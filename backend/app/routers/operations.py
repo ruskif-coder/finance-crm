@@ -1,0 +1,1105 @@
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+from sqlalchemy import func, case
+from app.database import get_db
+from app.models import Operation, Article, Counterparty, User
+from app.routers.auth import get_current_user
+from app.audit import log_action
+from app.permissions import require_permission
+from app.routers.reports import _due_date, _aging_bucket, _term_days_for_inn
+from pydantic import BaseModel
+from typing import Optional, List
+from datetime import date, datetime
+from datetime import date as _Date  # alias: see OperationCreate note below
+from collections import deque
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.worksheet.datavalidation import DataValidation
+import pandas as pd
+import io
+import re
+import uuid
+
+router = APIRouter()
+
+# Временное in-memory хранилище для шага preview→apply при синхронизации импорта.
+# Переживает только до перезапуска backend-контейнера — это сознательно временное решение,
+# пока система не переехала на боевой сервер (см. memory finance-system-status).
+IMPORT_SYNC_CACHE = {}
+
+# Статус дебиторки в списке операций — переиспользует ту же логику возраста долга
+# (срок оплаты = период + отсрочка контрагента по ИНН + буфер), что и /reports/receivables,
+# чтобы статус в /operations всегда совпадал с тем, что показывает отчёт по дебиторке.
+RECEIVABLE_STATUS_LABELS = {'overdue': 'Просрочка', 'current': 'Текущая', 'future': 'План'}
+
+def _receivable_status(op):
+    """Возвращает ключ статуса дебиторки ('overdue'/'current'/'future') только для операций
+    'План поступлений' с income > 0 — остальные (в т.ч. 'unknown', когда срок не определить)
+    возвращают None, и колонка в /operations остаётся пустой."""
+    if op.status != 'ПЛАН ПОСТУПЛЕНИЙ' or not op.income or op.income <= 0:
+        return None
+    term_days = _term_days_for_inn(op.counterparty.inn if op.counterparty else None)
+    due_date = _due_date(op.period, term_days)
+    bucket = _aging_bucket(due_date, date.today())
+    return bucket if bucket in RECEIVABLE_STATUS_LABELS else None
+
+class OperationCreate(BaseModel):
+    # ВАЖНО: поле "date" ниже маскирует имя типа "date" (datetime.date) внутри
+    # тела этого класса после своей строки — Python связывает локальное имя
+    # "date" со значением по умолчанию (None) в namespace класса. Из-за этого
+    # invoice_date: Optional[date] на самом деле резолвился в Optional[None]
+    # (т.е. только None разрешён) — это и было причиной 422 "Input should be
+    # None" при попытке передать дату счёта. Поэтому здесь используется алиас
+    # _Date вместо голого "date" для типов, объявленных после поля "date".
+    date: Optional[_Date] = None
+    status: str
+    income: float = 0
+    expense: float = 0
+    bank: Optional[str] = None
+    period: Optional[str] = None
+    vat_rate: float = 0
+    article_id: Optional[int] = None
+    counterparty_id: Optional[int] = None
+    ds_num: Optional[str] = None
+    invoice: Optional[str] = None
+    invoice_date: Optional[_Date] = None
+    description: Optional[str] = None
+    document_link: Optional[str] = None
+
+@router.get("/")
+def get_operations(
+    skip: int = 0,
+    limit: int = 300,
+    status: Optional[List[str]] = Query(None),
+    bank: Optional[List[str]] = Query(None),
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    article_id: Optional[List[int]] = Query(None),
+    counterparty_id: Optional[List[int]] = Query(None),
+    period: Optional[List[str]] = Query(None),
+    sort_col: Optional[str] = 'date',
+    sort_dir: Optional[str] = 'desc',
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "view"))
+):
+    query = db.query(Operation)
+
+    if status:
+        query = query.filter(Operation.status.in_(status))
+    if bank:
+        query = query.filter(Operation.bank.in_(bank))
+    if date_from:
+        query = query.filter(Operation.date >= date_from)
+    if date_to:
+        query = query.filter(Operation.date <= date_to)
+    if article_id:
+        query = query.filter(Operation.article_id.in_(article_id))
+    if counterparty_id:
+        query = query.filter(Operation.counterparty_id.in_(counterparty_id))
+    if period:
+        query = query.filter(Operation.period.in_(period))
+
+    query = query.outerjoin(Article, Operation.article_id == Article.id)\
+                 .outerjoin(Counterparty, Operation.counterparty_id == Counterparty.id)
+
+    total = query.count()
+
+    sort_map = {
+        'date': Operation.date,
+        'status': Operation.status,
+        'income': Operation.income,
+        'expense': Operation.expense,
+        'bank': Operation.bank,
+        'article': Article.name,
+        'counterparty': Counterparty.name,
+        'period': case(
+            (Operation.period.like('Q1 %'), func.concat(func.substring(Operation.period, 4, 4), '-01')),
+            (Operation.period.like('Q2 %'), func.concat(func.substring(Operation.period, 4, 4), '-04')),
+            (Operation.period.like('Q3 %'), func.concat(func.substring(Operation.period, 4, 4), '-07')),
+            (Operation.period.like('Q4 %'), func.concat(func.substring(Operation.period, 4, 4), '-10')),
+            else_=Operation.period
+        ),
+    }
+    # nulls_first() в обоих направлениях (а не nulls_last() для desc) — намеренно:
+    # операции без даты (например, "план поступлений" из импорта, где заполнен
+    # только период) должны быть видны сразу на первой странице, а не похоронены
+    # в конце списка из тысяч строк, где их никто не найдёт. См. баг: после
+    # импорта плановых строк без даты пользователь не мог их найти, потому что
+    # они проваливались на последнюю страницу под sort_dir=desc.
+    sort_column = sort_map.get(sort_col, Operation.date)
+    if sort_dir == 'asc':
+        query = query.order_by(sort_column.asc().nulls_first())
+    else:
+        query = query.order_by(sort_column.desc().nulls_first())
+
+    operations = query.offset(skip).limit(limit).all()
+
+    return {
+        "total": total,
+        "items": [
+            {
+                "id": op.id,
+                "date": op.date,
+                "status": op.status,
+                "income": op.income,
+                "expense": op.expense,
+                "bank": op.bank,
+                "period": op.period,
+                "vat_rate": op.vat_rate,
+                "vat_fact": op.vat_fact,
+                "article": op.article.name if op.article else None,
+                "article_id": op.article_id,
+                "counterparty": op.counterparty.name if op.counterparty else None,
+                "counterparty_id": op.counterparty_id,
+                "ds_num": op.ds_num,
+                "invoice": op.invoice,
+                "invoice_date": op.invoice_date,
+                "description": op.description,
+                "document_link": op.document_link,
+                "receivable_status": _receivable_status(op),
+            }
+            for op in operations
+        ]
+    }
+
+@router.get("/export")
+def export_operations(
+    status: Optional[List[str]] = Query(None),
+    bank: Optional[List[str]] = Query(None),
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    article_id: Optional[List[int]] = Query(None),
+    counterparty_id: Optional[List[int]] = Query(None),
+    period: Optional[List[str]] = Query(None),
+    sort_col: Optional[str] = 'date',
+    sort_dir: Optional[str] = 'desc',
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "view"))
+):
+    """Выгружает в XLSX ВСЕ операции, соответствующие текущим фильтрам и
+    сортировке страницы /operations — без учёта пагинации (skip/limit), т.е.
+    весь отфильтрованный список, а не только видимую страницу. Параметры
+    фильтрации/сортировки повторяют GET /operations/, чтобы кнопка "Скачать"
+    на фронтенде выгружала ровно то, что выбрано текущими фильтрами."""
+    query = db.query(Operation)
+
+    if status:
+        query = query.filter(Operation.status.in_(status))
+    if bank:
+        query = query.filter(Operation.bank.in_(bank))
+    if date_from:
+        query = query.filter(Operation.date >= date_from)
+    if date_to:
+        query = query.filter(Operation.date <= date_to)
+    if article_id:
+        query = query.filter(Operation.article_id.in_(article_id))
+    if counterparty_id:
+        query = query.filter(Operation.counterparty_id.in_(counterparty_id))
+    if period:
+        query = query.filter(Operation.period.in_(period))
+
+    query = query.outerjoin(Article, Operation.article_id == Article.id)\
+                 .outerjoin(Counterparty, Operation.counterparty_id == Counterparty.id)
+
+    sort_map = {
+        'date': Operation.date,
+        'status': Operation.status,
+        'income': Operation.income,
+        'expense': Operation.expense,
+        'bank': Operation.bank,
+        'article': Article.name,
+        'counterparty': Counterparty.name,
+        'period': case(
+            (Operation.period.like('Q1 %'), func.concat(func.substring(Operation.period, 4, 4), '-01')),
+            (Operation.period.like('Q2 %'), func.concat(func.substring(Operation.period, 4, 4), '-04')),
+            (Operation.period.like('Q3 %'), func.concat(func.substring(Operation.period, 4, 4), '-07')),
+            (Operation.period.like('Q4 %'), func.concat(func.substring(Operation.period, 4, 4), '-10')),
+            else_=Operation.period
+        ),
+    }
+    # См. тот же фикс и пояснение в GET /operations/ выше — nulls_first() в обоих
+    # направлениях, чтобы выгрузка не теряла операции без даты в хвосте списка.
+    sort_column = sort_map.get(sort_col, Operation.date)
+    if sort_dir == 'asc':
+        query = query.order_by(sort_column.asc().nulls_first())
+    else:
+        query = query.order_by(sort_column.desc().nulls_first())
+
+    operations = query.all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Операции"
+
+    export_columns = [
+        ('Дата', 14), ('Статус', 18), ('Поступления', 14), ('Списания', 14),
+        ('Банк', 14), ('Период', 14), ('Статья', 22), ('Контрагент', 28),
+        ('НДС %', 8), ('НДС сумма', 14), ('№ ДС', 14), ('Счет', 14),
+        ('Счет от дата', 14), ('Документ', 32), ('Назначение', 35),
+        ('Статус ДЗ', 14),
+    ]
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for col_idx, (title, width) in enumerate(export_columns, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=title)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+        ws.column_dimensions[cell.column_letter].width = width
+    ws.row_dimensions[1].height = 26
+    ws.freeze_panes = "A2"
+
+    date_col_idx = 1
+    invoice_date_col_idx = 13
+    for row_idx, op in enumerate(operations, start=2):
+        values = [
+            op.date, op.status, op.income or None, op.expense or None,
+            op.bank, op.period, op.article.name if op.article else None,
+            op.counterparty.name if op.counterparty else None,
+            op.vat_rate or None, op.vat_fact or None, op.ds_num, op.invoice,
+            op.invoice_date, op.document_link, op.description,
+            RECEIVABLE_STATUS_LABELS.get(_receivable_status(op)),
+        ]
+        for col_idx, value in enumerate(values, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=value)
+        ws.cell(row=row_idx, column=date_col_idx).number_format = 'DD.MM.YYYY'
+        ws.cell(row=row_idx, column=invoice_date_col_idx).number_format = 'DD.MM.YYYY'
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"operacii_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+@router.post("/")
+def create_operation(
+    op: OperationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "create"))
+):
+    vat_fact = 0
+    if op.income > 0 and op.vat_rate > 0:
+        vat_fact = op.income * op.vat_rate / (100 + op.vat_rate)
+    elif op.expense > 0 and op.vat_rate > 0:
+        vat_fact = op.expense * op.vat_rate / (100 + op.vat_rate)
+
+    operation = Operation(
+        date=op.date,
+        status=op.status,
+        income=op.income,
+        expense=op.expense,
+        bank=op.bank,
+        period=op.period,
+        vat_rate=op.vat_rate,
+        vat_fact=vat_fact,
+        article_id=op.article_id,
+        counterparty_id=op.counterparty_id,
+        ds_num=op.ds_num,
+        invoice=op.invoice,
+        invoice_date=op.invoice_date,
+        description=op.description,
+        document_link=op.document_link,
+        created_by=current_user.id
+    )
+    db.add(operation)
+    db.commit()
+    db.refresh(operation)
+
+    log_action(db, current_user, "create_operation", entity_type="operation", entity_id=operation.id,
+               details=f"{op.status}, доход {op.income}, расход {op.expense}, банк {op.bank}")
+    return {"id": operation.id, "message": "Операция создана"}
+
+@router.put("/{op_id}")
+def update_operation(
+    op_id: int,
+    op: OperationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "edit"))
+):
+    operation = db.query(Operation).filter(Operation.id == op_id).first()
+    if not operation:
+        raise HTTPException(status_code=404, detail="Операция не найдена")
+    for key, value in op.dict().items():
+        setattr(operation, key, value)
+
+    # Пересчёт суммы НДС при сохранении. vat_fact не входит в OperationCreate,
+    # поэтому цикл setattr выше его не трогает — без этого блока сумма НДС
+    # оставалась прежней (с момента создания операции), даже если при
+    # редактировании меняли доход/расход или ставку НДС. Логика та же, что
+    # и при создании операции (см. create_operation выше).
+    vat_fact = 0
+    if op.income > 0 and op.vat_rate > 0:
+        vat_fact = op.income * op.vat_rate / (100 + op.vat_rate)
+    elif op.expense > 0 and op.vat_rate > 0:
+        vat_fact = op.expense * op.vat_rate / (100 + op.vat_rate)
+    operation.vat_fact = vat_fact
+
+    db.commit()
+
+    log_action(db, current_user, "update_operation", entity_type="operation", entity_id=op_id,
+               details=f"{op.status}, доход {op.income}, расход {op.expense}, банк {op.bank}")
+    return {"message": "Операция обновлена"}
+
+class OperationBulkUpdate(BaseModel):
+    # Поле "date" типизировано через алиас _Date (а не голым "date"), иначе оно
+    # маскирует само себя: Python сначала присваивает имени "date" в namespace
+    # класса значение None, и только потом резолвит аннотацию "Optional[date]" —
+    # к этому моменту "date" уже означает None, и аннотация превращается в
+    # Optional[None], из-за чего pydantic требует "date" строго = None (422
+    # "Input should be None" при любой реальной дате). См. тот же фикс и более
+    # подробное объяснение в OperationCreate выше.
+    ids: List[int]
+    status: Optional[str] = None
+    date: Optional[_Date] = None
+    bank: Optional[str] = None
+    article_id: Optional[int] = None
+    counterparty_id: Optional[int] = None
+    period: Optional[str] = None
+    vat_rate: Optional[float] = None
+
+class OperationBulkDelete(BaseModel):
+    ids: List[int]
+
+@router.patch("/bulk")
+def bulk_update_operations(
+    payload: OperationBulkUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "edit"))
+):
+    """Массовое изменение статуса/даты/банка у списка операций одним запросом.
+    В отличие от update_operation (PUT, полная перезапись), здесь — частичное
+    обновление: меняются только явно переданные поля (exclude_unset), остальные
+    поля затронутых операций не трогаются."""
+    if not payload.ids:
+        raise HTTPException(status_code=400, detail="Не указаны id операций")
+
+    fields = payload.dict(exclude={"ids"}, exclude_unset=True)
+    if not fields:
+        raise HTTPException(status_code=400, detail="Не указаны поля для изменения")
+
+    operations = db.query(Operation).filter(Operation.id.in_(payload.ids)).all()
+    if not operations:
+        raise HTTPException(status_code=404, detail="Операции не найдены")
+
+    for operation in operations:
+        for key, value in fields.items():
+            setattr(operation, key, value)
+        # Если меняется ставка НДС, сумма НДС (vat_fact) пересчитывается тут же —
+        # иначе она осталась бы рассчитанной по старой ставке. Та же формула,
+        # что и при создании/одиночном редактировании операции (см. выше).
+        if 'vat_rate' in fields:
+            vat_fact = 0
+            if operation.income > 0 and operation.vat_rate > 0:
+                vat_fact = operation.income * operation.vat_rate / (100 + operation.vat_rate)
+            elif operation.expense > 0 and operation.vat_rate > 0:
+                vat_fact = operation.expense * operation.vat_rate / (100 + operation.vat_rate)
+            operation.vat_fact = vat_fact
+    db.commit()
+
+    changed_desc = ", ".join(f"{k}={v}" for k, v in fields.items())
+    log_action(db, current_user, "bulk_update_operation", entity_type="operation", entity_id=None,
+               details=f"ids={payload.ids}; {changed_desc}")
+
+    return {"message": f"Обновлено {len(operations)} операций", "updated": len(operations)}
+
+@router.delete("/bulk")
+def bulk_delete_operations(
+    payload: OperationBulkDelete,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "delete"))
+):
+    """Массовое удаление операций по списку id. Зарегистрирован выше
+    @router.delete("/{op_id}"), иначе FastAPI пытался бы матчить
+    DELETE /operations/bulk в delete_operation(op_id="bulk") и падал
+    с 422 на валидации int, не доходя до этого хендлера."""
+    if not payload.ids:
+        raise HTTPException(status_code=400, detail="Не указаны id операций")
+
+    operations = db.query(Operation).filter(Operation.id.in_(payload.ids)).all()
+    if not operations:
+        raise HTTPException(status_code=404, detail="Операции не найдены")
+
+    count = len(operations)
+    for operation in operations:
+        db.delete(operation)
+    db.commit()
+
+    log_action(db, current_user, "bulk_delete_operation", entity_type="operation", entity_id=None,
+               details=f"ids={payload.ids}; удалено {count}")
+
+    return {"message": f"Удалено {count} операций", "deleted": count}
+
+@router.delete("/{op_id}")
+def delete_operation(
+    op_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "delete"))
+):
+    operation = db.query(Operation).filter(Operation.id == op_id).first()
+    if not operation:
+        raise HTTPException(status_code=404, detail="Операция не найдена")
+    details = f"{operation.status}, доход {operation.income}, расход {operation.expense}, банк {operation.bank}"
+    db.delete(operation)
+    db.commit()
+
+    log_action(db, current_user, "delete_operation", entity_type="operation", entity_id=op_id, details=details)
+    return {"message": "Операция удалена"}
+
+_CF_BEST_COLUMN_MAP = {
+    'дата': 'date',
+    'статус': 'status',
+    'поступления': 'income',
+    'списания': 'expense',
+    'банк': 'bank',
+    'период': 'period',
+    'ндс': 'vat_rate',
+    'ндс факт': 'vat_fact',
+    'статья': 'article',
+    'контрагент': 'counterparty',
+    'инн': 'inn',
+    '№ дс': 'ds_num',
+    'счет': 'invoice',
+    'счет от дата': 'invoice_date',
+    'просрочка дней': 'overdue_days',
+    'назначение': 'description',
+    'ссылка на документ': 'document_link',
+}
+# Поля без которых парсинг не имеет смысла. overdue_days нигде не используется ниже;
+# inn и document_link — новые опциональные поля (см. шаблон массового импорта),
+# их отсутствие в старом файле формата CF BEST не должно блокировать импорт.
+# vat_fact тоже сделан опциональным: если колонки нет (как в новом шаблоне), сумма
+# НДС вычисляется автоматически из дохода/расхода и ставки — так же, как при
+# ручном добавлении операции через форму (см. create_operation/update_operation).
+_CF_BEST_REQUIRED_FIELDS = set(_CF_BEST_COLUMN_MAP.values()) - {'overdue_days', 'inn', 'document_link', 'vat_fact'}
+
+_PERIOD_MONTHS = {
+    'январь': 1, 'февраль': 2, 'март': 3, 'апрель': 4,
+    'май': 5, 'июнь': 6, 'июль': 7, 'август': 8,
+    'сентябрь': 9, 'октябрь': 10, 'ноябрь': 11, 'декабрь': 12,
+}
+
+# Квартальный формат план-строк без даты (ПЛАН ОПЛАТ/ПОСТУПЛЕНИЙ): договорились
+# хранить такие периоды как "Q1 2026", "Q4 2025" и т.п. Во входящем файле он
+# записан по-русски ("1 квартал 2026"), поэтому распознаём оба варианта и
+# приводим к единому каноническому виду "QN YYYY" (с заглавной Q и пробелом —
+# именно так его ждут reports.py/QUARTER_MONTHS и сортировка в get_operations).
+_QUARTER_EN_RE = re.compile(r'q([1-4])\D{0,3}(\d{4})')
+_QUARTER_RU_RE = re.compile(r'([1-4])\s*-?\s*(?:[йi]\s*)?кварт\w*\D{0,10}(\d{4})')
+
+
+def _normalize_period(period: Optional[str], op_date: Optional[date]) -> Optional[str]:
+    """Приводит период к формату YYYY-MM — тому же, в котором уже хранятся периоды
+    в БД (см. одноразовый скрипт app/fix_periods.py, которым они были нормализованы).
+    Без этого синхронизация считала смену формата записи периода ("июль 2024" вместо
+    "2024-07") реальным изменением и заводила ложный конфликт почти на каждой строке.
+
+    Исключение — квартальный формат у строк без даты (план/прогноз): если есть
+    реальная дата операции, она всегда важнее квартальной "вилки" (актуально для
+    исторических операций с протухшей квартальной меткой, см. _normalize_period
+    в существующих данных). Но если даты нет вообще, единственная содержательная
+    информация о периоде — это квартал, и её нельзя терять, сворачивая в None,
+    иначе пропадает сама возможность увидеть смену квартала как конфликт."""
+    if not period:
+        return op_date.strftime('%Y-%m') if op_date else None
+    p = str(period).lower().strip()
+    if re.match(r'^\d{4}-\d{2}$', p):
+        return p
+    for name, num in _PERIOD_MONTHS.items():
+        if name in p:
+            year_match = re.search(r'\d{4}', p)
+            year = int(year_match.group()) if year_match else (op_date.year if op_date else None)
+            return f"{year}-{num:02d}" if year else None
+    if op_date:
+        return op_date.strftime('%Y-%m')
+    qm = _QUARTER_EN_RE.search(p) or _QUARTER_RU_RE.search(p)
+    if qm:
+        return f"Q{qm.group(1)} {qm.group(2)}"
+    return None
+
+
+def _clean_inn(value) -> Optional[str]:
+    """ИНН в Excel часто попадает как число (например 7712345678.0), если ячейка
+    отформатирована как "Общий" — без этой очистки в БД улетел бы хвост ".0"."""
+    if pd.isna(value):
+        return None
+    s = str(value).strip()
+    if s.endswith('.0') and s[:-2].isdigit():
+        s = s[:-2]
+    return s or None
+
+
+def _parse_cf_best_rows(contents: bytes) -> List[dict]:
+    """Парсит Excel-файл с листом CF BEST в список словарей (без обращения к БД).
+    Логика идентична исходному /import — вынесена в helper, чтобы её могли
+    использовать и блайнд-импорт, и preview/apply синхронизация.
+
+    Заголовок ищется динамически (строка, где есть ячейка "статус"), а колонки
+    сопоставляются по названию, а не по фиксированной позиции. Это позволяет
+    обрабатывать разные варианты выгрузки: со служебной шапкой-дашбордом сверху
+    или без неё, с лишними колонками (например, "Кредит"/"Дебет") — такие
+    нераспознанные колонки просто игнорируются."""
+    raw = pd.read_excel(io.BytesIO(contents), sheet_name="CF BEST", header=None)
+
+    header_row_idx = None
+    for idx in range(len(raw)):
+        cells = [str(v).strip().lower() for v in raw.iloc[idx].tolist() if pd.notna(v)]
+        if 'статус' in cells:
+            header_row_idx = idx
+            break
+    if header_row_idx is None:
+        raise ValueError('Не найдена строка заголовка (колонка "статус") на листе CF BEST')
+
+    header = raw.iloc[header_row_idx]
+    col_map = {}
+    for col_idx, value in header.items():
+        if pd.isna(value):
+            continue
+        field = _CF_BEST_COLUMN_MAP.get(str(value).strip().lower())
+        if field:
+            col_map[col_idx] = field
+
+    missing = _CF_BEST_REQUIRED_FIELDS - set(col_map.values())
+    if missing:
+        raise ValueError(f"В файле не найдены обязательные колонки: {sorted(missing)}")
+
+    df = raw.iloc[header_row_idx + 1:].rename(columns=col_map)
+    df = df[list(col_map.values())]
+    df = df[df['status'].astype(str).str.strip().str.lower() != 'статус'].copy()
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+
+    rows = []
+    for _, row in df.iterrows():
+        parsed_date = row['date'].date() if pd.notna(row.get('date')) else None
+        raw_period = str(row['period']) if pd.notna(row.get('period')) else None
+        parsed_income = float(row['income']) if pd.notna(row.get('income')) else 0
+        parsed_expense = float(row['expense']) if pd.notna(row.get('expense')) else 0
+        parsed_vat_rate = float(row['vat_rate']) if pd.notna(row.get('vat_rate')) else 0
+        if pd.notna(row.get('vat_fact')):
+            parsed_vat_fact = float(row['vat_fact'])
+        elif parsed_income > 0 and parsed_vat_rate > 0:
+            parsed_vat_fact = parsed_income * parsed_vat_rate / (100 + parsed_vat_rate)
+        elif parsed_expense > 0 and parsed_vat_rate > 0:
+            parsed_vat_fact = parsed_expense * parsed_vat_rate / (100 + parsed_vat_rate)
+        else:
+            parsed_vat_fact = 0
+        rows.append({
+            'date': parsed_date,
+            'status': str(row['status']).strip().upper() if pd.notna(row.get('status')) else 'ОПЛАЧЕНО',
+            'income': parsed_income,
+            'expense': parsed_expense,
+            'bank': str(row['bank']) if pd.notna(row.get('bank')) else None,
+            'period': _normalize_period(raw_period, parsed_date),
+            'vat_rate': parsed_vat_rate,
+            'vat_fact': parsed_vat_fact,
+            'article': str(row['article']) if pd.notna(row.get('article')) else None,
+            'counterparty': str(row['counterparty']) if pd.notna(row.get('counterparty')) else None,
+            'inn': _clean_inn(row.get('inn')),
+            'ds_num': str(row['ds_num']) if pd.notna(row.get('ds_num')) else None,
+            'invoice': str(row['invoice']) if pd.notna(row.get('invoice')) else None,
+            'invoice_date': pd.to_datetime(row['invoice_date']).date() if pd.notna(row.get('invoice_date')) else None,
+            'description': str(row['description']) if pd.notna(row.get('description')) else None,
+            'document_link': str(row['document_link']).strip() if pd.notna(row.get('document_link')) else None,
+        })
+    return rows
+
+
+def _get_or_create_article(db: Session, name: Optional[str]):
+    if not name:
+        return None
+    article = db.query(Article).filter(Article.name == name).first()
+    if not article:
+        article = Article(name=name, type='expense')
+        db.add(article)
+        db.flush()
+    return article
+
+
+def _get_or_create_counterparty(db: Session, name: Optional[str], inn: Optional[str] = None):
+    """Сопоставление контрагента. ИНН — более надёжный ключ, чем название (которое
+    в файлах встречается с разными кавычками/регистром/формой "ООО"/"OOO" и т.п.),
+    поэтому при наличии ИНН он проверяется первым. Если контрагент найден по ИНН,
+    его карточка не переименовывается даже при расхождении в названии — иначе один
+    "плохой" импорт может массово переписать справочник. Если контрагент найден по
+    имени, а в файле указан ИНН, которого в карточке ещё нет — ИНН подтягивается
+    (обогащение справочника), но существующий ИНН никогда не перезаписывается."""
+    if inn:
+        by_inn = db.query(Counterparty).filter(Counterparty.inn == inn).first()
+        if by_inn:
+            return by_inn
+    if not name:
+        return None
+    counterparty = db.query(Counterparty).filter(Counterparty.name == name).first()
+    if not counterparty:
+        counterparty = Counterparty(name=name, inn=inn)
+        db.add(counterparty)
+        db.flush()
+    elif inn and not counterparty.inn:
+        counterparty.inn = inn
+    return counterparty
+
+
+# Порядок и заголовки колонок шаблона массового импорта — заголовки должны совпадать
+# (без учёта регистра) с ключами _CF_BEST_COLUMN_MAP, чтобы файл, скачанный отсюда
+# и затем заполненный пользователем, корректно распознавался _parse_cf_best_rows.
+# НДС факт и Просрочка дней не включены — оба поля опциональны/вычисляются автоматически.
+_TEMPLATE_COLUMNS = [
+    ('Дата', 16),
+    ('Статус', 20),
+    ('Поступления', 14),
+    ('Списания', 14),
+    ('Банк', 14),
+    ('Период', 12),
+    ('НДС', 8),
+    ('Статья', 22),
+    ('Контрагент', 28),
+    ('ИНН', 14),
+    ('№ ДС', 14),
+    ('Счет', 14),
+    ('Счет от дата', 16),
+    ('Ссылка на документ', 28),
+    ('Назначение', 30),
+]
+
+
+@router.get("/import/template")
+async def download_import_template(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "create"))
+):
+    """Генерирует XLSX-шаблон для массового импорта операций. Лист с данными
+    называется ровно "CF BEST" (регистрозависимо) — это требование парсера
+    (_parse_cf_best_rows читает pd.read_excel с sheet_name="CF BEST"). Пояснения
+    и пример заполнения вынесены на отдельный лист "Инструкция", чтобы они не
+    могли быть случайно прочитаны как настоящая строка операции.
+
+    Статус/Банк/НДС/Статья — выпадающие списки с жёстким запретом свободного
+    ввода (showErrorMessage + errorStyle="stop"): если вписать значение не из
+    списка, Excel покажет ошибку и не даст покинуть ячейку. Список статей не
+    хардкодится, а читается из текущего справочника статей (Article) и кладётся
+    на скрытый лист "Справочники" — он не влезает в инлайн-список формулы
+    (ограничение Excel ~255 символов), и так список всегда актуален без правки
+    кода при добавлении новых статей через Настройки → Справочники → Статьи."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "CF BEST"
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    for col_idx, (title, width) in enumerate(_TEMPLATE_COLUMNS, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=title)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+        ws.column_dimensions[cell.column_letter].width = width
+
+    ws.row_dimensions[1].height = 32
+    ws.freeze_panes = "A2"
+
+    last_row = 500
+    status_col = next(i for i, (t, _) in enumerate(_TEMPLATE_COLUMNS, start=1) if t == 'Статус')
+    bank_col = next(i for i, (t, _) in enumerate(_TEMPLATE_COLUMNS, start=1) if t == 'Банк')
+    vat_col = next(i for i, (t, _) in enumerate(_TEMPLATE_COLUMNS, start=1) if t == 'НДС')
+    article_col = next(i for i, (t, _) in enumerate(_TEMPLATE_COLUMNS, start=1) if t == 'Статья')
+    status_letter = ws.cell(row=1, column=status_col).column_letter
+    bank_letter = ws.cell(row=1, column=bank_col).column_letter
+    vat_letter = ws.cell(row=1, column=vat_col).column_letter
+    article_letter = ws.cell(row=1, column=article_col).column_letter
+
+    def _strict_list_dv(formula1):
+        return DataValidation(
+            type="list", formula1=formula1, allow_blank=True,
+            showErrorMessage=True, errorStyle="stop",
+            errorTitle="Недопустимое значение",
+            error="Выберите значение строго из выпадающего списка — свободный ввод не поддерживается.",
+        )
+
+    # НДС — список ставок должен совпадать с VAT_OPTIONS на фронте (frontend/pages/operations.js).
+    vat_options = [0, 5, 10, 20, 22]
+    status_dv = _strict_list_dv('"ОПЛАЧЕНО,ПЛАН ОПЛАТ,ПЛАН ПОСТУПЛЕНИЙ"')
+    bank_dv = _strict_list_dv('"АльфаБанк,ОПТ Банк,Совкомбанк,Наличные"')
+    vat_dv = _strict_list_dv('"' + ','.join(str(v) for v in vat_options) + '"')
+    ws.add_data_validation(status_dv)
+    ws.add_data_validation(bank_dv)
+    ws.add_data_validation(vat_dv)
+    status_dv.add(f"{status_letter}2:{status_letter}{last_row}")
+    bank_dv.add(f"{bank_letter}2:{bank_letter}{last_row}")
+    vat_dv.add(f"{vat_letter}2:{vat_letter}{last_row}")
+
+    # Статья — список слишком длинный для инлайн-формулы, поэтому через скрытый
+    # лист-справочник, на который ссылается список (см. docstring выше).
+    article_names = [a.name for a in db.query(Article).order_by(Article.sort_order, Article.id).all()]
+    if article_names:
+        lists_ws = wb.create_sheet("Справочники")
+        for i, name in enumerate(article_names, start=1):
+            lists_ws.cell(row=i, column=1, value=name)
+        lists_ws.sheet_state = "hidden"
+        article_dv = _strict_list_dv(f"'Справочники'!$A$1:$A${len(article_names)}")
+        ws.add_data_validation(article_dv)
+        article_dv.add(f"{article_letter}2:{article_letter}{last_row}")
+
+    date_cols = [i for i, (t, _) in enumerate(_TEMPLATE_COLUMNS, start=1) if t in ('Дата', 'Счет от дата')]
+    for row in range(2, last_row + 1):
+        for col in date_cols:
+            ws.cell(row=row, column=col).number_format = 'DD.MM.YYYY'
+
+    instr = wb.create_sheet("Инструкция")
+    instr.column_dimensions['A'].width = 22
+    instr.column_dimensions['B'].width = 90
+    instr_font_title = Font(bold=True, size=13)
+    instr.cell(row=1, column=1, value="Инструкция по заполнению шаблона").font = instr_font_title
+
+    rows = [
+        ("Лист CF BEST", "Заполняйте операции на этом листе, начиная со 2-й строки. Не переименовывайте лист и не меняйте заголовки — иначе файл не распознается при импорте."),
+        ("Дата", "Дата операции, формат ДД.МM.ГГГГ."),
+        ("Статус", "Один из: ОПЛАЧЕНО / ПЛАН ОПЛАТ / ПЛАН ПОСТУПЛЕНИЙ (выбирается из выпадающего списка)."),
+        ("Поступления / Списания", "Сумма по операции. Заполняется только одно из полей в зависимости от типа операции."),
+        ("Банк", "Один из: АльфаБанк / ОПТ Банк / Совкомбанк / Наличные (выпадающий список)."),
+        ("Период", "Период, к которому относится операция, например: Январь 2026 или 1 квартал 2026."),
+        ("НДС", "Ставка НДС в процентах — строго из выпадающего списка: 0 / 5 / 10 / 20 / 22. Свободный ввод заблокирован. Сумма НДС вычисляется автоматически — отдельную колонку заполнять не нужно."),
+        ("Статья", "Название статьи ДДС — строго из выпадающего списка текущего справочника статей. Свободный ввод заблокирован. Если нужной статьи нет в списке — добавьте её в Настройки → Справочники → Статьи и заново скачайте шаблон."),
+        ("Контрагент", "Название контрагента. Если контрагент не найден — будет создана новая карточка в справочнике контрагентов."),
+        ("ИНН", "ИНН контрагента — необязательно, но настоятельно рекомендуется: по ИНН контрагенты сопоставляются надёжнее, чем по названию (которое может отличаться кавычками/регистром/формой ООО). Если контрагент уже есть в справочнике под другим написанием названия, но с тем же ИНН — система не создаст дубликат, а сопоставит с существующей карточкой."),
+        ("№ ДС", "Номер документа списания/счёта на оплату (если есть) — используется для сопоставления при повторной синхронизации."),
+        ("Счет", "Номер счёта."),
+        ("Счет от дата", "Дата счёта, формат ДД.ММ.ГГГГ."),
+        ("Ссылка на документ", "Ссылка (URL) на скан/копию документа — необязательно."),
+        ("Назначение", "Назначение платежа / комментарий."),
+        ("Повторный импорт (синхронизация)", "Тот же файл можно загрузить повторно через раздел Импорт → Синхронизация: система найдёт совпадающие операции по № ДС + Счёт (либо по набору полей, если эти номера не указаны) и покажет, что изменилось, перед применением."),
+    ]
+    for i, (label, text) in enumerate(rows, start=3):
+        instr.cell(row=i, column=1, value=label).font = Font(bold=True)
+        instr.cell(row=i, column=1).alignment = Alignment(vertical="top")
+        c = instr.cell(row=i, column=2, value=text)
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+        instr.row_dimensions[i].height = 32
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    headers = {"Content-Disposition": "attachment; filename=shablon_operaciy.xlsx"}
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+
+def _values_equal(a, b) -> bool:
+    """Сравнение значений для диффа: float сравниваются с округлением до 2 знаков,
+    чтобы погрешности округления в Excel не создавали ложные конфликты."""
+    if isinstance(a, float) or isinstance(b, float):
+        try:
+            return round(float(a or 0), 2) == round(float(b or 0), 2)
+        except (TypeError, ValueError):
+            return a == b
+    return a == b
+
+
+
+
+def _serialize_for_json(row: dict) -> dict:
+    out = dict(row)
+    for f in ('date', 'invoice_date'):
+        if isinstance(out.get(f), date):
+            out[f] = out[f].isoformat()
+    return out
+
+
+MAX_IMPORT_FILE_SIZE = 10 * 1024 * 1024  # 10 МБ
+
+
+def _validate_import_file(file: UploadFile, contents: bytes):
+    filename = (file.filename or '').lower()
+    if not filename.endswith('.xlsx'):
+        raise HTTPException(status_code=400, detail="Ожидается файл .xlsx")
+    if len(contents) > MAX_IMPORT_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="Файл слишком большой (максимум 10 МБ)")
+
+
+@router.post("/import")
+async def import_excel(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("import", "view"))
+):
+    contents = await file.read()
+    _validate_import_file(file, contents)
+    rows = _parse_cf_best_rows(contents)
+
+    imported = 0
+    for row in rows:
+        article = _get_or_create_article(db, row['article'])
+        counterparty = _get_or_create_counterparty(db, row['counterparty'], row.get('inn'))
+
+        op = Operation(
+            date=row['date'],
+            status=row['status'],
+            income=row['income'],
+            expense=row['expense'],
+            bank=row['bank'],
+            period=row['period'],
+            vat_rate=row['vat_rate'],
+            vat_fact=row['vat_fact'],
+            article_id=article.id if article else None,
+            counterparty_id=counterparty.id if counterparty else None,
+            ds_num=row['ds_num'],
+            invoice=row['invoice'],
+            invoice_date=row['invoice_date'],
+            description=row['description'],
+            document_link=row.get('document_link'),
+            created_by=current_user.id
+        )
+        db.add(op)
+        imported += 1
+
+    db.commit()
+    return {"message": f"Импортировано {imported} операций"}
+
+
+# Поля, которые сравниваются между файлом и существующей операцией для определения конфликта.
+# 'period' исключён намеренно — это легитимно изменяемое поле (например, перенос платежа),
+# включение его в ключ или в сравнение как блокирующего привело бы к ложным конфликтам.
+# Здесь оно как раз участвует в сравнении (чтобы показать пользователю изменение), но НЕ в ключе.
+_SYNC_COMPARE_FIELDS = ['date', 'status', 'income', 'expense', 'bank', 'period',
+                        'vat_rate', 'vat_fact', 'article', 'counterparty',
+                        'invoice_date', 'description', 'document_link']
+
+# document_link сравнивается мягко: пустое значение в файле НЕ считается изменением
+# (старый формат CF BEST без этой колонки иначе помечал бы конфликтом каждую строку
+# с уже заполненной вручную ссылкой). Конфликт показывается только если в файле
+# реально указана ссылка, отличающаяся от той, что сохранена в БД.
+def _field_equal(field: str, existing_val, incoming_val) -> bool:
+    if field == 'document_link' and not incoming_val:
+        return True
+    return _values_equal(existing_val, incoming_val)
+
+
+@router.post("/import/preview")
+async def import_preview(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("import", "view"))
+):
+    """Шаг 1 синхронизации: парсит файл и сопоставляет строки с уже существующими
+    операциями по составному ключу (№ ДС + № Счёта). Ничего не пишет в БД —
+    результат кэшируется в памяти под import_id для последующего /import/apply."""
+    contents = await file.read()
+    _validate_import_file(file, contents)
+    rows = _parse_cf_best_rows(contents)
+
+    keyed_rows = [r for r in rows if r['ds_num'] and r['invoice']]
+    ds_nums = list({r['ds_num'] for r in keyed_rows})
+    invoices = list({r['invoice'] for r in keyed_rows})
+
+    existing_map = {}
+    if ds_nums and invoices:
+        # order_by(id) — в данных встречаются операции с одинаковым (ds_num, invoice)
+        # (дубликаты от прошлых "слепых" импортов без дедупликации). При совпадении
+        # ключа детерминированно берём запись с наибольшим id (последнюю созданную).
+        candidates = db.query(Operation).filter(
+            Operation.ds_num.in_(ds_nums),
+            Operation.invoice.in_(invoices)
+        ).order_by(Operation.id).all()
+        for op in candidates:
+            existing_map[(op.ds_num, op.invoice)] = op
+
+    # Большинство операций (зарплата, банк, налоги и т.п.) не имеют № ДС / Счёта —
+    # для них составного ключа нет, и раньше они ВСЕГДА считались "новыми" при каждой
+    # синхронизации, даже если уже были загружены. Чтобы это исправить, такие строки
+    # дополнительно сопоставляются по "естественному" ключу: дата + статус + банк +
+    # сумма + статья + контрагент — набору полей, который и так не входит в сравнение
+    # изменений (см. _SYNC_COMPARE_FIELDS), то есть совпадение по нему не "угадывание",
+    # а просто более полное описание той же самой операции. Сопоставление мультисетовое
+    # (deque на каждый ключ), чтобы N одинаковых старых строк не съели один и тот же
+    # существующий id — каждая использованная запись из пула берётся только один раз.
+    articles_by_id = {a.id: a.name for a in db.query(Article).all()}
+    counterparties_by_id = {c.id: c.name for c in db.query(Counterparty).all()}
+
+    unkeyed_existing = db.query(Operation).filter(
+        (Operation.ds_num.is_(None)) | (Operation.invoice.is_(None))
+    ).order_by(Operation.id).all()
+
+    def _natural_key(d, status, bank, income, expense, article, counterparty):
+        return (d, status, bank, round(income or 0, 2), round(expense or 0, 2), article, counterparty)
+
+    natural_pool = {}
+    for op in unkeyed_existing:
+        nk = _natural_key(op.date, op.status, op.bank, op.income, op.expense,
+                           articles_by_id.get(op.article_id), counterparties_by_id.get(op.counterparty_id))
+        natural_pool.setdefault(nk, deque()).append(op)
+
+    new_rows = []
+    conflicts = []
+    unchanged_count = 0
+    cache_rows = []
+
+    for r in rows:
+        has_key = bool(r['ds_num'] and r['invoice'])
+        existing = None
+
+        if has_key:
+            key = f"{r['ds_num']}||{r['invoice']}"
+            existing = existing_map.get((r['ds_num'], r['invoice']))
+        else:
+            nk = _natural_key(r['date'], r['status'], r['bank'], r['income'], r['expense'],
+                               r['article'], r['counterparty'])
+            pool = natural_pool.get(nk)
+            existing = pool.popleft() if pool else None
+            key = f"nk:{existing.id}" if existing else None
+
+        if not existing:
+            new_rows.append(_serialize_for_json(r))
+            cache_rows.append({'status': 'new', 'key': key, 'data': r, 'existing_id': None})
+            continue
+
+        existing_view = {
+            'date': existing.date,
+            'status': existing.status,
+            'income': existing.income,
+            'expense': existing.expense,
+            'bank': existing.bank,
+            # Период приводится тем же правилом, что и у входящих строк (_normalize_period).
+            # В БД остались операции с ненормализованным периодом в квартальном формате
+            # ("Q1 2024") — это записи, попавшие туда уже ПОСЛЕ разового скрипта
+            # fix_periods.py (например, через старый "слепой" /import без нормализации),
+            # а не осознанный формат для план-строк. Без повторной нормализации здесь
+            # такие записи всегда конфликтовали бы с файлом из-за разницы в формате,
+            # хотя реального изменения периода нет.
+            'period': _normalize_period(existing.period, existing.date),
+            'vat_rate': existing.vat_rate,
+            'vat_fact': existing.vat_fact,
+            'article': existing.article.name if existing.article else None,
+            'counterparty': existing.counterparty.name if existing.counterparty else None,
+            'invoice_date': existing.invoice_date,
+            'description': existing.description,
+            'document_link': existing.document_link,
+        }
+        diff_fields = [f for f in _SYNC_COMPARE_FIELDS if not _field_equal(f, existing_view.get(f), r.get(f))]
+
+        if not diff_fields:
+            unchanged_count += 1
+            cache_rows.append({'status': 'unchanged', 'key': key, 'data': r, 'existing_id': existing.id})
+            continue
+
+        conflicts.append({
+            'key': key,
+            'existing': _serialize_for_json(existing_view),
+            'incoming': _serialize_for_json(r),
+            'diff_fields': diff_fields,
+        })
+        cache_rows.append({'status': 'conflict', 'key': key, 'data': r, 'existing_id': existing.id})
+
+    import_id = uuid.uuid4().hex
+    IMPORT_SYNC_CACHE[import_id] = {
+        'rows': cache_rows,
+        'created_at': datetime.utcnow(),
+        'user_id': current_user.id,
+    }
+
+    return {
+        'import_id': import_id,
+        'summary': {
+            'new': len(new_rows),
+            'conflict': len(conflicts),
+            'unchanged': unchanged_count,
+        },
+        'new_rows': new_rows,
+        'conflicts': conflicts,
+    }
+
+
+class ImportApplyRequest(BaseModel):
+    import_id: str
+    confirmed_keys: List[str] = []
+
+
+@router.post("/import/apply")
+async def import_apply(
+    payload: ImportApplyRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("import", "view"))
+):
+    """Шаг 2 синхронизации («Перепровести»): новые строки добавляются всегда,
+    конфликтные строки обновляются только если их key есть в confirmed_keys —
+    остальное (неподтверждённые конфликты, unchanged) пропускается."""
+    cached = IMPORT_SYNC_CACHE.get(payload.import_id)
+    if not cached:
+        raise HTTPException(status_code=400, detail="Сессия импорта истекла или не найдена — загрузите файл повторно")
+
+    confirmed = set(payload.confirmed_keys)
+    inserted = updated = skipped = 0
+
+    for row in cached['rows']:
+        data = row['data']
+
+        if row['status'] == 'new':
+            article = _get_or_create_article(db, data['article'])
+            counterparty = _get_or_create_counterparty(db, data['counterparty'], data.get('inn'))
+            op = Operation(
+                date=data['date'],
+                status=data['status'],
+                income=data['income'],
+                expense=data['expense'],
+                bank=data['bank'],
+                period=data['period'],
+                vat_rate=data['vat_rate'],
+                vat_fact=data['vat_fact'],
+                article_id=article.id if article else None,
+                counterparty_id=counterparty.id if counterparty else None,
+                ds_num=data['ds_num'],
+                invoice=data['invoice'],
+                invoice_date=data['invoice_date'],
+                description=data['description'],
+                document_link=data.get('document_link'),
+                created_by=current_user.id,
+            )
+            db.add(op)
+            inserted += 1
+
+        elif row['status'] == 'conflict' and row['key'] in confirmed:
+            existing = db.query(Operation).filter(Operation.id == row['existing_id']).first()
+            if not existing:
+                skipped += 1
+                continue
+            article = _get_or_create_article(db, data['article'])
+            counterparty = _get_or_create_counterparty(db, data['counterparty'], data.get('inn'))
+            existing.date = data['date']
+            existing.status = data['status']
+            existing.income = data['income']
+            existing.expense = data['expense']
+            existing.bank = data['bank']
+            existing.period = data['period']
+            existing.vat_rate = data['vat_rate']
+            existing.vat_fact = data['vat_fact']
+            existing.article_id = article.id if article else None
+            existing.counterparty_id = counterparty.id if counterparty else None
+            existing.invoice_date = data['invoice_date']
+            existing.description = data['description']
+            # document_link не затирается пустым значением: старый формат файла
+            # (без колонки "Ссылка на документ") иначе бы каждый раз стирал ссылку,
+            # вручную добавленную в приложении.
+            if data.get('document_link'):
+                existing.document_link = data['document_link']
+            updated += 1
+
+        else:
+            skipped += 1
+
+    db.commit()
+    del IMPORT_SYNC_CACHE[payload.import_id]
+
+    return {
+        "message": f"Добавлено {inserted}, обновлено {updated}, пропущено {skipped}",
+        "inserted": inserted,
+        "updated": updated,
+        "skipped": skipped,
+    }

@@ -1,0 +1,20 @@
+# Build artifacts
+node_modules/
+.next/
+__pycache__/
+*.pyc
+
+# Secrets — never commit
+.env
+.env.*
+
+# Локальные дампы и бэкапы БД — большие файлы с реальными данными, хранятся локально, не в git
+backups/
+
+# Разовые выгрузки с реальными данными в корне проекта
+/*.xlsx
+/*.xls
+
+# OS
+.DS_Store
+Thumbs.db

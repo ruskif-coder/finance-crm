@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:16
+    container_name: finance_db
+    restart: always
+    environment:
+      POSTGRES_DB: finance
+      POSTGRES_USER: finance_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  backend:
+    build: ./backend
+    container_name: finance_backend
+    restart: always
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql://finance_user:${POSTGRES_PASSWORD}@db:5432/finance
+      SECRET_KEY: ${SECRET_KEY}
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    container_name: finance_frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
