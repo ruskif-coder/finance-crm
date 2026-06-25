@@ -97,8 +97,13 @@ export default function Dashboard() {
   // ── Данные для риббон-графика (из реальных периодов, без фиктивных 12 месяцев) ──
   const monthly = periods.map(p => ({ income: p.total_income || 0, expense: p.total_expense || 0 }))
   const maxVal = niceMax(Math.max(1, ...monthly.map(m => m.income), ...monthly.map(m => m.expense)))
-  const divBars = buildDivBars(monthly, { maxVal })
-  const yLabels = buildYLabels(maxVal)
+  // height/arm должны совпадать с фактической высотой контейнера графика (height: 320, см. ниже) —
+  // ribbonChart.js по умолчанию рассчитан на 400px, без этого override бары и подписи оси
+  // выходят за пределы карточки (на ~62px ниже видимой области)
+  const RIBBON_HEIGHT = 320
+  const RIBBON_ARM = 144
+  const divBars = buildDivBars(monthly, { maxVal, height: RIBBON_HEIGHT, arm: RIBBON_ARM })
+  const yLabels = buildYLabels(maxVal, { height: RIBBON_HEIGHT, arm: RIBBON_ARM })
   const monthLabels = buildMonthLabels(periods.map(p => p.period))
 
   // ── Данные для накопительного остатка ──
@@ -188,7 +193,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div style={{ position: 'relative', height: 320, paddingLeft: 50 }}>
+              <div style={{ position: 'relative', height: 320, paddingLeft: 50, overflow: 'hidden' }}>
                 {yLabels.map(l => (
                   <div key={l.y} style={{ position: 'absolute', left: 0, top: l.y, transform: 'translateY(-7px)', fontSize: 11, color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums' }}>{l.v}</div>
                 ))}
@@ -306,17 +311,4 @@ export default function Dashboard() {
               <tfoot>
                 <tr style={{ borderTop: '2px solid var(--border-card)', background: 'var(--bg-subtle)' }}>
                   <td style={{ padding: '10px 12px', fontWeight: 700, color: 'var(--text-primary)' }}>ИТОГО</td>
-                  <td style={{ padding: '10px 12px', color: 'var(--income)', fontWeight: 700 }}>{fmt(periods.reduce((s, r) => s + (r.total_income || 0), 0))} ₽</td>
-                  <td style={{ padding: '10px 12px', color: 'var(--expense)', fontWeight: 700 }}>{fmt(periods.reduce((s, r) => s + (r.total_expense || 0), 0))} ₽</td>
-                  <td style={{ padding: '10px 12px', fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(periods.reduce((s, r) => s + (r.net || 0), 0))} ₽</td>
-                  <td colSpan={2}></td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-
-        </>}
-      </div>
-    </div>
-  )
-}
+                  <td style={{ padding: '10px 12px', color: 'var(--income)', fontWeight: 700 }}>{fmt(perio
