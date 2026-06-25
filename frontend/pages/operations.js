@@ -763,4 +763,23 @@ export default function Operations() {
                         {can(permissions, 'operations', 'create') && <button onClick={() => openCopy(op)} title="Скопировать" style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid var(--accent)', background: 'var(--accent-tint)', cursor: 'pointer', color: 'var(--accent)', marginRight: '4px' }}>📋</button>}
                         {can(permissions, 'operations', 'edit') && <button onClick={() => openEdit(op)} style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid var(--dot-current-dz)', background: 'var(--warning-tint)', cursor: 'pointer', color: 'var(--dot-current-dz)', marginRight: '4px' }}>✏️</button>}
                         {can(permissions, 'operations', 'delete') && <button onClick={() => handleDelete(op.id)} style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid var(--border-card)', background: 'transparent', cursor: 'pointer', color: 'var(--dot-overdue)' }}>✕</button>}
-                        {!can(permissions, 'operations', 'create') && !can(permissions, 'operations', 'edit') && !can(permissions, 'op
+                        {!can(permissions, 'operations', 'create') && !can(permissions, 'operations', 'edit') && !can(permissions, 'operations', 'delete') && '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '4px', marginTop: '12px' }}>
+          <button onClick={() => setPage(p => p - 1)} disabled={page === 0} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', cursor: page === 0 ? 'default' : 'pointer', fontSize: '15px', opacity: page === 0 ? 0.4 : 1 }}>← Назад</button>
+          <span style={{ padding: '6px 16px', fontSize: '15px', color: 'var(--text-muted)' }}>{page + 1} из {totalPages || 1}</span>
+          <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: '15px', opacity: page >= totalPages - 1 ? 0.4 : 1 }}>Вперёд →</button>
+        </div>
+
+      </div>
+    </div>
+  )
+}
