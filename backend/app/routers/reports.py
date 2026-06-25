@@ -133,8 +133,10 @@ def get_dds_summary(
 ):
     total_income = db.query(func.sum(Operation.income)).filter(Operation.status == 'ОПЛАЧЕНО').scalar() or 0
     total_expense = db.query(func.sum(Operation.expense)).filter(Operation.status == 'ОПЛАЧЕНО').scalar() or 0
-    plan_income = db.query(func.sum(Operation.income)).filter(Operation.status == 'ПЛАН ПОСТУПЛЕНИЙ').scalar() or 0
-    plan_expense = db.query(func.sum(Operation.expense)).filter(Operation.status == 'ПЛАН ОПЛАТ').scalar() or 0
+    plan_income_row = db.query(func.sum(Operation.income), func.count(Operation.id)).filter(Operation.status == 'ПЛАН ПОСТУПЛЕНИЙ').first()
+    plan_income, income_count = (plan_income_row[0] or 0), (plan_income_row[1] or 0)
+    plan_expense_row = db.query(func.sum(Operation.expense), func.count(Operation.id)).filter(Operation.status == 'ПЛАН ОПЛАТ').first()
+    plan_expense, expense_count = (plan_expense_row[0] or 0), (plan_expense_row[1] or 0)
 
     # Обороты по банкам
     by_bank_rows = db.query(
@@ -172,6 +174,8 @@ def get_dds_summary(
         'net': total_income - total_expense,
         'plan_income': plan_income,
         'plan_expense': plan_expense,
+        'income_count': income_count,
+        'expense_count': expense_count,
         'total_balance': total_balance,
         'by_bank': by_bank,
     }

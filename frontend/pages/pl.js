@@ -22,12 +22,18 @@ const formatPeriod = (p) => {
   return `${MONTH_NAMES[month] || month} ${year}`
 }
 
-const GROUP_COLORS = {
-  'ВЫРУЧКА':       { bg: '#f0fdf4', border: '#86efac', text: '#15803d' },
-  'СЕБЕСТОИМОСТЬ': { bg: '#fefce8', border: '#fde047', text: '#854d0e' },
-  'ОПЕРАЦИОННЫЕ':  { bg: '#eff6ff', border: '#93c5fd', text: '#1d4ed8' },
-  'МАРКЕТИНГ':     { bg: '#fdf4ff', border: '#d8b4fe', text: '#7e22ce' },
-  'НАЛОГИ':        { bg: '#fff1f2', border: '#fda4af', text: '#be123c' },
+// Уровни вложенности (группа → подгруппа → статья) — единый нейтральный стиль
+// вместо разноцветных пастельных категорий (см. design_integration.MD §11)
+const rowStyle = (level) => ({
+  fontWeight: level === 0 ? 700 : level === 1 ? 600 : 400,
+  fontSize:   level === 0 ? 15  : 14,
+  color:      level === 0 ? 'var(--text-primary)' : 'var(--text-secondary)',
+  background: level === 0 ? 'var(--bg-subtle)' : 'var(--bg-card)',
+})
+
+const totalStyle = {
+  fontWeight: 700, fontSize: 15, color: 'var(--text-primary)',
+  background: 'var(--accent-tint)', borderTop: '2px solid var(--border-card)',
 }
 
 export default function PL() {
@@ -70,62 +76,63 @@ export default function PL() {
     setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }))
   }
 
-  if (loading) return <div style={{ textAlign: 'center', padding: '80px', color: '#6b7280' }}>Загрузка P&L...</div>
+  if (loading) return <div style={{ textAlign: 'center', padding: '80px', color: 'var(--text-muted)' }}>Загрузка P&L...</div>
   if (!data) return null
 
   const { periods, groups, summary } = data
   const colWidth = `${Math.max(100, Math.floor(700 / (periods.length || 1)))}px`
 
   const thStyle = {
-    padding: '8px 12px', fontSize: '14px', fontWeight: '500', color: '#6b7280',
-    whiteSpace: 'nowrap', textAlign: 'right', background: '#f9fafb',
-    borderBottom: '2px solid #e5e7eb', position: 'sticky', top: 0, zIndex: 10
+    padding: '8px 12px', fontSize: '10.5px', fontWeight: '700', color: 'var(--text-faint)',
+    whiteSpace: 'nowrap', textAlign: 'right', background: 'var(--bg-subtle)',
+    letterSpacing: '.04em', textTransform: 'uppercase',
+    borderBottom: '2px solid var(--border-card)', position: 'sticky', top: 0, zIndex: 10
   }
 
   const SummaryRow = ({ label, field, isProfit, isMargin, marginField, bold }) => (
     <>
-      <tr style={{ background: isProfit ? '#f0fdf4' : '#f8fafc', borderBottom: '1px solid #e5e7eb' }}>
-        <td style={{ padding: '9px 16px', fontSize: '15px', fontWeight: bold ? '600' : '500', color: isProfit ? '#15803d' : '#374151', position: 'sticky', left: 0, background: isProfit ? '#f0fdf4' : '#f8fafc', whiteSpace: 'nowrap', minWidth: '220px' }}>
+      <tr style={isProfit ? totalStyle : { background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-card)' }}>
+        <td style={{ padding: '9px 16px', fontSize: '15px', fontWeight: bold ? '600' : '500', color: 'var(--text-primary)', position: 'sticky', left: 0, background: isProfit ? 'var(--accent-tint)' : 'var(--bg-subtle)', whiteSpace: 'nowrap', minWidth: '220px' }}>
           {label}
         </td>
         {periods.map(p => (
-          <td key={p} style={{ padding: '9px 12px', fontSize: '15px', fontWeight: bold ? '600' : '500', textAlign: 'right', color: summary[p]?.[field] >= 0 ? (isProfit ? '#15803d' : '#374151') : '#dc2626', whiteSpace: 'nowrap' }}>
+          <td key={p} style={{ padding: '9px 12px', fontSize: '15px', fontWeight: bold ? '600' : '500', textAlign: 'right', color: summary[p]?.[field] >= 0 ? 'var(--income)' : 'var(--expense)', whiteSpace: 'nowrap' }}>
             {fmt(summary[p]?.[field])} ₽
           </td>
         ))}
-        <td style={{ padding: '9px 12px', fontSize: '15px', fontWeight: '600', textAlign: 'right', whiteSpace: 'nowrap', color: Object.values(summary).reduce((s,v) => s + (v[field]||0), 0) >= 0 ? (isProfit ? '#15803d' : '#374151') : '#dc2626' }}>
+        <td style={{ padding: '9px 12px', fontSize: '15px', fontWeight: '600', textAlign: 'right', whiteSpace: 'nowrap', color: Object.values(summary).reduce((s,v) => s + (v[field]||0), 0) >= 0 ? 'var(--income)' : 'var(--expense)' }}>
           {fmt(Object.values(summary).reduce((s,v) => s + (v[field]||0), 0))} ₽
         </td>
       </tr>
       {isMargin && marginField && (
-        <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
-          <td style={{ padding: '5px 16px 9px', fontSize: '13px', color: '#6b7280', position: 'sticky', left: 0, background: '#f8fafc' }}>Маржа</td>
+        <tr style={{ background: 'var(--bg-subtle)', borderBottom: '2px solid var(--border-card)' }}>
+          <td style={{ padding: '5px 16px 9px', fontSize: '13px', color: 'var(--text-muted)', position: 'sticky', left: 0, background: 'var(--bg-subtle)' }}>Маржа</td>
           {periods.map(p => (
-            <td key={p} style={{ padding: '5px 12px 9px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>
+            <td key={p} style={{ padding: '5px 12px 9px', fontSize: '13px', color: 'var(--text-muted)', textAlign: 'right' }}>
               {fmtPct(summary[p]?.[marginField])}
             </td>
           ))}
-          <td style={{ padding: '5px 12px 9px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>—</td>
+          <td style={{ padding: '5px 12px 9px', fontSize: '13px', color: 'var(--text-muted)', textAlign: 'right' }}>—</td>
         </tr>
       )}
     </>
   )
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f6fa' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
       <Navbar active="pl">
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <span style={{ fontSize: '15px', color: '#6b7280' }}>С периода</span>
+          <span style={{ fontSize: '15px', color: 'var(--text-muted)' }}>С периода</span>
           <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', fontSize: '15px' }} />
-          <span style={{ fontSize: '15px', color: '#6b7280' }}>По период</span>
+            style={{ padding: '5px 8px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-card)', fontSize: '15px' }} />
+          <span style={{ fontSize: '15px', color: 'var(--text-muted)' }}>По период</span>
           <input type="month" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', fontSize: '15px' }} />
+            style={{ padding: '5px 8px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-card)', fontSize: '15px' }} />
         </div>
       </Navbar>
 
       <div style={{ padding: '20px 24px' }}>
-        <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'auto' }}>
+        <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', overflow: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '15px' }}>
             <thead>
               <tr>
@@ -133,14 +140,14 @@ export default function PL() {
                 {periods.map(p => (
                   <th key={p} style={{ ...thStyle, minWidth: colWidth }}>{formatPeriod(p)}</th>
                 ))}
-                <th style={{ ...thStyle, minWidth: '120px', borderLeft: '2px solid #e5e7eb' }}>ИТОГО</th>
+                <th style={{ ...thStyle, minWidth: '120px', borderLeft: '2px solid var(--border-card)' }}>ИТОГО</th>
               </tr>
             </thead>
             <tbody>
 
               {/* Группы статей */}
               {groups.map(g => {
-                const style = GROUP_COLORS[g.group] || { bg: '#f9fafb', border: '#e5e7eb', text: '#374151' }
+                const style = rowStyle(0)
                 const isExpanded = expandedGroups[g.group]
                 const isIncome = g.group === 'ВЫРУЧКА'
 
@@ -148,15 +155,15 @@ export default function PL() {
                   <>
                     {/* Заголовок группы */}
                     <tr key={g.group} onClick={() => toggleGroup(g.group)}
-                      style={{ background: style.bg, borderTop: `2px solid ${style.border}`, cursor: 'pointer' }}>
-                      <td style={{ padding: '10px 16px', fontWeight: '600', fontSize: '15px', color: style.text, position: 'sticky', left: 0, background: style.bg, whiteSpace: 'nowrap' }}>
+                      style={{ background: style.background, borderTop: '2px solid var(--border-card)', cursor: 'pointer' }}>
+                      <td style={{ padding: '10px 16px', fontWeight: '600', fontSize: '15px', color: style.color, position: 'sticky', left: 0, background: style.background, whiteSpace: 'nowrap' }}>
                         {isExpanded ? '▼' : '►'} {g.group}
                       </td>
                       {periods.map(p => {
                         const val = isIncome ? (g.totals[p]?.income || 0) : (g.totals[p]?.expense || 0)
-                        return <td key={p} style={{ padding: '10px 12px', fontWeight: '600', textAlign: 'right', color: style.text, whiteSpace: 'nowrap' }}>{fmt(val)} ₽</td>
+                        return <td key={p} style={{ padding: '10px 12px', fontWeight: '600', textAlign: 'right', color: style.color, whiteSpace: 'nowrap' }}>{fmt(val)} ₽</td>
                       })}
-                      <td style={{ padding: '10px 12px', fontWeight: '700', textAlign: 'right', color: style.text, whiteSpace: 'nowrap', borderLeft: '2px solid #e5e7eb' }}>
+                      <td style={{ padding: '10px 12px', fontWeight: '700', textAlign: 'right', color: style.color, whiteSpace: 'nowrap', borderLeft: '2px solid var(--border-card)' }}>
                         {fmt(periods.reduce((s, p) => s + (isIncome ? (g.totals[p]?.income||0) : (g.totals[p]?.expense||0)), 0))} ₽
                       </td>
                     </tr>
@@ -171,15 +178,15 @@ export default function PL() {
                           {/* Заголовок подгруппы (если есть) */}
                           {hasSubgroup && (
                             <tr key={sgKey} onClick={() => toggleGroup(sgKey)}
-                              style={{ background: '#f8fafc', borderBottom: '1px solid #e5e7eb', cursor: 'pointer' }}>
-                              <td style={{ padding: '7px 16px 7px 20px', fontWeight: '500', fontSize: '14px', color: '#374151', position: 'sticky', left: 0, background: '#f8fafc', whiteSpace: 'nowrap' }}>
+                              style={{ background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-card)', cursor: 'pointer' }}>
+                              <td style={{ padding: '7px 16px 7px 20px', fontWeight: '600', fontSize: '14px', color: 'var(--text-secondary)', position: 'sticky', left: 0, background: 'var(--bg-subtle)', whiteSpace: 'nowrap' }}>
                                 {expandedGroups[sgKey] !== false ? '▾' : '▸'} {sg.subgroup}
                               </td>
                               {periods.map(p => {
                                 const val = isIncome ? (sg.totals[p]?.income || 0) : (sg.totals[p]?.expense || 0)
-                                return <td key={p} style={{ padding: '7px 12px', fontSize: '14px', fontWeight: '500', textAlign: 'right', color: '#374151', whiteSpace: 'nowrap' }}>{val > 0 ? fmt(val) + ' ₽' : '—'}</td>
+                                return <td key={p} style={{ padding: '7px 12px', fontSize: '14px', fontWeight: '600', textAlign: 'right', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{val > 0 ? fmt(val) + ' ₽' : '—'}</td>
                               })}
-                              <td style={{ padding: '7px 12px', fontSize: '14px', fontWeight: '500', textAlign: 'right', whiteSpace: 'nowrap', borderLeft: '2px solid #e5e7eb' }}>
+                              <td style={{ padding: '7px 12px', fontSize: '14px', fontWeight: '600', textAlign: 'right', whiteSpace: 'nowrap', borderLeft: '2px solid var(--border-card)' }}>
                                 {fmt(periods.reduce((s, p) => s + (isIncome ? (sg.totals[p]?.income||0) : (sg.totals[p]?.expense||0)), 0))} ₽
                               </td>
                             </tr>
@@ -187,17 +194,17 @@ export default function PL() {
 
                           {/* Строки статей */}
                           {(expandedGroups[sgKey] !== false) && sg.articles.map(a => (
-                            <tr key={a.article} style={{ borderBottom: '1px solid #f3f4f6' }}
-                              onMouseEnter={e => e.currentTarget.style.background = '#f0f9ff'}
+                            <tr key={a.article} style={{ borderBottom: '1px solid var(--border-row)' }}
+                              onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-tint)'}
                               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                              <td style={{ padding: '6px 16px 6px ' + (hasSubgroup ? '36px' : '28px'), color: '#6b7280', fontSize: '14px', position: 'sticky', left: 0, background: 'white', whiteSpace: 'nowrap' }}>
+                              <td style={{ padding: '6px 16px 6px ' + (hasSubgroup ? '36px' : '28px'), color: 'var(--text-muted)', fontSize: '14px', position: 'sticky', left: 0, background: 'var(--bg-card)', whiteSpace: 'nowrap' }}>
                                 {a.article}
                               </td>
                               {periods.map(p => {
                                 const val = isIncome ? (a.periods[p]?.income || 0) : (a.periods[p]?.expense || 0)
-                                return <td key={p} style={{ padding: '6px 12px', textAlign: 'right', color: val > 0 ? '#374151' : '#d1d5db', fontSize: '14px', whiteSpace: 'nowrap' }}>{val > 0 ? fmt(val) + ' ₽' : '—'}</td>
+                                return <td key={p} style={{ padding: '6px 12px', textAlign: 'right', color: val > 0 ? 'var(--text-secondary)' : 'var(--text-faint)', fontSize: '14px', whiteSpace: 'nowrap' }}>{val > 0 ? fmt(val) + ' ₽' : '—'}</td>
                               })}
-                              <td style={{ padding: '6px 12px', textAlign: 'right', fontSize: '14px', color: '#374151', whiteSpace: 'nowrap', borderLeft: '2px solid #e5e7eb' }}>
+                              <td style={{ padding: '6px 12px', textAlign: 'right', fontSize: '14px', color: 'var(--text-secondary)', whiteSpace: 'nowrap', borderLeft: '2px solid var(--border-card)' }}>
                                 {fmt(periods.reduce((s, p) => s + (isIncome ? (a.periods[p]?.income||0) : (a.periods[p]?.expense||0)), 0))} ₽
                               </td>
                             </tr>

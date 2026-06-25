@@ -2,7 +2,8 @@ import Navbar from '../components/Navbar'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, LineChart, Line } from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+import { buildDivBars, buildYLabels, niceMax, buildMonthLabels } from '../helpers/ribbonChart'
 
 const api = (token) => axios.create({
   baseURL: 'http://localhost:8000/api',
@@ -10,10 +11,10 @@ const api = (token) => axios.create({
 })
 
 const fmt = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0))
-const fmtM = (n) => (n / 1000000).toFixed(2) + ' млн'
 
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
-const BANK_COLORS = { 'АльфаБанк': '#2563eb', 'ОПТ Банк': '#16a34a', 'Совкомбанк': '#d97706', 'Наличные': '#7c3aed' }
+const BANK_VARS = { 'АльфаБанк': 'var(--bank-alfa)', 'ОПТ Банк': 'var(--bank-opt)', 'Совкомбанк': 'var(--bank-sovkom)', 'Наличные': 'var(--bank-cash)' }
+const bankColor = (name) => BANK_VARS[name] || 'var(--text-faint)'
 
 const MONTH_NAMES = {
   '01': 'Янв', '02': 'Фев', '03': 'Мар', '04': 'Апр',
@@ -27,16 +28,20 @@ const formatPeriod = (p) => {
   return `${MONTH_NAMES[month] || month} ${year}`
 }
 
+// ── Стили карточек ───────────────────────────────────────────────
+const card = (extra = {}) => ({
+  background: 'var(--bg-card)',
+  borderRadius: 'var(--radius-card)',
+  boxShadow: 'var(--shadow-card)',
+  padding: '20px 22px',
+  ...extra,
+})
+
 export default function Dashboard() {
   const router = useRouter()
-  const [tab, setTab] = useState('dds')
   const [ddsData, setDdsData] = useState({ periods: [], banks: [] })
   const [ddsSummary, setDdsSummary] = useState(null)
-  const [pl, setPl] = useState([])
-  const [planFact, setPlanFact] = useState([])
-  const [balance, setBalance] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [name, setName] = useState('')
   const [selectedBank, setSelectedBank] = useState('all')
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date()
@@ -53,7 +58,6 @@ export default function Dashboard() {
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (!token) { router.push('/login'); return }
-    setName(localStorage.getItem('name') || '')
     loadAll(token)
   }, [])
 
@@ -66,18 +70,12 @@ export default function Dashboard() {
     setLoading(true)
     try {
       const a = api(token)
-      const [ddsRes, summaryRes, plRes, pfRes, balRes] = await Promise.all([
+      const [ddsRes, summaryRes] = await Promise.all([
         a.get(`/reports/dds?date_from=${dateFrom}&date_to=${dateTo}&group_by=${groupBy}`),
         a.get('/reports/dds/summary'),
-        a.get('/reports/pl'),
-        a.get('/reports/plan-fact'),
-        a.get('/reports/balance'),
       ])
       setDdsData(ddsRes.data || { periods: [], banks: [] })
       setDdsSummary(summaryRes.data || null)
-      setPl(Array.isArray(plRes.data) ? plRes.data : [])
-      setPlanFact(Array.isArray(pfRes.data) ? pfRes.data : [])
-      setBalance(balRes.data || null)
     } catch (e) {
       if (e.response?.status === 401) router.push('/login')
     } finally {
@@ -94,209 +92,228 @@ export default function Dashboard() {
     } catch (e) {}
   }
 
-  const logout = () => { localStorage.clear(); router.push('/login') }
-
-  const tabs = [
-    { id: 'dds', label: 'ДДС' },
-    { id: 'pl', label: 'P&L', link: '/pl' },
-    { id: 'balance', label: 'Баланс', link: '/balance' },
-    { id: 'planfact', label: 'План / Факт' },
-  ]
-
   const periods = ddsData?.periods || []
 
-  const ddsChart = periods.map(p => ({
-    period: formatPeriod(p.period),
-    'Поступления': Math.round(p.total_income || 0),
-    'Списания': Math.round(p.total_expense || 0),
-    'Остаток': Math.round(p.cumulative || 0),
-  }))
+  // ── Данные для риббон-графика (из реальных периодов, без фиктивных 12 месяцев) ──
+  const monthly = periods.map(p => ({ income: p.total_income || 0, expense: p.total_expense || 0 }))
+  const maxVal = niceMax(Math.max(1, ...monthly.map(m => m.income), ...monthly.map(m => m.expense)))
+  const divBars = buildDivBars(monthly, { maxVal })
+  const yLabels = buildYLabels(maxVal)
+  const monthLabels = buildMonthLabels(periods.map(p => p.period))
+
+  // ── Данные для накопительного остатка ──
+  const cumulativeData = periods.map(p => ({ period: formatPeriod(p.period), cumulative: Math.round(p.cumulative || 0) }))
+
+  const actualBalance = ddsSummary?.total_balance ?? ddsSummary?.net ?? 0
+  const planNet = (ddsSummary?.plan_income || 0) - (ddsSummary?.plan_expense || 0)
+  const forecastBalance = actualBalance + planNet
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
       <Navbar active="dds" />
 
-      <div style={{ padding: '24px 32px' }}>
+      <div style={{ maxWidth: 1440, margin: '0 auto', padding: '26px 30px' }}>
 
-        {loading ? <div style={{ textAlign: 'center', padding: '60px', color: 'var(--muted)' }}>Загрузка...</div> : <>
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>Загрузка…</div>
+        ) : <>
 
-          {/* ДДС */}
-          {tab === 'dds' && (
-            <div>
-              {/* Сводные метрики */}
-              {ddsSummary && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: '12px', marginBottom: '20px' }}>
-                  {(() => {
-                    const actualBalance = ddsSummary.total_balance ?? ddsSummary.net
-                    const planNet = (ddsSummary.plan_income || 0) - (ddsSummary.plan_expense || 0)
-                    const forecastBalance = actualBalance + planNet
-                    return [
-                      { label: 'Актуальный баланс', val: fmt(actualBalance) + ' ₽', color: actualBalance >= 0 ? 'var(--success)' : 'var(--danger)' },
-                      { label: 'Прогнозный баланс', val: fmt(forecastBalance) + ' ₽', color: forecastBalance >= 0 ? 'var(--primary)' : 'var(--danger)', sub: `план: +${fmt(ddsSummary.plan_income || 0)} ₽ / -${fmt(ddsSummary.plan_expense || 0)} ₽` },
-                      { label: 'План поступлений', val: fmt(ddsSummary.plan_income) + ' ₽', color: 'var(--warning)' },
-                      { label: 'План расходов', val: fmt(ddsSummary.plan_expense) + ' ₽', color: 'var(--warning)' },
-                    ]
-                  })().map(m => (
-                    <div key={m.label} style={{ background: 'var(--card)', borderRadius: '12px', padding: '14px 18px' }}>
-                      <div style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '4px' }}>{m.label}</div>
-                      <div style={{ fontSize: '20px', fontWeight: '600', color: m.color }}>{m.val}</div>
-                      {m.sub && <div style={{ fontSize: '13px', color: 'var(--muted)', marginTop: '4px' }}>{m.sub}</div>}
-                    </div>
+          {/* ── Заголовок + фильтры ── */}
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 16 }}>
+            <h1 style={{ margin: 0, fontSize: 28, fontWeight: 300, color: 'var(--text-primary)', letterSpacing: '-.02em' }}>
+              Движение <b style={{ fontWeight: 800 }}>денежных средств</b>
+            </h1>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 500 }}>С периода</label>
+                <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                  style={{ padding: '9px 12px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-card)', background: 'var(--bg-card)', fontSize: 13, color: 'var(--text-secondary)' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 500 }}>По период</label>
+                <input type="month" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                  style={{ padding: '9px 12px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-card)', background: 'var(--bg-card)', fontSize: 13, color: 'var(--text-secondary)' }} />
+              </div>
+              <select value={selectedBank} onChange={e => setSelectedBank(e.target.value)} style={{
+                padding: '11px 16px', borderRadius: 'var(--radius-input)', background: 'var(--bg-card)',
+                border: '1px solid var(--border-card)', fontSize: 13, color: 'var(--text-secondary)', fontWeight: 500, cursor: 'pointer',
+              }}>
+                <option value="all">Все банки</option>
+                {BANKS.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+              <div style={{ display: 'flex', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, padding: 4 }}>
+                {[['period', 'По периоду'], ['date', 'По дате']].map(([v, label]) => (
+                  <div key={v} onClick={() => setGroupBy(v)} style={{
+                    padding: '7px 14px', borderRadius: 9, cursor: 'pointer', fontSize: 13, fontWeight: 500,
+                    background: groupBy === v ? 'var(--text-primary)' : 'transparent',
+                    color: groupBy === v ? '#fff' : 'var(--text-secondary)',
+                    transition: 'all .15s',
+                  }}>{label}</div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ── KPI-полоса ── */}
+          {ddsSummary && (
+            <div style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
+              {[
+                { label: 'Актуальный баланс', val: fmt(actualBalance) + ' ₽', valColor: actualBalance >= 0 ? 'var(--income)' : 'var(--expense)', sub: 'На счетах сегодня' },
+                { label: 'Прогнозный баланс', val: fmt(forecastBalance) + ' ₽', valColor: forecastBalance >= 0 ? 'var(--accent)' : 'var(--expense)', sub: `план: +${fmt(ddsSummary.plan_income || 0)} ₽ / −${fmt(ddsSummary.plan_expense || 0)} ₽` },
+                { label: 'План поступлений', val: fmt(ddsSummary.plan_income) + ' ₽', valColor: 'var(--income)', sub: `${ddsSummary.income_count ?? 0} операций` },
+                { label: 'План расходов', val: fmt(ddsSummary.plan_expense) + ' ₽', valColor: 'var(--expense)', sub: `${ddsSummary.expense_count ?? 0} операций` },
+              ].map(k => (
+                <div key={k.label} style={{ ...card(), flex: '1 1 200px' }}>
+                  <div style={{ fontSize: 12.5, color: 'var(--text-muted)', fontWeight: 500 }}>{k.label}</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, marginTop: 9, letterSpacing: '-.01em', fontVariantNumeric: 'tabular-nums', color: k.valColor }}>{k.val}</div>
+                  <div style={{ fontSize: 12, marginTop: 7, fontWeight: 500, color: 'var(--text-muted)' }}>{k.sub}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── Риббон-график + Банки ── */}
+          <div style={{ display: 'flex', gap: 16, marginBottom: 16, alignItems: 'stretch', flexWrap: 'wrap' }}>
+
+            {/* Риббон-график */}
+            <div style={{ ...card(), flex: '1 1 480px', padding: '22px 26px 18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, flexWrap: 'wrap', gap: 10 }}>
+                <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>Движение денег по месяцам</div>
+                <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--text-secondary)' }}>
+                  {[['linear-gradient(180deg, var(--ribbon-income-from), var(--ribbon-income-to))', 'Поступления'], ['linear-gradient(180deg, var(--ribbon-expense-from), var(--ribbon-expense-to))', 'Списания']].map(([c, l]) => (
+                    <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: 3, background: c }} />{l}
+                    </span>
                   ))}
                 </div>
-              )}
+              </div>
 
-              {/* Остатки по банкам */}
-              {ddsSummary && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: '12px', marginBottom: '20px' }}>
-                  {(ddsSummary.by_bank || []).map(b => (
-                    <div key={b.bank} style={{ background: 'var(--card)', borderRadius: '12px', padding: '14px 18px', borderLeft: `4px solid ${BANK_COLORS[b.bank] || '#6b7280'}` }}>
-                      <div style={{ fontSize: '14px', fontWeight: '500', marginBottom: '6px' }}>{b.bank}</div>
-                      <div style={{ fontSize: '13px', color: 'var(--muted)' }}>Поступило: {fmt(b.income)} ₽</div>
-                      <div style={{ fontSize: '13px', color: 'var(--muted)' }}>Списано: {fmt(b.expense)} ₽</div>
-                      <div style={{ fontSize: '18px', fontWeight: '600', marginTop: '6px', color: b.balance >= 0 ? 'var(--success)' : 'var(--danger)' }}>{fmt(b.balance)} ₽</div>
-                    </div>
+              <div style={{ position: 'relative', height: 320, paddingLeft: 50 }}>
+                {yLabels.map(l => (
+                  <div key={l.y} style={{ position: 'absolute', left: 0, top: l.y, transform: 'translateY(-7px)', fontSize: 11, color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums' }}>{l.v}</div>
+                ))}
+                <div style={{ position: 'relative', height: '100%', borderLeft: '1px solid var(--border-inner)' }}>
+                  {yLabels.map(l => (
+                    <div key={l.y} style={{ position: 'absolute', left: 0, right: 0, top: l.y, height: 1, background: 'var(--border-inner)' }} />
                   ))}
-                </div>
-              )}
-
-              {/* Фильтры */}
-              <div style={{ background: 'var(--card)', borderRadius: '12px', padding: '16px 20px', marginBottom: '16px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                <div>
-                  <label style={{ fontSize: '13px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>С периода</label>
-                  <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-                    style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '15px' }} />
-                </div>
-                <div>
-                  <label style={{ fontSize: '13px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>По период</label>
-                  <input type="month" value={dateTo} onChange={e => setDateTo(e.target.value)}
-                    style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '15px' }} />
-                </div>
-                <div>
-                  <label style={{ fontSize: '13px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>Банк</label>
-                  <select value={selectedBank} onChange={e => setSelectedBank(e.target.value)}
-                    style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '15px' }}>
-                    <option value="all">Все банки</option>
-                    {BANKS.map(b => <option key={b} value={b}>{b}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ fontSize: '13px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>Группировка</label>
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    <button onClick={() => setGroupBy('period')}
-                      style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '15px', background: groupBy === 'period' ? 'var(--primary)' : 'var(--card)', color: groupBy === 'period' ? 'white' : 'var(--text)', border: '1px solid var(--border)' }}>
-                      По периоду
-                    </button>
-                    <button onClick={() => setGroupBy('date')}
-                      style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '15px', background: groupBy === 'date' ? 'var(--primary)' : 'var(--card)', color: groupBy === 'date' ? 'white' : 'var(--text)', border: '1px solid var(--border)' }}>
-                      По дате
-                    </button>
+                  <div style={{ position: 'absolute', left: 0, right: 0, top: '50%', height: 2, background: '#D7DCEA' }} />
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', gap: 2, padding: '0 10px' }}>
+                    {divBars.map((bar, i) => (
+                      <div key={i} style={{ flex: 1, position: 'relative', height: '100%' }}>
+                        {bar.incH > 0 && (
+                          <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', width: 9, top: bar.incTop, height: bar.incH, borderRadius: 5, background: 'linear-gradient(180deg, var(--ribbon-income-from), var(--ribbon-income-mid), var(--ribbon-income-to))' }} />
+                        )}
+                        {bar.expH > 0 && (
+                          <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', width: 9, top: bar.expTop, height: bar.expH, borderRadius: 5, background: 'linear-gradient(180deg, var(--ribbon-expense-from), var(--ribbon-expense-to))' }} />
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
 
-              {/* График поступления/списания */}
-              <div style={{ background: 'var(--card)', borderRadius: '12px', padding: '20px', marginBottom: '16px' }}>
-                <div style={{ fontWeight: '500', marginBottom: '16px' }}>Движение денег по месяцам</div>
-                <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={ddsChart}>
-                    <XAxis dataKey="period" tick={{ fontSize: 13 }} />
-                    <YAxis tick={{ fontSize: 13 }} tickFormatter={v => (v / 1000000).toFixed(0) + 'M'} />
-                    <Tooltip formatter={v => fmt(v) + ' ₽'} />
-                    <Legend />
-                    <Bar dataKey="Поступления" fill="#16a34a" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="Списания" fill="#dc2626" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 10px 0 50px', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                {monthLabels.map((m, i) => <span key={i}>{m}</span>)}
               </div>
+            </div>
 
-              {/* График накопительного остатка */}
-              <div style={{ background: 'var(--card)', borderRadius: '12px', padding: '20px', marginBottom: '16px' }}>
-                <div style={{ fontWeight: '500', marginBottom: '16px' }}>Накопительный остаток</div>
-                <ResponsiveContainer width="100%" height={200}>
-                  <LineChart data={ddsChart}>
-                    <XAxis dataKey="period" tick={{ fontSize: 13 }} />
-                    <YAxis tick={{ fontSize: 13 }} tickFormatter={v => (v / 1000000).toFixed(0) + 'M'} />
-                    <Tooltip formatter={v => fmt(v) + ' ₽'} />
-                    <Line type="monotone" dataKey="Остаток" stroke="var(--primary)" strokeWidth={2} dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+            {/* Банки — плашки */}
+            <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {(ddsSummary?.by_bank || []).map(b => (
+                <div key={b.bank} style={{
+                  ...card({ padding: '14px 18px', borderRadius: 'var(--radius-card-sm)' }),
+                  flex: 1, borderLeft: `3px solid ${bankColor(b.bank)}`,
+                  display: 'flex', flexDirection: 'column', justifyContent: 'center',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{b.bank}</span>
+                    <span style={{ fontSize: 17, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: bankColor(b.bank) }}>{fmt(b.balance)} ₽</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 11.5, color: 'var(--text-muted)' }}>
+                    <span>↓ {fmt(b.income)} ₽</span>
+                    <span>↑ {fmt(b.expense)} ₽</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
 
-              {/* Таблица по месяцам */}
-              <div style={{ background: 'var(--card)', borderRadius: '12px', padding: '20px' }}>
-                <div style={{ fontWeight: '500', marginBottom: '16px' }}>Детализация по месяцам</div>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '15px' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '2px solid var(--border)' }}>
-                      {['Период', 'Поступления', 'Списания', 'Чистый поток', 'Накопит. остаток', ''].map(h => (
-                        <th key={h} style={{ textAlign: 'left', padding: '8px 10px', color: 'var(--muted)', fontWeight: '500' }}>{h}</th>
-                      ))}
+          {/* ── Накопительный остаток ── */}
+          <div style={{ ...card({ padding: '22px 24px 14px' }), marginBottom: 16 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>Накопительный остаток</div>
+            <ResponsiveContainer width="100%" height={150}>
+              <AreaChart data={cumulativeData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="dashAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.20} />
+                    <stop offset="100%" stopColor="var(--accent)" stopOpacity={0.01} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="period" tick={{ fontSize: 10.5, fill: 'var(--text-faint)' }} axisLine={false} tickLine={false} />
+                <YAxis hide />
+                <Tooltip
+                  contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, fontSize: 12, color: 'var(--text-primary)' }}
+                  formatter={(v) => [fmt(v) + ' ₽', 'Остаток']}
+                />
+                <Area dataKey="cumulative" stroke="var(--accent)" strokeWidth={2.5} fill="url(#dashAreaGrad)" dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* ── Таблица по месяцам ── */}
+          <div style={card({ padding: '20px' })}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 16 }}>Детализация по месяцам</div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border-inner)', background: 'var(--bg-subtle)' }}>
+                  {['Период', 'Поступления', 'Списания', 'Чистый поток', 'Накопит. остаток', ''].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '10px 12px', color: 'var(--text-faint)', fontWeight: 700, fontSize: 10.5, letterSpacing: '.04em', textTransform: 'uppercase' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {periods.map((row, i) => (
+                  <>
+                    <tr key={i}
+                      style={{ borderBottom: '1px solid var(--border-row)', cursor: 'pointer', background: expandedPeriod === row.period ? 'var(--accent-tint)' : (i % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-subtle)') }}
+                      onClick={() => setExpandedPeriod(expandedPeriod === row.period ? null : row.period)}>
+                      <td style={{ padding: '10px 12px', fontWeight: 500, color: 'var(--text-primary)' }}>{formatPeriod(row.period)}</td>
+                      <td style={{ padding: '10px 12px', color: 'var(--income)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{fmt(row.total_income)} ₽</td>
+                      <td style={{ padding: '10px 12px', color: 'var(--expense)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{fmt(row.total_expense)} ₽</td>
+                      <td style={{ padding: '10px 12px', color: row.net >= 0 ? 'var(--income)' : 'var(--expense)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                        {row.net >= 0 ? '+' : ''}{fmt(row.net)} ₽
+                      </td>
+                      <td style={{ padding: '10px 12px', color: 'var(--accent)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{fmt(row.cumulative)} ₽</td>
+                      <td style={{ padding: '10px 12px', color: 'var(--text-faint)', fontSize: 12 }}>{expandedPeriod === row.period ? '▲' : '▼'}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {periods.map((row, i) => (
-                      <>
-                        <tr key={i}
-                          style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', background: expandedPeriod === row.period ? '#f0f7ff' : 'transparent' }}
-                          onClick={() => setExpandedPeriod(expandedPeriod === row.period ? null : row.period)}>
-                          <td style={{ padding: '10px', fontWeight: '500' }}>{formatPeriod(row.period)}</td>
-                          <td style={{ padding: '10px', color: 'var(--success)' }}>{fmt(row.total_income)} ₽</td>
-                          <td style={{ padding: '10px', color: 'var(--danger)' }}>{fmt(row.total_expense)} ₽</td>
-                          <td style={{ padding: '10px', color: row.net >= 0 ? 'var(--success)' : 'var(--danger)', fontWeight: '500' }}>
-                            {row.net >= 0 ? '+' : ''}{fmt(row.net)} ₽
-                          </td>
-                          <td style={{ padding: '10px', color: 'var(--primary)', fontWeight: '500' }}>{fmt(row.cumulative)} ₽</td>
-                          <td style={{ padding: '10px', color: 'var(--muted)', fontSize: '13px' }}>{expandedPeriod === row.period ? '▲' : '▼'}</td>
-                        </tr>
-                        {expandedPeriod === row.period && Object.entries(row.by_bank || {}).map(([bank, data]) => (
-                          <tr key={bank} style={{ borderBottom: '1px solid var(--border)', background: '#f8fafc' }}>
-                            <td style={{ padding: '6px 10px 6px 24px', color: 'var(--muted)', fontSize: '14px' }}>
-                              <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: BANK_COLORS[bank] || '#6b7280', marginRight: '6px' }}></span>
-                              {bank}
-                            </td>
-                            <td style={{ padding: '6px 10px', color: 'var(--success)', fontSize: '14px' }}>{fmt(data.income)} ₽</td>
-                            <td style={{ padding: '6px 10px', color: 'var(--danger)', fontSize: '14px' }}>{fmt(data.expense)} ₽</td>
-                            <td style={{ padding: '6px 10px', color: data.net >= 0 ? 'var(--success)' : 'var(--danger)', fontSize: '14px' }}>
-                              {data.net >= 0 ? '+' : ''}{fmt(data.net)} ₽
-                            </td>
-                            <td colSpan={2}></td>
-                          </tr>
-                        ))}
-                      </>
+                    {expandedPeriod === row.period && Object.entries(row.by_bank || {}).map(([bank, data]) => (
+                      <tr key={bank} style={{ borderBottom: '1px solid var(--border-row)', background: 'var(--bg-subtle)' }}>
+                        <td style={{ padding: '7px 12px 7px 26px', color: 'var(--text-muted)', fontSize: 13 }}>
+                          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: bankColor(bank), marginRight: 7 }}></span>
+                          {bank}
+                        </td>
+                        <td style={{ padding: '7px 12px', color: 'var(--income)', fontSize: 13 }}>{fmt(data.income)} ₽</td>
+                        <td style={{ padding: '7px 12px', color: 'var(--expense)', fontSize: 13 }}>{fmt(data.expense)} ₽</td>
+                        <td style={{ padding: '7px 12px', color: data.net >= 0 ? 'var(--income)' : 'var(--expense)', fontSize: 13 }}>
+                          {data.net >= 0 ? '+' : ''}{fmt(data.net)} ₽
+                        </td>
+                        <td colSpan={2}></td>
+                      </tr>
                     ))}
-                  </tbody>
-                  <tfoot>
-                    <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg)' }}>
-                      <td style={{ padding: '10px', fontWeight: '600' }}>ИТОГО</td>
-                      <td style={{ padding: '10px', color: 'var(--success)', fontWeight: '600' }}>{fmt(periods.reduce((s, r) => s + (r.total_income || 0), 0))} ₽</td>
-                      <td style={{ padding: '10px', color: 'var(--danger)', fontWeight: '600' }}>{fmt(periods.reduce((s, r) => s + (r.total_expense || 0), 0))} ₽</td>
-                      <td style={{ padding: '10px', fontWeight: '600' }}>{fmt(periods.reduce((s, r) => s + (r.net || 0), 0))} ₽</td>
-                      <td colSpan={2}></td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {tab === 'pl' && (
-            <div style={{ background: 'var(--card)', borderRadius: '12px', padding: '40px', textAlign: 'center', color: 'var(--muted)' }}>
-              P&L — в разработке. Обсудим структуру следующим шагом.
-            </div>
-          )}
-
-          {tab === 'balance' && (
-            <div style={{ background: 'var(--card)', borderRadius: '12px', padding: '40px', textAlign: 'center', color: 'var(--muted)' }}>
-              Баланс — в разработке. Обсудим структуру следующим шагом.
-            </div>
-          )}
-
-          {tab === 'planfact' && (
-            <div style={{ background: 'var(--card)', borderRadius: '12px', padding: '40px', textAlign: 'center', color: 'var(--muted)' }}>
-              План/Факт — в разработке. Обсудим структуру следующим шагом.
-            </div>
-          )}
+                  </>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: '2px solid var(--border-card)', background: 'var(--bg-subtle)' }}>
+                  <td style={{ padding: '10px 12px', fontWeight: 700, color: 'var(--text-primary)' }}>ИТОГО</td>
+                  <td style={{ padding: '10px 12px', color: 'var(--income)', fontWeight: 700 }}>{fmt(periods.reduce((s, r) => s + (r.total_income || 0), 0))} ₽</td>
+                  <td style={{ padding: '10px 12px', color: 'var(--expense)', fontWeight: 700 }}>{fmt(periods.reduce((s, r) => s + (r.total_expense || 0), 0))} ₽</td>
+                  <td style={{ padding: '10px 12px', fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(periods.reduce((s, r) => s + (r.net || 0), 0))} ₽</td>
+                  <td colSpan={2}></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
 
         </>}
       </div>

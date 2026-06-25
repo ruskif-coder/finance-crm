@@ -5,19 +5,83 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #f5f6fa;
-  color: #1a1a2e;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+  background: #EBEEF6;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
 }
 
 :root {
-  --primary: #2563eb;
-  --success: #16a34a;
-  --danger: #dc2626;
-  --warning: #d97706;
-  --bg: #f5f6fa;
-  --card: #ffffff;
-  --border: #e5e7eb;
-  --text: #1a1a2e;
-  --muted: #6b7280;
+  /* ── Акцент ─────────────────────────────────────── */
+  --accent:           #4F6CE6;   /* основной синий, кнопки, активная вкладка */
+  --accent-hover:     #3A50BE;
+  --accent-tint:      #ECEFFD;   /* фон активной вкладки / бейджа */
+
+  /* ── Фоны ───────────────────────────────────────── */
+  --bg-canvas:        #EBEEF6;   /* внешний фон всех страниц */
+  --bg-card:          #FFFFFF;   /* карточки */
+  --bg-subtle:        #F6F7FB;   /* вторичный фон, строки hover */
+  --bg-header:        #FFFFFF;   /* топ-навбар */
+
+  /* ── Текст ──────────────────────────────────────── */
+  --text-primary:     #1C2433;   /* заголовки, основной текст */
+  --text-secondary:   #525C70;   /* второстепенный текст */
+  --text-muted:       #79839A;   /* подписи, метки */
+  --text-faint:       #A3ABBD;   /* заголовки колонок, плейсхолдеры */
+
+  /* ── Разделители ────────────────────────────────── */
+  --border-card:      #E3E7F1;
+  --border-inner:     #EDF0F7;
+  --border-row:       #F2F4FA;
+
+  /* ── Семантика данных ───────────────────────────── */
+  --income:           #2FA37C;   /* поступления — зелёный */
+  --expense:          #DB5C6E;   /* расходы — красноватый */
+
+  /* ── Статусы (точка-индикатор) ──────────────────── */
+  --dot-income:       #2FA37C;
+  --dot-expense:      #5B7CF0;
+  --dot-overdue:       #E5484D;  /* просрочка дебиторки */
+  --dot-current-dz:    #E89020;  /* текущая дебиторка */
+
+  /* ── Риббон-график ──────────────────────────────── */
+  --ribbon-income-from:  #FF4D6A;
+  --ribbon-income-mid:   #F046B0;
+  --ribbon-income-to:    #D94BDC;
+  --ribbon-expense-from: #8A53E4;
+  --ribbon-expense-to:   #4F6CE6;
+
+  /* ── Банки ──────────────────────────────────────── */
+  --bank-alfa:        #5B7CF0;
+  --bank-opt:         #2FB8A8;
+  --bank-sovkom:      #4A90C2;
+  --bank-cash:        #8B7BE8;
+
+  /* ── Геометрия / тень (не описаны в дизайн-доке отдельно,
+       выведены из значений, используемых в компонентах макета) ── */
+  --radius-card:      18px;
+  --radius-card-sm:   14px;
+  --radius-badge:     8px;
+  --radius-input:     12px;
+  --radius-btn:        12px;
+  --navbar-h:          66px;
+  --shadow-card:       0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04);
+
+  /* ── Пастельные подложки для предупреждений (не описаны в дизайн-доке —
+       выведены из --dot-current-dz / --dot-overdue, нужны для подсветки
+       редактируемой строки и т.п.) ── */
+  --warning-tint:      #FBF0DE;
+  --danger-tint:       #FBE4E6;
+
+  /* ── Совместимость со старыми именами ───────────── */
+  /* (чтобы settings/import/login не ломались) */
+  --primary:   var(--accent);
+  --success:   var(--income);
+  --danger:    var(--dot-overdue);
+  --warning:   var(--dot-current-dz);
+  --bg:        var(--bg-canvas);
+  --card:      var(--bg-card);
+  --border:    var(--border-card);
+  --text:      var(--text-primary);
+  --muted:     var(--text-muted);
 }

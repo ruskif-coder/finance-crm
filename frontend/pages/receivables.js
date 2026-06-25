@@ -35,11 +35,12 @@ function getPermissions() {
 
 const can = (perms, section, action = 'view') => !!(perms && perms[section] && perms[section][action])
 
+// Нейтральная плашка + цветная точка (см. design_integration.MD §7 AGING_DOT)
 const AGING_META = {
-  overdue: { label: 'Просрочено',            short: 'Просрочка', color: '#dc2626', bg: '#fee2e2', border: '#fca5a5' },
-  current: { label: 'Текущая задолженность', short: 'Текущая',   color: '#d97706', bg: '#fef3c7', border: '#fcd34d' },
-  future:  { label: 'План',                  short: 'План',      color: '#2563eb', bg: '#dbeafe', border: '#93c5fd' },
-  unknown: { label: 'Без периода',           short: 'Без периода',color: '#6b7280', bg: '#f3f4f6', border: '#d1d5db' },
+  overdue: { label: 'Просрочено',            short: 'Просрочка', color: 'var(--dot-overdue)' },
+  current: { label: 'Текущая задолженность', short: 'Текущая',   color: 'var(--dot-current-dz)' },
+  future:  { label: 'План',                  short: 'План',      color: 'var(--accent)' },
+  unknown: { label: 'Без периода',           short: 'Без периода', color: 'var(--text-faint)' },
 }
 const BUCKET_ORDER = ['overdue', 'current', 'future', 'unknown']
 
@@ -59,28 +60,28 @@ function MultiDropdown({ label, items, selected, onToggle, onClear, placeholder,
 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
-      <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '3px' }}>
-        {label} {selected.length > 0 && <span style={{ color: '#2563eb' }}>({selected.length})</span>}
+      <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '3px' }}>
+        {label} {selected.length > 0 && <span style={{ color: 'var(--accent)' }}>({selected.length})</span>}
       </div>
       <div onClick={() => setOpen(o => !o)}
-        style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', cursor: 'pointer', background: 'white', minWidth: '150px', userSelect: 'none', whiteSpace: 'nowrap' }}>
+        style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', fontSize: '14px', cursor: 'pointer', background: 'white', minWidth: '150px', userSelect: 'none', whiteSpace: 'nowrap' }}>
         {selected.length === 0 ? `${placeholder} ▾` : `Выбрано: ${selected.length} ▾`}
       </div>
       {open && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', background: 'white', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', zIndex: 300, minWidth: '220px', maxHeight: '280px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', background: 'white', border: '1px solid var(--border-card)', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', zIndex: 300, minWidth: '220px', maxHeight: '280px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '8px' }}>
             <input autoFocus placeholder="Поиск..." value={search} onChange={e => setSearch(e.target.value)}
-              style={{ width: '100%', padding: '5px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', fontSize: '14px', outline: 'none' }} />
+              style={{ width: '100%', padding: '5px 8px', borderRadius: '6px', border: '1px solid var(--border-card)', fontSize: '14px', outline: 'none' }} />
           </div>
           <div style={{ overflowY: 'auto', flex: 1 }}>
             {filtered.map(item => {
               const active = selected.includes(item)
               return (
                 <div key={item} onClick={() => onToggle(item)}
-                  style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', background: active ? '#eff6ff' : 'white' }}
-                  onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#f9fafb' }}
-                  onMouseLeave={e => { e.currentTarget.style.background = active ? '#eff6ff' : 'white' }}>
-                  <span style={{ width: '14px', height: '14px', borderRadius: '3px', border: `1px solid ${active ? '#2563eb' : '#d1d5db'}`, background: active ? '#2563eb' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', background: active ? 'var(--accent-tint)' : 'white' }}
+                  onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'var(--bg-subtle)' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = active ? 'var(--accent-tint)' : 'white' }}>
+                  <span style={{ width: '14px', height: '14px', borderRadius: '3px', border: `1px solid ${active ? 'var(--accent)' : 'var(--border-card)'}`, background: active ? 'var(--accent)' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     {active && <span style={{ color: 'white', fontSize: '12px' }}>✓</span>}
                   </span>
                   {fmtItem(item)}
@@ -89,7 +90,7 @@ function MultiDropdown({ label, items, selected, onToggle, onClear, placeholder,
             })}
           </div>
           {selected.length > 0 && (
-            <div onClick={() => { onClear(); setSearch('') }} style={{ padding: '8px 12px', borderTop: '1px solid #e5e7eb', fontSize: '14px', color: '#dc2626', cursor: 'pointer' }}>
+            <div onClick={() => { onClear(); setSearch('') }} style={{ padding: '8px 12px', borderTop: '1px solid var(--border-card)', fontSize: '14px', color: 'var(--dot-overdue)', cursor: 'pointer' }}>
               Сбросить выбор
             </div>
           )}
@@ -101,8 +102,8 @@ function MultiDropdown({ label, items, selected, onToggle, onClear, placeholder,
 
 function SummaryCard({ label, value, color, isCount }) {
   return (
-    <div style={{ background: 'white', borderRadius: '12px', padding: '16px 20px', border: '1px solid #e5e7eb' }}>
-      <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '6px' }}>{label}</div>
+    <div style={{ background: 'white', borderRadius: '12px', padding: '16px 20px', border: '1px solid var(--border-card)' }}>
+      <div style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '6px' }}>{label}</div>
       <div style={{ fontSize: '24px', fontWeight: '700', color }}>{isCount ? fmt(value) : `${fmt(value)} ₽`}</div>
     </div>
   )
@@ -114,12 +115,16 @@ function AgingCard({ bucket, data, active, onClick }) {
   return (
     <div onClick={onClick}
       style={{
-        borderRadius: '10px', padding: '12px 16px', background: meta.bg, border: `1px solid ${active ? meta.color : meta.border}`,
+        borderRadius: 'var(--radius-card-sm)', padding: '14px 18px', background: 'var(--bg-subtle)',
+        border: active ? `1px solid ${meta.color}` : '1px solid var(--border-card)',
         cursor: bucket === 'overdue' ? 'pointer' : 'default', boxShadow: active ? `0 0 0 2px ${meta.color}33` : 'none',
       }}>
-      <div style={{ fontSize: '14px', fontWeight: '500', color: meta.color, marginBottom: '6px' }}>{meta.label}</div>
-      <div style={{ fontSize: '19px', fontWeight: '700', color: meta.color }}>{fmt(data.amount)} ₽</div>
-      <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '2px' }}>{data.count} операций</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: '14px', fontWeight: '500', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color, flexShrink: 0 }} />
+        {meta.label}
+      </div>
+      <div style={{ fontSize: '19px', fontWeight: '700', color: 'var(--text-primary)' }}>{fmt(data.amount)} ₽</div>
+      <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '2px' }}>{data.count} операций</div>
     </div>
   )
 }
@@ -131,7 +136,8 @@ function AgingBadges({ aging }) {
       {entries.map(b => {
         const meta = AGING_META[b]
         return (
-          <span key={b} style={{ fontSize: '12px', padding: '2px 7px', borderRadius: '10px', background: meta.bg, color: meta.color, border: `1px solid ${meta.border}`, whiteSpace: 'nowrap' }}>
+          <span key={b} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '12px', padding: '2px 8px', borderRadius: 'var(--radius-badge)', background: 'var(--bg-subtle)', color: 'var(--text-secondary)', whiteSpace: 'nowrap', fontWeight: 600 }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: meta.color, flexShrink: 0 }} />
             {meta.short}: {fmt(aging[b])} ₽
           </span>
         )
@@ -212,7 +218,7 @@ export default function Receivables() {
     }
   }
 
-  if (loading) return <div style={{ textAlign: 'center', padding: '80px', color: '#6b7280' }}>Загрузка дебиторской задолженности...</div>
+  if (loading) return <div style={{ textAlign: 'center', padding: '80px', color: 'var(--text-muted)' }}>Загрузка дебиторской задолженности...</div>
   if (!data) return null
 
   const canEditNote = can(getPermissions(), 'receivables', 'edit')
@@ -256,8 +262,8 @@ export default function Receivables() {
   })
 
   const SortIcon = ({ col }) => sortCol !== col
-    ? <span style={{ color: '#d1d5db', marginLeft: '4px' }}>↕</span>
-    : <span style={{ color: '#2563eb', marginLeft: '4px' }}>{sortDir === 'asc' ? '↑' : '↓'}</span>
+    ? <span style={{ color: 'var(--text-faint)', marginLeft: '4px' }}>↕</span>
+    : <span style={{ color: 'var(--accent)', marginLeft: '4px' }}>{sortDir === 'asc' ? '↑' : '↓'}</span>
 
   const toggleExpand = (cid) => setExpanded(prev => ({ ...prev, [cid]: !prev[cid] }))
 
@@ -266,13 +272,13 @@ export default function Receivables() {
 
   const hasActiveFilters = filterCounterparties.length > 0 || filterArticles.length > 0 || filterPeriods.length > 0 || !overdueOnly
 
-  const thS = { textAlign: 'left', padding: '7px 8px', color: '#6b7280', fontWeight: '500', fontSize: '14px', cursor: 'pointer', userSelect: 'none', borderBottom: '2px solid #e5e7eb', whiteSpace: 'nowrap' }
+  const thS = { textAlign: 'left', padding: '7px 8px', color: 'var(--text-muted)', fontWeight: '500', fontSize: '14px', cursor: 'pointer', userSelect: 'none', borderBottom: '2px solid var(--border-card)', whiteSpace: 'nowrap' }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f6fa' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
       <Navbar active="receivables">
         <button onClick={downloadExport} title="Скачать в Excel"
-          style={{ fontSize: '17px', padding: '6px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'white', color: '#374151', cursor: 'pointer', lineHeight: 1 }}>
+          style={{ fontSize: '17px', padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', color: 'var(--text-secondary)', cursor: 'pointer', lineHeight: 1 }}>
           ⬇️
         </button>
       </Navbar>
@@ -280,19 +286,19 @@ export default function Receivables() {
       <div style={{ padding: '24px', width: '70%', minWidth: '900px', margin: '0 auto' }}>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px' }}>
-          <div style={{ fontSize: '20px', fontWeight: '700', color: '#111827' }}>Дебиторская задолженность</div>
-          <div style={{ fontSize: '14px', color: '#9ca3af' }}>на {formatDate(data.as_of)}</div>
+          <div style={{ fontSize: '20px', fontWeight: '700', color: 'var(--text-primary)' }}>Дебиторская задолженность</div>
+          <div style={{ fontSize: '14px', color: 'var(--text-faint)' }}>на {formatDate(data.as_of)}</div>
         </div>
 
         {/* Сводка */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '16px' }}>
-          <SummaryCard label="Итого дебиторка" value={data.summary.total_amount} color="#16a34a" />
-          <SummaryCard label="Контрагентов-должников" value={data.summary.counterparty_count} color="#374151" isCount />
-          <SummaryCard label="Счетов / операций" value={data.summary.operation_count} color="#374151" isCount />
+          <SummaryCard label="Итого дебиторка" value={data.summary.total_amount} color="var(--income)" />
+          <SummaryCard label="Контрагентов-должников" value={data.summary.counterparty_count} color="var(--text-secondary)" isCount />
+          <SummaryCard label="Счетов / операций" value={data.summary.operation_count} color="var(--text-secondary)" isCount />
         </div>
 
         {/* Статус задолженности */}
-        <div style={{ fontSize: '13px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', marginLeft: '4px' }}>
+        <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', marginLeft: '4px' }}>
           Срок оплаты = период + отсрочка контрагента (договорных сроков пока нет — стандартно 60 дн., см. колонку «Отсрочка»); текущая задолженность — до 30 дн. после срока, далее — просрочка
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
@@ -317,20 +323,20 @@ export default function Receivables() {
             label="Период" items={allPeriods} selected={filterPeriods} formatItem={formatPeriod}
             onToggle={v => toggle(filterPeriods, setFilterPeriods, v)}
             onClear={() => setFilterPeriods([])} placeholder="Все периоды" />
-          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px', color: '#374151', cursor: 'pointer', padding: '7px 10px', border: '1px solid #e5e7eb', borderRadius: '8px', background: overdueOnly ? '#dbeafe' : 'white' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px', color: 'var(--text-secondary)', cursor: 'pointer', padding: '7px 10px', border: '1px solid var(--border-card)', borderRadius: '8px', background: overdueOnly ? 'var(--accent-tint)' : 'white' }}>
             <input type="checkbox" checked={overdueOnly} onChange={e => setOverdueOnly(e.target.checked)} />
             Только актуальные
           </label>
           {hasActiveFilters && (
             <button onClick={() => { setFilterCounterparties([]); setFilterArticles([]); setFilterPeriods([]); setOverdueOnly(true) }}
-              style={{ padding: '7px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', fontSize: '14px', color: '#6b7280' }}>
+              style={{ padding: '7px 12px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'transparent', cursor: 'pointer', fontSize: '14px', color: 'var(--text-muted)' }}>
               Сбросить всё
             </button>
           )}
         </div>
 
         {/* Таблица по контрагентам */}
-        <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+        <div style={{ background: 'white', borderRadius: '12px', border: '1px solid var(--border-card)', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '15px' }}>
             <thead>
               <tr>
@@ -350,19 +356,19 @@ export default function Receivables() {
                 const isOpen = !!expanded[key]
                 return (
                   <>
-                    <tr key={key} style={{ borderBottom: isOpen ? 'none' : '1px solid #f3f4f6', cursor: 'pointer' }}
+                    <tr key={key} style={{ borderBottom: isOpen ? 'none' : '1px solid var(--border-row)', cursor: 'pointer' }}
                       onClick={() => toggleExpand(key)}
-                      onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
+                      onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-subtle)'}
                       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                      <td style={{ padding: '8px', color: '#374151' }}>
-                        <span style={{ display: 'inline-block', width: '14px', color: '#9ca3af', fontSize: '13px' }}>{isOpen ? '▾' : '▸'}</span>
+                      <td style={{ padding: '8px', color: 'var(--text-secondary)' }}>
+                        <span style={{ display: 'inline-block', width: '14px', color: 'var(--text-faint)', fontSize: '13px' }}>{isOpen ? '▾' : '▸'}</span>
                         {r.counterparty}
                       </td>
-                      <td style={{ padding: '8px', color: '#6b7280' }}>{r.inn || '—'}</td>
-                      <td style={{ padding: '8px', color: '#6b7280' }}>{r.contract_number || '—'}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', color: '#6b7280' }}>{r.term_days} дн.</td>
-                      <td style={{ padding: '8px', textAlign: 'right', color: '#16a34a', fontWeight: '500' }}>{fmt(r.amount)} ₽</td>
-                      <td style={{ padding: '8px', textAlign: 'right', color: '#6b7280' }}>{r.op_count}</td>
+                      <td style={{ padding: '8px', color: 'var(--text-muted)' }}>{r.inn || '—'}</td>
+                      <td style={{ padding: '8px', color: 'var(--text-muted)' }}>{r.contract_number || '—'}</td>
+                      <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-muted)' }}>{r.term_days} дн.</td>
+                      <td style={{ padding: '8px', textAlign: 'right', color: 'var(--income)', fontWeight: '500' }}>{fmt(r.amount)} ₽</td>
+                      <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-muted)' }}>{r.op_count}</td>
                       <td style={{ padding: '8px' }}><AgingBadges aging={r.aging} /></td>
                       <td style={{ padding: '4px 8px' }} onClick={e => e.stopPropagation()}>
                         {canEditNote ? (
@@ -377,31 +383,31 @@ export default function Receivables() {
                               }}
                               onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
                               placeholder="—"
-                              style={{ width: '100%', minWidth: '140px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #e5e7eb', fontSize: '14px', outline: 'none' }}
+                              style={{ width: '100%', minWidth: '140px', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--border-card)', fontSize: '14px', outline: 'none' }}
                             />
-                            {noteStatus[key] === 'saving' && <span style={{ fontSize: '12px', color: '#9ca3af', flexShrink: 0 }}>…</span>}
-                            {noteStatus[key] === 'saved' && <span style={{ fontSize: '12px', color: '#16a34a', flexShrink: 0 }}>✓</span>}
+                            {noteStatus[key] === 'saving' && <span style={{ fontSize: '12px', color: 'var(--text-faint)', flexShrink: 0 }}>…</span>}
+                            {noteStatus[key] === 'saved' && <span style={{ fontSize: '12px', color: 'var(--income)', flexShrink: 0 }}>✓</span>}
                           </div>
                         ) : (
-                          <span style={{ color: '#6b7280' }}>{r.note || '—'}</span>
+                          <span style={{ color: 'var(--text-muted)' }}>{r.note || '—'}</span>
                         )}
                       </td>
                     </tr>
                     {isOpen && (
-                      <tr key={key + '_detail'} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                        <td colSpan={8} style={{ padding: '0 8px 10px 28px', background: '#f9fafb' }}>
+                      <tr key={key + '_detail'} style={{ borderBottom: '1px solid var(--border-row)' }}>
+                        <td colSpan={8} style={{ padding: '0 8px 10px 28px', background: 'var(--bg-subtle)' }}>
                           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                             <thead>
                               <tr>
-                                <th style={{ textAlign: 'left', padding: '5px 6px', color: '#9ca3af', fontWeight: '500' }}>Дата</th>
-                                <th style={{ textAlign: 'left', padding: '5px 6px', color: '#9ca3af', fontWeight: '500' }}>Статья</th>
-                                <th style={{ textAlign: 'left', padding: '5px 6px', color: '#9ca3af', fontWeight: '500' }}>Период</th>
-                                <th style={{ textAlign: 'left', padding: '5px 6px', color: '#9ca3af', fontWeight: '500' }}>Срок оплаты</th>
-                                <th style={{ textAlign: 'left', padding: '5px 6px', color: '#9ca3af', fontWeight: '500' }}>Возраст</th>
-                                <th style={{ textAlign: 'right', padding: '5px 6px', color: '#9ca3af', fontWeight: '500' }}>Сумма</th>
-                                <th style={{ textAlign: 'left', padding: '5px 6px', color: '#9ca3af', fontWeight: '500' }}>№ ДС</th>
-                                <th style={{ textAlign: 'left', padding: '5px 6px', color: '#9ca3af', fontWeight: '500' }}>№ Счёта</th>
-                                <th style={{ textAlign: 'left', padding: '5px 6px', color: '#9ca3af', fontWeight: '500' }}>Дата счёта</th>
+                                <th style={{ textAlign: 'left', padding: '5px 6px', color: 'var(--text-faint)', fontWeight: '500' }}>Дата</th>
+                                <th style={{ textAlign: 'left', padding: '5px 6px', color: 'var(--text-faint)', fontWeight: '500' }}>Статья</th>
+                                <th style={{ textAlign: 'left', padding: '5px 6px', color: 'var(--text-faint)', fontWeight: '500' }}>Период</th>
+                                <th style={{ textAlign: 'left', padding: '5px 6px', color: 'var(--text-faint)', fontWeight: '500' }}>Срок оплаты</th>
+                                <th style={{ textAlign: 'left', padding: '5px 6px', color: 'var(--text-faint)', fontWeight: '500' }}>Возраст</th>
+                                <th style={{ textAlign: 'right', padding: '5px 6px', color: 'var(--text-faint)', fontWeight: '500' }}>Сумма</th>
+                                <th style={{ textAlign: 'left', padding: '5px 6px', color: 'var(--text-faint)', fontWeight: '500' }}>№ ДС</th>
+                                <th style={{ textAlign: 'left', padding: '5px 6px', color: 'var(--text-faint)', fontWeight: '500' }}>№ Счёта</th>
+                                <th style={{ textAlign: 'left', padding: '5px 6px', color: 'var(--text-faint)', fontWeight: '500' }}>Дата счёта</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -409,19 +415,20 @@ export default function Receivables() {
                                 const meta = AGING_META[op.aging_bucket]
                                 return (
                                   <tr key={op.id}>
-                                    <td style={{ padding: '4px 6px', color: '#374151' }}>{formatDate(op.date)}</td>
-                                    <td style={{ padding: '4px 6px', color: '#374151' }}>{op.article}</td>
-                                    <td style={{ padding: '4px 6px', color: '#6b7280' }}>{formatPeriod(op.period)}</td>
-                                    <td style={{ padding: '4px 6px', color: '#6b7280' }}>{formatDate(op.due_date)}</td>
+                                    <td style={{ padding: '4px 6px', color: 'var(--text-secondary)' }}>{formatDate(op.date)}</td>
+                                    <td style={{ padding: '4px 6px', color: 'var(--text-secondary)' }}>{op.article}</td>
+                                    <td style={{ padding: '4px 6px', color: 'var(--text-muted)' }}>{formatPeriod(op.period)}</td>
+                                    <td style={{ padding: '4px 6px', color: 'var(--text-muted)' }}>{formatDate(op.due_date)}</td>
                                     <td style={{ padding: '4px 6px' }}>
-                                      <span style={{ fontSize: '12px', padding: '2px 7px', borderRadius: '10px', background: meta.bg, color: meta.color, border: `1px solid ${meta.border}` }}>
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '12px', padding: '2px 8px', borderRadius: 'var(--radius-badge)', background: 'var(--bg-subtle)', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: meta.color, flexShrink: 0 }} />
                                         {meta.short}
                                       </span>
                                     </td>
-                                    <td style={{ padding: '4px 6px', textAlign: 'right', color: '#16a34a' }}>{fmt(op.amount)} ₽</td>
-                                    <td style={{ padding: '4px 6px', color: '#374151' }}>{op.ds_num || '—'}</td>
-                                    <td style={{ padding: '4px 6px', color: '#374151' }}>{op.invoice || '—'}</td>
-                                    <td style={{ padding: '4px 6px', color: '#374151' }}>{formatDate(op.invoice_date)}</td>
+                                    <td style={{ padding: '4px 6px', textAlign: 'right', color: 'var(--income)' }}>{fmt(op.amount)} ₽</td>
+                                    <td style={{ padding: '4px 6px', color: 'var(--text-secondary)' }}>{op.ds_num || '—'}</td>
+                                    <td style={{ padding: '4px 6px', color: 'var(--text-secondary)' }}>{op.invoice || '—'}</td>
+                                    <td style={{ padding: '4px 6px', color: 'var(--text-secondary)' }}>{formatDate(op.invoice_date)}</td>
                                   </tr>
                                 )
                               })}
@@ -434,16 +441,16 @@ export default function Receivables() {
                 )
               })}
               {sortedRows.length === 0 && (
-                <tr><td colSpan={8} style={{ padding: '24px', textAlign: 'center', color: '#9ca3af' }}>Нет данных по выбранным фильтрам</td></tr>
+                <tr><td colSpan={8} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-faint)' }}>Нет данных по выбранным фильтрам</td></tr>
               )}
             </tbody>
             <tfoot>
-              <tr style={{ borderTop: '2px solid #e5e7eb' }}>
+              <tr style={{ borderTop: '2px solid var(--border-card)' }}>
                 <td colSpan={4} style={{ padding: '8px', fontWeight: '600', fontSize: '15px' }}>
                   Итого {sortedRows.length < data.rows.length ? `(${sortedRows.length} из ${data.rows.length})` : ''}
                 </td>
-                <td style={{ padding: '8px', textAlign: 'right', fontWeight: '700', color: '#16a34a' }}>{fmt(totalFiltered)} ₽</td>
-                <td style={{ padding: '8px', textAlign: 'right', fontWeight: '600', color: '#6b7280' }}>{totalOpsFiltered}</td>
+                <td style={{ padding: '8px', textAlign: 'right', fontWeight: '700', color: 'var(--income)' }}>{fmt(totalFiltered)} ₽</td>
+                <td style={{ padding: '8px', textAlign: 'right', fontWeight: '600', color: 'var(--text-muted)' }}>{totalOpsFiltered}</td>
                 <td></td>
                 <td></td>
               </tr>
