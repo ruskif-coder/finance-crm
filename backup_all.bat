@@ -5,8 +5,8 @@ REM machine, same as the other deploy/rotate scripts in this folder.
 
 set BACKUPDIR=F:\finance\backups
 set LOG=%BACKUPDIR%\backup_all_log.txt
-set DUMP=%BACKUPDIR%\backup_full_2026-06-24.sql
-set ZIP=%BACKUPDIR%\backup_full_2026-06-24.zip
+set DUMP=%BACKUPDIR%\backup_full_2026-06-25.sql
+set ZIP=%BACKUPDIR%\backup_full_2026-06-25.zip
 
 if not exist "%BACKUPDIR%" mkdir "%BACKUPDIR%"
 
@@ -21,7 +21,7 @@ powershell -NoProfile -Command "Get-ChildItem -Path 'F:\finance' -Exclude 'backu
 echo [3/4] Committing current code state to git (secrets in .env stay out via .gitignore)... >> "%LOG%"
 cd /d F:\finance
 git add -A >> "%LOG%" 2>&1
-git commit -m "Backup snapshot 2026-06-24" >> "%LOG%" 2>&1
+git commit -m "Backup snapshot 2026-06-25" >> "%LOG%" 2>&1
 
 echo [4/4] Verifying backups folder contents... >> "%LOG%"
 dir "%BACKUPDIR%" >> "%LOG%" 2>&1
