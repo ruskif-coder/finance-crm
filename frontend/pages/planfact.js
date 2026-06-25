@@ -132,7 +132,7 @@ export default function PlanFact() {
         </div>
       </Navbar>
 
-      <div style={{ padding: '20px 24px', maxWidth: 2000, margin: '0 auto' }}>
+      <div style={{ padding: '20px 24px', maxWidth: 1920, margin: '0 auto' }}>
 
         {/* Сводные карточки */}
         <div style={{ display: 'flex', gap: '14px', marginBottom: '16px' }}>
@@ -245,4 +245,8 @@ export default function PlanFact() {
               })}
             </tbody>
           </table>
-        </d
+        </div>
+      </div>
+    </div>
+  )
+}

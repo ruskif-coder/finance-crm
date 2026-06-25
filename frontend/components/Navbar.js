@@ -48,7 +48,7 @@ export default function Navbar({ active, children }) {
         height: '66px',
       }}>
         <div style={{
-          maxWidth: 2000, margin: '0 auto', padding: '0 30px', height: '100%',
+          maxWidth: 1920, margin: '0 auto', padding: '0 30px', height: '100%',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '36px', minWidth: 0 }}>
@@ -110,4 +110,13 @@ export default function Navbar({ active, children }) {
       {/* Вторая строка — опциональные элементы конкретной страницы (фильтры, кнопки) */}
       {children && (
         <div style={{ background: 'var(--bg-header)', borderBottom: '1px solid var(--border-card)', height: '46px' }}>
-          <div style={{ maxWidth
+          <div style={{ maxWidth: 1920, margin: '0 auto', padding: '0 30px', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {children}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

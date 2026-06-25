@@ -179,7 +179,7 @@ export default function Import() {
     <div style={{minHeight:'100vh',background:'var(--bg)'}}>
       <Navbar active="import" />
 
-      <div style={{padding:'24px 32px', maxWidth:2000, margin:'0 auto'}}>
+      <div style={{padding:'24px 32px', maxWidth:1920, margin:'0 auto'}}>
         <div style={{maxWidth:'600px'}}>
         <div style={{background:'var(--card)',borderRadius:'12px',padding:'24px'}}>
           <div style={{fontWeight:'500',marginBottom:'8px'}}>Импорт из Excel</div>
@@ -396,4 +396,8 @@ export default function Import() {
               ✓ {applyResult.message}
             </div>
           )}
-        </div
+        </div>
+      </div>
+    </div>
+  )
+}

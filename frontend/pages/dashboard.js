@@ -117,7 +117,7 @@ export default function Dashboard() {
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
       <Navbar active="dds" />
 
-      <div style={{ maxWidth: 2000, margin: '0 auto', padding: '26px 30px' }}>
+      <div style={{ maxWidth: 1920, margin: '0 auto', padding: '26px 30px' }}>
 
         {loading ? (
           <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>Загрузка…</div>
