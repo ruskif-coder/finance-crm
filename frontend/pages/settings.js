@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
+import Navbar from '../components/Navbar'
 
 const api = (token) => axios.create({
   baseURL: 'http://localhost:8000/api',
@@ -544,11 +545,7 @@ export default function Settings() {
 
   return (
     <div style={{ minHeight: '100vh', background: '#f5f6fa' }}>
-      {/* Шапка */}
-      <div style={{ background: 'white', borderBottom: '1px solid #e5e7eb', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '56px' }}>
-        <div style={{ fontWeight: '600', fontSize: '18px' }}>Настройки</div>
-        <button onClick={() => router.push('/dashboard')} style={{ fontSize: '15px', padding: '6px 14px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer' }}>← Дашборд</button>
-      </div>
+      <Navbar active="settings" />
 
       <div style={{ padding: '24px', maxWidth: tab === 'counterparties' ? 'none' : '1000px' }}>
 

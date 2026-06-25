@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
+import Navbar from '../components/Navbar'
 
 function getPermissions() {
   if (typeof window === 'undefined') return {}
@@ -176,10 +177,7 @@ export default function Import() {
 
   return (
     <div style={{minHeight:'100vh',background:'var(--bg)'}}>
-      <div style={{background:'var(--card)',borderBottom:'1px solid var(--border)',padding:'0 32px',display:'flex',alignItems:'center',justifyContent:'space-between',height:'56px'}}>
-        <div style={{fontWeight:'600',fontSize:'18px'}}>Импорт данных</div>
-        <button onClick={() => router.push('/dashboard')} style={{fontSize:'15px',padding:'6px 14px',borderRadius:'8px',border:'1px solid var(--border)',background:'transparent',cursor:'pointer'}}>← Дашборд</button>
-      </div>
+      <Navbar active="import" />
 
       <div style={{padding:'24px 32px'}}>
         <div style={{maxWidth:'600px'}}>

@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
 
 const NAV_ITEMS = [
@@ -19,56 +20,97 @@ export default function Navbar({ active, children }) {
   const router = useRouter()
   const name = typeof window !== 'undefined' ? localStorage.getItem('name') || '' : ''
   const permissions = getPermissions()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef(null)
+
+  useEffect(() => {
+    const h = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [])
 
   const logout = () => { localStorage.clear(); router.push('/login') }
 
   const navItems = NAV_ITEMS.filter(item => can(permissions, item.section))
+  const initial = (name || '?').trim().charAt(0).toUpperCase() || '?'
 
   const utilBtn = {
     fontSize: '13.5px', padding: '8px 16px', borderRadius: 'var(--radius-btn)',
-    border: '1px solid var(--border-card)', background: 'var(--bg-card)',
-    cursor: 'pointer', color: 'var(--text-secondary)', fontWeight: 500,
+    border: 'none', background: 'var(--bg-subtle)',
+    cursor: 'pointer', color: 'var(--text-secondary)', fontWeight: 500, whiteSpace: 'nowrap',
   }
 
   return (
     <div style={{ position: 'sticky', top: 0, zIndex: 100 }}>
-      {/* Верхняя строка — логотип и кнопки */}
-      <div style={{ background: 'var(--bg-header)', borderBottom: '1px solid var(--border-card)', padding: '0 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '52px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }} onClick={() => router.push('/dashboard')}>
-          <img src="/logo.png" alt="Логотип" style={{ height: '26px', width: 'auto', display: 'block' }}
+      {/* Единая строка — логотип, вкладки, утилиты, аватар */}
+      <header style={{
+        background: 'var(--bg-header)', borderBottom: '1px solid var(--border-card)',
+        height: '66px', padding: '0 30px', display: 'flex', alignItems: 'center',
+        justifyContent: 'space-between',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '36px', minWidth: 0 }}>
+          <img src="/logo.png" alt="Логотип" style={{ height: '24px', width: 'auto', display: 'block', cursor: 'pointer', flexShrink: 0 }}
+            onClick={() => router.push('/dashboard')}
             onError={(e) => { e.target.style.display = 'none' }} />
+          <nav style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
+            {navItems.map(item => (
+              <button key={item.id} onClick={() => router.push(item.href)}
+                style={{
+                  padding: '8px 16px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+                  fontWeight: active === item.id ? 600 : 500, fontSize: '14px',
+                  background: active === item.id ? 'var(--accent-tint)' : 'transparent',
+                  color: active === item.id ? 'var(--accent)' : 'var(--text-secondary)',
+                  transition: 'background .15s, color .15s', whiteSpace: 'nowrap',
+                }}>
+                {item.label}
+              </button>
+            ))}
+          </nav>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '13.5px', color: 'var(--text-muted)', marginRight: '6px', fontWeight: 500 }}>{name}</span>
-          {can(permissions, 'operations') && <button onClick={() => router.push('/operations')} style={utilBtn}>Операции</button>}
-          {can(permissions, 'import') && <button onClick={() => router.push('/import')} style={{ ...utilBtn, border: '1px solid var(--accent)', color: 'var(--accent)' }}>Импорт</button>}
-          {can(permissions, 'settings_balances') && <button onClick={() => router.push('/settings')} style={utilBtn}>⚙️ Настройки</button>}
-          <button onClick={logout} style={{ fontSize: '13.5px', padding: '8px 16px', borderRadius: 'var(--radius-btn)', border: 'none', background: 'var(--dot-overdue)', color: '#fff', cursor: 'pointer', fontWeight: 500 }}>Выйти</button>
-        </div>
-      </div>
 
-      {/* Нижняя строка — вкладки слева, children справа */}
-      <div style={{ background: 'var(--bg-header)', borderBottom: '1px solid var(--border-card)', padding: '0 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '46px' }}>
-        <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
-          {navItems.map(item => (
-            <button key={item.id} onClick={() => router.push(item.href)}
-              style={{
-                padding: '7px 16px', borderRadius: '10px', border: 'none', cursor: 'pointer',
-                fontWeight: active === item.id ? 600 : 500, fontSize: '14px',
-                background: active === item.id ? 'var(--accent-tint)' : 'transparent',
-                color: active === item.id ? 'var(--accent)' : 'var(--text-secondary)',
-                transition: 'background .15s, color .15s',
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+          {can(permissions, 'operations') && <button onClick={() => router.push('/operations')} style={utilBtn}>Операции</button>}
+          {can(permissions, 'import') && <button onClick={() => router.push('/import')} style={utilBtn}>Импорт</button>}
+          {can(permissions, 'settings_balances') && <button onClick={() => router.push('/settings')} style={utilBtn}>Настройки</button>}
+
+          <div ref={menuRef} style={{ position: 'relative', marginLeft: '6px' }}>
+            <div onClick={() => setMenuOpen(o => !o)} title={name || ''} style={{
+              width: '34px', height: '34px', borderRadius: '50%', background: 'var(--text-primary)',
+              color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '14px', fontWeight: 600, cursor: 'pointer', userSelect: 'none',
+            }}>
+              {initial}
+            </div>
+            {menuOpen && (
+              <div style={{
+                position: 'absolute', top: '42px', right: 0, background: 'var(--bg-card)',
+                border: '1px solid var(--border-card)', borderRadius: 'var(--radius-card-sm)',
+                boxShadow: 'var(--shadow-card)', minWidth: '160px', zIndex: 200, overflow: 'hidden',
               }}>
-              {item.label}
-            </button>
-          ))}
+                <div style={{ padding: '10px 14px', fontSize: '13.5px', color: 'var(--text-secondary)', fontWeight: 500, borderBottom: '1px solid var(--border-row)' }}>
+                  {name || '—'}
+                </div>
+                <button onClick={logout} style={{
+                  display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px',
+                  fontSize: '13.5px', color: 'var(--dot-overdue)', background: 'transparent',
+                  border: 'none', cursor: 'pointer', fontWeight: 500,
+                }}>
+                  Выйти
+                </button>
+              </div>
+            )}
+          </div>
         </div>
-        {children && (
+      </header>
+
+      {/* Вторая строка — опциональные элементы конкретной страницы (фильтры, кнопки) */}
+      {children && (
+        <div style={{ background: 'var(--bg-header)', borderBottom: '1px solid var(--border-card)', padding: '0 30px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', height: '46px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {children}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }

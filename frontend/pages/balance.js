@@ -147,7 +147,7 @@ function AgingBadges({ aging }) {
         return (
           <span key={b} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '12px', padding: '2px 8px', borderRadius: 'var(--radius-badge)', background: 'var(--bg-subtle)', color: 'var(--text-secondary)', whiteSpace: 'nowrap', fontWeight: 600 }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: meta.color, flexShrink: 0 }} />
-            {meta.short}: {fmt(aging[b])} ₽
+            {fmt(aging[b])} ₽
           </span>
         )
       })}
