@@ -602,9 +602,11 @@ export default function Operations() {
           <div style={{ background: 'white', borderRadius: '12px', padding: '14px 20px', marginBottom: '12px', border: '2px solid var(--accent)', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginRight: '4px', alignSelf: 'center' }}>
               <div style={{ fontSize: '15px', fontWeight: '500', color: 'var(--accent)' }}>Выбрано: {selectedIds.length}</div>
-              <div style={{ display: 'flex', gap: '10px', fontSize: '12px', whiteSpace: 'nowrap' }}>
-                <span style={{ color: 'var(--income)', fontWeight: 600 }}>+{new Intl.NumberFormat('ru-RU').format(Math.round(selectedIncome))} ₽</span>
-                <span style={{ color: 'var(--expense)', fontWeight: 600 }}>−{new Intl.NumberFormat('ru-RU').format(Math.round(selectedExpense))} ₽</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', whiteSpace: 'nowrap', color: 'var(--income)', fontWeight: 600 }}>
+                <span>↑</span><span>+{new Intl.NumberFormat('ru-RU').format(Math.round(selectedIncome))} ₽</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', whiteSpace: 'nowrap', color: 'var(--expense)', fontWeight: 600 }}>
+                <span>↓</span><span>−{new Intl.NumberFormat('ru-RU').format(Math.round(selectedExpense))} ₽</span>
               </div>
             </div>
             {can(permissions, 'operations', 'edit') && (<>
@@ -776,10 +778,4 @@ export default function Operations() {
         <div style={{ display: 'flex', justifyContent: 'center', gap: '4px', marginTop: '12px' }}>
           <button onClick={() => setPage(p => p - 1)} disabled={page === 0} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', cursor: page === 0 ? 'default' : 'pointer', fontSize: '15px', opacity: page === 0 ? 0.4 : 1 }}>← Назад</button>
           <span style={{ padding: '6px 16px', fontSize: '15px', color: 'var(--text-muted)' }}>{page + 1} из {totalPages || 1}</span>
-          <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: '15px', opacity: page >= totalPages - 1 ? 0.4 : 1 }}>Вперёд →</button>
-        </div>
-
-      </div>
-    </div>
-  )
-}
+          <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', cursor: page >= t
