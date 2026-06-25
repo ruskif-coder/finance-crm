@@ -778,4 +778,10 @@ export default function Operations() {
         <div style={{ display: 'flex', justifyContent: 'center', gap: '4px', marginTop: '12px' }}>
           <button onClick={() => setPage(p => p - 1)} disabled={page === 0} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', cursor: page === 0 ? 'default' : 'pointer', fontSize: '15px', opacity: page === 0 ? 0.4 : 1 }}>← Назад</button>
           <span style={{ padding: '6px 16px', fontSize: '15px', color: 'var(--text-muted)' }}>{page + 1} из {totalPages || 1}</span>
-          <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', cursor: page >= t
+          <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: '15px', opacity: page >= totalPages - 1 ? 0.4 : 1 }}>Вперёд →</button>
+        </div>
+
+      </div>
+    </div>
+  )
+}
