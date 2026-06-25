@@ -414,6 +414,10 @@ export default function Operations() {
   const toggleSelect = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   const allVisibleSelected = operations.length > 0 && operations.every(op => selectedIds.includes(op.id))
   const toggleSelectAllVisible = () => setSelectedIds(allVisibleSelected ? [] : operations.map(op => op.id))
+  // Суммы по выбранным строкам (только видимые на текущей странице — selectedIds могут включать
+  // id с других страниц, но сумму считаем по факту найденных в operations, как и selectedIds.length по смыслу выбора)
+  const selectedIncome = operations.filter(op => selectedIds.includes(op.id)).reduce((s, op) => s + (op.income || 0), 0)
+  const selectedExpense = operations.filter(op => selectedIds.includes(op.id)).reduce((s, op) => s + (op.expense || 0), 0)
 
   const resetBulkFields = () => {
     setSelectedIds([]); setBulkStatus(''); setBulkDate(''); setBulkBank(''); setBulkArticle(''); setBulkCounterparty('')
@@ -596,7 +600,13 @@ export default function Operations() {
 
         {(can(permissions, 'operations', 'edit') || can(permissions, 'operations', 'delete')) && selectedIds.length > 0 && (
           <div style={{ background: 'white', borderRadius: '12px', padding: '14px 20px', marginBottom: '12px', border: '2px solid var(--accent)', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <div style={{ fontSize: '15px', fontWeight: '500', color: 'var(--accent)', marginRight: '4px', alignSelf: 'center' }}>Выбрано: {selectedIds.length}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginRight: '4px', alignSelf: 'center' }}>
+              <div style={{ fontSize: '15px', fontWeight: '500', color: 'var(--accent)' }}>Выбрано: {selectedIds.length}</div>
+              <div style={{ display: 'flex', gap: '10px', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                <span style={{ color: 'var(--income)', fontWeight: 600 }}>+{new Intl.NumberFormat('ru-RU').format(Math.round(selectedIncome))} ₽</span>
+                <span style={{ color: 'var(--expense)', fontWeight: 600 }}>−{new Intl.NumberFormat('ru-RU').format(Math.round(selectedExpense))} ₽</span>
+              </div>
+            </div>
             {can(permissions, 'operations', 'edit') && (<>
             <div><label style={lbl}>Статус</label>
               <select style={inp} value={bulkStatus} onChange={e => setBulkStatus(e.target.value)}>
@@ -753,23 +763,4 @@ export default function Operations() {
                         {can(permissions, 'operations', 'create') && <button onClick={() => openCopy(op)} title="Скопировать" style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid var(--accent)', background: 'var(--accent-tint)', cursor: 'pointer', color: 'var(--accent)', marginRight: '4px' }}>📋</button>}
                         {can(permissions, 'operations', 'edit') && <button onClick={() => openEdit(op)} style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid var(--dot-current-dz)', background: 'var(--warning-tint)', cursor: 'pointer', color: 'var(--dot-current-dz)', marginRight: '4px' }}>✏️</button>}
                         {can(permissions, 'operations', 'delete') && <button onClick={() => handleDelete(op.id)} style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid var(--border-card)', background: 'transparent', cursor: 'pointer', color: 'var(--dot-overdue)' }}>✕</button>}
-                        {!can(permissions, 'operations', 'create') && !can(permissions, 'operations', 'edit') && !can(permissions, 'operations', 'delete') && '—'}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '4px', marginTop: '12px' }}>
-          <button onClick={() => setPage(p => p - 1)} disabled={page === 0} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', cursor: page === 0 ? 'default' : 'pointer', fontSize: '15px', opacity: page === 0 ? 0.4 : 1 }}>← Назад</button>
-          <span style={{ padding: '6px 16px', fontSize: '15px', color: 'var(--text-muted)' }}>{page + 1} из {totalPages || 1}</span>
-          <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: '15px', opacity: page >= totalPages - 1 ? 0.4 : 1 }}>Вперёд →</button>
-        </div>
-
-      </div>
-    </div>
-  )
-}
+                        {!can(permissions, 'operations', 'create') && !can(permissions, 'operations', 'edit') && !can(permissions, 'op
