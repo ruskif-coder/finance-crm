@@ -311,4 +311,17 @@ export default function Dashboard() {
               <tfoot>
                 <tr style={{ borderTop: '2px solid var(--border-card)', background: 'var(--bg-subtle)' }}>
                   <td style={{ padding: '10px 12px', fontWeight: 700, color: 'var(--text-primary)' }}>ИТОГО</td>
-                  <td style={{ padding: '10px 12px', color: 'var(--income)', fontWeight: 700 }}>{fmt(perio
+                  <td style={{ padding: '10px 12px', color: 'var(--income)', fontWeight: 700 }}>{fmt(periods.reduce((s, r) => s + (r.total_income || 0), 0))} ₽</td>
+                  <td style={{ padding: '10px 12px', color: 'var(--expense)', fontWeight: 700 }}>{fmt(periods.reduce((s, r) => s + (r.total_expense || 0), 0))} ₽</td>
+                  <td style={{ padding: '10px 12px', fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(periods.reduce((s, r) => s + (r.net || 0), 0))} ₽</td>
+                  <td colSpan={2}></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+        </>}
+      </div>
+    </div>
+  )
+}
