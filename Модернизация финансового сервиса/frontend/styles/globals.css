@@ -1,0 +1,114 @@
+/* ================================================================
+   Silab-AD — глобальные стили и дизайн-токены
+   Заменяет предыдущий globals.css полностью.
+   ================================================================ */
+
+/* ── Шрифт ─────────────────────────────────────────────────────── */
+/* Если подключён через next/font/google в _app.js — эта строка
+   не нужна. Если нет — добавьте в <Head> страницы:
+   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"> */
+
+/* ── Сброс ─────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+html { font-size: 16px; }
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: 'Onest', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+a { color: inherit; text-decoration: none; }
+button { font-family: inherit; cursor: pointer; }
+input, select, textarea { font-family: inherit; }
+
+/* ── Дизайн-токены ─────────────────────────────────────────────── */
+:root {
+  /* Акцент */
+  --accent:              #4F6CE6;
+  --accent-hover:        #3A50BE;
+  --accent-tint:         #ECEFFD;
+  --accent-rgb:          79, 108, 230;
+
+  /* Фоны */
+  --bg-canvas:           #EBEEF6;
+  --bg-card:             #FFFFFF;
+  --bg-subtle:           #F6F7FB;
+  --bg-header:           #FFFFFF;
+
+  /* Текст */
+  --text-primary:        #1C2433;
+  --text-secondary:      #525C70;
+  --text-muted:          #79839A;
+  --text-faint:          #A3ABBD;
+
+  /* Разделители */
+  --border-card:         #E3E7F1;
+  --border-inner:        #EDF0F7;
+  --border-row:          #F2F4FA;
+
+  /* Семантика данных */
+  --income:              #2FA37C;
+  --expense:             #DB5C6E;
+
+  /* Статусы — точка-индикатор */
+  --dot-income:          #2FA37C;
+  --dot-expense:         #5B7CF0;
+  --dot-overdue:         #E5484D;
+  --dot-current-dz:      #E89020;
+
+  /* Риббон-график */
+  --ribbon-income-from:  #FF4D6A;
+  --ribbon-income-mid:   #F046B0;
+  --ribbon-income-to:    #D94BDC;
+  --ribbon-expense-from: #8A53E4;
+  --ribbon-expense-to:   #4F6CE6;
+
+  /* Банки */
+  --bank-alfa:           #5B7CF0;
+  --bank-opt:            #2FB8A8;
+  --bank-sovkom:         #4A90C2;
+  --bank-cash:           #8B7BE8;
+
+  /* Тени */
+  --shadow-card:         0 1px 2px rgba(28,36,51,.05);
+  --shadow-float:        0 1px 3px rgba(28,36,51,.08), 0 8px 24px rgba(28,36,51,.10);
+
+  /* Радиусы */
+  --radius-card:         20px;
+  --radius-card-sm:      14px;
+  --radius-btn:          12px;
+  --radius-badge:        8px;
+  --radius-input:        11px;
+
+  /* Высота навбара */
+  --navbar-h:            66px;
+
+  /* Совместимость со старыми именами (для settings / import / login) */
+  --primary:    var(--accent);
+  --success:    var(--income);
+  --danger:     var(--dot-overdue);
+  --warning:    var(--dot-current-dz);
+  --bg:         var(--bg-canvas);
+  --card:       var(--bg-card);
+  --border:     var(--border-card);
+  --text:       var(--text-primary);
+  --muted:      var(--text-muted);
+}
+
+/* ── Утилиты ───────────────────────────────────────────────────── */
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* Скролл-бар — тонкий */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-card); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+
+/* Отступ под фиксированный навбар */
+.page-content {
+  padding-top: var(--navbar-h);
+  min-height: 100vh;
+}
