@@ -701,22 +701,24 @@ def _aging_bucket(due_date, today):
     return 'overdue'
 
 
-def _compute_receivables(db: Session):
-    """Дебиторская задолженность = операции со статусом 'ПЛАН ПОСТУПЛЕНИЙ' (income > 0),
-    сгруппированные по контрагенту, с разбивкой по статусу долга (просрочено/текущая задолженность/план)
-    относительно срока оплаты = период + отсрочка контрагента (по ИНН) + буфер GRACE_DAYS."""
+def _compute_debt_grouped(db: Session, status: str, amount_field: str, group_by: str):
+    """Общая логика дебиторки/кредиторки: операции со статусом `status` (где `amount_field` > 0),
+    сгруппированные либо по контрагенту (group_by='counterparty'), либо по статье (group_by='article'),
+    с разбивкой по статусу долга (просрочено/текущая задолженность/план) относительно срока оплаты =
+    период + отсрочка контрагента + буфер GRACE_DAYS. Срок отсрочки всегда берётся по контрагенту
+    операции независимо от того, по какому полю идёт группировка."""
     from app.models import Counterparty
     from datetime import date as date_cls
 
     today = date_cls.today()
 
-    ops = db.query(Operation).filter(Operation.status == 'ПЛАН ПОСТУПЛЕНИЙ')\
-        .filter(Operation.income > 0).all()
+    ops = db.query(Operation).filter(Operation.status == status)\
+        .filter(getattr(Operation, amount_field) > 0).all()
 
     counterparty_cache = {c.id: c for c in db.query(Counterparty).all()}
     article_cache = {a.id: a.name for a in db.query(Article).all()}
 
-    by_counterparty = {}
+    by_group = {}
     aging_summary = {
         'overdue': {'amount': 0, 'count': 0},
         'current': {'amount': 0, 'count': 0},
@@ -725,40 +727,48 @@ def _compute_receivables(db: Session):
     }
 
     for op in ops:
-        cid = op.counterparty_id
-        if cid not in by_counterparty:
-            cp = counterparty_cache.get(cid)
-            term_days = _term_days_for_counterparty(cp)
-            by_counterparty[cid] = {
-                'counterparty_id': cid,
-                'counterparty': cp.name if cp else '—',
-                'inn': cp.inn if cp else None,
-                'contract_number': cp.contract_number if cp else None,
-                'contract_date': cp.contract_date if cp else None,
-                'note': cp.note if cp else None,
-                'term_days': term_days,
-                'amount': 0,
-                'op_count': 0,
-                'aging': {'overdue': 0, 'current': 0, 'future': 0, 'unknown': 0},
-                'operations': [],
-            }
-        row = by_counterparty[cid]
-        term_days = row['term_days']
+        cp = counterparty_cache.get(op.counterparty_id)
+        term_days = _term_days_for_counterparty(cp)
         due_date = _due_date(op.period, term_days)
         bucket = _aging_bucket(due_date, today)
-        amount = op.income or 0
+        amount = getattr(op, amount_field) or 0
 
         aging_summary[bucket]['amount'] += amount
         aging_summary[bucket]['count'] += 1
 
+        key = op.counterparty_id if group_by == 'counterparty' else op.article_id
+        if key not in by_group:
+            if group_by == 'counterparty':
+                by_group[key] = {
+                    'counterparty_id': key,
+                    'counterparty': cp.name if cp else '—',
+                    'inn': cp.inn if cp else None,
+                    'contract_number': cp.contract_number if cp else None,
+                    'contract_date': cp.contract_date if cp else None,
+                    'note': cp.note if cp else None,
+                    'term_days': term_days,
+                    'amount': 0,
+                    'op_count': 0,
+                    'aging': {'overdue': 0, 'current': 0, 'future': 0, 'unknown': 0},
+                    'operations': [],
+                }
+            else:
+                by_group[key] = {
+                    'article_id': key,
+                    'article': article_cache.get(key, '—'),
+                    'amount': 0,
+                    'op_count': 0,
+                    'aging': {'overdue': 0, 'current': 0, 'future': 0, 'unknown': 0},
+                    'operations': [],
+                }
+
+        row = by_group[key]
         row['amount'] += amount
         row['op_count'] += 1
         row['aging'][bucket] += amount
-        row['operations'].append({
+        op_detail = {
             'id': op.id,
             'date': op.date,
-            'article': article_cache.get(op.article_id, '—'),
-            'article_id': op.article_id,
             'period': op.period,
             'amount': amount,
             'ds_num': op.ds_num,
@@ -766,9 +776,16 @@ def _compute_receivables(db: Session):
             'invoice_date': op.invoice_date,
             'due_date': due_date,
             'aging_bucket': bucket,
-        })
+        }
+        if group_by == 'counterparty':
+            op_detail['article'] = article_cache.get(op.article_id, '—')
+            op_detail['article_id'] = op.article_id
+        else:
+            op_detail['counterparty'] = cp.name if cp else '—'
+            op_detail['counterparty_id'] = op.counterparty_id
+        row['operations'].append(op_detail)
 
-    rows = list(by_counterparty.values())
+    rows = list(by_group.values())
     for r in rows:
         r['operations'].sort(key=lambda o: (o['date'] or date_cls.min, o['id']))
     rows.sort(key=lambda r: r['amount'], reverse=True)
@@ -779,12 +796,26 @@ def _compute_receivables(db: Session):
         'as_of': today,
         'summary': {
             'total_amount': total_amount,
-            'counterparty_count': len(rows),
+            'group_count': len(rows),
             'operation_count': len(ops),
         },
         'aging_summary': aging_summary,
         'rows': rows,
     }
+
+
+def _compute_receivables(db: Session):
+    """Дебиторская задолженность = 'ПЛАН ПОСТУПЛЕНИЙ' (income > 0), сгруппированная по контрагенту."""
+    data = _compute_debt_grouped(db, 'ПЛАН ПОСТУПЛЕНИЙ', 'income', 'counterparty')
+    data['summary']['counterparty_count'] = data['summary'].pop('group_count')
+    return data
+
+
+def _compute_payables(db: Session):
+    """Кредиторская задолженность = 'ПЛАН ОПЛАТ' (expense > 0), сгруппированная по статье."""
+    data = _compute_debt_grouped(db, 'ПЛАН ОПЛАТ', 'expense', 'article')
+    data['summary']['article_count'] = data['summary'].pop('group_count')
+    return data
 
 
 @router.get("/receivables")
@@ -793,6 +824,22 @@ def get_receivables(
     current_user: User = Depends(require_permission("receivables", "view"))
 ):
     return _compute_receivables(db)
+
+
+@router.get("/balance/receivables")
+def get_balance_receivables(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("balance", "view"))
+):
+    return _compute_receivables(db)
+
+
+@router.get("/balance/payables")
+def get_balance_payables(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("balance", "view"))
+):
+    return _compute_payables(db)
 
 
 class CounterpartyNoteUpdate(BaseModel):
