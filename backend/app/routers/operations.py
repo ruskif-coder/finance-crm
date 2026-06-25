@@ -7,7 +7,7 @@ from app.models import Operation, Article, Counterparty, User
 from app.routers.auth import get_current_user
 from app.audit import log_action
 from app.permissions import require_permission
-from app.routers.reports import _due_date, _aging_bucket, _term_days_for_inn
+from app.routers.reports import _due_date, _aging_bucket, _term_days_for_counterparty
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import date, datetime
@@ -29,8 +29,8 @@ router = APIRouter()
 IMPORT_SYNC_CACHE = {}
 
 # Статус дебиторки в списке операций — переиспользует ту же логику возраста долга
-# (срок оплаты = период + отсрочка контрагента по ИНН + буфер), что и /reports/receivables,
-# чтобы статус в /operations всегда совпадал с тем, что показывает отчёт по дебиторке.
+# (срок оплаты = период + отсрочка контрагента, редактируемая в реестре + буфер), что и
+# /reports/receivables, чтобы статус в /operations всегда совпадал с тем, что показывает отчёт по дебиторке.
 RECEIVABLE_STATUS_LABELS = {'overdue': 'Просрочка', 'current': 'Текущая', 'future': 'План'}
 
 def _receivable_status(op):
@@ -39,7 +39,7 @@ def _receivable_status(op):
     возвращают None, и колонка в /operations остаётся пустой."""
     if op.status != 'ПЛАН ПОСТУПЛЕНИЙ' or not op.income or op.income <= 0:
         return None
-    term_days = _term_days_for_inn(op.counterparty.inn if op.counterparty else None)
+    term_days = _term_days_for_counterparty(op.counterparty)
     due_date = _due_date(op.period, term_days)
     bucket = _aging_bucket(due_date, date.today())
     return bucket if bucket in RECEIVABLE_STATUS_LABELS else None

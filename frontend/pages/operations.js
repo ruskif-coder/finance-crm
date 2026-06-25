@@ -88,17 +88,17 @@ function MultiDropdown({ label, items, selected, onToggle, onClear, placeholder,
 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
-      <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '3px' }}>
+      <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '3px' }}>
         {label} {selected.length > 0 && <span style={{ color: '#2563eb' }}>({selected.length})</span>}
       </div>
-      <div onClick={() => setOpen(o => !o)} style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '13px', cursor: 'pointer', background: 'white', minWidth: '150px', userSelect: 'none', whiteSpace: 'nowrap' }}>
+      <div onClick={() => setOpen(o => !o)} style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '15px', cursor: 'pointer', background: 'white', minWidth: '150px', userSelect: 'none', whiteSpace: 'nowrap' }}>
         {selected.length === 0 ? `${placeholder} ▾` : `Выбрано: ${selected.length} ▾`}
       </div>
       {open && (
         <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', background: 'white', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', zIndex: 300, minWidth: '200px', maxHeight: '300px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '8px' }}>
             <input autoFocus placeholder="Поиск..." value={search} onChange={e => setSearch(e.target.value)}
-              style={{ width: '100%', padding: '5px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', fontSize: '12px', outline: 'none' }} />
+              style={{ width: '100%', padding: '5px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', fontSize: '14px', outline: 'none' }} />
           </div>
           <div style={{ overflowY: 'auto', flex: 1 }}>
             {filtered.map(item => {
@@ -107,11 +107,11 @@ function MultiDropdown({ label, items, selected, onToggle, onClear, placeholder,
               const active = selected.includes(id)
               return (
                 <div key={id} onClick={() => onToggle(id)}
-                  style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px', background: active ? '#eff6ff' : 'white' }}
+                  style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', background: active ? '#eff6ff' : 'white' }}
                   onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#f9fafb' }}
                   onMouseLeave={e => { e.currentTarget.style.background = active ? '#eff6ff' : 'white' }}>
                   <span style={{ width: '14px', height: '14px', borderRadius: '3px', border: `1px solid ${active ? '#2563eb' : '#d1d5db'}`, background: active ? '#2563eb' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    {active && <span style={{ color: 'white', fontSize: '10px', lineHeight: 1 }}>✓</span>}
+                    {active && <span style={{ color: 'white', fontSize: '12px', lineHeight: 1 }}>✓</span>}
                   </span>
                   {lbl}
                 </div>
@@ -119,7 +119,7 @@ function MultiDropdown({ label, items, selected, onToggle, onClear, placeholder,
             })}
           </div>
           {selected.length > 0 && (
-            <div onClick={() => { onClear(); setSearch('') }} style={{ padding: '8px 12px', borderTop: '1px solid #e5e7eb', fontSize: '12px', color: '#dc2626', cursor: 'pointer' }}>
+            <div onClick={() => { onClear(); setSearch('') }} style={{ padding: '8px 12px', borderTop: '1px solid #e5e7eb', fontSize: '14px', color: '#dc2626', cursor: 'pointer' }}>
               Сбросить выбор
             </div>
           )}
@@ -162,25 +162,25 @@ function CounterpartySearch({ counterparties, value, onChange, onCreateNew }) {
     <div ref={ref} style={{ position: 'relative' }}>
       <div
         onClick={() => { setOpen(o => !o); setSearch('') }}
-        style={{ width: '100%', padding: '7px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '13px', cursor: 'pointer', background: 'white', userSelect: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        style={{ width: '100%', padding: '7px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '15px', cursor: 'pointer', background: 'white', userSelect: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {selected ? selected.name : '— выберите или введите —'}
       </div>
       {open && (
         <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', background: 'white', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', zIndex: 500, maxHeight: '280px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '8px', borderBottom: '1px solid #f3f4f6' }}>
             <input autoFocus placeholder="Поиск контрагента..." value={search} onChange={e => setSearch(e.target.value)}
-              style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #e5e7eb', fontSize: '12px', outline: 'none' }} />
+              style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #e5e7eb', fontSize: '14px', outline: 'none' }} />
           </div>
           <div style={{ overflowY: 'auto', flex: 1 }}>
             <div onClick={() => { onChange(''); setOpen(false) }}
-              style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '12px', color: '#6b7280', borderBottom: '1px solid #f9fafb' }}
+              style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '14px', color: '#6b7280', borderBottom: '1px solid #f9fafb' }}
               onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
               onMouseLeave={e => e.currentTarget.style.background = 'white'}>
               — не указан —
             </div>
             {filtered.map(c => (
               <div key={c.id} onClick={() => { onChange(c.id); setOpen(false); setSearch('') }}
-                style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '12px', background: value === c.id ? '#eff6ff' : 'white' }}
+                style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '14px', background: value === c.id ? '#eff6ff' : 'white' }}
                 onMouseEnter={e => { if (value !== c.id) e.currentTarget.style.background = '#f9fafb' }}
                 onMouseLeave={e => { e.currentTarget.style.background = value === c.id ? '#eff6ff' : 'white' }}>
                 {c.name}
@@ -188,7 +188,7 @@ function CounterpartySearch({ counterparties, value, onChange, onCreateNew }) {
             ))}
             {search && !filtered.find(c => c.name.toLowerCase() === search.toLowerCase()) && (
               <div onClick={() => { setNewName(search); setCreating(true) }}
-                style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '12px', color: '#2563eb', borderTop: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', gap: '6px' }}
+                style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '14px', color: '#2563eb', borderTop: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', gap: '6px' }}
                 onMouseEnter={e => e.currentTarget.style.background = '#eff6ff'}
                 onMouseLeave={e => e.currentTarget.style.background = 'white'}>
                 + Создать «{search}»
@@ -198,9 +198,9 @@ function CounterpartySearch({ counterparties, value, onChange, onCreateNew }) {
           {creating && (
             <div style={{ padding: '8px', borderTop: '1px solid #e5e7eb', display: 'flex', gap: '6px' }}>
               <input value={newName} onChange={e => setNewName(e.target.value)}
-                style={{ flex: 1, padding: '5px 8px', borderRadius: '6px', border: '1px solid #2563eb', fontSize: '12px', outline: 'none' }} />
-              <button onClick={handleCreate} style={{ padding: '5px 10px', borderRadius: '6px', border: 'none', background: '#2563eb', color: 'white', fontSize: '12px', cursor: 'pointer' }}>Создать</button>
-              <button onClick={() => setCreating(false)} style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'white', fontSize: '12px', cursor: 'pointer' }}>✕</button>
+                style={{ flex: 1, padding: '5px 8px', borderRadius: '6px', border: '1px solid #2563eb', fontSize: '14px', outline: 'none' }} />
+              <button onClick={handleCreate} style={{ padding: '5px 10px', borderRadius: '6px', border: 'none', background: '#2563eb', color: 'white', fontSize: '14px', cursor: 'pointer' }}>Создать</button>
+              <button onClick={() => setCreating(false)} style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'white', fontSize: '14px', cursor: 'pointer' }}>✕</button>
             </div>
           )}
         </div>
@@ -474,8 +474,8 @@ export default function Operations() {
   }
 
   const totalPages = Math.ceil(total / pageSize)
-  const inp = { width: '100%', padding: '7px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '13px', outline: 'none' }
-  const lbl = { fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '3px' }
+  const inp = { width: '100%', padding: '7px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '15px', outline: 'none' }
+  const lbl = { fontSize: '13px', color: '#6b7280', display: 'block', marginBottom: '3px' }
   const thS = { textAlign: 'left', padding: '8px 10px', color: '#6b7280', fontWeight: '500', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', borderBottom: '2px solid #e5e7eb', background: '#f9fafb', position: 'sticky', top: 0, zIndex: 10 }
   const SortIcon = ({ col }) => sortCol !== col ? <span style={{ color: '#d1d5db', marginLeft: '4px' }}>↕</span> : <span style={{ color: '#2563eb', marginLeft: '4px' }}>{sortDir === 'asc' ? '↑' : '↓'}</span>
   const planMode = isPlan(form.status)
@@ -490,11 +490,11 @@ export default function Operations() {
   return (
     <div style={{ minHeight: '100vh', background: '#f5f6fa' }}>
       <Navbar active="operations">
-        <span style={{ fontSize: '12px', color: '#6b7280' }}>Строк:</span>
-        {PAGE_SIZE_OPTIONS.map(s => <button key={s} onClick={() => handlePageSize(s)} style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid #e5e7eb', cursor: 'pointer', background: pageSize === s ? '#2563eb' : 'white', color: pageSize === s ? 'white' : '#374151' }}>{s}</button>)}
-        {can(permissions, 'operations', 'create') && <button onClick={openNew} style={{ fontSize: '13px', padding: '6px 14px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', cursor: 'pointer', marginLeft: '8px' }}>+ Новая операция</button>}
-        {can(permissions, 'operations', 'create') && <button onClick={downloadTemplate} style={{ fontSize: '13px', padding: '6px 14px', borderRadius: '8px', border: '1px solid #2563eb', background: 'white', color: '#2563eb', cursor: 'pointer' }}>Шаблон</button>}
-        <button onClick={downloadExport} title="Скачать (с учётом текущих фильтров и сортировки)" style={{ fontSize: '15px', padding: '6px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'white', color: '#374151', cursor: 'pointer', lineHeight: 1 }}>⬇️</button>
+        <span style={{ fontSize: '14px', color: '#6b7280' }}>Строк:</span>
+        {PAGE_SIZE_OPTIONS.map(s => <button key={s} onClick={() => handlePageSize(s)} style={{ fontSize: '14px', padding: '4px 10px', borderRadius: '6px', border: '1px solid #e5e7eb', cursor: 'pointer', background: pageSize === s ? '#2563eb' : 'white', color: pageSize === s ? 'white' : '#374151' }}>{s}</button>)}
+        {can(permissions, 'operations', 'create') && <button onClick={openNew} style={{ fontSize: '15px', padding: '6px 14px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', cursor: 'pointer', marginLeft: '8px' }}>+ Новая операция</button>}
+        {can(permissions, 'operations', 'create') && <button onClick={downloadTemplate} style={{ fontSize: '15px', padding: '6px 14px', borderRadius: '8px', border: '1px solid #2563eb', background: 'white', color: '#2563eb', cursor: 'pointer' }}>Шаблон</button>}
+        <button onClick={downloadExport} title="Скачать (с учётом текущих фильтров и сортировки)" style={{ fontSize: '17px', padding: '6px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'white', color: '#374151', cursor: 'pointer', lineHeight: 1 }}>⬇️</button>
       </Navbar>
 
       <div style={{ padding: '16px 24px' }}>
@@ -503,7 +503,7 @@ export default function Operations() {
           <div style={{ background: 'white', borderRadius: '12px', padding: '20px', marginBottom: '16px', border: `2px solid ${editingId ? '#f59e0b' : '#2563eb'}` }}>
             <div style={{ fontWeight: '500', marginBottom: '14px', display: 'flex', justifyContent: 'space-between' }}>
               <span>{editingId ? '✏️ Редактирование #' + editingId : (copyOf ? `📋 Копия операции #${copyOf}` : '+ Новая операция')}</span>
-              <button onClick={() => { setShowForm(false); setEditingId(null); setCopyOf(null); setForm(emptyForm); setPeriodMode('month') }} style={{ fontSize: '18px', background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}>✕</button>
+              <button onClick={() => { setShowForm(false); setEditingId(null); setCopyOf(null); setForm(emptyForm); setPeriodMode('month') }} style={{ fontSize: '20px', background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}>✕</button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: '10px', marginBottom: '14px' }}>
               <div><label style={lbl}>Статус</label>
@@ -528,11 +528,11 @@ export default function Operations() {
                 <label style={lbl}>Период</label>
                 <div style={{ display: 'flex', gap: '3px', marginBottom: '4px' }}>
                   <button type="button" onClick={() => { setPeriodMode('month'); setForm({ ...form, period: '' }) }}
-                    style={{ flex: 1, padding: '3px 6px', fontSize: '11px', borderRadius: '6px', border: '1px solid #e5e7eb', cursor: 'pointer', background: periodMode === 'month' ? '#2563eb' : 'white', color: periodMode === 'month' ? 'white' : '#374151' }}>
+                    style={{ flex: 1, padding: '3px 6px', fontSize: '13px', borderRadius: '6px', border: '1px solid #e5e7eb', cursor: 'pointer', background: periodMode === 'month' ? '#2563eb' : 'white', color: periodMode === 'month' ? 'white' : '#374151' }}>
                     Месяц
                   </button>
                   <button type="button" onClick={() => { setPeriodMode('quarter'); setForm({ ...form, period: `Q1 ${new Date().getFullYear()}` }) }}
-                    style={{ flex: 1, padding: '3px 6px', fontSize: '11px', borderRadius: '6px', border: '1px solid #e5e7eb', cursor: 'pointer', background: periodMode === 'quarter' ? '#2563eb' : 'white', color: periodMode === 'quarter' ? 'white' : '#374151' }}>
+                    style={{ flex: 1, padding: '3px 6px', fontSize: '13px', borderRadius: '6px', border: '1px solid #e5e7eb', cursor: 'pointer', background: periodMode === 'quarter' ? '#2563eb' : 'white', color: periodMode === 'quarter' ? 'white' : '#374151' }}>
                     Квартал
                   </button>
                 </div>
@@ -576,8 +576,8 @@ export default function Operations() {
               <div style={{ gridColumn: 'span 2' }}><label style={lbl}>Описание</label><input type="text" style={inp} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={handleSubmit} style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: editingId ? '#f59e0b' : '#2563eb', color: 'white', cursor: 'pointer', fontSize: '13px' }}>{editingId ? 'Сохранить изменения' : 'Добавить операцию'}</button>
-              <button onClick={() => { setShowForm(false); setEditingId(null); setCopyOf(null); setForm(emptyForm); setPeriodMode('month') }} style={{ padding: '8px 20px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', fontSize: '13px' }}>Отмена</button>
+              <button onClick={handleSubmit} style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: editingId ? '#f59e0b' : '#2563eb', color: 'white', cursor: 'pointer', fontSize: '15px' }}>{editingId ? 'Сохранить изменения' : 'Добавить операцию'}</button>
+              <button onClick={() => { setShowForm(false); setEditingId(null); setCopyOf(null); setForm(emptyForm); setPeriodMode('month') }} style={{ padding: '8px 20px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', fontSize: '15px' }}>Отмена</button>
             </div>
           </div>
         )}
@@ -588,14 +588,14 @@ export default function Operations() {
           <MultiDropdown label="Статья" items={articles} selected={filterArticles} onToggle={v => tog(filterArticles, setFilterArticles, v)} onClear={() => { setFilterArticles([]); setPage(0) }} placeholder="Все статьи" getLabel={o => o.name} getId={o => o.id} />
           <MultiDropdown label="Контрагент" items={counterparties} selected={filterCounterparties} onToggle={v => tog(filterCounterparties, setFilterCounterparties, v)} onClear={() => { setFilterCounterparties([]); setPage(0) }} placeholder="Все контрагенты" getLabel={o => o.name} getId={o => o.id} />
           <MultiDropdown label="Период" items={periods} selected={filterPeriods} onToggle={v => tog(filterPeriods, setFilterPeriods, v)} onClear={() => { setFilterPeriods([]); setPage(0) }} placeholder="Все периоды" getLabel={o => o} getId={o => o} />
-          <div><div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '3px' }}>Дата с</div><input type="date" style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '13px' }} value={filterDateFrom} onChange={e => { setFilterDateFrom(e.target.value); setPage(0) }} /></div>
-          <div><div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '3px' }}>Дата по</div><input type="date" style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '13px' }} value={filterDateTo} onChange={e => { setFilterDateTo(e.target.value); setPage(0) }} /></div>
-          <button onClick={resetFilters} style={{ padding: '7px 14px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', fontSize: '12px', color: '#6b7280' }}>Сбросить всё</button>
+          <div><div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '3px' }}>Дата с</div><input type="date" style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '15px' }} value={filterDateFrom} onChange={e => { setFilterDateFrom(e.target.value); setPage(0) }} /></div>
+          <div><div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '3px' }}>Дата по</div><input type="date" style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '15px' }} value={filterDateTo} onChange={e => { setFilterDateTo(e.target.value); setPage(0) }} /></div>
+          <button onClick={resetFilters} style={{ padding: '7px 14px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', fontSize: '14px', color: '#6b7280' }}>Сбросить всё</button>
         </div>
 
         {(can(permissions, 'operations', 'edit') || can(permissions, 'operations', 'delete')) && selectedIds.length > 0 && (
           <div style={{ background: 'white', borderRadius: '12px', padding: '14px 20px', marginBottom: '12px', border: '2px solid #2563eb', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <div style={{ fontSize: '13px', fontWeight: '500', color: '#2563eb', marginRight: '4px', alignSelf: 'center' }}>Выбрано: {selectedIds.length}</div>
+            <div style={{ fontSize: '15px', fontWeight: '500', color: '#2563eb', marginRight: '4px', alignSelf: 'center' }}>Выбрано: {selectedIds.length}</div>
             {can(permissions, 'operations', 'edit') && (<>
             <div><label style={lbl}>Статус</label>
               <select style={inp} value={bulkStatus} onChange={e => setBulkStatus(e.target.value)}>
@@ -611,8 +611,8 @@ export default function Operations() {
             <div>
               <label style={lbl}>Период</label>
               <div style={{ display: 'flex', gap: '3px', marginBottom: '4px' }}>
-                <button type="button" onClick={() => { setBulkPeriodMode('month'); setBulkPeriod('') }} style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '6px', border: '1px solid ' + (bulkPeriodMode === 'month' ? '#2563eb' : '#e5e7eb'), background: bulkPeriodMode === 'month' ? '#eff6ff' : 'white', color: bulkPeriodMode === 'month' ? '#2563eb' : '#6b7280', cursor: 'pointer' }}>Месяц</button>
-                <button type="button" onClick={() => { setBulkPeriodMode('quarter'); setBulkPeriod(`Q1 ${new Date().getFullYear()}`) }} style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '6px', border: '1px solid ' + (bulkPeriodMode === 'quarter' ? '#2563eb' : '#e5e7eb'), background: bulkPeriodMode === 'quarter' ? '#eff6ff' : 'white', color: bulkPeriodMode === 'quarter' ? '#2563eb' : '#6b7280', cursor: 'pointer' }}>Квартал</button>
+                <button type="button" onClick={() => { setBulkPeriodMode('month'); setBulkPeriod('') }} style={{ fontSize: '13px', padding: '3px 8px', borderRadius: '6px', border: '1px solid ' + (bulkPeriodMode === 'month' ? '#2563eb' : '#e5e7eb'), background: bulkPeriodMode === 'month' ? '#eff6ff' : 'white', color: bulkPeriodMode === 'month' ? '#2563eb' : '#6b7280', cursor: 'pointer' }}>Месяц</button>
+                <button type="button" onClick={() => { setBulkPeriodMode('quarter'); setBulkPeriod(`Q1 ${new Date().getFullYear()}`) }} style={{ fontSize: '13px', padding: '3px 8px', borderRadius: '6px', border: '1px solid ' + (bulkPeriodMode === 'quarter' ? '#2563eb' : '#e5e7eb'), background: bulkPeriodMode === 'quarter' ? '#eff6ff' : 'white', color: bulkPeriodMode === 'quarter' ? '#2563eb' : '#6b7280', cursor: 'pointer' }}>Квартал</button>
               </div>
               {bulkPeriodMode === 'month' ? (
                 <input type="month" style={inp} value={bulkPeriod} onChange={e => setBulkPeriod(e.target.value)} />
@@ -651,29 +651,29 @@ export default function Operations() {
                 onCreateNew={createCounterparty}
               />
             </div>
-            <button onClick={handleBulkApply} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', cursor: 'pointer', fontSize: '13px' }}>Применить к {selectedIds.length}</button>
+            <button onClick={handleBulkApply} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', cursor: 'pointer', fontSize: '15px' }}>Применить к {selectedIds.length}</button>
             </>)}
             {can(permissions, 'operations', 'delete') && (
-              <button onClick={handleBulkDelete} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#dc2626', color: 'white', cursor: 'pointer', fontSize: '13px' }}>Удалить {selectedIds.length}</button>
+              <button onClick={handleBulkDelete} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#dc2626', color: 'white', cursor: 'pointer', fontSize: '15px' }}>Удалить {selectedIds.length}</button>
             )}
-            <button onClick={resetBulkFields} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', fontSize: '13px', color: '#6b7280' }}>Снять выделение</button>
+            <button onClick={resetBulkFields} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', fontSize: '15px', color: '#6b7280' }}>Снять выделение</button>
           </div>
         )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-          <div style={{ fontSize: '13px', color: '#6b7280' }}>Показано {Math.min(page * pageSize + 1, total)}–{Math.min((page + 1) * pageSize, total)} из {total} операций</div>
+          <div style={{ fontSize: '15px', color: '#6b7280' }}>Показано {Math.min(page * pageSize + 1, total)}–{Math.min((page + 1) * pageSize, total)} из {total} операций</div>
           <div style={{ display: 'flex', gap: '4px' }}>
-            <button onClick={() => setPage(0)} disabled={page === 0} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'white', cursor: page === 0 ? 'default' : 'pointer', fontSize: '12px', opacity: page === 0 ? 0.4 : 1 }}>«</button>
-            <button onClick={() => setPage(p => p - 1)} disabled={page === 0} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'white', cursor: page === 0 ? 'default' : 'pointer', fontSize: '12px', opacity: page === 0 ? 0.4 : 1 }}>‹</button>
-            <span style={{ padding: '4px 12px', fontSize: '12px', color: '#6b7280' }}>{page + 1} / {totalPages || 1}</span>
-            <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'white', cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: '12px', opacity: page >= totalPages - 1 ? 0.4 : 1 }}>›</button>
-            <button onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'white', cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: '12px', opacity: page >= totalPages - 1 ? 0.4 : 1 }}>»</button>
+            <button onClick={() => setPage(0)} disabled={page === 0} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'white', cursor: page === 0 ? 'default' : 'pointer', fontSize: '14px', opacity: page === 0 ? 0.4 : 1 }}>«</button>
+            <button onClick={() => setPage(p => p - 1)} disabled={page === 0} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'white', cursor: page === 0 ? 'default' : 'pointer', fontSize: '14px', opacity: page === 0 ? 0.4 : 1 }}>‹</button>
+            <span style={{ padding: '4px 12px', fontSize: '14px', color: '#6b7280' }}>{page + 1} / {totalPages || 1}</span>
+            <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'white', cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: '14px', opacity: page >= totalPages - 1 ? 0.4 : 1 }}>›</button>
+            <button onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'white', cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: '14px', opacity: page >= totalPages - 1 ? 0.4 : 1 }}>»</button>
           </div>
         </div>
 
         {loading ? <div style={{ textAlign: 'center', padding: '60px', color: '#6b7280' }}>Загрузка...</div> : (
           <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'auto', maxHeight: 'calc(100vh - 280px)' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
               <thead>
                 <tr>
                   {can(permissions, 'operations', 'edit') && (
@@ -714,7 +714,7 @@ export default function Operations() {
                       )}
                       <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{op.date || '—'}</td>
                       <td style={{ padding: '7px 10px' }}>
-                        <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap', background: STATUS_COLORS[op.status]?.bg || '#f3f4f6', color: STATUS_COLORS[op.status]?.color || '#6b7280' }}>
+                        <span style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap', background: STATUS_COLORS[op.status]?.bg || '#f3f4f6', color: STATUS_COLORS[op.status]?.color || '#6b7280' }}>
                           {op.status}
                         </span>
                       </td>
@@ -727,7 +727,7 @@ export default function Operations() {
                       <td style={{ padding: '7px 10px', color: '#dc2626', fontWeight: op.expense > 0 ? '500' : '400', whiteSpace: 'nowrap' }}>{op.expense > 0 ? fmt(op.expense) : '—'}</td>
                       <td style={{ padding: '7px 10px' }}>
                         {op.bank
-                          ? <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap', background: bankStyle.bg, color: bankStyle.color, border: `1px solid ${bankStyle.border}`, fontWeight: '500' }}>{op.bank}</span>
+                          ? <span style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap', background: bankStyle.bg, color: bankStyle.color, border: `1px solid ${bankStyle.border}`, fontWeight: '500' }}>{op.bank}</span>
                           : '—'}
                       </td>
                       <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{op.period || '—'}</td>
@@ -741,16 +741,16 @@ export default function Operations() {
                       <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
                         {op.document_link
                           ? <a href={op.document_link} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} title="Открыть документ"
-                              style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #93c5fd', background: '#eff6ff', color: '#2563eb', textDecoration: 'none', cursor: 'pointer', display: 'inline-block' }}>
+                              style={{ fontSize: '15px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #93c5fd', background: '#eff6ff', color: '#2563eb', textDecoration: 'none', cursor: 'pointer', display: 'inline-block' }}>
                               📄
                             </a>
                           : '—'}
                       </td>
                       <td style={{ padding: '7px 10px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={op.description}>{renderDescription(op.description)}</td>
                       <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
-                        {can(permissions, 'operations', 'create') && <button onClick={() => openCopy(op)} title="Скопировать" style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #c7d2fe', background: '#eef2ff', cursor: 'pointer', color: '#4338ca', marginRight: '4px' }}>📋</button>}
-                        {can(permissions, 'operations', 'edit') && <button onClick={() => openEdit(op)} style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fde68a', background: '#fffbeb', cursor: 'pointer', color: '#d97706', marginRight: '4px' }}>✏️</button>}
-                        {can(permissions, 'operations', 'delete') && <button onClick={() => handleDelete(op.id)} style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#dc2626' }}>✕</button>}
+                        {can(permissions, 'operations', 'create') && <button onClick={() => openCopy(op)} title="Скопировать" style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #c7d2fe', background: '#eef2ff', cursor: 'pointer', color: '#4338ca', marginRight: '4px' }}>📋</button>}
+                        {can(permissions, 'operations', 'edit') && <button onClick={() => openEdit(op)} style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fde68a', background: '#fffbeb', cursor: 'pointer', color: '#d97706', marginRight: '4px' }}>✏️</button>}
+                        {can(permissions, 'operations', 'delete') && <button onClick={() => handleDelete(op.id)} style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#dc2626' }}>✕</button>}
                         {!can(permissions, 'operations', 'create') && !can(permissions, 'operations', 'edit') && !can(permissions, 'operations', 'delete') && '—'}
                       </td>
                     </tr>
@@ -762,9 +762,9 @@ export default function Operations() {
         )}
 
         <div style={{ display: 'flex', justifyContent: 'center', gap: '4px', marginTop: '12px' }}>
-          <button onClick={() => setPage(p => p - 1)} disabled={page === 0} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'white', cursor: page === 0 ? 'default' : 'pointer', fontSize: '13px', opacity: page === 0 ? 0.4 : 1 }}>← Назад</button>
-          <span style={{ padding: '6px 16px', fontSize: '13px', color: '#6b7280' }}>{page + 1} из {totalPages || 1}</span>
-          <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'white', cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: '13px', opacity: page >= totalPages - 1 ? 0.4 : 1 }}>Вперёд →</button>
+          <button onClick={() => setPage(p => p - 1)} disabled={page === 0} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'white', cursor: page === 0 ? 'default' : 'pointer', fontSize: '15px', opacity: page === 0 ? 0.4 : 1 }}>← Назад</button>
+          <span style={{ padding: '6px 16px', fontSize: '15px', color: '#6b7280' }}>{page + 1} из {totalPages || 1}</span>
+          <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'white', cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: '15px', opacity: page >= totalPages - 1 ? 0.4 : 1 }}>Вперёд →</button>
         </div>
 
       </div>

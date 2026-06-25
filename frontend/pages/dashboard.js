@@ -138,9 +138,9 @@ export default function Dashboard() {
                     ]
                   })().map(m => (
                     <div key={m.label} style={{ background: 'var(--card)', borderRadius: '12px', padding: '14px 18px' }}>
-                      <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '4px' }}>{m.label}</div>
-                      <div style={{ fontSize: '18px', fontWeight: '600', color: m.color }}>{m.val}</div>
-                      {m.sub && <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>{m.sub}</div>}
+                      <div style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '4px' }}>{m.label}</div>
+                      <div style={{ fontSize: '20px', fontWeight: '600', color: m.color }}>{m.val}</div>
+                      {m.sub && <div style={{ fontSize: '13px', color: 'var(--muted)', marginTop: '4px' }}>{m.sub}</div>}
                     </div>
                   ))}
                 </div>
@@ -151,10 +151,10 @@ export default function Dashboard() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: '12px', marginBottom: '20px' }}>
                   {(ddsSummary.by_bank || []).map(b => (
                     <div key={b.bank} style={{ background: 'var(--card)', borderRadius: '12px', padding: '14px 18px', borderLeft: `4px solid ${BANK_COLORS[b.bank] || '#6b7280'}` }}>
-                      <div style={{ fontSize: '12px', fontWeight: '500', marginBottom: '6px' }}>{b.bank}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Поступило: {fmt(b.income)} ₽</div>
-                      <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Списано: {fmt(b.expense)} ₽</div>
-                      <div style={{ fontSize: '16px', fontWeight: '600', marginTop: '6px', color: b.balance >= 0 ? 'var(--success)' : 'var(--danger)' }}>{fmt(b.balance)} ₽</div>
+                      <div style={{ fontSize: '14px', fontWeight: '500', marginBottom: '6px' }}>{b.bank}</div>
+                      <div style={{ fontSize: '13px', color: 'var(--muted)' }}>Поступило: {fmt(b.income)} ₽</div>
+                      <div style={{ fontSize: '13px', color: 'var(--muted)' }}>Списано: {fmt(b.expense)} ₽</div>
+                      <div style={{ fontSize: '18px', fontWeight: '600', marginTop: '6px', color: b.balance >= 0 ? 'var(--success)' : 'var(--danger)' }}>{fmt(b.balance)} ₽</div>
                     </div>
                   ))}
                 </div>
@@ -163,32 +163,32 @@ export default function Dashboard() {
               {/* Фильтры */}
               <div style={{ background: 'var(--card)', borderRadius: '12px', padding: '16px 20px', marginBottom: '16px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
                 <div>
-                  <label style={{ fontSize: '11px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>С периода</label>
+                  <label style={{ fontSize: '13px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>С периода</label>
                   <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-                    style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px' }} />
+                    style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '15px' }} />
                 </div>
                 <div>
-                  <label style={{ fontSize: '11px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>По период</label>
+                  <label style={{ fontSize: '13px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>По период</label>
                   <input type="month" value={dateTo} onChange={e => setDateTo(e.target.value)}
-                    style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px' }} />
+                    style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '15px' }} />
                 </div>
                 <div>
-                  <label style={{ fontSize: '11px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>Банк</label>
+                  <label style={{ fontSize: '13px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>Банк</label>
                   <select value={selectedBank} onChange={e => setSelectedBank(e.target.value)}
-                    style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px' }}>
+                    style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '15px' }}>
                     <option value="all">Все банки</option>
                     {BANKS.map(b => <option key={b} value={b}>{b}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label style={{ fontSize: '11px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>Группировка</label>
+                  <label style={{ fontSize: '13px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>Группировка</label>
                   <div style={{ display: 'flex', gap: '4px' }}>
                     <button onClick={() => setGroupBy('period')}
-                      style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '13px', background: groupBy === 'period' ? 'var(--primary)' : 'var(--card)', color: groupBy === 'period' ? 'white' : 'var(--text)', border: '1px solid var(--border)' }}>
+                      style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '15px', background: groupBy === 'period' ? 'var(--primary)' : 'var(--card)', color: groupBy === 'period' ? 'white' : 'var(--text)', border: '1px solid var(--border)' }}>
                       По периоду
                     </button>
                     <button onClick={() => setGroupBy('date')}
-                      style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '13px', background: groupBy === 'date' ? 'var(--primary)' : 'var(--card)', color: groupBy === 'date' ? 'white' : 'var(--text)', border: '1px solid var(--border)' }}>
+                      style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '15px', background: groupBy === 'date' ? 'var(--primary)' : 'var(--card)', color: groupBy === 'date' ? 'white' : 'var(--text)', border: '1px solid var(--border)' }}>
                       По дате
                     </button>
                   </div>
@@ -200,8 +200,8 @@ export default function Dashboard() {
                 <div style={{ fontWeight: '500', marginBottom: '16px' }}>Движение денег по месяцам</div>
                 <ResponsiveContainer width="100%" height={280}>
                   <BarChart data={ddsChart}>
-                    <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 11 }} tickFormatter={v => (v / 1000000).toFixed(0) + 'M'} />
+                    <XAxis dataKey="period" tick={{ fontSize: 13 }} />
+                    <YAxis tick={{ fontSize: 13 }} tickFormatter={v => (v / 1000000).toFixed(0) + 'M'} />
                     <Tooltip formatter={v => fmt(v) + ' ₽'} />
                     <Legend />
                     <Bar dataKey="Поступления" fill="#16a34a" radius={[4, 4, 0, 0]} />
@@ -215,8 +215,8 @@ export default function Dashboard() {
                 <div style={{ fontWeight: '500', marginBottom: '16px' }}>Накопительный остаток</div>
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={ddsChart}>
-                    <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 11 }} tickFormatter={v => (v / 1000000).toFixed(0) + 'M'} />
+                    <XAxis dataKey="period" tick={{ fontSize: 13 }} />
+                    <YAxis tick={{ fontSize: 13 }} tickFormatter={v => (v / 1000000).toFixed(0) + 'M'} />
                     <Tooltip formatter={v => fmt(v) + ' ₽'} />
                     <Line type="monotone" dataKey="Остаток" stroke="var(--primary)" strokeWidth={2} dot={false} />
                   </LineChart>
@@ -226,7 +226,7 @@ export default function Dashboard() {
               {/* Таблица по месяцам */}
               <div style={{ background: 'var(--card)', borderRadius: '12px', padding: '20px' }}>
                 <div style={{ fontWeight: '500', marginBottom: '16px' }}>Детализация по месяцам</div>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '15px' }}>
                   <thead>
                     <tr style={{ borderBottom: '2px solid var(--border)' }}>
                       {['Период', 'Поступления', 'Списания', 'Чистый поток', 'Накопит. остаток', ''].map(h => (
@@ -247,17 +247,17 @@ export default function Dashboard() {
                             {row.net >= 0 ? '+' : ''}{fmt(row.net)} ₽
                           </td>
                           <td style={{ padding: '10px', color: 'var(--primary)', fontWeight: '500' }}>{fmt(row.cumulative)} ₽</td>
-                          <td style={{ padding: '10px', color: 'var(--muted)', fontSize: '11px' }}>{expandedPeriod === row.period ? '▲' : '▼'}</td>
+                          <td style={{ padding: '10px', color: 'var(--muted)', fontSize: '13px' }}>{expandedPeriod === row.period ? '▲' : '▼'}</td>
                         </tr>
                         {expandedPeriod === row.period && Object.entries(row.by_bank || {}).map(([bank, data]) => (
                           <tr key={bank} style={{ borderBottom: '1px solid var(--border)', background: '#f8fafc' }}>
-                            <td style={{ padding: '6px 10px 6px 24px', color: 'var(--muted)', fontSize: '12px' }}>
+                            <td style={{ padding: '6px 10px 6px 24px', color: 'var(--muted)', fontSize: '14px' }}>
                               <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: BANK_COLORS[bank] || '#6b7280', marginRight: '6px' }}></span>
                               {bank}
                             </td>
-                            <td style={{ padding: '6px 10px', color: 'var(--success)', fontSize: '12px' }}>{fmt(data.income)} ₽</td>
-                            <td style={{ padding: '6px 10px', color: 'var(--danger)', fontSize: '12px' }}>{fmt(data.expense)} ₽</td>
-                            <td style={{ padding: '6px 10px', color: data.net >= 0 ? 'var(--success)' : 'var(--danger)', fontSize: '12px' }}>
+                            <td style={{ padding: '6px 10px', color: 'var(--success)', fontSize: '14px' }}>{fmt(data.income)} ₽</td>
+                            <td style={{ padding: '6px 10px', color: 'var(--danger)', fontSize: '14px' }}>{fmt(data.expense)} ₽</td>
+                            <td style={{ padding: '6px 10px', color: data.net >= 0 ? 'var(--success)' : 'var(--danger)', fontSize: '14px' }}>
                               {data.net >= 0 ? '+' : ''}{fmt(data.net)} ₽
                             </td>
                             <td colSpan={2}></td>

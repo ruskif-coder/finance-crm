@@ -6,6 +6,7 @@ from app.models import Counterparty, Operation, Article, User
 from app.routers.auth import get_current_user
 from app.permissions import require_permission
 from app.audit import log_action
+from app.routers.reports import DEFAULT_TERM_DAYS
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import date
@@ -24,6 +25,7 @@ class CounterpartyRegistryUpdate(BaseModel):
     status: str
     contract_number: Optional[str] = None
     contract_date: Optional[date] = None
+    term_days: Optional[int] = None
 
 class CounterpartyBulkUpdate(BaseModel):
     ids: List[int]
@@ -115,6 +117,7 @@ def get_counterparties_registry(
             Counterparty.group_override,
             Counterparty.contract_number,
             Counterparty.contract_date,
+            Counterparty.term_days,
             func.count(Operation.id).label("op_count"),
             # Поступления/выплаты по факту (статус "ОПЛАЧЕНО")
             func.coalesce(func.sum(case((Operation.status == 'ОПЛАЧЕНО', Operation.income), else_=0)), 0).label("income_paid"),
@@ -129,7 +132,7 @@ def get_counterparties_registry(
         )
         .outerjoin(Operation, Operation.counterparty_id == Counterparty.id)
         .group_by(Counterparty.id, Counterparty.name, Counterparty.inn, Counterparty.status, Counterparty.group_override,
-                  Counterparty.contract_number, Counterparty.contract_date)
+                  Counterparty.contract_number, Counterparty.contract_date, Counterparty.term_days)
         .order_by(Counterparty.name)
         .all()
     )
@@ -170,6 +173,9 @@ def get_counterparties_registry(
                 "inn": r.inn,
                 "contract_number": r.contract_number,
                 "contract_date": r.contract_date.isoformat() if r.contract_date else None,
+                "term_days": r.term_days,
+                "term_days_effective": r.term_days if r.term_days is not None else DEFAULT_TERM_DAYS,
+                "term_days_is_default": r.term_days is None,
                 "status": r.status,
                 "relation": classify(r.total_income_all, r.total_expense_all),
                 "group": r.group_override or top_article.get(r.id, (None, 0))[0],
@@ -243,6 +249,8 @@ def update_counterparty_registry(
         raise HTTPException(status_code=400, detail="Название не может быть пустым")
     if data.status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail="Статус должен быть «действующий» или «виртуальный»")
+    if data.term_days is not None and data.term_days < 0:
+        raise HTTPException(status_code=400, detail="Отсрочка не может быть отрицательной")
 
     if name != counterparty.name:
         dup = db.query(Counterparty).filter(Counterparty.name == name, Counterparty.id != counterparty_id).first()
@@ -264,12 +272,15 @@ def update_counterparty_registry(
         changes.append(f"№ договора: {counterparty.contract_number or '—'} → {data.contract_number or '—'}")
     if data.contract_date != counterparty.contract_date:
         changes.append(f"дата договора: {counterparty.contract_date or '—'} → {data.contract_date or '—'}")
+    if data.term_days != counterparty.term_days:
+        changes.append(f"отсрочка: {counterparty.term_days if counterparty.term_days is not None else f'{DEFAULT_TERM_DAYS} (по умолч.)'} → {data.term_days if data.term_days is not None else f'{DEFAULT_TERM_DAYS} (по умолч.)'}")
 
     counterparty.name = name
     counterparty.inn = new_inn
     counterparty.status = data.status
     counterparty.contract_number = (data.contract_number or "").strip() or None
     counterparty.contract_date = data.contract_date
+    counterparty.term_days = data.term_days
     db.commit()
 
     if changes:

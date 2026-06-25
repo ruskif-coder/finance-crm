@@ -658,18 +658,18 @@ def _period_bounds(period):
 
 
 GRACE_DAYS = 30          # буфер после срока оплаты, в течение которого долг считается "текущим", а не просроченным
-DEFAULT_TERM_DAYS = 60   # стандартный срок отсрочки, пока нет данных по факт. срокам из договоров
-TERM_OVERRIDES_BY_INN = {
-    '7701906766': 90,
-    '7731276913': 120,
-}
+DEFAULT_TERM_DAYS = 60   # стандартный срок отсрочки для контрагентов без явно заданного term_days
+# Раньше отсрочка для двух контрагентов была захардкожена здесь по ИНН (90/120 дн.) — теперь это
+# редактируемое поле Counterparty.term_days в реестре контрагентов (/settings → Контрагенты).
+# Значения 90/120 были перенесены в БД миграцией migrate_add_term_days.sql.
 
 
-def _term_days_for_inn(inn):
-    """Срок отсрочки в днях для контрагента. Договорных данных о фактических сроках пока нет —
-    используется стандартный срок (DEFAULT_TERM_DAYS), кроме явных исключений по ИНН."""
-    key = (inn or '').strip()
-    return TERM_OVERRIDES_BY_INN.get(key, DEFAULT_TERM_DAYS)
+def _term_days_for_counterparty(cp):
+    """Срок отсрочки в днях для контрагента: явное значение term_days из реестра контрагентов,
+    либо стандартный срок (DEFAULT_TERM_DAYS), если оно не задано."""
+    if cp is not None and cp.term_days is not None:
+        return cp.term_days
+    return DEFAULT_TERM_DAYS
 
 
 def _due_date(period, term_days):
@@ -724,7 +724,7 @@ def _compute_receivables(db: Session):
         cid = op.counterparty_id
         if cid not in by_counterparty:
             cp = counterparty_cache.get(cid)
-            term_days = _term_days_for_inn(cp.inn if cp else None)
+            term_days = _term_days_for_counterparty(cp)
             by_counterparty[cid] = {
                 'counterparty_id': cid,
                 'counterparty': cp.name if cp else '—',

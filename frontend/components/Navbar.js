@@ -32,11 +32,11 @@ export default function Navbar({ active, children }) {
           <img src="/logo.png" alt="Логотип" style={{ height: '26px', width: 'auto' }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '13px', color: '#6b7280', marginRight: '4px' }}>{name}</span>
-          {can(permissions, 'operations') && <button onClick={() => router.push('/operations')} style={{ fontSize: '13px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#374151' }}>Операции</button>}
-          {can(permissions, 'import') && <button onClick={() => router.push('/import')} style={{ fontSize: '13px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #2563eb', background: 'transparent', cursor: 'pointer', color: '#2563eb' }}>Импорт</button>}
-          {can(permissions, 'settings_balances') && <button onClick={() => router.push('/settings')} style={{ fontSize: '13px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#374151' }}>⚙️ Настройки</button>}
-          <button onClick={logout} style={{ fontSize: '13px', padding: '5px 12px', borderRadius: '7px', border: 'none', background: '#dc2626', color: 'white', cursor: 'pointer' }}>Выйти</button>
+          <span style={{ fontSize: '15px', color: '#6b7280', marginRight: '4px' }}>{name}</span>
+          {can(permissions, 'operations') && <button onClick={() => router.push('/operations')} style={{ fontSize: '15px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#374151' }}>Операции</button>}
+          {can(permissions, 'import') && <button onClick={() => router.push('/import')} style={{ fontSize: '15px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #2563eb', background: 'transparent', cursor: 'pointer', color: '#2563eb' }}>Импорт</button>}
+          {can(permissions, 'settings_balances') && <button onClick={() => router.push('/settings')} style={{ fontSize: '15px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#374151' }}>⚙️ Настройки</button>}
+          <button onClick={logout} style={{ fontSize: '15px', padding: '5px 12px', borderRadius: '7px', border: 'none', background: '#dc2626', color: 'white', cursor: 'pointer' }}>Выйти</button>
         </div>
       </div>
 
@@ -47,7 +47,7 @@ export default function Navbar({ active, children }) {
             <button key={item.id} onClick={() => router.push(item.href)}
               style={{
                 padding: '6px 18px', borderRadius: '7px', border: 'none', cursor: 'pointer',
-                fontWeight: active === item.id ? '600' : '400', fontSize: '14px',
+                fontWeight: active === item.id ? '600' : '400', fontSize: '16px',
                 background: active === item.id ? '#2563eb' : 'transparent',
                 color: active === item.id ? 'white' : '#374151',
               }}>

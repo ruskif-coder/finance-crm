@@ -34,39 +34,39 @@ export default function Login() {
   return (
     <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'var(--bg)'}}>
       <div style={{background:'var(--card)',padding:'40px',borderRadius:'16px',width:'380px',boxShadow:'0 4px 24px rgba(0,0,0,0.08)'}}>
-        <h1 style={{fontSize:'22px',fontWeight:'600',marginBottom:'8px'}}>Финансовый учёт</h1>
-        <p style={{color:'var(--muted)',fontSize:'14px',marginBottom:'28px'}}>Войдите в систему</p>
+        <h1 style={{fontSize:'24px',fontWeight:'600',marginBottom:'8px'}}>Финансовый учёт</h1>
+        <p style={{color:'var(--muted)',fontSize:'16px',marginBottom:'28px'}}>Войдите в систему</p>
 
         <div style={{marginBottom:'16px'}}>
-          <label style={{fontSize:'13px',color:'var(--muted)',display:'block',marginBottom:'6px'}}>Email</label>
+          <label style={{fontSize:'15px',color:'var(--muted)',display:'block',marginBottom:'6px'}}>Email</label>
           <input
             type="email"
             value={email}
             onChange={e => setEmail(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleLogin()}
-            style={{width:'100%',padding:'10px 14px',borderRadius:'8px',border:'1px solid var(--border)',fontSize:'14px',outline:'none'}}
+            style={{width:'100%',padding:'10px 14px',borderRadius:'8px',border:'1px solid var(--border)',fontSize:'16px',outline:'none'}}
             placeholder="admin@company.ru"
           />
         </div>
 
         <div style={{marginBottom:'24px'}}>
-          <label style={{fontSize:'13px',color:'var(--muted)',display:'block',marginBottom:'6px'}}>Пароль</label>
+          <label style={{fontSize:'15px',color:'var(--muted)',display:'block',marginBottom:'6px'}}>Пароль</label>
           <input
             type="password"
             value={password}
             onChange={e => setPassword(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleLogin()}
-            style={{width:'100%',padding:'10px 14px',borderRadius:'8px',border:'1px solid var(--border)',fontSize:'14px',outline:'none'}}
+            style={{width:'100%',padding:'10px 14px',borderRadius:'8px',border:'1px solid var(--border)',fontSize:'16px',outline:'none'}}
             placeholder="••••••••"
           />
         </div>
 
-        {error && <p style={{color:'var(--danger)',fontSize:'13px',marginBottom:'16px'}}>{error}</p>}
+        {error && <p style={{color:'var(--danger)',fontSize:'15px',marginBottom:'16px'}}>{error}</p>}
 
         <button
           onClick={handleLogin}
           disabled={loading}
-          style={{width:'100%',padding:'12px',background:'var(--primary)',color:'white',border:'none',borderRadius:'8px',fontSize:'14px',fontWeight:'500',cursor:'pointer'}}
+          style={{width:'100%',padding:'12px',background:'var(--primary)',color:'white',border:'none',borderRadius:'8px',fontSize:'16px',fontWeight:'500',cursor:'pointer'}}
         >
           {loading ? 'Вход...' : 'Войти'}
         </button>

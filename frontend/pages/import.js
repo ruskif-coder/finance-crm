@@ -52,20 +52,20 @@ const SYNC_TABLE_COLUMNS = [
   { key: 'document_link', label: 'Документ' },
 ]
 
-const syncThS = { textAlign:'left', padding:'6px 8px', color:'#6b7280', fontWeight:'500', whiteSpace:'nowrap', borderBottom:'2px solid #e5e7eb', background:'#f9fafb', position:'sticky', top:0, fontSize:'11px' }
-const syncTdS = { padding:'6px 8px', whiteSpace:'nowrap', fontSize:'12px' }
+const syncThS = { textAlign:'left', padding:'6px 8px', color:'#6b7280', fontWeight:'500', whiteSpace:'nowrap', borderBottom:'2px solid #e5e7eb', background:'#f9fafb', position:'sticky', top:0, fontSize:'13px' }
+const syncTdS = { padding:'6px 8px', whiteSpace:'nowrap', fontSize:'14px' }
 
 function SyncCell({ col, data, highlight }) {
   const v = data ? data[col.key] : null
   const hl = highlight ? { fontWeight: '700' } : {}
   if (col.key === 'status') {
     const s = STATUS_COLORS[v] || { bg: '#f3f4f6', color: '#6b7280' }
-    return v ? <span style={{ fontSize:'11px', padding:'2px 8px', borderRadius:'20px', whiteSpace:'nowrap', background:s.bg, color:s.color, ...hl }}>{v}</span> : '—'
+    return v ? <span style={{ fontSize:'13px', padding:'2px 8px', borderRadius:'20px', whiteSpace:'nowrap', background:s.bg, color:s.color, ...hl }}>{v}</span> : '—'
   }
   if (col.key === 'bank') {
     if (!v) return '—'
     const s = BANK_STYLES[v] || { bg:'#f3f4f6', color:'#6b7280', border:'#d1d5db' }
-    return <span style={{ fontSize:'11px', padding:'2px 8px', borderRadius:'20px', whiteSpace:'nowrap', background:s.bg, color:s.color, border:`1px solid ${s.border}`, fontWeight:'500' }}>{v}</span>
+    return <span style={{ fontSize:'13px', padding:'2px 8px', borderRadius:'20px', whiteSpace:'nowrap', background:s.bg, color:s.color, border:`1px solid ${s.border}`, fontWeight:'500' }}>{v}</span>
   }
   if (col.key === 'income') return v > 0 ? <span style={{ color:'#16a34a', ...hl }}>{fmt(v)}</span> : '—'
   if (col.key === 'expense') return v > 0 ? <span style={{ color:'#dc2626', ...hl }}>{fmt(v)}</span> : '—'
@@ -177,15 +177,15 @@ export default function Import() {
   return (
     <div style={{minHeight:'100vh',background:'var(--bg)'}}>
       <div style={{background:'var(--card)',borderBottom:'1px solid var(--border)',padding:'0 32px',display:'flex',alignItems:'center',justifyContent:'space-between',height:'56px'}}>
-        <div style={{fontWeight:'600',fontSize:'16px'}}>Импорт данных</div>
-        <button onClick={() => router.push('/dashboard')} style={{fontSize:'13px',padding:'6px 14px',borderRadius:'8px',border:'1px solid var(--border)',background:'transparent',cursor:'pointer'}}>← Дашборд</button>
+        <div style={{fontWeight:'600',fontSize:'18px'}}>Импорт данных</div>
+        <button onClick={() => router.push('/dashboard')} style={{fontSize:'15px',padding:'6px 14px',borderRadius:'8px',border:'1px solid var(--border)',background:'transparent',cursor:'pointer'}}>← Дашборд</button>
       </div>
 
       <div style={{padding:'24px 32px'}}>
         <div style={{maxWidth:'600px'}}>
         <div style={{background:'var(--card)',borderRadius:'12px',padding:'24px'}}>
           <div style={{fontWeight:'500',marginBottom:'8px'}}>Импорт из Excel</div>
-          <div style={{fontSize:'13px',color:'var(--muted)',marginBottom:'24px'}}>
+          <div style={{fontSize:'15px',color:'var(--muted)',marginBottom:'24px'}}>
             Загрузи файл Excel с листом "CF BEST". Система автоматически создаст статьи, контрагентов и загрузит все операции.
           </div>
 
@@ -198,11 +198,11 @@ export default function Import() {
               id="fileInput"
             />
             <label htmlFor="fileInput" style={{cursor:'pointer'}}>
-              <div style={{fontSize:'32px',marginBottom:'8px'}}>📂</div>
-              <div style={{fontSize:'14px',fontWeight:'500',marginBottom:'4px'}}>
+              <div style={{fontSize:'34px',marginBottom:'8px'}}>📂</div>
+              <div style={{fontSize:'16px',fontWeight:'500',marginBottom:'4px'}}>
                 {file ? file.name : 'Нажми чтобы выбрать файл'}
               </div>
-              <div style={{fontSize:'12px',color:'var(--muted)'}}>xlsx, xls</div>
+              <div style={{fontSize:'14px',color:'var(--muted)'}}>xlsx, xls</div>
             </label>
           </div>
 
@@ -213,18 +213,18 @@ export default function Import() {
               background: loading || !file ? 'var(--border)' : 'var(--primary)',
               color: loading || !file ? 'var(--muted)' : 'white',
               cursor: loading || !file ? 'default' : 'pointer',
-              fontSize:'14px',fontWeight:'500'}}
+              fontSize:'16px',fontWeight:'500'}}
           >
             {loading ? 'Импортируем...' : 'Загрузить'}
           </button>
 
           {result && (
-            <div style={{marginTop:'16px',padding:'12px 16px',borderRadius:'8px',background:'#dcfce7',color:'var(--success)',fontSize:'13px'}}>
+            <div style={{marginTop:'16px',padding:'12px 16px',borderRadius:'8px',background:'#dcfce7',color:'var(--success)',fontSize:'15px'}}>
               ✓ {result}
             </div>
           )}
           {error && (
-            <div style={{marginTop:'16px',padding:'12px 16px',borderRadius:'8px',background:'#fee2e2',color:'var(--danger)',fontSize:'13px'}}>
+            <div style={{marginTop:'16px',padding:'12px 16px',borderRadius:'8px',background:'#fee2e2',color:'var(--danger)',fontSize:'15px'}}>
               ✗ {error}
             </div>
           )}
@@ -239,7 +239,7 @@ export default function Import() {
             'Загружаются все операции с января 2025',
             'При повторном импорте создаются дубликаты — для повторной загрузки используй блок «Синхронизация» ниже',
           ].map((s,i) => (
-            <div key={i} style={{display:'flex',gap:'8px',padding:'6px 0',fontSize:'13px',color:'var(--muted)'}}>
+            <div key={i} style={{display:'flex',gap:'8px',padding:'6px 0',fontSize:'15px',color:'var(--muted)'}}>
               <span style={{color:'var(--success)'}}>✓</span>{s}
             </div>
           ))}
@@ -249,7 +249,7 @@ export default function Import() {
         <div style={{background:'var(--card)',borderRadius:'12px',padding:'24px',marginTop:'16px'}}>
           <div style={{fontWeight:'500',marginBottom:'8px'}}>Синхронизация (с проверкой)</div>
           <div style={{maxWidth:'600px'}}>
-          <div style={{fontSize:'13px',color:'var(--muted)',marginBottom:'24px'}}>
+          <div style={{fontSize:'15px',color:'var(--muted)',marginBottom:'24px'}}>
             Временное решение на время, пока система не переехала на сервер: загрузи актуальный файл из Google Таблицы —
             система сама найдёт совпадения по № ДС + № Счёта, покажет что изменилось, и обновит только то, что ты подтвердишь.
             Новые строки добавляются автоматически, неизменные пропускаются.
@@ -264,11 +264,11 @@ export default function Import() {
               id="syncFileInput"
             />
             <label htmlFor="syncFileInput" style={{cursor:'pointer'}}>
-              <div style={{fontSize:'32px',marginBottom:'8px'}}>🔄</div>
-              <div style={{fontSize:'14px',fontWeight:'500',marginBottom:'4px'}}>
+              <div style={{fontSize:'34px',marginBottom:'8px'}}>🔄</div>
+              <div style={{fontSize:'16px',fontWeight:'500',marginBottom:'4px'}}>
                 {syncFile ? syncFile.name : 'Нажми чтобы выбрать файл'}
               </div>
-              <div style={{fontSize:'12px',color:'var(--muted)'}}>xlsx, xls</div>
+              <div style={{fontSize:'14px',color:'var(--muted)'}}>xlsx, xls</div>
             </label>
           </div>
 
@@ -279,13 +279,13 @@ export default function Import() {
               background: syncLoading || !syncFile ? 'var(--border)' : 'var(--primary)',
               color: syncLoading || !syncFile ? 'var(--muted)' : 'white',
               cursor: syncLoading || !syncFile ? 'default' : 'pointer',
-              fontSize:'14px',fontWeight:'500'}}
+              fontSize:'16px',fontWeight:'500'}}
           >
             {syncLoading ? 'Проверяем...' : 'Проверить'}
           </button>
 
           {syncError && (
-            <div style={{marginTop:'16px',padding:'12px 16px',borderRadius:'8px',background:'#fee2e2',color:'var(--danger)',fontSize:'13px'}}>
+            <div style={{marginTop:'16px',padding:'12px 16px',borderRadius:'8px',background:'#fee2e2',color:'var(--danger)',fontSize:'15px'}}>
               ✗ {syncError}
             </div>
           )}
@@ -293,7 +293,7 @@ export default function Import() {
 
           {preview && (
             <div style={{marginTop:'20px'}}>
-              <div style={{display:'flex',gap:'12px',marginBottom:'16px',fontSize:'13px',flexWrap:'wrap'}}>
+              <div style={{display:'flex',gap:'12px',marginBottom:'16px',fontSize:'15px',flexWrap:'wrap'}}>
                 <div style={{padding:'8px 12px',borderRadius:'8px',background:'#dcfce7',color:'var(--success)'}}>Новых: {preview.summary.new}</div>
                 <div style={{padding:'8px 12px',borderRadius:'8px',background:'#fef9c3',color:'#854d0e'}}>Конфликтов: {preview.summary.conflict}</div>
                 <div style={{padding:'8px 12px',borderRadius:'8px',background:'var(--bg)',color:'var(--muted)'}}>Без изменений: {preview.summary.unchanged}</div>
@@ -302,11 +302,11 @@ export default function Import() {
               {preview.conflicts.length > 0 && (
                 <div style={{marginBottom:'24px'}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
-                    <div style={{fontWeight:'500',fontSize:'13px'}}>
+                    <div style={{fontWeight:'500',fontSize:'15px'}}>
                       Конфликты — отметь строки для перезаписи (
                       <span style={{color:'#dc2626',fontWeight:'700'}}>было</span> / <span style={{color:'#16a34a',fontWeight:'700'}}>станет</span>, изменившиеся поля выделены жирным)
                     </div>
-                    <label style={{fontSize:'12px',color:'var(--muted)',cursor:'pointer',display:'flex',alignItems:'center',gap:'4px'}}>
+                    <label style={{fontSize:'14px',color:'var(--muted)',cursor:'pointer',display:'flex',alignItems:'center',gap:'4px'}}>
                       <input type="checkbox" onChange={e => toggleAll(e.target.checked)} /> Выбрать все
                     </label>
                   </div>
@@ -325,7 +325,7 @@ export default function Import() {
                             <td rowSpan={2} style={{...syncTdS,textAlign:'center',verticalAlign:'middle'}}>
                               <input type="checkbox" checked={!!checkedKeys[c.key]} onChange={() => toggleKey(c.key)} />
                             </td>
-                            <td style={{...syncTdS,fontSize:'11px',fontWeight:'700',color:'#dc2626'}}>было</td>
+                            <td style={{...syncTdS,fontSize:'13px',fontWeight:'700',color:'#dc2626'}}>было</td>
                             {SYNC_TABLE_COLUMNS.map(col => (
                               <td key={col.key} style={syncTdS}>
                                 <SyncCell
@@ -337,7 +337,7 @@ export default function Import() {
                             ))}
                           </tr>,
                           <tr key={c.key + '-new'} style={{background:'#f0fdf4',borderBottom:'2px solid var(--border)'}}>
-                            <td style={{...syncTdS,fontSize:'11px',fontWeight:'700',color:'#16a34a'}}>станет</td>
+                            <td style={{...syncTdS,fontSize:'13px',fontWeight:'700',color:'#16a34a'}}>станет</td>
                             {SYNC_TABLE_COLUMNS.map(col => (
                               <td key={col.key} style={syncTdS}>
                                 <SyncCell col={col} data={c.incoming} highlight={c.diff_fields.includes(col.key)} />
@@ -353,7 +353,7 @@ export default function Import() {
 
               {preview.new_rows.length > 0 && (
                 <div style={{marginBottom:'8px'}}>
-                  <div style={{fontWeight:'500',fontSize:'13px',marginBottom:'8px'}}>
+                  <div style={{fontWeight:'500',fontSize:'15px',marginBottom:'8px'}}>
                     Новые операции ({preview.new_rows.length}) — добавятся автоматически
                   </div>
                   <div style={{maxHeight:'400px',overflow:'auto',border:'1px solid var(--border)',borderRadius:'8px'}}>
@@ -385,7 +385,7 @@ export default function Import() {
                   background: applyLoading ? 'var(--border)' : 'var(--primary)',
                   color: applyLoading ? 'var(--muted)' : 'white',
                   cursor: applyLoading ? 'default' : 'pointer',
-                  fontSize:'14px',fontWeight:'500'}}
+                  fontSize:'16px',fontWeight:'500'}}
               >
                 {applyLoading ? 'Применяем...' : 'Перепровести'}
               </button>
@@ -394,7 +394,7 @@ export default function Import() {
           )}
 
           {applyResult && (
-            <div style={{marginTop:'16px',padding:'12px 16px',borderRadius:'8px',background:'#dcfce7',color:'var(--success)',fontSize:'13px'}}>
+            <div style={{marginTop:'16px',padding:'12px 16px',borderRadius:'8px',background:'#dcfce7',color:'var(--success)',fontSize:'15px'}}>
               ✓ {applyResult.message}
             </div>
           )}

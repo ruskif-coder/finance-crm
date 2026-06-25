@@ -20,6 +20,10 @@ const BANK_STYLES = {
 
 const ACTION_LABELS_RU = { view: 'Просмотр', create: 'Создание', edit: 'Редактирование', delete: 'Удаление' }
 
+// Должно совпадать с DEFAULT_TERM_DAYS в backend/app/routers/reports.py — используется
+// только как плейсхолдер/подсказка в поле "Отсрочка", фактическое значение всегда приходит с backend.
+const DEFAULT_TERM_DAYS = 60
+
 function getPermissions() {
   if (typeof window === 'undefined') return {}
   try { return JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { return {} }
@@ -65,7 +69,7 @@ export default function Settings() {
   const [counterparties, setCounterparties] = useState([])
   const [loadingCounterparties, setLoadingCounterparties] = useState(false)
   const [cpEditingId, setCpEditingId] = useState(null)
-  const [cpDraft, setCpDraft] = useState({ name: '', inn: '', status: 'действующий', contract_number: '', contract_date: '' })
+  const [cpDraft, setCpDraft] = useState({ name: '', inn: '', status: 'действующий', contract_number: '', contract_date: '', term_days: '' })
   const [cpSaving, setCpSaving] = useState(false)
   const [cpError, setCpError] = useState('')
   const [cpSearch, setCpSearch] = useState('')
@@ -221,7 +225,7 @@ export default function Settings() {
 
   const openCpEdit = (c) => {
     setCpEditingId(c.id)
-    setCpDraft({ name: c.name, inn: c.inn || '', status: c.status, contract_number: c.contract_number || '', contract_date: c.contract_date || '' })
+    setCpDraft({ name: c.name, inn: c.inn || '', status: c.status, contract_number: c.contract_number || '', contract_date: c.contract_date || '', term_days: c.term_days != null ? String(c.term_days) : '' })
     setCpError('')
   }
 
@@ -232,7 +236,7 @@ export default function Settings() {
     setCpSaving(true)
     setCpError('')
     try {
-      await api(token).put(`/counterparties/${id}/registry`, { name: cpDraft.name, inn: cpDraft.inn, status: cpDraft.status, contract_number: cpDraft.contract_number, contract_date: cpDraft.contract_date || null })
+      await api(token).put(`/counterparties/${id}/registry`, { name: cpDraft.name, inn: cpDraft.inn, status: cpDraft.status, contract_number: cpDraft.contract_number, contract_date: cpDraft.contract_date || null, term_days: cpDraft.term_days !== '' ? parseInt(cpDraft.term_days, 10) : null })
       await loadCounterparties(token)
       setCpEditingId(null)
     } catch (e) {
@@ -511,15 +515,15 @@ export default function Settings() {
     return blocks
   }
 
-  const inp = { width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', outline: 'none', textAlign: 'right' }
+  const inp = { width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '16px', outline: 'none', textAlign: 'right' }
   const inpLeft = { ...inp, textAlign: 'left' }
-  const select = { padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', outline: 'none' }
-  const btn = { padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', cursor: 'pointer', fontSize: '13px', whiteSpace: 'nowrap' }
-  const th = { textAlign: 'left', padding: '8px 12px', fontSize: '11px', color: '#6b7280', fontWeight: '500', borderBottom: '1px solid #e5e7eb' }
-  const td = { padding: '10px 12px', fontSize: '13px', borderBottom: '1px solid #f3f4f6' }
+  const select = { padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '16px', outline: 'none' }
+  const btn = { padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', cursor: 'pointer', fontSize: '15px', whiteSpace: 'nowrap' }
+  const th = { textAlign: 'left', padding: '8px 12px', fontSize: '13px', color: '#6b7280', fontWeight: '500', borderBottom: '1px solid #e5e7eb' }
+  const td = { padding: '10px 12px', fontSize: '15px', borderBottom: '1px solid #f3f4f6' }
 
   // Сортируемый заголовок таблицы контрагентов — визуально как в /operations (липкая шапка, стрелка сортировки)
-  const cpTh = { textAlign: 'left', padding: '8px 10px', color: '#6b7280', fontWeight: '500', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', borderBottom: '2px solid #e5e7eb', background: '#f9fafb', position: 'sticky', top: 0, zIndex: 10, fontSize: '12px' }
+  const cpTh = { textAlign: 'left', padding: '8px 10px', color: '#6b7280', fontWeight: '500', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', borderBottom: '2px solid #e5e7eb', background: '#f9fafb', position: 'sticky', top: 0, zIndex: 10, fontSize: '14px' }
   const CpSortIcon = ({ col }) => cpSortCol !== col ? <span style={{ color: '#d1d5db', marginLeft: '4px' }}>↕</span> : <span style={{ color: '#2563eb', marginLeft: '4px' }}>{cpSortDir === 'asc' ? '↑' : '↓'}</span>
 
   const tabs = []
@@ -542,8 +546,8 @@ export default function Settings() {
     <div style={{ minHeight: '100vh', background: '#f5f6fa' }}>
       {/* Шапка */}
       <div style={{ background: 'white', borderBottom: '1px solid #e5e7eb', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '56px' }}>
-        <div style={{ fontWeight: '600', fontSize: '16px' }}>Настройки</div>
-        <button onClick={() => router.push('/dashboard')} style={{ fontSize: '13px', padding: '6px 14px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer' }}>← Дашборд</button>
+        <div style={{ fontWeight: '600', fontSize: '18px' }}>Настройки</div>
+        <button onClick={() => router.push('/dashboard')} style={{ fontSize: '15px', padding: '6px 14px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer' }}>← Дашборд</button>
       </div>
 
       <div style={{ padding: '24px', maxWidth: tab === 'counterparties' ? 'none' : '1000px' }}>
@@ -552,7 +556,7 @@ export default function Settings() {
         <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
           {tabs.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
-              style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '500', fontSize: '14px', background: tab === t.id ? '#2563eb' : 'white', color: tab === t.id ? 'white' : '#374151' }}>
+              style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '500', fontSize: '16px', background: tab === t.id ? '#2563eb' : 'white', color: tab === t.id ? 'white' : '#374151' }}>
               {t.label}
             </button>
           ))}
@@ -563,10 +567,10 @@ export default function Settings() {
             {/* Итоговая карточка */}
             <div style={{ background: 'white', borderRadius: '12px', padding: '20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>Общий остаток по всем счетам</div>
-                <div style={{ fontSize: '28px', fontWeight: '700', color: totalBalance >= 0 ? '#16a34a' : '#dc2626' }}>{fmt(totalBalance)} ₽</div>
+                <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '4px' }}>Общий остаток по всем счетам</div>
+                <div style={{ fontSize: '30px', fontWeight: '700', color: totalBalance >= 0 ? '#16a34a' : '#dc2626' }}>{fmt(totalBalance)} ₽</div>
               </div>
-              <div style={{ fontSize: '12px', color: '#6b7280', textAlign: 'right' }}>
+              <div style={{ fontSize: '14px', color: '#6b7280', textAlign: 'right' }}>
                 <div>Стартовый остаток + поступления − списания</div>
                 <div style={{ marginTop: '4px' }}>по всем банкам (только оплаченные)</div>
               </div>
@@ -582,14 +586,14 @@ export default function Settings() {
 
                         {/* Название банка */}
                         <div style={{ minWidth: '120px' }}>
-                          <span style={{ fontSize: '12px', padding: '3px 10px', borderRadius: '20px', background: style.bg, color: style.color, border: `1px solid ${style.border}`, fontWeight: '500' }}>
+                          <span style={{ fontSize: '14px', padding: '3px 10px', borderRadius: '20px', background: style.bg, color: style.color, border: `1px solid ${style.border}`, fontWeight: '500' }}>
                             {b.bank}
                           </span>
                         </div>
 
                         {/* Стартовый остаток — редактируемый */}
                         <div style={{ flex: 1, minWidth: '180px' }}>
-                          <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>Стартовый остаток</div>
+                          <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>Стартовый остаток</div>
                           {(role === 'admin' || can(permissions, 'settings_balances', 'edit')) ? (
                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                               <input
@@ -606,23 +610,23 @@ export default function Settings() {
                               </button>
                             </div>
                           ) : (
-                            <div style={{ fontSize: '16px', fontWeight: '500' }}>{fmt(b.opening_balance)} ₽</div>
+                            <div style={{ fontSize: '18px', fontWeight: '500' }}>{fmt(b.opening_balance)} ₽</div>
                           )}
                         </div>
 
                         {/* Обороты */}
                         <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
                           <div>
-                            <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>Поступило</div>
-                            <div style={{ fontSize: '16px', fontWeight: '500', color: '#16a34a' }}>{fmt(b.total_income)}</div>
+                            <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>Поступило</div>
+                            <div style={{ fontSize: '18px', fontWeight: '500', color: '#16a34a' }}>{fmt(b.total_income)}</div>
                           </div>
                           <div>
-                            <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>Списано</div>
-                            <div style={{ fontSize: '16px', fontWeight: '500', color: '#dc2626' }}>{fmt(b.total_expense)}</div>
+                            <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>Списано</div>
+                            <div style={{ fontSize: '18px', fontWeight: '500', color: '#dc2626' }}>{fmt(b.total_expense)}</div>
                           </div>
                           <div>
-                            <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>Текущий остаток</div>
-                            <div style={{ fontSize: '18px', fontWeight: '700', color: b.balance >= 0 ? '#16a34a' : '#dc2626' }}>{fmt(b.balance)} ₽</div>
+                            <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>Текущий остаток</div>
+                            <div style={{ fontSize: '20px', fontWeight: '700', color: b.balance >= 0 ? '#16a34a' : '#dc2626' }}>{fmt(b.balance)} ₽</div>
                           </div>
                         </div>
 
@@ -645,38 +649,38 @@ export default function Settings() {
                 <option value="действующий">Действующий</option>
                 <option value="виртуальный">Виртуальный</option>
               </select>
-              <span style={{ fontSize: '12px', color: '#6b7280', marginLeft: 'auto' }}>{filteredCounterparties.length} из {counterparties.length}</span>
+              <span style={{ fontSize: '14px', color: '#6b7280', marginLeft: 'auto' }}>{filteredCounterparties.length} из {counterparties.length}</span>
             </div>
 
             {(role === 'admin' || can(permissions, 'counterparties', 'edit')) && cpSelectedIds.length > 0 && (
               <div style={{ background: 'white', borderRadius: '12px', padding: '14px 20px', marginBottom: '12px', border: '2px solid #2563eb', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                <div style={{ fontSize: '13px', fontWeight: '500', color: '#2563eb', marginRight: '4px', alignSelf: 'center' }}>Выбрано: {cpSelectedIds.length}</div>
-                <div><div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '3px' }}>Вид</div>
+                <div style={{ fontSize: '15px', fontWeight: '500', color: '#2563eb', marginRight: '4px', alignSelf: 'center' }}>Выбрано: {cpSelectedIds.length}</div>
+                <div><div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '3px' }}>Вид</div>
                   <select style={select} value={cpBulkStatus} onChange={e => setCpBulkStatus(e.target.value)}>
                     <option value="">— не менять —</option>
                     <option value="действующий">Действующий</option>
                     <option value="виртуальный">Виртуальный</option>
                   </select>
                 </div>
-                <div><div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '3px' }}>Группа</div>
+                <div><div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '3px' }}>Группа</div>
                   <input placeholder="Новая группа" value={cpBulkGroup === '__reset__' ? '' : cpBulkGroup}
                     onChange={e => setCpBulkGroup(e.target.value)}
                     style={{ ...inpLeft, width: '180px' }} />
                 </div>
                 <button onClick={() => setCpBulkGroup('__reset__')} title="Вернуть автоматический расчёт группы (самая частая статья)"
-                  style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', background: cpBulkGroup === '__reset__' ? '#eff6ff' : 'transparent', color: cpBulkGroup === '__reset__' ? '#2563eb' : '#6b7280', cursor: 'pointer', fontSize: '12px' }}>
+                  style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', background: cpBulkGroup === '__reset__' ? '#eff6ff' : 'transparent', color: cpBulkGroup === '__reset__' ? '#2563eb' : '#6b7280', cursor: 'pointer', fontSize: '14px' }}>
                   Сбросить группу на авто
                 </button>
-                <button onClick={handleCpBulkApply} disabled={cpBulkSaving} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', cursor: 'pointer', fontSize: '13px' }}>
+                <button onClick={handleCpBulkApply} disabled={cpBulkSaving} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', cursor: 'pointer', fontSize: '15px' }}>
                   {cpBulkSaving ? 'Сохранение...' : `Применить к ${cpSelectedIds.length}`}
                 </button>
-                <button onClick={() => { setCpSelectedIds([]); setCpBulkStatus(''); setCpBulkGroup('') }} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', fontSize: '13px', color: '#6b7280' }}>Снять выделение</button>
+                <button onClick={() => { setCpSelectedIds([]); setCpBulkStatus(''); setCpBulkGroup('') }} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', fontSize: '15px', color: '#6b7280' }}>Снять выделение</button>
               </div>
             )}
 
             {loadingCounterparties ? <div style={{ textAlign: 'center', padding: '60px', color: '#6b7280' }}>Загрузка...</div> : (
               <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'auto', maxHeight: 'calc(100vh - 280px)' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                   <thead>
                     <tr>
                       {(role === 'admin' || can(permissions, 'counterparties', 'edit')) && (
@@ -689,6 +693,7 @@ export default function Settings() {
                       <th style={cpTh} onClick={() => handleCpSort('inn')}>ИНН <CpSortIcon col="inn" /></th>
                       <th style={cpTh} onClick={() => handleCpSort('contract_number')}>№ договора <CpSortIcon col="contract_number" /></th>
                       <th style={cpTh} onClick={() => handleCpSort('contract_date')}>Дата договора <CpSortIcon col="contract_date" /></th>
+                      <th style={cpTh} onClick={() => handleCpSort('term_days')}>Отсрочка, дн. <CpSortIcon col="term_days" /></th>
                       <th style={cpTh} onClick={() => handleCpSort('relation')}>Статус <CpSortIcon col="relation" /></th>
                       <th style={cpTh} onClick={() => handleCpSort('group')}>Группа <CpSortIcon col="group" /></th>
                       <th style={cpTh} onClick={() => handleCpSort('status')}>Вид <CpSortIcon col="status" /></th>
@@ -720,30 +725,39 @@ export default function Settings() {
                           <td style={{ padding: '7px 10px' }}>
                             {isEditing
                               ? <input autoFocus value={cpDraft.name} onChange={e => setCpDraft(d => ({ ...d, name: e.target.value }))}
-                                  style={{ ...inpLeft, width: '220px', padding: '5px 8px', fontSize: '12px' }} />
+                                  style={{ ...inpLeft, width: '220px', padding: '5px 8px', fontSize: '14px' }} />
                               : c.name}
                           </td>
                           <td style={{ padding: '7px 10px' }}>
                             {isEditing
                               ? <input value={cpDraft.inn} onChange={e => setCpDraft(d => ({ ...d, inn: e.target.value }))}
-                                  style={{ ...inpLeft, width: '120px', padding: '5px 8px', fontSize: '12px' }} />
+                                  style={{ ...inpLeft, width: '120px', padding: '5px 8px', fontSize: '14px' }} />
                               : (c.inn || '—')}
                           </td>
                           <td style={{ padding: '7px 10px' }}>
                             {isEditing
                               ? <input value={cpDraft.contract_number} onChange={e => setCpDraft(d => ({ ...d, contract_number: e.target.value }))}
-                                  style={{ ...inpLeft, width: '110px', padding: '5px 8px', fontSize: '12px' }} />
+                                  style={{ ...inpLeft, width: '110px', padding: '5px 8px', fontSize: '14px' }} />
                               : (c.contract_number || '—')}
                           </td>
                           <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
                             {isEditing
                               ? <input type="date" value={cpDraft.contract_date} onChange={e => setCpDraft(d => ({ ...d, contract_date: e.target.value }))}
-                                  style={{ ...inpLeft, width: '120px', padding: '5px 8px', fontSize: '12px' }} />
+                                  style={{ ...inpLeft, width: '120px', padding: '5px 8px', fontSize: '14px' }} />
                               : fmtDate(c.contract_date)}
+                          </td>
+                          <td style={{ padding: '7px 10px', textAlign: 'right' }}>
+                            {isEditing
+                              ? <input type="number" min="0" value={cpDraft.term_days} onChange={e => setCpDraft(d => ({ ...d, term_days: e.target.value }))}
+                                  placeholder={String(DEFAULT_TERM_DAYS)}
+                                  style={{ ...inpLeft, width: '70px', padding: '5px 8px', fontSize: '14px', textAlign: 'right' }} />
+                              : (c.term_days_is_default
+                                  ? <span style={{ color: '#9ca3af' }} title="Значение по умолчанию">{c.term_days_effective}</span>
+                                  : <span title="Задано вручную">{c.term_days_effective}</span>)}
                           </td>
                           <td style={{ padding: '7px 10px' }}>
                             {c.relation
-                              ? <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap', background: relColor.bg, color: relColor.color }}>{RELATION_LABELS[c.relation]}</span>
+                              ? <span style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap', background: relColor.bg, color: relColor.color }}>{RELATION_LABELS[c.relation]}</span>
                               : <span style={{ color: '#9ca3af' }}>—</span>}
                           </td>
                           <td style={{ padding: '7px 10px', color: '#6b7280', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.group_is_override ? `${c.group} (задано вручную)` : c.group}>
@@ -752,7 +766,7 @@ export default function Settings() {
                           </td>
                           <td style={{ padding: '7px 10px' }}>
                             {isEditing ? (
-                              <select value={cpDraft.status} onChange={e => setCpDraft(d => ({ ...d, status: e.target.value }))} style={{ ...select, padding: '5px 8px', fontSize: '12px' }}>
+                              <select value={cpDraft.status} onChange={e => setCpDraft(d => ({ ...d, status: e.target.value }))} style={{ ...select, padding: '5px 8px', fontSize: '14px' }}>
                                 <option value="действующий">Действующий</option>
                                 <option value="виртуальный">Виртуальный</option>
                               </select>
@@ -772,16 +786,16 @@ export default function Settings() {
                             {!canEdit ? '—' : isEditing ? (
                               <>
                                 <button onClick={() => handleSaveCounterparty(c.id)} disabled={cpSaving} title="Сохранить"
-                                  style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #86efac', background: '#dcfce7', cursor: 'pointer', color: '#16a34a', marginRight: '4px' }}>
+                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #86efac', background: '#dcfce7', cursor: 'pointer', color: '#16a34a', marginRight: '4px' }}>
                                   {cpSaving ? '...' : '✓'}
                                 </button>
                                 <button onClick={cancelCpEdit} disabled={cpSaving} title="Отмена"
-                                  style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#6b7280' }}>✕</button>
-                                {cpError && <div style={{ color: '#dc2626', fontSize: '11px', marginTop: '4px', maxWidth: '200px' }}>{cpError}</div>}
+                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#6b7280' }}>✕</button>
+                                {cpError && <div style={{ color: '#dc2626', fontSize: '13px', marginTop: '4px', maxWidth: '200px' }}>{cpError}</div>}
                               </>
                             ) : (
                               <button onClick={() => openCpEdit(c)} title="Редактировать"
-                                style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fde68a', background: '#fffbeb', cursor: 'pointer', color: '#d97706' }}>✏️</button>
+                                style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fde68a', background: '#fffbeb', cursor: 'pointer', color: '#d97706' }}>✏️</button>
                             )}
                           </td>
                         </tr>
@@ -803,7 +817,7 @@ export default function Settings() {
             {/* Форма создания */}
             {(role === 'admin' || can(permissions, 'articles', 'edit')) && (
               <div style={{ background: 'white', borderRadius: '12px', padding: '20px', marginBottom: '12px' }}>
-                <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>Новая статья</div>
+                <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px' }}>Новая статья</div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                   <input placeholder="Название" value={newArticle.name} onChange={e => setNewArticle(p => ({ ...p, name: e.target.value }))} style={{ ...inpLeft, width: '220px' }} />
                   <input placeholder="Группа (верхний уровень)" list="article-groups" value={newArticle.group} onChange={e => setNewArticle(p => ({ ...p, group: e.target.value }))} style={{ ...inpLeft, width: '200px' }} />
@@ -813,20 +827,20 @@ export default function Settings() {
                   </select>
                   <button onClick={handleCreateArticle} disabled={creatingArticle} style={btn}>{creatingArticle ? '...' : 'Создать'}</button>
                 </div>
-                {artCreateError && <div style={{ color: '#dc2626', fontSize: '13px', marginTop: '8px' }}>{artCreateError}</div>}
+                {artCreateError && <div style={{ color: '#dc2626', fontSize: '15px', marginTop: '8px' }}>{artCreateError}</div>}
               </div>
             )}
 
             {/* Фильтр */}
             <div style={{ background: 'white', borderRadius: '12px', padding: '14px 20px', marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
               <input placeholder="Поиск по названию или группе" value={artSearch} onChange={e => setArtSearch(e.target.value)} style={{ ...inpLeft, width: '260px' }} />
-              {artSearch && <span style={{ fontSize: '11px', color: '#d97706' }}>Очистите поиск, чтобы менять порядок вывода</span>}
-              <span style={{ fontSize: '12px', color: '#6b7280', marginLeft: 'auto' }}>{filteredArticles.length} из {articles.length}</span>
+              {artSearch && <span style={{ fontSize: '13px', color: '#d97706' }}>Очистите поиск, чтобы менять порядок вывода</span>}
+              <span style={{ fontSize: '14px', color: '#6b7280', marginLeft: 'auto' }}>{filteredArticles.length} из {articles.length}</span>
             </div>
 
             {loadingArticles ? <div style={{ textAlign: 'center', padding: '60px', color: '#6b7280' }}>Загрузка...</div> : (
               <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'auto', maxHeight: 'calc(100vh - 320px)' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                   <thead>
                     <tr>
                       <th style={{ ...cpTh, width: '48px', cursor: 'default' }}>ID</th>
@@ -851,23 +865,23 @@ export default function Settings() {
                           <td style={{ padding: '7px 10px' }}>
                             {isEditing
                               ? <input autoFocus value={artDraft.name} onChange={e => setArtDraft(d => ({ ...d, name: e.target.value }))}
-                                  style={{ ...inpLeft, width: '220px', padding: '5px 8px', fontSize: '12px' }} />
+                                  style={{ ...inpLeft, width: '220px', padding: '5px 8px', fontSize: '14px' }} />
                               : a.name}
                           </td>
                           <td style={{ padding: '7px 10px', color: '#6b7280' }}>
                             {isEditing
                               ? <input list="article-groups" value={artDraft.group} onChange={e => setArtDraft(d => ({ ...d, group: e.target.value }))}
-                                  style={{ ...inpLeft, width: '180px', padding: '5px 8px', fontSize: '12px' }} />
+                                  style={{ ...inpLeft, width: '180px', padding: '5px 8px', fontSize: '14px' }} />
                               : (a.group || '—')}
                           </td>
                           <td style={{ padding: '7px 10px' }}>
                             {isEditing ? (
-                              <select value={artDraft.type} onChange={e => setArtDraft(d => ({ ...d, type: e.target.value }))} style={{ ...select, padding: '5px 8px', fontSize: '12px' }}>
+                              <select value={artDraft.type} onChange={e => setArtDraft(d => ({ ...d, type: e.target.value }))} style={{ ...select, padding: '5px 8px', fontSize: '14px' }}>
                                 <option value="expense">Расход</option>
                                 <option value="income">Доход</option>
                               </select>
                             ) : (
-                              <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', background: typeMeta.bg, color: typeMeta.color }}>{typeMeta.label}</span>
+                              <span style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '20px', background: typeMeta.bg, color: typeMeta.color }}>{typeMeta.label}</span>
                             )}
                           </td>
                           <td style={{ padding: '7px 10px', textAlign: 'right' }}>{a.op_count}</td>
@@ -875,9 +889,9 @@ export default function Settings() {
                             {canEditArt && !artSearch ? (
                               <>
                                 <button onClick={() => handleMoveArticle(a.id, 'up')} disabled={i === 0 || artMovingId === a.id} title="Выше"
-                                  style={{ border: 'none', background: 'transparent', cursor: i === 0 ? 'default' : 'pointer', color: i === 0 ? '#d1d5db' : '#6b7280', fontSize: '13px', padding: '2px 4px' }}>▲</button>
+                                  style={{ border: 'none', background: 'transparent', cursor: i === 0 ? 'default' : 'pointer', color: i === 0 ? '#d1d5db' : '#6b7280', fontSize: '15px', padding: '2px 4px' }}>▲</button>
                                 <button onClick={() => handleMoveArticle(a.id, 'down')} disabled={i === filteredArticles.length - 1 || artMovingId === a.id} title="Ниже"
-                                  style={{ border: 'none', background: 'transparent', cursor: i === filteredArticles.length - 1 ? 'default' : 'pointer', color: i === filteredArticles.length - 1 ? '#d1d5db' : '#6b7280', fontSize: '13px', padding: '2px 4px' }}>▼</button>
+                                  style={{ border: 'none', background: 'transparent', cursor: i === filteredArticles.length - 1 ? 'default' : 'pointer', color: i === filteredArticles.length - 1 ? '#d1d5db' : '#6b7280', fontSize: '15px', padding: '2px 4px' }}>▼</button>
                               </>
                             ) : <span style={{ color: '#d1d5db' }}>—</span>}
                           </td>
@@ -885,19 +899,19 @@ export default function Settings() {
                             {!canEditArt ? '—' : isEditing ? (
                               <>
                                 <button onClick={() => handleSaveArticle(a.id)} disabled={artSaving} title="Сохранить"
-                                  style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #86efac', background: '#dcfce7', cursor: 'pointer', color: '#16a34a', marginRight: '4px' }}>
+                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #86efac', background: '#dcfce7', cursor: 'pointer', color: '#16a34a', marginRight: '4px' }}>
                                   {artSaving ? '...' : '✓'}
                                 </button>
                                 <button onClick={cancelArtEdit} disabled={artSaving} title="Отмена"
-                                  style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#6b7280' }}>✕</button>
-                                {artError && <div style={{ color: '#dc2626', fontSize: '11px', marginTop: '4px', maxWidth: '200px' }}>{artError}</div>}
+                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#6b7280' }}>✕</button>
+                                {artError && <div style={{ color: '#dc2626', fontSize: '13px', marginTop: '4px', maxWidth: '200px' }}>{artError}</div>}
                               </>
                             ) : (
                               <>
                                 <button onClick={() => openArtEdit(a)} title="Редактировать"
-                                  style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fde68a', background: '#fffbeb', cursor: 'pointer', color: '#d97706', marginRight: '4px' }}>✏️</button>
+                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fde68a', background: '#fffbeb', cursor: 'pointer', color: '#d97706', marginRight: '4px' }}>✏️</button>
                                 <button onClick={() => handleDeleteArticle(a)} title="Удалить"
-                                  style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fca5a5', background: '#fee2e2', cursor: 'pointer', color: '#dc2626' }}>🗑️</button>
+                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fca5a5', background: '#fee2e2', cursor: 'pointer', color: '#dc2626' }}>🗑️</button>
                               </>
                             )}
                           </td>
@@ -915,7 +929,7 @@ export default function Settings() {
           <div>
             {/* Форма создания */}
             <div style={{ background: 'white', borderRadius: '12px', padding: '20px', marginBottom: '20px' }}>
-              <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>Новый пользователь</div>
+              <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px' }}>Новый пользователь</div>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                 <input placeholder="Имя" value={newUser.name} onChange={e => setNewUser(p => ({ ...p, name: e.target.value }))} style={{ ...inpLeft, width: '160px' }} />
                 <input placeholder="Email" value={newUser.email} onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} style={{ ...inpLeft, width: '200px' }} />
@@ -925,7 +939,7 @@ export default function Settings() {
                 </select>
                 <button onClick={handleCreateUser} disabled={creatingUser} style={btn}>{creatingUser ? '...' : 'Создать'}</button>
               </div>
-              {userError && <div style={{ color: '#dc2626', fontSize: '13px', marginTop: '8px' }}>{userError}</div>}
+              {userError && <div style={{ color: '#dc2626', fontSize: '15px', marginTop: '8px' }}>{userError}</div>}
             </div>
 
             {/* Таблица пользователей */}
@@ -961,7 +975,7 @@ export default function Settings() {
                             <button
                               disabled={isSelf}
                               onClick={() => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, is_active: !ed.is_active } }))}
-                              style={{ padding: '4px 12px', borderRadius: '20px', border: 'none', cursor: isSelf ? 'default' : 'pointer', fontSize: '12px', fontWeight: '500', background: ed.is_active ? '#dcfce7' : '#fee2e2', color: ed.is_active ? '#16a34a' : '#dc2626' }}>
+                              style={{ padding: '4px 12px', borderRadius: '20px', border: 'none', cursor: isSelf ? 'default' : 'pointer', fontSize: '14px', fontWeight: '500', background: ed.is_active ? '#dcfce7' : '#fee2e2', color: ed.is_active ? '#16a34a' : '#dc2626' }}>
                               {ed.is_active ? 'Активен' : 'Деактивирован'}
                             </button>
                           </td>
@@ -1000,7 +1014,7 @@ export default function Settings() {
               <input type="date" value={auditFilters.date_from} onChange={e => handleAuditFilterChange({ date_from: e.target.value })} style={select} />
               <span style={{ color: '#9ca3af' }}>—</span>
               <input type="date" value={auditFilters.date_to} onChange={e => handleAuditFilterChange({ date_to: e.target.value })} style={select} />
-              <span style={{ fontSize: '12px', color: '#6b7280', marginLeft: 'auto' }}>{fmt(auditTotal)} записей</span>
+              <span style={{ fontSize: '14px', color: '#6b7280', marginLeft: 'auto' }}>{fmt(auditTotal)} записей</span>
             </div>
 
             <div style={{ background: 'white', borderRadius: '12px', overflow: 'hidden' }}>
@@ -1019,7 +1033,7 @@ export default function Settings() {
                       <td style={{ ...td, whiteSpace: 'nowrap', color: '#6b7280' }}>{fmtDateTime(a.created_at)}</td>
                       <td style={td}>{a.user_name || '—'}</td>
                       <td style={td}>
-                        <span style={{ fontSize: '12px', padding: '3px 10px', borderRadius: '20px', background: a.action.includes('failed') ? '#fee2e2' : a.action.includes('delete') ? '#fef3c7' : '#f3f4f6', color: a.action.includes('failed') ? '#dc2626' : '#374151' }}>
+                        <span style={{ fontSize: '14px', padding: '3px 10px', borderRadius: '20px', background: a.action.includes('failed') ? '#fee2e2' : a.action.includes('delete') ? '#fef3c7' : '#f3f4f6', color: a.action.includes('failed') ? '#dc2626' : '#374151' }}>
                           {a.action_label}
                         </span>
                       </td>
@@ -1045,12 +1059,12 @@ export default function Settings() {
           <div>
             {/* Создание роли */}
             <div style={{ background: 'white', borderRadius: '12px', padding: '20px', marginBottom: '20px' }}>
-              <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>Новая роль</div>
+              <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px' }}>Новая роль</div>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                 <input placeholder="Название роли" value={newRoleLabel} onChange={e => setNewRoleLabel(e.target.value)} style={{ ...inpLeft, width: '240px' }} />
                 <button onClick={handleCreateRole} disabled={creatingRole} style={btn}>{creatingRole ? '...' : 'Создать'}</button>
               </div>
-              {roleError && <div style={{ color: '#dc2626', fontSize: '13px', marginTop: '8px' }}>{roleError}</div>}
+              {roleError && <div style={{ color: '#dc2626', fontSize: '15px', marginTop: '8px' }}>{roleError}</div>}
             </div>
 
             {loadingRoles ? <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>Загрузка...</div> : (
@@ -1062,16 +1076,16 @@ export default function Settings() {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: isAdmin ? 0 : '16px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: '200px' }}>
                           {isAdmin ? (
-                            <div style={{ fontSize: '15px', fontWeight: '600' }}>{r.label}</div>
+                            <div style={{ fontSize: '17px', fontWeight: '600' }}>{r.label}</div>
                           ) : (
                             <input value={roleLabels[r.id] ?? r.label}
                               onChange={e => setRoleLabels(prev => ({ ...prev, [r.id]: e.target.value }))}
                               style={{ ...inpLeft, maxWidth: '240px', fontWeight: '600' }} />
                           )}
                           {!!r.is_system && (
-                            <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '20px', background: '#f3f4f6', color: '#6b7280' }}>системная</span>
+                            <span style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '20px', background: '#f3f4f6', color: '#6b7280' }}>системная</span>
                           )}
-                          <span style={{ fontSize: '11px', color: '#9ca3af' }}>{r.user_count} {r.user_count === 1 ? 'пользователь' : 'пользователей'}</span>
+                          <span style={{ fontSize: '13px', color: '#9ca3af' }}>{r.user_count} {r.user_count === 1 ? 'пользователь' : 'пользователей'}</span>
                         </div>
                         <div style={{ display: 'flex', gap: '8px' }}>
                           {!isAdmin && (
@@ -1089,20 +1103,20 @@ export default function Settings() {
                       </div>
 
                       {isAdmin ? (
-                        <div style={{ fontSize: '13px', color: '#6b7280' }}>Полный доступ ко всем разделам и действиям — не настраивается.</div>
+                        <div style={{ fontSize: '15px', color: '#6b7280' }}>Полный доступ ко всем разделам и действиям — не настраивается.</div>
                       ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '4px' }}>
                           {buildPermissionBlocks(sections).map((block, bi) => (
                             <div key={bi} style={{ border: '1px solid #f3f4f6', borderRadius: '10px', padding: '10px 14px' }}>
                               {block.group && (
-                                <div style={{ fontSize: '12px', fontWeight: '600', color: '#6b7280', marginBottom: '6px' }}>{block.group}</div>
+                                <div style={{ fontSize: '14px', fontWeight: '600', color: '#6b7280', marginBottom: '6px' }}>{block.group}</div>
                               )}
                               {block.items.map(s => (
                                 <div key={s.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', flexWrap: 'wrap', gap: '8px' }}>
-                                  <div style={{ fontSize: '13px', paddingLeft: block.group ? '12px' : 0 }}>{s.label}</div>
+                                  <div style={{ fontSize: '15px', paddingLeft: block.group ? '12px' : 0 }}>{s.label}</div>
                                   <div style={{ display: 'flex', gap: '14px' }}>
                                     {s.actions.map(a => (
-                                      <label key={a} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                      <label key={a} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '14px', color: '#374151', cursor: 'pointer' }}>
                                         <input type="checkbox"
                                           checked={!!editingRolePerms[r.id]?.[s.key]?.[a]}
                                           onChange={() => togglePerm(r.id, s.key, a)} />

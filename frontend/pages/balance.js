@@ -49,29 +49,29 @@ function MultiDropdown({ label, items, selected, onToggle, onClear, placeholder 
 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
-      <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '3px' }}>
+      <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '3px' }}>
         {label} {selected.length > 0 && <span style={{ color: '#2563eb' }}>({selected.length})</span>}
       </div>
       <div onClick={() => setOpen(o => !o)}
-        style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '12px', cursor: 'pointer', background: 'white', minWidth: '150px', userSelect: 'none', whiteSpace: 'nowrap' }}>
+        style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', cursor: 'pointer', background: 'white', minWidth: '150px', userSelect: 'none', whiteSpace: 'nowrap' }}>
         {selected.length === 0 ? `${placeholder} ▾` : `Выбрано: ${selected.length} ▾`}
       </div>
       {open && (
         <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', background: 'white', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', zIndex: 300, minWidth: '220px', maxHeight: '280px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '8px' }}>
             <input autoFocus placeholder="Поиск..." value={search} onChange={e => setSearch(e.target.value)}
-              style={{ width: '100%', padding: '5px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', fontSize: '12px', outline: 'none' }} />
+              style={{ width: '100%', padding: '5px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', fontSize: '14px', outline: 'none' }} />
           </div>
           <div style={{ overflowY: 'auto', flex: 1 }}>
             {filtered.map(item => {
               const active = selected.includes(item)
               return (
                 <div key={item} onClick={() => onToggle(item)}
-                  style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px', background: active ? '#eff6ff' : 'white' }}
+                  style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', background: active ? '#eff6ff' : 'white' }}
                   onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#f9fafb' }}
                   onMouseLeave={e => { e.currentTarget.style.background = active ? '#eff6ff' : 'white' }}>
                   <span style={{ width: '14px', height: '14px', borderRadius: '3px', border: `1px solid ${active ? '#2563eb' : '#d1d5db'}`, background: active ? '#2563eb' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    {active && <span style={{ color: 'white', fontSize: '10px' }}>✓</span>}
+                    {active && <span style={{ color: 'white', fontSize: '12px' }}>✓</span>}
                   </span>
                   {item}
                 </div>
@@ -79,7 +79,7 @@ function MultiDropdown({ label, items, selected, onToggle, onClear, placeholder 
             })}
           </div>
           {selected.length > 0 && (
-            <div onClick={() => { onClear(); setSearch('') }} style={{ padding: '8px 12px', borderTop: '1px solid #e5e7eb', fontSize: '12px', color: '#dc2626', cursor: 'pointer' }}>
+            <div onClick={() => { onClear(); setSearch('') }} style={{ padding: '8px 12px', borderTop: '1px solid #e5e7eb', fontSize: '14px', color: '#dc2626', cursor: 'pointer' }}>
               Сбросить выбор
             </div>
           )}
@@ -128,7 +128,7 @@ function DebtTable({ rows, amountColor, filterArticles, setFilterArticles, filte
     ? <span style={{ color: '#d1d5db', marginLeft: '4px' }}>↕</span>
     : <span style={{ color: '#2563eb', marginLeft: '4px' }}>{sortDir === 'asc' ? '↑' : '↓'}</span>
 
-  const thS = { textAlign: 'left', padding: '7px 8px', color: '#6b7280', fontWeight: '500', fontSize: '12px', cursor: 'pointer', userSelect: 'none', borderBottom: '2px solid #e5e7eb', whiteSpace: 'nowrap' }
+  const thS = { textAlign: 'left', padding: '7px 8px', color: '#6b7280', fontWeight: '500', fontSize: '14px', cursor: 'pointer', userSelect: 'none', borderBottom: '2px solid #e5e7eb', whiteSpace: 'nowrap' }
 
   return (
     <div>
@@ -145,7 +145,7 @@ function DebtTable({ rows, amountColor, filterArticles, setFilterArticles, filte
         {(filterArticles.length > 0 || filterCounterparties.length > 0) && (
           <div style={{ display: 'flex', alignItems: 'flex-end' }}>
             <button onClick={() => { setFilterArticles([]); setFilterCounterparties([]) }}
-              style={{ padding: '6px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', fontSize: '12px', color: '#6b7280' }}>
+              style={{ padding: '6px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', fontSize: '14px', color: '#6b7280' }}>
               Сбросить всё
             </button>
           </div>
@@ -153,7 +153,7 @@ function DebtTable({ rows, amountColor, filterArticles, setFilterArticles, filte
       </div>
 
       {/* Таблица */}
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '15px' }}>
         <thead>
           <tr>
             <th style={thS} onClick={() => handleSort('counterparty')}>Контрагент <SortIcon col="counterparty" /></th>
@@ -174,7 +174,7 @@ function DebtTable({ rows, amountColor, filterArticles, setFilterArticles, filte
                   onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                   <td style={{ padding: '7px 8px', color: '#374151' }}>
-                    {hasOps && <span style={{ display: 'inline-block', width: '14px', color: '#9ca3af', fontSize: '11px' }}>{isOpen ? '▾' : '▸'}</span>}
+                    {hasOps && <span style={{ display: 'inline-block', width: '14px', color: '#9ca3af', fontSize: '13px' }}>{isOpen ? '▾' : '▸'}</span>}
                     {r.counterparty}
                   </td>
                   <td style={{ padding: '7px 8px', color: '#6b7280' }}>{r.article}</td>
@@ -184,7 +184,7 @@ function DebtTable({ rows, amountColor, filterArticles, setFilterArticles, filte
                 {isOpen && hasOps && (
                   <tr key={key + '_detail'} style={{ borderBottom: '1px solid #f3f4f6' }}>
                     <td colSpan={4} style={{ padding: '0 8px 10px 28px', background: '#f9fafb' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                         <thead>
                           <tr>
                             <th style={{ textAlign: 'left', padding: '5px 6px', color: '#9ca3af', fontWeight: '500' }}>Сумма</th>
@@ -213,7 +213,7 @@ function DebtTable({ rows, amountColor, filterArticles, setFilterArticles, filte
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid #e5e7eb' }}>
-            <td colSpan={3} style={{ padding: '8px', fontWeight: '600', fontSize: '13px' }}>
+            <td colSpan={3} style={{ padding: '8px', fontWeight: '600', fontSize: '15px' }}>
               Итого {filtered.length < rows.length ? `(${filtered.length} из ${rows.length})` : ''}
             </td>
             <td style={{ padding: '8px', textAlign: 'right', fontWeight: '700', color: amountColor }}>{fmt(totalFiltered)} ₽</td>
@@ -260,11 +260,11 @@ export default function Balance() {
     <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', marginBottom: '12px', overflow: 'hidden' }}>
       <div onClick={onToggle} style={{ padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: children ? 'pointer' : 'default', borderBottom: isExpanded ? '1px solid #e5e7eb' : 'none' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ fontSize: '15px', fontWeight: '600', color: '#111827' }}>{title}</span>
-          {count !== undefined && <span style={{ fontSize: '12px', color: '#6b7280', background: '#f3f4f6', padding: '2px 8px', borderRadius: '20px' }}>{count} позиций</span>}
-          {children && <span style={{ fontSize: '12px', color: '#6b7280' }}>{isExpanded ? '▲' : '▼'}</span>}
+          <span style={{ fontSize: '17px', fontWeight: '600', color: '#111827' }}>{title}</span>
+          {count !== undefined && <span style={{ fontSize: '14px', color: '#6b7280', background: '#f3f4f6', padding: '2px 8px', borderRadius: '20px' }}>{count} позиций</span>}
+          {children && <span style={{ fontSize: '14px', color: '#6b7280' }}>{isExpanded ? '▲' : '▼'}</span>}
         </div>
-        <span style={{ fontSize: '18px', fontWeight: '700', color }}>{fmt(amount)} ₽</span>
+        <span style={{ fontSize: '20px', fontWeight: '700', color }}>{fmt(amount)} ₽</span>
       </div>
       {isExpanded && children}
     </div>
@@ -284,13 +284,13 @@ export default function Balance() {
             { label: 'Чистые активы', val: data.net_assets, color: data.net_assets >= 0 ? '#2563eb' : '#dc2626' },
           ].map(m => (
             <div key={m.label} style={{ background: 'white', borderRadius: '12px', padding: '16px 20px', border: '1px solid #e5e7eb' }}>
-              <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '6px' }}>{m.label}</div>
-              <div style={{ fontSize: '22px', fontWeight: '700', color: m.color }}>{fmt(m.val)} ₽</div>
+              <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '6px' }}>{m.label}</div>
+              <div style={{ fontSize: '24px', fontWeight: '700', color: m.color }}>{fmt(m.val)} ₽</div>
             </div>
           ))}
         </div>
 
-        <div style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', marginLeft: '4px' }}>Активы</div>
+        <div style={{ fontSize: '13px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', marginLeft: '4px' }}>Активы</div>
 
         {/* Денежные средства */}
         <Section title="Денежные средства" amount={data.total_cash} color="#16a34a" isExpanded={true}>
@@ -300,11 +300,11 @@ export default function Balance() {
                 const style = BANK_STYLES[b.bank] || { bg: '#f3f4f6', color: '#4b5563', border: '#d1d5db' }
                 return (
                   <div key={b.bank} style={{ borderRadius: '10px', padding: '12px 16px', background: style.bg, border: `1px solid ${style.border}` }}>
-                    <div style={{ fontSize: '12px', fontWeight: '500', color: style.color, marginBottom: '8px' }}>{b.bank}</div>
-                    <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '2px' }}>Стартовый: {fmt(b.opening_balance)} ₽</div>
-                    <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '2px' }}>Поступило: {fmt(b.income)} ₽</div>
-                    <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '6px' }}>Списано: {fmt(b.expense)} ₽</div>
-                    <div style={{ fontSize: '16px', fontWeight: '700', color: b.balance >= 0 ? style.color : '#dc2626' }}>{fmt(b.balance)} ₽</div>
+                    <div style={{ fontSize: '14px', fontWeight: '500', color: style.color, marginBottom: '8px' }}>{b.bank}</div>
+                    <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '2px' }}>Стартовый: {fmt(b.opening_balance)} ₽</div>
+                    <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '2px' }}>Поступило: {fmt(b.income)} ₽</div>
+                    <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '6px' }}>Списано: {fmt(b.expense)} ₽</div>
+                    <div style={{ fontSize: '18px', fontWeight: '700', color: b.balance >= 0 ? style.color : '#dc2626' }}>{fmt(b.balance)} ₽</div>
                   </div>
                 )
               })}
@@ -321,7 +321,7 @@ export default function Balance() {
           isExpanded={showReceivables}
           onToggle={() => setShowReceivables(v => !v)}>
           <div style={{ padding: '0 20px 16px' }}>
-            <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '12px', marginTop: '12px' }}>
+            <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '12px', marginTop: '12px' }}>
               Ожидаемые поступления (план поступлений)
             </div>
             <DebtTable
@@ -335,7 +335,7 @@ export default function Balance() {
           </div>
         </Section>
 
-        <div style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', marginLeft: '4px', marginTop: '8px' }}>Обязательства</div>
+        <div style={{ fontSize: '13px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', marginLeft: '4px', marginTop: '8px' }}>Обязательства</div>
 
         {/* Кредиторская */}
         <Section
@@ -346,7 +346,7 @@ export default function Balance() {
           isExpanded={showPayables}
           onToggle={() => setShowPayables(v => !v)}>
           <div style={{ padding: '0 20px 16px' }}>
-            <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '12px', marginTop: '12px' }}>
+            <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '12px', marginTop: '12px' }}>
               Запланированные выплаты (план оплат)
             </div>
             <DebtTable

@@ -66,6 +66,7 @@ class Counterparty(Base):
     contract_number = Column(String, nullable=True)  # № договора
     contract_date = Column(Date, nullable=True)  # дата договора
     note = Column(Text, nullable=True)  # примечание (например, по дебиторке) — свободный текст
+    term_days = Column(Integer, nullable=True)  # отсрочка платежа в днях; NULL = берётся DEFAULT_TERM_DAYS (см. reports.py)
     operations = relationship("Operation", back_populates="counterparty")
 
 class Operation(Base):
