@@ -64,6 +64,8 @@ docker exec -i finance_frontend sh -c "cat > /app/pages/planfact.js" < "F:\finan
 if errorlevel 1 goto :error
 docker exec -i finance_frontend sh -c "cat > /app/pages/settings.js" < "F:\finance\frontend\pages\settings.js"
 if errorlevel 1 goto :error
+docker exec -i finance_frontend sh -c "cat > /app/pages/import.js" < "F:\finance\frontend\pages\import.js"
+if errorlevel 1 goto :error
 
 echo.
 echo === STEP 5: Rebuild frontend (production mode - needs internet access ===
@@ -79,10 +81,4 @@ echo.
 echo === DONE. Open http://localhost:3000 and check: ===
 echo   - all pages for the new look (Onest font, colors)
 echo   - Settings - Kontragenty: Otsrochka column editable
-echo   - Debitorka page: aging uses per-counterparty term
-goto :eof
-
-:error
-echo.
-echo *** STEP FAILED - stopped. Check the error above before retrying. ***
-exit /b 1
+echo   - Debitorka page: aging u
