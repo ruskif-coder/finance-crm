@@ -547,7 +547,7 @@ export default function Settings() {
     <div style={{ minHeight: '100vh', background: '#f5f6fa' }}>
       <Navbar active="settings" />
 
-      <div style={{ padding: '24px', maxWidth: tab === 'counterparties' ? 'none' : '1000px' }}>
+      <div style={{ padding: '24px', maxWidth: 2000, margin: '0 auto' }}>
 
         {/* Вкладки */}
         <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>

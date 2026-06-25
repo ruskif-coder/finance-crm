@@ -283,7 +283,7 @@ export default function Receivables() {
         </button>
       </Navbar>
 
-      <div style={{ padding: '24px', width: '70%', minWidth: '900px', margin: '0 auto' }}>
+      <div style={{ padding: '24px', maxWidth: 2000, margin: '0 auto' }}>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px' }}>
           <div style={{ fontSize: '20px', fontWeight: '700', color: 'var(--text-primary)' }}>Дебиторская задолженность</div>

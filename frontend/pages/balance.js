@@ -466,7 +466,7 @@ export default function Balance() {
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
       <Navbar active="balance" />
 
-      <div style={{ padding: '24px', width: '80%', minWidth: '1000px', margin: '0 auto' }}>
+      <div style={{ padding: '24px', maxWidth: 2000, margin: '0 auto' }}>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '24px' }}>
           {[
