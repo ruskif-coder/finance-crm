@@ -2,9 +2,11 @@ import Navbar from '../components/Navbar'
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 
 const api = (token) => axios.create({
-  baseURL: 'http://localhost:8000/api',
+  // См. комментарий в balance.js — относительный путь, проксируется Caddy.
+  baseURL: '/api',
   headers: { Authorization: `Bearer ${token}` }
 })
 
@@ -129,6 +131,53 @@ function AgingCard({ bucket, data, active, onClick }) {
   )
 }
 
+function AgingPieCard({ aging }) {
+  const segments = ['overdue', 'current', 'future']
+    .map(key => ({ key, value: aging?.[key]?.amount || 0 }))
+    .filter(s => s.value > 0)
+  const total = segments.reduce((s, x) => s + x.value, 0)
+
+  return (
+    <div style={{ background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-card)', padding: '16px', width: '380px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '8px', flexShrink: 0 }}>Структура задолженности</div>
+      {total === 0 ? (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-faint)', fontSize: '13px' }}>Нет данных</div>
+      ) : (
+        <>
+          {/* легенда слева, диаграмма справа — занимает всю оставшуюся высоту
+              карточки целиком (без легенды под собой), поэтому кольцо крупнее */}
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '12px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', flexShrink: 0, width: '130px' }}>
+              {segments.map(s => (
+                <div key={s.key}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: AGING_META[s.key].color, flexShrink: 0 }} />
+                    <span style={{ color: 'var(--text-secondary)' }}>{AGING_META[s.key].short}</span>
+                  </div>
+                  <div style={{ color: 'var(--text-primary)', fontWeight: '700', fontSize: '18px', marginLeft: '14px' }}>{Math.round(s.value / total * 100)}%</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ flex: 1, minWidth: 0, height: '100%' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={segments} dataKey="value" nameKey="key" cx="50%" cy="50%" innerRadius="58%" outerRadius="100%" paddingAngle={2} stroke="none">
+                    {segments.map(s => <Cell key={s.key} fill={AGING_META[s.key].color} />)}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, fontSize: 12 }}
+                    formatter={(value, name, props) => [`${fmt(value)} ₽`, AGING_META[props.payload.key].label]}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function AgingBadges({ aging }) {
   const entries = BUCKET_ORDER.filter(b => aging[b] > 0)
   return (
@@ -138,7 +187,7 @@ function AgingBadges({ aging }) {
         return (
           <span key={b} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '12px', padding: '2px 8px', borderRadius: 'var(--radius-badge)', background: 'var(--bg-subtle)', color: 'var(--text-secondary)', whiteSpace: 'nowrap', fontWeight: 600 }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: meta.color, flexShrink: 0 }} />
-            {meta.short}: {fmt(aging[b])} ₽
+            {fmt(aging[b])} ₽
           </span>
         )
       })}
@@ -290,23 +339,30 @@ export default function Receivables() {
           <div style={{ fontSize: '14px', color: 'var(--text-faint)' }}>на {formatDate(data.as_of)}</div>
         </div>
 
-        {/* Сводка */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '16px' }}>
-          <SummaryCard label="Итого дебиторка" value={data.summary.total_amount} color="var(--income)" />
-          <SummaryCard label="Контрагентов-должников" value={data.summary.counterparty_count} color="var(--text-secondary)" isCount />
-          <SummaryCard label="Счетов / операций" value={data.summary.operation_count} color="var(--text-secondary)" isCount />
-        </div>
+        {/* Сводка + статус задолженности (слева), структура долга (справа) */}
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', alignItems: 'stretch' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {/* Сводка */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '16px' }}>
+              <SummaryCard label="Итого дебиторка" value={data.summary.total_amount} color="var(--income)" />
+              <SummaryCard label="Контрагентов-должников" value={data.summary.counterparty_count} color="var(--text-secondary)" isCount />
+              <SummaryCard label="Счетов / операций" value={data.summary.operation_count} color="var(--text-secondary)" isCount />
+            </div>
 
-        {/* Статус задолженности */}
-        <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', marginLeft: '4px' }}>
-          Срок оплаты = период + отсрочка контрагента (договорных сроков пока нет — стандартно 60 дн., см. колонку «Отсрочка»); текущая задолженность — до 30 дн. после срока, далее — просрочка
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-          {BUCKET_ORDER.map(b => (
-            <AgingCard key={b} bucket={b} data={data.aging_summary[b]}
-              active={b === 'overdue' && overdueOnly}
-              onClick={() => b === 'overdue' && setOverdueOnly(v => !v)} />
-          ))}
+            {/* Статус задолженности */}
+            <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', marginLeft: '4px' }}>
+              Срок оплаты = период + отсрочка контрагента (договорных сроков пока нет — стандартно 60 дн., см. колонку «Отсрочка»); текущая задолженность — до 30 дн. после срока, далее — просрочка
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+              {BUCKET_ORDER.map(b => (
+                <AgingCard key={b} bucket={b} data={data.aging_summary[b]}
+                  active={b === 'overdue' && overdueOnly}
+                  onClick={() => b === 'overdue' && setOverdueOnly(v => !v)} />
+              ))}
+            </div>
+          </div>
+
+          <AgingPieCard aging={data.aging_summary} />
         </div>
 
         {/* Фильтры */}
@@ -453,12 +509,4 @@ export default function Receivables() {
                 <td style={{ padding: '8px', textAlign: 'right', fontWeight: '600', color: 'var(--text-muted)' }}>{totalOpsFiltered}</td>
                 <td></td>
                 <td></td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-
-      </div>
-    </div>
-  )
-}
+      

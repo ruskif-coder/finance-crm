@@ -1,19 +1,67 @@
-from fastapi import FastAPI
+import os
+import logging
+from logging.handlers import RotatingFileHandler
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from app.database import engine, Base
 from app.routers import auth, operations, reports, counterparties, articles, settings, users, roles
+
+# Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
+# внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
+# /app/logs смонтирован с хоста (см. docker-compose.yml backend.volumes), поэтому лог
+# переживает "docker restart"; если контейнер когда-нибудь пересоздадут без этого тома
+# (force-recreate без volumes), лог-файл начнётся с нуля — это тот же компромисс, что и
+# у IMPORT_SYNC_CACHE в operations.py, осознанно принят пока система не на боевом сервере.
+LOG_DIR = os.getenv("LOG_DIR", "/app/logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[
+        RotatingFileHandler(os.path.join(LOG_DIR, "backend.log"), maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"),
+        logging.StreamHandler(),
+    ],
+)
+logger = logging.getLogger("finance")
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Finance Management System")
 
+# http://localhost:3000 остаётся всегда — это прямой доступ к фронтенду в обход Caddy
+# (см. docker-compose.yml, порт смотрит на 127.0.0.1, доступен только с этой машины),
+# полезно для отладки. https://{DOMAIN} добавляется, когда задан реальный домен (см.
+# .env и Caddyfile) — без этого браузер на https://ваш-домен получал бы CORS-ошибку,
+# хотя на практике после перехода фронтенда на относительный путь /api (см. Caddyfile)
+# запросы идут с того же origin и CORS для них вообще не задействуется; этот источник
+# остаётся как подстраховка для прямых cross-origin обращений к API.
+_DOMAIN = os.getenv("DOMAIN", "localhost")
+_allow_origins = ["http://localhost:3000"]
+if _DOMAIN and _DOMAIN != "localhost":
+    _allow_origins.append(f"https://{_DOMAIN}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class ExceptionLoggingMiddleware(BaseHTTPMiddleware):
+    """Логирует необработанные исключения (с traceback) перед тем, как FastAPI
+    вернёт стандартный 500 — без этого падения видны только мимо пролетевшим
+    "docker logs" в момент сбоя, а потом теряются без следа."""
+    async def dispatch(self, request: Request, call_next):
+        try:
+            return await call_next(request)
+        except Exception:
+            logger.exception(f"Необработанное исключение: {request.method} {request.url.path}")
+            raise
+
+app.add_middleware(ExceptionLoggingMiddleware)
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(operations.router, prefix="/api/operations", tags=["operations"])
