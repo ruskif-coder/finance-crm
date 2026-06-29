@@ -9,8 +9,13 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # Раньше было "5432:5432" — слушало на всех интерфейсах хоста, то есть Postgres был
+    # достижим из локальной сети/интернета при открытом файрволе, хотя снаружи контейнера
+    # к нему никто кроме backend не должен ходить (он общается с db через внутреннюю сеть
+    # docker-compose по имени "db"). 127.0.0.1 оставляет доступ только с этой машины
+    # (psql/pgAdmin локально), убирает внешнюю поверхность атаки.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
 
   backend:
     build: ./backend
@@ -21,8 +26,15 @@ services:
     environment:
       DATABASE_URL: postgresql://finance_user:${POSTGRES_PASSWORD}@db:5432/finance
       SECRET_KEY: ${SECRET_KEY}
+      # Используется в main.py для CORS allow_origins — см. комментарий там.
+      # Пока не открыли систему наружу, оставляйте "localhost".
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./backend/logs:/app/logs
+    # См. комментарий у db.ports — то же рассуждение: прямой доступ снаружи этой машины
+    # не нужен, единственная публичная точка входа — caddy (80/443).
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
   frontend:
     build: ./frontend
@@ -30,8 +42,37 @@ services:
     restart: always
     depends_on:
       - backend
+    # См. комментарий у db.ports.
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
+
+  # Reverse proxy: единственный сервис, слушающий на всех интерфейсах (0.0.0.0:80/443).
+  # Маршрутизация — см. ./Caddyfile. DOMAIN=localhost (значение по умолчанию из .env) —
+  # Caddy в этом случае не пытается получить сертификат Let's Encrypt (это публичный CA,
+  # ему нужен реальный домен, прошедший HTTP-01 challenge снаружи) и обслуживает запросы
+  # по локально доверенному сертификату — для повседневной локальной работы это нормально,
+  # в браузере просто нужно принять предупреждение один раз (или использовать http://localhost,
+  # Caddy сам не форсирует https для локального имени). Подставьте реальный домен в .env
+  # (DOMAIN=ваш-домен) только после того как DNS A-запись и проброс портов 80/443 настроены —
+  # см. DEPLOYMENT.md.
+  caddy:
+    image: caddy:2
+    container_name: finance_caddy
+    restart: always
+    depends_on:
+      - backend
+      - frontend
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
 
 volumes:
   postgres_data:
+  caddy_data:
+  caddy_config:
