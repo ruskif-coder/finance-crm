@@ -16,7 +16,9 @@ export default function Login() {
       const params = new URLSearchParams()
       params.append('username', email)
       params.append('password', password)
-      const res = await axios.post('http://localhost:8000/api/auth/login', params)
+      // Относительный путь — см. комментарий в balance.js (axios baseURL); login.js
+      // не использует общий api(token), потому что на момент логина токена ещё нет.
+      const res = await axios.post('/api/auth/login', params)
       localStorage.setItem('token', res.data.access_token)
       localStorage.setItem('role', res.data.role)
       localStorage.setItem('role_label', res.data.role_label || '')

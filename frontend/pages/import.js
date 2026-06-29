@@ -105,7 +105,7 @@ export default function Import() {
       const token = localStorage.getItem('token')
       const formData = new FormData()
       formData.append('file', file)
-      const res = await axios.post('http://localhost:8000/api/operations/import', formData, {
+      const res = await axios.post('/api/operations/import', formData, {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'multipart/form-data'
@@ -130,7 +130,7 @@ export default function Import() {
       const token = localStorage.getItem('token')
       const formData = new FormData()
       formData.append('file', syncFile)
-      const res = await axios.post('http://localhost:8000/api/operations/import/preview', formData, {
+      const res = await axios.post('/api/operations/import/preview', formData, {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'multipart/form-data'
@@ -160,7 +160,7 @@ export default function Import() {
     setSyncError(null)
     try {
       const token = localStorage.getItem('token')
-      const res = await axios.post('http://localhost:8000/api/operations/import/apply', {
+      const res = await axios.post('/api/operations/import/apply', {
         import_id: preview.import_id,
         confirmed_keys
       }, { headers: { Authorization: `Bearer ${token}` } })

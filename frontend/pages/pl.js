@@ -4,7 +4,8 @@ import { useRouter } from 'next/router'
 import axios from 'axios'
 
 const api = (token) => axios.create({
-  baseURL: 'http://localhost:8000/api',
+  // См. комментарий в balance.js — относительный путь, проксируется Caddy.
+  baseURL: '/api',
   headers: { Authorization: `Bearer ${token}` }
 })
 

@@ -4,7 +4,10 @@ import { useRouter } from 'next/router'
 import axios from 'axios'
 
 const api = (token) => axios.create({
-  baseURL: 'http://localhost:8000/api',
+  // Относительный путь — запрос идёт через Caddy на тот же origin, что и страница
+  // (см. Caddyfile), поэтому работает что на localhost, что под реальным доменом,
+  // без переключения конфигурации и без CORS для этих запросов.
+  baseURL: '/api',
   headers: { Authorization: `Bearer ${token}` }
 })
 
