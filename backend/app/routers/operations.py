@@ -44,6 +44,18 @@ def _receivable_status(op):
     bucket = _aging_bucket(due_date, date.today())
     return bucket if bucket in RECEIVABLE_STATUS_LABELS else None
 
+def compute_vat_fact(income: float, expense: float, vat_rate: float) -> float:
+    """Сумма НДС, выделенная из дохода/расхода по ставке vat_rate (НДС "в том числе",
+    а не сверху). Используется при создании/редактировании операции (одиночном и
+    массовом) и при импорте — выделена в отдельную функцию, т.к. раньше эта формула
+    была продублирована в 4 местах по отдельности и однажды уже расходилась
+    (см. историю фикса "НДС не пересчитывается при редактировании")."""
+    if income and income > 0 and vat_rate and vat_rate > 0:
+        return income * vat_rate / (100 + vat_rate)
+    if expense and expense > 0 and vat_rate and vat_rate > 0:
+        return expense * vat_rate / (100 + vat_rate)
+    return 0
+
 class OperationCreate(BaseModel):
     # ВАЖНО: поле "date" ниже маскирует имя типа "date" (datetime.date) внутри
     # тела этого класса после своей строки — Python связывает локальное имя
@@ -284,11 +296,7 @@ def create_operation(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("operations", "create"))
 ):
-    vat_fact = 0
-    if op.income > 0 and op.vat_rate > 0:
-        vat_fact = op.income * op.vat_rate / (100 + op.vat_rate)
-    elif op.expense > 0 and op.vat_rate > 0:
-        vat_fact = op.expense * op.vat_rate / (100 + op.vat_rate)
+    vat_fact = compute_vat_fact(op.income, op.expense, op.vat_rate)
 
     operation = Operation(
         date=op.date,
@@ -334,12 +342,7 @@ def update_operation(
     # оставалась прежней (с момента создания операции), даже если при
     # редактировании меняли доход/расход или ставку НДС. Логика та же, что
     # и при создании операции (см. create_operation выше).
-    vat_fact = 0
-    if op.income > 0 and op.vat_rate > 0:
-        vat_fact = op.income * op.vat_rate / (100 + op.vat_rate)
-    elif op.expense > 0 and op.vat_rate > 0:
-        vat_fact = op.expense * op.vat_rate / (100 + op.vat_rate)
-    operation.vat_fact = vat_fact
+    operation.vat_fact = compute_vat_fact(op.income, op.expense, op.vat_rate)
 
     db.commit()
 
@@ -395,12 +398,7 @@ def bulk_update_operations(
         # иначе она осталась бы рассчитанной по старой ставке. Та же формула,
         # что и при создании/одиночном редактировании операции (см. выше).
         if 'vat_rate' in fields:
-            vat_fact = 0
-            if operation.income > 0 and operation.vat_rate > 0:
-                vat_fact = operation.income * operation.vat_rate / (100 + operation.vat_rate)
-            elif operation.expense > 0 and operation.vat_rate > 0:
-                vat_fact = operation.expense * operation.vat_rate / (100 + operation.vat_rate)
-            operation.vat_fact = vat_fact
+            operation.vat_fact = compute_vat_fact(operation.income, operation.expense, operation.vat_rate)
     db.commit()
 
     changed_desc = ", ".join(f"{k}={v}" for k, v in fields.items())
@@ -583,12 +581,8 @@ def _parse_cf_best_rows(contents: bytes) -> List[dict]:
         parsed_vat_rate = float(row['vat_rate']) if pd.notna(row.get('vat_rate')) else 0
         if pd.notna(row.get('vat_fact')):
             parsed_vat_fact = float(row['vat_fact'])
-        elif parsed_income > 0 and parsed_vat_rate > 0:
-            parsed_vat_fact = parsed_income * parsed_vat_rate / (100 + parsed_vat_rate)
-        elif parsed_expense > 0 and parsed_vat_rate > 0:
-            parsed_vat_fact = parsed_expense * parsed_vat_rate / (100 + parsed_vat_rate)
         else:
-            parsed_vat_fact = 0
+            parsed_vat_fact = compute_vat_fact(parsed_income, parsed_expense, parsed_vat_rate)
         rows.append({
             'date': parsed_date,
             'status': str(row['status']).strip().upper() if pd.notna(row.get('status')) else 'ОПЛАЧЕНО',
