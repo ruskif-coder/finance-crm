@@ -63,11 +63,43 @@ class Counterparty(Base):
     inn = Column(String, nullable=True)
     status = Column(String, nullable=False, default="действующий")  # действующий / виртуальный — скрытый параметр, пока без отображения в UI
     group_override = Column(String, nullable=True)  # ручная "Группа" в реестре — приоритетнее авто-вычисленной самой частой статьи
-    contract_number = Column(String, nullable=True)  # № договора
-    contract_date = Column(Date, nullable=True)  # дата договора
+    contract_number = Column(String, nullable=True)  # УСТАРЕЛО: дублировало 1:N таблицу Contract под видом 1:1 поля. Заменено
+    # привязкой Contract.counterparty_id (см. ниже) + Counterparty.contracts. Колонка не удалена и не трогается существующими
+    # значениями (см. CLAUDE.md про осторожность с деструктивными изменениями), но больше не читается/не пишется через
+    # API/UI (routers/counterparties.py, directories.js) — оставлена для истории.
+    contract_date = Column(Date, nullable=True)  # УСТАРЕЛО — см. комментарий к contract_number выше.
     note = Column(Text, nullable=True)  # примечание (например, по дебиторке) — свободный текст
     term_days = Column(Integer, nullable=True)  # отсрочка платежа в днях; NULL = берётся DEFAULT_TERM_DAYS (см. reports.py)
     operations = relationship("Operation", back_populates="counterparty")
+    contracts = relationship("Contract", back_populates="counterparty")
+
+class Contract(Base):
+    __tablename__ = "contracts"
+    id = Column(Integer, primary_key=True)
+    contract_number = Column(String, nullable=True)  # № договора — в файле встречаются и строки, и числа, храним как текст
+    contract_date = Column(Date, nullable=True)  # дата договора
+    inn = Column(String, nullable=True)
+    counterparty_name = Column(String, nullable=True)  # ООО КОНТРАГЕНТ — текстовое поле. Раньше это был единственный способ
+    # связать договор с контрагентом (без FK). Теперь это денормализованный снимок, синхронизируемый с Counterparty.name
+    # на сервере при наличии counterparty_id (см. routers/contracts.py) — не редактируется напрямую для привязанных строк.
+    # Для строк без привязки (counterparty_id is NULL, не успели сопоставить — см. link_contracts_to_counterparties.py)
+    # остаётся обычным свободным текстом, как раньше.
+    counterparty_id = Column(Integer, ForeignKey("counterparties.id"), nullable=True)  # FK на единый реестр контрагентов
+    # ("единый источник данных для всех полей контрагент в системе" — см. CLAUDE.md). NULL = историческая строка, ещё не
+    # сопоставленная с реестром (см. link_contracts_to_counterparties.py); обязателен при создании НОВОГО договора
+    # (проверяется в create_contract, не на уровне Pydantic-модели, т.к. она общая с update_contract).
+    counterparty = relationship("Counterparty", back_populates="contracts")
+    marketing_name = Column(String, nullable=True)  # НАЗВАНИЕ МАРКЕТИНГОВОЕ
+    cooperation_format = Column(String, nullable=True)  # ФОРМАТ СОТРУДНИЧЕСТВА
+    services = Column(Text, nullable=True)  # УСЛУГИ
+    end_date_text = Column(String, nullable=True)  # ДАТА ОКОНЧАНИЯ ДОГОВОРА — текст, формат в исходнике непостоянный
+    prolongation = Column(String, nullable=True)  # ПРОЛОНГАЦИЯ — свободный текст в БД, фронт ограничивает списком (PROLONGATION_OPTIONS в settings.js)
+    payment_form = Column(String, nullable=True)  # ФОРМА ОПЛАТЫ
+    payment_term = Column(String, nullable=True)  # УСТАРЕЛО: старое текстовое "срок оплаты". Заменено на payment_term_days/payment_term_condition (см. migrate_payment_term.py). Колонка не удалена (см. CLAUDE.md про осторожность с деструктивными изменениями) и не используется в API/UI — оставлена для истории.
+    payment_term_days = Column(Integer, nullable=True)  # срок оплаты, кол-во дней
+    payment_term_condition = Column(String, nullable=True)  # срок оплаты, условие: С даты УПД / С даты АКТ / По периоду — свободный текст в БД, фронт ограничивает списком
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
 
 class Operation(Base):
     __tablename__ = "operations"

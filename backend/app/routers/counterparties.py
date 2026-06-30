@@ -2,14 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Counterparty, Operation, Article, User
+from app.models import Counterparty, Operation, Article, Contract, User
 from app.routers.auth import get_current_user
 from app.permissions import require_permission
 from app.audit import log_action
 from app.routers.reports import DEFAULT_TERM_DAYS
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import date
 
 router = APIRouter()
 
@@ -23,14 +22,19 @@ class CounterpartyRegistryUpdate(BaseModel):
     name: str
     inn: Optional[str] = None
     status: str
-    contract_number: Optional[str] = None
-    contract_date: Optional[date] = None
     term_days: Optional[int] = None
+    # contract_number/contract_date УБРАНЫ (см. models.py): дублировали 1:N таблицу
+    # Contract как ложное 1:1 поле. Источник правды теперь Contract.counterparty_id —
+    # см. contracts_count в GET /registry ниже.
 
 class CounterpartyBulkUpdate(BaseModel):
     ids: List[int]
     status: Optional[str] = None
     group_override: Optional[str] = None
+
+class CounterpartyBulkDelete(BaseModel):
+    ids: List[int]
+    password: str
 
 @router.get("/")
 def get_counterparties(
@@ -47,7 +51,7 @@ def get_counterparties(
     items = query.offset(skip).limit(limit).all()
     return {
         "total": total,
-        "items": [{"id": c.id, "name": c.name, "vat_rate": c.vat_rate} for c in items]
+        "items": [{"id": c.id, "name": c.name, "vat_rate": c.vat_rate, "status": c.status} for c in items]
     }
 
 @router.post("/")
@@ -79,6 +83,48 @@ def update_counterparty(
     counterparty.vat_rate = data.vat_rate
     db.commit()
     return {"message": "Контрагент обновлён"}
+
+@router.delete("/bulk")
+def bulk_delete_counterparties(
+    payload: CounterpartyBulkDelete,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("counterparties", "delete"))
+):
+    """Массовое удаление контрагентов с подтверждением паролем администратора.
+    Отклоняет удаление, если у любого из контрагентов есть связанные операции."""
+    from app.routers.auth import verify_password
+    if not verify_password(payload.password, current_user.hashed_password):
+        raise HTTPException(status_code=403, detail="Неверный пароль")
+    if not payload.ids:
+        raise HTTPException(status_code=400, detail="Не указаны id контрагентов")
+
+    cps = db.query(Counterparty).filter(Counterparty.id.in_(payload.ids)).all()
+    if not cps:
+        raise HTTPException(status_code=404, detail="Контрагенты не найдены")
+
+    # Проверяем наличие связанных операций — при их наличии удаление запрещено:
+    # FK Operation.counterparty_id не даст сделать это на уровне БД, но лучше
+    # дать понятное сообщение заранее, чем поймать IntegrityError.
+    blocked = []
+    for cp in cps:
+        op_count = db.query(func.count(Operation.id)).filter(Operation.counterparty_id == cp.id).scalar() or 0
+        if op_count:
+            blocked.append(f"«{cp.name}» ({op_count} оп.)")
+    if blocked:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Нельзя удалить: у следующих контрагентов есть операции — {'; '.join(blocked)}"
+        )
+
+    names = [cp.name for cp in cps]
+    for cp in cps:
+        db.delete(cp)
+    db.commit()
+
+    log_action(db, current_user, "bulk_delete_counterparty", entity_type="counterparty", entity_id=None,
+               details=f"Удалено {len(names)} контрагентов: {'; '.join(names)}")
+    return {"message": f"Удалено {len(names)} контрагентов"}
+
 
 @router.delete("/{counterparty_id}")
 def delete_counterparty(
@@ -115,8 +161,6 @@ def get_counterparties_registry(
             Counterparty.inn,
             Counterparty.status,
             Counterparty.group_override,
-            Counterparty.contract_number,
-            Counterparty.contract_date,
             Counterparty.term_days,
             func.count(Operation.id).label("op_count"),
             # Поступления/выплаты по факту (статус "ОПЛАЧЕНО")
@@ -132,10 +176,20 @@ def get_counterparties_registry(
         )
         .outerjoin(Operation, Operation.counterparty_id == Counterparty.id)
         .group_by(Counterparty.id, Counterparty.name, Counterparty.inn, Counterparty.status, Counterparty.group_override,
-                  Counterparty.contract_number, Counterparty.contract_date, Counterparty.term_days)
+                  Counterparty.term_days)
         .order_by(Counterparty.name)
         .all()
     )
+
+    # Кол-во привязанных договоров (Contract.counterparty_id) — отдельный запрос, как и
+    # top_article ниже, чтобы джойн с Contract не размножил строки основного агрегата.
+    contract_count_rows = (
+        db.query(Contract.counterparty_id, func.count(Contract.id))
+        .filter(Contract.counterparty_id.isnot(None))
+        .group_by(Contract.counterparty_id)
+        .all()
+    )
+    contracts_count_by_cp = {cid: cnt for cid, cnt in contract_count_rows}
 
     # Группа (колонка): если у контрагента вручную задан group_override — показываем его,
     # иначе — самая частая КОНКРЕТНАЯ статья среди операций контрагента, без группировки
@@ -171,8 +225,7 @@ def get_counterparties_registry(
                 "id": r.id,
                 "name": r.name,
                 "inn": r.inn,
-                "contract_number": r.contract_number,
-                "contract_date": r.contract_date.isoformat() if r.contract_date else None,
+                "contracts_count": contracts_count_by_cp.get(r.id, 0),
                 "term_days": r.term_days,
                 "term_days_effective": r.term_days if r.term_days is not None else DEFAULT_TERM_DAYS,
                 "term_days_is_default": r.term_days is None,
@@ -268,18 +321,14 @@ def update_counterparty_registry(
         changes.append(f"ИНН: {counterparty.inn or '—'} → {new_inn or '—'}")
     if data.status != counterparty.status:
         changes.append(f"статус: {counterparty.status} → {data.status}")
-    if data.contract_number != counterparty.contract_number:
-        changes.append(f"№ договора: {counterparty.contract_number or '—'} → {data.contract_number or '—'}")
-    if data.contract_date != counterparty.contract_date:
-        changes.append(f"дата договора: {counterparty.contract_date or '—'} → {data.contract_date or '—'}")
     if data.term_days != counterparty.term_days:
         changes.append(f"отсрочка: {counterparty.term_days if counterparty.term_days is not None else f'{DEFAULT_TERM_DAYS} (по умолч.)'} → {data.term_days if data.term_days is not None else f'{DEFAULT_TERM_DAYS} (по умолч.)'}")
 
     counterparty.name = name
     counterparty.inn = new_inn
     counterparty.status = data.status
-    counterparty.contract_number = (data.contract_number or "").strip() or None
-    counterparty.contract_date = data.contract_date
+    # contract_number/contract_date намеренно НЕ трогаются (см. CounterpartyRegistryUpdate
+    # выше) — старые значения остаются как историческая заморозка, не перезаписываются в None.
     counterparty.term_days = data.term_days
     db.commit()
 

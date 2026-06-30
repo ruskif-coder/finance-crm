@@ -56,7 +56,7 @@ const RECEIVABLE_META = {
 const STATUSES = ['ОПЛАЧЕНО', 'ПЛАН ОПЛАТ', 'ПЛАН ПОСТУПЛЕНИЙ']
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
 const PAGE_SIZE_OPTIONS = [50, 100, 300, 500]
-const VAT_OPTIONS = [0, 5, 10, 20, 22]
+const VAT_OPTIONS = [0, 5, 7, 10, 20, 22]
 const isPlan = (s) => s === 'ПЛАН ОПЛАТ' || s === 'ПЛАН ПОСТУПЛЕНИЙ'
 const isQuarterPeriod = (p) => /^Q[1-4] \d{4}$/.test(p || '')
 
@@ -233,6 +233,10 @@ export default function Operations() {
   const [filterArticles, setFilterArticles] = useState([])
   const [filterCounterparties, setFilterCounterparties] = useState([])
   const [filterPeriods, setFilterPeriods] = useState([])
+  // Фильтр по типу контрагента — только для админа. Значения: 'все' | 'действующий' | 'виртуальный'
+  // (точно совпадают с Counterparty.status в БД, чтобы c.status === filterCpStatus работало напрямую).
+  const [filterCpStatus, setFilterCpStatus] = useState('все')
+  const [isAdmin, setIsAdmin] = useState(false)
 
   const [form, setForm] = useState(emptyForm)
   const [periodMode, setPeriodMode] = useState('month')
@@ -264,20 +268,21 @@ export default function Operations() {
     const perms = getPermissions()
     if (!can(perms, 'operations', 'view')) { router.push('/dashboard'); return }
     setPermissions(perms)
+    setIsAdmin(localStorage.getItem('is_admin') === '1')
     loadRefs(token)
   }, [])
 
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (token) loadOps(token)
-  }, [page, sortCol, sortDir, pageSize, filterStatuses, filterBanks, filterDateFrom, filterDateTo, filterArticles, filterCounterparties, filterPeriods])
+  }, [page, sortCol, sortDir, pageSize, filterStatuses, filterBanks, filterDateFrom, filterDateTo, filterArticles, filterCounterparties, filterPeriods, filterCpStatus])
 
   // Выделение строк для массового редактирования привязано к текущей странице —
   // при смене страницы/фильтра/сортировки оно сбрасывается, чтобы не оставалось
   // "невидимых" выбранных операций, которых уже нет в текущей выдаче.
   useEffect(() => {
     setSelectedIds([])
-  }, [page, sortCol, sortDir, pageSize, filterStatuses, filterBanks, filterDateFrom, filterDateTo, filterArticles, filterCounterparties, filterPeriods])
+  }, [page, sortCol, sortDir, pageSize, filterStatuses, filterBanks, filterDateFrom, filterDateTo, filterArticles, filterCounterparties, filterPeriods, filterCpStatus])
 
   const loadRefs = async (token) => {
     try {
@@ -303,7 +308,20 @@ export default function Operations() {
       if (filterDateFrom) params.append('date_from', filterDateFrom)
       if (filterDateTo) params.append('date_to', filterDateTo)
       filterArticles.forEach(id => params.append("article_id", id))
-      filterCounterparties.forEach(id => params.append("counterparty_id", id))
+      // Фильтр по типу контрагента (только для админа). Если тип выбран — берём
+      // ID контрагентов этого типа и пересекаем с ручным выбором (если он есть).
+      let cpIdsToFilter = filterCounterparties
+      if (filterCpStatus !== 'все') {
+        const statusIds = counterparties.filter(c => c.status === filterCpStatus).map(c => c.id)
+        if (filterCounterparties.length > 0) {
+          const statusSet = new Set(statusIds)
+          cpIdsToFilter = filterCounterparties.filter(id => statusSet.has(id))
+        } else {
+          cpIdsToFilter = statusIds
+        }
+        if (cpIdsToFilter.length === 0) cpIdsToFilter = [-1] // гарантированно пустой результат
+      }
+      cpIdsToFilter.forEach(id => params.append("counterparty_id", id))
       filterPeriods.forEach(p => params.append("period", p))
       const res = await a.get(`/operations/?${params}`)
       setOperations(res.data?.items || [])
@@ -328,7 +346,7 @@ export default function Operations() {
 
   const resetFilters = () => {
     setFilterStatuses([]); setFilterBanks([]); setFilterDateFrom(''); setFilterDateTo('')
-    setFilterArticles([]); setFilterCounterparties([]); setFilterPeriods([]); setPage(0)
+    setFilterArticles([]); setFilterCounterparties([]); setFilterPeriods([]); setFilterCpStatus('все'); setPage(0)
   }
 
   const openNew = () => { setEditingId(null); setCopyOf(null); setForm(emptyForm); setPeriodMode('month'); setShowForm(true) }
@@ -359,7 +377,18 @@ export default function Operations() {
       if (filterDateFrom) params.append('date_from', filterDateFrom)
       if (filterDateTo) params.append('date_to', filterDateTo)
       filterArticles.forEach(id => params.append('article_id', id))
-      filterCounterparties.forEach(id => params.append('counterparty_id', id))
+      let cpIdsExp = filterCounterparties
+      if (filterCpStatus !== 'все') {
+        const statusIds = counterparties.filter(c => c.status === filterCpStatus).map(c => c.id)
+        if (filterCounterparties.length > 0) {
+          const statusSet = new Set(statusIds)
+          cpIdsExp = filterCounterparties.filter(id => statusSet.has(id))
+        } else {
+          cpIdsExp = statusIds
+        }
+        if (cpIdsExp.length === 0) cpIdsExp = [-1]
+      }
+      cpIdsExp.forEach(id => params.append('counterparty_id', id))
       filterPeriods.forEach(p => params.append('period', p))
       const res = await api(token).get(`/operations/export?${params}`, { responseType: 'blob' })
       const url = window.URL.createObjectURL(new Blob([res.data]))
@@ -500,6 +529,9 @@ export default function Operations() {
         {PAGE_SIZE_OPTIONS.map(s => <button key={s} onClick={() => handlePageSize(s)} style={{ fontSize: '14px', padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--border-card)', cursor: 'pointer', background: pageSize === s ? 'var(--accent)' : 'white', color: pageSize === s ? 'white' : 'var(--text-secondary)' }}>{s}</button>)}
         {can(permissions, 'operations', 'create') && <button onClick={openNew} style={{ fontSize: '15px', padding: '6px 14px', borderRadius: '8px', border: 'none', background: 'var(--accent)', color: 'white', cursor: 'pointer', marginLeft: '8px' }}>+ Новая операция</button>}
         {can(permissions, 'operations', 'create') && <button onClick={downloadTemplate} style={{ fontSize: '15px', padding: '6px 14px', borderRadius: '8px', border: '1px solid var(--accent)', background: 'white', color: 'var(--accent)', cursor: 'pointer' }}>Шаблон</button>}
+        {can(permissions, 'import') && <button onClick={() => router.push('/import')} title="Импорт" style={{ fontSize: '17px', padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', color: 'var(--text-secondary)', cursor: 'pointer', lineHeight: 1 }}>
+          <span style={{ display: 'inline-block', transform: 'rotate(180deg)' }}>⬇️</span>
+        </button>}
         <button onClick={downloadExport} title="Скачать (с учётом текущих фильтров и сортировки)" style={{ fontSize: '17px', padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', color: 'var(--text-secondary)', cursor: 'pointer', lineHeight: 1 }}>⬇️</button>
       </Navbar>
 
@@ -592,10 +624,30 @@ export default function Operations() {
           <MultiDropdown label="Статус" items={STATUSES} selected={filterStatuses} onToggle={v => tog(filterStatuses, setFilterStatuses, v)} onClear={() => { setFilterStatuses([]); setPage(0) }} placeholder="Все статусы" getLabel={o => o} getId={o => o} />
           <MultiDropdown label="Банк" items={BANKS} selected={filterBanks} onToggle={v => tog(filterBanks, setFilterBanks, v)} onClear={() => { setFilterBanks([]); setPage(0) }} placeholder="Все банки" getLabel={o => o} getId={o => o} />
           <MultiDropdown label="Статья" items={articles} selected={filterArticles} onToggle={v => tog(filterArticles, setFilterArticles, v)} onClear={() => { setFilterArticles([]); setPage(0) }} placeholder="Все статьи" getLabel={o => o.name} getId={o => o.id} />
-          <MultiDropdown label="Контрагент" items={counterparties} selected={filterCounterparties} onToggle={v => tog(filterCounterparties, setFilterCounterparties, v)} onClear={() => { setFilterCounterparties([]); setPage(0) }} placeholder="Все контрагенты" getLabel={o => o.name} getId={o => o.id} />
+          <MultiDropdown
+            label="Контрагент"
+            items={filterCpStatus === 'все' ? counterparties : counterparties.filter(c => c.status === filterCpStatus)}
+            selected={filterCounterparties}
+            onToggle={v => tog(filterCounterparties, setFilterCounterparties, v)}
+            onClear={() => { setFilterCounterparties([]); setPage(0) }}
+            placeholder="Все контрагенты"
+            getLabel={o => o.name}
+            getId={o => o.id}
+          />
           <MultiDropdown label="Период" items={periods} selected={filterPeriods} onToggle={v => tog(filterPeriods, setFilterPeriods, v)} onClear={() => { setFilterPeriods([]); setPage(0) }} placeholder="Все периоды" getLabel={o => o} getId={o => o} />
           <div><div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '3px' }}>Дата с</div><input type="date" style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', fontSize: '15px' }} value={filterDateFrom} onChange={e => { setFilterDateFrom(e.target.value); setPage(0) }} /></div>
           <div><div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '3px' }}>Дата по</div><input type="date" style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', fontSize: '15px' }} value={filterDateTo} onChange={e => { setFilterDateTo(e.target.value); setPage(0) }} /></div>
+          {isAdmin && (
+            <div>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '3px' }}>Тип контрагента</div>
+              <select value={filterCpStatus} onChange={e => { setFilterCpStatus(e.target.value); setFilterCounterparties([]); setPage(0) }}
+                style={{ padding: '7px 10px', borderRadius: '8px', border: `1px solid ${filterCpStatus !== 'все' ? 'var(--accent)' : 'var(--border-card)'}`, fontSize: '15px', background: 'white', cursor: 'pointer', color: filterCpStatus !== 'все' ? 'var(--accent)' : 'inherit', outline: 'none' }}>
+                <option value="все">Все</option>
+                <option value="действующий">Действующие</option>
+                <option value="виртуальный">Виртуальные</option>
+              </select>
+            </div>
+          )}
           <button onClick={resetFilters} style={{ padding: '7px 14px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'transparent', cursor: 'pointer', fontSize: '14px', color: 'var(--text-muted)' }}>Сбросить всё</button>
         </div>
 
@@ -775,12 +827,6 @@ export default function Operations() {
             </table>
           </div>
         )}
-
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '4px', marginTop: '12px' }}>
-          <button onClick={() => setPage(p => p - 1)} disabled={page === 0} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', cursor: page === 0 ? 'default' : 'pointer', fontSize: '15px', opacity: page === 0 ? 0.4 : 1 }}>← Назад</button>
-          <span style={{ padding: '6px 16px', fontSize: '15px', color: 'var(--text-muted)' }}>{page + 1} из {totalPages || 1}</span>
-          <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} style={{ padding: '6px 16px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: '15px', opacity: page >= totalPages - 1 ? 0.4 : 1 }}>Вперёд →</button>
-        </div>
 
       </div>
     </div>

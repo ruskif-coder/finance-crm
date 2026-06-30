@@ -22,10 +22,6 @@ const BANK_STYLES = {
 
 const ACTION_LABELS_RU = { view: 'Просмотр', create: 'Создание', edit: 'Редактирование', delete: 'Удаление' }
 
-// Должно совпадать с DEFAULT_TERM_DAYS в backend/app/routers/reports.py — используется
-// только как плейсхолдер/подсказка в поле "Отсрочка", фактическое значение всегда приходит с backend.
-const DEFAULT_TERM_DAYS = 60
-
 function getPermissions() {
   if (typeof window === 'undefined') return {}
   try { return JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { return {} }
@@ -67,35 +63,6 @@ export default function Settings() {
   const [creatingUser, setCreatingUser] = useState(false)
   const [userError, setUserError] = useState('')
 
-  // Контрагенты (справочник)
-  const [counterparties, setCounterparties] = useState([])
-  const [loadingCounterparties, setLoadingCounterparties] = useState(false)
-  const [cpEditingId, setCpEditingId] = useState(null)
-  const [cpDraft, setCpDraft] = useState({ name: '', inn: '', status: 'действующий', contract_number: '', contract_date: '', term_days: '' })
-  const [cpSaving, setCpSaving] = useState(false)
-  const [cpError, setCpError] = useState('')
-  const [cpSearch, setCpSearch] = useState('')
-  const [cpStatusFilter, setCpStatusFilter] = useState('действующий')
-  const [cpSortCol, setCpSortCol] = useState('name')
-  const [cpSortDir, setCpSortDir] = useState('asc')
-  const [cpSelectedIds, setCpSelectedIds] = useState([])
-  const [cpBulkStatus, setCpBulkStatus] = useState('')
-  const [cpBulkGroup, setCpBulkGroup] = useState('')
-  const [cpBulkSaving, setCpBulkSaving] = useState(false)
-
-  // Статьи (справочник)
-  const [articles, setArticles] = useState([])
-  const [loadingArticles, setLoadingArticles] = useState(false)
-  const [artEditingId, setArtEditingId] = useState(null)
-  const [artDraft, setArtDraft] = useState({ name: '', group: '', type: 'expense' })
-  const [artSaving, setArtSaving] = useState(false)
-  const [artError, setArtError] = useState('')
-  const [artSearch, setArtSearch] = useState('')
-  const [artMovingId, setArtMovingId] = useState(null)
-  const [newArticle, setNewArticle] = useState({ name: '', group: '', type: 'expense' })
-  const [creatingArticle, setCreatingArticle] = useState(false)
-  const [artCreateError, setArtCreateError] = useState('')
-
   // Журнал действий
   const [auditItems, setAuditItems] = useState([])
   const [auditTotal, setAuditTotal] = useState(0)
@@ -110,7 +77,7 @@ export default function Settings() {
     if (!token) { router.push('/login'); return }
     const r = localStorage.getItem('role') || ''
     const perms = getPermissions()
-    if (r !== 'admin' && !can(perms, 'settings_balances', 'view') && !can(perms, 'counterparties', 'view') && !can(perms, 'articles', 'view')) { router.push('/dashboard'); return }
+    if (r !== 'admin') { router.push('/dashboard'); return }
     setRole(r)
     setPermissions(perms)
     loadBalances(token)
@@ -124,8 +91,6 @@ export default function Settings() {
     if (tab === 'users') loadUsers(token)
     if (tab === 'audit') loadAuditLog(token, 0, auditFilters)
     if (tab === 'roles') loadRoles(token)
-    if (tab === 'counterparties') loadCounterparties(token)
-    if (tab === 'articles') loadArticles(token)
   }, [tab])
 
   const loadBalances = async (token) => {
@@ -211,185 +176,7 @@ export default function Settings() {
     }
   }
 
-  // ---------- Контрагенты (справочник) ----------
-
-  const loadCounterparties = async (token) => {
-    setLoadingCounterparties(true)
-    try {
-      const res = await api(token).get('/counterparties/registry')
-      setCounterparties(res.data.items)
-    } catch (e) {
-      if (e.response?.status === 401) router.push('/login')
-    } finally {
-      setLoadingCounterparties(false)
-    }
-  }
-
-  const openCpEdit = (c) => {
-    setCpEditingId(c.id)
-    setCpDraft({ name: c.name, inn: c.inn || '', status: c.status, contract_number: c.contract_number || '', contract_date: c.contract_date || '', term_days: c.term_days != null ? String(c.term_days) : '' })
-    setCpError('')
-  }
-
-  const cancelCpEdit = () => { setCpEditingId(null); setCpError('') }
-
-  const handleSaveCounterparty = async (id) => {
-    const token = localStorage.getItem('token')
-    setCpSaving(true)
-    setCpError('')
-    try {
-      await api(token).put(`/counterparties/${id}/registry`, { name: cpDraft.name, inn: cpDraft.inn, status: cpDraft.status, contract_number: cpDraft.contract_number, contract_date: cpDraft.contract_date || null, term_days: cpDraft.term_days !== '' ? parseInt(cpDraft.term_days, 10) : null })
-      await loadCounterparties(token)
-      setCpEditingId(null)
-    } catch (e) {
-      setCpError(e.response?.data?.detail || 'Ошибка при сохранении')
-    } finally {
-      setCpSaving(false)
-    }
-  }
-
-  const toggleCpSelect = (id) => setCpSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
-
-  const handleCpBulkApply = async () => {
-    const fields = {}
-    if (cpBulkStatus) fields.status = cpBulkStatus
-    if (cpBulkGroup) fields.group_override = cpBulkGroup === '__reset__' ? '' : cpBulkGroup
-    if (Object.keys(fields).length === 0) { alert('Выберите хотя бы одно поле для изменения'); return }
-    const labels = { status: 'Вид', group_override: 'Группа' }
-    const summary = Object.entries(fields).map(([k, v]) => `${labels[k]} → ${v === '' ? 'сброс на авто' : v}`).join(', ')
-    if (!confirm(`Изменить ${cpSelectedIds.length} контрагентов?\n${summary}`)) return
-    const token = localStorage.getItem('token')
-    setCpBulkSaving(true)
-    try {
-      await api(token).patch('/counterparties/bulk', { ids: cpSelectedIds, ...fields })
-      setCpSelectedIds([]); setCpBulkStatus(''); setCpBulkGroup('')
-      await loadCounterparties(token)
-    } catch (e) {
-      alert(e.response?.data?.detail || 'Ошибка при массовом редактировании')
-    } finally {
-      setCpBulkSaving(false)
-    }
-  }
-
-  const handleCpSort = (col) => {
-    setCpSortDir(prev => (cpSortCol === col ? (prev === 'asc' ? 'desc' : 'asc') : 'asc'))
-    setCpSortCol(col)
-  }
-
-  const RELATION_LABELS = { 'заказчик': 'Заказчик', 'поставщик': 'Поставщик', 'смешенный': 'Смешенный' }
-  const RELATION_COLORS = {
-    'заказчик': { bg: '#dbeafe', color: '#2563eb' },
-    'поставщик': { bg: '#fef9c3', color: '#d97706' },
-    'смешенный': { bg: '#f3e8ff', color: '#7c3aed' },
-  }
-
-  const filteredCounterparties = counterparties
-    .filter(c => {
-      if (cpStatusFilter && c.status !== cpStatusFilter) return false
-      if (cpSearch) {
-        const q = cpSearch.toLowerCase()
-        if (!c.name.toLowerCase().includes(q) && !(c.inn || '').includes(q)) return false
-      }
-      return true
-    })
-    .sort((a, b) => {
-      const av = a[cpSortCol], bv = b[cpSortCol]
-      let cmp
-      if (typeof av === 'number' || typeof bv === 'number') cmp = (av || 0) - (bv || 0)
-      else cmp = String(av || '').localeCompare(String(bv || ''), 'ru')
-      return cpSortDir === 'asc' ? cmp : -cmp
-    })
-
-  const allCpVisibleSelected = filteredCounterparties.length > 0 && filteredCounterparties.every(c => cpSelectedIds.includes(c.id))
-  const toggleCpSelectAllVisible = () => setCpSelectedIds(allCpVisibleSelected ? [] : filteredCounterparties.map(c => c.id))
-
-  // ---------- Статьи (справочник) ----------
-
-  const loadArticles = async (token) => {
-    setLoadingArticles(true)
-    try {
-      const res = await api(token).get('/articles/registry')
-      setArticles(res.data.items)
-    } catch (e) {
-      if (e.response?.status === 401) router.push('/login')
-    } finally {
-      setLoadingArticles(false)
-    }
-  }
-
-  const handleCreateArticle = async () => {
-    setArtCreateError('')
-    if (!newArticle.name.trim()) { setArtCreateError('Введите название статьи'); return }
-    const token = localStorage.getItem('token')
-    setCreatingArticle(true)
-    try {
-      await api(token).post('/articles/', { name: newArticle.name.trim(), group: newArticle.group || null, type: newArticle.type })
-      setNewArticle({ name: '', group: '', type: 'expense' })
-      await loadArticles(token)
-    } catch (e) {
-      setArtCreateError(e.response?.data?.detail || 'Ошибка при создании')
-    } finally {
-      setCreatingArticle(false)
-    }
-  }
-
-  const openArtEdit = (a) => {
-    setArtEditingId(a.id)
-    setArtDraft({ name: a.name, group: a.group || '', type: a.type || 'expense' })
-    setArtError('')
-  }
-
-  const cancelArtEdit = () => { setArtEditingId(null); setArtError('') }
-
-  const handleSaveArticle = async (id) => {
-    const token = localStorage.getItem('token')
-    setArtSaving(true)
-    setArtError('')
-    try {
-      await api(token).put(`/articles/${id}`, { name: artDraft.name, group: artDraft.group || null, type: artDraft.type })
-      await loadArticles(token)
-      setArtEditingId(null)
-    } catch (e) {
-      setArtError(e.response?.data?.detail || 'Ошибка при сохранении')
-    } finally {
-      setArtSaving(false)
-    }
-  }
-
-  const handleDeleteArticle = async (a) => {
-    if (!confirm(`Удалить статью «${a.name}»?`)) return
-    const token = localStorage.getItem('token')
-    try {
-      await api(token).delete(`/articles/${a.id}`)
-      await loadArticles(token)
-    } catch (e) {
-      alert(e.response?.data?.detail || 'Ошибка при удалении')
-    }
-  }
-
-  const handleMoveArticle = async (id, direction) => {
-    const token = localStorage.getItem('token')
-    setArtMovingId(id)
-    try {
-      await api(token).put(`/articles/${id}/move`, { direction })
-      await loadArticles(token)
-    } catch (e) {
-      alert(e.response?.data?.detail || 'Ошибка при изменении порядка')
-    } finally {
-      setArtMovingId(null)
-    }
-  }
-
-  const articleGroups = [...new Set(articles.map(a => a.group).filter(Boolean))]
-
-  const filteredArticles = artSearch
-    ? articles.filter(a => a.name.toLowerCase().includes(artSearch.toLowerCase()) || (a.group || '').toLowerCase().includes(artSearch.toLowerCase()))
-    : articles
-
-  const ARTICLE_TYPE_META = {
-    income: { label: 'Доход', bg: '#dcfce7', color: '#16a34a' },
-    expense: { label: 'Расход', bg: '#fee2e2', color: '#dc2626' },
-  }
+  // Контрагенты/Статьи/Договоры были перенесены в pages/directories.js (раздел "Справочники")
 
   // ---------- Журнал действий ----------
 
@@ -524,25 +311,14 @@ export default function Settings() {
   const th = { textAlign: 'left', padding: '8px 12px', fontSize: '13px', color: '#6b7280', fontWeight: '500', borderBottom: '1px solid #e5e7eb' }
   const td = { padding: '10px 12px', fontSize: '15px', borderBottom: '1px solid #f3f4f6' }
 
-  // Сортируемый заголовок таблицы контрагентов — визуально как в /operations (липкая шапка, стрелка сортировки)
-  const cpTh = { textAlign: 'left', padding: '8px 10px', color: '#6b7280', fontWeight: '500', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', borderBottom: '2px solid #e5e7eb', background: '#f9fafb', position: 'sticky', top: 0, zIndex: 10, fontSize: '14px' }
-  const CpSortIcon = ({ col }) => cpSortCol !== col ? <span style={{ color: '#d1d5db', marginLeft: '4px' }}>↕</span> : <span style={{ color: '#2563eb', marginLeft: '4px' }}>{cpSortDir === 'asc' ? '↑' : '↓'}</span>
-
-  const tabs = []
-  if (role === 'admin' || can(permissions, 'settings_balances', 'view')) {
-    tabs.push({ id: 'balances', label: 'Остатки по банкам' })
-  }
-  if (role === 'admin' || can(permissions, 'counterparties', 'view')) {
-    tabs.push({ id: 'counterparties', label: 'Контрагенты' })
-  }
-  if (role === 'admin' || can(permissions, 'articles', 'view')) {
-    tabs.push({ id: 'articles', label: 'Статьи' })
-  }
-  if (role === 'admin') {
-    tabs.push({ id: 'users', label: 'Пользователи' })
-    tabs.push({ id: 'audit', label: 'Журнал действий' })
-    tabs.push({ id: 'roles', label: 'Роли' })
-  }
+  // Настройки теперь доступны только администратору (см. page-guard выше), поэтому
+  // вкладки ниже не нуждаются в индивидуальных permission-проверках — admin проходит их все.
+  const tabs = [
+    { id: 'balances', label: 'Остатки по банкам' },
+    { id: 'users', label: 'Пользователи' },
+    { id: 'audit', label: 'Журнал действий' },
+    { id: 'roles', label: 'Роли' },
+  ]
 
   return (
     <div style={{ minHeight: '100vh', background: '#f5f6fa' }}>
@@ -632,292 +408,6 @@ export default function Settings() {
                     </div>
                   )
                 })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {tab === 'counterparties' && (
-          <div>
-            {/* Фильтры */}
-            <div style={{ background: 'white', borderRadius: '12px', padding: '14px 20px', marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-              <input placeholder="Поиск по названию или ИНН" value={cpSearch} onChange={e => setCpSearch(e.target.value)} style={{ ...inpLeft, width: '260px' }} />
-              <select value={cpStatusFilter} onChange={e => setCpStatusFilter(e.target.value)} style={select}>
-                <option value="">Все виды</option>
-                <option value="действующий">Действующий</option>
-                <option value="виртуальный">Виртуальный</option>
-              </select>
-              <span style={{ fontSize: '14px', color: '#6b7280', marginLeft: 'auto' }}>{filteredCounterparties.length} из {counterparties.length}</span>
-            </div>
-
-            {(role === 'admin' || can(permissions, 'counterparties', 'edit')) && cpSelectedIds.length > 0 && (
-              <div style={{ background: 'white', borderRadius: '12px', padding: '14px 20px', marginBottom: '12px', border: '2px solid #2563eb', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                <div style={{ fontSize: '15px', fontWeight: '500', color: '#2563eb', marginRight: '4px', alignSelf: 'center' }}>Выбрано: {cpSelectedIds.length}</div>
-                <div><div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '3px' }}>Вид</div>
-                  <select style={select} value={cpBulkStatus} onChange={e => setCpBulkStatus(e.target.value)}>
-                    <option value="">— не менять —</option>
-                    <option value="действующий">Действующий</option>
-                    <option value="виртуальный">Виртуальный</option>
-                  </select>
-                </div>
-                <div><div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '3px' }}>Группа</div>
-                  <input placeholder="Новая группа" value={cpBulkGroup === '__reset__' ? '' : cpBulkGroup}
-                    onChange={e => setCpBulkGroup(e.target.value)}
-                    style={{ ...inpLeft, width: '180px' }} />
-                </div>
-                <button onClick={() => setCpBulkGroup('__reset__')} title="Вернуть автоматический расчёт группы (самая частая статья)"
-                  style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', background: cpBulkGroup === '__reset__' ? '#eff6ff' : 'transparent', color: cpBulkGroup === '__reset__' ? '#2563eb' : '#6b7280', cursor: 'pointer', fontSize: '14px' }}>
-                  Сбросить группу на авто
-                </button>
-                <button onClick={handleCpBulkApply} disabled={cpBulkSaving} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#2563eb', color: 'white', cursor: 'pointer', fontSize: '15px' }}>
-                  {cpBulkSaving ? 'Сохранение...' : `Применить к ${cpSelectedIds.length}`}
-                </button>
-                <button onClick={() => { setCpSelectedIds([]); setCpBulkStatus(''); setCpBulkGroup('') }} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', fontSize: '15px', color: '#6b7280' }}>Снять выделение</button>
-              </div>
-            )}
-
-            {loadingCounterparties ? <div style={{ textAlign: 'center', padding: '60px', color: '#6b7280' }}>Загрузка...</div> : (
-              <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'auto', maxHeight: 'calc(100vh - 280px)' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                  <thead>
-                    <tr>
-                      {(role === 'admin' || can(permissions, 'counterparties', 'edit')) && (
-                        <th style={{ ...cpTh, width: '34px', cursor: 'default' }}>
-                          <input type="checkbox" checked={allCpVisibleSelected} onChange={toggleCpSelectAllVisible} />
-                        </th>
-                      )}
-                      <th style={{ ...cpTh, width: '48px' }} onClick={() => handleCpSort('id')}>ID <CpSortIcon col="id" /></th>
-                      <th style={cpTh} onClick={() => handleCpSort('name')}>Название <CpSortIcon col="name" /></th>
-                      <th style={cpTh} onClick={() => handleCpSort('inn')}>ИНН <CpSortIcon col="inn" /></th>
-                      <th style={cpTh} onClick={() => handleCpSort('contract_number')}>№ договора <CpSortIcon col="contract_number" /></th>
-                      <th style={cpTh} onClick={() => handleCpSort('contract_date')}>Дата договора <CpSortIcon col="contract_date" /></th>
-                      <th style={cpTh} onClick={() => handleCpSort('term_days')}>Отсрочка, дн. <CpSortIcon col="term_days" /></th>
-                      <th style={cpTh} onClick={() => handleCpSort('relation')}>Статус <CpSortIcon col="relation" /></th>
-                      <th style={cpTh} onClick={() => handleCpSort('group')}>Группа <CpSortIcon col="group" /></th>
-                      <th style={cpTh} onClick={() => handleCpSort('status')}>Вид <CpSortIcon col="status" /></th>
-                      <th style={{ ...cpTh, textAlign: 'right' }} onClick={() => handleCpSort('op_count')}>Операции <CpSortIcon col="op_count" /></th>
-                      <th style={{ ...cpTh, textAlign: 'right' }} onClick={() => handleCpSort('receivable')}>Дебиторка <CpSortIcon col="receivable" /></th>
-                      <th style={{ ...cpTh, textAlign: 'right' }} onClick={() => handleCpSort('payable')}>Кредиторка <CpSortIcon col="payable" /></th>
-                      <th style={{ ...cpTh, textAlign: 'right' }} onClick={() => handleCpSort('income_paid')}>Поступления <CpSortIcon col="income_paid" /></th>
-                      <th style={{ ...cpTh, textAlign: 'right' }} onClick={() => handleCpSort('expense_paid')}>Выплаты <CpSortIcon col="expense_paid" /></th>
-                      <th style={{ ...cpTh, textAlign: 'right' }} onClick={() => handleCpSort('diff')}>Разница <CpSortIcon col="diff" /></th>
-                      <th style={cpTh} onClick={() => handleCpSort('last_op_date')}>Дата последней операции <CpSortIcon col="last_op_date" /></th>
-                      <th style={{ ...cpTh, cursor: 'default' }}>Действия</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredCounterparties.map(c => {
-                      const canEdit = role === 'admin' || can(permissions, 'counterparties', 'edit')
-                      const isEditing = cpEditingId === c.id
-                      const relColor = RELATION_COLORS[c.relation] || { bg: '#f3f4f6', color: '#6b7280' }
-                      return (
-                        <tr key={c.id} style={{ borderBottom: '1px solid #f3f4f6', background: isEditing ? '#fffbeb' : 'transparent' }}
-                          onMouseEnter={e => { if (!isEditing) e.currentTarget.style.background = '#f9fafb' }}
-                          onMouseLeave={e => { e.currentTarget.style.background = isEditing ? '#fffbeb' : 'transparent' }}>
-                          {canEdit && (
-                            <td style={{ padding: '7px 10px' }}>
-                              <input type="checkbox" checked={cpSelectedIds.includes(c.id)} onChange={() => toggleCpSelect(c.id)} />
-                            </td>
-                          )}
-                          <td style={{ padding: '7px 10px', color: '#9ca3af' }}>{c.id}</td>
-                          <td style={{ padding: '7px 10px' }}>
-                            {isEditing
-                              ? <input autoFocus value={cpDraft.name} onChange={e => setCpDraft(d => ({ ...d, name: e.target.value }))}
-                                  style={{ ...inpLeft, width: '220px', padding: '5px 8px', fontSize: '14px' }} />
-                              : c.name}
-                          </td>
-                          <td style={{ padding: '7px 10px' }}>
-                            {isEditing
-                              ? <input value={cpDraft.inn} onChange={e => setCpDraft(d => ({ ...d, inn: e.target.value }))}
-                                  style={{ ...inpLeft, width: '120px', padding: '5px 8px', fontSize: '14px' }} />
-                              : (c.inn || '—')}
-                          </td>
-                          <td style={{ padding: '7px 10px' }}>
-                            {isEditing
-                              ? <input value={cpDraft.contract_number} onChange={e => setCpDraft(d => ({ ...d, contract_number: e.target.value }))}
-                                  style={{ ...inpLeft, width: '110px', padding: '5px 8px', fontSize: '14px' }} />
-                              : (c.contract_number || '—')}
-                          </td>
-                          <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
-                            {isEditing
-                              ? <input type="date" value={cpDraft.contract_date} onChange={e => setCpDraft(d => ({ ...d, contract_date: e.target.value }))}
-                                  style={{ ...inpLeft, width: '120px', padding: '5px 8px', fontSize: '14px' }} />
-                              : fmtDate(c.contract_date)}
-                          </td>
-                          <td style={{ padding: '7px 10px', textAlign: 'right' }}>
-                            {isEditing
-                              ? <input type="number" min="0" value={cpDraft.term_days} onChange={e => setCpDraft(d => ({ ...d, term_days: e.target.value }))}
-                                  placeholder={String(DEFAULT_TERM_DAYS)}
-                                  style={{ ...inpLeft, width: '70px', padding: '5px 8px', fontSize: '14px', textAlign: 'right' }} />
-                              : (c.term_days_is_default
-                                  ? <span style={{ color: '#9ca3af' }} title="Значение по умолчанию">{c.term_days_effective}</span>
-                                  : <span title="Задано вручную">{c.term_days_effective}</span>)}
-                          </td>
-                          <td style={{ padding: '7px 10px' }}>
-                            {c.relation
-                              ? <span style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap', background: relColor.bg, color: relColor.color }}>{RELATION_LABELS[c.relation]}</span>
-                              : <span style={{ color: '#9ca3af' }}>—</span>}
-                          </td>
-                          <td style={{ padding: '7px 10px', color: '#6b7280', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.group_is_override ? `${c.group} (задано вручную)` : c.group}>
-                            {c.group_is_override && <span style={{ color: '#d97706', marginRight: '3px' }}>✎</span>}
-                            {c.group || '—'}
-                          </td>
-                          <td style={{ padding: '7px 10px' }}>
-                            {isEditing ? (
-                              <select value={cpDraft.status} onChange={e => setCpDraft(d => ({ ...d, status: e.target.value }))} style={{ ...select, padding: '5px 8px', fontSize: '14px' }}>
-                                <option value="действующий">Действующий</option>
-                                <option value="виртуальный">Виртуальный</option>
-                              </select>
-                            ) : (
-                              <span title={c.status === 'действующий' ? 'Действующий' : 'Виртуальный'}
-                                style={{ width: '10px', height: '10px', borderRadius: '50%', background: c.status === 'действующий' ? '#16a34a' : '#2563eb', display: 'inline-block' }} />
-                            )}
-                          </td>
-                          <td style={{ padding: '7px 10px', textAlign: 'right' }}>{c.op_count}</td>
-                          <td style={{ padding: '7px 10px', textAlign: 'right', color: '#2563eb', whiteSpace: 'nowrap' }}>{c.receivable > 0 ? fmt(c.receivable) : '—'}</td>
-                          <td style={{ padding: '7px 10px', textAlign: 'right', color: '#d97706', whiteSpace: 'nowrap' }}>{c.payable > 0 ? fmt(c.payable) : '—'}</td>
-                          <td style={{ padding: '7px 10px', textAlign: 'right', color: '#16a34a', whiteSpace: 'nowrap' }}>{c.income_paid > 0 ? fmt(c.income_paid) : '—'}</td>
-                          <td style={{ padding: '7px 10px', textAlign: 'right', color: '#dc2626', whiteSpace: 'nowrap' }}>{c.expense_paid > 0 ? fmt(c.expense_paid) : '—'}</td>
-                          <td style={{ padding: '7px 10px', textAlign: 'right', whiteSpace: 'nowrap', color: c.diff >= 0 ? '#16a34a' : '#dc2626', fontWeight: '500' }}>{fmt(c.diff)}</td>
-                          <td style={{ padding: '7px 10px', color: '#6b7280', whiteSpace: 'nowrap' }}>{fmtDate(c.last_op_date)}</td>
-                          <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
-                            {!canEdit ? '—' : isEditing ? (
-                              <>
-                                <button onClick={() => handleSaveCounterparty(c.id)} disabled={cpSaving} title="Сохранить"
-                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #86efac', background: '#dcfce7', cursor: 'pointer', color: '#16a34a', marginRight: '4px' }}>
-                                  {cpSaving ? '...' : '✓'}
-                                </button>
-                                <button onClick={cancelCpEdit} disabled={cpSaving} title="Отмена"
-                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#6b7280' }}>✕</button>
-                                {cpError && <div style={{ color: '#dc2626', fontSize: '13px', marginTop: '4px', maxWidth: '200px' }}>{cpError}</div>}
-                              </>
-                            ) : (
-                              <button onClick={() => openCpEdit(c)} title="Редактировать"
-                                style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fde68a', background: '#fffbeb', cursor: 'pointer', color: '#d97706' }}>✏️</button>
-                            )}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {tab === 'articles' && (
-          <div>
-            <datalist id="article-groups">
-              {articleGroups.map(g => <option key={g} value={g} />)}
-            </datalist>
-
-            {/* Форма создания */}
-            {(role === 'admin' || can(permissions, 'articles', 'edit')) && (
-              <div style={{ background: 'white', borderRadius: '12px', padding: '20px', marginBottom: '12px' }}>
-                <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px' }}>Новая статья</div>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                  <input placeholder="Название" value={newArticle.name} onChange={e => setNewArticle(p => ({ ...p, name: e.target.value }))} style={{ ...inpLeft, width: '220px' }} />
-                  <input placeholder="Группа (верхний уровень)" list="article-groups" value={newArticle.group} onChange={e => setNewArticle(p => ({ ...p, group: e.target.value }))} style={{ ...inpLeft, width: '200px' }} />
-                  <select value={newArticle.type} onChange={e => setNewArticle(p => ({ ...p, type: e.target.value }))} style={select}>
-                    <option value="expense">Расход</option>
-                    <option value="income">Доход</option>
-                  </select>
-                  <button onClick={handleCreateArticle} disabled={creatingArticle} style={btn}>{creatingArticle ? '...' : 'Создать'}</button>
-                </div>
-                {artCreateError && <div style={{ color: '#dc2626', fontSize: '15px', marginTop: '8px' }}>{artCreateError}</div>}
-              </div>
-            )}
-
-            {/* Фильтр */}
-            <div style={{ background: 'white', borderRadius: '12px', padding: '14px 20px', marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-              <input placeholder="Поиск по названию или группе" value={artSearch} onChange={e => setArtSearch(e.target.value)} style={{ ...inpLeft, width: '260px' }} />
-              {artSearch && <span style={{ fontSize: '13px', color: '#d97706' }}>Очистите поиск, чтобы менять порядок вывода</span>}
-              <span style={{ fontSize: '14px', color: '#6b7280', marginLeft: 'auto' }}>{filteredArticles.length} из {articles.length}</span>
-            </div>
-
-            {loadingArticles ? <div style={{ textAlign: 'center', padding: '60px', color: '#6b7280' }}>Загрузка...</div> : (
-              <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'auto', maxHeight: 'calc(100vh - 320px)' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                  <thead>
-                    <tr>
-                      <th style={{ ...cpTh, width: '48px', cursor: 'default' }}>ID</th>
-                      <th style={{ ...cpTh, cursor: 'default' }}>Название</th>
-                      <th style={{ ...cpTh, cursor: 'default' }}>Группа</th>
-                      <th style={{ ...cpTh, cursor: 'default' }}>Тип</th>
-                      <th style={{ ...cpTh, textAlign: 'right', cursor: 'default' }}>Операций</th>
-                      <th style={{ ...cpTh, textAlign: 'center', cursor: 'default', width: '70px' }}>Порядок</th>
-                      <th style={{ ...cpTh, cursor: 'default' }}>Действия</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredArticles.map((a, i) => {
-                      const canEditArt = role === 'admin' || can(permissions, 'articles', 'edit')
-                      const isEditing = artEditingId === a.id
-                      const typeMeta = ARTICLE_TYPE_META[a.type] || { label: a.type || '—', bg: '#f3f4f6', color: '#6b7280' }
-                      return (
-                        <tr key={a.id} style={{ borderBottom: '1px solid #f3f4f6', background: isEditing ? '#fffbeb' : 'transparent' }}
-                          onMouseEnter={e => { if (!isEditing) e.currentTarget.style.background = '#f9fafb' }}
-                          onMouseLeave={e => { e.currentTarget.style.background = isEditing ? '#fffbeb' : 'transparent' }}>
-                          <td style={{ padding: '7px 10px', color: '#9ca3af' }}>{a.id}</td>
-                          <td style={{ padding: '7px 10px' }}>
-                            {isEditing
-                              ? <input autoFocus value={artDraft.name} onChange={e => setArtDraft(d => ({ ...d, name: e.target.value }))}
-                                  style={{ ...inpLeft, width: '220px', padding: '5px 8px', fontSize: '14px' }} />
-                              : a.name}
-                          </td>
-                          <td style={{ padding: '7px 10px', color: '#6b7280' }}>
-                            {isEditing
-                              ? <input list="article-groups" value={artDraft.group} onChange={e => setArtDraft(d => ({ ...d, group: e.target.value }))}
-                                  style={{ ...inpLeft, width: '180px', padding: '5px 8px', fontSize: '14px' }} />
-                              : (a.group || '—')}
-                          </td>
-                          <td style={{ padding: '7px 10px' }}>
-                            {isEditing ? (
-                              <select value={artDraft.type} onChange={e => setArtDraft(d => ({ ...d, type: e.target.value }))} style={{ ...select, padding: '5px 8px', fontSize: '14px' }}>
-                                <option value="expense">Расход</option>
-                                <option value="income">Доход</option>
-                              </select>
-                            ) : (
-                              <span style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '20px', background: typeMeta.bg, color: typeMeta.color }}>{typeMeta.label}</span>
-                            )}
-                          </td>
-                          <td style={{ padding: '7px 10px', textAlign: 'right' }}>{a.op_count}</td>
-                          <td style={{ padding: '7px 10px', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                            {canEditArt && !artSearch ? (
-                              <>
-                                <button onClick={() => handleMoveArticle(a.id, 'up')} disabled={i === 0 || artMovingId === a.id} title="Выше"
-                                  style={{ border: 'none', background: 'transparent', cursor: i === 0 ? 'default' : 'pointer', color: i === 0 ? '#d1d5db' : '#6b7280', fontSize: '15px', padding: '2px 4px' }}>▲</button>
-                                <button onClick={() => handleMoveArticle(a.id, 'down')} disabled={i === filteredArticles.length - 1 || artMovingId === a.id} title="Ниже"
-                                  style={{ border: 'none', background: 'transparent', cursor: i === filteredArticles.length - 1 ? 'default' : 'pointer', color: i === filteredArticles.length - 1 ? '#d1d5db' : '#6b7280', fontSize: '15px', padding: '2px 4px' }}>▼</button>
-                              </>
-                            ) : <span style={{ color: '#d1d5db' }}>—</span>}
-                          </td>
-                          <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
-                            {!canEditArt ? '—' : isEditing ? (
-                              <>
-                                <button onClick={() => handleSaveArticle(a.id)} disabled={artSaving} title="Сохранить"
-                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #86efac', background: '#dcfce7', cursor: 'pointer', color: '#16a34a', marginRight: '4px' }}>
-                                  {artSaving ? '...' : '✓'}
-                                </button>
-                                <button onClick={cancelArtEdit} disabled={artSaving} title="Отмена"
-                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#6b7280' }}>✕</button>
-                                {artError && <div style={{ color: '#dc2626', fontSize: '13px', marginTop: '4px', maxWidth: '200px' }}>{artError}</div>}
-                              </>
-                            ) : (
-                              <>
-                                <button onClick={() => openArtEdit(a)} title="Редактировать"
-                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fde68a', background: '#fffbeb', cursor: 'pointer', color: '#d97706', marginRight: '4px' }}>✏️</button>
-                                <button onClick={() => handleDeleteArticle(a)} title="Удалить"
-                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fca5a5', background: '#fee2e2', cursor: 'pointer', color: '#dc2626' }}>🗑️</button>
-                              </>
-                            )}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
               </div>
             )}
           </div>
@@ -1140,3 +630,4 @@ export default function Settings() {
     </div>
   )
 }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               

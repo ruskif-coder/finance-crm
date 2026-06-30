@@ -17,6 +17,7 @@ SECTIONS = [
     {"key": "settings_balances", "label": "Остатки по банкам",  "group": "Настройки", "actions": ["view", "edit"]},
     {"key": "counterparties",    "label": "Контрагенты",        "group": "Справочники", "actions": ["view", "edit"]},
     {"key": "articles",          "label": "Статьи",             "group": "Справочники", "actions": ["view", "edit"]},
+    {"key": "contracts",         "label": "Договоры",           "group": "Справочники", "actions": ["view", "edit"]},
 ]
 
 ACTION_FIELDS = {"view": "can_view", "create": "can_create", "edit": "can_edit", "delete": "can_delete"}

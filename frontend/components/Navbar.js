@@ -19,6 +19,7 @@ export const can = (perms, section, action = 'view') => !!(perms && perms[sectio
 export default function Navbar({ active, children }) {
   const router = useRouter()
   const name = typeof window !== 'undefined' ? localStorage.getItem('name') || '' : ''
+  const role = typeof window !== 'undefined' ? localStorage.getItem('role') || '' : ''
   const permissions = getPermissions()
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef(null)
@@ -73,8 +74,9 @@ export default function Navbar({ active, children }) {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
             {can(permissions, 'operations') && <button onClick={() => router.push('/operations')} style={utilBtn}>Операции</button>}
-            {can(permissions, 'import') && <button onClick={() => router.push('/import')} style={utilBtn}>Импорт</button>}
-            {can(permissions, 'settings_balances') && <button onClick={() => router.push('/settings')} style={utilBtn}>Настройки</button>}
+            {(role === 'admin' || can(permissions, 'counterparties') || can(permissions, 'articles') || can(permissions, 'contracts')) &&
+              <button onClick={() => router.push('/directories')} style={utilBtn}>Справочники</button>}
+            {role === 'admin' && <button onClick={() => router.push('/settings')} title="Настройки" style={{ ...utilBtn, padding: '8px 12px', fontSize: '16px', lineHeight: 1 }}>⚙️</button>}
 
             <div ref={menuRef} style={{ position: 'relative', marginLeft: '6px' }}>
               <div onClick={() => setMenuOpen(o => !o)} title={name || ''} style={{

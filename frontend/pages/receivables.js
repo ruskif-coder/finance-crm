@@ -509,4 +509,12 @@ export default function Receivables() {
                 <td style={{ padding: '8px', textAlign: 'right', fontWeight: '600', color: 'var(--text-muted)' }}>{totalOpsFiltered}</td>
                 <td></td>
                 <td></td>
-      
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+      </div>
+    </div>
+  )
+}
