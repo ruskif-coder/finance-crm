@@ -13,6 +13,15 @@
 {$DOMAIN} {
 	encode gzip
 
+	# Заголовки безопасности (OWASP A5): браузер не будет встраивать приложение
+	# во фреймы сторонних сайтов (clickjacking), не станет угадывать MIME-тип
+	# ответа (sniff), и при переходах наружу не утечёт Referer с полным URL.
+	header {
+		X-Frame-Options DENY
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
 	# Бэкенд: всё, что фронтенд раньше звал по http://localhost:8000/api/...,
 	# теперь идёт сюда же относительным путём /api/... — тот же origin, что и
 	# страницы фронтенда, поэтому CORS на эти запросы из браузера не нужен.

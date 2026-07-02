@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 from app.database import get_db
@@ -7,7 +7,7 @@ from app.routers.auth import get_current_user
 from app.permissions import require_permission
 from app.audit import log_action
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 router = APIRouter()
 
@@ -866,6 +866,10 @@ def update_counterparty_note(
 
 @router.get("/receivables/export")
 def export_receivables(
+    counterparty: List[str] = Query(default=[]),
+    article: List[str] = Query(default=[]),
+    period: List[str] = Query(default=[]),
+    overdue_only: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("receivables", "view"))
 ):
@@ -878,6 +882,25 @@ def export_receivables(
     AGING_LABELS = {'overdue': 'Просрочено', 'current': 'Текущая задолженность', 'future': 'План', 'unknown': 'Без периода'}
 
     data = _compute_receivables(db)
+
+    # Применяем те же фильтры, что и в клиентском UI
+    rows = data['rows']
+    if counterparty:
+        rows = [r for r in rows if r['counterparty'] in counterparty]
+
+    filtered_rows = []
+    for r in rows:
+        ops = list(r['operations'])
+        if overdue_only:
+            ops = [o for o in ops if o['aging_bucket'] in ('overdue', 'current')]
+        if article:
+            ops = [o for o in ops if o['article'] in article]
+        if period:
+            ops = [o for o in ops if o['period'] in period]
+        if ops:
+            filtered_rows.append({**r, 'operations': ops})
+
+    total_amount = sum(o['amount'] for r in filtered_rows for o in r['operations'])
 
     wb = Workbook()
     ws = wb.active
@@ -900,7 +923,7 @@ def export_receivables(
 
     date_cols = (4, 8, 10, 14)
     row_idx = 2
-    for r in data['rows']:
+    for r in filtered_rows:
         for op in r['operations']:
             values = [
                 r['counterparty'], r['inn'], r['contract_number'], r['contract_date'], r['term_days'],
@@ -916,7 +939,7 @@ def export_receivables(
     if row_idx > 2:
         total_row = row_idx
         ws.cell(row=total_row, column=10, value='Итого:').font = Font(bold=True)
-        sum_cell = ws.cell(row=total_row, column=11, value=data['summary']['total_amount'])
+        sum_cell = ws.cell(row=total_row, column=11, value=total_amount)
         sum_cell.font = Font(bold=True)
 
     buf = io.BytesIO()

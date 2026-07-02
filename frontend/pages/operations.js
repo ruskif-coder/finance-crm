@@ -394,7 +394,7 @@ export default function Operations() {
       const url = window.URL.createObjectURL(new Blob([res.data]))
       const a = document.createElement('a')
       a.href = url
-      a.download = 'operacii.xlsx'
+      a.download = `operacii_${new Date().toISOString().slice(0,16).replace('T','_').replace(':','')}.xlsx`
       document.body.appendChild(a)
       a.click()
       a.remove()

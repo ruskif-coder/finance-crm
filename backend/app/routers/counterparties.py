@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Counterparty, Operation, Article, Contract, User
+from app.models import Counterparty, CounterpartyBankAccount, Operation, Article, Contract, User
 from app.routers.auth import get_current_user
 from app.permissions import require_permission
 from app.audit import log_action
@@ -35,6 +35,26 @@ class CounterpartyBulkUpdate(BaseModel):
 class CounterpartyBulkDelete(BaseModel):
     ids: List[int]
     password: str
+
+class BankAccountData(BaseModel):
+    bank_name: Optional[str] = None
+    rs: Optional[str] = None
+    ks: Optional[str] = None
+    bik: Optional[str] = None
+
+class CounterpartyRequisitesUpdate(BaseModel):
+    kpp: Optional[str] = None
+    ogrn: Optional[str] = None
+    okpo: Optional[str] = None
+    address: Optional[str] = None
+    address_fact: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    website: Optional[str] = None
+    edo_id: Optional[str] = None
+    director_name: Optional[str] = None
+    note: Optional[str] = None
+    bank_accounts: List[BankAccountData] = []
 
 @router.get("/")
 def get_counterparties(
@@ -337,3 +357,233 @@ def update_counterparty_registry(
                    details="; ".join(changes))
 
     return {"message": "Контрагент обновлён"}
+
+
+# ===================== Карточка контрагента =====================
+
+@router.get("/{counterparty_id}/card")
+def get_counterparty_card(
+    counterparty_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("counterparties", "view"))
+):
+    """Полные данные для карточки контрагента: реквизиты, банковские счета,
+    договора, агрегаты по операциям."""
+    cp = db.query(Counterparty).filter(Counterparty.id == counterparty_id).first()
+    if not cp:
+        raise HTTPException(status_code=404, detail="Контрагент не найден")
+
+    # Агрегаты по операциям
+    stats = (
+        db.query(
+            func.count(Operation.id).label("op_count"),
+            func.coalesce(func.sum(
+                case((Operation.status == 'ОПЛАЧЕНО', Operation.income), else_=0)
+            ), 0).label("income_paid"),
+            func.coalesce(func.sum(
+                case((Operation.status == 'ОПЛАЧЕНО', Operation.expense), else_=0)
+            ), 0).label("expense_paid"),
+            func.coalesce(func.sum(
+                case((Operation.status == 'ПЛАН ПОСТУПЛЕНИЙ', Operation.income), else_=0)
+            ), 0).label("receivable"),
+            func.coalesce(func.sum(
+                case((Operation.status == 'ПЛАН ОПЛАТ', Operation.expense), else_=0)
+            ), 0).label("payable"),
+            func.max(Operation.date).label("last_op_date"),
+        )
+        .filter(Operation.counterparty_id == counterparty_id)
+        .first()
+    )
+
+    contracts = (
+        db.query(Contract)
+        .filter(Contract.counterparty_id == counterparty_id)
+        .order_by(Contract.contract_date.desc().nullslast())
+        .all()
+    )
+
+    bank_accounts = (
+        db.query(CounterpartyBankAccount)
+        .filter(CounterpartyBankAccount.counterparty_id == counterparty_id)
+        .order_by(CounterpartyBankAccount.sort_order)
+        .all()
+    )
+
+    return {
+        "id": cp.id,
+        "name": cp.name,
+        "inn": cp.inn,
+        "kpp": cp.kpp,
+        "ogrn": cp.ogrn,
+        "okpo": cp.okpo,
+        "address": cp.address,
+        "address_fact": cp.address_fact,
+        "phone": cp.phone,
+        "email": cp.email,
+        "edo_id": cp.edo_id,
+        "director_name": cp.director_name,
+        "website": cp.website,
+        "note": cp.note,
+        "status": cp.status,
+        "vat_rate": cp.vat_rate,
+        "term_days": cp.term_days,
+        "bank_accounts": [
+            {
+                "id": b.id,
+                "bank_name": b.bank_name,
+                "rs": b.rs,
+                "ks": b.ks,
+                "bik": b.bik,
+                "sort_order": b.sort_order,
+            }
+            for b in bank_accounts
+        ],
+        "contracts": [
+            {
+                "id": c.id,
+                "contract_number": c.contract_number,
+                "contract_date": c.contract_date.isoformat() if c.contract_date else None,
+                "cooperation_format": c.cooperation_format,
+                "prolongation": c.prolongation,
+                "payment_term_days": c.payment_term_days,
+                "payment_term_condition": c.payment_term_condition,
+                "end_date_text": c.end_date_text,
+                "note": c.note,
+            }
+            for c in contracts
+        ],
+        "stats": {
+            "op_count": stats.op_count or 0,
+            "income_paid": float(stats.income_paid or 0),
+            "expense_paid": float(stats.expense_paid or 0),
+            "receivable": float(stats.receivable or 0),
+            "payable": float(stats.payable or 0),
+            "saldo": float(stats.receivable or 0) - float(stats.payable or 0),
+            "last_op_date": stats.last_op_date.isoformat() if stats.last_op_date else None,
+        },
+    }
+
+
+@router.get("/{counterparty_id}/analytics")
+def get_counterparty_analytics(
+    counterparty_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("counterparties", "view"))
+):
+    """Аналитика для карточки контрагента: оборот по месяцам, топ статей,
+    разбивка по статусам операций, средний чек."""
+    from sqlalchemy import text
+
+    cp = db.query(Counterparty).filter(Counterparty.id == counterparty_id).first()
+    if not cp:
+        raise HTTPException(status_code=404, detail="Контрагент не найден")
+
+    # Оборот по месяцам — только YYYY-MM периоды, весь доступный период
+    monthly = db.execute(text("""
+        SELECT period,
+               COALESCE(SUM(income),  0) AS income,
+               COALESCE(SUM(expense), 0) AS expense
+        FROM operations
+        WHERE counterparty_id = :cid
+          AND period ~ '^[0-9]{4}-[0-9]{2}$'
+        GROUP BY period
+        ORDER BY period
+    """), {"cid": counterparty_id}).fetchall()
+
+    # Топ-5 статей по суммарному обороту
+    top_articles = db.execute(text("""
+        SELECT a.name AS article,
+               COALESCE(SUM(o.income),  0) AS income,
+               COALESCE(SUM(o.expense), 0) AS expense
+        FROM operations o
+        JOIN articles a ON a.id = o.article_id
+        WHERE o.counterparty_id = :cid
+        GROUP BY a.name
+        ORDER BY (COALESCE(SUM(o.income), 0) + COALESCE(SUM(o.expense), 0)) DESC
+        LIMIT 5
+    """), {"cid": counterparty_id}).fetchall()
+
+    # Разбивка по статусам операций
+    by_status = db.execute(text("""
+        SELECT status,
+               COUNT(*)               AS cnt,
+               COALESCE(SUM(income),  0) AS income,
+               COALESCE(SUM(expense), 0) AS expense
+        FROM operations
+        WHERE counterparty_id = :cid
+        GROUP BY status
+    """), {"cid": counterparty_id}).fetchall()
+
+    # Средний чек (только ненулевые значения)
+    avg_row = db.execute(text("""
+        SELECT AVG(NULLIF(income,  0)) AS avg_income,
+               AVG(NULLIF(expense, 0)) AS avg_expense
+        FROM operations
+        WHERE counterparty_id = :cid
+    """), {"cid": counterparty_id}).fetchone()
+
+    return {
+        "monthly": [
+            {"period": r.period, "income": float(r.income), "expense": float(r.expense)}
+            for r in monthly
+        ],
+        "top_articles": [
+            {"article": r.article, "income": float(r.income), "expense": float(r.expense)}
+            for r in top_articles
+        ],
+        "by_status": [
+            {"status": r.status, "cnt": r.cnt,
+             "income": float(r.income), "expense": float(r.expense)}
+            for r in by_status
+        ],
+        "avg_income":  float(avg_row.avg_income  or 0) if avg_row and avg_row.avg_income  else 0,
+        "avg_expense": float(avg_row.avg_expense or 0) if avg_row and avg_row.avg_expense else 0,
+    }
+
+
+@router.put("/{counterparty_id}/requisites")
+def update_counterparty_requisites(
+    counterparty_id: int,
+    data: CounterpartyRequisitesUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("counterparties", "edit"))
+):
+    """Сохранение реквизитов контрагента (реквизитные поля + банковские счета).
+    Банковские счета перезаписываются целиком — старые удаляются, новые вставляются."""
+    cp = db.query(Counterparty).filter(Counterparty.id == counterparty_id).first()
+    if not cp:
+        raise HTTPException(status_code=404, detail="Контрагент не найден")
+
+    def _s(v): return (v or '').strip() or None
+
+    cp.kpp           = _s(data.kpp)
+    cp.ogrn          = _s(data.ogrn)
+    cp.okpo          = _s(data.okpo)
+    cp.address       = _s(data.address)
+    cp.address_fact  = _s(data.address_fact)
+    cp.phone         = _s(data.phone)
+    cp.email         = _s(data.email)
+    cp.edo_id        = _s(data.edo_id)
+    cp.director_name = _s(data.director_name)
+    cp.website       = _s(data.website)
+    cp.note          = _s(data.note)
+
+    # Перезаписываем банковские счета
+    db.query(CounterpartyBankAccount).filter(
+        CounterpartyBankAccount.counterparty_id == counterparty_id
+    ).delete()
+    for i, ba in enumerate(data.bank_accounts):
+        db.add(CounterpartyBankAccount(
+            counterparty_id=counterparty_id,
+            bank_name=_s(ba.bank_name),
+            rs=_s(ba.rs),
+            ks=_s(ba.ks),
+            bik=_s(ba.bik),
+            sort_order=i,
+        ))
+
+    db.commit()
+    log_action(db, current_user, "update_counterparty_requisites",
+               entity_type="counterparty", entity_id=cp.id,
+               details=f"Обновлены реквизиты: «{cp.name}»")
+    return {"message": "Реквизиты обновлены"}

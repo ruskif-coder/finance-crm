@@ -16,13 +16,20 @@ services:
     # (psql/pgAdmin локально), убирает внешнюю поверхность атаки.
     ports:
       - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finance_user -d finance"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 512m
 
   backend:
     build: ./backend
     container_name: finance_backend
     restart: always
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://finance_user:${POSTGRES_PASSWORD}@db:5432/finance
       SECRET_KEY: ${SECRET_KEY}
@@ -31,10 +38,12 @@ services:
       DOMAIN: ${DOMAIN:-localhost}
     volumes:
       - ./backend/logs:/app/logs
+      - ./uploads:/app/uploads   # персистентное хранилище прикреплённых файлов договоров
     # См. комментарий у db.ports — то же рассуждение: прямой доступ снаружи этой машины
     # не нужен, единственная публичная точка входа — caddy (80/443).
     ports:
       - "127.0.0.1:8000:8000"
+    mem_limit: 512m
 
   frontend:
     build: ./frontend
@@ -45,6 +54,7 @@ services:
     # См. комментарий у db.ports.
     ports:
       - "127.0.0.1:3000:3000"
+    mem_limit: 512m
 
   # Reverse proxy: единственный сервис, слушающий на всех интерфейсах (0.0.0.0:80/443).
   # Маршрутизация — см. ./Caddyfile. DOMAIN=localhost (значение по умолчанию из .env) —

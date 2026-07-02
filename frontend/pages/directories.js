@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
+import Link from 'next/link'
 import Navbar from '../components/Navbar'
 
 const api = (token) => axios.create({
@@ -11,6 +12,13 @@ const api = (token) => axios.create({
 
 const fmt = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0))
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
+// Дата окончания хранится как текст (VARCHAR): новые значения — YYYY-MM-DD от date-picker,
+// исторические — произвольный текст. Форматируем, если дата валидна, иначе — как есть.
+const fmtEndDate = (s) => {
+  if (!s) return '—'
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(s).toLocaleDateString('ru-RU')
+  return s
+}
 
 // Должно совпадать с DEFAULT_TERM_DAYS в backend/app/routers/reports.py — используется
 // только как плейсхолдер/подсказка в поле "Отсрочка", фактическое значение всегда приходит с backend.
@@ -146,7 +154,7 @@ export default function Directories() {
   // Договоры (справочник) — контрагент привязывается к реестру Контрагентов через
   // counterparty_id (FK); counterparty_name/inn для привязанных строк server-side
   // выводятся из Counterparty и тут только для отображения непривязанных легаси-строк.
-  const EMPTY_CONTRACT = { counterparty_id: null, contract_number: '', contract_date: '', inn: '', counterparty_name: '', marketing_name: '', cooperation_format: '', end_date_text: '', prolongation: '', payment_form: '', payment_term_days: '', payment_term_condition: '', note: '' }
+  const EMPTY_CONTRACT = { counterparty_id: null, contract_number: '', contract_date: '', inn: '', counterparty_name: '', marketing_name: '', cooperation_format: '', end_date_text: '', prolongation: '', payment_form: '', payment_term_days: '', payment_term_condition: '', note: '', document_link: '' }
   const [contracts, setContracts] = useState([])
   const [loadingContracts, setLoadingContracts] = useState(false)
   const [ctEditingId, setCtEditingId] = useState(null)
@@ -168,6 +176,19 @@ export default function Directories() {
   const [creatingContract, setCreatingContract] = useState(false)
   const [ctCreateError, setCtCreateError] = useState('')
   const [showNewContract, setShowNewContract] = useState(false)
+  const [newEndDateMode, setNewEndDateMode] = useState('date')  // 'date' | 'text'
+  // Экспорт/импорт договоров
+  const [ctImportPreview, setCtImportPreview] = useState(null)   // {changes, skipped} | null
+  const [ctImportApplying, setCtImportApplying] = useState(false)
+  const [ctImportFile, setCtImportFile] = useState(null)
+  const ctImportInputRef = useRef(null)
+  // Загрузка файлов к договорам
+  const ctUploadInputRef = useRef(null)
+  const ctNewUploadInputRef = useRef(null)
+  const [ctUploadTargetId, setCtUploadTargetId] = useState(null)
+  const [ctUploadingId, setCtUploadingId] = useState(null)
+  const [newContractFile, setNewContractFile] = useState(null)
+  const [newContractFileUploading, setNewContractFileUploading] = useState(false)
 
   // Фиксированные списки для Договоров (запрос пользователя) — старые значения, не
   // входящие в список, не скрываются и не подменяются, просто показываются как есть
@@ -437,6 +458,110 @@ export default function Directories() {
 
   // ---------- Договоры (справочник) ----------
 
+  const downloadCtExport = async () => {
+    const token = localStorage.getItem('token')
+    try {
+      const res = await api(token).get('/contracts/export', { responseType: 'blob' })
+      const url = window.URL.createObjectURL(new Blob([res.data]))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `dogovory_${new Date().toISOString().slice(0,16).replace('T','_').replace(':','')}.xlsx`
+      document.body.appendChild(a); a.click(); a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (e) { alert('Не удалось скачать файл') }
+  }
+
+  const handleCtImportFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setCtImportFile(file)
+    const token = localStorage.getItem('token')
+    const formData = new FormData()
+    formData.append('file', file)
+    try {
+      const res = await api(token).post('/contracts/import/preview', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      setCtImportPreview(res.data)
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Ошибка при разборе файла')
+    }
+    e.target.value = ''
+  }
+
+  const applyCtImport = async () => {
+    if (!ctImportFile) return
+    setCtImportApplying(true)
+    const token = localStorage.getItem('token')
+    const formData = new FormData()
+    formData.append('file', ctImportFile)
+    try {
+      const res = await api(token).post('/contracts/import/apply', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      setCtImportPreview(null)
+      setCtImportFile(null)
+      await loadContracts(token)
+      alert(`Обновлено договоров: ${res.data.updated}${res.data.skipped?.length ? '\nПропущено: ' + res.data.skipped.join('\n') : ''}`)
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Ошибка при применении импорта')
+    } finally {
+      setCtImportApplying(false)
+    }
+  }
+
+  const handleCtUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const targetId = ctUploadTargetId
+    if (!targetId) return
+    const token = localStorage.getItem('token')
+    const formData = new FormData()
+    formData.append('file', file)
+    setCtUploadingId(targetId)
+    try {
+      await api(token).post(`/contracts/${targetId}/upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      await loadContracts(token)
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Ошибка при загрузке файла')
+    } finally {
+      setCtUploadingId(null)
+      setCtUploadTargetId(null)
+    }
+    e.target.value = ''
+  }
+
+  const handleCtDownload = async (id, storedFilename) => {
+    const token = localStorage.getItem('token')
+    try {
+      const res = await api(token).get(`/contracts/${id}/download`, { responseType: 'blob' })
+      // Оригинальное имя без префикса id_
+      const prefix = `${id}_`
+      const displayName = storedFilename.startsWith(prefix) ? storedFilename.slice(prefix.length) : storedFilename
+      const url = window.URL.createObjectURL(new Blob([res.data]))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = displayName
+      document.body.appendChild(a); a.click(); a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      alert('Не удалось скачать файл')
+    }
+  }
+
+  const handleCtDeleteDoc = async (id) => {
+    if (!confirm('Удалить прикреплённый документ?')) return
+    const token = localStorage.getItem('token')
+    try {
+      await api(token).delete(`/contracts/${id}/document`)
+      await loadContracts(token)
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Ошибка при удалении документа')
+    }
+  }
+
   const loadContracts = async (token) => {
     setLoadingContracts(true)
     try {
@@ -449,11 +574,15 @@ export default function Directories() {
     }
   }
 
-  const contractPayload = (d) => ({
-    ...d,
-    contract_date: d.contract_date || null,
-    payment_term_days: d.payment_term_days !== '' && d.payment_term_days != null ? parseInt(d.payment_term_days, 10) : null,
-  })
+  const contractPayload = (d) => {
+    // eslint-disable-next-line no-unused-vars
+    const { _end_date_mode, ...rest } = d
+    return {
+      ...rest,
+      contract_date: d.contract_date || null,
+      payment_term_days: d.payment_term_days !== '' && d.payment_term_days != null ? parseInt(d.payment_term_days, 10) : null,
+    }
+  }
 
   const handleCreateContract = async () => {
     if (!newContract.counterparty_id) {
@@ -464,8 +593,26 @@ export default function Directories() {
     const token = localStorage.getItem('token')
     setCreatingContract(true)
     try {
-      await api(token).post('/contracts/', contractPayload(newContract))
+      const res = await api(token).post('/contracts/', contractPayload(newContract))
+      const newId = res.data?.id
+      // Если выбран файл — загружаем сразу после создания
+      if (newId && newContractFile) {
+        setNewContractFileUploading(true)
+        try {
+          const formData = new FormData()
+          formData.append('file', newContractFile)
+          await api(token).post(`/contracts/${newId}/upload`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+          })
+        } catch (uploadErr) {
+          alert(uploadErr.response?.data?.detail || 'Договор создан, но файл не загрузился')
+        } finally {
+          setNewContractFileUploading(false)
+        }
+      }
       setNewContract(EMPTY_CONTRACT)
+      setNewContractFile(null)
+      if (ctNewUploadInputRef.current) ctNewUploadInputRef.current.value = ''
       setShowNewContract(false)
       await loadContracts(token)
     } catch (e) {
@@ -477,7 +624,8 @@ export default function Directories() {
 
   const openCtEdit = (c) => {
     setCtEditingId(c.id)
-    setCtDraft({ ...EMPTY_CONTRACT, ...c, contract_date: c.contract_date || '', payment_term_days: c.payment_term_days != null ? String(c.payment_term_days) : '' })
+    const endMode = c.end_date_text && !/^\d{4}-\d{2}-\d{2}$/.test(c.end_date_text) ? 'text' : 'date'
+    setCtDraft({ ...EMPTY_CONTRACT, ...c, contract_date: c.contract_date || '', payment_term_days: c.payment_term_days != null ? String(c.payment_term_days) : '', document_link: c.document_link || '', _end_date_mode: endMode })
     setCtError('')
   }
 
@@ -808,7 +956,8 @@ export default function Directories() {
                             {isEditing
                               ? <input autoFocus value={cpDraft.name} onChange={e => setCpDraft(d => ({ ...d, name: e.target.value }))}
                                   style={{ ...inpLeft, width: '220px', padding: '5px 8px', fontSize: '14px' }} />
-                              : c.name}
+                              : <Link href={`/counterparty/${c.id}`} style={{ color: 'var(--primary, #2563eb)', textDecoration: 'none' }}
+                                  title="Открыть карточку контрагента">{c.name}</Link>}
                           </td>
                           <td style={{ padding: '7px 10px' }}>
                             {isEditing
@@ -1017,7 +1166,87 @@ export default function Directories() {
                 {ctProlongationOptions.map(o => <option key={o} value={o}>{o}</option>)}
               </select>
               <span style={{ fontSize: '14px', color: '#6b7280', marginLeft: 'auto' }}>{filteredContracts.length} из {contracts.length}</span>
+              {/* Экспорт */}
+              <button onClick={downloadCtExport} title="Экспорт в Excel"
+                style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', fontSize: '15px', lineHeight: 1, color: '#374151' }}>
+                ⬇️
+              </button>
+              {/* Скрытый input для загрузки файла к договору */}
+              <input ref={ctUploadInputRef} type="file" style={{ display: 'none' }} onChange={handleCtUpload} />
+              <input ref={ctNewUploadInputRef} type="file" style={{ display: 'none' }}
+                onChange={e => { setNewContractFile(e.target.files?.[0] || null) }} />
+              {/* Импорт */}
+              {(role === 'admin' || can(permissions, 'contracts', 'edit')) && (<>
+                <input ref={ctImportInputRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleCtImportFile} />
+                <button onClick={() => ctImportInputRef.current?.click()} title="Импорт из Excel"
+                  style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', fontSize: '15px', lineHeight: 1, color: '#374151' }}>
+                  ⬆️
+                </button>
+              </>)}
             </div>
+
+            {/* Модальное окно превью импорта */}
+            {ctImportPreview && (
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                <div style={{ background: 'white', borderRadius: '16px', padding: '24px', maxWidth: '820px', width: '100%', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                    <div style={{ fontSize: '18px', fontWeight: '700' }}>Превью импорта договоров</div>
+                    <button onClick={() => { setCtImportPreview(null); setCtImportFile(null) }}
+                      style={{ border: 'none', background: 'none', fontSize: '20px', cursor: 'pointer', color: '#6b7280' }}>✕</button>
+                  </div>
+
+                  {ctImportPreview.changes.length === 0 && ctImportPreview.skipped.length === 0 && (
+                    <div style={{ color: '#6b7280', padding: '20px 0', textAlign: 'center' }}>Изменений не обнаружено</div>
+                  )}
+
+                  {ctImportPreview.changes.length > 0 && (
+                    <div style={{ marginBottom: '16px' }}>
+                      <div style={{ fontWeight: '600', marginBottom: '8px', color: '#1e3a5f' }}>
+                        Будет обновлено договоров: {ctImportPreview.changes.length}
+                      </div>
+                      {ctImportPreview.changes.map(ch => (
+                        <div key={ch.id} style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '10px 14px', marginBottom: '8px' }}>
+                          <div style={{ fontWeight: '600', marginBottom: '6px', fontSize: '14px' }}>
+                            {ch.contract_number} — {ch.counterparty_name}
+                          </div>
+                          {ch.diffs.map((d, i) => (
+                            <div key={i} style={{ fontSize: '13px', color: '#374151', marginBottom: '3px' }}>
+                              <span style={{ color: '#6b7280' }}>{d.label}:</span>{' '}
+                              <span style={{ color: '#dc2626', textDecoration: 'line-through' }}>{d.old || '—'}</span>{' → '}
+                              <span style={{ color: '#16a34a' }}>{d.new || '—'}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {ctImportPreview.skipped.length > 0 && (
+                    <div style={{ marginBottom: '16px' }}>
+                      <div style={{ fontWeight: '600', marginBottom: '8px', color: '#b45309' }}>
+                        Пропущено строк: {ctImportPreview.skipped.length}
+                      </div>
+                      {ctImportPreview.skipped.map((s, i) => (
+                        <div key={i} style={{ fontSize: '13px', color: '#6b7280', marginBottom: '2px' }}>{s.reason}</div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid #e5e7eb', paddingTop: '16px' }}>
+                    <button onClick={() => { setCtImportPreview(null); setCtImportFile(null) }}
+                      style={{ padding: '8px 18px', borderRadius: '8px', border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', color: '#374151' }}>
+                      Отмена
+                    </button>
+                    {ctImportPreview.changes.length > 0 && (
+                      <button onClick={applyCtImport} disabled={ctImportApplying}
+                        style={{ padding: '8px 18px', borderRadius: '8px', border: 'none', background: ctImportApplying ? '#9ca3af' : '#2563eb', color: 'white', cursor: ctImportApplying ? 'not-allowed' : 'pointer', fontWeight: '600' }}>
+                        {ctImportApplying ? 'Применяем...' : `Применить (${ctImportPreview.changes.length})`}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {showNewContract && (role === 'admin' || can(permissions, 'contracts', 'edit')) && (
               <div style={{ background: 'white', borderRadius: '12px', padding: '20px', marginBottom: '12px' }}>
@@ -1027,6 +1256,10 @@ export default function Directories() {
                     <CounterpartySearch counterparties={counterparties} value={newContract.counterparty_id}
                       onChange={id => setNewContract(p => ({ ...p, counterparty_id: id }))} onCreateNew={createCounterparty} />
                   </div>
+                  <input readOnly
+                    value={(counterparties.find(cp => cp.id === newContract.counterparty_id) || {}).inn || ''}
+                    placeholder="ИНН" title="ИНН контрагента — заполняется из реестра автоматически"
+                    style={{ ...inpLeft, width: '120px', background: '#f9fafb', color: '#6b7280', cursor: 'default' }} />
                   <input placeholder="№ договора" value={newContract.contract_number} onChange={e => setNewContract(p => ({ ...p, contract_number: e.target.value }))} style={{ ...inpLeft, width: '140px' }} />
                   <input type="date" value={newContract.contract_date} onChange={e => setNewContract(p => ({ ...p, contract_date: e.target.value }))} style={{ ...inpLeft, width: '150px' }} />
                   <input placeholder="Название маркетинговое" value={newContract.marketing_name} onChange={e => setNewContract(p => ({ ...p, marketing_name: e.target.value }))} style={{ ...inpLeft, width: '200px' }} />
@@ -1036,13 +1269,53 @@ export default function Directories() {
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginTop: '8px' }}>
                   <SelectWithOther value={newContract.cooperation_format} options={COOPERATION_FORMATS} emptyLabel="Формат сотрудничества"
                     onChange={e => setNewContract(p => ({ ...p, cooperation_format: e.target.value }))} style={{ ...select, width: '190px' }} />
-                  <input placeholder="Дата окончания" value={newContract.end_date_text} onChange={e => setNewContract(p => ({ ...p, end_date_text: e.target.value }))} style={{ ...inpLeft, width: '150px' }} />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                      {newEndDateMode === 'date'
+                        ? <input type="date" title="Дата окончания договора" value={newContract.end_date_text}
+                            onChange={e => setNewContract(p => ({ ...p, end_date_text: e.target.value }))}
+                            style={{ ...inpLeft, width: '150px' }} />
+                        : <input type="text" placeholder="Текстовое пояснение (напр. «Бессрочно»)"
+                            value={newContract.end_date_text}
+                            onChange={e => setNewContract(p => ({ ...p, end_date_text: e.target.value }))}
+                            style={{ ...inpLeft, width: '220px' }} />}
+                      <button type="button" title={newEndDateMode === 'date' ? 'Ввести текстом' : 'Выбрать дату из календаря'}
+                        onClick={() => { setNewEndDateMode(m => m === 'date' ? 'text' : 'date'); setNewContract(p => ({ ...p, end_date_text: '' })) }}
+                        style={{ fontSize: '12px', padding: '3px 7px', borderRadius: '5px', border: '1px solid #d1d5db', background: '#f9fafb', cursor: 'pointer', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                        {newEndDateMode === 'date' ? 'Aa' : '📅'}
+                      </button>
+                    </div>
+                  </div>
                   <SelectWithOther value={newContract.prolongation} options={PROLONGATION_OPTIONS} emptyLabel="Пролонгация"
                     onChange={e => setNewContract(p => ({ ...p, prolongation: e.target.value }))} style={{ ...select, width: '170px' }} />
                   <input type="number" min="0" placeholder="Срок оплаты, дни" value={newContract.payment_term_days} onChange={e => setNewContract(p => ({ ...p, payment_term_days: e.target.value }))} style={{ ...inp, width: '140px' }} />
                   <SelectWithLegacy value={newContract.payment_term_condition} options={PAYMENT_TERM_CONDITIONS} emptyLabel="Условие"
                     onChange={e => setNewContract(p => ({ ...p, payment_term_condition: e.target.value }))} style={{ ...select, width: '170px' }} />
-                  <button onClick={handleCreateContract} disabled={creatingContract} style={btn}>{creatingContract ? '...' : 'Создать'}</button>
+                  <button onClick={handleCreateContract} disabled={creatingContract || newContractFileUploading} style={btn}>
+                    {newContractFileUploading ? '📎...' : creatingContract ? '...' : 'Создать'}
+                  </button>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginTop: '8px' }}>
+                  <input placeholder="🔗 Ссылка на документ (ЭДО, облако…)" value={newContract.document_link}
+                    onChange={e => setNewContract(p => ({ ...p, document_link: e.target.value }))}
+                    style={{ ...inpLeft, width: '300px' }} />
+                  <span style={{ color: '#9ca3af', fontSize: '13px' }}>или</span>
+                  <button type="button"
+                    onClick={() => ctNewUploadInputRef.current?.click()}
+                    title="Выбрать файл для прикрепления к договору"
+                    style={{ padding: '7px 12px', borderRadius: '8px', border: '1px solid #d1d5db', background: newContractFile ? '#ecfdf5' : '#f9fafb', color: newContractFile ? '#059669' : '#374151', cursor: 'pointer', fontSize: '14px', whiteSpace: 'nowrap' }}>
+                    {newContractFile ? `📎 ${newContractFile.name}` : '📎 Прикрепить файл'}
+                  </button>
+                  {newContractFile && (
+                    <button type="button" onClick={() => { setNewContractFile(null); if (ctNewUploadInputRef.current) ctNewUploadInputRef.current.value = '' }}
+                      title="Убрать файл" style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #fca5a5', background: '#fef2f2', color: '#dc2626', cursor: 'pointer', fontSize: '12px' }}>✕</button>
+                  )}
+                  {newContract.document_link && (
+                    <a href={newContract.document_link} target="_blank" rel="noopener noreferrer"
+                      style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid #bfdbfe', background: '#eff6ff', color: '#2563eb', textDecoration: 'none', fontSize: '15px' }}>
+                      🔗 Открыть
+                    </a>
+                  )}
                 </div>
                 {ctCreateError && <div style={{ color: '#dc2626', fontSize: '15px', marginTop: '8px' }}>{ctCreateError}</div>}
               </div>
@@ -1089,17 +1362,17 @@ export default function Directories() {
                         </th>
                       )}
                       <th style={{ ...ctTh, width: '48px' }} onClick={() => handleCtSort('id')}>ID <CtSortIcon col="id" /></th>
-                      <th style={ctTh} onClick={() => handleCtSort('counterparty_name')}>Контрагент <CtSortIcon col="counterparty_name" /></th>
-                      <th style={ctTh} onClick={() => handleCtSort('contract_number')}>№ договора <CtSortIcon col="contract_number" /></th>
-                      <th style={ctTh} onClick={() => handleCtSort('contract_date')}>Дата договора <CtSortIcon col="contract_date" /></th>
-                      <th style={ctTh} onClick={() => handleCtSort('inn')}>ИНН <CtSortIcon col="inn" /></th>
-                      <th style={ctTh} onClick={() => handleCtSort('marketing_name')}>Маркетинговое название <CtSortIcon col="marketing_name" /></th>
-                      <th style={ctTh} onClick={() => handleCtSort('cooperation_format')}>Формат сотрудничества <CtSortIcon col="cooperation_format" /></th>
-                      <th style={ctTh} onClick={() => handleCtSort('end_date_text')}>Дата окончания <CtSortIcon col="end_date_text" /></th>
-                      <th style={ctTh} onClick={() => handleCtSort('prolongation')}>Пролонгация <CtSortIcon col="prolongation" /></th>
-                      <th style={{ ...ctTh, textAlign: 'right' }} onClick={() => handleCtSort('payment_term_days')}>Срок оплаты, дни <CtSortIcon col="payment_term_days" /></th>
-                      <th style={ctTh} onClick={() => handleCtSort('payment_term_condition')}>Условие <CtSortIcon col="payment_term_condition" /></th>
-                      <th style={{ ...ctTh, cursor: 'default' }}>Действия</th>
+                      <th style={{ ...ctTh, width: '160px' }} onClick={() => handleCtSort('counterparty_name')}>Контрагент <CtSortIcon col="counterparty_name" /></th>
+                      <th style={{ ...ctTh, width: '110px' }} onClick={() => handleCtSort('contract_number')}>№ дог. <CtSortIcon col="contract_number" /></th>
+                      <th style={{ ...ctTh, width: '100px' }} onClick={() => handleCtSort('contract_date')} title="Дата договора">Дата <CtSortIcon col="contract_date" /></th>
+                      <th style={{ ...ctTh, width: '110px' }} onClick={() => handleCtSort('inn')}>ИНН <CtSortIcon col="inn" /></th>
+                      <th style={{ ...ctTh, width: '150px' }} onClick={() => handleCtSort('marketing_name')} title="Маркетинговое название">Назв. маркет. <CtSortIcon col="marketing_name" /></th>
+                      <th style={{ ...ctTh, width: '120px' }} onClick={() => handleCtSort('cooperation_format')} title="Формат сотрудничества">Формат <CtSortIcon col="cooperation_format" /></th>
+                      <th style={{ ...ctTh, width: '105px' }} onClick={() => handleCtSort('end_date_text')} title="Дата окончания договора">Окончание <CtSortIcon col="end_date_text" /></th>
+                      <th style={{ ...ctTh, width: '100px' }} onClick={() => handleCtSort('prolongation')}>Пролонг. <CtSortIcon col="prolongation" /></th>
+                      <th style={{ ...ctTh, width: '70px', textAlign: 'right' }} onClick={() => handleCtSort('payment_term_days')} title="Срок оплаты, дни">Дни <CtSortIcon col="payment_term_days" /></th>
+                      <th style={{ ...ctTh, width: '120px' }} onClick={() => handleCtSort('payment_term_condition')} title="Условие срока оплаты">Условие <CtSortIcon col="payment_term_condition" /></th>
+                      <th style={{ ...ctTh, width: '130px', cursor: 'default' }}>Действия</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1118,7 +1391,8 @@ export default function Directories() {
                             </td>
                           )}
                           <td style={{ padding: '7px 10px', color: '#9ca3af' }}>{c.id}</td>
-                          <td style={{ padding: '7px 10px' }}>{isEditing
+                          <td style={{ padding: '7px 10px', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                            title={!isEditing ? (c.counterparty_name || '') : undefined}>{isEditing
                             ? <div style={{ width: '200px' }}><CounterpartySearch counterparties={counterparties} value={ctDraft.counterparty_id} onChange={id => setCtDraft(d => ({ ...d, counterparty_id: id }))} onCreateNew={createCounterparty} /></div>
                             : <>{c.counterparty_name || '—'}{!c.linked && <span title="Не привязан к реестру контрагентов — старая запись" style={{ marginLeft: '5px', color: '#d97706' }}>⚠</span>}</>}</td>
                           <td style={{ padding: '7px 10px' }}>{isEditing ? <input value={ctDraft.contract_number || ''} onChange={e => setCtDraft(d => ({ ...d, contract_number: e.target.value }))} style={w('110px')} /> : (c.contract_number || '—')}</td>
@@ -1128,11 +1402,30 @@ export default function Directories() {
                               ? <span style={{ color: '#9ca3af' }}>{(counterparties.find(cp => cp.id === ctDraft.counterparty_id) || {}).inn || '—'}</span>
                               : <input value={ctDraft.inn || ''} onChange={e => setCtDraft(d => ({ ...d, inn: e.target.value }))} style={w('110px')} />)
                             : (c.inn || '—')}</td>
-                          <td style={{ padding: '7px 10px' }}>{isEditing ? <input value={ctDraft.marketing_name || ''} onChange={e => setCtDraft(d => ({ ...d, marketing_name: e.target.value }))} style={w('180px')} /> : (c.marketing_name || '—')}</td>
-                          <td style={{ padding: '7px 10px' }}>{isEditing
+                          <td style={{ padding: '7px 10px', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                            title={!isEditing ? (c.marketing_name || '') : undefined}>{isEditing ? <input value={ctDraft.marketing_name || ''} onChange={e => setCtDraft(d => ({ ...d, marketing_name: e.target.value }))} style={w('180px')} /> : (c.marketing_name || '—')}</td>
+                          <td style={{ padding: '7px 10px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                            title={!isEditing ? (c.cooperation_format || '') : undefined}>{isEditing
                             ? <SelectWithOther value={ctDraft.cooperation_format} options={COOPERATION_FORMATS} onChange={e => setCtDraft(d => ({ ...d, cooperation_format: e.target.value }))} style={sw('170px')} />
                             : (c.cooperation_format || '—')}</td>
-                          <td style={{ padding: '7px 10px' }}>{isEditing ? <input value={ctDraft.end_date_text || ''} onChange={e => setCtDraft(d => ({ ...d, end_date_text: e.target.value }))} style={w('140px')} /> : (c.end_date_text || '—')}</td>
+                          <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{isEditing
+                            ? <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                {(ctDraft._end_date_mode || 'date') === 'date'
+                                  ? <input type="date" value={ctDraft.end_date_text || ''}
+                                      onChange={e => setCtDraft(d => ({ ...d, end_date_text: e.target.value }))}
+                                      style={w('140px')} />
+                                  : <input type="text" placeholder="Текст (напр. «Бессрочно»)"
+                                      value={ctDraft.end_date_text || ''}
+                                      onChange={e => setCtDraft(d => ({ ...d, end_date_text: e.target.value }))}
+                                      style={w('180px')} />}
+                                <button type="button"
+                                  title={(ctDraft._end_date_mode || 'date') === 'date' ? 'Ввести текстом' : 'Выбрать дату'}
+                                  onClick={() => setCtDraft(d => ({ ...d, _end_date_mode: (d._end_date_mode || 'date') === 'date' ? 'text' : 'date', end_date_text: '' }))}
+                                  style={{ fontSize: '12px', padding: '2px 6px', borderRadius: '5px', border: '1px solid #d1d5db', background: '#f9fafb', cursor: 'pointer', color: '#6b7280' }}>
+                                  {(ctDraft._end_date_mode || 'date') === 'date' ? 'Aa' : '📅'}
+                                </button>
+                              </div>
+                            : fmtEndDate(c.end_date_text)}</td>
                           <td style={{ padding: '7px 10px' }}>{isEditing
                             ? <SelectWithOther value={ctDraft.prolongation} options={PROLONGATION_OPTIONS} onChange={e => setCtDraft(d => ({ ...d, prolongation: e.target.value }))} style={sw('160px')} />
                             : (c.prolongation || '—')}</td>
@@ -1142,24 +1435,71 @@ export default function Directories() {
                           <td style={{ padding: '7px 10px' }}>{isEditing
                             ? <SelectWithLegacy value={ctDraft.payment_term_condition} options={PAYMENT_TERM_CONDITIONS} onChange={e => setCtDraft(d => ({ ...d, payment_term_condition: e.target.value }))} style={sw('170px')} />
                             : (c.payment_term_condition || '—')}</td>
-                          <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
-                            {!canEditCt ? '—' : isEditing ? (
-                              <>
-                                <button onClick={() => handleSaveContract(c.id)} disabled={ctSaving} title="Сохранить"
-                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #86efac', background: '#dcfce7', cursor: 'pointer', color: '#16a34a', marginRight: '4px' }}>
-                                  {ctSaving ? '...' : '✓'}
-                                </button>
-                                <button onClick={cancelCtEdit} disabled={ctSaving} title="Отмена"
-                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#6b7280' }}>✕</button>
-                                {ctError && <div style={{ color: '#dc2626', fontSize: '13px', marginTop: '4px', maxWidth: '200px' }}>{ctError}</div>}
-                              </>
+                          <td style={{ padding: '7px 10px' }}>
+                            {isEditing ? (
+                              <div style={{ minWidth: '260px' }}>
+                                {/* Ссылка на документ */}
+                                <div style={{ marginBottom: '5px', display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                  <input value={ctDraft.document_link || ''} onChange={e => setCtDraft(d => ({ ...d, document_link: e.target.value }))}
+                                    placeholder="Ссылка на документ" style={{ ...inpLeft, width: '180px', padding: '4px 8px', fontSize: '13px' }} />
+                                  {ctDraft.document_link && (
+                                    <a href={ctDraft.document_link} target="_blank" rel="noopener noreferrer" title="Открыть ссылку"
+                                      style={{ fontSize: '13px', padding: '2px 7px', borderRadius: '6px', border: '1px solid #bfdbfe', background: '#eff6ff', color: '#2563eb', textDecoration: 'none' }}>🔗</a>
+                                  )}
+                                </div>
+                                {/* Прикреплённый файл */}
+                                <div style={{ marginBottom: '5px', display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                  {c.attached_filename ? (
+                                    <>
+                                      <button onClick={() => handleCtDownload(c.id, c.attached_filename)} title={c.attached_filename}
+                                        style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', background: '#d1fae5', cursor: 'pointer', color: '#065f46' }}>📥</button>
+                                      <span style={{ fontSize: '12px', color: '#6b7280', maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                        title={c.attached_filename.replace(new RegExp(`^${c.id}_`), '')}>
+                                        {c.attached_filename.replace(new RegExp(`^${c.id}_`), '')}
+                                      </span>
+                                      <button onClick={() => handleCtDeleteDoc(c.id)} title="Удалить файл"
+                                        style={{ fontSize: '12px', padding: '2px 6px', borderRadius: '6px', border: '1px solid #fca5a5', background: '#fee2e2', cursor: 'pointer', color: '#dc2626' }}>✕</button>
+                                    </>
+                                  ) : (
+                                    <button onClick={() => { setCtUploadTargetId(c.id); ctUploadInputRef.current?.click() }} title="Прикрепить документ"
+                                      style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #d1d5db', background: '#f9fafb', cursor: 'pointer', color: '#374151' }}>
+                                      {ctUploadingId === c.id ? '...' : '📎 Прикрепить'}
+                                    </button>
+                                  )}
+                                </div>
+                                {/* Сохранить / Отмена */}
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                  <button onClick={() => handleSaveContract(c.id)} disabled={ctSaving} title="Сохранить"
+                                    style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #86efac', background: '#dcfce7', cursor: 'pointer', color: '#16a34a' }}>
+                                    {ctSaving ? '...' : '✓'}
+                                  </button>
+                                  <button onClick={cancelCtEdit} disabled={ctSaving} title="Отмена"
+                                    style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#6b7280' }}>✕</button>
+                                </div>
+                                {ctError && <div style={{ color: '#dc2626', fontSize: '13px', marginTop: '4px', maxWidth: '240px' }}>{ctError}</div>}
+                              </div>
                             ) : (
-                              <>
-                                <button onClick={() => openCtEdit(c)} title="Редактировать"
-                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fde68a', background: '#fffbeb', cursor: 'pointer', color: '#d97706', marginRight: '4px' }}>✏️</button>
-                                <button onClick={() => handleDeleteContract(c)} title="Удалить"
-                                  style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fca5a5', background: '#fee2e2', cursor: 'pointer', color: '#dc2626' }}>🗑️</button>
-                              </>
+                              <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'nowrap' }}>
+                                {/* Документы — первыми */}
+                                {c.document_link && (
+                                  <a href={c.document_link} target="_blank" rel="noopener noreferrer" title="Открыть документ"
+                                    style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #bfdbfe', background: '#eff6ff', color: '#2563eb', textDecoration: 'none' }}>🔗</a>
+                                )}
+                                {c.attached_filename && (
+                                  <button onClick={() => handleCtDownload(c.id, c.attached_filename)}
+                                    title={`Скачать: ${c.attached_filename.replace(new RegExp(`^${c.id}_`), '')}`}
+                                    style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', background: '#d1fae5', cursor: 'pointer', color: '#065f46' }}>📥</button>
+                                )}
+                                {/* Редактировать / Удалить */}
+                                {canEditCt && (
+                                  <>
+                                    <button onClick={() => openCtEdit(c)} title="Редактировать"
+                                      style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fde68a', background: '#fffbeb', cursor: 'pointer', color: '#d97706' }}>✏️</button>
+                                    <button onClick={() => handleDeleteContract(c)} title="Удалить"
+                                      style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fca5a5', background: '#fee2e2', cursor: 'pointer', color: '#dc2626' }}>🗑️</button>
+                                  </>
+                                )}
+                              </div>
                             )}
                           </td>
                         </tr>

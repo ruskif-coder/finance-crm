@@ -61,6 +61,16 @@ class Counterparty(Base):
     name = Column(String, unique=True, nullable=False)
     vat_rate = Column(Float, default=0)
     inn = Column(String, nullable=True)
+    kpp = Column(String, nullable=True)
+    ogrn = Column(String, nullable=True)
+    okpo = Column(String, nullable=True)
+    address = Column(Text, nullable=True)
+    phone = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    edo_id = Column(String, nullable=True)
+    director_name = Column(String, nullable=True)
+    website = Column(String, nullable=True)
+    address_fact = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="действующий")  # действующий / виртуальный — скрытый параметр, пока без отображения в UI
     group_override = Column(String, nullable=True)  # ручная "Группа" в реестре — приоритетнее авто-вычисленной самой частой статьи
     contract_number = Column(String, nullable=True)  # УСТАРЕЛО: дублировало 1:N таблицу Contract под видом 1:1 поля. Заменено
@@ -72,6 +82,20 @@ class Counterparty(Base):
     term_days = Column(Integer, nullable=True)  # отсрочка платежа в днях; NULL = берётся DEFAULT_TERM_DAYS (см. reports.py)
     operations = relationship("Operation", back_populates="counterparty")
     contracts = relationship("Contract", back_populates="counterparty")
+    bank_accounts = relationship("CounterpartyBankAccount", back_populates="counterparty",
+                                 cascade="all, delete-orphan", order_by="CounterpartyBankAccount.sort_order")
+
+
+class CounterpartyBankAccount(Base):
+    __tablename__ = "counterparty_bank_accounts"
+    id = Column(Integer, primary_key=True)
+    counterparty_id = Column(Integer, ForeignKey("counterparties.id"), nullable=False)
+    bank_name = Column(String, nullable=True)
+    rs = Column(String, nullable=True)
+    ks = Column(String, nullable=True)
+    bik = Column(String, nullable=True)
+    sort_order = Column(Integer, default=0)
+    counterparty = relationship("Counterparty", back_populates="bank_accounts")
 
 class Contract(Base):
     __tablename__ = "contracts"
@@ -99,6 +123,8 @@ class Contract(Base):
     payment_term_days = Column(Integer, nullable=True)  # срок оплаты, кол-во дней
     payment_term_condition = Column(String, nullable=True)  # срок оплаты, условие: С даты УПД / С даты АКТ / По периоду — свободный текст в БД, фронт ограничивает списком
     note = Column(Text, nullable=True)
+    document_link = Column(String, nullable=True)   # URL на документ в ЭДО или другой системе — открывается по кнопке 🔗
+    attached_filename = Column(String, nullable=True)  # имя файла, сохранённого на сервере в /app/uploads/contracts/; NULL = файл не прикреплён
     created_at = Column(DateTime, server_default=func.now())
 
 class Operation(Base):

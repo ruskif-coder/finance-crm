@@ -28,7 +28,16 @@ logger = logging.getLogger("finance")
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Finance Management System")
+# В DEBUG=true (локальная разработка) Swagger UI доступен на /docs.
+# В production (DEBUG не задан или false) документация закрыта — /docs, /redoc, /openapi.json
+# возвращают 404, чтобы не раскрывать схему API без аутентификации (OWASP A6).
+_debug = os.getenv("DEBUG", "false").lower() == "true"
+app = FastAPI(
+    title="Finance Management System",
+    docs_url="/docs" if _debug else None,
+    redoc_url="/redoc" if _debug else None,
+    openapi_url="/openapi.json" if _debug else None,
+)
 
 # http://localhost:3000 остаётся всегда — это прямой доступ к фронтенду в обход Caddy
 # (см. docker-compose.yml, порт смотрит на 127.0.0.1, доступен только с этой машины),

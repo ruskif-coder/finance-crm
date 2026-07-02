@@ -253,11 +253,17 @@ export default function Receivables() {
   const downloadExport = async () => {
     const token = localStorage.getItem('token')
     try {
-      const res = await api(token).get('/reports/receivables/export', { responseType: 'blob' })
+      const params = new URLSearchParams()
+      filterCounterparties.forEach(c => params.append('counterparty', c))
+      filterArticles.forEach(a => params.append('article', a))
+      filterPeriods.forEach(p => params.append('period', p))
+      if (overdueOnly) params.append('overdue_only', 'true')
+      const qs = params.toString()
+      const res = await api(token).get(`/reports/receivables/export${qs ? '?' + qs : ''}`, { responseType: 'blob' })
       const url = window.URL.createObjectURL(new Blob([res.data]))
       const a = document.createElement('a')
       a.href = url
-      a.download = 'debitorka.xlsx'
+      a.download = `debitorka_${new Date().toISOString().slice(0,16).replace('T','_').replace(':','')}.xlsx`
       document.body.appendChild(a)
       a.click()
       a.remove()

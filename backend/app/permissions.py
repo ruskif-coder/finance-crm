@@ -15,7 +15,7 @@ SECTIONS = [
     {"key": "operations",        "label": "Операции",           "group": None,        "actions": ["view", "create", "edit", "delete"]},
     {"key": "import",            "label": "Импорт",             "group": None,        "actions": ["view"]},
     {"key": "settings_balances", "label": "Остатки по банкам",  "group": "Настройки", "actions": ["view", "edit"]},
-    {"key": "counterparties",    "label": "Контрагенты",        "group": "Справочники", "actions": ["view", "edit"]},
+    {"key": "counterparties",    "label": "Контрагенты",        "group": "Справочники", "actions": ["view", "edit", "delete"]},
     {"key": "articles",          "label": "Статьи",             "group": "Справочники", "actions": ["view", "edit"]},
     {"key": "contracts",         "label": "Договоры",           "group": "Справочники", "actions": ["view", "edit"]},
 ]
