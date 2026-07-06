@@ -8,15 +8,33 @@ __pycache__/
 .env
 .env.*
 
-# Локальные дампы и бэкапы БД — большие файлы с реальными данными, хранятся локально, не в git
+# DB dumps and backups — real data, local only
 backups/
 
-# Логи backend (смонтированы с хоста в docker-compose.yml) — операционные данные, не код
+# Backend logs (bind-mounted in docker-compose.yml)
 backend/logs/
 
-# Разовые выгрузки с реальными данными в корне проекта
+# Windows deploy/operational scripts — local only
+*.bat
+
+# Internal docs and planning files — local only
+CLAUDE.md
+AUDIT.md
+IMPLEMENTATION_PLAN.md
+docs/
+
+# SQL migration scripts — applied manually, local only
+*.sql
+
+# Stray data exports
 /*.xlsx
 /*.xls
+/*.csv
+*.md
+
+# Keep DEPLOYMENT.md and README if present
+!DEPLOYMENT.md
+!README.md
 
 # OS
 .DS_Store
