@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 
 UPLOADS_DIR = "/app/uploads/contracts"
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 МБ — максимальный размер прикреплённого файла
+ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".jpeg", ".png", ".zip"}
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Contract, Counterparty, User
@@ -347,6 +348,12 @@ async def upload_contract_document(
 
     # Санитизация имени файла: оставляем только безопасные символы
     original_name = file.filename or "document"
+    ext = os.path.splitext(original_name)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Недопустимый тип файла. Разрешены: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+        )
     safe_name = re.sub(r'[^\w\.\-]', '_', original_name)
     stored_name = f"{contract_id}_{safe_name}"
 
