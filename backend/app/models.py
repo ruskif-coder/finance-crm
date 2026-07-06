@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from datetime import datetime
 from app.database import Base
 
 class Role(Base):
@@ -149,3 +150,16 @@ class Operation(Base):
     created_by = Column(Integer, ForeignKey("users.id"))
     article = relationship("Article", back_populates="operations")
     counterparty = relationship("Counterparty", back_populates="operations")
+
+class LoginAttempt(Base):
+    """Хранит счётчик неудачных попыток входа и время разблокировки для каждого email.
+    Одна строка на email — при успешном входе сбрасывается (не удаляется).
+    Таблица создаётся автоматически через Base.metadata.create_all() при старте backend.
+    Преимущество перед in-memory dict (_LOGIN_ATTEMPTS): переживает перезапуск контейнера."""
+    __tablename__ = "login_attempts"
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    failed_count = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+

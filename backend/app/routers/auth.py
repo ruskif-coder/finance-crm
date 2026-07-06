@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import User
+from app.models import User, LoginAttempt
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
@@ -18,27 +18,42 @@ if not SECRET_KEY:
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480
 
-# Блокировка после неудачных попыток входа — в памяти процесса, по аналогии с
-# IMPORT_SYNC_CACHE в operations.py; не переживает перезапуск контейнера.
-_LOGIN_ATTEMPTS = {}  # email -> {"count": int, "locked_until": datetime|None}
 MAX_LOGIN_ATTEMPTS = 5
 LOGIN_LOCKOUT_MINUTES = 15
 
-def _check_login_lockout(email: str):
-    entry = _LOGIN_ATTEMPTS.get(email)
-    if entry and entry.get("locked_until") and entry["locked_until"] > datetime.utcnow():
-        remaining = int((entry["locked_until"] - datetime.utcnow()).total_seconds() // 60) + 1
-        raise HTTPException(status_code=429, detail=f"Слишком много неудачных попыток входа. Попробуйте через {remaining} мин.")
+# Блокировка входа — состояние хранится в таблице login_attempts (PostgreSQL),
+# а не в dict в памяти процесса, поэтому переживает docker restart finance_backend.
+# Таблица создаётся автоматически через Base.metadata.create_all() при старте.
+# Одна строка на email; при успешном входе счётчик/блокировка сбрасываются (не удаляются).
 
-def _register_failed_login(email: str):
-    entry = _LOGIN_ATTEMPTS.setdefault(email, {"count": 0, "locked_until": None})
-    entry["count"] += 1
-    if entry["count"] >= MAX_LOGIN_ATTEMPTS:
-        entry["locked_until"] = datetime.utcnow() + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
-        entry["count"] = 0
+def _check_login_lockout(db: Session, email: str):
+    row = db.query(LoginAttempt).filter(LoginAttempt.email == email).first()
+    if row and row.locked_until and row.locked_until > datetime.utcnow():
+        remaining = int((row.locked_until - datetime.utcnow()).total_seconds() // 60) + 1
+        raise HTTPException(
+            status_code=429,
+            detail=f"Слишком много неудачных попыток входа. Попробуйте через {remaining} мин."
+        )
 
-def _clear_login_attempts(email: str):
-    _LOGIN_ATTEMPTS.pop(email, None)
+def _register_failed_login(db: Session, email: str):
+    row = db.query(LoginAttempt).filter(LoginAttempt.email == email).first()
+    if not row:
+        row = LoginAttempt(email=email, failed_count=0)
+        db.add(row)
+    row.failed_count += 1
+    if row.failed_count >= MAX_LOGIN_ATTEMPTS:
+        row.locked_until = datetime.utcnow() + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+        row.failed_count = 0
+    row.updated_at = datetime.utcnow()
+    db.commit()
+
+def _clear_login_attempts(db: Session, email: str):
+    row = db.query(LoginAttempt).filter(LoginAttempt.email == email).first()
+    if row:
+        row.failed_count = 0
+        row.locked_until = None
+        row.updated_at = datetime.utcnow()
+        db.commit()
 
 def verify_password(plain, hashed):
     return pwd_context.verify(plain, hashed)
@@ -75,11 +90,11 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     from app.audit import log_action  # локальный импорт — избегаем циклической зависимости (audit.py импортирует auth.py)
     from app.permissions import get_permissions_for_user  # тоже локальный — по той же причине (permissions.py импортирует auth.py)
 
-    _check_login_lockout(form_data.username)
+    _check_login_lockout(db, form_data.username)
 
     user = db.query(User).filter(User.email == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
-        _register_failed_login(form_data.username)
+        _register_failed_login(db, form_data.username)
         log_action(db, user, "login_failed", entity_type="user", entity_id=user.id if user else None,
                    details=f"Неудачная попытка входа: {form_data.username}")
         raise HTTPException(status_code=400, detail="Неверный email или пароль")
@@ -87,7 +102,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
         log_action(db, user, "login_failed", entity_type="user", entity_id=user.id,
                    details="Попытка входа деактивированного пользователя")
         raise HTTPException(status_code=400, detail="Учётная запись деактивирована")
-    _clear_login_attempts(form_data.username)
+    _clear_login_attempts(db, form_data.username)
     token = create_access_token({"sub": user.email, "role": user.role.key})
     log_action(db, user, "login_success", entity_type="user", entity_id=user.id)
     return {
