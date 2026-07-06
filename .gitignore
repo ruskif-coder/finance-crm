@@ -26,6 +26,10 @@ docs/
 # SQL migration scripts — applied manually, local only
 *.sql
 
+# One-off utility scripts (moved to scripts/ folder)
+make_*.py
+scripts/
+
 # Stray data exports
 /*.xlsx
 /*.xls
