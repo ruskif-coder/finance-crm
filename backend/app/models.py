@@ -33,6 +33,7 @@ class User(Base):
     role_id = Column(Integer, ForeignKey("roles.id"), nullable=False)
     is_active = Column(Integer, default=1)
     created_at = Column(DateTime, server_default=func.now())
+    consent_accepted_at = Column(DateTime, nullable=True)  # 152-ФЗ: момент принятия согласия на обработку ПДн
     role = relationship("Role")
 
 class AuditLog(Base):

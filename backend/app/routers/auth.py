@@ -4,7 +4,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, LoginAttempt
 from passlib.context import CryptContext
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import InvalidTokenError
 from datetime import datetime, timedelta
 import os
 
@@ -78,7 +79,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception
-    except JWTError:
+    except InvalidTokenError:
         raise credentials_exception
     user = db.query(User).filter(User.email == email).first()
     if user is None or not user.is_active:
@@ -113,6 +114,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
         "is_admin": user.role.key == "admin",
         "permissions": get_permissions_for_user(db, user),
         "name": user.name,
+        "consent_required": user.consent_accepted_at is None,
     }
 
 @router.get("/me")
@@ -128,3 +130,17 @@ def get_me(current_user: User = Depends(get_current_user), db: Session = Depends
         "is_admin": current_user.role.key == "admin",
         "permissions": get_permissions_for_user(db, current_user),
     }
+
+
+@router.post("/accept-consent")
+def accept_consent(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """152-ФЗ: фиксирует момент принятия пользователем согласия на обработку персональных данных."""
+    from app.audit import log_action
+    current_user.consent_accepted_at = datetime.utcnow()
+    db.commit()
+    log_action(db, current_user, "consent_accepted", entity_type="user", entity_id=current_user.id,
+               details="Пользователь принял согласие на обработку персональных данных (152-ФЗ)")
+    return {"ok": True}
