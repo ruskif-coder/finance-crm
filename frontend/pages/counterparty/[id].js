@@ -901,4 +901,63 @@ export default function CounterpartyCard() {
                                        color: 'var(--text-secondary)', fontSize: 12 }}>
                             {op.period || '—'}
                           </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
+                                       color: 'var(--text-primary)', overflow: 'hidden',
+                                       textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
+                            {op.article || '—'}
+                          </td>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
+                                       fontWeight: op.income > 0 ? 600 : 400,
+                                       color: op.income > 0 ? 'var(--income)' : 'var(--text-faint)' }}>
+                            {op.income > 0 ? fmt(op.income) : '—'}
+                          </td>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
+                                       fontWeight: op.expense > 0 ? 600 : 400,
+                                       color: op.expense > 0 ? 'var(--dot-overdue)' : 'var(--text-faint)' }}>
+                            {op.expense > 0 ? fmt(op.expense) : '—'}
+                          </td>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)', whiteSpace: 'nowrap' }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
+                                           fontSize: 11, color: 'var(--text-secondary)' }}>
+                              <span style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor,
+                                             flexShrink: 0, display: 'inline-block' }} />
+                              {op.status}
+                            </span>
+                          </td>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
+                                       fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden',
+                                       textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
+                            {op.description || ''}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Пагинация */}
+              {opsTotal > OPS_LIMIT && (
+                <div style={{ padding: '10px 14px', display: 'flex', gap: 8, alignItems: 'center',
+                              borderTop: '1px solid var(--border-card)' }}>
+                  <button disabled={opsPage === 0} style={BTN({ padding: '4px 12px', fontSize: 12 })}
+                          onClick={() => handlePage(opsPage - 1)}>
+                    ← Пред.
+                  </button>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    {opsPage * OPS_LIMIT + 1}–{Math.min((opsPage + 1) * OPS_LIMIT, opsTotal)} из {opsTotal}
+                  </span>
+                  <button disabled={(opsPage + 1) * OPS_LIMIT >= opsTotal} style={BTN({ padding: '4px 12px', fontSize: 12 })}
+                          onClick={() => handlePage(opsPage + 1)}>
+                    След. →
+                  </button>
+                </div>
+              )}
+            </Card>
+
+          </div>{/* /right col */}
+        </div>{/* /grid */}
+      </div>{/* /wrap */}
+    </div>
+  )
+}
