@@ -717,6 +717,9 @@ def get_counterparty_operations(
                 "period": op.period,
                 "article": op.article.name if op.article else None,
                 "article_id": op.article_id,
+                "ds_num": op.ds_num,
+                "invoice": op.invoice,
+                "invoice_date": str(op.invoice_date) if op.invoice_date else None,
                 "receivable_status": _recv_status(op),
             }
             for op in ops

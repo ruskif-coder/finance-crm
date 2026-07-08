@@ -877,12 +877,13 @@ export default function CounterpartyCard() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <colgroup>
                     <col style={{ width: 88 }} /><col style={{ width: 80 }} />
-                    <col /><col style={{ width: 120 }} /><col style={{ width: 120 }} />
-                    <col style={{ width: 160 }} /><col />
+                    <col /><col style={{ width: 100 }} /><col style={{ width: 80 }} />
+                    <col style={{ width: 120 }} /><col style={{ width: 120 }} />
+                    <col style={{ width: 160 }} /><col style={{ width: 90 }} /><col />
                   </colgroup>
                   <thead>
                     <tr>
-                      {['Дата', 'Период', 'Статья', 'Приход', 'Расход', 'Статус', 'Описание'].map(h => (
+                      {['Дата', 'Период', 'Статья', '№ счёта', 'Дата сч.', 'Приход', 'Расход', 'Статус', 'Описание', '№ ДС'].map(h => (
                         <th key={h} style={{
                           textAlign: 'left', padding: '8px 12px', fontSize: 11,
                           color: 'var(--text-faint)', fontWeight: 500,
@@ -895,7 +896,7 @@ export default function CounterpartyCard() {
                   <tbody>
                     {ops.length === 0 && !opsLoading ? (
                       <tr>
-                        <td colSpan={7} style={{ padding: '24px 12px', color: 'var(--text-muted)',
+                        <td colSpan={10} style={{ padding: '24px 12px', color: 'var(--text-muted)',
                                                   textAlign: 'center', fontSize: 13 }}>
                           Операций нет
                         </td>
@@ -914,6 +915,14 @@ export default function CounterpartyCard() {
                           <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
                                        color: 'var(--text-secondary)', fontSize: 12 }}>
                             {op.period || '—'}
+                          </td>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
+                                       fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                            {op.invoice || '—'}
+                          </td>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
+                                       fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                            {op.invoice_date ? fmtDate(op.invoice_date) : '—'}
                           </td>
                           <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
                                        color: 'var(--text-primary)', overflow: 'hidden',
@@ -943,6 +952,10 @@ export default function CounterpartyCard() {
                                        textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
                             {op.description || ''}
                           </td>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
+                                       fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                            {op.ds_num || '—'}
+                          </td>
                         </tr>
                       )
                     })}
@@ -970,8 +983,4 @@ export default function CounterpartyCard() {
             </Card>}
 
           </div>{/* /right col */}
-        </div>{/* /grid */}
-      </div>{/* /wrap */}
-    </div>
-  )
-}
+        </div>{/* /grid *
