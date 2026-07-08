@@ -983,4 +983,8 @@ export default function CounterpartyCard() {
             </Card>}
 
           </div>{/* /right col */}
-        </div>{/* /grid *
+        </div>{/* /grid */}
+      </div>{/* /wrap */}
+    </div>
+  )
+}
