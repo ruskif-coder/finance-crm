@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
 import Link from 'next/link'
+import Head from 'next/head'
 import Navbar from '../../components/Navbar'
 import {
-import Head from 'next/head'
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
 
