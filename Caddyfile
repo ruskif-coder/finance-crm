@@ -13,13 +13,31 @@
 {$DOMAIN} {
 	encode gzip
 
-	# Заголовки безопасности (OWASP A5): браузер не будет встраивать приложение
-	# во фреймы сторонних сайтов (clickjacking), не станет угадывать MIME-тип
-	# ответа (sniff), и при переходах наружу не утечёт Referer с полным URL.
+	# Заголовки безопасности (OWASP A5).
 	header {
+		# Clickjacking: запрещаем встраивать приложение во фреймы любых сайтов.
 		X-Frame-Options DENY
+
+		# MIME-sniffing: браузер строго следует Content-Type ответа.
 		X-Content-Type-Options nosniff
+
+		# Referrer: при переходах наружу не утекает полный URL (только origin).
 		Referrer-Policy strict-origin-when-cross-origin
+
+		# HSTS: браузер всегда использует HTTPS для этого домена (1 год).
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+		# Permissions-Policy: явно отключаем API, которые приложению не нужны.
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+
+		# CSP: разрешаем только собственные ресурсы; unsafe-inline обязателен для
+		# Next.js (встроенные стили и hydration-скрипты), unsafe-eval — для Next.js
+		# production runtime. frame-ancestors 'none' дублирует X-Frame-Options для
+		# современных браузеров. object-src 'none' блокирует Flash/плагины.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self';"
+
+		# Убираем заголовок Server (не светим версию Caddy).
+		-Server
 	}
 
 	# Бэкенд: всё, что фронтенд раньше звал по http://localhost:8000/api/...,
