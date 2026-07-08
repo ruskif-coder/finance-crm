@@ -616,18 +616,31 @@ def lookup_bic(
         raise HTTPException(status_code=502, detail=f"Не удалось получить данные ЦБ РФ: {e}")
 
     try:
-        root = ET.fromstring(resp.text)
-        # Структура: <BicCode><BICRow BIC="..." NameP="..." City="..." Ks="..." .../>
-        row = root.find(".//BICRow")
+        # Ответ в windows-1251 — передаём bytes, чтобы ET взял кодировку из XML-декларации
+        root = ET.fromstring(resp.content)
+
+        def _text(parent, *tags):
+            """Ищет первый из тегов как дочерний элемент и возвращает его текст."""
+            for tag in tags:
+                el = parent.find(tag)
+                if el is not None and el.text:
+                    return el.text.strip()
+            return ""
+
+        # Реальная структура: <BicCode><Record ID="..."><ShortName>...</ShortName><Bic>...</Bic>...
+        row = root.find(".//Record")
+        if row is None:
+            # Старый формат с атрибутами (на случай смены API ЦБ)
+            row = root.find(".//BICRow")
         if row is None:
             raise HTTPException(status_code=404, detail="БИК не найден в справочнике ЦБ РФ")
 
-        return {
-            "bik": bik,
-            "bank_name": row.get("NameP", ""),
-            "bank_city": row.get("City", ""),
-            "ks": row.get("Ks", ""),
-        }
+        bank_name = (_text(row, "ShortName", "NameP")
+                     or row.get("NameP", "") or row.get("ShortName", ""))
+        bank_city = _text(row, "City") or row.get("City", "")
+        ks        = _text(row, "Ks", "CorrAccount") or row.get("Ks", "")
+
+        return {"bik": bik, "bank_name": bank_name, "bank_city": bank_city, "ks": ks}
     except HTTPException:
         raise
     except Exception as e:
