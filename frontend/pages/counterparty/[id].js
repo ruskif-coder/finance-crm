@@ -370,6 +370,11 @@ export default function CounterpartyCard() {
     'ПЛАН ОПЛАТ':        'var(--dot-current-dz)',
   }
 
+  const RECEIVABLE_META = {
+    overdue: { label: 'Просрочка', color: 'var(--dot-overdue)' },
+    current: { label: 'Текущая',   color: 'var(--dot-current-dz)' },
+  }
+
   const SORT_COL_OPTIONS = [
     { value: 'date',    label: 'Дата' },
     { value: 'period',  label: 'Период' },
@@ -876,14 +881,14 @@ export default function CounterpartyCard() {
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <colgroup>
-                    <col style={{ width: 88 }} /><col style={{ width: 80 }} />
-                    <col /><col style={{ width: 100 }} /><col style={{ width: 80 }} />
-                    <col style={{ width: 120 }} /><col style={{ width: 120 }} />
-                    <col style={{ width: 160 }} /><col style={{ width: 90 }} /><col />
+                    <col style={{ width: 88 }} /><col style={{ width: 130 }} />
+                    <col style={{ width: 36 }} /><col style={{ width: 110 }} /><col style={{ width: 110 }} />
+                    <col style={{ width: 90 }} /><col style={{ width: 80 }} /><col />
+                    <col style={{ width: 80 }} /><col style={{ width: 90 }} /><col style={{ width: 90 }} />
                   </colgroup>
                   <thead>
                     <tr>
-                      {['Дата', 'Период', 'Статья', '№ счёта', 'Дата сч.', 'Приход', 'Расход', 'Статус', 'Описание', '№ ДС'].map(h => (
+                      {['Дата', 'Статус', 'ДЗ', 'Приход', 'Расход', 'Банк', 'Период', 'Статья', '№ ДС', '№ Счёта', 'Дата счёта'].map(h => (
                         <th key={h} style={{
                           textAlign: 'left', padding: '8px 12px', fontSize: 11,
                           color: 'var(--text-faint)', fontWeight: 500,
@@ -896,7 +901,7 @@ export default function CounterpartyCard() {
                   <tbody>
                     {ops.length === 0 && !opsLoading ? (
                       <tr>
-                        <td colSpan={10} style={{ padding: '24px 12px', color: 'var(--text-muted)',
+                        <td colSpan={11} style={{ padding: '24px 12px', color: 'var(--text-muted)',
                                                   textAlign: 'center', fontSize: 13 }}>
                           Операций нет
                         </td>
@@ -912,22 +917,20 @@ export default function CounterpartyCard() {
                                        color: 'var(--text-muted)', whiteSpace: 'nowrap', fontSize: 12 }}>
                             {fmtDate(op.date)}
                           </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
-                                       color: 'var(--text-secondary)', fontSize: 12 }}>
-                            {op.period || '—'}
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)', whiteSpace: 'nowrap' }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
+                                           fontSize: 11, color: 'var(--text-secondary)' }}>
+                              <span style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor,
+                                             flexShrink: 0, display: 'inline-block' }} />
+                              {op.status}
+                            </span>
                           </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
-                                       fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                            {op.invoice || '—'}
-                          </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
-                                       fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                            {op.invoice_date ? fmtDate(op.invoice_date) : '—'}
-                          </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
-                                       color: 'var(--text-primary)', overflow: 'hidden',
-                                       textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
-                            {op.article || '—'}
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)', textAlign: 'center' }}>
+                            {op.receivable_status && RECEIVABLE_META[op.receivable_status]
+                              ? <span title={RECEIVABLE_META[op.receivable_status].label}
+                                      style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
+                                               background: RECEIVABLE_META[op.receivable_status].color }} />
+                              : null}
                           </td>
                           <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
                                        fontWeight: op.income > 0 ? 600 : 400,
@@ -939,22 +942,30 @@ export default function CounterpartyCard() {
                                        color: op.expense > 0 ? 'var(--dot-overdue)' : 'var(--text-faint)' }}>
                             {op.expense > 0 ? fmt(op.expense) : '—'}
                           </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)', whiteSpace: 'nowrap' }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
-                                           fontSize: 11, color: 'var(--text-secondary)' }}>
-                              <span style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor,
-                                             flexShrink: 0, display: 'inline-block' }} />
-                              {op.status}
-                            </span>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
+                                       fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                            {op.bank || '—'}
                           </td>
                           <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
-                                       fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden',
+                                       color: 'var(--text-secondary)', fontSize: 12 }}>
+                            {op.period || '—'}
+                          </td>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
+                                       color: 'var(--text-primary)', overflow: 'hidden',
                                        textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
-                            {op.description || ''}
+                            {op.article || '—'}
                           </td>
                           <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
                                        fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                             {op.ds_num || '—'}
+                          </td>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
+                                       fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                            {op.invoice || '—'}
+                          </td>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
+                                       fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                            {op.invoice_date ? fmtDate(op.invoice_date) : '—'}
                           </td>
                         </tr>
                       )
