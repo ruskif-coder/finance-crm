@@ -194,7 +194,7 @@ export default function CounterpartyCard() {
         director_name: d.director_name || '', note: d.note || '',
         bank_accounts: d.bank_accounts.length
           ? d.bank_accounts
-          : [{ bank_name: '', rs: '', ks: '', bik: '' }],
+          : [{ bank_name: '', bank_city: '', rs: '', ks: '', bik: '' }],
       })
     } catch (e) {
       setError(e.response?.data?.detail || 'Ошибка загрузки')
@@ -276,10 +276,40 @@ export default function CounterpartyCard() {
     })
   }
   function addBank() {
-    setEditData(prev => ({ ...prev, bank_accounts: [...prev.bank_accounts, { bank_name: '', rs: '', ks: '', bik: '' }] }))
+    setEditData(prev => ({ ...prev, bank_accounts: [...prev.bank_accounts, { bank_name: '', bank_city: '', rs: '', ks: '', bik: '' }] }))
   }
   function removeBank(idx) {
     setEditData(prev => ({ ...prev, bank_accounts: prev.bank_accounts.filter((_, i) => i !== idx) }))
+  }
+
+  // Автозаполнение банковских реквизитов по БИК через справочник ЦБ РФ
+  const [bicLoading, setBicLoading] = useState({})
+  const [bicError, setBicError] = useState({})
+  async function lookupBic(idx) {
+    const bik = editData.bank_accounts[idx]?.bik?.trim()
+    if (!bik || bik.length !== 9) {
+      setBicError(prev => ({ ...prev, [idx]: 'Введите 9-значный БИК' }))
+      return
+    }
+    setBicLoading(prev => ({ ...prev, [idx]: true }))
+    setBicError(prev => ({ ...prev, [idx]: '' }))
+    try {
+      const res = await api(token).get(`/counterparties/bic/${bik}`)
+      setEditData(prev => {
+        const ba = [...prev.bank_accounts]
+        ba[idx] = {
+          ...ba[idx],
+          bank_name: res.data.bank_name || ba[idx].bank_name,
+          bank_city: res.data.bank_city || ba[idx].bank_city,
+          ks:        res.data.ks        || ba[idx].ks,
+        }
+        return { ...prev, bank_accounts: ba }
+      })
+    } catch (e) {
+      setBicError(prev => ({ ...prev, [idx]: e.response?.data?.detail || 'Не найден' }))
+    } finally {
+      setBicLoading(prev => ({ ...prev, [idx]: false }))
+    }
   }
 
   function copyRequisites() {
@@ -482,6 +512,7 @@ export default function CounterpartyCard() {
                                         textTransform: 'uppercase', letterSpacing: '.04em' }}>
                             {b.bank_name || `Счёт ${i + 1}`}
                           </div>
+                          {b.bank_city && <ReqRow label="Город банка" value={b.bank_city} />}
                           <ReqRow label="Р/С" value={b.rs} />
                           <ReqRow label="К/С" value={b.ks} />
                           <ReqRow label="БИК" value={b.bik} />
@@ -537,10 +568,35 @@ export default function CounterpartyCard() {
                                   style={{ background: 'none', border: 'none', cursor: 'pointer',
                                            color: 'var(--dot-overdue)', fontSize: 13, padding: 0 }}>✕</button>
                         </div>
-                        <EditInput label="Банк" value={b.bank_name} onChange={v => updateBank(i, 'bank_name', v)} />
-                        <EditInput label="Р/С"  value={b.rs}        onChange={v => updateBank(i, 'rs', v)} />
-                        <EditInput label="К/С"  value={b.ks}        onChange={v => updateBank(i, 'ks', v)} />
-                        <EditInput label="БИК"  value={b.bik}       onChange={v => updateBank(i, 'bik', v)} />
+                        {/* БИК с автозаполнением из справочника ЦБ РФ */}
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2, fontWeight: 500 }}>БИК</div>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <input
+                              style={{ flex: 1, padding: '6px 10px', fontSize: 13,
+                                       border: '1px solid var(--border-card)', borderRadius: 8,
+                                       background: 'var(--bg-subtle)', color: 'var(--text-primary)', outline: 'none' }}
+                              value={b.bik || ''}
+                              onChange={e => updateBank(i, 'bik', e.target.value)}
+                              placeholder="044525974"
+                              maxLength={9}
+                            />
+                            <button
+                              onClick={() => lookupBic(i)}
+                              disabled={bicLoading[i]}
+                              style={{ padding: '6px 10px', fontSize: 12, background: 'var(--accent)',
+                                       color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer',
+                                       whiteSpace: 'nowrap', opacity: bicLoading[i] ? 0.6 : 1 }}
+                            >
+                              {bicLoading[i] ? '...' : 'Найти'}
+                            </button>
+                          </div>
+                          {bicError[i] && <div style={{ fontSize: 11, color: 'var(--dot-overdue)', marginTop: 3 }}>{bicError[i]}</div>}
+                        </div>
+                        <EditInput label="Банк"       value={b.bank_name} onChange={v => updateBank(i, 'bank_name', v)} placeholder="Заполняется автоматически по БИК" />
+                        <EditInput label="Город банка" value={b.bank_city} onChange={v => updateBank(i, 'bank_city', v)} placeholder="г. Москва" />
+                        <EditInput label="Р/С"  value={b.rs}  onChange={v => updateBank(i, 'rs', v)}  placeholder="40702810000000000000" />
+                        <EditInput label="К/С"  value={b.ks}  onChange={v => updateBank(i, 'ks', v)}  placeholder="Заполняется автоматически по БИК" />
                       </div>
                     ))}
                     <button style={BTN({ fontSize: 12, padding: '5px 12px' })} onClick={addBank}>

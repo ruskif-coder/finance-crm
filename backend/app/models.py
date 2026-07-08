@@ -92,10 +92,11 @@ class CounterpartyBankAccount(Base):
     __tablename__ = "counterparty_bank_accounts"
     id = Column(Integer, primary_key=True)
     counterparty_id = Column(Integer, ForeignKey("counterparties.id"), nullable=False)
-    bank_name = Column(String, nullable=True)
-    rs = Column(String, nullable=True)
-    ks = Column(String, nullable=True)
-    bik = Column(String, nullable=True)
+    bank_name = Column(String, nullable=True)   # краткое наименование банка (ПолучательБанк1)
+    bank_city = Column(String, nullable=True)   # город банка (ПолучательБанк2)
+    rs = Column(String, nullable=True)          # расчётный счёт (ПолучательСчет)
+    ks = Column(String, nullable=True)          # корреспондентский счёт (ПолучательКорсчет)
+    bik = Column(String, nullable=True)         # БИК банка (ПолучательБИК)
     sort_order = Column(Integer, default=0)
     counterparty = relationship("Counterparty", back_populates="bank_accounts")
 

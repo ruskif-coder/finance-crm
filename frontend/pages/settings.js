@@ -100,6 +100,12 @@ export default function Settings() {
     if (tab === 'roles') loadRoles(token)
   }, [tab])
 
+  // Реквизиты компании для экспорта платёжек
+  const [companyReq, setCompanyReq] = useState({})     // { "АльфаБанк": { inn, kpp, rs, bik, ... } }
+  const [editingReq, setEditingReq] = useState({})
+  const [savingReq, setSavingReq] = useState({})
+  const [reqOpen, setReqOpen] = useState({})           // { "АльфаБанк": true } — раскрыта секция
+
   const loadBalances = async (token) => {
     setLoading(true)
     try {
@@ -107,8 +113,25 @@ export default function Settings() {
       setBanks(res.data.banks)
       setTotalBalance(res.data.total_balance)
       const ed = {}
-      res.data.banks.forEach(b => { ed[b.bank] = b.opening_balance })
+      const cr = {}
+      const er = {}
+      res.data.banks.forEach(b => {
+        ed[b.bank] = b.opening_balance
+        cr[b.bank] = {
+          company_name: b.company_name || '',
+          inn: b.inn || '',
+          kpp: b.kpp || '',
+          rs: b.rs || '',
+          bik: b.bik || '',
+          bank_full_name: b.bank_full_name || '',
+          bank_city: b.bank_city || '',
+          ks: b.ks || '',
+        }
+        er[b.bank] = { ...cr[b.bank] }
+      })
       setEditing(ed)
+      setCompanyReq(cr)
+      setEditingReq(er)
     } catch (e) {
       if (e.response?.status === 401) router.push('/login')
     } finally {
@@ -129,6 +152,19 @@ export default function Settings() {
       alert('Ошибка при сохранении')
     } finally {
       setSaving(prev => ({ ...prev, [bank]: false }))
+    }
+  }
+
+  const handleSaveReq = async (bank) => {
+    const token = localStorage.getItem('token')
+    setSavingReq(prev => ({ ...prev, [bank]: true }))
+    try {
+      await api(token).put('/settings/company-requisites', { bank, ...editingReq[bank] })
+      await loadBalances(token)
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Ошибка при сохранении реквизитов')
+    } finally {
+      setSavingReq(prev => ({ ...prev, [bank]: false }))
     }
   }
 
@@ -413,6 +449,57 @@ export default function Settings() {
                         </div>
 
                       </div>
+
+                      {/* Реквизиты компании для выгрузки платёжек — раскрывающийся блок */}
+                      {(role === 'admin' || can(permissions, 'settings_balances', 'edit')) && b.bank !== 'Наличные' && (
+                        <div style={{ marginTop: 14, borderTop: '1px solid #f3f4f6', paddingTop: 12 }}>
+                          <button
+                            onClick={() => setReqOpen(prev => ({ ...prev, [b.bank]: !prev[b.bank] }))}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13,
+                                     color: '#2563eb', padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}
+                          >
+                            {reqOpen[b.bank] ? '▾' : '▸'} Реквизиты компании-плательщика
+                            {editingReq[b.bank]?.inn && <span style={{ color: '#6b7280', fontWeight: 400 }}> · ИНН {editingReq[b.bank].inn}</span>}
+                          </button>
+                          {reqOpen[b.bank] && (
+                            <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px' }}>
+                              {[
+                                { key: 'company_name', label: 'Наименование организации', full: true },
+                                { key: 'inn',          label: 'ИНН' },
+                                { key: 'kpp',          label: 'КПП' },
+                                { key: 'rs',           label: 'Расчётный счёт (Р/С)' },
+                                { key: 'bik',          label: 'БИК банка' },
+                                { key: 'bank_full_name', label: 'Наименование банка', full: true },
+                                { key: 'bank_city',    label: 'Город банка' },
+                                { key: 'ks',           label: 'Корр. счёт (К/С)' },
+                              ].map(f => (
+                                <div key={f.key} style={f.full ? { gridColumn: '1 / -1' } : {}}>
+                                  <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 2 }}>{f.label}</div>
+                                  <input
+                                    style={{ width: '100%', padding: '5px 8px', fontSize: 13,
+                                             border: '1px solid #e5e7eb', borderRadius: 6,
+                                             background: '#f9fafb', boxSizing: 'border-box' }}
+                                    value={editingReq[b.bank]?.[f.key] || ''}
+                                    onChange={e => setEditingReq(prev => ({
+                                      ...prev,
+                                      [b.bank]: { ...prev[b.bank], [f.key]: e.target.value }
+                                    }))}
+                                  />
+                                </div>
+                              ))}
+                              <div style={{ gridColumn: '1 / -1', marginTop: 4 }}>
+                                <button
+                                  onClick={() => handleSaveReq(b.bank)}
+                                  disabled={savingReq[b.bank]}
+                                  style={btn}
+                                >
+                                  {savingReq[b.bank] ? 'Сохранение...' : 'Сохранить реквизиты'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )
                 })}

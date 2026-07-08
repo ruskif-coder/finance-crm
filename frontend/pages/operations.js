@@ -495,6 +495,51 @@ export default function Operations() {
     }
   }
 
+  // Экспорт выбранных расходных операций в формат Альфа-Банка (1CClientBankExchange)
+  const [alfaExportLoading, setAlfaExportLoading] = useState(false)
+  const handleAlfaExport = async () => {
+    const expenseSelected = operations.filter(op => selectedIds.includes(op.id) && (op.expense || 0) > 0)
+    if (expenseSelected.length === 0) {
+      alert('Выберите расходные операции для выгрузки в Альфа-Банк')
+      return
+    }
+    // Определяем банк — берём из первой выбранной операции; если разные — предупреждаем
+    const banks = [...new Set(expenseSelected.map(op => op.bank).filter(Boolean))]
+    let bank = banks[0]
+    if (banks.length > 1) {
+      bank = prompt(
+        `Выбранные операции относятся к разным банкам: ${banks.join(', ')}.\nВведите банк-плательщик (АльфаБанк / ОПТ Банк / Совкомбанк):`,
+        banks[0]
+      )
+      if (!bank) return
+    }
+    setAlfaExportLoading(true)
+    const token = localStorage.getItem('token')
+    try {
+      const res = await api(token).post('/operations/export/alfa',
+        { ids: expenseSelected.map(op => op.id), bank },
+        { responseType: 'blob' }
+      )
+      const url = window.URL.createObjectURL(new Blob([res.data]))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `alfa_payments_${new Date().toISOString().slice(0,10)}.txt`
+      a.click()
+      window.URL.revokeObjectURL(url)
+    } catch (e) {
+      // При ошибке blob может содержать текст — пробуем прочитать
+      try {
+        const text = await e.response?.data?.text?.()
+        const parsed = JSON.parse(text || '{}')
+        alert(`Ошибка: ${parsed.detail || 'Неизвестная ошибка'}`)
+      } catch {
+        alert('Ошибка при формировании файла. Проверьте реквизиты контрагентов и настройки банка.')
+      }
+    } finally {
+      setAlfaExportLoading(false)
+    }
+  }
+
 
   const createCounterparty = async (name) => {
     const token = localStorage.getItem('token')
@@ -534,6 +579,18 @@ export default function Operations() {
         {can(permissions, 'import') && <button onClick={() => router.push('/import')} title="Импорт" style={{ fontSize: '17px', padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', color: 'var(--text-secondary)', cursor: 'pointer', lineHeight: 1 }}>
           <span style={{ display: 'inline-block', transform: 'rotate(180deg)' }}>⬇️</span>
         </button>}
+        {selectedIds.length > 0 && (
+          <button
+            onClick={handleAlfaExport}
+            disabled={alfaExportLoading}
+            title="Выгрузить выбранные расходные операции в Альфа-Банк"
+            style={{ fontSize: '14px', padding: '6px 12px', borderRadius: '8px',
+                     border: '1px solid #e83c3c', background: alfaExportLoading ? '#f5e0e0' : '#fff5f5',
+                     color: '#e83c3c', cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 500 }}
+          >
+            {alfaExportLoading ? '...' : `🏦 В Альфа-Банк (${selectedIds.filter(id => operations.find(op => op.id === id && op.expense > 0)).length})`}
+          </button>
+        )}
         <button onClick={downloadExport} title="Скачать (с учётом текущих фильтров и сортировки)" style={{ fontSize: '17px', padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', color: 'var(--text-secondary)', cursor: 'pointer', lineHeight: 1 }}>⬇️</button>
       </Navbar>
 

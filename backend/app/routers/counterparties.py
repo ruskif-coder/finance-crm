@@ -38,6 +38,7 @@ class CounterpartyBulkDelete(BaseModel):
 
 class BankAccountData(BaseModel):
     bank_name: Optional[str] = None
+    bank_city: Optional[str] = None
     rs: Optional[str] = None
     ks: Optional[str] = None
     bik: Optional[str] = None
@@ -431,6 +432,7 @@ def get_counterparty_card(
             {
                 "id": b.id,
                 "bank_name": b.bank_name,
+                "bank_city": b.bank_city,
                 "rs": b.rs,
                 "ks": b.ks,
                 "bik": b.bik,
@@ -576,6 +578,7 @@ def update_counterparty_requisites(
         db.add(CounterpartyBankAccount(
             counterparty_id=counterparty_id,
             bank_name=_s(ba.bank_name),
+            bank_city=_s(ba.bank_city),
             rs=_s(ba.rs),
             ks=_s(ba.ks),
             bik=_s(ba.bik),
@@ -587,3 +590,45 @@ def update_counterparty_requisites(
                entity_type="counterparty", entity_id=cp.id,
                details=f"Обновлены реквизиты: «{cp.name}»")
     return {"message": "Реквизиты обновлены"}
+
+
+# ===================== Справочник БИК ЦБ РФ =====================
+
+@router.get("/bic/{bik}")
+def lookup_bic(
+    bik: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Запрашивает справочник ЦБ РФ по БИК и возвращает наименование банка,
+    город, корреспондентский счёт. Используется для автозаполнения реквизитов."""
+    import httpx
+    import xml.etree.ElementTree as ET
+
+    bik = bik.strip()
+    if not bik.isdigit() or len(bik) != 9:
+        raise HTTPException(status_code=400, detail="БИК должен состоять из 9 цифр")
+
+    try:
+        url = f"https://www.cbr.ru/scripts/XML_bic.asp?BIC={bik}"
+        resp = httpx.get(url, timeout=5.0)
+        resp.raise_for_status()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Не удалось получить данные ЦБ РФ: {e}")
+
+    try:
+        root = ET.fromstring(resp.text)
+        # Структура: <BicCode><BICRow BIC="..." NameP="..." City="..." Ks="..." .../>
+        row = root.find(".//BICRow")
+        if row is None:
+            raise HTTPException(status_code=404, detail="БИК не найден в справочнике ЦБ РФ")
+
+        return {
+            "bik": bik,
+            "bank_name": row.get("NameP", ""),
+            "bank_city": row.get("City", ""),
+            "ks": row.get("Ks", ""),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка парсинга ответа ЦБ: {e}")
