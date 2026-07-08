@@ -2,6 +2,7 @@ import Navbar from '../components/Navbar'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
+import Head from 'next/head'
 
 const api = (token) => axios.create({
   // См. комментарий в balance.js — относительный путь, проксируется Caddy.
@@ -122,6 +123,7 @@ export default function PL() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
       <Navbar active="pl">
+      <Head><title>P&L | Финансовый учёт</title></Head>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <span style={{ fontSize: '15px', color: 'var(--text-muted)' }}>С периода</span>
           <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)}

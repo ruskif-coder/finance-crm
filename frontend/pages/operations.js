@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
 import Navbar from '../components/Navbar'
+import Head from 'next/head'
 
 const api = (token) => axios.create({
   // См. комментарий в balance.js — относительный путь, проксируется Caddy.
@@ -525,6 +526,7 @@ export default function Operations() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
       <Navbar active="operations">
+      <Head><title>Операции | Финансовый учёт</title></Head>
         <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>Строк:</span>
         {PAGE_SIZE_OPTIONS.map(s => <button key={s} onClick={() => handlePageSize(s)} style={{ fontSize: '14px', padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--border-card)', cursor: 'pointer', background: pageSize === s ? 'var(--accent)' : 'white', color: pageSize === s ? 'white' : 'var(--text-secondary)' }}>{s}</button>)}
         {can(permissions, 'operations', 'create') && <button onClick={openNew} style={{ fontSize: '15px', padding: '6px 14px', borderRadius: '8px', border: 'none', background: 'var(--accent)', color: 'white', cursor: 'pointer', marginLeft: '8px' }}>+ Новая операция</button>}

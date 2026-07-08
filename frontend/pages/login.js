@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
+import Head from 'next/head'
 
 const POLICY_TEXT = `ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ
 ООО «Программатик медиа»
@@ -76,6 +77,24 @@ const CONSENT_TEXT = `СОГЛАСИЕ НА ОБРАБОТКУ ПЕРСОНАЛ�
 
 Факт принятия настоящего согласия фиксируется в информационной системе с указанием даты и времени.`
 
+// Порядок приоритета разделов для редиректа после входа
+const REDIRECT_ORDER = [
+  { section: 'dashboard',   href: '/dashboard' },
+  { section: 'pl',          href: '/pl' },
+  { section: 'balance',     href: '/balance' },
+  { section: 'receivables', href: '/receivables' },
+  { section: 'planfact',    href: '/planfact' },
+  { section: 'operations',  href: '/operations' },
+]
+
+function firstAllowedHref(permissions, isAdmin) {
+  if (isAdmin) return '/dashboard'
+  for (const item of REDIRECT_ORDER) {
+    if (permissions?.[item.section]?.view) return item.href
+  }
+  return '/dashboard' // fallback — у пользователя нет ни одного раздела, покажет пустой дашборд
+}
+
 export default function Login() {
   const router = useRouter()
   const [email, setEmail] = useState('')
@@ -112,7 +131,7 @@ export default function Login() {
         setToken(res.data.access_token)
         setShowConsent(true)
       } else {
-        router.push('/dashboard')
+        router.push(firstAllowedHref(res.data.permissions || {}, res.data.is_admin))
       }
     } catch (e) {
       setError('Неверный email или пароль')
@@ -128,7 +147,9 @@ export default function Login() {
       await axios.post('/api/auth/accept-consent', {}, {
         headers: { Authorization: `Bearer ${token}` }
       })
-      router.push('/dashboard')
+      const perms = JSON.parse(localStorage.getItem('permissions') || '{}')
+      const isAdmin = localStorage.getItem('is_admin') === '1'
+      router.push(firstAllowedHref(perms, isAdmin))
     } catch (e) {
       setError('Ошибка при сохранении согласия. Попробуйте войти снова.')
       setShowConsent(false)
@@ -241,31 +262,27 @@ export default function Login() {
   // --- Форма входа ---
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
+      <Head><title>Вход</title></Head>
       <div style={{ background: 'var(--card)', padding: '40px', borderRadius: '16px', width: '380px', boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
-        <h1 style={{ fontSize: '24px', fontWeight: '600', marginBottom: '8px' }}>Финансовый учёт</h1>
-        <p style={{ color: 'var(--muted)', fontSize: '16px', marginBottom: '28px' }}>Войдите в систему</p>
-
         <div style={{ marginBottom: '16px' }}>
-          <label style={{ fontSize: '15px', color: 'var(--muted)', display: 'block', marginBottom: '6px' }}>Email</label>
           <input
             type="email"
             value={email}
             onChange={e => setEmail(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleLogin()}
             style={inputStyle}
-            placeholder="admin@company.ru"
+            placeholder="Email"
           />
         </div>
 
         <div style={{ marginBottom: '24px' }}>
-          <label style={{ fontSize: '15px', color: 'var(--muted)', display: 'block', marginBottom: '6px' }}>Пароль</label>
           <input
             type="password"
             value={password}
             onChange={e => setPassword(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleLogin()}
             style={inputStyle}
-            placeholder="••••••••"
+            placeholder="Пароль"
           />
         </div>
 

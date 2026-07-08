@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
 import Navbar from '../components/Navbar'
+import Head from 'next/head'
 
 function getPermissions() {
   if (typeof window === 'undefined') return {}
@@ -178,6 +179,7 @@ export default function Import() {
   return (
     <div style={{minHeight:'100vh',background:'var(--bg)'}}>
       <Navbar active="import" />
+      <Head><title>Импорт | Финансовый учёт</title></Head>
 
       <div style={{padding:'24px 32px', maxWidth:1920, margin:'0 auto'}}>
         <div style={{maxWidth:'600px'}}>

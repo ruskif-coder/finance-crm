@@ -4,6 +4,7 @@ import axios from 'axios'
 import Link from 'next/link'
 import Navbar from '../../components/Navbar'
 import {
+import Head from 'next/head'
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
 
@@ -356,6 +357,7 @@ export default function CounterpartyCard() {
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+      <Head><title>Контрагент | Финансовый учёт</title></Head>
 
       {/* ── Стандартная шапка (без children — чтобы не ломать выравнивание) ── */}
       <Navbar active="directories" />

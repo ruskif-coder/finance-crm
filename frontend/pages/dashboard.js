@@ -4,6 +4,7 @@ import { useRouter } from 'next/router'
 import axios from 'axios'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { buildDivBars, buildYLabels, niceMax, buildMonthLabels } from '../helpers/ribbonChart'
+import Head from 'next/head'
 
 const api = (token) => axios.create({
   // См. комментарий в balance.js — относительный путь, проксируется Caddy.
@@ -117,6 +118,7 @@ export default function Dashboard() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
       <Navbar active="dds" />
+      <Head><title>ДДС | Финансовый учёт</title></Head>
 
       <div style={{ maxWidth: 1920, margin: '0 auto', padding: '26px 30px' }}>
 

@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
+import Head from 'next/head'
 
 const api = (token) => axios.create({
   // См. комментарий в balance.js — относительный путь, проксируется Caddy.
@@ -332,6 +333,7 @@ export default function Receivables() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
       <Navbar active="receivables">
+      <Head><title>Дебиторка | Финансовый учёт</title></Head>
         <button onClick={downloadExport} title="Скачать в Excel"
           style={{ fontSize: '17px', padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', color: 'var(--text-secondary)', cursor: 'pointer', lineHeight: 1 }}>
           ⬇️

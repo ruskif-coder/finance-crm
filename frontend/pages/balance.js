@@ -2,6 +2,7 @@ import Navbar from '../components/Navbar'
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
+import Head from 'next/head'
 
 const api = (token) => axios.create({
   // Относительный путь — запрос идёт через Caddy на тот же origin, что и страница
@@ -468,6 +469,7 @@ export default function Balance() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
       <Navbar active="balance" />
+      <Head><title>Баланс | Финансовый учёт</title></Head>
 
       <div style={{ padding: '24px', maxWidth: 1920, margin: '0 auto' }}>
 

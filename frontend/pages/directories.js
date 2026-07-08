@@ -3,6 +3,7 @@ import { useRouter } from 'next/router'
 import axios from 'axios'
 import Link from 'next/link'
 import Navbar from '../components/Navbar'
+import Head from 'next/head'
 
 const api = (token) => axios.create({
   // См. комментарий в balance.js — относительный путь, проксируется Caddy.
@@ -789,6 +790,7 @@ export default function Directories() {
   return (
     <div style={{ minHeight: '100vh', background: '#f5f6fa' }}>
       <Navbar active="directories">
+      <Head><title>Справочники | Финансовый учёт</title></Head>
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             style={{ padding: '6px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '500', fontSize: '14px', background: tab === t.id ? '#2563eb' : 'transparent', color: tab === t.id ? 'white' : '#374151' }}>
