@@ -22,6 +22,7 @@ class RolePermission(Base):
     can_create = Column(Integer, default=0)
     can_edit = Column(Integer, default=0)
     can_delete = Column(Integer, default=0)
+    can_view_operations = Column(Integer, default=0)  # counterparties: показывать операции в карточке
     role = relationship("Role", back_populates="permissions")
 
 class User(Base):

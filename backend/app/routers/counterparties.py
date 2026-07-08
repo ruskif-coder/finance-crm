@@ -451,6 +451,8 @@ def get_counterparty_card(
                 "payment_term_condition": c.payment_term_condition,
                 "end_date_text": c.end_date_text,
                 "note": c.note,
+                "document_link": c.document_link,
+                "attached_filename": c.attached_filename,
             }
             for c in contracts
         ],
@@ -608,46 +610,115 @@ def lookup_bic(
     if not bik.isdigit() or len(bik) != 9:
         raise HTTPException(status_code=400, detail="БИК должен состоять из 9 цифр")
 
+    # Источник 1: bik-info.ru — полные реквизиты (КС, город, наименование), без API-ключа
+    bank_name = ""
+    bank_city = ""
+    ks = ""
     try:
-        url = f"https://www.cbr.ru/scripts/XML_bic.asp?BIC={bik}"
-        resp = httpx.get(url, timeout=5.0)
-        resp.raise_for_status()
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Не удалось получить данные ЦБ РФ: {e}")
+        url1 = f"https://bik-info.ru/api.html?BIK={bik}&TYPE=json"
+        r1 = httpx.get(url1, timeout=6.0)
+        if r1.status_code == 200:
+            d = r1.json()
+            bank_name = (d.get("namep") or d.get("name") or "").strip()
+            bank_city = (d.get("city") or "").strip().title()
+            ks        = (d.get("ks")   or "").strip()
+    except Exception:
+        pass  # падаем на резервный источник
 
-    try:
-        # Ответ в windows-1251 — передаём bytes, чтобы ET взял кодировку из XML-декларации
-        root = ET.fromstring(resp.content)
+    # Источник 2: ЦБ РФ (резерв) — только наименование банка
+    if not bank_name:
+        try:
+            import xml.etree.ElementTree as ET
+            url2 = f"https://www.cbr.ru/scripts/XML_bic.asp?BIC={bik}"
+            r2 = httpx.get(url2, timeout=5.0)
+            r2.raise_for_status()
+            root = ET.fromstring(r2.content)
+            row  = root.find(".//Record") or root.find(".//BICRow")
+            if row is not None:
+                def _t(p, *tags):
+                    for t in tags:
+                        el = p.find(t)
+                        if el is not None and el.text:
+                            return el.text.strip()
+                    return ""
+                bank_name = _t(row, "ShortName", "NameP") or row.get("NameP", "") or row.get("ShortName", "")
+        except Exception:
+            pass
 
-        def _text(parent, *tags):
-            """Ищет первый из тегов как дочерний элемент и возвращает его текст."""
-            for tag in tags:
-                el = parent.find(tag)
-                if el is not None and el.text:
-                    return el.text.strip()
-            return ""
+    if not bank_name:
+        raise HTTPException(status_code=404, detail="БИК не найден")
 
-        # Реальная структура: <BicCode><Record ID="..."><ShortName>...</ShortName><Bic>...</Bic>...
-        row = root.find(".//Record")
-        if row is None:
-            row = root.find(".//BICRow")
-        if row is None:
-            raise HTTPException(status_code=404, detail="БИК не найден в справочнике ЦБ РФ")
+    return {"bik": bik, "bank_name": bank_name, "bank_city": bank_city, "ks": ks}
 
-        # Логируем все дочерние теги для отладки
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info("CBR BIC XML tags: %s", {
-            el.tag: (el.text or "").strip() for el in row
-        })
 
-        bank_name = (_text(row, "ShortName", "NameP")
-                     or row.get("NameP", "") or row.get("ShortName", ""))
-        bank_city = _text(row, "City") or row.get("City", "")
-        ks        = _text(row, "Ks", "CorrAccount", "KS", "ks") or row.get("Ks", "") or row.get("KS", "")
+# ===================== Операции контрагента =====================
 
-        return {"bik": bik, "bank_name": bank_name, "bank_city": bank_city, "ks": ks}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка парсинга ответа ЦБ: {e}")
+@router.get("/{counterparty_id}/operations")
+def get_counterparty_operations(
+    counterparty_id: int,
+    skip: int = 0,
+    limit: int = 50,
+    status: Optional[str] = None,
+    sort_col: Optional[str] = "date",
+    sort_dir: Optional[str] = "desc",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Операции контрагента. Доступно при наличии operations.view ИЛИ counterparties.view_operations."""
+    from app.permissions import get_permissions_for_user
+    perms = get_permissions_for_user(db, current_user)
+    if not (perms.get("operations", {}).get("view") or perms.get("counterparties", {}).get("view_operations")):
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+    cp = db.query(Counterparty).filter(Counterparty.id == counterparty_id).first()
+    if not cp:
+        raise HTTPException(status_code=404, detail="Контрагент не найден")
+
+    query = (
+        db.query(Operation)
+        .outerjoin(Article, Operation.article_id == Article.id)
+        .filter(Operation.counterparty_id == counterparty_id)
+    )
+    if status:
+        query = query.filter(Operation.status == status)
+
+    total = query.count()
+
+    sort_map = {
+        "date": Operation.date, "status": Operation.status,
+        "income": Operation.income, "expense": Operation.expense,
+        "period": Operation.period, "article": Article.name,
+    }
+    sc = sort_map.get(sort_col, Operation.date)
+    query = query.order_by(sc.asc().nulls_first() if sort_dir == "asc" else sc.desc().nulls_first())
+    ops = query.offset(skip).limit(limit).all()
+
+    from app.routers.reports import _due_date, _aging_bucket, _term_days_for_inn
+    from datetime import date as date_type
+    today = date_type.today()
+
+    def _recv_status(op):
+        if op.status != "ПЛАН ПОСТУПЛЕНИЙ" or not op.income or op.income <= 0:
+            return None
+        term = _term_days_for_inn(cp.inn) if cp.inn else DEFAULT_TERM_DAYS
+        due = _due_date(op.period, term)
+        return _aging_bucket(due, today)
+
+    return {
+        "total": total,
+        "items": [
+            {
+                "id": op.id,
+                "date": op.date,
+                "status": op.status,
+                "income": float(op.income or 0),
+                "expense": float(op.expense or 0),
+                "bank": op.bank,
+                "period": op.period,
+                "article": op.article.name if op.article else None,
+                "article_id": op.article_id,
+                "receivable_status": _recv_status(op),
+            }
+            for op in ops
+        ],
+    }

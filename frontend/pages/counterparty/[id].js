@@ -168,13 +168,15 @@ export default function CounterpartyCard() {
 
   // Права
   const [canEdit, setCanEdit] = useState(false)
+  const [canViewOps, setCanViewOps] = useState(false)
 
   useEffect(() => {
     const isAdmin = localStorage.getItem('is_admin') === '1'
-    if (isAdmin) { setCanEdit(true); return }
+    if (isAdmin) { setCanEdit(true); setCanViewOps(true); return }
     try {
       const perms = JSON.parse(localStorage.getItem('permissions') || '{}')
       setCanEdit(!!(perms['counterparties']?.can_edit))
+      setCanViewOps(!!(perms['counterparties']?.view_operations) || !!(perms['operations']?.view))
     } catch {}
   }, [])
 
@@ -215,7 +217,7 @@ export default function CounterpartyCard() {
         sort_dir: dir ?? 'desc',
       })
       if (status) params.append('status', status)
-      const r = await api(token).get(`/operations/?${params}`)
+      const r = await api(token).get(`/counterparties/${id}/operations?${params}`)
       setOps(r.data.items || [])
       setOpsTotal(r.data.total || 0)
     } catch {}
@@ -800,7 +802,7 @@ export default function CounterpartyCard() {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                     <thead>
                       <tr>
-                        {['№ договора', 'Дата', 'Формат', 'Пролонгация', 'Срок оплаты'].map(h => (
+                        {['№ договора', 'Дата', 'Формат', 'Пролонгация', 'Срок оплаты', 'Документ'].map(h => (
                           <th key={h} style={{
                             textAlign: 'left', padding: '8px 14px', fontSize: 11,
                             color: 'var(--text-faint)', fontWeight: 500, background: 'var(--bg-subtle)',
@@ -821,6 +823,17 @@ export default function CounterpartyCard() {
                           <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-row)', color: 'var(--text-secondary)' }}>
                             {c.payment_term_days ? `${c.payment_term_days} дн. ${c.payment_term_condition || ''}` : '—'}
                           </td>
+                          <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-row)', whiteSpace: 'nowrap' }}>
+                            {c.document_link && (
+                              <a href={c.document_link} target="_blank" rel="noopener noreferrer"
+                                 title="Открыть в ЭДО" style={{ marginRight: 6, textDecoration: 'none', fontSize: 15 }}>🔗</a>
+                            )}
+                            {c.attached_filename && (
+                              <a href={`/api/contracts/${c.id}/document`}
+                                 title={c.attached_filename} style={{ textDecoration: 'none', fontSize: 15 }}>📥</a>
+                            )}
+                            {!c.document_link && !c.attached_filename && '—'}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -830,7 +843,7 @@ export default function CounterpartyCard() {
             </Card>
 
             {/* Операции */}
-            <Card
+            {canViewOps && <Card
               title="Операции"
               action={<span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400 }}>{opsTotal} записей</span>}
             >
@@ -953,7 +966,7 @@ export default function CounterpartyCard() {
                   </button>
                 </div>
               )}
-            </Card>
+            </Card>}
 
           </div>{/* /right col */}
         </div>{/* /grid */}

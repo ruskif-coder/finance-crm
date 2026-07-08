@@ -16,6 +16,7 @@ class PermissionInput(BaseModel):
     can_create: Optional[bool] = None
     can_edit: Optional[bool] = None
     can_delete: Optional[bool] = None
+    can_view_operations: Optional[bool] = None
 
 
 class RoleCreate(BaseModel):

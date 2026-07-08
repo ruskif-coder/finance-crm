@@ -27,7 +27,7 @@ const BANK_STYLES = {
   'Наличные':   { bg: '#dbeafe', color: '#2563eb', border: '#93c5fd' },
 }
 
-const ACTION_LABELS_RU = { view: 'Просмотр', create: 'Создание', edit: 'Редактирование', delete: 'Удаление' }
+const ACTION_LABELS_RU = { view: 'Просмотр', create: 'Создание', edit: 'Редактирование', delete: 'Удаление', view_operations: 'Опер. в карточке' }
 
 function getPermissions() {
   if (typeof window === 'undefined') return {}
@@ -311,6 +311,7 @@ export default function Settings() {
         can_create: s.actions.includes('create') ? !!draft[s.key]?.create : undefined,
         can_edit: s.actions.includes('edit') ? !!draft[s.key]?.edit : undefined,
         can_delete: s.actions.includes('delete') ? !!draft[s.key]?.delete : undefined,
+        can_view_operations: s.actions.includes('view_operations') ? !!draft[s.key]?.view_operations : undefined,
       }))
       await api(token).put(`/roles/${roleId}`, { label: roleLabels[roleId], permissions })
       await loadRoles(token)

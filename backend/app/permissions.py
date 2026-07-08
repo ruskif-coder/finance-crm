@@ -15,12 +15,12 @@ SECTIONS = [
     {"key": "operations",        "label": "Операции",           "group": None,        "actions": ["view", "create", "edit", "delete"]},
     {"key": "import",            "label": "Импорт",             "group": None,        "actions": ["view"]},
     {"key": "settings_balances", "label": "Остатки по банкам",  "group": "Настройки", "actions": ["view", "edit"]},
-    {"key": "counterparties",    "label": "Контрагенты",        "group": "Справочники", "actions": ["view", "edit", "delete"]},
+    {"key": "counterparties",    "label": "Контрагенты",        "group": "Справочники", "actions": ["view", "edit", "delete", "view_operations"]},
     {"key": "articles",          "label": "Статьи",             "group": "Справочники", "actions": ["view", "edit"]},
     {"key": "contracts",         "label": "Договоры",           "group": "Справочники", "actions": ["view", "edit"]},
 ]
 
-ACTION_FIELDS = {"view": "can_view", "create": "can_create", "edit": "can_edit", "delete": "can_delete"}
+ACTION_FIELDS = {"view": "can_view", "create": "can_create", "edit": "can_edit", "delete": "can_delete", "view_operations": "can_view_operations"}
 
 
 def get_permissions_for_user(db: Session, user: User) -> dict:
