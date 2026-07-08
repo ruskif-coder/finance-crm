@@ -630,15 +630,21 @@ def lookup_bic(
         # Реальная структура: <BicCode><Record ID="..."><ShortName>...</ShortName><Bic>...</Bic>...
         row = root.find(".//Record")
         if row is None:
-            # Старый формат с атрибутами (на случай смены API ЦБ)
             row = root.find(".//BICRow")
         if row is None:
             raise HTTPException(status_code=404, detail="БИК не найден в справочнике ЦБ РФ")
 
+        # Логируем все дочерние теги для отладки
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("CBR BIC XML tags: %s", {
+            el.tag: (el.text or "").strip() for el in row
+        })
+
         bank_name = (_text(row, "ShortName", "NameP")
                      or row.get("NameP", "") or row.get("ShortName", ""))
         bank_city = _text(row, "City") or row.get("City", "")
-        ks        = _text(row, "Ks", "CorrAccount") or row.get("Ks", "")
+        ks        = _text(row, "Ks", "CorrAccount", "KS", "ks") or row.get("Ks", "") or row.get("KS", "")
 
         return {"bik": bik, "bank_name": bank_name, "bank_city": bank_city, "ks": ks}
     except HTTPException:
