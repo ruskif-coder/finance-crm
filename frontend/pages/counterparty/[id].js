@@ -172,10 +172,11 @@ export default function CounterpartyCard() {
 
   useEffect(() => {
     const isAdmin = localStorage.getItem('is_admin') === '1'
+      || localStorage.getItem('role') === 'admin'
     if (isAdmin) { setCanEdit(true); setCanViewOps(true); return }
     try {
       const perms = JSON.parse(localStorage.getItem('permissions') || '{}')
-      setCanEdit(!!(perms['counterparties']?.can_edit))
+      setCanEdit(!!(perms['counterparties']?.edit))
       setCanViewOps(!!(perms['counterparties']?.view_operations) || !!(perms['operations']?.view))
     } catch {}
   }, [])

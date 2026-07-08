@@ -693,14 +693,14 @@ def get_counterparty_operations(
     query = query.order_by(sc.asc().nulls_first() if sort_dir == "asc" else sc.desc().nulls_first())
     ops = query.offset(skip).limit(limit).all()
 
-    from app.routers.reports import _due_date, _aging_bucket, _term_days_for_inn
+    from app.routers.reports import _due_date, _aging_bucket, _term_days_for_counterparty
     from datetime import date as date_type
     today = date_type.today()
 
     def _recv_status(op):
         if op.status != "ПЛАН ПОСТУПЛЕНИЙ" or not op.income or op.income <= 0:
             return None
-        term = _term_days_for_inn(cp.inn) if cp.inn else DEFAULT_TERM_DAYS
+        term = _term_days_for_counterparty(cp)
         due = _due_date(op.period, term)
         return _aging_bucket(due, today)
 
