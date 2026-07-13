@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -84,7 +84,8 @@ class Counterparty(Base):
     note = Column(Text, nullable=True)  # примечание (например, по дебиторке) — свободный текст
     term_days = Column(Integer, nullable=True)  # отсрочка платежа в днях; NULL = берётся DEFAULT_TERM_DAYS (см. reports.py)
     is_own_company = Column(Boolean, default=False, nullable=False)  # наше юрлицо — используется как плательщик/получатель
-    operations = relationship("Operation", back_populates="counterparty")
+    operations = relationship("Operation", back_populates="counterparty",
+                             foreign_keys="Operation.counterparty_id")
     contracts = relationship("Contract", back_populates="counterparty",
                              foreign_keys="Contract.counterparty_id")
     own_contracts = relationship("Contract", back_populates="own_company",
@@ -176,4 +177,3 @@ class LoginAttempt(Base):
     failed_count = Column(Integer, default=0, nullable=False)
     locked_until = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-

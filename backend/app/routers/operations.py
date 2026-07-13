@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, case
+from sqlalchemy import func, case, text
 from app.database import get_db
 from app.models import Operation, Article, Counterparty, User
 from app.routers.auth import get_current_user
@@ -49,9 +49,7 @@ def _get_own_company_id(db) -> Optional[int]:
     Используется при создании/импорте операций для автоматической простановки
     own_company_id (пока юрлицо одно — всегда будет первым и единственным)."""
     row = db.execute(
-        __import__('sqlalchemy').text(
-            "SELECT id FROM counterparties WHERE is_own_company = TRUE ORDER BY id LIMIT 1"
-        )
+        text("SELECT id FROM counterparties WHERE is_own_company = TRUE ORDER BY id LIMIT 1")
     ).fetchone()
     return row.id if row else None
 
