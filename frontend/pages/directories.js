@@ -119,7 +119,7 @@ export default function Directories() {
   const [counterparties, setCounterparties] = useState([])
   const [loadingCounterparties, setLoadingCounterparties] = useState(false)
   const [cpEditingId, setCpEditingId] = useState(null)
-  const [cpDraft, setCpDraft] = useState({ name: '', inn: '', status: 'действующий', term_days: '' })
+  const [cpDraft, setCpDraft] = useState({ name: '', inn: '', status: 'действующий', term_days: '', is_own_company: false })
   const [cpSaving, setCpSaving] = useState(false)
   const [cpError, setCpError] = useState('')
   const [cpSearch, setCpSearch] = useState('')
@@ -234,7 +234,7 @@ export default function Directories() {
 
   const openCpEdit = (c) => {
     setCpEditingId(c.id)
-    setCpDraft({ name: c.name, inn: c.inn || '', status: c.status, term_days: c.term_days != null ? String(c.term_days) : '' })
+    setCpDraft({ name: c.name, inn: c.inn || '', status: c.status, term_days: c.term_days != null ? String(c.term_days) : '', is_own_company: !!c.is_own_company })
     setCpError('')
   }
 
@@ -245,7 +245,7 @@ export default function Directories() {
     setCpSaving(true)
     setCpError('')
     try {
-      await api(token).put(`/counterparties/${id}/registry`, { name: cpDraft.name, inn: cpDraft.inn, status: cpDraft.status, term_days: cpDraft.term_days !== '' ? parseInt(cpDraft.term_days, 10) : null })
+      await api(token).put(`/counterparties/${id}/registry`, { name: cpDraft.name, inn: cpDraft.inn, status: cpDraft.status, term_days: cpDraft.term_days !== '' ? parseInt(cpDraft.term_days, 10) : null, is_own_company: cpDraft.is_own_company })
       await loadCounterparties(token)
       setCpEditingId(null)
     } catch (e) {
@@ -955,11 +955,29 @@ export default function Directories() {
                           )}
                           <td style={{ padding: '7px 10px', color: '#9ca3af' }}>{c.id}</td>
                           <td style={{ padding: '7px 10px' }}>
-                            {isEditing
-                              ? <input autoFocus value={cpDraft.name} onChange={e => setCpDraft(d => ({ ...d, name: e.target.value }))}
+                            {isEditing ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                <input autoFocus value={cpDraft.name} onChange={e => setCpDraft(d => ({ ...d, name: e.target.value }))}
                                   style={{ ...inpLeft, width: '220px', padding: '5px 8px', fontSize: '14px' }} />
-                              : <Link href={`/counterparty/${c.id}`} style={{ color: 'var(--primary, #2563eb)', textDecoration: 'none' }}
-                                  title="Открыть карточку контрагента">{c.name}</Link>}
+                                {role === 'admin' && (
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                    title="Своё юрлицо — используется как плательщик в платёжках">
+                                    <input type="checkbox" checked={cpDraft.is_own_company}
+                                      onChange={e => setCpDraft(d => ({ ...d, is_own_company: e.target.checked }))} />
+                                    🏢 Наша
+                                  </label>
+                                )}
+                              </div>
+                            ) : (
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <Link href={`/counterparty/${c.id}`} style={{ color: 'var(--primary, #2563eb)', textDecoration: 'none' }}
+                                  title="Открыть карточку контрагента">{c.name}</Link>
+                                {c.is_own_company && (
+                                  <span title="Наше юрлицо"
+                                    style={{ fontSize: '12px', padding: '1px 6px', borderRadius: '10px', background: '#dbeafe', color: '#1d4ed8', fontWeight: '500', whiteSpace: 'nowrap' }}>🏢 Наша</span>
+                                )}
+                              </span>
+                            )}
                           </td>
                           <td style={{ padding: '7px 10px' }}>
                             {isEditing

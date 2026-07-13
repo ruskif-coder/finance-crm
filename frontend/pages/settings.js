@@ -106,16 +106,26 @@ export default function Settings() {
   const [savingReq, setSavingReq] = useState({})
   const [reqOpen, setReqOpen] = useState({})           // { "АльфаБанк": true } — раскрыта секция
 
+  // Юрлица (is_own_company) для привязки к банковскому счёту
+  const [ownCompanies, setOwnCompanies] = useState([])  // [{ id, name, inn }, ...]
+  const [bankOwnCompany, setBankOwnCompany] = useState({})  // { "АльфаБанк": id|null }
+  const [savingOwnCompany, setSavingOwnCompany] = useState({})
+
   const loadBalances = async (token) => {
     setLoading(true)
     try {
-      const res = await api(token).get('/settings/bank-balances')
-      setBanks(res.data.banks)
-      setTotalBalance(res.data.total_balance)
+      const [balRes, ownRes] = await Promise.all([
+        api(token).get('/settings/bank-balances'),
+        api(token).get('/counterparties/own'),
+      ])
+      setBanks(balRes.data.banks)
+      setTotalBalance(balRes.data.total_balance)
+      setOwnCompanies(ownRes.data)
       const ed = {}
       const cr = {}
       const er = {}
-      res.data.banks.forEach(b => {
+      const boc = {}
+      balRes.data.banks.forEach(b => {
         ed[b.bank] = b.opening_balance
         cr[b.bank] = {
           company_name: b.company_name || '',
@@ -128,14 +138,33 @@ export default function Settings() {
           ks: b.ks || '',
         }
         er[b.bank] = { ...cr[b.bank] }
+        boc[b.bank] = b.own_company_id || ''
       })
       setEditing(ed)
       setCompanyReq(cr)
       setEditingReq(er)
+      setBankOwnCompany(boc)
     } catch (e) {
       if (e.response?.status === 401) router.push('/login')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleSaveBankOwnCompany = async (bank) => {
+    const token = localStorage.getItem('token')
+    setSavingOwnCompany(prev => ({ ...prev, [bank]: true }))
+    try {
+      const ownId = bankOwnCompany[bank]
+      await api(token).patch('/settings/bank-balances/own-company', {
+        bank,
+        own_company_id: ownId ? parseInt(ownId, 10) : null,
+      })
+      await loadBalances(token)
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Ошибка при сохранении юрлица')
+    } finally {
+      setSavingOwnCompany(prev => ({ ...prev, [bank]: false }))
     }
   }
 
@@ -450,6 +479,30 @@ export default function Settings() {
                         </div>
 
                       </div>
+
+                      {/* Юрлицо-плательщик для этого банка */}
+                      {(role === 'admin' || can(permissions, 'settings_balances', 'edit')) && b.bank !== 'Наличные' && ownCompanies.length > 0 && (
+                        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 13, color: '#6b7280', whiteSpace: 'nowrap' }}>🏢 Юрлицо:</span>
+                          <select
+                            value={bankOwnCompany[b.bank] || ''}
+                            onChange={e => setBankOwnCompany(prev => ({ ...prev, [b.bank]: e.target.value }))}
+                            style={{ fontSize: 13, padding: '4px 8px', border: '1px solid #e5e7eb', borderRadius: 6, background: '#f9fafb', minWidth: '180px' }}
+                          >
+                            <option value="">— не привязано —</option>
+                            {ownCompanies.map(cp => (
+                              <option key={cp.id} value={cp.id}>{cp.name}{cp.inn ? ` (ИНН ${cp.inn})` : ''}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => handleSaveBankOwnCompany(b.bank)}
+                            disabled={savingOwnCompany[b.bank]}
+                            style={{ fontSize: 13, padding: '4px 12px', borderRadius: 6, border: '1px solid #93c5fd', background: '#dbeafe', color: '#1d4ed8', cursor: 'pointer', opacity: savingOwnCompany[b.bank] ? 0.6 : 1 }}
+                          >
+                            {savingOwnCompany[b.bank] ? '...' : 'Сохранить'}
+                          </button>
+                        </div>
+                      )}
 
                       {/* Реквизиты компании для выгрузки платёжек — раскрывающийся блок */}
                       {(role === 'admin' || can(permissions, 'settings_balances', 'edit')) && b.bank !== 'Наличные' && (

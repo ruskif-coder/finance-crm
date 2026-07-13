@@ -44,6 +44,18 @@ def _receivable_status(op):
     bucket = _aging_bucket(due_date, date.today())
     return bucket if bucket in RECEIVABLE_STATUS_LABELS else None
 
+def _get_own_company_id(db) -> Optional[int]:
+    """Возвращает id первого контрагента с is_own_company=True, или None если нет.
+    Используется при создании/импорте операций для автоматической простановки
+    own_company_id (пока юрлицо одно — всегда будет первым и единственным)."""
+    row = db.execute(
+        __import__('sqlalchemy').text(
+            "SELECT id FROM counterparties WHERE is_own_company = TRUE ORDER BY id LIMIT 1"
+        )
+    ).fetchone()
+    return row.id if row else None
+
+
 def compute_vat_fact(income: float, expense: float, vat_rate: float) -> float:
     """Сумма НДС, выделенная из дохода/расхода по ставке vat_rate (НДС "в том числе",
     а не сверху). Используется при создании/редактировании операции (одиночном и
@@ -314,6 +326,7 @@ def create_operation(
         invoice_date=op.invoice_date,
         description=op.description,
         document_link=op.document_link,
+        own_company_id=_get_own_company_id(db),
         created_by=current_user.id
     )
     db.add(operation)
@@ -1054,6 +1067,7 @@ async def import_apply(
                 invoice_date=data['invoice_date'],
                 description=data['description'],
                 document_link=data.get('document_link'),
+                own_company_id=_get_own_company_id(db),
                 created_by=current_user.id,
             )
             db.add(op)
@@ -1097,3 +1111,170 @@ async def import_apply(
         "updated": updated,
         "skipped": skipped,
     }
+
+
+# ===================== Экспорт платёжных поручений в Альфа-Банк =====================
+
+class AlfaExportRequest(BaseModel):
+    ids: List[int]       # id операций для выгрузки
+    bank: str            # наш банк-плательщик (напр. "АльфаБанк")
+
+@router.post("/export/alfa")
+def export_to_alfa(
+    payload: AlfaExportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "view"))
+):
+    """Генерирует файл платёжных поручений в формате 1CClientBankExchange
+    для загрузки в Альфа-Банк (меню Импорт → Рублёвые платежи).
+
+    Перед выгрузкой проверяет:
+    - операции являются расходными (expense > 0)
+    - у контрагента заполнены банковские реквизиты (хотя бы БИК и расчётный счёт)
+    - у нашего банка-плательщика заполнены реквизиты в Настройках
+
+    Возвращает .txt файл; счётчик номера платёжного поручения инкрементируется в company_settings."""
+    from sqlalchemy import text as _text
+
+    if not payload.ids:
+        raise HTTPException(status_code=400, detail="Не указаны операции")
+    if payload.bank not in ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']:
+        raise HTTPException(status_code=400, detail="Неизвестный банк")
+
+    # Реквизиты нашей компании для выбранного банка.
+    # Если bank_balances привязан к own_company — имя/ИНН/КПП берём из реестра контрагентов
+    # (более актуально, т.к. это единый источник данных юрлица); RS/БИК/КС всегда из bank_balances.
+    company_row = db.execute(_text("""
+        SELECT bb.company_name, bb.inn, bb.kpp, bb.rs, bb.bik, bb.bank_full_name, bb.bank_city, bb.ks,
+               cp.name  AS own_name,
+               cp.inn   AS own_inn,
+               cp.kpp   AS own_kpp
+        FROM bank_balances bb
+        LEFT JOIN counterparties cp ON cp.id = bb.own_company_id AND cp.is_own_company = TRUE
+        WHERE bb.bank = :bank
+    """), {"bank": payload.bank}).fetchone()
+
+    if not company_row or not company_row.rs or not company_row.bik:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Реквизиты компании для банка «{payload.bank}» не заполнены. "
+                   f"Заполните их в Настройках → Остатки по банкам."
+        )
+    # Подставляем данные из реестра контрагентов, если юрлицо привязано (приоритет выше bank_balances)
+    _payer_name = company_row.own_name or company_row.company_name or ''
+    _payer_inn  = company_row.own_inn  or company_row.inn  or ''
+    _payer_kpp  = company_row.own_kpp  or company_row.kpp  or '0'
+    if not _payer_inn:
+        raise HTTPException(
+            status_code=400,
+            detail=f"ИНН компании для банка «{payload.bank}» не заполнен. "
+                   f"Заполните реквизиты в Настройках → Остатки по банкам."
+        )
+
+    # Следующий номер платёжного поручения
+    num_row = db.execute(_text(
+        "SELECT value FROM company_settings WHERE key = 'payment_number_last'"
+    )).fetchone()
+    next_num = int(num_row.value if num_row else 0) + 1
+
+    # Загружаем операции с контрагентами и их банковскими счетами
+    from app.models import CounterpartyBankAccount
+    operations = (
+        db.query(Operation)
+        .filter(Operation.id.in_(payload.ids))
+        .all()
+    )
+
+    if not operations:
+        raise HTTPException(status_code=404, detail="Операции не найдены")
+
+    errors = []
+    blocks = []
+
+    for op in operations:
+        if not op.expense or op.expense <= 0:
+            errors.append(f"Операция #{op.id}: не является расходной (expense = {op.expense})")
+            continue
+
+        cp = op.counterparty
+        if not cp:
+            errors.append(f"Операция #{op.id}: контрагент не указан")
+            continue
+
+        # Берём первый банковский счёт контрагента с заполненным БИК и РС
+        ba = None
+        for b in (cp.bank_accounts or []):
+            if b.bik and b.rs:
+                ba = b
+                break
+
+        if not ba:
+            errors.append(
+                f"Операция #{op.id} ({cp.name}): не заполнены банковские реквизиты контрагента"
+            )
+            continue
+
+        today_str = op.date.strftime('%d.%m.%Y') if op.date else date.today().strftime('%d.%m.%Y')
+        purpose = (op.description or f"Оплата по договору. НДС не облагается.")[:210]
+
+        block = "\n".join([
+            "СекцияДокумент=Платежное поручение",
+            f"Номер={next_num}",
+            f"Дата={today_str}",
+            f"Сумма={op.expense:.2f}",
+            f"ПлательщикСчет={company_row.rs}",
+            f"Плательщик=ИНН {_payer_inn} {_payer_name}",
+            f"ПлательщикИНН={_payer_inn}",
+            f"ПлательщикКПП={_payer_kpp}",
+            f"Плательщик1={_payer_name}",
+            f"ПлательщикБанк1={company_row.bank_full_name or ''}",
+            f"ПлательщикБанк2={company_row.bank_city or ''}",
+            f"ПлательщикБИК={company_row.bik}",
+            f"ПлательщикКорсчет={company_row.ks or ''}",
+            f"ПолучательСчет={ba.rs}",
+            f"Получатель={cp.name}",
+            f"ПолучательИНН={cp.inn or '0'}",
+            f"ПолучательКПП={cp.kpp or '0'}",
+            f"Получатель1={cp.name}",
+            f"ПолучательБанк1={ba.bank_name or ''}",
+            f"ПолучательБанк2={ba.bank_city or ''}",
+            f"ПолучательБИК={ba.bik}",
+            f"ПолучательКорсчет={ba.ks or ''}",
+            "ВидПлатежа=",
+            "Очередность=5",
+            "Код=0",
+            f"НазначениеПлатежа={purpose}",
+            "КонецДокумента",
+        ])
+
+        blocks.append(block)
+        next_num += 1
+
+    if errors and not blocks:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+
+    # Обновляем счётчик
+    actual_next = next_num - 1  # последний использованный
+    db.execute(_text(
+        "INSERT INTO company_settings (key, value) VALUES ('payment_number_last', :v) "
+        "ON CONFLICT (key) DO UPDATE SET value = :v"
+    ), {"v": str(actual_next)})
+    db.commit()
+
+    content = "1CClientBankExchange\n\n" + "\n\n".join(blocks) + "\n\nКонецФайла"
+    if errors:
+        # Добавляем предупреждения о пропущенных операциях в начало как комментарий
+        warn_block = "// ПРОПУЩЕНО:\n" + "\n".join(f"// {e}" for e in errors) + "\n\n"
+        content = "1CClientBankExchange\n\n" + warn_block + "\n\n".join(blocks) + "\n\nКонецФайла"
+
+    from datetime import date as _d
+    filename = f"alfa_payments_{_d.today().isoformat()}.txt"
+
+    log_action(db, current_user, "export_alfa", entity_type="operation", entity_id=None,
+               details=f"Выгружено {len(blocks)} п/п, пропущено {len(errors)}, банк={payload.bank}")
+
+    return StreamingResponse(
+        io.BytesIO(content.encode("cp1251")),  # Альфа-Банк ожидает Windows-1251
+        media_type="text/plain; charset=windows-1251",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )

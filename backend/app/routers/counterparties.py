@@ -23,6 +23,7 @@ class CounterpartyRegistryUpdate(BaseModel):
     inn: Optional[str] = None
     status: str
     term_days: Optional[int] = None
+    is_own_company: Optional[bool] = None  # только admin меняет через реестр
     # contract_number/contract_date УБРАНЫ (см. models.py): дублировали 1:N таблицу
     # Contract как ложное 1:1 поле. Источник правды теперь Contract.counterparty_id —
     # см. contracts_count в GET /registry ниже.
@@ -123,6 +124,12 @@ def bulk_delete_counterparties(
     if not cps:
         raise HTTPException(status_code=404, detail="Контрагенты не найдены")
 
+    # Запрещаем удаление «своих компаний»
+    own = [cp.name for cp in cps if cp.is_own_company]
+    if own:
+        raise HTTPException(status_code=400,
+                            detail=f"Нельзя удалить свои организации: {'; '.join(own)}")
+
     # Проверяем наличие связанных операций — при их наличии удаление запрещено:
     # FK Operation.counterparty_id не даст сделать это на уровне БД, но лучше
     # дать понятное сообщение заранее, чем поймать IntegrityError.
@@ -156,6 +163,8 @@ def delete_counterparty(
     counterparty = db.query(Counterparty).filter(Counterparty.id == counterparty_id).first()
     if not counterparty:
         raise HTTPException(status_code=404, detail="Контрагент не найден")
+    if counterparty.is_own_company:
+        raise HTTPException(status_code=400, detail="Нельзя удалить свою организацию")
     name = counterparty.name
     db.delete(counterparty)
     db.commit()
@@ -167,6 +176,45 @@ def delete_counterparty(
 # ===================== Реестр контрагентов (Настройки → Справочники) =====================
 # Отдельные эндпоинты — не трогают /(list)/create/update/delete выше, которые используются
 # выпадающим списком на /operations и должны остаться доступны всем с правом на "operations".
+
+
+@router.get("/own")
+def get_own_companies(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Список своих юрлиц (is_own_company=True) с банковскими счетами.
+    Используется в дропдаунах: остатки по банку, платёжные поручения, договоры.
+    Доступен всем аутентифицированным пользователям (не только admin)."""
+    cps = (
+        db.query(Counterparty)
+        .filter(Counterparty.is_own_company == True)
+        .order_by(Counterparty.name)
+        .all()
+    )
+    return [
+        {
+            "id": cp.id,
+            "name": cp.name,
+            "inn": cp.inn,
+            "kpp": cp.kpp,
+            "ogrn": cp.ogrn,
+            "address": cp.address,
+            "bank_accounts": [
+                {
+                    "id": ba.id,
+                    "bank_name": ba.bank_name,
+                    "bank_city": ba.bank_city,
+                    "rs": ba.rs,
+                    "ks": ba.ks,
+                    "bik": ba.bik,
+                }
+                for ba in cp.bank_accounts
+            ],
+        }
+        for cp in cps
+    ]
+
 
 @router.get("/registry")
 def get_counterparties_registry(
@@ -183,6 +231,7 @@ def get_counterparties_registry(
             Counterparty.status,
             Counterparty.group_override,
             Counterparty.term_days,
+            Counterparty.is_own_company,
             func.count(Operation.id).label("op_count"),
             # Поступления/выплаты по факту (статус "ОПЛАЧЕНО")
             func.coalesce(func.sum(case((Operation.status == 'ОПЛАЧЕНО', Operation.income), else_=0)), 0).label("income_paid"),
@@ -197,7 +246,7 @@ def get_counterparties_registry(
         )
         .outerjoin(Operation, Operation.counterparty_id == Counterparty.id)
         .group_by(Counterparty.id, Counterparty.name, Counterparty.inn, Counterparty.status, Counterparty.group_override,
-                  Counterparty.term_days)
+                  Counterparty.term_days, Counterparty.is_own_company)
         .order_by(Counterparty.name)
         .all()
     )
@@ -261,6 +310,7 @@ def get_counterparties_registry(
                 "expense_paid": float(r.expense_paid or 0),
                 "diff": float(r.income_paid or 0) - float(r.expense_paid or 0),
                 "last_op_date": r.last_op_date.isoformat() if r.last_op_date else None,
+                "is_own_company": bool(r.is_own_company),
             }
             for r in rows
         ]
@@ -351,6 +401,12 @@ def update_counterparty_registry(
     # contract_number/contract_date намеренно НЕ трогаются (см. CounterpartyRegistryUpdate
     # выше) — старые значения остаются как историческая заморозка, не перезаписываются в None.
     counterparty.term_days = data.term_days
+    if data.is_own_company is not None:
+        if not data.is_own_company and counterparty.is_own_company:
+            changes.append("is_own_company: Наша → нет")
+        elif data.is_own_company and not counterparty.is_own_company:
+            changes.append("is_own_company: нет → Наша")
+        counterparty.is_own_company = data.is_own_company
     db.commit()
 
     if changes:

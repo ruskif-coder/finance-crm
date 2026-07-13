@@ -33,11 +33,15 @@ def get_bank_balances(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("settings_balances", "view"))
 ):
-    # Стартовые остатки + реквизиты компании
+    # Стартовые остатки + реквизиты компании + привязка к юрлицу
     rows = db.execute(text("""
-        SELECT bank, opening_balance,
-               company_name, inn, kpp, rs, bik, bank_full_name, bank_city, ks
-        FROM bank_balances ORDER BY bank
+        SELECT bb.bank, bb.opening_balance,
+               bb.company_name, bb.inn, bb.kpp, bb.rs, bb.bik, bb.bank_full_name, bb.bank_city, bb.ks,
+               bb.own_company_id,
+               cp.name AS own_company_name
+        FROM bank_balances bb
+        LEFT JOIN counterparties cp ON cp.id = bb.own_company_id
+        ORDER BY bb.bank
     """)).fetchall()
     opening = {r.bank: r.opening_balance for r in rows}
 
@@ -77,6 +81,8 @@ def get_bank_balances(
             'bank_full_name': rq.bank_full_name if rq else None,
             'bank_city': rq.bank_city if rq else None,
             'ks': rq.ks if rq else None,
+            'own_company_id':   rq.own_company_id if rq else None,
+            'own_company_name': rq.own_company_name if rq else None,
         })
 
     return {'banks': result, 'total_balance': total_balance}
@@ -130,3 +136,33 @@ def update_company_requisites(
     })
     db.commit()
     return {"message": "Реквизиты компании сохранены"}
+
+
+class BankOwnCompanyUpdate(BaseModel):
+    bank: str
+    own_company_id: Optional[int] = None
+
+@router.patch("/bank-balances/own-company")
+def update_bank_own_company(
+    data: BankOwnCompanyUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("settings_balances", "edit"))
+):
+    """Привязывает банковский счёт к своему юрлицу (own_company_id).
+    own_company_id = None → отвязать."""
+    if data.bank not in BANKS:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"Неизвестный банк: {data.bank}")
+    if data.own_company_id is not None:
+        from app.models import Counterparty
+        cp = db.execute(text(
+            "SELECT id, is_own_company FROM counterparties WHERE id = :id"
+        ), {'id': data.own_company_id}).fetchone()
+        if not cp or not cp.is_own_company:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Указанный контрагент не является своей организацией")
+    db.execute(text(
+        "UPDATE bank_balances SET own_company_id = :own_company_id WHERE bank = :bank"
+    ), {'own_company_id': data.own_company_id, 'bank': data.bank})
+    db.commit()
+    return {"message": "Юрлицо для банка обновлено"}

@@ -83,8 +83,12 @@ class Counterparty(Base):
     contract_date = Column(Date, nullable=True)  # УСТАРЕЛО — см. комментарий к contract_number выше.
     note = Column(Text, nullable=True)  # примечание (например, по дебиторке) — свободный текст
     term_days = Column(Integer, nullable=True)  # отсрочка платежа в днях; NULL = берётся DEFAULT_TERM_DAYS (см. reports.py)
+    is_own_company = Column(Boolean, default=False, nullable=False)  # наше юрлицо — используется как плательщик/получатель
     operations = relationship("Operation", back_populates="counterparty")
-    contracts = relationship("Contract", back_populates="counterparty")
+    contracts = relationship("Contract", back_populates="counterparty",
+                             foreign_keys="Contract.counterparty_id")
+    own_contracts = relationship("Contract", back_populates="own_company",
+                                 foreign_keys="Contract.own_company_id")
     bank_accounts = relationship("CounterpartyBankAccount", back_populates="counterparty",
                                  cascade="all, delete-orphan", order_by="CounterpartyBankAccount.sort_order")
 
@@ -116,7 +120,11 @@ class Contract(Base):
     # ("единый источник данных для всех полей контрагент в системе" — см. CLAUDE.md). NULL = историческая строка, ещё не
     # сопоставленная с реестром (см. link_contracts_to_counterparties.py); обязателен при создании НОВОГО договора
     # (проверяется в create_contract, не на уровне Pydantic-модели, т.к. она общая с update_contract).
-    counterparty = relationship("Counterparty", back_populates="contracts")
+    own_company_id = Column(Integer, ForeignKey("counterparties.id"), nullable=True)  # наше юрлицо — сторона договора
+    counterparty = relationship("Counterparty", back_populates="contracts",
+                                foreign_keys=[counterparty_id])
+    own_company   = relationship("Counterparty", back_populates="own_contracts",
+                                 foreign_keys=[own_company_id])
     marketing_name = Column(String, nullable=True)  # НАЗВАНИЕ МАРКЕТИНГОВОЕ
     cooperation_format = Column(String, nullable=True)  # ФОРМАТ СОТРУДНИЧЕСТВА
     services = Column(Text, nullable=True)  # УСЛУГИ
@@ -149,10 +157,13 @@ class Operation(Base):
     invoice_date = Column(Date)
     description = Column(String)
     document_link = Column(String)
+    own_company_id = Column(Integer, ForeignKey("counterparties.id"), nullable=True)  # наше юрлицо-плательщик/получатель
     created_at = Column(DateTime, server_default=func.now())
     created_by = Column(Integer, ForeignKey("users.id"))
     article = relationship("Article", back_populates="operations")
-    counterparty = relationship("Counterparty", back_populates="operations")
+    counterparty = relationship("Counterparty", back_populates="operations",
+                                foreign_keys="Operation.counterparty_id")
+    own_company  = relationship("Counterparty", foreign_keys="Operation.own_company_id")
 
 class LoginAttempt(Base):
     """Хранит счётчик неудачных попыток входа и время разблокировки для каждого email.
