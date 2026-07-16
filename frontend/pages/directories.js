@@ -1386,6 +1386,8 @@ export default function Directories() {
                       <th style={{ ...ctTh, width: '110px' }} onClick={() => handleCtSort('contract_number')}>№ дог. <CtSortIcon col="contract_number" /></th>
                       <th style={{ ...ctTh, width: '100px' }} onClick={() => handleCtSort('contract_date')} title="Дата договора">Дата <CtSortIcon col="contract_date" /></th>
                       <th style={{ ...ctTh, width: '110px' }} onClick={() => handleCtSort('inn')}>ИНН <CtSortIcon col="inn" /></th>
+                      <th style={{ ...ctTh, width: '70px', textAlign: 'right' }} onClick={() => handleCtSort('vat_rate_income')} title="НДС по приходным операциям — из карточки контрагента">НДС↓ <CtSortIcon col="vat_rate_income" /></th>
+                      <th style={{ ...ctTh, width: '70px', textAlign: 'right' }} onClick={() => handleCtSort('vat_rate_expense')} title="НДС по расходным операциям — из карточки контрагента">НДС↑ <CtSortIcon col="vat_rate_expense" /></th>
                       <th style={{ ...ctTh, width: '150px' }} onClick={() => handleCtSort('marketing_name')} title="Маркетинговое название">Назв. маркет. <CtSortIcon col="marketing_name" /></th>
                       <th style={{ ...ctTh, width: '120px' }} onClick={() => handleCtSort('cooperation_format')} title="Формат сотрудничества">Формат <CtSortIcon col="cooperation_format" /></th>
                       <th style={{ ...ctTh, width: '105px' }} onClick={() => handleCtSort('end_date_text')} title="Дата окончания договора">Окончание <CtSortIcon col="end_date_text" /></th>
@@ -1422,6 +1424,9 @@ export default function Directories() {
                               ? <span style={{ color: '#9ca3af' }}>{(counterparties.find(cp => cp.id === ctDraft.counterparty_id) || {}).inn || '—'}</span>
                               : <input value={ctDraft.inn || ''} onChange={e => setCtDraft(d => ({ ...d, inn: e.target.value }))} style={w('110px')} />)
                             : (c.inn || '—')}</td>
+                          {/* НДС приход/расход — read-only производные из контрагента (редактируются в его карточке) */}
+                          <td style={{ padding: '7px 10px', textAlign: 'right', color: '#6b7280' }} title="Редактируется в карточке контрагента">{c.vat_rate_income != null ? `${c.vat_rate_income}%` : '—'}</td>
+                          <td style={{ padding: '7px 10px', textAlign: 'right', color: '#6b7280' }} title="Редактируется в карточке контрагента">{c.vat_rate_expense != null ? `${c.vat_rate_expense}%` : '—'}</td>
                           <td style={{ padding: '7px 10px', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                             title={!isEditing ? (c.marketing_name || '') : undefined}>{isEditing ? <input value={ctDraft.marketing_name || ''} onChange={e => setCtDraft(d => ({ ...d, marketing_name: e.target.value }))} style={w('180px')} /> : (c.marketing_name || '—')}</td>
                           <td style={{ padding: '7px 10px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}

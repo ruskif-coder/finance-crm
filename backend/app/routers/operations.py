@@ -331,9 +331,38 @@ def create_operation(
     db.commit()
     db.refresh(operation)
 
+    _learn_counterparty_defaults(db, operation)
+
     log_action(db, current_user, "create_operation", entity_type="operation", entity_id=operation.id,
                details=f"{op.status}, доход {op.income}, расход {op.expense}, банк {op.bank}")
     return {"id": operation.id, "message": "Операция создана"}
+
+
+def _learn_counterparty_defaults(db: Session, operation: Operation):
+    """Самообучение реестра контрагентов (2026-07-16): первая операция направления
+    (приход/расход) фиксирует НДС и статью контрагента как значения по умолчанию —
+    дальше они автоподставляются в форме операций (см. applyCpDefaults в operations.js).
+    Пишем ТОЛЬКО в NULL — заполненное бэкфиллом или руками в карточке не перетирается,
+    поэтому ошибка первой операции правится в карточке и больше не возвращается."""
+    if not operation.counterparty_id:
+        return
+    cp = db.query(Counterparty).filter(Counterparty.id == operation.counterparty_id).first()
+    if not cp:
+        return
+    direction = "income" if (operation.income or 0) > 0 else "expense" if (operation.expense or 0) > 0 else None
+    if not direction:
+        return
+    vat_field = f"vat_rate_{direction}"
+    art_field = f"default_article_{direction}_id"
+    changed = False
+    if getattr(cp, vat_field) is None and operation.vat_rate is not None:
+        setattr(cp, vat_field, operation.vat_rate)
+        changed = True
+    if getattr(cp, art_field) is None and operation.article_id is not None:
+        setattr(cp, art_field, operation.article_id)
+        changed = True
+    if changed:
+        db.commit()
 
 @router.put("/{op_id}")
 def update_operation(

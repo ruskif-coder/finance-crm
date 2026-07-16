@@ -426,6 +426,27 @@ export default function Operations() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  // Автоподстановка НДС и статьи из контрагента по направлению операции (2026-07-16).
+  // Направление определяется заполненной суммой (приход приоритетнее), поэтому вызывается
+  // из onChange сумм И выбора контрагента — в любом порядке заполнения сработает то, что позже.
+  // Только для новых операций (не при редактировании) и только в пустые/нулевые поля —
+  // введённое руками не перетирается.
+  const applyCpDefaults = (next) => {
+    if (editingId) return next
+    const cp = counterparties.find(c => c.id === Number(next.counterparty_id))
+    if (!cp) return next
+    const inc = parseFloat(next.income) || 0
+    const exp = parseFloat(next.expense) || 0
+    const dir = inc > 0 ? 'income' : (exp > 0 ? 'expense' : null)
+    if (!dir) return next
+    const vat = dir === 'income' ? cp.vat_rate_income : cp.vat_rate_expense
+    const art = dir === 'income' ? cp.default_article_income_id : cp.default_article_expense_id
+    const out = { ...next }
+    if ((parseFloat(next.vat_rate) || 0) === 0 && vat != null) out.vat_rate = vat
+    if (!next.article_id && art != null) out.article_id = String(art)
+    return out
+  }
+
   const handleSubmit = async () => {
     const token = localStorage.getItem('token')
     try {
@@ -613,8 +634,8 @@ export default function Operations() {
               <div><label style={lbl}>Дата {planMode && <span style={{ color: 'var(--dot-current-dz)' }}>(необяз.)</span>}</label>
                 <input type="date" style={{ ...inp, borderColor: planMode ? 'var(--dot-current-dz)' : 'var(--border-card)' }} value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
               </div>
-              <div><label style={lbl}>Поступление</label><input type="number" style={inp} value={form.income} onChange={e => setForm({ ...form, income: e.target.value })} /></div>
-              <div><label style={lbl}>Списание</label><input type="number" style={inp} value={form.expense} onChange={e => setForm({ ...form, expense: e.target.value })} /></div>
+              <div><label style={lbl}>Поступление</label><input type="number" style={inp} value={form.income} onChange={e => setForm(applyCpDefaults({ ...form, income: e.target.value }))} /></div>
+              <div><label style={lbl}>Списание</label><input type="number" style={inp} value={form.expense} onChange={e => setForm(applyCpDefaults({ ...form, expense: e.target.value }))} /></div>
               <div><label style={lbl}>Банк {planMode && <span style={{ color: 'var(--dot-current-dz)' }}>(необяз.)</span>}</label>
                 <select style={{ ...inp, borderColor: planMode ? 'var(--dot-current-dz)' : 'var(--border-card)' }} value={form.bank} onChange={e => setForm({ ...form, bank: e.target.value })}>
                   {planMode && <option value="">— не указан —</option>}
@@ -662,7 +683,7 @@ export default function Operations() {
                 <CounterpartySearch
                   counterparties={counterparties}
                   value={form.counterparty_id}
-                  onChange={v => setForm({ ...form, counterparty_id: v })}
+                  onChange={v => setForm(applyCpDefaults({ ...form, counterparty_id: v }))}
                   onCreateNew={createCounterparty}
                 />
               </div>

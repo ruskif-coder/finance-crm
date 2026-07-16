@@ -71,9 +71,17 @@ def get_counterparties(
         query = query.filter(Counterparty.name.ilike(f"%{search}%"))
     total = query.count()
     items = query.offset(skip).limit(limit).all()
+    # vat_rate_income/expense и default_article_*_id — для автоподстановки в форме операций
+    # при вводе суммы прихода/расхода (см. operations.js). Старый vat_rate заморожен.
     return {
         "total": total,
-        "items": [{"id": c.id, "name": c.name, "vat_rate": c.vat_rate, "status": c.status} for c in items]
+        "items": [{
+            "id": c.id, "name": c.name, "status": c.status,
+            "vat_rate_income": c.vat_rate_income,
+            "vat_rate_expense": c.vat_rate_expense,
+            "default_article_income_id": c.default_article_income_id,
+            "default_article_expense_id": c.default_article_expense_id,
+        } for c in items]
     }
 
 @router.post("/")
@@ -418,6 +426,61 @@ def update_counterparty_registry(
 
 # ===================== Карточка контрагента =====================
 
+
+def _article_name(db: Session, article_id):
+    if not article_id:
+        return None
+    a = db.query(Article).filter(Article.id == article_id).first()
+    return a.name if a else None
+
+
+class CounterpartyDefaultsUpdate(BaseModel):
+    """НДС и статья по умолчанию раздельно по приходу/расходу (2026-07-16).
+    None = «не задано» (автоподстановка в форме операций не сработает)."""
+    vat_rate_income: Optional[float] = None
+    vat_rate_expense: Optional[float] = None
+    default_article_income_id: Optional[int] = None
+    default_article_expense_id: Optional[int] = None
+
+
+@router.put("/{counterparty_id}/defaults")
+def update_counterparty_defaults(
+    counterparty_id: int,
+    data: CounterpartyDefaultsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("counterparties", "edit"))
+):
+    """Редактирование НДС/статей по умолчанию из карточки контрагента. Все четыре поля
+    пишутся как переданы (включая None = сбросить) — форма карточки шлёт полный набор."""
+    cp = db.query(Counterparty).filter(Counterparty.id == counterparty_id).first()
+    if not cp:
+        raise HTTPException(status_code=404, detail="Контрагент не найден")
+
+    for aid in (data.default_article_income_id, data.default_article_expense_id):
+        if aid is not None and not db.query(Article.id).filter(Article.id == aid).first():
+            raise HTTPException(status_code=400, detail=f"Статья id={aid} не найдена")
+
+    changes = []
+    def _track(field, label, fmt=lambda v: v):
+        old, new = getattr(cp, field), getattr(data, field)
+        if old != new:
+            changes.append(f"{label}: {fmt(old)} → {fmt(new)}")
+        setattr(cp, field, new)
+
+    _fmt_vat = lambda v: "—" if v is None else f"{v:g}%"
+    _fmt_art = lambda v: _article_name(db, v) or "—"
+    _track("vat_rate_income", "НДС приход", _fmt_vat)
+    _track("vat_rate_expense", "НДС расход", _fmt_vat)
+    _track("default_article_income_id", "статья прихода", _fmt_art)
+    _track("default_article_expense_id", "статья расхода", _fmt_art)
+    db.commit()
+
+    if changes:
+        log_action(db, current_user, "update_counterparty_defaults", entity_type="counterparty",
+                   entity_id=cp.id, details=f"«{cp.name}»: " + "; ".join(changes))
+    return {"message": "Значения по умолчанию обновлены"}
+
+
 @router.get("/{counterparty_id}/card")
 def get_counterparty_card(
     counterparty_id: int,
@@ -482,8 +545,14 @@ def get_counterparty_card(
         "website": cp.website,
         "note": cp.note,
         "status": cp.status,
-        "vat_rate": cp.vat_rate,
         "term_days": cp.term_days,
+        # НДС и статьи по умолчанию раздельно по направлениям (старый vat_rate заморожен)
+        "vat_rate_income": cp.vat_rate_income,
+        "vat_rate_expense": cp.vat_rate_expense,
+        "default_article_income_id": cp.default_article_income_id,
+        "default_article_expense_id": cp.default_article_expense_id,
+        "default_article_income": _article_name(db, cp.default_article_income_id),
+        "default_article_expense": _article_name(db, cp.default_article_expense_id),
         "bank_accounts": [
             {
                 "id": b.id,
@@ -582,7 +651,48 @@ def get_counterparty_analytics(
         WHERE counterparty_id = :cid
     """), {"cid": counterparty_id}).fetchone()
 
+    # Старение дебиторки этого контрагента (2026-07-16) — та же логика бакетов, что
+    # в отчёте «Дебиторка» (reports._aging_bucket): future / current / overdue.
+    from app.routers.reports import _due_date, _aging_bucket, _term_days_for_counterparty
+    from datetime import date as date_cls, timedelta
+    today = date_cls.today()
+    term = _term_days_for_counterparty(cp)
+    plan_ops = (
+        db.query(Operation)
+        .filter(Operation.counterparty_id == counterparty_id,
+                Operation.status == 'ПЛАН ПОСТУПЛЕНИЙ', Operation.income > 0)
+        .all()
+    )
+    aging = {b: {"amount": 0.0, "count": 0} for b in ("future", "current", "overdue", "unknown")}
+    max_overdue_days = 0
+    for op in plan_ops:
+        due = _due_date(op.period, term)
+        bucket = _aging_bucket(due, today)
+        aging[bucket]["amount"] += float(op.income or 0)
+        aging[bucket]["count"] += 1
+        if bucket == "overdue" and due:
+            max_overdue_days = max(max_overdue_days, (today - due).days)
+
+    # Доля контрагента в обороте компании за последние 12 месяцев (2026-07-16) —
+    # concentration risk: по фактическим (ОПЛАЧЕНО) операциям, по дате операции.
+    cutoff = today - timedelta(days=365)
+    share_row = db.execute(text("""
+        SELECT
+            COALESCE(SUM(CASE WHEN counterparty_id = :cid THEN income  ELSE 0 END), 0) AS cp_income,
+            COALESCE(SUM(CASE WHEN counterparty_id = :cid THEN expense ELSE 0 END), 0) AS cp_expense,
+            COALESCE(SUM(income),  0) AS total_income,
+            COALESCE(SUM(expense), 0) AS total_expense
+        FROM operations
+        WHERE status = 'ОПЛАЧЕНО' AND date >= :cutoff
+    """), {"cid": counterparty_id, "cutoff": cutoff}).fetchone()
+    share_income = float(share_row.cp_income) / float(share_row.total_income) * 100 if share_row.total_income else 0
+    share_expense = float(share_row.cp_expense) / float(share_row.total_expense) * 100 if share_row.total_expense else 0
+
     return {
+        "aging": {b: {"amount": v["amount"], "count": v["count"]} for b, v in aging.items()},
+        "max_overdue_days": max_overdue_days,
+        "share_income_12m": round(share_income, 1),
+        "share_expense_12m": round(share_expense, 1),
         "monthly": [
             {"period": r.period, "income": float(r.income), "expense": float(r.expense)}
             for r in monthly

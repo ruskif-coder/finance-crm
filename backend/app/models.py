@@ -62,7 +62,18 @@ class Counterparty(Base):
     __tablename__ = "counterparties"
     id = Column(Integer, primary_key=True)
     name = Column(String, unique=True, nullable=False)
-    vat_rate = Column(Float, default=0)
+    vat_rate = Column(Float, default=0)  # УСТАРЕЛО (2026-07-16): одна ставка на контрагента не покрывает случай
+    # «по доходным НДС 22%, по расходным (премии за объём) 0%» — см. vat_rate_income/vat_rate_expense ниже.
+    # Колонка не удалена (см. CLAUDE.md про осторожность с деструктивными изменениями), но больше
+    # не читается/не пишется через API/UI — оставлена для истории.
+    # НДС и статья по умолчанию раздельно по направлениям (2026-07-16, add_vat_article_defaults.sql).
+    # NULL = не задано (автоподстановка в форме операций просто не сработает). Заполняются бэкфиллом
+    # backfill_vat_articles.py (НДС — из самой свежей операции направления, чтобы не тянуть ставку 20%
+    # из эпохи до перехода 20→22%; статья — самая частая) и далее редактируются в карточке контрагента.
+    vat_rate_income = Column(Float, nullable=True)
+    vat_rate_expense = Column(Float, nullable=True)
+    default_article_income_id = Column(Integer, ForeignKey("articles.id"), nullable=True)
+    default_article_expense_id = Column(Integer, ForeignKey("articles.id"), nullable=True)
     inn = Column(String, nullable=True)
     kpp = Column(String, nullable=True)
     ogrn = Column(String, nullable=True)

@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Head from 'next/head'
 import Navbar from '../../components/Navbar'
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+  ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
 
 const api = (token) => axios.create({
@@ -33,6 +33,42 @@ const fmtMonth = (p) => {
 function normalizeUrl(u) {
   if (!u) return null
   return /^https?:\/\//i.test(u) ? u : 'https://' + u
+}
+
+// Дата окончания договора хранится текстом (end_date_text) — парсим ISO и dd.mm.yyyy,
+// произвольный текст («Бессрочно») отдаём как null (без бейджа срока).
+function parseEndDate(s) {
+  if (!s) return null
+  let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3])
+  m = /^(\d{2})\.(\d{2})\.(\d{4})/.exec(s)
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1])
+  return null
+}
+
+// Статус окончания договора: истёк / истекает ≤30 дн. / действует
+function contractExpiry(endDateText) {
+  const d = parseEndDate(endDateText)
+  if (!d) return null
+  const days = Math.ceil((d - new Date()) / 86400000)
+  if (days < 0) return { label: 'истёк', bg: 'var(--danger-tint)', color: 'var(--dot-overdue)' }
+  if (days <= 30) return { label: `${days} дн.`, bg: '#FEF3C7', color: '#D97706' }
+  return null
+}
+
+// Линейный тренд (МНК) по массиву чисел — значения линии тренда для каждой точки
+function trendLine(values) {
+  const n = values.length
+  if (n < 2) return values.map(() => null)
+  const sx = (n - 1) * n / 2
+  const sxx = (n - 1) * n * (2 * n - 1) / 6
+  const sy = values.reduce((a, b) => a + b, 0)
+  const sxy = values.reduce((a, b, i) => a + b * i, 0)
+  const denom = n * sxx - sx * sx
+  if (!denom) return values.map(() => null)
+  const slope = (n * sxy - sx * sy) / denom
+  const intercept = (sy - slope * sx) / n
+  return values.map((_, i) => Math.max(0, intercept + slope * i))
 }
 
 // ── Строка реквизита ─────────────────────────────────────────────────────────
@@ -163,6 +199,12 @@ export default function CounterpartyCard() {
   const [analytics, setAnalytics] = useState(null)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
 
+  // Условия по умолчанию: НДС и статья раздельно по приходу/расходу (2026-07-16)
+  const [articles, setArticles] = useState([])
+  const [defEdit, setDefEdit] = useState(false)
+  const [defData, setDefData] = useState(null)
+  const [defSaving, setDefSaving] = useState(false)
+
   // Копирование
   const [copied, setCopied] = useState(false)
 
@@ -239,6 +281,39 @@ export default function CounterpartyCard() {
   useEffect(() => { loadCard() }, [loadCard])
   useEffect(() => { if (id) loadOps(0, '', 'date', 'desc') }, [id])
   useEffect(() => { loadAnalytics() }, [loadAnalytics])
+
+  // Справочник статей — для селектов «статья по умолчанию»
+  useEffect(() => {
+    const token = localStorage.getItem('token')
+    api(token).get('/articles/').then(r => setArticles(r.data || [])).catch(() => {})
+  }, [])
+
+  const startDefEdit = () => {
+    setDefData({
+      vat_rate_income: card.vat_rate_income ?? '',
+      vat_rate_expense: card.vat_rate_expense ?? '',
+      default_article_income_id: card.default_article_income_id || '',
+      default_article_expense_id: card.default_article_expense_id || '',
+    })
+    setDefEdit(true)
+  }
+
+  const saveDefaults = async () => {
+    const token = localStorage.getItem('token')
+    setDefSaving(true)
+    try {
+      await api(token).put(`/counterparties/${id}/defaults`, {
+        vat_rate_income: defData.vat_rate_income === '' ? null : Number(defData.vat_rate_income),
+        vat_rate_expense: defData.vat_rate_expense === '' ? null : Number(defData.vat_rate_expense),
+        default_article_income_id: defData.default_article_income_id ? Number(defData.default_article_income_id) : null,
+        default_article_expense_id: defData.default_article_expense_id ? Number(defData.default_article_expense_id) : null,
+      })
+      setDefEdit(false)
+      loadCard()
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Ошибка сохранения')
+    } finally { setDefSaving(false) }
+  }
 
   // Обработчики фильтров/сортировки — каждый передаёт полный набор параметров
   function handleStatus(val) {
@@ -428,6 +503,10 @@ export default function CounterpartyCard() {
               color={isActive ? 'var(--income)' : 'var(--text-muted)'}
             />
             {relation && <Badge label={relation} bg="var(--accent-tint)" color="var(--accent)" />}
+            {/* Аудиторский флаг: операции есть, привязанных договоров нет (2026-07-16) */}
+            {card.contracts.length === 0 && (stats.op_count || 0) > 0 && (
+              <Badge label="⚠ Без договора" bg="var(--danger-tint)" color="var(--dot-overdue)" />
+            )}
             {card.website && (
               <Badge
                 label={`🌐 ${card.website.replace(/^https?:\/\//i, '').replace(/\/$/, '')}`}
@@ -451,7 +530,8 @@ export default function CounterpartyCard() {
       <div style={{ maxWidth: 1920, margin: '0 auto', padding: '20px 24px' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'clamp(20vw, 25vw, 480px) minmax(0,1fr)', gap: 16, alignItems: 'start' }}>
 
-          {/* ── Левая колонка: Реквизиты ────────────────────────────────── */}
+          {/* ── Левая колонка: Реквизиты + Условия по умолчанию ─────────── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <Card
             title="Реквизиты"
             action={
@@ -617,6 +697,74 @@ export default function CounterpartyCard() {
             </div>
           </Card>
 
+          {/* ── Условия по умолчанию: НДС и статья по направлениям (2026-07-16).
+                 Подставляются автоматически в форме новой операции (operations.js). ── */}
+          <Card
+            title="Условия по умолчанию"
+            action={canEdit && (
+              !defEdit
+                ? <button onClick={startDefEdit} style={BTN({ padding: '4px 8px', fontSize: 14, lineHeight: 1 })} title="Редактировать">✏️</button>
+                : <div style={{ display: 'flex', gap: 6 }}>
+                    <button onClick={() => setDefEdit(false)} title="Отмена"
+                      style={{ padding: '4px 7px', borderRadius: 8, cursor: 'pointer', fontSize: 15,
+                               border: '1px solid #f5c842', background: 'transparent', color: '#f5c842', lineHeight: 1 }}>↩</button>
+                    <button onClick={saveDefaults} disabled={defSaving} title="Сохранить"
+                      style={{ padding: '4px 7px', borderRadius: 8, cursor: 'pointer', fontSize: 15,
+                               border: '1px solid var(--income)', background: 'transparent', color: 'var(--income)',
+                               lineHeight: 1, opacity: defSaving ? 0.5 : 1 }}>{defSaving ? '…' : '✓'}</button>
+                  </div>
+            )}
+          >
+            <div style={{ padding: '10px 16px' }}>
+              {!defEdit ? (
+                <>
+                  <ReqRow label="НДС приход"    value={card.vat_rate_income != null ? `${card.vat_rate_income}%` : null} />
+                  <ReqRow label="НДС расход"    value={card.vat_rate_expense != null ? `${card.vat_rate_expense}%` : null} />
+                  <ReqRow label="Статья прихода" value={card.default_article_income} />
+                  <ReqRow label="Статья расхода" value={card.default_article_expense} />
+                </>
+              ) : (
+                <>
+                  {[
+                    { key: 'vat_rate_income', label: 'НДС приход' },
+                    { key: 'vat_rate_expense', label: 'НДС расход' },
+                  ].map(f => (
+                    <div key={f.key} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2, fontWeight: 500 }}>{f.label}</div>
+                      <select
+                        style={{ width: '100%', padding: '6px 10px', fontSize: 13, border: '1px solid var(--border-card)',
+                                 borderRadius: 8, background: 'var(--bg-subtle)', color: 'var(--text-primary)', outline: 'none' }}
+                        value={defData[f.key]}
+                        onChange={e => setDefData({ ...defData, [f.key]: e.target.value })}
+                      >
+                        <option value="">— не задано —</option>
+                        {[0, 5, 7, 10, 20, 22].map(v => <option key={v} value={v}>{v}%</option>)}
+                      </select>
+                    </div>
+                  ))}
+                  {[
+                    { key: 'default_article_income_id', label: 'Статья прихода' },
+                    { key: 'default_article_expense_id', label: 'Статья расхода' },
+                  ].map(f => (
+                    <div key={f.key} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2, fontWeight: 500 }}>{f.label}</div>
+                      <select
+                        style={{ width: '100%', padding: '6px 10px', fontSize: 13, border: '1px solid var(--border-card)',
+                                 borderRadius: 8, background: 'var(--bg-subtle)', color: 'var(--text-primary)', outline: 'none' }}
+                        value={defData[f.key]}
+                        onChange={e => setDefData({ ...defData, [f.key]: e.target.value })}
+                      >
+                        <option value="">— не задана —</option>
+                        {articles.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          </Card>
+          </div>
+
           {/* ── Правая колонка ──────────────────────────────────────────── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
@@ -656,6 +804,36 @@ export default function CounterpartyCard() {
                   ))
                 })()}
               </div>
+              {/* Старение дебиторки — те же бакеты, что в отчёте «Дебиторка» (2026-07-16) */}
+              {analytics && (stats.receivable || 0) > 0 && (() => {
+                const a = analytics.aging || {}
+                const items = [
+                  { key: 'future',  label: 'Срок не наступил', color: 'var(--accent)' },
+                  { key: 'current', label: 'Текущая',          color: '#D97706' },
+                  { key: 'overdue', label: 'Просрочка',        color: 'var(--dot-overdue)' },
+                ].filter(x => (a[x.key]?.amount || 0) > 0)
+                if (!items.length) return null
+                return (
+                  <div style={{ padding: '10px 18px', borderTop: '1px solid var(--border-inner)',
+                                display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500,
+                                   textTransform: 'uppercase', letterSpacing: '.04em' }}>Дебиторка по срокам:</span>
+                    {items.map(x => (
+                      <span key={x.key} style={{ fontSize: 12, display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: x.color, display: 'inline-block' }} />
+                        <span style={{ color: 'var(--text-secondary)' }}>{x.label}</span>
+                        <span style={{ fontWeight: 600, color: x.color }}>{fmt(a[x.key].amount)}</span>
+                        <span style={{ color: 'var(--text-faint)' }}>({a[x.key].count} оп.)</span>
+                      </span>
+                    ))}
+                    {(analytics.max_overdue_days || 0) > 0 && (
+                      <span style={{ fontSize: 12, color: 'var(--dot-overdue)', fontWeight: 500 }}>
+                        макс. просрочка {analytics.max_overdue_days} дн.
+                      </span>
+                    )}
+                  </div>
+                )
+              })()}
             </Card>
 
             {/* Аналитика */}
@@ -681,37 +859,48 @@ export default function CounterpartyCard() {
                     </div>
                     {analytics.monthly.length === 0 ? (
                       <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 16 }}>Нет данных</div>
-                    ) : (
+                    ) : (() => {
+                      // Линия тренда (МНК) по суммарному обороту месяца — поверх баров (2026-07-16)
+                      const trend = trendLine(analytics.monthly.map(m => (m.income || 0) + (m.expense || 0)))
+                      const data = analytics.monthly.map((m, i) => ({ ...m, trend: trend[i] }))
+                      return (
                       <ResponsiveContainer width="100%" height={130}>
-                        <BarChart data={analytics.monthly} barCategoryGap="30%" margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+                        <ComposedChart data={data} barCategoryGap="30%" margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-inner)" vertical={false} />
                           <XAxis dataKey="period" tickFormatter={fmtMonth} tick={{ fontSize: 10, fill: 'var(--text-muted)' }}
                                  axisLine={false} tickLine={false} />
                           <YAxis tickFormatter={fmtK} tick={{ fontSize: 10, fill: 'var(--text-muted)' }}
                                  axisLine={false} tickLine={false} width={36} />
                           <Tooltip
-                            formatter={(v, name) => [fmt(v), name === 'income' ? 'Приход' : 'Расход']}
+                            formatter={(v, name) => name === 'trend' ? [fmt(v), 'Тренд'] : [fmt(v), name === 'income' ? 'Приход' : 'Расход']}
                             labelFormatter={fmtMonth}
                             contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid var(--border-card)',
                                             background: 'var(--bg-card)', color: 'var(--text-primary)' }}
                           />
                           <Bar dataKey="income"  fill="var(--income)"      radius={[3,3,0,0]} maxBarSize={24} />
                           <Bar dataKey="expense" fill="var(--dot-overdue)" radius={[3,3,0,0]} maxBarSize={24} />
-                        </BarChart>
+                          <Line dataKey="trend" stroke="var(--accent)" strokeWidth={2} strokeDasharray="6 4"
+                                dot={false} activeDot={false} legendType="none" />
+                        </ComposedChart>
                       </ResponsiveContainer>
-                    )}
+                      )
+                    })()}
 
-                    {/* Средний чек */}
+                    {/* Средний чек + доля в обороте компании за 12 мес (concentration risk) */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 16, marginBottom: 16 }}>
                       {[
-                        { label: 'Ср. приход', value: analytics.avg_income,  color: 'var(--income)' },
-                        { label: 'Ср. расход',  value: analytics.avg_expense, color: 'var(--dot-overdue)' },
+                        { label: 'Ср. приход', value: analytics.avg_income,  color: 'var(--income)', money: true },
+                        { label: 'Ср. расход',  value: analytics.avg_expense, color: 'var(--dot-overdue)', money: true },
+                        { label: 'Доля в выручке (12 мес)', value: analytics.share_income_12m,
+                          color: (analytics.share_income_12m || 0) >= 20 ? 'var(--dot-overdue)' : 'var(--income)',
+                          title: (analytics.share_income_12m || 0) >= 20 ? 'Высокая концентрация — потеря этого заказчика существенно ударит по выручке' : undefined },
+                        { label: 'Доля в закупках (12 мес)', value: analytics.share_expense_12m, color: 'var(--text-secondary)' },
                       ].map(s => (
-                        <div key={s.label} style={{ background: 'var(--bg-subtle)', borderRadius: 10,
+                        <div key={s.label} title={s.title} style={{ background: 'var(--bg-subtle)', borderRadius: 10,
                                                     padding: '10px 12px', border: '1px solid var(--border-card)' }}>
                           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>{s.label}</div>
                           <div style={{ fontSize: 14, fontWeight: 600, color: s.value ? s.color : 'var(--text-faint)' }}>
-                            {s.value ? fmt(s.value) : '—'}
+                            {s.money ? (s.value ? fmt(s.value) : '—') : (s.value ? `${s.value}%` : '—')}
                           </div>
                         </div>
                       ))}
@@ -808,7 +997,7 @@ export default function CounterpartyCard() {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                     <thead>
                       <tr>
-                        {['№ договора', 'Дата', 'Формат', 'Пролонгация', 'Срок оплаты', 'Документ'].map(h => (
+                        {['№ договора', 'Дата', 'Формат', 'Пролонгация', 'Срок оплаты', 'Окончание', 'Документ'].map(h => (
                           <th key={h} style={{
                             textAlign: 'left', padding: '8px 14px', fontSize: 11,
                             color: 'var(--text-faint)', fontWeight: 500, background: 'var(--bg-subtle)',
@@ -828,6 +1017,18 @@ export default function CounterpartyCard() {
                           <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-row)', color: 'var(--text-secondary)' }}>{c.prolongation || '—'}</td>
                           <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-row)', color: 'var(--text-secondary)' }}>
                             {c.payment_term_days ? `${c.payment_term_days} дн. ${c.payment_term_condition || ''}` : '—'}
+                          </td>
+                          {/* Окончание договора с бейджем «истёк» / «истекает через N дн.» (2026-07-16) */}
+                          <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-row)',
+                                       color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                            {(() => {
+                              const exp = contractExpiry(c.end_date_text)
+                              return <>
+                                {c.end_date_text || '—'}
+                                {exp && <span style={{ marginLeft: 6, padding: '1px 7px', borderRadius: 6, fontSize: 11,
+                                                       fontWeight: 600, background: exp.bg, color: exp.color }}>{exp.label}</span>}
+                              </>
+                            })()}
                           </td>
                           <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-row)', whiteSpace: 'nowrap' }}>
                             {c.document_link && (

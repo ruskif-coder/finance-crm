@@ -102,6 +102,10 @@ def _serialize(c: Contract) -> dict:
         "counterparty_id": c.counterparty_id,
         "counterparty_name": c.counterparty_name,
         "linked": c.counterparty_id is not None,
+        # НДС контрагента по направлениям — read-only производные из реестра контрагентов
+        # (как contracts_count в обратную сторону), редактируются в карточке контрагента.
+        "vat_rate_income": c.counterparty.vat_rate_income if c.counterparty else None,
+        "vat_rate_expense": c.counterparty.vat_rate_expense if c.counterparty else None,
         "marketing_name": c.marketing_name,
         "cooperation_format": c.cooperation_format,
         "services": c.services,
