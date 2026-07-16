@@ -205,7 +205,7 @@ export default function Settings() {
       const res = await api(token).get('/users/')
       setUsers(res.data)
       const ed = {}
-      res.data.forEach(u => { ed[u.id] = { role: u.role, is_active: u.is_active, password: '' } })
+      res.data.forEach(u => { ed[u.id] = { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '' } })
       setEditingUsers(ed)
     } catch (e) {
       if (e.response?.status === 401) router.push('/login')
@@ -237,7 +237,7 @@ export default function Settings() {
     const ed = editingUsers[id]
     setSavingUsers(prev => ({ ...prev, [id]: true }))
     try {
-      const payload = { role: ed.role, is_active: ed.is_active }
+      const payload = { name: ed.name, email: ed.email, role: ed.role, is_active: ed.is_active }
       if (ed.password) payload.password = ed.password
       await api(token).put(`/users/${id}`, payload)
       await loadUsers(token)
@@ -245,6 +245,18 @@ export default function Settings() {
       alert(e.response?.data?.detail || 'Ошибка при сохранении')
     } finally {
       setSavingUsers(prev => ({ ...prev, [id]: false }))
+    }
+  }
+
+  // Удаление — только деактивированных; backend дополнительно блокирует, если есть операции
+  const handleDeleteUser = async (id, name) => {
+    if (!confirm(`Удалить пользователя «${name}»? Действие необратимо.`)) return
+    const token = localStorage.getItem('token')
+    try {
+      await api(token).delete(`/users/${id}`)
+      await loadUsers(token)
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Ошибка при удалении')
     }
   }
 
@@ -595,12 +607,20 @@ export default function Settings() {
                   </thead>
                   <tbody>
                     {users.map(u => {
-                      const ed = editingUsers[u.id] || { role: u.role, is_active: u.is_active, password: '' }
+                      const ed = editingUsers[u.id] || { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '' }
                       const isSelf = u.id === selfId
                       return (
                         <tr key={u.id}>
-                          <td style={td}>{u.name}</td>
-                          <td style={td}>{u.email}</td>
+                          <td style={td}>
+                            <input value={ed.name}
+                              onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, name: e.target.value } }))}
+                              style={{ ...inpLeft, width: '160px', padding: '6px 10px' }} />
+                          </td>
+                          <td style={td}>
+                            <input type="email" value={ed.email}
+                              onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, email: e.target.value } }))}
+                              style={{ ...inpLeft, width: '200px', padding: '6px 10px' }} />
+                          </td>
                           <td style={td}>
                             <select disabled={isSelf} value={ed.role}
                               onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, role: e.target.value } }))}
@@ -622,9 +642,19 @@ export default function Settings() {
                               style={{ ...inpLeft, width: '140px', padding: '6px 10px' }} />
                           </td>
                           <td style={td}>
-                            <button onClick={() => handleSaveUser(u.id)} disabled={savingUsers[u.id]} style={btn}>
-                              {savingUsers[u.id] ? '...' : 'Сохранить'}
-                            </button>
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                              <button onClick={() => handleSaveUser(u.id)} disabled={savingUsers[u.id]} style={btn}>
+                                {savingUsers[u.id] ? '...' : 'Сохранить'}
+                              </button>
+                              {/* Удаление — только деактивированных и не себя (2026-07-16) */}
+                              {!isSelf && !u.is_active && (
+                                <button onClick={() => handleDeleteUser(u.id, u.name)} title="Удалить пользователя"
+                                  style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #fca5a5',
+                                           background: '#fee2e2', cursor: 'pointer', color: '#dc2626', fontSize: '14px' }}>
+                                  🗑
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       )

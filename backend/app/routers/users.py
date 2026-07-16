@@ -20,6 +20,7 @@ class UserCreate(BaseModel):
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
+    email: Optional[str] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
     password: Optional[str] = None
@@ -92,6 +93,16 @@ def update_user(
         changes.append(f"имя: {user.name} → {data.name}")
         user.name = data.name
 
+    if data.email is not None and data.email != user.email:
+        new_email = data.email.strip()
+        if not new_email or "@" not in new_email:
+            raise HTTPException(status_code=400, detail="Некорректный email")
+        dup = db.query(User).filter(User.email == new_email, User.id != user_id).first()
+        if dup:
+            raise HTTPException(status_code=400, detail="Email уже занят другим пользователем")
+        changes.append(f"email: {user.email} → {new_email}")
+        user.email = new_email
+
     if data.role is not None and data.role != user.role.key:
         new_role = db.query(Role).filter(Role.key == data.role).first()
         if not new_role:
@@ -122,11 +133,50 @@ def update_user(
     return {"message": "Пользователь обновлён"}
 
 
+@router.delete("/{user_id}")
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    """Удаление пользователя (2026-07-16). Только деактивированных — как страховка от
+    случайного удаления рабочей учётки. Пользователь с созданными операциями не удаляется
+    (created_by — авторство должно сохраниться), его оставляем деактивированным.
+    Записи аудита сохраняются: user_id обнуляется, user_name денормализован и остаётся."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="Нельзя удалить самого себя")
+    if user.is_active:
+        raise HTTPException(status_code=400, detail="Сначала деактивируйте пользователя")
+
+    from app.models import Operation
+    op_count = db.query(Operation).filter(Operation.created_by == user_id).count()
+    if op_count:
+        raise HTTPException(
+            status_code=400,
+            detail=f"У пользователя {op_count} созданных операций — удалить нельзя, оставьте деактивированным"
+        )
+
+    # Журнал действий не трогаем: отвязываем user_id, имя остаётся в денормализованном user_name
+    db.query(AuditLog).filter(AuditLog.user_id == user_id).update({"user_id": None})
+
+    name, email = user.name, user.email
+    db.delete(user)
+    db.commit()
+
+    log_action(db, current_user, "delete_user", entity_type="user", entity_id=user_id,
+               details=f"Удалён пользователь {name} ({email})")
+    return {"message": "Пользователь удалён"}
+
+
 ACTION_LABELS = {
     "login_success": "Вход выполнен",
     "login_failed": "Неудачный вход",
     "create_user": "Создание пользователя",
     "update_user": "Изменение пользователя",
+    "delete_user": "Удаление пользователя",
     "create_operation": "Создание операции",
     "update_operation": "Изменение операции",
     "delete_operation": "Удаление операции",
