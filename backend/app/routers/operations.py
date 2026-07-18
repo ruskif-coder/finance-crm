@@ -8,7 +8,7 @@ from app.routers.auth import get_current_user
 from app.audit import log_action
 from app.permissions import require_permission
 from app.routers.reports import _due_date, _aging_bucket, _term_days_for_counterparty
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import date, datetime
 from datetime import date as _Date  # alias: see OperationCreate note below
@@ -88,6 +88,24 @@ class OperationCreate(BaseModel):
     invoice_date: Optional[_Date] = None
     description: Optional[str] = None
     document_link: Optional[str] = None
+
+    # Пентест 2026-07-18 (раздел 9): API принимал отрицательные income/expense и
+    # vat_rate=999 (фронт ограничивает дропдауном, но прямой вызов API — нет), что
+    # искажало P&L и сумму НДС. Валидируем на входе. vat_fact в модель не входит —
+    # считается сервером (compute_vat_fact), клиентское значение игнорируется.
+    @field_validator("income", "expense")
+    @classmethod
+    def _non_negative(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("Сумма не может быть отрицательной")
+        return v
+
+    @field_validator("vat_rate")
+    @classmethod
+    def _vat_in_range(cls, v):
+        if v is not None and not (0 <= v <= 100):
+            raise ValueError("Ставка НДС должна быть в диапазоне 0–100")
+        return v
 
 @router.get("/")
 def get_operations(
