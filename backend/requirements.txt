@@ -1,4 +1,11 @@
-fastapi==0.111.0
+# 2026-07-18 (пентест): fastapi 0.111→0.118.0, starlette 0.37→0.49.1 (пин явно),
+# python-multipart 0.0.20→0.0.31 — закрывают CVE в парсинге multipart/form (DoS при
+# загрузке файлов) и прочие starlette 0.x. Проверено: все 33 backend-теста зелёные.
+# python-jose удалён ранее (миграция на PyJWT) — тянул ecdsa/rsa, тоже уходят при пересборке.
+# ОСТАТОК: 5 starlette-CVE фиксятся только в starlette 1.x — мажорная миграция, вынесена
+# в отдельное тестовое окно (см. docs/PENTEST_PLAN.md).
+fastapi==0.118.0
+starlette==0.49.1
 uvicorn==0.29.0
 sqlalchemy==2.0.51
 psycopg2-binary==2.9.12
@@ -6,7 +13,7 @@ alembic==1.13.1
 PyJWT==2.13.0
 passlib==1.7.4
 bcrypt==4.1.3
-python-multipart==0.0.20
+python-multipart==0.0.31
 pandas==2.2.2
 openpyxl==3.1.5
 python-dotenv==1.2.2

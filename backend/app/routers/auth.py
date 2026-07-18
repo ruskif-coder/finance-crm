@@ -1,12 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, LoginAttempt
 from passlib.context import CryptContext
+from sqlalchemy import func
 import jwt
 from jwt.exceptions import InvalidTokenError
 from datetime import datetime, timedelta
+import time
+import threading
 import os
 
 router = APIRouter()
@@ -22,10 +25,41 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 480
 MAX_LOGIN_ATTEMPTS = 5
 LOGIN_LOCKOUT_MINUTES = 15
 
+# Пентест 2026-07-18, находка #1: без этого хэша ответ на несуществующий email
+# приходит за ~9 мс (bcrypt не считается), а на существующий — за ~230 мс, что даёт
+# timing-oracle для перечисления учёток. Прогоняем verify_password против фиктивного
+# хэша, когда юзер не найден, чтобы время ответа не зависело от существования email.
+_DUMMY_BCRYPT_HASH = pwd_context.hash("timing_equalizer_dummy_password")
+
+# Пентест 2026-07-18, находка #2: локаут только по email не мешает password spraying
+# (один пароль по многим email). Добавляем per-IP троттлинг /login. In-memory (один
+# backend-контейнер), скользящее окно; переживать рестарт не обязано — при рестарте
+# счётчик обнуляется, что безопасно (не блокирует легитимных, лишь снимает защиту на миг).
+MAX_LOGIN_PER_IP = 20            # попыток с одного IP
+LOGIN_IP_WINDOW_SECONDS = 15 * 60
+_ip_attempts: dict[str, list[float]] = {}
+_ip_lock = threading.Lock()
+
+
+def _check_ip_rate_limit(ip: str):
+    now = time.time()
+    with _ip_lock:
+        window = [t for t in _ip_attempts.get(ip, []) if now - t < LOGIN_IP_WINDOW_SECONDS]
+        _ip_attempts[ip] = window
+        if len(window) >= MAX_LOGIN_PER_IP:
+            raise HTTPException(status_code=429, detail="Слишком много попыток входа. Попробуйте позже.")
+        window.append(now)
+
 # Блокировка входа — состояние хранится в таблице login_attempts (PostgreSQL),
 # а не в dict в памяти процесса, поэтому переживает docker restart finance_backend.
 # Таблица создаётся автоматически через Base.metadata.create_all() при старте.
 # Одна строка на email; при успешном входе счётчик/блокировка сбрасываются (не удаляются).
+
+def _norm_email(email: str) -> str:
+    """Нормализация email для поиска/локаута (пентест #3): регистронезависимо + trim,
+    чтобы варианты регистра не получали отдельный счётчик локаута и вход работал одинаково."""
+    return (email or "").strip().lower()
+
 
 def _check_login_lockout(db: Session, email: str):
     row = db.query(LoginAttempt).filter(LoginAttempt.email == email).first()
@@ -87,15 +121,25 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 @router.post("/login")
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     from app.audit import log_action  # локальный импорт — избегаем циклической зависимости (audit.py импортирует auth.py)
     from app.permissions import get_permissions_for_user  # тоже локальный — по той же причине (permissions.py импортирует auth.py)
 
-    _check_login_lockout(db, form_data.username)
+    # per-IP троттлинг (#2). За Caddy реальный IP в X-Forwarded-For; фолбэк — сокет.
+    client_ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                 or (request.client.host if request.client else "unknown"))
+    _check_ip_rate_limit(client_ip)
 
-    user = db.query(User).filter(User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        _register_failed_login(db, form_data.username)
+    email = _norm_email(form_data.username)
+    _check_login_lockout(db, email)
+
+    # Регистронезависимый поиск (#3). Timing-фикс (#1): при отсутствии юзера всё равно
+    # прогоняем bcrypt против фиктивного хэша, чтобы время ответа не выдавало наличие email.
+    user = db.query(User).filter(func.lower(User.email) == email).first()
+    password_ok = verify_password(form_data.password, user.hashed_password) if user else \
+        (verify_password(form_data.password, _DUMMY_BCRYPT_HASH) and False)
+    if not user or not password_ok:
+        _register_failed_login(db, email)
         log_action(db, user, "login_failed", entity_type="user", entity_id=user.id if user else None,
                    details=f"Неудачная попытка входа: {form_data.username}")
         raise HTTPException(status_code=400, detail="Неверный email или пароль")
@@ -103,7 +147,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
         log_action(db, user, "login_failed", entity_type="user", entity_id=user.id,
                    details="Попытка входа деактивированного пользователя")
         raise HTTPException(status_code=400, detail="Учётная запись деактивирована")
-    _clear_login_attempts(db, form_data.username)
+    _clear_login_attempts(db, email)
     token = create_access_token({"sub": user.email, "role": user.role.key})
     log_action(db, user, "login_success", entity_type="user", entity_id=user.id)
     return {
