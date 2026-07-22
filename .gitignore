@@ -29,6 +29,10 @@ docs/
 # SQL migration scripts — applied manually, local only
 *.sql
 
+# Разовый бэкфилл реквизитов из выгрузки Битрикс24 — локальный инструмент,
+# копируется на сервер напрямую (scp), в репозиторий не идёт
+backend/app/backfill_counterparty_requisites.py
+
 # One-off utility scripts (moved to scripts/ folder)
 make_*.py
 scripts/
