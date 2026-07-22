@@ -309,7 +309,19 @@ function DebtPanel({ data, mode, canEditNote, onSaveNote }) {
                       <span style={{ display: 'inline-block', width: '14px', color: 'var(--text-faint)', fontSize: '13px' }}>{isOpen ? '▾' : '▸'}</span>
                       {r.title}
                     </td>
-                    {isReceivables && <td style={{ padding: '8px', color: 'var(--text-muted)' }}>{r.inn || '—'}</td>}
+                    {isReceivables && (
+                      <td style={{ padding: '8px' }} onClick={e => e.stopPropagation()}>
+                        {r.inn ? (
+                          <a href={`/counterparty/${r.counterparty_id}`} target="_blank" rel="noopener noreferrer"
+                            style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 500 }}
+                            onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+                            onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+                            title="Открыть карточку контрагента в справочнике">
+                            {r.inn}
+                          </a>
+                        ) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                      </td>
+                    )}
                     {isReceivables && <td style={{ padding: '8px', color: 'var(--text-muted)' }}>{r.contract_number || '—'}</td>}
                     {isReceivables && <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-muted)' }}>{r.term_days} дн.</td>}
                     <td style={{ padding: '8px', textAlign: 'right', color: amountColor, fontWeight: '500' }}>{fmt(r.amount)} ₽</td>
