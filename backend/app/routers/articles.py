@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Article, Operation, User
+from app.models import Article, ArticleGroup, Operation, User
 from app.routers.auth import get_current_user
 from app.permissions import require_permission
 from pydantic import BaseModel
@@ -17,6 +17,81 @@ class ArticleCreate(BaseModel):
 
 class ArticleMove(BaseModel):
     direction: str  # "up" | "down"
+
+class ArticleGroupCreate(BaseModel):
+    name: str
+
+class ArticleReorder(BaseModel):
+    ids: list[int]  # полный список id статей в новом порядке
+
+# ===================== Перестановка порядка статей (drag-and-drop) =====================
+# Роут объявлен ДО /{article_id}, чтобы путь /reorder не перехватывался параметром article_id.
+
+@router.put("/reorder")
+def reorder_articles(
+    data: ArticleReorder,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("articles", "edit"))
+):
+    """Переставляет статьи в порядке, заданном списком ids: sort_order = позиция в списке.
+    Заменяет попарные перестановки (/move) — позволяет перетаскивать строку на любую позицию."""
+    ids = data.ids or []
+    id_to_order = {aid: idx for idx, aid in enumerate(ids)}
+    articles = db.query(Article).filter(Article.id.in_(ids)).all()
+    for a in articles:
+        a.sort_order = id_to_order[a.id]
+    db.commit()
+    return {"message": "Порядок обновлён"}
+
+# ===================== Справочник групп статей =====================
+# Группы статей верхнего уровня. Хранятся в отдельной таблице article_groups как канонический
+# список допустимых имён (для строгого выпадающего списка при создании/редактировании статьи).
+# Роуты объявлены ДО /{article_id}, чтобы путь /groups не перехватывался параметром article_id.
+
+@router.get("/groups")
+def get_article_groups(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Все группы из справочника. Открыт любому авторизованному — используется в выпадающих
+    списках. Порядок: sort_order, затем имя."""
+    rows = db.query(ArticleGroup).order_by(ArticleGroup.sort_order, ArticleGroup.name).all()
+    return {"items": [{"id": g.id, "name": g.name, "sort_order": g.sort_order} for g in rows]}
+
+@router.post("/groups")
+def create_article_group(
+    data: ArticleGroupCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("articles", "edit"))
+):
+    name = (data.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Название группы не может быть пустым")
+    existing = db.query(ArticleGroup).filter(func.lower(ArticleGroup.name) == name.lower()).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Группа «{existing.name}» уже существует")
+    max_order = db.query(func.max(ArticleGroup.sort_order)).scalar() or 0
+    group = ArticleGroup(name=name, sort_order=max_order + 1)
+    db.add(group)
+    db.commit()
+    db.refresh(group)
+    return {"id": group.id, "message": "Группа создана"}
+
+@router.delete("/groups/{group_id}")
+def delete_article_group(
+    group_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("articles", "edit"))
+):
+    group = db.query(ArticleGroup).filter(ArticleGroup.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Группа не найдена")
+    used = db.query(func.count(Article.id)).filter(Article.group == group.name).scalar()
+    if used:
+        raise HTTPException(status_code=400, detail=f"Нельзя удалить — группа используется в {used} статьях")
+    db.delete(group)
+    db.commit()
+    return {"message": "Группа удалена"}
 
 # ===================== Список для выпадающих списков (/operations и т.п.) =====================
 # Открыт любому авторизованному пользователю — как и раньше. Порядок теперь соответствует

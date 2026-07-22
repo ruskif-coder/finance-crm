@@ -148,9 +148,17 @@ export default function Directories() {
   const [artError, setArtError] = useState('')
   const [artSearch, setArtSearch] = useState('')
   const [artMovingId, setArtMovingId] = useState(null)
+  const [dragIndex, setDragIndex] = useState(null)
+  const [dragOverIndex, setDragOverIndex] = useState(null)
   const [newArticle, setNewArticle] = useState({ name: '', group: '', type: 'expense' })
   const [creatingArticle, setCreatingArticle] = useState(false)
   const [artCreateError, setArtCreateError] = useState('')
+  // Справочник групп статей (отдельная таблица) — канонический список для строгого выпадающего списка
+  const [groups, setGroups] = useState([])
+  const [newGroupName, setNewGroupName] = useState('')
+  const [creatingGroup, setCreatingGroup] = useState(false)
+  const [groupError, setGroupError] = useState('')
+  const [showGroupInput, setShowGroupInput] = useState(false)
 
   // Договоры (справочник) — контрагент привязывается к реестру Контрагентов через
   // counterparty_id (FK); counterparty_name/inn для привязанных строк server-side
@@ -214,7 +222,7 @@ export default function Directories() {
     // Контрагенты грузятся и для вкладки "Договоры" — нужны для пикера привязки
     // договора к реестру (CounterpartySearch, см. ниже).
     if (tab === 'counterparties' || tab === 'contracts') loadCounterparties(token)
-    if (tab === 'articles') loadArticles(token)
+    if (tab === 'articles') { loadArticles(token); loadGroups(token) }
     if (tab === 'contracts') loadContracts(token)
   }, [tab])
 
@@ -383,6 +391,31 @@ export default function Directories() {
     }
   }
 
+  const loadGroups = async (token) => {
+    try {
+      const res = await api(token).get('/articles/groups')
+      setGroups(res.data.items || [])
+    } catch (e) {}
+  }
+
+  const handleCreateGroup = async () => {
+    setGroupError('')
+    const name = newGroupName.trim()
+    if (!name) { setGroupError('Введите название группы'); return }
+    const token = localStorage.getItem('token')
+    setCreatingGroup(true)
+    try {
+      await api(token).post('/articles/groups', { name })
+      setNewGroupName('')
+      setShowGroupInput(false)
+      await loadGroups(token)
+    } catch (e) {
+      setGroupError(e.response?.data?.detail || 'Ошибка при создании группы')
+    } finally {
+      setCreatingGroup(false)
+    }
+  }
+
   const handleCreateArticle = async () => {
     setArtCreateError('')
     if (!newArticle.name.trim()) { setArtCreateError('Введите название статьи'); return }
@@ -433,16 +466,19 @@ export default function Directories() {
     }
   }
 
-  const handleMoveArticle = async (id, direction) => {
+  const handleDropReorder = async (fromIdx, toIdx) => {
+    if (fromIdx == null || toIdx == null || fromIdx === toIdx) return
+    // Оптимистично переставляем локально, затем шлём весь порядок на сервер
+    const reordered = [...articles]
+    const [moved] = reordered.splice(fromIdx, 1)
+    reordered.splice(toIdx, 0, moved)
+    setArticles(reordered)
     const token = localStorage.getItem('token')
-    setArtMovingId(id)
     try {
-      await api(token).put(`/articles/${id}/move`, { direction })
-      await loadArticles(token)
+      await api(token).put('/articles/reorder', { ids: reordered.map(a => a.id) })
     } catch (e) {
       alert(e.response?.data?.detail || 'Ошибка при изменении порядка')
-    } finally {
-      setArtMovingId(null)
+      await loadArticles(token)  // откат к серверному состоянию
     }
   }
 
@@ -1052,24 +1088,39 @@ export default function Directories() {
 
         {tab === 'articles' && (
           <div>
-            <datalist id="article-groups">
-              {articleGroups.map(g => <option key={g} value={g} />)}
-            </datalist>
-
             {/* Форма создания */}
             {(role === 'admin' || can(permissions, 'articles', 'edit')) && (
               <div style={{ background: 'white', borderRadius: '12px', padding: '20px', marginBottom: '12px' }}>
                 <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px' }}>Новая статья</div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                   <input placeholder="Название" value={newArticle.name} onChange={e => setNewArticle(p => ({ ...p, name: e.target.value }))} style={{ ...inpLeft, width: '220px' }} />
-                  <input placeholder="Группа (верхний уровень)" list="article-groups" value={newArticle.group} onChange={e => setNewArticle(p => ({ ...p, group: e.target.value }))} style={{ ...inpLeft, width: '200px' }} />
+                  <select value={newArticle.group} onChange={e => setNewArticle(p => ({ ...p, group: e.target.value }))} style={{ ...select, width: '200px' }}>
+                    <option value="">— без группы —</option>
+                    {groups.map(g => <option key={g.id} value={g.name}>{g.name}</option>)}
+                  </select>
                   <select value={newArticle.type} onChange={e => setNewArticle(p => ({ ...p, type: e.target.value }))} style={select}>
                     <option value="expense">Расход</option>
                     <option value="income">Доход</option>
                   </select>
                   <button onClick={handleCreateArticle} disabled={creatingArticle} style={btn}>{creatingArticle ? '...' : 'Создать'}</button>
+
+                  {/* Создание группы */}
+                  <span style={{ borderLeft: '1px solid #e5e7eb', height: '28px', margin: '0 4px' }} />
+                  {showGroupInput ? (
+                    <>
+                      <input autoFocus placeholder="Название группы" value={newGroupName}
+                        onChange={e => setNewGroupName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleCreateGroup(); if (e.key === 'Escape') { setShowGroupInput(false); setNewGroupName(''); setGroupError('') } }}
+                        style={{ ...inpLeft, width: '180px' }} />
+                      <button onClick={handleCreateGroup} disabled={creatingGroup} style={btn}>{creatingGroup ? '...' : 'Сохранить группу'}</button>
+                      <button onClick={() => { setShowGroupInput(false); setNewGroupName(''); setGroupError('') }} style={{ ...btn, background: '#6b7280' }}>Отмена</button>
+                    </>
+                  ) : (
+                    <button onClick={() => { setShowGroupInput(true); setGroupError('') }} style={{ ...btn, background: '#0ea5e9' }}>+ Создать группу</button>
+                  )}
                 </div>
                 {artCreateError && <div style={{ color: '#dc2626', fontSize: '15px', marginTop: '8px' }}>{artCreateError}</div>}
+                {groupError && <div style={{ color: '#dc2626', fontSize: '15px', marginTop: '8px' }}>{groupError}</div>}
               </div>
             )}
 
@@ -1099,10 +1150,23 @@ export default function Directories() {
                       const canEditArt = role === 'admin' || can(permissions, 'articles', 'edit')
                       const isEditing = artEditingId === a.id
                       const typeMeta = ARTICLE_TYPE_META[a.type] || { label: a.type || '—', bg: '#f3f4f6', color: '#6b7280' }
+                      const canDrag = canEditArt && !artSearch && !isEditing
                       return (
-                        <tr key={a.id} style={{ borderBottom: '1px solid #f3f4f6', background: isEditing ? '#fffbeb' : 'transparent' }}
-                          onMouseEnter={e => { if (!isEditing) e.currentTarget.style.background = '#f9fafb' }}
-                          onMouseLeave={e => { e.currentTarget.style.background = isEditing ? '#fffbeb' : 'transparent' }}>
+                        <tr key={a.id}
+                          draggable={canDrag}
+                          onDragStart={canDrag ? (e) => { setDragIndex(i); e.dataTransfer.effectAllowed = 'move' } : undefined}
+                          onDragOver={canDrag ? (e) => { e.preventDefault(); if (dragOverIndex !== i) setDragOverIndex(i) } : undefined}
+                          onDragLeave={canDrag ? () => setDragOverIndex(null) : undefined}
+                          onDrop={canDrag ? (e) => { e.preventDefault(); handleDropReorder(dragIndex, i); setDragIndex(null); setDragOverIndex(null) } : undefined}
+                          onDragEnd={() => { setDragIndex(null); setDragOverIndex(null) }}
+                          style={{
+                            borderBottom: '1px solid #f3f4f6',
+                            borderTop: dragOverIndex === i && dragIndex !== i ? '2px solid #0ea5e9' : '2px solid transparent',
+                            background: isEditing ? '#fffbeb' : (dragIndex === i ? '#eff6ff' : 'transparent'),
+                            opacity: dragIndex === i ? 0.4 : 1,
+                          }}
+                          onMouseEnter={e => { if (!isEditing && dragIndex === null) e.currentTarget.style.background = '#f9fafb' }}
+                          onMouseLeave={e => { if (dragIndex === null) e.currentTarget.style.background = isEditing ? '#fffbeb' : 'transparent' }}>
                           <td style={{ padding: '7px 10px', color: '#9ca3af' }}>{a.id}</td>
                           <td style={{ padding: '7px 10px' }}>
                             {isEditing
@@ -1112,8 +1176,14 @@ export default function Directories() {
                           </td>
                           <td style={{ padding: '7px 10px', color: '#6b7280' }}>
                             {isEditing
-                              ? <input list="article-groups" value={artDraft.group} onChange={e => setArtDraft(d => ({ ...d, group: e.target.value }))}
-                                  style={{ ...inpLeft, width: '180px', padding: '5px 8px', fontSize: '14px' }} />
+                              ? <select value={artDraft.group} onChange={e => setArtDraft(d => ({ ...d, group: e.target.value }))}
+                                  style={{ ...select, width: '180px', padding: '5px 8px', fontSize: '14px' }}>
+                                  <option value="">— без группы —</option>
+                                  {groups.map(g => <option key={g.id} value={g.name}>{g.name}</option>)}
+                                  {artDraft.group && !groups.some(g => g.name === artDraft.group) && (
+                                    <option value={artDraft.group}>{artDraft.group} (вне справочника)</option>
+                                  )}
+                                </select>
                               : (a.group || '—')}
                           </td>
                           <td style={{ padding: '7px 10px' }}>
@@ -1129,12 +1199,8 @@ export default function Directories() {
                           <td style={{ padding: '7px 10px', textAlign: 'right' }}>{a.op_count}</td>
                           <td style={{ padding: '7px 10px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                             {canEditArt && !artSearch ? (
-                              <>
-                                <button onClick={() => handleMoveArticle(a.id, 'up')} disabled={i === 0 || artMovingId === a.id} title="Выше"
-                                  style={{ border: 'none', background: 'transparent', cursor: i === 0 ? 'default' : 'pointer', color: i === 0 ? '#d1d5db' : '#6b7280', fontSize: '15px', padding: '2px 4px' }}>▲</button>
-                                <button onClick={() => handleMoveArticle(a.id, 'down')} disabled={i === filteredArticles.length - 1 || artMovingId === a.id} title="Ниже"
-                                  style={{ border: 'none', background: 'transparent', cursor: i === filteredArticles.length - 1 ? 'default' : 'pointer', color: i === filteredArticles.length - 1 ? '#d1d5db' : '#6b7280', fontSize: '15px', padding: '2px 4px' }}>▼</button>
-                              </>
+                              <span title="Перетащите строку, чтобы изменить порядок"
+                                style={{ cursor: 'grab', color: '#9ca3af', fontSize: '17px', userSelect: 'none', lineHeight: 1 }}>⠿</span>
                             ) : <span style={{ color: '#d1d5db' }}>—</span>}
                           </td>
                           <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>

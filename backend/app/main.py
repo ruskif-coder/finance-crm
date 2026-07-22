@@ -4,7 +4,7 @@ from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from app.database import engine, Base
+from app.database import engine, Base, SessionLocal
 from app.routers import auth, operations, reports, counterparties, articles, settings, users, roles, contracts
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
@@ -27,6 +27,33 @@ logging.basicConfig(
 logger = logging.getLogger("finance")
 
 Base.metadata.create_all(bind=engine)
+
+
+def seed_article_groups():
+    """Заполняет таблицу article_groups уникальными группами из существующих статей —
+    чтобы после введения справочника групп строгий выпадающий список сразу содержал
+    все уже используемые группы. Идемпотентно: добавляет только отсутствующие имена."""
+    from app.models import Article, ArticleGroup
+    db = SessionLocal()
+    try:
+        existing = {g.name for g in db.query(ArticleGroup).all()}
+        used = {a.group for a in db.query(Article).filter(Article.group.isnot(None)).all() if (a.group or "").strip()}
+        to_add = sorted(used - existing)
+        if to_add:
+            base_order = db.query(func.max(ArticleGroup.sort_order)).scalar() or 0
+            for i, name in enumerate(to_add, start=1):
+                db.add(ArticleGroup(name=name, sort_order=base_order + i))
+            db.commit()
+            logger.info(f"seed_article_groups: добавлено {len(to_add)} групп из статей")
+    except Exception:
+        logger.exception("seed_article_groups: ошибка сидирования групп")
+        db.rollback()
+    finally:
+        db.close()
+
+
+from sqlalchemy import func  # noqa: E402
+seed_article_groups()
 
 # В DEBUG=true (локальная разработка) Swagger UI доступен на /docs.
 # В production (DEBUG не задан или false) документация закрыта — /docs, /redoc, /openapi.json

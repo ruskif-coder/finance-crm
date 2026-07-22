@@ -58,6 +58,16 @@ class Article(Base):
     sort_order = Column(Integer, default=0)  # порядок вывода в справочнике статей и в выпадающих списках
     operations = relationship("Operation", back_populates="article")
 
+class ArticleGroup(Base):
+    __tablename__ = "article_groups"
+    # Справочник групп статей верхнего уровня. Группа у статьи (Article.group) хранится как строка
+    # (денормализовано, чтобы reports.py читал её напрямую), а эта таблица — канонический список
+    # допустимых имён групп для строгого выпадающего списка и для пустых, ещё не заполненных групп.
+    # Сидируется из существующих Article.group при старте (seed_article_groups в main.py).
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, nullable=False)
+    sort_order = Column(Integer, default=0)
+
 class Counterparty(Base):
     __tablename__ = "counterparties"
     id = Column(Integer, primary_key=True)
