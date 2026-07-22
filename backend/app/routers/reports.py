@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text
+from sqlalchemy import func, text, case
 from app.database import get_db
 from app.models import Operation, Article, User
 from app.routers.auth import get_current_user
@@ -36,6 +36,8 @@ def expand_quarter_rows(rows):
                     'bank': r.bank,
                     'total_income': (r.total_income or 0) / 3,
                     'total_expense': (r.total_expense or 0) / 3,
+                    'income_count': (getattr(r, 'income_count', 0) or 0) / 3,
+                    'expense_count': (getattr(r, 'expense_count', 0) or 0) / 3,
                 })
         else:
             expanded.append({
@@ -43,7 +45,31 @@ def expand_quarter_rows(rows):
                 'bank': r.bank,
                 'total_income': r.total_income or 0,
                 'total_expense': r.total_expense or 0,
+                'income_count': getattr(r, 'income_count', 0) or 0,
+                'expense_count': getattr(r, 'expense_count', 0) or 0,
             })
+    return expanded
+
+
+def _expand_quarter_rows_dict(rows):
+    """То же что expand_quarter_rows, но принимает dict-строки (уже имеют все поля)."""
+    import re
+    expanded = []
+    for r in rows:
+        p = r.get('period') or ''
+        match = re.match(r'^(Q[1-4])\s+(\d{4})$', p)
+        if match:
+            q, year = match.group(1), match.group(2)
+            months = QUARTER_MONTHS.get(q, [])
+            for m in months:
+                expanded.append({**r, 'period': f'{year}-{m}',
+                    'total_income': r['total_income'] / 3,
+                    'total_expense': r['total_expense'] / 3,
+                    'income_count': r.get('income_count', 0) / 3,
+                    'expense_count': r.get('expense_count', 0) / 3,
+                })
+        else:
+            expanded.append(r)
     return expanded
 
 
@@ -70,7 +96,17 @@ def get_dds(
         Operation.bank,
         func.sum(Operation.income).label("total_income"),
         func.sum(Operation.expense).label("total_expense"),
-    ).filter(Operation.status == 'ОПЛАЧЕНО')     .filter(Operation.date.isnot(None) if group_by == 'date' else Operation.period.isnot(None))     .group_by(group_col, Operation.bank)     .order_by(group_col)
+        func.sum(case((Operation.income > 0, 1), else_=0)).label("income_count"),
+        func.sum(case((Operation.expense > 0, 1), else_=0)).label("expense_count"),
+    )
+    # По дате — только фактически оплаченные операции (кассовый взгляд: реальное движение денег).
+    # По периоду — все операции периода, включая план (начислительный взгляд: что отнесено к периоду
+    # независимо от факта оплаты). Статусов в системе три: ОПЛАЧЕНО, ПЛАН ПОСТУПЛЕНИЙ, ПЛАН ОПЛАТ.
+    if group_by == 'date':
+        query = query.filter(Operation.status == 'ОПЛАЧЕНО').filter(Operation.date.isnot(None))
+    else:
+        query = query.filter(Operation.period.isnot(None))
+    query = query.group_by(group_col, Operation.bank).order_by(group_col)
 
     if date_from:
         if group_by == 'date':
@@ -96,7 +132,10 @@ def get_dds(
     if group_by == 'period':
         expanded_rows = expand_quarter_rows(rows)
     else:
-        expanded_rows = [{'period': r.period, 'bank': r.bank, 'total_income': r.total_income or 0, 'total_expense': r.total_expense or 0} for r in rows]
+        expanded_rows = [{'period': r.period, 'bank': r.bank,
+            'total_income': r.total_income or 0, 'total_expense': r.total_expense or 0,
+            'income_count': r.income_count or 0, 'expense_count': r.expense_count or 0,
+        } for r in rows]
 
     periods = {}
     banks = set()
@@ -105,9 +144,11 @@ def get_dds(
         b = r['bank'] or 'Не указан'
         banks.add(b)
         if p not in periods:
-            periods[p] = {'period': p, 'total_income': 0, 'total_expense': 0, 'net': 0, 'by_bank': {}}
+            periods[p] = {'period': p, 'total_income': 0, 'total_expense': 0, 'net': 0, 'income_count': 0, 'expense_count': 0, 'by_bank': {}}
         periods[p]['total_income'] += r['total_income']
         periods[p]['total_expense'] += r['total_expense']
+        periods[p]['income_count'] += r.get('income_count', 0)
+        periods[p]['expense_count'] += r.get('expense_count', 0)
         periods[p]['net'] = periods[p]['total_income'] - periods[p]['total_expense']
         if b not in periods[p]['by_bank']:
             periods[p]['by_bank'][b] = {'income': 0, 'expense': 0, 'net': 0}
@@ -122,6 +163,10 @@ def get_dds(
         row = periods[p]
         cumulative += row['net']
         row['cumulative'] = cumulative
+        ic = row.get('income_count') or 0
+        ec = row.get('expense_count') or 0
+        row['avg_income'] = round(row['total_income'] / ic) if ic else 0
+        row['avg_expense'] = round(row['total_expense'] / ec) if ec else 0
         result.append(row)
 
     return {'periods': result, 'banks': sorted(list(banks))}
