@@ -1,10 +1,11 @@
 import Navbar from '../components/Navbar'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { buildDivBars, buildYLabels, niceMax, buildMonthLabels } from '../helpers/ribbonChart'
 import Head from 'next/head'
+import { motion, AnimatePresence, useMotionValue, useTransform, animate, useReducedMotion } from 'framer-motion'
 
 const api = (token) => axios.create({
   // См. комментарий в balance.js — относительный путь, проксируется Caddy.
@@ -39,11 +40,35 @@ const card = (extra = {}) => ({
   ...extra,
 })
 
+// ── Анимация 1: count-up число ───────────────────────────────────
+function CountUp({ value, suffix = '', color }) {
+  const reduced = useReducedMotion()
+  const mv = useMotionValue(0)
+  const formatted = useTransform(mv, v => new Intl.NumberFormat('ru-RU').format(Math.round(v)) + suffix)
+  const prevRef = useRef(0)
+
+  useEffect(() => {
+    if (reduced) { mv.set(value); return }
+    const ctrl = animate(mv, value, { duration: 0.85, ease: [0.22, 1, 0.36, 1], from: prevRef.current })
+    prevRef.current = value
+    return () => ctrl.stop()
+  }, [value, reduced])
+
+  return (
+    <motion.span style={{ color, fontVariantNumeric: 'tabular-nums' }}>
+      {formatted}
+    </motion.span>
+  )
+}
+
 export default function Dashboard() {
   const router = useRouter()
+  const reduced = useReducedMotion()
   const [ddsData, setDdsData] = useState({ periods: [], banks: [] })
   const [ddsSummary, setDdsSummary] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [hoverBar, setHoverBar] = useState(null)
+  const [hoverCapsuleIdx, setHoverCapsuleIdx] = useState(null)
   const [selectedBank, setSelectedBank] = useState('all')
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date()
@@ -108,8 +133,30 @@ export default function Dashboard() {
   const yLabels = buildYLabels(maxVal, { height: RIBBON_HEIGHT, arm: RIBBON_ARM })
   const monthLabels = buildMonthLabels(periods.map(p => p.period))
 
+  // ── Hover-зоны по реальным месяцам ──
+  // divBars — это SUB интерполированных капсул (Catmull-Rom), а не по одной на месяц.
+  // Месяц m лежит в параметре t=m/(N-1), что соответствует капсуле round(t·(SUB-1)).
+  // Подпись позиционируем по кончику этой капсулы, а значение берём реальное из monthly[m].
+  const SUB = divBars.length
+  const N = monthly.length
+  const monthHotspots = monthly.map((mo, m) => {
+    const capsuleIdx = N > 1 ? Math.round((m / (N - 1)) * (SUB - 1)) : Math.round((SUB - 1) / 2)
+    const bar = divBars[capsuleIdx] || { incTop: RIBBON_HEIGHT / 2, incH: 0, expTop: RIBBON_HEIGHT / 2, expH: 0 }
+    return {
+      m,
+      capsuleIdx,
+      inc: mo.income || 0,
+      exp: mo.expense || 0,
+      leftPct: `calc(10px + ${((capsuleIdx + 0.5) / SUB).toFixed(4)} * (100% - 20px))`,
+      widthPct: `calc((100% - 20px) / ${Math.max(1, N)})`,
+      incLabelTop: Math.max(0, bar.incTop - 17),
+      expLabelTop: Math.min(RIBBON_HEIGHT - 15, bar.expTop + bar.expH + 3),
+    }
+  })
+
   // ── Данные для накопительного остатка ──
   const cumulativeData = periods.map(p => ({ period: formatPeriod(p.period), cumulative: Math.round(p.cumulative || 0) }))
+
 
   const actualBalance = ddsSummary?.total_balance ?? ddsSummary?.net ?? 0
   const planNet = (ddsSummary?.plan_income || 0) - (ddsSummary?.plan_expense || 0)
@@ -149,14 +196,22 @@ export default function Dashboard() {
                 <option value="all">Все банки</option>
                 {BANKS.map(b => <option key={b} value={b}>{b}</option>)}
               </select>
-              <div style={{ display: 'flex', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, padding: 4 }}>
+
+              {/* ── Анимация 4: Magic pill segmented control ── */}
+              <div style={{ position: 'relative', display: 'flex', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, padding: 4 }}>
                 {[['period', 'По периоду'], ['date', 'По дате']].map(([v, label]) => (
-                  <div key={v} onClick={() => setGroupBy(v)} style={{
-                    padding: '7px 14px', borderRadius: 9, cursor: 'pointer', fontSize: 13, fontWeight: 500,
-                    background: groupBy === v ? 'var(--text-primary)' : 'transparent',
-                    color: groupBy === v ? '#fff' : 'var(--text-secondary)',
-                    transition: 'all .15s',
-                  }}>{label}</div>
+                  <div key={v} onClick={() => setGroupBy(v)} style={{ position: 'relative', padding: '7px 14px', borderRadius: 9, cursor: 'pointer', fontSize: 13, fontWeight: 500, zIndex: 1,
+                    color: groupBy === v ? '#fff' : 'var(--text-secondary)', transition: 'color .15s',
+                  }}>
+                    {groupBy === v && (
+                      <motion.div
+                        layoutId="segPill"
+                        style={{ position: 'absolute', inset: 0, borderRadius: 9, background: 'var(--text-primary)', zIndex: -1 }}
+                        transition={reduced ? { duration: 0 } : { type: 'spring', stiffness: 420, damping: 36 }}
+                      />
+                    )}
+                    {label}
+                  </div>
                 ))}
               </div>
             </div>
@@ -166,16 +221,24 @@ export default function Dashboard() {
           {ddsSummary && (
             <div style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
               {[
-                { label: 'Актуальный баланс', val: fmt(actualBalance) + ' ₽', valColor: actualBalance >= 0 ? 'var(--income)' : 'var(--expense)', sub: 'На счетах сегодня' },
-                { label: 'Прогнозный баланс', val: fmt(forecastBalance) + ' ₽', valColor: forecastBalance >= 0 ? 'var(--accent)' : 'var(--expense)', sub: `план: +${fmt(ddsSummary.plan_income || 0)} ₽ / −${fmt(ddsSummary.plan_expense || 0)} ₽` },
-                { label: 'План поступлений', val: fmt(ddsSummary.plan_income) + ' ₽', valColor: 'var(--income)', sub: `${ddsSummary.income_count ?? 0} операций` },
-                { label: 'План расходов', val: fmt(ddsSummary.plan_expense) + ' ₽', valColor: 'var(--expense)', sub: `${ddsSummary.expense_count ?? 0} операций` },
-              ].map(k => (
-                <div key={k.label} style={{ ...card(), flex: '1 1 200px' }}>
+                { label: 'Актуальный баланс', rawVal: actualBalance, suffix: ' ₽', valColor: actualBalance >= 0 ? 'var(--income)' : 'var(--expense)', sub: 'На счетах сегодня' },
+                { label: 'Прогнозный баланс', rawVal: forecastBalance, suffix: ' ₽', valColor: forecastBalance >= 0 ? 'var(--accent)' : 'var(--expense)', sub: `план: +${fmt(ddsSummary.plan_income || 0)} ₽ / −${fmt(ddsSummary.plan_expense || 0)} ₽` },
+                { label: 'План поступлений', rawVal: ddsSummary.plan_income || 0, suffix: ' ₽', valColor: 'var(--income)', sub: `${ddsSummary.income_count ?? 0} операций` },
+                { label: 'План расходов', rawVal: ddsSummary.plan_expense || 0, suffix: ' ₽', valColor: 'var(--expense)', sub: `${ddsSummary.expense_count ?? 0} операций` },
+              ].map((k, i) => (
+                <motion.div key={k.label}
+                  initial={reduced ? false : { opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.07, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+                  style={{ ...card(), flex: '1 1 200px' }}
+                >
                   <div style={{ fontSize: 12.5, color: 'var(--text-muted)', fontWeight: 500 }}>{k.label}</div>
-                  <div style={{ fontSize: 24, fontWeight: 700, marginTop: 9, letterSpacing: '-.01em', fontVariantNumeric: 'tabular-nums', color: k.valColor }}>{k.val}</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, marginTop: 9, letterSpacing: '-.01em' }}>
+                    {/* Анимация 1: count-up */}
+                    <CountUp value={k.rawVal} suffix={k.suffix} color={k.valColor} />
+                  </div>
                   <div style={{ fontSize: 12, marginTop: 7, fontWeight: 500, color: 'var(--text-muted)' }}>{k.sub}</div>
-                </div>
+                </motion.div>
               ))}
             </div>
           )}
@@ -205,18 +268,75 @@ export default function Dashboard() {
                     <div key={l.y} style={{ position: 'absolute', left: 0, right: 0, top: l.y, height: 1, background: 'var(--border-inner)' }} />
                   ))}
                   <div style={{ position: 'absolute', left: 0, right: 0, top: '50%', height: 2, background: '#D7DCEA' }} />
+
+                  {/* ── Анимация 2: ribbon bars grow from midline (декоративная сглаженная огибающая) ── */}
                   <div style={{ position: 'absolute', inset: 0, display: 'flex', gap: 2, padding: '0 10px' }}>
-                    {divBars.map((bar, i) => (
-                      <div key={i} style={{ flex: 1, position: 'relative', height: '100%' }}>
-                        {bar.incH > 0 && (
-                          <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', width: 9, top: bar.incTop, height: bar.incH, borderRadius: 5, background: 'linear-gradient(180deg, var(--ribbon-income-from), var(--ribbon-income-mid), var(--ribbon-income-to))' }} />
-                        )}
-                        {bar.expH > 0 && (
-                          <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', width: 9, top: bar.expTop, height: bar.expH, borderRadius: 5, background: 'linear-gradient(180deg, var(--ribbon-expense-from), var(--ribbon-expense-to))' }} />
+                    {divBars.map((bar, i) => {
+                      const isHoverCapsule = hoverCapsuleIdx === i
+                      return (
+                        <div key={i} style={{ flex: 1, position: 'relative', height: '100%' }}>
+                          {bar.incH > 0 && (
+                            <motion.div
+                              initial={reduced ? false : { scaleY: 0 }}
+                              animate={{ scaleY: 1 }}
+                              transition={{ delay: i * 0.03, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+                              style={{
+                                position: 'absolute', left: '50%', transform: 'translateX(-50%)',
+                                width: 9, top: bar.incTop, height: bar.incH, borderRadius: 5,
+                                background: 'linear-gradient(180deg, var(--ribbon-income-from), var(--ribbon-income-mid), var(--ribbon-income-to))',
+                                transformOrigin: 'bottom',
+                                filter: isHoverCapsule ? 'brightness(1.12)' : 'none',
+                                boxShadow: isHoverCapsule ? '0 0 0 1.5px var(--income, #16a34a)' : 'none',
+                              }}
+                            />
+                          )}
+                          {bar.expH > 0 && (
+                            <motion.div
+                              initial={reduced ? false : { scaleY: 0 }}
+                              animate={{ scaleY: 1 }}
+                              transition={{ delay: i * 0.03, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+                              style={{
+                                position: 'absolute', left: '50%', transform: 'translateX(-50%)',
+                                width: 9, top: bar.expTop, height: bar.expH, borderRadius: 5,
+                                background: 'linear-gradient(180deg, var(--ribbon-expense-from), var(--ribbon-expense-to))',
+                                transformOrigin: 'top',
+                                filter: isHoverCapsule ? 'brightness(1.12)' : 'none',
+                                boxShadow: isHoverCapsule ? '0 0 0 1.5px var(--expense, #dc2626)' : 'none',
+                              }}
+                            />
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* ── Hover-зоны по РЕАЛЬНЫМ месяцам (не по интерполированным капсулам) ── */}
+                  {monthHotspots.map(h => {
+                    const isHover = hoverBar === h.m
+                    return (
+                      <div key={h.m}
+                        onMouseEnter={() => { setHoverBar(h.m); setHoverCapsuleIdx(h.capsuleIdx) }}
+                        onMouseLeave={() => { setHoverBar(v => v === h.m ? null : v); setHoverCapsuleIdx(v => v === h.capsuleIdx ? null : v) }}
+                        style={{ position: 'absolute', top: 0, bottom: 0, left: h.leftPct, width: h.widthPct, transform: 'translateX(-50%)', cursor: 'default', zIndex: 3 }}>
+                        {isHover && (
+                          <>
+                            {/* поступление — над пином */}
+                            {h.inc > 0 && (
+                              <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', top: h.incLabelTop, fontSize: 10.5, fontWeight: 700, color: 'var(--income, #16a34a)', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' }}>
+                                {fmt(h.inc)}
+                              </div>
+                            )}
+                            {/* списание — под пином */}
+                            {h.exp > 0 && (
+                              <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', top: h.expLabelTop, fontSize: 10.5, fontWeight: 700, color: 'var(--expense, #dc2626)', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' }}>
+                                {fmt(h.exp)}
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
-                    ))}
-                  </div>
+                    )
+                  })}
                 </div>
               </div>
 
