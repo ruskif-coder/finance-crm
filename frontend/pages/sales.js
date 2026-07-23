@@ -45,6 +45,76 @@ const COLUMNS = [
   { key: 'period_to', label: 'Конец РК', w: 96, sortable: true },
 ]
 
+/** Выпадающий список с чекбоксами. Пустой выбор = без ограничения. */
+function MultiSelect({ label, options, selected, onChange }) {
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const box = {
+    padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-input)',
+    fontSize: 13, background: selected.length ? 'var(--accent-tint)' : 'var(--bg-card)',
+    color: selected.length ? 'var(--accent)' : 'inherit', cursor: 'pointer', whiteSpace: 'nowrap',
+  }
+  const shown = (options || []).filter(o =>
+    !q.trim() || String(o.label).toLowerCase().includes(q.trim().toLowerCase()))
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <div style={box} onClick={() => setOpen(!open)}>
+        {label}{selected.length ? ` · ${selected.length}` : ''} ▾
+      </div>
+      {open && (
+        <>
+          {/* Клик мимо закрывает список */}
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9 }} onClick={() => setOpen(false)} />
+          <div style={{
+            position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 10,
+            background: 'var(--bg-card)', border: '1px solid var(--border-card)',
+            borderRadius: 'var(--radius-card-sm)', boxShadow: 'var(--shadow-card)',
+            minWidth: 250, maxHeight: 320, overflowY: 'auto', padding: 8,
+          }}>
+            {(options || []).length > 8 && (
+              <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="поиск"
+                style={{
+                  width: '100%', padding: '6px 8px', marginBottom: 6, fontSize: 12.5,
+                  border: '1px solid var(--border)', borderRadius: 'var(--radius-input)',
+                  background: 'var(--bg-card)', color: 'inherit',
+                }} />
+            )}
+            {selected.length > 0 && (
+              <div style={{ fontSize: 12, color: 'var(--accent)', cursor: 'pointer', padding: '3px 4px' }}
+                onClick={() => onChange([])}>снять все</div>
+            )}
+            {shown.map(o => (
+              <label key={String(o.value)} style={{
+                display: 'flex', alignItems: 'center', gap: 7, padding: '4px 4px',
+                fontSize: 12.5, cursor: 'pointer',
+              }}>
+                <input type="checkbox" checked={selected.includes(o.value)}
+                  onChange={() => onChange(selected.includes(o.value)
+                    ? selected.filter(v => v !== o.value)
+                    : [...selected, o.value])} />
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.label}</span>
+                {o.count !== undefined && <span style={{ color: 'var(--muted)', fontSize: 11 }}>{o.count}</span>}
+              </label>
+            ))}
+            {!shown.length && <div style={{ fontSize: 12, color: 'var(--muted)', padding: 6 }}>ничего не найдено</div>}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+const FILTER_FIELDS = [
+  { key: 'money_layer', label: 'Слой денег' },
+  { key: 'pipeline', label: 'Воронка' },
+  { key: 'bitrix_stage', label: 'Стадия' },
+  { key: 'advertiser_id', label: 'Рекламодатель' },
+  { key: 'brand_id', label: 'Бренд' },
+  { key: 'sales_rep_id', label: 'Продавец' },
+  { key: 'account_manager_id', label: 'Аккаунт' },
+]
+
 export default function Sales() {
   const router = useRouter()
   const [rows, setRows] = useState([])
@@ -56,11 +126,18 @@ export default function Sales() {
   const [perms, setPerms] = useState({})
   const [pageSize, setPageSize] = useState(100)
   const [sort, setSort] = useState({ key: 'period_from', dir: 'desc' })
-  const [f, setF] = useState({ date_from: '', date_to: '', money_layer: '', pipeline: '', search: '' })
+  const [f, setF] = useState({ date_from: '', date_to: '', search: '' })
+  const [options, setOptions] = useState({})
+  const [sel, setSel] = useState(
+    Object.fromEntries(FILTER_FIELDS.map(x => [x.key, []]))
+  )
 
   const params = (extra = {}) => {
     const p = { ...extra }
     Object.entries(f).forEach(([k, v]) => { if (v) p[k] = v })
+    // Множественные значения уходят повторяющимися параметрами (?a=1&a=2) —
+    // именно так FastAPI собирает List[...] из query string.
+    Object.entries(sel).forEach(([k, v]) => { if (v.length) p[k] = v })
     return p
   }
 
@@ -85,6 +162,8 @@ export default function Sales() {
   useEffect(() => {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     try { setPerms(JSON.parse(localStorage.getItem('permissions') || '{}')) } catch (e) { setPerms({}) }
+    api.get('/sales/filters', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+      .then(r => setOptions(r.data)).catch(() => {})
     load(0)
   }, [])
 
@@ -165,17 +244,14 @@ export default function Sales() {
             value={f.date_from} onChange={e => setF({ ...f, date_from: e.target.value })} />
           <input style={{ ...inputStyle, width: 110 }} placeholder="по (2026-12)"
             value={f.date_to} onChange={e => setF({ ...f, date_to: e.target.value })} />
-          <select style={inputStyle} value={f.money_layer} onChange={e => setF({ ...f, money_layer: e.target.value })}>
-            <option value="">все слои</option>
-            {LAYERS.map(l => <option key={l} value={l}>{l}</option>)}
-          </select>
-          <select style={inputStyle} value={f.pipeline} onChange={e => setF({ ...f, pipeline: e.target.value })}>
-            <option value="">все воронки</option>
-            {(summary?.by_pipeline || []).map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
-          </select>
+          {FILTER_FIELDS.map(x => (
+            <MultiSelect key={x.key} label={x.label} options={options[x.key]}
+              selected={sel[x.key]} onChange={v => setSel({ ...sel, [x.key]: v })} />
+          ))}
           <button style={btn(true)} onClick={() => load(0)}>Показать</button>
           <button style={btn(false)} onClick={() => {
-            setF({ date_from: '', date_to: '', money_layer: '', pipeline: '', search: '' })
+            setF({ date_from: '', date_to: '', search: '' })
+            setSel(Object.fromEntries(FILTER_FIELDS.map(x => [x.key, []])))
             setTimeout(() => load(0), 0)
           }}>Сбросить</button>
           {can(perms, 'sales_dashboard', 'edit') && (

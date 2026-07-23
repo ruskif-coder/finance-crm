@@ -14,10 +14,10 @@
    с общим итогом. Это прямая профилактика дефекта, известного в P&L финмодуля,
    где операции без article.group молча исчезают из отчёта.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, and_
 from sqlalchemy.orm import Session, aliased
-from typing import Optional
+from typing import Optional, List, Annotated
 import os
 import re
 
@@ -50,8 +50,15 @@ def _month_bounds(value: str, is_end: bool):
     return f"{year:04d}-{month:02d}-01"
 
 
+def _in(column, values):
+    """Фильтр «одно из списка». Пустой список означает «без ограничения»,
+    а не «ничего не подходит» — иначе снятие всех галочек обнуляло бы выборку."""
+    return column.in_(values) if values else None
+
+
 def _base_query(db: Session, date_from, date_to, pipeline, sales_rep_id,
-                account_manager_id, advertiser_id, money_layer):
+                account_manager_id, advertiser_id, money_layer,
+                bitrix_stage=None, brand_id=None):
     """Сделки, склеенные с маппингом стадий. Джойн LEFT и только по активным
     строкам маппинга: неизвестная или намеренно отключённая стадия («Сделка
     провалена») даёт NULL и попадает в «Без группы», а не исчезает."""
@@ -74,16 +81,17 @@ def _base_query(db: Session, date_from, date_to, pipeline, sales_rep_id,
             conds.append(SalesDeal.period_from < end)
         q = q.filter(and_(*conds))
 
-    if pipeline:
-        q = q.filter(SalesDeal.pipeline == pipeline)
-    if sales_rep_id is not None:
-        q = q.filter(SalesDeal.sales_rep_id == sales_rep_id)
-    if account_manager_id is not None:
-        q = q.filter(SalesDeal.account_manager_id == account_manager_id)
-    if advertiser_id is not None:
-        q = q.filter(SalesDeal.advertiser_id == advertiser_id)
-    if money_layer:
-        q = q.filter(SalesBitrixStageMap.money_layer == money_layer)
+    for condition in (
+        _in(SalesDeal.pipeline, pipeline),
+        _in(SalesDeal.bitrix_stage, bitrix_stage),
+        _in(SalesDeal.sales_rep_id, sales_rep_id),
+        _in(SalesDeal.account_manager_id, account_manager_id),
+        _in(SalesDeal.advertiser_id, advertiser_id),
+        _in(SalesDeal.brand_id, brand_id),
+        _in(SalesBitrixStageMap.money_layer, money_layer),
+    ):
+        if condition is not None:
+            q = q.filter(condition)
     return q
 
 
@@ -102,16 +110,19 @@ def _group(rows, key_fn):
 def dashboard(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    pipeline: Optional[str] = None,
-    sales_rep_id: Optional[int] = None,
-    account_manager_id: Optional[int] = None,
-    advertiser_id: Optional[int] = None,
-    money_layer: Optional[str] = None,
+    pipeline: Annotated[Optional[List[str]], Query()] = None,
+    bitrix_stage: Annotated[Optional[List[str]], Query()] = None,
+    sales_rep_id: Annotated[Optional[List[int]], Query()] = None,
+    account_manager_id: Annotated[Optional[List[int]], Query()] = None,
+    advertiser_id: Annotated[Optional[List[int]], Query()] = None,
+    brand_id: Annotated[Optional[List[int]], Query()] = None,
+    money_layer: Annotated[Optional[List[str]], Query()] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("sales_dashboard", "view")),
 ):
     rows = _base_query(db, date_from, date_to, pipeline, sales_rep_id,
-                       account_manager_id, advertiser_id, money_layer).all()
+                       account_manager_id, advertiser_id, money_layer,
+                       bitrix_stage, brand_id).all()
 
     adv_names = dict(db.query(SalesAdvertiser.id, SalesAdvertiser.name).all())
     rep_names = dict(db.query(SalesRep.id, SalesRep.name).all())
@@ -162,11 +173,13 @@ def dashboard(
 def deals_registry(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    pipeline: Optional[str] = None,
-    sales_rep_id: Optional[int] = None,
-    account_manager_id: Optional[int] = None,
-    advertiser_id: Optional[int] = None,
-    money_layer: Optional[str] = None,
+    pipeline: Annotated[Optional[List[str]], Query()] = None,
+    bitrix_stage: Annotated[Optional[List[str]], Query()] = None,
+    sales_rep_id: Annotated[Optional[List[int]], Query()] = None,
+    account_manager_id: Annotated[Optional[List[int]], Query()] = None,
+    advertiser_id: Annotated[Optional[List[int]], Query()] = None,
+    brand_id: Annotated[Optional[List[int]], Query()] = None,
+    money_layer: Annotated[Optional[List[str]], Query()] = None,
     search: Optional[str] = None,
     sort: str = "period_from",
     direction: str = "desc",
@@ -251,6 +264,39 @@ def deals_registry(
             "date_create": d.date_create,
             "date_modify": d.date_modify,
         } for d, layer in rows],
+    }
+
+
+@router.get("/filters")
+def filter_options(db: Session = Depends(get_db),
+                   current_user: User = Depends(require_permission("sales_dashboard", "view"))):
+    """Значения для фильтров-чекбоксов, с числом сделок по каждому.
+
+    Считается по всем сделкам, а не по текущей выборке: иначе, сняв галочку,
+    пользователь не смог бы вернуть её обратно — значение исчезло бы из списка."""
+    def counted(column):
+        rows = (db.query(column, func.count(SalesDeal.id))
+                  .group_by(column).order_by(func.count(SalesDeal.id).desc()).all())
+        return [{"value": v, "count": c} for v, c in rows if v is not None]
+
+    def named(model, fk):
+        rows = (db.query(model.id, model.name, func.count(SalesDeal.id))
+                  .join(SalesDeal, fk == model.id)
+                  .group_by(model.id, model.name)
+                  .order_by(func.count(SalesDeal.id).desc()).all())
+        return [{"value": i, "label": n, "count": c} for i, n, c in rows]
+
+    rep_a, acct_a = aliased(SalesRep), aliased(SalesRep)
+    return {
+        "money_layer": [{"value": l, "label": l} for l in ("планируемые", "реализуемые", "фактические")],
+        "pipeline": [{"value": r["value"], "label": r["value"], "count": r["count"]}
+                     for r in counted(SalesDeal.pipeline)],
+        "bitrix_stage": [{"value": r["value"], "label": r["value"], "count": r["count"]}
+                         for r in counted(SalesDeal.bitrix_stage)],
+        "advertiser_id": named(SalesAdvertiser, SalesDeal.advertiser_id),
+        "brand_id": named(SalesBrand, SalesDeal.brand_id),
+        "sales_rep_id": named(rep_a, SalesDeal.sales_rep_id),
+        "account_manager_id": named(acct_a, SalesDeal.account_manager_id),
     }
 
 
