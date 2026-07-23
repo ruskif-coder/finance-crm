@@ -28,16 +28,26 @@ export default function Agencies() {
   const load = async () => {
     setLoading(true); setError('')
     try {
-      const [a, c] = await Promise.all([
-        api.get('/sales/directories/agencies', { params: { only_active: false }, ...auth() }),
-        api.get('/counterparties/', auth()).catch(() => ({ data: [] })),
-      ])
+      const a = await api.get('/sales/directories/agencies', { params: { only_active: false }, ...auth() })
       setItems(a.data.items)
-      const list = Array.isArray(c.data) ? c.data : (c.data.items || [])
-      setCps(list.map(x => ({ id: x.id, name: x.name })).filter(x => x.name))
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить справочник') }
     finally { setLoading(false) }
   }
+
+  // Поиск контрагентов — на сервере: их 207, а эндпойнт отдаёт страницами по 200,
+  // поэтому грузить всё на клиент и фильтровать локально нельзя — часть выпадает.
+  useEffect(() => {
+    const q = cpQuery.trim()
+    if (!q) { setCps([]); return }
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.get('/counterparties/', { params: { search: q, limit: 30 }, ...auth() })
+        const list = Array.isArray(r.data) ? r.data : (r.data.items || [])
+        setCps(list.map(x => ({ id: x.id, name: x.name })).filter(x => x.name))
+      } catch (e) { /* поиск не критичен, молчим */ }
+    }, 250)
+    return () => clearTimeout(t)
+  }, [cpQuery])
 
   useEffect(() => {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
@@ -76,8 +86,11 @@ export default function Agencies() {
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось открепить') }
   }
 
+  const [editFull, setEditFull] = useState('')
+
   const startEdit = (a) => {
     setEditId(a.id)
+    setEditFull(a.full_name || '')
     setForm({ short_name: a.short_name || '', name_en: a.name_en || '',
       name_ru: a.name_ru || '', holding: a.holding || '' })
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -90,7 +103,7 @@ export default function Agencies() {
       || (a.counterparties || []).some(c => (c.name || '').toLowerCase().includes(q))
   })
 
-  const cpShown = cps.filter(c => !cpQuery.trim() || c.name.toLowerCase().includes(cpQuery.trim().toLowerCase())).slice(0, 30)
+  const cpShown = cps   // уже отфильтрованы сервером по cpQuery
 
   const inp = { padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-input)',
     fontSize: 13, background: 'var(--bg-card)', color: 'inherit' }
@@ -117,6 +130,11 @@ export default function Agencies() {
             borderRadius: 'var(--radius-card)', padding: '14px 16px', marginBottom: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>
               {editId ? 'Редактирование' : 'Новое агентство'}
+              {editId && editFull && (
+                <span style={{ fontWeight: 400, color: 'var(--muted)', marginLeft: 10 }}>
+                  исходное: {editFull}
+                </span>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <input style={{ ...inp, width: 160 }} placeholder="Краткое"
@@ -157,7 +175,11 @@ export default function Agencies() {
                 {filtered.map(a => (
                   <tr key={a.id} style={{ opacity: a.is_active ? 1 : 0.5 }}>
                     <td style={{ ...td, fontWeight: 600 }}>{a.short_name || dash}</td>
-                    <td style={td}>{[a.name_en, a.name_ru].filter(Boolean).join(' / ') || dash}</td>
+                    <td style={td}>
+                      {/* Размеченные ENG/РУС, а пока их нет — исходное полное имя,
+                          чтобы агентство всегда можно было опознать */}
+                      {[a.name_en, a.name_ru].filter(Boolean).join(' / ') || a.full_name || dash}
+                    </td>
                     <td style={td}>{a.holding || dash}</td>
                     <td style={td}>
                       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>

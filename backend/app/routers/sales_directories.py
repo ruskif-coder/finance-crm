@@ -397,6 +397,9 @@ def list_agencies(only_active: bool = True, db: Session = Depends(get_db),
     return {"items": [{"id": a.id,
                        "short_name": a.short_name or a.name,
                        "name_en": a.name_en, "name_ru": a.name_ru,
+                       # Исходное полное имя из Битрикса — для опознания, когда
+                       # ENG/РУС ещё не размечены. Не теряем то, что было.
+                       "full_name": a.name,
                        "holding": a.holding, "is_active": a.is_active, "note": a.note,
                        "counterparties": links.get(a.id, [])} for a in rows]}
 
