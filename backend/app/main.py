@@ -26,6 +26,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("finance")
 
+from app.sales import models as sales_models  # noqa: F401,E402 — регистрирует таблицы дашборда продаж в Base.metadata
+
 Base.metadata.create_all(bind=engine)
 
 
