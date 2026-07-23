@@ -7,7 +7,7 @@ import Navbar, { can } from '../components/Navbar'
 const api = axios.create({ baseURL: '/api' })
 const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
 
-const EMPTY = { name: '', holding: '', legal_entity: '', counterparty_id: '' }
+const EMPTY = { short_name: '', name_en: '', name_ru: '', holding: '' }
 
 export default function Agencies() {
   const router = useRouter()
@@ -20,6 +20,8 @@ export default function Agencies() {
   const [search, setSearch] = useState('')
   const [form, setForm] = useState(EMPTY)
   const [editId, setEditId] = useState(null)
+  const [attachTo, setAttachTo] = useState(null)   // agency id, для которого открыт выбор контрагента
+  const [cpQuery, setCpQuery] = useState('')
 
   const mayEdit = can(perms, 'sales_directories', 'edit')
 
@@ -31,7 +33,6 @@ export default function Agencies() {
         api.get('/counterparties/', auth()).catch(() => ({ data: [] })),
       ])
       setItems(a.data.items)
-      // Реестр контрагентов финмодуля — источник истины по юрлицам.
       const list = Array.isArray(c.data) ? c.data : (c.data.items || [])
       setCps(list.map(x => ({ id: x.id, name: x.name })).filter(x => x.name))
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить справочник') }
@@ -48,50 +49,57 @@ export default function Agencies() {
 
   const save = async () => {
     setError('')
-    if (!form.name.trim()) { setError('Название обязательно'); return }
-    const body = { ...form, counterparty_id: form.counterparty_id ? Number(form.counterparty_id) : null }
+    if (!form.short_name.trim() && !form.name_en.trim() && !form.name_ru.trim()) {
+      setError('Заполните хотя бы одно название'); return
+    }
     try {
-      if (editId) {
-        await api.put(`/sales/directories/agencies/${editId}`, body, auth()); flash('Агентство обновлено')
-      } else {
-        await api.post('/sales/directories/agencies', body, auth()); flash('Агентство создано')
-      }
+      if (editId) { await api.put(`/sales/directories/agencies/${editId}`, form, auth()); flash('Обновлено') }
+      else { await api.post('/sales/directories/agencies', form, auth()); flash('Создано') }
       setForm(EMPTY); setEditId(null); load()
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось сохранить') }
   }
 
+  const attach = async (agencyId, cpId) => {
+    setError('')
+    try {
+      await api.post(`/sales/directories/agencies/${agencyId}/counterparties`,
+        { counterparty_id: cpId }, auth())
+      setAttachTo(null); setCpQuery(''); flash('Юрлицо прикреплено'); load()
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось прикрепить') }
+  }
+
+  const detach = async (agencyId, cpId) => {
+    setError('')
+    try {
+      await api.delete(`/sales/directories/agencies/${agencyId}/counterparties/${cpId}`, auth())
+      flash('Юрлицо откреплено'); load()
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось открепить') }
+  }
+
   const startEdit = (a) => {
     setEditId(a.id)
-    setForm({
-      name: a.name || '', holding: a.holding || '',
-      legal_entity: a.legal_entity || '', counterparty_id: a.counterparty_id || '',
-    })
+    setForm({ short_name: a.short_name || '', name_en: a.name_en || '',
+      name_ru: a.name_ru || '', holding: a.holding || '' })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const filtered = items.filter(a => {
     const q = search.trim().toLowerCase()
     if (!q) return true
-    return [a.name, a.holding, a.legal_entity, a.counterparty]
-      .some(v => (v || '').toLowerCase().includes(q))
+    return [a.short_name, a.name_en, a.name_ru, a.holding].some(v => (v || '').toLowerCase().includes(q))
+      || (a.counterparties || []).some(c => (c.name || '').toLowerCase().includes(q))
   })
 
-  const inp = {
-    padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-input)',
-    fontSize: 13, background: 'var(--bg-card)', color: 'inherit',
-  }
-  const btn = (p) => ({
-    padding: '7px 15px', borderRadius: 'var(--radius-btn)', border: 'none', cursor: 'pointer',
-    fontSize: 13, fontWeight: 500,
-    background: p ? 'var(--accent)' : 'var(--bg-subtle)', color: p ? '#fff' : 'inherit',
-  })
+  const cpShown = cps.filter(c => !cpQuery.trim() || c.name.toLowerCase().includes(cpQuery.trim().toLowerCase())).slice(0, 30)
+
+  const inp = { padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-input)',
+    fontSize: 13, background: 'var(--bg-card)', color: 'inherit' }
+  const btn = (p) => ({ padding: '7px 15px', borderRadius: 'var(--radius-btn)', border: 'none', cursor: 'pointer',
+    fontSize: 13, fontWeight: 500, background: p ? 'var(--accent)' : 'var(--bg-subtle)', color: p ? '#fff' : 'inherit' })
   const th = { padding: '9px 10px', textAlign: 'left', fontSize: 11.5, fontWeight: 600,
     color: 'var(--muted)', borderBottom: '1px solid var(--border-card)', whiteSpace: 'nowrap' }
-  const td = { padding: '8px 10px', fontSize: 13, borderBottom: '1px solid var(--border-row)' }
+  const td = { padding: '8px 10px', fontSize: 13, borderBottom: '1px solid var(--border-row)', verticalAlign: 'top' }
   const dash = <span style={{ color: 'var(--muted)' }}>—</span>
-
-  const noHolding = items.filter(a => !a.holding).length
-  const noLegal = items.filter(a => !a.legal_entity).length
 
   return (
     <>
@@ -99,38 +107,26 @@ export default function Agencies() {
       <Navbar active="sales" />
       <div style={{ maxWidth: 1400, margin: '0 auto', padding: '20px 24px 50px' }}>
 
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 14, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 14 }}>
           <h1 style={{ fontSize: 19, fontWeight: 600, margin: 0 }}>Рекламные агентства</h1>
           <span style={{ fontSize: 12, color: 'var(--muted)' }}>{items.length} записей</span>
-          {/* Пробелы видны сразу: справочник наполнен из сделок, холдинг и юрлицо там не размечены */}
-          <span style={{ fontSize: 12, color: noHolding ? 'var(--danger)' : 'var(--muted)' }}>
-            без холдинга: {noHolding}
-          </span>
-          <span style={{ fontSize: 12, color: noLegal ? 'var(--danger)' : 'var(--muted)' }}>
-            без юрлица: {noLegal}
-          </span>
         </div>
 
         {mayEdit && (
-          <div style={{
-            background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-            borderRadius: 'var(--radius-card)', padding: '14px 16px', marginBottom: 16,
-          }}>
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)',
+            borderRadius: 'var(--radius-card)', padding: '14px 16px', marginBottom: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>
               {editId ? 'Редактирование' : 'Новое агентство'}
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <input style={{ ...inp, width: 170 }} placeholder="Холдинг"
+              <input style={{ ...inp, width: 160 }} placeholder="Краткое"
+                value={form.short_name} onChange={e => setForm({ ...form, short_name: e.target.value })} />
+              <input style={{ ...inp, width: 190 }} placeholder="Название ENG"
+                value={form.name_en} onChange={e => setForm({ ...form, name_en: e.target.value })} />
+              <input style={{ ...inp, width: 190 }} placeholder="Название РУС"
+                value={form.name_ru} onChange={e => setForm({ ...form, name_ru: e.target.value })} />
+              <input style={{ ...inp, width: 160 }} placeholder="Холдинг (необяз.)"
                 value={form.holding} onChange={e => setForm({ ...form, holding: e.target.value })} />
-              <input style={{ ...inp, width: 220 }} placeholder="Название"
-                value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-              <input style={{ ...inp, width: 220 }} placeholder="Юрлицо (текстом)"
-                value={form.legal_entity} onChange={e => setForm({ ...form, legal_entity: e.target.value })} />
-              <select style={{ ...inp, maxWidth: 280 }} value={form.counterparty_id}
-                onChange={e => setForm({ ...form, counterparty_id: e.target.value })}>
-                <option value="">— контрагент не выбран —</option>
-                {cps.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
               <button style={btn(true)} onClick={save}>{editId ? 'Сохранить' : 'Добавить'}</button>
               {editId && <button style={btn(false)} onClick={() => { setEditId(null); setForm(EMPTY) }}>Отмена</button>}
             </div>
@@ -141,8 +137,7 @@ export default function Agencies() {
           value={search} onChange={e => setSearch(e.target.value)} />
 
         {error && <div style={{ background: 'var(--danger-tint)', border: '1px solid var(--danger)',
-          color: 'var(--danger)', padding: '10px 14px', borderRadius: 'var(--radius-card-sm)',
-          marginBottom: 12, fontSize: 13 }}>{error}</div>}
+          color: 'var(--danger)', padding: '10px 14px', borderRadius: 'var(--radius-card-sm)', marginBottom: 12, fontSize: 13 }}>{error}</div>}
         {ok && <div style={{ background: 'var(--accent-tint)', color: 'var(--accent)',
           padding: '10px 14px', borderRadius: 'var(--radius-card-sm)', marginBottom: 12, fontSize: 13 }}>{ok}</div>}
         {loading && <div style={{ color: 'var(--muted)' }}>Загрузка…</div>}
@@ -152,29 +147,69 @@ export default function Agencies() {
             borderRadius: 'var(--radius-card)', overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead><tr>
+                <th style={th}>Краткое</th>
+                <th style={th}>Название (ENG / РУС)</th>
                 <th style={th}>Холдинг</th>
-                <th style={th}>Название</th>
-                <th style={th}>Юрлицо</th>
-                <th style={th}>Контрагент в финмодуле</th>
+                <th style={th}>Юрлица</th>
                 <th style={th}></th>
               </tr></thead>
               <tbody>
                 {filtered.map(a => (
                   <tr key={a.id} style={{ opacity: a.is_active ? 1 : 0.5 }}>
+                    <td style={{ ...td, fontWeight: 600 }}>{a.short_name || dash}</td>
+                    <td style={td}>{[a.name_en, a.name_ru].filter(Boolean).join(' / ') || dash}</td>
                     <td style={td}>{a.holding || dash}</td>
-                    <td style={td}>{a.name}</td>
-                    <td style={td}>{a.legal_entity || dash}</td>
-                    <td style={td}>{a.counterparty || dash}</td>
-                    <td style={{ ...td, textAlign: 'right' }}>
-                      {mayEdit && <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12 }}
-                        onClick={() => startEdit(a)}>Изменить</button>}
+                    <td style={td}>
+                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+                        {(a.counterparties || []).map(c => (
+                          <span key={c.counterparty_id} style={{
+                            background: 'var(--bg-subtle)', borderRadius: 'var(--radius-badge)',
+                            padding: '2px 8px', fontSize: 12, display: 'inline-flex', gap: 6, alignItems: 'center',
+                          }}>
+                            {c.name}
+                            {mayEdit && <span style={{ cursor: 'pointer', color: 'var(--danger)', fontWeight: 700 }}
+                              onClick={() => detach(a.id, c.counterparty_id)} title="Открепить">×</span>}
+                          </span>
+                        ))}
+                        {!a.counterparties?.length && dash}
+                      </div>
+                      {attachTo === a.id && mayEdit && (
+                        <div style={{ marginTop: 8, position: 'relative' }}>
+                          <input autoFocus style={{ ...inp, width: 280 }} placeholder="поиск контрагента"
+                            value={cpQuery} onChange={e => setCpQuery(e.target.value)} />
+                          {cpQuery.trim() && (
+                            <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 10, marginTop: 2,
+                              background: 'var(--bg-card)', border: '1px solid var(--border-card)',
+                              borderRadius: 'var(--radius-card-sm)', boxShadow: 'var(--shadow-card)',
+                              maxHeight: 240, overflowY: 'auto', minWidth: 280 }}>
+                              {cpShown.map(c => (
+                                <div key={c.id} onClick={() => attach(a.id, c.id)}
+                                  style={{ padding: '6px 10px', fontSize: 12.5, cursor: 'pointer', borderBottom: '1px solid var(--border-row)' }}>
+                                  {c.name}
+                                </div>
+                              ))}
+                              {!cpShown.length && <div style={{ padding: 8, fontSize: 12, color: 'var(--muted)' }}>не найдено</div>}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {mayEdit && (
+                        <>
+                          <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12, marginRight: 6 }}
+                            onClick={() => { setAttachTo(attachTo === a.id ? null : a.id); setCpQuery('') }}>
+                            + контрагент
+                          </button>
+                          <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12 }}
+                            onClick={() => startEdit(a)}>Изменить</button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
                 {!filtered.length && (
-                  <tr><td colSpan={5} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>
-                    Ничего не найдено
-                  </td></tr>
+                  <tr><td colSpan={5} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>Ничего не найдено</td></tr>
                 )}
               </tbody>
             </table>

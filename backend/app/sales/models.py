@@ -77,15 +77,30 @@ class SalesAgency(Base):
     и тогда юрлица в реестре контрагентов просто нет."""
     __tablename__ = "sales_agencies"
     id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False, unique=True)
-    holding = Column(String)
-    # Юрлицо текстом: агентство может ещё не иметь договора, и тогда записи
-    # в counterparties нет. Заполняется вручную — в исходнике после «/» лежит
-    # то юрлицо, то транслитерация названия, и различить их автоматически нельзя.
-    legal_entity = Column(String)
-    counterparty_id = Column(Integer, ForeignKey("counterparties.id"))
+    name = Column(String, nullable=False, unique=True)  # исходное имя из Битрикса, ключ связи со сделками
+    short_name = Column(String)   # краткое — основная колонка в реестре
+    name_en = Column(String)
+    name_ru = Column(String)
+    holding = Column(String)      # необязательно
     is_active = Column(Boolean, nullable=False, default=True)
     note = Column(Text)
+    # УСТАРЕЛО: одиночное юрлицо. Заменено связью М:М (несколько юрлиц на агентство).
+    # Колонки не удалены (неразрушающе), но через API/UI не читаются.
+    legal_entity = Column(String)
+    counterparty_id = Column(Integer, ForeignKey("counterparties.id"))
+    counterparties = relationship("SalesAgencyCounterparty", back_populates="agency",
+                                  cascade="all, delete-orphan")
+
+
+class SalesAgencyCounterparty(Base):
+    """Юрлицо агентства. Многие-ко-многим: у одного агентства может быть
+    несколько юрлиц (плательщиков), и одно юрлицо теоретически у разных агентств."""
+    __tablename__ = "sales_agency_counterparties"
+    __table_args__ = (UniqueConstraint("agency_id", "counterparty_id"),)
+    id = Column(Integer, primary_key=True)
+    agency_id = Column(Integer, ForeignKey("sales_agencies.id", ondelete="CASCADE"), nullable=False)
+    counterparty_id = Column(Integer, ForeignKey("counterparties.id"), nullable=False)
+    agency = relationship("SalesAgency", back_populates="counterparties")
 
 
 class SalesPriceListItem(Base):

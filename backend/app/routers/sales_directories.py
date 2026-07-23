@@ -27,7 +27,8 @@ from app.permissions import require_permission
 from app.audit import log_action
 from app.sales.models import (SalesService, SalesServiceGroup, SalesAdvertiser,
                               SalesBrand, SalesPriceListItem, SalesAgency,
-                              SalesPipeline, SalesDeal, SalesPipelineStage)
+                              SalesPipeline, SalesDeal, SalesPipelineStage,
+                              SalesAgencyCounterparty)
 from app.sales.normalize import normalize_name, normalize_inn
 
 router = APIRouter()
@@ -359,11 +360,23 @@ def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db),
 # ============================ Агентства ============================
 
 class AgencyIn(BaseModel):
-    name: str
+    short_name: Optional[str] = None
+    name_en: Optional[str] = None
+    name_ru: Optional[str] = None
     holding: Optional[str] = None
-    legal_entity: Optional[str] = None
-    counterparty_id: Optional[int] = None
     note: Optional[str] = None
+
+
+class CounterpartyLink(BaseModel):
+    counterparty_id: int
+
+
+def _agency_name(data: "AgencyIn") -> str:
+    """Уникальный ключ агентства. Одно из названий обязательно."""
+    for v in (data.short_name, data.name_en, data.name_ru):
+        if (v or "").strip():
+            return v.strip()
+    raise HTTPException(status_code=400, detail="Заполните хотя бы одно название")
 
 
 @router.get("/agencies")
@@ -372,24 +385,30 @@ def list_agencies(only_active: bool = True, db: Session = Depends(get_db),
     q = db.query(SalesAgency)
     if only_active:
         q = q.filter(SalesAgency.is_active.is_(True))
-    rows = q.order_by(SalesAgency.holding.nullslast(), SalesAgency.name).all()
+    rows = q.order_by(SalesAgency.holding.nullslast(),
+                      func.coalesce(SalesAgency.short_name, SalesAgency.name)).all()
 
     cp = dict(db.query(Counterparty.id, Counterparty.name).all())
-    return {"items": [{"id": a.id, "name": a.name, "holding": a.holding,
-                       "legal_entity": a.legal_entity,
-                       "counterparty_id": a.counterparty_id,
-                       "counterparty": cp.get(a.counterparty_id),
-                       "is_active": a.is_active, "note": a.note} for a in rows]}
+    links = {}
+    for lk in db.query(SalesAgencyCounterparty).all():
+        links.setdefault(lk.agency_id, []).append(
+            {"counterparty_id": lk.counterparty_id, "name": cp.get(lk.counterparty_id)})
+
+    return {"items": [{"id": a.id,
+                       "short_name": a.short_name or a.name,
+                       "name_en": a.name_en, "name_ru": a.name_ru,
+                       "holding": a.holding, "is_active": a.is_active, "note": a.note,
+                       "counterparties": links.get(a.id, [])} for a in rows]}
 
 
 @router.post("/agencies")
 def create_agency(data: AgencyIn, db: Session = Depends(get_db),
                   current_user: User = Depends(_EDIT)):
-    name = _clean_name(data.name)
+    name = _agency_name(data)
     _reject_duplicate(db, SalesAgency, name)
-    agency = SalesAgency(name=name, holding=data.holding or None,
-                         legal_entity=data.legal_entity or None,
-                         counterparty_id=data.counterparty_id, note=data.note)
+    agency = SalesAgency(name=name, short_name=data.short_name or name,
+                         name_en=data.name_en or None, name_ru=data.name_ru or None,
+                         holding=data.holding or None, note=data.note)
     db.add(agency)
     db.commit()
     db.refresh(agency)
@@ -401,16 +420,48 @@ def create_agency(data: AgencyIn, db: Session = Depends(get_db),
 def update_agency(agency_id: int, data: AgencyIn, db: Session = Depends(get_db),
                   current_user: User = Depends(_EDIT)):
     agency = _require(db, SalesAgency, agency_id, "Агентство")
-    name = _clean_name(data.name)
-    _reject_duplicate(db, SalesAgency, name, exclude_id=agency_id)
-    agency.name = name
+    _agency_name(data)  # проверка, что хоть одно имя есть
+    agency.short_name = data.short_name or None
+    agency.name_en = data.name_en or None
+    agency.name_ru = data.name_ru or None
     agency.holding = data.holding or None
-    agency.legal_entity = data.legal_entity or None
-    agency.counterparty_id = data.counterparty_id
     agency.note = data.note
     db.commit()
-    log_action(db, current_user, "update_sales_agency", "sales_agency", agency.id, name)
+    log_action(db, current_user, "update_sales_agency", "sales_agency", agency.id, agency.name)
     return {"message": "Агентство обновлено"}
+
+
+@router.post("/agencies/{agency_id}/counterparties")
+def attach_counterparty(agency_id: int, data: CounterpartyLink,
+                        db: Session = Depends(get_db), current_user: User = Depends(_EDIT)):
+    """Прикрепляет юрлицо (контрагента) к агентству. Их может быть несколько."""
+    _require(db, SalesAgency, agency_id, "Агентство")
+    cp = db.query(Counterparty).filter(Counterparty.id == data.counterparty_id).first()
+    if not cp:
+        raise HTTPException(status_code=404, detail="Контрагент не найден")
+    exists = (db.query(SalesAgencyCounterparty)
+              .filter(SalesAgencyCounterparty.agency_id == agency_id,
+                      SalesAgencyCounterparty.counterparty_id == data.counterparty_id).first())
+    if exists:
+        raise HTTPException(status_code=400, detail=f"«{cp.name}» уже прикреплён")
+    db.add(SalesAgencyCounterparty(agency_id=agency_id, counterparty_id=data.counterparty_id))
+    db.commit()
+    log_action(db, current_user, "attach_agency_cp", "sales_agency", agency_id, cp.name)
+    return {"message": f"«{cp.name}» прикреплён"}
+
+
+@router.delete("/agencies/{agency_id}/counterparties/{counterparty_id}")
+def detach_counterparty(agency_id: int, counterparty_id: int,
+                        db: Session = Depends(get_db), current_user: User = Depends(_EDIT)):
+    lk = (db.query(SalesAgencyCounterparty)
+          .filter(SalesAgencyCounterparty.agency_id == agency_id,
+                  SalesAgencyCounterparty.counterparty_id == counterparty_id).first())
+    if not lk:
+        raise HTTPException(status_code=404, detail="Связь не найдена")
+    db.delete(lk)
+    db.commit()
+    log_action(db, current_user, "detach_agency_cp", "sales_agency", agency_id, str(counterparty_id))
+    return {"message": "Юрлицо откреплено"}
 
 
 @router.delete("/agencies/{agency_id}")
