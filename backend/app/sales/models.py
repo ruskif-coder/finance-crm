@@ -117,6 +117,11 @@ class SalesPipeline(Base):
     name = Column(String, nullable=False, unique=True)
     sort_order = Column(Integer, nullable=False, default=0)
     is_active = Column(Boolean, nullable=False, default=True)
+    # Парсить ли эту воронку из Битрикса. Снятый флаг — воронка не про продажи;
+    # синхронизация её пропускает, но существующие данные не трогает.
+    # (Физически удалённые воронки СК/Сверка_сайты/БЕЗ СДЕЛКИ здесь не хранятся —
+    # флаг для тех, что решили оставить, но временно не учитывать.)
+    is_tracked = Column(Boolean, nullable=False, default=True)
 
 
 # ===================== АЛЬТЕРНАТИВНЫЕ ГРУППИРОВКИ =====================

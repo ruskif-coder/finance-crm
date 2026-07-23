@@ -26,7 +26,8 @@ from app.routers.auth import get_current_user
 from app.permissions import require_permission
 from app.audit import log_action
 from app.sales.models import (SalesService, SalesServiceGroup, SalesAdvertiser,
-                              SalesBrand, SalesPriceListItem, SalesAgency)
+                              SalesBrand, SalesPriceListItem, SalesAgency,
+                              SalesPipeline, SalesDeal)
 from app.sales.normalize import normalize_name, normalize_inn
 
 router = APIRouter()
@@ -265,6 +266,77 @@ def deactivate_advertiser(advertiser_id: int, db: Session = Depends(get_db),
     db.commit()
     log_action(db, current_user, "deactivate_sales_advertiser", "sales_advertiser", adv.id, adv.name)
     return {"message": "Рекламодатель скрыт из справочника"}
+
+
+# ============================== Воронки ==============================
+
+class PipelineTrack(BaseModel):
+    is_tracked: bool
+
+
+@router.get("/pipelines")
+def list_pipelines(db: Session = Depends(get_db),
+                   current_user: User = Depends(get_current_user)):
+    """Воронки с числом сделок. Открыт любому авторизованному —
+    используется в фильтрах реестра."""
+    counts = dict(db.query(SalesDeal.pipeline, func.count(SalesDeal.id))
+                  .group_by(SalesDeal.pipeline).all())
+    rows = db.query(SalesPipeline).order_by(SalesPipeline.sort_order, SalesPipeline.name).all()
+    return {"items": [{"id": p.id, "name": p.name, "is_tracked": p.is_tracked,
+                       "is_active": p.is_active,
+                       "deals": counts.get(p.name, 0)} for p in rows]}
+
+
+@router.put("/pipelines/{pipeline_id}/tracked")
+def set_pipeline_tracked(pipeline_id: int, data: PipelineTrack,
+                         db: Session = Depends(get_db),
+                         current_user: User = Depends(_EDIT)):
+    """Включает/выключает парсинг воронки. Данные не трогает — только флаг.
+    При выключении синхронизация перестаёт грузить сделки этой воронки."""
+    p = _require(db, SalesPipeline, pipeline_id, "Воронка")
+    p.is_tracked = data.is_tracked
+    db.commit()
+    log_action(db, current_user, "set_pipeline_tracked", "sales_pipeline", p.id,
+               f"{p.name}: {'парсить' if data.is_tracked else 'не парсить'}")
+    return {"message": "Сохранено", "is_tracked": p.is_tracked}
+
+
+@router.delete("/pipelines/{pipeline_id}")
+def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db),
+                    current_user: User = Depends(_DELETE)):
+    """ФИЗИЧЕСКИ удаляет воронку вместе со всеми её сделками, их сырьём
+    и строками маппинга. Необратимо. Отклоняет удаление, если по сделкам
+    воронки есть ручные правки или разнесения — их потеря молча недопустима."""
+    p = _require(db, SalesPipeline, pipeline_id, "Воронка")
+
+    deal_ids = [d.id for d in db.query(SalesDeal.id).filter(SalesDeal.pipeline == p.name).all()]
+    if deal_ids:
+        from app.sales.models import SalesDealFieldOverride, SalesDealAnnexAllocation
+        blocked = (db.query(func.count(SalesDealFieldOverride.id))
+                   .filter(SalesDealFieldOverride.deal_id.in_(deal_ids)).scalar() or 0)
+        blocked += (db.query(func.count(SalesDealAnnexAllocation.id))
+                    .filter(SalesDealAnnexAllocation.deal_id.in_(deal_ids)).scalar() or 0)
+        if blocked:
+            raise HTTPException(status_code=400,
+                detail=f"Нельзя удалить: по сделкам воронки есть {blocked} ручных правок "
+                       f"или разнесений. Сначала разберите их.")
+
+    bitrix_ids = [d.bitrix_id for d in
+                  db.query(SalesDeal.bitrix_id).filter(SalesDeal.pipeline == p.name).all()]
+
+    from app.sales.models import SalesBitrixRaw, SalesBitrixStageMap
+    if bitrix_ids:
+        db.query(SalesBitrixRaw).filter(SalesBitrixRaw.entity == "deal",
+                                        SalesBitrixRaw.bitrix_id.in_(bitrix_ids)
+                                        ).delete(synchronize_session=False)
+    db.query(SalesDeal).filter(SalesDeal.pipeline == p.name).delete(synchronize_session=False)
+    db.query(SalesBitrixStageMap).filter(SalesBitrixStageMap.pipeline == p.name
+                                         ).delete(synchronize_session=False)
+    db.delete(p)
+    db.commit()
+    log_action(db, current_user, "delete_sales_pipeline", "sales_pipeline", pipeline_id,
+               f"{p.name}: удалено сделок {len(deal_ids)}")
+    return {"message": f"Воронка «{p.name}» удалена вместе с {len(deal_ids)} сделками"}
 
 
 # ============================ Агентства ============================
