@@ -122,6 +122,27 @@ class SalesPipeline(Base):
     # (Физически удалённые воронки СК/Сверка_сайты/БЕЗ СДЕЛКИ здесь не хранятся —
     # флаг для тех, что решили оставить, но временно не учитывать.)
     is_tracked = Column(Boolean, nullable=False, default=True)
+    # id воронки в Битриксе (crm.category). Надёжная привязка вместо имени:
+    # воронку в портале переименовывают, а id остаётся.
+    bitrix_category_id = Column(Integer)
+    stages = relationship("SalesPipelineStage", back_populates="pipeline",
+                          cascade="all, delete-orphan", order_by="SalesPipelineStage.sort_order")
+
+
+class SalesPipelineStage(Base):
+    """Стадия воронки, как заведена в Битриксе. status_id — код стадии
+    («C8:NEW»), по которому API отдаёт сделки; name — человекочитаемое имя.
+    Хранится, чтобы справочник показывал состав воронки и чтобы маппинг
+    слоёв денег строился по кодам, а не по меняющимся названиям."""
+    __tablename__ = "sales_pipeline_stages"
+    __table_args__ = (UniqueConstraint("bitrix_category_id", "status_id"),)
+    id = Column(Integer, primary_key=True)
+    pipeline_id = Column(Integer, ForeignKey("sales_pipelines.id", ondelete="CASCADE"))
+    bitrix_category_id = Column(Integer)
+    status_id = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    pipeline = relationship("SalesPipeline", back_populates="stages")
 
 
 # ===================== АЛЬТЕРНАТИВНЫЕ ГРУППИРОВКИ =====================

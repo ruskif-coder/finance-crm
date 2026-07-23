@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import Head from 'next/head'
 import axios from 'axios'
 import { useRouter } from 'next/router'
@@ -14,6 +14,8 @@ export default function Pipelines() {
   const [error, setError] = useState('')
   const [ok, setOk] = useState('')
   const [perms, setPerms] = useState({})
+  const [expanded, setExpanded] = useState(null)
+  const [stages, setStages] = useState({})   // { pipelineId: {items, bitrix_category_id} }
 
   const mayEdit = can(perms, 'sales_directories', 'edit')
   const mayDelete = can(perms, 'sales_directories', 'delete')
@@ -34,6 +36,17 @@ export default function Pipelines() {
   }, [])
 
   const flash = (m) => { setOk(m); setTimeout(() => setOk(''), 2500) }
+
+  const toggleExpand = async (p) => {
+    if (expanded === p.id) { setExpanded(null); return }
+    setExpanded(p.id)
+    if (!stages[p.id]) {
+      try {
+        const r = await api.get(`/sales/directories/pipelines/${p.id}/stages`, auth())
+        setStages(s => ({ ...s, [p.id]: r.data }))
+      } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить стадии') }
+    }
+  }
 
   const toggle = async (p) => {
     setError('')
@@ -103,19 +116,59 @@ export default function Pipelines() {
               </tr></thead>
               <tbody>
                 {items.map(p => (
-                  <tr key={p.id} style={{ opacity: p.is_tracked ? 1 : 0.55 }}>
-                    <td style={{ ...td, fontWeight: 500 }}>{p.name}</td>
-                    <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{p.deals}</td>
-                    <td style={{ ...td, textAlign: 'center' }}>
-                      <input type="checkbox" checked={p.is_tracked} disabled={!mayEdit}
-                        onChange={() => toggle(p)} style={{ cursor: mayEdit ? 'pointer' : 'default' }} />
-                    </td>
-                    <td style={{ ...td, textAlign: 'right' }}>
-                      {mayDelete && (
-                        <button style={btn('danger')} onClick={() => remove(p)}>Удалить с данными</button>
-                      )}
-                    </td>
-                  </tr>
+                  <Fragment key={p.id}>
+                    <tr style={{ opacity: p.is_tracked ? 1 : 0.55 }}>
+                      <td style={{ ...td, fontWeight: 500, cursor: 'pointer' }} onClick={() => toggleExpand(p)}>
+                        <span style={{ color: 'var(--muted)', marginRight: 6, fontSize: 11 }}>
+                          {expanded === p.id ? '▼' : '▶'}
+                        </span>
+                        {p.name}
+                      </td>
+                      <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{p.deals}</td>
+                      <td style={{ ...td, textAlign: 'center' }}>
+                        <input type="checkbox" checked={p.is_tracked} disabled={!mayEdit}
+                          onChange={() => toggle(p)} style={{ cursor: mayEdit ? 'pointer' : 'default' }} />
+                      </td>
+                      <td style={{ ...td, textAlign: 'right' }}>
+                        {mayDelete && (
+                          <button style={btn('danger')} onClick={() => remove(p)}>Удалить с данными</button>
+                        )}
+                      </td>
+                    </tr>
+                    {expanded === p.id && (
+                      <tr>
+                        <td colSpan={4} style={{ padding: '4px 12px 14px 32px', background: 'var(--bg-subtle)' }}>
+                          {!stages[p.id] ? (
+                            <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>Загрузка стадий…</span>
+                          ) : !stages[p.id].items.length ? (
+                            <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+                              Стадии не загружены. Запустите синхронизацию с Битрикс24.
+                            </span>
+                          ) : (
+                            <>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', margin: '6px 0' }}>
+                                Воронка в Битриксе: id={stages[p.id].bitrix_category_id ?? '—'}
+                              </div>
+                              <table style={{ borderCollapse: 'collapse' }}>
+                                <tbody>
+                                  {stages[p.id].items.map((s, i) => (
+                                    <tr key={s.id}>
+                                      <td style={{ padding: '3px 10px', fontSize: 12.5, color: 'var(--muted)', width: 26 }}>{i + 1}</td>
+                                      <td style={{ padding: '3px 10px', fontSize: 13 }}>{s.name}</td>
+                                      <td style={{ padding: '3px 10px', fontSize: 11.5, color: 'var(--muted)', fontFamily: 'monospace' }}>{s.status_id}</td>
+                                      <td style={{ padding: '3px 10px', fontSize: 12.5, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                                        {s.deals ? `${s.deals} сд.` : ''}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
                 {!items.length && (
                   <tr><td colSpan={4} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>

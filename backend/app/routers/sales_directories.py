@@ -27,7 +27,7 @@ from app.permissions import require_permission
 from app.audit import log_action
 from app.sales.models import (SalesService, SalesServiceGroup, SalesAdvertiser,
                               SalesBrand, SalesPriceListItem, SalesAgency,
-                              SalesPipeline, SalesDeal)
+                              SalesPipeline, SalesDeal, SalesPipelineStage)
 from app.sales.normalize import normalize_name, normalize_inn
 
 router = APIRouter()
@@ -285,6 +285,23 @@ def list_pipelines(db: Session = Depends(get_db),
     return {"items": [{"id": p.id, "name": p.name, "is_tracked": p.is_tracked,
                        "is_active": p.is_active,
                        "deals": counts.get(p.name, 0)} for p in rows]}
+
+
+@router.get("/pipelines/{pipeline_id}/stages")
+def pipeline_stages(pipeline_id: int, db: Session = Depends(get_db),
+                    current_user: User = Depends(get_current_user)):
+    """Стадии воронки — для раскрывающегося списка в справочнике.
+    Число сделок на стадии считается по фактическим данным (bitrix_stage)."""
+    p = _require(db, SalesPipeline, pipeline_id, "Воронка")
+    counts = dict(db.query(SalesDeal.bitrix_stage, func.count(SalesDeal.id))
+                  .filter(SalesDeal.pipeline == p.name)
+                  .group_by(SalesDeal.bitrix_stage).all())
+    rows = (db.query(SalesPipelineStage)
+            .filter(SalesPipelineStage.pipeline_id == pipeline_id)
+            .order_by(SalesPipelineStage.sort_order).all())
+    return {"items": [{"id": s.id, "status_id": s.status_id, "name": s.name,
+                       "deals": counts.get(s.name, 0)} for s in rows],
+            "bitrix_category_id": p.bitrix_category_id}
 
 
 @router.put("/pipelines/{pipeline_id}/tracked")
