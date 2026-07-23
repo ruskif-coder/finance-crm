@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { id: 'balance',  label: 'Баланс',      href: '/balance', section: 'balance' },
   { id: 'receivables', label: 'Дебиторка', href: '/receivables', section: 'receivables' },
   { id: 'planfact', label: 'План / Факт', href: '/planfact', section: 'planfact' },
+  { id: 'sales',    label: 'Продажи',     href: '/sales', section: 'sales_dashboard' },
 ]
 
 function getPermissions() {

@@ -22,10 +22,10 @@ import os
 import re
 
 from app.database import get_db
-from app.models import User
+from app.models import User, Counterparty
 from app.permissions import require_permission
 from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
-                              SalesRep, SalesBitrixSyncLog)
+                              SalesRep, SalesBrand, SalesBitrixSyncLog)
 
 router = APIRouter()
 
@@ -155,6 +155,72 @@ def dashboard(
         # Витрина всегда сообщает возраст данных: молча устаревшие цифры —
         # худшее поведение для отчётной системы.
         "last_sync_at": last_sync.finished_at.isoformat() if last_sync and last_sync.finished_at else None,
+    }
+
+
+@router.get("/deals")
+def deals_registry(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    pipeline: Optional[str] = None,
+    sales_rep_id: Optional[int] = None,
+    account_manager_id: Optional[int] = None,
+    advertiser_id: Optional[int] = None,
+    money_layer: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("sales_dashboard", "view")),
+):
+    """Реестр сделок — базовое представление, от которого строится всё остальное.
+
+    Отдаёт учётные поля как есть, включая незаполненные: пустое поле — это факт
+    о данных, и прятать его нельзя. Часть атрибутов (продукты, агентства,
+    клиентская сумма) пока живёт только в сыром слое sales_bitrix_raw и в колонки
+    не вынесена — см. раздел 13 спецификации."""
+    q = _base_query(db, date_from, date_to, pipeline, sales_rep_id,
+                    account_manager_id, advertiser_id, money_layer)
+
+    if search:
+        pattern = f"%{search.strip()}%"
+        q = q.filter(or_(SalesDeal.title.ilike(pattern),
+                         SalesDeal.bitrix_id.ilike(pattern)))
+
+    total = q.count()
+    rows = (q.order_by(SalesDeal.period_from.desc().nullslast(),
+                       SalesDeal.date_create.desc())
+             .limit(min(limit, 500)).offset(offset).all())
+
+    adv = dict(db.query(SalesAdvertiser.id, SalesAdvertiser.name).all())
+    reps = dict(db.query(SalesRep.id, SalesRep.name).all())
+    brands = dict(db.query(SalesBrand.id, SalesBrand.name).all())
+    cps = dict(db.query(Counterparty.id, Counterparty.name).all())
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": [{
+            "id": d.id,
+            "bitrix_id": d.bitrix_id,
+            "title": d.title,
+            "pipeline": d.pipeline,
+            "bitrix_stage": d.bitrix_stage,
+            "money_layer": layer or NO_GROUP,
+            "amount": d.amount,
+            "currency": d.currency,
+            "advertiser": adv.get(d.advertiser_id),
+            "brand": brands.get(d.brand_id),
+            "sales_rep": reps.get(d.sales_rep_id),
+            "account_manager": reps.get(d.account_manager_id),
+            "counterparty": cps.get(d.counterparty_id),
+            "period_from": d.period_from,
+            "period_to": d.period_to,
+            "annex_id": d.annex_id,
+            "date_create": d.date_create,
+            "date_modify": d.date_modify,
+        } for d, layer in rows],
     }
 
 
