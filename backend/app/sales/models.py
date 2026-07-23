@@ -68,6 +68,26 @@ class SalesBrand(Base):
     advertiser = relationship("SalesAdvertiser", back_populates="brands")
 
 
+class SalesAgency(Base):
+    """Рекламное агентство. Отдельная сущность, а не роль контрагента:
+    агентство встаёт в разрыв между нами и рекламодателем как плательщик,
+    и у него своя иерархия — несколько агентств могут принадлежать одному холдингу.
+
+    counterparty_id nullable: агентство может ещё не иметь договора с нами,
+    и тогда юрлица в реестре контрагентов просто нет."""
+    __tablename__ = "sales_agencies"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
+    holding = Column(String)
+    # Юрлицо текстом: агентство может ещё не иметь договора, и тогда записи
+    # в counterparties нет. Заполняется вручную — в исходнике после «/» лежит
+    # то юрлицо, то транслитерация названия, и различить их автоматически нельзя.
+    legal_entity = Column(String)
+    counterparty_id = Column(Integer, ForeignKey("counterparties.id"))
+    is_active = Column(Boolean, nullable=False, default=True)
+    note = Column(Text)
+
+
 class SalesPriceListItem(Base):
     __tablename__ = "sales_price_list"
     id = Column(Integer, primary_key=True)
@@ -202,6 +222,12 @@ class SalesDeal(Base):
     # Одиночная ссылка: один медиаплан — один бренд. Несколько брендов дают
     # несколько медиапланов, сливающихся в одно приложение на «Сборе запуска».
     brand_id = Column(Integer, ForeignKey("sales_brands.id"))
+    # Агентство-плательщик. Пусто = прямой договор с рекламодателем.
+    agency_id = Column(Integer, ForeignKey("sales_agencies.id"))
+    # Плательщик как есть из поля «Компания» Битрикса — агентство при работе
+    # через агентство, рекламодатель при прямом договоре. Хранится строкой без
+    # интерпретации: связи проставляются только при однозначном совпадении.
+    payer_name = Column(String)
     # Две разные роли, обе из справочника sales_reps и в данных не пересекаются:
     # продавец закреплён за клиентом (колонка CJ), аккаунт-менеджер ведёт сделку
     # со «Сбора запуска» и далее (колонка BI «Ответственный КС»).

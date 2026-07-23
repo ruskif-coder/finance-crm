@@ -21,12 +21,12 @@ from typing import Optional
 from datetime import date
 
 from app.database import get_db
-from app.models import User
+from app.models import User, Counterparty
 from app.routers.auth import get_current_user
 from app.permissions import require_permission
 from app.audit import log_action
 from app.sales.models import (SalesService, SalesServiceGroup, SalesAdvertiser,
-                              SalesBrand, SalesPriceListItem)
+                              SalesBrand, SalesPriceListItem, SalesAgency)
 from app.sales.normalize import normalize_name, normalize_inn
 
 router = APIRouter()
@@ -265,6 +265,73 @@ def deactivate_advertiser(advertiser_id: int, db: Session = Depends(get_db),
     db.commit()
     log_action(db, current_user, "deactivate_sales_advertiser", "sales_advertiser", adv.id, adv.name)
     return {"message": "Рекламодатель скрыт из справочника"}
+
+
+# ============================ Агентства ============================
+
+class AgencyIn(BaseModel):
+    name: str
+    holding: Optional[str] = None
+    legal_entity: Optional[str] = None
+    counterparty_id: Optional[int] = None
+    note: Optional[str] = None
+
+
+@router.get("/agencies")
+def list_agencies(only_active: bool = True, db: Session = Depends(get_db),
+                  current_user: User = Depends(get_current_user)):
+    q = db.query(SalesAgency)
+    if only_active:
+        q = q.filter(SalesAgency.is_active.is_(True))
+    rows = q.order_by(SalesAgency.holding.nullslast(), SalesAgency.name).all()
+
+    cp = dict(db.query(Counterparty.id, Counterparty.name).all())
+    return {"items": [{"id": a.id, "name": a.name, "holding": a.holding,
+                       "legal_entity": a.legal_entity,
+                       "counterparty_id": a.counterparty_id,
+                       "counterparty": cp.get(a.counterparty_id),
+                       "is_active": a.is_active, "note": a.note} for a in rows]}
+
+
+@router.post("/agencies")
+def create_agency(data: AgencyIn, db: Session = Depends(get_db),
+                  current_user: User = Depends(_EDIT)):
+    name = _clean_name(data.name)
+    _reject_duplicate(db, SalesAgency, name)
+    agency = SalesAgency(name=name, holding=data.holding or None,
+                         legal_entity=data.legal_entity or None,
+                         counterparty_id=data.counterparty_id, note=data.note)
+    db.add(agency)
+    db.commit()
+    db.refresh(agency)
+    log_action(db, current_user, "create_sales_agency", "sales_agency", agency.id, name)
+    return {"id": agency.id, "message": "Агентство создано"}
+
+
+@router.put("/agencies/{agency_id}")
+def update_agency(agency_id: int, data: AgencyIn, db: Session = Depends(get_db),
+                  current_user: User = Depends(_EDIT)):
+    agency = _require(db, SalesAgency, agency_id, "Агентство")
+    name = _clean_name(data.name)
+    _reject_duplicate(db, SalesAgency, name, exclude_id=agency_id)
+    agency.name = name
+    agency.holding = data.holding or None
+    agency.legal_entity = data.legal_entity or None
+    agency.counterparty_id = data.counterparty_id
+    agency.note = data.note
+    db.commit()
+    log_action(db, current_user, "update_sales_agency", "sales_agency", agency.id, name)
+    return {"message": "Агентство обновлено"}
+
+
+@router.delete("/agencies/{agency_id}")
+def deactivate_agency(agency_id: int, db: Session = Depends(get_db),
+                      current_user: User = Depends(_DELETE)):
+    agency = _require(db, SalesAgency, agency_id, "Агентство")
+    agency.is_active = False
+    db.commit()
+    log_action(db, current_user, "deactivate_sales_agency", "sales_agency", agency.id, agency.name)
+    return {"message": "Агентство скрыто из справочника"}
 
 
 # ============================== Бренды ==============================

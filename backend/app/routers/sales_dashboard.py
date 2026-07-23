@@ -29,7 +29,7 @@ from app.permissions import require_permission
 from app.audit import log_action
 from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
                               SalesRep, SalesBrand, SalesBitrixSyncLog,
-                              SalesDealFieldOverride)
+                              SalesDealFieldOverride, SalesAgency)
 
 router = APIRouter()
 
@@ -62,11 +62,13 @@ def _in(column, values):
 
 def _base_query(db: Session, date_from, date_to, pipeline, sales_rep_id,
                 account_manager_id, advertiser_id, money_layer,
-                bitrix_stage=None, brand_id=None):
+                bitrix_stage=None, brand_id=None, agency_id=None):
     """Сделки, склеенные с маппингом стадий. Джойн LEFT и только по активным
     строкам маппинга: неизвестная или намеренно отключённая стадия («Сделка
     провалена») даёт NULL и попадает в «Без группы», а не исчезает."""
-    q = db.query(SalesDeal, SalesBitrixStageMap.money_layer.label("layer")).outerjoin(
+    q = db.query(SalesDeal,
+                 SalesBitrixStageMap.money_layer.label("layer"),
+                 SalesBitrixStageMap.stage_key.label("stage_key")).outerjoin(
         SalesBitrixStageMap,
         and_(SalesBitrixStageMap.pipeline == SalesDeal.pipeline,
              SalesBitrixStageMap.bitrix_stage == SalesDeal.bitrix_stage,
@@ -92,6 +94,7 @@ def _base_query(db: Session, date_from, date_to, pipeline, sales_rep_id,
         _in(SalesDeal.account_manager_id, account_manager_id),
         _in(SalesDeal.advertiser_id, advertiser_id),
         _in(SalesDeal.brand_id, brand_id),
+        _in(SalesDeal.agency_id, agency_id),
         _in(SalesBitrixStageMap.money_layer, money_layer),
     ):
         if condition is not None:
@@ -102,7 +105,7 @@ def _base_query(db: Session, date_from, date_to, pipeline, sales_rep_id,
 def _group(rows, key_fn):
     """Сворачивает выборку по ключу, пустой ключ — в «Без группы»."""
     acc = {}
-    for deal, layer in rows:
+    for deal, layer, _stage_key in rows:
         key = key_fn(deal, layer) or NO_GROUP
         bucket = acc.setdefault(key, {"name": key, "deals": 0, "amount": 0.0})
         bucket["deals"] += 1
@@ -120,18 +123,19 @@ def dashboard(
     account_manager_id: Annotated[Optional[List[int]], Query()] = None,
     advertiser_id: Annotated[Optional[List[int]], Query()] = None,
     brand_id: Annotated[Optional[List[int]], Query()] = None,
+    agency_id: Annotated[Optional[List[int]], Query()] = None,
     money_layer: Annotated[Optional[List[str]], Query()] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("sales_dashboard", "view")),
 ):
     rows = _base_query(db, date_from, date_to, pipeline, sales_rep_id,
                        account_manager_id, advertiser_id, money_layer,
-                       bitrix_stage, brand_id).all()
+                       bitrix_stage, brand_id, agency_id).all()
 
     adv_names = dict(db.query(SalesAdvertiser.id, SalesAdvertiser.name).all())
     rep_names = dict(db.query(SalesRep.id, SalesRep.name).all())
 
-    total_amount = sum(float(d.amount or 0) for d, _ in rows)
+    total_amount = sum(float(d.amount or 0) for d, _, _ in rows)
 
     by_layer = _group(rows, lambda d, layer: layer)
     # Сверка: сумма по слоям обязана совпасть с общим итогом.
@@ -140,7 +144,7 @@ def dashboard(
 
     # Сделки без периода размещения не попадают ни в один месяц. Их видно
     # отдельной строкой: 53% сделок в источнике не имеют «Старт РК».
-    no_period = sum(1 for d, _ in rows if d.period_from is None)
+    no_period = sum(1 for d, _, _ in rows if d.period_from is None)
 
     last_sync = (db.query(SalesBitrixSyncLog)
                  .filter(SalesBitrixSyncLog.status == "success")
@@ -183,6 +187,7 @@ def deals_registry(
     account_manager_id: Annotated[Optional[List[int]], Query()] = None,
     advertiser_id: Annotated[Optional[List[int]], Query()] = None,
     brand_id: Annotated[Optional[List[int]], Query()] = None,
+    agency_id: Annotated[Optional[List[int]], Query()] = None,
     money_layer: Annotated[Optional[List[str]], Query()] = None,
     search: Optional[str] = None,
     gaps: Annotated[Optional[List[str]], Query()] = None,
@@ -200,7 +205,8 @@ def deals_registry(
     клиентская сумма) пока живёт только в сыром слое sales_bitrix_raw и в колонки
     не вынесена — см. раздел 13 спецификации."""
     q = _base_query(db, date_from, date_to, pipeline, sales_rep_id,
-                    account_manager_id, advertiser_id, money_layer)
+                    account_manager_id, advertiser_id, money_layer,
+                    bitrix_stage, brand_id, agency_id)
 
     if search:
         pattern = f"%{search.strip()}%"
@@ -212,6 +218,7 @@ def deals_registry(
     if gaps:
         gap_columns = {
             "advertiser_id": SalesDeal.advertiser_id,
+            "agency_id": SalesDeal.agency_id,
             "brand_id": SalesDeal.brand_id,
             "sales_rep_id": SalesDeal.sales_rep_id,
             "account_manager_id": SalesDeal.account_manager_id,
@@ -259,10 +266,11 @@ def deals_registry(
     reps = dict(db.query(SalesRep.id, SalesRep.name).all())
     brands = dict(db.query(SalesBrand.id, SalesBrand.name).all())
     cps = dict(db.query(Counterparty.id, Counterparty.name).all())
+    agencies = dict(db.query(SalesAgency.id, SalesAgency.name).all())
 
     # Какие поля на этой странице заполнены вручную — чтобы интерфейс их пометил
     # и было видно, что синхронизация их не тронет.
-    page_ids = [d.id for d, _ in rows]
+    page_ids = [d.id for d, _, _ in rows]
     manual = {}
     if page_ids:
         for o in (db.query(SalesDealFieldOverride)
@@ -280,6 +288,10 @@ def deals_registry(
             "pipeline": d.pipeline,
             "bitrix_stage": d.bitrix_stage,
             "money_layer": layer or NO_GROUP,
+            "stage_key": stage_key,
+            "agency": agencies.get(d.agency_id),
+            "agency_id": d.agency_id,
+            "payer_name": d.payer_name,
             "amount": d.amount,
             "currency": d.currency,
             "advertiser": adv.get(d.advertiser_id),
@@ -298,7 +310,7 @@ def deals_registry(
             "sales_rep_id": d.sales_rep_id,
             "account_manager_id": d.account_manager_id,
             "manual_fields": manual.get(d.id, []),
-        } for d, layer in rows],
+        } for d, layer, stage_key in rows],
     }
 
 
@@ -306,6 +318,7 @@ class DealPatch(BaseModel):
     """Ручная правка полей сделки. Передаются только изменяемые поля.
     Значение None означает «очистить», отсутствие ключа — «не трогать»."""
     advertiser_id: Optional[int] = None
+    agency_id: Optional[int] = None
     brand_id: Optional[int] = None
     sales_rep_id: Optional[int] = None
     account_manager_id: Optional[int] = None
@@ -315,7 +328,7 @@ class DealPatch(BaseModel):
 
 # Поля, доступные ручной правке. Расширять осознанно: каждое попадёт
 # в очередь на заливку в Битрикс.
-EDITABLE_INT = ("advertiser_id", "brand_id", "sales_rep_id", "account_manager_id")
+EDITABLE_INT = ("advertiser_id", "agency_id", "brand_id", "sales_rep_id", "account_manager_id")
 EDITABLE_DATE = ("period_from", "period_to")
 
 
@@ -339,7 +352,7 @@ def patch_deal(
     if not changes:
         raise HTTPException(status_code=400, detail="Не передано ни одного поля")
 
-    existing = {o.field_name: o for o in db.query(SalesDealFieldOverride)
+    existing = {o.field_name: o for o in db.query(SalesDealFieldOverride, SalesAgency)
                 .filter(SalesDealFieldOverride.deal_id == deal_id).all()}
 
     for field, value in changes.items():
@@ -377,7 +390,7 @@ def drop_override(
 
     Само значение не откатывается — оно вернётся при следующем прогоне
     из источника. Это и есть механизм отката."""
-    row = (db.query(SalesDealFieldOverride)
+    row = (db.query(SalesDealFieldOverride, SalesAgency)
            .filter(SalesDealFieldOverride.deal_id == deal_id,
                    SalesDealFieldOverride.field_name == field_name).first())
     if not row:
@@ -416,6 +429,7 @@ def filter_options(db: Session = Depends(get_db),
                          for r in counted(SalesDeal.bitrix_stage)],
         "advertiser_id": named(SalesAdvertiser, SalesDeal.advertiser_id),
         "brand_id": named(SalesBrand, SalesDeal.brand_id),
+        "agency_id": named(SalesAgency, SalesDeal.agency_id),
         "sales_rep_id": named(rep_a, SalesDeal.sales_rep_id),
         "account_manager_id": named(acct_a, SalesDeal.account_manager_id),
     }

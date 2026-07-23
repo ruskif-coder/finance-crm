@@ -30,7 +30,7 @@ from app.database import SessionLocal  # noqa: E402
 from app import models as core_models  # noqa: E402,F401
 from app.sales.models import (SalesPipeline, SalesBitrixStageMap, SalesService,  # noqa: E402
                               SalesAdvertiser, SalesBrand, SalesRep, SalesDeal,
-                              SalesBitrixRaw, SalesDealFieldOverride)
+                              SalesBitrixRaw, SalesDealFieldOverride, SalesAgency)
 from app.sales.normalize import normalize_name  # noqa: E402
 from app.sales.bitrix_client import payload_hash  # noqa: E402
 
@@ -261,6 +261,13 @@ class Loader:
         # Аккаунт-менеджер — из «Ответственный КС» (BI).
         # Колонка «Ответственный» (L) как источник продавца НЕ годится: она заполнена
         # на 100%, но смешивает обе роли (Жанна Смирнова — аккаунт, 1002 сделки).
+        # Агентства из поля «Рекламные агентства». Холдинг и юрлицо в исходнике
+        # не размечены — заполняются вручную в справочнике.
+        agencies = set()
+        for d in deals:
+            agencies |= set(split_multi(d.get("agencies")))
+        agency_idx = self.seed_named(SalesAgency, agencies)
+
         reps = set()
         for d in deals:
             reps |= set(split_multi(d.get("sales_client")))
@@ -273,6 +280,11 @@ class Loader:
                      for b in self.db.query(SalesBrand).all()}
         if not self.dry:
             self.db.flush()
+
+        # Контрагенты финмодуля — источник истины по плательщикам.
+        # Сопоставление строгое, по нормализованному имени: никакого нечёткого матчинга.
+        cp_idx = {normalize_name(c.name): c
+                  for c in self.db.query(core_models.Counterparty).all()}
 
         deal_idx = {d.bitrix_id: d for d in self.db.query(SalesDeal).all()}
 
@@ -315,6 +327,21 @@ class Loader:
             acct_names = split_multi(d.get("account_mgr"))
             acct = rep_idx.get(normalize_name(acct_names[0])) if acct_names else None
 
+            agency_names = split_multi(d.get("agencies"))
+            agency = agency_idx.get(normalize_name(agency_names[0])) if agency_names else None
+
+            # «Компания» — плательщик: агентство при работе через агентство,
+            # рекламодатель при прямом договоре. Связи проставляем только при
+            # точном совпадении, всё остальное остаётся строкой для ручного разбора.
+            payer = (str(d.get("company") or "")).strip() or None
+            payer_key = normalize_name(payer) if payer else None
+            payer_cp = cp_idx.get(payer_key) if payer_key else None
+            if payer_key and agency is None:
+                match = agency_idx.get(payer_key)
+                if match is not None:
+                    agency = match
+                    self.bump("плательщик_опознан_как_агентство")
+
             values = dict(
                 title=d["title"],
                 pipeline=d["pipeline"],
@@ -325,6 +352,9 @@ class Loader:
                 brand_id=getattr(brand, "id", None),
                 sales_rep_id=getattr(rep, "id", None),
                 account_manager_id=getattr(acct, "id", None),
+                agency_id=getattr(agency, "id", None),
+                payer_name=payer,
+                counterparty_id=getattr(payer_cp, "id", None),
                 date_create=parse_dt(d["date_create"]),
                 date_modify=parse_dt(d["date_modify"]),
                 period_from=parse_date(d.get("rk_start")),

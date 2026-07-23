@@ -34,16 +34,50 @@ const COLUMNS = [
   { key: 'title', label: 'Сделка', w: 260, sortable: true },
   { key: 'pipeline', label: 'Воронка', w: 110, sortable: true },
   { key: 'bitrix_stage', label: 'Стадия', w: 170, sortable: true },
-  { key: 'money_layer', label: 'Слой денег', w: 118, sortable: true },
+  { key: 'stage_bar', label: 'Стадия 2/2/2', w: 108 },
   { key: 'amount', label: 'Сумма', w: 100, right: true, sortable: true },
   { key: 'advertiser', label: 'Рекламодатель', w: 200, sortable: true },
   { key: 'brand', label: 'Бренд', w: 130 },
+  { key: 'agency', label: 'Агентство', w: 160, sortable: false },
   { key: 'sales_rep', label: 'Продавец', w: 140, sortable: true },
   { key: 'account_manager', label: 'Аккаунт', w: 140, sortable: true },
-  { key: 'counterparty', label: 'Плательщик', w: 160 },
+  { key: 'payer_name', label: 'Плательщик (Компания)', w: 200 },
   { key: 'period_from', label: 'Старт РК', w: 96, sortable: true },
   { key: 'period_to', label: 'Конец РК', w: 96, sortable: true },
 ]
+
+// Шесть стадий сделки, разложенные 2/2/2 по слоям денег.
+// Цвет — слой: серый прогноз, оранжевый в работе, зелёный факт.
+const STAGES = [
+  { key: 'media_plan', label: 'Медиаплан', color: 'var(--muted)' },
+  { key: 'booking', label: 'Бронь', color: 'var(--muted)' },
+  { key: 'launch_prep', label: 'Сбор запуска', color: 'var(--warning, #d97706)' },
+  { key: 'launch', label: 'Запуск', color: 'var(--warning, #d97706)' },
+  { key: 'closing', label: 'Закрытие', color: 'var(--success)' },
+  { key: 'archive', label: 'Архив', color: 'var(--success)' },
+]
+
+/** Полоса из шести стадий: пройденные закрашены, текущая ярче остальных. */
+function StageBar({ stageKey }) {
+  const idx = STAGES.findIndex(s => s.key === stageKey)
+  const title = idx >= 0
+    ? `${STAGES[idx].label} — ${idx < 2 ? 'планируемые' : idx < 4 ? 'реализуемые' : 'фактические'} деньги`
+    : 'Стадия вне маппинга — в слои не попадает'
+  return (
+    <div title={title} style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+      {STAGES.map((s, i) => (
+        <div key={s.key} style={{
+          width: 13, height: 9, borderRadius: 2,
+          background: idx < 0 ? 'var(--bg-subtle)' : (i <= idx ? s.color : 'var(--bg-subtle)'),
+          outline: i === idx ? '1px solid var(--text, #333)' : 'none',
+          outlineOffset: 1,
+          opacity: idx < 0 ? 0.5 : (i === idx ? 1 : i < idx ? 0.55 : 1),
+        }} />
+      ))}
+      {idx < 0 && <span style={{ fontSize: 10.5, color: 'var(--danger)', marginLeft: 4 }}>вне слоёв</span>}
+    </div>
+  )
+}
 
 /** Выпадающий список с чекбоксами. Пустой выбор = без ограничения. */
 function MultiSelect({ label, options, selected, onChange }) {
@@ -110,6 +144,7 @@ function MultiSelect({ label, options, selected, onChange }) {
 const EDITABLE = {
   advertiser: { field: 'advertiser_id', opt: 'advertiser_id' },
   brand: { field: 'brand_id', opt: 'brand_id' },
+  agency: { field: 'agency_id', opt: 'agency_id' },
   sales_rep: { field: 'sales_rep_id', opt: 'sales_rep_id' },
   account_manager: { field: 'account_manager_id', opt: 'account_manager_id' },
   period_from: { field: 'period_from', date: true },
@@ -119,6 +154,7 @@ const EDITABLE = {
 const GAP_FIELDS = [
   { value: 'advertiser_id', label: 'без рекламодателя' },
   { value: 'brand_id', label: 'без бренда' },
+  { value: 'agency_id', label: 'без агентства' },
   { value: 'sales_rep_id', label: 'без продавца' },
   { value: 'account_manager_id', label: 'без аккаунта' },
   { value: 'period_from', label: 'без старта РК' },
@@ -131,6 +167,7 @@ const FILTER_FIELDS = [
   { key: 'bitrix_stage', label: 'Стадия' },
   { key: 'advertiser_id', label: 'Рекламодатель' },
   { key: 'brand_id', label: 'Бренд' },
+  { key: 'agency_id', label: 'Агентство' },
   { key: 'sales_rep_id', label: 'Продавец' },
   { key: 'account_manager_id', label: 'Аккаунт' },
 ]
@@ -329,6 +366,9 @@ export default function Sales() {
                 {rows.map(r => (
                   <tr key={r.id}>
                     {COLUMNS.map(c => {
+                      if (c.key === 'stage_bar') {
+                        return <td key={c.key} style={td(c)}><StageBar stageKey={r.stage_key} /></td>
+                      }
                       let v = r[c.key]
                       if (c.key === 'amount') v = r.amount === null ? null : fmtMoney(r.amount)
                       if (c.key === 'period_from' || c.key === 'period_to') v = r[c.key] ? fmtDate(r[c.key]) : null

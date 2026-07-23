@@ -826,6 +826,7 @@ export default function Directories() {
   // не влезает в этот файл, он и так на 111 КБ. Вкладка переводит на /advertisers.
   if (role === 'admin' || can(permissions, 'sales_directories', 'view')) {
     tabs.push({ id: 'advertisers', label: 'Рекламодатели', href: '/advertisers' })
+    tabs.push({ id: 'agencies', label: 'Агентства', href: '/agencies' })
   }
 
   return (
