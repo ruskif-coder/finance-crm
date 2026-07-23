@@ -204,6 +204,11 @@ class SalesDeal(Base):
     annex_id = Column(Integer, ForeignKey("sales_annexes.id"))
     date_create = Column(DateTime)
     date_modify = Column(DateTime)
+    # Период размещения — «Старт РК» / «Конец РК». Основная ось витрины:
+    # дата создания сделки для отчётности бесполезна, деньги относятся
+    # к периоду размещения. period_to = NULL — календарный месяц period_from.
+    period_from = Column(Date)
+    period_to = Column(Date)
     synced_at = Column(DateTime, server_default=func.now())
 
 

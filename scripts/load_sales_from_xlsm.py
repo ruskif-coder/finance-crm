@@ -93,6 +93,23 @@ def parse_dt(v):
         return None
 
 
+def parse_date(v):
+    """Даты РК в Excel лежат вперемешку: часть настоящими датами, часть текстом.
+    Без разбора текстовых форматов теряется ровно половина периодов размещения."""
+    dt = parse_dt(v)
+    if dt:
+        return dt.date()
+    s = str(v or "").strip()
+    if not s:
+        return None
+    for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 def parse_num(v):
     if v in (None, ""):
         return None
@@ -236,6 +253,8 @@ class Loader:
                 account_manager_id=getattr(acct, "id", None),
                 date_create=parse_dt(d["date_create"]),
                 date_modify=parse_dt(d["date_modify"]),
+                period_from=parse_date(d.get("rk_start")),
+                period_to=parse_date(d.get("rk_end")),
             )
 
             existing = deal_idx.get(bid)
