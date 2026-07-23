@@ -63,15 +63,9 @@ export default function Advertisers() {
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось сохранить бренд') }
   }
 
-  const [editBrand, setEditBrand] = useState(null)   // { id, name }
-  const [drag, setDrag] = useState(null)             // перетаскиваемый бренд
-  const [dragOver, setDragOver] = useState(null)     // id рекламодателя-цели
-
-  const dropOnAdvertiser = (advertiserId) => {
-    if (!drag || drag.advertiserId === advertiserId) { setDrag(null); setDragOver(null); return }
-    saveBrand(drag.id, drag.name, advertiserId)
-    setDrag(null); setDragOver(null)
-  }
+  const [editBrand, setEditBrand] = useState(null)   // { id, name } — правка имени
+  const [moveBrand, setMoveBrand] = useState(null)   // { id, name } — перенос
+  const [moveQuery, setMoveQuery] = useState('')
 
   const load = async () => {
     setLoading(true); setError('')
@@ -238,13 +232,7 @@ export default function Advertisers() {
               <tbody>
                 {filtered.map(a => (
                   <tr key={a.id} style={{ opacity: a.is_active ? 1 : 0.5 }}>
-                    {/* Ячейка имени — зона сброса бренда: перетащил бренд сюда → он переехал */}
-                    <td style={{ ...td,
-                        background: dragOver === a.id ? 'var(--accent-tint)' : undefined,
-                        outline: dragOver === a.id ? '2px dashed var(--accent)' : undefined }}
-                      onDragOver={e => { if (drag) { e.preventDefault(); setDragOver(a.id) } }}
-                      onDragLeave={() => setDragOver(d => d === a.id ? null : d)}
-                      onDrop={() => dropOnAdvertiser(a.id)}>
+                    <td style={td}>
                       {a.name_en || dash}
                       {a.exclude_from_revenue && (
                         <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--danger)' }}>не в выручке</span>
@@ -270,17 +258,16 @@ export default function Advertisers() {
                               }} />
                           ) : (
                             <span key={b.id}
-                              draggable={mayEdit}
-                              onDragStart={() => setDrag({ id: b.id, name: b.name, advertiserId: a.id })}
-                              onDragEnd={() => { setDrag(null); setDragOver(null) }}
                               onDoubleClick={() => mayEdit && setEditBrand({ id: b.id, name: b.name })}
-                              title={mayEdit ? 'Двойной клик — переименовать, тащить — перенести' : b.name}
+                              title={mayEdit ? 'Двойной клик — переименовать' : b.name}
                               style={{
                                 background: 'var(--bg-subtle)', borderRadius: 'var(--radius-badge)',
                                 padding: '2px 8px', fontSize: 12, display: 'inline-flex', gap: 6, alignItems: 'center',
-                                cursor: mayEdit ? 'grab' : 'default',
                               }}>
                               {b.name}
+                              {mayEdit && <span style={{ cursor: 'pointer', color: 'var(--accent)', fontWeight: 700 }}
+                                onClick={() => { setMoveBrand({ id: b.id, name: b.name }); setMoveQuery('') }}
+                                title="Перенести к другому рекламодателю">⇄</span>}
                               {mayEdit && <span style={{ cursor: 'pointer', color: 'var(--danger)', fontWeight: 700 }}
                                 onClick={() => deleteBrand(b.id, b.name)} title="Удалить бренд">×</span>}
                             </span>
@@ -288,6 +275,32 @@ export default function Advertisers() {
                         ))}
                         {!a.brands?.length && dash}
                       </div>
+                      {moveBrand && (a.brands || []).some(b => b.id === moveBrand.id) && (
+                        <div style={{ marginTop: 8, position: 'relative' }}>
+                          <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 4 }}>
+                            Перенести «{moveBrand.name}» к рекламодателю:
+                          </div>
+                          <input autoFocus style={{ ...inp, width: 280 }} placeholder="поиск рекламодателя"
+                            value={moveQuery} onChange={e => setMoveQuery(e.target.value)} />
+                          <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--muted)', cursor: 'pointer' }}
+                            onClick={() => setMoveBrand(null)}>отмена</span>
+                          {moveQuery.trim() && (
+                            <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 10, marginTop: 2,
+                              background: 'var(--bg-card)', border: '1px solid var(--border-card)',
+                              borderRadius: 'var(--radius-card-sm)', boxShadow: 'var(--shadow-card)',
+                              maxHeight: 260, overflowY: 'auto', minWidth: 300 }}>
+                              {items.filter(x => x.id !== a.id &&
+                                  [x.name, x.name_en, x.name_ru].some(v => (v || '').toLowerCase().includes(moveQuery.trim().toLowerCase())))
+                                .slice(0, 30).map(x => (
+                                <div key={x.id} onClick={() => { saveBrand(moveBrand.id, moveBrand.name, x.id); setMoveBrand(null) }}
+                                  style={{ padding: '6px 10px', fontSize: 12.5, cursor: 'pointer', borderBottom: '1px solid var(--border-row)' }}>
+                                  {[x.name_en, x.name_ru].filter(Boolean).join(' / ') || x.name}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {expanded === a.id && mayEdit && (
                         <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
                           <input style={{ ...inp, width: 190 }} placeholder="название бренда" autoFocus
