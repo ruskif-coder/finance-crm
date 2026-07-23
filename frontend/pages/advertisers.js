@@ -183,12 +183,6 @@ export default function Advertisers() {
                           }}>{b.name}</span>
                         ))}
                         {!a.brands?.length && dash}
-                        {mayEdit && (
-                          <button style={{ ...btn(false), padding: '2px 8px', fontSize: 12 }}
-                            onClick={() => { setExpanded(expanded === a.id ? null : a.id); setBrandName('') }}>
-                            + бренд
-                          </button>
-                        )}
                       </div>
                       {expanded === a.id && mayEdit && (
                         <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
@@ -199,9 +193,17 @@ export default function Advertisers() {
                         </div>
                       )}
                     </td>
-                    <td style={{ ...td, textAlign: 'right' }}>
-                      {mayEdit && <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12 }}
-                        onClick={() => startEdit(a)}>Изменить</button>}
+                    <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {mayEdit && (
+                        <>
+                          <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12, marginRight: 6 }}
+                            onClick={() => { setExpanded(expanded === a.id ? null : a.id); setBrandName('') }}>
+                            + бренд
+                          </button>
+                          <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12 }}
+                            onClick={() => startEdit(a)}>Изменить</button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
