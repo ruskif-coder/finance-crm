@@ -81,6 +81,9 @@ STAGE_MAP = [
 # на фрагменты и плодил мусор в справочнике.
 _SPLIT = re.compile(r"[;|\n\r]+")
 
+# Рекламодатель-заглушка для сделок, где заполнен только бренд.
+VIRTUAL_ADVERTISER = "(рекламодатель не указан)"
+
 # «[L]ACINO (Ацино)» -> ('ACINO', 'Ацино'). Префикс [L] приходит из поля
 # «Рекламодатель = Лид» в Битриксе и в названии не нужен.
 _LEAD_PREFIX = re.compile(r"^\s*\[L\]\s*", re.IGNORECASE)
@@ -230,6 +233,18 @@ class Loader:
                     adv_parsed[normalize_name(name)] = (name, en, ru)
 
         adv_idx = self._index(SalesAdvertiser)
+
+        # Виртуальный рекламодатель для строк, где заполнен только бренд.
+        # Без него такие бренды теряются: advertiser_id у бренда NOT NULL.
+        # Помечен явно, чтобы его было видно в справочнике и разобрать вручную.
+        if normalize_name(VIRTUAL_ADVERTISER) not in adv_idx:
+            self.bump("sales_advertisers")
+            virt = SalesAdvertiser(name=VIRTUAL_ADVERTISER, name_ru=VIRTUAL_ADVERTISER,
+                                   note="Создан автоматически: в сделке был бренд без рекламодателя")
+            adv_idx[normalize_name(VIRTUAL_ADVERTISER)] = virt
+            if not self.dry:
+                self.db.add(virt)
+                self.db.flush()
         for key, (name, en, ru) in sorted(adv_parsed.items()):
             if key in adv_idx:
                 continue
@@ -273,6 +288,10 @@ class Loader:
 
             brand = None
             brand_names = split_multi(d["brands_list"]) or split_multi(d["brand_manuf"])
+            # Бренд без рекламодателя вешаем на заглушку, а не теряем.
+            if brand_names and adv is None:
+                adv = adv_idx.get(normalize_name(VIRTUAL_ADVERTISER))
+                self.bump("брендов_без_рекламодателя")
             if brand_names and adv is not None and not self.dry:
                 bkey = (adv.id, normalize_name(brand_names[0]))
                 brand = brand_idx.get(bkey)

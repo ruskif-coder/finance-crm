@@ -822,13 +822,18 @@ export default function Directories() {
   if (role === 'admin' || can(permissions, 'contracts', 'view')) {
     tabs.push({ id: 'contracts', label: 'Договоры' })
   }
+  // Рекламодатели живут отдельной страницей: справочник со вложенными брендами
+  // не влезает в этот файл, он и так на 111 КБ. Вкладка переводит на /advertisers.
+  if (role === 'admin' || can(permissions, 'sales_directories', 'view')) {
+    tabs.push({ id: 'advertisers', label: 'Рекламодатели', href: '/advertisers' })
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: '#f5f6fa' }}>
       <Navbar active="directories">
       <Head><title>Справочники | Финансовый учёт</title></Head>
         {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
+          <button key={t.id} onClick={() => (t.href ? router.push(t.href) : setTab(t.id))}
             style={{ padding: '6px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '500', fontSize: '14px', background: tab === t.id ? '#2563eb' : 'transparent', color: tab === t.id ? 'white' : '#374151' }}>
             {t.label}
           </button>
