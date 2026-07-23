@@ -12,15 +12,18 @@ SECTIONS = [
     {"key": "balance",           "label": "Баланс",             "group": "Отчёты",    "actions": ["view"]},
     {"key": "planfact",          "label": "План / Факт",        "group": "Отчёты",    "actions": ["view"]},
     {"key": "receivables",       "label": "Дебиторская задолженность", "group": "Отчёты", "actions": ["view", "edit"]},
+    # Дашборд продаж. Действие "edit" гейтит принудительную синхронизацию с Битрикс24 —
+    # отдельного действия под неё не заводим, чтобы не плодить сущности в матрице ролей.
+    # ВАЖНО: раздел стоит рядом с остальными «Отчётами». buildPermissionBlocks в
+    # settings.js группирует разделы ПО СОСЕДСТВУ — вынесенный в конец списка раздел
+    # рисуется отдельным блоком с повторным заголовком группы.
+    {"key": "sales_dashboard",   "label": "Дашборд продаж",     "group": "Отчёты",      "actions": ["view", "edit"]},
     {"key": "operations",        "label": "Операции",           "group": None,        "actions": ["view", "create", "edit", "delete"]},
     {"key": "import",            "label": "Импорт",             "group": None,        "actions": ["view"]},
     {"key": "settings_balances", "label": "Остатки по банкам",  "group": "Настройки", "actions": ["view", "edit"]},
     {"key": "counterparties",    "label": "Контрагенты",        "group": "Справочники", "actions": ["view", "edit", "delete", "view_operations"]},
     {"key": "articles",          "label": "Статьи",             "group": "Справочники", "actions": ["view", "edit"]},
     {"key": "contracts",         "label": "Договоры",           "group": "Справочники", "actions": ["view", "edit"]},
-    # Дашборд продаж. Действие "edit" гейтит принудительную синхронизацию с Битрикс24 —
-    # отдельного действия под неё не заводим, чтобы не плодить сущности в матрице ролей.
-    {"key": "sales_dashboard",   "label": "Дашборд продаж",     "group": "Отчёты",      "actions": ["view", "edit"]},
     {"key": "sales_directories", "label": "Услуги и бренды",    "group": "Справочники", "actions": ["view", "edit", "delete"]},
 ]
 

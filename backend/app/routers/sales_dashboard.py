@@ -16,7 +16,7 @@
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, or_, and_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 from typing import Optional
 import os
 import re
@@ -168,6 +168,8 @@ def deals_registry(
     advertiser_id: Optional[int] = None,
     money_layer: Optional[str] = None,
     search: Optional[str] = None,
+    sort: str = "period_from",
+    direction: str = "desc",
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db),
@@ -188,9 +190,37 @@ def deals_registry(
                          SalesDeal.bitrix_id.ilike(pattern)))
 
     total = q.count()
-    rows = (q.order_by(SalesDeal.period_from.desc().nullslast(),
-                       SalesDeal.date_create.desc())
-             .limit(min(limit, 500)).offset(offset).all())
+
+    # Сортировка по именам исполнителей и рекламодателя — через отдельные алиасы
+    # sales_reps: продавец и аккаунт-менеджер ссылаются на одну таблицу, и без
+    # алиасов SQLAlchemy не сможет соединить её дважды.
+    rep_a, acct_a, adv_a = aliased(SalesRep), aliased(SalesRep), aliased(SalesAdvertiser)
+    q = (q.outerjoin(rep_a, rep_a.id == SalesDeal.sales_rep_id)
+          .outerjoin(acct_a, acct_a.id == SalesDeal.account_manager_id)
+          .outerjoin(adv_a, adv_a.id == SalesDeal.advertiser_id))
+
+    sortable = {
+        "bitrix_id": SalesDeal.bitrix_id,
+        "title": SalesDeal.title,
+        "pipeline": SalesDeal.pipeline,
+        "bitrix_stage": SalesDeal.bitrix_stage,
+        "money_layer": SalesBitrixStageMap.money_layer,
+        "amount": SalesDeal.amount,
+        "advertiser": adv_a.name,
+        "sales_rep": rep_a.name,
+        "account_manager": acct_a.name,
+        "period_from": SalesDeal.period_from,
+        "period_to": SalesDeal.period_to,
+        "date_create": SalesDeal.date_create,
+    }
+    column = sortable.get(sort)
+    if column is None:
+        raise HTTPException(status_code=400, detail=f"Сортировка по «{sort}» не поддерживается")
+
+    # nullslast в обоих направлениях: незаполненные поля не должны занимать
+    # начало списка — их и так много, и они вытеснили бы содержательные строки.
+    ordering = column.desc().nullslast() if direction == "desc" else column.asc().nullslast()
+    rows = q.order_by(ordering, SalesDeal.id.desc()).limit(min(limit, 500)).offset(offset).all()
 
     adv = dict(db.query(SalesAdvertiser.id, SalesAdvertiser.name).all())
     reps = dict(db.query(SalesRep.id, SalesRep.name).all())

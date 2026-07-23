@@ -13,7 +13,7 @@ const LAYER_COLOR = {
   'фактические': 'var(--success)',
   'Без группы': 'var(--danger)',
 }
-const PAGE = 100
+const PAGE_SIZES = [50, 100, 300, 500]
 
 const fmtMoney = (v) => {
   if (v === null || v === undefined) return '—'
@@ -27,20 +27,22 @@ const fmtDate = (d) => (d ? String(d).slice(0, 10) : '—')
 const Empty = () => <span style={{ color: 'var(--danger)', opacity: 0.65 }}>—</span>
 const cell = (v) => (v === null || v === undefined || v === '' ? <Empty /> : v)
 
+// sortable: ключ поддерживается бэкендом в /api/sales/deals.
+// Бренд и плательщик пока не сортируются — по ним нет джойна на сервере.
 const COLUMNS = [
-  { key: 'bitrix_id', label: 'ID', w: 62 },
-  { key: 'title', label: 'Сделка', w: 260 },
-  { key: 'pipeline', label: 'Воронка', w: 110 },
-  { key: 'bitrix_stage', label: 'Стадия', w: 170 },
-  { key: 'money_layer', label: 'Слой денег', w: 118 },
-  { key: 'amount', label: 'Сумма', w: 100, right: true },
-  { key: 'advertiser', label: 'Рекламодатель', w: 200 },
+  { key: 'bitrix_id', label: 'ID', w: 62, sortable: true },
+  { key: 'title', label: 'Сделка', w: 260, sortable: true },
+  { key: 'pipeline', label: 'Воронка', w: 110, sortable: true },
+  { key: 'bitrix_stage', label: 'Стадия', w: 170, sortable: true },
+  { key: 'money_layer', label: 'Слой денег', w: 118, sortable: true },
+  { key: 'amount', label: 'Сумма', w: 100, right: true, sortable: true },
+  { key: 'advertiser', label: 'Рекламодатель', w: 200, sortable: true },
   { key: 'brand', label: 'Бренд', w: 130 },
-  { key: 'sales_rep', label: 'Продавец', w: 140 },
-  { key: 'account_manager', label: 'Аккаунт', w: 140 },
+  { key: 'sales_rep', label: 'Продавец', w: 140, sortable: true },
+  { key: 'account_manager', label: 'Аккаунт', w: 140, sortable: true },
   { key: 'counterparty', label: 'Плательщик', w: 160 },
-  { key: 'period_from', label: 'Старт РК', w: 96 },
-  { key: 'period_to', label: 'Конец РК', w: 96 },
+  { key: 'period_from', label: 'Старт РК', w: 96, sortable: true },
+  { key: 'period_to', label: 'Конец РК', w: 96, sortable: true },
 ]
 
 export default function Sales() {
@@ -52,6 +54,8 @@ export default function Sales() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [perms, setPerms] = useState({})
+  const [pageSize, setPageSize] = useState(100)
+  const [sort, setSort] = useState({ key: 'period_from', dir: 'desc' })
   const [f, setF] = useState({ date_from: '', date_to: '', money_layer: '', pipeline: '', search: '' })
 
   const params = (extra = {}) => {
@@ -60,12 +64,15 @@ export default function Sales() {
     return p
   }
 
-  const load = async (newOffset = 0) => {
+  const load = async (newOffset = 0, size = pageSize, s = sort) => {
     setLoading(true); setError('')
     const headers = { Authorization: `Bearer ${localStorage.getItem('token')}` }
     try {
       const [reg, sum] = await Promise.all([
-        api.get('/sales/deals', { params: params({ limit: PAGE, offset: newOffset }), headers }),
+        api.get('/sales/deals', {
+          params: params({ limit: size, offset: newOffset, sort: s.key, direction: s.dir }),
+          headers,
+        }),
         api.get('/sales/dashboard', { params: params(), headers }),
       ])
       setRows(reg.data.items); setTotal(reg.data.total); setOffset(newOffset)
@@ -93,9 +100,21 @@ export default function Sales() {
   const th = (c) => ({
     position: 'sticky', top: 0, background: 'var(--bg-subtle)', zIndex: 1,
     padding: '9px 10px', textAlign: c.right ? 'right' : 'left', fontSize: 11.5,
-    fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap',
-    borderBottom: '1px solid var(--border-card)', minWidth: c.w,
+    fontWeight: 600, whiteSpace: 'nowrap', minWidth: c.w,
+    color: sort.key === c.key ? 'var(--accent)' : 'var(--muted)',
+    borderBottom: '1px solid var(--border-card)',
+    cursor: c.sortable ? 'pointer' : 'default',
+    userSelect: 'none',
   })
+
+  // Первый клик по колонке — по убыванию (обычно интересует «самое большое сверху»),
+  // повторный — переключение направления.
+  const toggleSort = (c) => {
+    if (!c.sortable) return
+    const dir = sort.key === c.key && sort.dir === 'desc' ? 'asc' : 'desc'
+    const next = { key: c.key, dir }
+    setSort(next); load(0, pageSize, next)
+  }
   const td = (c) => ({
     padding: '7px 10px', fontSize: 12.5, textAlign: c.right ? 'right' : 'left',
     borderBottom: '1px solid var(--border-row)', maxWidth: c.w,
@@ -182,7 +201,13 @@ export default function Sales() {
         }}>
           <div style={{ overflowX: 'auto', maxHeight: '62vh' }}>
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-              <thead><tr>{COLUMNS.map(c => <th key={c.key} style={th(c)}>{c.label}</th>)}</tr></thead>
+              <thead><tr>{COLUMNS.map(c => (
+                <th key={c.key} style={th(c)} onClick={() => toggleSort(c)}
+                    title={c.sortable ? 'Сортировать' : 'Сортировка недоступна'}>
+                  {c.label}
+                  {sort.key === c.key && <span> {sort.dir === 'desc' ? '↓' : '↑'}</span>}
+                </th>
+              ))}</tr></thead>
               <tbody>
                 {rows.map(r => (
                   <tr key={r.id}>
@@ -210,12 +235,21 @@ export default function Sales() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12, fontSize: 13 }}>
-          <button style={btn(false)} disabled={offset === 0} onClick={() => load(Math.max(0, offset - PAGE))}>← Назад</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12, fontSize: 13, flexWrap: 'wrap' }}>
+          <button style={btn(false)} disabled={offset === 0}
+            onClick={() => load(Math.max(0, offset - pageSize))}>← Назад</button>
           <span style={{ color: 'var(--muted)' }}>
-            {total ? `${offset + 1}–${Math.min(offset + PAGE, total)} из ${total}` : '0'}
+            {total ? `${offset + 1}–${Math.min(offset + pageSize, total)} из ${total}` : '0'}
           </span>
-          <button style={btn(false)} disabled={offset + PAGE >= total} onClick={() => load(offset + PAGE)}>Вперёд →</button>
+          <button style={btn(false)} disabled={offset + pageSize >= total}
+            onClick={() => load(offset + pageSize)}>Вперёд →</button>
+          <span style={{ color: 'var(--muted)', marginLeft: 8 }}>строк:</span>
+          <select style={inputStyle} value={pageSize} onChange={e => {
+            const size = Number(e.target.value)
+            setPageSize(size); load(0, size)
+          }}>
+            {PAGE_SIZES.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
           {loading && <span style={{ color: 'var(--muted)' }}>загрузка…</span>}
         </div>
       </div>
