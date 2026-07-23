@@ -175,7 +175,16 @@ class Loader:
             advertisers |= set(split_multi(d["advertiser"]))
         adv_idx = self.seed_named(SalesAdvertiser, advertisers)
 
-        reps = {r for d in deals for r in split_multi(d["sales"])}
+        # Продавец берётся из «Ответственный Sales за клиента» (CJ), запасной
+        # источник — «Sales» (BH, заполнена лишь в 7% строк и является подмножеством CJ).
+        # Аккаунт-менеджер — из «Ответственный КС» (BI).
+        # Колонка «Ответственный» (L) как источник продавца НЕ годится: она заполнена
+        # на 100%, но смешивает обе роли (Жанна Смирнова — аккаунт, 1002 сделки).
+        reps = set()
+        for d in deals:
+            reps |= set(split_multi(d.get("sales_client")))
+            reps |= set(split_multi(d.get("sales")))
+            reps |= set(split_multi(d.get("account_mgr")))
         rep_idx = self.seed_named(SalesRep, reps)
 
         # Бренды принадлежат рекламодателю — создаём в паре
@@ -209,8 +218,11 @@ class Loader:
             elif brand_names:
                 self.bump("sales_brands")
 
-            rep_names = split_multi(d["sales"])
+            rep_names = split_multi(d.get("sales_client")) or split_multi(d.get("sales"))
             rep = rep_idx.get(normalize_name(rep_names[0])) if rep_names else None
+
+            acct_names = split_multi(d.get("account_mgr"))
+            acct = rep_idx.get(normalize_name(acct_names[0])) if acct_names else None
 
             values = dict(
                 title=d["title"],
@@ -221,6 +233,7 @@ class Loader:
                 advertiser_id=getattr(adv, "id", None),
                 brand_id=getattr(brand, "id", None),
                 sales_rep_id=getattr(rep, "id", None),
+                account_manager_id=getattr(acct, "id", None),
                 date_create=parse_dt(d["date_create"]),
                 date_modify=parse_dt(d["date_modify"]),
             )

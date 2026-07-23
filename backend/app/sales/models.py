@@ -196,7 +196,11 @@ class SalesDeal(Base):
     # Одиночная ссылка: один медиаплан — один бренд. Несколько брендов дают
     # несколько медиапланов, сливающихся в одно приложение на «Сборе запуска».
     brand_id = Column(Integer, ForeignKey("sales_brands.id"))
+    # Две разные роли, обе из справочника sales_reps и в данных не пересекаются:
+    # продавец закреплён за клиентом (колонка CJ), аккаунт-менеджер ведёт сделку
+    # со «Сбора запуска» и далее (колонка BI «Ответственный КС»).
     sales_rep_id = Column(Integer, ForeignKey("sales_reps.id"))
+    account_manager_id = Column(Integer, ForeignKey("sales_reps.id"))
     annex_id = Column(Integer, ForeignKey("sales_annexes.id"))
     date_create = Column(DateTime)
     date_modify = Column(DateTime)
