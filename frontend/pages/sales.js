@@ -4,7 +4,10 @@ import axios from 'axios'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 
-const api = axios.create({ baseURL: '/api' })
+// indexes: null — массивы уходят повторяющимся ключом (?a=1&a=2), как ждёт FastAPI
+// для List[...]. По умолчанию axios шлёт a[]=1&a[]=2, и такие параметры
+// FastAPI молча игнорирует — фильтры-чекбоксы просто не срабатывают.
+const api = axios.create({ baseURL: '/api', paramsSerializer: { indexes: null } })
 
 const LAYERS = ['планируемые', 'реализуемые', 'фактические']
 const LAYER_COLOR = {
