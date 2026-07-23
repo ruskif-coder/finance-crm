@@ -342,7 +342,10 @@ export default function Advertisers() {
                           <button style={{ ...btn(true), padding: '3px 10px', fontSize: 12, marginRight: 6 }}
                             onClick={save}>Сохранить</button>
                           <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12 }}
-                            onClick={() => { setEditId(null); setForm(EMPTY) }}>Отмена</button>
+                            onClick={() => { setEditId(null); setForm(EMPTY); setError('') }}>Отмена</button>
+                          {/* ошибка сохранения — прямо у строки, а не только вверху страницы */}
+                          {error && <div style={{ color: 'var(--danger)', fontSize: 11.5, marginTop: 4,
+                            whiteSpace: 'normal', maxWidth: 260, textAlign: 'left' }}>{error}</div>}
                         </>
                       ) : mayEdit && (
                         <>

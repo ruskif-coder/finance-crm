@@ -249,7 +249,16 @@ def update_advertiser(advertiser_id: int, data: AdvertiserIn, db: Session = Depe
     # и правка (скажем, только website) не должна обнулять имя и падать 400.
     display = _advertiser_display_name(data)
     name = display or adv.name
-    _reject_duplicate(db, SalesAdvertiser, name, exclude_id=advertiser_id)
+    # Понятное сообщение вместо общего «уже есть»: чаще всего человек пытается
+    # переименовать заглушку в имя существующего рекламодателя — ему нужен перенос
+    # бренда, а не переименование.
+    dup = (db.query(SalesAdvertiser)
+           .filter(func.lower(func.trim(SalesAdvertiser.name)) == normalize_name(name),
+                   SalesAdvertiser.id != advertiser_id).first())
+    if dup:
+        raise HTTPException(status_code=400,
+            detail=f"«{dup.name}» уже есть. Если нужно объединить — перенесите бренды "
+                   f"на него (⇄) или слейте дубли, а не переименовывайте.")
     adv.name = name
     adv.name_en = data.name_en or None
     adv.name_ru = data.name_ru or None
