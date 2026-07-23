@@ -18,6 +18,10 @@ SECTIONS = [
     {"key": "counterparties",    "label": "Контрагенты",        "group": "Справочники", "actions": ["view", "edit", "delete", "view_operations"]},
     {"key": "articles",          "label": "Статьи",             "group": "Справочники", "actions": ["view", "edit"]},
     {"key": "contracts",         "label": "Договоры",           "group": "Справочники", "actions": ["view", "edit"]},
+    # Дашборд продаж. Действие "edit" гейтит принудительную синхронизацию с Битрикс24 —
+    # отдельного действия под неё не заводим, чтобы не плодить сущности в матрице ролей.
+    {"key": "sales_dashboard",   "label": "Дашборд продаж",     "group": "Отчёты",      "actions": ["view", "edit"]},
+    {"key": "sales_directories", "label": "Услуги и бренды",    "group": "Справочники", "actions": ["view", "edit", "delete"]},
 ]
 
 ACTION_FIELDS = {"view": "can_view", "create": "can_create", "edit": "can_edit", "delete": "can_delete", "view_operations": "can_view_operations"}
