@@ -827,6 +827,7 @@ export default function Directories() {
   if (role === 'admin' || can(permissions, 'sales_directories', 'view')) {
     tabs.push({ id: 'advertisers', label: 'Рекламодатели', href: '/advertisers' })
     tabs.push({ id: 'agencies', label: 'Агентства', href: '/agencies' })
+    tabs.push({ id: 'pipelines', label: 'Воронки', href: '/pipelines' })
   }
 
   return (
