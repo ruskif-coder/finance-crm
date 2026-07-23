@@ -244,7 +244,11 @@ def create_advertiser(data: AdvertiserIn, db: Session = Depends(get_db),
 def update_advertiser(advertiser_id: int, data: AdvertiserIn, db: Session = Depends(get_db),
                       current_user: User = Depends(_EDIT)):
     adv = _require(db, SalesAdvertiser, advertiser_id, "Рекламодатель")
-    name = _clean_name(_advertiser_display_name(data))
+    # Отображаемое имя пересобираем из ENG/РУС, только если хоть одно заполнено.
+    # Иначе оставляем прежнее: у импортированных из файла заполнен лишь name,
+    # и правка (скажем, только website) не должна обнулять имя и падать 400.
+    display = _advertiser_display_name(data)
+    name = display or adv.name
     _reject_duplicate(db, SalesAdvertiser, name, exclude_id=advertiser_id)
     adv.name = name
     adv.name_en = data.name_en or None

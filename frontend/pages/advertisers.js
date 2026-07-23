@@ -117,7 +117,7 @@ export default function Advertisers() {
       name_en: a.name_en || '', name_ru: a.name_ru || '', website: a.website || '',
       inn: a.inn || '', exclude_from_revenue: !!a.exclude_from_revenue,
     })
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    // без прокрутки в шапку — правка идёт прямо в строке
   }
 
   const filtered = items.filter(a => {
@@ -155,14 +155,12 @@ export default function Advertisers() {
           <span style={{ fontSize: 12, color: 'var(--muted)' }}>{items.length} записей</span>
         </div>
 
-        {mayEdit && (
+        {mayEdit && !editId && (
           <div style={{
             background: 'var(--bg-card)', border: '1px solid var(--border-card)',
             borderRadius: 'var(--radius-card)', padding: '14px 16px', marginBottom: 16,
           }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>
-              {editId ? 'Редактирование' : 'Новый рекламодатель'}
-            </div>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Новый рекламодатель</div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <input style={{ ...inp, width: 200 }} placeholder="Название ENG"
                 value={form.name_en} onChange={e => setForm({ ...form, name_en: e.target.value })} />
@@ -177,8 +175,7 @@ export default function Advertisers() {
                   onChange={e => setForm({ ...form, exclude_from_revenue: e.target.checked })} />
                 исключить из выручки
               </label>
-              <button style={btn(true)} onClick={save}>{editId ? 'Сохранить' : 'Добавить'}</button>
-              {editId && <button style={btn(false)} onClick={() => { setEditId(null); setForm(EMPTY) }}>Отмена</button>}
+              <button style={btn(true)} onClick={save}>Добавить</button>
             </div>
           </div>
         )}
@@ -232,19 +229,48 @@ export default function Advertisers() {
               <tbody>
                 {filtered.map(a => (
                   <tr key={a.id} style={{ opacity: a.is_active ? 1 : 0.5 }}>
-                    <td style={td}>
-                      {a.name_en || dash}
-                      {a.exclude_from_revenue && (
-                        <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--danger)' }}>не в выручке</span>
-                      )}
-                    </td>
-                    <td style={td}>{a.name_ru || dash}</td>
-                    <td style={td}>
-                      {a.website
-                        ? <a href={a.website.startsWith('http') ? a.website : `https://${a.website}`}
-                             target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>{a.website}</a>
-                        : dash}
-                    </td>
+                    {editId === a.id ? (
+                      <>
+                        <td style={td}>
+                          <input style={{ ...inp, width: 150, padding: '3px 7px' }} placeholder="ENG" autoFocus
+                            value={form.name_en} onChange={e => setForm({ ...form, name_en: e.target.value })} />
+                          {/* исходное имя — ориентир, если ENG/РУС ещё не размечены */}
+                          {a.name && !a.name_en && !a.name_ru && (
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>было: {a.name}</div>
+                          )}
+                        </td>
+                        <td style={td}>
+                          <input style={{ ...inp, width: 150, padding: '3px 7px' }} placeholder="РУС"
+                            value={form.name_ru} onChange={e => setForm({ ...form, name_ru: e.target.value })} />
+                        </td>
+                        <td style={td}>
+                          <input style={{ ...inp, width: 150, padding: '3px 7px' }} placeholder="сайт"
+                            value={form.website} onChange={e => setForm({ ...form, website: e.target.value })} />
+                          <label style={{ fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 5, marginTop: 4 }}>
+                            <input type="checkbox" checked={form.exclude_from_revenue}
+                              onChange={e => setForm({ ...form, exclude_from_revenue: e.target.checked })} />
+                            не в выручке
+                          </label>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td style={td}>
+                          {/* когда ENG/РУС пусты, показываем исходное имя — иначе строка «— / —» неопознаваема */}
+                          {a.name_en || (!a.name_ru && a.name) || dash}
+                          {a.exclude_from_revenue && (
+                            <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--danger)' }}>не в выручке</span>
+                          )}
+                        </td>
+                        <td style={td}>{a.name_ru || dash}</td>
+                        <td style={td}>
+                          {a.website
+                            ? <a href={a.website.startsWith('http') ? a.website : `https://${a.website}`}
+                                 target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>{a.website}</a>
+                            : dash}
+                        </td>
+                      </>
+                    )}
                     <td style={td}>
                       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
                         {(a.brands || []).map(b => (
@@ -311,7 +337,14 @@ export default function Advertisers() {
                       )}
                     </td>
                     <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {mayEdit && (
+                      {mayEdit && editId === a.id ? (
+                        <>
+                          <button style={{ ...btn(true), padding: '3px 10px', fontSize: 12, marginRight: 6 }}
+                            onClick={save}>Сохранить</button>
+                          <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12 }}
+                            onClick={() => { setEditId(null); setForm(EMPTY) }}>Отмена</button>
+                        </>
+                      ) : mayEdit && (
                         <>
                           <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12, marginRight: 6 }}
                             onClick={() => { setExpanded(expanded === a.id ? null : a.id); setBrandName('') }}>
