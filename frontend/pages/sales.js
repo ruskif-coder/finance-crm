@@ -356,7 +356,9 @@ export default function Sales() {
           background: 'var(--bg-card)', border: '1px solid var(--border-card)',
           borderRadius: 'var(--radius-card)', overflow: 'hidden',
         }}>
-          <div style={{ overflowX: 'auto', maxHeight: '62vh' }}>
+          {/* Таблица тянется до низа окна; вычет — на шапку, фильтры и пагинацию.
+              Заголовки sticky, поэтому при прокрутке остаются на месте. */}
+          <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 250px)' }}>
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <thead><tr>{COLUMNS.map(c => (
                 <th key={c.key} style={th(c)} onClick={() => toggleSort(c)}
