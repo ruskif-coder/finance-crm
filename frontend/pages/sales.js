@@ -105,6 +105,26 @@ function MultiSelect({ label, options, selected, onChange }) {
   )
 }
 
+// Поля, редактируемые прямо в строке. key — колонка реестра,
+// opt — ключ справочника из /sales/filters.
+const EDITABLE = {
+  advertiser: { field: 'advertiser_id', opt: 'advertiser_id' },
+  brand: { field: 'brand_id', opt: 'brand_id' },
+  sales_rep: { field: 'sales_rep_id', opt: 'sales_rep_id' },
+  account_manager: { field: 'account_manager_id', opt: 'account_manager_id' },
+  period_from: { field: 'period_from', date: true },
+  period_to: { field: 'period_to', date: true },
+}
+
+const GAP_FIELDS = [
+  { value: 'advertiser_id', label: 'без рекламодателя' },
+  { value: 'brand_id', label: 'без бренда' },
+  { value: 'sales_rep_id', label: 'без продавца' },
+  { value: 'account_manager_id', label: 'без аккаунта' },
+  { value: 'period_from', label: 'без старта РК' },
+  { value: 'period_to', label: 'без конца РК' },
+]
+
 const FILTER_FIELDS = [
   { key: 'money_layer', label: 'Слой денег' },
   { key: 'pipeline', label: 'Воронка' },
@@ -126,6 +146,9 @@ export default function Sales() {
   const [perms, setPerms] = useState({})
   const [pageSize, setPageSize] = useState(100)
   const [sort, setSort] = useState({ key: 'period_from', dir: 'desc' })
+  const [gaps, setGaps] = useState([])
+  const [editing, setEditing] = useState(null)   // { dealId, colKey }
+  const [saving, setSaving] = useState(false)
   const [f, setF] = useState({ date_from: '', date_to: '', search: '' })
   const [options, setOptions] = useState({})
   const [sel, setSel] = useState(
@@ -138,7 +161,22 @@ export default function Sales() {
     // Множественные значения уходят повторяющимися параметрами (?a=1&a=2) —
     // именно так FastAPI собирает List[...] из query string.
     Object.entries(sel).forEach(([k, v]) => { if (v.length) p[k] = v })
+    if (gaps.length) p.gaps = gaps
     return p
+  }
+
+  /** Сохраняет одно поле сделки. Значение сразу помечается как ручное —
+   *  синхронизация его больше не перезапишет. */
+  const saveField = async (dealId, field, value) => {
+    setSaving(true); setError('')
+    try {
+      await api.patch(`/sales/deals/${dealId}`, { [field]: value === '' ? null : value },
+        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+      setEditing(null)
+      await load(offset)
+    } catch (e) {
+      setError(e.response?.data?.detail || 'Не удалось сохранить')
+    } finally { setSaving(false) }
   }
 
   const load = async (newOffset = 0, size = pageSize, s = sort) => {
@@ -202,6 +240,7 @@ export default function Sales() {
   })
 
   const t = summary?.totals
+  const mayEditDeals = can(perms, 'sales_dashboard', 'edit')
 
   return (
     <>
@@ -248,10 +287,12 @@ export default function Sales() {
             <MultiSelect key={x.key} label={x.label} options={options[x.key]}
               selected={sel[x.key]} onChange={v => setSel({ ...sel, [x.key]: v })} />
           ))}
+          <MultiSelect label="Незаполненные" options={GAP_FIELDS} selected={gaps} onChange={setGaps} />
           <button style={btn(true)} onClick={() => load(0)}>Показать</button>
           <button style={btn(false)} onClick={() => {
             setF({ date_from: '', date_to: '', search: '' })
             setSel(Object.fromEntries(FILTER_FIELDS.map(x => [x.key, []])))
+            setGaps([])
             setTimeout(() => load(0), 0)
           }}>Сбросить</button>
           {can(perms, 'sales_dashboard', 'edit') && (
@@ -291,12 +332,51 @@ export default function Sales() {
                       let v = r[c.key]
                       if (c.key === 'amount') v = r.amount === null ? null : fmtMoney(r.amount)
                       if (c.key === 'period_from' || c.key === 'period_to') v = r[c.key] ? fmtDate(r[c.key]) : null
+
+                      const ed = mayEditDeals ? EDITABLE[c.key] : null
+                      const isEditing = editing && editing.dealId === r.id && editing.colKey === c.key
+                      const isManual = (r.manual_fields || []).includes(ed?.field)
+
+                      if (isEditing) {
+                        return (
+                          <td key={c.key} style={td(c)}>
+                            {ed.date ? (
+                              <input type="date" autoFocus disabled={saving}
+                                defaultValue={r[c.key] ? String(r[c.key]).slice(0, 10) : ''}
+                                style={{ ...inputStyle, width: '100%', padding: '3px 6px' }}
+                                onBlur={e => saveField(r.id, ed.field, e.target.value)} />
+                            ) : (
+                              <select autoFocus disabled={saving}
+                                defaultValue={r[ed.field] ?? ''}
+                                style={{ ...inputStyle, width: '100%', padding: '3px 6px' }}
+                                onChange={e => saveField(r.id, ed.field,
+                                  e.target.value === '' ? null : Number(e.target.value))}
+                                onBlur={() => setEditing(null)}>
+                                <option value="">— не задано —</option>
+                                {(options[ed.opt] || []).map(o => (
+                                  <option key={o.value} value={o.value}>{o.label}</option>
+                                ))}
+                              </select>
+                            )}
+                          </td>
+                        )
+                      }
+
                       return (
-                        <td key={c.key} style={{
-                          ...td(c),
-                          color: c.key === 'money_layer' ? LAYER_COLOR[r.money_layer] : undefined,
-                          fontWeight: c.key === 'money_layer' ? 600 : undefined,
-                        }} title={typeof v === 'string' ? v : undefined}>{cell(v)}</td>
+                        <td key={c.key}
+                          onClick={() => ed && setEditing({ dealId: r.id, colKey: c.key })}
+                          style={{
+                            ...td(c),
+                            color: c.key === 'money_layer' ? LAYER_COLOR[r.money_layer] : undefined,
+                            fontWeight: c.key === 'money_layer' ? 600 : undefined,
+                            cursor: ed ? 'pointer' : undefined,
+                            // Ручная правка помечена: синхронизация её не тронет
+                            borderLeft: isManual ? '2px solid var(--accent)' : undefined,
+                          }}
+                          title={isManual ? 'Заполнено вручную — синхронизация не перезапишет'
+                            : (ed ? 'Нажмите, чтобы изменить' : (typeof v === 'string' ? v : undefined))}>
+                          {cell(v)}
+                        </td>
                       )
                     })}
                   </tr>
