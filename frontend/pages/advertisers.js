@@ -21,8 +21,38 @@ export default function Advertisers() {
   const [editId, setEditId] = useState(null)
   const [expanded, setExpanded] = useState(null)
   const [brandName, setBrandName] = useState('')
+  const [dupes, setDupes] = useState([])
+  const [showDupes, setShowDupes] = useState(false)
 
   const mayEdit = can(perms, 'sales_directories', 'edit')
+
+  const loadDupes = async () => {
+    try {
+      const r = await api.get('/sales/directories/advertisers/duplicates', auth())
+      setDupes(r.data.pairs); setShowDupes(true)
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить дубли') }
+  }
+
+  // keepId остаётся, dropId вливается и исчезает
+  const merge = async (keepId, dropId, keepName, dropName) => {
+    if (!window.confirm(`Влить «${dropName}» в «${keepName}»?\n\nБренды и сделки перейдут на «${keepName}», «${dropName}» будет удалён.`)) return
+    setError('')
+    try {
+      const r = await api.post(`/sales/directories/advertisers/${keepId}/merge`, { source_id: dropId }, auth())
+      flash(r.data.message)
+      setDupes(dupes.filter(p => !(p.keep.id === keepId && p.drop.id === dropId) && !(p.keep.id === dropId && p.drop.id === keepId)))
+      load()
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось слить') }
+  }
+
+  const deleteBrand = async (brandId, name) => {
+    if (!window.confirm(`Удалить бренд «${name}»? Сделки, ссылавшиеся на него, потеряют бренд.`)) return
+    setError('')
+    try {
+      const r = await api.delete(`/sales/directories/brands/${brandId}/hard`, auth())
+      flash(r.data.message); load()
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось удалить бренд') }
+  }
 
   const load = async () => {
     setLoading(true); setError('')
@@ -106,6 +136,9 @@ export default function Advertisers() {
 
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 16 }}>
           <h1 style={{ fontSize: 19, fontWeight: 600, margin: 0 }}>Рекламодатели</h1>
+          {mayEdit && <button style={btn(false)} onClick={() => showDupes ? setShowDupes(false) : loadDupes()}>
+            {showDupes ? 'Скрыть дубли' : 'Найти дубли'}
+          </button>}
           <span style={{ fontSize: 12, color: 'var(--muted)' }}>{items.length} записей</span>
         </div>
 
@@ -134,6 +167,31 @@ export default function Advertisers() {
               <button style={btn(true)} onClick={save}>{editId ? 'Сохранить' : 'Добавить'}</button>
               {editId && <button style={btn(false)} onClick={() => { setEditId(null); setForm(EMPTY) }}>Отмена</button>}
             </div>
+          </div>
+        )}
+
+        {showDupes && (
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)',
+            borderRadius: 'var(--radius-card)', padding: '12px 14px', marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+              Возможные дубли ({dupes.length}) — проверьте каждую пару, направление можно поменять
+            </div>
+            {!dupes.length && <div style={{ fontSize: 13, color: 'var(--muted)' }}>Дублей не найдено</div>}
+            {dupes.map((p, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                padding: '6px 0', borderBottom: '1px solid var(--border-row)', fontSize: 13 }}>
+                <span style={{ flex: 1, minWidth: 260 }}>
+                  оставить <b>{p.keep.name}</b> <span style={{ color: 'var(--muted)' }}>({p.keep.brands} бр.)</span>
+                  {' ← '}
+                  влить <b>{p.drop.name}</b> <span style={{ color: 'var(--muted)' }}>({p.drop.brands} бр.)</span>
+                </span>
+                <button style={{ ...btn(true), padding: '4px 12px', fontSize: 12 }}
+                  onClick={() => merge(p.keep.id, p.drop.id, p.keep.name, p.drop.name)}>Слить →</button>
+                <button style={{ ...btn(false), padding: '4px 12px', fontSize: 12 }}
+                  onClick={() => merge(p.drop.id, p.keep.id, p.drop.name, p.keep.name)}
+                  title="Поменять направление: оставить другого">⇄</button>
+              </div>
+            ))}
           </div>
         )}
 
@@ -179,8 +237,12 @@ export default function Advertisers() {
                         {(a.brands || []).map(b => (
                           <span key={b.id} style={{
                             background: 'var(--bg-subtle)', borderRadius: 'var(--radius-badge)',
-                            padding: '2px 8px', fontSize: 12,
-                          }}>{b.name}</span>
+                            padding: '2px 8px', fontSize: 12, display: 'inline-flex', gap: 6, alignItems: 'center',
+                          }}>
+                            {b.name}
+                            {mayEdit && <span style={{ cursor: 'pointer', color: 'var(--danger)', fontWeight: 700 }}
+                              onClick={() => deleteBrand(b.id, b.name)} title="Удалить бренд">×</span>}
+                          </span>
                         ))}
                         {!a.brands?.length && dash}
                       </div>

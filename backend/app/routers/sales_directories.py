@@ -477,6 +477,123 @@ def deactivate_agency(agency_id: int, db: Session = Depends(get_db),
     return {"message": "Агентство скрыто из справочника"}
 
 
+# ==================== Слияние дублей рекламодателей ====================
+
+class MergeIn(BaseModel):
+    source_id: int   # кого вливаем (исчезнет)
+
+
+@router.get("/advertisers/duplicates")
+def advertiser_duplicates(db: Session = Depends(get_db),
+                          current_user: User = Depends(_VIEW)):
+    """Предлагает пары возможных дублей рекламодателей по совпадению
+    русского или латинского ядра имени. Только предложение — слияние
+    подтверждает человек, автоматически не склеиваем."""
+    import re
+
+    def cores(a):
+        out = set()
+        for v in (a.name, a.name_en, a.name_ru):
+            if not v:
+                continue
+            for part in re.split(r"[(/,]", v):
+                lat = re.sub(r"[^a-z0-9]", "", part.lower())
+                rus = re.sub(r"[^а-я0-9]", "", part.lower())
+                if len(lat) >= 4:
+                    out.add(("lat", lat))
+                if len(rus) >= 4:
+                    out.add(("rus", rus))
+        return out
+
+    advs = db.query(SalesAdvertiser).all()
+    brand_counts = dict(db.query(SalesBrand.advertiser_id, func.count(SalesBrand.id))
+                        .group_by(SalesBrand.advertiser_id).all())
+    adv_cores = [(a, cores(a)) for a in advs]
+
+    def related(ca, cb):
+        """Совпадение ядер: равенство или префикс (одно — начало другого),
+        в пределах одного алфавита. Префикс ловит «биннофарм» ⊂ «биннофармгрупп»."""
+        for alpha, x in ca:
+            for beta, y in cb:
+                if alpha != beta:
+                    continue
+                if x == y:
+                    return x
+                short, long = (x, y) if len(x) <= len(y) else (y, x)
+                if len(short) >= 5 and long.startswith(short):
+                    return short
+        return None
+
+    seen_pairs = set()
+    pairs = []
+    for i in range(len(adv_cores)):
+        a, ca = adv_cores[i]
+        for j in range(i + 1, len(adv_cores)):
+            b, cb = adv_cores[j]
+            m = related(ca, cb)
+            if not m:
+                continue
+            key = (a.id, b.id)
+            if key in seen_pairs:
+                continue
+            seen_pairs.add(key)
+            keep, drop = (a, b) if brand_counts.get(a.id, 0) >= brand_counts.get(b.id, 0) else (b, a)
+            pairs.append({
+                "keep": {"id": keep.id, "name": keep.name, "brands": brand_counts.get(keep.id, 0)},
+                "drop": {"id": drop.id, "name": drop.name, "brands": brand_counts.get(drop.id, 0)},
+                "matched_on": m,
+            })
+    pairs.sort(key=lambda p: -(p["keep"]["brands"] + p["drop"]["brands"]))
+    return {"pairs": pairs}
+
+
+@router.post("/advertisers/{target_id}/merge")
+def merge_advertiser(target_id: int, data: MergeIn, db: Session = Depends(get_db),
+                     current_user: User = Depends(_EDIT)):
+    """Вливает source в target: бренды переносятся (дубли по имени схлопываются),
+    сделки и ручные правки переуказываются на target, source удаляется."""
+    if data.source_id == target_id:
+        raise HTTPException(status_code=400, detail="Нельзя слить рекламодателя с самим собой")
+    target = _require(db, SalesAdvertiser, target_id, "Рекламодатель (цель)")
+    source = _require(db, SalesAdvertiser, data.source_id, "Рекламодатель (источник)")
+
+    # Всё через bulk-UPDATE по id, без ORM-мутаций: если двигать бренды присвоением
+    # атрибута, relationship SalesAdvertiser.brands при удалении источника обнулит
+    # им advertiser_id (NOT NULL → падение). Bulk-запросы этого не задевают.
+    dropped_name = source.name
+    tgt_brands = {normalize_name(b.name): b.id for b in
+                  db.query(SalesBrand).filter(SalesBrand.advertiser_id == target_id).all()}
+    moved_brands = 0
+    for b in db.query(SalesBrand).filter(SalesBrand.advertiser_id == data.source_id).all():
+        twin_id = tgt_brands.get(normalize_name(b.name))
+        if twin_id:
+            # бренд-дубль: сделки перецепляем на бренд target, дубль удаляем
+            db.query(SalesDeal).filter(SalesDeal.brand_id == b.id).update(
+                {SalesDeal.brand_id: twin_id}, synchronize_session=False)
+            db.query(SalesBrand).filter(SalesBrand.id == b.id).delete(synchronize_session=False)
+        else:
+            db.query(SalesBrand).filter(SalesBrand.id == b.id).update(
+                {SalesBrand.advertiser_id: target_id}, synchronize_session=False)
+            tgt_brands[normalize_name(b.name)] = b.id
+            moved_brands += 1
+
+    from app.sales.models import SalesDealFieldOverride
+    deals_moved = (db.query(SalesDeal).filter(SalesDeal.advertiser_id == data.source_id)
+                   .update({SalesDeal.advertiser_id: target_id}, synchronize_session=False))
+    db.query(SalesDealFieldOverride).filter(
+        SalesDealFieldOverride.field_name == "advertiser_id",
+        SalesDealFieldOverride.value_int == data.source_id).update(
+        {SalesDealFieldOverride.value_int: target_id}, synchronize_session=False)
+
+    db.query(SalesAdvertiser).filter(SalesAdvertiser.id == data.source_id).delete(
+        synchronize_session=False)
+    db.commit()
+    log_action(db, current_user, "merge_advertiser", "sales_advertiser", target_id,
+               f"влит «{dropped_name}»: брендов +{moved_brands}, сделок {deals_moved}")
+    return {"message": f"«{dropped_name}» влит в «{target.name}»: "
+                       f"брендов перенесено {moved_brands}, сделок {deals_moved}"}
+
+
 # ============================== Бренды ==============================
 
 @router.get("/brands")
@@ -508,6 +625,23 @@ def create_brand(data: BrandIn, db: Session = Depends(get_db),
     db.refresh(brand)
     log_action(db, current_user, "create_sales_brand", "sales_brand", brand.id, name)
     return {"id": brand.id, "message": "Бренд создан"}
+
+
+@router.delete("/brands/{brand_id}/hard")
+def delete_brand_hard(brand_id: int, db: Session = Depends(get_db),
+                      current_user: User = Depends(_DELETE)):
+    """Физически удаляет бренд — для мусорных записей (склеенные списки,
+    дубли регистра). Сделки, ссылавшиеся на него, теряют ссылку (brand_id=NULL),
+    а не блокируют удаление: мусорный бренд не должен цепляться за данные."""
+    brand = _require(db, SalesBrand, brand_id, "Бренд")
+    freed = (db.query(SalesDeal).filter(SalesDeal.brand_id == brand_id)
+             .update({SalesDeal.brand_id: None}, synchronize_session=False))
+    name = brand.name
+    db.delete(brand)
+    db.commit()
+    log_action(db, current_user, "delete_brand_hard", "sales_brand", brand_id,
+               f"{name}: освобождено сделок {freed}")
+    return {"message": f"Бренд «{name}» удалён (сделок освобождено: {freed})"}
 
 
 @router.put("/brands/{brand_id}")
