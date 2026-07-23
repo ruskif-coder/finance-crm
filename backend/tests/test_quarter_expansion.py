@@ -21,6 +21,10 @@ def test_non_quarter_row_passes_through_unchanged():
         "bank": "АльфаБанк",
         "total_income": 1000,
         "total_expense": 400,
+        # Счётчики операций добавлены в expand_quarter_rows позже сумм; входная строка
+        # их не несёт, функция читает через getattr с умолчанием 0.
+        "income_count": 0,
+        "expense_count": 0,
     }]
 
 
@@ -56,7 +60,8 @@ def test_none_amounts_in_quarter_row_treated_as_zero():
 def test_empty_period_passes_through():
     rows = [_row(None, total_income=50, total_expense=0)]
     result = expand_quarter_rows(rows)
-    assert result == [{"period": "", "bank": "АльфаБанк", "total_income": 50, "total_expense": 0}]
+    assert result == [{"period": "", "bank": "АльфаБанк", "total_income": 50, "total_expense": 0,
+                       "income_count": 0, "expense_count": 0}]
 
 
 def test_multiple_rows_mixed():
