@@ -18,14 +18,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, and_
 from sqlalchemy.orm import Session, aliased
 from typing import Optional, List, Annotated
+from pydantic import BaseModel
+from datetime import date, datetime
 import os
 import re
 
 from app.database import get_db
 from app.models import User, Counterparty
 from app.permissions import require_permission
+from app.audit import log_action
 from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
-                              SalesRep, SalesBrand, SalesBitrixSyncLog)
+                              SalesRep, SalesBrand, SalesBitrixSyncLog,
+                              SalesDealFieldOverride)
 
 router = APIRouter()
 
@@ -181,6 +185,7 @@ def deals_registry(
     brand_id: Annotated[Optional[List[int]], Query()] = None,
     money_layer: Annotated[Optional[List[str]], Query()] = None,
     search: Optional[str] = None,
+    gaps: Annotated[Optional[List[str]], Query()] = None,
     sort: str = "period_from",
     direction: str = "desc",
     limit: int = 100,
@@ -201,6 +206,21 @@ def deals_registry(
         pattern = f"%{search.strip()}%"
         q = q.filter(or_(SalesDeal.title.ilike(pattern),
                          SalesDeal.bitrix_id.ilike(pattern)))
+
+    # Фильтр «незаполненные»: показать только сделки с пробелами в этих полях.
+    # Несколько значений складываются по «или» — «покажи всё, где чего-то не хватает».
+    if gaps:
+        gap_columns = {
+            "advertiser_id": SalesDeal.advertiser_id,
+            "brand_id": SalesDeal.brand_id,
+            "sales_rep_id": SalesDeal.sales_rep_id,
+            "account_manager_id": SalesDeal.account_manager_id,
+            "period_from": SalesDeal.period_from,
+            "period_to": SalesDeal.period_to,
+        }
+        conds = [gap_columns[g].is_(None) for g in gaps if g in gap_columns]
+        if conds:
+            q = q.filter(or_(*conds))
 
     total = q.count()
 
@@ -240,6 +260,15 @@ def deals_registry(
     brands = dict(db.query(SalesBrand.id, SalesBrand.name).all())
     cps = dict(db.query(Counterparty.id, Counterparty.name).all())
 
+    # Какие поля на этой странице заполнены вручную — чтобы интерфейс их пометил
+    # и было видно, что синхронизация их не тронет.
+    page_ids = [d.id for d, _ in rows]
+    manual = {}
+    if page_ids:
+        for o in (db.query(SalesDealFieldOverride)
+                  .filter(SalesDealFieldOverride.deal_id.in_(page_ids)).all()):
+            manual.setdefault(o.deal_id, []).append(o.field_name)
+
     return {
         "total": total,
         "limit": limit,
@@ -263,8 +292,100 @@ def deals_registry(
             "annex_id": d.annex_id,
             "date_create": d.date_create,
             "date_modify": d.date_modify,
+            # id нужны интерфейсу для выпадающих списков при правке
+            "advertiser_id": d.advertiser_id,
+            "brand_id": d.brand_id,
+            "sales_rep_id": d.sales_rep_id,
+            "account_manager_id": d.account_manager_id,
+            "manual_fields": manual.get(d.id, []),
         } for d, layer in rows],
     }
+
+
+class DealPatch(BaseModel):
+    """Ручная правка полей сделки. Передаются только изменяемые поля.
+    Значение None означает «очистить», отсутствие ключа — «не трогать»."""
+    advertiser_id: Optional[int] = None
+    brand_id: Optional[int] = None
+    sales_rep_id: Optional[int] = None
+    account_manager_id: Optional[int] = None
+    period_from: Optional[date] = None
+    period_to: Optional[date] = None
+
+
+# Поля, доступные ручной правке. Расширять осознанно: каждое попадёт
+# в очередь на заливку в Битрикс.
+EDITABLE_INT = ("advertiser_id", "brand_id", "sales_rep_id", "account_manager_id")
+EDITABLE_DATE = ("period_from", "period_to")
+
+
+@router.patch("/deals/{deal_id}")
+def patch_deal(
+    deal_id: int,
+    payload: DealPatch,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("sales_dashboard", "edit")),
+):
+    """Правит поля сделки у нас и помечает их как заполненные вручную.
+
+    Помеченные поля синхронизация не перезаписывает, а заливка в Битрикс
+    берёт их по признаку pushed_at IS NULL."""
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+
+    # exclude_unset: отличаем «поле не прислали» от «прислали null, очисти».
+    changes = payload.dict(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=400, detail="Не передано ни одного поля")
+
+    existing = {o.field_name: o for o in db.query(SalesDealFieldOverride)
+                .filter(SalesDealFieldOverride.deal_id == deal_id).all()}
+
+    for field, value in changes.items():
+        if field not in EDITABLE_INT + EDITABLE_DATE:
+            raise HTTPException(status_code=400, detail=f"Поле «{field}» не редактируется")
+
+        setattr(deal, field, value)
+
+        row = existing.get(field)
+        if row is None:
+            row = SalesDealFieldOverride(deal_id=deal_id, field_name=field)
+            db.add(row)
+        row.value_int = value if field in EDITABLE_INT else None
+        row.value_text = value.isoformat() if (field in EDITABLE_DATE and value) else None
+        row.set_by = current_user.id if current_user else None
+        row.set_at = datetime.utcnow()
+        # Правка снова становится неотправленной: значение изменилось,
+        # прошлая отправка в Битрикс больше не актуальна.
+        row.pushed_at = None
+
+    db.commit()
+    log_action(db, current_user, "patch_sales_deal", "sales_deal", deal_id,
+               ", ".join(changes.keys()))
+    return {"message": "Сохранено", "fields": list(changes.keys())}
+
+
+@router.delete("/deals/{deal_id}/overrides/{field_name}")
+def drop_override(
+    deal_id: int,
+    field_name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("sales_dashboard", "edit")),
+):
+    """Снимает ручную пометку: поле возвращается под управление синхронизации.
+
+    Само значение не откатывается — оно вернётся при следующем прогоне
+    из источника. Это и есть механизм отката."""
+    row = (db.query(SalesDealFieldOverride)
+           .filter(SalesDealFieldOverride.deal_id == deal_id,
+                   SalesDealFieldOverride.field_name == field_name).first())
+    if not row:
+        raise HTTPException(status_code=404, detail="Ручная правка по этому полю не найдена")
+    db.delete(row)
+    db.commit()
+    log_action(db, current_user, "drop_sales_override", "sales_deal", deal_id, field_name)
+    return {"message": "Поле возвращено под управление синхронизации"}
 
 
 @router.get("/filters")

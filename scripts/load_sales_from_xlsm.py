@@ -30,7 +30,7 @@ from app.database import SessionLocal  # noqa: E402
 from app import models as core_models  # noqa: E402,F401
 from app.sales.models import (SalesPipeline, SalesBitrixStageMap, SalesService,  # noqa: E402
                               SalesAdvertiser, SalesBrand, SalesRep, SalesDeal,
-                              SalesBitrixRaw)
+                              SalesBitrixRaw, SalesDealFieldOverride)
 from app.sales.normalize import normalize_name  # noqa: E402
 from app.sales.bitrix_client import payload_hash  # noqa: E402
 
@@ -275,6 +275,11 @@ class Loader:
             self.db.flush()
 
         deal_idx = {d.bitrix_id: d for d in self.db.query(SalesDeal).all()}
+
+        # Карта защищённых полей: {deal_id: {'advertiser_id', 'period_from', ...}}
+        overrides = {}
+        for o in self.db.query(SalesDealFieldOverride).all():
+            overrides.setdefault(o.deal_id, set()).add(o.field_name)
         raw_hashes = {(r.bitrix_id, r.payload_hash) for r in
                       self.db.query(SalesBitrixRaw).filter(SalesBitrixRaw.entity == "deal").all()}
 
@@ -333,9 +338,15 @@ class Loader:
                     self.db.add(SalesDeal(bitrix_id=bid, **values))
             else:
                 self.bump("deals_updated")
+                # Поля, заполненные человеком у нас, синхронизация не трогает.
+                # Иначе ручная стандартизация пропадает на первом же прогоне.
+                protected = overrides.get(existing.id, set())
+                if protected:
+                    self.bump("полей_защищено_от_затирания", len(protected))
                 if not self.dry:
                     for k, v in values.items():
-                        setattr(existing, k, v)
+                        if k not in protected:
+                            setattr(existing, k, v)
 
             # Append-only слой сырья: версия пишется только при смене хеша
             h = payload_hash(d)

@@ -218,6 +218,34 @@ class SalesDeal(Base):
     synced_at = Column(DateTime, server_default=func.now())
 
 
+class SalesDealFieldOverride(Base):
+    """Поле сделки, заполненное человеком у нас, а не пришедшее из Битрикса.
+
+    Три задачи одной таблицей:
+    1. Синхронизация не затирает ручной ввод — поле со строкой правки не трогается.
+       Тот же принцип, что у контрагентов в финмодуле («ручной ввод никогда
+       не перезатирается», см. docs/INTEGRATION_SPEC.md раздел 3.1).
+    2. Видно авторство и время правки.
+    3. Заливка в Битрикс берёт строки с pushed_at IS NULL — сравнивать ничего
+       не нужно, задвоить отправку нельзя.
+
+    Значение дублируется в саму sales_deals, чтобы реестр и витрина работали
+    обычными запросами без джойна на правки.
+
+    Удаление строки правки возвращает поле под управление синхронизации —
+    это и есть механизм отката."""
+    __tablename__ = "sales_deal_field_overrides"
+    __table_args__ = (UniqueConstraint("deal_id", "field_name"),)
+    id = Column(Integer, primary_key=True)
+    deal_id = Column(Integer, ForeignKey("sales_deals.id", ondelete="CASCADE"), nullable=False)
+    field_name = Column(String, nullable=False)
+    value_int = Column(Integer)    # для ссылок: advertiser_id, brand_id, sales_rep_id...
+    value_text = Column(String)    # для дат и строк: period_from, period_to
+    set_by = Column(Integer, ForeignKey("users.id"))
+    set_at = Column(DateTime, server_default=func.now())
+    pushed_at = Column(DateTime)   # NULL = в Битрикс ещё не отправлено
+
+
 class SalesAnnexItem(Base):
     """Состав микса: бренд × услуга × сумма × период размещения.
     period_to = NULL означает календарный месяц period_from."""
