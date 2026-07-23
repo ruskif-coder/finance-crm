@@ -54,6 +54,25 @@ export default function Advertisers() {
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось удалить бренд') }
   }
 
+  // Переименование и перенос — один эндпойнт PUT /brands/{id} (name + advertiser_id)
+  const saveBrand = async (brandId, name, advertiserId) => {
+    setError('')
+    try {
+      await api.put(`/sales/directories/brands/${brandId}`, { name, advertiser_id: advertiserId }, auth())
+      setEditBrand(null); load()
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось сохранить бренд') }
+  }
+
+  const [editBrand, setEditBrand] = useState(null)   // { id, name }
+  const [drag, setDrag] = useState(null)             // перетаскиваемый бренд
+  const [dragOver, setDragOver] = useState(null)     // id рекламодателя-цели
+
+  const dropOnAdvertiser = (advertiserId) => {
+    if (!drag || drag.advertiserId === advertiserId) { setDrag(null); setDragOver(null); return }
+    saveBrand(drag.id, drag.name, advertiserId)
+    setDrag(null); setDragOver(null)
+  }
+
   const load = async () => {
     setLoading(true); setError('')
     try {
@@ -219,7 +238,13 @@ export default function Advertisers() {
               <tbody>
                 {filtered.map(a => (
                   <tr key={a.id} style={{ opacity: a.is_active ? 1 : 0.5 }}>
-                    <td style={td}>
+                    {/* Ячейка имени — зона сброса бренда: перетащил бренд сюда → он переехал */}
+                    <td style={{ ...td,
+                        background: dragOver === a.id ? 'var(--accent-tint)' : undefined,
+                        outline: dragOver === a.id ? '2px dashed var(--accent)' : undefined }}
+                      onDragOver={e => { if (drag) { e.preventDefault(); setDragOver(a.id) } }}
+                      onDragLeave={() => setDragOver(d => d === a.id ? null : d)}
+                      onDrop={() => dropOnAdvertiser(a.id)}>
                       {a.name_en || dash}
                       {a.exclude_from_revenue && (
                         <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--danger)' }}>не в выручке</span>
@@ -235,14 +260,31 @@ export default function Advertisers() {
                     <td style={td}>
                       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
                         {(a.brands || []).map(b => (
-                          <span key={b.id} style={{
-                            background: 'var(--bg-subtle)', borderRadius: 'var(--radius-badge)',
-                            padding: '2px 8px', fontSize: 12, display: 'inline-flex', gap: 6, alignItems: 'center',
-                          }}>
-                            {b.name}
-                            {mayEdit && <span style={{ cursor: 'pointer', color: 'var(--danger)', fontWeight: 700 }}
-                              onClick={() => deleteBrand(b.id, b.name)} title="Удалить бренд">×</span>}
-                          </span>
+                          editBrand?.id === b.id ? (
+                            <input key={b.id} autoFocus defaultValue={b.name}
+                              style={{ ...inp, width: 150, padding: '2px 6px', fontSize: 12 }}
+                              onBlur={e => saveBrand(b.id, e.target.value, a.id)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') saveBrand(b.id, e.target.value, a.id)
+                                if (e.key === 'Escape') setEditBrand(null)
+                              }} />
+                          ) : (
+                            <span key={b.id}
+                              draggable={mayEdit}
+                              onDragStart={() => setDrag({ id: b.id, name: b.name, advertiserId: a.id })}
+                              onDragEnd={() => { setDrag(null); setDragOver(null) }}
+                              onDoubleClick={() => mayEdit && setEditBrand({ id: b.id, name: b.name })}
+                              title={mayEdit ? 'Двойной клик — переименовать, тащить — перенести' : b.name}
+                              style={{
+                                background: 'var(--bg-subtle)', borderRadius: 'var(--radius-badge)',
+                                padding: '2px 8px', fontSize: 12, display: 'inline-flex', gap: 6, alignItems: 'center',
+                                cursor: mayEdit ? 'grab' : 'default',
+                              }}>
+                              {b.name}
+                              {mayEdit && <span style={{ cursor: 'pointer', color: 'var(--danger)', fontWeight: 700 }}
+                                onClick={() => deleteBrand(b.id, b.name)} title="Удалить бренд">×</span>}
+                            </span>
+                          )
                         ))}
                         {!a.brands?.length && dash}
                       </div>
