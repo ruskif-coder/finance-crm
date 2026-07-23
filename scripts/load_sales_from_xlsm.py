@@ -74,7 +74,18 @@ STAGE_MAP = [
     ("БЕЗ СДЕЛКИ", "удалить", "deleted", "планируемые", False),
 ]
 
-_SPLIT = re.compile(r"[;,/|]| и ")
+# Разделители списка — только ';', '|' и перевод строки.
+# Запятая и слэш НЕ разделители: они встречаются внутри самих названий
+# («AVVA Pharmaceuticals (АВВА Фармасьютикалс, Россия)»,
+#  «Digital alliance / Диджитал Альянс»). Разбор по ним резал имена
+# на фрагменты и плодил мусор в справочнике.
+_SPLIT = re.compile(r"[;|\n\r]+")
+
+# «[L]ACINO (Ацино)» -> ('ACINO', 'Ацино'). Префикс [L] приходит из поля
+# «Рекламодатель = Лид» в Битриксе и в названии не нужен.
+_LEAD_PREFIX = re.compile(r"^\s*\[L\]\s*", re.IGNORECASE)
+_EN_RU = re.compile(r"^(?P<en>[^(]+?)\s*\((?P<ru>[^)]*)\)?\s*$")
+_CYRILLIC = re.compile(r"[А-Яа-яЁё]")
 
 
 def split_multi(raw):
@@ -82,6 +93,29 @@ def split_multi(raw):
     if not raw:
         return []
     return [p.strip() for p in _SPLIT.split(str(raw)) if p and p.strip()]
+
+
+def parse_advertiser_name(raw):
+    """Разбирает «[L]ACINO (Ацино)» на английское и русское названия.
+
+    Возвращает (полное_имя_без_префикса, name_en, name_ru). Если разобрать
+    не удалось — имя целиком кладётся в ту графу, которой соответствует
+    его алфавит, а вторая остаётся пустой: выдумывать перевод нельзя."""
+    name = _LEAD_PREFIX.sub("", str(raw or "")).strip()
+    if not name:
+        return "", None, None
+
+    m = _EN_RU.match(name)
+    if m:
+        en, ru = m.group("en").strip(), m.group("ru").strip()
+        # Скобка могла содержать не перевод, а уточнение («неизвестен РД»).
+        # Считаем переводом только кириллический хвост при латинском начале.
+        if en and ru and _CYRILLIC.search(ru) and not _CYRILLIC.search(en):
+            return name, en, ru
+
+    if _CYRILLIC.search(name):
+        return name, None, name
+    return name, name, None
 
 
 def parse_dt(v):
@@ -186,11 +220,26 @@ class Loader:
             services |= set(split_multi(d["products"]))
         svc_idx = self.seed_named(SalesService, services)
 
-        # Рекламодатели: поле «Рекламодатель = Лид», иначе «Компания»
-        advertisers = set()
+        # Рекламодатели: поле «Рекламодатель = Лид». Имя очищается от префикса [L]
+        # и разбирается на английское/русское написание.
+        adv_parsed = {}
         for d in deals:
-            advertisers |= set(split_multi(d["advertiser"]))
-        adv_idx = self.seed_named(SalesAdvertiser, advertisers)
+            for raw in split_multi(d["advertiser"]):
+                name, en, ru = parse_advertiser_name(raw)
+                if name:
+                    adv_parsed[normalize_name(name)] = (name, en, ru)
+
+        adv_idx = self._index(SalesAdvertiser)
+        for key, (name, en, ru) in sorted(adv_parsed.items()):
+            if key in adv_idx:
+                continue
+            self.bump("sales_advertisers")
+            obj = SalesAdvertiser(name=name, name_en=en, name_ru=ru)
+            adv_idx[key] = obj
+            if not self.dry:
+                self.db.add(obj)
+        if not self.dry:
+            self.db.flush()
 
         # Продавец берётся из «Ответственный Sales за клиента» (CJ), запасной
         # источник — «Sales» (BH, заполнена лишь в 7% строк и является подмножеством CJ).
@@ -219,7 +268,8 @@ class Loader:
             adv = None
             adv_names = split_multi(d["advertiser"])
             if adv_names:
-                adv = adv_idx.get(normalize_name(adv_names[0]))
+                clean, _, _ = parse_advertiser_name(adv_names[0])
+                adv = adv_idx.get(normalize_name(clean))
 
             brand = None
             brand_names = split_multi(d["brands_list"]) or split_multi(d["brand_manuf"])

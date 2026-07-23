@@ -40,7 +40,13 @@ class SalesService(Base):
 class SalesAdvertiser(Base):
     __tablename__ = "sales_advertisers"
     id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False, unique=True)
+    name = Column(String, nullable=False, unique=True)  # как пришло из источника, без префикса [L]
+    # Разбирается из формата «ACINO (Ацино)». Если разобрать не удалось —
+    # заполняется та графа, которой соответствует алфавит имени, вторая остаётся
+    # пустой: выдумывать перевод нельзя.
+    name_en = Column(String)
+    name_ru = Column(String)
+    website = Column(String)
     # NULL намеренно: рекламодатель и плательщик — разные сущности.
     # Пусто = платит агентство, нормальное состояние, а не пропуск данных.
     counterparty_id = Column(Integer, ForeignKey("counterparties.id"))

@@ -49,11 +49,25 @@ class ServiceGroupIn(BaseModel):
 
 
 class AdvertiserIn(BaseModel):
-    name: str
+    name: Optional[str] = None       # если не задано — собирается из name_en/name_ru
+    name_en: Optional[str] = None
+    name_ru: Optional[str] = None
+    website: Optional[str] = None
     counterparty_id: Optional[int] = None
     inn: Optional[str] = None
     exclude_from_revenue: bool = False
     note: Optional[str] = None
+
+
+def _advertiser_display_name(data: "AdvertiserIn") -> str:
+    """Отображаемое имя: «ENG (РУС)», либо то из двух, что заполнено.
+    Явно переданное name имеет приоритет — им можно переопределить сборку."""
+    if (data.name or "").strip():
+        return data.name.strip()
+    en, ru = (data.name_en or "").strip(), (data.name_ru or "").strip()
+    if en and ru:
+        return f"{en} ({ru})"
+    return en or ru
 
 
 class BrandIn(BaseModel):
@@ -184,21 +198,34 @@ def list_advertisers(only_active: bool = True, db: Session = Depends(get_db),
     if only_active:
         q = q.filter(SalesAdvertiser.is_active.is_(True))
     rows = q.order_by(SalesAdvertiser.name).all()
-    return {"items": [{"id": a.id, "name": a.name, "inn": a.inn,
-                       "counterparty_id": a.counterparty_id,
+
+    # Бренды подтягиваются одним запросом и раскладываются по рекламодателям:
+    # запрос на каждого дал бы 167 обращений к БД на одну отрисовку списка.
+    brands = db.query(SalesBrand).filter(SalesBrand.is_active.is_(True)).order_by(SalesBrand.name).all()
+    by_adv = {}
+    for b in brands:
+        by_adv.setdefault(b.advertiser_id, []).append({"id": b.id, "name": b.name})
+
+    return {"items": [{"id": a.id, "name": a.name,
+                       "name_en": a.name_en, "name_ru": a.name_ru, "website": a.website,
+                       "inn": a.inn, "counterparty_id": a.counterparty_id,
                        "exclude_from_revenue": a.exclude_from_revenue,
-                       "is_active": a.is_active} for a in rows]}
+                       "is_active": a.is_active,
+                       "brands": by_adv.get(a.id, [])} for a in rows]}
 
 
 @router.post("/advertisers")
 def create_advertiser(data: AdvertiserIn, db: Session = Depends(get_db),
                       current_user: User = Depends(_EDIT)):
-    name = _clean_name(data.name)
+    name = _clean_name(_advertiser_display_name(data))
     _reject_duplicate(db, SalesAdvertiser, name)
     # ИНН нормализуется на входе: из Битрикса он приходит как float ("1673005251.0"),
     # и в справочник должен попасть уже в каноническом виде.
     adv = SalesAdvertiser(
         name=name,
+        name_en=(data.name_en or None),
+        name_ru=(data.name_ru or None),
+        website=(data.website or None),
         counterparty_id=data.counterparty_id,
         inn=normalize_inn(data.inn),
         exclude_from_revenue=data.exclude_from_revenue,
@@ -215,9 +242,12 @@ def create_advertiser(data: AdvertiserIn, db: Session = Depends(get_db),
 def update_advertiser(advertiser_id: int, data: AdvertiserIn, db: Session = Depends(get_db),
                       current_user: User = Depends(_EDIT)):
     adv = _require(db, SalesAdvertiser, advertiser_id, "Рекламодатель")
-    name = _clean_name(data.name)
+    name = _clean_name(_advertiser_display_name(data))
     _reject_duplicate(db, SalesAdvertiser, name, exclude_id=advertiser_id)
     adv.name = name
+    adv.name_en = data.name_en or None
+    adv.name_ru = data.name_ru or None
+    adv.website = data.website or None
     adv.counterparty_id = data.counterparty_id
     adv.inn = normalize_inn(data.inn)
     adv.exclude_from_revenue = data.exclude_from_revenue
