@@ -7,7 +7,7 @@ import Navbar, { can } from '../components/Navbar'
 const api = axios.create({ baseURL: '/api' })
 const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
 
-const EMPTY = { name_en: '', name_ru: '', website: '', inn: '', exclude_from_revenue: false }
+const EMPTY = { name: '', name_en: '', name_ru: '', website: '', inn: '', exclude_from_revenue: false }
 
 export default function Advertisers() {
   const router = useRouter()
@@ -120,8 +120,9 @@ export default function Advertisers() {
 
   const save = async () => {
     setError('')
-    if (!form.name_en.trim() && !form.name_ru.trim()) {
-      setError('Заполните хотя бы одно название — английское или русское')
+    // достаточно любого имени: основного, английского или русского
+    if (!form.name?.trim() && !form.name_en.trim() && !form.name_ru.trim()) {
+      setError('Заполните название')
       return
     }
     try {
@@ -148,6 +149,8 @@ export default function Advertisers() {
   const startEdit = (a) => {
     setEditId(a.id)
     setForm({
+      // основное имя редактируемо: у импортированных заполнено только оно
+      name: a.name || '',
       name_en: a.name_en || '', name_ru: a.name_ru || '', website: a.website || '',
       inn: a.inn || '', exclude_from_revenue: !!a.exclude_from_revenue,
     })
@@ -196,9 +199,11 @@ export default function Advertisers() {
           }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Новый рекламодатель</div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <input style={{ ...inp, width: 200 }} placeholder="Название ENG"
+              <input style={{ ...inp, width: 200 }} placeholder="Название"
+                value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+              <input style={{ ...inp, width: 200 }} placeholder="ENG (необяз.)"
                 value={form.name_en} onChange={e => setForm({ ...form, name_en: e.target.value })} />
-              <input style={{ ...inp, width: 200 }} placeholder="Название РУС"
+              <input style={{ ...inp, width: 200 }} placeholder="РУС (необяз.)"
                 value={form.name_ru} onChange={e => setForm({ ...form, name_ru: e.target.value })} />
               <input style={{ ...inp, width: 210 }} placeholder="сайт"
                 value={form.website} onChange={e => setForm({ ...form, website: e.target.value })} />
@@ -266,15 +271,14 @@ export default function Advertisers() {
                     {editId === a.id ? (
                       <>
                         <td style={td}>
-                          <input style={{ ...inp, width: 150, padding: '3px 7px' }} placeholder="ENG" autoFocus
+                          {/* основное имя — редактируемо; у импортированных заполнено только оно */}
+                          <input style={{ ...inp, width: 160, padding: '3px 7px' }} placeholder="Название" autoFocus
+                            value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+                          <input style={{ ...inp, width: 160, padding: '3px 7px', marginTop: 4 }} placeholder="ENG (необяз.)"
                             value={form.name_en} onChange={e => setForm({ ...form, name_en: e.target.value })} />
-                          {/* исходное имя — ориентир, если ENG/РУС ещё не размечены */}
-                          {a.name && !a.name_en && !a.name_ru && (
-                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>было: {a.name}</div>
-                          )}
                         </td>
                         <td style={td}>
-                          <input style={{ ...inp, width: 150, padding: '3px 7px' }} placeholder="РУС"
+                          <input style={{ ...inp, width: 150, padding: '3px 7px' }} placeholder="РУС (необяз.)"
                             value={form.name_ru} onChange={e => setForm({ ...form, name_ru: e.target.value })} />
                         </td>
                         <td style={td}>

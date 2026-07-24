@@ -244,11 +244,11 @@ def create_advertiser(data: AdvertiserIn, db: Session = Depends(get_db),
 def update_advertiser(advertiser_id: int, data: AdvertiserIn, db: Session = Depends(get_db),
                       current_user: User = Depends(_EDIT)):
     adv = _require(db, SalesAdvertiser, advertiser_id, "Рекламодатель")
-    # Отображаемое имя пересобираем из ENG/РУС, только если хоть одно заполнено.
-    # Иначе оставляем прежнее: у импортированных из файла заполнен лишь name,
-    # и правка (скажем, только website) не должна обнулять имя и падать 400.
-    display = _advertiser_display_name(data)
-    name = display or adv.name
+    # Имя — явное поле name (приоритет). Если не прислано — собираем из ENG/РУС,
+    # если и их нет — оставляем прежнее (правка website не должна обнулять имя).
+    # ENG/РУС не пересобирают имя автоматически: их правка не должна менять
+    # каноничное название, которое человек задал в поле «Название».
+    name = (data.name or "").strip() or _advertiser_display_name(data) or adv.name
     # Понятное сообщение вместо общего «уже есть»: чаще всего человек пытается
     # переименовать заглушку в имя существующего рекламодателя — ему нужен перенос
     # бренда, а не переименование.
