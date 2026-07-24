@@ -365,6 +365,88 @@ class DealPatch(BaseModel):
 EDITABLE_INT = ("advertiser_id", "agency_id", "brand_id", "sales_rep_id",
                 "account_manager_id", "payer_counterparty_id")
 EDITABLE_DATE = ("period_from", "period_to")
+EDITABLE_STR = ("product",)
+
+
+class BulkUpdate(BaseModel):
+    """Массовое изменение выбранных сделок. Передаются только меняемые поля;
+    отсутствие ключа = не трогать. period — строка ГГГГ-ММ (ставится в period_from)."""
+    deal_ids: List[int]
+    advertiser_id: Optional[int] = None
+    agency_id: Optional[int] = None
+    sales_rep_id: Optional[int] = None
+    account_manager_id: Optional[int] = None
+    product: Optional[str] = None
+    period: Optional[str] = None
+
+
+class BulkDelete(BaseModel):
+    deal_ids: List[int]
+
+
+@router.post("/deals/bulk-update")
+def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
+                      current_user: User = Depends(require_permission("sales_dashboard", "edit"))):
+    """Применяет заданные поля ко всем выбранным сделкам и помечает их ручными
+    (синхронизация не перезапишет). Пустые/непереданные поля не трогаются."""
+    if not payload.deal_ids:
+        raise HTTPException(status_code=400, detail="Не выбрано ни одной сделки")
+
+    changes = payload.dict(exclude_unset=True, exclude={"deal_ids"})
+    if not changes:
+        raise HTTPException(status_code=400, detail="Не задано ни одного поля")
+
+    # period ГГГГ-ММ -> period_from = первое число месяца
+    updates = {}
+    if "period" in changes:
+        pv = (changes.pop("period") or "").strip()
+        if pv:
+            if not _PERIOD_RE.match(pv):
+                raise HTTPException(status_code=400, detail="Период должен быть ГГГГ-ММ")
+            updates[SalesDeal.period_from] = date(int(pv[:4]), int(pv[5:7]), 1)
+            changes["period_from"] = updates[SalesDeal.period_from]
+    for f in ("advertiser_id", "agency_id", "sales_rep_id", "account_manager_id", "product"):
+        if f in changes:
+            updates[getattr(SalesDeal, f)] = changes[f]
+
+    if updates:
+        db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).update(
+            updates, synchronize_session=False)
+
+    # помечаем как ручные правки (защита от синхронизации)
+    existing = {(o.deal_id, o.field_name): o for o in db.query(SalesDealFieldOverride)
+                .filter(SalesDealFieldOverride.deal_id.in_(payload.deal_ids)).all()}
+    for did in payload.deal_ids:
+        for field, value in changes.items():
+            row = existing.get((did, field))
+            if row is None:
+                row = SalesDealFieldOverride(deal_id=did, field_name=field)
+                db.add(row)
+            row.value_int = value if field in EDITABLE_INT else None
+            row.value_text = (value.isoformat() if hasattr(value, "isoformat")
+                              else (str(value) if field in EDITABLE_STR and value is not None else None))
+            row.set_by = current_user.id if current_user else None
+            row.set_at = datetime.utcnow()
+            row.pushed_at = None
+
+    db.commit()
+    log_action(db, current_user, "bulk_update_deals", "sales_deal", None,
+               f"{len(payload.deal_ids)} сделок: {', '.join(changes.keys())}")
+    return {"message": f"Обновлено сделок: {len(payload.deal_ids)}"}
+
+
+@router.post("/deals/bulk-delete")
+def bulk_delete_deals(payload: BulkDelete, db: Session = Depends(get_db),
+                      current_user: User = Depends(require_permission("sales_dashboard", "edit"))):
+    """Удаляет выбранные сделки. Правки и разнесения уходят каскадом,
+    сырьё в sales_bitrix_raw остаётся историей."""
+    if not payload.deal_ids:
+        raise HTTPException(status_code=400, detail="Не выбрано ни одной сделки")
+    n = db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).delete(
+        synchronize_session=False)
+    db.commit()
+    log_action(db, current_user, "bulk_delete_deals", "sales_deal", None, f"удалено {n}")
+    return {"message": f"Удалено сделок: {n}"}
 
 
 @router.patch("/deals/{deal_id}")
@@ -467,6 +549,8 @@ def filter_options(db: Session = Depends(get_db),
         "agency_id": named(SalesAgency, SalesDeal.agency_id),
         "sales_rep_id": named(rep_a, SalesDeal.sales_rep_id),
         "account_manager_id": named(acct_a, SalesDeal.account_manager_id),
+        "product": [{"value": r["value"], "label": r["value"], "count": r["count"]}
+                    for r in counted(SalesDeal.product)],
     }
 
 

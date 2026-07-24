@@ -175,12 +175,16 @@ export default function Sales() {
   const [offset, setOffset] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [ok, setOk] = useState('')
+  const flashOk = (m) => { setOk(m); setTimeout(() => setOk(''), 2500) }
   const [perms, setPerms] = useState({})
   const [pageSize, setPageSize] = useState(100)
   const [sort, setSort] = useState({ key: 'period_from', dir: 'desc' })
   const [gaps, setGaps] = useState([])
   const [payerPick, setPayerPick] = useState(null)   // id сделки, где открыт выбор юрлица
   const [saving, setSaving] = useState(false)
+  const [selDeals, setSelDeals] = useState({})       // { dealId: true } — массовый выбор
+  const [bulkForm, setBulkForm] = useState({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', period: '' })
   const [f, setF] = useState({ date_from: '', date_to: '', search: '' })
   const [options, setOptions] = useState({})
   const [sel, setSel] = useState(
@@ -195,6 +199,41 @@ export default function Sales() {
     Object.entries(selOverride || sel).forEach(([k, v]) => { if (v.length) p[k] = v })
     if (gaps.length) p.gaps = gaps
     return p
+  }
+
+  const selDealIds = Object.keys(selDeals).map(Number)
+
+  /** Массовое применение заполненных полей к выбранным сделкам. */
+  const applyBulk = async () => {
+    const body = { deal_ids: selDealIds }
+    let any = false
+    for (const [k, v] of Object.entries(bulkForm)) {
+      if (v !== '' && v !== null) {
+        body[k] = (k === 'product' || k === 'period') ? v : Number(v)
+        any = true
+      }
+    }
+    if (!any) { setError('Заполните хотя бы одно поле для изменения'); return }
+    setSaving(true); setError('')
+    try {
+      const r = await api.post('/sales/deals/bulk-update', body,
+        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+      flashOk(r.data.message)
+      setSelDeals({}); setBulkForm({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', period: '' })
+      await load(offset)
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось применить') }
+    finally { setSaving(false) }
+  }
+
+  const deleteBulk = async () => {
+    if (!window.confirm(`Удалить ${selDealIds.length} сделок? Действие необратимо.`)) return
+    setSaving(true); setError('')
+    try {
+      const r = await api.post('/sales/deals/bulk-delete', { deal_ids: selDealIds },
+        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+      flashOk(r.data.message); setSelDeals({}); await load(offset)
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось удалить') }
+    finally { setSaving(false) }
   }
 
   /** Выбор юрлица-плательщика для сделки из юрлиц её агентства. */
@@ -351,6 +390,40 @@ export default function Sales() {
             padding: '10px 14px', borderRadius: 'var(--radius-card-sm)', marginBottom: 14, fontSize: 13,
           }}>{error}</div>
         )}
+        {ok && (
+          <div style={{ background: 'var(--accent-tint)', color: 'var(--accent)',
+            padding: '10px 14px', borderRadius: 'var(--radius-card-sm)', marginBottom: 14, fontSize: 13 }}>{ok}</div>
+        )}
+
+        {/* Панель массового редактирования — при выборе строк */}
+        {mayEditDeals && selDealIds.length > 0 && (
+          <div style={{ position: 'sticky', top: 8, zIndex: 40, marginBottom: 14,
+            background: 'var(--bg-card)', border: '1px solid var(--accent)',
+            borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-card)', padding: '12px 16px',
+            display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Выбрано: {selDealIds.length}</span>
+            {(() => {
+              const bsel = (k, opt, ph) => (
+                <select style={inputStyle} value={bulkForm[k]} onChange={e => setBulkForm({ ...bulkForm, [k]: e.target.value })}>
+                  <option value="">{ph}</option>
+                  {(options[opt] || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              )
+              return <>
+                {bsel('product', 'product', 'услуга —')}
+                <input style={{ ...inputStyle, width: 96 }} placeholder="период ГГГГ-ММ"
+                  value={bulkForm.period} onChange={e => setBulkForm({ ...bulkForm, period: e.target.value })} />
+                {bsel('advertiser_id', 'advertiser_id', 'рекламодатель —')}
+                {bsel('agency_id', 'agency_id', 'агентство —')}
+                {bsel('sales_rep_id', 'sales_rep_id', 'продавец —')}
+                {bsel('account_manager_id', 'account_manager_id', 'аккаунт —')}
+              </>
+            })()}
+            <button style={btn(true)} disabled={saving} onClick={applyBulk}>Применить</button>
+            <button style={{ ...btn(false), color: 'var(--danger)' }} disabled={saving} onClick={deleteBulk}>Удалить</button>
+            <button style={btn(false)} onClick={() => setSelDeals({})}>Сбросить</button>
+          </div>
+        )}
 
         <div style={{
           background: 'var(--bg-card)', border: '1px solid var(--border-card)',
@@ -360,7 +433,18 @@ export default function Sales() {
               Заголовки sticky, поэтому при прокрутке остаются на месте. */}
           <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 250px)' }}>
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-              <thead><tr>{COLUMNS.map(c => (
+              <thead><tr>
+                {mayEditDeals && (
+                  <th style={{ ...th({ w: 28 }), textAlign: 'center' }}>
+                    <input type="checkbox"
+                      checked={rows.length > 0 && rows.every(r => selDeals[r.id])}
+                      onChange={e => {
+                        if (e.target.checked) setSelDeals(Object.fromEntries(rows.map(r => [r.id, true])))
+                        else setSelDeals({})
+                      }} title="Выбрать все на странице" />
+                  </th>
+                )}
+                {COLUMNS.map(c => (
                 <th key={c.key} style={th(c)} onClick={() => toggleSort(c)}
                     title={c.sortable ? 'Сортировать' : 'Сортировка недоступна'}>
                   {c.label}
@@ -369,7 +453,15 @@ export default function Sales() {
               ))}</tr></thead>
               <tbody>
                 {rows.map(r => (
-                  <tr key={r.id}>
+                  <tr key={r.id} style={{ background: selDeals[r.id] ? 'var(--accent-tint)' : undefined }}>
+                    {mayEditDeals && (
+                      <td style={{ ...td({ w: 28 }), textAlign: 'center' }}>
+                        <input type="checkbox" checked={!!selDeals[r.id]}
+                          onChange={() => setSelDeals(s => {
+                            const n = { ...s }; if (n[r.id]) delete n[r.id]; else n[r.id] = true; return n
+                          })} />
+                      </td>
+                    )}
                     {COLUMNS.map(c => {
                       if (c.key === 'stage_bar') {
                         return <td key={c.key} style={td(c)}><StageBar stageKey={r.stage_key} /></td>
@@ -424,7 +516,7 @@ export default function Sales() {
                   </tr>
                 ))}
                 {!loading && !rows.length && (
-                  <tr><td colSpan={COLUMNS.length} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>
+                  <tr><td colSpan={COLUMNS.length + (mayEditDeals ? 1 : 0)} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>
                     Ничего не найдено
                   </td></tr>
                 )}
