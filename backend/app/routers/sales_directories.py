@@ -405,6 +405,10 @@ def list_agencies(only_active: bool = True, db: Session = Depends(get_db),
         links.setdefault(lk.agency_id, []).append(
             {"counterparty_id": lk.counterparty_id, "name": cp.get(lk.counterparty_id)})
 
+    # Число сделок на агентство — одним GROUP BY
+    deal_counts = dict(db.query(SalesDeal.agency_id, func.count(SalesDeal.id))
+                       .group_by(SalesDeal.agency_id).all())
+
     return {"items": [{"id": a.id,
                        "short_name": a.short_name or a.name,
                        "name_en": a.name_en, "name_ru": a.name_ru,
@@ -412,6 +416,7 @@ def list_agencies(only_active: bool = True, db: Session = Depends(get_db),
                        # ENG/РУС ещё не размечены. Не теряем то, что было.
                        "full_name": a.name,
                        "holding": a.holding, "is_active": a.is_active, "note": a.note,
+                       "deals": deal_counts.get(a.id, 0),
                        "counterparties": links.get(a.id, [])} for a in rows]}
 
 

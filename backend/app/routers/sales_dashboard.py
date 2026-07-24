@@ -278,6 +278,23 @@ def deals_registry(
     cps = dict(db.query(Counterparty.id, Counterparty.name).all())
     agencies = dict(db.query(SalesAgency.id, func.coalesce(SalesAgency.short_name, SalesAgency.name)).all())
 
+    # Юрлица, прикреплённые к агентствам — для колонки «Плательщик»:
+    # по умолчанию первое, по клику можно выбрать другое.
+    from app.sales.models import SalesAgencyCounterparty
+    agency_legals = {}
+    for lk in db.query(SalesAgencyCounterparty).order_by(SalesAgencyCounterparty.id).all():
+        agency_legals.setdefault(lk.agency_id, []).append(
+            {"id": lk.counterparty_id, "name": cps.get(lk.counterparty_id)})
+
+    def resolve_payer(d):
+        # приоритет: выбранное вручную юрлицо -> первое юрлицо агентства -> текст «Компания»
+        if d.payer_counterparty_id:
+            return cps.get(d.payer_counterparty_id)
+        legals = agency_legals.get(d.agency_id)
+        if legals:
+            return legals[0]["name"]
+        return d.payer_name
+
     # Какие поля на этой странице заполнены вручную — чтобы интерфейс их пометил
     # и было видно, что синхронизация их не тронет.
     page_ids = [d.id for d, _, _ in rows]
@@ -304,6 +321,10 @@ def deals_registry(
             "agency": agencies.get(d.agency_id),
             "agency_id": d.agency_id,
             "payer_name": d.payer_name,
+            # выбранный/дефолтный плательщик и варианты для выпадашки
+            "payer": resolve_payer(d),
+            "payer_counterparty_id": d.payer_counterparty_id,
+            "agency_legals": agency_legals.get(d.agency_id, []),
             "amount": d.amount,
             "currency": d.currency,
             "advertiser": adv.get(d.advertiser_id),
@@ -334,13 +355,15 @@ class DealPatch(BaseModel):
     brand_id: Optional[int] = None
     sales_rep_id: Optional[int] = None
     account_manager_id: Optional[int] = None
+    payer_counterparty_id: Optional[int] = None
     period_from: Optional[date] = None
     period_to: Optional[date] = None
 
 
 # Поля, доступные ручной правке. Расширять осознанно: каждое попадёт
 # в очередь на заливку в Битрикс.
-EDITABLE_INT = ("advertiser_id", "agency_id", "brand_id", "sales_rep_id", "account_manager_id")
+EDITABLE_INT = ("advertiser_id", "agency_id", "brand_id", "sales_rep_id",
+                "account_manager_id", "payer_counterparty_id")
 EDITABLE_DATE = ("period_from", "period_to")
 
 

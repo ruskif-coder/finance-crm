@@ -171,6 +171,7 @@ export default function Agencies() {
                 <th style={th}>Краткое</th>
                 <th style={th}>Название (ENG / РУС)</th>
                 <th style={th}>Холдинг</th>
+                <th style={{ ...th, textAlign: 'right' }}>Сделок</th>
                 <th style={th}>Юрлица</th>
                 <th style={th}></th>
               </tr></thead>
@@ -184,6 +185,14 @@ export default function Agencies() {
                       {[a.name_en, a.name_ru].filter(Boolean).join(' / ') || a.full_name || dash}
                     </td>
                     <td style={td}>{a.holding || dash}</td>
+                    <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {a.deals > 0 ? (
+                        // клик открывает реестр сделок, отфильтрованный по этому агентству
+                        <a href={`/sales?agency_id=${a.id}`} target="_blank" rel="noreferrer"
+                          style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}
+                          title="Открыть сделки агентства в реестре">{a.deals}</a>
+                      ) : <span style={{ color: 'var(--muted)' }}>0</span>}
+                    </td>
                     <td style={td}>
                       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
                         {(a.counterparties || []).map(c => (
@@ -234,7 +243,7 @@ export default function Agencies() {
                   </tr>
                 ))}
                 {!filtered.length && (
-                  <tr><td colSpan={5} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>Ничего не найдено</td></tr>
+                  <tr><td colSpan={6} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>Ничего не найдено</td></tr>
                 )}
               </tbody>
             </table>

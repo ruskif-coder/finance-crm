@@ -32,23 +32,24 @@ const cell = (v) => (v === null || v === undefined || v === '' ? <Empty /> : v)
 
 // sortable: ключ поддерживается бэкендом в /api/sales/deals.
 // Бренд и плательщик пока не сортируются — по ним нет джойна на сервере.
+// w — минимальная ширина; узкие поля сжаты, текстовые получают простор
 const COLUMNS = [
-  { key: 'bitrix_id', label: 'ID', w: 62, sortable: true },
-  { key: 'title', label: 'Сделка', w: 260, sortable: true },
-  { key: 'pipeline', label: 'Воронка', w: 110, sortable: true },
-  { key: 'product', label: 'Услуга', w: 130 },
-  { key: 'period', label: 'Период', w: 84 },
-  { key: 'bitrix_stage', label: 'Стадия', w: 170, sortable: true },
-  { key: 'stage_bar', label: 'Стадия 2/2/2', w: 108 },
-  { key: 'amount', label: 'Сумма', w: 100, right: true, sortable: true },
-  { key: 'advertiser', label: 'Рекламодатель', w: 200, sortable: true },
-  { key: 'brand', label: 'Бренд', w: 130 },
-  { key: 'agency', label: 'Агентство', w: 160, sortable: false },
-  { key: 'sales_rep', label: 'Продавец', w: 140, sortable: true },
-  { key: 'account_manager', label: 'Аккаунт', w: 140, sortable: true },
-  { key: 'payer_name', label: 'Плательщик (Компания)', w: 200 },
-  { key: 'period_from', label: 'Старт РК', w: 96, sortable: true },
-  { key: 'period_to', label: 'Конец РК', w: 96, sortable: true },
+  { key: 'bitrix_id', label: 'ID', w: 54, sortable: true },
+  { key: 'title', label: 'Сделка', w: 220, sortable: true },
+  { key: 'pipeline', label: 'Воронка', w: 90, sortable: true },
+  { key: 'product', label: 'Услуга', w: 120 },
+  { key: 'period', label: 'Период', w: 72 },
+  { key: 'bitrix_stage', label: 'Стадия', w: 150, sortable: true },
+  { key: 'stage_bar', label: '2/2/2', w: 96 },
+  { key: 'amount', label: 'Сумма', w: 92, right: true, sortable: true },
+  { key: 'advertiser', label: 'Рекламодатель', w: 150, sortable: true },
+  { key: 'brand', label: 'Бренд', w: 110 },
+  { key: 'agency', label: 'Агентство', w: 110, sortable: false },
+  { key: 'sales_rep', label: 'Продавец', w: 96, sortable: true },
+  { key: 'account_manager', label: 'Аккаунт', w: 96, sortable: true },
+  { key: 'payer', label: 'Плательщик', w: 160 },
+  { key: 'period_from', label: 'Старт РК', w: 84, sortable: true },
+  { key: 'period_to', label: 'Конец РК', w: 84, sortable: true },
 ]
 
 // Шесть стадий сделки, разложенные 2/2/2 по слоям денег.
@@ -144,17 +145,6 @@ function MultiSelect({ label, options, selected, onChange }) {
   )
 }
 
-// Поля, редактируемые прямо в строке. key — колонка реестра,
-// opt — ключ справочника из /sales/filters.
-const EDITABLE = {
-  advertiser: { field: 'advertiser_id', opt: 'advertiser_id' },
-  brand: { field: 'brand_id', opt: 'brand_id' },
-  agency: { field: 'agency_id', opt: 'agency_id' },
-  sales_rep: { field: 'sales_rep_id', opt: 'sales_rep_id' },
-  account_manager: { field: 'account_manager_id', opt: 'account_manager_id' },
-  period_from: { field: 'period_from', date: true },
-  period_to: { field: 'period_to', date: true },
-}
 
 const GAP_FIELDS = [
   { value: 'advertiser_id', label: 'без рекламодателя' },
@@ -189,7 +179,7 @@ export default function Sales() {
   const [pageSize, setPageSize] = useState(100)
   const [sort, setSort] = useState({ key: 'period_from', dir: 'desc' })
   const [gaps, setGaps] = useState([])
-  const [editing, setEditing] = useState(null)   // { dealId, colKey }
+  const [payerPick, setPayerPick] = useState(null)   // id сделки, где открыт выбор юрлица
   const [saving, setSaving] = useState(false)
   const [f, setF] = useState({ date_from: '', date_to: '', search: '' })
   const [options, setOptions] = useState({})
@@ -197,40 +187,39 @@ export default function Sales() {
     Object.fromEntries(FILTER_FIELDS.map(x => [x.key, []]))
   )
 
-  const params = (extra = {}) => {
+  const params = (extra = {}, selOverride = null) => {
     const p = { ...extra }
     Object.entries(f).forEach(([k, v]) => { if (v) p[k] = v })
     // Множественные значения уходят повторяющимися параметрами (?a=1&a=2) —
     // именно так FastAPI собирает List[...] из query string.
-    Object.entries(sel).forEach(([k, v]) => { if (v.length) p[k] = v })
+    Object.entries(selOverride || sel).forEach(([k, v]) => { if (v.length) p[k] = v })
     if (gaps.length) p.gaps = gaps
     return p
   }
 
-  /** Сохраняет одно поле сделки. Значение сразу помечается как ручное —
-   *  синхронизация его больше не перезапишет. */
-  const saveField = async (dealId, field, value) => {
+  /** Выбор юрлица-плательщика для сделки из юрлиц её агентства. */
+  const savePayer = async (dealId, counterpartyId) => {
     setSaving(true); setError('')
     try {
-      await api.patch(`/sales/deals/${dealId}`, { [field]: value === '' ? null : value },
+      await api.patch(`/sales/deals/${dealId}`, { payer_counterparty_id: counterpartyId },
         { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
-      setEditing(null)
+      setPayerPick(null)
       await load(offset)
     } catch (e) {
       setError(e.response?.data?.detail || 'Не удалось сохранить')
     } finally { setSaving(false) }
   }
 
-  const load = async (newOffset = 0, size = pageSize, s = sort) => {
+  const load = async (newOffset = 0, size = pageSize, s = sort, selOverride = null) => {
     setLoading(true); setError('')
     const headers = { Authorization: `Bearer ${localStorage.getItem('token')}` }
     try {
       const [reg, sum] = await Promise.all([
         api.get('/sales/deals', {
-          params: params({ limit: size, offset: newOffset, sort: s.key, direction: s.dir }),
+          params: params({ limit: size, offset: newOffset, sort: s.key, direction: s.dir }, selOverride),
           headers,
         }),
-        api.get('/sales/dashboard', { params: params(), headers }),
+        api.get('/sales/dashboard', { params: params({}, selOverride), headers }),
       ])
       setRows(reg.data.items); setTotal(reg.data.total); setOffset(newOffset)
       setSummary(sum.data)
@@ -244,8 +233,17 @@ export default function Sales() {
     try { setPerms(JSON.parse(localStorage.getItem('permissions') || '{}')) } catch (e) { setPerms({}) }
     api.get('/sales/filters', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
       .then(r => setOptions(r.data)).catch(() => {})
-    load(0)
-  }, [])
+    // Переход со справочника агентств: ?agency_id=X — сразу фильтруем и сортируем
+    const aid = router.query.agency_id
+    if (aid) {
+      const selInit = Object.fromEntries(FILTER_FIELDS.map(x => [x.key, []]))
+      selInit.agency_id = [Number(aid)]
+      setSel(selInit)
+      setTimeout(() => load(0, pageSize, sort, selInit), 0)
+    } else {
+      load(0)
+    }
+  }, [router.isReady])
 
   const inputStyle = {
     padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-input)',
@@ -376,52 +374,49 @@ export default function Sales() {
                       if (c.key === 'stage_bar') {
                         return <td key={c.key} style={td(c)}><StageBar stageKey={r.stage_key} /></td>
                       }
-                      let v = r[c.key]
-                      if (c.key === 'amount') v = r.amount === null ? null : fmtMoney(r.amount)
-                      if (c.key === 'period_from' || c.key === 'period_to') v = r[c.key] ? fmtDate(r[c.key]) : null
 
-                      const ed = mayEditDeals ? EDITABLE[c.key] : null
-                      const isEditing = editing && editing.dealId === r.id && editing.colKey === c.key
-                      const isManual = (r.manual_fields || []).includes(ed?.field)
-
-                      if (isEditing) {
-                        return (
-                          <td key={c.key} style={td(c)}>
-                            {ed.date ? (
-                              <input type="date" autoFocus disabled={saving}
-                                defaultValue={r[c.key] ? String(r[c.key]).slice(0, 10) : ''}
+                      // Плательщик: показываем юрлицо, по клику — выбор из юрлиц агентства
+                      if (c.key === 'payer') {
+                        const legals = r.agency_legals || []
+                        const canPick = mayEditDeals && legals.length > 1
+                        const isPicking = payerPick === r.id
+                        if (isPicking) {
+                          return (
+                            <td key={c.key} style={td(c)}>
+                              <select autoFocus disabled={saving} defaultValue={r.payer_counterparty_id ?? ''}
                                 style={{ ...inputStyle, width: '100%', padding: '3px 6px' }}
-                                onBlur={e => saveField(r.id, ed.field, e.target.value)} />
-                            ) : (
-                              <select autoFocus disabled={saving}
-                                defaultValue={r[ed.field] ?? ''}
-                                style={{ ...inputStyle, width: '100%', padding: '3px 6px' }}
-                                onChange={e => saveField(r.id, ed.field,
-                                  e.target.value === '' ? null : Number(e.target.value))}
-                                onBlur={() => setEditing(null)}>
-                                <option value="">— не задано —</option>
-                                {(options[ed.opt] || []).map(o => (
-                                  <option key={o.value} value={o.value}>{o.label}</option>
-                                ))}
+                                onChange={e => savePayer(r.id, e.target.value === '' ? null : Number(e.target.value))}
+                                onBlur={() => setPayerPick(null)}>
+                                <option value="">— по умолчанию —</option>
+                                {legals.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                               </select>
-                            )}
+                            </td>
+                          )
+                        }
+                        return (
+                          <td key={c.key}
+                            onClick={() => canPick && setPayerPick(r.id)}
+                            style={{ ...td(c), cursor: canPick ? 'pointer' : undefined,
+                              borderLeft: r.payer_counterparty_id ? '2px solid var(--accent)' : undefined }}
+                            title={canPick ? 'Нажмите, чтобы выбрать юрлицо' : (r.payer || undefined)}>
+                            {cell(r.payer)}
+                            {canPick && <span style={{ color: 'var(--muted)', marginLeft: 4, fontSize: 10 }}>▾</span>}
                           </td>
                         )
                       }
 
+                      let v = r[c.key]
+                      if (c.key === 'amount') v = r.amount === null ? null : fmtMoney(r.amount)
+                      if (c.key === 'period_from' || c.key === 'period_to') v = r[c.key] ? fmtDate(r[c.key]) : null
+
                       return (
                         <td key={c.key}
-                          onClick={() => ed && setEditing({ dealId: r.id, colKey: c.key })}
                           style={{
                             ...td(c),
                             color: c.key === 'money_layer' ? LAYER_COLOR[r.money_layer] : undefined,
                             fontWeight: c.key === 'money_layer' ? 600 : undefined,
-                            cursor: ed ? 'pointer' : undefined,
-                            // Ручная правка помечена: синхронизация её не тронет
-                            borderLeft: isManual ? '2px solid var(--accent)' : undefined,
                           }}
-                          title={isManual ? 'Заполнено вручную — синхронизация не перезапишет'
-                            : (ed ? 'Нажмите, чтобы изменить' : (typeof v === 'string' ? v : undefined))}>
+                          title={typeof v === 'string' ? v : undefined}>
                           {cell(v)}
                         </td>
                       )
