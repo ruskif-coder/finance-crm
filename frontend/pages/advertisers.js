@@ -70,12 +70,51 @@ export default function Advertisers() {
   const [bulkMove, setBulkMove] = useState(false)    // открыт поиск для пакетного переноса
   const [bulkQuery, setBulkQuery] = useState('')
 
+  // Выбор рекламодателей (производителей) для схлопывания — отдельно от брендов
+  const [selAdv, setSelAdv] = useState({})   // { id: {name, deals} }
+  const selAdvIds = Object.keys(selAdv).map(Number)
+  const toggleAdv = (a) => {
+    setSel({})   // взаимоисключение: либо производители, либо бренды
+    setSelAdv(s => {
+      const n = { ...s }
+      if (n[a.id]) delete n[a.id]; else n[a.id] = { name: a.short_name || a.name, deals: a.deals }
+      return n
+    })
+  }
+
+  const mergeSelectedProducers = async () => {
+    if (selAdvIds.length < 2) return
+    // оставляем того, у кого больше сделок — обычно это основная запись
+    const keepId = selAdvIds.slice().sort((x, y) => (selAdv[y].deals) - (selAdv[x].deals))[0]
+    const keepName = selAdv[keepId].name
+    const dropIds = selAdvIds.filter(id => id !== keepId)
+    const dropNames = dropIds.map(id => selAdv[id].name).join(', ')
+    if (!window.confirm(
+      `Схлопнуть в «${keepName}»?\n\nВольются: ${dropNames}\n\n` +
+      `Их бренды и сделки перейдут на «${keepName}», сами записи удалятся.`)) return
+    setError('')
+    try {
+      // бэкенд сливает по одному источнику; идём последовательно
+      for (const dropId of dropIds) {
+        await api.post(`/sales/directories/producers/${keepId}/merge`, { source_id: dropId }, auth())
+      }
+      flash(`Схлопнуто ${dropIds.length} в «${keepName}»`)
+      setSelAdv({}); load()
+    } catch (e) {
+      const d = e.response?.data?.detail
+      setError((Array.isArray(d) ? JSON.stringify(d) : d) || (e.response ? `HTTP ${e.response.status}` : `Сеть: ${e.message}`))
+    }
+  }
+
   const selIds = Object.keys(sel).map(Number)
-  const toggleSel = (id, name) => setSel(s => {
-    const n = { ...s }
-    if (n[id]) delete n[id]; else n[id] = name
-    return n
-  })
+  const toggleSel = (id, name) => {
+    setSelAdv({})   // взаимоисключение с выбором производителей
+    setSel(s => {
+      const n = { ...s }
+      if (n[id]) delete n[id]; else n[id] = name
+      return n
+    })
+  }
   const clearSel = () => { setSel({}); setBulkMove(false); setBulkQuery('') }
 
   const moveSelected = async (advertiserId) => {
@@ -259,6 +298,7 @@ export default function Advertisers() {
             borderRadius: 'var(--radius-card)', overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead><tr>
+                <th style={{ ...th, width: 28 }}></th>
                 <th style={th}>Короткое</th>
                 <th style={th}>Англ</th>
                 <th style={th}>Русское</th>
@@ -269,7 +309,16 @@ export default function Advertisers() {
               </tr></thead>
               <tbody>
                 {filtered.map(a => (
-                  <tr key={a.id} style={{ opacity: a.is_active ? 1 : 0.5 }}>
+                  <tr key={a.id} style={{
+                    opacity: a.is_active ? 1 : 0.5,
+                    background: selAdv[a.id] ? 'var(--accent-tint)' : undefined,
+                  }}>
+                    <td style={{ ...td, textAlign: 'center' }}>
+                      {mayEdit && editId !== a.id && (
+                        <input type="checkbox" checked={!!selAdv[a.id]} onChange={() => toggleAdv(a)}
+                          style={{ cursor: 'pointer' }} />
+                      )}
+                    </td>
                     {editId === a.id ? (
                       <>
                         <td style={td}>
@@ -398,7 +447,7 @@ export default function Advertisers() {
                   </tr>
                 ))}
                 {!filtered.length && (
-                  <tr><td colSpan={7} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>
+                  <tr><td colSpan={8} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>
                     Ничего не найдено
                   </td></tr>
                 )}
@@ -408,6 +457,24 @@ export default function Advertisers() {
         )}
 
         {/* Плавающая панель действий над выбранными брендами */}
+        {selAdvIds.length > 0 && (
+          <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 50, background: 'var(--bg-card)', border: '1px solid var(--accent)',
+            borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-card)',
+            padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Выбрано производителей: {selAdvIds.length}</span>
+            <button style={{ ...btn(true), padding: '6px 14px', fontSize: 13 }}
+              disabled={selAdvIds.length < 2} onClick={mergeSelectedProducers}>Схлопнуть в один</button>
+            <button style={{ ...btn(false), padding: '6px 14px', fontSize: 13 }}
+              onClick={() => setSelAdv({})}>Сбросить</button>
+            {selAdvIds.length >= 2 && (
+              <span style={{ fontSize: 11.5, color: 'var(--muted)', width: '100%' }}>
+                оставим того, у кого больше сделок
+              </span>
+            )}
+          </div>
+        )}
+
         {selIds.length > 0 && (
           <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)',
             zIndex: 50, background: 'var(--bg-card)', border: '1px solid var(--accent)',
