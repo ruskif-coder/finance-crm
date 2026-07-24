@@ -36,6 +36,8 @@ const COLUMNS = [
   { key: 'bitrix_id', label: 'ID', w: 62, sortable: true },
   { key: 'title', label: 'Сделка', w: 260, sortable: true },
   { key: 'pipeline', label: 'Воронка', w: 110, sortable: true },
+  { key: 'product', label: 'Услуга', w: 130 },
+  { key: 'period', label: 'Период', w: 84 },
   { key: 'bitrix_stage', label: 'Стадия', w: 170, sortable: true },
   { key: 'stage_bar', label: 'Стадия 2/2/2', w: 108 },
   { key: 'amount', label: 'Сумма', w: 100, right: true, sortable: true },

@@ -354,6 +354,7 @@ class Loader:
                 account_manager_id=getattr(acct, "id", None),
                 agency_id=getattr(agency, "id", None),
                 payer_name=payer,
+                product=(str(d.get("products") or "").strip() or None),
                 counterparty_id=getattr(payer_cp, "id", None),
                 date_create=parse_dt(d["date_create"]),
                 date_modify=parse_dt(d["date_modify"]),

@@ -34,6 +34,16 @@ from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
 router = APIRouter()
 
 NO_GROUP = "Без группы"
+
+def _short_fio(full):
+    """«Андрей Мошков» -> «Андрей М.». Первое слово + первая буква второго."""
+    if not full:
+        return None
+    parts = str(full).split()
+    if len(parts) == 1:
+        return parts[0]
+    return f"{parts[0]} {parts[1][:1].upper()}."
+
 _PERIOD_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
@@ -262,11 +272,11 @@ def deals_registry(
     ordering = column.desc().nullslast() if direction == "desc" else column.asc().nullslast()
     rows = q.order_by(ordering, SalesDeal.id.desc()).limit(min(limit, 500)).offset(offset).all()
 
-    adv = dict(db.query(SalesAdvertiser.id, SalesAdvertiser.name).all())
+    adv = dict(db.query(SalesAdvertiser.id, func.coalesce(SalesAdvertiser.short_name, SalesAdvertiser.name)).all())
     reps = dict(db.query(SalesRep.id, SalesRep.name).all())
     brands = dict(db.query(SalesBrand.id, SalesBrand.name).all())
     cps = dict(db.query(Counterparty.id, Counterparty.name).all())
-    agencies = dict(db.query(SalesAgency.id, SalesAgency.name).all())
+    agencies = dict(db.query(SalesAgency.id, func.coalesce(SalesAgency.short_name, SalesAgency.name)).all())
 
     # Какие поля на этой странице заполнены вручную — чтобы интерфейс их пометил
     # и было видно, что синхронизация их не тронет.
@@ -286,6 +296,8 @@ def deals_registry(
             "bitrix_id": d.bitrix_id,
             "title": d.title,
             "pipeline": d.pipeline,
+            "product": d.product,
+            "period": d.period_from.strftime("%Y-%m") if d.period_from else None,
             "bitrix_stage": d.bitrix_stage,
             "money_layer": layer or NO_GROUP,
             "stage_key": stage_key,
@@ -296,8 +308,8 @@ def deals_registry(
             "currency": d.currency,
             "advertiser": adv.get(d.advertiser_id),
             "brand": brands.get(d.brand_id),
-            "sales_rep": reps.get(d.sales_rep_id),
-            "account_manager": reps.get(d.account_manager_id),
+            "sales_rep": _short_fio(reps.get(d.sales_rep_id)),
+            "account_manager": _short_fio(reps.get(d.account_manager_id)),
             "counterparty": cps.get(d.counterparty_id),
             "period_from": d.period_from,
             "period_to": d.period_to,
