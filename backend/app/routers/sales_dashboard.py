@@ -368,6 +368,22 @@ EDITABLE_DATE = ("period_from", "period_to")
 EDITABLE_STR = ("product",)
 
 
+def _upsert_override(db, deal_id, field, value_int, value_text, user):
+    """Помечает поле сделки ручной правкой (защита от синхронизации).
+    Единая точка: используется массовой правкой и подстановкой брендов."""
+    row = (db.query(SalesDealFieldOverride)
+           .filter(SalesDealFieldOverride.deal_id == deal_id,
+                   SalesDealFieldOverride.field_name == field).first())
+    if row is None:
+        row = SalesDealFieldOverride(deal_id=deal_id, field_name=field)
+        db.add(row)
+    row.value_int = value_int
+    row.value_text = value_text
+    row.set_by = user.id if user else None
+    row.set_at = datetime.utcnow()
+    row.pushed_at = None
+
+
 class BulkUpdate(BaseModel):
     """Массовое изменение выбранных сделок. Передаются только меняемые поля;
     отсутствие ключа = не трогать. period — строка ГГГГ-ММ (ставится в period_from)."""
@@ -433,6 +449,93 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
     log_action(db, current_user, "bulk_update_deals", "sales_deal", None,
                f"{len(payload.deal_ids)} сделок: {', '.join(changes.keys())}")
     return {"message": f"Обновлено сделок: {len(payload.deal_ids)}"}
+
+
+@router.get("/deals/brand-suggestions")
+def brand_suggestions(limit: int = 500, db: Session = Depends(get_db),
+                      current_user: User = Depends(require_permission("sales_dashboard", "view"))):
+    """Сделки без бренда, где в названии однозначно упомянут бренд из справочника.
+    Предлагает бренд и его рекламодателя. Только однозначные совпадения —
+    неоднозначные (несколько брендов в названии) не предлагаем, чтобы не гадать."""
+    brands = db.query(SalesBrand).all()
+    adv = dict(db.query(SalesAdvertiser.id,
+                        func.coalesce(SalesAdvertiser.short_name, SalesAdvertiser.name)).all())
+
+    def norm(s):
+        return re.sub(r"\s+", " ", str(s or "").lower()).strip()
+
+    # бренды длиной >=3 символа, чтобы не ловить мусорные совпадения
+    bidx = [(norm(b.name), b) for b in brands if len(norm(b.name)) >= 3]
+
+    deals = (db.query(SalesDeal)
+             .filter(SalesDeal.brand_id.is_(None), SalesDeal.title.isnot(None))
+             .order_by(SalesDeal.date_create.desc()).all())
+
+    out = []
+    for d in deals:
+        t = norm(d.title)
+        # граница слова с учётом кириллицы (\b плохо работает с не-ASCII)
+        hits = {b.id: b for key, b in bidx
+                if re.search(r"(?<![a-zа-я0-9])" + re.escape(key) + r"(?![a-zа-я0-9])", t)}
+        if len(hits) != 1:
+            continue
+        b = next(iter(hits.values()))
+        conflict = d.advertiser_id is not None and d.advertiser_id != b.advertiser_id
+        out.append({
+            "deal_id": d.id,
+            "bitrix_id": d.bitrix_id,
+            "title": d.title,
+            "brand_id": b.id,
+            "brand": b.name,
+            "advertiser_id": b.advertiser_id,
+            "advertiser": adv.get(b.advertiser_id),
+            "current_advertiser_id": d.advertiser_id,
+            "current_advertiser": adv.get(d.advertiser_id),
+            "conflict": conflict,   # у сделки уже другой рекламодатель
+        })
+        if len(out) >= limit:
+            break
+    return {"items": out, "total": len(out)}
+
+
+class ApplyBrand(BaseModel):
+    deal_id: int
+    brand_id: int
+    set_advertiser: bool = True   # проставить рекламодателя бренда, если у сделки пусто
+
+
+class ApplyBrands(BaseModel):
+    items: List[ApplyBrand]
+
+
+@router.post("/deals/apply-brand-suggestions")
+def apply_brand_suggestions(payload: ApplyBrands, db: Session = Depends(get_db),
+                            current_user: User = Depends(require_permission("sales_dashboard", "edit"))):
+    """Проставляет подтверждённые бренды (и рекламодателя бренда, если у сделки
+    его нет) как ручные правки — синхронизация не перезапишет."""
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="Нечего применять")
+
+    brand_adv = dict(db.query(SalesBrand.id, SalesBrand.advertiser_id).all())
+    applied = 0; adv_set = 0
+    for it in payload.items:
+        deal = db.query(SalesDeal).filter(SalesDeal.id == it.deal_id).first()
+        if not deal:
+            continue
+        deal.brand_id = it.brand_id
+        _upsert_override(db, it.deal_id, "brand_id", it.brand_id, None, current_user)
+        applied += 1
+        # рекламодателя ставим только если у сделки его нет — чужой не трогаем
+        if it.set_advertiser and deal.advertiser_id is None:
+            aid = brand_adv.get(it.brand_id)
+            if aid:
+                deal.advertiser_id = aid
+                _upsert_override(db, it.deal_id, "advertiser_id", aid, None, current_user)
+                adv_set += 1
+    db.commit()
+    log_action(db, current_user, "apply_brand_suggestions", "sales_deal", None,
+               f"брендов {applied}, рекламодателей {adv_set}")
+    return {"message": f"Проставлено брендов: {applied}, рекламодателей: {adv_set}"}
 
 
 @router.post("/deals/bulk-delete")
