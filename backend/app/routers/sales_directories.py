@@ -190,7 +190,7 @@ def deactivate_service(service_id: int, db: Session = Depends(get_db),
 
 # ========================== Рекламодатели ==========================
 
-@router.get("/advertisers")
+@router.get("/producers")
 def list_advertisers(only_active: bool = True, db: Session = Depends(get_db),
                      current_user: User = Depends(get_current_user)):
     q = db.query(SalesAdvertiser)
@@ -219,7 +219,7 @@ def list_advertisers(only_active: bool = True, db: Session = Depends(get_db),
                        "brands": by_adv.get(a.id, [])} for a in rows]}
 
 
-@router.post("/advertisers")
+@router.post("/producers")
 def create_advertiser(data: AdvertiserIn, db: Session = Depends(get_db),
                       current_user: User = Depends(_EDIT)):
     name = _clean_name(_advertiser_key_name(data))
@@ -243,7 +243,7 @@ def create_advertiser(data: AdvertiserIn, db: Session = Depends(get_db),
     return {"id": adv.id, "message": "Рекламодатель создан"}
 
 
-@router.put("/advertisers/{advertiser_id}")
+@router.put("/producers/{advertiser_id}")
 def update_advertiser(advertiser_id: int, data: AdvertiserIn, db: Session = Depends(get_db),
                       current_user: User = Depends(_EDIT)):
     adv = _require(db, SalesAdvertiser, advertiser_id, "Рекламодатель")
@@ -270,7 +270,7 @@ def update_advertiser(advertiser_id: int, data: AdvertiserIn, db: Session = Depe
     return {"message": "Рекламодатель обновлён"}
 
 
-@router.delete("/advertisers/{advertiser_id}")
+@router.delete("/producers/{advertiser_id}")
 def deactivate_advertiser(advertiser_id: int, db: Session = Depends(get_db),
                           current_user: User = Depends(_DELETE)):
     adv = _require(db, SalesAdvertiser, advertiser_id, "Рекламодатель")
@@ -494,7 +494,7 @@ class MergeIn(BaseModel):
     source_id: int   # кого вливаем (исчезнет)
 
 
-@router.get("/advertisers/duplicates")
+@router.get("/producers/duplicates")
 def advertiser_duplicates(db: Session = Depends(get_db),
                           current_user: User = Depends(_VIEW)):
     """Предлагает пары возможных дублей рекламодателей по совпадению
@@ -558,7 +558,7 @@ def advertiser_duplicates(db: Session = Depends(get_db),
     return {"pairs": pairs}
 
 
-@router.post("/advertisers/{target_id}/merge")
+@router.post("/producers/{target_id}/merge")
 def merge_advertiser(target_id: int, data: MergeIn, db: Session = Depends(get_db),
                      current_user: User = Depends(_EDIT)):
     """Вливает source в target: бренды переносятся (дубли по имени схлопываются),

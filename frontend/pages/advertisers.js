@@ -28,7 +28,7 @@ export default function Advertisers() {
 
   const loadDupes = async () => {
     try {
-      const r = await api.get('/sales/directories/advertisers/duplicates', auth())
+      const r = await api.get('/sales/directories/producers/duplicates', auth())
       setDupes(r.data.pairs); setShowDupes(true)
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить дубли') }
   }
@@ -38,7 +38,7 @@ export default function Advertisers() {
     if (!window.confirm(`Влить «${dropName}» в «${keepName}»?\n\nБренды и сделки перейдут на «${keepName}», «${dropName}» будет удалён.`)) return
     setError('')
     try {
-      const r = await api.post(`/sales/directories/advertisers/${keepId}/merge`, { source_id: dropId }, auth())
+      const r = await api.post(`/sales/directories/producers/${keepId}/merge`, { source_id: dropId }, auth())
       flash(r.data.message)
       setDupes(dupes.filter(p => !(p.keep.id === keepId && p.drop.id === dropId) && !(p.keep.id === dropId && p.drop.id === keepId)))
       load()
@@ -104,7 +104,7 @@ export default function Advertisers() {
   const load = async () => {
     setLoading(true); setError('')
     try {
-      const res = await api.get('/sales/directories/advertisers', { params: { only_active: false }, ...auth() })
+      const res = await api.get('/sales/directories/producers', { params: { only_active: false }, ...auth() })
       setItems(res.data.items)
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить справочник') }
     finally { setLoading(false) }
@@ -127,10 +127,10 @@ export default function Advertisers() {
     }
     try {
       if (editId) {
-        await api.put(`/sales/directories/advertisers/${editId}`, form, auth())
+        await api.put(`/sales/directories/producers/${editId}`, form, auth())
         flash('Рекламодатель обновлён')
       } else {
-        await api.post('/sales/directories/advertisers', form, auth())
+        await api.post('/sales/directories/producers', form, auth())
         flash('Рекламодатель создан')
       }
       setForm(EMPTY); setEditId(null); load()
