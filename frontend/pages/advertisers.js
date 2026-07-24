@@ -134,7 +134,13 @@ export default function Advertisers() {
         flash('Рекламодатель создан')
       }
       setForm(EMPTY); setEditId(null); load()
-    } catch (e) { setError(e.response?.data?.detail || 'Не удалось сохранить') }
+    } catch (e) {
+      // диагностический текст: показываем статус и настоящую причину,
+      // а не общую заглушку — чтобы было видно, HTTP-ошибка это или сетевая
+      const d = e.response?.data?.detail
+      const detail = Array.isArray(d) ? JSON.stringify(d) : d
+      setError(detail || (e.response ? `HTTP ${e.response.status}` : `Сеть: ${e.message}`))
+    }
   }
 
   const addBrand = async (advertiserId) => {
