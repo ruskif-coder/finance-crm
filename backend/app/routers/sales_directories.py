@@ -640,6 +640,86 @@ def create_brand(data: BrandIn, db: Session = Depends(get_db),
     return {"id": brand.id, "message": "Бренд создан"}
 
 
+class BrandsMove(BaseModel):
+    brand_ids: list[int]
+    advertiser_id: int   # куда переносим пачку
+
+
+class BrandsMerge(BaseModel):
+    keep_id: int          # бренд, который остаётся
+    drop_ids: list[int]   # бренды-дубли, вливаемые в keep
+
+
+@router.post("/brands/move")
+def move_brands(data: BrandsMove, db: Session = Depends(get_db),
+                current_user: User = Depends(_EDIT)):
+    """Переносит пачку брендов к одному рекламодателю. Если у цели уже есть
+    бренд с таким именем — сделки перецепляем на существующий, дубль удаляем,
+    иначе просто меняем advertiser_id."""
+    _require(db, SalesAdvertiser, data.advertiser_id, "Рекламодатель")
+    tgt_brands = {normalize_name(b.name): b.id for b in
+                  db.query(SalesBrand).filter(SalesBrand.advertiser_id == data.advertiser_id).all()}
+    moved = 0; merged = 0
+    for b in db.query(SalesBrand).filter(SalesBrand.id.in_(data.brand_ids)).all():
+        if b.advertiser_id == data.advertiser_id:
+            continue
+        twin_id = tgt_brands.get(normalize_name(b.name))
+        if twin_id:
+            db.query(SalesDeal).filter(SalesDeal.brand_id == b.id).update(
+                {SalesDeal.brand_id: twin_id}, synchronize_session=False)
+            db.query(SalesBrand).filter(SalesBrand.id == b.id).delete(synchronize_session=False)
+            merged += 1
+        else:
+            db.query(SalesBrand).filter(SalesBrand.id == b.id).update(
+                {SalesBrand.advertiser_id: data.advertiser_id}, synchronize_session=False)
+            tgt_brands[normalize_name(b.name)] = b.id
+            moved += 1
+    db.commit()
+    log_action(db, current_user, "move_brands", "sales_advertiser", data.advertiser_id,
+               f"перенесено {moved}, схлопнуто дублей {merged}")
+    return {"message": f"Перенесено брендов: {moved}" + (f", схлопнуто дублей: {merged}" if merged else "")}
+
+
+@router.post("/brands/merge")
+def merge_brands(data: BrandsMerge, db: Session = Depends(get_db),
+                 current_user: User = Depends(_EDIT)):
+    """Схлопывает дубли: сделки со всех drop-брендов перецепляет на keep,
+    сами drop-бренды удаляет. Для склейки «вольтарен»/«Вольтарен» и т.п."""
+    keep = _require(db, SalesBrand, data.keep_id, "Бренд (остаётся)")
+    freed = 0
+    for bid in data.drop_ids:
+        if bid == data.keep_id:
+            continue
+        moved = (db.query(SalesDeal).filter(SalesDeal.brand_id == bid)
+                 .update({SalesDeal.brand_id: data.keep_id}, synchronize_session=False))
+        freed += moved
+        db.query(SalesBrand).filter(SalesBrand.id == bid).delete(synchronize_session=False)
+    db.commit()
+    log_action(db, current_user, "merge_brands", "sales_brand", data.keep_id,
+               f"в «{keep.name}» влито {len(data.drop_ids)}, сделок {freed}")
+    return {"message": f"Схлопнуто в «{keep.name}»: {len(data.drop_ids)} брендов, сделок {freed}"}
+
+
+@router.get("/brands/duplicates")
+def brand_duplicates(db: Session = Depends(get_db), current_user: User = Depends(_VIEW)):
+    """Группы брендов с одинаковым нормализованным именем у одного рекламодателя —
+    кандидаты на схлопывание («вольтарен» + «Вольтарен»)."""
+    rows = db.query(SalesBrand).all()
+    groups = {}
+    for b in rows:
+        groups.setdefault((b.advertiser_id, normalize_name(b.name)), []).append(b)
+    adv = dict(db.query(SalesAdvertiser.id, SalesAdvertiser.name).all())
+    out = []
+    for (adv_id, _key), brands in groups.items():
+        if len(brands) > 1:
+            out.append({
+                "advertiser_id": adv_id,
+                "advertiser": adv.get(adv_id),
+                "brands": [{"id": b.id, "name": b.name} for b in brands],
+            })
+    return {"groups": out}
+
+
 @router.delete("/brands/{brand_id}/hard")
 def delete_brand_hard(brand_id: int, db: Session = Depends(get_db),
                       current_user: User = Depends(_DELETE)):

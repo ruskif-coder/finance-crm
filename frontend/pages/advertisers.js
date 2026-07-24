@@ -64,8 +64,42 @@ export default function Advertisers() {
   }
 
   const [editBrand, setEditBrand] = useState(null)   // { id, name } — правка имени
-  const [moveBrand, setMoveBrand] = useState(null)   // { id, name } — перенос
+  const [moveBrand, setMoveBrand] = useState(null)   // { id, name } — одиночный перенос
   const [moveQuery, setMoveQuery] = useState('')
+  const [sel, setSel] = useState({})                 // { brandId: name } — мультивыбор
+  const [bulkMove, setBulkMove] = useState(false)    // открыт поиск для пакетного переноса
+  const [bulkQuery, setBulkQuery] = useState('')
+
+  const selIds = Object.keys(sel).map(Number)
+  const toggleSel = (id, name) => setSel(s => {
+    const n = { ...s }
+    if (n[id]) delete n[id]; else n[id] = name
+    return n
+  })
+  const clearSel = () => { setSel({}); setBulkMove(false); setBulkQuery('') }
+
+  const moveSelected = async (advertiserId) => {
+    setError('')
+    try {
+      const r = await api.post('/sales/directories/brands/move',
+        { brand_ids: selIds, advertiser_id: advertiserId }, auth())
+      flash(r.data.message); clearSel(); load()
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось перенести') }
+  }
+
+  const mergeSelected = async () => {
+    if (selIds.length < 2) return
+    // оставляем бренд с самым коротким именем (обычно каноничное написание)
+    const keepId = selIds.slice().sort((a, b) => sel[a].length - sel[b].length)[0]
+    const keepName = sel[keepId]
+    if (!window.confirm(`Схлопнуть ${selIds.length} брендов в «${keepName}»?\n\nОстальные удаляются, их сделки переходят на «${keepName}».`)) return
+    setError('')
+    try {
+      const r = await api.post('/sales/directories/brands/merge',
+        { keep_id: keepId, drop_ids: selIds.filter(id => id !== keepId) }, auth())
+      flash(r.data.message); clearSel(); load()
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось схлопнуть') }
+  }
 
   const load = async () => {
     setLoading(true); setError('')
@@ -285,11 +319,15 @@ export default function Advertisers() {
                           ) : (
                             <span key={b.id}
                               onDoubleClick={() => mayEdit && setEditBrand({ id: b.id, name: b.name })}
-                              title={mayEdit ? 'Двойной клик — переименовать' : b.name}
+                              title={mayEdit ? 'Двойной клик — переименовать, галочка — выбрать' : b.name}
                               style={{
-                                background: 'var(--bg-subtle)', borderRadius: 'var(--radius-badge)',
+                                background: sel[b.id] ? 'var(--accent-tint)' : 'var(--bg-subtle)',
+                                border: sel[b.id] ? '1px solid var(--accent)' : '1px solid transparent',
+                                borderRadius: 'var(--radius-badge)',
                                 padding: '2px 8px', fontSize: 12, display: 'inline-flex', gap: 6, alignItems: 'center',
                               }}>
+                              {mayEdit && <input type="checkbox" checked={!!sel[b.id]}
+                                onChange={() => toggleSel(b.id, b.name)} style={{ cursor: 'pointer', margin: 0 }} />}
                               {b.name}
                               {mayEdit && <span style={{ cursor: 'pointer', color: 'var(--accent)', fontWeight: 700 }}
                                 onClick={() => { setMoveBrand({ id: b.id, name: b.name }); setMoveQuery('') }}
@@ -367,6 +405,43 @@ export default function Advertisers() {
                 )}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Плавающая панель действий над выбранными брендами */}
+        {selIds.length > 0 && (
+          <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 50, background: 'var(--bg-card)', border: '1px solid var(--accent)',
+            borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-card)',
+            padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Выбрано брендов: {selIds.length}</span>
+            <button style={{ ...btn(true), padding: '6px 14px', fontSize: 13 }}
+              onClick={() => { setBulkMove(true); setBulkQuery('') }}>Перенести пачкой</button>
+            <button style={{ ...btn(true), padding: '6px 14px', fontSize: 13 }}
+              disabled={selIds.length < 2} onClick={mergeSelected}>Схлопнуть в один</button>
+            <button style={{ ...btn(false), padding: '6px 14px', fontSize: 13 }} onClick={clearSel}>Сбросить</button>
+
+            {bulkMove && (
+              <div style={{ position: 'relative', width: '100%', marginTop: 8 }}>
+                <input autoFocus style={{ ...inp, width: 300 }} placeholder="перенести к рекламодателю — поиск"
+                  value={bulkQuery} onChange={e => setBulkQuery(e.target.value)} />
+                {bulkQuery.trim() && (
+                  <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 2, zIndex: 60,
+                    background: 'var(--bg-card)', border: '1px solid var(--border-card)',
+                    borderRadius: 'var(--radius-card-sm)', boxShadow: 'var(--shadow-card)',
+                    maxHeight: 240, overflowY: 'auto', minWidth: 300 }}>
+                    {items.filter(x => [x.name, x.name_en, x.name_ru].some(v =>
+                        (v || '').toLowerCase().includes(bulkQuery.trim().toLowerCase())))
+                      .slice(0, 30).map(x => (
+                      <div key={x.id} onClick={() => moveSelected(x.id)}
+                        style={{ padding: '6px 10px', fontSize: 12.5, cursor: 'pointer', borderBottom: '1px solid var(--border-row)' }}>
+                        {[x.name_en, x.name_ru].filter(Boolean).join(' / ') || x.name}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
