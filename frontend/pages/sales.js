@@ -9,6 +9,9 @@ import Navbar, { can } from '../components/Navbar'
 // FastAPI молча игнорирует — фильтры-чекбоксы просто не срабатывают.
 const api = axios.create({ baseURL: '/api', paramsSerializer: { indexes: null } })
 
+// Ссылка на карточку сделки в Битриксе (портал simb-ad)
+const BITRIX_DEAL_URL = (id) => `https://simb-ad.bitrix24.ru/crm/deal/details/${id}/`
+
 const LAYERS = ['планируемые', 'реализуемые', 'фактические']
 const LAYER_COLOR = {
   'планируемые': 'var(--muted)',
@@ -465,6 +468,17 @@ export default function Sales() {
                     {COLUMNS.map(c => {
                       if (c.key === 'stage_bar') {
                         return <td key={c.key} style={td(c)}><StageBar stageKey={r.stage_key} /></td>
+                      }
+
+                      // ID сделки — ссылка на карточку в Битриксе (новая вкладка)
+                      if (c.key === 'bitrix_id') {
+                        return (
+                          <td key={c.key} style={td(c)}>
+                            <a href={BITRIX_DEAL_URL(r.bitrix_id)} target="_blank" rel="noreferrer"
+                              style={{ color: 'var(--accent)', textDecoration: 'none' }}
+                              title="Открыть сделку в Битрикс24">{r.bitrix_id}</a>
+                          </td>
+                        )
                       }
 
                       // Плательщик: показываем юрлицо, по клику — выбор из юрлиц агентства
