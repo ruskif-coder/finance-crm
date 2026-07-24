@@ -361,6 +361,18 @@ class SalesBitrixRaw(Base):
     fetched_at = Column(DateTime, server_default=func.now())
 
 
+class SalesDeletedDeal(Base):
+    """Надгробие удалённой сделки. Синхронизация с Битриксом ОБЯЗАНА пропускать
+    сделки, чей bitrix_id здесь: иначе удалённые вручную сделки воскреснут
+    при первом же прогоне, т.к. в Битриксе они ещё существуют."""
+    __tablename__ = "sales_deleted_deals"
+    id = Column(Integer, primary_key=True)
+    bitrix_id = Column(String, nullable=False, unique=True)
+    reason = Column(String)
+    deleted_at = Column(DateTime, server_default=func.now())
+    deleted_by = Column(Integer, ForeignKey("users.id"))
+
+
 class SalesBitrixSyncLog(Base):
     __tablename__ = "sales_bitrix_sync_log"
     id = Column(Integer, primary_key=True)

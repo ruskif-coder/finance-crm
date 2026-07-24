@@ -7,7 +7,19 @@
    ручную очередь, а не догадку.
 """
 from app.sales.sync import (should_store_version, plan_counterparty_match,
-                            plan_directory_match)
+                            plan_directory_match, should_import_deal)
+
+
+def test_deleted_deal_is_not_reimported():
+    tomb = {"6668", "6660"}
+    assert should_import_deal("6668", tomb) is False
+    assert should_import_deal(6660, tomb) is False   # число тоже
+    assert should_import_deal("9999", tomb) is True
+
+
+def test_no_tombstones_imports_everything():
+    assert should_import_deal("123", set()) is True
+    assert should_import_deal("123", None) is True
 
 
 def test_first_version_is_always_stored():

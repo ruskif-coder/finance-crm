@@ -439,14 +439,28 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
 def bulk_delete_deals(payload: BulkDelete, db: Session = Depends(get_db),
                       current_user: User = Depends(require_permission("sales_dashboard", "edit"))):
     """Удаляет выбранные сделки. Правки и разнесения уходят каскадом,
-    сырьё в sales_bitrix_raw остаётся историей."""
+    сырьё в sales_bitrix_raw остаётся историей.
+
+    Каждый bitrix_id пишется в надгробия (sales_deleted_deals): будущая
+    синхронизация с Битриксом обязана их пропускать, иначе удалённые сделки
+    воскреснут — в Битриксе они ещё существуют."""
     if not payload.deal_ids:
         raise HTTPException(status_code=400, detail="Не выбрано ни одной сделки")
+
+    from app.sales.models import SalesDeletedDeal
+    deals = db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).all()
+    tombstoned = {t.bitrix_id for t in db.query(SalesDeletedDeal.bitrix_id).all()}
+    for d in deals:
+        if d.bitrix_id and d.bitrix_id not in tombstoned:
+            db.add(SalesDeletedDeal(bitrix_id=d.bitrix_id, reason="удалено вручную из реестра",
+                                    deleted_by=(current_user.id if current_user else None)))
+            tombstoned.add(d.bitrix_id)
+
     n = db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).delete(
         synchronize_session=False)
     db.commit()
     log_action(db, current_user, "bulk_delete_deals", "sales_deal", None, f"удалено {n}")
-    return {"message": f"Удалено сделок: {n}"}
+    return {"message": f"Удалено сделок: {n} (не вернутся при синхронизации)"}
 
 
 @router.patch("/deals/{deal_id}")
