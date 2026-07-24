@@ -112,6 +112,13 @@ function CounterpartySearch({ counterparties, value, onChange, onCreateNew }) {
 export default function Directories() {
   const router = useRouter()
   const [tab, setTab] = useState('counterparties')
+
+  // Открыть нужную вкладку по ?tab= — чтобы переход со страниц
+  // производителей/агентств/воронок вёл прямо на выбранный раздел
+  useEffect(() => {
+    const t = router.query.tab
+    if (t && ['counterparties', 'articles', 'contracts'].includes(t)) setTab(t)
+  }, [router.query.tab])
   const [role, setRole] = useState('')
   const [permissions, setPermissions] = useState({})
 

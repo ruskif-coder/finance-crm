@@ -3,6 +3,7 @@ import Head from 'next/head'
 import axios from 'axios'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
+import DirectoryTabs from '../components/DirectoryTabs'
 
 const api = axios.create({ baseURL: '/api' })
 const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
@@ -85,8 +86,10 @@ export default function Pipelines() {
   return (
     <>
       <Head><title>Воронки</title></Head>
-      <Navbar active="sales" />
+      <Navbar active="directories" />
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '20px 24px 50px' }}>
+
+        <DirectoryTabs active="pipelines" />
 
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 6 }}>
           <h1 style={{ fontSize: 19, fontWeight: 600, margin: 0 }}>Воронки</h1>
