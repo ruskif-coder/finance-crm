@@ -51,25 +51,22 @@ class ServiceGroupIn(BaseModel):
 
 
 class AdvertiserIn(BaseModel):
-    name: Optional[str] = None       # если не задано — собирается из name_en/name_ru
+    short_name: Optional[str] = None
     name_en: Optional[str] = None
     name_ru: Optional[str] = None
     website: Optional[str] = None
     counterparty_id: Optional[int] = None
     inn: Optional[str] = None
-    exclude_from_revenue: bool = False
     note: Optional[str] = None
 
 
-def _advertiser_display_name(data: "AdvertiserIn") -> str:
-    """Отображаемое имя: «ENG (РУС)», либо то из двух, что заполнено.
-    Явно переданное name имеет приоритет — им можно переопределить сборку."""
-    if (data.name or "").strip():
-        return data.name.strip()
-    en, ru = (data.name_en or "").strip(), (data.name_ru or "").strip()
-    if en and ru:
-        return f"{en} ({ru})"
-    return en or ru
+def _advertiser_key_name(data: "AdvertiserIn") -> str:
+    """Каноничный ключ (уникальное поле name) — короткое имя, иначе первое
+    заполненное из ENG/РУС. Хоть одно название обязательно."""
+    for v in (data.short_name, data.name_en, data.name_ru):
+        if (v or "").strip():
+            return v.strip()
+    return ""
 
 
 class BrandIn(BaseModel):
@@ -199,7 +196,7 @@ def list_advertisers(only_active: bool = True, db: Session = Depends(get_db),
     q = db.query(SalesAdvertiser)
     if only_active:
         q = q.filter(SalesAdvertiser.is_active.is_(True))
-    rows = q.order_by(SalesAdvertiser.name).all()
+    rows = q.order_by(func.coalesce(SalesAdvertiser.short_name, SalesAdvertiser.name)).all()
 
     # Бренды подтягиваются одним запросом и раскладываются по рекламодателям:
     # запрос на каждого дал бы 167 обращений к БД на одну отрисовку списка.
@@ -208,29 +205,35 @@ def list_advertisers(only_active: bool = True, db: Session = Depends(get_db),
     for b in brands:
         by_adv.setdefault(b.advertiser_id, []).append({"id": b.id, "name": b.name})
 
+    # Число сделок на рекламодателя — одним GROUP BY, не запросом на каждого
+    deal_counts = dict(db.query(SalesDeal.advertiser_id, func.count(SalesDeal.id))
+                       .group_by(SalesDeal.advertiser_id).all())
+
     return {"items": [{"id": a.id, "name": a.name,
+                       "short_name": a.short_name or a.name,
                        "name_en": a.name_en, "name_ru": a.name_ru, "website": a.website,
                        "inn": a.inn, "counterparty_id": a.counterparty_id,
                        "exclude_from_revenue": a.exclude_from_revenue,
                        "is_active": a.is_active,
+                       "deals": deal_counts.get(a.id, 0),
                        "brands": by_adv.get(a.id, [])} for a in rows]}
 
 
 @router.post("/advertisers")
 def create_advertiser(data: AdvertiserIn, db: Session = Depends(get_db),
                       current_user: User = Depends(_EDIT)):
-    name = _clean_name(_advertiser_display_name(data))
+    name = _clean_name(_advertiser_key_name(data))
     _reject_duplicate(db, SalesAdvertiser, name)
     # ИНН нормализуется на входе: из Битрикса он приходит как float ("1673005251.0"),
     # и в справочник должен попасть уже в каноническом виде.
     adv = SalesAdvertiser(
         name=name,
+        short_name=(data.short_name or None),
         name_en=(data.name_en or None),
         name_ru=(data.name_ru or None),
         website=(data.website or None),
         counterparty_id=data.counterparty_id,
         inn=normalize_inn(data.inn),
-        exclude_from_revenue=data.exclude_from_revenue,
         note=data.note,
     )
     db.add(adv)
@@ -244,14 +247,9 @@ def create_advertiser(data: AdvertiserIn, db: Session = Depends(get_db),
 def update_advertiser(advertiser_id: int, data: AdvertiserIn, db: Session = Depends(get_db),
                       current_user: User = Depends(_EDIT)):
     adv = _require(db, SalesAdvertiser, advertiser_id, "Рекламодатель")
-    # Имя — явное поле name (приоритет). Если не прислано — собираем из ENG/РУС,
-    # если и их нет — оставляем прежнее (правка website не должна обнулять имя).
-    # ENG/РУС не пересобирают имя автоматически: их правка не должна менять
-    # каноничное название, которое человек задал в поле «Название».
-    name = (data.name or "").strip() or _advertiser_display_name(data) or adv.name
-    # Понятное сообщение вместо общего «уже есть»: чаще всего человек пытается
-    # переименовать заглушку в имя существующего рекламодателя — ему нужен перенос
-    # бренда, а не переименование.
+    # Каноничный ключ = короткое имя / первое заполненное. Если ничего не прислано —
+    # оставляем прежнее (правка website не должна обнулять имя и падать 400).
+    name = _advertiser_key_name(data) or adv.name
     dup = (db.query(SalesAdvertiser)
            .filter(func.lower(func.trim(SalesAdvertiser.name)) == normalize_name(name),
                    SalesAdvertiser.id != advertiser_id).first())
@@ -260,12 +258,12 @@ def update_advertiser(advertiser_id: int, data: AdvertiserIn, db: Session = Depe
             detail=f"«{dup.name}» уже есть. Если нужно объединить — перенесите бренды "
                    f"на него (⇄) или слейте дубли, а не переименовывайте.")
     adv.name = name
+    adv.short_name = data.short_name or None
     adv.name_en = data.name_en or None
     adv.name_ru = data.name_ru or None
     adv.website = data.website or None
     adv.counterparty_id = data.counterparty_id
     adv.inn = normalize_inn(data.inn)
-    adv.exclude_from_revenue = data.exclude_from_revenue
     adv.note = data.note
     db.commit()
     log_action(db, current_user, "update_sales_advertiser", "sales_advertiser", adv.id, name)

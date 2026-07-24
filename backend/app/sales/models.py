@@ -40,10 +40,8 @@ class SalesService(Base):
 class SalesAdvertiser(Base):
     __tablename__ = "sales_advertisers"
     id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False, unique=True)  # как пришло из источника, без префикса [L]
-    # Разбирается из формата «ACINO (Ацино)». Если разобрать не удалось —
-    # заполняется та графа, которой соответствует алфавит имени, вторая остаётся
-    # пустой: выдумывать перевод нельзя.
+    name = Column(String, nullable=False, unique=True)  # каноничный ключ; = short_name или первое заполненное
+    short_name = Column(String)   # короткое — основная колонка в реестре
     name_en = Column(String)
     name_ru = Column(String)
     website = Column(String)

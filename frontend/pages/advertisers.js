@@ -7,7 +7,7 @@ import Navbar, { can } from '../components/Navbar'
 const api = axios.create({ baseURL: '/api' })
 const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
 
-const EMPTY = { name: '', name_en: '', name_ru: '', website: '', inn: '', exclude_from_revenue: false }
+const EMPTY = { short_name: '', name_en: '', name_ru: '', website: '', inn: '' }
 
 export default function Advertisers() {
   const router = useRouter()
@@ -120,9 +120,9 @@ export default function Advertisers() {
 
   const save = async () => {
     setError('')
-    // достаточно любого имени: основного, английского или русского
-    if (!form.name?.trim() && !form.name_en.trim() && !form.name_ru.trim()) {
-      setError('Заполните название')
+    // достаточно любого из трёх названий
+    if (!form.short_name.trim() && !form.name_en.trim() && !form.name_ru.trim()) {
+      setError('Заполните хотя бы одно название')
       return
     }
     try {
@@ -149,10 +149,9 @@ export default function Advertisers() {
   const startEdit = (a) => {
     setEditId(a.id)
     setForm({
-      // основное имя редактируемо: у импортированных заполнено только оно
-      name: a.name || '',
-      name_en: a.name_en || '', name_ru: a.name_ru || '', website: a.website || '',
-      inn: a.inn || '', exclude_from_revenue: !!a.exclude_from_revenue,
+      short_name: a.short_name || a.name || '',
+      name_en: a.name_en || '', name_ru: a.name_ru || '',
+      website: a.website || '', inn: a.inn || '',
     })
     // без прокрутки в шапку — правка идёт прямо в строке
   }
@@ -160,7 +159,7 @@ export default function Advertisers() {
   const filtered = items.filter(a => {
     const q = search.trim().toLowerCase()
     if (!q) return true
-    return [a.name, a.name_en, a.name_ru].some(v => (v || '').toLowerCase().includes(q))
+    return [a.short_name, a.name, a.name_en, a.name_ru].some(v => (v || '').toLowerCase().includes(q))
       || (a.brands || []).some(b => b.name.toLowerCase().includes(q))
   })
 
@@ -199,21 +198,16 @@ export default function Advertisers() {
           }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Новый рекламодатель</div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <input style={{ ...inp, width: 200 }} placeholder="Название"
-                value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-              <input style={{ ...inp, width: 200 }} placeholder="ENG (необяз.)"
+              <input style={{ ...inp, width: 170 }} placeholder="Короткое"
+                value={form.short_name} onChange={e => setForm({ ...form, short_name: e.target.value })} />
+              <input style={{ ...inp, width: 180 }} placeholder="Англ"
                 value={form.name_en} onChange={e => setForm({ ...form, name_en: e.target.value })} />
-              <input style={{ ...inp, width: 200 }} placeholder="РУС (необяз.)"
+              <input style={{ ...inp, width: 180 }} placeholder="Русское"
                 value={form.name_ru} onChange={e => setForm({ ...form, name_ru: e.target.value })} />
-              <input style={{ ...inp, width: 210 }} placeholder="сайт"
+              <input style={{ ...inp, width: 190 }} placeholder="сайт"
                 value={form.website} onChange={e => setForm({ ...form, website: e.target.value })} />
               <input style={{ ...inp, width: 130 }} placeholder="ИНН"
                 value={form.inn} onChange={e => setForm({ ...form, inn: e.target.value })} />
-              <label style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <input type="checkbox" checked={form.exclude_from_revenue}
-                  onChange={e => setForm({ ...form, exclude_from_revenue: e.target.checked })} />
-                исключить из выручки
-              </label>
               <button style={btn(true)} onClick={save}>Добавить</button>
             </div>
           </div>
@@ -259,8 +253,10 @@ export default function Advertisers() {
             borderRadius: 'var(--radius-card)', overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead><tr>
-                <th style={th}>Название ENG</th>
-                <th style={th}>Название РУС</th>
+                <th style={th}>Короткое</th>
+                <th style={th}>Англ</th>
+                <th style={th}>Русское</th>
+                <th style={{ ...th, textAlign: 'right' }}>Сделок</th>
                 <th style={th}>Сайт</th>
                 <th style={th}>Бренды</th>
                 <th style={th}></th>
@@ -271,36 +267,29 @@ export default function Advertisers() {
                     {editId === a.id ? (
                       <>
                         <td style={td}>
-                          {/* основное имя — редактируемо; у импортированных заполнено только оно */}
-                          <input style={{ ...inp, width: 160, padding: '3px 7px' }} placeholder="Название" autoFocus
-                            value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-                          <input style={{ ...inp, width: 160, padding: '3px 7px', marginTop: 4 }} placeholder="ENG (необяз.)"
+                          <input style={{ ...inp, width: 140, padding: '3px 7px' }} placeholder="Короткое" autoFocus
+                            value={form.short_name} onChange={e => setForm({ ...form, short_name: e.target.value })} />
+                        </td>
+                        <td style={td}>
+                          <input style={{ ...inp, width: 140, padding: '3px 7px' }} placeholder="Англ"
                             value={form.name_en} onChange={e => setForm({ ...form, name_en: e.target.value })} />
                         </td>
                         <td style={td}>
-                          <input style={{ ...inp, width: 150, padding: '3px 7px' }} placeholder="РУС (необяз.)"
+                          <input style={{ ...inp, width: 140, padding: '3px 7px' }} placeholder="Русское"
                             value={form.name_ru} onChange={e => setForm({ ...form, name_ru: e.target.value })} />
                         </td>
+                        <td style={{ ...td, textAlign: 'right', color: 'var(--muted)' }}>{a.deals}</td>
                         <td style={td}>
-                          <input style={{ ...inp, width: 150, padding: '3px 7px' }} placeholder="сайт"
+                          <input style={{ ...inp, width: 140, padding: '3px 7px' }} placeholder="сайт"
                             value={form.website} onChange={e => setForm({ ...form, website: e.target.value })} />
-                          <label style={{ fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 5, marginTop: 4 }}>
-                            <input type="checkbox" checked={form.exclude_from_revenue}
-                              onChange={e => setForm({ ...form, exclude_from_revenue: e.target.checked })} />
-                            не в выручке
-                          </label>
                         </td>
                       </>
                     ) : (
                       <>
-                        <td style={td}>
-                          {/* когда ENG/РУС пусты, показываем исходное имя — иначе строка «— / —» неопознаваема */}
-                          {a.name_en || (!a.name_ru && a.name) || dash}
-                          {a.exclude_from_revenue && (
-                            <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--danger)' }}>не в выручке</span>
-                          )}
-                        </td>
+                        <td style={{ ...td, fontWeight: 600 }}>{a.short_name || a.name || dash}</td>
+                        <td style={td}>{a.name_en || dash}</td>
                         <td style={td}>{a.name_ru || dash}</td>
+                        <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{a.deals}</td>
                         <td style={td}>
                           {a.website
                             ? <a href={a.website.startsWith('http') ? a.website : `https://${a.website}`}
@@ -403,7 +392,7 @@ export default function Advertisers() {
                   </tr>
                 ))}
                 {!filtered.length && (
-                  <tr><td colSpan={5} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>
+                  <tr><td colSpan={7} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>
                     Ничего не найдено
                   </td></tr>
                 )}
