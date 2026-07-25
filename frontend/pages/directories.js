@@ -117,7 +117,7 @@ export default function Directories() {
   // производителей/агентств/воронок вёл прямо на выбранный раздел
   useEffect(() => {
     const t = router.query.tab
-    if (t && ['counterparties', 'articles', 'contracts'].includes(t)) setTab(t)
+    if (t && ['counterparties', 'contracts'].includes(t)) setTab(t)
   }, [router.query.tab])
   const [role, setRole] = useState('')
   const [permissions, setPermissions] = useState({})
@@ -824,7 +824,7 @@ export default function Directories() {
     tabs.push({ id: 'counterparties', label: 'Контрагенты' })
   }
   if (role === 'admin' || can(permissions, 'articles', 'view')) {
-    tabs.push({ id: 'articles', label: 'Статьи' })
+    tabs.push({ id: 'articles', label: 'Статьи', href: '/articles' })
   }
   if (role === 'admin' || can(permissions, 'contracts', 'view')) {
     tabs.push({ id: 'contracts', label: 'Договоры' })
