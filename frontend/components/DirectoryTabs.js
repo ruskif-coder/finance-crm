@@ -19,7 +19,7 @@ export default function DirectoryTabs({ active }) {
 
   const tabs = []
   if (isAdmin || can(perms, 'counterparties', 'view')) tabs.push({ id: 'counterparties', label: 'Контрагенты', href: '/directories?tab=counterparties' })
-  if (isAdmin || can(perms, 'articles', 'view')) tabs.push({ id: 'articles', label: 'Статьи', href: '/directories?tab=articles' })
+  if (isAdmin || can(perms, 'articles', 'view')) tabs.push({ id: 'articles', label: 'Статьи', href: '/articles' })
   if (isAdmin || can(perms, 'contracts', 'view')) tabs.push({ id: 'contracts', label: 'Договоры', href: '/directories?tab=contracts' })
   if (isAdmin || can(perms, 'sales_directories', 'view')) {
     tabs.push({ id: 'advertisers', label: 'Рекламодатели', href: '/advertisers' })
