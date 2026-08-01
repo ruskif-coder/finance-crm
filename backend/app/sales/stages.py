@@ -13,6 +13,20 @@ from app.sales.normalize import normalize_name
 
 MONEY_LAYERS = ("планируемые", "реализуемые", "фактические")
 
+# Канонический «светофор» 2/2/2: шесть стадий сделки, по две на каждый слой денег.
+# Ключи и порядок совпадают с фронтендом (StageBar) — менять только синхронно с ним.
+# Привязка стадии Битрикса к одной из этих позиций задаёт и stage_key (для StageBar),
+# и слой денег (для P&L/отчётов). Правка тут = правка светофора для всей системы.
+STAGE_CATALOG = [
+    {"key": "media_plan",  "label": "Медиаплан",   "money_layer": "планируемые"},
+    {"key": "booking",     "label": "Бронь",        "money_layer": "планируемые"},
+    {"key": "launch_prep", "label": "Сбор запуска", "money_layer": "реализуемые"},
+    {"key": "launch",      "label": "Запуск",       "money_layer": "реализуемые"},
+    {"key": "closing",     "label": "Закрытие",     "money_layer": "фактические"},
+    {"key": "archive",     "label": "Архив",        "money_layer": "фактические"},
+]
+STAGE_BY_KEY = {s["key"]: s for s in STAGE_CATALOG}
+
 
 def build_stage_index(rows) -> dict:
     """Строит индекс из строк bitrix_stage_map.

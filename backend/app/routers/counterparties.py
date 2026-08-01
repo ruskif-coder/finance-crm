@@ -3,6 +3,7 @@ from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Counterparty, CounterpartyBankAccount, Operation, Article, Contract, User
+from app.sales.models import SalesAgency, SalesAgencyCounterparty
 from app.routers.auth import get_current_user
 from app.permissions import require_permission
 from app.audit import log_action
@@ -529,6 +530,13 @@ def get_counterparty_card(
         .all()
     )
 
+    linked_agencies = (
+        db.query(SalesAgency)
+        .join(SalesAgencyCounterparty, SalesAgencyCounterparty.agency_id == SalesAgency.id)
+        .filter(SalesAgencyCounterparty.counterparty_id == counterparty_id)
+        .all()
+    )
+
     return {
         "id": cp.id,
         "name": cp.name,
@@ -580,6 +588,16 @@ def get_counterparty_card(
                 "attached_filename": c.attached_filename,
             }
             for c in contracts
+        ],
+        "linked_agencies": [
+            {
+                "id": a.id,
+                "short_name": a.short_name or a.name,
+                "name": a.name,
+                "name_en": a.name_en,
+                "holding": a.holding,
+            }
+            for a in linked_agencies
         ],
         "stats": {
             "op_count": stats.op_count or 0,

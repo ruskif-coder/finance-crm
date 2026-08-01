@@ -6,26 +6,38 @@ from app.routers.auth import get_current_user
 
 # Канонический список разделов, доступных настройке через менеджер ролей.
 # "Пользователи" и "Журнал действий" сюда не входят — они жёстко закрыты под admin (см. app.audit.require_admin).
+# Раздел настраивается матрицей ролей: разделы по вертикали, роли по горизонтали
+# (settings.js). Группы (group) идут по соседству — их заголовки рисуются один раз.
+# Секции «Продажи» и «Справочники продаж» покрывают вложенные подстраницы:
+#   sales_dashboard   → Дашборд · Реестр сделок · Аналитика (общий data-слой, одно право);
+#   sales_directories → Рекламодатели · Агентства · Воронки · Услуги · Бренды · Прайс.
+# Отдельных прав на каждую подстраницу не заводим: они делят одни и те же эндпойнты,
+# гейтить их порознь сейчас было бы косметикой. При необходимости — расщепить позже.
 SECTIONS = [
     {"key": "dashboard",         "label": "ДДС",                "group": "Отчёты",    "actions": ["view"]},
     {"key": "pl",                "label": "P&L",                "group": "Отчёты",    "actions": ["view"]},
     {"key": "balance",           "label": "Баланс",             "group": "Отчёты",    "actions": ["view"]},
     {"key": "planfact",          "label": "План / Факт",        "group": "Отчёты",    "actions": ["view"]},
     {"key": "receivables",       "label": "Дебиторская задолженность", "group": "Отчёты", "actions": ["view", "edit"]},
-    # Дашборд продаж. Действие "edit" гейтит принудительную синхронизацию с Битрикс24 —
-    # отдельного действия под неё не заводим, чтобы не плодить сущности в матрице ролей.
-    # ВАЖНО: раздел стоит рядом с остальными «Отчётами». buildPermissionBlocks в
-    # settings.js группирует разделы ПО СОСЕДСТВУ — вынесенный в конец списка раздел
-    # рисуется отдельным блоком с повторным заголовком группы.
-    {"key": "sales_dashboard",   "label": "Дашборд продаж",     "group": "Отчёты",      "actions": ["view", "edit"]},
+    # Раздел «Продажи» — три отдельные страницы. Действие "edit" на реестре гейтит
+    # правку сделок и синхронизацию. deals_scope (all/own) — видимость сделок,
+    # задаётся 5-уровневым контролом матрицы (нет/просмотр-свои/все/ред.-свои/все).
+    {"key": "sales_dashboard",   "label": "Продажи · Дашборд",       "group": "Продажи", "actions": ["view", "edit"]},
+    {"key": "sales_registry",    "label": "Продажи · Реестр сделок",  "group": "Продажи", "actions": ["view", "edit"]},
+    {"key": "sales_analytics",   "label": "Продажи · Аналитика",      "group": "Продажи", "actions": ["view", "edit"]},
     {"key": "operations",        "label": "Операции",           "group": None,        "actions": ["view", "create", "edit", "delete"]},
     {"key": "import",            "label": "Импорт",             "group": None,        "actions": ["view"]},
-    {"key": "settings_balances", "label": "Остатки по банкам",  "group": "Настройки", "actions": ["view", "edit"]},
     {"key": "counterparties",    "label": "Контрагенты",        "group": "Справочники", "actions": ["view", "edit", "delete", "view_operations"]},
-    {"key": "articles",          "label": "Статьи",             "group": "Справочники", "actions": ["view", "edit"]},
     {"key": "contracts",         "label": "Договоры",           "group": "Справочники", "actions": ["view", "edit"]},
-    {"key": "sales_directories", "label": "Услуги и бренды",    "group": "Справочники", "actions": ["view", "edit", "delete"]},
+    {"key": "dir_advertisers",   "label": "Рекламодатели",      "group": "Справочники", "actions": ["view", "edit", "delete"]},
+    {"key": "dir_agencies",      "label": "Агентства",          "group": "Справочники", "actions": ["view", "edit", "delete"]},
+    # Единое право «Настройки»: покрывает Остатки по банкам, Статьи, Воронки
+    # (вкладки страницы /settings). Отдельных прав у Статей/Воронок нет.
+    {"key": "settings",          "label": "Настройки · остатки, статьи, воронки", "group": "Настройки", "actions": ["view", "edit"]},
 ]
+
+# Секции продаж (5-уровневый контроль со свои/все) — для UI-матрицы и gate-хелперов.
+SALES_SECTIONS = ("sales_dashboard", "sales_registry", "sales_analytics")
 
 ACTION_FIELDS = {"view": "can_view", "create": "can_create", "edit": "can_edit", "delete": "can_delete", "view_operations": "can_view_operations"}
 
@@ -47,6 +59,23 @@ def get_permissions_for_user(db: Session, user: User) -> dict:
             for a in s["actions"]
         }
     return result
+
+
+def require_any_permission(sections, action: str = "view"):
+    """Пропускает, если у роли есть can_<action> хотя бы по одной из секций.
+    Для эндпойнтов, которые обслуживают несколько страниц (напр. /sales/dashboard
+    читают и реестр, и аналитика). Admin всегда проходит."""
+    def checker(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
+        if current_user.role.key == "admin":
+            return current_user
+        field = ACTION_FIELDS.get(action, "can_view")
+        rows = (db.query(RolePermission)
+                .filter(RolePermission.role_id == current_user.role_id,
+                        RolePermission.section.in_(list(sections))).all())
+        if any(bool(getattr(r, field)) for r in rows):
+            return current_user
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав для этого действия")
+    return checker
 
 
 def require_permission(section: str, action: str = "view"):

@@ -17,6 +17,7 @@ class PermissionInput(BaseModel):
     can_edit: Optional[bool] = None
     can_delete: Optional[bool] = None
     can_view_operations: Optional[bool] = None
+    deals_scope: Optional[str] = None   # all | own — для секции sales_dashboard
 
 
 class RoleCreate(BaseModel):
@@ -41,6 +42,8 @@ def _serialize_role(db: Session, role: Role) -> dict:
             for a in s["actions"]
         }
     user_count = db.query(User).filter(User.role_id == role.id).count()
+    sd = rows.get("sales_dashboard")
+    deals_scope = "all" if role.key == "admin" else ((sd.deals_scope if sd else None) or "all")
     return {
         "id": role.id,
         "key": role.key,
@@ -48,6 +51,7 @@ def _serialize_role(db: Session, role: Role) -> dict:
         "is_system": bool(role.is_system),
         "user_count": user_count,
         "permissions": permissions,
+        "deals_scope": deals_scope,
     }
 
 
@@ -108,6 +112,9 @@ def update_role(role_id: int, data: RoleUpdate, db: Session = Depends(get_db), c
                 val = getattr(p, ACTION_FIELDS[action])
                 if val is not None:
                     setattr(row, ACTION_FIELDS[action], 1 if val else 0)
+            # Видимость сделок — только для секции продаж
+            if p.section == "sales_dashboard" and p.deals_scope is not None:
+                row.deals_scope = p.deals_scope if p.deals_scope in ("all", "own") else "all"
         changes.append("права доступа изменены")
 
     db.commit()

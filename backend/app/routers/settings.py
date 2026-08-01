@@ -31,7 +31,7 @@ class CompanyRequisitesUpdate(BaseModel):
 @router.get("/bank-balances")
 def get_bank_balances(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings_balances", "view"))
+    current_user: User = Depends(require_permission("settings", "view"))
 ):
     # Стартовые остатки + реквизиты компании + привязка к юрлицу
     rows = db.execute(text("""
@@ -91,7 +91,7 @@ def get_bank_balances(
 def update_bank_balance(
     data: BankBalanceUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings_balances", "edit"))
+    current_user: User = Depends(require_permission("settings", "edit"))
 ):
     db.execute(text(
         "UPDATE bank_balances SET opening_balance = :balance, updated_at = NOW() WHERE bank = :bank"
@@ -104,7 +104,7 @@ def update_bank_balance(
 def update_company_requisites(
     data: CompanyRequisitesUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings_balances", "edit"))
+    current_user: User = Depends(require_permission("settings", "edit"))
 ):
     """Сохраняет реквизиты компании-плательщика для выбранного банка.
     Эти данные используются при экспорте платёжных поручений в Альфа-Банк."""
@@ -146,7 +146,7 @@ class BankOwnCompanyUpdate(BaseModel):
 def update_bank_own_company(
     data: BankOwnCompanyUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings_balances", "edit"))
+    current_user: User = Depends(require_permission("settings", "edit"))
 ):
     """Привязывает банковский счёт к своему юрлицу (own_company_id).
     own_company_id = None → отвязать."""

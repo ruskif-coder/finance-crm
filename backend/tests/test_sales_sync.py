@@ -7,7 +7,8 @@
    ручную очередь, а не догадку.
 """
 from app.sales.sync import (should_store_version, plan_counterparty_match,
-                            plan_directory_match, should_import_deal)
+                            plan_directory_match, should_import_deal,
+                            diff_bitrix_pipelines)
 
 
 def test_deleted_deal_is_not_reimported():
@@ -69,3 +70,53 @@ def test_unknown_directory_value_is_not_created_silently():
 def test_empty_directory_value_goes_to_queue():
     assert plan_directory_match("", {"web": 1}) == (None, "not_found")
     assert plan_directory_match(None, {"web": 1}) == (None, "not_found")
+
+
+# ---- Сверка воронок/стадий с Битриксом (актуальность справочника) ----
+
+def _pipe(cid, name, stages):
+    return {"bitrix_category_id": cid, "name": name,
+            "stages": [{"status_id": s, "name": n} for s, n in stages]}
+
+
+def test_identical_pipelines_report_no_changes():
+    stored = [_pipe(1, "Общая", [("C1:NEW", "Медиаплан"), ("C1:WON", "Закрытие")])]
+    r = diff_bitrix_pipelines(stored, stored)
+    assert r["has_changes"] is False
+    assert r["new_pipelines"] == [] and r["missing_pipelines"] == []
+
+
+def test_new_pipeline_and_its_stages_detected():
+    stored = [_pipe(1, "Общая", [("C1:NEW", "Медиаплан")])]
+    fetched = stored + [_pipe(2, "ДО", [("C2:NEW", "Сбор запуска")])]
+    r = diff_bitrix_pipelines(stored, fetched)
+    assert r["new_pipelines"] == [{"bitrix_category_id": 2, "name": "ДО"}]
+    assert {"pipeline": "ДО", "status_id": "C2:NEW", "name": "Сбор запуска"} in r["new_stages"]
+    assert r["has_changes"] is True
+
+
+def test_renamed_pipeline_matched_by_category_id():
+    stored = [_pipe(1, "Общая", [("C1:NEW", "Медиаплан")])]
+    fetched = [_pipe(1, "Общая воронка", [("C1:NEW", "Медиаплан")])]
+    r = diff_bitrix_pipelines(stored, fetched)
+    assert r["renamed_pipelines"] == [{"bitrix_category_id": 1,
+                                       "from": "Общая", "to": "Общая воронка"}]
+
+
+def test_renamed_stage_is_flagged_because_it_breaks_the_map():
+    # Карта светофора ключуется по имени стадии — переименование её отвязывает.
+    stored = [_pipe(1, "Общая", [("C1:WON", "Закрытие")])]
+    fetched = [_pipe(1, "Общая", [("C1:WON", "Закрытие | Мария")])]
+    r = diff_bitrix_pipelines(stored, fetched)
+    assert r["renamed_stages"] == [{"pipeline": "Общая", "status_id": "C1:WON",
+                                    "from": "Закрытие", "to": "Закрытие | Мария"}]
+
+
+def test_missing_pipeline_and_stage_detected():
+    stored = [_pipe(1, "Общая", [("C1:NEW", "Медиаплан"), ("C1:OLD", "Старая стадия")]),
+              _pipe(9, "Удалённая", [("C9:X", "Что-то")])]
+    fetched = [_pipe(1, "Общая", [("C1:NEW", "Медиаплан")])]
+    r = diff_bitrix_pipelines(stored, fetched)
+    assert {"bitrix_category_id": 9, "name": "Удалённая"} in r["missing_pipelines"]
+    assert {"pipeline": "Общая", "status_id": "C1:OLD",
+            "name": "Старая стадия"} in r["missing_stages"]

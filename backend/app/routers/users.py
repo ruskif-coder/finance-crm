@@ -24,6 +24,7 @@ class UserUpdate(BaseModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
     password: Optional[str] = None
+    bitrix_user_id: Optional[str] = None  # "" → отвязать, None → не трогать
 
 
 @router.get("/")
@@ -41,9 +42,22 @@ def list_users(
             "role_label": u.role.label,
             "is_active": bool(u.is_active),
             "created_at": u.created_at,
+            "bitrix_user_id": u.bitrix_user_id,
         }
         for u in users
     ]
+
+
+@router.get("/bitrix-directory")
+def bitrix_directory(current_user: User = Depends(require_admin)):
+    """Список сотрудников Битрикса для селектора привязки в настройках."""
+    from app.bitrix_api import list_bitrix_users
+    try:
+        # active_only=False — уволенные (неактивные) тоже нужны для привязки исторических reps;
+        # фронт помечает их «(уволен)».
+        return {"items": list_bitrix_users(active_only=False)}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Битрикс недоступен: {e}")
 
 
 @router.post("/")
@@ -123,6 +137,12 @@ def update_user(
             raise HTTPException(status_code=400, detail="Пароль должен быть не короче 8 символов")
         changes.append("пароль изменён")
         user.hashed_password = get_password_hash(data.password)
+
+    if data.bitrix_user_id is not None:
+        new_bx = data.bitrix_user_id.strip() or None
+        if new_bx != user.bitrix_user_id:
+            changes.append(f"Битрикс-привязка: {user.bitrix_user_id or '—'} → {new_bx or '—'}")
+            user.bitrix_user_id = new_bx
 
     db.commit()
 

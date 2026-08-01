@@ -52,8 +52,12 @@ class SalesAdvertiser(Base):
     # перенос листа MP Advertisers — исключение «МП» из выручки
     exclude_from_revenue = Column(Boolean, nullable=False, default=False)
     is_active = Column(Boolean, nullable=False, default=True)
+    bx_id = Column(String, nullable=True)   # id компании в Битриксе (заполнит синхрон справочников)
+    bx_master = Column(String, nullable=True)  # 'ours' | 'bitrix' — сторона-эталон при связке с Битриксом
     note = Column(Text)
     brands = relationship("SalesBrand", back_populates="advertiser")
+    direct_counterparties = relationship("SalesAdvertiserCounterparty", back_populates="advertiser",
+                                         cascade="all, delete-orphan")
 
 
 class SalesBrand(Base):
@@ -81,6 +85,9 @@ class SalesAgency(Base):
     name_ru = Column(String)
     holding = Column(String)      # необязательно
     is_active = Column(Boolean, nullable=False, default=True)
+    sk_percent = Column(Float, nullable=False, server_default="30")  # базовый СК агентства, % (для бонуса сейлза)
+    bx_id = Column(String, nullable=True)   # id компании в Битриксе (заполнит синхрон справочников)
+    bx_master = Column(String, nullable=True)  # 'ours' | 'bitrix' — сторона-эталон при связке с Битриксом
     note = Column(Text)
     # УСТАРЕЛО: одиночное юрлицо. Заменено связью М:М (несколько юрлиц на агентство).
     # Колонки не удалены (неразрушающе), но через API/UI не читаются.
@@ -99,6 +106,29 @@ class SalesAgencyCounterparty(Base):
     agency_id = Column(Integer, ForeignKey("sales_agencies.id", ondelete="CASCADE"), nullable=False)
     counterparty_id = Column(Integer, ForeignKey("counterparties.id"), nullable=False)
     agency = relationship("SalesAgency", back_populates="counterparties")
+
+
+class SalesAdvertiserCounterparty(Base):
+    """Юрлицо рекламодателя при прямом договоре. M:M аналог SalesAgencyCounterparty."""
+    __tablename__ = "sales_advertiser_counterparties"
+    __table_args__ = (UniqueConstraint("advertiser_id", "counterparty_id"),)
+    id = Column(Integer, primary_key=True)
+    advertiser_id = Column(Integer, ForeignKey("sales_advertisers.id", ondelete="CASCADE"), nullable=False)
+    counterparty_id = Column(Integer, ForeignKey("counterparties.id"), nullable=False)
+    advertiser = relationship("SalesAdvertiser", back_populates="direct_counterparties")
+
+
+class SalesBitrixLink(Base):
+    """Связь нашей записи справочника с компанией Битрикса. Много компаний Битрикса
+    могут указывать на ОДНУ нашу запись (дубли/юрлица в Битриксе), но одна компания
+    Битрикса принадлежит только одной нашей записи (UNIQUE по kind+bx_id).
+    kind: 'agencies' | 'advertisers'. our_id — id в sales_agencies/sales_advertisers."""
+    __tablename__ = "sales_bitrix_links"
+    __table_args__ = (UniqueConstraint("kind", "bx_id", name="uq_bxlink_kind_bxid"),)
+    id = Column(Integer, primary_key=True)
+    kind = Column(String, nullable=False)
+    our_id = Column(Integer, nullable=False)
+    bx_id = Column(String, nullable=False)
 
 
 class SalesPriceListItem(Base):
@@ -122,6 +152,7 @@ class SalesRep(Base):
     # NULL: менеджер в Битриксе не обязан быть пользователем финмодуля
     user_id = Column(Integer, ForeignKey("users.id"))
     is_active = Column(Boolean, nullable=False, default=True)
+    is_sales_head = Column(Boolean, nullable=False, default=False)  # рук отдела сейлзов — видит дашборды всех
 
 
 class SalesPipeline(Base):
@@ -255,6 +286,7 @@ class SalesDeal(Base):
     pipeline = Column(String)
     bitrix_stage = Column(String)
     amount = Column(Float)
+    amount_with_vat = Column(Float, nullable=True)  # сумма С НДС (клиентская); amount — БЕЗ НДС
     currency = Column(String, nullable=False, default="RUB")
     counterparty_id = Column(Integer, ForeignKey("counterparties.id"))
     advertiser_id = Column(Integer, ForeignKey("sales_advertisers.id"))
@@ -286,6 +318,18 @@ class SalesDeal(Base):
     period_from = Column(Date)
     period_to = Column(Date)
     synced_at = Column(DateTime, server_default=func.now())
+    # Бриф — Битрикс-поле ufCrm_1761318500 «Бриф - Описание задач». Ленивая подгрузка:
+    # NULL = ещё не тянули из Битрикса; после первого открытия кэшируется здесь.
+    # Правка двусторонняя: сохраняем сюда и патчим в Битрикс. brief_synced_at — момент
+    # последней синхронизации с Битриксом (подтяжки или записи).
+    brief = Column(Text, nullable=True)
+    brief_synced_at = Column(DateTime, nullable=True)
+    # Светофор синхронизации (считается при sync_deal_from_bitrix):
+    # green — совпадает с Битриксом; blue — у нас данные полнее (не выгружено);
+    # red — расхождение (Битрикс не матчится с нашими справочниками). NULL — не проверялось.
+    sync_status = Column(String, nullable=True)
+    sync_checked_at = Column(DateTime, nullable=True)
+    sync_report = Column(JSONB, nullable=True)   # {issues:[{field,message}], changes:[...], checked_at}
 
 
 class SalesDealFieldOverride(Base):
@@ -386,6 +430,23 @@ class SalesBitrixSyncLog(Base):
     rejected = Column(Integer, nullable=False, default=0)
     error_text = Column(Text)
     triggered_by = Column(Integer, ForeignKey("users.id"))
+
+
+class SalesDealFile(Base):
+    """Файл сделки (МП / договор), скачанный из Битрикса и сохранённый у нас
+    в персистентном томе /app/uploads. Живой URL Битрикса временный — поэтому
+    держим копию и отдаём её сами."""
+    __tablename__ = "sales_deal_files"
+    __table_args__ = (UniqueConstraint("deal_id", "kind"),)
+    id = Column(Integer, primary_key=True)
+    deal_id = Column(Integer, ForeignKey("sales_deals.id", ondelete="CASCADE"), nullable=False)
+    kind = Column(String, nullable=False)            # 'mp' | 'contract'
+    bitrix_file_id = Column(String)
+    filename = Column(String)
+    path = Column(String, nullable=False)            # относительный путь внутри /app/uploads
+    size = Column(Integer)
+    content_type = Column(String)
+    synced_at = Column(DateTime, server_default=func.now())
 
 
 class SalesMatchQueue(Base):

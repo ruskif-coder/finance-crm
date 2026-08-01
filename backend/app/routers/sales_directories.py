@@ -28,14 +28,26 @@ from app.audit import log_action
 from app.sales.models import (SalesService, SalesServiceGroup, SalesAdvertiser,
                               SalesBrand, SalesPriceListItem, SalesAgency,
                               SalesPipeline, SalesDeal, SalesPipelineStage,
-                              SalesAgencyCounterparty)
+                              SalesBitrixStageMap,
+                              SalesAgencyCounterparty, SalesAdvertiserCounterparty)
 from app.sales.normalize import normalize_name, normalize_inn
+from app.sales.stages import STAGE_CATALOG, STAGE_BY_KEY
+import logging
 
 router = APIRouter()
+logger = logging.getLogger("finance")
 
-_VIEW = require_permission("sales_directories", "view")
-_EDIT = require_permission("sales_directories", "edit")
-_DELETE = require_permission("sales_directories", "delete")
+# Права per-ресурс: рекламодатели/бренды/услуги/прайс → dir_advertisers;
+# агентства → dir_agencies; воронки перенесены в «Настройки» → settings.
+ADV_VIEW = require_permission("dir_advertisers", "view")
+ADV_EDIT = require_permission("dir_advertisers", "edit")
+ADV_DELETE = require_permission("dir_advertisers", "delete")
+AG_VIEW = require_permission("dir_agencies", "view")
+AG_EDIT = require_permission("dir_agencies", "edit")
+AG_DELETE = require_permission("dir_agencies", "delete")
+SET_VIEW = require_permission("settings", "view")
+SET_EDIT = require_permission("settings", "edit")
+SET_DELETE = require_permission("settings", "edit")   # у «Настроек» нет отдельного delete
 
 
 # ============================== Pydantic ==============================
@@ -67,6 +79,10 @@ def _advertiser_key_name(data: "AdvertiserIn") -> str:
         if (v or "").strip():
             return v.strip()
     return ""
+
+
+class CounterpartyLink(BaseModel):
+    counterparty_id: int
 
 
 class BrandIn(BaseModel):
@@ -138,7 +154,7 @@ def list_service_groups(db: Session = Depends(get_db),
 
 @router.post("/services/groups")
 def create_service_group(data: ServiceGroupIn, db: Session = Depends(get_db),
-                         current_user: User = Depends(_EDIT)):
+                         current_user: User = Depends(ADV_EDIT)):
     name = _clean_name(data.name)
     _reject_duplicate(db, SalesServiceGroup, name)
     max_order = db.query(func.max(SalesServiceGroup.sort_order)).scalar() or 0
@@ -152,7 +168,7 @@ def create_service_group(data: ServiceGroupIn, db: Session = Depends(get_db),
 
 @router.post("/services")
 def create_service(data: ServiceIn, db: Session = Depends(get_db),
-                   current_user: User = Depends(_EDIT)):
+                   current_user: User = Depends(ADV_EDIT)):
     name = _clean_name(data.name)
     _reject_duplicate(db, SalesService, name)
     max_order = db.query(func.max(SalesService.sort_order)).scalar() or 0
@@ -166,7 +182,7 @@ def create_service(data: ServiceIn, db: Session = Depends(get_db),
 
 @router.put("/services/{service_id}")
 def update_service(service_id: int, data: ServiceIn, db: Session = Depends(get_db),
-                   current_user: User = Depends(_EDIT)):
+                   current_user: User = Depends(ADV_EDIT)):
     svc = _require(db, SalesService, service_id, "Услуга")
     name = _clean_name(data.name)
     _reject_duplicate(db, SalesService, name, exclude_id=service_id)
@@ -178,7 +194,7 @@ def update_service(service_id: int, data: ServiceIn, db: Session = Depends(get_d
 
 @router.delete("/services/{service_id}")
 def deactivate_service(service_id: int, db: Session = Depends(get_db),
-                       current_user: User = Depends(_DELETE)):
+                       current_user: User = Depends(ADV_DELETE)):
     """Мягкое удаление: запись скрывается из выпадающих списков, но остаётся в БД,
     чтобы исторические сделки не потеряли ссылку."""
     svc = _require(db, SalesService, service_id, "Услуга")
@@ -186,6 +202,49 @@ def deactivate_service(service_id: int, db: Session = Depends(get_db),
     db.commit()
     log_action(db, current_user, "deactivate_sales_service", "sales_service", svc.id, svc.name)
     return {"message": "Услуга скрыта из справочника"}
+
+
+class UseIn(BaseModel):
+    on: bool
+
+
+@router.put("/services/{service_id}/use")
+def set_service_use(service_id: int, data: UseIn, db: Session = Depends(get_db),
+                    current_user: User = Depends(SET_EDIT)):
+    """Галочка «использовать» — включает/выключает услугу (is_active)."""
+    svc = _require(db, SalesService, service_id, "Услуга")
+    svc.is_active = data.on
+    db.commit()
+    log_action(db, current_user, "set_service_use", "sales_service", svc.id,
+               f"{svc.name}: {'использовать' if data.on else 'не использовать'}")
+    return {"message": "Сохранено", "is_active": svc.is_active}
+
+
+@router.post("/services/refresh")
+def refresh_services(db: Session = Depends(get_db), current_user: User = Depends(SET_EDIT)):
+    """Синхронизация услуг с Битриксом («Продукты Simb-ad», СП 1050): добавляет новые
+    (матч по нормализованному имени), существующие не трогает."""
+    from app.sales.bitrix.transport import list_bitrix_services
+    try:
+        items = list_bitrix_services()
+    except Exception as e:
+        logger.error("directories: Битрикс недоступен: %s", e)
+        raise HTTPException(status_code=502, detail="Битрикс недоступен (детали в логе сервера)")
+    existing = {normalize_name(s.name) for s in db.query(SalesService).all()}
+    added = 0
+    max_order = db.query(func.max(SalesService.sort_order)).scalar() or 0
+    for it in items:
+        title = (it.get("title") or "").strip()
+        if not title or normalize_name(title) in existing:
+            continue
+        max_order += 1
+        db.add(SalesService(name=title, is_active=True, sort_order=max_order))
+        existing.add(normalize_name(title))
+        added += 1
+    db.commit()
+    log_action(db, current_user, "refresh_services", "sales_service", 0,
+               f"добавлено из Битрикса: {added}")
+    return {"added": added, "bitrix_total": len(items)}
 
 
 # ========================== Рекламодатели ==========================
@@ -209,19 +268,27 @@ def list_advertisers(only_active: bool = True, db: Session = Depends(get_db),
     deal_counts = dict(db.query(SalesDeal.advertiser_id, func.count(SalesDeal.id))
                        .group_by(SalesDeal.advertiser_id).all())
 
-    return {"items": [{"id": a.id, "name": a.name,
+    # Юрлица рекламодателей (прямые договора) — одним запросом
+    cp_names = dict(db.query(Counterparty.id, Counterparty.name).all())
+    adv_cps = {}
+    for lk in db.query(SalesAdvertiserCounterparty).all():
+        adv_cps.setdefault(lk.advertiser_id, []).append(
+            {"counterparty_id": lk.counterparty_id, "name": cp_names.get(lk.counterparty_id)})
+
+    return {"items": [{"id": a.id, "name": a.name, "bx_id": a.bx_id,
                        "short_name": a.short_name or a.name,
                        "name_en": a.name_en, "name_ru": a.name_ru, "website": a.website,
                        "inn": a.inn, "counterparty_id": a.counterparty_id,
                        "exclude_from_revenue": a.exclude_from_revenue,
                        "is_active": a.is_active,
                        "deals": deal_counts.get(a.id, 0),
-                       "brands": by_adv.get(a.id, [])} for a in rows]}
+                       "brands": by_adv.get(a.id, []),
+                       "counterparties": adv_cps.get(a.id, [])} for a in rows]}
 
 
 @router.post("/producers")
 def create_advertiser(data: AdvertiserIn, db: Session = Depends(get_db),
-                      current_user: User = Depends(_EDIT)):
+                      current_user: User = Depends(ADV_EDIT)):
     name = _clean_name(_advertiser_key_name(data))
     _reject_duplicate(db, SalesAdvertiser, name)
     # ИНН нормализуется на входе: из Битрикса он приходит как float ("1673005251.0"),
@@ -245,7 +312,7 @@ def create_advertiser(data: AdvertiserIn, db: Session = Depends(get_db),
 
 @router.put("/producers/{advertiser_id}")
 def update_advertiser(advertiser_id: int, data: AdvertiserIn, db: Session = Depends(get_db),
-                      current_user: User = Depends(_EDIT)):
+                      current_user: User = Depends(ADV_EDIT)):
     adv = _require(db, SalesAdvertiser, advertiser_id, "Рекламодатель")
     # Каноничный ключ = короткое имя / первое заполненное. Если ничего не прислано —
     # оставляем прежнее (правка website не должна обнулять имя и падать 400).
@@ -272,7 +339,7 @@ def update_advertiser(advertiser_id: int, data: AdvertiserIn, db: Session = Depe
 
 @router.delete("/producers/{advertiser_id}")
 def deactivate_advertiser(advertiser_id: int, db: Session = Depends(get_db),
-                          current_user: User = Depends(_DELETE)):
+                          current_user: User = Depends(ADV_DELETE)):
     adv = _require(db, SalesAdvertiser, advertiser_id, "Рекламодатель")
     adv.is_active = False
     db.commit()
@@ -280,10 +347,51 @@ def deactivate_advertiser(advertiser_id: int, db: Session = Depends(get_db),
     return {"message": "Рекламодатель скрыт из справочника"}
 
 
+@router.post("/producers/{advertiser_id}/counterparties")
+def attach_producer_counterparty(advertiser_id: int, data: CounterpartyLink,
+                                  db: Session = Depends(get_db),
+                                  current_user: User = Depends(ADV_EDIT)):
+    """Прикрепляет юрлицо к рекламодателю (прямой договор). Несколько допустимо."""
+    _require(db, SalesAdvertiser, advertiser_id, "Рекламодатель")
+    cp = db.query(Counterparty).filter(Counterparty.id == data.counterparty_id).first()
+    if not cp:
+        raise HTTPException(status_code=404, detail="Контрагент не найден")
+    exists = (db.query(SalesAdvertiserCounterparty)
+              .filter(SalesAdvertiserCounterparty.advertiser_id == advertiser_id,
+                      SalesAdvertiserCounterparty.counterparty_id == data.counterparty_id).first())
+    if exists:
+        raise HTTPException(status_code=400, detail=f"«{cp.name}» уже прикреплён")
+    db.add(SalesAdvertiserCounterparty(advertiser_id=advertiser_id,
+                                        counterparty_id=data.counterparty_id))
+    db.commit()
+    log_action(db, current_user, "attach_producer_cp", "sales_advertiser", advertiser_id, cp.name)
+    return {"message": f"«{cp.name}» прикреплён"}
+
+
+@router.delete("/producers/{advertiser_id}/counterparties/{counterparty_id}")
+def detach_producer_counterparty(advertiser_id: int, counterparty_id: int,
+                                  db: Session = Depends(get_db),
+                                  current_user: User = Depends(ADV_EDIT)):
+    lk = (db.query(SalesAdvertiserCounterparty)
+          .filter(SalesAdvertiserCounterparty.advertiser_id == advertiser_id,
+                  SalesAdvertiserCounterparty.counterparty_id == counterparty_id).first())
+    if not lk:
+        raise HTTPException(status_code=404, detail="Связь не найдена")
+    db.delete(lk)
+    db.commit()
+    log_action(db, current_user, "detach_producer_cp", "sales_advertiser", advertiser_id,
+               str(counterparty_id))
+    return {"message": "Юрлицо откреплено"}
+
+
 # ============================== Воронки ==============================
 
 class PipelineTrack(BaseModel):
     is_tracked: bool
+
+
+class PipelineRename(BaseModel):
+    name: str
 
 
 @router.get("/pipelines")
@@ -308,18 +416,28 @@ def pipeline_stages(pipeline_id: int, db: Session = Depends(get_db),
     counts = dict(db.query(SalesDeal.bitrix_stage, func.count(SalesDeal.id))
                   .filter(SalesDeal.pipeline == p.name)
                   .group_by(SalesDeal.bitrix_stage).all())
+    # Текущая привязка к светофору 2/2/2 — из карты стадий по имени.
+    # Ключ совпадает с джойном реестра (pipeline+bitrix_stage по именам).
+    maps = {m.bitrix_stage: m for m in
+            db.query(SalesBitrixStageMap).filter(SalesBitrixStageMap.pipeline == p.name).all()}
     rows = (db.query(SalesPipelineStage)
             .filter(SalesPipelineStage.pipeline_id == pipeline_id)
             .order_by(SalesPipelineStage.sort_order).all())
-    return {"items": [{"id": s.id, "status_id": s.status_id, "name": s.name,
-                       "deals": counts.get(s.name, 0)} for s in rows],
-            "bitrix_category_id": p.bitrix_category_id}
+    items = []
+    for s in rows:
+        m = maps.get(s.name)
+        items.append({"id": s.id, "status_id": s.status_id, "name": s.name,
+                      "deals": counts.get(s.name, 0),
+                      "stage_key": m.stage_key if m else None,
+                      "money_layer": m.money_layer if m else None})
+    return {"items": items, "bitrix_category_id": p.bitrix_category_id,
+            "catalog": STAGE_CATALOG}
 
 
 @router.put("/pipelines/{pipeline_id}/tracked")
 def set_pipeline_tracked(pipeline_id: int, data: PipelineTrack,
                          db: Session = Depends(get_db),
-                         current_user: User = Depends(_EDIT)):
+                         current_user: User = Depends(SET_EDIT)):
     """Включает/выключает парсинг воронки. Данные не трогает — только флаг.
     При выключении синхронизация перестаёт грузить сделки этой воронки."""
     p = _require(db, SalesPipeline, pipeline_id, "Воронка")
@@ -330,9 +448,189 @@ def set_pipeline_tracked(pipeline_id: int, data: PipelineTrack,
     return {"message": "Сохранено", "is_tracked": p.is_tracked}
 
 
+def _cascade_pipeline_rename(db: Session, old: str, new: str) -> tuple[int, int]:
+    """Имя воронки — денормализованный ключ в sales_deals.pipeline и
+    sales_bitrix_stage_map.pipeline. Справочник (sales_pipelines) — единственный источник
+    имени; при переименовании каскадно обновляем обе таблицы, чтобы связь по имени не рвалась
+    (счётчики, money-layer джойн, удаление по имени). Обе стороны джойна меняются синхронно,
+    поэтому денежные расчёты не меняются — только подпись воронки.
+    → (сколько сделок, сколько строк карты стадий обновлено)."""
+    if not old or old == new:
+        return (0, 0)
+    d = (db.query(SalesDeal).filter(SalesDeal.pipeline == old)
+         .update({SalesDeal.pipeline: new}, synchronize_session=False))
+    m = (db.query(SalesBitrixStageMap).filter(SalesBitrixStageMap.pipeline == old)
+         .update({SalesBitrixStageMap.pipeline: new}, synchronize_session=False))
+    return (d, m)
+
+
+def _cascade_stage_rename(db: Session, pipeline_name: str, old: str, new: str) -> tuple[int, int]:
+    """Имя стадии — денормализованный ключ (в паре с воронкой) в sales_deals.bitrix_stage
+    и sales_bitrix_stage_map.bitrix_stage. Money-layer джойн витрины идёт по ИМЕНАМ
+    (pipeline+bitrix_stage), поэтому переименование стадии в Битриксе обязано каскадно
+    менять обе таблицы — иначе новые сделки с новым именем стадии не находят раскладку
+    и уходят в «Без группы». → (сколько сделок, сколько строк карты обновлено)."""
+    if not old or old == new:
+        return (0, 0)
+    d = (db.query(SalesDeal)
+         .filter(SalesDeal.pipeline == pipeline_name, SalesDeal.bitrix_stage == old)
+         .update({SalesDeal.bitrix_stage: new}, synchronize_session=False))
+    # Коллизия: если пара (pipeline, new) в карте уже есть, переименование старой
+    # строки нарушило бы UNIQUE(pipeline,bitrix_stage) и уронило бы весь refresh.
+    # Пропускаем — сделки уже переименованы в new и найдут раскладку по существующей
+    # строке; старая (pipeline, old) остаётся осиротевшей (безвредно, без сделок).
+    clash = (db.query(SalesBitrixStageMap)
+             .filter(SalesBitrixStageMap.pipeline == pipeline_name,
+                     SalesBitrixStageMap.bitrix_stage == new).first())
+    if clash:
+        m = 0
+    else:
+        m = (db.query(SalesBitrixStageMap)
+             .filter(SalesBitrixStageMap.pipeline == pipeline_name, SalesBitrixStageMap.bitrix_stage == old)
+             .update({SalesBitrixStageMap.bitrix_stage: new}, synchronize_session=False))
+    return (d, m)
+
+
+@router.put("/pipelines/{pipeline_id}/name")
+def rename_pipeline(pipeline_id: int, data: PipelineRename,
+                    db: Session = Depends(get_db),
+                    current_user: User = Depends(SET_EDIT)):
+    """Ручное переименование воронки. Нужно для категории 0 (дефолтной): её настоящее
+    имя VibeCode API не отдаёт, поэтому оно правится только здесь. refresh это имя не трогает.
+    Каскадно переносит имя на сделки и карту стадий."""
+    p = _require(db, SalesPipeline, pipeline_id, "Воронка")
+    new_name = (data.name or "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Название не может быть пустым")
+    clash = (db.query(SalesPipeline)
+             .filter(SalesPipeline.name == new_name, SalesPipeline.id != p.id).first())
+    if clash:
+        raise HTTPException(status_code=409, detail=f"Воронка «{new_name}» уже существует")
+    old = p.name
+    p.name = new_name
+    deals_n, maps_n = _cascade_pipeline_rename(db, old, new_name)
+    db.commit()
+    log_action(db, current_user, "rename_pipeline", "sales_pipeline", p.id,
+               f"{old} → {new_name} (сделок {deals_n}, карт стадий {maps_n})")
+    return {"message": "Сохранено", "name": p.name, "deals_updated": deals_n}
+
+
+@router.post("/pipelines/refresh")
+def refresh_pipelines(db: Session = Depends(get_db), current_user: User = Depends(SET_EDIT)):
+    """Синхронизация воронок/стадий с Битриксом. Новые воронки заводятся ВЫКЛЮЧЕННЫМИ
+    (is_tracked=False) — чтобы синхрон сделок их не тянул, пока не решим. Стадии добавляются/
+    переименовываются по имени. Данные (сделки) не трогает."""
+    from app.sales.bitrix.transport import list_bitrix_pipelines, list_bitrix_stages
+    try:
+        cats = list_bitrix_pipelines()
+    except Exception as e:
+        logger.error("directories: Битрикс недоступен: %s", e)
+        raise HTTPException(status_code=502, detail="Битрикс недоступен (детали в логе сервера)")
+    added_p, added_s, renamed_s, renamed_p = 0, 0, 0, 0
+    used_names = {p.name for p in db.query(SalesPipeline).all()}
+    for c in cats:
+        cid = c["id"]
+        p = db.query(SalesPipeline).filter(SalesPipeline.bitrix_category_id == cid).first()
+        if not p:
+            name = c["name"] or f"Воронка {cid}"
+            if name in used_names:
+                name = f"{name} ({cid})"
+            used_names.add(name)
+            p = SalesPipeline(name=name, bitrix_category_id=cid, is_tracked=False, is_active=True)
+            db.add(p)
+            db.flush()
+            added_p += 1
+        elif cid == 0:
+            # Категория 0 (дефолтная): её настоящее имя API не отдаёт (подставляем
+            # заглушку). Не затираем — имя задаётся только вручную через /name.
+            pass
+        else:
+            new_name = c["name"] or f"Воронка {cid}"
+            if new_name != p.name:
+                # не даём переименованием создать дубликат имени другой воронки
+                if new_name in used_names:
+                    new_name = f"{new_name} ({cid})"
+                if new_name != p.name:
+                    used_names.discard(p.name)
+                    used_names.add(new_name)
+                    _cascade_pipeline_rename(db, p.name, new_name)
+                    p.name = new_name
+                    renamed_p += 1
+        try:
+            stages = list_bitrix_stages(cid)
+        except Exception:
+            stages = []
+        for order, s in enumerate(stages):
+            sid = s["status_id"]
+            st = (db.query(SalesPipelineStage)
+                  .filter(SalesPipelineStage.bitrix_category_id == cid,
+                          SalesPipelineStage.status_id == sid).first())
+            if not st:
+                db.add(SalesPipelineStage(pipeline_id=p.id, bitrix_category_id=cid,
+                                          status_id=sid, name=s["name"], sort_order=order))
+                added_s += 1
+            elif st.name != s["name"]:
+                # каскад: карта слоёв и сделки хранят имя стадии денормализованно
+                _cascade_stage_rename(db, p.name, st.name, s["name"])
+                st.name = s["name"]
+                renamed_s += 1
+    db.commit()
+    log_action(db, current_user, "refresh_pipelines", "sales_pipeline", 0,
+               f"воронок +{added_p} (переим. {renamed_p}), стадий +{added_s}, переименовано стадий {renamed_s}")
+    return {"pipelines_added": added_p, "pipelines_renamed": renamed_p,
+            "stages_added": added_s, "stages_renamed": renamed_s}
+
+
+class StageMapping(BaseModel):
+    stage_key: Optional[str] = None   # None => снять привязку стадии со светофора
+
+
+@router.put("/pipelines/{pipeline_id}/stages/{stage_id}/mapping")
+def set_stage_mapping(pipeline_id: int, stage_id: int, data: StageMapping,
+                      db: Session = Depends(get_db),
+                      current_user: User = Depends(SET_EDIT)):
+    """Привязывает стадию воронки к позиции светофора 2/2/2 (или снимает привязку).
+
+    Из выбранной позиции (stage_key) выводится слой денег — так и StageBar, и
+    P&L смотрят на одно значение. Карта ключуется по ИМЕНАМ (воронка, стадия),
+    как и джойн реестра, поэтому привязка сразу влияет на витрину."""
+    p = _require(db, SalesPipeline, pipeline_id, "Воронка")
+    s = (db.query(SalesPipelineStage)
+         .filter(SalesPipelineStage.id == stage_id,
+                 SalesPipelineStage.pipeline_id == pipeline_id).first())
+    if s is None:
+        raise HTTPException(status_code=404, detail="Стадия не найдена")
+
+    existing = (db.query(SalesBitrixStageMap)
+                .filter(SalesBitrixStageMap.pipeline == p.name,
+                        SalesBitrixStageMap.bitrix_stage == s.name).first())
+
+    if data.stage_key is None:
+        if existing:
+            db.delete(existing)
+            db.commit()
+        log_action(db, current_user, "unmap_stage", "sales_stage", stage_id,
+                   f"{p.name} / {s.name}: привязка снята")
+        return {"message": "Привязка снята", "stage_key": None, "money_layer": None}
+
+    cat = STAGE_BY_KEY.get(data.stage_key)
+    if cat is None:
+        raise HTTPException(status_code=400, detail="Неизвестная позиция светофора")
+    if existing is None:
+        existing = SalesBitrixStageMap(pipeline=p.name, bitrix_stage=s.name)
+        db.add(existing)
+    existing.stage_key = cat["key"]
+    existing.money_layer = cat["money_layer"]
+    existing.is_active = True
+    db.commit()
+    log_action(db, current_user, "map_stage", "sales_stage", stage_id,
+               f"{p.name} / {s.name} → {cat['label']} ({cat['money_layer']})")
+    return {"message": "Сохранено", "stage_key": cat["key"], "money_layer": cat["money_layer"]}
+
+
 @router.delete("/pipelines/{pipeline_id}")
 def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db),
-                    current_user: User = Depends(_DELETE)):
+                    current_user: User = Depends(SET_DELETE)):
     """ФИЗИЧЕСКИ удаляет воронку вместе со всеми её сделками, их сырьём
     и строками маппинга. Необратимо. Отклоняет удаление, если по сделкам
     воронки есть ручные правки или разнесения — их потеря молча недопустима."""
@@ -378,10 +676,6 @@ class AgencyIn(BaseModel):
     note: Optional[str] = None
 
 
-class CounterpartyLink(BaseModel):
-    counterparty_id: int
-
-
 def _agency_name(data: "AgencyIn") -> str:
     """Уникальный ключ агентства. Одно из названий обязательно."""
     for v in (data.short_name, data.name_en, data.name_ru):
@@ -409,20 +703,37 @@ def list_agencies(only_active: bool = True, db: Session = Depends(get_db),
     deal_counts = dict(db.query(SalesDeal.agency_id, func.count(SalesDeal.id))
                        .group_by(SalesDeal.agency_id).all())
 
-    return {"items": [{"id": a.id,
+    return {"items": [{"id": a.id, "bx_id": a.bx_id,
                        "short_name": a.short_name or a.name,
                        "name_en": a.name_en, "name_ru": a.name_ru,
                        # Исходное полное имя из Битрикса — для опознания, когда
                        # ENG/РУС ещё не размечены. Не теряем то, что было.
                        "full_name": a.name,
                        "holding": a.holding, "is_active": a.is_active, "note": a.note,
-                       "deals": deal_counts.get(a.id, 0),
+                       "deals": deal_counts.get(a.id, 0), "sk_percent": a.sk_percent,
                        "counterparties": links.get(a.id, [])} for a in rows]}
+
+
+class SkIn(BaseModel):
+    sk_percent: float
+
+
+@router.put("/agencies/{agency_id}/sk")
+def set_agency_sk(agency_id: int, data: SkIn, db: Session = Depends(get_db),
+                  current_user: User = Depends(AG_EDIT)):
+    """Базовый СК агентства (%). Правится по клику в справочнике."""
+    a = _require(db, SalesAgency, agency_id, "Агентство")
+    if data.sk_percent < 0 or data.sk_percent > 100:
+        raise HTTPException(status_code=400, detail="СК должен быть 0–100%")
+    a.sk_percent = data.sk_percent
+    db.commit()
+    log_action(db, current_user, "set_agency_sk", "sales_agency", a.id, f"{a.name}: СК {data.sk_percent}%")
+    return {"message": "Сохранено", "sk_percent": a.sk_percent}
 
 
 @router.post("/agencies")
 def create_agency(data: AgencyIn, db: Session = Depends(get_db),
-                  current_user: User = Depends(_EDIT)):
+                  current_user: User = Depends(AG_EDIT)):
     name = _agency_name(data)
     _reject_duplicate(db, SalesAgency, name)
     agency = SalesAgency(name=name, short_name=data.short_name or name,
@@ -437,7 +748,7 @@ def create_agency(data: AgencyIn, db: Session = Depends(get_db),
 
 @router.put("/agencies/{agency_id}")
 def update_agency(agency_id: int, data: AgencyIn, db: Session = Depends(get_db),
-                  current_user: User = Depends(_EDIT)):
+                  current_user: User = Depends(AG_EDIT)):
     agency = _require(db, SalesAgency, agency_id, "Агентство")
     _agency_name(data)  # проверка, что хоть одно имя есть
     agency.short_name = data.short_name or None
@@ -452,7 +763,7 @@ def update_agency(agency_id: int, data: AgencyIn, db: Session = Depends(get_db),
 
 @router.post("/agencies/{agency_id}/counterparties")
 def attach_counterparty(agency_id: int, data: CounterpartyLink,
-                        db: Session = Depends(get_db), current_user: User = Depends(_EDIT)):
+                        db: Session = Depends(get_db), current_user: User = Depends(AG_EDIT)):
     """Прикрепляет юрлицо (контрагента) к агентству. Их может быть несколько."""
     _require(db, SalesAgency, agency_id, "Агентство")
     cp = db.query(Counterparty).filter(Counterparty.id == data.counterparty_id).first()
@@ -471,7 +782,7 @@ def attach_counterparty(agency_id: int, data: CounterpartyLink,
 
 @router.delete("/agencies/{agency_id}/counterparties/{counterparty_id}")
 def detach_counterparty(agency_id: int, counterparty_id: int,
-                        db: Session = Depends(get_db), current_user: User = Depends(_EDIT)):
+                        db: Session = Depends(get_db), current_user: User = Depends(AG_EDIT)):
     lk = (db.query(SalesAgencyCounterparty)
           .filter(SalesAgencyCounterparty.agency_id == agency_id,
                   SalesAgencyCounterparty.counterparty_id == counterparty_id).first())
@@ -485,7 +796,7 @@ def detach_counterparty(agency_id: int, counterparty_id: int,
 
 @router.delete("/agencies/{agency_id}")
 def deactivate_agency(agency_id: int, db: Session = Depends(get_db),
-                      current_user: User = Depends(_DELETE)):
+                      current_user: User = Depends(AG_DELETE)):
     agency = _require(db, SalesAgency, agency_id, "Агентство")
     agency.is_active = False
     db.commit()
@@ -501,7 +812,7 @@ class MergeIn(BaseModel):
 
 @router.get("/producers/duplicates")
 def advertiser_duplicates(db: Session = Depends(get_db),
-                          current_user: User = Depends(_VIEW)):
+                          current_user: User = Depends(ADV_VIEW)):
     """Предлагает пары возможных дублей рекламодателей по совпадению
     русского или латинского ядра имени. Только предложение — слияние
     подтверждает человек, автоматически не склеиваем."""
@@ -565,7 +876,7 @@ def advertiser_duplicates(db: Session = Depends(get_db),
 
 @router.post("/producers/{target_id}/merge")
 def merge_advertiser(target_id: int, data: MergeIn, db: Session = Depends(get_db),
-                     current_user: User = Depends(_EDIT)):
+                     current_user: User = Depends(ADV_EDIT)):
     """Вливает source в target: бренды переносятся (дубли по имени схлопываются),
     сделки и ручные правки переуказываются на target, source удаляется."""
     if data.source_id == target_id:
@@ -601,6 +912,21 @@ def merge_advertiser(target_id: int, data: MergeIn, db: Session = Depends(get_db
         SalesDealFieldOverride.value_int == data.source_id).update(
         {SalesDealFieldOverride.value_int: target_id}, synchronize_session=False)
 
+    # Перенос связей с Битриксом: компании source переезжают на target (bx_id уникален
+    # по kind, коллизий нет). Мастер наследуется, если у target не задан.
+    from app.sales.models import SalesBitrixLink
+    db.query(SalesBitrixLink).filter(
+        SalesBitrixLink.kind == "advertisers", SalesBitrixLink.our_id == data.source_id).update(
+        {SalesBitrixLink.our_id: target_id}, synchronize_session=False)
+    if not target.bx_master and source.bx_master:
+        target.bx_master = source.bx_master
+    db.flush()
+    _tgt_links = [lk.bx_id for lk in db.query(SalesBitrixLink).filter(
+        SalesBitrixLink.kind == "advertisers", SalesBitrixLink.our_id == target_id)
+        .order_by(SalesBitrixLink.id).all()]
+    if _tgt_links:
+        target.bx_id = _tgt_links[0]
+
     db.query(SalesAdvertiser).filter(SalesAdvertiser.id == data.source_id).delete(
         synchronize_session=False)
     db.commit()
@@ -608,6 +934,59 @@ def merge_advertiser(target_id: int, data: MergeIn, db: Session = Depends(get_db
                f"влит «{dropped_name}»: брендов +{moved_brands}, сделок {deals_moved}")
     return {"message": f"«{dropped_name}» влит в «{target.name}»: "
                        f"брендов перенесено {moved_brands}, сделок {deals_moved}"}
+
+
+@router.post("/agencies/{target_id}/merge")
+def merge_agency(target_id: int, data: MergeIn, db: Session = Depends(get_db),
+                 current_user: User = Depends(AG_EDIT)):
+    """Вливает source-агентство в target: юрлица переносятся (дубли связи схлопываются),
+    сделки и ручные правки переуказываются на target, source удаляется."""
+    if data.source_id == target_id:
+        raise HTTPException(status_code=400, detail="Нельзя слить агентство с самим собой")
+    target = _require(db, SalesAgency, target_id, "Агентство (цель)")
+    source = _require(db, SalesAgency, data.source_id, "Агентство (источник)")
+    dropped_name = source.name
+
+    tgt_cp = {lk.counterparty_id for lk in db.query(SalesAgencyCounterparty)
+              .filter(SalesAgencyCounterparty.agency_id == target_id).all()}
+    moved_legals = 0
+    for lk in db.query(SalesAgencyCounterparty).filter(SalesAgencyCounterparty.agency_id == data.source_id).all():
+        if lk.counterparty_id in tgt_cp:
+            db.query(SalesAgencyCounterparty).filter(SalesAgencyCounterparty.id == lk.id).delete(synchronize_session=False)
+        else:
+            db.query(SalesAgencyCounterparty).filter(SalesAgencyCounterparty.id == lk.id).update(
+                {SalesAgencyCounterparty.agency_id: target_id}, synchronize_session=False)
+            tgt_cp.add(lk.counterparty_id); moved_legals += 1
+
+    from app.sales.models import SalesDealFieldOverride
+    deals_moved = (db.query(SalesDeal).filter(SalesDeal.agency_id == data.source_id)
+                   .update({SalesDeal.agency_id: target_id}, synchronize_session=False))
+    db.query(SalesDealFieldOverride).filter(
+        SalesDealFieldOverride.field_name == "agency_id",
+        SalesDealFieldOverride.value_int == data.source_id).update(
+        {SalesDealFieldOverride.value_int: target_id}, synchronize_session=False)
+
+    # Перенос связей с Битриксом: компании source переезжают на target (bx_id уникален
+    # по kind, коллизий нет). Мастер наследуется, если у target не задан.
+    from app.sales.models import SalesBitrixLink
+    db.query(SalesBitrixLink).filter(
+        SalesBitrixLink.kind == "agencies", SalesBitrixLink.our_id == data.source_id).update(
+        {SalesBitrixLink.our_id: target_id}, synchronize_session=False)
+    if not target.bx_master and source.bx_master:
+        target.bx_master = source.bx_master
+    db.flush()
+    _tgt_links = [lk.bx_id for lk in db.query(SalesBitrixLink).filter(
+        SalesBitrixLink.kind == "agencies", SalesBitrixLink.our_id == target_id)
+        .order_by(SalesBitrixLink.id).all()]
+    if _tgt_links:
+        target.bx_id = _tgt_links[0]
+
+    db.query(SalesAgency).filter(SalesAgency.id == data.source_id).delete(synchronize_session=False)
+    db.commit()
+    log_action(db, current_user, "merge_agency", "sales_agency", target_id,
+               f"влит «{dropped_name}»: юрлиц +{moved_legals}, сделок {deals_moved}")
+    return {"message": f"«{dropped_name}» влит в «{target.name}»: "
+                       f"юрлиц перенесено {moved_legals}, сделок {deals_moved}"}
 
 
 # ============================== Бренды ==============================
@@ -628,7 +1007,10 @@ def list_brands(advertiser_id: Optional[int] = None, only_active: bool = True,
 
 @router.post("/brands")
 def create_brand(data: BrandIn, db: Session = Depends(get_db),
-                 current_user: User = Depends(_EDIT)):
+                 current_user: User = Depends(require_permission("sales_registry", "edit"))):
+    # Добавление бренда — по праву «редактирование» в разделе Продажи (sales_registry),
+    # тому же, что и правка сделки (решение 2026-07-27). Отдельного права на справочник
+    # не требуем: бренды заводят из реестра сделок.
     name = _clean_name(data.name)
     _require(db, SalesAdvertiser, data.advertiser_id, "Рекламодатель")
     # Уникальность бренда — в пределах рекламодателя: одноимённые бренды
@@ -655,7 +1037,7 @@ class BrandsMerge(BaseModel):
 
 @router.post("/brands/move")
 def move_brands(data: BrandsMove, db: Session = Depends(get_db),
-                current_user: User = Depends(_EDIT)):
+                current_user: User = Depends(ADV_EDIT)):
     """Переносит пачку брендов к одному рекламодателю. Если у цели уже есть
     бренд с таким именем — сделки перецепляем на существующий, дубль удаляем,
     иначе просто меняем advertiser_id."""
@@ -685,7 +1067,7 @@ def move_brands(data: BrandsMove, db: Session = Depends(get_db),
 
 @router.post("/brands/merge")
 def merge_brands(data: BrandsMerge, db: Session = Depends(get_db),
-                 current_user: User = Depends(_EDIT)):
+                 current_user: User = Depends(ADV_EDIT)):
     """Схлопывает дубли: сделки со всех drop-брендов перецепляет на keep,
     сами drop-бренды удаляет. Для склейки «вольтарен»/«Вольтарен» и т.п."""
     keep = _require(db, SalesBrand, data.keep_id, "Бренд (остаётся)")
@@ -704,7 +1086,7 @@ def merge_brands(data: BrandsMerge, db: Session = Depends(get_db),
 
 
 @router.get("/brands/duplicates")
-def brand_duplicates(db: Session = Depends(get_db), current_user: User = Depends(_VIEW)):
+def brand_duplicates(db: Session = Depends(get_db), current_user: User = Depends(ADV_VIEW)):
     """Группы брендов с одинаковым нормализованным именем у одного рекламодателя —
     кандидаты на схлопывание («вольтарен» + «Вольтарен»)."""
     rows = db.query(SalesBrand).all()
@@ -725,7 +1107,7 @@ def brand_duplicates(db: Session = Depends(get_db), current_user: User = Depends
 
 @router.delete("/brands/{brand_id}/hard")
 def delete_brand_hard(brand_id: int, db: Session = Depends(get_db),
-                      current_user: User = Depends(_DELETE)):
+                      current_user: User = Depends(ADV_DELETE)):
     """Физически удаляет бренд — для мусорных записей (склеенные списки,
     дубли регистра). Сделки, ссылавшиеся на него, теряют ссылку (brand_id=NULL),
     а не блокируют удаление: мусорный бренд не должен цепляться за данные."""
@@ -742,7 +1124,7 @@ def delete_brand_hard(brand_id: int, db: Session = Depends(get_db),
 
 @router.put("/brands/{brand_id}")
 def update_brand(brand_id: int, data: BrandIn, db: Session = Depends(get_db),
-                 current_user: User = Depends(_EDIT)):
+                 current_user: User = Depends(ADV_EDIT)):
     brand = _require(db, SalesBrand, brand_id, "Бренд")
     name = _clean_name(data.name)
     _require(db, SalesAdvertiser, data.advertiser_id, "Рекламодатель")
@@ -756,7 +1138,7 @@ def update_brand(brand_id: int, data: BrandIn, db: Session = Depends(get_db),
 
 @router.delete("/brands/{brand_id}")
 def deactivate_brand(brand_id: int, db: Session = Depends(get_db),
-                     current_user: User = Depends(_DELETE)):
+                     current_user: User = Depends(ADV_DELETE)):
     brand = _require(db, SalesBrand, brand_id, "Бренд")
     brand.is_active = False
     db.commit()
@@ -769,7 +1151,7 @@ def deactivate_brand(brand_id: int, db: Session = Depends(get_db),
 @router.get("/price-list")
 def list_price(service_id: Optional[int] = None, only_active: bool = True,
                db: Session = Depends(get_db),
-               current_user: User = Depends(_VIEW)):
+               current_user: User = Depends(ADV_VIEW)):
     q = db.query(SalesPriceListItem)
     if service_id is not None:
         q = q.filter(SalesPriceListItem.service_id == service_id)
@@ -784,7 +1166,7 @@ def list_price(service_id: Optional[int] = None, only_active: bool = True,
 
 @router.post("/price-list")
 def create_price(data: PriceIn, db: Session = Depends(get_db),
-                 current_user: User = Depends(_EDIT)):
+                 current_user: User = Depends(ADV_EDIT)):
     _require(db, SalesService, data.service_id, "Услуга")
     if data.valid_from and data.valid_to and data.valid_to < data.valid_from:
         raise HTTPException(status_code=400, detail="Дата окончания раньше даты начала")
@@ -798,7 +1180,7 @@ def create_price(data: PriceIn, db: Session = Depends(get_db),
 
 @router.put("/price-list/{item_id}")
 def update_price(item_id: int, data: PriceIn, db: Session = Depends(get_db),
-                 current_user: User = Depends(_EDIT)):
+                 current_user: User = Depends(ADV_EDIT)):
     item = _require(db, SalesPriceListItem, item_id, "Позиция прайса")
     _require(db, SalesService, data.service_id, "Услуга")
     if data.valid_from and data.valid_to and data.valid_to < data.valid_from:
@@ -812,7 +1194,7 @@ def update_price(item_id: int, data: PriceIn, db: Session = Depends(get_db),
 
 @router.delete("/price-list/{item_id}")
 def deactivate_price(item_id: int, db: Session = Depends(get_db),
-                     current_user: User = Depends(_DELETE)):
+                     current_user: User = Depends(ADV_DELETE)):
     item = _require(db, SalesPriceListItem, item_id, "Позиция прайса")
     item.is_active = False
     db.commit()

@@ -23,6 +23,9 @@ class RolePermission(Base):
     can_edit = Column(Integer, default=0)
     can_delete = Column(Integer, default=0)
     can_view_operations = Column(Integer, default=0)  # counterparties: показывать операции в карточке
+    # Видимость сделок: 'all' — все, 'own' — только свои (где пользователь сейлз/аккаунт
+    # через SalesRep.user_id). Осмысленно для секции sales_dashboard.
+    deals_scope = Column(String, default="all")
     role = relationship("Role", back_populates="permissions")
 
 class User(Base):
@@ -35,6 +38,7 @@ class User(Base):
     is_active = Column(Integer, default=1)
     created_at = Column(DateTime, server_default=func.now())
     consent_accepted_at = Column(DateTime, nullable=True)  # 152-ФЗ: момент принятия согласия на обработку ПДн
+    bitrix_user_id = Column(String, nullable=True)  # привязка к сотруднику в Битрикс24 (ручной выбор в настройках)
     role = relationship("Role")
 
 class AuditLog(Base):
