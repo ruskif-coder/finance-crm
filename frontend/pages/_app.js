@@ -1,5 +1,8 @@
 import '../styles/globals.css'
 import localFont from 'next/font/local'
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/router'
+import axios from 'axios'
 
 // Локальный шрифт вместо next/font/google: раньше каждая сборка (docker compose
 // up -d --build) скачивала Onest с fonts.googleapis.com/fonts.gstatic.com, и при
@@ -18,9 +21,30 @@ const onest = localFont({
 })
 
 export default function App({ Component, pageProps }) {
+  const router = useRouter()
+  // Освежаем права/роль из /auth/me при загрузке приложения: снимок в localStorage
+  // делается при логине, и без этого изменения роли в настройках не подхватывались
+  // до повторного входа (кнопки/инлайн-редактирование оставались по старым правам).
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    if (!token) { setReady(true); return }
+    axios.get('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => {
+        const d = r.data || {}
+        localStorage.setItem('role', d.role || '')
+        localStorage.setItem('role_label', d.role_label || '')
+        localStorage.setItem('is_admin', d.is_admin ? '1' : '0')
+        localStorage.setItem('permissions', JSON.stringify(d.permissions || {}))
+        if (d.name) localStorage.setItem('name', d.name)
+      })
+      .catch(e => { if (e.response?.status === 401) { localStorage.clear(); router.replace('/login') } })
+      .finally(() => setReady(true))
+  }, [])
+
   return (
     <main className={onest.className}>
-      <Component {...pageProps} />
+      {ready ? <Component {...pageProps} /> : null}
     </main>
   )
 }

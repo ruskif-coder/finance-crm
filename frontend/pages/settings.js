@@ -3,6 +3,12 @@ import { useRouter } from 'next/router'
 import axios from 'axios'
 import Navbar from '../components/Navbar'
 import Head from 'next/head'
+import Articles from './articles'
+import Pipelines from './pipelines'
+import FieldAuditPanel from '../components/FieldAuditPanel'
+
+// Секции продаж — 5-уровневый доступ (свои/все). Единый список для матрицы.
+const SALES_KEYS = ['sales_dashboard', 'sales_registry', 'sales_analytics']
 
 const api = (token) => axios.create({
   // См. комментарий в balance.js — относительный путь, проксируется Caddy.
@@ -29,6 +35,26 @@ const BANK_STYLES = {
 
 const ACTION_LABELS_RU = { view: 'Просмотр', create: 'Создание', edit: 'Редактирование', delete: 'Удаление', view_operations: 'Опер. в карточке' }
 
+// Одна строка на страницу, в ячейке — уровень доступа. Уровни маппятся на булевы
+// поля бэкенда (can_view/edit/…) + deals_scope. Три вида страниц:
+//   view  — только чтение (отчёты без правки): нет / просмотр
+//   edit  — справочники и разделы с правкой: нет / просмотр / редактирование
+//   sales — раздел «Продажи»: + измерение свои/все (deals_scope)
+const LEVELS_VIEW = [{ v: 'none', l: 'нет' }, { v: 'view', l: 'просмотр' }]
+const LEVELS_EDIT = [{ v: 'none', l: 'нет' }, { v: 'view', l: 'просмотр' }, { v: 'edit', l: 'редактирование' }]
+const LEVELS_SALES = [
+  { v: 'none', l: 'нет' },
+  { v: 'view_own', l: 'просмотр — свои' },
+  { v: 'view_all', l: 'просмотр — все' },
+  { v: 'edit_own', l: 'редактирование — свои' },
+  { v: 'edit_all', l: 'редактирование — все' },
+]
+const sectionKind = (s) => SALES_KEYS.includes(s.key) ? 'sales'
+  : (s.actions.some(a => a !== 'view') ? 'edit' : 'view')
+const levelsFor = (s) => { const k = sectionKind(s); return k === 'sales' ? LEVELS_SALES : k === 'edit' ? LEVELS_EDIT : LEVELS_VIEW }
+const levelLabel = (s, v) => (levelsFor(s).find(x => x.v === v) || {}).l || v
+const adminLevel = (s) => { const k = sectionKind(s); return k === 'sales' ? 'edit_all' : k === 'edit' ? 'edit' : 'view' }
+
 function getPermissions() {
   if (typeof window === 'undefined') return {}
   try { return JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { return {} }
@@ -48,8 +74,10 @@ export default function Settings() {
   const [sections, setSections] = useState([])
   const [loadingRoles, setLoadingRoles] = useState(false)
   const [editingRolePerms, setEditingRolePerms] = useState({})
+  const [roleScopes, setRoleScopes] = useState({})   // { roleId: 'all' | 'own' }
   const [roleLabels, setRoleLabels] = useState({})
   const [savingRole, setSavingRole] = useState({})
+  const [savingAll, setSavingAll] = useState(false)
   const [newRoleLabel, setNewRoleLabel] = useState('')
   const [creatingRole, setCreatingRole] = useState(false)
   const [roleError, setRoleError] = useState('')
@@ -66,9 +94,15 @@ export default function Settings() {
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [editingUsers, setEditingUsers] = useState({})
   const [savingUsers, setSavingUsers] = useState({})
+  const [savingAllUsers, setSavingAllUsers] = useState(false)
+  const [hideInactive, setHideInactive] = useState(false)
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'viewer' })
   const [creatingUser, setCreatingUser] = useState(false)
   const [userError, setUserError] = useState('')
+  // Справочник сотрудников Битрикса (для привязки)
+  const [bitrixUsers, setBitrixUsers] = useState([])
+  const [bxLoading, setBxLoading] = useState(false)
+  const [bxError, setBxError] = useState('')
 
   // Журнал действий
   const [auditItems, setAuditItems] = useState([])
@@ -84,9 +118,11 @@ export default function Settings() {
     if (!token) { router.push('/login'); return }
     const r = localStorage.getItem('role') || ''
     const perms = getPermissions()
-    if (r !== 'admin') { router.push('/dashboard'); return }
+    // Доступ: админ или роль с правом «Настройки» (остатки/статьи/воронки).
+    if (r !== 'admin' && !can(perms, 'settings', 'view')) { router.push('/dashboard'); return }
     setRole(r)
     setPermissions(perms)
+    setTab(r === 'admin' || can(perms, 'settings', 'view') ? 'balances' : 'balances')
     loadBalances(token)
     api(token).get('/auth/me').then(res => setSelfId(res.data.id)).catch(() => {})
     if (r === 'admin') loadRoles(token)
@@ -98,7 +134,36 @@ export default function Settings() {
     if (tab === 'users') loadUsers(token)
     if (tab === 'audit') loadAuditLog(token, 0, auditFilters)
     if (tab === 'roles') loadRoles(token)
+    if (tab === 'services') loadServices(token)
   }, [tab])
+
+  // ---------- Услуги (синхрон с Битриксом «Продукты Simb-ad») ----------
+  const [services, setServices] = useState([])
+  const [svcLoading, setSvcLoading] = useState(false)
+  const [svcBusy, setSvcBusy] = useState(false)
+  const loadServices = async (token) => {
+    setSvcLoading(true)
+    try {
+      const r = await api(token).get('/sales/directories/services?only_active=false')
+      setServices(r.data.items || [])
+    } catch (e) { if (e.response?.status === 401) router.push('/login') }
+    finally { setSvcLoading(false) }
+  }
+  const toggleServiceUse = async (id, on) => {
+    const token = localStorage.getItem('token')
+    try { await api(token).put(`/sales/directories/services/${id}/use`, { on }); await loadServices(token) }
+    catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+  }
+  const refreshServices = async () => {
+    const token = localStorage.getItem('token')
+    setSvcBusy(true)
+    try {
+      const r = await api(token).post('/sales/directories/services/refresh', {})
+      alert(`Синхронизация услуг: добавлено ${r.data.added} (в Битриксе всего: ${r.data.bitrix_total})`)
+      await loadServices(token)
+    } catch (e) { alert(e.response?.data?.detail || 'Обновление недоступно') }
+    finally { setSvcBusy(false) }
+  }
 
   // Реквизиты компании для экспорта платёжек
   const [companyReq, setCompanyReq] = useState({})     // { "АльфаБанк": { inn, kpp, rs, bik, ... } }
@@ -205,12 +270,25 @@ export default function Settings() {
       const res = await api(token).get('/users/')
       setUsers(res.data)
       const ed = {}
-      res.data.forEach(u => { ed[u.id] = { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '' } })
+      res.data.forEach(u => { ed[u.id] = { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '', bitrix_user_id: u.bitrix_user_id || '' } })
       setEditingUsers(ed)
     } catch (e) {
       if (e.response?.status === 401) router.push('/login')
     } finally {
       setLoadingUsers(false)
+    }
+    loadBitrixUsers(token)
+  }
+
+  const loadBitrixUsers = async (token) => {
+    setBxLoading(true); setBxError('')
+    try {
+      const res = await api(token).get('/users/bitrix-directory')
+      setBitrixUsers(res.data.items || [])
+    } catch (e) {
+      setBxError(e.response?.data?.detail || 'Битрикс недоступен')
+    } finally {
+      setBxLoading(false)
     }
   }
 
@@ -237,7 +315,7 @@ export default function Settings() {
     const ed = editingUsers[id]
     setSavingUsers(prev => ({ ...prev, [id]: true }))
     try {
-      const payload = { name: ed.name, email: ed.email, role: ed.role, is_active: ed.is_active }
+      const payload = { name: ed.name, email: ed.email, role: ed.role, is_active: ed.is_active, bitrix_user_id: ed.bitrix_user_id || '' }
       if (ed.password) payload.password = ed.password
       await api(token).put(`/users/${id}`, payload)
       await loadUsers(token)
@@ -245,6 +323,39 @@ export default function Settings() {
       alert(e.response?.data?.detail || 'Ошибка при сохранении')
     } finally {
       setSavingUsers(prev => ({ ...prev, [id]: false }))
+    }
+  }
+
+  const handleSaveAllUsers = async () => {
+    const token = localStorage.getItem('token')
+    setSavingAllUsers(true)
+    let ok = 0; const errs = []
+    for (const u of users) {
+      const ed = editingUsers[u.id]
+      if (!ed) continue
+      try {
+        const payload = { name: ed.name, email: ed.email, role: ed.role, is_active: ed.is_active, bitrix_user_id: ed.bitrix_user_id || '' }
+        if (ed.password) payload.password = ed.password
+        await api(token).put(`/users/${u.id}`, payload)
+        ok++
+      } catch (e) { errs.push(`${u.name}: ${e.response?.data?.detail || 'ошибка'}`) }
+    }
+    await loadUsers(token)
+    setSavingAllUsers(false)
+    alert(`Сохранено: ${ok}` + (errs.length ? `\nОшибки (${errs.length}):\n` + errs.join('\n') : ''))
+  }
+
+  // Генератор пароля через Web Crypto (готовое безопасное решение). Без похожих символов (0/O/1/l/I).
+  const genPassword = (len = 16) => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_=+'
+    const arr = new Uint32Array(len)
+    window.crypto.getRandomValues(arr)
+    return Array.from(arr, x => chars[x % chars.length]).join('')
+  }
+  const copyText = async (t) => {
+    try { await navigator.clipboard.writeText(t) } catch (e) {
+      const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select()
+      try { document.execCommand('copy') } catch (_) {} document.body.removeChild(ta)
     }
   }
 
@@ -302,12 +413,15 @@ export default function Settings() {
       setSections(res.data.sections)
       const draft = {}
       const labels = {}
+      const scopes = {}
       res.data.roles.forEach(r => {
         draft[r.id] = JSON.parse(JSON.stringify(r.permissions))
         labels[r.id] = r.label
+        scopes[r.id] = r.deals_scope || 'all'
       })
       setEditingRolePerms(draft)
       setRoleLabels(labels)
+      setRoleScopes(scopes)
     } catch (e) {
       if (e.response?.status === 401) router.push('/login')
     } finally {
@@ -341,25 +455,48 @@ export default function Settings() {
     }
   }
 
+  const setScope = (roleId, value) => setRoleScopes(prev => ({ ...prev, [roleId]: value }))
+
+  const buildPermPayload = (roleId) => {
+    const draft = editingRolePerms[roleId] || {}
+    return sections.map(s => ({
+      section: s.key,
+      can_view: s.actions.includes('view') ? !!draft[s.key]?.view : undefined,
+      can_create: s.actions.includes('create') ? !!draft[s.key]?.create : undefined,
+      can_edit: s.actions.includes('edit') ? !!draft[s.key]?.edit : undefined,
+      can_delete: s.actions.includes('delete') ? !!draft[s.key]?.delete : undefined,
+      can_view_operations: s.actions.includes('view_operations') ? !!draft[s.key]?.view_operations : undefined,
+      deals_scope: SALES_KEYS.includes(s.key) ? (roleScopes[roleId] || 'all') : undefined,
+    }))
+  }
+
   const handleSaveRole = async (roleId) => {
     const token = localStorage.getItem('token')
     setSavingRole(prev => ({ ...prev, [roleId]: true }))
     try {
-      const draft = editingRolePerms[roleId] || {}
-      const permissions = sections.map(s => ({
-        section: s.key,
-        can_view: s.actions.includes('view') ? !!draft[s.key]?.view : undefined,
-        can_create: s.actions.includes('create') ? !!draft[s.key]?.create : undefined,
-        can_edit: s.actions.includes('edit') ? !!draft[s.key]?.edit : undefined,
-        can_delete: s.actions.includes('delete') ? !!draft[s.key]?.delete : undefined,
-        can_view_operations: s.actions.includes('view_operations') ? !!draft[s.key]?.view_operations : undefined,
-      }))
-      await api(token).put(`/roles/${roleId}`, { label: roleLabels[roleId], permissions })
+      await api(token).put(`/roles/${roleId}`, { label: roleLabels[roleId], permissions: buildPermPayload(roleId) })
       await loadRoles(token)
     } catch (e) {
       alert(e.response?.data?.detail || 'Ошибка при сохранении роли')
     } finally {
       setSavingRole(prev => ({ ...prev, [roleId]: false }))
+    }
+  }
+
+  // Сохранить все роли разом — удобнее для матрицы, где правишь несколько сразу.
+  const handleSaveAll = async () => {
+    const token = localStorage.getItem('token')
+    setSavingAll(true)
+    try {
+      for (const r of allRoles) {
+        if (r.key === 'admin') continue
+        await api(token).put(`/roles/${r.id}`, { label: roleLabels[r.id], permissions: buildPermPayload(r.id) })
+      }
+      await loadRoles(token)
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Ошибка при сохранении')
+    } finally {
+      setSavingAll(false)
     }
   }
 
@@ -374,19 +511,42 @@ export default function Settings() {
     }
   }
 
-  const buildPermissionBlocks = (secs) => {
-    const blocks = []
-    let i = 0
-    while (i < secs.length) {
-      const g = secs[i].group
-      const items = [secs[i]]
-      i++
-      if (g) {
-        while (i < secs.length && secs[i].group === g) { items.push(secs[i]); i++ }
-      }
-      blocks.push({ group: g, items })
+  // Строки матрицы: заголовки групп + по одной строке на страницу. Роли — колонки.
+  const buildMatrixRows = (secs) => {
+    const out = []
+    let group
+    secs.forEach(s => {
+      if (s.group !== group) { group = s.group; if (s.group) out.push({ type: 'group', label: s.group }) }
+      out.push({ type: 'section', s })
+    })
+    return out
+  }
+
+  // Текущий уровень доступа роли к странице — выводится из булевых полей + scope.
+  const currentLevel = (roleId, s) => {
+    const d = editingRolePerms[roleId]?.[s.key] || {}
+    if (SALES_KEYS.includes(s.key)) {
+      if (!d.view) return 'none'
+      return (d.edit ? 'edit_' : 'view_') + (roleScopes[roleId] === 'own' ? 'own' : 'all')
     }
-    return blocks
+    if (!d.view) return 'none'
+    return s.actions.some(a => a !== 'view' && d[a]) ? 'edit' : 'view'
+  }
+
+  // Установка уровня → раскладка по булевым полям секции (+ scope для продаж).
+  const setLevel = (roleId, s, level) => {
+    let sec
+    if (SALES_KEYS.includes(s.key)) {
+      sec = { view: level !== 'none', edit: level.startsWith('edit') }
+      setScope(roleId, level.endsWith('own') ? 'own' : 'all')
+    } else if (level === 'view') {
+      sec = Object.fromEntries(s.actions.map(a => [a, a === 'view']))
+    } else if (level === 'edit') {
+      sec = Object.fromEntries(s.actions.map(a => [a, true]))
+    } else { // none
+      sec = Object.fromEntries(s.actions.map(a => [a, false]))
+    }
+    setEditingRolePerms(prev => ({ ...prev, [roleId]: { ...prev[roleId], [s.key]: sec } }))
   }
 
   const inp = { width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '16px', outline: 'none', textAlign: 'right' }
@@ -398,11 +558,21 @@ export default function Settings() {
 
   // Настройки теперь доступны только администратору (см. page-guard выше), поэтому
   // вкладки ниже не нуждаются в индивидуальных permission-проверках — admin проходит их все.
+  const isAdmin = role === 'admin'
+  const maySettings = isAdmin || can(permissions, 'settings', 'view')
   const tabs = [
-    { id: 'balances', label: 'Остатки по банкам' },
-    { id: 'users', label: 'Пользователи' },
-    { id: 'audit', label: 'Журнал действий' },
-    { id: 'roles', label: 'Роли' },
+    ...(maySettings ? [
+      { id: 'balances', label: 'Остатки по банкам' },
+      { id: 'articles', label: 'Статьи' },
+      { id: 'pipelines', label: 'Воронки' },
+      { id: 'services', label: 'Услуги' },
+      { id: 'field_audit', label: 'Сверка полей' },
+    ] : []),
+    ...(isAdmin ? [
+      { id: 'users', label: 'Пользователи' },
+      { id: 'audit', label: 'Журнал действий' },
+      { id: 'roles', label: 'Роли' },
+    ] : []),
   ]
 
   return (
@@ -421,6 +591,8 @@ export default function Settings() {
             </button>
           ))}
         </div>
+
+        {tab === 'field_audit' && <FieldAuditPanel />}
 
         {tab === 'balances' && (
           <div>
@@ -454,7 +626,7 @@ export default function Settings() {
                         {/* Стартовый остаток — редактируемый */}
                         <div style={{ flex: 1, minWidth: '180px' }}>
                           <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>Стартовый остаток</div>
-                          {(role === 'admin' || can(permissions, 'settings_balances', 'edit')) ? (
+                          {(role === 'admin' || can(permissions, 'settings', 'edit')) ? (
                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                               <input
                                 type="number"
@@ -493,7 +665,7 @@ export default function Settings() {
                       </div>
 
                       {/* Юрлицо-плательщик для этого банка */}
-                      {(role === 'admin' || can(permissions, 'settings_balances', 'edit')) && b.bank !== 'Наличные' && ownCompanies.length > 0 && (
+                      {(role === 'admin' || can(permissions, 'settings', 'edit')) && b.bank !== 'Наличные' && ownCompanies.length > 0 && (
                         <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                           <span style={{ fontSize: 13, color: '#6b7280', whiteSpace: 'nowrap' }}>🏢 Юрлицо:</span>
                           <select
@@ -517,7 +689,7 @@ export default function Settings() {
                       )}
 
                       {/* Реквизиты компании для выгрузки платёжек — раскрывающийся блок */}
-                      {(role === 'admin' || can(permissions, 'settings_balances', 'edit')) && b.bank !== 'Наличные' && (
+                      {(role === 'admin' || can(permissions, 'settings', 'edit')) && b.bank !== 'Наличные' && (
                         <div style={{ marginTop: 14, borderTop: '1px solid #f3f4f6', paddingTop: 12 }}>
                           <button
                             onClick={() => setReqOpen(prev => ({ ...prev, [b.bank]: !prev[b.bank] }))}
@@ -574,6 +746,57 @@ export default function Settings() {
           </div>
         )}
 
+        {tab === 'articles' && (
+          <div style={{ background: 'white', borderRadius: '12px', padding: '16px' }}>
+            <Articles embedded />
+          </div>
+        )}
+
+        {tab === 'pipelines' && (
+          <div style={{ background: 'white', borderRadius: '12px', padding: '16px' }}>
+            <Pipelines embedded />
+          </div>
+        )}
+
+        {tab === 'services' && (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 12 }}>
+              <h2 style={{ fontSize: 17, fontWeight: 600, margin: 0 }}>Услуги</h2>
+              <span style={{ fontSize: 12, color: '#6b7280' }}>{services.length}</span>
+              <span style={{ fontSize: 12, color: '#6b7280' }}>синхронизация с «Продукты Simb-ad» (Битрикс)</span>
+              <button onClick={refreshServices} disabled={svcBusy}
+                style={{ marginLeft: 'auto', padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 500, fontSize: 14, background: '#2563eb', color: 'white' }}>
+                {svcBusy ? 'Обновление…' : 'Обновить из Битрикса'}
+              </button>
+            </div>
+            {svcLoading ? <div style={{ color: '#6b7280', padding: 20 }}>Загрузка…</div> : (
+              <div style={{ background: 'white', borderRadius: '12px', overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr>
+                    <th style={th}>Услуга</th>
+                    <th style={th}>Группа</th>
+                    <th style={{ ...th, textAlign: 'center', width: 120 }}>Использовать</th>
+                  </tr></thead>
+                  <tbody>
+                    {services.map(s => (
+                      <tr key={s.id} style={{ opacity: s.is_active ? 1 : 0.5 }}>
+                        <td style={td}>{s.name}</td>
+                        <td style={{ ...td, color: '#6b7280' }}>{s.group || ''}</td>
+                        <td style={{ ...td, textAlign: 'center' }}>
+                          <input type="checkbox" checked={!!s.is_active}
+                            onChange={e => toggleServiceUse(s.id, e.target.checked)}
+                            style={{ cursor: 'pointer' }} />
+                        </td>
+                      </tr>
+                    ))}
+                    {!services.length && <tr><td colSpan={3} style={{ ...td, textAlign: 'center', color: '#9ca3af' }}>Услуг нет — нажмите «Обновить из Битрикса»</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
         {tab === 'users' && (
           <div>
             {/* Форма создания */}
@@ -591,6 +814,18 @@ export default function Settings() {
               {userError && <div style={{ color: '#dc2626', fontSize: '15px', marginTop: '8px' }}>{userError}</div>}
             </div>
 
+            {/* Тулбар: скрыть деактивированных + массовое сохранение */}
+            {!loadingUsers && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 10 }}>
+                <label style={{ fontSize: 13, color: '#374151', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={hideInactive} onChange={e => setHideInactive(e.target.checked)} /> скрыть деактивированных
+                </label>
+                <button onClick={handleSaveAllUsers} disabled={savingAllUsers} style={{ ...btn, marginLeft: 'auto' }}>
+                  {savingAllUsers ? 'Сохранение…' : 'Сохранить все'}
+                </button>
+              </div>
+            )}
+
             {/* Таблица пользователей */}
             {loadingUsers ? <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>Загрузка...</div> : (
               <div style={{ background: 'white', borderRadius: '12px', overflow: 'hidden' }}>
@@ -601,13 +836,14 @@ export default function Settings() {
                       <th style={th}>Email</th>
                       <th style={th}>Роль</th>
                       <th style={th}>Активен</th>
+                      <th style={th}>Сотрудник в Битрикс24</th>
                       <th style={th}>Новый пароль</th>
                       <th style={th}></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {users.map(u => {
-                      const ed = editingUsers[u.id] || { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '' }
+                    {users.filter(u => !hideInactive || u.is_active).map(u => {
+                      const ed = editingUsers[u.id] || { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '', bitrix_user_id: u.bitrix_user_id || '' }
                       const isSelf = u.id === selfId
                       return (
                         <tr key={u.id}>
@@ -637,9 +873,37 @@ export default function Settings() {
                             </button>
                           </td>
                           <td style={td}>
-                            <input type="password" placeholder="не менять" value={ed.password}
-                              onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, password: e.target.value } }))}
-                              style={{ ...inpLeft, width: '140px', padding: '6px 10px' }} />
+                            {(() => {
+                              const cur = ed.bitrix_user_id || ''
+                              const known = bitrixUsers.some(b => b.id === cur)
+                              return (
+                                <select value={cur}
+                                  onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, bitrix_user_id: e.target.value } }))}
+                                  disabled={bxLoading || (!!bxError && bitrixUsers.length === 0)}
+                                  title={bxError || ''}
+                                  style={{ ...select, minWidth: '200px' }}>
+                                  <option value="">{bxLoading ? 'загрузка…' : (bxError && bitrixUsers.length === 0 ? '⚠ ' + bxError : '— не привязан —')}</option>
+                                  {cur && !known && <option value={cur}>ID {cur} (не в списке)</option>}
+                                  {[...bitrixUsers].sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1)).map(b =>
+                                    <option key={b.id} value={b.id}>{b.name}{b.active ? '' : ' (уволен)'} · #{b.id}</option>)}
+                                </select>
+                              )
+                            })()}
+                          </td>
+                          <td style={td}>
+                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                              <input type={ed.showPw ? 'text' : 'password'} placeholder="не менять" value={ed.password}
+                                onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, password: e.target.value } }))}
+                                style={{ ...inpLeft, width: '150px', padding: '6px 10px', fontFamily: ed.showPw ? 'monospace' : 'inherit' }} />
+                              <button title="Сгенерировать пароль (16 символов)"
+                                onClick={() => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, password: genPassword(16), showPw: true } }))}
+                                style={{ padding: '5px 8px', borderRadius: '8px', border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', fontSize: '14px' }}>🎲</button>
+                              {ed.password && (
+                                <button title="Скопировать пароль"
+                                  onClick={() => copyText(ed.password)}
+                                  style={{ padding: '5px 8px', borderRadius: '8px', border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', fontSize: '14px' }}>📋</button>
+                              )}
+                            </div>
                           </td>
                           <td style={td}>
                             <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
@@ -735,71 +999,91 @@ export default function Settings() {
             </div>
 
             {loadingRoles ? <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>Загрузка...</div> : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {allRoles.map(r => {
-                  const isAdmin = r.key === 'admin'
-                  return (
-                    <div key={r.id} style={{ background: 'white', borderRadius: '12px', padding: '20px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: isAdmin ? 0 : '16px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: '200px' }}>
-                          {isAdmin ? (
-                            <div style={{ fontSize: '17px', fontWeight: '600' }}>{r.label}</div>
-                          ) : (
-                            <input value={roleLabels[r.id] ?? r.label}
-                              onChange={e => setRoleLabels(prev => ({ ...prev, [r.id]: e.target.value }))}
-                              style={{ ...inpLeft, maxWidth: '240px', fontWeight: '600' }} />
-                          )}
-                          {!!r.is_system && (
-                            <span style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '20px', background: '#f3f4f6', color: '#6b7280' }}>системная</span>
-                          )}
-                          <span style={{ fontSize: '13px', color: '#9ca3af' }}>{r.user_count} {r.user_count === 1 ? 'пользователь' : 'пользователей'}</span>
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          {!isAdmin && (
-                            <button onClick={() => handleSaveRole(r.id)} disabled={savingRole[r.id]} style={btn}>
-                              {savingRole[r.id] ? '...' : 'Сохранить'}
-                            </button>
-                          )}
-                          {!r.is_system && (
-                            <button onClick={() => handleDeleteRole(r.id)}
-                              style={{ ...btn, background: '#fee2e2', color: '#dc2626' }}>
-                              Удалить
-                            </button>
-                          )}
-                        </div>
-                      </div>
+              <div style={{ background: 'white', borderRadius: '12px', padding: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '12px' }}>
+                  <div style={{ fontSize: '14px', color: '#6b7280' }}>
+                    Разделы — по вертикали, роли — по горизонтали. «Админ» имеет полный доступ и не настраивается.
+                  </div>
+                  <button onClick={handleSaveAll} disabled={savingAll} style={btn}>
+                    {savingAll ? 'Сохранение...' : 'Сохранить изменения'}
+                  </button>
+                </div>
 
-                      {isAdmin ? (
-                        <div style={{ fontSize: '15px', color: '#6b7280' }}>Полный доступ ко всем разделам и действиям — не настраивается.</div>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '4px' }}>
-                          {buildPermissionBlocks(sections).map((block, bi) => (
-                            <div key={bi} style={{ border: '1px solid #f3f4f6', borderRadius: '10px', padding: '10px 14px' }}>
-                              {block.group && (
-                                <div style={{ fontSize: '14px', fontWeight: '600', color: '#6b7280', marginBottom: '6px' }}>{block.group}</div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 480 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ position: 'sticky', left: 0, background: 'white', zIndex: 2, textAlign: 'left',
+                          padding: '8px 12px', borderBottom: '2px solid #e5e7eb', minWidth: 260, fontSize: 13, color: '#6b7280' }}>
+                          Раздел / действие
+                        </th>
+                        {allRoles.map(r => {
+                          const isAdmin = r.key === 'admin'
+                          return (
+                            <th key={r.id} style={{ padding: '8px 10px', borderBottom: '2px solid #e5e7eb',
+                              textAlign: 'center', minWidth: 200, verticalAlign: 'top' }}>
+                              {isAdmin ? (
+                                <div style={{ fontWeight: 600, fontSize: 15 }}>{r.label}</div>
+                              ) : (
+                                <input value={roleLabels[r.id] ?? r.label}
+                                  onChange={e => setRoleLabels(prev => ({ ...prev, [r.id]: e.target.value }))}
+                                  style={{ ...inp, textAlign: 'center', fontWeight: 600, fontSize: 14, padding: '5px 8px' }} />
                               )}
-                              {block.items.map(s => (
-                                <div key={s.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', flexWrap: 'wrap', gap: '8px' }}>
-                                  <div style={{ fontSize: '15px', paddingLeft: block.group ? '12px' : 0 }}>{s.label}</div>
-                                  <div style={{ display: 'flex', gap: '14px' }}>
-                                    {s.actions.map(a => (
-                                      <label key={a} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '14px', color: '#374151', cursor: 'pointer' }}>
-                                        <input type="checkbox"
-                                          checked={!!editingRolePerms[r.id]?.[s.key]?.[a]}
-                                          onChange={() => togglePerm(r.id, s.key, a)} />
-                                        {ACTION_LABELS_RU[a] || a}
-                                      </label>
-                                    ))}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
+                              <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
+                                {r.is_system ? 'системная · ' : ''}{r.user_count} польз.
+                              </div>
+                              {!r.is_system && (
+                                <button onClick={() => handleDeleteRole(r.id)}
+                                  style={{ marginTop: 6, fontSize: 12, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }}>
+                                  удалить
+                                </button>
+                              )}
+                            </th>
+                          )
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {buildMatrixRows(sections).map((row, ri) => {
+                        if (row.type === 'group') {
+                          return (
+                            <tr key={`g${ri}`}>
+                              <td colSpan={allRoles.length + 1} style={{ position: 'sticky', left: 0,
+                                background: '#f9fafb', padding: '7px 12px', fontSize: 13, fontWeight: 600,
+                                color: '#6b7280', borderTop: '1px solid #f3f4f6' }}>
+                                {row.label}
+                              </td>
+                            </tr>
+                          )
+                        }
+                        const s = row.s
+                        return (
+                          <tr key={s.key}>
+                            <td style={{ position: 'sticky', left: 0, background: 'white', zIndex: 1,
+                              padding: '9px 12px', borderBottom: '1px solid #f3f4f6', fontSize: 14 }}>
+                              {s.label}
+                            </td>
+                            {allRoles.map(r => {
+                              const isAdmin = r.key === 'admin'
+                              return (
+                                <td key={r.id} style={{ textAlign: 'center', padding: '6px 10px', borderBottom: '1px solid #f3f4f6' }}>
+                                  {isAdmin ? (
+                                    <span style={{ fontSize: 13, color: '#9ca3af' }}>{levelLabel(s, adminLevel(s))}</span>
+                                  ) : (
+                                    <select value={currentLevel(r.id, s)} onChange={e => setLevel(r.id, s, e.target.value)}
+                                      style={{ ...select, fontSize: 13, padding: '5px 8px', width: '100%', maxWidth: 200 }}>
+                                      {levelsFor(s).map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+                                    </select>
+                                  )}
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>

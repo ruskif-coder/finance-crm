@@ -3,18 +3,18 @@ import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import SalesTabs from '../components/SalesTabs'
+import SalesQuarterWidgets from '../components/SalesQuarterWidgets'
 import DealCreateForm from '../components/DealCreateForm'
 import DealBriefCell from '../components/DealBriefCell'
 import ValuePopover from '../components/ValuePopover'
 import api, { auth } from '../lib/api'
-import { fmtMoney, fmtDate, mln } from '../lib/salesFormat'
+import { fmtMoney, fmtDate } from '../lib/salesFormat'
 import { BITRIX_DEAL_URL } from '../lib/salesLayers'
 import { MONO, UI, PIP, FILL, HATCH, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn } from '../components/salesTableKit'
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 const COLS = [
-  { key: 'sel', w: '28px', label: '', fixed: true },
-  { key: 'brief', w: '46px', label: 'Бриф', fixed: true },
+  { key: 'brief', w: '30px', label: 'Бриф', fixed: true },
   { key: 'bitrix_id', w: '62px', label: 'BX_ID', sortable: true },
   { key: 'agency', w: '92px', label: 'Агентство', sortable: true },
   { key: 'advertiser', w: '1.1fr', label: 'Рекламодатель', sortable: true },
@@ -34,35 +34,56 @@ const COLS = [
 ]
 // по умолчанию скрыты (доступны в меню «Колонки»)
 const DEFAULT_HIDDEN = ['pipeline', 'period_from', 'period_to']
-const COLS_KEY = 'sr3_hidden_cols'
-const COLS_ORDER_KEY = 'sr3_col_order'
+const COLS_KEY = 'sd3_hidden_cols'
+const COLS_ORDER_KEY = 'sd3_col_order'
 const COL_BY_KEY = Object.fromEntries(COLS.map(c => [c.key, c]))
 const MIDDLE_KEYS = COLS.filter(c => !c.fixed).map(c => c.key)   // переставляемые/скрываемые (brief/gen фиксированы)
 
-export default function SalesRegistry2() {
+function recentQuarters(n = 6) {
+  const out = []; const d = new Date()
+  let y = d.getFullYear(); let q = Math.floor(d.getMonth() / 3) + 1
+  for (let i = 0; i < n; i++) { out.push(`${y}-Q${q}`); q--; if (q < 1) { q = 4; y-- } }
+  return out
+}
+const quarterRange = (qs) => {
+  if (qs === 'all' || qs === 'Всё время') return 'всё время'
+  const m = /(\d{4}).*?([1-4])/.exec(qs || '')
+  const d = new Date(); let y = d.getFullYear(); let q = Math.floor(d.getMonth() / 3) + 1
+  if (m) { y = +m[1]; q = +m[2] }
+  const m0 = (q - 1) * 3
+  const from = new Date(y, m0, 1), to = new Date(y, m0 + 3, 0)
+  const f = (x) => `${String(x.getDate()).padStart(2, '0')}.${String(x.getMonth() + 1).padStart(2, '0')}.${String(x.getFullYear()).slice(2)}`
+  return `${f(from)} — ${f(to)}`
+}
+// Месяцы квартала в формате YYYY-MM (для фильтра таблицы сделок по периоду РК).
+// Пустой аргумент → текущий квартал.
+const quarterMonths = (qs) => {
+  const m = /(\d{4}).*?([1-4])/.exec(qs || '')
+  const d = new Date(); let y = d.getFullYear(); let q = Math.floor(d.getMonth() / 3) + 1
+  if (m) { y = +m[1]; q = +m[2] }
+  const m0 = (q - 1) * 3 + 1
+  const p = (mm) => `${y}-${String(mm).padStart(2, '0')}`
+  return { from: p(m0), to: p(m0 + 2) }
+}
+export default function SalesDashboard2() {
   const router = useRouter()
+  const [data, setData] = useState(null)
+  const [quarter, setQuarter] = useState('')
+  const [repId, setRepId] = useState('')
+  const [reps, setReps] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [perms, setPerms] = useState({})
   const canEdit = can(perms, 'sales_registry', 'edit')
-  // права под конкретные действия (бэк требует разные секции)
   const canDirAg = can(perms, 'dir_agencies', 'edit')
   const canDirAdv = can(perms, 'dir_advertisers', 'edit')
-  const isAdmin = typeof window !== 'undefined' && localStorage.getItem('role') === 'admin'
 
   const [deals, setDeals] = useState([])
   const [dealsTotal, setDealsTotal] = useState(0)
-  const [offset, setOffset] = useState(0)
   const [summary, setSummary] = useState(null)
-  const [pageSize, setPageSize] = useState(100)
-  const [sortKey, setSortKey] = useState('date_create')
+  const [pageSize, setPageSize] = useState(50)
+  const [sortKey, setSortKey] = useState('amount')
   const [sortDir, setSortDir] = useState('desc')
-  // массовое редактирование + чекбоксы
-  const [selDeals, setSelDeals] = useState({})   // { dealId: true }
-  const [lastIdx, setLastIdx] = useState(null)   // якорь Shift-выделения
-  const [bulkForm, setBulkForm] = useState({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', bitrix_stage: '', period: '' })
-  const [saving, setSaving] = useState(false)
-  const selDealIds = Object.keys(selDeals).map(Number)
 
   const [sel, setSel] = useState(Object.fromEntries(FILTER_DROPS.map(([k]) => [k, []])))
   const [gaps, setGaps] = useState([])
@@ -103,9 +124,6 @@ export default function SalesRegistry2() {
   const [colPicker, setColPicker] = useState(false)
   const [periodEdit, setPeriodEdit] = useState(null) // { dealId, rect, month } — правка периода строки
   const [genConfirm, setGenConfirm] = useState(null) // { dealId, rect, text, current } — подтверждение генерации имени
-  const [syncingId, setSyncingId] = useState(null)   // id сделки в процессе синхронизации из Битрикса
-  const [syncResult, setSyncResult] = useState(null) // { deal, changes, files, warnings } — попап результата
-  const [bulkResult, setBulkResult] = useState(null) // сводка массовой синхронизации
   const [advConfirm, setAdvConfirm] = useState(null) // подтверждение смены рекламодателя со сбросом бренда
 
   // Смена периода сделки: только при изменении; period_from = 1-е число выбранного месяца.
@@ -137,8 +155,8 @@ export default function SalesRegistry2() {
     })
     setDragIdx(null)
   }
-  // чекбокс (при праве) → бриф → переставленные видимые колонки (генерация — внутри «Сделка»).
-  const visibleCols = [canEdit ? COL_BY_KEY.sel : null, COL_BY_KEY.brief, ...colOrder.map(k => COL_BY_KEY[k]).filter(c => c && !hidden.has(c.key))].filter(Boolean)
+  // brief фиксирован первым; далее — переставленные видимые колонки (кнопка генерации живёт внутри ячейки «Сделка»).
+  const visibleCols = [COL_BY_KEY.brief, ...colOrder.map(k => COL_BY_KEY[k]).filter(c => c && !hidden.has(c.key))].filter(Boolean)
   const gridTemplate = visibleCols.map(c => c.w).join(' ')
 
   // Выгрузка текущей выборки в CSV (клиентская).
@@ -159,83 +177,50 @@ export default function SalesRegistry2() {
     api.get('/sales/brands-by-advertiser', auth()).then(r => setBrandsByAdv(r.data || {})).catch(() => {})
   }, [])
 
-  const buildBase = () => {
+  const load = async () => {
+    setLoading(true); setErr('')
+    try {
+      const params = {}
+      if (quarter) params.quarter = quarter
+      if (repId) params.rep_id = repId
+      const r = await api.get('/sales/dashboard/bonus', { ...auth(), params })
+      setData(r.data)
+      loadDeals(r.data.rep_ids)
+      if (r.data.can_view_others && reps.length === 0) api.get('/sales/reps', auth()).then(rr => setReps(rr.data.items || [])).catch(() => {})
+    } catch (e) { if (e.response?.status === 401) return router.push('/login'); setErr(e.response?.data?.detail || 'Ошибка загрузки') }
+    finally { setLoading(false) }
+  }
+  const buildBase = (repIds) => {
     const b = new URLSearchParams()
+    ;(repIds || []).forEach(id => b.append('sales_rep_id', id))
     Object.entries(sel).forEach(([k, arr]) => arr.forEach(v => b.append(k, v)))
     gaps.forEach(g => b.append('gaps', g))
     if (hideArchive) b.append('hide_archive', 'true')
     if (searchQ.trim()) b.append('search', searchQ.trim())
-    if (dateFrom) b.append('date_from', dateFrom)
-    if (dateTo) b.append('date_to', dateTo)
+    // Период таблицы: ручной диапазон С/По имеет приоритет; иначе — по выбранному
+    // кварталу; «Показать все» (quarter==='all') снимает ограничение периода.
+    if (dateFrom || dateTo) {
+      if (dateFrom) b.append('date_from', dateFrom)
+      if (dateTo) b.append('date_to', dateTo)
+    } else if (quarter !== 'all') {
+      const qm = quarterMonths(quarter)
+      b.append('date_from', qm.from); b.append('date_to', qm.to)
+    }
     return b
   }
-  const load = async (newOffset = 0, size = pageSize) => {
-    setLoading(true); setErr('')
-    const base = buildBase()
+  const loadDeals = async (repIds) => {
+    if (!repIds || !repIds.length) { setDeals([]); setDealsTotal(0); setSummary(null); return }
+    const base = buildBase(repIds)
     const dq = new URLSearchParams(base)
-    dq.append('limit', String(size)); dq.append('offset', String(newOffset)); dq.append('sort', sortKey); dq.append('direction', sortDir)
-    const sumq = new URLSearchParams(base); sumq.append('scope_section', 'sales_registry')
-    try {
-      const [reg, sum] = await Promise.all([api.get('/sales/deals?' + dq.toString(), auth()), api.get('/sales/dashboard?' + sumq.toString(), auth())])
-      setDeals(reg.data.items || []); setDealsTotal(reg.data.total || 0); setOffset(newOffset); setSummary(sum.data)
-    } catch (e) { if (e.response?.status === 401) return router.push('/login'); setErr(e.response?.data?.detail || 'Не удалось загрузить') }
-    finally { setLoading(false) }
+    dq.append('limit', String(pageSize)); dq.append('sort', sortKey); dq.append('direction', sortDir)
+    try { const r = await api.get('/sales/deals?' + dq.toString(), auth()); setDeals(r.data.items || []); setDealsTotal(r.data.total || 0) }
+    catch (e) { setDeals([]); setDealsTotal(0) }
+    api.get('/sales/dashboard?' + base.toString(), auth()).then(r => setSummary(r.data)).catch(() => setSummary(null))
   }
 
-  // фильтры/сортировка → перезагрузка с 1-й страницы (дебаунс 300 мс)
-  useEffect(() => { const t = setTimeout(() => load(0), 300); return () => clearTimeout(t) }, [sel, gaps, hideArchive, searchQ, dateFrom, dateTo, sortKey, sortDir])
+  useEffect(() => { load() }, [quarter, repId])
+  useEffect(() => { if (data?.rep_ids?.length) loadDeals(data.rep_ids) }, [sortKey, sortDir, pageSize, sel, gaps, hideArchive, searchQ, dateFrom, dateTo])
   useEffect(() => { const t = setTimeout(() => setSearchQ(search), 300); return () => clearTimeout(t) }, [search])
-  useEffect(() => { setLastIdx(null) }, [deals])
-
-  // ── массовое редактирование ──
-  const toggleRow = (i, id, shift) => {
-    setSelDeals(prev => {
-      const next = { ...prev }
-      if (shift && lastIdx != null && deals[lastIdx]) {
-        const a = Math.min(lastIdx, i), b = Math.max(lastIdx, i), target = !prev[id]
-        for (let k = a; k <= b; k++) { const rid = deals[k] && deals[k].id; if (rid == null) continue; if (target) next[rid] = true; else delete next[rid] }
-      } else if (next[id]) { delete next[id] } else { next[id] = true }
-      return next
-    })
-    setLastIdx(i)
-  }
-  const applyBulk = async () => {
-    const body = { deal_ids: selDealIds }; let any = false
-    const STR = ['product', 'period', 'bitrix_stage']
-    for (const [k, v] of Object.entries(bulkForm)) {
-      if (v === '__clear__') { body[k] = null; any = true }
-      else if (v !== '' && v !== null) { body[k] = STR.includes(k) ? v : Number(v); any = true }
-    }
-    if (!any) { setErr('Заполните хотя бы одно поле для изменения'); return }
-    setSaving(true); setErr('')
-    try {
-      const r = await api.post('/sales/deals/bulk-update', body, auth())
-      alert(r.data.message); setSelDeals({}); setBulkForm({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', bitrix_stage: '', period: '' }); load(offset)
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось применить') } finally { setSaving(false) }
-  }
-  const deleteBulk = async () => {
-    if (!window.confirm(`Удалить ${selDealIds.length} сделок? Действие необратимо.`)) return
-    setSaving(true); setErr('')
-    try { const r = await api.post('/sales/deals/bulk-delete', { deal_ids: selDealIds }, auth()); alert(r.data.message); setSelDeals({}); load(offset) }
-    catch (e) { setErr(e.response?.data?.detail || 'Не удалось удалить') } finally { setSaving(false) }
-  }
-  const syncDeals = async () => { try { await api.post('/sales/sync', {}, auth()); load(offset) } catch (e) { setErr(e.response?.data?.detail || 'Синхронизация недоступна') } }
-  const importDeals = async () => {
-    try {
-      const pv = (await api.post('/sales/reconcile/import-deals?commit=0', {}, auth())).data
-      if (!pv.to_insert) { alert('Свежих сделок нет — всё уже загружено.'); return }
-      if (!window.confirm(`Найдено ${pv.to_insert} свежих сделок${pv.skipped_untracked ? ` (пропущено вне воронок: ${pv.skipped_untracked})` : ''}.\nИмпортировать?`)) return
-      const res = (await api.post('/sales/reconcile/import-deals?commit=1', {}, auth())).data
-      alert(`Импортировано: ${res.inserted} сделок.`); load(offset)
-    } catch (e) { setErr(e.response?.data?.detail || 'Импорт недоступен') }
-  }
-  const btnAcc = { background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 14px', fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: 'pointer' }
-  // кнопки в строке меню разделов — высота как у вкладок (padding 6×14)
-  const tabBtn = (acc) => ({ padding: '6px 14px', borderRadius: 8, border: acc ? 'none' : '1px solid var(--border-card)', cursor: 'pointer', fontWeight: acc ? 700 : 600, fontSize: 13, whiteSpace: 'nowrap', fontFamily: acc ? MONO : UI, background: acc ? 'var(--accent)' : 'var(--bg-subtle)', color: acc ? '#fff' : 'var(--text-secondary)' })
-  // Контурная кнопка: белый фон + синий контур (для «+ Агентство» / «+ Рекламодатель»)
-  const tabBtnOutline = { padding: '6px 14px', borderRadius: 8, border: '1px solid var(--accent)', cursor: 'pointer', fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', fontFamily: MONO, background: 'var(--bg-card)', color: 'var(--accent)' }
-  const btnSec = { background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-card)', borderRadius: 10, padding: '9px 13px', fontFamily: UI, fontSize: 13, fontWeight: 600, cursor: 'pointer' }
-  const bulkInp = { padding: '7px 9px', border: '1px solid var(--border-card)', borderRadius: 8, fontSize: 12.5, background: 'var(--bg-card)', color: 'inherit', fontFamily: UI }
 
   const onSort = (k, sortable) => { if (!sortable) return; if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(k); setSortDir('desc') } }
   const resetFilters = () => { setSel(Object.fromEntries(FILTER_DROPS.map(([k]) => [k, []]))); setGaps([]); setHideArchive(true); setSearch(''); setSearchQ(''); setDateFrom(''); setDateTo('') }
@@ -274,90 +259,18 @@ export default function SalesRegistry2() {
   const templateTitle = (d) => [d.advertiser, d.brand, d.agency, d.product, d.period].filter(v => v != null && String(v).trim() !== '').join(' | ')
   const saveTitle = async (id, title) => { try { await api.patch(`/sales/deals/${id}`, { title }, auth()); setDeals(prev => prev.map(x => x.id === id ? { ...x, title } : x)) } catch (e) { alert('Не удалось сохранить название') } }
 
-  // ── синхронизация одной сделки из Битрикса (кнопка ⟳ в строке) ──
-  const syncDeal = async (d) => {
-    setSyncingId(d.id)
-    try {
-      const r = await api.post(`/sales/deals/${d.id}/sync-from-bitrix`, {}, auth())
-      setSyncResult({ deal: d, ...r.data })
-      load(offset)
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка синхронизации') }
-    finally { setSyncingId(null) }
-  }
-  // Массовая синхронизация выбранных сделок
-  const syncBulk = async () => {
-    if (!selDealIds.length) return
-    setSaving(true)
-    try {
-      const r = await api.post('/sales/deals/bulk-sync-from-bitrix', { deal_ids: selDealIds }, auth())
-      setBulkResult(r.data); setSelDeals({}); load(offset)
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка массовой синхронизации') }
-    finally { setSaving(false) }
-  }
-  // Клик по светофору — детали последней синхронизации из сохранённого отчёта
-  const openSyncReport = (d) => setSyncResult({
-    deal: d, bitrix_id: d.bitrix_id, readonly: true, changes: {}, files: [],
-    issues: d.sync_issues || [], warnings: (d.sync_issues || []).map(i => i.message),
-    checked_at: d.sync_checked_at,
-  })
-  // Скачивание сохранённого файла через blob (эндпоинт под Bearer-токеном)
-  const downloadDealFile = async (dealId, kind, filename) => {
-    try {
-      const r = await api.get(`/sales/deals/${dealId}/files/${kind}/download`, { ...auth(), responseType: 'blob' })
-      const url = URL.createObjectURL(r.data)
-      const a = document.createElement('a'); a.href = url; a.download = filename || 'file'; a.click(); URL.revokeObjectURL(url)
-    } catch (e) { alert('Не удалось скачать файл') }
-  }
-  const SYNC_LABELS = { amount: 'Сумма до НДС', amount_with_vat: 'Сумма с НДС', sales_rep_id: 'Продавец', account_manager_id: 'Аккаунт', advertiser_id: 'Рекламодатель', brand_id: 'Бренд', period_from: 'Старт РК' }
-  const FILE_LABEL = { mp: 'МП', contract: 'Договор' }
-  const ISSUE_LABELS = { advertiser: 'Рекламодатель', brand: 'Бренд', sales_rep: 'Продавец', account_manager: 'Аккаунт', mp: 'МП', contract: 'Договор' }
-  // Светофор синхронизации: зелёный — совпадает, синий — мы полнее, красный — расхождение.
-  const SYNC_DOT = {
-    green: ['var(--income)', 'Синхронизировано: совпадает с Битриксом'],
-    blue: ['var(--accent)', 'У нас данные полнее — ещё не выгружено в Битрикс'],
-    red: ['var(--dot-overdue)', 'Расхождение с Битриксом (разные справочники) — проверьте'],
-  }
-  const ATTN_COLS = new Set(['advertiser', 'brand', 'sales_rep', 'account_manager'])
-  const renderSyncDot = (d) => {
-    const status = d.sync_status
-    const m = SYNC_DOT[status]
-    if (!m) return <span title="Синхронизация ещё не проверялась" style={{ width: 9, height: 9, borderRadius: 2, border: '1px solid var(--text-faint)', boxSizing: 'border-box', flex: '0 0 9px' }} />
-    return <span onClick={e => { e.stopPropagation(); openSyncReport(d) }} title={m[1] + ' · клик — детали'}
-      style={{ width: 9, height: 9, borderRadius: 2, background: m[0], flex: '0 0 9px', cursor: 'pointer' }} />
-  }
-
   const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }
 
   // Ячейка строки по ключу колонки (для итерации по видимым колонкам).
   const cellFor = (key, d) => {
     const none = !FILL[d.money_layer]; const n = FILL[d.money_layer] || 0
     switch (key) {
-      case 'sel': return canEdit
-        ? <input type="checkbox" checked={!!selDeals[d.id]} readOnly onClick={e => { e.stopPropagation(); toggleRow(deals.indexOf(d), d.id, e.shiftKey) }} title="Shift+клик — диапазон" style={{ cursor: 'pointer' }} />
-        : <span />
-      case 'brief': return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <DealBriefCell deal={d} canEdit={canEdit} v2 />
-          {renderSyncDot(d)}
-        </span>
-      )
-      case 'bitrix_id': {
-        if (String(d.bitrix_id || '').startsWith('local-'))
-          return canEdit
-            ? <button onClick={() => api.post(`/sales/deals/${d.id}/push-to-bitrix`, {}, auth()).then(() => load(offset)).catch(e => alert(e.response?.data?.detail || 'Ошибка'))} title="Отправить в Битрикс" style={{ border: '1px solid var(--accent)', background: 'var(--accent-tint)', color: 'var(--accent)', borderRadius: 6, cursor: 'pointer', fontSize: 11, padding: '2px 6px', fontFamily: MONO, justifySelf: 'start' }}>→ БХ</button>
-            : <span style={{ color: 'var(--text-faint)', fontSize: 11, fontFamily: MONO }}>локально</span>
-        // Свежий импорт: подсвечиваем ячейку BX_ID 3 суток после попадания в базу.
-        const fresh = d.date_create && (Date.now() - new Date(d.date_create).getTime()) < 2592e5
-        return (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <a href={BITRIX_DEAL_URL(d.bitrix_id)} target="_blank" rel="noreferrer"
-              title={fresh ? 'Импортирована недавно (до 3 суток)' : undefined}
-              style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none', ...(fresh ? { background: 'var(--warning-tint)', borderRadius: 6, padding: '2px 6px' } : {}) }}>{d.bitrix_id}</a>
-            {canEdit && <span onClick={() => syncingId !== d.id && syncDeal(d)} title="Обновить из Битрикса (поля + файлы)"
-              style={{ cursor: syncingId === d.id ? 'default' : 'pointer', fontSize: 12, lineHeight: 1, color: syncingId === d.id ? 'var(--text-faint)' : 'var(--accent)' }}>{syncingId === d.id ? '⏳' : '⟳'}</span>}
-          </span>
-        )
-      }
+      case 'brief': return <DealBriefCell deal={d} canEdit={canEdit} v2 />
+      case 'bitrix_id': return String(d.bitrix_id || '').startsWith('local-')
+        ? (canEdit
+          ? <button onClick={() => api.post(`/sales/deals/${d.id}/push-to-bitrix`, {}, auth()).then(() => loadDeals(data.rep_ids)).catch(e => alert(e.response?.data?.detail || 'Ошибка'))} title="Отправить в Битрикс" style={{ border: '1px solid var(--accent)', background: 'var(--accent-tint)', color: 'var(--accent)', borderRadius: 6, cursor: 'pointer', fontSize: 11, padding: '2px 6px', fontFamily: MONO, justifySelf: 'start' }}>→ БХ</button>
+          : <span style={{ color: 'var(--text-faint)', fontSize: 11, fontFamily: MONO }}>локально</span>)
+        : <a href={BITRIX_DEAL_URL(d.bitrix_id)} target="_blank" rel="noreferrer" style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>{d.bitrix_id}</a>
       case 'agency': return <span className={canEdit ? 'd2-cell' : ''} onClick={e => openPicker('agency', d, e)} style={{ fontWeight: 600 }} title={d.agency_full || d.agency || 'выбрать'}>{d.agency ?? '—'}</span>
       case 'advertiser': return <span className={canEdit ? 'd2-cell' : ''} onClick={e => openPicker('advertiser', d, e)} title={d.advertiser_full || d.advertiser || 'выбрать'}>{d.advertiser ?? '—'}</span>
       case 'brand': return <span className={canEdit ? 'd2-cell' : ''} onClick={e => openPicker('brand', d, e)} title={d.brand || 'выбрать'}>{d.brand ?? '—'}</span>
@@ -394,7 +307,7 @@ export default function SalesRegistry2() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Head>
-        <title>Реестр сделок</title>
+        <title>Дашборд</title>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
@@ -478,67 +391,26 @@ export default function SalesRegistry2() {
       </>)}
 
       <div style={{ padding: 24 }}>
-        {/* меню раздела + действия в одну строку */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-          <SalesTabs active="registry" />
-          {(canEdit || canDirAg || canDirAdv || isAdmin) && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {canDirAg && <button onClick={openAgency} style={tabBtnOutline}>+ Агентство</button>}
-              {canDirAdv && <button onClick={openAdvertiser} style={tabBtnOutline}>+ Рекламодатель</button>}
-              {canEdit && <button onClick={() => setCreateOpen(true)} style={tabBtn(true)}>+ Сделка</button>}
-              {canEdit && <button onClick={syncDeals} style={tabBtn(false)}>Синхронизировать</button>}
-              {isAdmin && <button onClick={importDeals} style={tabBtn(false)}>Импорт</button>}
-            </div>
-          )}
-        </div>
-        <DealCreateForm open={createOpen} onClose={() => setCreateOpen(false)} canPickRep onCreated={() => load(0)} />
+        <SalesTabs active="dashboard" />
+        <DealCreateForm open={createOpen} onClose={() => setCreateOpen(false)} canPickRep={!!data?.can_view_others} onCreated={() => { setSortKey('date_create'); setSortDir('desc') }} />
 
         {err && <div style={{ color: 'var(--danger)', marginBottom: 12 }}>{err}</div>}
+        {loading && !data && <div style={{ color: 'var(--text-muted)', padding: 40 }}>Загрузка…</div>}
 
-        {/* Полоса портфеля — как «Сделки в работе» в виджете дашборда */}
-        {summary?.totals && (() => {
-          const total = summary.totals.amount || 0
-          const amt = (name) => (summary.by_layer || []).find(b => b.name === name)?.amount || 0
-          const cnt = (name) => (summary.by_layer || []).find(b => b.name === name)?.deals || 0
-          const LAYERS = [
-            { name: 'фактические', bg: 'var(--income)' }, { name: 'реализуемые', bg: 'var(--dot-current-dz)' },
-            { name: 'планируемые', bg: 'var(--text-faint)' }, { name: 'Без группы', bg: HATCH },
-          ]
-          const recon = summary.totals.reconciles
-          return (
-            <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)', padding: '18px 22px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 36, flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 180 }}>
-                <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Всего в реестре</span>
-                <span style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
-                  <span style={{ fontFamily: MONO, fontSize: 26, fontWeight: 700, color: 'var(--text-primary)' }}>{mln(total)}</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)' }}>млн ₽ / {summary.totals.deals} шт</span>
-                </span>
-              </div>
-              <div style={{ flex: 1, minWidth: 320, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div style={{ display: 'flex', gap: 2, height: 10 }}>
-                  {LAYERS.map(L => { const w = total > 0 ? amt(L.name) / total * 100 : 0; return w > 0 ? <div key={L.name} title={`${L.name}: ${mln(amt(L.name))} млн · ${cnt(L.name)}`} style={{ width: `${w}%`, background: L.bg }} /> : null })}
-                </div>
-                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-muted)' }}>
-                  {LAYERS.map(L => (
-                    <span key={L.name} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: L.bg }} />{L.name === 'Без группы' ? 'без группы' : L.name} <span style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--text-primary)' }}>{mln(amt(L.name))} млн · {cnt(L.name)}</span>
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', color: recon ? 'var(--income)' : 'var(--danger)' }}>
-                <span style={{ width: 7, height: 7, borderRadius: 999, background: recon ? 'var(--income)' : 'var(--danger)' }} />{recon ? 'сверка сходится' : 'сверка расходится'}
-              </div>
-            </div>
-          )
-        })()}
+        {data && (
+          <div>{/* без transform-обёртки: иначе position:fixed модалок центрируется относительно неё, а не экрана */}
+            <SalesQuarterWidgets data={data} summary={summary} lastSyncAt={summary?.last_sync_at}
+              quarter={quarter} setQuarter={setQuarter} quarters={recentQuarters()}
+              repId={repId} setRepId={setRepId} reps={reps} canViewOthers={!!data.can_view_others}
+              onCreate={canEdit ? () => setCreateOpen(true) : undefined}
+              onCreateAgency={canDirAg ? openAgency : undefined} onCreateAdvertiser={canDirAdv ? openAdvertiser : undefined} />
 
-        {/* массовое редактирование выбранных */}
-        {loading && !deals.length && <div style={{ color: 'var(--text-muted)', padding: 40 }}>Загрузка…</div>}
-
-        {true && (
-          <div>
-              <div style={{ marginTop: 4 }}>
+            {!data.linked ? (
+              <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, padding: 32, textAlign: 'center', color: 'var(--text-muted)', marginTop: 16, maxWidth: 700 }}>
+                {data.can_view_others ? 'Выберите сотрудника в селекторе в шапке блока.' : 'Ваш профиль не привязан к продавцу — обратитесь к админу.'}
+              </div>
+            ) : (
+              <div style={{ marginTop: 12 }}>
                 {/* заголовок блока */}
                 <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 24, padding: '0 4px', marginBottom: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
@@ -574,30 +446,6 @@ export default function SalesRegistry2() {
                   </div>
                 </div>
 
-                {/* массовое редактирование выбранных — под заголовком, в одну строку */}
-                {canEdit && selDealIds.length > 0 && (
-                  <div style={{ marginBottom: 12, background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: '10px 14px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>Выбрано: {selDealIds.length}</span>
-                    {(() => {
-                      const W = { flexShrink: 0, width: 132, maxWidth: 132, textOverflow: 'ellipsis' }
-                      const bsel = (k, opt, ph) => <select style={{ ...bulkInp, ...W }} value={bulkForm[k]} onChange={e => setBulkForm({ ...bulkForm, [k]: e.target.value })}><option value="">{ph}</option>{(fopts[opt] || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
-                      return <>
-                        {bsel('bitrix_stage', 'bitrix_stage', 'стадия —')}
-                        {bsel('product', 'product', 'услуга —')}
-                        <input type="month" style={{ ...bulkInp, flexShrink: 0, width: 120 }} value={bulkForm.period} onChange={e => setBulkForm({ ...bulkForm, period: e.target.value })} />
-                        {bsel('advertiser_id', 'advertiser_id', 'рекл. —')}
-                        {bsel('agency_id', 'agency_id', 'агентство —')}
-                        {bsel('sales_rep_id', 'sales_rep_id', 'продавец —')}
-                        {bsel('account_manager_id', 'account_manager_id', 'аккаунт —')}
-                      </>
-                    })()}
-                    <button onClick={applyBulk} disabled={saving} style={{ ...btnAcc, flexShrink: 0 }}>Применить</button>
-                    <button onClick={syncBulk} disabled={saving} title="Синхронизировать выбранные из Битрикса (до 50 за раз)" style={{ ...btnSec, color: 'var(--accent)', borderColor: 'var(--accent)', flexShrink: 0 }}>{saving ? '…' : `⟳ Синхронизировать`}</button>
-                    <button onClick={deleteBulk} disabled={saving} style={{ ...btnSec, color: 'var(--danger)', flexShrink: 0 }}>Удалить</button>
-                    <button onClick={() => setSelDeals({})} style={{ ...btnSec, flexShrink: 0 }}>Сбросить</button>
-                  </div>
-                )}
-
                 {/* карточка таблицы */}
                 <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)', padding: '20px 24px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
@@ -612,7 +460,7 @@ export default function SalesRegistry2() {
                     <div style={{ position: 'relative', flex: '0 0 auto' }}>
                       <div onClick={() => setPeriodOpen(o => !o)} title="Период размещения — выбрать диапазон месяцев"
                         style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: `1px solid ${(dateFrom || dateTo || periodOpen) ? 'var(--accent)' : 'var(--border-card)'}`, background: (dateFrom || dateTo) ? 'var(--accent-tint)' : 'var(--bg-card)', borderRadius: 10, padding: '8px 10px', fontFamily: MONO, fontSize: 11, color: (dateFrom || dateTo) ? 'var(--accent)' : 'var(--text-muted)', whiteSpace: 'nowrap', cursor: 'pointer' }}>
-                        {(dateFrom || dateTo) ? `${dateFrom || '…'} — ${dateTo || '…'}` : 'период'} ▾
+                        {(dateFrom || dateTo) ? `${dateFrom || '…'} — ${dateTo || '…'}` : quarterRange(quarter || data.quarter)} ▾
                       </div>
                       {periodOpen && (<>
                         <div style={{ position: 'fixed', inset: 0, zIndex: 39 }} onClick={() => setPeriodOpen(false)} />
@@ -647,13 +495,7 @@ export default function SalesRegistry2() {
                   <div style={{ overflowX: 'auto' }}>
                     <div style={{ minWidth: 1180 }}>
                       <div style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, padding: '0 0 10px', borderBottom: '1px solid var(--border-inner)', fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
-                        {visibleCols.map(c => c.key === 'sel' ? (
-                          <span key="sel" style={{ display: 'inline-flex', alignItems: 'center' }}>
-                            <input type="checkbox" checked={deals.length > 0 && deals.every(r => selDeals[r.id])}
-                              onChange={e => { if (e.target.checked) setSelDeals(Object.fromEntries(deals.map(r => [r.id, true]))); else setSelDeals({}) }}
-                              title="Выбрать все на странице" style={{ cursor: 'pointer' }} />
-                          </span>
-                        ) : (
+                        {visibleCols.map(c => (
                           <span key={c.key} onClick={() => onSort(c.key, c.sortable)} style={{ textAlign: c.right ? 'right' : 'left', cursor: c.sortable ? 'pointer' : 'default', color: sortKey === c.key ? 'var(--accent)' : 'var(--text-faint)' }}>
                             {c.label}{sortKey === c.key ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}
                           </span>
@@ -661,13 +503,8 @@ export default function SalesRegistry2() {
                       </div>
 
                       {deals.map(d => (
-                        <div key={d.id} className="d2-row" style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 12, color: 'var(--text-primary)', background: selDeals[d.id] ? 'var(--accent-tint)' : undefined }}>
-                          {visibleCols.map(c => {
-                            const attn = ATTN_COLS.has(c.key) && (d.sync_issues || []).some(i => i.field === c.key)
-                            return <Fragment key={c.key}>{attn
-                              ? <span title="Расхождение с Битриксом — клик по светофору покажет детали" style={{ display: 'block', minWidth: 0, background: 'var(--danger-tint)', borderRadius: 5, boxShadow: 'inset 0 0 0 1px #F3C9CC', padding: '2px 4px' }}>{cellFor(c.key, d)}</span>
-                              : cellFor(c.key, d)}</Fragment>
-                          })}
+                        <div key={d.id} className="d2-row" style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 12, color: 'var(--text-primary)' }}>
+                          {visibleCols.map(c => <Fragment key={c.key}>{cellFor(c.key, d)}</Fragment>)}
                         </div>
                       ))}
                       {!deals.length && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Нет сделок по выбранным фильтрам</div>}
@@ -676,9 +513,7 @@ export default function SalesRegistry2() {
 
                   {/* подвал */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', paddingTop: 14, borderTop: '1px solid var(--border-inner)', fontSize: 12, color: 'var(--text-muted)' }}>
-                    <button onClick={() => load(Math.max(0, offset - pageSize))} disabled={offset === 0} style={{ ...btnSec, padding: '5px 11px', opacity: offset === 0 ? 0.5 : 1 }}>← Назад</button>
-                    <span>{dealsTotal ? `${offset + 1}–${Math.min(offset + pageSize, dealsTotal)} из ${dealsTotal}` : '0'}</span>
-                    <button onClick={() => load(offset + pageSize)} disabled={offset + pageSize >= dealsTotal} style={{ ...btnSec, padding: '5px 11px', opacity: offset + pageSize >= dealsTotal ? 0.5 : 1 }}>Вперёд →</button>
+                    <span>показано {deals.length} из {dealsTotal}</span>
                     <span style={{ display: 'inline-flex', gap: 14, flexWrap: 'wrap' }}>
                       {[['фактические', 'var(--income)'], ['реализуемые', 'var(--dot-current-dz)'], ['планируемые', 'var(--text-faint)']].map(([l, c]) => (
                         <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: c }} />{l}</span>
@@ -688,7 +523,7 @@ export default function SalesRegistry2() {
                       <span>строк на странице</span>
                       <span style={{ display: 'flex', background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 10, padding: 3 }}>
                         {[50, 100, 300, 500].map(nn => (
-                          <span key={nn} onClick={() => { setPageSize(nn); load(0, nn) }}
+                          <span key={nn} onClick={() => setPageSize(nn)}
                             style={{ borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontFamily: MONO, fontSize: 12, fontWeight: pageSize === nn ? 700 : 600,
                               background: pageSize === nn ? 'var(--accent-tint)' : 'transparent', color: pageSize === nn ? 'var(--accent)' : 'var(--text-secondary)' }}>{nn}</span>
                         ))}
@@ -697,75 +532,7 @@ export default function SalesRegistry2() {
                   </div>
                 </div>
               </div>
-          </div>
-        )}
-
-        {/* ── Попап результата синхронизации из Битрикса ── */}
-        {syncResult && (
-          <div onClick={() => setSyncResult(null)} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(20,26,40,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, boxShadow: 'var(--shadow-card)', width: 440, maxWidth: '92vw', maxHeight: '82vh', overflowY: 'auto', padding: '20px 22px', fontFamily: UI }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>{syncResult.readonly ? 'Синхронизация' : 'Обновлено из Битрикса'} · сделка {syncResult.bitrix_id}</span>
-                <span onClick={() => setSyncResult(null)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>✕</span>
-              </div>
-              {syncResult.checked_at && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 12 }}>проверено {new Date(syncResult.checked_at).toLocaleString('ru-RU')}</div>}
-              {!syncResult.readonly && (Object.keys(syncResult.changes || {}).length > 0 ? (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>Обновлены поля ({Object.keys(syncResult.changes).length})</div>
-                  {Object.keys(syncResult.changes).map(k => (
-                    <div key={k} style={{ display: 'flex', gap: 8, fontSize: 13, padding: '3px 0' }}>
-                      <span style={{ color: 'var(--income)' }}>✓</span>
-                      <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{SYNC_LABELS[k] || k}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>Поля уже актуальны — изменений нет.</div>)}
-              {syncResult.readonly && (syncResult.issues || []).length === 0 && <div style={{ fontSize: 13, color: 'var(--income)', marginBottom: 12 }}>✓ Данные совпадают с Битриксом.</div>}
-              {(syncResult.files || []).length > 0 && (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>Файлы</div>
-                  {syncResult.files.map(f => (
-                    <div key={f.kind} onClick={() => downloadDealFile(syncResult.deal.id, f.kind, f.filename)} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '4px 0', cursor: 'pointer', color: 'var(--accent)' }}>
-                      <span>⭳</span><span style={{ fontWeight: 600 }}>{FILE_LABEL[f.kind] || f.kind}</span>
-                      <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.filename}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {((syncResult.issues || []).length > 0 || (syncResult.warnings || []).length > 0) && (
-                <div style={{ background: 'var(--warning-tint)', borderRadius: 10, padding: '10px 12px' }}>
-                  <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: '#B26A0C', marginBottom: 5 }}>Расхождения / требует внимания</div>
-                  {(syncResult.issues && syncResult.issues.length
-                    ? syncResult.issues.map((it, i) => <div key={i} style={{ fontSize: 12.5, color: '#8a5209', padding: '2px 0' }}>• <b>{ISSUE_LABELS[it.field] || it.field}:</b> {it.message}</div>)
-                    : syncResult.warnings.map((w, i) => <div key={i} style={{ fontSize: 12.5, color: '#8a5209', padding: '2px 0' }}>• {w}</div>))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── Сводка массовой синхронизации ── */}
-        {bulkResult && (
-          <div onClick={() => setBulkResult(null)} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(20,26,40,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, boxShadow: 'var(--shadow-card)', width: 360, maxWidth: '92vw', padding: '20px 22px', fontFamily: UI }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>Синхронизировано: {bulkResult.total}</span>
-                <span onClick={() => setBulkResult(null)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>✕</span>
-              </div>
-              {[['green', 'Совпадает', 'var(--income)'], ['blue', 'Мы полнее', 'var(--accent)'], ['red', 'Расхождения', 'var(--dot-overdue)']].map(([k, l, c]) => (
-                <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, padding: '4px 0' }}>
-                  <span style={{ width: 9, height: 9, borderRadius: 2, background: c }} />
-                  <span style={{ flex: 1, color: 'var(--text-secondary)' }}>{l}</span>
-                  <span style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--text-primary)' }}>{bulkResult[k] || 0}</span>
-                </div>
-              ))}
-              {(bulkResult.skipped > 0 || bulkResult.errors > 0) && (
-                <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-row)', fontSize: 12, color: 'var(--text-muted)' }}>
-                  {bulkResult.skipped > 0 && <span>пропущено (локальные): {bulkResult.skipped}. </span>}
-                  {bulkResult.errors > 0 && <span style={{ color: '#C93A3E' }}>ошибок: {bulkResult.errors}</span>}
-                </div>
-              )}
-            </div>
+            )}
           </div>
         )}
       </div>

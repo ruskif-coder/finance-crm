@@ -1,13 +1,19 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
+import { motion } from 'framer-motion'
+
+const MONO = "'JetBrains Mono', ui-monospace, monospace"
+const SPRING = { type: 'spring', stiffness: 420, damping: 36 }
 
 const NAV_ITEMS = [
-  { id: 'dds',      label: 'ДДС',         href: '/dashboard', section: 'dashboard' },
-  { id: 'pl',       label: 'P&L',         href: '/pl', section: 'pl' },
-  { id: 'balance',  label: 'Баланс',      href: '/balance', section: 'balance' },
+  { id: 'dds', label: 'ДДС', href: '/dashboard', section: 'dashboard' },
+  // «Продажи» — раздел с тремя вложенными экранами (дашборд, реестр сделок,
+  // аналитика), под-навигация — SalesTabs. Вход ведёт на дашборд (первый экран).
+  { id: 'sales', label: 'Сделки', href: '/sales-dashboard', section: 'sales_dashboard' },
+  { id: 'pl', label: 'P&L', href: '/pl', section: 'pl' },
+  { id: 'balance', label: 'Баланс', href: '/balance', section: 'balance' },
   { id: 'receivables', label: 'Дебиторка', href: '/receivables', section: 'receivables' },
   { id: 'planfact', label: 'План / Факт', href: '/planfact', section: 'planfact' },
-  { id: 'sales',    label: 'Продажи',     href: '/sales', section: 'sales_dashboard' },
 ]
 
 function getPermissions() {
@@ -15,15 +21,70 @@ function getPermissions() {
   try { return JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { return {} }
 }
 
-export const can = (perms, section, action = 'view') => !!(perms && perms[section] && perms[section][action])
+// Админ имеет полный доступ (как на бэкенде). Проверяем роль из localStorage,
+// чтобы не зависеть от устаревшего снимка permissions после добавления секций.
+export const can = (perms, section, action = 'view') => {
+  if (typeof window !== 'undefined' && localStorage.getItem('role') === 'admin') return true
+  return !!(perms && perms[section] && perms[section][action])
+}
+
+// Приоритет разделов для «первого доступного экрана» — единый источник правды
+// для редиректа после логина, клика по логотипу и входа в справочники.
+const LANDING_ORDER = [
+  ['dashboard', '/dashboard'],
+  ['sales_dashboard', '/sales-dashboard'],
+  ['sales_registry', '/sales'],
+  ['sales_analytics', '/analytics'],
+  ['pl', '/pl'],
+  ['balance', '/balance'],
+  ['receivables', '/receivables'],
+  ['planfact', '/planfact'],
+  ['operations', '/operations'],
+  ['counterparties', '/counterparties'],
+  ['contracts', '/contracts'],
+  ['dir_advertisers', '/advertisers'],
+  ['dir_agencies', '/agencies'],
+  ['settings', '/settings'],
+]
+const DIRECTORY_ORDER = [
+  ['counterparties', '/counterparties'],
+  ['contracts', '/contracts'],
+  ['dir_advertisers', '/advertisers'],
+  ['dir_agencies', '/agencies'],
+]
+
+// Первый доступный пользователю экран согласно его правам (админ → ДДС).
+export const firstAllowedHref = (perms, role) => {
+  if (role === 'admin') return '/dashboard'
+  for (const [sec, href] of LANDING_ORDER) if (can(perms, sec)) return href
+  return '/dashboard'
+}
+// Первый доступный справочник (для кнопки «Справочники»).
+export const firstDirectoryHref = (perms, role) => {
+  if (role === 'admin') return '/counterparties'
+  for (const [sec, href] of DIRECTORY_ORDER) if (can(perms, sec)) return href
+  return '/counterparties'
+}
+
+// ── SVG-иконки ───────────────────────────────────────────────────
+const Ico = ({ d, size = 16 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">{d}</svg>
+)
+const IcoBurger = <Ico size={18} d={<><path d="M3 6h18" /><path d="M3 12h18" /><path d="M3 18h18" /></>} />
+const IcoClose = <Ico size={18} d={<><path d="M6 6l12 12" /><path d="M18 6L6 18" /></>} />
+const IcoGear = <Ico d={<><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" /></>} />
+const IcoCaret = <Ico size={10} d={<path d="M6 9l6 6 6-6" />} />
 
 export default function Navbar({ active, children }) {
   const router = useRouter()
   const name = typeof window !== 'undefined' ? localStorage.getItem('name') || '' : ''
   const role = typeof window !== 'undefined' ? localStorage.getItem('role') || '' : ''
   const permissions = getPermissions()
-  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)   // профиль-меню (десктоп)
+  const [drawer, setDrawer] = useState(false)        // мобильный оверлей
   const menuRef = useRef(null)
+  const stripRef = useRef(null)
+  const activeChipRef = useRef(null)
 
   useEffect(() => {
     const h = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false) }
@@ -31,95 +92,241 @@ export default function Navbar({ active, children }) {
     return () => document.removeEventListener('mousedown', h)
   }, [])
 
+  // блок скролла body + Esc при открытом мобильном меню
+  useEffect(() => {
+    if (!drawer) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (e) => { if (e.key === 'Escape') setDrawer(false) }
+    document.addEventListener('keydown', onKey)
+    return () => { document.body.style.overflow = prev; document.removeEventListener('keydown', onKey) }
+  }, [drawer])
+
   const logout = () => { localStorage.clear(); router.push('/login') }
 
-  const navItems = NAV_ITEMS.filter(item => can(permissions, item.section))
+  // «Продажи» видны, если есть право хотя бы на одну из трёх страниц раздела;
+  // вход ведёт на первую доступную (дашборд → реестр → аналитика).
+  const SALES = [
+    { key: 'sales_dashboard', href: '/sales-dashboard' },
+    { key: 'sales_registry', href: '/sales' },
+    { key: 'sales_analytics', href: '/analytics' },
+  ]
+  const isAdmin = role === 'admin'
+  const firstSales = SALES.find(x => isAdmin || can(permissions, x.key))
+  const navItems = NAV_ITEMS
+    .map(item => item.id === 'sales' && firstSales ? { ...item, href: firstSales.href } : item)
+    .filter(item => item.id === 'sales' ? !!firstSales : (isAdmin || can(permissions, item.section)))
   const initial = (name || '?').trim().charAt(0).toUpperCase() || '?'
 
-  const utilBtn = {
-    fontSize: '13.5px', padding: '8px 16px', borderRadius: 'var(--radius-btn)',
-    border: 'none', background: 'var(--bg-subtle)',
-    cursor: 'pointer', color: 'var(--text-secondary)', fontWeight: 500, whiteSpace: 'nowrap',
-  }
+  const canOperations = can(permissions, 'operations')
+  const canDirectories = isAdmin || can(permissions, 'counterparties') || can(permissions, 'contracts') || can(permissions, 'dir_advertisers') || can(permissions, 'dir_agencies')
+  const canSettings = isAdmin || can(permissions, 'settings')
+  // Человеческое название роли (role.label с бэкенда); фолбэк — ключ роли.
+  const roleLabelRaw = typeof window !== 'undefined' ? localStorage.getItem('role_label') || '' : ''
+  const roleLabel = roleLabelRaw || role
+  const homeHref = firstAllowedHref(permissions, role)
+  const dirHref = firstDirectoryHref(permissions, role)
+
+  // авто-скролл активного чипа мобильной ленты в видимую зону
+  useEffect(() => {
+    const strip = stripRef.current, chip = activeChipRef.current
+    if (strip && chip) strip.scrollLeft = chip.offsetLeft - 14
+  }, [active, navItems.length])
+
+  const go = (href) => { setDrawer(false); router.push(href) }
 
   return (
-    <div style={{ position: 'sticky', top: 0, zIndex: 100 }}>
-      {/* Единая строка — логотип, вкладки, утилиты, аватар */}
-      <header style={{
-        background: 'var(--bg-header)', borderBottom: '1px solid var(--border-card)',
-        height: '66px',
-      }}>
-        <div style={{
-          maxWidth: 1920, margin: '0 auto', padding: '0 30px', height: '100%',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    <>
+      <style>{`
+        @keyframes navRise { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
+        @keyframes navFade { from { opacity:0 } to { opacity:1 } }
+        @keyframes navSheet { from { opacity:0; transform:translateY(-8px) } to { opacity:1; transform:none } }
+        .nav-desktop { display:flex }
+        .nav-mobile { display:none }
+        @media (max-width:1023px){ .nav-desktop{ display:none } .nav-mobile{ display:block } }
+        .nav-link:hover { background:var(--bg-subtle); color:var(--text-primary) !important; }
+        .nav-out:hover { border-color:#C7D0E8 !important; color:var(--accent) !important; }
+        .nav-ico:hover { background:var(--bg-subtle); color:var(--accent) !important; }
+        .nav-strip::-webkit-scrollbar { height:0 }
+        .nav-strip { scrollbar-width:none }
+        .nav-mrow:active { background:var(--bg-subtle) }
+        @media (prefers-reduced-motion:reduce){ [style*="animation"]{ animation:none !important } }
+      `}</style>
+
+      <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'var(--bg-card)', borderBottom: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)' }}>
+
+        {/* ═══ ДЕСКТОП ═══ */}
+        <header className="nav-desktop" style={{
+          boxSizing: 'border-box', width: '100%',
+          background: 'var(--bg-card)', padding: '12px 24px', alignItems: 'center', gap: 22,
+          animation: 'navRise .4s cubic-bezier(0.22,1,0.36,1) both',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '36px', minWidth: 0 }}>
-            <img src="/logo.png" alt="Логотип" style={{ height: '24px', width: 'auto', display: 'block', cursor: 'pointer', flexShrink: 0 }}
-              onClick={() => router.push('/dashboard')}
-              onError={(e) => { e.target.style.display = 'none' }} />
-            <nav style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
-              {navItems.map(item => (
-                <button key={item.id} onClick={() => router.push(item.href)}
-                  style={{
-                    padding: '8px 16px', borderRadius: '10px', border: 'none', cursor: 'pointer',
-                    fontWeight: active === item.id ? 600 : 500, fontSize: '14px',
-                    background: active === item.id ? 'var(--accent-tint)' : 'transparent',
-                    color: active === item.id ? 'var(--accent)' : 'var(--text-secondary)',
-                    transition: 'background .15s, color .15s', whiteSpace: 'nowrap',
-                  }}>
-                  {item.label}
-                </button>
-              ))}
-            </nav>
+          <div style={{ paddingRight: 20, borderRight: '1px solid var(--border-inner)', display: 'flex', alignItems: 'center' }}>
+            <img src="/logo.png" alt="Логотип" onClick={() => router.push(homeHref)}
+              onError={(e) => { e.target.style.display = 'none' }}
+              style={{ height: 22, width: 'auto', display: 'block', cursor: 'pointer' }} />
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-            {can(permissions, 'operations') && <button onClick={() => router.push('/operations')} style={utilBtn}>Операции</button>}
-            {(role === 'admin' || can(permissions, 'counterparties') || can(permissions, 'articles') || can(permissions, 'contracts')) &&
-              <button onClick={() => router.push('/directories')} style={utilBtn}>Справочники</button>}
-            {role === 'admin' && <button onClick={() => router.push('/settings')} title="Настройки" style={{ ...utilBtn, padding: '8px 12px', fontSize: '16px', lineHeight: 1 }}>⚙️</button>}
+          <nav style={{ flex: 1, display: 'flex', gap: 4, alignItems: 'center', minWidth: 0 }}>
+            {navItems.map(item => {
+              const on = active === item.id
+              return (
+                <button key={item.id} className={on ? '' : 'nav-link'} onClick={() => router.push(item.href)}
+                  style={{ position: 'relative', border: 'none', cursor: 'pointer', background: 'transparent',
+                    borderRadius: 10, padding: '8px 14px', fontSize: 14, fontWeight: on ? 700 : 600,
+                    color: on ? 'var(--accent)' : 'var(--text-secondary)', whiteSpace: 'nowrap',
+                    transition: 'background .15s, color .15s' }}>
+                  {on && <motion.span layoutId="navPillDesktop" transition={SPRING}
+                    style={{ position: 'absolute', inset: 0, background: 'var(--accent-tint)', borderRadius: 10, zIndex: 0 }} />}
+                  <span style={{ position: 'relative', zIndex: 1 }}>{item.label}</span>
+                </button>
+              )
+            })}
+          </nav>
 
-            <div ref={menuRef} style={{ position: 'relative', marginLeft: '6px' }}>
-              <div onClick={() => setMenuOpen(o => !o)} title={name || ''} style={{
-                width: '34px', height: '34px', borderRadius: '50%', background: 'var(--text-primary)',
-                color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '14px', fontWeight: 600, cursor: 'pointer', userSelect: 'none',
-              }}>
-                {initial}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            {canOperations && <button className="nav-out" onClick={() => router.push('/operations')} style={outBtn}>Операции</button>}
+            {canDirectories && <button className="nav-out" onClick={() => router.push(dirHref)} style={outBtn}>Справочники</button>}
+            {canSettings && <button className="nav-ico" onClick={() => router.push('/settings')} title="Настройки" aria-label="Настройки"
+              style={{ width: 32, height: 32, borderRadius: 10, border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{IcoGear}</button>}
+
+            <div ref={menuRef} style={{ position: 'relative', paddingLeft: 12, borderLeft: '1px solid var(--border-inner)' }}>
+              <div onClick={() => setMenuOpen(o => !o)} title={name || ''}
+                style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', userSelect: 'none' }}>
+                <span style={avatar(32)}>{initial}</span>
+                <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25, maxWidth: 140 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name || '—'}</span>
+                  {roleLabel && <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>{roleLabel}</span>}
+                </span>
+                <span style={{ color: 'var(--text-faint)' }}>{IcoCaret}</span>
               </div>
               {menuOpen && (
-                <div style={{
-                  position: 'absolute', top: '42px', right: 0, background: 'var(--bg-card)',
-                  border: '1px solid var(--border-card)', borderRadius: 'var(--radius-card-sm)',
-                  boxShadow: 'var(--shadow-card)', minWidth: '160px', zIndex: 200, overflow: 'hidden',
-                }}>
-                  <div style={{ padding: '10px 14px', fontSize: '13.5px', color: 'var(--text-secondary)', fontWeight: 500, borderBottom: '1px solid var(--border-row)' }}>
-                    {name || '—'}
+                <div style={{ position: 'absolute', top: 'calc(100% + 10px)', right: 0, background: 'var(--bg-card)',
+                  border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)',
+                  minWidth: 180, zIndex: 200, overflow: 'hidden', animation: 'navFade .15s ease both' }}>
+                  <div style={{ padding: '11px 14px', borderBottom: '1px solid var(--border-row)' }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{name || '—'}</div>
+                    {roleLabel && <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-faint)', marginTop: 2 }}>{roleLabel}</div>}
                   </div>
-                  <button onClick={logout} style={{
-                    display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px',
-                    fontSize: '13.5px', color: 'var(--dot-overdue)', background: 'transparent',
-                    border: 'none', cursor: 'pointer', fontWeight: 500,
-                  }}>
-                    Выйти
-                  </button>
+                  {canSettings && <button onClick={() => { setMenuOpen(false); router.push('/settings') }} style={menuItem('var(--text-secondary)')}>Настройки</button>}
+                  <button onClick={logout} style={menuItem('var(--dot-overdue)')}>Выйти</button>
                 </div>
               )}
             </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Вторая строка — опциональные элементы конкретной страницы (фильтры, кнопки) */}
-      {children && (
-        <div style={{ background: 'var(--bg-header)', borderBottom: '1px solid var(--border-card)', height: '46px' }}>
-          <div style={{ maxWidth: 1920, margin: '0 auto', padding: '0 30px', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              {children}
+        {/* ═══ МОБИЛЬНЫЙ ═══ */}
+        <div className="nav-mobile">
+          <header style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border-inner)',
+            padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button onClick={() => setDrawer(true)} aria-label="Открыть меню"
+              style={{ width: 36, height: 36, borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{IcoBurger}</button>
+            <img src="/logo.png" alt="Логотип" onClick={() => router.push(homeHref)} onError={(e) => { e.target.style.display = 'none' }}
+              style={{ height: 18, width: 'auto', display: 'block', cursor: 'pointer' }} />
+            <button onClick={() => setDrawer(true)} title={name || ''} aria-label="Профиль"
+              style={{ ...avatar(36), marginLeft: 'auto', flexShrink: 0, cursor: 'pointer', border: 'none' }}>{initial}</button>
+          </header>
+
+          {/* горизонтальная лента разделов */}
+          <div ref={stripRef} className="nav-strip" style={{ display: 'flex', gap: 6, overflowX: 'auto', padding: '8px 16px', WebkitOverflowScrolling: 'touch' }}>
+            {navItems.map(item => {
+              const on = active === item.id
+              return (
+                <button key={item.id} ref={on ? activeChipRef : null} onClick={() => router.push(item.href)}
+                  style={{ flexShrink: 0, border: 'none', cursor: 'pointer', borderRadius: 10, padding: '7px 13px',
+                    fontSize: 13, fontWeight: on ? 700 : 600, whiteSpace: 'nowrap',
+                    background: on ? 'var(--accent-tint)' : 'transparent',
+                    color: on ? 'var(--accent)' : 'var(--text-secondary)' }}>{item.label}</button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Вторая строка — опциональные элементы страницы (фильтры, кнопки) */}
+        {children && (
+          <div style={{ padding: '10px 24px', borderTop: '1px solid var(--border-inner)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+            {children}
+          </div>
+        )}
+      </div>
+
+      {/* ═══ Мобильный оверлей-меню ═══ */}
+      {drawer && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 300 }}>
+          <div onClick={() => setDrawer(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(28,36,51,.32)', animation: 'navFade .18s ease both' }} />
+          <div role="dialog" aria-modal="true" style={{ position: 'absolute', top: 0, left: 0, right: 0, background: 'var(--bg-card)',
+            borderRadius: '0 0 18px 18px', boxShadow: 'var(--shadow-card)', padding: 14, maxHeight: '100vh', overflowY: 'auto',
+            animation: 'navSheet .24s cubic-bezier(0.22,1,0.36,1) both' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+              <button onClick={() => setDrawer(false)} aria-label="Закрыть меню"
+                style={{ width: 36, height: 36, borderRadius: 10, border: '1px solid #D7DEFA', background: 'var(--accent-tint)', color: 'var(--accent)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{IcoClose}</button>
+              <img src="/logo.png" alt="Логотип" onError={(e) => { e.target.style.display = 'none' }} style={{ height: 18, width: 'auto' }} />
+            </div>
+
+            {/* разделы */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {navItems.map(item => {
+                const on = active === item.id
+                return (
+                  <button key={item.id} className="nav-mrow" onClick={() => go(item.href)}
+                    style={{ display: 'flex', alignItems: 'center', border: 'none', cursor: 'pointer', textAlign: 'left',
+                      borderRadius: 12, padding: '13px 14px', fontSize: 15, fontWeight: on ? 700 : 600,
+                      background: on ? 'var(--accent-tint)' : 'transparent', color: on ? 'var(--accent)' : 'var(--text-primary)' }}>
+                    <span style={{ flex: 1 }}>{item.label}</span>
+                    {on && <span style={{ fontFamily: MONO, fontSize: 11, color: '#8F9BE8' }}>текущий</span>}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* группа «Данные» */}
+            {(canOperations || canDirectories) && (
+              <>
+                <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '14px 14px 6px' }}>Данные</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {canOperations && <button className="nav-mrow" onClick={() => go('/operations')} style={mRow(active === 'operations')}><span style={{ flex: 1 }}>Операции</span>{active === 'operations' && <span style={{ fontFamily: MONO, fontSize: 11, color: '#8F9BE8' }}>текущий</span>}</button>}
+                  {canDirectories && <button className="nav-mrow" onClick={() => go(dirHref)} style={mRow(active === 'directories')}><span style={{ flex: 1 }}>Справочники</span>{active === 'directories' && <span style={{ fontFamily: MONO, fontSize: 11, color: '#8F9BE8' }}>текущий</span>}</button>}
+                </div>
+              </>
+            )}
+
+            {/* профиль */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border-inner)' }}>
+              <span style={avatar(38, 12)}>{initial}</span>
+              <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3, flex: 1, minWidth: 0 }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name || '—'}</span>
+                {roleLabel && <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>{roleLabel}</span>}
+              </span>
+              {canSettings && <button onClick={() => go('/settings')} aria-label="Настройки"
+                style={{ width: 38, height: 38, borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{IcoGear}</button>}
+              <button onClick={logout} aria-label="Выйти"
+                style={{ width: 38, height: 38, borderRadius: 12, border: '1px solid #F3C9CC', background: 'var(--bg-card)', color: 'var(--dot-overdue)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Ico d={<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" /></>} /></button>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </>
   )
 }
+
+// ── переиспользуемые стили ───────────────────────────────────────
+const outBtn = {
+  border: '1px solid var(--border-card)', background: 'var(--bg-card)', borderRadius: 10,
+  padding: '7px 13px', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)',
+  cursor: 'pointer', whiteSpace: 'nowrap', transition: 'border-color .15s, color .15s',
+}
+const avatar = (size, radius) => ({
+  width: size, height: size, borderRadius: radius || 10, background: 'var(--text-primary)', color: '#fff',
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0,
+})
+const menuItem = (color) => ({
+  display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px', fontSize: 13,
+  color, background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 500,
+})
+const mRow = (on) => ({
+  display: 'flex', alignItems: 'center', border: 'none', cursor: 'pointer', textAlign: 'left',
+  borderRadius: 12, padding: '13px 14px', fontSize: 15, fontWeight: on ? 700 : 600,
+  background: on ? 'var(--accent-tint)' : 'transparent', color: on ? 'var(--accent)' : 'var(--text-primary)',
+})

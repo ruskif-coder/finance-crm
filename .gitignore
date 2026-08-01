@@ -29,6 +29,13 @@ docs/
 # SQL migration scripts — applied manually, local only
 *.sql
 
+# Fallback-страницы — держим локально до перехода на прод
+frontend/pages/OLD_*.js
+frontend/pages/*_bak.js
+
+# Runtime-загрузки файлов сделок (bind-mount, docker создаёт сам)
+uploads/
+
 # Разовый бэкфилл реквизитов из выгрузки Битрикс24 — локальный инструмент,
 # копируется на сервер напрямую (scp), в репозиторий не идёт
 backend/app/backfill_counterparty_requisites.py

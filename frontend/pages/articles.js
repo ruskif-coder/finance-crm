@@ -14,7 +14,7 @@ const TYPE_META = {
 }
 const EMPTY = { name: '', group: '', type: 'expense' }
 
-export default function Articles() {
+export default function Articles({ embedded = false } = {}) {
   const router = useRouter()
   const [items, setItems] = useState([])
   const [groups, setGroups] = useState([])
@@ -29,6 +29,7 @@ export default function Articles() {
   const [newGroup, setNewGroup] = useState('')
   const [dragIdx, setDragIdx] = useState(null)
   const [overIdx, setOverIdx] = useState(null)
+  const [showForm, setShowForm] = useState(false)
 
   const mayEdit = can(perms, 'articles', 'edit')
 
@@ -60,7 +61,7 @@ export default function Articles() {
     if (!form.name.trim()) { setError('Введите название статьи'); return }
     try {
       await api.post('/articles/', { name: form.name.trim(), group: form.group || null, type: form.type }, auth())
-      setForm(EMPTY); flash('Статья создана'); load()
+      setForm(EMPTY); setShowForm(false); flash('Статья создана'); load()
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось создать') }
   }
 
@@ -128,24 +129,39 @@ export default function Articles() {
 
   return (
     <>
-      <Head><title>Статьи</title></Head>
-      <Navbar active="directories" />
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '20px 24px 50px' }}>
+      {!embedded && <Head><title>Статьи</title></Head>}
+      {!embedded && <Navbar active="directories" />}
+      <div style={{ padding: embedded ? 0 : '20px 24px 50px' }}>
 
-        <DirectoryTabs active="articles" />
+        {!embedded && <DirectoryTabs active="articles" />}
 
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 14 }}>
           <h1 style={{ fontSize: 19, fontWeight: 600, margin: 0 }}>Статьи</h1>
           <span style={{ fontSize: 12, color: 'var(--muted)' }}>{items.length}</span>
         </div>
 
-        {mayEdit && (
+        {/* Строка поиска + кнопка добавления */}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: showForm ? 0 : 12 }}>
+          <input style={{ ...inp, width: 300 }} placeholder="поиск по названию или группе"
+            value={search} onChange={e => setSearch(e.target.value)} />
+          {mayEdit && (
+            <button style={btn(showForm)}
+              onClick={() => { setShowForm(s => !s); setForm(EMPTY); setNewGroup(''); setError('') }}>
+              {showForm ? 'Отмена' : '+ Добавить'}
+            </button>
+          )}
+        </div>
+
+        {/* Форма добавления — раскрывается под строкой поиска */}
+        {mayEdit && showForm && (
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-            borderRadius: 'var(--radius-card)', padding: '14px 16px', marginBottom: 16 }}>
+            borderTop: 'none', borderRadius: '0 0 var(--radius-card) var(--radius-card)',
+            padding: '14px 16px', marginBottom: 12 }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Новая статья</div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <input style={{ ...inp, width: 260 }} placeholder="Название статьи"
-                value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+              <input style={{ ...inp, width: 260 }} placeholder="Название статьи" autoFocus
+                value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
+                onKeyDown={e => { if (e.key === 'Enter') createArticle(); if (e.key === 'Escape') { setShowForm(false); setForm(EMPTY) } }} />
               <select style={inp} value={form.group} onChange={e => setForm({ ...form, group: e.target.value })}>
                 <option value="">— группа —</option>
                 {groups.map(g => <option key={g} value={g}>{g}</option>)}
@@ -164,9 +180,6 @@ export default function Articles() {
           </div>
         )}
 
-        <input style={{ ...inp, width: 300, marginBottom: 12 }} placeholder="поиск по названию или группе"
-          value={search} onChange={e => setSearch(e.target.value)} />
-
         {error && <div style={{ background: 'var(--danger-tint)', border: '1px solid var(--danger)',
           color: 'var(--danger)', padding: '10px 14px', borderRadius: 'var(--radius-card-sm)',
           marginBottom: 12, fontSize: 13 }}>{error}</div>}
@@ -176,8 +189,8 @@ export default function Articles() {
 
         {!loading && (
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-            borderRadius: 'var(--radius-card)', overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            borderRadius: 'var(--radius-card)', overflow: 'hidden', width: 'max-content' }}>
+            <table style={{ borderCollapse: 'collapse' }}>
               <thead><tr>
                 {mayEdit && !search && <th style={{ ...th, width: 28 }}></th>}
                 <th style={th}>Название</th>

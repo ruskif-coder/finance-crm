@@ -17,15 +17,14 @@ export default function DirectoryTabs({ active }) {
   }
   const isAdmin = role === 'admin'
 
+  // Статьи и Воронки переехали в раздел «Настройки» (вкладки /settings).
   const tabs = []
-  if (isAdmin || can(perms, 'counterparties', 'view')) tabs.push({ id: 'counterparties', label: 'Контрагенты', href: '/directories?tab=counterparties' })
-  if (isAdmin || can(perms, 'articles', 'view')) tabs.push({ id: 'articles', label: 'Статьи', href: '/articles' })
-  if (isAdmin || can(perms, 'contracts', 'view')) tabs.push({ id: 'contracts', label: 'Договоры', href: '/directories?tab=contracts' })
-  if (isAdmin || can(perms, 'sales_directories', 'view')) {
-    tabs.push({ id: 'advertisers', label: 'Рекламодатели', href: '/advertisers' })
-    tabs.push({ id: 'agencies', label: 'Агентства', href: '/agencies' })
-    tabs.push({ id: 'pipelines', label: 'Воронки', href: '/pipelines' })
-  }
+  if (isAdmin || can(perms, 'counterparties', 'view')) tabs.push({ id: 'counterparties', label: 'Контрагенты', href: '/counterparties' })
+  if (isAdmin || can(perms, 'contracts', 'view')) tabs.push({ id: 'contracts', label: 'Договора', href: '/contracts' })
+  if (isAdmin || can(perms, 'dir_advertisers', 'view')) tabs.push({ id: 'advertisers', label: 'Рекламодатели', href: '/advertisers' })
+  if (isAdmin || can(perms, 'dir_agencies', 'view')) tabs.push({ id: 'agencies', label: 'Агентства', href: '/agencies' })
+  // Временный инструмент сверки справочников с Битриксом — только админ.
+  if (isAdmin) tabs.push({ id: 'reconcile', label: 'Сверка с Битриксом', href: '/reconcile' })
 
   return (
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>

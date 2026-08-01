@@ -85,3 +85,19 @@ body {
   --text:      var(--text-primary);
   --muted:     var(--text-muted);
 }
+
+/* ── Адаптивная сетка виджетов раздела «Продажи» ──
+   Десктоп — три колонки с акцентом на динамику; планшет — две; мобилка —
+   один столбец, виджеты друг под другом. */
+.sales-widget-grid {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr) minmax(0, 1.2fr);
+}
+@media (max-width: 1200px) {
+  .sales-widget-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 760px) {
+  .sales-widget-grid { grid-template-columns: 1fr; }
+}

@@ -1,14 +1,11 @@
 import { useState, useEffect, Fragment } from 'react'
 import Head from 'next/head'
-import axios from 'axios'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import DirectoryTabs from '../components/DirectoryTabs'
+import api, { auth } from '../lib/api'
 
-const api = axios.create({ baseURL: '/api' })
-const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
-
-export default function Pipelines() {
+export default function Pipelines({ embedded = false } = {}) {
   const router = useRouter()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
@@ -17,9 +14,11 @@ export default function Pipelines() {
   const [perms, setPerms] = useState({})
   const [expanded, setExpanded] = useState(null)
   const [stages, setStages] = useState({})   // { pipelineId: {items, bitrix_category_id} }
+  const [expandAll, setExpandAll] = useState(false)
+  const [busy, setBusy] = useState(false)
 
-  const mayEdit = can(perms, 'sales_directories', 'edit')
-  const mayDelete = can(perms, 'sales_directories', 'delete')
+  const mayEdit = can(perms, 'settings', 'edit')
+  const mayDelete = can(perms, 'settings', 'edit')
 
   const load = async () => {
     setLoading(true); setError('')
@@ -38,6 +37,32 @@ export default function Pipelines() {
 
   const flash = (m) => { setOk(m); setTimeout(() => setOk(''), 2500) }
 
+  const refresh = async () => {
+    setBusy(true); setError('')
+    try {
+      const r = await api.post('/sales/directories/pipelines/refresh', {}, auth())
+      flash(`Обновлено из Битрикса: воронок +${r.data.pipelines_added} (переим. ${r.data.pipelines_renamed || 0}), стадий +${r.data.stages_added}, переименовано стадий ${r.data.stages_renamed}`)
+      await load()
+    } catch (e) { setError(e.response?.data?.detail || 'Обновление недоступно') }
+    finally { setBusy(false) }
+  }
+
+  const loadStagesFor = async (p) => {
+    if (stages[p.id]) return
+    try {
+      const r = await api.get(`/sales/directories/pipelines/${p.id}/stages`, auth())
+      setStages(s => ({ ...s, [p.id]: r.data }))
+    } catch (e) { /* тихо */ }
+  }
+
+  const toggleAll = async () => {
+    const next = !expandAll
+    setExpandAll(next)
+    if (next) { for (const p of items) { await loadStagesFor(p) } }
+  }
+
+  const isOpen = (p) => expandAll || expanded === p.id
+
   const toggleExpand = async (p) => {
     if (expanded === p.id) { setExpanded(null); return }
     setExpanded(p.id)
@@ -49,6 +74,31 @@ export default function Pipelines() {
     }
   }
 
+  // Привязка стадии к светофору 2/2/2. Пустое значение снимает привязку.
+  // Обновляем локально, чтобы селектор сразу показал новый слой.
+  const mapStage = async (p, stage, stageKey) => {
+    setError('')
+    try {
+      const r = await api.put(
+        `/sales/directories/pipelines/${p.id}/stages/${stage.id}/mapping`,
+        { stage_key: stageKey || null }, auth())
+      setStages(s => ({
+        ...s,
+        [p.id]: {
+          ...s[p.id],
+          items: s[p.id].items.map(it => it.id === stage.id
+            ? { ...it, stage_key: r.data.stage_key, money_layer: r.data.money_layer } : it),
+        },
+      }))
+      flash(r.data.message)
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось привязать стадию') }
+  }
+
+  // Цвет слоя денег — тот же язык, что в реестре сделок.
+  const layerColor = (l) => l === 'фактические' ? 'var(--success)'
+    : l === 'реализуемые' ? 'var(--warning, #d97706)'
+    : l === 'планируемые' ? 'var(--muted)' : 'var(--danger)'
+
   const toggle = async (p) => {
     setError('')
     try {
@@ -57,6 +107,19 @@ export default function Pipelines() {
       flash(`«${p.name}»: ${!p.is_tracked ? 'парсится' : 'не парсится'}`)
       load()
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось изменить') }
+  }
+
+  const rename = async (p) => {
+    setError('')
+    const next = window.prompt(`Новое название воронки «${p.name}»:`, p.name)
+    if (next === null) return
+    const name = next.trim()
+    if (!name || name === p.name) return
+    try {
+      const r = await api.put(`/sales/directories/pipelines/${p.id}/name`, { name }, auth())
+      flash(`Переименовано: «${p.name}» → «${r.data.name}»`)
+      load()
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось переименовать') }
   }
 
   const remove = async (p) => {
@@ -85,15 +148,23 @@ export default function Pipelines() {
 
   return (
     <>
-      <Head><title>Воронки</title></Head>
-      <Navbar active="directories" />
-      <div style={{ maxWidth: 900, margin: '0 auto', padding: '20px 24px 50px' }}>
+      {!embedded && <Head><title>Воронки</title></Head>}
+      {!embedded && <Navbar active="directories" />}
+      <div style={{ padding: embedded ? 0 : '20px 24px 50px' }}>
 
-        <DirectoryTabs active="pipelines" />
+        {!embedded && <DirectoryTabs active="pipelines" />}
 
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 6 }}>
           <h1 style={{ fontSize: 19, fontWeight: 600, margin: 0 }}>Воронки</h1>
           <span style={{ fontSize: 12, color: 'var(--muted)' }}>{items.length}</span>
+          <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+            {!!items.length && (
+              <button style={btn()} onClick={toggleAll}>{expandAll ? 'Свернуть все' : 'Развернуть все'}</button>
+            )}
+            {mayEdit && (
+              <button style={btn()} disabled={busy} onClick={refresh}>{busy ? 'Обновление…' : 'Обновить из Битрикса'}</button>
+            )}
+          </div>
         </div>
         <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 0, marginBottom: 16 }}>
           «Парсить» — учитывать ли воронку при синхронизации с Битрикс24. Снятый флаг
@@ -109,8 +180,8 @@ export default function Pipelines() {
 
         {!loading && (
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-            borderRadius: 'var(--radius-card)', overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            borderRadius: 'var(--radius-card)', overflow: 'hidden', width: 'max-content' }}>
+            <table style={{ borderCollapse: 'collapse' }}>
               <thead><tr>
                 <th style={th}>Воронка</th>
                 <th style={{ ...th, textAlign: 'right' }}>Сделок</th>
@@ -121,11 +192,18 @@ export default function Pipelines() {
                 {items.map(p => (
                   <Fragment key={p.id}>
                     <tr style={{ opacity: p.is_tracked ? 1 : 0.55 }}>
-                      <td style={{ ...td, fontWeight: 500, cursor: 'pointer' }} onClick={() => toggleExpand(p)}>
-                        <span style={{ color: 'var(--muted)', marginRight: 6, fontSize: 11 }}>
-                          {expanded === p.id ? '▼' : '▶'}
+                      <td style={{ ...td, fontWeight: 500 }}>
+                        <span onClick={() => toggleExpand(p)} style={{ cursor: 'pointer' }}>
+                          <span style={{ color: 'var(--muted)', marginRight: 6, fontSize: 11 }}>
+                            {isOpen(p) ? '▼' : '▶'}
+                          </span>
+                          {p.name}
                         </span>
-                        {p.name}
+                        {mayEdit && (
+                          <button title="Переименовать" onClick={() => rename(p)}
+                            style={{ marginLeft: 8, border: 'none', background: 'none', cursor: 'pointer',
+                              color: 'var(--muted)', fontSize: 12.5, padding: 0 }}>✎</button>
+                        )}
                       </td>
                       <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{p.deals}</td>
                       <td style={{ ...td, textAlign: 'center' }}>
@@ -138,7 +216,7 @@ export default function Pipelines() {
                         )}
                       </td>
                     </tr>
-                    {expanded === p.id && (
+                    {isOpen(p) && (
                       <tr>
                         <td colSpan={4} style={{ padding: '4px 12px 14px 32px', background: 'var(--bg-subtle)' }}>
                           {!stages[p.id] ? (
@@ -149,18 +227,43 @@ export default function Pipelines() {
                             </span>
                           ) : (
                             <>
-                              <div style={{ fontSize: 11, color: 'var(--muted)', margin: '6px 0' }}>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', margin: '6px 0 10px' }}>
                                 Воронка в Битриксе: id={stages[p.id].bitrix_category_id ?? '—'}
+                                {' · '}«Светофор 2/2/2» задаёт слой денег для отчётов и реестра.
+                                {stages[p.id].items.some(s => s.deals && !s.stage_key) && (
+                                  <span style={{ color: 'var(--danger)', marginLeft: 6 }}>
+                                    ⚠ есть стадии со сделками без привязки
+                                  </span>
+                                )}
                               </div>
                               <table style={{ borderCollapse: 'collapse' }}>
                                 <tbody>
                                   {stages[p.id].items.map((s, i) => (
                                     <tr key={s.id}>
-                                      <td style={{ padding: '3px 10px', fontSize: 12.5, color: 'var(--muted)', width: 26 }}>{i + 1}</td>
-                                      <td style={{ padding: '3px 10px', fontSize: 13 }}>{s.name}</td>
-                                      <td style={{ padding: '3px 10px', fontSize: 11.5, color: 'var(--muted)', fontFamily: 'monospace' }}>{s.status_id}</td>
-                                      <td style={{ padding: '3px 10px', fontSize: 12.5, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                                      <td style={{ padding: '4px 10px', fontSize: 12.5, color: 'var(--muted)', width: 26 }}>{i + 1}</td>
+                                      <td style={{ padding: '4px 10px', fontSize: 13 }}>{s.name}</td>
+                                      <td style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--muted)', fontFamily: 'monospace' }}>{s.status_id}</td>
+                                      <td style={{ padding: '4px 10px', fontSize: 12.5, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: s.deals && !s.stage_key ? 'var(--danger)' : undefined }}>
                                         {s.deals ? `${s.deals} сд.` : ''}
+                                      </td>
+                                      <td style={{ padding: '4px 10px', textAlign: 'center' }}>
+                                        {/* Точка-индикатор слоя денег текущей привязки */}
+                                        <span title={s.money_layer || 'не привязана'} style={{
+                                          display: 'inline-block', width: 9, height: 9, borderRadius: '50%',
+                                          background: s.stage_key ? layerColor(s.money_layer) : 'var(--border-card)',
+                                        }} />
+                                      </td>
+                                      <td style={{ padding: '4px 10px' }}>
+                                        <select value={s.stage_key || ''} disabled={!mayEdit}
+                                          onChange={e => mapStage(p, s, e.target.value)}
+                                          style={{ padding: '3px 6px', fontSize: 12.5, borderRadius: 'var(--radius-input)',
+                                            border: '1px solid var(--border-card)', background: 'var(--bg-card)',
+                                            color: 'inherit', cursor: mayEdit ? 'pointer' : 'default' }}>
+                                          <option value="">— не учитывать —</option>
+                                          {(stages[p.id].catalog || []).map(c => (
+                                            <option key={c.key} value={c.key}>{c.label} · {c.money_layer}</option>
+                                          ))}
+                                        </select>
                                       </td>
                                     </tr>
                                   ))}

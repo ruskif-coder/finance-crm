@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
 import Head from 'next/head'
+import { firstAllowedHref } from '../components/Navbar'
 
 const POLICY_TEXT = `ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ
 ООО «Программатик медиа»
@@ -77,24 +78,6 @@ const CONSENT_TEXT = `СОГЛАСИЕ НА ОБРАБОТКУ ПЕРСОНАЛ�
 
 Факт принятия настоящего согласия фиксируется в информационной системе с указанием даты и времени.`
 
-// Порядок приоритета разделов для редиректа после входа
-const REDIRECT_ORDER = [
-  { section: 'dashboard',   href: '/dashboard' },
-  { section: 'pl',          href: '/pl' },
-  { section: 'balance',     href: '/balance' },
-  { section: 'receivables', href: '/receivables' },
-  { section: 'planfact',    href: '/planfact' },
-  { section: 'operations',  href: '/operations' },
-]
-
-function firstAllowedHref(permissions, isAdmin) {
-  if (isAdmin) return '/dashboard'
-  for (const item of REDIRECT_ORDER) {
-    if (permissions?.[item.section]?.view) return item.href
-  }
-  return '/dashboard' // fallback — у пользователя нет ни одного раздела, покажет пустой дашборд
-}
-
 export default function Login() {
   const router = useRouter()
   const [email, setEmail] = useState('')
@@ -131,7 +114,7 @@ export default function Login() {
         setToken(res.data.access_token)
         setShowConsent(true)
       } else {
-        router.push(firstAllowedHref(res.data.permissions || {}, res.data.is_admin))
+        router.push(firstAllowedHref(res.data.permissions || {}, res.data.role))
       }
     } catch (e) {
       setError('Неверный email или пароль')
@@ -148,8 +131,7 @@ export default function Login() {
         headers: { Authorization: `Bearer ${token}` }
       })
       const perms = JSON.parse(localStorage.getItem('permissions') || '{}')
-      const isAdmin = localStorage.getItem('is_admin') === '1'
-      router.push(firstAllowedHref(perms, isAdmin))
+      router.push(firstAllowedHref(perms, localStorage.getItem('role')))
     } catch (e) {
       setError('Ошибка при сохранении согласия. Попробуйте войти снова.')
       setShowConsent(false)

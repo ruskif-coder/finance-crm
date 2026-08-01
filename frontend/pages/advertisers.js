@@ -24,8 +24,9 @@ export default function Advertisers() {
   const [brandName, setBrandName] = useState('')
   const [dupes, setDupes] = useState([])
   const [showDupes, setShowDupes] = useState(false)
+  const [showForm, setShowForm] = useState(false)
 
-  const mayEdit = can(perms, 'sales_directories', 'edit')
+  const mayEdit = can(perms, 'dir_advertisers', 'edit')
 
   const loadDupes = async () => {
     try {
@@ -70,6 +71,10 @@ export default function Advertisers() {
   const [sel, setSel] = useState({})                 // { brandId: name } — мультивыбор
   const [bulkMove, setBulkMove] = useState(false)    // открыт поиск для пакетного переноса
   const [bulkQuery, setBulkQuery] = useState('')
+
+  const [attachToAdv, setAttachToAdv] = useState(null)  // id рекламодателя, к которому прикрепляем контрагента
+  const [cpQueryAdv, setCpQueryAdv] = useState('')
+  const [cpsAdv, setCpsAdv] = useState([])
 
   // Выбор рекламодателей (производителей) для схлопывания — отдельно от брендов
   const [selAdv, setSelAdv] = useState({})   // { id: {name, deals} }
@@ -150,6 +155,37 @@ export default function Advertisers() {
     finally { setLoading(false) }
   }
 
+  // Поиск контрагентов для прикрепления к рекламодателю
+  useEffect(() => {
+    const q = cpQueryAdv.trim()
+    if (!q) { setCpsAdv([]); return }
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.get('/counterparties/', { params: { search: q, limit: 30 }, ...auth() })
+        const list = Array.isArray(r.data) ? r.data : (r.data.items || [])
+        setCpsAdv(list.map(x => ({ id: x.id, name: x.name })).filter(x => x.name))
+      } catch (e) { /* молчим */ }
+    }, 250)
+    return () => clearTimeout(t)
+  }, [cpQueryAdv])
+
+  const attachCp = async (advId, cpId) => {
+    setError('')
+    try {
+      await api.post(`/sales/directories/producers/${advId}/counterparties`,
+        { counterparty_id: cpId }, auth())
+      setAttachToAdv(null); setCpQueryAdv(''); flash('Юрлицо прикреплено'); load()
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось прикрепить') }
+  }
+
+  const detachCp = async (advId, cpId) => {
+    setError('')
+    try {
+      await api.delete(`/sales/directories/producers/${advId}/counterparties/${cpId}`, auth())
+      flash('Юрлицо откреплено'); load()
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось открепить') }
+  }
+
   useEffect(() => {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     try { setPerms(JSON.parse(localStorage.getItem('permissions') || '{}')) } catch (e) { setPerms({}) }
@@ -157,6 +193,8 @@ export default function Advertisers() {
   }, [])
 
   const flash = (msg) => { setOk(msg); setTimeout(() => setOk(''), 2500) }
+
+  const cancelForm = () => { setEditId(null); setForm(EMPTY); setShowForm(false); setError('') }
 
   const save = async () => {
     setError('')
@@ -169,11 +207,13 @@ export default function Advertisers() {
       if (editId) {
         await api.put(`/sales/directories/producers/${editId}`, form, auth())
         flash('Рекламодатель обновлён')
+        setEditId(null); setForm(EMPTY)
       } else {
         await api.post('/sales/directories/producers', form, auth())
         flash('Рекламодатель создан')
+        cancelForm()
       }
-      setForm(EMPTY); setEditId(null); load()
+      load()
     } catch (e) {
       // диагностический текст: показываем статус и настоящую причину,
       // а не общую заглушку — чтобы было видно, HTTP-ошибка это или сетевая
@@ -227,7 +267,7 @@ export default function Advertisers() {
     <>
       <Head><title>Рекламодатели</title></Head>
       <Navbar active="directories" />
-      <div style={{ maxWidth: 1400, margin: '0 auto', padding: '20px 24px 50px' }}>
+      <div style={{ padding: '20px 24px 50px' }}>
 
         <DirectoryTabs active="advertisers" />
 
@@ -239,24 +279,42 @@ export default function Advertisers() {
           <span style={{ fontSize: 12, color: 'var(--muted)' }}>{items.length} записей</span>
         </div>
 
-        {mayEdit && !editId && (
-          <div style={{
-            background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-            borderRadius: 'var(--radius-card)', padding: '14px 16px', marginBottom: 16,
-          }}>
+        {/* Строка поиска + кнопка добавления */}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: showForm ? 0 : 12 }}>
+          <input style={{ ...inp, width: 300 }} placeholder="поиск по названию или бренду"
+            value={search} onChange={e => setSearch(e.target.value)} />
+          {mayEdit && !editId && (
+            <button style={btn(showForm)}
+              onClick={() => showForm ? cancelForm() : setShowForm(true)}>
+              {showForm ? 'Отмена' : '+ Добавить'}
+            </button>
+          )}
+        </div>
+
+        {/* Форма добавления — раскрывается под строкой поиска */}
+        {mayEdit && showForm && !editId && (
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)',
+            borderTop: 'none', borderRadius: '0 0 var(--radius-card) var(--radius-card)',
+            padding: '14px 16px', marginBottom: 12 }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Новый рекламодатель</div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <input style={{ ...inp, width: 170 }} placeholder="Короткое"
-                value={form.short_name} onChange={e => setForm({ ...form, short_name: e.target.value })} />
+              <input style={{ ...inp, width: 170 }} placeholder="Короткое" autoFocus
+                value={form.short_name} onChange={e => setForm({ ...form, short_name: e.target.value })}
+                onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancelForm() }} />
               <input style={{ ...inp, width: 180 }} placeholder="Англ"
-                value={form.name_en} onChange={e => setForm({ ...form, name_en: e.target.value })} />
+                value={form.name_en} onChange={e => setForm({ ...form, name_en: e.target.value })}
+                onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancelForm() }} />
               <input style={{ ...inp, width: 180 }} placeholder="Русское"
-                value={form.name_ru} onChange={e => setForm({ ...form, name_ru: e.target.value })} />
+                value={form.name_ru} onChange={e => setForm({ ...form, name_ru: e.target.value })}
+                onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancelForm() }} />
               <input style={{ ...inp, width: 190 }} placeholder="сайт"
-                value={form.website} onChange={e => setForm({ ...form, website: e.target.value })} />
+                value={form.website} onChange={e => setForm({ ...form, website: e.target.value })}
+                onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancelForm() }} />
               <input style={{ ...inp, width: 130 }} placeholder="ИНН"
-                value={form.inn} onChange={e => setForm({ ...form, inn: e.target.value })} />
+                value={form.inn} onChange={e => setForm({ ...form, inn: e.target.value })}
+                onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancelForm() }} />
               <button style={btn(true)} onClick={save}>Добавить</button>
+              <button style={btn(false)} onClick={cancelForm}>Отмена</button>
             </div>
           </div>
         )}
@@ -286,9 +344,6 @@ export default function Advertisers() {
           </div>
         )}
 
-        <input style={{ ...inp, width: 300, marginBottom: 12 }} placeholder="поиск по названию или бренду"
-          value={search} onChange={e => setSearch(e.target.value)} />
-
         {error && <div style={{ background: 'var(--danger-tint)', border: '1px solid var(--danger)',
           color: 'var(--danger)', padding: '10px 14px', borderRadius: 'var(--radius-card-sm)',
           marginBottom: 12, fontSize: 13 }}>{error}</div>}
@@ -298,16 +353,18 @@ export default function Advertisers() {
 
         {!loading && (
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-            borderRadius: 'var(--radius-card)', overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            borderRadius: 'var(--radius-card)', overflow: 'visible' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <thead><tr>
                 <th style={{ ...th, width: 28 }}></th>
+                <th style={th}>BX_ID</th>
                 <th style={th}>Короткое</th>
                 <th style={th}>Англ</th>
                 <th style={th}>Русское</th>
                 <th style={{ ...th, textAlign: 'right' }}>Сделок</th>
                 <th style={th}>Сайт</th>
                 <th style={th}>Бренды</th>
+                <th style={th}>Юрлица</th>
                 <th style={th}></th>
               </tr></thead>
               <tbody>
@@ -321,6 +378,13 @@ export default function Advertisers() {
                         <input type="checkbox" checked={!!selAdv[a.id]} onChange={() => toggleAdv(a)}
                           style={{ cursor: 'pointer' }} />
                       )}
+                    </td>
+                    <td style={{ ...td, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>
+                      {a.bx_id
+                        ? <a href={`https://simb-ad.bitrix24.ru/crm/company/details/${a.bx_id}/`}
+                             target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}
+                             title="Открыть рекламодателя в Битрикс24">{a.bx_id}</a>
+                        : dash}
                     </td>
                     {editId === a.id ? (
                       <>
@@ -347,7 +411,13 @@ export default function Advertisers() {
                         <td style={{ ...td, fontWeight: 600 }}>{a.short_name || a.name || dash}</td>
                         <td style={td}>{a.name_en || dash}</td>
                         <td style={td}>{a.name_ru || dash}</td>
-                        <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{a.deals}</td>
+                        <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {a.deals > 0
+                            ? <a href={`/sales?advertiser_id=${a.id}`} target="_blank" rel="noreferrer"
+                                 style={{ color: 'var(--accent)', textDecoration: 'none' }}
+                                 title="Открыть сделки рекламодателя в реестре">{a.deals}</a>
+                            : a.deals}
+                        </td>
                         <td style={td}>
                           {a.website
                             ? <a href={a.website.startsWith('http') ? a.website : `https://${a.website}`}
@@ -425,6 +495,44 @@ export default function Advertisers() {
                         </div>
                       )}
                     </td>
+                    {/* Юрлица — прямой договор */}
+                    <td style={td}>
+                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+                        {(a.counterparties || []).map(c => (
+                          <span key={c.counterparty_id} style={{
+                            background: 'var(--bg-subtle)', borderRadius: 'var(--radius-badge)',
+                            padding: '2px 8px', fontSize: 12, display: 'inline-flex', gap: 6, alignItems: 'center',
+                          }}>
+                            {c.name}
+                            {mayEdit && editId !== a.id && (
+                              <span style={{ cursor: 'pointer', color: 'var(--danger)', fontWeight: 700 }}
+                                onClick={() => detachCp(a.id, c.counterparty_id)} title="Открепить">×</span>
+                            )}
+                          </span>
+                        ))}
+                        {!a.counterparties?.length && dash}
+                      </div>
+                      {attachToAdv === a.id && editId !== a.id && mayEdit && (
+                        <div style={{ marginTop: 8, position: 'relative' }}>
+                          <input autoFocus style={{ ...inp, width: 280 }} placeholder="поиск контрагента"
+                            value={cpQueryAdv} onChange={e => setCpQueryAdv(e.target.value)} />
+                          {cpQueryAdv.trim() && (
+                            <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 10, marginTop: 2,
+                              background: 'var(--bg-card)', border: '1px solid var(--border-card)',
+                              borderRadius: 'var(--radius-card-sm)', boxShadow: 'var(--shadow-card)',
+                              maxHeight: 240, overflowY: 'auto', minWidth: 280 }}>
+                              {cpsAdv.map(c => (
+                                <div key={c.id} onClick={() => attachCp(a.id, c.id)}
+                                  style={{ padding: '6px 10px', fontSize: 12.5, cursor: 'pointer', borderBottom: '1px solid var(--border-row)' }}>
+                                  {c.name}
+                                </div>
+                              ))}
+                              {!cpsAdv.length && <div style={{ padding: 8, fontSize: 12, color: 'var(--muted)' }}>не найдено</div>}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {mayEdit && editId === a.id ? (
                         <>
@@ -439,6 +547,10 @@ export default function Advertisers() {
                       ) : mayEdit && (
                         <>
                           <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12, marginRight: 6 }}
+                            onClick={() => { setAttachToAdv(attachToAdv === a.id ? null : a.id); setCpQueryAdv('') }}>
+                            + контрагент
+                          </button>
+                          <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12, marginRight: 6 }}
                             onClick={() => { setExpanded(expanded === a.id ? null : a.id); setBrandName('') }}>
                             + бренд
                           </button>
@@ -450,7 +562,7 @@ export default function Advertisers() {
                   </tr>
                 ))}
                 {!filtered.length && (
-                  <tr><td colSpan={8} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>
+                  <tr><td colSpan={9} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>
                     Ничего не найдено
                   </td></tr>
                 )}

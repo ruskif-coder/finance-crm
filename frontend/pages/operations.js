@@ -1,913 +1,468 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
+import Head from 'next/head'
 import { useRouter } from 'next/router'
 import axios from 'axios'
-import Navbar from '../components/Navbar'
-import Head from 'next/head'
+import Navbar, { can } from '../components/Navbar'
+import { MONO, UI, MultiDrop, IconBtn } from '../components/salesTableKit'
 
-const api = (token) => axios.create({
-  // См. комментарий в balance.js — относительный путь, проксируется Caddy.
-  baseURL: '/api',
-  headers: { Authorization: `Bearer ${token}` }
-})
-
-const fmt = (n) => n ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) : '—'
-
-const URL_RE = /(https?:\/\/[^\s,;]+)/g
-function renderDescription(text) {
-  if (!text) return '—'
-  const parts = String(text).split(URL_RE)
-  return parts.map((part, i) => {
-    if (i % 2 === 1) {
-      const trailMatch = part.match(/[.,;:)\]}»"']+$/)
-      const trail = trailMatch ? trailMatch[0] : ''
-      const url = trail ? part.slice(0, -trail.length) : part
-      return (
-        <span key={i}>
-          <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)', textDecoration: 'underline' }} onClick={e => e.stopPropagation()}>{url}</a>
-          {trail}
-        </span>
-      )
-    }
-    return part
-  })
-}
-
-// Статусы — нейтральная плашка + цветная точка (см. design_integration.MD §6)
-const STATUS_DOT = {
-  'ОПЛАЧЕНО': 'var(--income)',
-  'ПЛАН ОПЛАТ': 'var(--dot-expense)',
-  'ПЛАН ПОСТУПЛЕНИЙ': 'var(--dot-income)',
-}
-
-const BANK_STYLES = {
-  'АльфаБанк':  { color: 'var(--bank-alfa)' },
-  'ОПТ Банк':   { color: 'var(--bank-opt)' },
-  'Совкомбанк': { color: 'var(--bank-sovkom)' },
-  'Наличные':   { color: 'var(--bank-cash)' },
-}
-
-// Статус дебиторки по операции — те же 3 категории и цвета, что и в /receivables
-// (см. AGING_META там), считается backend'ом только для 'План поступлений'.
-const RECEIVABLE_META = {
-  overdue: { label: 'Просрочка', color: 'var(--dot-overdue)' },
-  current: { label: 'Текущая',   color: 'var(--dot-current-dz)' },
-  future:  { label: 'План',      color: 'var(--accent)' },
-}
+const api = (token) => axios.create({ baseURL: '/api', headers: { Authorization: `Bearer ${token}` }, paramsSerializer: { indexes: null } })
+const getPerms = () => { if (typeof window === 'undefined') return {}; try { return JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { return {} } }
 
 const STATUSES = ['ОПЛАЧЕНО', 'ПЛАН ОПЛАТ', 'ПЛАН ПОСТУПЛЕНИЙ']
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
-const PAGE_SIZE_OPTIONS = [50, 100, 300, 500]
+const BANK_COLOR = { 'АльфаБанк': 'var(--bank-alfa)', 'ОПТ Банк': 'var(--bank-opt)', 'Совкомбанк': 'var(--bank-sovkom)', 'Наличные': 'var(--bank-cash)' }
 const VAT_OPTIONS = [0, 5, 7, 10, 20, 22]
-const isPlan = (s) => s === 'ПЛАН ОПЛАТ' || s === 'ПЛАН ПОСТУПЛЕНИЙ'
-const isQuarterPeriod = (p) => /^Q[1-4] \d{4}$/.test(p || '')
+const PAGE_SIZES = [50, 100, 300, 500]
+// статус-чип: фон / текст / точка
+const STATUS_CHIP = {
+  'ОПЛАЧЕНО': ['#E6F5EF', '#1F7D5E', 'var(--income)'],
+  'ПЛАН ОПЛАТ': ['#EEF1FE', '#3A50BE', 'var(--dot-expense)'],
+  'ПЛАН ПОСТУПЛЕНИЙ': ['var(--warning-tint)', '#B26A0C', 'var(--dot-current-dz)'],
+  'ОЖИДАЕТ': ['var(--warning-tint)', '#B26A0C', 'var(--dot-current-dz)'],
+}
+const statusChip = (s) => STATUS_CHIP[s] || ['var(--bg-subtle)', 'var(--text-secondary)', 'var(--text-faint)']
 
-function getPermissions() {
-  if (typeof window === 'undefined') return {}
-  try { return JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { return {} }
+const fmt = (n) => (n ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) : '')
+const fmtDate = (d) => { if (!d) return ''; const [y, m, dd] = String(d).slice(0, 10).split('-'); return dd ? `${dd}.${m}.${y.slice(2)}` : d }
+const emptyForm = () => ({ date: new Date().toISOString().slice(0, 10), status: 'ОПЛАЧЕНО', income: 0, expense: 0, bank: 'АльфаБанк', period: '', vat_rate: 0, article_id: '', counterparty_id: '', ds_num: '', invoice: '', invoice_date: '', description: '', document_link: '' })
+const isQuarter = (p) => /^Q[1-4]\s*\d{4}$/.test(p || '')
+
+const CARD = { background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)' }
+const lbl = { fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5, display: 'block' }
+const inp = { width: '100%', boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 10, padding: '9px 11px', fontSize: 13, background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none', fontFamily: UI }
+
+// сегмент-переключатель (Месяц|Квартал, ставка НДС и т.п.)
+function Seg({ options, value, onChange, mono }) {
+  return (
+    <div style={{ display: 'flex', background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 10, padding: 3, height: 36, alignItems: 'stretch' }}>
+      {options.map(o => {
+        const on = String(o.value) === String(value)
+        return <button key={String(o.value)} type="button" onClick={() => onChange(o.value)}
+          style={{ flex: '0 0 auto', border: 'none', borderRadius: 7, padding: '0 12px', cursor: 'pointer', fontFamily: mono ? MONO : UI, fontSize: 12, fontWeight: on ? 700 : 600, background: on ? 'var(--accent-tint)' : 'transparent', color: on ? 'var(--accent)' : 'var(--text-secondary)' }}>{o.label}</button>
+      })}
+    </div>
+  )
 }
 
-const can = (perms, section, action = 'view') => !!(perms && perms[section] && perms[section][action])
-
-const emptyForm = {
-  date: new Date().toISOString().split('T')[0],
-  status: 'ОПЛАЧЕНО', income: 0, expense: 0,
-  bank: 'АльфаБанк', period: '', vat_rate: 0,
-  article_id: '', counterparty_id: '',
-  ds_num: '', invoice: '', invoice_date: '', description: '', document_link: ''
+// поле периода: сегмент Месяц|Квартал + значение
+function PeriodField({ value, onChange }) {
+  const q = isQuarter(value)
+  const [mode, setMode] = useState(q ? 'quarter' : 'month')
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'stretch', height: 36 }}>
+      <Seg options={[{ value: 'month', label: 'Месяц' }, { value: 'quarter', label: 'Квартал' }]} value={mode} onChange={m => { setMode(m); onChange('') }} />
+      {mode === 'month'
+        ? <input type="month" value={q ? '' : value} onChange={e => onChange(e.target.value)} style={{ ...inp, flex: 1, minWidth: 0 }} />
+        : <input placeholder="Q3 2025" value={q ? value : ''} onChange={e => onChange(e.target.value)} style={{ ...inp, flex: 1, minWidth: 0, fontFamily: MONO }} />}
+    </div>
+  )
 }
 
-function MultiDropdown({ label, items, selected, onToggle, onClear, placeholder, getLabel, getId }) {
+// Однослот с поиском в шапке (для длинных списков — Статья/Контрагент)
+function SingleSelect({ value, onChange, options, placeholder, emptyLabel }) {
   const [open, setOpen] = useState(false)
-  const [search, setSearch] = useState('')
+  const [q, setQ] = useState('')
   const ref = useRef(null)
-
   useEffect(() => {
     const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
+    document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h)
   }, [])
-
-  const filtered = items.filter(i => getLabel(i).toLowerCase().includes(search.toLowerCase()))
-
+  const selO = options.find(o => String(o.value) === String(value))
+  const shown = options.filter(o => !q.trim() || String(o.label).toLowerCase().includes(q.trim().toLowerCase())).slice(0, 300)
   return (
     <div ref={ref} style={{ position: 'relative' }}>
-      <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '3px' }}>
-        {label} {selected.length > 0 && <span style={{ color: 'var(--accent)' }}>({selected.length})</span>}
-      </div>
-      <div onClick={() => setOpen(o => !o)} style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', fontSize: '15px', cursor: 'pointer', background: 'white', minWidth: '150px', userSelect: 'none', whiteSpace: 'nowrap' }}>
-        {selected.length === 0 ? `${placeholder} ▾` : `Выбрано: ${selected.length} ▾`}
-      </div>
+      <div onClick={() => setOpen(o => !o)} style={{ ...inp, cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: selO ? 'var(--text-primary)' : 'var(--text-faint)' }}>{selO ? selO.label : placeholder} ▾</div>
       {open && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', background: 'white', border: '1px solid var(--border-card)', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', zIndex: 300, minWidth: '200px', maxHeight: '300px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '8px' }}>
-            <input autoFocus placeholder="Поиск..." value={search} onChange={e => setSearch(e.target.value)}
-              style={{ width: '100%', padding: '5px 8px', borderRadius: '6px', border: '1px solid var(--border-card)', fontSize: '14px', outline: 'none' }} />
+        <div style={{ position: 'absolute', top: '110%', left: 0, right: 0, minWidth: 210, zIndex: 50, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', maxHeight: 300, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: 8 }}><input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="поиск" style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} /></div>
+          <div style={{ overflowY: 'auto', padding: 5 }}>
+            <div onClick={() => { onChange(''); setOpen(false); setQ('') }} style={{ padding: '6px 8px', borderRadius: 7, fontSize: 12, cursor: 'pointer', color: 'var(--text-muted)' }}>{emptyLabel || '— не выбрано —'}</div>
+            {shown.map(o => <div key={o.value} onClick={() => { onChange(o.value); setOpen(false); setQ('') }} style={{ padding: '6px 8px', borderRadius: 7, fontSize: 12.5, cursor: 'pointer', background: String(o.value) === String(value) ? 'var(--accent-tint)' : 'transparent', color: String(o.value) === String(value) ? 'var(--accent)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</div>)}
+            {!shown.length && <div style={{ padding: 8, fontSize: 12, color: 'var(--text-muted)' }}>ничего не найдено</div>}
           </div>
-          <div style={{ overflowY: 'auto', flex: 1 }}>
-            {filtered.map(item => {
-              const id = getId(item)
-              const lbl = getLabel(item)
-              const active = selected.includes(id)
-              return (
-                <div key={id} onClick={() => onToggle(id)}
-                  style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', background: active ? 'var(--accent-tint)' : 'white' }}
-                  onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'var(--bg-subtle)' }}
-                  onMouseLeave={e => { e.currentTarget.style.background = active ? 'var(--accent-tint)' : 'white' }}>
-                  <span style={{ width: '14px', height: '14px', borderRadius: '3px', border: `1px solid ${active ? 'var(--accent)' : 'var(--border-card)'}`, background: active ? 'var(--accent)' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    {active && <span style={{ color: 'white', fontSize: '12px', lineHeight: 1 }}>✓</span>}
-                  </span>
-                  {lbl}
-                </div>
-              )
-            })}
-          </div>
-          {selected.length > 0 && (
-            <div onClick={() => { onClear(); setSearch('') }} style={{ padding: '8px 12px', borderTop: '1px solid var(--border-card)', fontSize: '14px', color: 'var(--dot-overdue)', cursor: 'pointer' }}>
-              Сбросить выбор
-            </div>
-          )}
         </div>
       )}
     </div>
   )
 }
 
-
-function CounterpartySearch({ counterparties, value, onChange, onCreateNew }) {
-  const [search, setSearch] = useState('')
-  const [open, setOpen] = useState(false)
-  const [creating, setCreating] = useState(false)
-  const [newName, setNewName] = useState('')
-  const ref = useRef(null)
-
-  useEffect(() => {
-    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
-  }, [])
-
-  const selected = counterparties.find(c => c.id === parseInt(value))
-  const filtered = counterparties.filter(c => c.name.toLowerCase().includes(search.toLowerCase())).slice(0, 50)
-
-  const handleCreate = async () => {
-    if (!newName.trim()) return
-    const created = await onCreateNew(newName.trim())
-    if (created) {
-      onChange(created.id)
-      setSearch('')
-      setNewName('')
-      setCreating(false)
-      setOpen(false)
-    }
-  }
-
+// Единый набор полей формы (создание/редактирование)
+function OpFields({ f, set, articles, counterparties, accent }) {
+  const artOpts = articles.map(a => ({ value: a.id, label: a.name }))
+  const cpOpts = counterparties.map(c => ({ value: c.id, label: c.name }))
+  const Cell = ({ label, opt, children }) => (
+    <div><span style={lbl}>{label}{opt ? <span style={{ color: accent === 'warn' ? '#B26A0C' : 'var(--text-faint)', marginLeft: 6 }}>необяз.</span> : ''}</span>{children}</div>
+  )
+  const sel = (val, onCh, opts, ph) => (
+    <select value={val} onChange={e => onCh(e.target.value)} style={inp}><option value="">{ph}</option>{opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+  )
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <div
-        onClick={() => { setOpen(o => !o); setSearch('') }}
-        style={{ width: '100%', padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', fontSize: '15px', cursor: 'pointer', background: 'white', userSelect: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {selected ? selected.name : '— выберите или введите —'}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 14 }}>
+        <Cell label="Статус">{sel(f.status, v => set({ status: v }), STATUSES.map(s => ({ value: s, label: s })), 'статус')}</Cell>
+        <Cell label="Дата" opt>{<input type="date" value={f.date} onChange={e => set({ date: e.target.value })} style={{ ...inp, ...(accent === 'warn' ? { borderColor: 'var(--dot-current-dz)' } : {}) }} />}</Cell>
+        <Cell label="Поступление"><input inputMode="numeric" value={f.income || ''} onChange={e => set({ income: +e.target.value.replace(/\D/g, '') || 0 })} placeholder="0 ₽" style={{ ...inp, fontFamily: MONO }} /></Cell>
+        <Cell label="Списание"><input inputMode="numeric" value={f.expense || ''} onChange={e => set({ expense: +e.target.value.replace(/\D/g, '') || 0 })} placeholder="0 ₽" style={{ ...inp, fontFamily: MONO }} /></Cell>
+        <Cell label="Банк" opt>{sel(f.bank, v => set({ bank: v }), BANKS.map(b => ({ value: b, label: b })), 'не указан')}</Cell>
+        <Cell label="Период"><PeriodField value={f.period} onChange={v => set({ period: v })} /></Cell>
       </div>
-      {open && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', background: 'white', border: '1px solid var(--border-card)', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', zIndex: 500, maxHeight: '280px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '8px', borderBottom: '1px solid var(--border-row)' }}>
-            <input autoFocus placeholder="Поиск контрагента..." value={search} onChange={e => setSearch(e.target.value)}
-              style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border-card)', fontSize: '14px', outline: 'none' }} />
-          </div>
-          <div style={{ overflowY: 'auto', flex: 1 }}>
-            <div onClick={() => { onChange(''); setOpen(false) }}
-              style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '14px', color: 'var(--text-muted)', borderBottom: '1px solid var(--bg-subtle)' }}
-              onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-subtle)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'white'}>
-              — не указан —
-            </div>
-            {filtered.map(c => (
-              <div key={c.id} onClick={() => { onChange(c.id); setOpen(false); setSearch('') }}
-                style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '14px', background: value === c.id ? 'var(--accent-tint)' : 'white' }}
-                onMouseEnter={e => { if (value !== c.id) e.currentTarget.style.background = 'var(--bg-subtle)' }}
-                onMouseLeave={e => { e.currentTarget.style.background = value === c.id ? 'var(--accent-tint)' : 'white' }}>
-                {c.name}
-              </div>
-            ))}
-            {search && !filtered.find(c => c.name.toLowerCase() === search.toLowerCase()) && (
-              <div onClick={() => { setNewName(search); setCreating(true) }}
-                style={{ padding: '7px 12px', cursor: 'pointer', fontSize: '14px', color: 'var(--accent)', borderTop: '1px solid var(--border-row)', display: 'flex', alignItems: 'center', gap: '6px' }}
-                onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-tint)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'white'}>
-                + Создать «{search}»
-              </div>
-            )}
-          </div>
-          {creating && (
-            <div style={{ padding: '8px', borderTop: '1px solid var(--border-card)', display: 'flex', gap: '6px' }}>
-              <input value={newName} onChange={e => setNewName(e.target.value)}
-                style={{ flex: 1, padding: '5px 8px', borderRadius: '6px', border: '1px solid var(--accent)', fontSize: '14px', outline: 'none' }} />
-              <button onClick={handleCreate} style={{ padding: '5px 10px', borderRadius: '6px', border: 'none', background: 'var(--accent)', color: 'white', fontSize: '14px', cursor: 'pointer' }}>Создать</button>
-              <button onClick={() => setCreating(false)} style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid var(--border-card)', background: 'white', fontSize: '14px', cursor: 'pointer' }}>✕</button>
-            </div>
-          )}
-        </div>
-      )}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 14 }}>
+        <Cell label="НДС"><Seg mono options={VAT_OPTIONS.map(v => ({ value: v, label: v + '%' }))} value={f.vat_rate} onChange={v => set({ vat_rate: v })} /></Cell>
+        <Cell label="Статья"><SingleSelect value={f.article_id} onChange={v => set({ article_id: v })} options={artOpts} placeholder="не выбрана" emptyLabel="— не выбрано —" /></Cell>
+        <Cell label="Контрагент"><SingleSelect value={f.counterparty_id} onChange={v => set({ counterparty_id: v })} options={cpOpts} placeholder="выберите или введите" emptyLabel="— не выбрано —" /></Cell>
+        <Cell label="№ ДС"><input value={f.ds_num} onChange={e => set({ ds_num: e.target.value })} placeholder="—" style={{ ...inp, fontFamily: MONO }} /></Cell>
+        <Cell label="№ счёта"><input value={f.invoice} onChange={e => set({ invoice: e.target.value })} placeholder="—" style={{ ...inp, fontFamily: MONO }} /></Cell>
+        <Cell label="Дата счёта"><input type="date" value={f.invoice_date} onChange={e => set({ invoice_date: e.target.value })} style={inp} /></Cell>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 14 }}>
+        <Cell label="Ссылка на документ"><input value={f.document_link} onChange={e => set({ document_link: e.target.value })} placeholder="https://…" style={inp} /></Cell>
+        <Cell label="Описание"><input value={f.description} onChange={e => set({ description: e.target.value })} placeholder="комментарий к операции" style={inp} /></Cell>
+      </div>
     </div>
   )
 }
 
-export default function Operations() {
+// колонки таблицы (сетка из хендоффа)
+const COLS = [
+  ['sel', '26px', ''], ['date', '78px', 'Дата', 'date'], ['status', '112px', 'Статус', 'status'], ['dz', '36px', 'ДЗ'],
+  ['income', '98px', 'Поступление', 'income'], ['expense', '98px', 'Списание', 'expense'], ['bank', '96px', 'Банк', 'bank'],
+  ['period', '78px', 'Период', 'period'], ['article', '122px', 'Статья'], ['counterparty', '1.2fr', 'Контрагент'],
+  ['vat', '46px', 'НДС'], ['vat_amount', '84px', 'НДС сумма'], ['ds_num', '62px', '№ ДС'], ['invoice', '112px', '№ счёта'],
+  ['invoice_date', '88px', 'Дата счёта'], ['doc', '32px', 'Док'], ['description', '0.9fr', 'Описание'], ['actions', '72px', 'Действия'],
+]
+const GRID = COLS.map(c => c[1]).join(' ')
+const RIGHT = new Set(['income', 'expense', 'vat', 'vat_amount'])
+
+export default function Operations2() {
   const router = useRouter()
-  const [operations, setOperations] = useState([])
+  const [perms, setPerms] = useState({})
+  const canEdit = can(perms, 'operations', 'edit')
+  const canImport = can(perms, 'import')
+  const [ops, setOps] = useState([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
   const [articles, setArticles] = useState([])
   const [counterparties, setCounterparties] = useState([])
-  const [periods, setPeriods] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [total, setTotal] = useState(0)
+  const [updatedAt] = useState('09:12')
+
   const [page, setPage] = useState(0)
-  const [showForm, setShowForm] = useState(false)
-  const [editingId, setEditingId] = useState(null)
+  const [pageSize, setPageSize] = useState(300)
   const [sortCol, setSortCol] = useState('date')
   const [sortDir, setSortDir] = useState('desc')
-  const [pageSize, setPageSize] = useState(300)
 
-  const [filterStatuses, setFilterStatuses] = useState([])
-  const [filterBanks, setFilterBanks] = useState([])
-  const [filterDateFrom, setFilterDateFrom] = useState('')
-  const [filterDateTo, setFilterDateTo] = useState('')
-  const [filterArticles, setFilterArticles] = useState([])
-  const [filterCounterparties, setFilterCounterparties] = useState([])
-  const [filterPeriods, setFilterPeriods] = useState([])
-  // Фильтр по типу контрагента — только для админа. Значения: 'все' | 'действующий' | 'виртуальный'
-  // (точно совпадают с Counterparty.status в БД, чтобы c.status === filterCpStatus работало напрямую).
-  const [filterCpStatus, setFilterCpStatus] = useState('все')
-  const [isAdmin, setIsAdmin] = useState(false)
+  const [dateFrom, setDateFrom] = useState(''); const [dateTo, setDateTo] = useState('')
+  const [fStatus, setFStatus] = useState([]); const [fBank, setFBank] = useState([]); const [fArticle, setFArticle] = useState([]); const [fCp, setFCp] = useState([]); const [fPeriod, setFPeriod] = useState([]); const [fOpType, setFOpType] = useState([])
 
-  const [form, setForm] = useState(emptyForm)
-  const [periodMode, setPeriodMode] = useState('month')
-  const [copyOf, setCopyOf] = useState(null)
-  const [permissions, setPermissions] = useState({})
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createForm, setCreateForm] = useState(emptyForm())
+  const [editing, setEditing] = useState(null)        // { id, ...form }
+  const [sel, setSel] = useState({})                  // { id: true }
+  const [bulk, setBulk] = useState({ status: '', date: '', period: '', bank: '', vat_rate: '', article_id: '', counterparty_id: '' })
+  const [saving, setSaving] = useState(false)
+  const editAnchor = useRef(null)
+  const [hidden, setHidden] = useState(new Set())   // скрытые колонки
+  const [colPicker, setColPicker] = useState(false)
+  const toggleCol = (k) => setHidden(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); localStorage.setItem('ops2_hidden', JSON.stringify([...n])); return n })
+  const visibleCols = COLS.filter(([k]) => !hidden.has(k))
+  const gridT = visibleCols.map(c => c[1]).join(' ')
 
-  const [selectedIds, setSelectedIds] = useState([])
-  const [bulkStatus, setBulkStatus] = useState('')
-  const [bulkDate, setBulkDate] = useState('')
-  const [bulkBank, setBulkBank] = useState('')
-  const [bulkArticle, setBulkArticle] = useState('')
-  const [bulkCounterparty, setBulkCounterparty] = useState('')
-  const [bulkPeriod, setBulkPeriod] = useState('')
-  const [bulkPeriodMode, setBulkPeriodMode] = useState('month')
-  const [bulkVatRate, setBulkVatRate] = useState('')
+  const tok = () => localStorage.getItem('token')
 
   useEffect(() => {
-    const col = localStorage.getItem('ops_sort_col')
-    const dir = localStorage.getItem('ops_sort_dir')
-    const size = localStorage.getItem('ops_page_size')
-    if (col) setSortCol(col)
-    if (dir) setSortDir(dir)
-    if (size) setPageSize(parseInt(size))
+    if (!tok()) { router.push('/login'); return }
+    try { setPerms(getPerms()) } catch (e) {}
+    try { const h = JSON.parse(localStorage.getItem('ops2_hidden')); if (Array.isArray(h)) setHidden(new Set(h)) } catch (e) {}
+    Promise.all([api(tok()).get('/articles/'), api(tok()).get('/counterparties/?limit=1000')])
+      .then(([a, c]) => { setArticles(a.data?.items || a.data || []); setCounterparties(c.data?.items || c.data || []) }).catch(() => {})
   }, [])
 
-  useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (!token) { router.push('/login'); return }
-    const perms = getPermissions()
-    if (!can(perms, 'operations', 'view')) { router.push('/dashboard'); return }
-    setPermissions(perms)
-    setIsAdmin(localStorage.getItem('is_admin') === '1')
-    loadRefs(token)
-  }, [])
-
-  useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (token) loadOps(token)
-  }, [page, sortCol, sortDir, pageSize, filterStatuses, filterBanks, filterDateFrom, filterDateTo, filterArticles, filterCounterparties, filterPeriods, filterCpStatus])
-
-  // Выделение строк для массового редактирования привязано к текущей странице —
-  // при смене страницы/фильтра/сортировки оно сбрасывается, чтобы не оставалось
-  // "невидимых" выбранных операций, которых уже нет в текущей выдаче.
-  useEffect(() => {
-    setSelectedIds([])
-  }, [page, sortCol, sortDir, pageSize, filterStatuses, filterBanks, filterDateFrom, filterDateTo, filterArticles, filterCounterparties, filterPeriods, filterCpStatus])
-
-  const loadRefs = async (token) => {
-    try {
-      const a = api(token)
-      const [artRes, contRes] = await Promise.all([a.get('/articles/'), a.get('/counterparties/?limit=1000')])
-      setArticles(Array.isArray(artRes.data) ? artRes.data : [])
-      setCounterparties(contRes.data?.items || [])
-    } catch (e) {}
-    try {
-      const a = api(token)
-      const perRes = await a.get('/reports/periods')
-      setPeriods(Array.isArray(perRes.data) ? perRes.data : [])
-    } catch (e) {}
-  }
-
-  const loadOps = async (token) => {
+  const loadOps = async () => {
     setLoading(true)
     try {
-      const a = api(token)
       const params = new URLSearchParams({ skip: page * pageSize, limit: pageSize, sort_col: sortCol, sort_dir: sortDir })
-      filterStatuses.forEach(s => params.append('status', s))
-      filterBanks.forEach(b => params.append('bank', b))
-      if (filterDateFrom) params.append('date_from', filterDateFrom)
-      if (filterDateTo) params.append('date_to', filterDateTo)
-      filterArticles.forEach(id => params.append("article_id", id))
-      // Фильтр по типу контрагента (только для админа). Если тип выбран — берём
-      // ID контрагентов этого типа и пересекаем с ручным выбором (если он есть).
-      let cpIdsToFilter = filterCounterparties
-      if (filterCpStatus !== 'все') {
-        const statusIds = counterparties.filter(c => c.status === filterCpStatus).map(c => c.id)
-        if (filterCounterparties.length > 0) {
-          const statusSet = new Set(statusIds)
-          cpIdsToFilter = filterCounterparties.filter(id => statusSet.has(id))
-        } else {
-          cpIdsToFilter = statusIds
-        }
-        if (cpIdsToFilter.length === 0) cpIdsToFilter = [-1] // гарантированно пустой результат
-      }
-      cpIdsToFilter.forEach(id => params.append("counterparty_id", id))
-      filterPeriods.forEach(p => params.append("period", p))
-      const res = await a.get(`/operations/?${params}`)
-      setOperations(res.data?.items || [])
-      setTotal(res.data?.total || 0)
-    } catch (e) {
-      if (e.response?.status === 401) router.push('/login')
-    } finally {
-      setLoading(false)
-    }
+      fStatus.forEach(s => params.append('status', s)); fBank.forEach(b => params.append('bank', b))
+      fArticle.forEach(id => params.append('article_id', id)); fCp.forEach(id => params.append('counterparty_id', id))
+      fPeriod.forEach(p => params.append('period', p))
+      if (dateFrom) params.append('date_from', dateFrom); if (dateTo) params.append('date_to', dateTo)
+      const res = await api(tok()).get(`/operations/?${params}`)
+      setOps(res.data?.items || []); setTotal(res.data?.total || 0)
+    } catch (e) { if (e.response?.status === 401) router.push('/login') }
+    finally { setLoading(false) }
   }
+  useEffect(() => { if (tok()) loadOps() }, [page, pageSize, sortCol, sortDir, fStatus, fBank, fArticle, fCp, fPeriod, dateFrom, dateTo])
 
-  const handleSort = (col) => {
-    const dir = sortCol === col ? (sortDir === 'asc' ? 'desc' : 'asc') : 'desc'
-    setSortCol(col); setSortDir(dir)
-    localStorage.setItem('ops_sort_col', col); localStorage.setItem('ops_sort_dir', dir)
-    setPage(0)
+  // op-type фильтр — клиентски по загруженной странице
+  const rows = ops.filter(o => !fOpType.length || (fOpType.includes('income') && o.income > 0) || (fOpType.includes('expense') && o.expense > 0))
+
+  const onSort = (k) => { if (!k) return; if (sortCol === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortCol(k); setSortDir('desc') }; setPage(0) }
+  const resetFilters = () => { setSearch(''); setSearchQ(''); setDateFrom(''); setDateTo(''); setFStatus([]); setFBank([]); setFArticle([]); setFCp([]); setFPeriod([]); setFOpType([]); setPage(0) }
+
+  const saveCreate = async () => {
+    setSaving(true)
+    try { await api(tok()).post('/operations/', createForm); setCreateForm(emptyForm()); setCreateOpen(false); loadOps() }
+    catch (e) { alert(e.response?.data?.detail || 'Не удалось создать') } finally { setSaving(false) }
   }
-
-  const handlePageSize = (s) => { setPageSize(s); localStorage.setItem('ops_page_size', s); setPage(0) }
-
-  const tog = (arr, set, val) => { set(prev => prev.includes(val) ? prev.filter(x => x !== val) : [...prev, val]); setPage(0) }
-
-  const resetFilters = () => {
-    setFilterStatuses([]); setFilterBanks([]); setFilterDateFrom(''); setFilterDateTo('')
-    setFilterArticles([]); setFilterCounterparties([]); setFilterPeriods([]); setFilterCpStatus('все'); setPage(0)
-  }
-
-  const openNew = () => { setEditingId(null); setCopyOf(null); setForm(emptyForm); setPeriodMode('month'); setShowForm(true) }
-
   const downloadTemplate = async () => {
-    const token = localStorage.getItem('token')
     try {
-      const res = await api(token).get('/operations/import/template', { responseType: 'blob' })
-      const url = window.URL.createObjectURL(new Blob([res.data]))
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'shablon_operaciy.xlsx'
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      window.URL.revokeObjectURL(url)
-    } catch (e) {
-      alert('Не удалось скачать шаблон')
-    }
+      const res = await api(tok()).get('/operations/import/template', { responseType: 'blob' })
+      const url = URL.createObjectURL(new Blob([res.data]))
+      const a = document.createElement('a'); a.href = url; a.download = 'shablon_operaciy.xlsx'; a.click(); URL.revokeObjectURL(url)
+    } catch (e) { alert('Не удалось скачать шаблон') }
   }
-
   const downloadExport = async () => {
-    const token = localStorage.getItem('token')
     try {
       const params = new URLSearchParams({ sort_col: sortCol, sort_dir: sortDir })
-      filterStatuses.forEach(s => params.append('status', s))
-      filterBanks.forEach(b => params.append('bank', b))
-      if (filterDateFrom) params.append('date_from', filterDateFrom)
-      if (filterDateTo) params.append('date_to', filterDateTo)
-      filterArticles.forEach(id => params.append('article_id', id))
-      let cpIdsExp = filterCounterparties
-      if (filterCpStatus !== 'все') {
-        const statusIds = counterparties.filter(c => c.status === filterCpStatus).map(c => c.id)
-        if (filterCounterparties.length > 0) {
-          const statusSet = new Set(statusIds)
-          cpIdsExp = filterCounterparties.filter(id => statusSet.has(id))
-        } else {
-          cpIdsExp = statusIds
-        }
-        if (cpIdsExp.length === 0) cpIdsExp = [-1]
-      }
-      cpIdsExp.forEach(id => params.append('counterparty_id', id))
-      filterPeriods.forEach(p => params.append('period', p))
-      const res = await api(token).get(`/operations/export?${params}`, { responseType: 'blob' })
-      const url = window.URL.createObjectURL(new Blob([res.data]))
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `operacii_${new Date().toISOString().slice(0,16).replace('T','_').replace(':','')}.xlsx`
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      window.URL.revokeObjectURL(url)
-    } catch (e) {
-      alert('Не удалось скачать файл')
-    }
+      fStatus.forEach(s => params.append('status', s)); fBank.forEach(b => params.append('bank', b))
+      fArticle.forEach(id => params.append('article_id', id)); fCp.forEach(id => params.append('counterparty_id', id))
+      fPeriod.forEach(p => params.append('period', p))
+      if (dateFrom) params.append('date_from', dateFrom); if (dateTo) params.append('date_to', dateTo)
+      const res = await api(tok()).get(`/operations/export?${params}`, { responseType: 'blob' })
+      const url = URL.createObjectURL(new Blob([res.data]))
+      const a = document.createElement('a'); a.href = url
+      a.download = `operacii_${new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '')}.xlsx`
+      a.click(); URL.revokeObjectURL(url)
+    } catch (e) { alert('Не удалось выгрузить') }
   }
-
   const openEdit = (op) => {
-    setEditingId(op.id)
-    setCopyOf(null)
-    setForm({ date: op.date || '', status: op.status || 'ОПЛАЧЕНО', income: op.income || 0, expense: op.expense || 0, bank: op.bank || 'АльфаБанк', period: op.period || '', vat_rate: op.vat_rate || 0, article_id: op.article_id || '', counterparty_id: op.counterparty_id || '', ds_num: op.ds_num || '', invoice: op.invoice || '', invoice_date: op.invoice_date || '', description: op.description || '', document_link: op.document_link || '' })
-    setPeriodMode(isQuarterPeriod(op.period) ? 'quarter' : 'month')
-    setShowForm(true)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    setEditing({ id: op.id, date: op.date || '', status: op.status || 'ОПЛАЧЕНО', income: op.income || 0, expense: op.expense || 0, bank: op.bank || '', period: op.period || '', vat_rate: op.vat_rate || 0, article_id: op.article_id || '', counterparty_id: op.counterparty_id || '', ds_num: op.ds_num || '', invoice: op.invoice || '', invoice_date: op.invoice_date || '', description: op.description || '', document_link: op.document_link || '' })
+    requestAnimationFrame(() => { const el = editAnchor.current; if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 24, behavior: 'smooth' }) })
   }
-
-  // Копия операции: та же форма, что и для редактирования, но editingId не
-  // выставляется — поэтому handleSubmit уйдёт через POST (создание новой
-  // записи), а не PUT (перезапись операции-источника).
-  const openCopy = (op) => {
-    setEditingId(null)
-    setCopyOf(op.id)
-    setForm({ date: op.date || '', status: op.status || 'ОПЛАЧЕНО', income: op.income || 0, expense: op.expense || 0, bank: op.bank || 'АльфаБанк', period: op.period || '', vat_rate: op.vat_rate || 0, article_id: op.article_id || '', counterparty_id: op.counterparty_id || '', ds_num: op.ds_num || '', invoice: op.invoice || '', invoice_date: op.invoice_date || '', description: op.description || '', document_link: op.document_link || '' })
-    setPeriodMode(isQuarterPeriod(op.period) ? 'quarter' : 'month')
-    setShowForm(true)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+  const saveEdit = async () => {
+    setSaving(true)
+    try { const { id, ...body } = editing; await api(tok()).put(`/operations/${id}`, body); setEditing(null); loadOps() }
+    catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить') } finally { setSaving(false) }
   }
+  const dupOp = async (op) => { try { const { id, ...body } = op; await api(tok()).post('/operations/', body); loadOps() } catch (e) { alert('Не удалось дублировать') } }
+  const delOp = async (id) => { if (!window.confirm('Удалить операцию?')) return; try { await api(tok()).delete(`/operations/${id}`); loadOps() } catch (e) { alert('Не удалось удалить') } }
 
-  // Автоподстановка НДС и статьи из контрагента по направлению операции (2026-07-16).
-  // Направление определяется заполненной суммой (приход приоритетнее), поэтому вызывается
-  // из onChange сумм И выбора контрагента — в любом порядке заполнения сработает то, что позже.
-  // Только для новых операций (не при редактировании) и только в пустые/нулевые поля —
-  // введённое руками не перетирается.
-  const applyCpDefaults = (next) => {
-    if (editingId) return next
-    const cp = counterparties.find(c => c.id === Number(next.counterparty_id))
-    if (!cp) return next
-    const inc = parseFloat(next.income) || 0
-    const exp = parseFloat(next.expense) || 0
-    const dir = inc > 0 ? 'income' : (exp > 0 ? 'expense' : null)
-    if (!dir) return next
-    const vat = dir === 'income' ? cp.vat_rate_income : cp.vat_rate_expense
-    const art = dir === 'income' ? cp.default_article_income_id : cp.default_article_expense_id
-    const out = { ...next }
-    if ((parseFloat(next.vat_rate) || 0) === 0 && vat != null) out.vat_rate = vat
-    if (!next.article_id && art != null) out.article_id = String(art)
-    return out
+  const selIds = Object.keys(sel).filter(k => sel[k]).map(Number)
+  const selRows = rows.filter(o => sel[o.id])
+  const selIncome = selRows.reduce((s, o) => s + (o.income || 0), 0)
+  const selExpense = selRows.reduce((s, o) => s + (o.expense || 0), 0)
+  const applyBulk = async () => {
+    const body = { ids: selIds }
+    Object.entries(bulk).forEach(([k, v]) => { if (v !== '') body[k] = k === 'vat_rate' ? +v : v })
+    if (Object.keys(body).length <= 1) { alert('Заполните хотя бы одно поле'); return }
+    setSaving(true)
+    try { await api(tok()).patch('/operations/bulk', body); setSel({}); setBulk({ status: '', date: '', period: '', bank: '', vat_rate: '', article_id: '', counterparty_id: '' }); loadOps() }
+    catch (e) { alert(e.response?.data?.detail || 'Не удалось применить') } finally { setSaving(false) }
   }
+  const delBulk = async () => { if (!window.confirm(`Удалить ${selIds.length} операций?`)) return; setSaving(true); try { await api(tok()).delete('/operations/bulk', { data: { ids: selIds } }); setSel({}); loadOps() } catch (e) { alert('Не удалось удалить') } finally { setSaving(false) } }
 
-  const handleSubmit = async () => {
-    const token = localStorage.getItem('token')
-    try {
-      const payload = { ...form, income: parseFloat(form.income) || 0, expense: parseFloat(form.expense) || 0, vat_rate: parseFloat(form.vat_rate) || 0, article_id: form.article_id ? parseInt(form.article_id) : null, counterparty_id: form.counterparty_id ? parseInt(form.counterparty_id) : null, invoice_date: form.invoice_date || null, date: form.date || null, bank: isPlan(form.status) && !form.bank ? null : form.bank }
-      if (editingId) { await api(token).put(`/operations/${editingId}`, payload) } else { await api(token).post('/operations/', payload) }
-      setShowForm(false); setEditingId(null); setCopyOf(null); setForm(emptyForm); loadOps(token)
-    } catch (e) { alert('Ошибка при сохранении') }
-  }
+  const pageIncome = rows.reduce((s, o) => s + (o.income || 0), 0)
+  const pageExpense = rows.reduce((s, o) => s + (o.expense || 0), 0)
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const cpName = Object.fromEntries(counterparties.map(c => [c.id, c.name]))
+  const artName = Object.fromEntries(articles.map(a => [a.id, a.name]))
+  const opt = (arr, get = x => x) => arr.map(get)
 
-  const handleDelete = async (id) => {
-    if (!confirm('Удалить операцию?')) return
-    const token = localStorage.getItem('token')
-    await api(token).delete(`/operations/${id}`)
-    loadOps(token)
-  }
+  const allOnPage = rows.length > 0 && rows.every(o => sel[o.id])
+  const someOnPage = rows.some(o => sel[o.id])
 
-  const toggleSelect = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
-  const allVisibleSelected = operations.length > 0 && operations.every(op => selectedIds.includes(op.id))
-  const toggleSelectAllVisible = () => setSelectedIds(allVisibleSelected ? [] : operations.map(op => op.id))
-  // Суммы по выбранным строкам (только видимые на текущей странице — selectedIds могут включать
-  // id с других страниц, но сумму считаем по факту найденных в operations, как и selectedIds.length по смыслу выбора)
-  const selectedIncome = operations.filter(op => selectedIds.includes(op.id)).reduce((s, op) => s + (op.income || 0), 0)
-  const selectedExpense = operations.filter(op => selectedIds.includes(op.id)).reduce((s, op) => s + (op.expense || 0), 0)
+  const chev = (d) => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d={d} /></svg>
+  const IcoStroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round', strokeLinejoin: 'round' }
 
-  const resetBulkFields = () => {
-    setSelectedIds([]); setBulkStatus(''); setBulkDate(''); setBulkBank(''); setBulkArticle(''); setBulkCounterparty('')
-    setBulkPeriod(''); setBulkPeriodMode('month'); setBulkVatRate('')
-  }
-
-  const handleBulkApply = async () => {
-    const fields = {}
-    if (bulkStatus) fields.status = bulkStatus
-    if (bulkDate) fields.date = bulkDate
-    if (bulkBank) fields.bank = bulkBank
-    if (bulkArticle) fields.article_id = Number(bulkArticle)
-    if (bulkCounterparty) fields.counterparty_id = Number(bulkCounterparty)
-    if (bulkPeriod) fields.period = bulkPeriod
-    if (bulkVatRate !== '') fields.vat_rate = Number(bulkVatRate)
-    if (Object.keys(fields).length === 0) { alert('Выберите хотя бы одно поле для изменения'); return }
-    const labels = { status: 'Статус', date: 'Дата', bank: 'Банк', article_id: 'Статья', counterparty_id: 'Контрагент', period: 'Период', vat_rate: 'НДС %' }
-    const valueLabels = { article_id: (v) => articles.find(a => a.id === v)?.name || v, counterparty_id: (v) => counterparties.find(c => c.id === v)?.name || v }
-    const summary = Object.entries(fields).map(([k, v]) => `${labels[k]} → ${valueLabels[k] ? valueLabels[k](v) : v}`).join(', ')
-    if (!confirm(`Изменить ${selectedIds.length} операций?\n${summary}`)) return
-    const token = localStorage.getItem('token')
-    try {
-      await api(token).patch('/operations/bulk', { ids: selectedIds, ...fields })
-      resetBulkFields()
-      loadOps(token)
-    } catch (e) {
-      const status = e.response?.status
-      const detail = e.response?.data?.detail
-      alert(`Ошибка при массовом изменении${status ? ` (${status})` : ''}${detail ? `: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}` : ''}`)
+  const cell = (o, key) => {
+    switch (key) {
+      case 'sel': return <input type="checkbox" checked={!!sel[o.id]} onChange={() => setSel(s => ({ ...s, [o.id]: !s[o.id] }))} style={{ width: 14, height: 14, cursor: 'pointer' }} />
+      case 'date': return <span style={{ fontFamily: MONO }}>{fmtDate(o.date) || '—'}</span>
+      case 'status': { const [bg, fg, dot] = statusChip(o.status); return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: bg, color: fg, borderRadius: 8, padding: '3px 8px', fontFamily: MONO, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', whiteSpace: 'nowrap' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: dot }} />{o.status}</span> }
+      case 'dz': { const rs = o.receivable_status; const meta = { overdue: ['Просрочка', 'var(--dot-overdue)'], current: ['Текущая', 'var(--dot-current-dz)'], future: ['План', 'var(--accent)'] }[rs]; return meta ? <span title={meta[0]} style={{ width: 10, height: 10, borderRadius: '50%', background: meta[1], display: 'inline-block' }} /> : <span style={{ color: '#C3C9D8' }}>—</span> }
+      case 'income': return o.income ? <span style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--income)' }}>{fmt(o.income)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
+      case 'expense': return o.expense ? <span style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(o.expense)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
+      case 'bank': return o.bank ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)' }}><span style={{ width: 8, height: 8, borderRadius: 2, background: BANK_COLOR[o.bank] || 'var(--text-faint)' }} />{o.bank}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
+      case 'period': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.period || '—'}</span>
+      case 'article': return <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{artName[o.article_id] || o.article || '—'}</span>
+      case 'counterparty': return <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cpName[o.counterparty_id] || o.counterparty || '—'}</span>
+      case 'vat': return <span style={{ fontFamily: MONO }}>{o.vat_rate ? o.vat_rate + '%' : <span style={{ color: '#C3C9D8' }}>—</span>}</span>
+      case 'vat_amount': return o.vat_amount ? <span style={{ fontFamily: MONO }}>{fmt(o.vat_amount)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
+      case 'ds_num': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.ds_num || '—'}</span>
+      case 'invoice': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.invoice || '—'}</span>
+      case 'invoice_date': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{fmtDate(o.invoice_date) || '—'}</span>
+      case 'doc': return o.document_link ? <a href={o.document_link} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} title="Открыть документ" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 8, background: 'var(--accent-tint)', color: 'var(--accent)' }}><svg width="14" height="14" viewBox="0 0 24 24" style={IcoStroke}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg></a> : <span style={{ color: '#C3C9D8' }}>—</span>
+      case 'description': return <span title={o.description} style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.description || '—'}</span>
+      case 'actions': return canEdit ? <span style={{ display: 'inline-flex', gap: 4 }}>
+        <span onClick={() => dupOp(o)} title="Дублировать" className="op-ico" style={{ color: 'var(--text-muted)' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg></span>
+        <span onClick={() => openEdit(o)} title="Редактировать" className="op-ico op-ico-w" style={{ color: 'var(--text-muted)' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></span>
+        <span onClick={() => delOp(o.id)} title="Удалить" className="op-ico op-ico-d" style={{ color: 'var(--text-muted)' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M6 6l12 12M18 6L6 18" /></svg></span>
+      </span> : null
+      default: return null
     }
   }
 
-  const handleBulkDelete = async () => {
-    if (!confirm(`Удалить ${selectedIds.length} операций? Это действие нельзя отменить.`)) return
-    const token = localStorage.getItem('token')
-    try {
-      await api(token).delete('/operations/bulk', { data: { ids: selectedIds } })
-      resetBulkFields()
-      loadOps(token)
-    } catch (e) {
-      const status = e.response?.status
-      const detail = e.response?.data?.detail
-      alert(`Ошибка при массовом удалении${status ? ` (${status})` : ''}${detail ? `: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}` : ''}`)
-    }
-  }
-
-  // Экспорт выбранных расходных операций в формат Альфа-Банка (1CClientBankExchange)
-  const [alfaExportLoading, setAlfaExportLoading] = useState(false)
-  const handleAlfaExport = async () => {
-    const expenseSelected = operations.filter(op => selectedIds.includes(op.id) && (op.expense || 0) > 0)
-    if (expenseSelected.length === 0) {
-      alert('Выберите расходные операции для выгрузки в Альфа-Банк')
-      return
-    }
-    // Определяем банк — берём из первой выбранной операции; если разные — предупреждаем
-    const banks = [...new Set(expenseSelected.map(op => op.bank).filter(Boolean))]
-    let bank = banks[0]
-    if (banks.length > 1) {
-      bank = prompt(
-        `Выбранные операции относятся к разным банкам: ${banks.join(', ')}.\nВведите банк-плательщик (АльфаБанк / ОПТ Банк / Совкомбанк):`,
-        banks[0]
-      )
-      if (!bank) return
-    }
-    setAlfaExportLoading(true)
-    const token = localStorage.getItem('token')
-    try {
-      const res = await api(token).post('/operations/export/alfa',
-        { ids: expenseSelected.map(op => op.id), bank },
-        { responseType: 'blob' }
-      )
-      const url = window.URL.createObjectURL(new Blob([res.data]))
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `alfa_payments_${new Date().toISOString().slice(0,10)}.txt`
-      a.click()
-      window.URL.revokeObjectURL(url)
-    } catch (e) {
-      // При ошибке blob может содержать текст — пробуем прочитать
-      try {
-        const text = await e.response?.data?.text?.()
-        const parsed = JSON.parse(text || '{}')
-        alert(`Ошибка: ${parsed.detail || 'Неизвестная ошибка'}`)
-      } catch {
-        alert('Ошибка при формировании файла. Проверьте реквизиты контрагентов и настройки банка.')
-      }
-    } finally {
-      setAlfaExportLoading(false)
-    }
-  }
-
-
-  const createCounterparty = async (name) => {
-    const token = localStorage.getItem('token')
-    try {
-      const res = await api(token).post('/counterparties/', { name, vat_rate: 0 })
-      const newC = { id: res.data.id, name }
-      setCounterparties(prev => [...prev, newC].sort((a, b) => a.name.localeCompare(b.name)))
-      return newC
-    } catch (e) {
-      alert('Ошибка при создании контрагента')
-      return null
-    }
-  }
-
-  const totalPages = Math.ceil(total / pageSize)
-  const inp = { width: '100%', padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', fontSize: '15px', outline: 'none' }
-  const lbl = { fontSize: '13px', color: 'var(--text-muted)', display: 'block', marginBottom: '3px' }
-  const thS = { textAlign: 'left', padding: '8px 10px', color: 'var(--text-muted)', fontWeight: '500', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', borderBottom: '2px solid var(--border-card)', background: 'var(--bg-subtle)', position: 'sticky', top: 0, zIndex: 10 }
-  const SortIcon = ({ col }) => sortCol !== col ? <span style={{ color: 'var(--text-faint)', marginLeft: '4px' }}>↕</span> : <span style={{ color: 'var(--accent)', marginLeft: '4px' }}>{sortDir === 'asc' ? '↑' : '↓'}</span>
-  const planMode = isPlan(form.status)
-  const quarterMatch = (form.period || '').match(/^Q([1-4]) (\d{4})$/)
-  const quarterNum = quarterMatch ? quarterMatch[1] : '1'
-  const quarterYear = quarterMatch ? quarterMatch[2] : String(new Date().getFullYear())
-
-  const bulkQuarterMatch = (bulkPeriod || '').match(/^Q([1-4]) (\d{4})$/)
-  const bulkQuarterNum = bulkQuarterMatch ? bulkQuarterMatch[1] : '1'
-  const bulkQuarterYear = bulkQuarterMatch ? bulkQuarterMatch[2] : String(new Date().getFullYear())
+  const HeadCard = ({ title, right, iconBg, iconFg, iconPath, onClose }) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 24px', borderBottom: '1px solid var(--border-inner)' }}>
+      <span style={{ width: 28, height: 28, borderRadius: 9, background: iconBg, color: iconFg, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={IcoStroke}>{iconPath}</svg></span>
+      <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>{title}</span>
+      {right}
+      <span onClick={onClose} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1, padding: 4 }}>✕</span>
+    </div>
+  )
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
-      <Navbar active="operations">
-      <Head><title>Операции | Финансовый учёт</title></Head>
-        <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>Строк:</span>
-        {PAGE_SIZE_OPTIONS.map(s => <button key={s} onClick={() => handlePageSize(s)} style={{ fontSize: '14px', padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--border-card)', cursor: 'pointer', background: pageSize === s ? 'var(--accent)' : 'white', color: pageSize === s ? 'white' : 'var(--text-secondary)' }}>{s}</button>)}
-        {can(permissions, 'operations', 'create') && <button onClick={openNew} style={{ fontSize: '15px', padding: '6px 14px', borderRadius: '8px', border: 'none', background: 'var(--accent)', color: 'white', cursor: 'pointer', marginLeft: '8px' }}>+ Новая операция</button>}
-        {can(permissions, 'operations', 'create') && <button onClick={downloadTemplate} style={{ fontSize: '15px', padding: '6px 14px', borderRadius: '8px', border: '1px solid var(--accent)', background: 'white', color: 'var(--accent)', cursor: 'pointer' }}>Шаблон</button>}
-        {can(permissions, 'import') && <button onClick={() => router.push('/import')} title="Импорт" style={{ fontSize: '17px', padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', color: 'var(--text-secondary)', cursor: 'pointer', lineHeight: 1 }}>
-          <span style={{ display: 'inline-block', transform: 'rotate(180deg)' }}>⬇️</span>
-        </button>}
-        {selectedIds.length > 0 && (
-          <button
-            onClick={handleAlfaExport}
-            disabled={alfaExportLoading}
-            title="Выгрузить выбранные расходные операции в Альфа-Банк"
-            style={{ fontSize: '14px', padding: '6px 12px', borderRadius: '8px',
-                     border: '1px solid #e83c3c', background: alfaExportLoading ? '#f5e0e0' : '#fff5f5',
-                     color: '#e83c3c', cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 500 }}
-          >
-            {alfaExportLoading ? '...' : `🏦 В Альфа-Банк (${selectedIds.filter(id => operations.find(op => op.id === id && op.expense > 0)).length})`}
-          </button>
-        )}
-        <button onClick={downloadExport} title="Скачать (с учётом текущих фильтров и сортировки)" style={{ fontSize: '17px', padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'white', color: 'var(--text-secondary)', cursor: 'pointer', lineHeight: 1 }}>⬇️</button>
-      </Navbar>
+    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+      <Head>
+        <title>Операции</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
+      </Head>
+      <Navbar active="dds" />
+      <style>{`
+        @keyframes opRise { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
+        .op-row:hover { background: var(--bg-subtle) !important; }
+        .op-ico { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:7px; cursor:pointer; }
+        .op-ico:hover { background: var(--accent-tint); color: var(--accent) !important; }
+        .op-ico-w:hover { background: var(--warning-tint); color: #B26A0C !important; }
+        .op-ico-d:hover { background: var(--danger-tint); color: #C93A3E !important; }
+        @media (prefers-reduced-motion: reduce){ [style*="animation"]{ animation:none !important } }
+      `}</style>
 
-      <div style={{ padding: '16px 24px' }}>
+      <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* Шапка */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
+            <h1 style={{ fontSize: 30, fontWeight: 700, letterSpacing: '-0.02em', margin: 0, color: 'var(--text-primary)' }}>Операции</h1>
+            <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{new Intl.NumberFormat('ru-RU').format(total)} записей · обновлено {updatedAt}</span>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {canEdit && <button onClick={() => setCreateOpen(o => !o)} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '10px 16px', fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>+ Новая операция</button>}
+            {canEdit && <button onClick={downloadTemplate} style={{ background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 12, padding: '10px 16px', fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Шаблон</button>}
+            {canImport && <IconBtn title="Импорт из файла" onClick={() => router.push('/import')}><svg width="17" height="17" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 15V3" /><path d="M7 8l5-5 5 5" /><path d="M5 21h14" /></svg></IconBtn>}
+            <IconBtn title="Выгрузить в Excel (с учётом фильтров)" onClick={downloadExport}><svg width="17" height="17" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M5 21h14" /></svg></IconBtn>
+          </div>
+        </div>
 
-        {showForm && (
-          <div style={{ background: 'white', borderRadius: '12px', padding: '20px', marginBottom: '16px', border: `2px solid ${editingId ? 'var(--dot-current-dz)' : 'var(--accent)'}` }}>
-            <div style={{ fontWeight: '500', marginBottom: '14px', display: 'flex', justifyContent: 'space-between' }}>
-              <span>{editingId ? '✏️ Редактирование #' + editingId : (copyOf ? `📋 Копия операции #${copyOf}` : '+ Новая операция')}</span>
-              <button onClick={() => { setShowForm(false); setEditingId(null); setCopyOf(null); setForm(emptyForm); setPeriodMode('month') }} style={{ fontSize: '20px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>✕</button>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: '10px', marginBottom: '14px' }}>
-              <div><label style={lbl}>Статус</label>
-                <select style={inp} value={form.status} onChange={e => setForm({ ...form, status: e.target.value, date: isPlan(e.target.value) ? '' : (form.date || new Date().toISOString().split('T')[0]), bank: isPlan(e.target.value) ? '' : form.bank })}>
-                  <option value="ОПЛАЧЕНО">Оплачено</option>
-                  <option value="ПЛАН ОПЛАТ">План оплат</option>
-                  <option value="ПЛАН ПОСТУПЛЕНИЙ">План поступлений</option>
-                </select>
-              </div>
-              <div><label style={lbl}>Дата {planMode && <span style={{ color: 'var(--dot-current-dz)' }}>(необяз.)</span>}</label>
-                <input type="date" style={{ ...inp, borderColor: planMode ? 'var(--dot-current-dz)' : 'var(--border-card)' }} value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
-              </div>
-              <div><label style={lbl}>Поступление</label><input type="number" style={inp} value={form.income} onChange={e => setForm(applyCpDefaults({ ...form, income: e.target.value }))} /></div>
-              <div><label style={lbl}>Списание</label><input type="number" style={inp} value={form.expense} onChange={e => setForm(applyCpDefaults({ ...form, expense: e.target.value }))} /></div>
-              <div><label style={lbl}>Банк {planMode && <span style={{ color: 'var(--dot-current-dz)' }}>(необяз.)</span>}</label>
-                <select style={{ ...inp, borderColor: planMode ? 'var(--dot-current-dz)' : 'var(--border-card)' }} value={form.bank} onChange={e => setForm({ ...form, bank: e.target.value })}>
-                  {planMode && <option value="">— не указан —</option>}
-                  {BANKS.map(b => <option key={b}>{b}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={lbl}>Период</label>
-                <div style={{ display: 'flex', gap: '3px', marginBottom: '4px' }}>
-                  <button type="button" onClick={() => { setPeriodMode('month'); setForm({ ...form, period: '' }) }}
-                    style={{ flex: 1, padding: '3px 6px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border-card)', cursor: 'pointer', background: periodMode === 'month' ? 'var(--accent)' : 'white', color: periodMode === 'month' ? 'white' : 'var(--text-secondary)' }}>
-                    Месяц
-                  </button>
-                  <button type="button" onClick={() => { setPeriodMode('quarter'); setForm({ ...form, period: `Q1 ${new Date().getFullYear()}` }) }}
-                    style={{ flex: 1, padding: '3px 6px', fontSize: '13px', borderRadius: '6px', border: '1px solid var(--border-card)', cursor: 'pointer', background: periodMode === 'quarter' ? 'var(--accent)' : 'white', color: periodMode === 'quarter' ? 'white' : 'var(--text-secondary)' }}>
-                    Квартал
-                  </button>
-                </div>
-                {periodMode === 'month' ? (
-                  <input type="month" style={inp} value={form.period} onChange={e => setForm({ ...form, period: e.target.value })} />
-                ) : (
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <select style={inp} value={quarterNum} onChange={e => setForm({ ...form, period: `Q${e.target.value} ${quarterYear}` })}>
-                      <option value="1">Q1</option>
-                      <option value="2">Q2</option>
-                      <option value="3">Q3</option>
-                      <option value="4">Q4</option>
-                    </select>
-                    <input type="number" style={inp} placeholder="Год" value={quarterYear} onChange={e => setForm({ ...form, period: `Q${quarterNum} ${e.target.value}` })} />
-                  </div>
-                )}
-              </div>
-              <div><label style={lbl}>НДС %</label>
-                <select style={inp} value={form.vat_rate} onChange={e => setForm({ ...form, vat_rate: e.target.value })}>
-                  {VAT_OPTIONS.map(v => <option key={v} value={v}>{v}%</option>)}
-                </select>
-              </div>
-              <div><label style={lbl}>Статья</label>
-                <select style={inp} value={form.article_id} onChange={e => setForm({ ...form, article_id: e.target.value })}>
-                  <option value="">— выберите —</option>
-                  {articles.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>
-              </div>
-              <div><label style={lbl}>Контрагент</label>
-                <CounterpartySearch
-                  counterparties={counterparties}
-                  value={form.counterparty_id}
-                  onChange={v => setForm(applyCpDefaults({ ...form, counterparty_id: v }))}
-                  onCreateNew={createCounterparty}
-                />
-              </div>
-              <div><label style={lbl}>№ ДС</label><input type="text" style={inp} value={form.ds_num} onChange={e => setForm({ ...form, ds_num: e.target.value })} /></div>
-              <div><label style={lbl}>№ Счёта</label><input type="text" style={inp} value={form.invoice} onChange={e => setForm({ ...form, invoice: e.target.value })} /></div>
-              <div><label style={lbl}>Дата счёта</label><input type="date" style={inp} value={form.invoice_date} onChange={e => setForm({ ...form, invoice_date: e.target.value })} /></div>
-              <div><label style={lbl}>Ссылка на документ</label><input type="url" style={inp} placeholder="https://..." value={form.document_link} onChange={e => setForm({ ...form, document_link: e.target.value })} /></div>
-              <div style={{ gridColumn: 'span 2' }}><label style={lbl}>Описание</label><input type="text" style={inp} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={handleSubmit} style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: editingId ? 'var(--dot-current-dz)' : 'var(--accent)', color: 'white', cursor: 'pointer', fontSize: '15px' }}>{editingId ? 'Сохранить изменения' : 'Добавить операцию'}</button>
-              <button onClick={() => { setShowForm(false); setEditingId(null); setCopyOf(null); setForm(emptyForm); setPeriodMode('month') }} style={{ padding: '8px 20px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'transparent', cursor: 'pointer', fontSize: '15px' }}>Отмена</button>
+        {/* Форма создания */}
+        {createOpen && canEdit && (
+          <div style={{ ...CARD, border: '1px solid #D7DEFA', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 8px 28px rgba(79,108,230,.10)', animation: 'opRise .28s cubic-bezier(0.22,1,0.36,1) both' }}>
+            <HeadCard title="Новая операция" iconBg="var(--accent-tint)" iconFg="var(--accent)" iconPath={<><path d="M12 5v14" /><path d="M5 12h14" /></>} onClose={() => setCreateOpen(false)} />
+            <div style={{ padding: '20px 24px' }}><OpFields f={createForm} set={p => setCreateForm(s => ({ ...s, ...p }))} articles={articles} counterparties={counterparties} /></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', background: '#FBFCFE', borderTop: '1px solid var(--border-inner)' }}>
+              <button onClick={saveCreate} disabled={saving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Добавить операцию</button>
+              <button onClick={() => setCreateOpen(false)} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, padding: '9px 16px', fontSize: 13, cursor: 'pointer' }}>Отмена</button>
+              <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-faint)' }}>сумма НДС считается автоматически по ставке · обязательны статус, дата, банк, статья, сумма</span>
             </div>
           </div>
         )}
 
-        <div style={{ background: 'white', borderRadius: '12px', padding: '14px 20px', marginBottom: '12px', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <MultiDropdown label="Статус" items={STATUSES} selected={filterStatuses} onToggle={v => tog(filterStatuses, setFilterStatuses, v)} onClear={() => { setFilterStatuses([]); setPage(0) }} placeholder="Все статусы" getLabel={o => o} getId={o => o} />
-          <MultiDropdown label="Банк" items={BANKS} selected={filterBanks} onToggle={v => tog(filterBanks, setFilterBanks, v)} onClear={() => { setFilterBanks([]); setPage(0) }} placeholder="Все банки" getLabel={o => o} getId={o => o} />
-          <MultiDropdown label="Статья" items={articles} selected={filterArticles} onToggle={v => tog(filterArticles, setFilterArticles, v)} onClear={() => { setFilterArticles([]); setPage(0) }} placeholder="Все статьи" getLabel={o => o.name} getId={o => o.id} />
-          <MultiDropdown
-            label="Контрагент"
-            items={filterCpStatus === 'все' ? counterparties : counterparties.filter(c => c.status === filterCpStatus)}
-            selected={filterCounterparties}
-            onToggle={v => tog(filterCounterparties, setFilterCounterparties, v)}
-            onClear={() => { setFilterCounterparties([]); setPage(0) }}
-            placeholder="Все контрагенты"
-            getLabel={o => o.name}
-            getId={o => o.id}
-          />
-          <MultiDropdown label="Период" items={periods} selected={filterPeriods} onToggle={v => tog(filterPeriods, setFilterPeriods, v)} onClear={() => { setFilterPeriods([]); setPage(0) }} placeholder="Все периоды" getLabel={o => o} getId={o => o} />
-          <div><div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '3px' }}>Дата с</div><input type="date" style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', fontSize: '15px' }} value={filterDateFrom} onChange={e => { setFilterDateFrom(e.target.value); setPage(0) }} /></div>
-          <div><div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '3px' }}>Дата по</div><input type="date" style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border-card)', fontSize: '15px' }} value={filterDateTo} onChange={e => { setFilterDateTo(e.target.value); setPage(0) }} /></div>
-          {isAdmin && (
-            <div>
-              <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '3px' }}>Тип контрагента</div>
-              <select value={filterCpStatus} onChange={e => { setFilterCpStatus(e.target.value); setFilterCounterparties([]); setPage(0) }}
-                style={{ padding: '7px 10px', borderRadius: '8px', border: `1px solid ${filterCpStatus !== 'все' ? 'var(--accent)' : 'var(--border-card)'}`, fontSize: '15px', background: 'white', cursor: 'pointer', color: filterCpStatus !== 'все' ? 'var(--accent)' : 'inherit', outline: 'none' }}>
-                <option value="все">Все</option>
-                <option value="действующий">Действующие</option>
-                <option value="виртуальный">Виртуальные</option>
-              </select>
-            </div>
-          )}
-          <button onClick={resetFilters} style={{ padding: '7px 14px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'transparent', cursor: 'pointer', fontSize: '14px', color: 'var(--text-muted)' }}>Сбросить всё</button>
-        </div>
-
-        {(can(permissions, 'operations', 'edit') || can(permissions, 'operations', 'delete')) && selectedIds.length > 0 && (
-          <div style={{ background: 'white', borderRadius: '12px', padding: '14px 20px', marginBottom: '12px', border: '2px solid var(--accent)', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginRight: '4px', alignSelf: 'center' }}>
-              <div style={{ fontSize: '15px', fontWeight: '500', color: 'var(--accent)' }}>Выбрано: {selectedIds.length}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', whiteSpace: 'nowrap', color: 'var(--income)', fontWeight: 600 }}>
-                <span>↑</span><span>+{new Intl.NumberFormat('ru-RU').format(Math.round(selectedIncome))} ₽</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', whiteSpace: 'nowrap', color: 'var(--expense)', fontWeight: 600 }}>
-                <span>↓</span><span>−{new Intl.NumberFormat('ru-RU').format(Math.round(selectedExpense))} ₽</span>
-              </div>
-            </div>
-            {can(permissions, 'operations', 'edit') && (<>
-            <div><label style={lbl}>Статус</label>
-              <select style={inp} value={bulkStatus} onChange={e => setBulkStatus(e.target.value)}>
-                <option value="">— не менять —</option>
-                <option value="ОПЛАЧЕНО">Оплачено</option>
-                <option value="ПЛАН ОПЛАТ">План оплат</option>
-                <option value="ПЛАН ПОСТУПЛЕНИЙ">План поступлений</option>
-              </select>
-            </div>
-            <div><label style={lbl}>Дата</label>
-              <input type="date" style={inp} value={bulkDate} onChange={e => setBulkDate(e.target.value)} />
-            </div>
-            <div>
-              <label style={lbl}>Период</label>
-              <div style={{ display: 'flex', gap: '3px', marginBottom: '4px' }}>
-                <button type="button" onClick={() => { setBulkPeriodMode('month'); setBulkPeriod('') }} style={{ fontSize: '13px', padding: '3px 8px', borderRadius: '6px', border: '1px solid ' + (bulkPeriodMode === 'month' ? 'var(--accent)' : 'var(--border-card)'), background: bulkPeriodMode === 'month' ? 'var(--accent-tint)' : 'white', color: bulkPeriodMode === 'month' ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer' }}>Месяц</button>
-                <button type="button" onClick={() => { setBulkPeriodMode('quarter'); setBulkPeriod(`Q1 ${new Date().getFullYear()}`) }} style={{ fontSize: '13px', padding: '3px 8px', borderRadius: '6px', border: '1px solid ' + (bulkPeriodMode === 'quarter' ? 'var(--accent)' : 'var(--border-card)'), background: bulkPeriodMode === 'quarter' ? 'var(--accent-tint)' : 'white', color: bulkPeriodMode === 'quarter' ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer' }}>Квартал</button>
-              </div>
-              {bulkPeriodMode === 'month' ? (
-                <input type="month" style={inp} value={bulkPeriod} onChange={e => setBulkPeriod(e.target.value)} />
-              ) : (
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <select style={inp} value={bulkQuarterNum} onChange={e => setBulkPeriod(`Q${e.target.value} ${bulkQuarterYear}`)}>
-                    <option value="1">Q1</option><option value="2">Q2</option><option value="3">Q3</option><option value="4">Q4</option>
-                  </select>
-                  <input type="number" style={inp} placeholder="Год" value={bulkQuarterYear} onChange={e => setBulkPeriod(`Q${bulkQuarterNum} ${e.target.value}`)} />
+        {/* Карточка таблицы */}
+        <div style={{ ...CARD, padding: '18px 24px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {/* строка фильтров */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border-card)', borderRadius: 10, padding: '7px 10px', fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>
+              <input type="month" value={dateFrom.slice(0, 7)} onChange={e => setDateFrom(e.target.value ? e.target.value + '-01' : '')} style={{ border: 'none', outline: 'none', fontFamily: MONO, fontSize: 11, width: 92, background: 'transparent' }} />
+              <span style={{ color: '#C3C9D8' }}>—</span>
+              <input type="month" value={dateTo.slice(0, 7)} onChange={e => setDateTo(e.target.value ? e.target.value + '-28' : '')} style={{ border: 'none', outline: 'none', fontFamily: MONO, fontSize: 11, width: 92, background: 'transparent' }} />
+            </span>
+            <MultiDrop label="Статус" options={STATUSES.map(s => ({ value: s, label: s }))} selected={fStatus} onChange={setFStatus} />
+            <MultiDrop label="Банк" options={BANKS.map(b => ({ value: b, label: b }))} selected={fBank} onChange={setFBank} />
+            <MultiDrop label="Статья" options={articles.map(a => ({ value: a.id, label: a.name }))} selected={fArticle} onChange={setFArticle} />
+            <MultiDrop label="Контрагент" options={counterparties.map(c => ({ value: c.id, label: c.name }))} selected={fCp} onChange={setFCp} />
+            <MultiDrop label="Тип операции" options={[{ value: 'income', label: 'Поступления' }, { value: 'expense', label: 'Списания' }]} selected={fOpType} onChange={setFOpType} />
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, position: 'relative' }}>
+              <IconBtn title="Сбросить фильтры" onClick={resetFilters}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v4h-4" /></svg></IconBtn>
+              <IconBtn title="Настройка колонок" active={colPicker} onClick={() => setColPicker(o => !o)}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" /></svg></IconBtn>
+              {colPicker && (<>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 39 }} onClick={() => setColPicker(false)} />
+                <div style={{ position: 'absolute', right: 0, top: '120%', zIndex: 40, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 10, minWidth: 200, maxHeight: 340, overflowY: 'auto' }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Колонки</div>
+                  {COLS.filter(([k]) => k !== 'sel' && k !== 'actions').map(([k, , label]) => (
+                    <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '4px 2px', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={!hidden.has(k)} onChange={() => toggleCol(k)} /> {label || k}
+                    </label>
+                  ))}
                 </div>
-              )}
+              </>)}
             </div>
-            <div><label style={lbl}>Банк</label>
-              <select style={inp} value={bulkBank} onChange={e => setBulkBank(e.target.value)}>
-                <option value="">— не менять —</option>
-                {BANKS.map(b => <option key={b}>{b}</option>)}
-              </select>
-            </div>
-            <div><label style={lbl}>НДС %</label>
-              <select style={inp} value={bulkVatRate} onChange={e => setBulkVatRate(e.target.value)}>
-                <option value="">— не менять —</option>
-                {VAT_OPTIONS.map(v => <option key={v} value={v}>{v}%</option>)}
-              </select>
-            </div>
-            <div><label style={lbl}>Статья</label>
-              <select style={inp} value={bulkArticle} onChange={e => setBulkArticle(e.target.value)}>
-                <option value="">— не менять —</option>
-                {articles.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </div>
-            <div style={{ minWidth: '180px' }}><label style={lbl}>Контрагент</label>
-              <CounterpartySearch
-                counterparties={counterparties}
-                value={bulkCounterparty}
-                onChange={v => setBulkCounterparty(v)}
-                onCreateNew={createCounterparty}
-              />
-            </div>
-            <button onClick={handleBulkApply} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: 'var(--accent)', color: 'white', cursor: 'pointer', fontSize: '15px' }}>Применить к {selectedIds.length}</button>
-            </>)}
-            {can(permissions, 'operations', 'delete') && (
-              <button onClick={handleBulkDelete} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: 'var(--dot-overdue)', color: 'white', cursor: 'pointer', fontSize: '15px' }}>Удалить {selectedIds.length}</button>
+          </div>
+
+          {/* слот форм: редактирование / массовое */}
+          <div ref={editAnchor} data-edit-anchor>
+            {editing && canEdit && (
+              <div style={{ background: '#FFFCF7', border: '1px solid #F0D7AE', borderRadius: 14, padding: '18px 20px', margin: '10px 0 4px', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                  <span style={{ width: 28, height: 28, borderRadius: 9, background: 'var(--warning-tint)', color: '#B26A0C', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></span>
+                  <span style={{ fontSize: 15, fontWeight: 700, flex: 1 }}>Редактирование #{editing.id}</span>
+                  <span onClick={() => setEditing(null)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18 }}>✕</span>
+                </div>
+                <OpFields f={editing} set={p => setEditing(s => ({ ...s, ...p }))} articles={articles} counterparties={counterparties} accent="warn" />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-faint)', flex: 1 }}>поля, отмеченные «необяз.», можно оставить пустыми</span>
+                  <button onClick={saveEdit} disabled={saving} style={{ background: 'var(--dot-current-dz)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Сохранить изменения</button>
+                  <button onClick={() => setEditing(null)} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, padding: '9px 16px', fontSize: 13, cursor: 'pointer' }}>Отмена</button>
+                </div>
+              </div>
             )}
-            <button onClick={resetBulkFields} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'transparent', cursor: 'pointer', fontSize: '15px', color: 'var(--text-muted)' }}>Снять выделение</button>
+            {canEdit && selIds.length > 0 && (
+              <div style={{ background: '#F6F8FF', border: '1px solid #D7DEFA', borderRadius: 14, padding: '16px 18px', margin: '10px 0 4px', display: 'flex', alignItems: 'flex-end', gap: 14, flexWrap: 'wrap', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
+                <div style={{ minWidth: 150, borderRight: '1px solid #DDE3F5', paddingRight: 14 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#3A50BE', marginBottom: 6 }}>Выбрано: {selIds.length}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: 'var(--income)' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--income)' }} />+{fmt(selIncome)} ₽</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: 'var(--text-primary)' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: '#8B93A6' }} />−{fmt(selExpense)} ₽</div>
+                </div>
+                {[['Статус', 'status', STATUSES.map(s => ({ value: s, label: s })), 150], ['Банк', 'bank', BANKS.map(b => ({ value: b, label: b })), 140], ['НДС', 'vat_rate', VAT_OPTIONS.map(v => ({ value: v, label: v + '%' })), 112], ['Статья', 'article_id', articles.map(a => ({ value: a.id, label: a.name })), 160], ['Контрагент', 'counterparty_id', counterparties.map(c => ({ value: c.id, label: c.name })), 190]].map(([label, k, opts, w]) => (
+                  <div key={k} style={{ display: 'flex', flexDirection: 'column', width: w, flexShrink: 0 }}>
+                    <span style={lbl}>{label}</span>
+                    {(k === 'article_id' || k === 'counterparty_id')
+                      ? <SingleSelect value={bulk[k]} onChange={v => setBulk(b => ({ ...b, [k]: v }))} options={opts} placeholder="не менять" emptyLabel="не менять" />
+                      : <select value={bulk[k]} onChange={e => setBulk(b => ({ ...b, [k]: e.target.value }))} style={{ ...inp, width: '100%' }}><option value="">не менять</option>{opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>}
+                  </div>
+                ))}
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                  <button onClick={applyBulk} disabled={saving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 15px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Применить к {selIds.length}</button>
+                  <button onClick={delBulk} disabled={saving} style={{ background: 'var(--bg-card)', border: '1px solid #F3C9CC', color: '#C93A3E', borderRadius: 10, padding: '9px 15px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Удалить {selIds.length}</button>
+                  <button onClick={() => setSel({})} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', padding: '9px 12px', fontSize: 13, cursor: 'pointer' }}>Снять выделение</button>
+                </div>
+              </div>
+            )}
           </div>
-        )}
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-          <div style={{ fontSize: '15px', color: 'var(--text-muted)' }}>Показано {Math.min(page * pageSize + 1, total)}–{Math.min((page + 1) * pageSize, total)} из {total} операций</div>
-          <div style={{ display: 'flex', gap: '4px' }}>
-            <button onClick={() => setPage(0)} disabled={page === 0} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--border-card)', background: 'white', cursor: page === 0 ? 'default' : 'pointer', fontSize: '14px', opacity: page === 0 ? 0.4 : 1 }}>«</button>
-            <button onClick={() => setPage(p => p - 1)} disabled={page === 0} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--border-card)', background: 'white', cursor: page === 0 ? 'default' : 'pointer', fontSize: '14px', opacity: page === 0 ? 0.4 : 1 }}>‹</button>
-            <span style={{ padding: '4px 12px', fontSize: '14px', color: 'var(--text-muted)' }}>{page + 1} / {totalPages || 1}</span>
-            <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--border-card)', background: 'white', cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: '14px', opacity: page >= totalPages - 1 ? 0.4 : 1 }}>›</button>
-            <button onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--border-card)', background: 'white', cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: '14px', opacity: page >= totalPages - 1 ? 0.4 : 1 }}>»</button>
+          {/* показано + пагинация */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+            <span>Показано <b style={{ color: 'var(--text-primary)', fontFamily: MONO }}>{total ? page * pageSize + 1 : 0}–{Math.min((page + 1) * pageSize, total)}</b> из <b style={{ color: 'var(--text-primary)', fontFamily: MONO }}>{new Intl.NumberFormat('ru-RU').format(total)}</b></span>
+            <span style={{ display: 'inline-flex', gap: 14 }}>
+              {[['оплачено', 'var(--income)'], ['план оплат', 'var(--dot-expense)'], ['ожидает', 'var(--dot-current-dz)']].map(([l, c]) => <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: c }} />{l}</span>)}
+            </span>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
+              <IconBtn title="В начало" onClick={() => setPage(0)}>«</IconBtn>
+              <IconBtn title="Назад" onClick={() => setPage(p => Math.max(0, p - 1))}>‹</IconBtn>
+              <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', padding: '0 6px' }}>{page + 1} / {totalPages}</span>
+              <IconBtn title="Вперёд" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}>›</IconBtn>
+              <IconBtn title="В конец" onClick={() => setPage(totalPages - 1)}>»</IconBtn>
+            </div>
+          </div>
+
+          {/* таблица */}
+          <div style={{ overflowX: 'auto', margin: '10px -8px 0', padding: '0 8px' }}>
+            <div style={{ minWidth: 1580 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: gridT, gap: 10, padding: '0 0 10px', borderBottom: '1px solid var(--border-card)', fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
+                {visibleCols.map(([k, w, label, sc]) => k === 'sel'
+                  ? <span key={k}><input type="checkbox" ref={el => { if (el) el.indeterminate = someOnPage && !allOnPage }} checked={allOnPage} onChange={e => setSel(e.target.checked ? Object.fromEntries(rows.map(o => [o.id, true])) : {})} style={{ width: 14, height: 14, cursor: 'pointer' }} /></span>
+                  : <span key={k} onClick={() => onSort(sc)} style={{ textAlign: RIGHT.has(k) ? 'right' : 'left', cursor: sc ? 'pointer' : 'default', color: sortCol === sc ? 'var(--accent)' : undefined }}>{label}{sortCol === sc ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}</span>)}
+              </div>
+              {loading ? <div style={{ padding: 30, color: 'var(--text-muted)', fontSize: 13 }}>Загрузка…</div>
+                : rows.length === 0 ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Нет операций по выбранным фильтрам</div>
+                  : rows.map(o => (
+                    <div key={o.id} className="op-row" style={{ display: 'grid', gridTemplateColumns: gridT, gap: 10, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 14.4, color: 'var(--text-primary)', background: sel[o.id] ? 'var(--accent-tint)' : 'transparent' }}>
+                      {visibleCols.map(([k]) => <span key={k} style={{ textAlign: RIGHT.has(k) ? 'right' : 'left', overflow: 'hidden' }}>{cell(o, k)}</span>)}
+                    </div>
+                  ))}
+            </div>
+          </div>
+
+          {/* подвал */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', paddingTop: 14, marginTop: 6, borderTop: '1px solid var(--border-inner)', fontSize: 12, color: 'var(--text-muted)' }}>
+            <span>выделено <b style={{ color: 'var(--text-primary)' }}>{selIds.length}</b> операций</span>
+            <span>итого на странице: поступления <b style={{ color: 'var(--income)', fontFamily: MONO }}>{fmt(pageIncome)} ₽</b> · списания <b style={{ color: 'var(--text-primary)', fontFamily: MONO }}>{fmt(pageExpense)} ₽</b></span>
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span>строк на странице</span>
+              <div style={{ display: 'flex', background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 10, padding: 3 }}>
+                {PAGE_SIZES.map(n => <button key={n} onClick={() => { setPageSize(n); setPage(0) }} style={{ border: 'none', borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontFamily: MONO, fontSize: 12, background: pageSize === n ? 'var(--accent-tint)' : 'transparent', color: pageSize === n ? 'var(--accent)' : 'var(--text-secondary)', fontWeight: pageSize === n ? 700 : 600 }}>{n}</button>)}
+              </div>
+            </div>
           </div>
         </div>
-
-        {loading ? <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>Загрузка...</div> : (
-          <div style={{ background: 'white', borderRadius: '12px', border: '1px solid var(--border-card)', overflow: 'auto', maxHeight: 'calc(100vh - 280px)' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-              <thead>
-                <tr>
-                  {can(permissions, 'operations', 'edit') && (
-                    <th style={{ ...thS, width: '34px', cursor: 'default' }}>
-                      <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} />
-                    </th>
-                  )}
-                  <th style={thS} onClick={() => handleSort('date')}>Дата <SortIcon col="date" /></th>
-                  <th style={thS} onClick={() => handleSort('status')}>Статус <SortIcon col="status" /></th>
-                  <th style={{ ...thS, textAlign: 'center' }}>ДЗ</th>
-                  <th style={thS}>Поступление</th>
-                  <th style={thS}>Списание</th>
-                  <th style={thS} onClick={() => handleSort('bank')}>Банк <SortIcon col="bank" /></th>
-                  <th style={thS} onClick={() => handleSort('period')}>Период <SortIcon col="period" /></th>
-                  <th style={thS} onClick={() => handleSort('article')}>Статья <SortIcon col="article" /></th>
-                  <th style={thS} onClick={() => handleSort('counterparty')}>Контрагент <SortIcon col="counterparty" /></th>
-                  <th style={thS}>НДС%</th>
-                  <th style={thS}>НДС сумма</th>
-                  <th style={thS}>№ ДС</th>
-                  <th style={thS}>№ Счёта</th>
-                  <th style={thS}>Дата счёта</th>
-                  <th style={thS}>Док</th>
-                  <th style={thS}>Описание</th>
-                  <th style={thS}>Действия</th>
-                </tr>
-              </thead>
-              <tbody>
-                {operations.map(op => {
-                  const bankStyle = BANK_STYLES[op.bank] || { color: 'var(--text-faint)' }
-                  return (
-                    <tr key={op.id} style={{ borderBottom: '1px solid var(--border-row)', background: editingId === op.id ? 'var(--warning-tint)' : 'transparent' }}
-                      onMouseEnter={e => { if (editingId !== op.id) e.currentTarget.style.background = 'var(--bg-subtle)' }}
-                      onMouseLeave={e => { e.currentTarget.style.background = editingId === op.id ? 'var(--warning-tint)' : 'transparent' }}>
-                      {can(permissions, 'operations', 'edit') && (
-                        <td style={{ padding: '7px 10px' }}>
-                          <input type="checkbox" checked={selectedIds.includes(op.id)} onChange={() => toggleSelect(op.id)} />
-                        </td>
-                      )}
-                      <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{op.date || '—'}</td>
-                      <td style={{ padding: '7px 10px' }}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '11px', padding: '3px 9px', borderRadius: 'var(--radius-badge)', whiteSpace: 'nowrap', background: 'var(--bg-subtle)', color: 'var(--text-secondary)', fontWeight: 600 }}>
-                          <span style={{ width: 7, height: 7, borderRadius: '50%', background: STATUS_DOT[op.status] || 'var(--text-faint)', flexShrink: 0 }} />
-                          {op.status}
-                        </span>
-                      </td>
-                      <td style={{ padding: '7px 10px', textAlign: 'center' }}>
-                        {op.receivable_status && RECEIVABLE_META[op.receivable_status]
-                          ? <span title={RECEIVABLE_META[op.receivable_status].label} style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', background: RECEIVABLE_META[op.receivable_status].color }} />
-                          : '—'}
-                      </td>
-                      <td style={{ padding: '7px 10px', color: 'var(--income)', fontWeight: op.income > 0 ? '500' : '400', whiteSpace: 'nowrap' }}>{op.income > 0 ? fmt(op.income) : '—'}</td>
-                      <td style={{ padding: '7px 10px', color: 'var(--expense)', fontWeight: op.expense > 0 ? '500' : '400', whiteSpace: 'nowrap' }}>{op.expense > 0 ? fmt(op.expense) : '—'}</td>
-                      <td style={{ padding: '7px 10px' }}>
-                        {op.bank
-                          ? <span style={{ fontSize: '11px', padding: '3px 9px', borderRadius: 'var(--radius-badge)', whiteSpace: 'nowrap', background: 'var(--bg-subtle)', color: bankStyle.color, border: `1px solid ${bankStyle.color}`, fontWeight: 600 }}>{op.bank}</span>
-                          : '—'}
-                      </td>
-                      <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{op.period || '—'}</td>
-                      <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{op.article || '—'}</td>
-                      <td style={{ padding: '7px 10px', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={op.counterparty}>{op.counterparty || '—'}</td>
-                      <td style={{ padding: '7px 10px' }}>{op.vat_rate > 0 ? op.vat_rate + '%' : '—'}</td>
-                      <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{op.vat_fact > 0 ? fmt(op.vat_fact) : '—'}</td>
-                      <td style={{ padding: '7px 10px' }}>{op.ds_num || '—'}</td>
-                      <td style={{ padding: '7px 10px' }}>{op.invoice || '—'}</td>
-                      <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{op.invoice_date || '—'}</td>
-                      <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
-                        {op.document_link
-                          ? <a href={op.document_link} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} title="Открыть документ"
-                              style={{ fontSize: '15px', padding: '2px 8px', borderRadius: '6px', border: '1px solid var(--accent)', background: 'var(--accent-tint)', color: 'var(--accent)', textDecoration: 'none', cursor: 'pointer', display: 'inline-block' }}>
-                              📄
-                            </a>
-                          : '—'}
-                      </td>
-                      <td style={{ padding: '7px 10px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={op.description}>{renderDescription(op.description)}</td>
-                      <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
-                        {can(permissions, 'operations', 'create') && <button onClick={() => openCopy(op)} title="Скопировать" style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid var(--accent)', background: 'var(--accent-tint)', cursor: 'pointer', color: 'var(--accent)', marginRight: '4px' }}>📋</button>}
-                        {can(permissions, 'operations', 'edit') && <button onClick={() => openEdit(op)} style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid var(--dot-current-dz)', background: 'var(--warning-tint)', cursor: 'pointer', color: 'var(--dot-current-dz)', marginRight: '4px' }}>✏️</button>}
-                        {can(permissions, 'operations', 'delete') && <button onClick={() => handleDelete(op.id)} style={{ fontSize: '13px', padding: '2px 8px', borderRadius: '6px', border: '1px solid var(--border-card)', background: 'transparent', cursor: 'pointer', color: 'var(--dot-overdue)' }}>✕</button>}
-                        {!can(permissions, 'operations', 'create') && !can(permissions, 'operations', 'edit') && !can(permissions, 'operations', 'delete') && '—'}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
       </div>
     </div>
   )

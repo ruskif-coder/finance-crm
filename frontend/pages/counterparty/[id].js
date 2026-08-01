@@ -487,7 +487,7 @@ export default function CounterpartyCard() {
         }}>
           {/* Левая часть — хлебные крошки + бейджи */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, overflow: 'hidden' }}>
-            <Link href="/directories?tab=counterparties"
+            <Link href="/counterparties"
                   style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'none',
                            display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
               ← Контрагенты
@@ -514,6 +514,12 @@ export default function CounterpartyCard() {
                 href={normalizeUrl(card.website)}
               />
             )}
+            {(card.linked_agencies || []).map(a => (
+              <Badge key={a.id}
+                label={`🏢 ${a.name_en || a.name}`}
+                bg="var(--accent-tint)" color="var(--accent)"
+              />
+            ))}
           </div>
 
           {/* Правая часть — пусто (кнопки управления перенесены в блок Реквизиты) */}
@@ -696,6 +702,22 @@ export default function CounterpartyCard() {
               )}
             </div>
           </Card>
+
+          {/* ── Принадлежность ──────────────────────────────────────────── */}
+          {((card.linked_agencies || []).length > 0) && (
+            <Card title="Принадлежность">
+              <div style={{ padding: '10px 16px' }}>
+                {(card.linked_agencies || []).map((a, i) => (
+                  <div key={a.id}>
+                    {i > 0 && <div style={{ height: 10 }} />}
+                    <ReqRow label="Краткое"  value={a.short_name} />
+                    <ReqRow label="Полное"   value={a.name_en || a.name} />
+                    {a.holding && <ReqRow label="Холдинг" value={a.holding} />}
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
 
           {/* ── Условия по умолчанию: НДС и статья по направлениям (2026-07-16).
                  Подставляются автоматически в форме новой операции (operations.js). ── */}
@@ -984,7 +1006,7 @@ export default function CounterpartyCard() {
             <Card
               title={`Договора (${card.contracts.length})`}
               action={
-                <Link href="/directories?tab=contracts"
+                <Link href="/contracts"
                       style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', fontWeight: 500 }}>
                   В реестр →
                 </Link>
