@@ -225,6 +225,7 @@ export default function Navbar({ active, children, onSearch }) {
                   </div>
                   {canSettings && <button onClick={() => { setMenuOpen(false); router.push('/settings') }} style={menuItem('var(--text-secondary)')}>Настройки</button>}
                   <button onClick={logout} style={menuItem('var(--dot-overdue)')}>Выйти</button>
+                  {isAdmin && <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border-row)', fontFamily: MONO, fontSize: 10, letterSpacing: '.04em', color: 'var(--text-faint)' }}>версия v{process.env.NEXT_PUBLIC_APP_VERSION}</div>}
                 </div>
               )}
             </div>
@@ -320,6 +321,7 @@ export default function Navbar({ active, children, onSearch }) {
               <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3, flex: 1, minWidth: 0 }}>
                 <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name || '—'}</span>
                 {roleLabel && <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>{roleLabel}</span>}
+                {isAdmin && <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.04em', color: 'var(--text-faint)', marginTop: 2 }}>версия v{process.env.NEXT_PUBLIC_APP_VERSION}</span>}
               </span>
               {canSettings && <button onClick={() => go('/settings')} aria-label="Настройки"
                 style={{ width: 38, height: 38, borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{IcoGear}</button>}

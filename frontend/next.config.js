@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 module.exports = {
+  // Версия приложения (из package.json) → в клиент, показывается в меню профиля.
+  env: { NEXT_PUBLIC_APP_VERSION: require('./package.json').version },
   // Не даём Next редиректить трейлинг-слэш: иначе /api/operations/ → 308 → /api/operations,
   // а FastAPI 307 возвращает слэш обратно → петля (эндпойнты со слэшем не грузятся на :3000).
   skipTrailingSlashRedirect: true,
