@@ -16,6 +16,28 @@ const NAV_ITEMS = [
   { id: 'planfact', label: 'План / Факт', href: '/planfact', section: 'planfact' },
 ]
 
+// Название текущего раздела и его под-навигация — для мобильной «строки 2»
+// (§2 хендоффа) и десктопных SalesTabs/DirectoryTabs (единый источник).
+const SECTION_TITLE = {
+  dds: 'ДДС', sales: 'Сделки', pl: 'P&L', balance: 'Баланс',
+  receivables: 'Дебиторка', planfact: 'План / Факт',
+  operations: 'Операции', directories: 'Справочники', settings: 'Настройки',
+}
+const SECTION_SUBNAV = {
+  sales: [
+    { label: 'Дашборд', href: '/sales-dashboard', section: 'sales_dashboard' },
+    { label: 'Реестр', href: '/sales', section: 'sales_registry' },
+    { label: 'Аналитика', href: '/analytics', section: 'sales_analytics' },
+  ],
+  directories: [
+    { label: 'Контрагенты', href: '/counterparties', section: 'counterparties' },
+    { label: 'Договора', href: '/contracts', section: 'contracts' },
+    { label: 'Рекламодатели', href: '/advertisers', section: 'dir_advertisers' },
+    { label: 'Агентства', href: '/agencies', section: 'dir_agencies' },
+    { label: 'Сверка', href: '/reconcile', adminOnly: true },
+  ],
+}
+
 function getPermissions() {
   if (typeof window === 'undefined') return {}
   try { return JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { return {} }
@@ -74,8 +96,9 @@ const IcoBurger = <Ico size={18} d={<><path d="M3 6h18" /><path d="M3 12h18" /><
 const IcoClose = <Ico size={18} d={<><path d="M6 6l12 12" /><path d="M18 6L6 18" /></>} />
 const IcoGear = <Ico d={<><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" /></>} />
 const IcoCaret = <Ico size={10} d={<path d="M6 9l6 6 6-6" />} />
+const IcoSearch = <Ico size={17} d={<><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></>} />
 
-export default function Navbar({ active, children }) {
+export default function Navbar({ active, children, onSearch }) {
   const router = useRouter()
   const name = typeof window !== 'undefined' ? localStorage.getItem('name') || '' : ''
   const role = typeof window !== 'undefined' ? localStorage.getItem('role') || '' : ''
@@ -83,8 +106,6 @@ export default function Navbar({ active, children }) {
   const [menuOpen, setMenuOpen] = useState(false)   // профиль-меню (десктоп)
   const [drawer, setDrawer] = useState(false)        // мобильный оверлей
   const menuRef = useRef(null)
-  const stripRef = useRef(null)
-  const activeChipRef = useRef(null)
 
   useEffect(() => {
     const h = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false) }
@@ -126,12 +147,6 @@ export default function Navbar({ active, children }) {
   const roleLabel = roleLabelRaw || role
   const homeHref = firstAllowedHref(permissions, role)
   const dirHref = firstDirectoryHref(permissions, role)
-
-  // авто-скролл активного чипа мобильной ленты в видимую зону
-  useEffect(() => {
-    const strip = stripRef.current, chip = activeChipRef.current
-    if (strip && chip) strip.scrollLeft = chip.offsetLeft - 14
-  }, [active, navItems.length])
 
   const go = (href) => { setDrawer(false); router.push(href) }
 
@@ -218,29 +233,19 @@ export default function Navbar({ active, children }) {
 
         {/* ═══ МОБИЛЬНЫЙ ═══ */}
         <div className="nav-mobile">
+          {/* строка 1 — бургер · логотип · (поиск) · аватар */}
           <header style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border-inner)',
-            padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+            padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
             <button onClick={() => setDrawer(true)} aria-label="Открыть меню"
               style={{ width: 36, height: 36, borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{IcoBurger}</button>
             <img src="/logo.png" alt="Логотип" onClick={() => router.push(homeHref)} onError={(e) => { e.target.style.display = 'none' }}
               style={{ height: 18, width: 'auto', display: 'block', cursor: 'pointer' }} />
+            {onSearch && <button onClick={onSearch} aria-label="Поиск"
+              style={{ width: 36, height: 36, borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: 'auto' }}>{IcoSearch}</button>}
             <button onClick={() => setDrawer(true)} title={name || ''} aria-label="Профиль"
-              style={{ ...avatar(36), marginLeft: 'auto', flexShrink: 0, cursor: 'pointer', border: 'none' }}>{initial}</button>
+              style={{ ...avatar(36), marginLeft: onSearch ? 0 : 'auto', flexShrink: 0, cursor: 'pointer', border: 'none' }}>{initial}</button>
           </header>
 
-          {/* горизонтальная лента разделов */}
-          <div ref={stripRef} className="nav-strip" style={{ display: 'flex', gap: 6, overflowX: 'auto', padding: '8px 16px', WebkitOverflowScrolling: 'touch' }}>
-            {navItems.map(item => {
-              const on = active === item.id
-              return (
-                <button key={item.id} ref={on ? activeChipRef : null} onClick={() => router.push(item.href)}
-                  style={{ flexShrink: 0, border: 'none', cursor: 'pointer', borderRadius: 10, padding: '7px 13px',
-                    fontSize: 13, fontWeight: on ? 700 : 600, whiteSpace: 'nowrap',
-                    background: on ? 'var(--accent-tint)' : 'transparent',
-                    color: on ? 'var(--accent)' : 'var(--text-secondary)' }}>{item.label}</button>
-              )
-            })}
-          </div>
         </div>
 
         {/* Вторая строка — опциональные элементы страницы (фильтры, кнопки) */}
@@ -264,18 +269,26 @@ export default function Navbar({ active, children }) {
               <img src="/logo.png" alt="Логотип" onError={(e) => { e.target.style.display = 'none' }} style={{ height: 18, width: 'auto' }} />
             </div>
 
-            {/* разделы */}
+            {/* разделы + их подразделы */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               {navItems.map(item => {
                 const on = active === item.id
+                const subs = (SECTION_SUBNAV[item.id] || []).filter(s => isAdmin || (s.adminOnly ? isAdmin : can(permissions, s.section)))
                 return (
-                  <button key={item.id} className="nav-mrow" onClick={() => go(item.href)}
-                    style={{ display: 'flex', alignItems: 'center', border: 'none', cursor: 'pointer', textAlign: 'left',
-                      borderRadius: 12, padding: '13px 14px', fontSize: 15, fontWeight: on ? 700 : 600,
-                      background: on ? 'var(--accent-tint)' : 'transparent', color: on ? 'var(--accent)' : 'var(--text-primary)' }}>
-                    <span style={{ flex: 1 }}>{item.label}</span>
-                    {on && <span style={{ fontFamily: MONO, fontSize: 11, color: '#8F9BE8' }}>текущий</span>}
-                  </button>
+                  <div key={item.id}>
+                    <button className="nav-mrow" onClick={() => go(item.href)} style={mRow(on)}>
+                      <span style={{ flex: 1 }}>{item.label}</span>
+                      {on && <span style={{ fontFamily: MONO, fontSize: 11, color: '#8F9BE8' }}>текущий</span>}
+                    </button>
+                    {subs.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginLeft: 12, marginTop: 2 }}>
+                        {subs.map(s => {
+                          const son = router.pathname === s.href || router.asPath.split('?')[0] === s.href
+                          return <button key={s.href} className="nav-mrow" onClick={() => go(s.href)} style={mSubRow(son)}><span style={{ flex: 1 }}>{s.label}</span></button>
+                        })}
+                      </div>
+                    )}
+                  </div>
                 )
               })}
             </div>
@@ -286,7 +299,17 @@ export default function Navbar({ active, children }) {
                 <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '14px 14px 6px' }}>Данные</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {canOperations && <button className="nav-mrow" onClick={() => go('/operations')} style={mRow(active === 'operations')}><span style={{ flex: 1 }}>Операции</span>{active === 'operations' && <span style={{ fontFamily: MONO, fontSize: 11, color: '#8F9BE8' }}>текущий</span>}</button>}
-                  {canDirectories && <button className="nav-mrow" onClick={() => go(dirHref)} style={mRow(active === 'directories')}><span style={{ flex: 1 }}>Справочники</span>{active === 'directories' && <span style={{ fontFamily: MONO, fontSize: 11, color: '#8F9BE8' }}>текущий</span>}</button>}
+                  {canDirectories && (
+                    <div>
+                      <button className="nav-mrow" onClick={() => go(dirHref)} style={mRow(active === 'directories')}><span style={{ flex: 1 }}>Справочники</span>{active === 'directories' && <span style={{ fontFamily: MONO, fontSize: 11, color: '#8F9BE8' }}>текущий</span>}</button>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginLeft: 12, marginTop: 2 }}>
+                        {(SECTION_SUBNAV.directories || []).filter(s => isAdmin || (s.adminOnly ? isAdmin : can(permissions, s.section))).map(s => {
+                          const son = router.pathname === s.href || router.asPath.split('?')[0] === s.href
+                          return <button key={s.href} className="nav-mrow" onClick={() => go(s.href)} style={mSubRow(son)}><span style={{ flex: 1 }}>{s.label}</span></button>
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </>
             )}
@@ -326,7 +349,12 @@ const menuItem = (color) => ({
   color, background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 500,
 })
 const mRow = (on) => ({
-  display: 'flex', alignItems: 'center', border: 'none', cursor: 'pointer', textAlign: 'left',
+  display: 'flex', alignItems: 'center', width: '100%', boxSizing: 'border-box', border: 'none', cursor: 'pointer', textAlign: 'left',
   borderRadius: 12, padding: '13px 14px', fontSize: 15, fontWeight: on ? 700 : 600,
   background: on ? 'var(--accent-tint)' : 'transparent', color: on ? 'var(--accent)' : 'var(--text-primary)',
+})
+const mSubRow = (on) => ({
+  display: 'flex', alignItems: 'center', width: '100%', border: 'none', cursor: 'pointer', textAlign: 'left',
+  borderRadius: 10, padding: '10px 14px', fontSize: 14, fontWeight: on ? 700 : 500,
+  background: on ? 'var(--accent-tint)' : 'transparent', color: on ? 'var(--accent)' : 'var(--text-secondary)',
 })

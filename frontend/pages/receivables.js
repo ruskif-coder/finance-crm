@@ -3,6 +3,8 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
 import Head from 'next/head'
+import useIsMobile from '../components/mobile/useIsMobile'
+import ReceivablesMobile from '../components/mobile/ReceivablesMobile'
 
 const api = (token) => axios.create({ baseURL: '/api', headers: { Authorization: `Bearer ${token}` } })
 
@@ -108,6 +110,7 @@ export default function Receivables() {
   const [noteStatus, setNoteStatus] = useState({})
   const [hoverBucket, setHoverBucket] = useState(null)
   const [denied, setDenied] = useState(false)
+  const isMobile = useIsMobile()
 
   useEffect(() => {
     const token = localStorage.getItem('token')
@@ -244,6 +247,23 @@ export default function Receivables() {
   const toggleExpand = (cid) => setExpanded(prev => ({ ...prev, [cid]: !prev[cid] }))
   const hasActiveFilters = filterCounterparties.length || filterArticles.length || filterPeriods.length || !onlyActual
 
+  // ── Мобильная версия (< 1024px) ──
+  if (isMobile) {
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+        <Head><title>Дебиторка | Финансовый учёт</title></Head>
+        <Navbar active="receivables" />
+        <ReceivablesMobile
+          asOf={data.as_of} onlyActual={onlyActual} setOnlyActual={setOnlyActual} downloadExport={downloadExport}
+          kpi={{ total, cpCount, opCount, overdue: agg.overdue, current: agg.current, future: agg.future, pctOf }}
+          buckets={buckets} ageMax={ageMax} structure={structure} structCells={structCells} structTotal={structTotal}
+          rows={sortedRows} totalFiltered={totalFiltered} rowsCount={data.rows.length}
+          expanded={expanded} toggleExpand={toggleExpand}
+          notes={notes} setNotes={setNotes} savedNotes={savedNotes} saveNote={saveNote} canEditNote={canEditNote} noteStatus={noteStatus} />
+      </div>
+    )
+  }
+
   const GRID = 'grid-template-columns: 2fr 128px 100px 168px 66px 1.4fr 1.5fr;'
   const DET_GRID = 'grid-template-columns: 92px 1.3fr 116px 138px 140px 150px 96px 90px 112px;'
   const monoLbl = { fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }
@@ -253,9 +273,6 @@ export default function Receivables() {
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Head>
         <title>Дебиторка | Финансовый учёт</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
       </Head>
       <Navbar active="receivables" />
 

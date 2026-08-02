@@ -725,6 +725,8 @@ class DealPatch(BaseModel):
     period_from: Optional[date] = None
     period_to: Optional[date] = None
     title: Optional[str] = None
+    product: Optional[str] = None
+    bitrix_stage: Optional[str] = None
 
 
 # Поля, доступные ручной правке. Расширять осознанно: каждое попадёт
@@ -1392,6 +1394,32 @@ def patch_deal(
         cur_brand = db.query(SalesBrand).filter(SalesBrand.id == deal.brand_id).first()
         if _brand_orphaned(cur_brand.advertiser_id if cur_brand else None, changes["advertiser_id"]):
             changes["brand_id"] = None
+
+    # own-роль не может переназначить сделку на чужого продавца/аккаунт
+    # (симметрично create_deal). Сделку в своей зоне видимости уже подтвердил
+    # _assert_deal_in_scope выше; здесь ограничиваем НОВОГО ответственного.
+    own = _own_rep_ids_or_all(db, current_user)
+    if own is not None:
+        own_set = set(own)
+        for fld in ("sales_rep_id", "account_manager_id"):
+            if changes.get(fld) is not None and changes[fld] not in own_set:
+                raise HTTPException(status_code=403, detail="Можно назначать сделки только на себя")
+
+    # Плательщик — только юрлицо, привязанное к агентству (а если агентства нет —
+    # к рекламодателю) сделки. Иначе можно привязать произвольного контрагента.
+    if changes.get("payer_counterparty_id") is not None:
+        from app.sales.models import SalesAgencyCounterparty, SalesAdvertiserCounterparty
+        eff_agency = changes.get("agency_id", deal.agency_id)
+        eff_adv = changes.get("advertiser_id", deal.advertiser_id)
+        if eff_agency:
+            allowed = {r[0] for r in db.query(SalesAgencyCounterparty.counterparty_id)
+                       .filter(SalesAgencyCounterparty.agency_id == eff_agency).all()}
+        else:
+            allowed = {r[0] for r in db.query(SalesAdvertiserCounterparty.counterparty_id)
+                       .filter(SalesAdvertiserCounterparty.advertiser_id == eff_adv).all()}
+        if changes["payer_counterparty_id"] not in allowed:
+            raise HTTPException(status_code=400,
+                                detail="Плательщик должен быть юрлицом агентства/рекламодателя сделки")
 
     existing = {o.field_name: o for o in db.query(SalesDealFieldOverride)
                 .filter(SalesDealFieldOverride.deal_id == deal_id).all()}

@@ -22,7 +22,7 @@ export default function SalesTabs({ active }) {
   if (!tabs.length) return null
 
   return (
-    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>
+    <div className="desktop-only" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>
       {tabs.map(t => {
         const isActive = t.id === active
         return (

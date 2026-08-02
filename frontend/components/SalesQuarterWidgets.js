@@ -1,4 +1,7 @@
+import { useState } from 'react'
 import { grp, mln as mlnBase } from '../lib/salesFormat'
+import useIsMobile from './mobile/useIsMobile'
+import BottomSheet from './mobile/BottomSheet'
 
 // Верхний блок дашборда сейлза «Мой квартал» — редизайн по хендоффу
 // (design_handoff_sales_widgets). Один контейнер: шапка → 4 KPI с вертикальными
@@ -60,6 +63,106 @@ export default function SalesQuarterWidgets({
     border: `1px solid ${C.ctrl}`, background: C.ctrlBg, borderRadius: 10, padding: '8px 12px',
     fontFamily: UI, fontSize: 13, fontWeight: 600, color: C.text, cursor: 'pointer',
     appearance: 'auto',
+  }
+
+  const isMobile = useIsMobile()
+  const [createMenuOpen, setCreateMenuOpen] = useState(false)
+  if (isMobile) {
+    const bigVal = (v, u) => (
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, flexWrap: 'wrap' }}>
+        <span style={{ fontFamily: MONO, fontSize: 28, fontWeight: 700, letterSpacing: '-.02em', color: C.text, whiteSpace: 'nowrap' }}>{v}</span>
+        {u && <span style={{ fontSize: 13, fontWeight: 600, color: C.sec }}>{u}</span>}
+      </div>
+    )
+    const kpi = (label, valNode, cap) => (
+      <div style={{ padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+        <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: C.sec }}>{label}</div>
+        {valNode}
+        <div style={{ fontSize: 11.5, color: C.sec }}>{cap}</div>
+      </div>
+    )
+    const outBtn = { flex: 1, background: 'var(--bg-card)', color: C.accent, border: `1px solid ${C.accent}`, borderRadius: 10, padding: '11px 12px', fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: 'pointer' }
+    return (
+      <div style={{ fontFamily: UI }}>
+        <div style={{ background: C.blockBg, border: `1px solid ${C.border}`, borderRadius: 16, padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* заголовок */}
+          <div>
+            <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-.02em', color: C.text }}>Мой квартал</div>
+            <div style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: C.sec, marginTop: 4 }}>{(data?.rep || '—') + ' / ' + (data?.quarter || '')}</div>
+          </div>
+          {/* компактная шапка: продавец / квартал / + */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {canViewOthers ? (
+              <select value={repId} onChange={e => setRepId(e.target.value)} style={{ ...selBox, flex: 1, minWidth: 0, padding: '11px 12px' }}>
+                <option value="">— я / сотрудник —</option>
+                {(reps || []).map(r => <option key={r.id} value={r.id}>{r.is_head ? '★ ' : ''}{r.name}{r.is_head ? ' · мастер-сейлз' : ''}{r.linked ? '' : ' (без юзера)'}</option>)}
+              </select>
+            ) : (
+              <div style={{ ...selBox, flex: 1, minWidth: 0, padding: '11px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'default' }}>{data?.rep || 'Мои сделки'}</div>
+            )}
+            <select value={quarter} onChange={e => setQuarter(e.target.value)} style={{ ...selBox, flex: '0 0 auto', padding: '11px 10px' }}>
+              <option value="">Тек. квартал</option>
+              {(quarters || []).map(q => <option key={q} value={q}>{q.replace('-', ' ')}</option>)}
+              <option value="all">Все</option>
+            </select>
+            {(onCreate || onCreateAgency || onCreateAdvertiser) && (
+              <button onClick={() => setCreateMenuOpen(true)} aria-label="Создать" style={{ flex: '0 0 auto', width: 44, height: 44, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: C.accent, color: '#fff', border: 'none', borderRadius: 12, fontSize: 26, fontWeight: 400, lineHeight: 1, cursor: 'pointer' }}>+</button>
+            )}
+          </div>
+          {/* модалка создания */}
+          <BottomSheet open={createMenuOpen} onClose={() => setCreateMenuOpen(false)} title="Создать">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {onCreateAgency && <button onClick={() => { setCreateMenuOpen(false); onCreateAgency() }} style={{ width: '100%', background: 'transparent', color: C.accent, border: `1px solid ${C.accent}`, borderRadius: 12, padding: '14px', fontFamily: UI, fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>+ Агентство</button>}
+              {onCreateAdvertiser && <button onClick={() => { setCreateMenuOpen(false); onCreateAdvertiser() }} style={{ width: '100%', background: 'transparent', color: C.accent, border: `1px solid ${C.accent}`, borderRadius: 12, padding: '14px', fontFamily: UI, fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>+ Рекламодатель</button>}
+              {onCreate && <button onClick={() => { setCreateMenuOpen(false); onCreate() }} style={{ width: '100%', background: C.accent, color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontFamily: UI, fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>+ Сделка</button>}
+            </div>
+          </BottomSheet>
+          {/* KPI 2×2 */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+            <div style={{ borderRight: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}` }}>
+              {kpi('Бонус за квартал', bigVal(grp(data?.forming_bonus), '₽'), <>
+                {data?.booking?.bonus > 0 && <span style={{ display: 'inline-block', background: C.warnBg, color: C.warnText, borderRadius: 6, padding: '3px 7px', fontSize: 11, fontWeight: 700, marginRight: 6 }}>+{grp(data.booking.bonus)} на бронях</span>}
+                {Math.round((p.bonus_rate || 0) * 100)}% после −{Math.round((p.agency_sk || 0) * 100)}% СК
+              </>)}
+            </div>
+            <div style={{ borderBottom: `1px solid ${C.border}` }}>
+              {kpi('Доведено до результата', bigVal(mln(data?.closed?.amount), 'млн ₽'), <>наша сумма <b style={strong}>{grp(data?.closed?.our_sum)} ₽</b></>)}
+            </div>
+            <div style={{ borderRight: `1px solid ${C.border}` }}>
+              {kpi('Брони', bigVal(mln(data?.booking?.amount), 'млн ₽'), <>наша <b style={strong}>{grp(data?.booking?.our_sum)} ₽</b> · бонус <b style={strong}>{grp(data?.booking?.bonus)}</b></>)}
+            </div>
+            <div>
+              {kpi('Активная песочница', bigVal(data?.sandbox?.count ?? '—', 'МП'), <>сумма <b style={strong}>{mln(data?.sandbox?.amount)} млн ₽</b> · 1-я воронка</>)}
+            </div>
+          </div>
+          {/* сделки в работе */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div>
+              <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: C.sec }}>Сделки в работе</div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
+                <span style={{ fontFamily: MONO, fontSize: 22, fontWeight: 700, color: C.text }}>{mln(portfolioAmt)}</span>
+                <span style={{ fontSize: 12.5, color: C.sec }}>млн ₽ / {totals?.deals ?? 0} шт</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 2, height: 10 }}>
+              {LAYERS.map(L => { const w = width(L.name); return w > 0 ? <div key={L.name} style={{ width: `${w}%`, background: L.bg }} /> : null })}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7, fontSize: 12.5, color: C.sec }}>
+              {LAYERS.map(L => (
+                <div key={L.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ width: 8, height: 8, background: L.bg, flexShrink: 0 }} />{L.display}
+                  <span style={{ marginLeft: 'auto', ...strong }}>{mln(layerAmt(L.name))} млн · {layerDeals(L.name)}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 700, color: recon ? C.okText : C.errText }}>
+              <span style={{ width: 7, height: 7, borderRadius: 999, background: recon ? C.ok : C.errDot }} />
+              {recon ? 'сверка сходится' : 'сверка расходится'}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (

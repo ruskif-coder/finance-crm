@@ -11,6 +11,9 @@ import api, { auth } from '../lib/api'
 import { fmtMoney, fmtDate } from '../lib/salesFormat'
 import { BITRIX_DEAL_URL } from '../lib/salesLayers'
 import { MONO, UI, PIP, FILL, HATCH, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn } from '../components/salesTableKit'
+import useIsMobile from '../components/mobile/useIsMobile'
+import DealsMobileControls from '../components/sales/DealsMobileControls'
+import DealCardList from '../components/mobile/DealCardList'
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 const COLS = [
@@ -158,6 +161,12 @@ export default function SalesDashboard2() {
   // brief фиксирован первым; далее — переставленные видимые колонки (кнопка генерации живёт внутри ячейки «Сделка»).
   const visibleCols = [COL_BY_KEY.brief, ...colOrder.map(k => COL_BY_KEY[k]).filter(c => c && !hidden.has(c.key))].filter(Boolean)
   const gridTemplate = visibleCols.map(c => c.w).join(' ')
+  const isMobile = useIsMobile()
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [mobView, setMobView] = useState('cards')       // мобильный вид: карточки | таблица
+  const [mobSearchOpen, setMobSearchOpen] = useState(false)
+  const activeFilterCount = Object.values(sel).filter(a => a.length).length + (gaps.length ? 1 : 0) + ((dateFrom || dateTo) ? 1 : 0) + (searchQ.trim() ? 1 : 0)
+  const loadMoreMobile = () => setPageSize(p => p + 50)
 
   // Выгрузка текущей выборки в CSV (клиентская).
   const exportCsv = () => {
@@ -208,14 +217,16 @@ export default function SalesDashboard2() {
     }
     return b
   }
+  const dealsSeq = useRef(0)
   const loadDeals = async (repIds) => {
+    const seq = ++dealsSeq.current            // защита от гонки/двойного фетча: применяем только последний
     if (!repIds || !repIds.length) { setDeals([]); setDealsTotal(0); setSummary(null); return }
     const base = buildBase(repIds)
     const dq = new URLSearchParams(base)
     dq.append('limit', String(pageSize)); dq.append('sort', sortKey); dq.append('direction', sortDir)
-    try { const r = await api.get('/sales/deals?' + dq.toString(), auth()); setDeals(r.data.items || []); setDealsTotal(r.data.total || 0) }
-    catch (e) { setDeals([]); setDealsTotal(0) }
-    api.get('/sales/dashboard?' + base.toString(), auth()).then(r => setSummary(r.data)).catch(() => setSummary(null))
+    try { const r = await api.get('/sales/deals?' + dq.toString(), auth()); if (seq !== dealsSeq.current) return; setDeals(r.data.items || []); setDealsTotal(r.data.total || 0) }
+    catch (e) { if (seq !== dealsSeq.current) return; setDeals([]); setDealsTotal(0) }
+    api.get('/sales/dashboard?' + base.toString(), auth()).then(r => { if (seq === dealsSeq.current) setSummary(r.data) }).catch(() => { if (seq === dealsSeq.current) setSummary(null) })
   }
 
   useEffect(() => { load() }, [quarter, repId])
@@ -226,8 +237,8 @@ export default function SalesDashboard2() {
   const resetFilters = () => { setSel(Object.fromEntries(FILTER_DROPS.map(([k]) => [k, []]))); setGaps([]); setHideArchive(true); setSearch(''); setSearchQ(''); setDateFrom(''); setDateTo('') }
 
   const patchCell = async (id, patch, localApply) => {
-    try { await api.patch(`/sales/deals/${id}`, patch, auth()); setDeals(prev => prev.map(x => x.id === id ? { ...x, ...localApply } : x)) }
-    catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить') }
+    try { await api.patch(`/sales/deals/${id}`, patch, auth()); setDeals(prev => prev.map(x => x.id === id ? { ...x, ...localApply } : x)); return true }
+    catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить'); return false }
   }
   const openPicker = (field, d, e) => {
     if (!canEdit) return
@@ -308,9 +319,6 @@ export default function SalesDashboard2() {
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Head>
         <title>Дашборд</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
       </Head>
       <Navbar active="sales" />
       <style>{`
@@ -411,7 +419,8 @@ export default function SalesDashboard2() {
               </div>
             ) : (
               <div style={{ marginTop: 12 }}>
-                {/* заголовок блока */}
+                {/* заголовок блока (десктоп) */}
+                {!isMobile && (
                 <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 24, padding: '0 4px', marginBottom: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
                     <span style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--text-primary)' }}>Список сделок</span>
@@ -445,11 +454,18 @@ export default function SalesDashboard2() {
                     </div>
                   </div>
                 </div>
+                )}
 
                 {/* карточка таблицы */}
                 <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)', padding: '20px 24px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-                  {/* строка фильтров */}
+                  {/* фильтры: мобильный тулбар+шторка (общий компонент) / десктопная строка */}
+                  {isMobile ? (
+                    <DealsMobileControls dealsTotal={dealsTotal} search={search} setSearch={setSearch} mobSearchOpen={mobSearchOpen} setMobSearchOpen={setMobSearchOpen}
+                      mobView={mobView} setMobView={setMobView} filtersOpen={filtersOpen} setFiltersOpen={setFiltersOpen} activeFilterCount={activeFilterCount}
+                      sel={sel} setSel={setSel} gaps={gaps} setGaps={setGaps} dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo}
+                      hideArchive={hideArchive} setHideArchive={setHideArchive} fopts={fopts} resetFilters={resetFilters} exportCsv={exportCsv} />
+                  ) : (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <div style={{ flex: '0 0 auto', width: searchFocus ? 300 : 148, display: 'inline-flex', alignItems: 'center', gap: 7, border: `1px solid ${searchFocus ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '7px 10px', transition: 'width .22s cubic-bezier(0.22,1,0.36,1), border-color .15s' }}>
                       <svg width="13" height="13" viewBox="0 0 24 24" style={{ ...stroke, strokeWidth: 2, flex: '0 0 13px', color: 'var(--text-faint)' }}><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></svg>
@@ -490,8 +506,10 @@ export default function SalesDashboard2() {
                       </div>
                     </div>
                   </div>
+                  )}
 
-                  {/* таблица */}
+                  {/* таблица (десктоп) / карточки (мобайл) */}
+                  {isMobile ? <DealCardList deals={deals} canEdit={canEdit} view={mobView} total={dealsTotal} onLoadMore={loadMoreMobile} fopts={fopts} onPatch={patchCell} /> : (
                   <div style={{ overflowX: 'auto' }}>
                     <div style={{ minWidth: 1180 }}>
                       <div style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, padding: '0 0 10px', borderBottom: '1px solid var(--border-inner)', fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
@@ -510,6 +528,7 @@ export default function SalesDashboard2() {
                       {!deals.length && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Нет сделок по выбранным фильтрам</div>}
                     </div>
                   </div>
+                  )}
 
                   {/* подвал */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', paddingTop: 14, borderTop: '1px solid var(--border-inner)', fontSize: 12, color: 'var(--text-muted)' }}>

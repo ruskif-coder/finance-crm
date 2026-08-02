@@ -25,7 +25,7 @@ export const GAP_FIELDS = [
 export const shortLabel = (lab) => (lab ? String(lab).split(' | ')[0].trim() : null)
 
 // компактный мультиселект-дропдаун фильтра
-export function MultiDrop({ label, options, selected, onChange }) {
+export function MultiDrop({ label, options, selected, onChange, block }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const ref = useRef(null)
@@ -36,12 +36,17 @@ export function MultiDrop({ label, options, selected, onChange }) {
   const opts = options || []
   const shown = opts.filter(o => !q.trim() || String(o.label).toLowerCase().includes(q.trim().toLowerCase()))
   const active = selected.length > 0
-  const box = { flex: '0 1 auto', border: `1px solid ${active ? 'var(--accent)' : 'var(--border-card)'}`, background: active ? 'var(--accent-tint)' : 'var(--bg-card)', borderRadius: 10, padding: '8px 10px', fontSize: 12, fontWeight: 600, color: active ? 'var(--accent)' : 'var(--text-primary)', whiteSpace: 'nowrap', cursor: 'pointer' }
+  const box = block
+    ? { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', boxSizing: 'border-box', border: `1px solid ${active ? 'var(--accent)' : 'var(--border-card)'}`, background: active ? 'var(--accent-tint)' : 'var(--bg-card)', borderRadius: 12, padding: '12px 14px', fontSize: 14, fontWeight: 600, color: active ? 'var(--accent)' : 'var(--text-primary)', cursor: 'pointer' }
+    : { flex: '0 1 auto', border: `1px solid ${active ? 'var(--accent)' : 'var(--border-card)'}`, background: active ? 'var(--accent-tint)' : 'var(--bg-card)', borderRadius: 10, padding: '8px 10px', fontSize: 12, fontWeight: 600, color: active ? 'var(--accent)' : 'var(--text-primary)', whiteSpace: 'nowrap', cursor: 'pointer' }
+  const panel = block
+    ? { position: 'static', marginTop: 6, width: '100%', boxSizing: 'border-box', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, maxHeight: 260, overflow: 'hidden', display: 'flex', flexDirection: 'column' }
+    : { position: 'absolute', top: '110%', left: 0, marginTop: 4, zIndex: 40, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', minWidth: 220, maxHeight: 320, overflow: 'hidden', display: 'flex', flexDirection: 'column' }
   return (
-    <div ref={ref} style={{ position: 'relative', flex: '0 1 auto' }}>
-      <div style={box} onClick={() => setOpen(o => !o)}>{label}{active ? ` · ${selected.length}` : ''} ▾</div>
+    <div ref={ref} style={{ position: 'relative', flex: block ? '1 1 auto' : '0 1 auto', width: block ? '100%' : undefined }}>
+      <div style={box} onClick={() => setOpen(o => !o)}>{block ? <span>{label}</span> : `${label}${active ? ` · ${selected.length}` : ''} ▾`}{block && <span style={{ fontFamily: 'inherit', color: active ? 'var(--accent)' : 'var(--text-muted)', fontWeight: 600 }}>{active ? `${selected.length} ▾` : 'все ▾'}</span>}</div>
       {open && (
-        <div style={{ position: 'absolute', top: '110%', left: 0, marginTop: 4, zIndex: 40, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', minWidth: 220, maxHeight: 320, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={panel}>
           {opts.length > 8 && <div style={{ padding: 8 }}>
             <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="поиск"
               style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} />

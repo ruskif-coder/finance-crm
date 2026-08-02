@@ -30,6 +30,19 @@ export const mlnAuto = (v) => (v == null ? '—'
 export const pct = (v) => (v == null ? '—'
   : v.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%')
 
+// Знаковая сумма с ₽ и типографским минусом: «+1 200 ₽» / «−1 200 ₽».
+export const signRub = (n) => `${n >= 0 ? '+' : '−'}${grp(Math.abs(n || 0))} ₽`
+// Знаковая сумма в млн (1 знак): «+2,3 млн» / «−2,3 млн».
+export const signMln = (n) => `${n >= 0 ? '+' : '−'}${mln(Math.abs(n || 0), 1)} млн`
+
+// Дата дд.мм.гг (список/детали) и дд.мм.гггг (форма/срез).
+export const fmtDateShort = (d) => { if (!d) return '—'; const [y, m, dd] = String(d).slice(0, 10).split('-'); return dd ? `${dd}.${m}.${y.slice(2)}` : d }
+export const fmtDateFull = (d) => { if (!d) return '—'; const [y, m, dd] = String(d).slice(0, 10).split('-'); return dd ? `${dd}.${m}.${y}` : d }
+
+// Цвета банков — единый источник для десктопа (ДДС) и мобилы (ДДС, операции).
+export const BANK_HEX = { 'АльфаБанк': '#E8453F', 'ОПТ Банк': '#2FB8A8', 'Совкомбанк': '#8B93A6', 'Наличные': '#8B7BE8' }
+export const bankColor = (n) => BANK_HEX[n] || '#C3C9D8'
+
 // Округление верхней границы шкалы графика до «круглого» шага.
 export const niceMax = (v) => {
   if (!v || v <= 0) return 1e6

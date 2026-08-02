@@ -60,3 +60,6 @@ scripts/
 .DS_Store
 Thumbs.db
 graphify-out/
+
+# DB dumps — local only
+*.dump

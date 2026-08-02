@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import api, { auth } from '../lib/api'
+import useIsMobile from './mobile/useIsMobile'
 
 const VAT = 1.22
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
@@ -73,6 +74,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
   const [brief, setBrief] = useState('')
   const [briefOpen, setBriefOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const isMobile = useIsMobile()
   const set = (k, v) => setF(p => ({ ...p, [k]: v }))
 
   useEffect(() => {
@@ -146,60 +148,93 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
   const canSubmit = f.agency_id && f.advertiser_id && f.product && f.period && (f.amount || f.amount_with_vat)
   const st = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }
 
+  // Поля формы (общие для десктопа и мобилы); на мобиле — одна колонка
+  const fields = (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(5,1fr)', gap: 14 }}>
+        <div><span style={LBL}>Агентство</span><Search placeholder="не выбрано" options={opts.agency_id} value={f.agency_id} onChange={v => set('agency_id', v)} /></div>
+        <div><span style={LBL}>Рекламодатель</span><Search placeholder="не выбран" options={opts.advertiser_id} value={f.advertiser_id} onChange={v => { set('advertiser_id', v); set('brand_id', '') }} /></div>
+        <div><span style={LBL}>Бренд</span><Search placeholder={f.advertiser_id ? 'не выбран' : 'сначала рекламодатель'} options={brands} value={f.brand_id} onChange={v => set('brand_id', v)} disabled={!f.advertiser_id} /></div>
+        <div><span style={LBL}>Услуга</span><Search placeholder="не выбрана" options={services.map(s => ({ value: s.name, label: s.name }))} value={f.product} onChange={v => set('product', v)} /></div>
+        <div><span style={LBL}>Планируется в период</span><input type="month" style={{ ...INP, fontFamily: MONO }} value={f.period} onChange={e => set('period', e.target.value)} /></div>
+
+        <div><span style={LBL}>Воронка</span><select style={INP} value={f.pipeline} onChange={e => set('pipeline', e.target.value)}>{pipelines.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+        <div><span style={LBL}>Стадия</span><select style={INP} value={f.bitrix_stage} onChange={e => set('bitrix_stage', e.target.value)}>{stages.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}</select></div>
+        <div><span style={LBL}>Сумма с НДС</span><AmountInput value={f.amount_with_vat} onChange={v => onAmount(true, v)} /></div>
+        <div><span style={LBL}>Без НДС · клиентская ⇄</span><AmountInput value={f.amount} onChange={v => onAmount(false, v)} /></div>
+        <div><span style={LBL}>Продавец</span>
+          {canPickRep
+            ? <Search placeholder="не выбран" options={opts.sales_rep_id} value={f.sales_rep_id} onChange={v => set('sales_rep_id', v)} />
+            : <div style={{ ...INP, background: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>вы (текущий)</div>}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 3fr 42px 42px', gap: 14, alignItems: 'end' }}>
+        <div><span style={LBL}>Аккаунт</span><Search placeholder="не выбран" options={opts.account_manager_id} value={f.account_manager_id} onChange={v => set('account_manager_id', v)} /></div>
+        {isMobile ? (
+          <div>
+            <span style={LBL}>Название сделки</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input style={{ ...INP, flex: 1, minWidth: 0 }} placeholder="Рекл. | Бренд | Агентство | Услуга | Период" value={f.title} onChange={e => set('title', e.target.value)} />
+              <IcoBtn title="Сгенерировать название" onClick={genTitle}>
+                <svg width="16" height="16" viewBox="0 0 24 24" style={st}><path d="M5 3v4" /><path d="M3 5h4" /><path d="M17 15v4" /><path d="M15 17h4" /><path d="M12.5 4.5l1.9 4.6 4.6 1.9-4.6 1.9-1.9 4.6-1.9-4.6L6 11l4.6-1.9z" /></svg>
+              </IcoBtn>
+              <IcoBtn title={brief.trim() ? 'Бриф добавлен' : 'Добавить бриф'} active={!!brief.trim() || briefOpen} onClick={() => setBriefOpen(o => !o)}>
+                <svg width="16" height="16" viewBox="0 0 24 24" style={st}><path d="M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" /><path d="M9 12h6" /><path d="M9 16h4" /></svg>
+              </IcoBtn>
+            </div>
+          </div>
+        ) : (<>
+          <div><span style={LBL}>Название сделки</span><input style={INP} placeholder="Рекламодатель | Бренд | Агентство | Услуга | Период" value={f.title} onChange={e => set('title', e.target.value)} /></div>
+          <IcoBtn title="Сгенерировать название" onClick={genTitle}>
+            <svg width="16" height="16" viewBox="0 0 24 24" style={st}><path d="M5 3v4" /><path d="M3 5h4" /><path d="M17 15v4" /><path d="M15 17h4" /><path d="M12.5 4.5l1.9 4.6 4.6 1.9-4.6 1.9-1.9 4.6-1.9-4.6L6 11l4.6-1.9z" /></svg>
+          </IcoBtn>
+          <IcoBtn title={brief.trim() ? 'Бриф добавлен' : 'Добавить бриф'} active={!!brief.trim() || briefOpen} onClick={() => setBriefOpen(o => !o)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" style={st}><path d="M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" /><path d="M9 12h6" /><path d="M9 16h4" /></svg>
+          </IcoBtn>
+        </>)}
+      </div>
+
+      {briefOpen && (
+        <div>
+          <span style={LBL}>Бриф (сохранится вместе со сделкой)</span>
+          <textarea value={brief} onChange={e => setBrief(e.target.value)} placeholder="Задачи, ЦА, гео, форматы, KPI, бюджет…"
+            style={{ ...INP, minHeight: 120, resize: 'vertical', lineHeight: 1.5 }} />
+        </div>
+      )}
+    </>
+  )
+
+  const header = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: isMobile ? '14px 16px' : '18px 24px', borderBottom: '1px solid var(--border-inner)', position: isMobile ? 'sticky' : 'static', top: 0, background: 'var(--bg-card)', zIndex: 3 }}>
+      <span style={{ width: 30, height: 30, borderRadius: 9, background: 'var(--accent-tint)', color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 700 }}>+</span>
+      <span style={{ flex: 1, fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>Новая сделка</span>
+      <button onClick={onClose} title="Закрыть" style={{ width: 32, height: 32, borderRadius: 9, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18 }}>✕</button>
+    </div>
+  )
+
+  // ── Мобиль: полноэкранная форма (как форма редактирования) ──
+  if (isMobile) {
+    return (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 500, background: 'var(--bg-canvas)', overflowY: 'auto', fontFamily: UI, paddingBottom: 84 }}>
+        {header}
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 18 }}>{fields}</div>
+        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 14px', background: 'var(--bg-card)', borderTop: '1px solid var(--border-inner)', display: 'flex', gap: 8 }}>
+          <button onClick={onClose} disabled={busy} style={{ flex: '0 0 auto', padding: '14px 20px', borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>Отмена</button>
+          <button onClick={submit} disabled={busy || !canSubmit} style={{ flex: 1, background: canSubmit ? 'var(--accent)' : 'var(--bg-subtle)', color: canSubmit ? '#fff' : 'var(--text-faint)', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: canSubmit ? 'pointer' : 'default' }}>{busy ? 'Создание…' : 'Создать сделку'}</button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Десктоп: центрированная модалка ──
   return (
     <div onClick={e => { if (e.target === e.currentTarget) onClose() }}
       style={{ position: 'fixed', inset: 0, zIndex: 55, background: 'rgba(28,36,51,.32)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40, overflow: 'auto', fontFamily: UI }}>
       <div style={{ width: 1080, maxWidth: '100%', margin: 'auto', background: 'var(--bg-card)', borderRadius: 18, overflow: 'hidden', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)', animation: 'riseIn .28s cubic-bezier(0.22,1,0.36,1) both' }}>
         <style>{`@keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}`}</style>
-
-        {/* шапка */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '18px 24px', borderBottom: '1px solid var(--border-inner)' }}>
-          <span style={{ width: 30, height: 30, borderRadius: 9, background: 'var(--accent-tint)', color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 700 }}>+</span>
-          <span style={{ flex: 1, fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>Новая сделка</span>
-          <button onClick={onClose} title="Закрыть" style={{ width: 30, height: 30, borderRadius: 9, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18 }}>✕</button>
-        </div>
-
-        {/* тело */}
-        <div style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 18 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 14 }}>
-            <div><span style={LBL}>Агентство</span><Search placeholder="не выбрано" options={opts.agency_id} value={f.agency_id} onChange={v => set('agency_id', v)} /></div>
-            <div><span style={LBL}>Рекламодатель</span><Search placeholder="не выбран" options={opts.advertiser_id} value={f.advertiser_id} onChange={v => { set('advertiser_id', v); set('brand_id', '') }} /></div>
-            <div><span style={LBL}>Бренд</span><Search placeholder={f.advertiser_id ? 'не выбран' : 'сначала рекламодатель'} options={brands} value={f.brand_id} onChange={v => set('brand_id', v)} disabled={!f.advertiser_id} /></div>
-            <div><span style={LBL}>Услуга</span><Search placeholder="не выбрана" options={services.map(s => ({ value: s.name, label: s.name }))} value={f.product} onChange={v => set('product', v)} /></div>
-            <div><span style={LBL}>Планируется в период</span><input type="month" style={{ ...INP, fontFamily: MONO }} value={f.period} onChange={e => set('period', e.target.value)} /></div>
-
-            <div><span style={LBL}>Воронка</span><select style={INP} value={f.pipeline} onChange={e => set('pipeline', e.target.value)}>{pipelines.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
-            <div><span style={LBL}>Стадия</span><select style={INP} value={f.bitrix_stage} onChange={e => set('bitrix_stage', e.target.value)}>{stages.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}</select></div>
-            <div><span style={LBL}>Сумма с НДС</span><AmountInput value={f.amount_with_vat} onChange={v => onAmount(true, v)} /></div>
-            <div><span style={LBL}>Без НДС · клиентская ⇄</span><AmountInput value={f.amount} onChange={v => onAmount(false, v)} /></div>
-            <div><span style={LBL}>Продавец</span>
-              {canPickRep
-                ? <Search placeholder="не выбран" options={opts.sales_rep_id} value={f.sales_rep_id} onChange={v => set('sales_rep_id', v)} />
-                : <div style={{ ...INP, background: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>вы (текущий)</div>}
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 3fr 42px 42px', gap: 14, alignItems: 'end' }}>
-            <div><span style={LBL}>Аккаунт</span><Search placeholder="не выбран" options={opts.account_manager_id} value={f.account_manager_id} onChange={v => set('account_manager_id', v)} /></div>
-            <div><span style={LBL}>Название сделки</span><input style={INP} placeholder="Рекламодатель | Бренд | Агентство | Услуга | Период" value={f.title} onChange={e => set('title', e.target.value)} /></div>
-            <IcoBtn title="Сгенерировать название" onClick={genTitle}>
-              <svg width="16" height="16" viewBox="0 0 24 24" style={st}><path d="M5 3v4" /><path d="M3 5h4" /><path d="M17 15v4" /><path d="M15 17h4" /><path d="M12.5 4.5l1.9 4.6 4.6 1.9-4.6 1.9-1.9 4.6-1.9-4.6L6 11l4.6-1.9z" /></svg>
-            </IcoBtn>
-            <IcoBtn title={brief.trim() ? 'Бриф добавлен' : 'Добавить бриф'} active={!!brief.trim() || briefOpen} onClick={() => setBriefOpen(o => !o)}>
-              <svg width="16" height="16" viewBox="0 0 24 24" style={st}><path d="M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" /><path d="M9 12h6" /><path d="M9 16h4" /></svg>
-            </IcoBtn>
-          </div>
-
-          {briefOpen && (
-            <div>
-              <span style={LBL}>Бриф (сохранится вместе со сделкой)</span>
-              <textarea value={brief} onChange={e => setBrief(e.target.value)} placeholder="Задачи, ЦА, гео, форматы, KPI, бюджет…"
-                style={{ ...INP, minHeight: 120, resize: 'vertical', lineHeight: 1.5 }} />
-            </div>
-          )}
-        </div>
-
-        {/* футер */}
+        {header}
+        <div style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 18 }}>{fields}</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', borderTop: '1px solid var(--border-inner)', background: 'var(--bg-subtle)' }}>
           <button onClick={submit} disabled={busy || !canSubmit}
             style={{ padding: '9px 20px', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, fontFamily: MONO,

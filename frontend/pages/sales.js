@@ -10,6 +10,10 @@ import api, { auth } from '../lib/api'
 import { fmtMoney, fmtDate, mln } from '../lib/salesFormat'
 import { BITRIX_DEAL_URL } from '../lib/salesLayers'
 import { MONO, UI, PIP, FILL, HATCH, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn } from '../components/salesTableKit'
+import useIsMobile from '../components/mobile/useIsMobile'
+import DealCardList from '../components/mobile/DealCardList'
+import DealsMobileControls from '../components/sales/DealsMobileControls'
+import BottomSheet from '../components/mobile/BottomSheet'
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 const COLS = [
@@ -78,6 +82,7 @@ export default function SalesRegistry2() {
   const [brandsByAdv, setBrandsByAdv] = useState({})
   const [vpop, setVpop] = useState(null)
   const [createOpen, setCreateOpen] = useState(false)
+  const [createMenuOpen, setCreateMenuOpen] = useState(false)   // мобильная модалка «Создать» (+Агентство/+Рекламодатель/+Сделка)
   const [entityModal, setEntityModal] = useState(null) // 'agency' | 'advertiser'
   const [entForm, setEntForm] = useState({})
   const [entSaving, setEntSaving] = useState(false)
@@ -142,6 +147,12 @@ export default function SalesRegistry2() {
   // чекбокс (при праве) → бриф → переставленные видимые колонки (генерация — внутри «Сделка»).
   const visibleCols = [canEdit ? COL_BY_KEY.sel : null, COL_BY_KEY.brief, ...colOrder.map(k => COL_BY_KEY[k]).filter(c => c && !hidden.has(c.key))].filter(Boolean)
   const gridTemplate = visibleCols.map(c => c.w).join(' ')
+  const isMobile = useIsMobile()
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [mobView, setMobView] = useState('cards')     // мобильный вид: карточки | таблица
+  const [mobSearchOpen, setMobSearchOpen] = useState(false)
+  const activeFilterCount = Object.values(sel).filter(a => a.length).length + (gaps.length ? 1 : 0) + ((dateFrom || dateTo) ? 1 : 0) + (searchQ.trim() ? 1 : 0)
+  const loadMoreMobile = () => { const ns = pageSize + 100; setPageSize(ns); load(0, ns) }
 
   // Выгрузка текущей выборки в CSV (клиентская).
   const exportCsv = () => {
@@ -171,7 +182,9 @@ export default function SalesRegistry2() {
     if (dateTo) b.append('date_to', dateTo)
     return b
   }
+  const loadSeq = useRef(0)
   const load = async (newOffset = 0, size = pageSize) => {
+    const seq = ++loadSeq.current            // защита от гонки: применяем только последний запрос
     setLoading(true); setErr('')
     const base = buildBase()
     const dq = new URLSearchParams(base)
@@ -179,9 +192,10 @@ export default function SalesRegistry2() {
     const sumq = new URLSearchParams(base); sumq.append('scope_section', 'sales_registry')
     try {
       const [reg, sum] = await Promise.all([api.get('/sales/deals?' + dq.toString(), auth()), api.get('/sales/dashboard?' + sumq.toString(), auth())])
+      if (seq !== loadSeq.current) return     // пришёл устаревший ответ — игнорируем
       setDeals(reg.data.items || []); setDealsTotal(reg.data.total || 0); setOffset(newOffset); setSummary(sum.data)
-    } catch (e) { if (e.response?.status === 401) return router.push('/login'); setErr(e.response?.data?.detail || 'Не удалось загрузить') }
-    finally { setLoading(false) }
+    } catch (e) { if (seq !== loadSeq.current) return; if (e.response?.status === 401) return router.push('/login'); setErr(e.response?.data?.detail || 'Не удалось загрузить') }
+    finally { if (seq === loadSeq.current) setLoading(false) }
   }
 
   // фильтры/сортировка → перезагрузка с 1-й страницы (дебаунс 300 мс)
@@ -243,8 +257,8 @@ export default function SalesRegistry2() {
   const resetFilters = () => { setSel(Object.fromEntries(FILTER_DROPS.map(([k]) => [k, []]))); setGaps([]); setHideArchive(true); setSearch(''); setSearchQ(''); setDateFrom(''); setDateTo('') }
 
   const patchCell = async (id, patch, localApply) => {
-    try { await api.patch(`/sales/deals/${id}`, patch, auth()); setDeals(prev => prev.map(x => x.id === id ? { ...x, ...localApply } : x)) }
-    catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить') }
+    try { await api.patch(`/sales/deals/${id}`, patch, auth()); setDeals(prev => prev.map(x => x.id === id ? { ...x, ...localApply } : x)); return true }
+    catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить'); return false }
   }
   const openPicker = (field, d, e) => {
     if (!canEdit) return
@@ -411,9 +425,6 @@ export default function SalesRegistry2() {
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Head>
         <title>Реестр сделок</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
       </Head>
       <Navbar active="sales" />
       <style>{`
@@ -499,15 +510,25 @@ export default function SalesRegistry2() {
           <SalesTabs active="registry" />
           {(canEdit || canDirAg || canDirAdv || isAdmin) && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {canDirAg && <button onClick={openAgency} style={tabBtnOutline}>+ Агентство</button>}
-              {canDirAdv && <button onClick={openAdvertiser} style={tabBtnOutline}>+ Рекламодатель</button>}
-              {canEdit && <button onClick={() => setCreateOpen(true)} style={tabBtn(true)}>+ Сделка</button>}
-              {canEdit && <button onClick={openPushEdits} disabled={pushBusy} title="Залить наши ручные правки в Битрикс24" style={tabBtn(false)}>{pushBusy ? '…' : '↑ Залить правки'}</button>}
-              {isAdmin && <button onClick={importDeals} style={tabBtn(false)}>Импорт</button>}
+              {canDirAg && !isMobile && <button onClick={openAgency} style={tabBtnOutline}>+ Агентство</button>}
+              {canDirAdv && !isMobile && <button onClick={openAdvertiser} style={tabBtnOutline}>+ Рекламодатель</button>}
+              {canEdit && !isMobile && <button onClick={() => setCreateOpen(true)} style={tabBtn(true)}>+ Сделка</button>}
+              {canEdit && !isMobile && <button onClick={openPushEdits} disabled={pushBusy} title="Залить наши ручные правки в Битрикс24" style={tabBtn(false)}>{pushBusy ? '…' : '↑ Залить правки'}</button>}
+              {isAdmin && !isMobile && <button onClick={importDeals} style={tabBtn(false)}>Импорт</button>}
             </div>
           )}
         </div>
         <DealCreateForm open={createOpen} onClose={() => setCreateOpen(false)} canPickRep onCreated={() => load(0)} />
+        {/* мобильная модалка «Создать» (как на дашборде сейлза) */}
+        {isMobile && (
+          <BottomSheet open={createMenuOpen} onClose={() => setCreateMenuOpen(false)} title="Создать">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {canDirAg && <button onClick={() => { setCreateMenuOpen(false); openAgency() }} style={{ width: '100%', background: 'transparent', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 12, padding: '14px', fontFamily: UI, fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>+ Агентство</button>}
+              {canDirAdv && <button onClick={() => { setCreateMenuOpen(false); openAdvertiser() }} style={{ width: '100%', background: 'transparent', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 12, padding: '14px', fontFamily: UI, fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>+ Рекламодатель</button>}
+              {canEdit && <button onClick={() => { setCreateMenuOpen(false); setCreateOpen(true) }} style={{ width: '100%', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontFamily: UI, fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>+ Сделка</button>}
+            </div>
+          </BottomSheet>
+        )}
 
         {err && <div style={{ color: 'var(--danger)', marginBottom: 12 }}>{err}</div>}
 
@@ -522,7 +543,10 @@ export default function SalesRegistry2() {
           ]
           const recon = summary.totals.reconciles
           return (
-            <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)', padding: '18px 22px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 36, flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)', padding: '18px 22px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 36, flexWrap: 'wrap' }}>
+              {isMobile && canEdit && (
+                <button onClick={() => setCreateMenuOpen(true)} aria-label="Создать" style={{ position: 'absolute', top: 16, right: 16, width: 44, height: 44, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, fontSize: 26, lineHeight: 1, cursor: 'pointer', zIndex: 1 }}>+</button>
+              )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 180 }}>
                 <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Всего в реестре</span>
                 <span style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
@@ -555,7 +579,8 @@ export default function SalesRegistry2() {
         {true && (
           <div>
               <div style={{ marginTop: 4 }}>
-                {/* заголовок блока */}
+                {/* заголовок блока (десктоп) */}
+                {!isMobile && (
                 <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 24, padding: '0 4px', marginBottom: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
                     <span style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--text-primary)' }}>Список сделок</span>
@@ -589,6 +614,7 @@ export default function SalesRegistry2() {
                     </div>
                   </div>
                 </div>
+                )}
 
                 {/* массовое редактирование выбранных — под заголовком, в одну строку */}
                 {canEdit && selDealIds.length > 0 && (
@@ -617,7 +643,13 @@ export default function SalesRegistry2() {
                 {/* карточка таблицы */}
                 <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)', padding: '20px 24px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-                  {/* строка фильтров */}
+                  {/* фильтры: мобильный тулбар+шторка (общий компонент) / десктопная строка */}
+                  {isMobile ? (
+                    <DealsMobileControls dealsTotal={dealsTotal} search={search} setSearch={setSearch} mobSearchOpen={mobSearchOpen} setMobSearchOpen={setMobSearchOpen}
+                      mobView={mobView} setMobView={setMobView} filtersOpen={filtersOpen} setFiltersOpen={setFiltersOpen} activeFilterCount={activeFilterCount}
+                      sel={sel} setSel={setSel} gaps={gaps} setGaps={setGaps} dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo}
+                      hideArchive={hideArchive} setHideArchive={setHideArchive} fopts={fopts} resetFilters={resetFilters} exportCsv={exportCsv} />
+                  ) : (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <div style={{ flex: '0 0 auto', width: searchFocus ? 300 : 148, display: 'inline-flex', alignItems: 'center', gap: 7, border: `1px solid ${searchFocus ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '7px 10px', transition: 'width .22s cubic-bezier(0.22,1,0.36,1), border-color .15s' }}>
                       <svg width="13" height="13" viewBox="0 0 24 24" style={{ ...stroke, strokeWidth: 2, flex: '0 0 13px', color: 'var(--text-faint)' }}><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></svg>
@@ -658,8 +690,10 @@ export default function SalesRegistry2() {
                       </div>
                     </div>
                   </div>
+                  )}
 
-                  {/* таблица */}
+                  {/* таблица (десктоп) / карточки-таблица (мобайл) */}
+                  {isMobile ? <DealCardList deals={deals} canEdit={canEdit} view={mobView} total={dealsTotal} onLoadMore={loadMoreMobile} fopts={fopts} onPatch={patchCell} /> : (
                   <div style={{ overflowX: 'auto' }}>
                     <div style={{ minWidth: 1180 }}>
                       <div style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, padding: '0 0 10px', borderBottom: '1px solid var(--border-inner)', fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
@@ -689,6 +723,7 @@ export default function SalesRegistry2() {
                       {!deals.length && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Нет сделок по выбранным фильтрам</div>}
                     </div>
                   </div>
+                  )}
 
                   {/* подвал */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', paddingTop: 14, borderTop: '1px solid var(--border-inner)', fontSize: 12, color: 'var(--text-muted)' }}>

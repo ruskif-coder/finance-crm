@@ -280,11 +280,24 @@ export default function Settings() {
     loadBitrixUsers(token)
   }
 
-  const loadBitrixUsers = async (token) => {
+  // Справочник пользователей Битрикса кэшируем в localStorage (TTL 12ч) — не дёргаем
+  // Битрикс при каждом открытии вкладки «Пользователи». refresh=true — принудительно.
+  const loadBitrixUsers = async (token, refresh = false) => {
+    const CACHE_KEY = 'bitrix_users_cache_v1', TTL = 12 * 60 * 60 * 1000
+    if (!refresh) {
+      try {
+        const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null')
+        if (c && Array.isArray(c.items) && (Date.now() - c.ts) < TTL) {
+          setBitrixUsers(c.items); setBxLoading(false); setBxError(''); return
+        }
+      } catch (e) {}
+    }
     setBxLoading(true); setBxError('')
     try {
       const res = await api(token).get('/users/bitrix-directory')
-      setBitrixUsers(res.data.items || [])
+      const items = res.data.items || []
+      setBitrixUsers(items)
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), items })) } catch (e) {}
     } catch (e) {
       setBxError(e.response?.data?.detail || 'Битрикс недоступен')
     } finally {

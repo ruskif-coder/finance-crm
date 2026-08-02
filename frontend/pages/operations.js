@@ -4,6 +4,8 @@ import { useRouter } from 'next/router'
 import axios from 'axios'
 import Navbar, { can } from '../components/Navbar'
 import { MONO, UI, MultiDrop, IconBtn } from '../components/salesTableKit'
+import useIsMobile from '../components/mobile/useIsMobile'
+import OperationsMobile from '../components/mobile/OperationsMobile'
 
 const api = (token) => axios.create({ baseURL: '/api', headers: { Authorization: `Bearer ${token}` }, paramsSerializer: { indexes: null } })
 const getPerms = () => { if (typeof window === 'undefined') return {}; try { return JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { return {} } }
@@ -138,6 +140,7 @@ export default function Operations2() {
   const [perms, setPerms] = useState({})
   const canEdit = can(perms, 'operations', 'edit')
   const canImport = can(perms, 'import')
+  const isMobile = useIsMobile()
   const [ops, setOps] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -195,7 +198,7 @@ export default function Operations2() {
   const rows = ops.filter(o => !fOpType.length || (fOpType.includes('income') && o.income > 0) || (fOpType.includes('expense') && o.expense > 0))
 
   const onSort = (k) => { if (!k) return; if (sortCol === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortCol(k); setSortDir('desc') }; setPage(0) }
-  const resetFilters = () => { setSearch(''); setSearchQ(''); setDateFrom(''); setDateTo(''); setFStatus([]); setFBank([]); setFArticle([]); setFCp([]); setFPeriod([]); setFOpType([]); setPage(0) }
+  const resetFilters = () => { setDateFrom(''); setDateTo(''); setFStatus([]); setFBank([]); setFArticle([]); setFCp([]); setFPeriod([]); setFOpType([]); setPage(0) }
 
   const saveCreate = async () => {
     setSaving(true)
@@ -232,7 +235,20 @@ export default function Operations2() {
     try { const { id, ...body } = editing; await api(tok()).put(`/operations/${id}`, body); setEditing(null); loadOps() }
     catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить') } finally { setSaving(false) }
   }
-  const dupOp = async (op) => { try { const { id, ...body } = op; await api(tok()).post('/operations/', body); loadOps() } catch (e) { alert('Не удалось дублировать') } }
+  // Копирование: не создаём дубль сразу, а открываем форму «Новая операция» с данными
+  // копируемой — пользователь правит и подтверждает (POST на «Добавить операцию»).
+  const dupOp = (op) => {
+    setEditing(null)
+    setCreateForm({ date: op.date || '', status: op.status || 'ОПЛАЧЕНО', income: op.income || 0, expense: op.expense || 0, bank: op.bank || 'АльфаБанк', period: op.period || '', vat_rate: op.vat_rate || 0, article_id: op.article_id || '', counterparty_id: op.counterparty_id || '', ds_num: op.ds_num || '', invoice: op.invoice || '', invoice_date: op.invoice_date || '', description: op.description || '', document_link: op.document_link || '' })
+    setCreateOpen(true)
+    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }))
+  }
+  // мобильные CRUD-хендлеры (форма в OperationsMobile)
+  const mobileSave = async (body, id) => {
+    try { if (id) await api(tok()).put(`/operations/${id}`, body); else await api(tok()).post('/operations/', body); loadOps(); return true }
+    catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить'); return false }
+  }
+  const mobileDelete = async (id) => { try { await api(tok()).delete(`/operations/${id}`); loadOps() } catch (e) { alert('Не удалось удалить') } }
   const delOp = async (id) => { if (!window.confirm('Удалить операцию?')) return; try { await api(tok()).delete(`/operations/${id}`); loadOps() } catch (e) { alert('Не удалось удалить') } }
 
   const selIds = Object.keys(sel).filter(k => sel[k]).map(Number)
@@ -299,15 +315,29 @@ export default function Operations2() {
     </div>
   )
 
+  // ── Мобильная версия (< 1024px) ──
+  if (isMobile) {
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+        <Head><title>Операции</title></Head>
+        <Navbar active="operations" />
+        <OperationsMobile
+          total={total} rows={rows} loading={loading} articles={articles} counterparties={counterparties} canEdit={canEdit}
+          dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo}
+          fStatus={fStatus} setFStatus={setFStatus} fBank={fBank} setFBank={setFBank}
+          fArticle={fArticle} setFArticle={setFArticle} fCp={fCp} setFCp={setFCp} fOpType={fOpType} setFOpType={setFOpType}
+          resetFilters={resetFilters} pageSize={pageSize} setPageSize={setPageSize}
+          onSave={mobileSave} onDelete={mobileDelete} downloadExport={downloadExport} emptyForm={emptyForm} />
+      </div>
+    )
+  }
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Head>
         <title>Операции</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
       </Head>
-      <Navbar active="dds" />
+      <Navbar active="operations" />
       <style>{`
         @keyframes opRise { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
         .op-row:hover { background: var(--bg-subtle) !important; }

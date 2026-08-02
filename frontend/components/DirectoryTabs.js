@@ -27,7 +27,7 @@ export default function DirectoryTabs({ active }) {
   if (isAdmin) tabs.push({ id: 'reconcile', label: 'Сверка с Битриксом', href: '/reconcile' })
 
   return (
-    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>
+    <div className="desktop-only" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>
       {tabs.map(t => {
         const isActive = t.id === active
         return (

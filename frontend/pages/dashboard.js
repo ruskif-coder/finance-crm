@@ -5,6 +5,9 @@ import axios from 'axios'
 import Head from 'next/head'
 import { motion, useMotionValue, useTransform, animate, useReducedMotion } from 'framer-motion'
 import { MONO, UI, IconBtn } from '../components/salesTableKit'
+import { bankColor } from '../lib/salesFormat'
+import useIsMobile from '../components/mobile/useIsMobile'
+import CashflowMobile from '../components/mobile/CashflowMobile'
 
 // ── API ──────────────────────────────────────────────────────────
 const api = (token) => axios.create({
@@ -53,8 +56,6 @@ const chartScale = (maxVal) => Math.max(1e6, Math.ceil((maxVal || 0) * 1.2 / 1e6
 
 // ── Банки ────────────────────────────────────────────────────────
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
-const BANK_HEX = { 'АльфаБанк': '#E8453F', 'ОПТ Банк': '#2FB8A8', 'Совкомбанк': '#8B93A6', 'Наличные': '#8B7BE8' }
-const bankColor = (name) => BANK_HEX[name] || '#C3C9D8'
 
 // ── Цвета баров ──────────────────────────────────────────────────
 const INCOME = '#2FA37C'
@@ -304,6 +305,7 @@ const selStyle = { fontFamily: UI, padding: '9px 14px', borderRadius: 12, backgr
 export default function DashboardV2() {
   const router = useRouter()
   const reduced = useReducedMotion()
+  const isMobile = useIsMobile()
   const [ddsData, setDdsData] = useState({ periods: [] })
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -416,6 +418,26 @@ export default function DashboardV2() {
   }
 
   const rise = (i) => reduced ? {} : { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 }, transition: { delay: i * 0.07, duration: 0.4, ease: EASE } }
+
+  // ── Мобильная версия (< 1024px) ──
+  if (isMobile) {
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+        <Navbar active="dds" />
+        <Head><title>ДДС | Финансовый учёт</title></Head>
+        {loading || !summary ? (
+          <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>Загрузка…</div>
+        ) : (
+          <CashflowMobile
+            dateFrom={dateFrom} dateTo={dateTo} setDateFrom={setDateFrom} setDateTo={setDateTo} groupBy={groupBy} setGroupBy={setGroupBy}
+            kpi={{ actualBalance, forecastBalance, forecastDelta, planIncome: summary.plan_income || 0, planExpense: summary.plan_expense || 0, incomeCount: summary.income_count ?? 0, expenseCount: summary.expense_count ?? 0, accountsCount: accounts.length }}
+            cashWeeks={cashWeeks} cashScale={cashScale} cumWeeks={cumWeeks} cumScale={cumScale}
+            accounts={accounts} months={months} totals={totals}
+            expanded={expanded} setExpanded={setExpanded} exportCsv={exportCsv} />
+        )}
+      </div>
+    )
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
