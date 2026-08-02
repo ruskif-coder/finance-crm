@@ -10,6 +10,8 @@ __pycache__/
 # Secrets — never commit
 .env
 .env.*
+*.key
+vibecode.key
 
 # DB dumps and backups — real data, local only
 backups/
