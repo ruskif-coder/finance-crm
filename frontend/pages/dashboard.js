@@ -47,6 +47,10 @@ const niceMax = (value) => {
   return nb * Math.pow(10, exp)
 }
 
+// Динамический потолок графика: максимум данных + 20% запаса, вверх до целых млн
+// (пол 1 млн, чтобы не делить на 0). Даёт нормальную детализацию баров под сумму.
+const chartScale = (maxVal) => Math.max(1e6, Math.ceil((maxVal || 0) * 1.2 / 1e6) * 1e6)
+
 // ── Банки ────────────────────────────────────────────────────────
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
 const BANK_HEX = { 'АльфаБанк': '#E8453F', 'ОПТ Банк': '#2FB8A8', 'Совкомбанк': '#8B93A6', 'Наличные': '#8B7BE8' }
@@ -193,9 +197,9 @@ const TipRow = ({ color, label, value }) => (
 function CumWeeksChart({ weeks, reduced }) {
   const [hover, setHover] = useState(null)
   const total = weeks.length
-  const posMax = niceMax(Math.max(30e6, ...weeks.map(w => w.value)))
+  const posMax = chartScale(Math.max(0, ...weeks.map(w => w.value)))
   const negRaw = Math.min(0, ...weeks.map(w => w.value))
-  const negMax = negRaw < 0 ? niceMax(Math.abs(negRaw)) : 0
+  const negMax = negRaw < 0 ? chartScale(Math.abs(negRaw)) : 0
   // Ячеек под нулём: пропорционально магнитуде, но не меньше 3 — иначе мелкая
   // просадка «схлопывается» в один пин и вариация не читается.
   const botCells = negMax > 0 ? Math.min(CELLS - 3, Math.max(3, Math.round(CELLS * negMax / (posMax + negMax)))) : 0
@@ -377,8 +381,8 @@ export default function DashboardV2() {
     return out
   }, [months])
 
-  const cashScale = useMemo(() => niceMax(Math.max(50e6, ...cashWeeks.map(w => w.income), ...cashWeeks.map(w => w.expense))), [cashWeeks])
-  const cumScale = useMemo(() => niceMax(Math.max(30e6, ...cumWeeks.map(w => w.value))), [cumWeeks])
+  const cashScale = useMemo(() => chartScale(Math.max(0, ...cashWeeks.map(w => w.income), ...cashWeeks.map(w => w.expense))), [cashWeeks])
+  const cumScale = useMemo(() => chartScale(Math.max(0, ...cumWeeks.map(w => w.value))), [cumWeeks])
 
   const cumStats = useMemo(() => {
     if (!months.length) return { max: null, min: null, gap: null }
