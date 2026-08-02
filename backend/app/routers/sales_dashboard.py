@@ -1562,3 +1562,53 @@ def run_sync(db: Session = Depends(get_db),
         status_code=501,
         detail="Загрузка из Битрикс24 ещё не подключена: данные загружены из Excel",
     )
+
+
+# v1: льём в Битрикс только безопасный набор. brand/advertiser/agency/reps/product/
+# stage — позже, после синхронизации справочников и обратного маппинга.
+PUSHABLE_FIELDS = {"title"}
+
+
+@router.post("/push-edits")
+def push_edits_to_bitrix(commit: int = 0, db: Session = Depends(get_db),
+                         current_user: User = Depends(require_permission("sales_registry", "edit"))):
+    """Заливка наших ручных правок (pushed_at IS NULL) в Битрикс.
+    commit=0 — превью (что и куда уйдёт), commit=1 — запись + отметка pushed_at.
+    v1 — только title; остальные поля показываются как «пропущено»."""
+    from app.sales.models import SalesDealFieldOverride
+    pending = (db.query(SalesDealFieldOverride)
+               .filter(SalesDealFieldOverride.pushed_at.is_(None)).all())
+    by_field = {}
+    for o in pending:
+        by_field[o.field_name] = by_field.get(o.field_name, 0) + 1
+    will = {f: c for f, c in by_field.items() if f in PUSHABLE_FIELDS}
+    skipped = {f: c for f, c in by_field.items() if f not in PUSHABLE_FIELDS}
+    targets = [o for o in pending if o.field_name in PUSHABLE_FIELDS]
+    deal_ids = list({o.deal_id for o in targets})
+    deals = ({d.id: d for d in db.query(SalesDeal).filter(SalesDeal.id.in_(deal_ids)).all()}
+             if deal_ids else {})
+    # локальные (ещё не в Битриксе) сделки заливать некуда — исключаем из счётчиков
+    live = [o for o in targets if deals.get(o.deal_id)
+            and not (deals[o.deal_id].bitrix_id or "").startswith("local-")]
+
+    if commit == 0:
+        return {"will_push": will, "skipped": skipped,
+                "deals": len({o.deal_id for o in live}), "total": len(live)}
+
+    from app.sales.bitrix.transport import vibecode_patch
+    pushed = 0
+    errors = []
+    for o in live:
+        deal = deals[o.deal_id]
+        body = {"title": deal.title}   # v1: только title
+        try:
+            vibecode_patch(f"/deals/{deal.bitrix_id}", body)
+            o.pushed_at = datetime.utcnow()
+            pushed += 1
+        except Exception as e:
+            logger.error("push_edits deal=%s: %s", o.deal_id, e)
+            errors.append({"deal": deal.bitrix_id, "error": repr(e)[:80]})
+    db.commit()
+    log_action(db, current_user, "push_edits_to_bitrix", "sales_deal", None,
+               f"залито title: {pushed}, ошибок: {len(errors)}")
+    return {"pushed": pushed, "errors": errors, "skipped": skipped}

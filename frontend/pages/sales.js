@@ -106,6 +106,8 @@ export default function SalesRegistry2() {
   const [syncingId, setSyncingId] = useState(null)   // id сделки в процессе синхронизации из Битрикса
   const [syncResult, setSyncResult] = useState(null) // { deal, changes, files, warnings } — попап результата
   const [bulkResult, setBulkResult] = useState(null) // сводка массовой синхронизации
+  const [pushPreview, setPushPreview] = useState(null) // превью/результат заливки правок в Битрикс
+  const [pushBusy, setPushBusy] = useState(false)
   const [advConfirm, setAdvConfirm] = useState(null) // подтверждение смены рекламодателя со сбросом бренда
 
   // Смена периода сделки: только при изменении; period_from = 1-е число выбранного месяца.
@@ -293,6 +295,20 @@ export default function SalesRegistry2() {
       setBulkResult(r.data); setSelDeals({}); load(offset)
     } catch (e) { alert(e.response?.data?.detail || 'Ошибка массовой синхронизации') }
     finally { setSaving(false) }
+  }
+  // «Залить правки в Битрикс» — превью (commit=0) → подтверждение → запись (commit=1)
+  const PUSH_FIELD_LABELS = { title: 'Название', advertiser_id: 'Рекламодатель', brand_id: 'Бренд', agency_id: 'Агентство', sales_rep_id: 'Продавец', account_manager_id: 'Аккаунт', payer_counterparty_id: 'Плательщик', period_from: 'Старт РК', period_to: 'Конец РК', product: 'Услуга', bitrix_stage: 'Стадия' }
+  const openPushEdits = async () => {
+    setPushBusy(true)
+    try { const r = await api.post('/sales/push-edits?commit=0', {}, auth()); setPushPreview(r.data) }
+    catch (e) { alert(e.response?.data?.detail || 'Не удалось получить превью') }
+    finally { setPushBusy(false) }
+  }
+  const confirmPushEdits = async () => {
+    setPushBusy(true)
+    try { const r = await api.post('/sales/push-edits?commit=1', {}, auth()); setPushPreview(p => ({ ...p, done: r.data })); load(offset) }
+    catch (e) { alert(e.response?.data?.detail || 'Ошибка заливки в Битрикс') }
+    finally { setPushBusy(false) }
   }
   // Клик по светофору — детали последней синхронизации из сохранённого отчёта
   const openSyncReport = (d) => setSyncResult({
@@ -486,7 +502,7 @@ export default function SalesRegistry2() {
               {canDirAg && <button onClick={openAgency} style={tabBtnOutline}>+ Агентство</button>}
               {canDirAdv && <button onClick={openAdvertiser} style={tabBtnOutline}>+ Рекламодатель</button>}
               {canEdit && <button onClick={() => setCreateOpen(true)} style={tabBtn(true)}>+ Сделка</button>}
-              {canEdit && <button onClick={syncDeals} style={tabBtn(false)}>Синхронизировать</button>}
+              {canEdit && <button onClick={openPushEdits} disabled={pushBusy} title="Залить наши ручные правки в Битрикс24" style={tabBtn(false)}>{pushBusy ? '…' : '↑ Залить правки'}</button>}
               {isAdmin && <button onClick={importDeals} style={tabBtn(false)}>Импорт</button>}
             </div>
           )}
@@ -764,6 +780,52 @@ export default function SalesRegistry2() {
                   {bulkResult.skipped > 0 && <span>пропущено (локальные): {bulkResult.skipped}. </span>}
                   {bulkResult.errors > 0 && <span style={{ color: '#C93A3E' }}>ошибок: {bulkResult.errors}</span>}
                 </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Заливка правок в Битрикс: превью → подтверждение → результат ── */}
+        {pushPreview && (
+          <div onClick={() => !pushBusy && setPushPreview(null)} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(20,26,40,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, boxShadow: 'var(--shadow-card)', width: 420, maxWidth: '92vw', maxHeight: '82vh', overflowY: 'auto', padding: '20px 22px', fontFamily: UI }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>Залить правки в Битрикс</span>
+                <span onClick={() => !pushBusy && setPushPreview(null)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>✕</span>
+              </div>
+
+              {pushPreview.done ? (
+                <>
+                  <div style={{ fontSize: 14, color: 'var(--income)', fontWeight: 600, marginBottom: 8 }}>✓ Залито в Битрикс: {pushPreview.done.pushed}</div>
+                  {(pushPreview.done.errors || []).length > 0 && (
+                    <div style={{ background: 'var(--danger-tint)', borderRadius: 10, padding: '10px 12px', marginTop: 8 }}>
+                      <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: '#C93A3E', marginBottom: 5 }}>Ошибки ({pushPreview.done.errors.length})</div>
+                      {pushPreview.done.errors.slice(0, 8).map((e, i) => <div key={i} style={{ fontSize: 12, color: '#8a2b2f', padding: '2px 0' }}>• {e.deal}: {e.error}</div>)}
+                    </div>
+                  )}
+                  <button onClick={() => setPushPreview(null)} style={{ marginTop: 14, ...btnAcc }}>Закрыть</button>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 14, color: 'var(--text-primary)', marginBottom: 12 }}>
+                    Уйдёт в Битрикс: <b style={{ fontFamily: MONO, color: 'var(--accent)' }}>{pushPreview.total || 0}</b> правок <span style={{ color: 'var(--text-muted)' }}>(только «Название»)</span> в <b style={{ fontFamily: MONO }}>{pushPreview.deals || 0}</b> сделок.
+                  </div>
+                  {Object.keys(pushPreview.skipped || {}).length > 0 && (
+                    <div style={{ background: 'var(--warning-tint)', borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
+                      <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: '#B26A0C', marginBottom: 6 }}>Пока не льём (нужен маппинг справочников)</div>
+                      {Object.entries(pushPreview.skipped).map(([f, c]) => (
+                        <div key={f} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: '#8a5209', padding: '2px 0' }}>
+                          <span>{PUSH_FIELD_LABELS[f] || f}</span><span style={{ fontFamily: MONO }}>{c}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={confirmPushEdits} disabled={pushBusy || !(pushPreview.total > 0)} style={{ ...btnAcc, opacity: (pushBusy || !(pushPreview.total > 0)) ? 0.5 : 1 }}>{pushBusy ? 'Заливаю…' : `Залить ${pushPreview.total || 0}`}</button>
+                    <button onClick={() => setPushPreview(null)} disabled={pushBusy} style={btnSec}>Отмена</button>
+                  </div>
+                  <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--text-faint)' }}>Запись идёт в живой Битрикс24. Отменить после заливки нельзя.</div>
+                </>
               )}
             </div>
           </div>
