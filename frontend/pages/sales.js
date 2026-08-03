@@ -504,7 +504,7 @@ export default function SalesRegistry2() {
         </div>
       </>)}
 
-      <div style={{ padding: 24 }}>
+      <div style={{ padding: isMobile ? 14 : 24 }}>
         {/* меню раздела + действия в одну строку */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <SalesTabs active="registry" />
@@ -543,7 +543,7 @@ export default function SalesRegistry2() {
           ]
           const recon = summary.totals.reconciles
           return (
-            <div style={{ position: 'relative', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)', padding: '18px 22px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 36, flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, boxShadow: 'var(--shadow-card)', padding: isMobile ? '14px 16px' : '18px 22px', marginBottom: isMobile ? 12 : 14, display: 'flex', alignItems: isMobile ? 'stretch' : 'center', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 12 : 36, flexWrap: 'wrap' }}>
               {isMobile && canEdit && (
                 <button onClick={() => setCreateMenuOpen(true)} aria-label="Создать" style={{ position: 'absolute', top: 16, right: 16, width: 44, height: 44, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, fontSize: 26, lineHeight: 1, cursor: 'pointer', zIndex: 1 }}>+</button>
               )}
@@ -554,14 +554,14 @@ export default function SalesRegistry2() {
                   <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)' }}>млн ₽ / {summary.totals.deals} шт</span>
                 </span>
               </div>
-              <div style={{ flex: 1, minWidth: 320, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ flex: 1, minWidth: isMobile ? 0 : 320, display: 'flex', flexDirection: 'column', gap: isMobile ? 8 : 10 }}>
                 <div style={{ display: 'flex', gap: 2, height: 10 }}>
                   {LAYERS.map(L => { const w = total > 0 ? amt(L.name) / total * 100 : 0; return w > 0 ? <div key={L.name} title={`${L.name}: ${mln(amt(L.name))} млн · ${cnt(L.name)}`} style={{ width: `${w}%`, background: L.bg }} /> : null })}
                 </div>
-                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-muted)' }}>
+                <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 7 : 24, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-muted)' }}>
                   {LAYERS.map(L => (
                     <span key={L.name} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: L.bg }} />{L.name === 'Без группы' ? 'без группы' : L.name} <span style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--text-primary)' }}>{mln(amt(L.name))} млн · {cnt(L.name)}</span>
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: L.bg }} />{L.name === 'Без группы' ? 'без группы' : L.name} <span style={{ marginLeft: isMobile ? 'auto' : 0, fontFamily: MONO, fontWeight: 700, color: 'var(--text-primary)' }}>{mln(amt(L.name))} млн · {cnt(L.name)}</span>
                     </span>
                   ))}
                 </div>
@@ -641,7 +641,7 @@ export default function SalesRegistry2() {
                 )}
 
                 {/* карточка таблицы */}
-                <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)', padding: '20px 24px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={isMobile ? { display: 'flex', flexDirection: 'column', gap: 12 } : { background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)', padding: '20px 24px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
                   {/* фильтры: мобильный тулбар+шторка (общий компонент) / десктопная строка */}
                   {isMobile ? (

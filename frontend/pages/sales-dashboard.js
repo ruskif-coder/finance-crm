@@ -398,7 +398,7 @@ export default function SalesDashboard2() {
         </div>
       </>)}
 
-      <div style={{ padding: 24 }}>
+      <div style={{ padding: isMobile ? 14 : 24 }}>
         <SalesTabs active="dashboard" />
         <DealCreateForm open={createOpen} onClose={() => setCreateOpen(false)} canPickRep={!!data?.can_view_others} onCreated={() => { setSortKey('date_create'); setSortDir('desc') }} />
 
@@ -457,7 +457,7 @@ export default function SalesDashboard2() {
                 )}
 
                 {/* карточка таблицы */}
-                <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)', padding: '20px 24px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={isMobile ? { display: 'flex', flexDirection: 'column', gap: 12 } : { background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)', padding: '20px 24px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
                   {/* фильтры: мобильный тулбар+шторка (общий компонент) / десктопная строка */}
                   {isMobile ? (
