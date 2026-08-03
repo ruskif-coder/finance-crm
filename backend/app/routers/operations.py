@@ -23,6 +23,27 @@ import uuid
 
 router = APIRouter()
 
+# Схемы, допустимые в document_link. Всё остальное (javascript:, data:, file: …) —
+# XSS-вектор: ссылка рендерится на фронте как <a href={...}>, и клик по такой схеме
+# исполняет скрипт в сессии открывшего (токен в localStorage → захват аккаунта).
+# В contracts.py уже есть аналогичная проверка; здесь её раньше НЕ было.
+_ALLOWED_LINK_SCHEMES = ("http://", "https://")
+
+def _validate_link(url, raise_on_bad=True):
+    """http/https → возвращает очищенную ссылку; иначе — 400 (API) или None (импорт).
+    raise_on_bad=False для Excel-импорта: одна битая строка не должна ронять весь импорт,
+    вместо этого небезопасная ссылка молча отбрасывается."""
+    if url is None:
+        return None
+    u = str(url).strip()
+    if not u:
+        return None
+    if not any(u.lower().startswith(s) for s in _ALLOWED_LINK_SCHEMES):
+        if raise_on_bad:
+            raise HTTPException(status_code=400, detail="Ссылка на документ должна начинаться с http:// или https://")
+        return None
+    return u
+
 # Временное in-memory хранилище для шага preview→apply при синхронизации импорта.
 # Переживает только до перезапуска backend-контейнера — это сознательно временное решение,
 # пока система не переехала на боевой сервер (см. memory finance-system-status).
@@ -364,7 +385,7 @@ def create_operation(
         invoice=op.invoice,
         invoice_date=op.invoice_date,
         description=op.description,
-        document_link=op.document_link,
+        document_link=_validate_link(op.document_link),
         own_company_id=_get_own_company_id(db),
         created_by=current_user.id
     )
@@ -417,6 +438,8 @@ def update_operation(
         raise HTTPException(status_code=404, detail="Операция не найдена")
     for key, value in op.dict().items():
         setattr(operation, key, value)
+    # document_link проверяем на безопасную схему (setattr выше записал сырое значение).
+    operation.document_link = _validate_link(op.document_link)
 
     # Пересчёт суммы НДС при сохранении. vat_fact не входит в OperationCreate,
     # поэтому цикл setattr выше его не трогает — без этого блока сумма НДС
@@ -680,7 +703,7 @@ def _parse_cf_best_rows(contents: bytes) -> List[dict]:
             'invoice': str(row['invoice']) if pd.notna(row.get('invoice')) else None,
             'invoice_date': pd.to_datetime(row['invoice_date']).date() if pd.notna(row.get('invoice_date')) else None,
             'description': str(row['description']) if pd.notna(row.get('description')) else None,
-            'document_link': str(row['document_link']).strip() if pd.notna(row.get('document_link')) else None,
+            'document_link': _validate_link(row.get('document_link'), raise_on_bad=False),
         })
     return rows
 
@@ -930,7 +953,7 @@ async def import_excel(
             invoice=row['invoice'],
             invoice_date=row['invoice_date'],
             description=row['description'],
-            document_link=row.get('document_link'),
+            document_link=_validate_link(row.get('document_link'), raise_on_bad=False),
             created_by=current_user.id
         )
         db.add(op)
@@ -1134,7 +1157,7 @@ async def import_apply(
                 invoice=data['invoice'],
                 invoice_date=data['invoice_date'],
                 description=data['description'],
-                document_link=data.get('document_link'),
+                document_link=_validate_link(data.get('document_link'), raise_on_bad=False),
                 own_company_id=_get_own_company_id(db),
                 created_by=current_user.id,
             )
@@ -1164,7 +1187,7 @@ async def import_apply(
             # (без колонки "Ссылка на документ") иначе бы каждый раз стирал ссылку,
             # вручную добавленную в приложении.
             if data.get('document_link'):
-                existing.document_link = data['document_link']
+                existing.document_link = _validate_link(data['document_link'], raise_on_bad=False)
             updated += 1
 
         else:

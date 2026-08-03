@@ -108,16 +108,16 @@ def get_dds(
         query = query.filter(Operation.period.isnot(None))
     query = query.group_by(group_col, Operation.bank).order_by(group_col)
 
-    if date_from:
-        if group_by == 'date':
-            query = query.filter(func.to_char(Operation.date, 'YYYY-MM') >= date_from)
-        else:
-            query = query.filter(Operation.period >= date_from)
-    if date_to:
-        if group_by == 'date':
-            query = query.filter(func.to_char(Operation.date, 'YYYY-MM') <= date_to)
-        else:
-            query = query.filter(Operation.period <= date_to)
+    # Фильтр по диапазону дат:
+    #  - group_by='date'   — по to_char(date) в SQL (date всегда YYYY-MM-DD);
+    #  - group_by='period' — НЕ здесь: период хранится как 'Q1 2026', и SQL-сравнение
+    #    было бы лексическим ('Q…' > '2…'), молча отбрасывая квартальные строки.
+    #    Для периода фильтруем ПОСЛЕ разворачивания кварталов в месяцы (см. ниже) —
+    #    так же, как в /pl и /plan-fact.
+    if date_from and group_by == 'date':
+        query = query.filter(func.to_char(Operation.date, 'YYYY-MM') >= date_from)
+    if date_to and group_by == 'date':
+        query = query.filter(func.to_char(Operation.date, 'YYYY-MM') <= date_to)
     if bank:
         query = query.filter(Operation.bank == bank)
 
@@ -136,6 +136,13 @@ def get_dds(
             'total_income': r.total_income or 0, 'total_expense': r.total_expense or 0,
             'income_count': r.income_count or 0, 'expense_count': r.expense_count or 0,
         } for r in rows]
+
+    # Фильтр по диапазону для group_by='period' — на развёрнутых месяцах (YYYY-MM),
+    # где лексическое сравнение корректно (см. комментарий к SQL-фильтру выше).
+    if group_by == 'period' and (date_from or date_to):
+        expanded_rows = [r for r in expanded_rows
+                         if (not date_from or (r['period'] or '') >= date_from)
+                         and (not date_to or (r['period'] or '') <= date_to)]
 
     periods = {}
     banks = set()

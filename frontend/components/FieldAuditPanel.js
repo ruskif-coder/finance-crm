@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react'
-import axios from 'axios'
 import { MONO, UI } from './salesTableKit'
+import { makeApi } from '../lib/http'
+import { T } from '../lib/tokens'
 
-const api = () => axios.create({ baseURL: '/api', headers: { Authorization: `Bearer ${typeof window !== 'undefined' ? localStorage.getItem('token') : ''}` } })
+const api = () => makeApi(typeof window !== 'undefined' ? localStorage.getItem('token') : '')
 
 const CARD = { background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)' }
 const lbl = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
@@ -97,7 +98,7 @@ function AuditCard({ mode }) {                       // mode: 'deal' | 'company'
         )}
       </div>
 
-      {err && <div style={{ background: 'var(--danger-tint)', color: '#C93A3E', borderRadius: 10, padding: '8px 12px', fontSize: 12.5 }}>{err}</div>}
+      {err && <div style={{ background: 'var(--danger-tint)', color: T.danger, borderRadius: 10, padding: '8px 12px', fontSize: 12.5 }}>{err}</div>}
 
       {data && (
         <>
@@ -120,7 +121,7 @@ function AuditCard({ mode }) {                       // mode: 'deal' | 'company'
                           <div style={{ marginTop: 3, color: bxVal != null ? 'var(--text-secondary)' : 'var(--text-faint)', wordBreak: 'break-word' }}>{bxVal != null ? bxVal : 'нет в payload'}</div>
                         </>
                       ) : (
-                        <span title="Код не опознан — найдите совпадение в полном списке BX ниже" style={{ fontFamily: MONO, fontSize: 10.5, color: '#B26A0C', background: 'var(--warning-tint)', borderRadius: 5, padding: '1px 5px' }}>❓ опознать</span>
+                        <span title="Код не опознан — найдите совпадение в полном списке BX ниже" style={{ fontFamily: MONO, fontSize: 10.5, color: T.warningText, background: 'var(--warning-tint)', borderRadius: 5, padding: '1px 5px' }}>❓ опознать</span>
                       )}
                     </span>
                   </RowCells>
@@ -162,7 +163,7 @@ export default function FieldAuditPanel() {
   return (
     <div style={{ fontFamily: UI }}>
       <div style={{ marginBottom: 14, fontSize: 13, color: 'var(--text-muted)' }}>
-        Сверка структуры полей нашей системы с живой карточкой Битрикса. Выберите конкретную запись — увидите наши поля рядом с реальными кодами и значениями Битрикса. «⟳ Обновить структуру» перечитывает карточку из Битрикса. Поля с меткой <span style={{ fontFamily: MONO, fontSize: 11, color: '#B26A0C', background: 'var(--warning-tint)', borderRadius: 5, padding: '1px 5px' }}>❓ опознать</span> — код в Битриксе ещё не сопоставлен; найдите его в полном списке.
+        Сверка структуры полей нашей системы с живой карточкой Битрикса. Выберите конкретную запись — увидите наши поля рядом с реальными кодами и значениями Битрикса. «⟳ Обновить структуру» перечитывает карточку из Битрикса. Поля с меткой <span style={{ fontFamily: MONO, fontSize: 11, color: T.warningText, background: 'var(--warning-tint)', borderRadius: 5, padding: '1px 5px' }}>❓ опознать</span> — код в Битриксе ещё не сопоставлен; найдите его в полном списке.
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
         <AuditCard mode="deal" />

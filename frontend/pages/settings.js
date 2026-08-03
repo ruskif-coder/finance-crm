@@ -1,20 +1,15 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
-import axios from 'axios'
 import Navbar from '../components/Navbar'
 import Head from 'next/head'
 import Articles from './articles'
 import Pipelines from './pipelines'
 import FieldAuditPanel from '../components/FieldAuditPanel'
+import { makeApi as api } from '../lib/http'
+import { getPermissions, can } from '../lib/auth'
 
 // Секции продаж — 5-уровневый доступ (свои/все). Единый список для матрицы.
 const SALES_KEYS = ['sales_dashboard', 'sales_registry', 'sales_analytics']
-
-const api = (token) => axios.create({
-  // См. комментарий в balance.js — относительный путь, проксируется Caddy.
-  baseURL: '/api',
-  headers: { Authorization: `Bearer ${token}` }
-})
 
 const fmt = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0))
 const fmtDateTime = (s) => {
@@ -54,13 +49,6 @@ const sectionKind = (s) => SALES_KEYS.includes(s.key) ? 'sales'
 const levelsFor = (s) => { const k = sectionKind(s); return k === 'sales' ? LEVELS_SALES : k === 'edit' ? LEVELS_EDIT : LEVELS_VIEW }
 const levelLabel = (s, v) => (levelsFor(s).find(x => x.v === v) || {}).l || v
 const adminLevel = (s) => { const k = sectionKind(s); return k === 'sales' ? 'edit_all' : k === 'edit' ? 'edit' : 'view' }
-
-function getPermissions() {
-  if (typeof window === 'undefined') return {}
-  try { return JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { return {} }
-}
-
-const can = (perms, section, action = 'view') => !!(perms && perms[section] && perms[section][action])
 
 export default function Settings() {
   const router = useRouter()

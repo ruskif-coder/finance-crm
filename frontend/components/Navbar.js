@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
 import { motion } from 'framer-motion'
+import { getPermissions, can } from '../lib/auth'
+
+// Ре-экспорт: многие страницы делают `import Navbar, { can } from '../components/Navbar'`.
+export { can }
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const SPRING = { type: 'spring', stiffness: 420, damping: 36 }
@@ -36,18 +40,6 @@ const SECTION_SUBNAV = {
     { label: 'Агентства', href: '/agencies', section: 'dir_agencies' },
     { label: 'Сверка', href: '/reconcile', adminOnly: true },
   ],
-}
-
-function getPermissions() {
-  if (typeof window === 'undefined') return {}
-  try { return JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { return {} }
-}
-
-// Админ имеет полный доступ (как на бэкенде). Проверяем роль из localStorage,
-// чтобы не зависеть от устаревшего снимка permissions после добавления секций.
-export const can = (perms, section, action = 'view') => {
-  if (typeof window !== 'undefined' && localStorage.getItem('role') === 'admin') return true
-  return !!(perms && perms[section] && perms[section][action])
 }
 
 // Приоритет разделов для «первого доступного экрана» — единый источник правды

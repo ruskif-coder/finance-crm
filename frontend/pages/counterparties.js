@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import Head from 'next/head'
-import axios from 'axios'
+import api, { auth } from '../lib/http'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
@@ -8,9 +8,8 @@ import DirectoryTabs from '../components/DirectoryTabs'
 import { MONO, UI, IconBtn } from '../components/salesTableKit'
 import useIsMobile from '../components/mobile/useIsMobile'
 import CounterpartiesMobile from '../components/mobile/CounterpartiesMobile'
+import { T } from '../lib/tokens'
 
-const api = axios.create({ baseURL: '/api' })
-const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
 
 const fmt = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0))
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
@@ -20,7 +19,7 @@ const DEFAULT_TERM_DAYS = 60
 const REL_META = {
   'заказчик': { label: 'Заказчик', bg: 'var(--accent-tint)', fg: 'var(--accent)' },
   'поставщик': { label: 'Поставщик', bg: '#FBF0DE', fg: '#B26A0C' },
-  'смешенный': { label: 'Смешанный', bg: '#F1EDFC', fg: '#7B62D6' },
+  'смешенный': { label: 'Смешанный', bg: '#F1EDFC', fg: T.mixed },
 }
 const relMeta = (r) => REL_META[r] || { label: 'не заполнен', bg: 'var(--bg-subtle)', fg: 'var(--text-faint)' }
 
@@ -208,7 +207,7 @@ export default function Counterparties() {
           </>
         } />
 
-        {error && <div style={{ background: 'var(--danger-tint)', color: '#C93A3E', padding: '10px 14px', borderRadius: 12, marginBottom: 12, fontSize: 13 }}>{error}</div>}
+        {error && <div style={{ background: 'var(--danger-tint)', color: T.danger, padding: '10px 14px', borderRadius: 12, marginBottom: 12, fontSize: 13 }}>{error}</div>}
 
         {/* Карточка реестра */}
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, padding: '18px 24px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -251,7 +250,7 @@ export default function Counterparties() {
               <div><div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>ИНН</div><input value={newForm.inn} onChange={e => setNewForm(f => ({ ...f, inn: e.target.value }))} placeholder="1234567890" style={{ border: '1px solid var(--border-card)', borderRadius: 10, padding: '8px 10px', fontSize: 13, width: 150, fontFamily: MONO, outline: 'none' }} /></div>
               <div><div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>Вид</div><select value={newForm.status} onChange={e => setNewForm(f => ({ ...f, status: e.target.value }))} style={chipSel}><option value="действующий">Действующий</option><option value="виртуальный">Виртуальный</option></select></div>
               <button onClick={handleCreate} disabled={newSaving || saving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>{newSaving || saving ? '…' : 'Создать'}</button>
-              {newError && <span style={{ color: '#C93A3E', fontSize: 12.5 }}>{newError}</span>}
+              {newError && <span style={{ color: T.danger, fontSize: 12.5 }}>{newError}</span>}
             </div>
           )}
 
@@ -282,14 +281,14 @@ export default function Counterparties() {
                       <div style={{ padding: '0 8px' }}>{isEdit
                         ? <select value={editDraft.status} onClick={e => e.stopPropagation()} onChange={e => setEditDraft(d => ({ ...d, status: e.target.value }))} style={{ border: '1px solid var(--border-card)', borderRadius: 8, padding: '4px 6px', fontSize: 12 }}><option value="действующий">Действ.</option><option value="виртуальный">Виртуал.</option></select>
                         : <span style={{ background: rel.bg, color: rel.fg, borderRadius: 8, padding: '4px 9px', fontFamily: MONO, fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>{rel.label}</span>}</div>
-                      <div style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '.04em', color: 'var(--text-muted)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.group || ''}>{c.group_is_override && <span style={{ color: '#E89020', marginRight: 3 }}>✎</span>}{c.group || <span style={{ color: 'var(--text-faint)' }}>—</span>}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '.04em', color: 'var(--text-muted)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.group || ''}>{c.group_is_override && <span style={{ color: T.warning, marginRight: 3 }}>✎</span>}{c.group || <span style={{ color: 'var(--text-faint)' }}>—</span>}</div>
                       <div style={{ textAlign: 'center' }}><span title={c.status} style={{ width: 8, height: 8, borderRadius: 2, display: 'inline-block', background: c.status === 'действующий' ? 'var(--income)' : 'var(--text-faint)' }} /></div>
                       <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', textAlign: 'right', padding: '0 8px' }}>{c.op_count || 0}</div>
                       <div style={{ fontFamily: MONO, fontSize: 12, color: c.receivable > 0 ? 'var(--accent)' : 'var(--text-faint)', textAlign: 'right', padding: '0 8px' }}>{c.receivable > 0 ? fmt(c.receivable) : '—'}</div>
-                      <div style={{ fontFamily: MONO, fontSize: 12, color: c.payable > 0 ? '#E89020' : 'var(--text-faint)', textAlign: 'right', padding: '0 8px' }}>{c.payable > 0 ? fmt(c.payable) : '—'}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 12, color: c.payable > 0 ? T.warning : 'var(--text-faint)', textAlign: 'right', padding: '0 8px' }}>{c.payable > 0 ? fmt(c.payable) : '—'}</div>
                       <div style={{ fontFamily: MONO, fontSize: 12, color: c.income_paid > 0 ? 'var(--income)' : 'var(--text-faint)', textAlign: 'right', padding: '0 8px' }}>{c.income_paid > 0 ? fmt(c.income_paid) : '—'}</div>
                       <div style={{ fontFamily: MONO, fontSize: 12, color: c.expense_paid > 0 ? 'var(--text-secondary)' : 'var(--text-faint)', textAlign: 'right', padding: '0 8px' }}>{c.expense_paid > 0 ? fmt(c.expense_paid) : '—'}</div>
-                      <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: c.diff > 0 ? 'var(--income)' : c.diff < 0 ? '#C93A3E' : 'var(--text-faint)', textAlign: 'right', padding: '0 8px' }}>{c.diff ? (c.diff > 0 ? '+' : '−') + fmt(Math.abs(c.diff)) : '—'}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: c.diff > 0 ? 'var(--income)' : c.diff < 0 ? T.danger : 'var(--text-faint)', textAlign: 'right', padding: '0 8px' }}>{c.diff ? (c.diff > 0 ? '+' : '−') + fmt(Math.abs(c.diff)) : '—'}</div>
                       <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)', padding: '0 8px' }}>{fmtDate(c.last_op_date)}</div>
                       <div onClick={e => e.stopPropagation()} style={{ textAlign: 'center' }}>
                         {mayEdit && (isEdit
@@ -300,7 +299,7 @@ export default function Counterparties() {
                   )
                 })}
                 {!shown.length && <div style={{ padding: 26, textAlign: 'center', color: 'var(--text-muted)' }}>Ничего не найдено</div>}
-                {editError && <div style={{ color: '#C93A3E', fontSize: 12.5, padding: '8px' }}>{editError}</div>}
+                {editError && <div style={{ color: T.danger, fontSize: 12.5, padding: '8px' }}>{editError}</div>}
               </div>
             </div>
           )}

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { MONO, UI, PIP, FILL, shortLabel } from '../salesTableKit'
 import { grp } from '../../lib/salesFormat'
+import { T } from '../../lib/tokens'
 import { CARD, PeriodSelect } from './kit'
 import DealBriefCell from '../DealBriefCell'
 
@@ -18,7 +19,7 @@ const amountOf = (d) => (d.amount_with_vat != null ? d.amount_with_vat : d.amoun
 // money_layer → чип статуса (метка + цвет + фон)
 const LAYER_CHIP = {
   'фактические': ['Фактические', '#1F7D5E', '#E6F5EF'],
-  'реализуемые': ['Реализуется', '#B26A0C', 'var(--warning-tint)'],
+  'реализуемые': ['Реализуется', T.warningText, 'var(--warning-tint)'],
   'планируемые': ['Планируется', 'var(--text-secondary)', 'var(--bg-subtle)'],
 }
 function StatusChip({ layer, stage }) {
@@ -48,6 +49,26 @@ const optsFor = (field, fopts, d) => {
   return fopts[field] || []
 }
 const labelOf = (opts, v) => (opts || []).find(o => String(o.value) === String(v))?.label
+
+const fieldStyle = { width: '100%', boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 12, padding: '12px', fontSize: 14, fontFamily: UI, background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none', appearance: 'auto' }
+
+// ВНЕ компонента: если объявлять внутри, при каждом вводе символа функция получает
+// новую идентичность → React ремоунтит <input> → поле теряет фокус после каждой буквы.
+const EditField = ({ label, field, clear, type, form, setForm, fopts, d }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{label}</span>
+    {type === 'text' ? (
+      <input value={form[field]} onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))} style={fieldStyle} />
+    ) : type === 'month' ? (
+      <PeriodSelect value={form[field] || ''} onChange={v => setForm(f => ({ ...f, [field]: v }))} allowQuarter={false} />
+    ) : (
+      <select value={form[field] ?? ''} onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))} style={fieldStyle}>
+        <option value="">{clear || '— не указано —'}</option>
+        {optsFor(field, fopts, d).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    )}
+  </div>
+)
 
 // ── Полноэкранная карточка сделки (§7 / макет 390px): шапка+табы, Обзор, Бриф, Оплаты + правка ──
 function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
@@ -95,22 +116,7 @@ function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
       <span style={{ fontSize: 13.5, fontWeight: strong ? 700 : 600, color: 'var(--text-primary)', flex: 1, textAlign: 'right', wordBreak: 'break-word', fontFamily: strong ? MONO : UI }}>{v ?? '—'}</span>
     </div>
   )
-  const fieldStyle = { width: '100%', boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 12, padding: '12px', fontSize: 14, fontFamily: UI, background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none', appearance: 'auto' }
-  const EditField = ({ label, field, clear, type }) => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
-      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{label}</span>
-      {type === 'text' ? (
-        <input value={form[field]} onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))} style={fieldStyle} />
-      ) : type === 'month' ? (
-        <PeriodSelect value={form[field] || ''} onChange={v => setForm(f => ({ ...f, [field]: v }))} allowQuarter={false} />
-      ) : (
-        <select value={form[field] ?? ''} onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))} style={fieldStyle}>
-          <option value="">{clear || '— не указано —'}</option>
-          {optsFor(field, fopts, d).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-      )}
-    </div>
-  )
+  const ef = { form, setForm, fopts, d }
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 500, background: 'var(--bg-canvas)', overflowY: 'auto', fontFamily: UI, paddingBottom: 84 }}>
@@ -142,15 +148,15 @@ function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
         {editing ? (
           <div style={{ ...CARD, padding: '16px', animation: 'sheetFade .2s ease both' }}>
             <div style={{ ...HDR, marginBottom: 14 }}>Редактирование сделки</div>
-            <EditField label="Название" field="title" type="text" />
-            <EditField label="Агентство" field="agency_id" clear="— прямой договор —" />
-            <EditField label="Рекламодатель" field="advertiser_id" clear="— не указан —" />
-            <EditField label="Плательщик" field="payer_counterparty_id" clear="— по умолчанию —" />
-            <EditField label="Услуга" field="product" clear="— не указана —" />
-            <EditField label="Стадия" field="bitrix_stage" clear="— не указана —" />
-            <EditField label="Продавец" field="sales_rep_id" clear="— не указан —" />
-            <EditField label="Аккаунт" field="account_manager_id" clear="— не указан —" />
-            <EditField label="Период (старт РК)" field="period" type="month" />
+            <EditField {...ef} label="Название" field="title" type="text" />
+            <EditField {...ef} label="Агентство" field="agency_id" clear="— прямой договор —" />
+            <EditField {...ef} label="Рекламодатель" field="advertiser_id" clear="— не указан —" />
+            <EditField {...ef} label="Плательщик" field="payer_counterparty_id" clear="— по умолчанию —" />
+            <EditField {...ef} label="Услуга" field="product" clear="— не указана —" />
+            <EditField {...ef} label="Стадия" field="bitrix_stage" clear="— не указана —" />
+            <EditField {...ef} label="Продавец" field="sales_rep_id" clear="— не указан —" />
+            <EditField {...ef} label="Аккаунт" field="account_manager_id" clear="— не указан —" />
+            <EditField {...ef} label="Период (старт РК)" field="period" type="month" />
           </div>
         ) : (<>
         {tab === 'overview' && (

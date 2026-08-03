@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef, Fragment } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
-import axios from 'axios'
 import Navbar, { can } from '../components/Navbar'
 import { MONO, UI, MultiDrop, IconBtn } from '../components/salesTableKit'
 import useIsMobile from '../components/mobile/useIsMobile'
 import OperationsMobile from '../components/mobile/OperationsMobile'
-
-const api = (token) => axios.create({ baseURL: '/api', headers: { Authorization: `Bearer ${token}` }, paramsSerializer: { indexes: null } })
-const getPerms = () => { if (typeof window === 'undefined') return {}; try { return JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { return {} } }
+import { PeriodSelect } from '../components/PeriodSelect'
+import { makeApi as api } from '../lib/http'
+import { getPermissions } from '../lib/auth'
+import { T } from '../lib/tokens'
 
 const STATUSES = ['ОПЛАЧЕНО', 'ПЛАН ОПЛАТ', 'ПЛАН ПОСТУПЛЕНИЙ']
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
@@ -19,8 +19,8 @@ const PAGE_SIZES = [50, 100, 300, 500]
 const STATUS_CHIP = {
   'ОПЛАЧЕНО': ['#E6F5EF', '#1F7D5E', 'var(--income)'],
   'ПЛАН ОПЛАТ': ['#EEF1FE', '#3A50BE', 'var(--dot-expense)'],
-  'ПЛАН ПОСТУПЛЕНИЙ': ['var(--warning-tint)', '#B26A0C', 'var(--dot-current-dz)'],
-  'ОЖИДАЕТ': ['var(--warning-tint)', '#B26A0C', 'var(--dot-current-dz)'],
+  'ПЛАН ПОСТУПЛЕНИЙ': ['var(--warning-tint)', T.warningText, 'var(--dot-current-dz)'],
+  'ОЖИДАЕТ': ['var(--warning-tint)', T.warningText, 'var(--dot-current-dz)'],
 }
 const statusChip = (s) => STATUS_CHIP[s] || ['var(--bg-subtle)', 'var(--text-secondary)', 'var(--text-faint)']
 
@@ -29,7 +29,6 @@ const fmt = (n) => (n ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) : '
 const fmt2 = (n) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0)
 const fmtDate = (d) => { if (!d) return ''; const [y, m, dd] = String(d).slice(0, 10).split('-'); return dd ? `${dd}.${m}.${y.slice(2)}` : d }
 const emptyForm = () => ({ date: new Date().toISOString().slice(0, 10), status: 'ОПЛАЧЕНО', income: 0, expense: 0, bank: 'АльфаБанк', period: '', vat_rate: 0, article_id: '', counterparty_id: '', ds_num: '', invoice: '', invoice_date: '', description: '', document_link: '' })
-const isQuarter = (p) => /^Q[1-4]\s*\d{4}$/.test(p || '')
 
 const CARD = { background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)' }
 const lbl = { fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5, display: 'block' }
@@ -44,20 +43,6 @@ function Seg({ options, value, onChange, mono }) {
         return <button key={String(o.value)} type="button" onClick={() => onChange(o.value)}
           style={{ flex: '0 0 auto', border: 'none', borderRadius: 7, padding: '0 12px', cursor: 'pointer', fontFamily: mono ? MONO : UI, fontSize: 12, fontWeight: on ? 700 : 600, background: on ? 'var(--accent-tint)' : 'transparent', color: on ? 'var(--accent)' : 'var(--text-secondary)' }}>{o.label}</button>
       })}
-    </div>
-  )
-}
-
-// поле периода: сегмент Месяц|Квартал + значение
-function PeriodField({ value, onChange }) {
-  const q = isQuarter(value)
-  const [mode, setMode] = useState(q ? 'quarter' : 'month')
-  return (
-    <div style={{ display: 'flex', gap: 6, alignItems: 'stretch', height: 36 }}>
-      <Seg options={[{ value: 'month', label: 'Месяц' }, { value: 'quarter', label: 'Квартал' }]} value={mode} onChange={m => { setMode(m); onChange('') }} />
-      {mode === 'month'
-        ? <input type="month" value={q ? '' : value} onChange={e => onChange(e.target.value)} style={{ ...inp, flex: 1, minWidth: 0 }} />
-        : <input placeholder="Q3 2025" value={q ? value : ''} onChange={e => onChange(e.target.value)} style={{ ...inp, flex: 1, minWidth: 0, fontFamily: MONO }} />}
     </div>
   )
 }
@@ -91,12 +76,17 @@ function SingleSelect({ value, onChange, options, placeholder, emptyLabel }) {
 }
 
 // Единый набор полей формы (создание/редактирование)
+// Ячейка формы. ВЫНЕСЕНА из OpFields на модульный уровень: если объявлять её внутри
+// компонента, при каждом рендере (нажатии клавиши в поле) она получает новую
+// идентичность функции → React размонтирует/монтирует <Cell> с input'ом заново →
+// поле теряет фокус после каждой цифры. Стабильная ссылка это устраняет.
+const Cell = ({ label, opt, accent, children }) => (
+  <div><span style={lbl}>{label}{opt ? <span style={{ color: accent === 'warn' ? T.warningText : 'var(--text-faint)', marginLeft: 6 }}>необяз.</span> : ''}</span>{children}</div>
+)
+
 function OpFields({ f, set, articles, counterparties, accent }) {
   const artOpts = articles.map(a => ({ value: a.id, label: a.name }))
   const cpOpts = counterparties.map(c => ({ value: c.id, label: c.name }))
-  const Cell = ({ label, opt, children }) => (
-    <div><span style={lbl}>{label}{opt ? <span style={{ color: accent === 'warn' ? '#B26A0C' : 'var(--text-faint)', marginLeft: 6 }}>необяз.</span> : ''}</span>{children}</div>
-  )
   const sel = (val, onCh, opts, ph) => (
     <select value={val} onChange={e => onCh(e.target.value)} style={inp}><option value="">{ph}</option>{opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
   )
@@ -104,11 +94,11 @@ function OpFields({ f, set, articles, counterparties, accent }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 14 }}>
         <Cell label="Статус">{sel(f.status, v => set({ status: v }), STATUSES.map(s => ({ value: s, label: s })), 'статус')}</Cell>
-        <Cell label="Дата" opt>{<input type="date" value={f.date} onChange={e => set({ date: e.target.value })} style={{ ...inp, ...(accent === 'warn' ? { borderColor: 'var(--dot-current-dz)' } : {}) }} />}</Cell>
+        <Cell label="Дата" opt accent={accent}>{<input type="date" value={f.date} onChange={e => set({ date: e.target.value })} style={{ ...inp, ...(accent === 'warn' ? { borderColor: 'var(--dot-current-dz)' } : {}) }} />}</Cell>
         <Cell label="Поступление"><input inputMode="numeric" value={f.income || ''} onChange={e => set({ income: +e.target.value.replace(/\D/g, '') || 0 })} placeholder="0 ₽" style={{ ...inp, fontFamily: MONO }} /></Cell>
         <Cell label="Списание"><input inputMode="numeric" value={f.expense || ''} onChange={e => set({ expense: +e.target.value.replace(/\D/g, '') || 0 })} placeholder="0 ₽" style={{ ...inp, fontFamily: MONO }} /></Cell>
-        <Cell label="Банк" opt>{sel(f.bank, v => set({ bank: v }), BANKS.map(b => ({ value: b, label: b })), 'не указан')}</Cell>
-        <Cell label="Период"><PeriodField value={f.period} onChange={v => set({ period: v })} /></Cell>
+        <Cell label="Банк" opt accent={accent}>{sel(f.bank, v => set({ bank: v }), BANKS.map(b => ({ value: b, label: b })), 'не указан')}</Cell>
+        <Cell label="Период"><PeriodSelect dense value={f.period} onChange={v => set({ period: v })} /></Cell>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 14 }}>
         <Cell label="НДС"><Seg mono options={VAT_OPTIONS.map(v => ({ value: v, label: v + '%' }))} value={f.vat_rate} onChange={v => set({ vat_rate: v })} /></Cell>
@@ -177,7 +167,7 @@ export default function Operations2() {
 
   useEffect(() => {
     if (!tok()) { router.push('/login'); return }
-    try { setPerms(getPerms()) } catch (e) {}
+    try { setPerms(getPermissions()) } catch (e) {}
     try { const h = JSON.parse(localStorage.getItem('ops2_hidden')); if (Array.isArray(h)) setHidden(new Set(h)) } catch (e) {}
     Promise.all([api(tok()).get('/articles/'), api(tok()).get('/counterparties/?limit=1000')])
       .then(([a, c]) => { setArticles(a.data?.items || a.data || []); setCounterparties(c.data?.items || c.data || []) }).catch(() => {})
@@ -323,7 +313,7 @@ export default function Operations2() {
       case 'ds_num': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.ds_num || '—'}</span>
       case 'invoice': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.invoice || '—'}</span>
       case 'invoice_date': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{fmtDate(o.invoice_date) || '—'}</span>
-      case 'doc': return o.document_link ? <a href={o.document_link} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} title="Открыть документ" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 8, background: 'var(--accent-tint)', color: 'var(--accent)' }}><svg width="14" height="14" viewBox="0 0 24 24" style={IcoStroke}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg></a> : <span style={{ color: '#C3C9D8' }}>—</span>
+      case 'doc': return o.document_link ? <a href={/^https?:\/\//i.test(o.document_link) ? o.document_link : undefined} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} title="Открыть документ" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 8, background: 'var(--accent-tint)', color: 'var(--accent)' }}><svg width="14" height="14" viewBox="0 0 24 24" style={IcoStroke}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg></a> : <span style={{ color: '#C3C9D8' }}>—</span>
       case 'description': return <span title={o.description} style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.description || '—'}</span>
       case 'actions': return canEdit ? <span style={{ display: 'inline-flex', gap: 4 }}>
         <span onClick={() => dupOp(o)} title="Дублировать" className="op-ico" style={{ color: 'var(--text-muted)' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg></span>
@@ -442,7 +432,7 @@ export default function Operations2() {
             {editing && canEdit && (
               <div style={{ background: '#FFFCF7', border: '1px solid #F0D7AE', borderRadius: 14, padding: '18px 20px', margin: '10px 0 4px', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                  <span style={{ width: 28, height: 28, borderRadius: 9, background: 'var(--warning-tint)', color: '#B26A0C', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></span>
+                  <span style={{ width: 28, height: 28, borderRadius: 9, background: 'var(--warning-tint)', color: T.warningText, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></span>
                   <span style={{ fontSize: 15, fontWeight: 700, flex: 1 }}>Редактирование #{editing.id}</span>
                   <span onClick={() => setEditing(null)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18 }}>✕</span>
                 </div>
@@ -459,16 +449,16 @@ export default function Operations2() {
                 <div style={{ minWidth: 150, borderRight: '1px solid #DDE3F5', paddingRight: 14 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: '#3A50BE', marginBottom: 6 }}>Выбрано: {selIds.length}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: 'var(--income)' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--income)' }} />+{fmt2(selIncome)} ₽</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: 'var(--text-primary)' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: '#8B93A6' }} />−{fmt2(selExpense)} ₽</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: '1px solid #DDE3F5', color: (selIncome - selExpense) >= 0 ? 'var(--income)' : '#C93A3E' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: (selIncome - selExpense) >= 0 ? 'var(--income)' : '#C93A3E' }} />сальдо {(selIncome - selExpense) >= 0 ? '+' : '−'}{fmt2(Math.abs(selIncome - selExpense))} ₽</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: 'var(--text-primary)' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: T.expense }} />−{fmt2(selExpense)} ₽</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: '1px solid #DDE3F5', color: (selIncome - selExpense) >= 0 ? 'var(--income)' : T.danger }}><span style={{ width: 6, height: 6, borderRadius: 2, background: (selIncome - selExpense) >= 0 ? 'var(--income)' : T.danger }} />{(selIncome - selExpense) >= 0 ? '+' : '−'}{fmt2(Math.abs(selIncome - selExpense))} ₽</div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', width: 148, flexShrink: 0 }}>
                   <span style={lbl}>Дата</span>
                   <input type="date" value={bulk.date} onChange={e => setBulk(b => ({ ...b, date: e.target.value }))} style={{ ...inp, width: '100%' }} />
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', width: 210, flexShrink: 0 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', width: 300, flexShrink: 0 }}>
                   <span style={lbl}>Период</span>
-                  <PeriodField value={bulk.period} onChange={v => setBulk(b => ({ ...b, period: v }))} />
+                  <PeriodSelect dense value={bulk.period} onChange={v => setBulk(b => ({ ...b, period: v }))} />
                 </div>
                 {[['Статус', 'status', STATUSES.map(s => ({ value: s, label: s })), 150], ['Банк', 'bank', BANKS.map(b => ({ value: b, label: b })), 140], ['НДС', 'vat_rate', VAT_OPTIONS.map(v => ({ value: v, label: v + '%' })), 112], ['Статья', 'article_id', articles.map(a => ({ value: a.id, label: a.name })), 160], ['Контрагент', 'counterparty_id', counterparties.map(c => ({ value: c.id, label: c.name })), 190]].map(([label, k, opts, w]) => (
                   <div key={k} style={{ display: 'flex', flexDirection: 'column', width: w, flexShrink: 0 }}>
@@ -480,7 +470,7 @@ export default function Operations2() {
                 ))}
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
                   <button onClick={applyBulk} disabled={saving} style={{ height: 38, boxSizing: 'border-box', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '0 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>Применить к {selIds.length}</button>
-                  <button onClick={delBulk} disabled={saving} title={`Удалить ${selIds.length}`} aria-label="Удалить" style={{ width: 38, height: 38, flexShrink: 0, background: 'var(--bg-card)', border: '1px solid #F3C9CC', color: '#C93A3E', borderRadius: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>
+                  <button onClick={delBulk} disabled={saving} title={`Удалить ${selIds.length}`} aria-label="Удалить" style={{ width: 38, height: 38, flexShrink: 0, background: 'var(--bg-card)', border: '1px solid #F3C9CC', color: T.danger, borderRadius: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>
                   <button onClick={() => setSel({})} title="Снять выделение" aria-label="Снять выделение" style={{ width: 38, height: 38, flexShrink: 0, background: 'var(--bg-card)', border: '1px solid var(--border-card)', color: 'var(--text-secondary)', borderRadius: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M18 6L6 18" /><path d="M6 6l12 12" /></svg></button>
                 </div>
               </div>

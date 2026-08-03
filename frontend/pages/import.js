@@ -1,15 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
-import axios from 'axios'
 import Navbar from '../components/Navbar'
 import Head from 'next/head'
-
-function getPermissions() {
-  if (typeof window === 'undefined') return {}
-  try { return JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { return {} }
-}
-
-const can = (perms, section, action = 'view') => !!(perms && perms[section] && perms[section][action])
+import { makeApi } from '../lib/http'
+import { getPermissions, can } from '../lib/auth'
 
 const FIELD_LABELS = {
   date: 'Дата', status: 'Статус', income: 'Доход', expense: 'Расход', bank: 'Банк',
@@ -106,11 +100,8 @@ export default function Import() {
       const token = localStorage.getItem('token')
       const formData = new FormData()
       formData.append('file', file)
-      const res = await axios.post('/api/operations/import', formData, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'multipart/form-data'
-        }
+      const res = await makeApi(token).post('/operations/import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       })
       setResult(res.data.message)
     } catch (e) {
@@ -131,11 +122,8 @@ export default function Import() {
       const token = localStorage.getItem('token')
       const formData = new FormData()
       formData.append('file', syncFile)
-      const res = await axios.post('/api/operations/import/preview', formData, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'multipart/form-data'
-        }
+      const res = await makeApi(token).post('/operations/import/preview', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       })
       setPreview(res.data)
     } catch (e) {
@@ -161,10 +149,10 @@ export default function Import() {
     setSyncError(null)
     try {
       const token = localStorage.getItem('token')
-      const res = await axios.post('/api/operations/import/apply', {
+      const res = await makeApi(token).post('/operations/import/apply', {
         import_id: preview.import_id,
         confirmed_keys
-      }, { headers: { Authorization: `Bearer ${token}` } })
+      })
       setApplyResult(res.data)
       setPreview(null)
       setSyncFile(null)

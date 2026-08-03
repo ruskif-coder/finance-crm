@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
-import axios from 'axios'
 import { MONO, UI } from '../salesTableKit'
-
-const api = (t) => axios.create({ baseURL: '/api', headers: { Authorization: `Bearer ${t}` } })
+import { makeApi as api } from '../../lib/http'
+import { bankColor } from '../../lib/salesFormat'
+import { T } from '../../lib/tokens'
 
 const rub = (n) => (n || n === 0) ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) + ' ₽' : '—'
 const mln = (n) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format((n || 0) / 1e6)
@@ -12,13 +12,10 @@ const fmtMonth = (p) => { if (!p) return ''; const [y, m] = String(p).split('-')
 const periodShort = (p) => String(p || '').replace(/^(\d{4})-(\d{2})$/, '$1-$2')
 const normalizeUrl = (u) => !u ? null : (/^https?:\/\//i.test(u) ? u : 'https://' + u)
 
-const BANK_HEX = { 'АльфаБанк': '#E8453F', 'ОПТ Банк': '#2FB8A8', 'Совкомбанк': '#8B93A6', 'Наличные': '#8B7BE8' }
-const bankColor = (b) => BANK_HEX[b] || '#C3C9D8'
-
 const STATUS_META = {
-  'ОПЛАЧЕНО': { label: 'исполнено', bg: '#E6F5EF', fg: '#1F7D5E', dot: '#2FA37C' },
-  'ПЛАН ОПЛАТ': { label: 'план оплат', bg: '#FBF0DE', fg: '#B26A0C', dot: '#E89020' },
-  'ПЛАН ПОСТУПЛЕНИЙ': { label: 'план поступл.', bg: '#ECEFFD', fg: '#4F6CE6', dot: '#4F6CE6' },
+  'ОПЛАЧЕНО': { label: 'исполнено', bg: '#E6F5EF', fg: '#1F7D5E', dot: T.income },
+  'ПЛАН ОПЛАТ': { label: 'план оплат', bg: T.warningTint, fg: T.warningText, dot: T.warning },
+  'ПЛАН ПОСТУПЛЕНИЙ': { label: 'план поступл.', bg: T.accentTint, fg: T.accent, dot: T.accent },
 }
 const stMeta = (s) => STATUS_META[s] || { label: (s || '').toLowerCase(), bg: 'var(--bg-subtle)', fg: 'var(--text-secondary)', dot: 'var(--text-faint)' }
 
@@ -162,7 +159,7 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
             <div key={i} style={{ background: 'var(--bg-subtle)', borderRadius: 12, padding: '12px 12px 4px', marginBottom: 10 }}>
               <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                 <input value={b.bank_name || ''} onChange={e => setBank(i, 'bank_name', e.target.value)} placeholder="Банк" style={{ ...inpS, flex: 1 }} />
-                <button onClick={() => delBank(i)} aria-label="Удалить счёт" style={{ width: 38, flexShrink: 0, border: '1px solid #F3C9CC', background: 'var(--bg-card)', color: '#C93A3E', borderRadius: 10, cursor: 'pointer' }}>✕</button>
+                <button onClick={() => delBank(i)} aria-label="Удалить счёт" style={{ width: 38, flexShrink: 0, border: '1px solid #F3C9CC', background: 'var(--bg-card)', color: T.danger, borderRadius: 10, cursor: 'pointer' }}>✕</button>
               </div>
               <div style={{ marginBottom: 8 }}><input value={b.rs || ''} onChange={e => setBank(i, 'rs', e.target.value)} placeholder="Р/С" style={{ ...inpS, fontFamily: MONO }} /></div>
               <div style={{ marginBottom: 8 }}><input value={b.ks || ''} onChange={e => setBank(i, 'ks', e.target.value)} placeholder="К/С" style={{ ...inpS, fontFamily: MONO }} /></div>
@@ -170,7 +167,7 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
             </div>
           ))}
           <button onClick={addBank} style={{ width: '100%', border: '1px dashed var(--border-card)', background: 'var(--bg-card)', color: 'var(--accent)', borderRadius: 10, padding: '10px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>+ Добавить счёт</button>
-          {saveErr && <div style={{ color: '#C93A3E', fontSize: 12.5, marginTop: 10 }}>{saveErr}</div>}
+          {saveErr && <div style={{ color: T.danger, fontSize: 12.5, marginTop: 10 }}>{saveErr}</div>}
         </div>
         <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 14px', background: 'var(--bg-card)', borderTop: '1px solid var(--border-inner)', display: 'flex', gap: 8 }}>
           <button onClick={onSave} disabled={saving} style={{ flex: 1, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : 'Сохранить'}</button>
@@ -207,8 +204,8 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
         {[
           { l: 'Операций всего', v: stats.op_count || 0, sub: `${planCnt} плана · ${factCnt} факт`, c: 'var(--text-primary)', br: true, bb: true },
           { l: 'Дебиторка', v: mln(stats.receivable), sub: stats.receivable > 0 ? 'есть задолженность' : 'нет просрочки', c: 'var(--accent)', bb: true },
-          { l: 'Кредиторка', v: mln(stats.payable), sub: 'млн ₽', c: '#E89020', br: true },
-          { l: 'Сальдо', v: (saldo < 0 ? '−' : '') + mln(Math.abs(saldo)), sub: `млн ₽ · ${saldo < 0 ? 'мы должны' : 'нам должны'}`, c: saldo < 0 ? '#C93A3E' : 'var(--income)' },
+          { l: 'Кредиторка', v: mln(stats.payable), sub: 'млн ₽', c: T.warning, br: true },
+          { l: 'Сальдо', v: (saldo < 0 ? '−' : '') + mln(Math.abs(saldo)), sub: `млн ₽ · ${saldo < 0 ? 'мы должны' : 'нам должны'}`, c: saldo < 0 ? T.danger : 'var(--income)' },
         ].map((k, i) => (
           <div key={i} style={{ padding: '14px 4px 14px 0', borderRight: k.br ? '1px solid var(--border-row)' : 'none', borderBottom: k.bb ? '1px solid var(--border-row)' : 'none', paddingLeft: (i % 2) ? 14 : 0 }}>
             <div style={monoLbl}>{k.l}</div>
@@ -332,7 +329,7 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
                   <div key={c.id} style={{ ...CARD, padding: '14px 16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                       <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{c.contract_number || '—'}</span>
-                      {exp && <span style={{ marginLeft: 'auto', background: 'var(--danger-tint)', color: '#C93A3E', borderRadius: 6, padding: '2px 8px', fontSize: 10.5, fontWeight: 700 }}>истёк</span>}
+                      {exp && <span style={{ marginLeft: 'auto', background: 'var(--danger-tint)', color: T.danger, borderRadius: 6, padding: '2px 8px', fontSize: 10.5, fontWeight: 700 }}>истёк</span>}
                     </div>
                     <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, padding: '2px 12px' }}>
                       {[

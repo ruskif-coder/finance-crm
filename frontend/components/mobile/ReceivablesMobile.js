@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
 import { grp, mln, fmtDateShort, fmtDateFull } from '../../lib/salesFormat'
+import { T } from '../../lib/tokens'
 import { CARD, monoLbl, Marker } from './kit'
 
 // Мобильная дебиторка (< 1024px) по хендоффу design_handoff_receivables_mobile.
@@ -12,10 +13,10 @@ const fullDate = fmtDateFull
 
 // Цвета типов (из хендоффа)
 const C = {
-  plan: '#5B7CF0', planTxt: '#4F6CE6', planTint: '#ECEFFD',
-  cur: '#E89020', curTxt: '#C27510', curTint2: '#B26A0C', curTint: '#FBF0DE',
-  over: '#E5484D', overTxt: '#C93A3E', overTint: '#FBE4E6',
-  accent: '#4F6CE6',
+  plan: '#5B7CF0', planTxt: T.accent, planTint: T.accentTint,
+  cur: T.warning, curTxt: '#C27510', curTint2: T.warningText, curTint: T.warningTint,
+  over: '#E5484D', overTxt: T.danger, overTint: '#FBE4E6',
+  accent: T.accent,
 }
 const TYPE = {
   future: { ru: 'план', bar: C.plan, chipBg: C.planTint, chipFg: C.planTxt, amt: 'var(--text-primary)' },

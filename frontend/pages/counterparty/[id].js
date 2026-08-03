@@ -1,17 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/router'
-import axios from 'axios'
 import Link from 'next/link'
 import Head from 'next/head'
 import Navbar from '../../components/Navbar'
 import useIsMobile from '../../components/mobile/useIsMobile'
 import CounterpartyCardMobile from '../../components/mobile/CounterpartyCardMobile'
 import CounterpartyCardDesktop, { T as CT } from '../../components/counterparty/CounterpartyCard'
-
-const api = (token) => axios.create({
-  baseURL: '/api',
-  headers: { Authorization: `Bearer ${token}` }
-})
+import { makeApi as api } from '../../lib/http'
+import { bankColor } from '../../lib/salesFormat'
 
 const fmt = (n) => {
   if (!n && n !== 0) return '—'
@@ -24,8 +20,6 @@ const fmtMonth = (p) => {
   const [y, m] = p.split('-')
   return `${MONTHS_SHORT[parseInt(m, 10) - 1]} ${y.slice(2)}`
 }
-const BANK_HEX = { 'АльфаБанк': '#E8453F', 'ОПТ Банк': '#2FB8A8', 'Совкомбанк': '#8B93A6', 'Наличные': '#8B7BE8' }
-const bankColorOf = (n) => BANK_HEX[n] || '#C3C9D8'
 
 // Дата окончания договора хранится текстом (end_date_text) — парсим ISO и dd.mm.yyyy,
 // произвольный текст («Бессрочно») отдаём как null (без бейджа срока).
@@ -394,7 +388,7 @@ export default function CounterpartyCard() {
         document: (c.document_link || c.attached_filename) ? 'есть' : '—',
       })),
       opsTotal,
-      ops: ops.map(o => { const m = STL[o.status] || { l: o.status, c: CT.t3 }; return { date: o.date ? fmtDate(o.date) : '—', status: m.l, statusColor: m.c, income: o.income || null, expense: o.expense || null, dz: null, bank: o.bank || 'не указан', bankColor: bankColorOf(o.bank), period: o.period || '—', item: o.article || '—', ds: o.ds_num || '—', account: o.invoice || '—', accountDate: o.invoice_date ? fmtDate(o.invoice_date) : '—' } }),
+      ops: ops.map(o => { const m = STL[o.status] || { l: o.status, c: CT.t3 }; return { date: o.date ? fmtDate(o.date) : '—', status: m.l, statusColor: m.c, income: o.income || null, expense: o.expense || null, dz: null, bank: o.bank || 'не указан', bankColor: bankColor(o.bank), period: o.period || '—', item: o.article || '—', ds: o.ds_num || '—', account: o.invoice || '—', accountDate: o.invoice_date ? fmtDate(o.invoice_date) : '—' } }),
     }
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>

@@ -1,24 +1,18 @@
 import Navbar, { can, firstAllowedHref } from '../components/Navbar'
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useRouter } from 'next/router'
-import axios from 'axios'
 import Head from 'next/head'
 import { motion, useMotionValue, useTransform, animate, useReducedMotion } from 'framer-motion'
 import { MONO, UI, IconBtn } from '../components/salesTableKit'
-import { bankColor } from '../lib/salesFormat'
+import { bankColor, signRub } from '../lib/salesFormat'
+import { makeApi as api } from '../lib/http'
+import { T } from '../lib/tokens'
 import useIsMobile from '../components/mobile/useIsMobile'
 import CashflowMobile from '../components/mobile/CashflowMobile'
-
-// ── API ──────────────────────────────────────────────────────────
-const api = (token) => axios.create({
-  baseURL: '/api',
-  headers: { Authorization: `Bearer ${token}` },
-})
 
 // ── Форматтеры ───────────────────────────────────────────────────
 const RUB = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0))
 const fmtRub = (n) => `${RUB(n)} ₽`
-const signRub = (n) => `${n >= 0 ? '+' : '−'}${RUB(Math.abs(n))} ₽`
 // «40,37 млн»
 const mln2 = (n) => (n / 1e6).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 // «27,4 млн» (одна десятая)
@@ -58,13 +52,13 @@ const chartScale = (maxVal) => Math.max(1e6, Math.ceil((maxVal || 0) * 1.2 / 1e6
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
 
 // ── Цвета баров ──────────────────────────────────────────────────
-const INCOME = '#2FA37C'
-const OUTFLOW = '#8B93A6'
+const INCOME = T.income
+const OUTFLOW = T.expense
 const EMPTY = 'var(--border-inner)'
-const FACT = '#4F6CE6'
-const FORECAST = '#A9B6F2'
-const WARN_TXT = '#B26A0C'
-const DANGER_TXT = '#C93A3E'
+const FACT = T.accent
+const FORECAST = T.accentSoft
+const WARN_TXT = T.warningText
+const DANGER_TXT = T.danger
 
 const CELLS = 14
 const WEEK_OFF = [-0.375, -0.125, 0.125, 0.375]
@@ -597,7 +591,7 @@ export default function DashboardV2() {
                       return (
                         <div key={m.period}>
                           <div onClick={() => setExpanded(open ? null : m.period)}
-                            style={{ ...GRID, padding: '11px 8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', cursor: 'pointer', background: open ? '#F6F8FF' : 'transparent', transition: 'background .12s' }}
+                            style={{ ...GRID, padding: '11px 8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', cursor: 'pointer', background: open ? T.tipBg : 'transparent', transition: 'background .12s' }}
                             onMouseEnter={e => { if (!open) e.currentTarget.style.background = 'var(--bg-subtle)' }}
                             onMouseLeave={e => { if (!open) e.currentTarget.style.background = 'transparent' }}>
                             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{formatPeriod(m.period)}</span>

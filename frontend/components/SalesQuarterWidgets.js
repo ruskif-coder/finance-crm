@@ -95,7 +95,7 @@ export default function SalesQuarterWidgets({
             {canViewOthers ? (
               <select value={repId} onChange={e => setRepId(e.target.value)} style={{ ...selBox, flex: 1, minWidth: 0, padding: '11px 12px' }}>
                 <option value="">— я / сотрудник —</option>
-                {(reps || []).map(r => <option key={r.id} value={r.id}>{r.is_head ? '★ ' : ''}{r.name}{r.is_head ? ' · мастер-сейлз' : ''}{r.linked ? '' : ' (без юзера)'}</option>)}
+                {(reps || []).map(r => <option key={r.id} value={r.id}>{r.is_head ? '★ ' : ''}{r.name}{r.linked ? '' : ' (без юзера)'}</option>)}
               </select>
             ) : (
               <div style={{ ...selBox, flex: 1, minWidth: 0, padding: '11px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'default' }}>{data?.rep || 'Мои сделки'}</div>
@@ -197,7 +197,7 @@ export default function SalesQuarterWidgets({
             {canViewOthers && (
               <select className="qw-sel" value={repId} onChange={e => setRepId(e.target.value)} style={selBox}>
                 <option value="">— я / сотрудник —</option>
-                {(reps || []).map(r => <option key={r.id} value={r.id}>{r.is_head ? '★ ' : ''}{r.name}{r.is_head ? ' · мастер-сейлз' : ''}{r.linked ? '' : ' (без юзера)'}</option>)}
+                {(reps || []).map(r => <option key={r.id} value={r.id}>{r.is_head ? '★ ' : ''}{r.name}{r.linked ? '' : ' (без юзера)'}</option>)}
               </select>
             )}
             <select className="qw-sel" value={quarter} onChange={e => setQuarter(e.target.value)} style={selBox}>

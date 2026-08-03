@@ -195,7 +195,13 @@ export default function SalesDashboard2() {
       const r = await api.get('/sales/dashboard/bonus', { ...auth(), params })
       setData(r.data)
       loadDeals(r.data.rep_ids)
-      if (r.data.can_view_others && reps.length === 0) api.get('/sales/reps', auth()).then(rr => setReps(rr.data.items || [])).catch(() => {})
+      // РОП (is_head, звёздочка) — первым в списке; остальные в исходном порядке.
+      // По умолчанию (админ/РОП без выбранного сотрудника) показываем первого — РОП.
+      if (r.data.can_view_others && reps.length === 0) api.get('/sales/reps', auth()).then(rr => {
+        const items = (rr.data.items || []).slice().sort((a, b) => (b.is_head ? 1 : 0) - (a.is_head ? 1 : 0))
+        setReps(items)
+        if (!repId && items.length) setRepId(String(items[0].id))
+      }).catch(() => {})
     } catch (e) { if (e.response?.status === 401) return router.push('/login'); setErr(e.response?.data?.detail || 'Ошибка загрузки') }
     finally { setLoading(false) }
   }

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/router'
 import { MONO, UI } from '../salesTableKit'
 import { grp } from '../../lib/salesFormat'
+import { T } from '../../lib/tokens'
 import { CARD, Marker } from './kit'
 import BottomSheet from './BottomSheet'
 import DirectoryMobile, { FilterChip } from './DirectoryMobile'
@@ -12,8 +13,8 @@ const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
 // тип контрагента (relation) → чип
 const REL_META = {
   'заказчик': { label: 'Заказчик', bg: 'var(--accent-tint)', fg: 'var(--accent)' },
-  'поставщик': { label: 'Поставщик', bg: '#FBF0DE', fg: '#B26A0C' },
-  'смешенный': { label: 'Смешанный', bg: '#F1EDFC', fg: '#7B62D6' },
+  'поставщик': { label: 'Поставщик', bg: T.warningTint, fg: T.warningText },
+  'смешенный': { label: 'Смешанный', bg: '#F1EDFC', fg: T.mixed },
 }
 const relMeta = (r) => REL_META[r] || { label: 'не заполнен', bg: 'var(--bg-subtle)', fg: 'var(--text-faint)' }
 // вид (status) → цвет маркера
@@ -22,7 +23,7 @@ const vidColor = (s) => s === 'действующий' ? 'var(--income)' : 'var(
 const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }
 
 function DiffValue({ v }) {
-  const col = v > 0 ? 'var(--income)' : v < 0 ? '#C93A3E' : 'var(--text-faint)'
+  const col = v > 0 ? 'var(--income)' : v < 0 ? T.danger : 'var(--text-faint)'
   const sign = v > 0 ? '+' : v < 0 ? '−' : ''
   return <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: col, whiteSpace: 'nowrap' }}>{v ? `${sign}${fmt(v)}` : '—'}</span>
 }
@@ -59,7 +60,7 @@ function CpCard({ c, open, onToggle, onOpen, onEdit, canEdit }) {
               ['Поступления', c.income_paid > 0 ? fmt(c.income_paid) : '—', 'var(--income)'],
               ['Выплаты', c.expense_paid > 0 ? fmt(c.expense_paid) : '—', 'var(--text-secondary)'],
               ['Дебиторка', c.receivable > 0 ? fmt(c.receivable) : '—', 'var(--accent)'],
-              ['Кредиторка', c.payable > 0 ? fmt(c.payable) : '—', '#E89020'],
+              ['Кредиторка', c.payable > 0 ? fmt(c.payable) : '—', T.warning],
               ['Договоров', c.contracts_count || 0, 'var(--text-primary)'],
               ['Операций', c.op_count || 0, 'var(--text-primary)'],
               ['Отсрочка', `${c.term_days_effective} дн.${c.term_days_is_default ? ' (по умолч.)' : ''}`, 'var(--text-primary)'],

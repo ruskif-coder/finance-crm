@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
 import { CARD, Marker } from './kit'
+import { T } from '../../lib/tokens'
 import BottomSheet from './BottomSheet'
 import DirectoryMobile, { FilterChip } from './DirectoryMobile'
 
@@ -18,9 +19,9 @@ const PAYMENT_TERM_CONDITIONS = ['С даты УПД', 'С даты АКТ', 'П
 // формат сотрудничества → цвет чипа
 const FMT_META = {
   'Клиент': { bg: 'var(--accent-tint)', fg: 'var(--accent)' },
-  'Подрядчик': { bg: '#FBF0DE', fg: '#B26A0C' },
-  'Агентство КЛ': { bg: '#F1EDFC', fg: '#7B62D6' },
-  'Агентство ПД': { bg: '#F1EDFC', fg: '#7B62D6' },
+  'Подрядчик': { bg: T.warningTint, fg: T.warningText },
+  'Агентство КЛ': { bg: '#F1EDFC', fg: T.mixed },
+  'Агентство ПД': { bg: '#F1EDFC', fg: T.mixed },
   'Аптека': { bg: '#E6F5EF', fg: 'var(--income)' },
   'Паблишер': { bg: '#E9F0FB', fg: '#3B6FD4' },
   'Рекламная система': { bg: '#FDEBF0', fg: '#C43C6B' },
@@ -80,7 +81,7 @@ function CtCard({ c, open, onToggle, onEdit, onDownload, canEdit }) {
               <button onClick={() => onDownload(c.id, c.attached_filename)} style={{ flex: 1, background: 'var(--accent-tint)', color: 'var(--accent)', border: 'none', borderRadius: 12, padding: '12px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>📥 Документ</button>
             )}
             {!c.attached_filename && c.document_link && (
-              <a href={c.document_link} target="_blank" rel="noopener noreferrer" style={{ flex: 1, background: 'var(--accent-tint)', color: 'var(--accent)', border: 'none', borderRadius: 12, padding: '12px', fontSize: 14, fontWeight: 700, cursor: 'pointer', textAlign: 'center', textDecoration: 'none' }}>🔗 Документ</a>
+              <a href={/^https?:\/\//i.test(c.document_link) ? c.document_link : undefined} target="_blank" rel="noopener noreferrer" style={{ flex: 1, background: 'var(--accent-tint)', color: 'var(--accent)', border: 'none', borderRadius: 12, padding: '12px', fontSize: 14, fontWeight: 700, cursor: 'pointer', textAlign: 'center', textDecoration: 'none' }}>🔗 Документ</a>
             )}
             {canEdit && (
               <button onClick={() => onEdit(c)} style={{ flex: c.attached_filename || c.document_link ? '0 0 auto' : 1, minWidth: 46, background: c.attached_filename || c.document_link ? 'var(--bg-card)' : 'var(--accent)', color: c.attached_filename || c.document_link ? 'var(--text-secondary)' : '#fff', border: c.attached_filename || c.document_link ? '1px solid var(--border-card)' : 'none', borderRadius: 12, padding: '12px', height: 44, fontSize: 14, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>

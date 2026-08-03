@@ -70,17 +70,21 @@ def _clean(s: Optional[str]) -> Optional[str]:
 
 _ALLOWED_LINK_SCHEMES = ("http://", "https://")
 
-def _validate_link(url: Optional[str]) -> Optional[str]:
+def _validate_link(url: Optional[str], raise_on_bad: bool = True) -> Optional[str]:
     """Проверяет, что ссылка использует безопасный протокол (http/https).
-    Отклоняет javascript:, data:, file: и прочие схемы (XSS-вектор в атрибуте href)."""
+    Отклоняет javascript:, data:, file: и прочие схемы (XSS-вектор в атрибуте href).
+    raise_on_bad=False для Excel-импорта: небезопасная ссылка молча отбрасывается,
+    а не роняет весь импорт 400-й ошибкой."""
     url = _clean(url)
     if url is None:
         return None
     if not any(url.lower().startswith(s) for s in _ALLOWED_LINK_SCHEMES):
-        raise HTTPException(
-            status_code=400,
-            detail="Ссылка на документ должна начинаться с http:// или https://"
-        )
+        if raise_on_bad:
+            raise HTTPException(
+                status_code=400,
+                detail="Ссылка на документ должна начинаться с http:// или https://"
+            )
+        return None
     return url
 
 
@@ -665,6 +669,8 @@ async def preview_import_contracts(
             if field not in rec:
                 continue
             new_val = _coerce_import_value(field, rec[field])
+            if field == 'document_link':
+                new_val = _validate_link(new_val, raise_on_bad=False)  # обход формы: санируем и здесь
             old_val = getattr(contract, field)
             # Нормализуем None / "" для сравнения
             old_norm = old_val if old_val is not None else None
@@ -721,6 +727,8 @@ async def apply_import_contracts(
             if field not in rec:
                 continue
             new_val = _coerce_import_value(field, rec[field])
+            if field == 'document_link':
+                new_val = _validate_link(new_val, raise_on_bad=False)  # обход формы: санируем и здесь
             old_val = getattr(contract, field)
             if str(old_val or "") != str(new_val or ""):
                 changes_log.append(f"{_FIELD_LABELS.get(field, field)}: {old_val or '—'} → {new_val or '—'}")

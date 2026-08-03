@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import Head from 'next/head'
-import axios from 'axios'
+import api, { auth } from '../lib/http'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import DirectoryTabs from '../components/DirectoryTabs'
@@ -8,8 +8,6 @@ import { MONO, UI, IconBtn } from '../components/salesTableKit'
 import useIsMobile from '../components/mobile/useIsMobile'
 import AdvertisersMobile from '../components/mobile/AdvertisersMobile'
 
-const api = axios.create({ baseURL: '/api' })
-const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
 
 const EMPTY = { short_name: '', name_en: '', name_ru: '', website: '', inn: '' }
 

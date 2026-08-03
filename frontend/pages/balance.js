@@ -1,16 +1,9 @@
 import Navbar from '../components/Navbar'
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
-import axios from 'axios'
 import Head from 'next/head'
-
-const api = (token) => axios.create({
-  // Относительный путь — запрос идёт через Caddy на тот же origin, что и страница
-  // (см. Caddyfile), поэтому работает что на localhost, что под реальным доменом,
-  // без переключения конфигурации и без CORS для этих запросов.
-  baseURL: '/api',
-  headers: { Authorization: `Bearer ${token}` }
-})
+import { makeApi as api } from '../lib/http'
+import { getPermissions, can } from '../lib/auth'
 
 const fmt = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0))
 
@@ -50,13 +43,6 @@ const formatDate = (d) => {
   const [year, month, day] = d.split('-')
   return day ? `${day}.${month}.${year}` : d
 }
-
-function getPermissions() {
-  if (typeof window === 'undefined') return {}
-  try { return JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { return {} }
-}
-
-const can = (perms, section, action = 'view') => !!(perms && perms[section] && perms[section][action])
 
 const AGING_META = {
   overdue: { label: 'Просрочено',            short: 'Просрочка', color: 'var(--dot-overdue)' },

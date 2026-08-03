@@ -70,7 +70,7 @@ function OpCard({ o, artName, cpName, open, onToggle, onEdit, onCopy }) {
               <svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
             </button>
             {o.document_link
-              ? <a href={o.document_link} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} aria-label="Документ" style={{ width: 46, height: 44, borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg></a>
+              ? <a href={/^https?:\/\//i.test(o.document_link) ? o.document_link : undefined} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} aria-label="Документ" style={{ width: 46, height: 44, borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg></a>
               : <span style={{ width: 46, height: 44, borderRadius: 12, border: '1px dashed var(--border-card)', color: 'var(--text-faint)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>—</span>}
           </div>
         </div>

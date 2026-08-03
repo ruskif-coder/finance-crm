@@ -1,12 +1,11 @@
 import Navbar, { can } from '../components/Navbar'
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
-import axios from 'axios'
 import Head from 'next/head'
 import useIsMobile from '../components/mobile/useIsMobile'
 import ReceivablesMobile from '../components/mobile/ReceivablesMobile'
-
-const api = (token) => axios.create({ baseURL: '/api', headers: { Authorization: `Bearer ${token}` } })
+import { makeApi as api } from '../lib/http'
+import { getPermissions } from '../lib/auth'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -18,8 +17,7 @@ const MONTH_NAMES = { '01': 'Янв', '02': 'Фев', '03': 'Мар', '04': 'А�
 const formatPeriod = (p) => { if (!p) return '—'; const m = p.match(/^(\d{4})-(\d{2})$/); return m ? `${MONTH_NAMES[m[2]] || m[2]} ${m[1]}` : p }
 const formatDate = (d) => { if (!d) return '—'; const [y, mo, da] = String(d).split('-'); return da ? `${da}.${mo}.${y}` : d }
 
-// can — из Navbar (с admin-bypass), чтобы админ везде имел доступ единообразно
-const getPermissions = () => { if (typeof window === 'undefined') return {}; try { return JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { return {} } }
+// getPermissions + can — из lib/auth (единый источник, admin-bypass)
 
 // Тёмные тона текста поверх пастельных подложек (нет в токенах — из хендоффа).
 const T_OVERDUE = '#C93A3E'      // на danger-tint

@@ -9,6 +9,12 @@ from app.permissions import SECTIONS, ACTION_FIELDS
 
 router = APIRouter()
 
+# Три секции раздела «Продажи» несут ОДИН deals_scope (UI шлёт одинаковое значение
+# на все три, см. settings.js SALES_KEYS). Энфорсмент own-scope читает
+# sales_registry/sales_analytics, поэтому писать scope надо во все три — иначе
+# «только свои» молча не срабатывает (роль продолжает видеть все сделки).
+_SALES_SECTIONS = ("sales_dashboard", "sales_registry", "sales_analytics")
+
 
 class PermissionInput(BaseModel):
     section: str
@@ -112,8 +118,8 @@ def update_role(role_id: int, data: RoleUpdate, db: Session = Depends(get_db), c
                 val = getattr(p, ACTION_FIELDS[action])
                 if val is not None:
                     setattr(row, ACTION_FIELDS[action], 1 if val else 0)
-            # Видимость сделок — только для секции продаж
-            if p.section == "sales_dashboard" and p.deals_scope is not None:
+            # Видимость сделок — для всех трёх секций продаж (см. _SALES_SECTIONS).
+            if p.section in _SALES_SECTIONS and p.deals_scope is not None:
                 row.deals_scope = p.deals_scope if p.deals_scope in ("all", "own") else "all"
         changes.append("права доступа изменены")
 

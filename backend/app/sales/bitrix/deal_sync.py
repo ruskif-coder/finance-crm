@@ -199,8 +199,15 @@ def sync_deal_from_bitrix(db: Session, deal: SalesDeal, download_files: bool = T
     changes = {}
     issues = []  # [{field, message}] — поля, требующие внимания (для подсветки + попапа)
 
+    # Поля с ручной правкой (override) синхронизация НЕ трогает — иначе «⟳ Обновить
+    # из Битрикса» затирает ручной ввод, а override-строка остаётся рассинхронизированной
+    # (инвариант из models.py: откат ручной правки — только удалением override).
+    from app.sales.models import SalesDealFieldOverride
+    override_fields = {o.field_name for o in db.query(SalesDealFieldOverride)
+                       .filter(SalesDealFieldOverride.deal_id == deal.id).all()}
+
     def setf(field, val):
-        if val is None:
+        if val is None or field in override_fields:
             return
         old = getattr(deal, field)
         if old != val:
@@ -243,9 +250,7 @@ def sync_deal_from_bitrix(db: Session, deal: SalesDeal, download_files: bool = T
     # red  — Битрикс расходится с нашими справочниками (что-то не сматчилось);
     # blue — у нас есть ручные правки (данные полнее / не выгружены в Битрикс);
     # green — всё сошлось. red важнее blue.
-    from app.sales.models import SalesDealFieldOverride
-    has_overrides = (db.query(SalesDealFieldOverride)
-                     .filter(SalesDealFieldOverride.deal_id == deal.id).count() > 0)
+    has_overrides = bool(override_fields)
     deal.sync_status = "red" if issues else ("blue" if has_overrides else "green")
     deal.sync_checked_at = datetime.utcnow()
     # Отчёт сохраняем в сделке — чтобы клик по светофору показал детали без нового запроса.

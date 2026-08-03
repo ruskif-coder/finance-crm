@@ -1,15 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import Head from 'next/head'
-import axios from 'axios'
+import api, { auth } from '../lib/http'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import DirectoryTabs from '../components/DirectoryTabs'
 import { MONO, UI, IconBtn } from '../components/salesTableKit'
 import useIsMobile from '../components/mobile/useIsMobile'
 import ContractsMobile from '../components/mobile/ContractsMobile'
+import { T } from '../lib/tokens'
 
-const api = axios.create({ baseURL: '/api' })
-const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
 
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
 const fmtEndDate = (s) => {
@@ -32,9 +31,9 @@ const PAYMENT_TERM_CONDITIONS = ['С даты УПД', 'С даты АКТ', 'П
 const FMT_META = {
   'Клиент': { bg: 'var(--accent-tint)', fg: 'var(--accent)' },
   'Подрядчик': { bg: '#FBF0DE', fg: '#B26A0C' },
-  'Агентство КЛ': { bg: '#F1EDFC', fg: '#7B62D6' },
-  'Агентство ПД': { bg: '#F1EDFC', fg: '#7B62D6' },
-  'Аптека': { bg: '#E6F5EF', fg: '#2FA37C' },
+  'Агентство КЛ': { bg: '#F1EDFC', fg: T.mixed },
+  'Агентство ПД': { bg: '#F1EDFC', fg: T.mixed },
+  'Аптека': { bg: '#E6F5EF', fg: T.income },
   'Паблишер': { bg: '#E9F0FB', fg: '#3B6FD4' },
   'Рекламная система': { bg: '#FDEBF0', fg: '#C43C6B' },
 }
@@ -570,7 +569,7 @@ export default function Contracts() {
                   style={{ ...btnSm(false), color: 'var(--danger)' }}>✕</button>
               )}
               {newForm.document_link && (
-                <a href={newForm.document_link} target="_blank" rel="noopener noreferrer"
+                <a href={/^https?:\/\//i.test(newForm.document_link) ? newForm.document_link : undefined} target="_blank" rel="noopener noreferrer"
                   style={{ ...btnSm(false), textDecoration: 'none', display: 'inline-block' }}>🔗 Открыть</a>
               )}
             </div>
@@ -736,7 +735,7 @@ export default function Contracts() {
                   <div key={c.id} style={{ display: 'grid', gridTemplateColumns: CGRID, gap: 12, alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border-row)', borderRadius: 10 }} onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-subtle)' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
                     <div>{mayEdit && <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleOne(c.id)} />}</div>
                     <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)', padding: '0 8px' }}>{c.id}</div>
-                    <div style={{ padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.counterparty_name || ''}><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{c.counterparty_name || dash}</span>{!c.linked && <span title="Не привязан к реестру" style={{ marginLeft: 5, color: '#E89020' }}>⚠</span>}</div>
+                    <div style={{ padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.counterparty_name || ''}><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{c.counterparty_name || dash}</span>{!c.linked && <span title="Не привязан к реестру" style={{ marginLeft: 5, color: T.warning }}>⚠</span>}</div>
                     <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.contract_number || dash}</div>
                     <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)', padding: '0 8px', whiteSpace: 'nowrap' }}>{fmtDate(c.contract_date)}</div>
                     <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px' }}>{c.inn || dash}</div>
@@ -747,10 +746,10 @@ export default function Contracts() {
                     <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', textAlign: 'right', padding: '0 8px' }}>{c.payment_term_days != null ? c.payment_term_days : dash}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.payment_term_condition || ''}>{c.payment_term_condition || dash}</div>
                     <div style={{ display: 'inline-flex', gap: 2, justifyContent: 'flex-end' }}>
-                      {c.document_link && <a href={c.document_link} target="_blank" rel="noopener noreferrer" title="Ссылка на документ" style={icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg></a>}
+                      {c.document_link && <a href={/^https?:\/\//i.test(c.document_link) ? c.document_link : undefined} target="_blank" rel="noopener noreferrer" title="Ссылка на документ" style={icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg></a>}
                       {c.attached_filename && <button onClick={() => handleDownload(c.id, c.attached_filename)} title="Скачать документ" style={icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg></button>}
                       {mayEdit && <button onClick={() => openEdit(c)} title="Редактировать" style={icoBtn} onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-tint)'; e.currentTarget.style.color = 'var(--accent)' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-faint)' }}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>}
-                      {mayEdit && <button onClick={() => handleDelete(c)} title="Удалить" style={icoBtn} onMouseEnter={e => { e.currentTarget.style.background = 'var(--danger-tint)'; e.currentTarget.style.color = '#C93A3E' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-faint)' }}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>}
+                      {mayEdit && <button onClick={() => handleDelete(c)} title="Удалить" style={icoBtn} onMouseEnter={e => { e.currentTarget.style.background = 'var(--danger-tint)'; e.currentTarget.style.color = T.danger }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-faint)' }}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>}
                     </div>
                   </div>
                 )

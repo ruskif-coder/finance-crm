@@ -136,6 +136,36 @@ def seed_split_permissions():
 
 seed_split_permissions()
 
+
+def backfill_sales_scope():
+    """Выравнивает deals_scope трёх sales-секций по строке sales_dashboard (источник
+    отображения в UI). Раньше update_role писал scope только в sales_dashboard, а
+    энфорсмент own-scope читает sales_registry/sales_analytics — старые роли с 'own'
+    по факту показывали ВСЕ сделки. Идемпотентно: правит только расходящиеся строки."""
+    from app.models import Role, RolePermission
+    db = SessionLocal()
+    try:
+        for role in db.query(Role).all():
+            rows = {rp.section: rp for rp in db.query(RolePermission).filter_by(role_id=role.id).all()}
+            sd = rows.get("sales_dashboard")
+            if not sd:
+                continue
+            scope = sd.deals_scope or "all"
+            for sec in ("sales_registry", "sales_analytics"):
+                r = rows.get(sec)
+                if r and (r.deals_scope or "all") != scope:
+                    r.deals_scope = scope
+        db.commit()
+        logger.info("backfill_sales_scope: deals_scope выровнен по sales_dashboard")
+    except Exception:
+        logger.exception("backfill_sales_scope: ошибка")
+        db.rollback()
+    finally:
+        db.close()
+
+
+backfill_sales_scope()
+
 # В DEBUG=true (локальная разработка) Swagger UI доступен на /docs.
 # В production (DEBUG не задан или false) документация закрыта — /docs, /redoc, /openapi.json
 # возвращают 404, чтобы не раскрывать схему API без аутентификации (OWASP A6).

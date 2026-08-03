@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react'
 import Head from 'next/head'
-import axios from 'axios'
+import api, { auth } from '../lib/http'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import DirectoryTabs from '../components/DirectoryTabs'
 
-const api = axios.create({ baseURL: '/api' })
-const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
 
 const TYPE_META = {
   income: { label: 'Доход', color: 'var(--success)', tint: 'var(--accent-tint)' },

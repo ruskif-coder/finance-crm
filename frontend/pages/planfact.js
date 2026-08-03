@@ -1,15 +1,9 @@
 import Navbar from '../components/Navbar'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
-import axios from 'axios'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, ReferenceLine, CartesianGrid } from 'recharts'
 import Head from 'next/head'
-
-const api = (token) => axios.create({
-  // См. комментарий в balance.js — относительный путь, проксируется Caddy.
-  baseURL: '/api',
-  headers: { Authorization: `Bearer ${token}` }
-})
+import { makeApi as api } from '../lib/http'
 
 const fmt = (n) => n ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) : '—'
 const fmtPct = (n) => n !== null && n !== undefined ? n.toFixed(1) + '%' : '—'

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
 import { grp, mln, signRub, bankColor } from '../../lib/salesFormat'
+import { T } from '../../lib/tokens'
 import { CARD, monoLbl, Marker } from './kit'
 
 // Мобильный ДДС (< 1024px) по хендоффу design_handoff_cashflow_mobile.
@@ -17,8 +18,8 @@ const capMonth = (p) => { const s = shortMonth(p); return s.charAt(0).toUpperCas
 const formatPeriod = (p) => { if (!p) return '—'; const [y, m] = String(p).split('-'); return `${MONTH_SHORT[m] || m} ${y}` }
 const rangeShort = (from, to) => { const one = (p) => { if (!p) return ''; const [y] = String(p).split('-'); return `${capMonth(p)} ${y.slice(2)}` }; return `${one(from)} — ${one(to)}` }
 
-const INCOME = '#2FA37C', OUTFLOW = '#8B93A6', EMPTY = 'var(--border-inner)', FACT = '#4F6CE6', FORECAST = '#A9B6F2'
-const WARN_TXT = '#B26A0C', DANGER_TXT = '#C93A3E'
+const INCOME = T.income, OUTFLOW = '#8B93A6', EMPTY = 'var(--border-inner)', FACT = T.accent, FORECAST = '#A9B6F2'
+const WARN_TXT = T.warningText, DANGER_TXT = T.danger
 
 function Kpi({ label, val, unit, color, badge, sub }) {
   return (
