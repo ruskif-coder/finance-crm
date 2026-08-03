@@ -49,8 +49,9 @@ function OpCard({ o, artName, cpName, open, onToggle, onEdit, onCopy }) {
           <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cpName[o.counterparty_id] || o.counterparty || '—'}</span>
           <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: isIncome ? 'var(--income)' : 'var(--text-primary)', whiteSpace: 'nowrap' }}>{signRub(amount)}</span>
         </div>
-        {/* строка 3: статья + дата */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {/* строка 3: период + статья + дата */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          {o.period && <span style={{ flexShrink: 0, fontFamily: MONO, fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-tint)', borderRadius: 6, padding: '2px 6px' }}>{String(o.period).replace(/^(\d{4})-(\d{2})$/, '$2.$1')}</span>}
           <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{artName[o.article_id] || o.article || '—'}</span>
           <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>{fmtDateShort(o.date)}</span>
         </div>

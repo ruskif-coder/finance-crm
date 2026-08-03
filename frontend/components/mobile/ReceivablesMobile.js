@@ -97,7 +97,7 @@ function DebtorRow({ r, open, onToggle, notes, setNotes, savedNotes, saveNote, c
                 <Marker c={t2.bar} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{op.invoice || op.article || '—'}</div>
-                  <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)' }}>срок {formatDate(op.due_date)}</div>
+                  <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)' }}>{op.period ? `период ${String(op.period).replace(/^(\d{4})-(\d{2})$/, '$2.$1')} · ` : ''}срок {formatDate(op.due_date)}</div>
                 </div>
                 <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: t2.amt, whiteSpace: 'nowrap' }}>{fmt(op.amount)} ₽</span>
               </div>

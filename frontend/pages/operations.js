@@ -478,10 +478,10 @@ export default function Operations2() {
                       : <select value={bulk[k]} onChange={e => setBulk(b => ({ ...b, [k]: e.target.value }))} style={{ ...inp, width: '100%' }}><option value="">не менять</option>{opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>}
                   </div>
                 ))}
-                <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                  <button onClick={applyBulk} disabled={saving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 15px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Применить к {selIds.length}</button>
-                  <button onClick={delBulk} disabled={saving} style={{ background: 'var(--bg-card)', border: '1px solid #F3C9CC', color: '#C93A3E', borderRadius: 10, padding: '9px 15px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Удалить {selIds.length}</button>
-                  <button onClick={() => setSel({})} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', padding: '9px 12px', fontSize: 13, cursor: 'pointer' }}>Снять выделение</button>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                  <button onClick={applyBulk} disabled={saving} style={{ height: 38, boxSizing: 'border-box', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '0 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>Применить к {selIds.length}</button>
+                  <button onClick={delBulk} disabled={saving} title={`Удалить ${selIds.length}`} aria-label="Удалить" style={{ width: 38, height: 38, flexShrink: 0, background: 'var(--bg-card)', border: '1px solid #F3C9CC', color: '#C93A3E', borderRadius: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>
+                  <button onClick={() => setSel({})} title="Снять выделение" aria-label="Снять выделение" style={{ width: 38, height: 38, flexShrink: 0, background: 'var(--bg-card)', border: '1px solid var(--border-card)', color: 'var(--text-secondary)', borderRadius: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M18 6L6 18" /><path d="M6 6l12 12" /></svg></button>
                 </div>
               </div>
             )}
