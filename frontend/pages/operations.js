@@ -146,6 +146,7 @@ export default function Operations2() {
   const [loading, setLoading] = useState(true)
   const [articles, setArticles] = useState([])
   const [counterparties, setCounterparties] = useState([])
+  const [periodOptions, setPeriodOptions] = useState([])
   const [updatedAt] = useState('09:12')
 
   const [page, setPage] = useState(0)
@@ -177,6 +178,7 @@ export default function Operations2() {
     try { const h = JSON.parse(localStorage.getItem('ops2_hidden')); if (Array.isArray(h)) setHidden(new Set(h)) } catch (e) {}
     Promise.all([api(tok()).get('/articles/'), api(tok()).get('/counterparties/?limit=1000')])
       .then(([a, c]) => { setArticles(a.data?.items || a.data || []); setCounterparties(c.data?.items || c.data || []) }).catch(() => {})
+    api(tok()).get('/operations/periods').then(r => setPeriodOptions(r.data?.periods || [])).catch(() => {})
   }, [])
 
   const loadOps = async () => {
@@ -326,6 +328,7 @@ export default function Operations2() {
           dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo}
           fStatus={fStatus} setFStatus={setFStatus} fBank={fBank} setFBank={setFBank}
           fArticle={fArticle} setFArticle={setFArticle} fCp={fCp} setFCp={setFCp} fOpType={fOpType} setFOpType={setFOpType}
+          fPeriod={fPeriod} setFPeriod={setFPeriod} periodOptions={periodOptions}
           resetFilters={resetFilters} pageSize={pageSize} setPageSize={setPageSize}
           onSave={mobileSave} onDelete={mobileDelete} downloadExport={downloadExport} emptyForm={emptyForm} />
       </div>
@@ -389,6 +392,7 @@ export default function Operations2() {
             <MultiDrop label="Банк" options={BANKS.map(b => ({ value: b, label: b }))} selected={fBank} onChange={setFBank} />
             <MultiDrop label="Статья" options={articles.map(a => ({ value: a.id, label: a.name }))} selected={fArticle} onChange={setFArticle} />
             <MultiDrop label="Контрагент" options={counterparties.map(c => ({ value: c.id, label: c.name }))} selected={fCp} onChange={setFCp} />
+            <MultiDrop label="Период" options={periodOptions.map(p => ({ value: p, label: p }))} selected={fPeriod} onChange={setFPeriod} />
             <MultiDrop label="Тип операции" options={[{ value: 'income', label: 'Поступления' }, { value: 'expense', label: 'Списания' }]} selected={fOpType} onChange={setFOpType} />
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, position: 'relative' }}>
               <IconBtn title="Сбросить фильтры" onClick={resetFilters}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v4h-4" /></svg></IconBtn>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { MONO, UI, PIP, FILL, shortLabel } from '../salesTableKit'
 import { grp } from '../../lib/salesFormat'
-import { CARD } from './kit'
+import { CARD, PeriodSelect } from './kit'
 import DealBriefCell from '../DealBriefCell'
 
 const rub = grp
@@ -102,7 +102,7 @@ function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
       {type === 'text' ? (
         <input value={form[field]} onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))} style={fieldStyle} />
       ) : type === 'month' ? (
-        <input type="month" value={form[field]} onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))} style={{ ...fieldStyle, fontFamily: MONO }} />
+        <PeriodSelect value={form[field] || ''} onChange={v => setForm(f => ({ ...f, [field]: v }))} allowQuarter={false} />
       ) : (
         <select value={form[field] ?? ''} onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))} style={fieldStyle}>
           <option value="">{clear || '— не указано —'}</option>

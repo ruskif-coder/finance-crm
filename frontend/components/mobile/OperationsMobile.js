@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { MONO, UI, MultiDrop } from '../salesTableKit'
 import { grp, signRub, fmtDateShort, bankColor } from '../../lib/salesFormat'
-import { CARD, monoLbl, Marker } from './kit'
+import { CARD, monoLbl, Marker, PeriodSelect } from './kit'
 import BottomSheet from './BottomSheet'
 
 const fmt = (n) => grp(Math.abs(n || 0))
@@ -166,7 +166,10 @@ function OperationForm({ initial, editId, articles, counterparties, onClose, onS
         <div>
           <div style={fieldRow}><span style={flbl}>Дата</span><input type="date" value={f.date || ''} onChange={e => set({ date: e.target.value })} style={{ ...fval, direction: 'rtl' }} /></div>
           <div style={fieldRow}><span style={flbl}>Банк</span><select value={f.bank || ''} onChange={e => set({ bank: e.target.value })} style={selVal}><option value="">не выбран</option>{BANKS.map(b => <option key={b} value={b}>{b}</option>)}</select></div>
-          <div style={fieldRow}><span style={flbl}>Период</span><input type="month" value={/^\d{4}-\d{2}$/.test(f.period || '') ? f.period : ''} onChange={e => set({ period: e.target.value })} style={{ ...fval, direction: 'rtl' }} /></div>
+          <div style={{ padding: '10px 0', borderBottom: '1px solid var(--border-row)' }}>
+            <div style={{ ...flbl, marginBottom: 8 }}>Период<span style={{ color: 'var(--text-faint)', fontWeight: 500, marginLeft: 6 }}>к какому месяцу/кварталу относится</span></div>
+            <PeriodSelect value={f.period || ''} onChange={v => set({ period: v })} />
+          </div>
           <div style={fieldRow}><span style={flbl}>Статья</span><select value={f.article_id || ''} onChange={e => set({ article_id: e.target.value })} style={selVal}><option value="">не выбрана</option>{articles.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div>
           <div style={fieldRow}><span style={flbl}>Контрагент</span><select value={f.counterparty_id || ''} onChange={e => set({ counterparty_id: e.target.value })} style={selVal}><option value="">не выбран</option>{counterparties.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           <div style={fieldRow}><span style={flbl}>№ счёта</span><input value={f.invoice || ''} onChange={e => set({ invoice: e.target.value })} placeholder="не указан" style={fval} /></div>
@@ -199,7 +202,7 @@ const FILTER_DROPS = [
 export default function OperationsMobile({
   total, rows, loading, articles, counterparties, canEdit,
   dateFrom, setDateFrom, dateTo, setDateTo, fStatus, setFStatus, fBank, setFBank,
-  fArticle, setFArticle, fCp, setFCp, fOpType, setFOpType, resetFilters,
+  fArticle, setFArticle, fCp, setFCp, fOpType, setFOpType, fPeriod, setFPeriod, periodOptions = [], resetFilters,
   pageSize, setPageSize, onSave, onDelete, downloadExport, emptyForm,
 }) {
   const [expandedId, setExpandedId] = useState(null)
@@ -211,7 +214,8 @@ export default function OperationsMobile({
 
   const artName = Object.fromEntries(articles.map(a => [a.id, a.name]))
   const cpName = Object.fromEntries(counterparties.map(c => [c.id, c.name]))
-  const activeFilterCount = fStatus.length + fBank.length + fArticle.length + fCp.length + fOpType.length + ((dateFrom || dateTo) ? 1 : 0)
+  const activeFilterCount = fStatus.length + fBank.length + fArticle.length + fCp.length + fOpType.length + fPeriod.length + ((dateFrom || dateTo) ? 1 : 0)
+  const periodDrop = periodOptions.map(p => ({ value: p, label: /^\d{4}-\d{2}$/.test(p) ? `${MONTH_UP[+p.slice(5, 7)] ? MONTH_UP[+p.slice(5, 7)][0] + MONTH_UP[+p.slice(5, 7)].slice(1).toLowerCase() : p.slice(5, 7)} ${p.slice(0, 4)}` : p }))
 
   // клиентский поиск по загруженной странице
   const q = search.trim().toLowerCase()
@@ -299,12 +303,15 @@ export default function OperationsMobile({
           <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{activeFilterCount > 0 ? `выбрано ${activeFilterCount}` : 'фильтры не заданы'}</span>
           <span onClick={resetFilters} style={{ fontSize: 13, fontWeight: 600, color: activeFilterCount > 0 ? 'var(--accent)' : 'var(--text-faint)', cursor: 'pointer' }}>Сбросить</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <div style={{ ...monoLbl, marginBottom: 6 }}>Дата проведения</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <input type="month" value={dateFrom.slice(0, 7)} onChange={e => setDateFrom(e.target.value ? e.target.value + '-01' : '')} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 12, padding: '11px 12px', fontSize: 13, fontFamily: MONO, outline: 'none' }} />
           <span style={{ color: 'var(--text-faint)' }}>—</span>
           <input type="month" value={dateTo.slice(0, 7)} onChange={e => setDateTo(e.target.value ? e.target.value + '-28' : '')} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 12, padding: '11px 12px', fontSize: 13, fontFamily: MONO, outline: 'none' }} />
         </div>
+        <div style={{ ...monoLbl, marginBottom: 6 }}>Период учёта</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <MultiDrop label="Период" options={periodDrop} selected={fPeriod} onChange={setFPeriod} block />
           <MultiDrop label="Статус" options={STATUSES.map(s => ({ value: s, label: s }))} selected={fStatus} onChange={setFStatus} block />
           <MultiDrop label="Банк" options={BANKS.map(b => ({ value: b, label: b }))} selected={fBank} onChange={setFBank} block />
           <MultiDrop label="Статья" options={articles.map(a => ({ value: a.id, label: a.name }))} selected={fArticle} onChange={setFArticle} block />

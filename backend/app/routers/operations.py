@@ -203,6 +203,29 @@ def get_operations(
         ]
     }
 
+@router.get("/periods")
+def get_periods(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "view"))
+):
+    """Список уникальных периодов операций, отсортированный по времени (новые сверху).
+    Кварталы (Q3 2025) упорядочиваются по первому месяцу квартала наравне с месяцами."""
+    sort_key = case(
+        (Operation.period.like('Q1 %'), func.concat(func.substring(Operation.period, 4, 4), '-01')),
+        (Operation.period.like('Q2 %'), func.concat(func.substring(Operation.period, 4, 4), '-04')),
+        (Operation.period.like('Q3 %'), func.concat(func.substring(Operation.period, 4, 4), '-07')),
+        (Operation.period.like('Q4 %'), func.concat(func.substring(Operation.period, 4, 4), '-10')),
+        else_=Operation.period,
+    )
+    rows = (
+        db.query(Operation.period, sort_key.label('sk'))
+        .filter(Operation.period.isnot(None), Operation.period != '')
+        .distinct()
+        .order_by(sort_key.desc())
+        .all()
+    )
+    return {"periods": [r[0] for r in rows]}
+
 @router.get("/export")
 def export_operations(
     status: Optional[List[str]] = Query(None),
