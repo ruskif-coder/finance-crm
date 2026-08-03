@@ -5,6 +5,9 @@ import Link from 'next/link'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import DirectoryTabs from '../components/DirectoryTabs'
+import { MONO, UI, IconBtn } from '../components/salesTableKit'
+import useIsMobile from '../components/mobile/useIsMobile'
+import CounterpartiesMobile from '../components/mobile/CounterpartiesMobile'
 
 const api = axios.create({ baseURL: '/api' })
 const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
@@ -13,26 +16,43 @@ const fmt = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0))
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
 const DEFAULT_TERM_DAYS = 60
 
-const RELATION_LABELS = { 'заказчик': 'Заказчик', 'поставщик': 'Поставщик', 'смешенный': 'Смешенный' }
-const RELATION_COLORS = {
-  'заказчик': { bg: '#dbeafe', color: '#2563eb' },
-  'поставщик': { bg: '#fef9c3', color: '#d97706' },
-  'смешенный': { bg: '#f3e8ff', color: '#7c3aed' },
+// тип контрагента (relation) → чип
+const REL_META = {
+  'заказчик': { label: 'Заказчик', bg: 'var(--accent-tint)', fg: 'var(--accent)' },
+  'поставщик': { label: 'Поставщик', bg: '#FBF0DE', fg: '#B26A0C' },
+  'смешенный': { label: 'Смешанный', bg: '#F1EDFC', fg: '#7B62D6' },
 }
+const relMeta = (r) => REL_META[r] || { label: 'не заполнен', bg: 'var(--bg-subtle)', fg: 'var(--text-faint)' }
+
+// сетка таблицы (одна для шапки и строк)
+const COLS = [
+  ['sel', '26px', ''], ['id', '52px', 'ID', 'id'], ['name', 'minmax(230px,1.5fr)', 'Название', 'name'],
+  ['inn', '110px', 'ИНН', 'inn'], ['contracts', '62px', 'Дог.'], ['term', '46px', 'Отс.', 'term_days'],
+  ['relation', '112px', 'Статус', 'relation'], ['group', '132px', 'Группа', 'group'], ['vid', '40px', 'Вид'],
+  ['op', '52px', 'Опе.', 'op_count'], ['receivable', '104px', 'Дебиторка', 'receivable'],
+  ['payable', '104px', 'Кредиторка', 'payable'], ['income', '112px', 'Поступления', 'income_paid'],
+  ['expense', '104px', 'Выплаты', 'expense_paid'], ['diff', '112px', 'Разница', 'diff'],
+  ['date', '88px', 'Дата', 'last_op_date'], ['actions', '40px', ''],
+]
+const RIGHT = new Set(['term', 'op', 'receivable', 'payable', 'income', 'expense', 'diff'])
 
 export default function Counterparties() {
   const router = useRouter()
+  const isMobile = useIsMobile()
   const [perms, setPerms] = useState({})
   const [role, setRole] = useState('')
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
-  const [ok, setOk] = useState('')
   const [error, setError] = useState('')
 
   const [search, setSearch] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState('действующий')
+  const [relFilter, setRelFilter] = useState('')
   const [sortCol, setSortCol] = useState('name')
   const [sortDir, setSortDir] = useState('asc')
+  const [pageSize, setPageSize] = useState(100)
+  const [mobileLimit, setMobileLimit] = useState(50)
 
   const [showForm, setShowForm] = useState(false)
   const [newForm, setNewForm] = useState({ name: '', inn: '', status: 'действующий' })
@@ -45,18 +65,9 @@ export default function Counterparties() {
   const [editError, setEditError] = useState('')
 
   const [selectedIds, setSelectedIds] = useState([])
-  const [bulkStatus, setBulkStatus] = useState('')
-  const [bulkGroup, setBulkGroup] = useState('')
-  const [bulkSaving, setBulkSaving] = useState(false)
-  const [deleteConfirming, setDeleteConfirming] = useState(false)
-  const [deletePassword, setDeletePassword] = useState('')
-  const [deleteError, setDeleteError] = useState('')
-  const [deleteLoading, setDeleteLoading] = useState(false)
 
   const isAdmin = role === 'admin'
   const mayEdit = isAdmin || can(perms, 'counterparties', 'edit')
-
-  const flash = (m) => { setOk(m); setTimeout(() => setOk(''), 2500) }
 
   const load = async () => {
     setLoading(true)
@@ -78,36 +89,39 @@ export default function Counterparties() {
     load()
   }, [])
 
-  const cancelForm = () => {
-    setShowForm(false)
-    setNewForm({ name: '', inn: '', status: 'действующий' })
-    setNewError('')
+  // единый сейв для мобильной формы (create + edit)
+  const mobileSave = async (f, id) => {
+    const name = (f.name || '').trim()
+    if (!name) { alert('Название обязательно'); return false }
+    setSaving(true)
+    try {
+      let targetId = id
+      if (!id) {
+        const res = await api.post('/counterparties/', { name, vat_rate: 0 }, auth())
+        targetId = res.data.id
+      }
+      await api.put(`/counterparties/${targetId}/registry`, {
+        name, inn: (f.inn || '').trim() || null, status: f.status,
+        term_days: f.term_days !== '' && f.term_days != null ? parseInt(f.term_days, 10) : null,
+        is_own_company: !!f.is_own_company,
+      }, auth())
+      await load()
+      return true
+    } catch (e) { alert(e.response?.data?.detail || 'Ошибка при сохранении'); return false }
+    finally { setSaving(false) }
   }
 
   const handleCreate = async () => {
-    const name = newForm.name.trim()
-    if (!name) { setNewError('Название обязательно'); return }
-    setNewSaving(true); setNewError('')
-    try {
-      const res = await api.post('/counterparties/', { name, vat_rate: 0 }, auth())
-      const newId = res.data.id
-      await api.put(`/counterparties/${newId}/registry`, {
-        name, inn: newForm.inn.trim() || null, status: newForm.status, term_days: null,
-      }, auth())
-      cancelForm(); flash('Контрагент создан'); load()
-    } catch (e) { setNewError(e.response?.data?.detail || 'Ошибка при создании') }
-    finally { setNewSaving(false) }
+    const ok = await mobileSave(newForm, null)
+    if (ok) { setShowForm(false); setNewForm({ name: '', inn: '', status: 'действующий' }); setNewError('') }
   }
 
   const openEdit = (c) => {
     setEditId(c.id)
-    setEditDraft({ name: c.name, inn: c.inn || '', status: c.status,
-      term_days: c.term_days != null ? String(c.term_days) : '',
-      is_own_company: !!c.is_own_company })
+    setEditDraft({ name: c.name, inn: c.inn || '', status: c.status, term_days: c.term_days != null ? String(c.term_days) : '', is_own_company: !!c.is_own_company })
     setEditError('')
   }
   const cancelEdit = () => { setEditId(null); setEditError('') }
-
   const handleSave = async (id) => {
     setSaving(true); setEditError('')
     try {
@@ -121,43 +135,16 @@ export default function Counterparties() {
     finally { setSaving(false) }
   }
 
-  const handleBulkApply = async () => {
-    const fields = {}
-    if (bulkStatus) fields.status = bulkStatus
-    if (bulkGroup) fields.group_override = bulkGroup === '__reset__' ? '' : bulkGroup
-    if (!Object.keys(fields).length) { alert('Выберите хотя бы одно поле'); return }
-    if (!confirm(`Изменить ${selectedIds.length} контрагентов?`)) return
-    setBulkSaving(true)
-    try {
-      await api.patch('/counterparties/bulk', { ids: selectedIds, ...fields }, auth())
-      setSelectedIds([]); setBulkStatus(''); setBulkGroup(''); load()
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
-    finally { setBulkSaving(false) }
-  }
-
-  const handleBulkDelete = async () => {
-    if (!deletePassword) { setDeleteError('Введите пароль'); return }
-    setDeleteLoading(true); setDeleteError('')
-    try {
-      await api.delete('/counterparties/bulk', { data: { ids: selectedIds, password: deletePassword }, ...auth() })
-      setSelectedIds([]); setDeleteConfirming(false); setDeletePassword(''); load()
-    } catch (e) {
-      const d = e.response?.data?.detail
-      setDeleteError(typeof d === 'string' ? d : (JSON.stringify(d) || 'Ошибка при удалении'))
-    } finally { setDeleteLoading(false) }
-  }
-
   const handleSort = (col) => {
+    if (!col) return
     setSortDir(d => sortCol === col ? (d === 'asc' ? 'desc' : 'asc') : 'asc')
     setSortCol(col)
   }
-  const SortIcon = ({ col }) => sortCol !== col
-    ? <span style={{ color: 'var(--border)', marginLeft: 3 }}>↕</span>
-    : <span style={{ color: 'var(--accent)', marginLeft: 3 }}>{sortDir === 'asc' ? '↑' : '↓'}</span>
 
   const filtered = items
     .filter(c => {
       if (statusFilter && c.status !== statusFilter) return false
+      if (relFilter && c.relation !== relFilter) return false
       if (search) {
         const q = search.toLowerCase()
         if (!c.name.toLowerCase().includes(q) && !(c.inn || '').includes(q)) return false
@@ -172,317 +159,160 @@ export default function Counterparties() {
       return sortDir === 'asc' ? cmp : -cmp
     })
 
+  const resetFilters = () => { setSearch(''); setStatusFilter(''); setRelFilter(''); setSortCol('name'); setSortDir('asc') }
+
+  const exportCsv = () => {
+    const head = ['ID', 'Название', 'ИНН', 'Договоров', 'Отсрочка', 'Тип', 'Группа', 'Вид', 'Операций', 'Дебиторка', 'Кредиторка', 'Поступления', 'Выплаты', 'Разница', 'Дата']
+    const rows = filtered.map(c => [c.id, c.name, c.inn || '', c.contracts_count || 0, c.term_days_effective, relMeta(c.relation).label, c.group || '', c.status, c.op_count, c.receivable, c.payable, c.income_paid, c.expense_paid, c.diff, fmtDate(c.last_op_date)])
+    const csv = [head, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n')
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'counterparties.csv'; a.click()
+  }
+
+  // ── МОБИЛЬНАЯ ВЕРСИЯ ──
+  if (isMobile) {
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+        <Head><title>Контрагенты</title></Head>
+        <Navbar active="directories" />
+        <CounterpartiesMobile
+          total={items.length} rows={filtered} loading={loading} canEdit={mayEdit} isAdmin={isAdmin}
+          search={search} setSearch={setSearch} statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+          onSave={mobileSave} saving={saving} limit={mobileLimit} setLimit={setMobileLimit} />
+      </div>
+    )
+  }
+
+  const GRID = COLS.map(c => c[1]).join(' ')
   const allSelected = filtered.length > 0 && filtered.every(c => selectedIds.includes(c.id))
   const toggleAll = () => setSelectedIds(allSelected ? [] : filtered.map(c => c.id))
   const toggleOne = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  const shown = filtered.slice(0, pageSize)
 
-  const inp = { padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-input)',
-    fontSize: 13, background: 'var(--bg-card)', color: 'inherit' }
-  const inpSm = (w) => ({ ...inp, width: w, padding: '5px 8px' })
-  const btn = (p) => ({ padding: '7px 15px', borderRadius: 'var(--radius-btn)', border: 'none', cursor: 'pointer',
-    fontSize: 13, fontWeight: 500, background: p ? 'var(--accent)' : 'var(--bg-subtle)', color: p ? '#fff' : 'inherit' })
-  const btnSm = (p) => ({ ...btn(p), padding: '3px 10px', fontSize: 12 })
-  const th = { padding: '9px 10px', textAlign: 'left', fontSize: 11.5, fontWeight: 600,
-    color: 'var(--muted)', borderBottom: '1px solid var(--border-card)', whiteSpace: 'nowrap',
-    cursor: 'pointer', userSelect: 'none', background: 'var(--bg-card)', position: 'sticky', top: 0, zIndex: 10 }
-  const td = { padding: '8px 10px', fontSize: 13, borderBottom: '1px solid var(--border-row)', verticalAlign: 'middle' }
-  const dash = <span style={{ color: 'var(--muted)' }}>—</span>
+  const chipSel = { appearance: 'none', border: '1px solid var(--border-card)', background: 'var(--bg-card)', borderRadius: 10, padding: '7px 26px 7px 12px', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer', fontFamily: UI, outline: 'none', backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%278%27 height=%275%27%3E%3Cpath d=%27M0 0l4 5 4-5z%27 fill=%27%23A3ABBD%27/%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center' }
+  const HeadCell = ({ k, w, label, sortKey }) => (
+    <div onClick={() => handleSort(sortKey)} style={{ padding: '0 8px 10px', fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: sortCol === sortKey ? 'var(--accent)' : 'var(--text-faint)', textAlign: RIGHT.has(k) ? 'right' : 'left', cursor: sortKey ? 'pointer' : 'default', userSelect: 'none', whiteSpace: 'nowrap' }}>
+      {label}{sortCol === sortKey && <span> {sortDir === 'asc' ? '↑' : '↓'}</span>}
+    </div>
+  )
 
   return (
     <>
       <Head><title>Контрагенты</title></Head>
       <Navbar active="directories" />
-      <div style={{ padding: '20px 24px 50px' }}>
-        <DirectoryTabs active="counterparties" />
+      <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
+        <DirectoryTabs active="counterparties" actions={
+          <>
+            <IconBtn title="Сбросить фильтры" onClick={resetFilters}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v4h-4" /></svg></IconBtn>
+            <IconBtn title="Выгрузить в CSV" onClick={exportCsv}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg></IconBtn>
+          </>
+        } />
 
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 14 }}>
-          <h1 style={{ fontSize: 19, fontWeight: 600, margin: 0 }}>Контрагенты</h1>
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>{filtered.length} из {items.length}</span>
-        </div>
+        {error && <div style={{ background: 'var(--danger-tint)', color: '#C93A3E', padding: '10px 14px', borderRadius: 12, marginBottom: 12, fontSize: 13 }}>{error}</div>}
 
-        {/* Строка поиска + кнопка добавления */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
-          marginBottom: showForm ? 0 : 12 }}>
-          <input style={{ ...inp, width: 260 }} placeholder="Поиск по названию или ИНН"
-            value={search} onChange={e => setSearch(e.target.value)} />
-          <select style={inp} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="">Все виды</option>
-            <option value="действующий">Действующий</option>
-            <option value="виртуальный">Виртуальный</option>
-          </select>
-          {mayEdit && (
-            <button style={btn(showForm)} onClick={() => showForm ? cancelForm() : setShowForm(true)}>
-              {showForm ? 'Отмена' : '+ Добавить'}
-            </button>
-          )}
-        </div>
-
-        {/* Форма нового контрагента */}
-        {mayEdit && showForm && (
-          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-            borderTop: 'none', borderRadius: '0 0 var(--radius-card) var(--radius-card)',
-            padding: '14px 16px', marginBottom: 12 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Новый контрагент</div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-              <div>
-                <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 3 }}>Название *</div>
-                <input style={inpSm(260)} placeholder="ООО Контрагент" autoFocus
-                  value={newForm.name} onChange={e => setNewForm(f => ({ ...f, name: e.target.value }))}
-                  onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') cancelForm() }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 3 }}>ИНН</div>
-                <input style={inpSm(150)} placeholder="1234567890"
-                  value={newForm.inn} onChange={e => setNewForm(f => ({ ...f, inn: e.target.value }))}
-                  onKeyDown={e => { if (e.key === 'Enter') handleCreate() }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 3 }}>Вид</div>
-                <select style={inp} value={newForm.status} onChange={e => setNewForm(f => ({ ...f, status: e.target.value }))}>
-                  <option value="действующий">Действующий</option>
-                  <option value="виртуальный">Виртуальный</option>
-                </select>
-              </div>
-              <button style={btn(true)} onClick={handleCreate} disabled={newSaving}>
-                {newSaving ? '…' : 'Создать'}
-              </button>
-              <button style={btn(false)} onClick={cancelForm}>Отмена</button>
+        {/* Карточка реестра */}
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, padding: '18px 24px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {/* строка фильтров */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <h1 style={{ fontSize: 17, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Контрагенты</h1>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${searchOpen || search ? 'var(--accent)' : 'var(--border-card)'}`, borderRadius: 10, padding: '0 10px', height: 34, width: searchOpen || search ? 260 : 150, transition: 'width 200ms ease' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'var(--text-faint)', strokeWidth: 1.8, strokeLinecap: 'round' }}><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></svg>
+              <input value={search} onFocus={() => setSearchOpen(true)} onBlur={() => setSearchOpen(false)} onChange={e => setSearch(e.target.value)} placeholder="Название, ИНН…" style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', fontSize: 13, fontFamily: UI, color: 'var(--text-primary)' }} />
             </div>
-            {newError && <div style={{ color: 'var(--danger)', fontSize: 12.5, marginTop: 6 }}>{newError}</div>}
-          </div>
-        )}
-
-        {/* Панель массового редактирования */}
-        {mayEdit && selectedIds.length > 0 && (
-          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)',
-            borderRadius: 'var(--radius-card)', padding: '12px 16px', marginBottom: 12,
-            display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', alignSelf: 'center' }}>
-              Выбрано: {selectedIds.length}
-            </span>
-            <div>
-              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 3 }}>Вид</div>
-              <select style={inp} value={bulkStatus} onChange={e => setBulkStatus(e.target.value)}>
-                <option value="">— не менять —</option>
-                <option value="действующий">Действующий</option>
-                <option value="виртуальный">Виртуальный</option>
-              </select>
-            </div>
-            <div>
-              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 3 }}>Группа</div>
-              <input style={inpSm(180)} placeholder="Новая группа"
-                value={bulkGroup === '__reset__' ? '' : bulkGroup}
-                onChange={e => setBulkGroup(e.target.value)} />
-            </div>
-            <button onClick={() => setBulkGroup('__reset__')}
-              style={{ ...btn(false), color: bulkGroup === '__reset__' ? 'var(--accent)' : undefined,
-                border: bulkGroup === '__reset__' ? '1px solid var(--accent)' : '1px solid var(--border)' }}
-              title="Вернуть автоматический расчёт группы (самая частая статья)">
-              Сбросить группу на авто
-            </button>
-            <button style={btn(true)} onClick={handleBulkApply} disabled={bulkSaving}>
-              {bulkSaving ? '…' : `Применить к ${selectedIds.length}`}
-            </button>
-            {isAdmin && (
-              deleteConfirming ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <input type="password" placeholder="Ваш пароль" autoFocus
-                    value={deletePassword} onChange={e => setDeletePassword(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleBulkDelete()}
-                    style={inpSm(180)} />
-                  <button style={{ ...btn(true), background: 'var(--danger)' }}
-                    onClick={handleBulkDelete} disabled={deleteLoading}>
-                    {deleteLoading ? '…' : 'Подтвердить удаление'}
-                  </button>
-                  <button style={btn(false)}
-                    onClick={() => { setDeleteConfirming(false); setDeletePassword(''); setDeleteError('') }}>
-                    Отмена
-                  </button>
-                  {deleteError && <span style={{ color: 'var(--danger)', fontSize: 12.5 }}>{deleteError}</span>}
-                </div>
-              ) : (
-                <button style={{ ...btn(false), color: 'var(--danger)' }}
-                  onClick={() => { setDeleteConfirming(true); setDeletePassword(''); setDeleteError('') }}>
-                  Удалить {selectedIds.length}
-                </button>
-              )
+            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={chipSel}>
+              <option value="">Все виды</option>
+              <option value="действующий">Действующий</option>
+              <option value="виртуальный">Виртуальный</option>
+            </select>
+            <select value={relFilter} onChange={e => setRelFilter(e.target.value)} style={chipSel}>
+              <option value="">Все типы</option>
+              <option value="заказчик">Заказчик</option>
+              <option value="поставщик">Поставщик</option>
+              <option value="смешенный">Смешанный</option>
+            </select>
+            {mayEdit && (
+              <button onClick={() => setShowForm(s => !s)} style={{ marginLeft: 'auto', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '8px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>{showForm ? 'Отмена' : '+ Контрагент'}</button>
             )}
-            <button style={btn(false)}
-              onClick={() => { setSelectedIds([]); setBulkStatus(''); setBulkGroup('');
-                setDeleteConfirming(false); setDeletePassword(''); setDeleteError('') }}>
-              Снять выделение
-            </button>
           </div>
-        )}
 
-        {error && <div style={{ background: 'var(--danger-tint)', border: '1px solid var(--danger)',
-          color: 'var(--danger)', padding: '10px 14px', borderRadius: 'var(--radius-card-sm)',
-          marginBottom: 12, fontSize: 13 }}>{error}</div>}
-        {ok && <div style={{ background: 'var(--accent-tint)', color: 'var(--accent)',
-          padding: '10px 14px', borderRadius: 'var(--radius-card-sm)', marginBottom: 12, fontSize: 13 }}>{ok}</div>}
+          {/* строка-счётчик + легенда */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '2px 0 6px' }}>
+            <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>показано {shown.length} из {items.length}</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 12, fontSize: 11.5, color: 'var(--text-muted)' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><i style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--income)' }} />действующий</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><i style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--text-faint)' }} />виртуальный</span>
+            </span>
+          </div>
 
-        {loading && <div style={{ color: 'var(--muted)' }}>Загрузка…</div>}
+          {/* форма нового контрагента */}
+          {mayEdit && showForm && (
+            <div style={{ border: '1px solid var(--border-card)', borderRadius: 14, padding: '14px 16px', margin: '4px 0 10px', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', background: 'var(--bg-subtle)' }}>
+              <div><div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>Название *</div><input autoFocus value={newForm.name} onChange={e => setNewForm(f => ({ ...f, name: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleCreate() }} placeholder="ООО Контрагент" style={{ border: '1px solid var(--border-card)', borderRadius: 10, padding: '8px 10px', fontSize: 13, width: 260, fontFamily: UI, outline: 'none' }} /></div>
+              <div><div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>ИНН</div><input value={newForm.inn} onChange={e => setNewForm(f => ({ ...f, inn: e.target.value }))} placeholder="1234567890" style={{ border: '1px solid var(--border-card)', borderRadius: 10, padding: '8px 10px', fontSize: 13, width: 150, fontFamily: MONO, outline: 'none' }} /></div>
+              <div><div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>Вид</div><select value={newForm.status} onChange={e => setNewForm(f => ({ ...f, status: e.target.value }))} style={chipSel}><option value="действующий">Действующий</option><option value="виртуальный">Виртуальный</option></select></div>
+              <button onClick={handleCreate} disabled={newSaving || saving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>{newSaving || saving ? '…' : 'Создать'}</button>
+              {newError && <span style={{ color: '#C93A3E', fontSize: 12.5 }}>{newError}</span>}
+            </div>
+          )}
 
-        {!loading && (
-          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-            borderRadius: 'var(--radius-card)', overflow: 'auto' }}>
-            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
-              <thead><tr>
-                {mayEdit && <th style={{ ...th, width: 32, cursor: 'default' }}>
-                  <input type="checkbox" checked={allSelected} onChange={toggleAll} />
-                </th>}
-                <th style={{ ...th, width: 44 }} onClick={() => handleSort('id')}>ID <SortIcon col="id" /></th>
-                <th style={th} onClick={() => handleSort('name')}>Название <SortIcon col="name" /></th>
-                <th style={th} onClick={() => handleSort('inn')}>ИНН <SortIcon col="inn" /></th>
-                <th style={{ ...th, width: 90, textAlign: 'center', cursor: 'default' }}
-                  title="Кол-во договоров, привязанных к контрагенту">Договоров</th>
-                <th style={{ ...th, width: 64, textAlign: 'right' }} onClick={() => handleSort('term_days')}
-                  title="Отсрочка, дн.">Отс. <SortIcon col="term_days" /></th>
-                <th style={th} onClick={() => handleSort('relation')}>Статус <SortIcon col="relation" /></th>
-                <th style={th} onClick={() => handleSort('group')}>Группа <SortIcon col="group" /></th>
-                <th style={{ ...th, width: 34, textAlign: 'center', cursor: 'default' }}
-                  title="Вид контрагента">Вид</th>
-                <th style={{ ...th, textAlign: 'right', width: 64 }} onClick={() => handleSort('op_count')}
-                  title="Операции">Опе. <SortIcon col="op_count" /></th>
-                <th style={{ ...th, textAlign: 'right' }} onClick={() => handleSort('receivable')}>Дебиторка <SortIcon col="receivable" /></th>
-                <th style={{ ...th, textAlign: 'right' }} onClick={() => handleSort('payable')}>Кредиторка <SortIcon col="payable" /></th>
-                <th style={{ ...th, textAlign: 'right' }} onClick={() => handleSort('income_paid')}>Поступления <SortIcon col="income_paid" /></th>
-                <th style={{ ...th, textAlign: 'right' }} onClick={() => handleSort('expense_paid')}>Выплаты <SortIcon col="expense_paid" /></th>
-                <th style={{ ...th, textAlign: 'right' }} onClick={() => handleSort('diff')}>Разница <SortIcon col="diff" /></th>
-                <th style={{ ...th, width: 90 }} onClick={() => handleSort('last_op_date')}>Дата <SortIcon col="last_op_date" /></th>
-                <th style={{ ...th, cursor: 'default' }}>Действия</th>
-              </tr></thead>
-              <tbody>
-                {filtered.map(c => {
+          {/* таблица */}
+          {loading ? <div style={{ padding: 30, color: 'var(--text-muted)' }}>Загрузка…</div> : (
+            <div style={{ overflowX: 'auto' }}>
+              <div style={{ minWidth: 1560 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12, borderBottom: '1px solid var(--border-card)' }}>
+                  {COLS.map(([k, w, label, sortKey]) => k === 'sel'
+                    ? <div key={k} style={{ padding: '0 0 10px' }}>{mayEdit && <input type="checkbox" checked={allSelected} onChange={toggleAll} />}</div>
+                    : <HeadCell key={k} k={k} w={w} label={label} sortKey={sortKey} />)}
+                </div>
+                {shown.map(c => {
+                  const rel = relMeta(c.relation)
                   const isEdit = editId === c.id
-                  const relColor = RELATION_COLORS[c.relation] || { bg: 'var(--bg-subtle)', color: 'var(--muted)' }
                   return (
-                    <tr key={c.id} style={{ background: isEdit ? 'var(--accent-tint)' : undefined }}>
-                      {mayEdit && <td style={td}>
-                        <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleOne(c.id)} />
-                      </td>}
-                      <td style={{ ...td, color: 'var(--muted)' }}>{c.id}</td>
-                      <td style={td}>
-                        {isEdit ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                            <input autoFocus value={editDraft.name}
-                              onChange={e => setEditDraft(d => ({ ...d, name: e.target.value }))}
-                              style={{ ...inp, width: 220, padding: '5px 8px' }} />
-                            {isAdmin && (
-                              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12.5, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                <input type="checkbox" checked={editDraft.is_own_company}
-                                  onChange={e => setEditDraft(d => ({ ...d, is_own_company: e.target.checked }))} />
-                                🏢 Наша
-                              </label>
-                            )}
-                          </div>
-                        ) : (
-                          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <Link href={`/counterparty/${c.id}`}
-                              style={{ color: 'var(--accent)', textDecoration: 'none' }}>{c.name}</Link>
-                            {c.is_own_company && (
-                              <span style={{ fontSize: 11.5, padding: '1px 6px', borderRadius: 10,
-                                background: '#dbeafe', color: '#1d4ed8', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                                🏢 Наша
-                              </span>
-                            )}
-                          </span>
-                        )}
-                      </td>
-                      <td style={td}>
+                    <div key={c.id} onClick={() => !isEdit && router.push(`/counterparty/${c.id}`)} style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12, alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border-row)', borderRadius: 10, cursor: isEdit ? 'default' : 'pointer', background: isEdit ? 'var(--accent-tint)' : 'transparent' }} onMouseEnter={e => { if (!isEdit) e.currentTarget.style.background = 'var(--bg-subtle)' }} onMouseLeave={e => { if (!isEdit) e.currentTarget.style.background = 'transparent' }}>
+                      <div onClick={e => e.stopPropagation()} style={{ paddingLeft: 0 }}>{mayEdit && <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleOne(c.id)} />}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)', padding: '0 8px' }}>{c.id}</div>
+                      <div style={{ padding: '0 8px', overflow: 'hidden' }}>
                         {isEdit
-                          ? <input value={editDraft.inn} onChange={e => setEditDraft(d => ({ ...d, inn: e.target.value }))}
-                              style={{ ...inp, width: 120, padding: '5px 8px' }} />
-                          : (c.inn || dash)}
-                      </td>
-                      <td style={{ ...td, textAlign: 'center' }}>
-                        {c.contracts_count > 0 ? c.contracts_count : <span style={{ color: 'var(--muted)' }}>0</span>}
-                      </td>
-                      <td style={{ ...td, textAlign: 'right' }}>
-                        {isEdit
-                          ? <input type="number" min="0" value={editDraft.term_days}
-                              onChange={e => setEditDraft(d => ({ ...d, term_days: e.target.value }))}
-                              placeholder={String(DEFAULT_TERM_DAYS)}
-                              style={{ ...inp, width: 70, padding: '5px 8px', textAlign: 'right' }} />
-                          : (c.term_days_is_default
-                              ? <span style={{ color: 'var(--muted)' }} title="Значение по умолчанию">{c.term_days_effective}</span>
-                              : <span title="Задано вручную">{c.term_days_effective}</span>)}
-                      </td>
-                      <td style={td}>
-                        {c.relation
-                          ? <span style={{ fontSize: 12.5, padding: '2px 8px', borderRadius: 20,
-                              whiteSpace: 'nowrap', background: relColor.bg, color: relColor.color }}>
-                              {RELATION_LABELS[c.relation]}
-                            </span>
-                          : dash}
-                      </td>
-                      <td style={{ ...td, color: 'var(--muted)', maxWidth: 160,
-                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                        title={c.group_is_override ? `${c.group} (задано вручную)` : (c.group || '')}>
-                        {c.group_is_override && <span style={{ color: '#d97706', marginRight: 3 }}>✎</span>}
-                        {c.group || dash}
-                      </td>
-                      <td style={{ ...td, textAlign: 'center' }}>
-                        {isEdit ? (
-                          <select value={editDraft.status}
-                            onChange={e => setEditDraft(d => ({ ...d, status: e.target.value }))}
-                            style={{ ...inp, padding: '5px 8px' }}>
-                            <option value="действующий">Действующий</option>
-                            <option value="виртуальный">Виртуальный</option>
-                          </select>
-                        ) : (
-                          <span title={c.status === 'действующий' ? 'Действующий' : 'Виртуальный'}
-                            style={{ width: 10, height: 10, borderRadius: '50%', display: 'inline-block',
-                              background: c.status === 'действующий' ? '#16a34a' : '#2563eb' }} />
-                        )}
-                      </td>
-                      <td style={{ ...td, textAlign: 'right' }}>{c.op_count}</td>
-                      <td style={{ ...td, textAlign: 'right', color: '#2563eb', whiteSpace: 'nowrap' }}>
-                        {c.receivable > 0 ? fmt(c.receivable) : dash}
-                      </td>
-                      <td style={{ ...td, textAlign: 'right', color: '#d97706', whiteSpace: 'nowrap' }}>
-                        {c.payable > 0 ? fmt(c.payable) : dash}
-                      </td>
-                      <td style={{ ...td, textAlign: 'right', color: '#16a34a', whiteSpace: 'nowrap' }}>
-                        {c.income_paid > 0 ? fmt(c.income_paid) : dash}
-                      </td>
-                      <td style={{ ...td, textAlign: 'right', color: '#dc2626', whiteSpace: 'nowrap' }}>
-                        {c.expense_paid > 0 ? fmt(c.expense_paid) : dash}
-                      </td>
-                      <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 500,
-                        color: c.diff >= 0 ? '#16a34a' : '#dc2626' }}>
-                        {fmt(c.diff)}
-                      </td>
-                      <td style={{ ...td, color: 'var(--muted)', whiteSpace: 'nowrap' }}>
-                        {fmtDate(c.last_op_date)}
-                      </td>
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                        {mayEdit && isEdit ? (
-                          <>
-                            <button style={btnSm(true)} onClick={() => handleSave(c.id)} disabled={saving}>
-                              {saving ? '…' : '✓'}
-                            </button>
-                            {' '}
-                            <button style={btnSm(false)} onClick={cancelEdit} disabled={saving}>✕</button>
-                            {editError && <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4, maxWidth: 200 }}>{editError}</div>}
-                          </>
-                        ) : mayEdit ? (
-                          <button style={btnSm(false)} onClick={() => openEdit(c)}>✏️</button>
-                        ) : null}
-                      </td>
-                    </tr>
+                          ? <input autoFocus value={editDraft.name} onClick={e => e.stopPropagation()} onChange={e => setEditDraft(d => ({ ...d, name: e.target.value }))} style={{ width: 220, border: '1px solid var(--border-card)', borderRadius: 8, padding: '5px 8px', fontSize: 13, fontFamily: UI }} />
+                          : <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>{c.is_own_company && <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-tint)', borderRadius: 6, padding: '1px 5px', whiteSpace: 'nowrap' }}>НАША</span>}</span>}
+                      </div>
+                      <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px' }}>{isEdit ? <input value={editDraft.inn} onClick={e => e.stopPropagation()} onChange={e => setEditDraft(d => ({ ...d, inn: e.target.value }))} style={{ width: 96, border: '1px solid var(--border-card)', borderRadius: 8, padding: '5px 8px', fontSize: 12, fontFamily: MONO }} /> : (c.inn || <span style={{ color: 'var(--text-faint)' }}>—</span>)}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 12, color: c.contracts_count ? 'var(--text-primary)' : 'var(--text-faint)', textAlign: 'center' }}>{c.contracts_count || 0}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 12, color: c.term_days_is_default ? 'var(--text-faint)' : 'var(--text-primary)', textAlign: 'right', padding: '0 8px' }}>{isEdit ? <input value={editDraft.term_days} onClick={e => e.stopPropagation()} onChange={e => setEditDraft(d => ({ ...d, term_days: e.target.value.replace(/\D/g, '') }))} placeholder={String(DEFAULT_TERM_DAYS)} style={{ width: 42, border: '1px solid var(--border-card)', borderRadius: 8, padding: '5px 6px', fontSize: 12, fontFamily: MONO, textAlign: 'right' }} /> : c.term_days_effective}</div>
+                      <div style={{ padding: '0 8px' }}>{isEdit
+                        ? <select value={editDraft.status} onClick={e => e.stopPropagation()} onChange={e => setEditDraft(d => ({ ...d, status: e.target.value }))} style={{ border: '1px solid var(--border-card)', borderRadius: 8, padding: '4px 6px', fontSize: 12 }}><option value="действующий">Действ.</option><option value="виртуальный">Виртуал.</option></select>
+                        : <span style={{ background: rel.bg, color: rel.fg, borderRadius: 8, padding: '4px 9px', fontFamily: MONO, fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>{rel.label}</span>}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '.04em', color: 'var(--text-muted)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.group || ''}>{c.group_is_override && <span style={{ color: '#E89020', marginRight: 3 }}>✎</span>}{c.group || <span style={{ color: 'var(--text-faint)' }}>—</span>}</div>
+                      <div style={{ textAlign: 'center' }}><span title={c.status} style={{ width: 8, height: 8, borderRadius: 2, display: 'inline-block', background: c.status === 'действующий' ? 'var(--income)' : 'var(--text-faint)' }} /></div>
+                      <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', textAlign: 'right', padding: '0 8px' }}>{c.op_count || 0}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 12, color: c.receivable > 0 ? 'var(--accent)' : 'var(--text-faint)', textAlign: 'right', padding: '0 8px' }}>{c.receivable > 0 ? fmt(c.receivable) : '—'}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 12, color: c.payable > 0 ? '#E89020' : 'var(--text-faint)', textAlign: 'right', padding: '0 8px' }}>{c.payable > 0 ? fmt(c.payable) : '—'}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 12, color: c.income_paid > 0 ? 'var(--income)' : 'var(--text-faint)', textAlign: 'right', padding: '0 8px' }}>{c.income_paid > 0 ? fmt(c.income_paid) : '—'}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 12, color: c.expense_paid > 0 ? 'var(--text-secondary)' : 'var(--text-faint)', textAlign: 'right', padding: '0 8px' }}>{c.expense_paid > 0 ? fmt(c.expense_paid) : '—'}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: c.diff > 0 ? 'var(--income)' : c.diff < 0 ? '#C93A3E' : 'var(--text-faint)', textAlign: 'right', padding: '0 8px' }}>{c.diff ? (c.diff > 0 ? '+' : '−') + fmt(Math.abs(c.diff)) : '—'}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)', padding: '0 8px' }}>{fmtDate(c.last_op_date)}</div>
+                      <div onClick={e => e.stopPropagation()} style={{ textAlign: 'center' }}>
+                        {mayEdit && (isEdit
+                          ? <span style={{ display: 'inline-flex', gap: 4 }}><button onClick={() => handleSave(c.id)} disabled={saving} style={{ width: 26, height: 26, borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>✓</button><button onClick={cancelEdit} style={{ width: 26, height: 26, borderRadius: 8, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer' }}>✕</button></span>
+                          : <button onClick={() => openEdit(c)} title="Редактировать" style={{ width: 26, height: 26, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-tint)'; e.currentTarget.style.color = 'var(--accent)' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-faint)' }}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>)}
+                      </div>
+                    </div>
                   )
                 })}
-                {!filtered.length && (
-                  <tr><td colSpan={mayEdit ? 17 : 16}
-                    style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>
-                    Ничего не найдено
-                  </td></tr>
-                )}
-              </tbody>
-            </table>
+                {!shown.length && <div style={{ padding: 26, textAlign: 'center', color: 'var(--text-muted)' }}>Ничего не найдено</div>}
+                {editError && <div style={{ color: '#C93A3E', fontSize: 12.5, padding: '8px' }}>{editError}</div>}
+              </div>
+            </div>
+          )}
+
+          {/* подвал: показать ещё + размер страницы */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 12 }}>
+            {filtered.length > pageSize && <button onClick={() => setPageSize(p => p + 100)} style={{ border: '1px solid var(--border-card)', background: 'var(--bg-card)', borderRadius: 10, padding: '7px 14px', fontSize: 13, fontWeight: 600, color: 'var(--accent)', cursor: 'pointer' }}>Показать ещё</button>}
+            <div style={{ marginLeft: 'auto', display: 'inline-flex', gap: 3, background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 10, padding: 3 }}>
+              {[50, 100, 300, 500].map(n => <button key={n} onClick={() => setPageSize(n)} style={{ border: 'none', borderRadius: 8, padding: '5px 11px', fontFamily: MONO, fontSize: 12, fontWeight: pageSize === n ? 700 : 600, background: pageSize === n ? 'var(--accent-tint)' : 'transparent', color: pageSize === n ? 'var(--accent)' : 'var(--text-secondary)', cursor: 'pointer' }}>{n}</button>)}
+            </div>
           </div>
-        )}
+        </div>
       </div>
     </>
   )

@@ -4,6 +4,9 @@ import axios from 'axios'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import DirectoryTabs from '../components/DirectoryTabs'
+import { MONO, UI, IconBtn } from '../components/salesTableKit'
+import useIsMobile from '../components/mobile/useIsMobile'
+import AdvertisersMobile from '../components/mobile/AdvertisersMobile'
 
 const api = axios.create({ baseURL: '/api' })
 const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
@@ -12,12 +15,14 @@ const EMPTY = { short_name: '', name_en: '', name_ru: '', website: '', inn: '' }
 
 export default function Advertisers() {
   const router = useRouter()
+  const isMobile = useIsMobile()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [ok, setOk] = useState('')
   const [perms, setPerms] = useState({})
   const [search, setSearch] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const [form, setForm] = useState(EMPTY)
   const [editId, setEditId] = useState(null)
   const [expanded, setExpanded] = useState(null)
@@ -25,6 +30,9 @@ export default function Advertisers() {
   const [dupes, setDupes] = useState([])
   const [showDupes, setShowDupes] = useState(false)
   const [showForm, setShowForm] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [pageSize, setPageSize] = useState(100)
+  const [mobileLimit, setMobileLimit] = useState(50)
 
   const mayEdit = can(perms, 'dir_advertisers', 'edit')
 
@@ -223,6 +231,31 @@ export default function Advertisers() {
     }
   }
 
+  // Единый сейв для мобильной формы (create + update producer).
+  const mobileSave = async (f, id) => {
+    const payload = {
+      short_name: (f.short_name || '').trim(),
+      name_en: (f.name_en || '').trim(),
+      name_ru: (f.name_ru || '').trim(),
+      website: (f.website || '').trim(),
+      inn: (f.inn || '').trim(),
+    }
+    if (!payload.short_name && !payload.name_en && !payload.name_ru) {
+      alert('Заполните хотя бы одно название'); return false
+    }
+    setSaving(true)
+    try {
+      if (id) await api.put(`/sales/directories/producers/${id}`, payload, auth())
+      else await api.post('/sales/directories/producers', payload, auth())
+      await load()
+      return true
+    } catch (e) {
+      const d = e.response?.data?.detail
+      alert((Array.isArray(d) ? JSON.stringify(d) : d) || (e.response ? `HTTP ${e.response.status}` : `Сеть: ${e.message}`))
+      return false
+    } finally { setSaving(false) }
+  }
+
   const addBrand = async (advertiserId) => {
     if (!brandName.trim()) return
     setError('')
@@ -249,44 +282,58 @@ export default function Advertisers() {
       || (a.brands || []).some(b => b.name.toLowerCase().includes(q))
   })
 
+  // ── МОБИЛЬНАЯ ВЕРСИЯ ──
+  if (isMobile) {
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+        <Head><title>Рекламодатели</title></Head>
+        <Navbar active="directories" />
+        <AdvertisersMobile
+          total={items.length} rows={filtered} loading={loading} canEdit={mayEdit}
+          search={search} setSearch={setSearch}
+          onSave={mobileSave} saving={saving} limit={mobileLimit} setLimit={setMobileLimit} />
+      </div>
+    )
+  }
+
   const inp = {
-    padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-input)',
-    fontSize: 13, background: 'var(--bg-card)', color: 'inherit',
+    padding: '8px 11px', border: '1px solid var(--border-card)', borderRadius: 10,
+    fontSize: 13, background: 'var(--bg-card)', color: 'var(--text-primary)', fontFamily: UI, outline: 'none',
   }
   const btn = (primary) => ({
-    padding: '7px 15px', borderRadius: 'var(--radius-btn)', border: 'none', cursor: 'pointer',
-    fontSize: 13, fontWeight: 500,
-    background: primary ? 'var(--accent)' : 'var(--bg-subtle)', color: primary ? '#fff' : 'inherit',
+    padding: '8px 15px', borderRadius: 10, border: primary ? 'none' : '1px solid var(--border-card)', cursor: 'pointer',
+    fontSize: 13, fontWeight: primary ? 700 : 600,
+    background: primary ? 'var(--accent)' : 'var(--bg-card)', color: primary ? '#fff' : 'var(--text-secondary)', fontFamily: UI,
   })
-  const th = { padding: '9px 10px', textAlign: 'left', fontSize: 11.5, fontWeight: 600,
-    color: 'var(--muted)', borderBottom: '1px solid var(--border-card)', whiteSpace: 'nowrap' }
-  const td = { padding: '8px 10px', fontSize: 13, borderBottom: '1px solid var(--border-row)', verticalAlign: 'top' }
-  const dash = <span style={{ color: 'var(--muted)' }}>—</span>
+  const th = { padding: '0 10px 10px', textAlign: 'left', fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 600,
+    color: 'var(--text-faint)', borderBottom: '1px solid var(--border-card)', whiteSpace: 'nowrap' }
+  const td = { padding: '10px 10px', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-row)', verticalAlign: 'middle' }
+  const dash = <span style={{ color: 'var(--text-faint)' }}>—</span>
 
   return (
     <>
       <Head><title>Рекламодатели</title></Head>
       <Navbar active="directories" />
-      <div style={{ padding: '20px 24px 50px' }}>
+      <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
 
-        <DirectoryTabs active="advertisers" />
+        <DirectoryTabs active="advertisers" actions={
+          <IconBtn title="Сбросить поиск" onClick={() => setSearch('')}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v4h-4" /></svg></IconBtn>
+        } />
 
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 16 }}>
-          <h1 style={{ fontSize: 19, fontWeight: 600, margin: 0 }}>Рекламодатели</h1>
+        {/* Карточка реестра */}
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, padding: '18px 24px 14px' }}>
+        {/* Строка фильтров */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+          <h1 style={{ fontSize: 17, fontWeight: 700, margin: '0 6px 0 0', color: 'var(--text-primary)' }}>Рекламодатели</h1>
+          <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginRight: 4 }}>показано {filtered.length} из {items.length}</span>
+          <input style={{ ...inp, width: 260 }} placeholder="название или бренд…"
+            value={search} onChange={e => setSearch(e.target.value)} />
           {mayEdit && <button style={btn(false)} onClick={() => showDupes ? setShowDupes(false) : loadDupes()}>
             {showDupes ? 'Скрыть дубли' : 'Найти дубли'}
           </button>}
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>{items.length} записей</span>
-        </div>
-
-        {/* Строка поиска + кнопка добавления */}
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: showForm ? 0 : 12 }}>
-          <input style={{ ...inp, width: 300 }} placeholder="поиск по названию или бренду"
-            value={search} onChange={e => setSearch(e.target.value)} />
           {mayEdit && !editId && (
-            <button style={btn(showForm)}
-              onClick={() => showForm ? cancelForm() : setShowForm(true)}>
-              {showForm ? 'Отмена' : '+ Добавить'}
+            <button style={{ ...btn(true), marginLeft: 'auto' }} onClick={() => showForm ? cancelForm() : setShowForm(true)}>
+              {showForm ? 'Отмена' : '+ Рекламодатель'}
             </button>
           )}
         </div>
@@ -351,82 +398,76 @@ export default function Advertisers() {
           padding: '10px 14px', borderRadius: 'var(--radius-card-sm)', marginBottom: 12, fontSize: 13 }}>{ok}</div>}
         {loading && <div style={{ color: 'var(--muted)' }}>Загрузка…</div>}
 
-        {!loading && (
-          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-            borderRadius: 'var(--radius-card)', overflow: 'visible' }}>
-            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-              <thead><tr>
-                <th style={{ ...th, width: 28 }}></th>
-                <th style={th}>BX_ID</th>
-                <th style={th}>Короткое</th>
-                <th style={th}>Англ</th>
-                <th style={th}>Русское</th>
-                <th style={{ ...th, textAlign: 'right' }}>Сделок</th>
-                <th style={th}>Сайт</th>
-                <th style={th}>Бренды</th>
-                <th style={th}>Юрлица</th>
-                <th style={th}></th>
-              </tr></thead>
-              <tbody>
+        {!loading && (() => {
+          const AGRID = '26px 64px minmax(120px,1fr) minmax(120px,1fr) minmax(120px,1fr) 60px minmax(120px,1fr) minmax(200px,1.6fr) minmax(180px,1.4fr) 232px'
+          const cell = { padding: '0 8px', fontSize: 13, color: 'var(--text-primary)', minWidth: 0 }
+          const headCell = (label, right) => <div style={{ padding: '0 8px 10px', fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-faint)', textAlign: right ? 'right' : 'left', whiteSpace: 'nowrap' }}>{label}</div>
+          return (
+          <div style={{ overflowX: 'auto', maxWidth: '100%', margin: '4px -4px 0' }}>
+            <div style={{ minWidth: 1360 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: AGRID, gap: 12, borderBottom: '1px solid var(--border-card)' }}>
+                <div />{headCell('BX_ID')}{headCell('Короткое')}{headCell('Англ')}{headCell('Русское')}{headCell('Сделок', true)}{headCell('Сайт')}{headCell('Бренды')}{headCell('Юрлица')}<div />
+              </div>
                 {filtered.map(a => (
-                  <tr key={a.id} style={{
+                  <div key={a.id} style={{
+                    display: 'grid', gridTemplateColumns: AGRID, gap: 12, alignItems: 'start', padding: '10px 0', borderBottom: '1px solid var(--border-row)', borderRadius: 10,
                     opacity: a.is_active ? 1 : 0.5,
-                    background: selAdv[a.id] ? 'var(--accent-tint)' : undefined,
-                  }}>
-                    <td style={{ ...td, textAlign: 'center' }}>
+                    background: selAdv[a.id] ? 'var(--accent-tint)' : 'transparent',
+                  }} onMouseEnter={e => { if (!selAdv[a.id]) e.currentTarget.style.background = 'var(--bg-subtle)' }} onMouseLeave={e => { if (!selAdv[a.id]) e.currentTarget.style.background = 'transparent' }}>
+                    <div style={{ ...cell, paddingTop: 2 }}>
                       {mayEdit && editId !== a.id && (
                         <input type="checkbox" checked={!!selAdv[a.id]} onChange={() => toggleAdv(a)}
                           style={{ cursor: 'pointer' }} />
                       )}
-                    </td>
-                    <td style={{ ...td, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>
+                    </div>
+                    <div style={{ ...cell, fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)' }}>
                       {a.bx_id
                         ? <a href={`https://simb-ad.bitrix24.ru/crm/company/details/${a.bx_id}/`}
                              target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}
                              title="Открыть рекламодателя в Битрикс24">{a.bx_id}</a>
                         : dash}
-                    </td>
+                    </div>
                     {editId === a.id ? (
                       <>
-                        <td style={td}>
-                          <input style={{ ...inp, width: 140, padding: '3px 7px' }} placeholder="Короткое" autoFocus
+                        <div style={cell}>
+                          <input style={{ ...inp, width: '100%', padding: '5px 8px' }} placeholder="Короткое" autoFocus
                             value={form.short_name} onChange={e => setForm({ ...form, short_name: e.target.value })} />
-                        </td>
-                        <td style={td}>
-                          <input style={{ ...inp, width: 140, padding: '3px 7px' }} placeholder="Англ"
+                        </div>
+                        <div style={cell}>
+                          <input style={{ ...inp, width: '100%', padding: '5px 8px' }} placeholder="Англ"
                             value={form.name_en} onChange={e => setForm({ ...form, name_en: e.target.value })} />
-                        </td>
-                        <td style={td}>
-                          <input style={{ ...inp, width: 140, padding: '3px 7px' }} placeholder="Русское"
+                        </div>
+                        <div style={cell}>
+                          <input style={{ ...inp, width: '100%', padding: '5px 8px' }} placeholder="Русское"
                             value={form.name_ru} onChange={e => setForm({ ...form, name_ru: e.target.value })} />
-                        </td>
-                        <td style={{ ...td, textAlign: 'right', color: 'var(--muted)' }}>{a.deals}</td>
-                        <td style={td}>
-                          <input style={{ ...inp, width: 140, padding: '3px 7px' }} placeholder="сайт"
+                        </div>
+                        <div style={{ ...cell, fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>{a.deals}</div>
+                        <div style={cell}>
+                          <input style={{ ...inp, width: '100%', padding: '5px 8px' }} placeholder="сайт"
                             value={form.website} onChange={e => setForm({ ...form, website: e.target.value })} />
-                        </td>
+                        </div>
                       </>
                     ) : (
                       <>
-                        <td style={{ ...td, fontWeight: 600 }}>{a.short_name || a.name || dash}</td>
-                        <td style={td}>{a.name_en || dash}</td>
-                        <td style={td}>{a.name_ru || dash}</td>
-                        <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        <div style={{ ...cell, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.short_name || a.name || dash}</div>
+                        <div style={{ ...cell, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name_en || dash}</div>
+                        <div style={{ ...cell, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name_ru || dash}</div>
+                        <div style={{ ...cell, fontFamily: MONO, fontSize: 12, textAlign: 'right' }}>
                           {a.deals > 0
                             ? <a href={`/sales?advertiser_id=${a.id}`} target="_blank" rel="noreferrer"
                                  style={{ color: 'var(--accent)', textDecoration: 'none' }}
                                  title="Открыть сделки рекламодателя в реестре">{a.deals}</a>
-                            : a.deals}
-                        </td>
-                        <td style={td}>
+                            : <span style={{ color: 'var(--text-faint)' }}>{a.deals}</span>}
+                        </div>
+                        <div style={{ ...cell, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {a.website
                             ? <a href={a.website.startsWith('http') ? a.website : `https://${a.website}`}
-                                 target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>{a.website}</a>
+                                 target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontSize: 12 }}>{a.website}</a>
                             : dash}
-                        </td>
+                        </div>
                       </>
                     )}
-                    <td style={td}>
+                    <div style={cell}>
                       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
                         {(a.brands || []).map(b => (
                           editBrand?.id === b.id ? (
@@ -458,7 +499,14 @@ export default function Advertisers() {
                             </span>
                           )
                         ))}
-                        {!a.brands?.length && dash}
+                        {!a.brands?.length && !(mayEdit) && dash}
+                        {mayEdit && (
+                          <span onClick={() => { setExpanded(expanded === a.id ? null : a.id); setBrandName('') }}
+                            title="Добавить бренд"
+                            style={{ cursor: 'pointer', border: '1px dashed var(--border-card)', color: expanded === a.id ? 'var(--accent)' : 'var(--text-muted)', borderColor: expanded === a.id ? 'var(--accent)' : 'var(--border-card)', borderRadius: 8, padding: '2px 8px', fontSize: 12, fontWeight: 600, display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                            + добавить
+                          </span>
+                        )}
                       </div>
                       {moveBrand && (a.brands || []).some(b => b.id === moveBrand.id) && (
                         <div style={{ marginTop: 8, position: 'relative' }}>
@@ -494,9 +542,9 @@ export default function Advertisers() {
                           <button style={btn(true)} onClick={() => addBrand(a.id)}>Добавить</button>
                         </div>
                       )}
-                    </td>
+                    </div>
                     {/* Юрлица — прямой договор */}
-                    <td style={td}>
+                    <div style={cell}>
                       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
                         {(a.counterparties || []).map(c => (
                           <span key={c.counterparty_id} style={{
@@ -532,44 +580,38 @@ export default function Advertisers() {
                           )}
                         </div>
                       )}
-                    </td>
-                    <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    </div>
+                    <div style={{ ...cell, display: 'flex', flexWrap: 'nowrap', gap: 6, justifyContent: 'flex-end', alignItems: 'flex-start' }}>
                       {mayEdit && editId === a.id ? (
                         <>
-                          <button style={{ ...btn(true), padding: '3px 10px', fontSize: 12, marginRight: 6 }}
+                          <button style={{ ...btn(true), padding: '5px 12px', fontSize: 12, whiteSpace: 'nowrap' }}
                             onClick={save}>Сохранить</button>
-                          <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12 }}
+                          <button style={{ ...btn(false), padding: '5px 12px', fontSize: 12, whiteSpace: 'nowrap' }}
                             onClick={() => { setEditId(null); setForm(EMPTY); setError('') }}>Отмена</button>
-                          {/* ошибка сохранения — прямо у строки, а не только вверху страницы */}
                           {error && <div style={{ color: 'var(--danger)', fontSize: 11.5, marginTop: 4,
-                            whiteSpace: 'normal', maxWidth: 260, textAlign: 'left' }}>{error}</div>}
+                            whiteSpace: 'normal', maxWidth: 200, textAlign: 'left' }}>{error}</div>}
                         </>
                       ) : mayEdit && (
                         <>
-                          <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12, marginRight: 6 }}
+                          <button style={{ ...btn(false), padding: '5px 12px', fontSize: 12, whiteSpace: 'nowrap' }}
                             onClick={() => { setAttachToAdv(attachToAdv === a.id ? null : a.id); setCpQueryAdv('') }}>
                             + контрагент
                           </button>
-                          <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12, marginRight: 6 }}
-                            onClick={() => { setExpanded(expanded === a.id ? null : a.id); setBrandName('') }}>
-                            + бренд
-                          </button>
-                          <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12 }}
+                          <button style={{ ...btn(false), padding: '5px 12px', fontSize: 12, whiteSpace: 'nowrap' }}
                             onClick={() => startEdit(a)}>Изменить</button>
                         </>
                       )}
-                    </td>
-                  </tr>
+                    </div>
+                  </div>
                 ))}
                 {!filtered.length && (
-                  <tr><td colSpan={9} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>
-                    Ничего не найдено
-                  </td></tr>
+                  <div style={{ padding: 26, textAlign: 'center', color: 'var(--text-muted)' }}>Ничего не найдено</div>
                 )}
-              </tbody>
-            </table>
+            </div>
           </div>
-        )}
+          )
+        })()}
+        </div>
 
         {/* Плавающая панель действий над выбранными брендами */}
         {selAdvIds.length > 0 && (

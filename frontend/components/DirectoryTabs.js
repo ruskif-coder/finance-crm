@@ -7,7 +7,7 @@ import { can } from './Navbar'
 //
 // Вкладки Контрагенты/Статьи/Договоры живут внутри directories.js как внутренние
 // табы — ведём на /directories?tab=<id>. Остальные — отдельные страницы.
-export default function DirectoryTabs({ active }) {
+export default function DirectoryTabs({ active, actions }) {
   const router = useRouter()
   let perms = {}
   let role = ''
@@ -27,21 +27,23 @@ export default function DirectoryTabs({ active }) {
   if (isAdmin) tabs.push({ id: 'reconcile', label: 'Сверка с Битриксом', href: '/reconcile' })
 
   return (
-    <div className="desktop-only" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>
+    <div className="desktop-only" style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, padding: '10px 14px', marginBottom: 16 }}>
       {tabs.map(t => {
         const isActive = t.id === active
         return (
-          <button key={t.id} onClick={() => router.push(t.href)}
+          <button key={t.id} onClick={() => !isActive && router.push(t.href)}
             style={{
-              padding: '6px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
-              fontWeight: 500, fontSize: 14, whiteSpace: 'nowrap',
-              background: isActive ? 'var(--accent, #2563eb)' : 'var(--bg-subtle, #eef1f7)',
-              color: isActive ? '#fff' : 'var(--text-secondary, #374151)',
+              padding: '8px 14px', borderRadius: 10, border: 'none', cursor: isActive ? 'default' : 'pointer',
+              fontWeight: isActive ? 700 : 600, fontSize: 14, whiteSpace: 'nowrap',
+              background: isActive ? 'var(--accent-tint)' : 'transparent',
+              color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
+              transition: 'background-color 150ms ease, color 150ms ease',
             }}>
             {t.label}
           </button>
         )
       })}
+      {actions && <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>{actions}</span>}
     </div>
   )
 }

@@ -4,6 +4,9 @@ import axios from 'axios'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import DirectoryTabs from '../components/DirectoryTabs'
+import { MONO, UI, IconBtn } from '../components/salesTableKit'
+import useIsMobile from '../components/mobile/useIsMobile'
+import ContractsMobile from '../components/mobile/ContractsMobile'
 
 const api = axios.create({ baseURL: '/api' })
 const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
@@ -24,6 +27,36 @@ const EMPTY = {
 const COOPERATION_FORMATS = ['Агентство КЛ', 'Агентство ПД', 'Клиент', 'Подрядчик', 'Аптека', 'Паблишер', 'Рекламная система']
 const PROLONGATION_OPTIONS = ['АВТО на год', 'По соглашению', 'Нет']
 const PAYMENT_TERM_CONDITIONS = ['С даты УПД', 'С даты АКТ', 'По периоду']
+
+// формат сотрудничества → цвет чипа
+const FMT_META = {
+  'Клиент': { bg: 'var(--accent-tint)', fg: 'var(--accent)' },
+  'Подрядчик': { bg: '#FBF0DE', fg: '#B26A0C' },
+  'Агентство КЛ': { bg: '#F1EDFC', fg: '#7B62D6' },
+  'Агентство ПД': { bg: '#F1EDFC', fg: '#7B62D6' },
+  'Аптека': { bg: '#E6F5EF', fg: '#2FA37C' },
+  'Паблишер': { bg: '#E9F0FB', fg: '#3B6FD4' },
+  'Рекламная система': { bg: '#FDEBF0', fg: '#C43C6B' },
+}
+const fmtMeta = (f) => FMT_META[f] || { bg: 'var(--bg-subtle)', fg: 'var(--text-muted)' }
+
+// сетка таблицы (без sel-колонки — она добавляется отдельно при mayEdit)
+const COLS = [
+  ['id', '48px', 'ID', 'id'],
+  ['cp', 'minmax(190px,1.5fr)', 'Контрагент', 'counterparty_name'],
+  ['num', '120px', '№ договора', 'contract_number'],
+  ['date', '92px', 'Дата', 'contract_date'],
+  ['inn', '108px', 'ИНН', 'inn'],
+  ['mkt', 'minmax(150px,1fr)', 'Назв. маркет.', 'marketing_name'],
+  ['fmt', '152px', 'Формат', 'cooperation_format'],
+  ['end', '100px', 'Окончание', 'end_date_text'],
+  ['prol', '120px', 'Пролонгация', 'prolongation'],
+  ['days', '52px', 'Дни', 'payment_term_days'],
+  ['cond', '124px', 'Условие', 'payment_term_condition'],
+  ['doc', '78px', 'Док.'],
+  ['act', '74px', ''],
+]
+const RIGHT = new Set(['days'])
 
 function CounterpartySearch({ counterparties, value, onChange, onCreateNew }) {
   const [search, setSearch] = useState('')
@@ -118,6 +151,7 @@ function SelectWithOther({ value, options, onChange, style, emptyLabel }) {
 
 export default function Contracts() {
   const router = useRouter()
+  const isMobile = useIsMobile()
   const [perms, setPerms] = useState({})
   const [role, setRole] = useState('')
   const [counterparties, setCounterparties] = useState([])
@@ -131,6 +165,7 @@ export default function Contracts() {
   const [prolongFilter, setProlongFilter] = useState('')
   const [sortCol, setSortCol] = useState('contract_date')
   const [sortDir, setSortDir] = useState('desc')
+  const [mobileLimit, setMobileLimit] = useState(50)
 
   const [showForm, setShowForm] = useState(false)
   const [newForm, setNewForm] = useState(EMPTY)
@@ -377,62 +412,87 @@ export default function Contracts() {
       return sortDir === 'asc' ? cmp : -cmp
     })
 
+  // единый сейв для мобильной формы (create + edit)
+  const mobileSave = async (f, id) => {
+    if (!(f.contract_number || '').trim() && !(f.counterparty_name || f.counterparty_id)) { alert('Укажите № договора или контрагента'); return false }
+    setSaving(true)
+    try {
+      if (id) await api.put(`/contracts/${id}`, payload(f), auth())
+      else await api.post('/contracts/', payload(f), auth())
+      await loadAll(); return true
+    } catch (e) { alert(e.response?.data?.detail || 'Ошибка при сохранении'); return false }
+    finally { setSaving(false) }
+  }
+
+  // ── МОБИЛЬНАЯ ВЕРСИЯ ──
+  if (isMobile) {
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+        <Head><title>Договора</title></Head>
+        <Navbar active="directories" />
+        <ContractsMobile
+          total={items.length} rows={filtered} loading={loading} canEdit={mayEdit} counterparties={counterparties}
+          search={search} setSearch={setSearch} formatFilter={formatFilter} setFormatFilter={setFormatFilter} formatOptions={formatOptions}
+          onSave={mobileSave} saving={saving} onDownload={handleDownload} limit={mobileLimit} setLimit={setMobileLimit} />
+      </div>
+    )
+  }
+
   const allSelected = filtered.length > 0 && filtered.every(c => selectedIds.includes(c.id))
   const toggleAll = () => setSelectedIds(allSelected ? [] : filtered.map(c => c.id))
   const toggleOne = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
 
-  const inp = { padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-input)',
-    fontSize: 13, background: 'var(--bg-card)', color: 'inherit' }
-  const inpSm = (w) => ({ ...inp, width: w, padding: '5px 8px' })
-  const selSm = (w) => ({ ...inp, width: w, padding: '5px 8px' })
-  const btn = (p) => ({ padding: '7px 15px', borderRadius: 'var(--radius-btn)', border: 'none', cursor: 'pointer',
-    fontSize: 13, fontWeight: 500, background: p ? 'var(--accent)' : 'var(--bg-subtle)', color: p ? '#fff' : 'inherit' })
-  const btnSm = (p) => ({ ...btn(p), padding: '3px 10px', fontSize: 12 })
-  const th = { padding: '9px 10px', textAlign: 'left', fontSize: 11.5, fontWeight: 600,
-    color: 'var(--muted)', borderBottom: '1px solid var(--border-card)', whiteSpace: 'nowrap',
+  const inp = { padding: '8px 11px', border: '1px solid var(--border-card)', borderRadius: 10,
+    fontSize: 13, background: 'var(--bg-card)', color: 'var(--text-primary)', fontFamily: UI, outline: 'none' }
+  const inpSm = (w) => ({ ...inp, width: w, padding: '6px 9px' })
+  const selSm = (w) => ({ ...inp, width: w, padding: '6px 9px' })
+  const btn = (p) => ({ padding: '8px 15px', borderRadius: 10, border: p ? 'none' : '1px solid var(--border-card)', cursor: 'pointer',
+    fontSize: 13, fontWeight: p ? 700 : 600, background: p ? 'var(--accent)' : 'var(--bg-card)', color: p ? '#fff' : 'var(--text-secondary)', fontFamily: UI })
+  const btnSm = (p) => ({ ...btn(p), padding: '4px 10px', fontSize: 12 })
+  const th = { padding: '0 10px 10px', textAlign: 'left', fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 600,
+    color: 'var(--text-faint)', borderBottom: '1px solid var(--border-card)', whiteSpace: 'nowrap',
     cursor: 'pointer', userSelect: 'none' }
-  const td = { padding: '8px 10px', fontSize: 13, borderBottom: '1px solid var(--border-row)', verticalAlign: 'top' }
-  const dash = <span style={{ color: 'var(--muted)' }}>—</span>
+  const td = { padding: '10px 10px', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-row)', verticalAlign: 'middle' }
+  const dash = <span style={{ color: 'var(--text-faint)' }}>—</span>
 
   return (
     <>
       <Head><title>Договора</title></Head>
       <Navbar active="directories" />
-      <div style={{ padding: '20px 24px 50px' }}>
-        <DirectoryTabs active="contracts" />
+      <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
+        <DirectoryTabs active="contracts" actions={
+          <>
+            <IconBtn title="Сбросить фильтры" onClick={() => { setSearch(''); setFormatFilter(''); setProlongFilter('') }}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v4h-4" /></svg></IconBtn>
+            <IconBtn title="Экспорт в Excel" onClick={downloadExport}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg></IconBtn>
+            {mayEdit && <IconBtn title="Импорт из Excel" onClick={() => importRef.current?.click()}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 21V9" /><path d="M7 13l5-5 5 5" /><path d="M4 4h16" /></svg></IconBtn>}
+          </>
+        } />
 
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 14 }}>
-          <h1 style={{ fontSize: 19, fontWeight: 600, margin: 0 }}>Договора</h1>
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>{items.length} записей</span>
-        </div>
+        <input ref={importRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleImportFile} />
+        <input ref={uploadRef} type="file" style={{ display: 'none' }} onChange={handleUpload} />
+        <input ref={newUploadRef} type="file" style={{ display: 'none' }} onChange={e => { setNewFile(e.target.files?.[0] || null) }} />
 
-        {/* Toolbar: поиск + фильтры + кнопка добавления */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
-          marginBottom: showForm ? 0 : 12 }}>
-          <input style={{ ...inp, width: 280 }} placeholder="Поиск по № договора, контрагенту, ИНН"
+        {/* Карточка реестра */}
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, padding: '18px 24px 14px' }}>
+        {/* Строка фильтров */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+          <h1 style={{ fontSize: 17, fontWeight: 700, margin: '0 6px 0 0', color: 'var(--text-primary)' }}>Договора</h1>
+          <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginRight: 4 }}>показано {filtered.length} из {items.length}</span>
+          <input style={{ ...inp, width: 260 }} placeholder="№ договора, контрагент, ИНН…"
             value={search} onChange={e => setSearch(e.target.value)} />
           <select style={inp} value={formatFilter} onChange={e => setFormatFilter(e.target.value)}>
             <option value="">Все форматы</option>
             {formatOptions.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
           <select style={inp} value={prolongFilter} onChange={e => setProlongFilter(e.target.value)}>
-            <option value="">Все типы пролонгации</option>
+            <option value="">Все пролонгации</option>
             {prolongOptions.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
-          <button style={btn(false)} onClick={downloadExport} title="Экспорт в Excel">⬇️</button>
           {mayEdit && (
-            <>
-              <input ref={importRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleImportFile} />
-              <button style={btn(false)} onClick={() => importRef.current?.click()} title="Импорт из Excel">⬆️</button>
-              <button style={btn(showForm)}
-                onClick={() => showForm ? cancelForm() : setShowForm(true)}>
-                {showForm ? 'Отмена' : '+ Добавить'}
-              </button>
-            </>
+            <button style={{ ...btn(true), marginLeft: 'auto' }} onClick={() => showForm ? cancelForm() : setShowForm(true)}>
+              {showForm ? 'Отмена' : '+ Договор'}
+            </button>
           )}
-          <input ref={uploadRef} type="file" style={{ display: 'none' }} onChange={handleUpload} />
-          <input ref={newUploadRef} type="file" style={{ display: 'none' }}
-            onChange={e => { setNewFile(e.target.files?.[0] || null) }} />
         </div>
 
         {/* Форма нового договора */}
@@ -621,182 +681,86 @@ export default function Contracts() {
           </div>
         )}
 
-        {loading && <div style={{ color: 'var(--muted)' }}>Загрузка…</div>}
+        {loading && <div style={{ color: 'var(--text-muted)' }}>Загрузка…</div>}
 
-        {!loading && (
-          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-            borderRadius: 'var(--radius-card)', overflow: 'auto', width: 'max-content', maxWidth: '100%' }}>
-            <table style={{ borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead><tr>
-                {mayEdit && <th style={{ ...th, width: 32, cursor: 'default' }}>
-                  <input type="checkbox" checked={allSelected} onChange={toggleAll} />
-                </th>}
-                <th style={{ ...th, width: 44 }} onClick={() => handleSort('id')}>ID <SortIcon col="id" /></th>
-                <th style={{ ...th, width: 255 }} onClick={() => handleSort('counterparty_name')}>Контрагент <SortIcon col="counterparty_name" /></th>
-                <th style={{ ...th, width: 120 }} onClick={() => handleSort('contract_number')}>№ договора <SortIcon col="contract_number" /></th>
-                <th style={{ ...th, width: 100 }} onClick={() => handleSort('contract_date')}>Дата <SortIcon col="contract_date" /></th>
-                <th style={{ ...th, width: 110 }} onClick={() => handleSort('inn')}>ИНН <SortIcon col="inn" /></th>
-                <th style={{ ...th, width: 170 }} onClick={() => handleSort('marketing_name')}>Назв. маркет. <SortIcon col="marketing_name" /></th>
-                <th style={{ ...th, width: 130 }} onClick={() => handleSort('cooperation_format')}>Формат <SortIcon col="cooperation_format" /></th>
-                <th style={{ ...th, width: 105 }} onClick={() => handleSort('end_date_text')}>Окончание <SortIcon col="end_date_text" /></th>
-                <th style={{ ...th, width: 110 }} onClick={() => handleSort('prolongation')}>Пролонгация <SortIcon col="prolongation" /></th>
-                <th style={{ ...th, width: 70, textAlign: 'right' }} onClick={() => handleSort('payment_term_days')}>Дни <SortIcon col="payment_term_days" /></th>
-                <th style={{ ...th, width: 120 }} onClick={() => handleSort('payment_term_condition')}>Условие <SortIcon col="payment_term_condition" /></th>
-                <th style={{ ...th, width: 130, cursor: 'default' }}>Действия</th>
-              </tr></thead>
-              <tbody>
-                {filtered.map(c => {
-                  const isEdit = editId === c.id
-                  const w = (px) => ({ ...inp, width: px, padding: '5px 8px' })
-                  const sw = (px) => ({ ...inp, width: px, padding: '5px 8px' })
+        {!loading && (() => {
+          const CCOLS = [
+            ['sel', '26px', ''], ['id', '46px', 'ID', 'id'], ['cp', 'minmax(200px,1.4fr)', 'Контрагент', 'counterparty_name'],
+            ['num', '118px', '№ договора', 'contract_number'], ['date', '92px', 'Дата', 'contract_date'], ['inn', '110px', 'ИНН', 'inn'],
+            ['mkt', 'minmax(130px,1fr)', 'Назв. маркет.', 'marketing_name'], ['fmt', '132px', 'Формат', 'cooperation_format'],
+            ['end', '104px', 'Окончание', 'end_date_text'], ['prol', '118px', 'Пролонгация', 'prolongation'],
+            ['days', '52px', 'Дни', 'payment_term_days'], ['cond', '122px', 'Условие', 'payment_term_condition'],
+            ['act', '92px', ''],
+          ]
+          const CRIGHT = new Set(['days'])
+          const CGRID = CCOLS.map(c => c[1]).join(' ')
+          const icoBtn = { width: 26, height: 26, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }
+          const w = (px) => ({ ...inp, width: px, padding: '6px 9px' })
+          const Head = ({ k, label, sortKey }) => (
+            <div onClick={() => sortKey && handleSort(sortKey)} style={{ padding: '0 8px 10px', fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: sortCol === sortKey ? 'var(--accent)' : 'var(--text-faint)', textAlign: CRIGHT.has(k) ? 'right' : 'left', cursor: sortKey ? 'pointer' : 'default', userSelect: 'none', whiteSpace: 'nowrap' }}>{label}{sortCol === sortKey && <span> {sortDir === 'asc' ? '↑' : '↓'}</span>}</div>
+          )
+          return (
+          <div style={{ overflowX: 'auto', maxWidth: '100%', margin: '4px -4px 0' }}>
+            <div style={{ minWidth: 1420 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: CGRID, gap: 12, borderBottom: '1px solid var(--border-card)' }}>
+                {CCOLS.map(([k, wd, label, sortKey]) => k === 'sel'
+                  ? <div key={k} style={{ padding: '0 0 10px' }}>{mayEdit && <input type="checkbox" checked={allSelected} onChange={toggleAll} />}</div>
+                  : <Head key={k} k={k} label={label} sortKey={sortKey} />)}
+              </div>
+              {filtered.map(c => {
+                if (editId === c.id) {
                   return (
-                    <tr key={c.id} style={{ background: isEdit ? 'var(--accent-tint)' : undefined }}>
-                      {mayEdit && <td style={td}>
-                        <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleOne(c.id)} />
-                      </td>}
-                      <td style={{ ...td, color: 'var(--muted)' }}>{c.id}</td>
-                      <td style={{ ...td, maxWidth: 255, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                        title={!isEdit ? (c.counterparty_name || '') : undefined}>
-                        {isEdit
-                          ? <div style={{ width: 200 }}><CounterpartySearch counterparties={counterparties}
-                              value={editDraft.counterparty_id}
-                              onChange={id => setEditDraft(d => ({ ...d, counterparty_id: id }))}
-                              onCreateNew={createCounterparty} /></div>
-                          : <>{c.counterparty_name || dash}{!c.linked && <span title="Не привязан к реестру" style={{ marginLeft: 5, color: 'var(--warning)' }}>⚠</span>}</>}
-                      </td>
-                      <td style={td}>
-                        {isEdit
-                          ? <input value={editDraft.contract_number || ''} onChange={e => setEditDraft(d => ({ ...d, contract_number: e.target.value }))} style={w(110)} />
-                          : (c.contract_number || dash)}
-                      </td>
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                        {isEdit
-                          ? <input type="date" value={editDraft.contract_date || ''} onChange={e => setEditDraft(d => ({ ...d, contract_date: e.target.value }))} style={w(130)} />
-                          : fmtDate(c.contract_date)}
-                      </td>
-                      <td style={td}>
-                        {isEdit
-                          ? (editDraft.counterparty_id
-                            ? <span style={{ color: 'var(--muted)' }}>{(counterparties.find(cp => cp.id === editDraft.counterparty_id) || {}).inn || '—'}</span>
-                            : <input value={editDraft.inn || ''} onChange={e => setEditDraft(d => ({ ...d, inn: e.target.value }))} style={w(110)} />)
-                          : (c.inn || dash)}
-                      </td>
-                      <td style={{ ...td, maxWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                        title={!isEdit ? (c.marketing_name || '') : undefined}>
-                        {isEdit
-                          ? <input value={editDraft.marketing_name || ''} onChange={e => setEditDraft(d => ({ ...d, marketing_name: e.target.value }))} style={w(180)} />
-                          : (c.marketing_name || dash)}
-                      </td>
-                      <td style={{ ...td, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                        title={!isEdit ? (c.cooperation_format || '') : undefined}>
-                        {isEdit
-                          ? <SelectWithOther value={editDraft.cooperation_format} options={COOPERATION_FORMATS}
-                              onChange={e => setEditDraft(d => ({ ...d, cooperation_format: e.target.value }))} style={sw(170)} />
-                          : (c.cooperation_format || dash)}
-                      </td>
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                        {isEdit
-                          ? <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                              {(editDraft._end_date_mode || 'date') === 'date'
-                                ? <input type="date" value={editDraft.end_date_text || ''} onChange={e => setEditDraft(d => ({ ...d, end_date_text: e.target.value }))} style={w(140)} />
-                                : <input type="text" placeholder="Текст" value={editDraft.end_date_text || ''} onChange={e => setEditDraft(d => ({ ...d, end_date_text: e.target.value }))} style={w(160)} />}
-                              <button type="button"
-                                onClick={() => setEditDraft(d => ({ ...d, _end_date_mode: (d._end_date_mode || 'date') === 'date' ? 'text' : 'date', end_date_text: '' }))}
-                                style={{ ...btnSm(false), padding: '2px 6px', fontSize: 11 }}>
-                                {(editDraft._end_date_mode || 'date') === 'date' ? 'Aa' : '📅'}
-                              </button>
-                            </div>
-                          : fmtEndDate(c.end_date_text)}
-                      </td>
-                      <td style={td}>
-                        {isEdit
-                          ? <SelectWithOther value={editDraft.prolongation} options={PROLONGATION_OPTIONS}
-                              onChange={e => setEditDraft(d => ({ ...d, prolongation: e.target.value }))} style={sw(160)} />
-                          : (c.prolongation || dash)}
-                      </td>
-                      <td style={{ ...td, textAlign: 'right' }}>
-                        {isEdit
-                          ? <input type="number" min="0" value={editDraft.payment_term_days}
-                              onChange={e => setEditDraft(d => ({ ...d, payment_term_days: e.target.value }))}
-                              style={{ ...w(80), textAlign: 'right' }} />
-                          : (c.payment_term_days != null ? c.payment_term_days : dash)}
-                      </td>
-                      <td style={td}>
-                        {isEdit
-                          ? <SelectWithLegacy value={editDraft.payment_term_condition} options={PAYMENT_TERM_CONDITIONS}
-                              onChange={e => setEditDraft(d => ({ ...d, payment_term_condition: e.target.value }))} style={sw(170)} />
-                          : (c.payment_term_condition || dash)}
-                      </td>
-                      <td style={td}>
-                        {isEdit ? (
-                          <div style={{ minWidth: 240 }}>
-                            <div style={{ marginBottom: 5, display: 'flex', gap: 4, alignItems: 'center' }}>
-                              <input value={editDraft.document_link || ''} onChange={e => setEditDraft(d => ({ ...d, document_link: e.target.value }))}
-                                placeholder="Ссылка на документ" style={{ ...w(180), fontSize: 12 }} />
-                              {editDraft.document_link && (
-                                <a href={editDraft.document_link} target="_blank" rel="noopener noreferrer"
-                                  style={{ ...btnSm(false), textDecoration: 'none', display: 'inline-block', fontSize: 12 }}>🔗</a>
-                              )}
-                            </div>
-                            <div style={{ marginBottom: 5, display: 'flex', gap: 4, alignItems: 'center' }}>
-                              {c.attached_filename ? (
-                                <>
-                                  <button onClick={() => handleDownload(c.id, c.attached_filename)}
-                                    style={btnSm(false)} title={c.attached_filename}>📥</button>
-                                  <span style={{ fontSize: 11.5, color: 'var(--muted)', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                                    title={c.attached_filename.replace(new RegExp(`^${c.id}_`), '')}>
-                                    {c.attached_filename.replace(new RegExp(`^${c.id}_`), '')}
-                                  </span>
-                                  <button onClick={() => handleDeleteDoc(c.id)}
-                                    style={{ ...btnSm(false), color: 'var(--danger)' }}>✕</button>
-                                </>
-                              ) : (
-                                <button onClick={() => { setUploadTargetId(c.id); uploadRef.current?.click() }}
-                                  style={btnSm(false)}>
-                                  {uploadingId === c.id ? '…' : '📎 Прикрепить'}
-                                </button>
-                              )}
-                            </div>
-                            <div style={{ display: 'flex', gap: 4 }}>
-                              <button onClick={() => handleSave(c.id)} disabled={saving} style={btnSm(true)}>
-                                {saving ? '…' : '✓ Сохранить'}
-                              </button>
-                              <button onClick={cancelEdit} disabled={saving} style={btnSm(false)}>Отмена</button>
-                            </div>
-                            {editError && <div style={{ color: 'var(--danger)', fontSize: 11.5, marginTop: 4 }}>{editError}</div>}
-                          </div>
-                        ) : (
-                          <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'nowrap' }}>
-                            {c.document_link && (
-                              <a href={c.document_link} target="_blank" rel="noopener noreferrer"
-                                style={{ ...btnSm(false), textDecoration: 'none', display: 'inline-block' }}>🔗</a>
-                            )}
-                            {c.attached_filename && (
-                              <button onClick={() => handleDownload(c.id, c.attached_filename)}
-                                title={`Скачать: ${c.attached_filename.replace(new RegExp(`^${c.id}_`), '')}`}
-                                style={btnSm(false)}>📥</button>
-                            )}
-                            {mayEdit && (
-                              <>
-                                <button onClick={() => openEdit(c)} style={btnSm(false)} title="Редактировать">✏️</button>
-                                <button onClick={() => handleDelete(c)} style={{ ...btnSm(false), color: 'var(--danger)' }} title="Удалить">🗑️</button>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
+                    <div key={c.id} style={{ borderBottom: '1px solid var(--border-row)', background: 'var(--accent-tint)', borderRadius: 10, padding: '12px 10px', margin: '2px 0' }}>
+                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Контрагент</span><div style={{ width: 220 }}><CounterpartySearch counterparties={counterparties} value={editDraft.counterparty_id} onChange={id => setEditDraft(d => ({ ...d, counterparty_id: id }))} onCreateNew={createCounterparty} /></div></div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>№ договора</span><input value={editDraft.contract_number || ''} onChange={e => setEditDraft(d => ({ ...d, contract_number: e.target.value }))} style={w(120)} /></div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Дата</span><input type="date" value={editDraft.contract_date || ''} onChange={e => setEditDraft(d => ({ ...d, contract_date: e.target.value }))} style={w(140)} /></div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>ИНН</span>{editDraft.counterparty_id ? <span style={{ ...w(120), color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center' }}>{(counterparties.find(cp => cp.id === editDraft.counterparty_id) || {}).inn || '—'}</span> : <input value={editDraft.inn || ''} onChange={e => setEditDraft(d => ({ ...d, inn: e.target.value }))} style={w(120)} />}</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Назв. маркет.</span><input value={editDraft.marketing_name || ''} onChange={e => setEditDraft(d => ({ ...d, marketing_name: e.target.value }))} style={w(180)} /></div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Формат</span><SelectWithOther value={editDraft.cooperation_format} options={COOPERATION_FORMATS} onChange={e => setEditDraft(d => ({ ...d, cooperation_format: e.target.value }))} style={w(170)} /></div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Окончание</span><div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>{(editDraft._end_date_mode || 'date') === 'date' ? <input type="date" value={editDraft.end_date_text || ''} onChange={e => setEditDraft(d => ({ ...d, end_date_text: e.target.value }))} style={w(140)} /> : <input type="text" placeholder="Текст" value={editDraft.end_date_text || ''} onChange={e => setEditDraft(d => ({ ...d, end_date_text: e.target.value }))} style={w(150)} />}<button type="button" onClick={() => setEditDraft(d => ({ ...d, _end_date_mode: (d._end_date_mode || 'date') === 'date' ? 'text' : 'date', end_date_text: '' }))} style={{ ...btnSm(false), padding: '4px 8px' }}>{(editDraft._end_date_mode || 'date') === 'date' ? 'Aa' : '📅'}</button></div></div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Пролонгация</span><SelectWithOther value={editDraft.prolongation} options={PROLONGATION_OPTIONS} onChange={e => setEditDraft(d => ({ ...d, prolongation: e.target.value }))} style={w(160)} /></div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Дни</span><input type="number" min="0" value={editDraft.payment_term_days} onChange={e => setEditDraft(d => ({ ...d, payment_term_days: e.target.value }))} style={{ ...w(70), textAlign: 'right' }} /></div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Условие</span><SelectWithLegacy value={editDraft.payment_term_condition} options={PAYMENT_TERM_CONDITIONS} onChange={e => setEditDraft(d => ({ ...d, payment_term_condition: e.target.value }))} style={w(170)} /></div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Документ</span><div style={{ display: 'flex', gap: 4, alignItems: 'center' }}><input value={editDraft.document_link || ''} onChange={e => setEditDraft(d => ({ ...d, document_link: e.target.value }))} placeholder="Ссылка" style={{ ...w(180), fontSize: 12 }} />{c.attached_filename ? <><button onClick={() => handleDownload(c.id, c.attached_filename)} style={btnSm(false)} title={c.attached_filename}>📥</button><button onClick={() => handleDeleteDoc(c.id)} style={{ ...btnSm(false), color: 'var(--danger)' }}>✕</button></> : <button onClick={() => { setUploadTargetId(c.id); uploadRef.current?.click() }} style={btnSm(false)}>{uploadingId === c.id ? '…' : '📎'}</button>}</div></div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
+                        <button onClick={() => handleSave(c.id)} disabled={saving} style={btnSm(true)}>{saving ? '…' : '✓ Сохранить'}</button>
+                        <button onClick={cancelEdit} disabled={saving} style={btnSm(false)}>Отмена</button>
+                        {editError && <span style={{ color: 'var(--danger)', fontSize: 11.5, alignSelf: 'center' }}>{editError}</span>}
+                      </div>
+                    </div>
                   )
-                })}
-                {!filtered.length && (
-                  <tr><td colSpan={mayEdit ? 13 : 12} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>
-                    Ничего не найдено
-                  </td></tr>
-                )}
-              </tbody>
-            </table>
+                }
+                return (
+                  <div key={c.id} style={{ display: 'grid', gridTemplateColumns: CGRID, gap: 12, alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border-row)', borderRadius: 10 }} onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-subtle)' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
+                    <div>{mayEdit && <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleOne(c.id)} />}</div>
+                    <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)', padding: '0 8px' }}>{c.id}</div>
+                    <div style={{ padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.counterparty_name || ''}><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{c.counterparty_name || dash}</span>{!c.linked && <span title="Не привязан к реестру" style={{ marginLeft: 5, color: '#E89020' }}>⚠</span>}</div>
+                    <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.contract_number || dash}</div>
+                    <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)', padding: '0 8px', whiteSpace: 'nowrap' }}>{fmtDate(c.contract_date)}</div>
+                    <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px' }}>{c.inn || dash}</div>
+                    <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.marketing_name || ''}>{c.marketing_name || dash}</div>
+                    <div style={{ padding: '0 8px', overflow: 'hidden' }}>{c.cooperation_format ? <span style={{ background: 'var(--accent-tint)', color: 'var(--accent)', borderRadius: 8, padding: '3px 8px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block', maxWidth: '100%' }} title={c.cooperation_format}>{c.cooperation_format}</span> : dash}</div>
+                    <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', padding: '0 8px', whiteSpace: 'nowrap' }}>{fmtEndDate(c.end_date_text)}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.prolongation || ''}>{c.prolongation || dash}</div>
+                    <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', textAlign: 'right', padding: '0 8px' }}>{c.payment_term_days != null ? c.payment_term_days : dash}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.payment_term_condition || ''}>{c.payment_term_condition || dash}</div>
+                    <div style={{ display: 'inline-flex', gap: 2, justifyContent: 'flex-end' }}>
+                      {c.document_link && <a href={c.document_link} target="_blank" rel="noopener noreferrer" title="Ссылка на документ" style={icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg></a>}
+                      {c.attached_filename && <button onClick={() => handleDownload(c.id, c.attached_filename)} title="Скачать документ" style={icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg></button>}
+                      {mayEdit && <button onClick={() => openEdit(c)} title="Редактировать" style={icoBtn} onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-tint)'; e.currentTarget.style.color = 'var(--accent)' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-faint)' }}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>}
+                      {mayEdit && <button onClick={() => handleDelete(c)} title="Удалить" style={icoBtn} onMouseEnter={e => { e.currentTarget.style.background = 'var(--danger-tint)'; e.currentTarget.style.color = '#C93A3E' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-faint)' }}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>}
+                    </div>
+                  </div>
+                )
+              })}
+              {!filtered.length && <div style={{ padding: 26, textAlign: 'center', color: 'var(--text-muted)' }}>Ничего не найдено</div>}
+            </div>
           </div>
-        )}
+          )
+        })()}
+        </div>
       </div>
     </>
   )

@@ -25,6 +25,8 @@ const STATUS_CHIP = {
 const statusChip = (s) => STATUS_CHIP[s] || ['var(--bg-subtle)', 'var(--text-secondary)', 'var(--text-faint)']
 
 const fmt = (n) => (n ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) : '')
+// с копейками (для сумм выбранного): всегда 2 знака
+const fmt2 = (n) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0)
 const fmtDate = (d) => { if (!d) return ''; const [y, m, dd] = String(d).slice(0, 10).split('-'); return dd ? `${dd}.${m}.${y.slice(2)}` : d }
 const emptyForm = () => ({ date: new Date().toISOString().slice(0, 10), status: 'ОПЛАЧЕНО', income: 0, expense: 0, bank: 'АльфаБанк', period: '', vat_rate: 0, article_id: '', counterparty_id: '', ds_num: '', invoice: '', invoice_date: '', description: '', document_link: '' })
 const isQuarter = (p) => /^Q[1-4]\s*\d{4}$/.test(p || '')
@@ -164,6 +166,7 @@ export default function Operations2() {
   const [bulk, setBulk] = useState({ status: '', date: '', period: '', bank: '', vat_rate: '', article_id: '', counterparty_id: '' })
   const [saving, setSaving] = useState(false)
   const editAnchor = useRef(null)
+  const lastSelIdx = useRef(null)   // якорь для shift-выбора диапазона
   const [hidden, setHidden] = useState(new Set())   // скрытые колонки
   const [colPicker, setColPicker] = useState(false)
   const toggleCol = (k) => setHidden(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); localStorage.setItem('ops2_hidden', JSON.stringify([...n])); return n })
@@ -202,9 +205,19 @@ export default function Operations2() {
   const onSort = (k) => { if (!k) return; if (sortCol === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortCol(k); setSortDir('desc') }; setPage(0) }
   const resetFilters = () => { setDateFrom(''); setDateTo(''); setFStatus([]); setFBank([]); setFArticle([]); setFCp([]); setFPeriod([]); setFOpType([]); setPage(0) }
 
+  // Приведение формы к типам бэкенда: пустые строки в id/датах → null, иначе
+  // pydantic (Optional[int]/Optional[date]) отвергает '' → 422 «ошибка сохранения».
+  const cleanOp = (f) => ({
+    date: f.date || null, status: f.status, income: +f.income || 0, expense: +f.expense || 0,
+    bank: f.bank || null, period: f.period || null, vat_rate: +f.vat_rate || 0,
+    article_id: f.article_id ? +f.article_id : null, counterparty_id: f.counterparty_id ? +f.counterparty_id : null,
+    ds_num: f.ds_num || '', invoice: f.invoice || '', invoice_date: f.invoice_date || null,
+    description: f.description || '', document_link: f.document_link || '',
+  })
+
   const saveCreate = async () => {
     setSaving(true)
-    try { await api(tok()).post('/operations/', createForm); setCreateForm(emptyForm()); setCreateOpen(false); loadOps() }
+    try { await api(tok()).post('/operations/', cleanOp(createForm)); setCreateForm(emptyForm()); setCreateOpen(false); loadOps() }
     catch (e) { alert(e.response?.data?.detail || 'Не удалось создать') } finally { setSaving(false) }
   }
   const downloadTemplate = async () => {
@@ -234,7 +247,7 @@ export default function Operations2() {
   }
   const saveEdit = async () => {
     setSaving(true)
-    try { const { id, ...body } = editing; await api(tok()).put(`/operations/${id}`, body); setEditing(null); loadOps() }
+    try { await api(tok()).put(`/operations/${editing.id}`, cleanOp(editing)); setEditing(null); loadOps() }
     catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить') } finally { setSaving(false) }
   }
   // Копирование: не создаём дубль сразу, а открываем форму «Новая операция» с данными
@@ -247,7 +260,8 @@ export default function Operations2() {
   }
   // мобильные CRUD-хендлеры (форма в OperationsMobile)
   const mobileSave = async (body, id) => {
-    try { if (id) await api(tok()).put(`/operations/${id}`, body); else await api(tok()).post('/operations/', body); loadOps(); return true }
+    const b = cleanOp(body)
+    try { if (id) await api(tok()).put(`/operations/${id}`, b); else await api(tok()).post('/operations/', b); loadOps(); return true }
     catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить'); return false }
   }
   const mobileDelete = async (id) => { try { await api(tok()).delete(`/operations/${id}`); loadOps() } catch (e) { alert('Не удалось удалить') } }
@@ -255,6 +269,18 @@ export default function Operations2() {
 
   const selIds = Object.keys(sel).filter(k => sel[k]).map(Number)
   const selRows = rows.filter(o => sel[o.id])
+  // выбор с Shift: диапазон от последнего кликнутого до текущего (в пределах страницы)
+  const toggleSel = (o, shiftKey) => {
+    const idx = rows.findIndex(r => r.id === o.id)
+    if (shiftKey && lastSelIdx.current != null && lastSelIdx.current >= 0 && lastSelIdx.current < rows.length) {
+      const [a, b] = [lastSelIdx.current, idx].sort((x, y) => x - y)
+      const target = !sel[o.id]
+      setSel(s => { const n = { ...s }; rows.slice(a, b + 1).forEach(r => { n[r.id] = target }); return n })
+    } else {
+      setSel(s => ({ ...s, [o.id]: !s[o.id] }))
+    }
+    lastSelIdx.current = idx
+  }
   const selIncome = selRows.reduce((s, o) => s + (o.income || 0), 0)
   const selExpense = selRows.reduce((s, o) => s + (o.expense || 0), 0)
   const applyBulk = async () => {
@@ -282,7 +308,7 @@ export default function Operations2() {
 
   const cell = (o, key) => {
     switch (key) {
-      case 'sel': return <input type="checkbox" checked={!!sel[o.id]} onChange={() => setSel(s => ({ ...s, [o.id]: !s[o.id] }))} style={{ width: 14, height: 14, cursor: 'pointer' }} />
+      case 'sel': return <input type="checkbox" checked={!!sel[o.id]} onClick={e => toggleSel(o, e.shiftKey)} onChange={() => {}} title="Shift — выбрать диапазон" style={{ width: 14, height: 14, cursor: 'pointer' }} />
       case 'date': return <span style={{ fontFamily: MONO }}>{fmtDate(o.date) || '—'}</span>
       case 'status': { const [bg, fg, dot] = statusChip(o.status); return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: bg, color: fg, borderRadius: 8, padding: '3px 8px', fontFamily: MONO, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', whiteSpace: 'nowrap' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: dot }} />{o.status}</span> }
       case 'dz': { const rs = o.receivable_status; const meta = { overdue: ['Просрочка', 'var(--dot-overdue)'], current: ['Текущая', 'var(--dot-current-dz)'], future: ['План', 'var(--accent)'] }[rs]; return meta ? <span title={meta[0]} style={{ width: 10, height: 10, borderRadius: '50%', background: meta[1], display: 'inline-block' }} /> : <span style={{ color: '#C3C9D8' }}>—</span> }
@@ -432,8 +458,17 @@ export default function Operations2() {
               <div style={{ background: '#F6F8FF', border: '1px solid #D7DEFA', borderRadius: 14, padding: '16px 18px', margin: '10px 0 4px', display: 'flex', alignItems: 'flex-end', gap: 14, flexWrap: 'wrap', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
                 <div style={{ minWidth: 150, borderRight: '1px solid #DDE3F5', paddingRight: 14 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: '#3A50BE', marginBottom: 6 }}>Выбрано: {selIds.length}</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: 'var(--income)' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--income)' }} />+{fmt(selIncome)} ₽</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: 'var(--text-primary)' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: '#8B93A6' }} />−{fmt(selExpense)} ₽</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: 'var(--income)' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--income)' }} />+{fmt2(selIncome)} ₽</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: 'var(--text-primary)' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: '#8B93A6' }} />−{fmt2(selExpense)} ₽</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: '1px solid #DDE3F5', color: (selIncome - selExpense) >= 0 ? 'var(--income)' : '#C93A3E' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: (selIncome - selExpense) >= 0 ? 'var(--income)' : '#C93A3E' }} />сальдо {(selIncome - selExpense) >= 0 ? '+' : '−'}{fmt2(Math.abs(selIncome - selExpense))} ₽</div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', width: 148, flexShrink: 0 }}>
+                  <span style={lbl}>Дата</span>
+                  <input type="date" value={bulk.date} onChange={e => setBulk(b => ({ ...b, date: e.target.value }))} style={{ ...inp, width: '100%' }} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', width: 210, flexShrink: 0 }}>
+                  <span style={lbl}>Период</span>
+                  <PeriodField value={bulk.period} onChange={v => setBulk(b => ({ ...b, period: v }))} />
                 </div>
                 {[['Статус', 'status', STATUSES.map(s => ({ value: s, label: s })), 150], ['Банк', 'bank', BANKS.map(b => ({ value: b, label: b })), 140], ['НДС', 'vat_rate', VAT_OPTIONS.map(v => ({ value: v, label: v + '%' })), 112], ['Статья', 'article_id', articles.map(a => ({ value: a.id, label: a.name })), 160], ['Контрагент', 'counterparty_id', counterparties.map(c => ({ value: c.id, label: c.name })), 190]].map(([label, k, opts, w]) => (
                   <div key={k} style={{ display: 'flex', flexDirection: 'column', width: w, flexShrink: 0 }}>
