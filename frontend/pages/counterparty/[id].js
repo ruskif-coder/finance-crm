@@ -4,9 +4,9 @@ import axios from 'axios'
 import Link from 'next/link'
 import Head from 'next/head'
 import Navbar from '../../components/Navbar'
-import {
-  ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-} from 'recharts'
+import useIsMobile from '../../components/mobile/useIsMobile'
+import CounterpartyCardMobile from '../../components/mobile/CounterpartyCardMobile'
+import CounterpartyCardDesktop, { T as CT } from '../../components/counterparty/CounterpartyCard'
 
 const api = (token) => axios.create({
   baseURL: '/api',
@@ -18,22 +18,14 @@ const fmt = (n) => {
   return new Intl.NumberFormat('ru-RU').format(Math.round(n)) + ' ₽'
 }
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
-const fmtK = (v) => {
-  if (!v) return '0'
-  if (v >= 1_000_000) return `${+(v / 1_000_000).toFixed(1)}М`
-  if (v >= 1_000)     return `${+(v / 1_000).toFixed(0)}К`
-  return String(Math.round(v))
-}
 const MONTHS_SHORT = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек']
 const fmtMonth = (p) => {
   if (!p) return ''
   const [y, m] = p.split('-')
   return `${MONTHS_SHORT[parseInt(m, 10) - 1]} ${y.slice(2)}`
 }
-function normalizeUrl(u) {
-  if (!u) return null
-  return /^https?:\/\//i.test(u) ? u : 'https://' + u
-}
+const BANK_HEX = { 'АльфаБанк': '#E8453F', 'ОПТ Банк': '#2FB8A8', 'Совкомбанк': '#8B93A6', 'Наличные': '#8B7BE8' }
+const bankColorOf = (n) => BANK_HEX[n] || '#C3C9D8'
 
 // Дата окончания договора хранится текстом (end_date_text) — парсим ISO и dd.mm.yyyy,
 // произвольный текст («Бессрочно») отдаём как null (без бейджа срока).
@@ -56,124 +48,12 @@ function contractExpiry(endDateText) {
   return null
 }
 
-// Линейный тренд (МНК) по массиву чисел — значения линии тренда для каждой точки
-function trendLine(values) {
-  const n = values.length
-  if (n < 2) return values.map(() => null)
-  const sx = (n - 1) * n / 2
-  const sxx = (n - 1) * n * (2 * n - 1) / 6
-  const sy = values.reduce((a, b) => a + b, 0)
-  const sxy = values.reduce((a, b, i) => a + b * i, 0)
-  const denom = n * sxx - sx * sx
-  if (!denom) return values.map(() => null)
-  const slope = (n * sxy - sx * sy) / denom
-  const intercept = (sy - slope * sx) / n
-  return values.map((_, i) => Math.max(0, intercept + slope * i))
-}
-
-// ── Строка реквизита ─────────────────────────────────────────────────────────
-function ReqRow({ label, value, link }) {
-  return (
-    <div style={{
-      display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-      padding: '7px 0', borderBottom: '1px solid var(--border-inner)', gap: 12, minHeight: 30,
-    }}>
-      <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap', flexShrink: 0, paddingTop: 1 }}>
-        {label}
-      </span>
-      {!value
-        ? <span style={{ fontSize: 13, color: 'var(--text-faint)' }}>—</span>
-        : link
-          ? <a href={normalizeUrl(value)} target="_blank" rel="noopener noreferrer"
-               style={{ fontSize: 13, textAlign: 'right', wordBreak: 'break-all',
-                        color: 'var(--accent)', textDecoration: 'none' }}>{value}</a>
-          : <span style={{ fontSize: 13, color: 'var(--text-primary)', textAlign: 'right', wordBreak: 'break-all' }}>
-              {value}
-            </span>
-      }
-    </div>
-  )
-}
-
-// ── Поле редактирования ──────────────────────────────────────────────────────
-function EditInput({ label, value, onChange, placeholder, multiline }) {
-  const inputStyle = {
-    width: '100%', padding: '6px 10px', fontSize: 13,
-    border: '1px solid var(--border-card)', borderRadius: 8,
-    background: 'var(--bg-subtle)', color: 'var(--text-primary)',
-    marginTop: 3, outline: 'none', resize: multiline ? 'vertical' : 'none',
-    fontFamily: 'inherit',
-  }
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2, fontWeight: 500 }}>{label}</div>
-      {multiline
-        ? <textarea rows={2} style={inputStyle} value={value || ''} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
-        : <input style={inputStyle} value={value || ''} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
-      }
-    </div>
-  )
-}
-
-// ── Кнопки ───────────────────────────────────────────────────────────────────
-const BTN = (extra = {}) => ({
-  padding: '7px 16px', borderRadius: 10, fontSize: 13, cursor: 'pointer', fontWeight: 500,
-  border: '1px solid var(--border-card)', background: 'var(--bg-subtle)', color: 'var(--text-secondary)',
-  display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap', ...extra,
-})
-const BTN_PRIMARY = BTN({ background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)' })
-const BTN_DANGER  = BTN({ background: 'var(--dot-overdue)', color: '#fff', borderColor: 'var(--dot-overdue)' })
-
-// ── Секция-карточка ──────────────────────────────────────────────────────────
-function Card({ title, action, children }) {
-  return (
-    <div style={{
-      background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-      borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-card)', overflow: 'hidden',
-    }}>
-      <div style={{
-        padding: '13px 18px', borderBottom: '1px solid var(--border-card)',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)',
-                       textTransform: 'uppercase', letterSpacing: '.06em' }}>
-          {title}
-        </span>
-        {action}
-      </div>
-      {children}
-    </div>
-  )
-}
-
-// ── Бейдж ────────────────────────────────────────────────────────────────────
-function Badge({ label, bg, color, href }) {
-  const s = {
-    display: 'inline-flex', alignItems: 'center', padding: '3px 10px',
-    borderRadius: 8, fontSize: 12, fontWeight: 500, background: bg, color,
-    textDecoration: 'none', whiteSpace: 'nowrap',
-  }
-  return href ? <a href={href} target="_blank" rel="noopener noreferrer" style={s}>{label}</a>
-              : <span style={s}>{label}</span>
-}
-
-// ── Select-фильтр в операциях ─────────────────────────────────────────────────
-function FilterSelect({ value, onChange, options, style }) {
-  return (
-    <select value={value} onChange={e => onChange(e.target.value)} style={{
-      fontSize: 12, padding: '5px 9px', borderRadius: 8, outline: 'none',
-      border: '1px solid var(--border-card)', background: 'var(--bg-subtle)',
-      color: 'var(--text-secondary)', cursor: 'pointer', ...style,
-    }}>
-      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </select>
-  )
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 export default function CounterpartyCard() {
   const router = useRouter()
   const { id } = router.query
+  const isMobile = useIsMobile()
 
   const [card, setCard] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -437,788 +317,149 @@ export default function CounterpartyCard() {
   const hasIncome  = stats.income_paid > 0 || stats.receivable > 0
   const hasExpense = stats.expense_paid > 0 || stats.payable > 0
   const relation   = hasIncome && hasExpense ? 'Смешанный' : hasIncome ? 'Заказчик' : hasExpense ? 'Поставщик' : null
-  const isActive   = card.status === 'действующий'
 
-  const OP_STATUS_DOT = {
-    'ОПЛАЧЕНО':          'var(--income)',
-    'ПЛАН ПОСТУПЛЕНИЙ':  'var(--accent)',
-    'ПЛАН ОПЛАТ':        'var(--dot-current-dz)',
-  }
-
-  const RECEIVABLE_META = {
-    overdue: { label: 'Просрочка', color: 'var(--dot-overdue)' },
-    current: { label: 'Текущая',   color: 'var(--dot-current-dz)' },
-  }
-
-  const SORT_COL_OPTIONS = [
-    { value: 'date',    label: 'Дата' },
-    { value: 'period',  label: 'Период' },
-    { value: 'article', label: 'Статья' },
-    { value: 'income',  label: 'Приход' },
-    { value: 'expense', label: 'Расход' },
-    { value: 'status',  label: 'Статус' },
-  ]
-  const SORT_DIR_OPTIONS = [
-    { value: 'desc', label: '↓ По убыванию' },
-    { value: 'asc',  label: '↑ По возрастанию' },
-  ]
-  const STATUS_OPTIONS = [
-    { value: '',                   label: 'Все статусы' },
-    { value: 'ОПЛАЧЕНО',           label: 'ОПЛАЧЕНО' },
-    { value: 'ПЛАН ПОСТУПЛЕНИЙ',   label: 'ПЛАН ПОСТУПЛЕНИЙ' },
-    { value: 'ПЛАН ОПЛАТ',         label: 'ПЛАН ОПЛАТ' },
-  ]
-
-  return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
-      <Head><title>Контрагент | Финансовый учёт</title></Head>
-
-      {/* ── Стандартная шапка (без children — чтобы не ломать выравнивание) ── */}
-      <Navbar active="directories" />
-
-      {/* ── Subheader: хлебные крошки + бейджи + кнопки ─────────────────── */}
-      <div style={{
-        background: 'var(--bg-header)', borderBottom: '1px solid var(--border-card)',
-        position: 'sticky', top: 66, zIndex: 90,
-      }}>
-        <div style={{
-          maxWidth: 1920, margin: '0 auto', padding: '0 24px', height: 46,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-        }}>
-          {/* Левая часть — хлебные крошки + бейджи */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, overflow: 'hidden' }}>
-            <Link href="/counterparties"
-                  style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'none',
-                           display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-              ← Контрагенты
-            </Link>
-            <span style={{ color: 'var(--border-card)', flexShrink: 0 }}>›</span>
-            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)',
-                           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {card.name}
-            </span>
-            <Badge
-              label={card.status}
-              bg={isActive ? '#E8F5EE' : 'var(--bg-subtle)'}
-              color={isActive ? 'var(--income)' : 'var(--text-muted)'}
-            />
-            {relation && <Badge label={relation} bg="var(--accent-tint)" color="var(--accent)" />}
-            {/* Аудиторский флаг: операции есть, привязанных договоров нет (2026-07-16) */}
-            {card.contracts.length === 0 && (stats.op_count || 0) > 0 && (
-              <Badge label="⚠ Без договора" bg="var(--danger-tint)" color="var(--dot-overdue)" />
-            )}
-            {card.website && (
-              <Badge
-                label={`🌐 ${card.website.replace(/^https?:\/\//i, '').replace(/\/$/, '')}`}
-                bg="var(--bg-subtle)" color="var(--accent)"
-                href={normalizeUrl(card.website)}
-              />
-            )}
-            {(card.linked_agencies || []).map(a => (
-              <Badge key={a.id}
-                label={`🏢 ${a.name_en || a.name}`}
-                bg="var(--accent-tint)" color="var(--accent)"
-              />
-            ))}
-          </div>
-
-          {/* Правая часть — пусто (кнопки управления перенесены в блок Реквизиты) */}
-          <div />
-        </div>
+  // ── МОБИЛЬНАЯ ВЕРСИЯ ──
+  if (isMobile) {
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+        <Head><title>{card.name} | Контрагент</title></Head>
+        <Navbar active="directories" />
+        <CounterpartyCardMobile
+          id={id} card={card} relation={relation} analytics={analytics} canEdit={canEdit}
+          onBack={() => router.push('/counterparties')}
+          onEdit={() => { setEditMode(true); setSaveErr('') }}
+          copyRequisites={copyRequisites} copied={copied}
+          editMode={editMode} editData={editData} setEditData={setEditData}
+          onSave={handleSave} saving={saving} saveErr={saveErr}
+          onCancelEdit={() => { setEditMode(false); setSaveErr('') }} />
       </div>
+    )
+  }
 
-      {saveErr && (
-        <div style={{ background: 'var(--danger-tint)', color: 'var(--dot-overdue)',
-                      padding: '8px 24px', fontSize: 13 }}>{saveErr}</div>
-      )}
-
-      {/* ── Контент — max 1920px ──────────────────────────────────────────── */}
-      <div style={{ maxWidth: 1920, margin: '0 auto', padding: '20px 24px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'clamp(20vw, 25vw, 480px) minmax(0,1fr)', gap: 16, alignItems: 'start' }}>
-
-          {/* ── Левая колонка: Реквизиты + Условия по умолчанию ─────────── */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <Card
-            title="Реквизиты"
-            action={
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                {!editMode ? <>
-                  <button onClick={copyRequisites} style={BTN({
-                    padding: '4px 10px', fontSize: 11,
-                    color: copied ? 'var(--income)' : 'var(--text-muted)',
-                    borderColor: copied ? 'var(--income)' : 'var(--border-card)',
-                  })}>
-                    {copied ? '✓ Скопировано' : '📋 Копировать'}
-                  </button>
-                  {canEdit && (
-                    <button
-                      onClick={() => { setEditMode(true); setSaveErr('') }}
-                      style={BTN({ padding: '4px 8px', fontSize: 14, lineHeight: 1 })}
-                      title="Редактировать реквизиты"
-                    >
-                      ✏️
-                    </button>
-                  )}
-                </> : <>
-                  <button
-                    onClick={() => { setEditMode(false); setSaveErr('') }}
-                    title="Отмена"
-                    style={{
-                      padding: '4px 7px', borderRadius: 8, cursor: 'pointer', fontSize: 15,
-                      border: '1px solid #f5c842', background: 'transparent', color: '#f5c842',
-                      display: 'inline-flex', alignItems: 'center', lineHeight: 1,
-                    }}
-                  >↩</button>
-                  <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    title="Сохранить"
-                    style={{
-                      padding: '4px 7px', borderRadius: 8, cursor: 'pointer', fontSize: 15,
-                      border: '1px solid var(--income)', background: 'transparent', color: 'var(--income)',
-                      display: 'inline-flex', alignItems: 'center', lineHeight: 1,
-                      opacity: saving ? 0.5 : 1,
-                    }}
-                  >{saving ? '…' : '✓'}</button>
-                </>}
-              </div>
-            }
-          >
-            <div style={{ padding: '10px 16px' }}>
-              {!editMode ? (
-                <>
-                  <ReqRow label="ИНН"           value={card.inn} />
-                  <ReqRow label="КПП"           value={card.kpp} />
-                  <ReqRow label="ОГРН"          value={card.ogrn} />
-                  <ReqRow label="ОКПО"          value={card.okpo} />
-                  <ReqRow label="Юр. адрес"     value={card.address} />
-                  <ReqRow label="Факт. адрес"   value={card.address_fact} />
-                  <ReqRow label="Телефон"       value={card.phone} />
-                  <ReqRow label="Email"         value={card.email} link />
-                  <ReqRow label="Сайт"          value={card.website} link />
-                  <ReqRow label="Ген. директор" value={card.director_name} />
-                  <ReqRow label="ЭДО"           value={card.edo_id} />
-                  <ReqRow label="Примечание"    value={card.note} />
-
-                  {card.bank_accounts.length > 0
-                    ? card.bank_accounts.map((b, i) => (
-                        <div key={i} style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-card)' }}>
-                          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', marginBottom: 6,
-                                        textTransform: 'uppercase', letterSpacing: '.04em' }}>
-                            {b.bank_name || `Счёт ${i + 1}`}
-                          </div>
-                          {b.bank_city && <ReqRow label="Город банка" value={b.bank_city} />}
-                          <ReqRow label="Р/С" value={b.rs} />
-                          <ReqRow label="К/С" value={b.ks} />
-                          <ReqRow label="БИК" value={b.bik} />
-                        </div>
-                      ))
-                    : (
-                        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-card)' }}>
-                          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-faint)', marginBottom: 6,
-                                        textTransform: 'uppercase', letterSpacing: '.04em' }}>
-                            Банковский счёт
-                          </div>
-                          <ReqRow label="Р/С" value={null} />
-                          <ReqRow label="К/С" value={null} />
-                          <ReqRow label="БИК" value={null} />
-                        </div>
-                      )
-                  }
-                </>
-              ) : (
-                <>
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2, fontWeight: 500 }}>ИНН</div>
-                    <div style={{ fontSize: 13, padding: '6px 10px', borderRadius: 8,
-                                  background: 'var(--border-inner)', color: 'var(--text-muted)',
-                                  border: '1px solid var(--border-card)' }}>
-                      {card.inn || '—'}
-                      <span style={{ fontSize: 11, marginLeft: 6, color: 'var(--text-faint)' }}>(изменяется в реестре)</span>
-                    </div>
+  // ── ДЕСКТОП: референс-компонент дизайн-системы (правка — модалкой в том же дизайне) ──
+  {
+    const kmln = (v) => v ? (v / 1e6).toFixed(2).replace('.', ',') : '0'
+    const pct = (v) => (v || v === 0) ? `${String(v).replace('.', ',')} %` : '—'
+    const bs = analytics?.by_status || []
+    const cnt = (p) => bs.filter(p).reduce((a, s) => a + (s.cnt || 0), 0)
+    const planCnt = cnt(s => /ПЛАН/.test(s.status)), factCnt = cnt(s => s.status === 'ОПЛАЧЕНО'), payCnt = cnt(s => s.status === 'ПЛАН ОПЛАТ')
+    const saldoV = stats.saldo || 0
+    const STL = { 'ОПЛАЧЕНО': { l: 'Оплачено', c: CT.income }, 'ПЛАН ОПЛАТ': { l: 'План оплат', c: CT.warning }, 'ПЛАН ПОСТУПЛЕНИЙ': { l: 'План поступл.', c: CT.accent } }
+    const monthly = analytics?.monthly || []
+    const ta = analytics?.top_articles || []
+    const taMax = ta[0] ? ((ta[0].income || 0) + (ta[0].expense || 0)) || 1 : 1
+    const data = {
+      name: card.name, state: card.status, kind: relation || '—',
+      site: card.website ? card.website.replace(/^https?:\/\//i, '').replace(/\/$/, '') : null,
+      brands: (card.linked_agencies || []).map(a => a.name_en || a.name).filter(Boolean),
+      requisites: [
+        { label: 'ИНН', value: card.inn || '—', mono: true }, { label: 'КПП', value: card.kpp || '—', mono: true },
+        { label: 'ОГРН', value: card.ogrn || '—', mono: true }, { label: 'ОКПО', value: card.okpo || '—', mono: true },
+        { label: 'Юр. адрес', value: card.address || '—' }, { label: 'Факт. адрес', value: card.address_fact || '—' },
+        { label: 'Телефон', value: card.phone || '—', mono: true }, { label: 'Email', value: card.email || '—' },
+        { label: 'Сайт', value: card.website || '—' }, { label: 'Ген. директор', value: card.director_name || '—' },
+        { label: 'ЭДО', value: card.edo_id || '—', mono: true }, { label: 'Примечание', value: card.note || '—' },
+      ],
+      banks: (card.bank_accounts || []).filter(b => b.bank_name || b.rs).map(b => ({
+        name: b.bank_name || 'Банк', rows: [{ label: 'Р/С', value: b.rs || '—' }, { label: 'К/С', value: b.ks || '—' }, { label: 'БИК', value: b.bik || '—' }],
+      })),
+      belonging: (card.linked_agencies || []).map(a => [
+        { label: 'Краткое', value: a.name || '—' }, { label: 'Полное', value: a.name_en || a.name || '—' }, { label: 'Холдинг', value: a.holding || '—' },
+      ]),
+      terms: [
+        { label: 'НДС приход', value: card.vat_rate_income != null ? `${card.vat_rate_income}%` : '—', mono: true },
+        { label: 'НДС расход', value: card.vat_rate_expense != null ? `${card.vat_rate_expense}%` : '—', mono: true },
+        { label: 'Статья прихода', value: card.default_article_income || '—' },
+        { label: 'Статья расхода', value: card.default_article_expense || '—' },
+      ],
+      kpi: [
+        { label: 'Операций всего', value: String(stats.op_count || 0), hint: `${planCnt} в плане · ${factCnt} факт`, color: CT.t1 },
+        { label: 'Дебиторка', value: kmln(stats.receivable), hint: (stats.receivable || 0) > 0 ? 'есть задолженность' : 'нет просрочки', color: CT.accent },
+        { label: 'Кредиторка', value: kmln(stats.payable), hint: (stats.payable || 0) > 0 ? `млн ₽ · ${payCnt} оп.` : '—', color: CT.warning },
+        { label: 'Сальдо', value: (saldoV < 0 ? '−' : '') + kmln(Math.abs(saldoV)), hint: `млн ₽ · ${saldoV < 0 ? 'мы им должны' : 'нам должны'}`, color: saldoV < 0 ? CT.danger : CT.income },
+      ],
+      turnover: { months: monthly.map(m => fmtMonth(m.period)), income: monthly.map(m => (m.income || 0) / 1e6), expense: monthly.map(m => (m.expense || 0) / 1e6) },
+      stats: [
+        { label: 'Ср. приход', value: analytics?.avg_income ? fmt(analytics.avg_income) : '—', color: CT.income },
+        { label: 'Ср. расход', value: analytics?.avg_expense ? fmt(analytics.avg_expense) : '—', color: CT.t2 },
+        { label: 'Доля в выручке (12 мес)', value: pct(analytics?.share_income_12m), color: CT.income },
+        { label: 'Доля в закупках (12 мес)', value: pct(analytics?.share_expense_12m), color: CT.t1 },
+      ],
+      topItems: ta.map(a => { const total = (a.income || 0) + (a.expense || 0); return { label: a.article, value: total, color: (a.income || 0) >= (a.expense || 0) ? CT.income : CT.expense, width: `${Math.round(total / taMax * 100)}%` } }),
+      byStatus: (analytics?.by_status || []).map(s => { const m = STL[s.status] || { l: s.status, c: CT.t3 }; const sum = (s.income || 0) > 0 ? s.income : s.expense; return { label: m.l, color: m.c, ops: s.cnt, sum: sum || 0 } }),
+      contracts: (card.contracts || []).map(c => ({
+        number: c.contract_number || '—', date: fmtDate(c.contract_date), format: c.cooperation_format || '—',
+        prolongation: c.prolongation || '—', payTerm: c.payment_term_days != null ? `${c.payment_term_days} дн.` : '—',
+        endsAt: c.end_date_text || '—', expired: !!(contractExpiry(c.end_date_text) && contractExpiry(c.end_date_text).label === 'истёк'),
+        document: (c.document_link || c.attached_filename) ? 'есть' : '—',
+      })),
+      opsTotal,
+      ops: ops.map(o => { const m = STL[o.status] || { l: o.status, c: CT.t3 }; return { date: o.date ? fmtDate(o.date) : '—', status: m.l, statusColor: m.c, income: o.income || null, expense: o.expense || null, dz: null, bank: o.bank || 'не указан', bankColor: bankColorOf(o.bank), period: o.period || '—', item: o.article || '—', ds: o.ds_num || '—', account: o.invoice || '—', accountDate: o.invoice_date ? fmtDate(o.invoice_date) : '—' } }),
+    }
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+        <Head><title>{card.name} | Контрагент</title></Head>
+        <Navbar active="directories" />
+        <CounterpartyCardDesktop data={data} canEdit={canEdit} copied={copied}
+          onBack={() => router.push('/counterparties')}
+          onEdit={() => { setEditMode(true); setSaveErr('') }}
+          onCopyRequisites={copyRequisites}
+          onOpenContracts={() => router.push('/contracts')} />
+        {editMode && editData && (() => {
+          const setF = (k, v) => setEditData(d => ({ ...d, [k]: v }))
+          const setBank = (i, k, v) => setEditData(d => ({ ...d, bank_accounts: d.bank_accounts.map((b, j) => j === i ? { ...b, [k]: v } : b) }))
+          const addBank = () => setEditData(d => ({ ...d, bank_accounts: [...d.bank_accounts, { bank_name: '', bank_city: '', rs: '', ks: '', bik: '' }] }))
+          const delBank = (i) => setEditData(d => ({ ...d, bank_accounts: d.bank_accounts.filter((_, j) => j !== i) }))
+          const inpS = { width: '100%', boxSizing: 'border-box', border: `1px solid ${CT.border}`, borderRadius: 10, padding: '9px 11px', fontSize: 13, fontFamily: CT.sans, background: CT.card, color: CT.t1, outline: 'none' }
+          const fld = (label, k, ml) => (
+            <div key={k} style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: CT.t3, marginBottom: 3 }}>{label}</div>
+              {ml ? <textarea value={editData[k] || ''} onChange={e => setF(k, e.target.value)} rows={2} style={{ ...inpS, resize: 'vertical' }} />
+                : <input value={editData[k] || ''} onChange={e => setF(k, e.target.value)} style={inpS} />}
+            </div>
+          )
+          return (
+            <div onClick={() => { setEditMode(false); setSaveErr('') }} style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(28,36,51,.4)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '40px 20px', fontFamily: CT.sans }}>
+              <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 620, background: CT.card, borderRadius: 18, boxShadow: CT.shadow }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 24px', borderBottom: `1px solid ${CT.border}` }}>
+                  <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.02em', color: CT.t1 }}>Редактирование реквизитов</span>
+                  <button onClick={() => { setEditMode(false); setSaveErr('') }} style={{ marginLeft: 'auto', width: 32, height: 32, borderRadius: 9, border: `1px solid ${CT.border}`, background: CT.card, color: CT.t2, cursor: 'pointer', fontSize: 16 }}>✕</button>
+                </div>
+                <div style={{ padding: '18px 24px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
+                    {fld('КПП', 'kpp')}{fld('ОГРН', 'ogrn')}{fld('ОКПО', 'okpo')}{fld('Телефон', 'phone')}
                   </div>
-                  <EditInput label="КПП"           value={editData.kpp}           onChange={v => updateEdit('kpp', v)} />
-                  <EditInput label="ОГРН"          value={editData.ogrn}          onChange={v => updateEdit('ogrn', v)} />
-                  <EditInput label="ОКПО"          value={editData.okpo}          onChange={v => updateEdit('okpo', v)} />
-                  <EditInput label="Юр. адрес"     value={editData.address}       onChange={v => updateEdit('address', v)} multiline />
-                  <EditInput label="Факт. адрес"   value={editData.address_fact}  onChange={v => updateEdit('address_fact', v)} multiline />
-                  <EditInput label="Телефон"       value={editData.phone}         onChange={v => updateEdit('phone', v)} />
-                  <EditInput label="Email"         value={editData.email}         onChange={v => updateEdit('email', v)} />
-                  <EditInput label="Сайт"          value={editData.website}       onChange={v => updateEdit('website', v)} placeholder="https://example.ru" />
-                  <EditInput label="Ген. директор" value={editData.director_name} onChange={v => updateEdit('director_name', v)} />
-                  <EditInput label="ЭДО (ID)"      value={editData.edo_id}        onChange={v => updateEdit('edo_id', v)} />
-                  <EditInput label="Примечание"    value={editData.note}          onChange={v => updateEdit('note', v)} multiline />
-
-                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border-card)' }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)',
-                                  textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>
-                      Банковские счета
-                    </div>
-                    {editData.bank_accounts.map((b, i) => (
-                      <div key={i} style={{ background: 'var(--bg-subtle)', borderRadius: 10, padding: 10,
-                                            marginBottom: 8, border: '1px solid var(--border-card)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }}>Счёт {i + 1}</span>
-                          <button onClick={() => removeBank(i)}
-                                  style={{ background: 'none', border: 'none', cursor: 'pointer',
-                                           color: 'var(--dot-overdue)', fontSize: 13, padding: 0 }}>✕</button>
-                        </div>
-                        {/* БИК с автозаполнением из справочника ЦБ РФ */}
-                        <div style={{ marginBottom: 10 }}>
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2, fontWeight: 500 }}>БИК</div>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <input
-                              style={{ flex: 1, padding: '6px 10px', fontSize: 13,
-                                       border: '1px solid var(--border-card)', borderRadius: 8,
-                                       background: 'var(--bg-subtle)', color: 'var(--text-primary)', outline: 'none' }}
-                              value={b.bik || ''}
-                              onChange={e => updateBank(i, 'bik', e.target.value)}
-                              placeholder="044525974"
-                              maxLength={9}
-                            />
-                            <button
-                              onClick={() => lookupBic(i)}
-                              disabled={bicLoading[i]}
-                              style={{ padding: '6px 10px', fontSize: 12, background: 'var(--accent)',
-                                       color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer',
-                                       whiteSpace: 'nowrap', opacity: bicLoading[i] ? 0.6 : 1 }}
-                            >
-                              {bicLoading[i] ? '...' : 'Найти'}
-                            </button>
-                          </div>
-                          {bicError[i] && <div style={{ fontSize: 11, color: 'var(--dot-overdue)', marginTop: 3 }}>{bicError[i]}</div>}
-                        </div>
-                        <EditInput label="Банк"       value={b.bank_name} onChange={v => updateBank(i, 'bank_name', v)} placeholder="Заполняется автоматически по БИК" />
-                        <EditInput label="Город банка" value={b.bank_city} onChange={v => updateBank(i, 'bank_city', v)} placeholder="г. Москва" />
-                        <EditInput label="Р/С"  value={b.rs}  onChange={v => updateBank(i, 'rs', v)}  placeholder="40702810000000000000" />
-                        <EditInput label="К/С"  value={b.ks}  onChange={v => updateBank(i, 'ks', v)}  placeholder="Заполняется автоматически по БИК" />
+                  {fld('Юр. адрес', 'address', true)}{fld('Факт. адрес', 'address_fact', true)}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
+                    {fld('Email', 'email')}{fld('Сайт', 'website')}
+                  </div>
+                  {fld('Ген. директор', 'director_name')}{fld('ЭДО', 'edo_id')}{fld('Примечание', 'note', true)}
+                  <div style={{ fontFamily: CT.mono, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: CT.t3, fontWeight: 700, margin: '10px 0 8px' }}>Банковские счета</div>
+                  {(editData.bank_accounts || []).map((b, i) => (
+                    <div key={i} style={{ background: CT.subtle, borderRadius: 12, padding: '12px 12px 2px', marginBottom: 10 }}>
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                        <input value={b.bank_name || ''} onChange={e => setBank(i, 'bank_name', e.target.value)} placeholder="Банк" style={{ ...inpS, flex: 1 }} />
+                        <button onClick={() => delBank(i)} title="Удалить счёт" style={{ width: 38, flexShrink: 0, border: `1px solid ${CT.dangerTint}`, background: CT.card, color: CT.danger, borderRadius: 10, cursor: 'pointer' }}>✕</button>
                       </div>
-                    ))}
-                    <button style={BTN({ fontSize: 12, padding: '5px 12px' })} onClick={addBank}>
-                      + Добавить счёт
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </Card>
-
-          {/* ── Принадлежность ──────────────────────────────────────────── */}
-          {((card.linked_agencies || []).length > 0) && (
-            <Card title="Принадлежность">
-              <div style={{ padding: '10px 16px' }}>
-                {(card.linked_agencies || []).map((a, i) => (
-                  <div key={a.id}>
-                    {i > 0 && <div style={{ height: 10 }} />}
-                    <ReqRow label="Краткое"  value={a.short_name} />
-                    <ReqRow label="Полное"   value={a.name_en || a.name} />
-                    {a.holding && <ReqRow label="Холдинг" value={a.holding} />}
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
-          {/* ── Условия по умолчанию: НДС и статья по направлениям (2026-07-16).
-                 Подставляются автоматически в форме новой операции (operations.js). ── */}
-          <Card
-            title="Условия по умолчанию"
-            action={canEdit && (
-              !defEdit
-                ? <button onClick={startDefEdit} style={BTN({ padding: '4px 8px', fontSize: 14, lineHeight: 1 })} title="Редактировать">✏️</button>
-                : <div style={{ display: 'flex', gap: 6 }}>
-                    <button onClick={() => setDefEdit(false)} title="Отмена"
-                      style={{ padding: '4px 7px', borderRadius: 8, cursor: 'pointer', fontSize: 15,
-                               border: '1px solid #f5c842', background: 'transparent', color: '#f5c842', lineHeight: 1 }}>↩</button>
-                    <button onClick={saveDefaults} disabled={defSaving} title="Сохранить"
-                      style={{ padding: '4px 7px', borderRadius: 8, cursor: 'pointer', fontSize: 15,
-                               border: '1px solid var(--income)', background: 'transparent', color: 'var(--income)',
-                               lineHeight: 1, opacity: defSaving ? 0.5 : 1 }}>{defSaving ? '…' : '✓'}</button>
-                  </div>
-            )}
-          >
-            <div style={{ padding: '10px 16px' }}>
-              {!defEdit ? (
-                <>
-                  <ReqRow label="НДС приход"    value={card.vat_rate_income != null ? `${card.vat_rate_income}%` : null} />
-                  <ReqRow label="НДС расход"    value={card.vat_rate_expense != null ? `${card.vat_rate_expense}%` : null} />
-                  <ReqRow label="Статья прихода" value={card.default_article_income} />
-                  <ReqRow label="Статья расхода" value={card.default_article_expense} />
-                </>
-              ) : (
-                <>
-                  {[
-                    { key: 'vat_rate_income', label: 'НДС приход' },
-                    { key: 'vat_rate_expense', label: 'НДС расход' },
-                  ].map(f => (
-                    <div key={f.key} style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2, fontWeight: 500 }}>{f.label}</div>
-                      <select
-                        style={{ width: '100%', padding: '6px 10px', fontSize: 13, border: '1px solid var(--border-card)',
-                                 borderRadius: 8, background: 'var(--bg-subtle)', color: 'var(--text-primary)', outline: 'none' }}
-                        value={defData[f.key]}
-                        onChange={e => setDefData({ ...defData, [f.key]: e.target.value })}
-                      >
-                        <option value="">— не задано —</option>
-                        {[0, 5, 7, 10, 20, 22].map(v => <option key={v} value={v}>{v}%</option>)}
-                      </select>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 10px' }}>
+                        <div style={{ marginBottom: 10 }}><input value={b.rs || ''} onChange={e => setBank(i, 'rs', e.target.value)} placeholder="Р/С" style={{ ...inpS, fontFamily: CT.mono }} /></div>
+                        <div style={{ marginBottom: 10 }}><input value={b.ks || ''} onChange={e => setBank(i, 'ks', e.target.value)} placeholder="К/С" style={{ ...inpS, fontFamily: CT.mono }} /></div>
+                        <div style={{ marginBottom: 10 }}><input value={b.bik || ''} onChange={e => setBank(i, 'bik', e.target.value)} placeholder="БИК" style={{ ...inpS, fontFamily: CT.mono }} /></div>
+                      </div>
                     </div>
                   ))}
-                  {[
-                    { key: 'default_article_income_id', label: 'Статья прихода' },
-                    { key: 'default_article_expense_id', label: 'Статья расхода' },
-                  ].map(f => (
-                    <div key={f.key} style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2, fontWeight: 500 }}>{f.label}</div>
-                      <select
-                        style={{ width: '100%', padding: '6px 10px', fontSize: 13, border: '1px solid var(--border-card)',
-                                 borderRadius: 8, background: 'var(--bg-subtle)', color: 'var(--text-primary)', outline: 'none' }}
-                        value={defData[f.key]}
-                        onChange={e => setDefData({ ...defData, [f.key]: e.target.value })}
-                      >
-                        <option value="">— не задана —</option>
-                        {articles.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                      </select>
-                    </div>
-                  ))}
-                </>
-              )}
+                  <button onClick={addBank} style={{ width: '100%', border: `1px dashed ${CT.border}`, background: CT.card, color: CT.accent, borderRadius: 10, padding: '10px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>+ Добавить счёт</button>
+                  {saveErr && <div style={{ color: CT.danger, fontSize: 12.5, marginTop: 10 }}>{saveErr}</div>}
+                </div>
+                <div style={{ display: 'flex', gap: 8, padding: '14px 24px', borderTop: `1px solid ${CT.border}` }}>
+                  <button onClick={handleSave} disabled={saving} style={{ background: CT.accent, color: '#fff', border: 'none', borderRadius: 10, padding: '11px 20px', fontSize: 14, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : 'Сохранить'}</button>
+                  <button onClick={() => { setEditMode(false); setSaveErr('') }} style={{ border: `1px solid ${CT.border}`, background: CT.card, color: CT.t2, borderRadius: 10, padding: '11px 20px', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Отмена</button>
+                </div>
+              </div>
             </div>
-          </Card>
-          </div>
-
-          {/* ── Правая колонка ──────────────────────────────────────────── */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-            {/* Взаиморасчёты */}
-            <Card title="Взаиморасчёты">
-              <div style={{ padding: '16px 18px', display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 0 }}>
-                {(() => {
-                  const maxVal = Math.max(stats.receivable || 0, stats.payable || 0, Math.abs(stats.saldo || 0), 1)
-                  return [
-                    { label: 'Операций всего', value: stats.op_count, plain: true },
-                    { label: 'Дебиторка',  value: fmt(stats.receivable), color: 'var(--accent)',          bar: stats.receivable || 0, barColor: 'var(--accent)' },
-                    { label: 'Кредиторка', value: fmt(stats.payable),    color: 'var(--dot-current-dz)',  bar: stats.payable || 0,   barColor: 'var(--dot-current-dz)' },
-                    {
-                      label: 'Сальдо', value: fmt(stats.saldo),
-                      color: (stats.saldo || 0) >= 0 ? 'var(--income)' : 'var(--dot-overdue)',
-                      bar: Math.abs(stats.saldo || 0),
-                      barColor: (stats.saldo || 0) >= 0 ? 'var(--income)' : 'var(--dot-overdue)',
-                    },
-                  ].map((s, idx) => (
-                    <div key={s.label} style={{
-                      textAlign: 'center', padding: '10px 8px',
-                      borderRight: idx < 3 ? '1px solid var(--border-inner)' : 'none',
-                    }}>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, lineHeight: 1.4 }}>{s.label}</div>
-                      <div style={{
-                        fontSize: s.plain ? 28 : 16, fontWeight: 600,
-                        color: s.plain ? 'var(--text-primary)' : s.color,
-                        letterSpacing: s.plain ? '-1px' : 0,
-                      }}>{s.value}</div>
-                      {!s.plain && (
-                        <div style={{ height: 4, borderRadius: 2, background: 'var(--border-card)', marginTop: 8, overflow: 'hidden' }}>
-                          <div style={{ height: '100%', borderRadius: 2, background: s.barColor,
-                                        width: `${Math.round((s.bar / maxVal) * 100)}%`, transition: 'width .3s' }} />
-                        </div>
-                      )}
-                    </div>
-                  ))
-                })()}
-              </div>
-              {/* Старение дебиторки — те же бакеты, что в отчёте «Дебиторка» (2026-07-16) */}
-              {analytics && (stats.receivable || 0) > 0 && (() => {
-                const a = analytics.aging || {}
-                const items = [
-                  { key: 'future',  label: 'Срок не наступил', color: 'var(--accent)' },
-                  { key: 'current', label: 'Текущая',          color: '#D97706' },
-                  { key: 'overdue', label: 'Просрочка',        color: 'var(--dot-overdue)' },
-                ].filter(x => (a[x.key]?.amount || 0) > 0)
-                if (!items.length) return null
-                return (
-                  <div style={{ padding: '10px 18px', borderTop: '1px solid var(--border-inner)',
-                                display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500,
-                                   textTransform: 'uppercase', letterSpacing: '.04em' }}>Дебиторка по срокам:</span>
-                    {items.map(x => (
-                      <span key={x.key} style={{ fontSize: 12, display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: x.color, display: 'inline-block' }} />
-                        <span style={{ color: 'var(--text-secondary)' }}>{x.label}</span>
-                        <span style={{ fontWeight: 600, color: x.color }}>{fmt(a[x.key].amount)}</span>
-                        <span style={{ color: 'var(--text-faint)' }}>({a[x.key].count} оп.)</span>
-                      </span>
-                    ))}
-                    {(analytics.max_overdue_days || 0) > 0 && (
-                      <span style={{ fontSize: 12, color: 'var(--dot-overdue)', fontWeight: 500 }}>
-                        макс. просрочка {analytics.max_overdue_days} дн.
-                      </span>
-                    )}
-                  </div>
-                )
-              })()}
-            </Card>
-
-            {/* Аналитика */}
-            <Card title="Аналитика">
-              {analyticsLoading ? (
-                <div style={{ padding: '20px 18px', color: 'var(--text-muted)', fontSize: 13 }}>Загрузка…</div>
-              ) : !analytics ? null : (() => {
-                const STATUS_COLOR = {
-                  'ОПЛАЧЕНО':         'var(--income)',
-                  'ПЛАН ПОСТУПЛЕНИЙ': 'var(--accent)',
-                  'ПЛАН ОПЛАТ':       'var(--dot-current-dz)',
-                }
-                const maxArticle = analytics.top_articles[0]
-                  ? analytics.top_articles[0].income + analytics.top_articles[0].expense : 1
-
-                return (
-                  <div style={{ padding: '14px 18px' }}>
-
-                    {/* График оборота */}
-                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)',
-                                  textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 10 }}>
-                      Оборот по месяцам (весь период)
-                    </div>
-                    {analytics.monthly.length === 0 ? (
-                      <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 16 }}>Нет данных</div>
-                    ) : (() => {
-                      // Линия тренда (МНК) по суммарному обороту месяца — поверх баров (2026-07-16)
-                      const trend = trendLine(analytics.monthly.map(m => (m.income || 0) + (m.expense || 0)))
-                      const data = analytics.monthly.map((m, i) => ({ ...m, trend: trend[i] }))
-                      return (
-                      <ResponsiveContainer width="100%" height={130}>
-                        <ComposedChart data={data} barCategoryGap="30%" margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="var(--border-inner)" vertical={false} />
-                          <XAxis dataKey="period" tickFormatter={fmtMonth} tick={{ fontSize: 10, fill: 'var(--text-muted)' }}
-                                 axisLine={false} tickLine={false} />
-                          <YAxis tickFormatter={fmtK} tick={{ fontSize: 10, fill: 'var(--text-muted)' }}
-                                 axisLine={false} tickLine={false} width={36} />
-                          <Tooltip
-                            formatter={(v, name) => name === 'trend' ? [fmt(v), 'Тренд'] : [fmt(v), name === 'income' ? 'Приход' : 'Расход']}
-                            labelFormatter={fmtMonth}
-                            contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid var(--border-card)',
-                                            background: 'var(--bg-card)', color: 'var(--text-primary)' }}
-                          />
-                          <Bar dataKey="income"  fill="var(--income)"      radius={[3,3,0,0]} maxBarSize={24} />
-                          <Bar dataKey="expense" fill="var(--dot-overdue)" radius={[3,3,0,0]} maxBarSize={24} />
-                          <Line dataKey="trend" stroke="var(--accent)" strokeWidth={2} strokeDasharray="6 4"
-                                dot={false} activeDot={false} legendType="none" />
-                        </ComposedChart>
-                      </ResponsiveContainer>
-                      )
-                    })()}
-
-                    {/* Средний чек + доля в обороте компании за 12 мес (concentration risk) */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 16, marginBottom: 16 }}>
-                      {[
-                        { label: 'Ср. приход', value: analytics.avg_income,  color: 'var(--income)', money: true },
-                        { label: 'Ср. расход',  value: analytics.avg_expense, color: 'var(--dot-overdue)', money: true },
-                        { label: 'Доля в выручке (12 мес)', value: analytics.share_income_12m,
-                          color: (analytics.share_income_12m || 0) >= 20 ? 'var(--dot-overdue)' : 'var(--income)',
-                          title: (analytics.share_income_12m || 0) >= 20 ? 'Высокая концентрация — потеря этого заказчика существенно ударит по выручке' : undefined },
-                        { label: 'Доля в закупках (12 мес)', value: analytics.share_expense_12m, color: 'var(--text-secondary)' },
-                      ].map(s => (
-                        <div key={s.label} title={s.title} style={{ background: 'var(--bg-subtle)', borderRadius: 10,
-                                                    padding: '10px 12px', border: '1px solid var(--border-card)' }}>
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>{s.label}</div>
-                          <div style={{ fontSize: 14, fontWeight: 600, color: s.value ? s.color : 'var(--text-faint)' }}>
-                            {s.money ? (s.value ? fmt(s.value) : '—') : (s.value ? `${s.value}%` : '—')}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Топ статей */}
-                    {analytics.top_articles.length > 0 && (
-                      <>
-                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)',
-                                      textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 10 }}>
-                          Топ статей
-                        </div>
-                        {analytics.top_articles.map((a, i) => {
-                          const total = a.income + a.expense
-                          const pct = Math.round((total / maxArticle) * 100)
-                          return (
-                            <div key={i} style={{ marginBottom: 10 }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between',
-                                            alignItems: 'baseline', marginBottom: 4, gap: 8 }}>
-                                <span style={{ fontSize: 12, color: 'var(--text-primary)',
-                                               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {a.article}
-                                </span>
-                                <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>
-                                  {fmt(total)}
-                                </span>
-                              </div>
-                              <div style={{ height: 4, borderRadius: 2, background: 'var(--border-card)', overflow: 'hidden' }}>
-                                <div style={{ height: '100%', borderRadius: 2,
-                                              width: `${pct}%`, transition: 'width .4s',
-                                              background: a.income >= a.expense ? 'var(--income)' : 'var(--dot-overdue)' }} />
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </>
-                    )}
-
-                    {/* Разбивка по статусам */}
-                    {analytics.by_status.length > 0 && (
-                      <>
-                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)',
-                                      textTransform: 'uppercase', letterSpacing: '.05em',
-                                      marginTop: 16, marginBottom: 10 }}>
-                          По статусам
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {analytics.by_status.map(s => (
-                            <div key={s.status} style={{ display: 'flex', alignItems: 'center',
-                                                         justifyContent: 'space-between', gap: 8 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                                <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-                                               background: STATUS_COLOR[s.status] || 'var(--text-faint)',
-                                               display: 'inline-block' }} />
-                                <span style={{ fontSize: 11, color: 'var(--text-secondary)',
-                                               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {s.status}
-                                </span>
-                              </div>
-                              <div style={{ display: 'flex', gap: 10, flexShrink: 0, alignItems: 'center' }}>
-                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.cnt} оп.</span>
-                                {(s.income > 0 || s.expense > 0) && (
-                                  <span style={{ fontSize: 11, fontWeight: 500,
-                                                 color: s.income > 0 ? 'var(--income)' : 'var(--dot-overdue)' }}>
-                                    {fmt(s.income > 0 ? s.income : s.expense)}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </>
-                    )}
-
-                  </div>
-                )
-              })()}
-            </Card>
-
-            {/* Договора */}
-            <Card
-              title={`Договора (${card.contracts.length})`}
-              action={
-                <Link href="/contracts"
-                      style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', fontWeight: 500 }}>
-                  В реестр →
-                </Link>
-              }
-            >
-              {card.contracts.length === 0 ? (
-                <div style={{ padding: '16px 18px', color: 'var(--text-muted)', fontSize: 13 }}>Договоров нет</div>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                    <thead>
-                      <tr>
-                        {['№ договора', 'Дата', 'Формат', 'Пролонгация', 'Срок оплаты', 'Окончание', 'Документ'].map(h => (
-                          <th key={h} style={{
-                            textAlign: 'left', padding: '8px 14px', fontSize: 11,
-                            color: 'var(--text-faint)', fontWeight: 500, background: 'var(--bg-subtle)',
-                            borderBottom: '1px solid var(--border-card)', whiteSpace: 'nowrap',
-                          }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {card.contracts.map((c, i) => (
-                        <tr key={c.id} style={{ background: i % 2 === 1 ? 'var(--bg-subtle)' : 'transparent' }}>
-                          <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-row)',
-                                       fontWeight: 600, color: 'var(--text-primary)' }}>{c.contract_number || '—'}</td>
-                          <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-row)',
-                                       color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(c.contract_date)}</td>
-                          <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-row)', color: 'var(--text-secondary)' }}>{c.cooperation_format || '—'}</td>
-                          <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-row)', color: 'var(--text-secondary)' }}>{c.prolongation || '—'}</td>
-                          <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-row)', color: 'var(--text-secondary)' }}>
-                            {c.payment_term_days ? `${c.payment_term_days} дн. ${c.payment_term_condition || ''}` : '—'}
-                          </td>
-                          {/* Окончание договора с бейджем «истёк» / «истекает через N дн.» (2026-07-16) */}
-                          <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-row)',
-                                       color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                            {(() => {
-                              const exp = contractExpiry(c.end_date_text)
-                              return <>
-                                {c.end_date_text || '—'}
-                                {exp && <span style={{ marginLeft: 6, padding: '1px 7px', borderRadius: 6, fontSize: 11,
-                                                       fontWeight: 600, background: exp.bg, color: exp.color }}>{exp.label}</span>}
-                              </>
-                            })()}
-                          </td>
-                          <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-row)', whiteSpace: 'nowrap' }}>
-                            {c.document_link && (
-                              <a href={c.document_link} target="_blank" rel="noopener noreferrer"
-                                 title="Открыть в ЭДО" style={{ marginRight: 6, textDecoration: 'none', fontSize: 15 }}>🔗</a>
-                            )}
-                            {c.attached_filename && (
-                              <a href={`/api/contracts/${c.id}/document`}
-                                 title={c.attached_filename} style={{ textDecoration: 'none', fontSize: 15 }}>📥</a>
-                            )}
-                            {!c.document_link && !c.attached_filename && '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Card>
-
-            {/* Операции */}
-            {canViewOps && <Card
-              title="Операции"
-              action={<span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400 }}>{opsTotal} записей</span>}
-            >
-              {/* Фильтры — три дропдауна */}
-              <div style={{
-                padding: '8px 14px', borderBottom: '1px solid var(--border-card)',
-                display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center',
-              }}>
-                <FilterSelect
-                  value={opsStatus}
-                  onChange={handleStatus}
-                  options={STATUS_OPTIONS}
-                />
-                <span style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 }}>Сортировка:</span>
-                <FilterSelect
-                  value={sortCol}
-                  onChange={handleSortCol}
-                  options={SORT_COL_OPTIONS}
-                />
-                <FilterSelect
-                  value={sortDir}
-                  onChange={handleSortDir}
-                  options={SORT_DIR_OPTIONS}
-                />
-                {opsLoading && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>загрузка…</span>}
-              </div>
-
-              {/* Таблица */}
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                  <colgroup>
-                    <col style={{ width: 88 }} /><col style={{ width: 130 }} />
-                    <col style={{ width: 36 }} /><col style={{ width: 110 }} /><col style={{ width: 110 }} />
-                    <col style={{ width: 90 }} /><col style={{ width: 80 }} /><col />
-                    <col style={{ width: 80 }} /><col style={{ width: 90 }} /><col style={{ width: 90 }} />
-                  </colgroup>
-                  <thead>
-                    <tr>
-                      {['Дата', 'Статус', 'ДЗ', 'Приход', 'Расход', 'Банк', 'Период', 'Статья', '№ ДС', '№ Счёта', 'Дата счёта'].map(h => (
-                        <th key={h} style={{
-                          textAlign: 'left', padding: '8px 12px', fontSize: 11,
-                          color: 'var(--text-faint)', fontWeight: 500,
-                          background: 'var(--bg-subtle)',
-                          borderBottom: '1px solid var(--border-card)', whiteSpace: 'nowrap',
-                        }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ops.length === 0 && !opsLoading ? (
-                      <tr>
-                        <td colSpan={11} style={{ padding: '24px 12px', color: 'var(--text-muted)',
-                                                  textAlign: 'center', fontSize: 13 }}>
-                          Операций нет
-                        </td>
-                      </tr>
-                    ) : ops.map((op, i) => {
-                      const dotColor = OP_STATUS_DOT[op.status] || 'var(--text-faint)'
-                      return (
-                        <tr key={op.id}
-                            style={{ background: i % 2 === 1 ? 'var(--bg-subtle)' : 'transparent' }}
-                            onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-tint)'}
-                            onMouseLeave={e => e.currentTarget.style.background = i % 2 === 1 ? 'var(--bg-subtle)' : 'transparent'}>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
-                                       color: 'var(--text-muted)', whiteSpace: 'nowrap', fontSize: 12 }}>
-                            {fmtDate(op.date)}
-                          </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)', whiteSpace: 'nowrap' }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
-                                           fontSize: 11, color: 'var(--text-secondary)' }}>
-                              <span style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor,
-                                             flexShrink: 0, display: 'inline-block' }} />
-                              {op.status}
-                            </span>
-                          </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)', textAlign: 'center' }}>
-                            {op.receivable_status && RECEIVABLE_META[op.receivable_status]
-                              ? <span title={RECEIVABLE_META[op.receivable_status].label}
-                                      style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
-                                               background: RECEIVABLE_META[op.receivable_status].color }} />
-                              : null}
-                          </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
-                                       fontWeight: op.income > 0 ? 600 : 400,
-                                       color: op.income > 0 ? 'var(--income)' : 'var(--text-faint)' }}>
-                            {op.income > 0 ? fmt(op.income) : '—'}
-                          </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
-                                       fontWeight: op.expense > 0 ? 600 : 400,
-                                       color: op.expense > 0 ? 'var(--dot-overdue)' : 'var(--text-faint)' }}>
-                            {op.expense > 0 ? fmt(op.expense) : '—'}
-                          </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
-                                       fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                            {op.bank || '—'}
-                          </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
-                                       color: 'var(--text-secondary)', fontSize: 12 }}>
-                            {op.period || '—'}
-                          </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
-                                       color: 'var(--text-primary)', overflow: 'hidden',
-                                       textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
-                            {op.article || '—'}
-                          </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
-                                       fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                            {op.ds_num || '—'}
-                          </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
-                                       fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                            {op.invoice || '—'}
-                          </td>
-                          <td style={{ padding: '7px 12px', borderBottom: '1px solid var(--border-row)',
-                                       fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                            {op.invoice_date ? fmtDate(op.invoice_date) : '—'}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Пагинация */}
-              {opsTotal > OPS_LIMIT && (
-                <div style={{ padding: '10px 14px', display: 'flex', gap: 8, alignItems: 'center',
-                              borderTop: '1px solid var(--border-card)' }}>
-                  <button disabled={opsPage === 0} style={BTN({ padding: '4px 12px', fontSize: 12 })}
-                          onClick={() => handlePage(opsPage - 1)}>
-                    ← Пред.
-                  </button>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                    {opsPage * OPS_LIMIT + 1}–{Math.min((opsPage + 1) * OPS_LIMIT, opsTotal)} из {opsTotal}
-                  </span>
-                  <button disabled={(opsPage + 1) * OPS_LIMIT >= opsTotal} style={BTN({ padding: '4px 12px', fontSize: 12 })}
-                          onClick={() => handlePage(opsPage + 1)}>
-                    След. →
-                  </button>
-                </div>
-              )}
-            </Card>}
-
-          </div>{/* /right col */}
-        </div>{/* /grid */}
-      </div>{/* /wrap */}
-    </div>
-  )
+          )
+        })()}
+      </div>
+    )
+  }
 }
