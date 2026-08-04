@@ -146,6 +146,13 @@ def update_user(
 
     db.commit()
 
+    # Смена email/пароля админом снимает лок­аут по НОВОМУ email: иначе пользователь мог
+    # остаться заблокированным на свежих учётных данных из-за прежних неудачных попыток
+    # (например, этот email вводили с неверным паролем ещё до его назначения).
+    if any(c.startswith("email:") or c == "пароль изменён" for c in changes):
+        from app.routers.auth import _clear_login_attempts, _norm_email
+        _clear_login_attempts(db, _norm_email(user.email))
+
     if changes:
         log_action(db, current_user, "update_user", entity_type="user", entity_id=user.id,
                    details=f"{user.name} ({user.email}): " + "; ".join(changes))

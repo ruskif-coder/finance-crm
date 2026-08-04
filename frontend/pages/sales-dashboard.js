@@ -10,7 +10,7 @@ import ValuePopover from '../components/ValuePopover'
 import api, { auth } from '../lib/api'
 import { fmtMoney, fmtDate } from '../lib/salesFormat'
 import { BITRIX_DEAL_URL } from '../lib/salesLayers'
-import { MONO, UI, PIP, FILL, HATCH, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn } from '../components/salesTableKit'
+import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn } from '../components/salesTableKit'
 import useIsMobile from '../components/mobile/useIsMobile'
 import DealsMobileControls from '../components/sales/DealsMobileControls'
 import DealCardList from '../components/mobile/DealCardList'
@@ -298,7 +298,7 @@ export default function SalesDashboard2() {
       case 'amount': return <span style={{ fontFamily: MONO, fontWeight: 700, textAlign: 'right' }} title={d.amount != null ? new Intl.NumberFormat('ru-RU').format(d.amount) + ' ₽' : ''}>{fmtMoney(d.amount)}</span>
       case 'account_manager': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.account_manager ?? '—'}</span>
       case 'payer': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.payer}>{d.payer ?? '—'}</span>
-      case 'money_layer': return <span style={{ display: 'flex', gap: 2 }} title={none ? 'Без группы — требует разбора' : `${d.money_layer} · слой денег`}>{PIP.map((c, i) => <span key={i} style={{ width: 9, height: 14, borderRadius: 2, background: none ? HATCH : (i < n ? c : 'var(--border-inner)') }} />)}</span>
+      case 'money_layer': { const lost = /провал|не случил|отказ/i.test(d.bitrix_stage || ''); return <span style={{ display: 'flex', gap: 2 }} title={none ? (lost ? 'Сделка провалена' : 'Без группы — требует разбора') : `${d.money_layer} · слой денег`}>{PIP.map((c, i) => <span key={i} style={{ width: 9, height: 14, borderRadius: 2, background: none ? (lost ? HATCH_RED : HATCH) : (i < n ? c : 'var(--border-inner)') }} />)}</span> }
       case 'pipeline': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.pipeline}>{d.pipeline ?? '—'}</span>
       case 'sales_rep': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.sales_rep ?? '—'}</span>
       case 'period_from': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{d.period_from ? fmtDate(d.period_from) : '—'}</span>

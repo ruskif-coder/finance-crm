@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
 
 // Общий набор для v2-таблиц реестра (/sales) и дашборда (/sales-dashboard):
 // шрифты, цвета слоёв, конфиг фильтров, компактный мультиселект и иконка-кнопка.
@@ -11,6 +11,8 @@ export const UI = "'Manrope', system-ui, sans-serif"
 export const PIP = ['var(--text-faint)', 'var(--text-faint)', 'var(--dot-current-dz)', 'var(--dot-current-dz)', 'var(--income)', 'var(--income)']
 export const FILL = { 'планируемые': 2, 'реализуемые': 4, 'фактические': 6 }
 export const HATCH = 'repeating-linear-gradient(135deg,#C3C9D8 0 3px,#FFFFFF 3px 6px)'
+// Красный штрих — «Сделка провалена» (как серый HATCH для неразобранных).
+export const HATCH_RED = 'repeating-linear-gradient(135deg,#E5484D 0 3px,#FFFFFF 3px 6px)'
 
 export const FILTER_DROPS = [
   ['pipeline', 'Воронка'], ['product', 'Услуга'], ['bitrix_stage', 'Стадия'], ['stage_key', 'Слой денег'],
@@ -53,16 +55,22 @@ export function MultiDrop({ label, options, selected, onChange, block }) {
           </div>}
           <div style={{ overflowY: 'auto', padding: 5 }}>
             {active && <div onClick={() => onChange([])} style={{ fontSize: 11.5, color: 'var(--accent)', cursor: 'pointer', padding: '4px 6px' }}>снять все</div>}
-            {shown.map(o => {
+            {(() => { let prevGroup = null; return shown.map((o, i) => {
               const on = selected.includes(o.value)
+              // Заголовок группы (напр. воронка над её стадиями) — когда o.group меняется.
+              const header = o.group && o.group !== prevGroup ? o.group : null
+              if (o.group) prevGroup = o.group
               return (
-                <label key={String(o.value)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 6px', fontSize: 12.5, cursor: 'pointer', borderRadius: 7, background: on ? 'var(--accent-tint)' : 'transparent' }}>
-                  <input type="checkbox" checked={on} onChange={() => onChange(on ? selected.filter(v => v !== o.value) : [...selected, o.value])} />
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</span>
-                  {o.count !== undefined && <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>{o.count}</span>}
-                </label>
+                <Fragment key={`${o.group ?? ''}:${String(o.value)}:${i}`}>
+                  {header && <div style={{ padding: '7px 6px 3px', fontFamily: MONO, fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>{header}</div>}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 6px', fontSize: 12.5, cursor: 'pointer', borderRadius: 7, background: on ? 'var(--accent-tint)' : 'transparent' }}>
+                    <input type="checkbox" checked={on} onChange={() => onChange(on ? selected.filter(v => v !== o.value) : [...selected, o.value])} />
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: o.tone === 'danger' ? 'var(--dot-overdue)' : undefined, fontWeight: o.tone === 'danger' ? 700 : undefined }}>{o.label}</span>
+                    {o.count !== undefined && <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>{o.count}</span>}
+                  </label>
+                </Fragment>
               )
-            })}
+            }) })()}
             {!shown.length && <div style={{ padding: 8, fontSize: 12, color: 'var(--text-muted)' }}>ничего не найдено</div>}
           </div>
         </div>

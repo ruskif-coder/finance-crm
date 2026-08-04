@@ -139,7 +139,7 @@ export default function Operations2() {
   const [articles, setArticles] = useState([])
   const [counterparties, setCounterparties] = useState([])
   const [periodOptions, setPeriodOptions] = useState([])
-  const [updatedAt] = useState('09:12')
+  const [updatedAt, setUpdatedAt] = useState('')
 
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(300)
@@ -184,6 +184,9 @@ export default function Operations2() {
       if (dateFrom) params.append('date_from', dateFrom); if (dateTo) params.append('date_to', dateTo)
       const res = await api(tok()).get(`/operations/?${params}`)
       setOps(res.data?.items || []); setTotal(res.data?.total || 0)
+      // Время последней загрузки данных (обновляется при любом изменении — add/edit/delete
+      // зовут loadOps). Считаем на клиенте, не при рендере — без SSR-рассинхрона.
+      setUpdatedAt(new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }))
     } catch (e) { if (e.response?.status === 401) router.push('/login') }
     finally { setLoading(false) }
   }
@@ -372,7 +375,7 @@ export default function Operations2() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
             <h1 style={{ fontSize: 30, fontWeight: 700, letterSpacing: '-0.02em', margin: 0, color: 'var(--text-primary)' }}>Операции</h1>
-            <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{new Intl.NumberFormat('ru-RU').format(total)} записей · обновлено {updatedAt}</span>
+            <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{new Intl.NumberFormat('ru-RU').format(total)} записей{updatedAt ? ` · обновлено ${updatedAt}` : ''}</span>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             {canEdit && <button onClick={() => setCreateOpen(o => !o)} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '10px 16px', fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>+ Новая операция</button>}

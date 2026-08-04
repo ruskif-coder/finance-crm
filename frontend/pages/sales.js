@@ -9,11 +9,15 @@ import ValuePopover from '../components/ValuePopover'
 import api, { auth } from '../lib/api'
 import { fmtMoney, fmtDate, mln } from '../lib/salesFormat'
 import { BITRIX_DEAL_URL } from '../lib/salesLayers'
-import { MONO, UI, PIP, FILL, HATCH, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn } from '../components/salesTableKit'
+import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn } from '../components/salesTableKit'
 import useIsMobile from '../components/mobile/useIsMobile'
 import DealCardList from '../components/mobile/DealCardList'
 import DealsMobileControls from '../components/sales/DealsMobileControls'
 import BottomSheet from '../components/mobile/BottomSheet'
+
+// Фильтр «Продавец» — только в реестре (в дашборде смысла нет, там лишь свои сделки),
+// поэтому не в общий FILTER_DROPS, а локально. Ставим рядом с «Аккаунтом» по смыслу.
+const REG_FILTER_DROPS = FILTER_DROPS.flatMap(fd => fd[0] === 'account_manager_id' ? [['sales_rep_id', 'Продавец'], fd] : [fd])
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 const COLS = [
@@ -68,7 +72,7 @@ export default function SalesRegistry2() {
   const [saving, setSaving] = useState(false)
   const selDealIds = Object.keys(selDeals).map(Number)
 
-  const [sel, setSel] = useState(Object.fromEntries(FILTER_DROPS.map(([k]) => [k, []])))
+  const [sel, setSel] = useState(Object.fromEntries(REG_FILTER_DROPS.map(([k]) => [k, []])))
   const [gaps, setGaps] = useState([])
   const [hideArchive, setHideArchive] = useState(true)
   const [search, setSearch] = useState('')
@@ -254,7 +258,7 @@ export default function SalesRegistry2() {
   const bulkInp = { padding: '7px 9px', border: '1px solid var(--border-card)', borderRadius: 8, fontSize: 12.5, background: 'var(--bg-card)', color: 'inherit', fontFamily: UI }
 
   const onSort = (k, sortable) => { if (!sortable) return; if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(k); setSortDir('desc') } }
-  const resetFilters = () => { setSel(Object.fromEntries(FILTER_DROPS.map(([k]) => [k, []]))); setGaps([]); setHideArchive(true); setSearch(''); setSearchQ(''); setDateFrom(''); setDateTo('') }
+  const resetFilters = () => { setSel(Object.fromEntries(REG_FILTER_DROPS.map(([k]) => [k, []]))); setGaps([]); setHideArchive(true); setSearch(''); setSearchQ(''); setDateFrom(''); setDateTo('') }
 
   const patchCell = async (id, patch, localApply) => {
     try { await api.patch(`/sales/deals/${id}`, patch, auth()); setDeals(prev => prev.map(x => x.id === id ? { ...x, ...localApply } : x)); return true }
@@ -398,7 +402,7 @@ export default function SalesRegistry2() {
       case 'amount': return <span style={{ fontFamily: MONO, fontWeight: 700, textAlign: 'right' }} title={d.amount != null ? new Intl.NumberFormat('ru-RU').format(d.amount) + ' ₽' : ''}>{fmtMoney(d.amount)}</span>
       case 'account_manager': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.account_manager ?? '—'}</span>
       case 'payer': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.payer}>{d.payer ?? '—'}</span>
-      case 'money_layer': return <span style={{ display: 'flex', gap: 2 }} title={none ? 'Без группы — требует разбора' : `${d.money_layer} · слой денег`}>{PIP.map((c, i) => <span key={i} style={{ width: 9, height: 14, borderRadius: 2, background: none ? HATCH : (i < n ? c : 'var(--border-inner)') }} />)}</span>
+      case 'money_layer': { const lost = /провал|не случил|отказ/i.test(d.bitrix_stage || ''); return <span style={{ display: 'flex', gap: 2 }} title={none ? (lost ? 'Сделка провалена' : 'Без группы — требует разбора') : `${d.money_layer} · слой денег`}>{PIP.map((c, i) => <span key={i} style={{ width: 9, height: 14, borderRadius: 2, background: none ? (lost ? HATCH_RED : HATCH) : (i < n ? c : 'var(--border-inner)') }} />)}</span> }
       case 'pipeline': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.pipeline}>{d.pipeline ?? '—'}</span>
       case 'sales_rep': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.sales_rep ?? '—'}</span>
       case 'period_from': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{d.period_from ? fmtDate(d.period_from) : '—'}</span>
@@ -648,7 +652,7 @@ export default function SalesRegistry2() {
                     <DealsMobileControls dealsTotal={dealsTotal} search={search} setSearch={setSearch} mobSearchOpen={mobSearchOpen} setMobSearchOpen={setMobSearchOpen}
                       mobView={mobView} setMobView={setMobView} filtersOpen={filtersOpen} setFiltersOpen={setFiltersOpen} activeFilterCount={activeFilterCount}
                       sel={sel} setSel={setSel} gaps={gaps} setGaps={setGaps} dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo}
-                      hideArchive={hideArchive} setHideArchive={setHideArchive} fopts={fopts} resetFilters={resetFilters} exportCsv={exportCsv} />
+                      hideArchive={hideArchive} setHideArchive={setHideArchive} fopts={fopts} resetFilters={resetFilters} exportCsv={exportCsv} filterDrops={REG_FILTER_DROPS} />
                   ) : (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <div style={{ flex: '0 0 auto', width: searchFocus ? 300 : 148, display: 'inline-flex', alignItems: 'center', gap: 7, border: `1px solid ${searchFocus ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '7px 10px', transition: 'width .22s cubic-bezier(0.22,1,0.36,1), border-color .15s' }}>
@@ -676,8 +680,8 @@ export default function SalesRegistry2() {
                         </div>
                       </>)}
                     </div>
-                    {FILTER_DROPS.map(([k, lbl]) => (
-                      <MultiDrop key={k} label={lbl} options={fopts[k]} selected={sel[k]} onChange={v => setSel(s => ({ ...s, [k]: v }))} />
+                    {REG_FILTER_DROPS.map(([k, lbl]) => (
+                      <MultiDrop key={k} label={lbl} options={fopts[k]} selected={sel[k]} onChange={v => { setSel(s => ({ ...s, [k]: v })); if (k === 'bitrix_stage' && hideArchive && v.some(x => /архив/i.test(x))) setHideArchive(false) }} />
                     ))}
                     <MultiDrop label="Незаполненные" options={GAP_FIELDS} selected={gaps} onChange={setGaps} />
                     <div style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>

@@ -12,6 +12,7 @@ export default function DealsMobileControls({
   mobView, setMobView, filtersOpen, setFiltersOpen, activeFilterCount,
   sel, setSel, gaps, setGaps, dateFrom, setDateFrom, dateTo, setDateTo,
   hideArchive, setHideArchive, fopts, resetFilters, exportCsv,
+  filterDrops = FILTER_DROPS,   // реестр /sales передаёт свой список (+ Продавец); дашборд — дефолт
 }) {
   return (
     <>
@@ -72,8 +73,8 @@ export default function DealsMobileControls({
           <input type="month" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 12, padding: '11px 12px', fontSize: 13, fontFamily: MONO, outline: 'none' }} />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {FILTER_DROPS.map(([k, lbl]) => (
-            <MultiDrop key={k} label={lbl} options={fopts[k]} selected={sel[k]} onChange={v => setSel(s => ({ ...s, [k]: v }))} block />
+          {filterDrops.map(([k, lbl]) => (
+            <MultiDrop key={k} label={lbl} options={fopts[k]} selected={sel[k]} onChange={v => { setSel(s => ({ ...s, [k]: v })); if (k === 'bitrix_stage' && hideArchive && v.some(x => /архив/i.test(x))) setHideArchive(false) }} block />
           ))}
           <MultiDrop label="Незаполненные" options={GAP_FIELDS} selected={gaps} onChange={setGaps} block />
         </div>

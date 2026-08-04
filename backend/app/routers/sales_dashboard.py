@@ -237,7 +237,6 @@ def _base_query(db: Session, date_from, date_to, pipeline, sales_rep_id,
 
     for condition in (
         _in(SalesDeal.pipeline, pipeline),
-        _in(SalesDeal.bitrix_stage, bitrix_stage),
         _in(SalesDeal.sales_rep_id, sales_rep_id),
         _in(SalesDeal.account_manager_id, account_manager_id),
         _in(SalesDeal.advertiser_id, advertiser_id),
@@ -249,6 +248,22 @@ def _base_query(db: Session, date_from, date_to, pipeline, sales_rep_id,
     ):
         if condition is not None:
             q = q.filter(condition)
+
+    # bitrix_stage: значения — простые имена ИЛИ пары "воронка\x1fстадия" (per-pipeline
+    # выбор: одинаковая стадия в разных воронках фильтруется независимо).
+    if bitrix_stage:
+        raw, pairs = [], []
+        for v in bitrix_stage:
+            if "\x1f" in v:
+                _p, _s = v.split("\x1f", 1); pairs.append((_p, _s))
+            else:
+                raw.append(v)
+        conds = []
+        if raw:
+            conds.append(SalesDeal.bitrix_stage.in_(raw))
+        conds += [and_(SalesDeal.pipeline == _p, SalesDeal.bitrix_stage == _s) for _p, _s in pairs]
+        if conds:
+            q = q.filter(or_(*conds))
     return q
 
 
@@ -1542,14 +1557,72 @@ def filter_options(db: Session = Depends(get_db),
                                     SalesBitrixStageMap.bitrix_stage == SalesDeal.bitrix_stage,
                                     SalesBitrixStageMap.is_active.is_(True))), own)
           .group_by(SalesBitrixStageMap.stage_key).all())
+
+    # ── Воронки в логическом порядке (настройки: sort_order) + группировка стадий ──
+    from app.sales.models import SalesPipeline, SalesPipelineStage
+    tracked_pipes = (db.query(SalesPipeline).filter(SalesPipeline.is_tracked.is_(True))
+                     .order_by(SalesPipeline.sort_order, SalesPipeline.bitrix_category_id).all())
+    pipe_names = [p.name for p in tracked_pipes]
+    stage_key_idx = {s["key"]: i for i, s in enumerate(STAGE_CATALOG)}   # порядок светофора
+    smap = {(m.pipeline, m.bitrix_stage): m.stage_key
+            for m in db.query(SalesBitrixStageMap).filter(SalesBitrixStageMap.is_active.is_(True)).all()}
+    ps_native = {}   # родной порядок стадии в воронке (тай-брейк внутри одного слоя)
+    for _p in tracked_pipes:
+        for _st in (db.query(SalesPipelineStage)
+                    .filter(SalesPipelineStage.bitrix_category_id == _p.bitrix_category_id).all()):
+            ps_native[(_p.name, _st.name)] = _st.sort_order
+
+    def _stage_rank(pipe_name, stage_name):
+        n = (stage_name or "").lower()
+        native = ps_native.get((pipe_name, stage_name), 999)
+        if "провал" in n or "не случил" in n or "отказ" in n:   # LOSE — в самый конец
+            return (99, native)
+        if "архив" in n:                                          # Архив — перед провалом
+            return (90, native)
+        sk = smap.get((pipe_name, stage_name))                   # по светофору; неразмеченные — середина
+        return (stage_key_idx.get(sk, 50), native)
+
+    # Счётчики сделок по (воронка, стадия) — own-scope.
+    ps_counts = {}
+    for _pipe, _stage, _c in (_apply_own_scope(
+            db.query(SalesDeal.pipeline, SalesDeal.bitrix_stage, func.count(SalesDeal.id)), own)
+            .group_by(SalesDeal.pipeline, SalesDeal.bitrix_stage).all()):
+        ps_counts[(_pipe, _stage)] = _c
+
+    # Воронки: логический порядок из настроек, + прочие из сделок в конец.
+    _pcnt = {}
+    for (_pipe, _stage), _c in ps_counts.items():
+        _pcnt[_pipe] = _pcnt.get(_pipe, 0) + _c
+    pipeline_opts = [{"value": n, "label": n, "count": _pcnt.get(n, 0)} for n in pipe_names]
+    for _pipe in sorted(k for k in _pcnt if k and k not in pipe_names):
+        pipeline_opts.append({"value": _pipe, "label": _pipe, "count": _pcnt[_pipe]})
+
+    # Стадии: сгруппированы по воронке (логический порядок), внутри — по светофору,
+    # Архив и «Сделка провалена» в конце группы. group — заголовок группы в дропдауне.
+    # Берём ВСЕ стадии воронки из настроек (sales_pipeline_stages) + исторические
+    # названия из сделок — чтобы список совпадал с настройками воронок (даже стадии
+    # без сделок, count=0), а не только использованные.
+    # value — пара "воронка\x1fстадия": одинаковые имена стадий в разных воронках
+    # выбираются НЕЗАВИСИМО (иначе выбор «Архив» цеплял бы все воронки сразу).
+    # tone='danger' — «Сделка провалена»: фронт красит красным в списке.
+    stage_opts = []
+    for n in pipe_names:
+        names = {st for (pp, st) in ps_native if pp == n and st}
+        names |= {st for (pp, st) in ps_counts if pp == n and st}
+        for s in sorted(names, key=lambda st: _stage_rank(n, st)):
+            low = (s or "").lower()
+            lost = "провал" in low or "не случил" in low or "отказ" in low
+            opt = {"value": f"{n}\x1f{s}", "label": s, "count": ps_counts.get((n, s), 0), "group": n}
+            if lost:
+                opt["tone"] = "danger"
+            stage_opts.append(opt)
+
     return {
         "money_layer": [{"value": l, "label": l} for l in ("планируемые", "реализуемые", "фактические")],
         "stage_key": [{"value": s["key"], "label": f"{s['label']} · {s['money_layer']}",
                        "count": sk_counts.get(s["key"], 0)} for s in STAGE_CATALOG],
-        "pipeline": [{"value": r["value"], "label": r["value"], "count": r["count"]}
-                     for r in counted(SalesDeal.pipeline)],
-        "bitrix_stage": [{"value": r["value"], "label": r["value"], "count": r["count"]}
-                         for r in counted(SalesDeal.bitrix_stage)],
+        "pipeline": pipeline_opts,
+        "bitrix_stage": stage_opts,
         "advertiser_id": directory(SalesAdvertiser, SalesDeal.advertiser_id),
         "brand_id": named(SalesBrand, SalesDeal.brand_id),
         "agency_id": directory(SalesAgency, SalesDeal.agency_id),
