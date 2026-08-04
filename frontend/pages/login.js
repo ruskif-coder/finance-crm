@@ -243,9 +243,9 @@ export default function Login() {
 
   // --- Форма входа ---
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', padding: '16px', boxSizing: 'border-box' }}>
       <Head><title>Вход</title></Head>
-      <div style={{ background: 'var(--card)', padding: '40px', borderRadius: '16px', width: '380px', boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
+      <div style={{ background: 'var(--card)', padding: 'clamp(28px, 7vw, 40px)', borderRadius: '16px', width: '100%', maxWidth: '380px', boxSizing: 'border-box', boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
         <div style={{ marginBottom: '16px' }}>
           <input
             type="email"
