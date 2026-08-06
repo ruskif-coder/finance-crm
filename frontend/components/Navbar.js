@@ -49,6 +49,7 @@ const LANDING_ORDER = [
   ['sales_dashboard', '/sales-dashboard'],
   ['sales_registry', '/sales'],
   ['sales_analytics', '/analytics'],
+  ['media_plans', '/deals/mp'],
   ['pl', '/pl'],
   ['balance', '/balance'],
   ['receivables', '/receivables'],
