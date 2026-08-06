@@ -87,10 +87,10 @@ export default function MpRegistry() {
     setPerms(p); setIsAdmin(admin)
     if (!admin && !can(p, 'media_plans', 'view')) { router.push('/dashboard'); return }
     load()
-    api.get('/sales/filters', auth()).then(r => { setAgencies(r.data?.agency_id || []); setAdvertisers(r.data?.advertiser_id || []) }).catch(() => {})
-    api.get('/sales/brands-by-advertiser', auth()).then(r => setBrandsByAdv(r.data || {})).catch(() => {})
-    api.get('/sales/directories/producers', auth()).then(r => { const m = {}; (r.data.items || []).forEach(a => { m[a.id] = (a.counterparties || []).map(c => ({ value: c.counterparty_id, label: c.name })) }); setAdvCps(m) }).catch(() => {})
-    api.get('/sales/directories/agencies', auth()).then(r => { const m = {}; (r.data.items || []).forEach(a => { m[a.id] = (a.counterparties || []).map(c => ({ value: c.counterparty_id, label: c.name })) }); setAgencyCps(m) }).catch(() => {})
+    // Справочники — из ОТКРЫТЫХ эндпоинтов (аккаунт-кабинет не требует прав продаж).
+    api.get('/sales/directories/brands', auth()).then(r => { const m = {}; (r.data.items || []).forEach(b => { (m[b.advertiser_id] = m[b.advertiser_id] || []).push({ value: b.id, label: b.name }) }); setBrandsByAdv(m) }).catch(() => {})
+    api.get('/sales/directories/producers', auth()).then(r => { const items = r.data.items || []; setAdvertisers(items.map(a => ({ value: a.id, label: a.short_name || a.name }))); const m = {}; items.forEach(a => { m[a.id] = (a.counterparties || []).map(c => ({ value: c.counterparty_id, label: c.name })) }); setAdvCps(m) }).catch(() => {})
+    api.get('/sales/directories/agencies', auth()).then(r => { const items = r.data.items || []; setAgencies(items.map(a => ({ value: a.id, label: a.short_name }))); const m = {}; items.forEach(a => { m[a.id] = (a.counterparties || []).map(c => ({ value: c.counterparty_id, label: c.name })) }); setAgencyCps(m) }).catch(() => {})
     const mapStaff = (r) => (r.data.items || []).map(u => ({ value: u.id, label: u.name + (u.is_master ? ' ★' : '') }))
     api.get('/sales/directories/staff?group=seller&only_active=true', auth()).then(r => setSellers(mapStaff(r))).catch(() => {})
     api.get('/sales/directories/staff?group=account&only_active=true', auth()).then(r => setAccounts(mapStaff(r))).catch(() => {})

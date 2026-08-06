@@ -32,7 +32,10 @@ export default function MpEditor() {
 
   const loadTargeting = useCallback(() => api.get('/sales/directories/targeting', auth()).then(r => setTargetingCatalog(r.data.groups || {})).catch(() => {}), [])
   const loadGeo = useCallback(() => api.get('/sales/directories/geo', auth()).then(r => setGeoList(r.data.items || [])).catch(() => {}), [])
-  const loadBrands = useCallback(() => api.get('/sales/brands-by-advertiser', auth()).then(r => setBrandsByAdv(r.data || {})).catch(() => {}), [])
+  // Бренды из открытого справочника (не sales-гейченного), сгруппированы по рекламодателю.
+  const loadBrands = useCallback(() => api.get('/sales/directories/brands', auth()).then(r => {
+    const m = {}; (r.data.items || []).forEach(b => { (m[b.advertiser_id] = m[b.advertiser_id] || []).push({ value: b.id, label: b.name }) }); setBrandsByAdv(m)
+  }).catch(() => {}), [])
 
   useEffect(() => {
     if (typeof window === 'undefined' || !id) return
@@ -53,10 +56,18 @@ export default function MpEditor() {
       }))).catch(() => setCatalog([]))
     api.get('/sales/directories/services/addons?only_active=true', auth())
       .then(r => setExtraCatalog((r.data.items || []).map(a => ({ name: a.name, period: a.period || '', price: a.unit_price || 0 })))).catch(() => setExtraCatalog([]))
-    api.get('/sales/filters', auth()).then(r => { setAdvertisers(r.data?.advertiser_id || []); setAgencies(r.data?.agency_id || []) }).catch(() => {})
     loadBrands()
-    api.get('/sales/directories/producers', auth()).then(r => { const m = {}; (r.data.items || []).forEach(a => { m[a.id] = (a.counterparties || []).map(c => ({ value: c.counterparty_id, label: c.name })) }); setAdvCps(m) }).catch(() => {})
-    api.get('/sales/directories/agencies', auth()).then(r => { const m = {}; (r.data.items || []).forEach(a => { m[a.id] = (a.counterparties || []).map(c => ({ value: c.counterparty_id, label: c.name })) }); setAgencyCps(m) }).catch(() => {})
+    // Рекламодатели/агентства — из ОТКРЫТЫХ справочников (аккаунт-кабинет не требует прав продаж).
+    api.get('/sales/directories/producers', auth()).then(r => {
+      const items = r.data.items || []
+      setAdvertisers(items.map(a => ({ value: a.id, label: a.short_name || a.name })))
+      const m = {}; items.forEach(a => { m[a.id] = (a.counterparties || []).map(c => ({ value: c.counterparty_id, label: c.name })) }); setAdvCps(m)
+    }).catch(() => {})
+    api.get('/sales/directories/agencies', auth()).then(r => {
+      const items = r.data.items || []
+      setAgencies(items.map(a => ({ value: a.id, label: a.short_name })))
+      const m = {}; items.forEach(a => { m[a.id] = (a.counterparties || []).map(c => ({ value: c.counterparty_id, label: c.name })) }); setAgencyCps(m)
+    }).catch(() => {})
     loadTargeting(); loadGeo()
     // Ответственные: пользователи по рабочей группе их роли (Роли → рабочая группа).
     const staffOf = (g) => api.get(`/sales/directories/staff?group=${g}&only_active=true`, auth()).then(r => r.data.items || []).catch(() => [])

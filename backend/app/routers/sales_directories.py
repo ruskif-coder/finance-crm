@@ -23,7 +23,7 @@ from datetime import date
 from app.database import get_db
 from app.models import User, Counterparty, Role
 from app.routers.auth import get_current_user
-from app.permissions import require_permission
+from app.permissions import require_permission, require_any_permission
 from app.audit import log_action
 from app.sales.models import (SalesService, SalesAddonService, SalesServiceGroup, SalesAdvertiser,
                               SalesBrand, SalesPriceListItem, SalesAgency,
@@ -1402,10 +1402,9 @@ def list_brands(advertiser_id: Optional[int] = None, only_active: bool = True,
 
 @router.post("/brands")
 def create_brand(data: BrandIn, db: Session = Depends(get_db),
-                 current_user: User = Depends(require_permission("sales_registry", "edit"))):
-    # Добавление бренда — по праву «редактирование» в разделе Продажи (sales_registry),
-    # тому же, что и правка сделки (решение 2026-07-27). Отдельного права на справочник
-    # не требуем: бренды заводят из реестра сделок.
+                 current_user: User = Depends(require_any_permission(("sales_registry", "dir_advertisers"), "edit"))):
+    # Добавление бренда — из реестра сделок (sales_registry:edit) ИЛИ из справочника
+    # рекламодателей/конструктора МП (dir_advertisers:edit) — бренд принадлежит рекламодателю.
     name = _clean_name(data.name)
     _require(db, SalesAdvertiser, data.advertiser_id, "Рекламодатель")
     # Уникальность бренда — в пределах рекламодателя: одноимённые бренды
