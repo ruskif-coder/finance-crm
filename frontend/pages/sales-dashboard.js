@@ -5,6 +5,7 @@ import Navbar, { can } from '../components/Navbar'
 import SalesTabs from '../components/SalesTabs'
 import SalesQuarterWidgets from '../components/SalesQuarterWidgets'
 import DealCreateForm from '../components/DealCreateForm'
+import DealDetail from '../components/sales/DealDetail'
 import DealBriefCell from '../components/DealBriefCell'
 import ValuePopover from '../components/ValuePopover'
 import api, { auth } from '../lib/api'
@@ -71,6 +72,7 @@ const quarterMonths = (qs) => {
 export default function SalesDashboard2() {
   const router = useRouter()
   const [data, setData] = useState(null)
+  const [expandedId, setExpandedId] = useState(null) // раскрытая строка-детализация сделки
   const [quarter, setQuarter] = useState('')
   const [repId, setRepId] = useState('')
   const [reps, setReps] = useState([])
@@ -279,10 +281,16 @@ export default function SalesDashboard2() {
   const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }
 
   // Ячейка строки по ключу колонки (для итерации по видимым колонкам).
+  // Действия карточки-детализации (раскрытие строки). Открыть — в Битрикс; правка и
+  // загрузка МП — заглушки (доработаем).
+  const openDeal = (d) => { if (d.bitrix_id && !String(d.bitrix_id).startsWith('local-')) window.open(BITRIX_DEAL_URL(d.bitrix_id), '_blank') }
+  const editDeal = () => alert('Редактирование сделки — скоро')
+  const addMp = () => alert('Загрузка/создание МП — скоро')
+
   const cellFor = (key, d) => {
     const none = !FILL[d.money_layer]; const n = FILL[d.money_layer] || 0
     switch (key) {
-      case 'brief': return <DealBriefCell deal={d} canEdit={canEdit} v2 />
+      case 'brief': return <span className="d2-brief" style={{ display: 'inline-flex' }}><DealBriefCell deal={d} canEdit={canEdit} v2 /></span>
       case 'bitrix_id': return String(d.bitrix_id || '').startsWith('local-')
         ? (canEdit
           ? <button onClick={() => api.post(`/sales/deals/${d.id}/push-to-bitrix`, {}, auth()).then(() => loadDeals(data.rep_ids)).catch(e => alert(e.response?.data?.detail || 'Ошибка'))} title="Отправить в Битрикс" style={{ border: '1px solid var(--accent)', background: 'var(--accent-tint)', color: 'var(--accent)', borderRadius: 6, cursor: 'pointer', fontSize: 11, padding: '2px 6px', fontFamily: MONO, justifySelf: 'start' }}>→ БХ</button>
@@ -527,9 +535,13 @@ export default function SalesDashboard2() {
                       </div>
 
                       {deals.map(d => (
-                        <div key={d.id} className="d2-row" style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 12, color: 'var(--text-primary)' }}>
+                        <Fragment key={d.id}>
+                        <div className="d2-row" onClick={e => { if (e.target.closest('.d2-cell, .d2-gen, .d2-brief, input, select, button, a, textarea')) return; setExpandedId(x => x === d.id ? null : d.id) }}
+                          style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 12, color: 'var(--text-primary)', cursor: 'pointer', background: expandedId === d.id ? 'var(--accent-tint)' : undefined }}>
                           {visibleCols.map(c => <Fragment key={c.key}>{cellFor(c.key, d)}</Fragment>)}
                         </div>
+                        {expandedId === d.id && <DealDetail deal={d} canEdit={canEdit} onOpen={openDeal} onEdit={editDeal} onAddMp={addMp} />}
+                        </Fragment>
                       ))}
                       {!deals.length && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Нет сделок по выбранным фильтрам</div>}
                     </div>

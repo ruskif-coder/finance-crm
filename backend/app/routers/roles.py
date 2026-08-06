@@ -14,6 +14,10 @@ router = APIRouter()
 # sales_registry/sales_analytics, поэтому писать scope надо во все три — иначе
 # «только свои» молча не срабатывает (роль продолжает видеть все сделки).
 _SALES_SECTIONS = ("sales_dashboard", "sales_registry", "sales_analytics")
+# Медиапланы несут собственный (независимый от продаж) deals_scope: реестр и
+# конструктор делят одно значение, UI шлёт его в обе секции (см. settings/roles.js).
+_MP_SECTIONS = ("media_plans", "media_plans_editor")
+_SCOPED_SECTIONS = _SALES_SECTIONS + _MP_SECTIONS
 
 
 class PermissionInput(BaseModel):
@@ -33,6 +37,8 @@ class RoleCreate(BaseModel):
 class RoleUpdate(BaseModel):
     label: Optional[str] = None
     permissions: Optional[List[PermissionInput]] = None
+    staff_group: Optional[str] = None   # 'seller' / 'account' / 'traffic' / '' (снять)
+    is_master: Optional[bool] = None
 
 
 def _serialize_role(db: Session, role: Role) -> dict:
@@ -49,7 +55,9 @@ def _serialize_role(db: Session, role: Role) -> dict:
         }
     user_count = db.query(User).filter(User.role_id == role.id).count()
     sd = rows.get("sales_dashboard")
+    mp = rows.get("media_plans")
     deals_scope = "all" if role.key == "admin" else ((sd.deals_scope if sd else None) or "all")
+    mp_scope = "all" if role.key == "admin" else ((mp.deals_scope if mp else None) or "all")
     return {
         "id": role.id,
         "key": role.key,
@@ -58,6 +66,9 @@ def _serialize_role(db: Session, role: Role) -> dict:
         "user_count": user_count,
         "permissions": permissions,
         "deals_scope": deals_scope,
+        "mp_scope": mp_scope,
+        "staff_group": role.staff_group or "",
+        "is_master": bool(role.is_master),
     }
 
 
@@ -103,6 +114,14 @@ def update_role(role_id: int, data: RoleUpdate, db: Session = Depends(get_db), c
         changes.append(f"название: {role.label} → {data.label.strip()}")
         role.label = data.label.strip()
 
+    # Рабочая группа + мастер (классификация роли для конструктора МП).
+    if data.staff_group is not None:
+        role.staff_group = data.staff_group if data.staff_group in ("seller", "account", "traffic") else None
+        changes.append(f"рабочая группа: {role.staff_group or '—'}")
+    if data.is_master is not None:
+        role.is_master = bool(data.is_master)
+        changes.append(f"мастер: {'да' if role.is_master else 'нет'}")
+
     if data.permissions:
         valid_sections = {s["key"]: s["actions"] for s in SECTIONS}
         for p in data.permissions:
@@ -118,8 +137,8 @@ def update_role(role_id: int, data: RoleUpdate, db: Session = Depends(get_db), c
                 val = getattr(p, ACTION_FIELDS[action])
                 if val is not None:
                     setattr(row, ACTION_FIELDS[action], 1 if val else 0)
-            # Видимость сделок — для всех трёх секций продаж (см. _SALES_SECTIONS).
-            if p.section in _SALES_SECTIONS and p.deals_scope is not None:
+            # Видимость (own/all) — секции продаж (общий scope) и медиапланов (свой).
+            if p.section in _SCOPED_SECTIONS and p.deals_scope is not None:
                 row.deals_scope = p.deals_scope if p.deals_scope in ("all", "own") else "all"
         changes.append("права доступа изменены")
 

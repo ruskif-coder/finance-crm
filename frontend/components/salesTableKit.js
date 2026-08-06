@@ -20,7 +20,7 @@ export const FILTER_DROPS = [
 ]
 export const GAP_FIELDS = [
   { value: 'advertiser_id', label: 'без рекламодателя' }, { value: 'brand_id', label: 'без бренда' },
-  { value: 'agency_id', label: 'без агентства' }, { value: 'account_manager_id', label: 'без аккаунта' },
+  { value: 'agency_id', label: 'без агентства' }, { value: 'sales_rep_id', label: 'без сейлза' }, { value: 'account_manager_id', label: 'без аккаунта' },
   { value: 'period_from', label: 'без старта РК' }, { value: 'payer', label: 'плательщик не из базы' },
 ]
 
@@ -86,3 +86,32 @@ export const IconBtn = ({ title, active, onClick, children }) => (
     {children}
   </div>
 )
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Канон стилей реестров и форм (карточка / инпут / селект / кнопка / ячейки
+// таблицы и CSS-grid). Единый источник: раньше эти объекты дублировались
+// байт-в-байт в справочниках (contracts/advertisers/agencies), статьях и на
+// всех страницах настроек. Значения — «причёсанный» вид дизайн-системы (ds.jsx):
+// var(--*) токены + шрифты MONO/UI. Не заводить локальные копии в страницах.
+export const card = { background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18 }
+
+export const inp = { padding: '8px 11px', border: '1px solid var(--border-card)', borderRadius: 10, fontSize: 13, background: 'var(--bg-card)', color: 'var(--text-primary)', fontFamily: UI, outline: 'none', boxSizing: 'border-box' }
+export const sel = { ...inp, cursor: 'pointer' }
+export const inpSm = (w) => ({ ...inp, width: w, padding: '6px 9px' })
+export const selSm = (w) => ({ ...sel, width: w, padding: '6px 9px' })
+// компактные поля во всю ширину ячейки (инлайн-редактирование строк реестра)
+export const ci = { ...inp, padding: '6px 8px', width: '100%' }
+export const cs = { ...sel, padding: '6px 6px', width: '100%' }
+
+// btn(primary): primary — акцентная заливка, иначе контурная светлая
+export const btn = (p) => ({ padding: '8px 15px', borderRadius: 10, border: p ? 'none' : '1px solid var(--border-card)', cursor: 'pointer', fontSize: 13, fontWeight: p ? 700 : 600, background: p ? 'var(--accent)' : 'var(--bg-card)', color: p ? '#fff' : 'var(--text-secondary)', fontFamily: UI })
+export const primaryBtn = btn(true)
+export const btnSm = (p) => ({ ...btn(p), padding: '4px 10px', fontSize: 12 })
+
+// заголовок/ячейка обычной <table>
+export const th = { padding: '0 10px 10px', textAlign: 'left', fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text-faint)', borderBottom: '1px solid var(--border-card)', whiteSpace: 'nowrap' }
+export const td = { padding: '10px 10px', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-row)', verticalAlign: 'middle' }
+
+// ячейка/заголовок CSS-grid реестра (advertisers/agencies)
+export const cell = { padding: '0 8px', fontSize: 13, color: 'var(--text-primary)', minWidth: 0 }
+export const headCell = (label, right) => <div style={{ padding: '0 8px 10px', fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-faint)', textAlign: right ? 'right' : 'left', whiteSpace: 'nowrap' }}>{label}</div>

@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case, text
 from app.database import get_db
+from app.xlsx_safe import xlsx_safe
 from app.models import Operation, Article, Counterparty, User
 from app.routers.auth import get_current_user
 from app.audit import log_action
@@ -347,7 +348,7 @@ def export_operations(
             RECEIVABLE_STATUS_LABELS.get(_receivable_status(op)),
         ]
         for col_idx, value in enumerate(values, start=1):
-            ws.cell(row=row_idx, column=col_idx, value=value)
+            ws.cell(row=row_idx, column=col_idx, value=xlsx_safe(value))
         ws.cell(row=row_idx, column=date_col_idx).number_format = 'DD.MM.YYYY'
         ws.cell(row=row_idx, column=invoice_date_col_idx).number_format = 'DD.MM.YYYY'
 
@@ -838,7 +839,7 @@ async def download_import_template(
     if article_names:
         lists_ws = wb.create_sheet("Справочники")
         for i, name in enumerate(article_names, start=1):
-            lists_ws.cell(row=i, column=1, value=name)
+            lists_ws.cell(row=i, column=1, value=xlsx_safe(name))
         lists_ws.sheet_state = "hidden"
         article_dv = _strict_list_dv(f"'Справочники'!$A$1:$A${len(article_names)}")
         ws.add_data_validation(article_dv)

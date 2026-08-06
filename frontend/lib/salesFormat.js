@@ -51,3 +51,14 @@ export const niceMax = (v) => {
   const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10
   return step * pow
 }
+
+// Имя скачиваемого файла: «<prefix> <Название РК> ДД.ММ.ГГГГ ЧЧ-ММ.<ext>» по московскому
+// времени. prefix — вид документа (для МП «MP Simb-AD»). Недопустимые символы вычищаются.
+export const downloadName = (title, ext = 'pdf', prefix = '') => {
+  const p = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date())
+  const g = (t) => (p.find((x) => x.type === t) || {}).value || ''
+  const stamp = `${g('day')}.${g('month')}.${g('year')} ${g('hour')}-${g('minute')}`
+  const safe = (title || 'Медиаплан').replace(/[\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim()
+  const head = prefix ? `${prefix} ` : ''
+  return `${head}${safe} ${stamp}.${ext}`
+}

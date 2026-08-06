@@ -36,6 +36,8 @@ services:
       # Используется в main.py для CORS allow_origins — см. комментарий там.
       # Пока не открыли систему наружу, оставляйте "localhost".
       DOMAIN: ${DOMAIN:-localhost}
+      # Сайдкар генерации нативного PDF (headless Chromium). Только внутренняя сеть.
+      PDF_SERVICE_URL: http://pdf:3001
     volumes:
       - ./backend/logs:/app/logs
       - ./uploads:/app/uploads   # персистентное хранилище прикреплённых файлов договоров
@@ -55,6 +57,18 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     mem_limit: 512m
+
+  # PDF-сайдкар: headless Chromium (Playwright) рендерит страницу медиаплана в нативный
+  # PDF. Портов наружу нет — ходит только backend по внутренней сети (http://pdf:3001).
+  pdf:
+    build: ./pdf-service
+    container_name: finance_pdf
+    restart: always
+    depends_on:
+      - frontend
+    environment:
+      FRONTEND_URL: http://frontend:3000
+    mem_limit: 1024m
 
   # Reverse proxy: единственный сервис, слушающий на всех интерфейсах (0.0.0.0:80/443).
   # Маршрутизация — см. ./Caddyfile. DOMAIN=localhost (значение по умолчанию из .env) —

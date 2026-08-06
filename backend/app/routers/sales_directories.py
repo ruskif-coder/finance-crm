@@ -17,18 +17,19 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import date
 
 from app.database import get_db
-from app.models import User, Counterparty
+from app.models import User, Counterparty, Role
 from app.routers.auth import get_current_user
 from app.permissions import require_permission
 from app.audit import log_action
-from app.sales.models import (SalesService, SalesServiceGroup, SalesAdvertiser,
+from app.sales.models import (SalesService, SalesAddonService, SalesServiceGroup, SalesAdvertiser,
                               SalesBrand, SalesPriceListItem, SalesAgency,
                               SalesPipeline, SalesDeal, SalesPipelineStage,
-                              SalesBitrixStageMap,
+                              SalesBitrixStageMap, SalesAnnexItem,
+                              SalesFormat, SalesServiceFormat, SalesTargetingItem, SalesGeo,
                               SalesAgencyCounterparty, SalesAdvertiserCounterparty)
 from app.sales.normalize import normalize_name, normalize_inn
 from app.sales.stages import STAGE_CATALOG, STAGE_BY_KEY
@@ -45,9 +46,8 @@ ADV_DELETE = require_permission("dir_advertisers", "delete")
 AG_VIEW = require_permission("dir_agencies", "view")
 AG_EDIT = require_permission("dir_agencies", "edit")
 AG_DELETE = require_permission("dir_agencies", "delete")
-SET_VIEW = require_permission("settings", "view")
-SET_EDIT = require_permission("settings", "edit")
-SET_DELETE = require_permission("settings", "edit")   # у «Настроек» нет отдельного delete
+SVC_EDIT = require_permission("settings_services", "edit")
+PIPE_EDIT = require_permission("settings_pipelines", "edit")
 
 
 # ============================== Pydantic ==============================
@@ -56,6 +56,47 @@ class ServiceIn(BaseModel):
     name: str
     group: Optional[str] = None
     note: Optional[str] = None
+    placement_type: Optional[str] = None
+    calc_form: Optional[str] = None
+    separate_price: Optional[bool] = False
+    unit_price: Optional[float] = None
+    unit_price_web: Optional[float] = None
+    unit_price_app: Optional[float] = None
+    constants: Optional[dict] = None
+    bx_id: Optional[str] = None       # привязка к услуге в Битриксе (элемент СП 1050)
+    bx_title: Optional[str] = None    # кэш имени битрикс-услуги на момент привязки
+    format_ids: Optional[List[int]] = None  # привязанные форматы (M2M); None — не трогать
+
+
+class FormatIn(BaseModel):
+    name: str
+    group: Optional[str] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = True
+
+
+class TargetingIn(BaseModel):
+    group: str
+    value: str
+
+
+class GeoIn(BaseModel):
+    name: str
+    sort_order: Optional[int] = None
+
+
+_TARGETING_GROUPS = ("audience", "buys", "interests", "behavior", "competitors")
+
+
+class AddonIn(BaseModel):
+    name: str
+    unit_price: Optional[float] = None
+    period: Optional[str] = None
+    can_be_bonus: Optional[bool] = False
+
+
+class ReorderIn(BaseModel):
+    ids: List[int]
 
 
 class ServiceGroupIn(BaseModel):
@@ -140,8 +181,70 @@ def list_services(only_active: bool = True, db: Session = Depends(get_db),
     if only_active:
         q = q.filter(SalesService.is_active.is_(True))
     rows = q.order_by(SalesService.sort_order, SalesService.name).all()
-    return {"items": [{"id": s.id, "name": s.name, "group": s.group,
-                       "is_active": s.is_active} for s in rows]}
+    # форматы одной пачкой (без N+1), отсортированы по sort_order формата
+    fmt_map = {}
+    if rows:
+        link_rows = (db.query(SalesServiceFormat.service_id, SalesFormat.id, SalesFormat.name, SalesFormat.group)
+                     .join(SalesFormat, SalesFormat.id == SalesServiceFormat.format_id)
+                     .filter(SalesServiceFormat.service_id.in_([s.id for s in rows]))
+                     .order_by(SalesFormat.sort_order, SalesFormat.name).all())
+        for sid, fid, fname, fgroup in link_rows:
+            fmt_map.setdefault(sid, []).append({"id": fid, "name": fname, "group": fgroup})
+    return {"items": [{"id": s.id, "name": s.name, "group": s.group, "is_active": s.is_active,
+                       "sort_order": s.sort_order, "placement_type": s.placement_type,
+                       "default_format": s.placement_type, "formats": fmt_map.get(s.id, []),
+                       "calc_form": s.calc_form, "separate_price": bool(s.separate_price),
+                       "unit_price": s.unit_price, "unit_price_web": s.unit_price_web,
+                       "unit_price_app": s.unit_price_app, "constants": s.constants or {},
+                       "bx_id": s.bx_id, "bx_title": s.bx_title}
+                      for s in rows]}
+
+
+def _set_service_fields(svc, data):
+    svc.placement_type = data.placement_type or None
+    svc.calc_form = data.calc_form or None
+    svc.separate_price = bool(data.separate_price)
+    svc.unit_price = data.unit_price
+    svc.unit_price_web = data.unit_price_web
+    svc.unit_price_app = data.unit_price_app
+    svc.constants = data.constants or {}
+
+
+def _apply_bx_link(db, svc, bx_id, bx_title, exclude_id=None):
+    """Проставляет привязку к битрикс-услуге с проверкой уникальности: один элемент
+    СП 1050 может быть привязан максимум к одной локальной услуге (иначе синк снова
+    начнёт плодить дубли). Пустой bx_id снимает привязку."""
+    bx_id = (bx_id or "").strip() or None
+    if bx_id:
+        q = db.query(SalesService).filter(SalesService.bx_id == bx_id)
+        if exclude_id is not None:
+            q = q.filter(SalesService.id != exclude_id)
+        dup = q.first()
+        if dup:
+            raise HTTPException(status_code=400,
+                detail=f"Эта услуга Битрикса уже привязана к «{dup.name}»")
+        svc.bx_id = bx_id
+        svc.bx_title = (bx_title or "").strip() or None
+    else:
+        svc.bx_id = None
+        svc.bx_title = None
+
+
+def _sync_service_formats(db, svc, format_ids):
+    """Пересобирает связки услуга↔формат по списку id (None — не трогать). Дефолтный формат
+    (svc.placement_type, вариант B) должен быть среди выбранных имён; иначе — первый выбранный
+    или None. svc должен иметь id (для create — после db.flush())."""
+    if format_ids is None:
+        return
+    ids = list(dict.fromkeys(format_ids))            # дедуп с сохранением порядка
+    valid = {f.id: f for f in db.query(SalesFormat).filter(SalesFormat.id.in_(ids)).all()} if ids else {}
+    db.query(SalesServiceFormat).filter(SalesServiceFormat.service_id == svc.id).delete()
+    for fid in ids:
+        if fid in valid:
+            db.add(SalesServiceFormat(service_id=svc.id, format_id=fid))
+    names = [valid[fid].name for fid in ids if fid in valid]
+    if svc.placement_type not in names:             # дефолт вне выбранных → чиним
+        svc.placement_type = names[0] if names else None
 
 
 @router.get("/services/groups")
@@ -152,9 +255,183 @@ def list_service_groups(db: Session = Depends(get_db),
     return {"items": [{"id": g.id, "name": g.name, "sort_order": g.sort_order} for g in rows]}
 
 
+@router.get("/services/bitrix")
+def list_bitrix_service_options(db: Session = Depends(get_db),
+                                current_user: User = Depends(SVC_EDIT)):
+    """Список услуг Битрикса (СП 1050) для селекта привязки в настройках. linked_to —
+    имя локальной услуги, к которой этот элемент уже привязан (None — свободен)."""
+    from app.sales.bitrix.transport import list_bitrix_services
+    try:
+        items = list_bitrix_services()
+    except Exception as e:
+        logger.error("directories: Битрикс недоступен: %s", e)
+        raise HTTPException(status_code=502, detail="Битрикс недоступен (детали в логе сервера)")
+    linked = {s.bx_id: s.name for s in
+              db.query(SalesService).filter(SalesService.bx_id.isnot(None)).all()}
+    return {"items": [{"id": it["id"], "title": it["title"],
+                       "linked_to": linked.get(it["id"])} for it in items]}
+
+
+# ===== Форматы размещения (справочник + M2M с услугами) =====
+
+@router.get("/services/formats")
+def list_formats(only_active: bool = False, db: Session = Depends(get_db),
+                 current_user: User = Depends(get_current_user)):
+    """Открыт любому авторизованному — нужен в конструкторе МП и настройках услуг."""
+    q = db.query(SalesFormat)
+    if only_active:
+        q = q.filter(SalesFormat.is_active.is_(True))
+    rows = q.order_by(SalesFormat.sort_order, SalesFormat.name).all()
+    return {"items": [{"id": f.id, "name": f.name, "group": f.group,
+                       "sort_order": f.sort_order, "is_active": f.is_active} for f in rows]}
+
+
+@router.post("/services/formats")
+def create_format(data: FormatIn, db: Session = Depends(get_db), current_user: User = Depends(SVC_EDIT)):
+    name = _clean_name(data.name)
+    _reject_duplicate(db, SalesFormat, name)
+    order = db.query(func.max(SalesFormat.sort_order)).scalar() or 0
+    f = SalesFormat(name=name, group=(data.group or None),
+                    sort_order=data.sort_order if data.sort_order is not None else order + 1,
+                    is_active=bool(data.is_active))
+    db.add(f)
+    db.commit()
+    db.refresh(f)
+    log_action(db, current_user, "create_sales_format", "sales_format", f.id, name)
+    return {"id": f.id, "message": "Формат создан"}
+
+
+@router.put("/services/formats/{format_id}")
+def update_format(format_id: int, data: FormatIn, db: Session = Depends(get_db),
+                  current_user: User = Depends(SVC_EDIT)):
+    f = _require(db, SalesFormat, format_id, "Формат")
+    name = _clean_name(data.name)
+    _reject_duplicate(db, SalesFormat, name, exclude_id=format_id)
+    old = f.name
+    f.name = name
+    f.group = data.group or None
+    if data.sort_order is not None:
+        f.sort_order = data.sort_order
+    if data.is_active is not None:
+        f.is_active = bool(data.is_active)
+    if old != name:   # дефолтный формат хранится строкой в placement_type — переносим имя
+        db.query(SalesService).filter(SalesService.placement_type == old).update(
+            {SalesService.placement_type: name}, synchronize_session=False)
+    db.commit()
+    log_action(db, current_user, "update_sales_format", "sales_format", f.id, name)
+    return {"message": "Формат обновлён"}
+
+
+@router.delete("/services/formats/{format_id}")
+def delete_format(format_id: int, db: Session = Depends(get_db), current_user: User = Depends(SVC_EDIT)):
+    f = _require(db, SalesFormat, format_id, "Формат")
+    used = db.query(SalesServiceFormat.id).filter(SalesServiceFormat.format_id == format_id).first()
+    if used:
+        raise HTTPException(status_code=400,
+            detail="Формат привязан к услугам — сначала снимите привязки.")
+    name = f.name
+    db.delete(f)
+    db.commit()
+    log_action(db, current_user, "delete_sales_format", "sales_format", format_id, name)
+    return {"message": "Формат удалён"}
+
+
+# ===== Каталог таргетинга (общий, по группам) + справочник гео =====
+
+@router.get("/targeting")
+def list_targeting(only_active: bool = True, db: Session = Depends(get_db),
+                   current_user: User = Depends(get_current_user)):
+    q = db.query(SalesTargetingItem)
+    if only_active:
+        q = q.filter(SalesTargetingItem.is_active.is_(True))
+    rows = q.order_by(SalesTargetingItem.group, SalesTargetingItem.sort_order, SalesTargetingItem.value).all()
+    groups = {}
+    for t in rows:
+        groups.setdefault(t.group, []).append({"id": t.id, "value": t.value})
+    return {"groups": groups}
+
+
+@router.post("/targeting")
+def create_targeting(data: TargetingIn, db: Session = Depends(get_db),
+                     current_user: User = Depends(require_permission("sales_registry", "edit"))):
+    grp = (data.group or "").strip()
+    if grp not in _TARGETING_GROUPS:
+        raise HTTPException(status_code=400, detail="Неизвестная группа таргетинга")
+    val = _clean_name(data.value)
+    dup = db.query(SalesTargetingItem).filter(
+        SalesTargetingItem.group == grp,
+        func.lower(func.trim(SalesTargetingItem.value)) == val.lower()).first()
+    if dup:
+        return {"id": dup.id, "value": dup.value, "message": "уже есть"}
+    order = db.query(func.max(SalesTargetingItem.sort_order)).filter(SalesTargetingItem.group == grp).scalar() or 0
+    t = SalesTargetingItem(group=grp, value=val, sort_order=order + 1)
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    log_action(db, current_user, "create_targeting_item", "sales_targeting", t.id, f"{grp}: {val}")
+    return {"id": t.id, "value": t.value, "message": "добавлено"}
+
+
+@router.delete("/targeting/{item_id}")
+def delete_targeting(item_id: int, db: Session = Depends(get_db),
+                     current_user: User = Depends(require_permission("sales_registry", "edit"))):
+    t = _require(db, SalesTargetingItem, item_id, "Значение таргетинга")
+    label = f"{t.group}: {t.value}"
+    db.delete(t)
+    db.commit()
+    log_action(db, current_user, "delete_targeting_item", "sales_targeting", item_id, label)
+    return {"message": "Удалено"}
+
+
+@router.get("/geo")
+def list_geo(only_active: bool = True, db: Session = Depends(get_db),
+             current_user: User = Depends(get_current_user)):
+    q = db.query(SalesGeo)
+    if only_active:
+        q = q.filter(SalesGeo.is_active.is_(True))
+    rows = q.order_by(SalesGeo.sort_order, SalesGeo.name).all()
+    return {"items": [{"id": g.id, "name": g.name} for g in rows]}
+
+
+@router.post("/geo")
+def create_geo(data: GeoIn, db: Session = Depends(get_db),
+               current_user: User = Depends(require_permission("sales_registry", "edit"))):
+    name = _clean_name(data.name)
+    _reject_duplicate(db, SalesGeo, name)
+    order = db.query(func.max(SalesGeo.sort_order)).scalar() or 0
+    g = SalesGeo(name=name, sort_order=data.sort_order if data.sort_order is not None else order + 1)
+    db.add(g)
+    db.commit()
+    db.refresh(g)
+    log_action(db, current_user, "create_geo", "sales_geo", g.id, name)
+    return {"id": g.id, "name": g.name, "message": "добавлено"}
+
+
+# --- Ответственные (сотрудники) для конструктора МП -----------------------------
+# Рабочая группа и «мастер» живут на РОЛИ (Role.staff_group / is_master), пользователь
+# наследует их через свою роль. Здесь — пользователи, сгруппированные по этой роли,
+# для пикеров «Продавец/Аккаунт/Трафик» в МП. Мастера идут первыми и помечаются ★.
+@router.get("/staff")
+def list_staff(group: Optional[str] = None, only_active: bool = True,
+               db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Пользователи по рабочей группе роли. group=seller|account|traffic."""
+    q = db.query(User, Role).join(Role, User.role_id == Role.id)
+    if group:
+        q = q.filter(Role.staff_group == group)
+    else:
+        q = q.filter(Role.staff_group.isnot(None))
+    if only_active:
+        q = q.filter(User.is_active == 1)
+    rows = q.all()
+    items = [{"id": u.id, "name": u.name, "group": r.staff_group, "is_master": bool(r.is_master)}
+             for u, r in rows]
+    items.sort(key=lambda x: (not x["is_master"], x["name"]))
+    return {"items": items}
+
+
 @router.post("/services/groups")
 def create_service_group(data: ServiceGroupIn, db: Session = Depends(get_db),
-                         current_user: User = Depends(ADV_EDIT)):
+                         current_user: User = Depends(SVC_EDIT)):
     name = _clean_name(data.name)
     _reject_duplicate(db, SalesServiceGroup, name)
     max_order = db.query(func.max(SalesServiceGroup.sort_order)).scalar() or 0
@@ -166,14 +443,36 @@ def create_service_group(data: ServiceGroupIn, db: Session = Depends(get_db),
     return {"id": group.id, "message": "Группа создана"}
 
 
+@router.put("/services/reorder")
+def reorder_services(data: ReorderIn, db: Session = Depends(get_db),
+                     current_user: User = Depends(SVC_EDIT)):
+    """Порядок услуг (drag-n-drop): sort_order по позиции в списке ids. Определён
+    ДО /services/{service_id}, иначе FastAPI примет 'reorder' за service_id."""
+    ids = data.ids[:1000]  # защита от неадекватно длинного списка
+    changed = 0
+    for pos, sid in enumerate(ids):
+        svc = db.query(SalesService).filter(SalesService.id == sid).first()
+        if svc:
+            svc.sort_order = pos
+            changed += 1
+    db.commit()
+    log_action(db, current_user, "reorder_sales_services", "sales_service", None,
+               f"переупорядочено услуг: {changed}")
+    return {"message": "Порядок сохранён"}
+
+
 @router.post("/services")
 def create_service(data: ServiceIn, db: Session = Depends(get_db),
-                   current_user: User = Depends(ADV_EDIT)):
+                   current_user: User = Depends(SVC_EDIT)):
     name = _clean_name(data.name)
     _reject_duplicate(db, SalesService, name)
     max_order = db.query(func.max(SalesService.sort_order)).scalar() or 0
     svc = SalesService(name=name, group=data.group, note=data.note, sort_order=max_order + 1)
+    _set_service_fields(svc, data)
+    _apply_bx_link(db, svc, data.bx_id, data.bx_title)
     db.add(svc)
+    db.flush()
+    _sync_service_formats(db, svc, data.format_ids)
     db.commit()
     db.refresh(svc)
     log_action(db, current_user, "create_sales_service", "sales_service", svc.id, name)
@@ -182,19 +481,71 @@ def create_service(data: ServiceIn, db: Session = Depends(get_db),
 
 @router.put("/services/{service_id}")
 def update_service(service_id: int, data: ServiceIn, db: Session = Depends(get_db),
-                   current_user: User = Depends(ADV_EDIT)):
+                   current_user: User = Depends(SVC_EDIT)):
     svc = _require(db, SalesService, service_id, "Услуга")
     name = _clean_name(data.name)
     _reject_duplicate(db, SalesService, name, exclude_id=service_id)
     svc.name, svc.group, svc.note = name, data.group, data.note
+    _set_service_fields(svc, data)
+    _apply_bx_link(db, svc, data.bx_id, data.bx_title, exclude_id=service_id)
+    _sync_service_formats(db, svc, data.format_ids)
     db.commit()
     log_action(db, current_user, "update_sales_service", "sales_service", svc.id, name)
     return {"message": "Услуга обновлена"}
 
 
+# ============================== Доп. услуги ==============================
+
+@router.get("/services/addons")
+def list_addons(only_active: bool = False, db: Session = Depends(get_db),
+                current_user: User = Depends(get_current_user)):
+    q = db.query(SalesAddonService)
+    if only_active:
+        q = q.filter(SalesAddonService.is_active.is_(True))
+    rows = q.order_by(SalesAddonService.sort_order, SalesAddonService.name).all()
+    return {"items": [{"id": a.id, "name": a.name, "unit_price": a.unit_price, "period": a.period,
+                       "can_be_bonus": bool(a.can_be_bonus), "is_active": a.is_active,
+                       "sort_order": a.sort_order} for a in rows]}
+
+
+@router.post("/services/addons")
+def create_addon(data: AddonIn, db: Session = Depends(get_db), current_user: User = Depends(SVC_EDIT)):
+    name = _clean_name(data.name)
+    max_order = db.query(func.max(SalesAddonService.sort_order)).scalar() or 0
+    a = SalesAddonService(name=name, unit_price=data.unit_price, period=data.period or None,
+                          can_be_bonus=bool(data.can_be_bonus), sort_order=max_order + 1)
+    db.add(a)
+    db.commit()
+    db.refresh(a)
+    log_action(db, current_user, "create_sales_addon", "sales_addon", a.id, name)
+    return {"id": a.id, "message": "Доп. услуга создана"}
+
+
+@router.put("/services/addons/{addon_id}")
+def update_addon(addon_id: int, data: AddonIn, db: Session = Depends(get_db),
+                 current_user: User = Depends(SVC_EDIT)):
+    a = _require(db, SalesAddonService, addon_id, "Доп. услуга")
+    a.name = _clean_name(data.name)
+    a.unit_price = data.unit_price
+    a.period = data.period or None
+    a.can_be_bonus = bool(data.can_be_bonus)
+    db.commit()
+    log_action(db, current_user, "update_sales_addon", "sales_addon", a.id, a.name)
+    return {"message": "Доп. услуга обновлена"}
+
+
+@router.delete("/services/addons/{addon_id}")
+def delete_addon(addon_id: int, db: Session = Depends(get_db), current_user: User = Depends(SVC_EDIT)):
+    a = _require(db, SalesAddonService, addon_id, "Доп. услуга")
+    db.delete(a)
+    db.commit()
+    log_action(db, current_user, "delete_sales_addon", "sales_addon", addon_id, a.name)
+    return {"message": "Доп. услуга удалена"}
+
+
 @router.delete("/services/{service_id}")
 def deactivate_service(service_id: int, db: Session = Depends(get_db),
-                       current_user: User = Depends(ADV_DELETE)):
+                       current_user: User = Depends(SVC_EDIT)):
     """Мягкое удаление: запись скрывается из выпадающих списков, но остаётся в БД,
     чтобы исторические сделки не потеряли ссылку."""
     svc = _require(db, SalesService, service_id, "Услуга")
@@ -204,13 +555,35 @@ def deactivate_service(service_id: int, db: Session = Depends(get_db),
     return {"message": "Услуга скрыта из справочника"}
 
 
+@router.delete("/services/{service_id}/hard")
+def delete_service_hard(service_id: int, db: Session = Depends(get_db),
+                        current_user: User = Depends(SVC_EDIT)):
+    """Полное удаление услуги из справочника. Сделки хранят услугу строкой
+    (SalesDeal.product), не FK — их не задевает. Но услуга может быть строкой
+    микс-приложения (SalesAnnexItem.service_id, NOT NULL FK): в этом случае
+    каскад порушил бы аннекс, поэтому удаление блокируем. Зачищаем строки прайса,
+    затем удаляем услугу."""
+    svc = _require(db, SalesService, service_id, "Услуга")
+    name = svc.name
+    used = db.query(SalesAnnexItem.id).filter(SalesAnnexItem.service_id == service_id).first()
+    if used:
+        raise HTTPException(status_code=400,
+            detail="Услуга используется в микс-приложениях (МП) — удалить нельзя. "
+                   "Скройте её из справочника (мягкое удаление).")
+    db.query(SalesPriceListItem).filter(SalesPriceListItem.service_id == service_id).delete()
+    db.delete(svc)
+    db.commit()
+    log_action(db, current_user, "delete_sales_service", "sales_service", service_id, name)
+    return {"message": "Услуга удалена"}
+
+
 class UseIn(BaseModel):
     on: bool
 
 
 @router.put("/services/{service_id}/use")
 def set_service_use(service_id: int, data: UseIn, db: Session = Depends(get_db),
-                    current_user: User = Depends(SET_EDIT)):
+                    current_user: User = Depends(SVC_EDIT)):
     """Галочка «использовать» — включает/выключает услугу (is_active)."""
     svc = _require(db, SalesService, service_id, "Услуга")
     svc.is_active = data.on
@@ -221,30 +594,52 @@ def set_service_use(service_id: int, data: UseIn, db: Session = Depends(get_db),
 
 
 @router.post("/services/refresh")
-def refresh_services(db: Session = Depends(get_db), current_user: User = Depends(SET_EDIT)):
-    """Синхронизация услуг с Битриксом («Продукты Simb-ad», СП 1050): добавляет новые
-    (матч по нормализованному имени), существующие не трогает."""
+def refresh_services(db: Session = Depends(get_db), current_user: User = Depends(SVC_EDIT)):
+    """Синхронизация услуг с Битриксом («Продукты Simb-ad», СП 1050). Матч по bx_id:
+      1) привязанные (есть bx_id) — не трогаем, лишь обновляем кэш имени bx_title;
+      2) без bx_id, но имя совпадает → авто-привязываем (проставляем bx_id/bx_title);
+      3) остаток из Битрикса → создаём новую локальную услугу уже с bx_id.
+    Так переименование локальной услуги не рвёт связь и не плодит дубли."""
     from app.sales.bitrix.transport import list_bitrix_services
     try:
         items = list_bitrix_services()
     except Exception as e:
         logger.error("directories: Битрикс недоступен: %s", e)
         raise HTTPException(status_code=502, detail="Битрикс недоступен (детали в логе сервера)")
-    existing = {normalize_name(s.name) for s in db.query(SalesService).all()}
-    added = 0
+    services = db.query(SalesService).all()
+    by_bx = {s.bx_id: s for s in services if s.bx_id}
+    by_name = {normalize_name(s.name): s for s in services}
+    added = linked = renamed = 0
     max_order = db.query(func.max(SalesService.sort_order)).scalar() or 0
     for it in items:
+        bid = it["id"]
         title = (it.get("title") or "").strip()
-        if not title or normalize_name(title) in existing:
+        if not title:
+            continue
+        if bid in by_bx:
+            s = by_bx[bid]
+            if s.bx_title != title:      # в Битриксе переименовали — освежаем кэш
+                s.bx_title = title
+                renamed += 1
+            continue
+        nm = normalize_name(title)
+        s = by_name.get(nm)
+        if s is not None and not s.bx_id:
+            s.bx_id, s.bx_title = bid, title
+            by_bx[bid] = s
+            linked += 1
             continue
         max_order += 1
-        db.add(SalesService(name=title, is_active=True, sort_order=max_order))
-        existing.add(normalize_name(title))
+        ns = SalesService(name=title, is_active=True, sort_order=max_order,
+                          bx_id=bid, bx_title=title)
+        db.add(ns)
+        by_bx[bid] = ns
+        by_name[nm] = ns
         added += 1
     db.commit()
-    log_action(db, current_user, "refresh_services", "sales_service", 0,
-               f"добавлено из Битрикса: {added}")
-    return {"added": added, "bitrix_total": len(items)}
+    log_action(db, current_user, "refresh_services", "sales_service", None,
+               f"из Битрикса: +{added} новых, {linked} привязано, {renamed} переименований")
+    return {"added": added, "linked": linked, "renamed": renamed, "bitrix_total": len(items)}
 
 
 # ========================== Рекламодатели ==========================
@@ -437,7 +832,7 @@ def pipeline_stages(pipeline_id: int, db: Session = Depends(get_db),
 @router.put("/pipelines/{pipeline_id}/tracked")
 def set_pipeline_tracked(pipeline_id: int, data: PipelineTrack,
                          db: Session = Depends(get_db),
-                         current_user: User = Depends(SET_EDIT)):
+                         current_user: User = Depends(PIPE_EDIT)):
     """Включает/выключает парсинг воронки. Данные не трогает — только флаг.
     При выключении синхронизация перестаёт грузить сделки этой воронки."""
     p = _require(db, SalesPipeline, pipeline_id, "Воронка")
@@ -494,7 +889,7 @@ def _cascade_stage_rename(db: Session, pipeline_name: str, old: str, new: str) -
 @router.put("/pipelines/{pipeline_id}/name")
 def rename_pipeline(pipeline_id: int, data: PipelineRename,
                     db: Session = Depends(get_db),
-                    current_user: User = Depends(SET_EDIT)):
+                    current_user: User = Depends(PIPE_EDIT)):
     """Ручное переименование воронки. Нужно для категории 0 (дефолтной): её настоящее
     имя VibeCode API не отдаёт, поэтому оно правится только здесь. refresh это имя не трогает.
     Каскадно переносит имя на сделки и карту стадий."""
@@ -516,7 +911,7 @@ def rename_pipeline(pipeline_id: int, data: PipelineRename,
 
 
 @router.post("/pipelines/refresh")
-def refresh_pipelines(db: Session = Depends(get_db), current_user: User = Depends(SET_EDIT)):
+def refresh_pipelines(db: Session = Depends(get_db), current_user: User = Depends(PIPE_EDIT)):
     """Синхронизация воронок/стадий с Битриксом. Новые воронки заводятся ВЫКЛЮЧЕННЫМИ
     (is_tracked=False) — чтобы синхрон сделок их не тянул, пока не решим. Стадии добавляются/
     переименовываются по имени. Данные (сделки) не трогает."""
@@ -588,7 +983,7 @@ class StageMapping(BaseModel):
 @router.put("/pipelines/{pipeline_id}/stages/{stage_id}/mapping")
 def set_stage_mapping(pipeline_id: int, stage_id: int, data: StageMapping,
                       db: Session = Depends(get_db),
-                      current_user: User = Depends(SET_EDIT)):
+                      current_user: User = Depends(PIPE_EDIT)):
     """Привязывает стадию воронки к позиции светофора 2/2/2 (или снимает привязку).
 
     Из выбранной позиции (stage_key) выводится слой денег — так и StageBar, и
@@ -630,7 +1025,7 @@ def set_stage_mapping(pipeline_id: int, stage_id: int, data: StageMapping,
 
 @router.delete("/pipelines/{pipeline_id}")
 def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db),
-                    current_user: User = Depends(SET_DELETE)):
+                    current_user: User = Depends(PIPE_EDIT)):
     """ФИЗИЧЕСКИ удаляет воронку вместе со всеми её сделками, их сырьём
     и строками маппинга. Необратимо. Отклоняет удаление, если по сделкам
     воронки есть ручные правки или разнесения — их потеря молча недопустима."""

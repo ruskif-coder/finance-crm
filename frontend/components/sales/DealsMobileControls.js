@@ -11,7 +11,7 @@ export default function DealsMobileControls({
   dealsTotal, search, setSearch, mobSearchOpen, setMobSearchOpen,
   mobView, setMobView, filtersOpen, setFiltersOpen, activeFilterCount,
   sel, setSel, gaps, setGaps, dateFrom, setDateFrom, dateTo, setDateTo,
-  hideArchive, setHideArchive, fopts, resetFilters, exportCsv,
+  hideArchive, setHideArchive, fopts, productOpts, resetFilters, exportCsv,
   filterDrops = FILTER_DROPS,   // реестр /sales передаёт свой список (+ Продавец); дашборд — дефолт
 }) {
   return (
@@ -74,7 +74,7 @@ export default function DealsMobileControls({
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {filterDrops.map(([k, lbl]) => (
-            <MultiDrop key={k} label={lbl} options={fopts[k]} selected={sel[k]} onChange={v => { setSel(s => ({ ...s, [k]: v })); if (k === 'bitrix_stage' && hideArchive && v.some(x => /архив/i.test(x))) setHideArchive(false) }} block />
+            <MultiDrop key={k} label={lbl} options={k === 'product' ? (productOpts || fopts[k]) : fopts[k]} selected={sel[k]} onChange={v => { setSel(s => ({ ...s, [k]: v })); if (k === 'bitrix_stage' && hideArchive && v.some(x => /архив/i.test(x))) setHideArchive(false) }} block />
           ))}
           <MultiDrop label="Незаполненные" options={GAP_FIELDS} selected={gaps} onChange={setGaps} block />
         </div>

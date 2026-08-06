@@ -71,7 +71,22 @@ body {
        выведены из --dot-current-dz / --dot-overdue, нужны для подсветки
        редактируемой строки и т.п.) ── */
   --warning-tint:      #FBF0DE;
+  --warning-text:      #B26A0C;
   --danger-tint:       #FBE4E6;
+
+  /* ── Доп. токены дизайн-системы (хендоффы карточки/МП; ранее вбивались хардкодом,
+       нужны и для тёмной темы) ── */
+  --bg-tint:           #F6F8FF;   /* подложка плиток/легенды */
+  --border-hover:      #C7D0E8;
+  --accent-border:     #D7DEFA;
+  --income-tint:       #E6F5EF;
+  --mixed:             #7B62D6;   /* роль «трафик» / смешанное */
+  --mixed-tint:        #F1EDFC;
+  /* незаполненная строка конструктора МП */
+  --empty-bg:          #FFFBF3;
+  --empty-border:      #F2DFC0;
+  --empty-text:        #B26A0C;
+  --empty-num:         #C7A46A;
 
   /* ── Совместимость со старыми именами ───────────── */
   /* (чтобы settings/import/login не ломались) */

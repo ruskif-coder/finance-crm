@@ -31,7 +31,7 @@ class ArticleReorder(BaseModel):
 def reorder_articles(
     data: ArticleReorder,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings", "edit"))
+    current_user: User = Depends(require_permission("settings_articles", "edit"))
 ):
     """Переставляет статьи в порядке, заданном списком ids: sort_order = позиция в списке.
     Заменяет попарные перестановки (/move) — позволяет перетаскивать строку на любую позицию."""
@@ -62,7 +62,7 @@ def get_article_groups(
 def create_article_group(
     data: ArticleGroupCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings", "edit"))
+    current_user: User = Depends(require_permission("settings_articles", "edit"))
 ):
     name = (data.name or "").strip()
     if not name:
@@ -81,7 +81,7 @@ def create_article_group(
 def delete_article_group(
     group_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings", "edit"))
+    current_user: User = Depends(require_permission("settings_articles", "edit"))
 ):
     group = db.query(ArticleGroup).filter(ArticleGroup.id == group_id).first()
     if not group:
@@ -113,7 +113,7 @@ def get_articles(
 @router.get("/registry")
 def get_articles_registry(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings", "view"))
+    current_user: User = Depends(require_permission("settings_articles", "view"))
 ):
     rows = (
         db.query(Article, func.count(Operation.id).label("op_count"))
@@ -140,7 +140,7 @@ def get_articles_registry(
 def create_article(
     data: ArticleCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings", "edit"))
+    current_user: User = Depends(require_permission("settings_articles", "edit"))
 ):
     name = (data.name or "").strip()
     if not name:
@@ -160,7 +160,7 @@ def update_article(
     article_id: int,
     data: ArticleCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings", "edit"))
+    current_user: User = Depends(require_permission("settings_articles", "edit"))
 ):
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:
@@ -183,7 +183,7 @@ def move_article(
     article_id: int,
     data: ArticleMove,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings", "edit"))
+    current_user: User = Depends(require_permission("settings_articles", "edit"))
 ):
     """Меняет порядок вывода — переставляет статью на одну позицию вверх/вниз,
     меняя sort_order местами с соседней статьёй в полном (несортированном поиском) списке."""
@@ -205,7 +205,7 @@ def move_article(
 def delete_article(
     article_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings", "edit"))
+    current_user: User = Depends(require_permission("settings_articles", "edit"))
 ):
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:

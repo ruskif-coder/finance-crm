@@ -58,7 +58,12 @@ const LANDING_ORDER = [
   ['contracts', '/contracts'],
   ['dir_advertisers', '/advertisers'],
   ['dir_agencies', '/agencies'],
-  ['settings', '/settings'],
+  ['settings_balances', '/settings'],
+  ['settings_articles', '/settings'],
+  ['settings_pipelines', '/settings'],
+  ['settings_services', '/settings'],
+  ['settings_field_audit', '/settings'],
+  ['settings_audit', '/settings'],
 ]
 const DIRECTORY_ORDER = [
   ['counterparties', '/counterparties'],
@@ -132,8 +137,9 @@ export default function Navbar({ active, children, onSearch }) {
   const initial = (name || '?').trim().charAt(0).toUpperCase() || '?'
 
   const canOperations = can(permissions, 'operations')
+  const canMp = isAdmin || can(permissions, 'media_plans', 'view')   // быстрый вход в реестр МП
   const canDirectories = isAdmin || can(permissions, 'counterparties') || can(permissions, 'contracts') || can(permissions, 'dir_advertisers') || can(permissions, 'dir_agencies')
-  const canSettings = isAdmin || can(permissions, 'settings')
+  const canSettings = isAdmin || ['settings_balances', 'settings_articles', 'settings_pipelines', 'settings_services', 'settings_field_audit', 'settings_audit'].some(k => can(permissions, k))
   // Человеческое название роли (role.label с бэкенда); фолбэк — ключ роли.
   const roleLabelRaw = typeof window !== 'undefined' ? localStorage.getItem('role_label') || '' : ''
   const roleLabel = roleLabelRaw || role
@@ -192,6 +198,7 @@ export default function Navbar({ active, children, onSearch }) {
           </nav>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            {canMp && <button className="nav-out" onClick={() => router.push('/deals/mp')} style={outBtn}>МП</button>}
             {canOperations && <button className="nav-out" onClick={() => router.push('/operations')} style={outBtn}>Операции</button>}
             {canDirectories && <button className="nav-out" onClick={() => router.push(dirHref)} style={outBtn}>Справочники</button>}
             {canSettings && <button className="nav-ico" onClick={() => router.push('/settings')} title="Настройки" aria-label="Настройки"
@@ -291,6 +298,7 @@ export default function Navbar({ active, children, onSearch }) {
               <>
                 <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '14px 14px 6px' }}>Данные</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {canMp && <button className="nav-mrow" onClick={() => go('/deals/mp')} style={mRow(false)}><span style={{ flex: 1 }}>Конструктор МП</span></button>}
                   {canOperations && <button className="nav-mrow" onClick={() => go('/operations')} style={mRow(active === 'operations')}><span style={{ flex: 1 }}>Операции</span>{active === 'operations' && <span style={{ fontFamily: MONO, fontSize: 11, color: '#8F9BE8' }}>текущий</span>}</button>}
                   {canDirectories && (
                     <div>

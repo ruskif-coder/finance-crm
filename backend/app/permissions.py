@@ -5,7 +5,8 @@ from app.models import User, RolePermission
 from app.routers.auth import get_current_user
 
 # Канонический список разделов, доступных настройке через менеджер ролей.
-# "Пользователи" и "Журнал действий" сюда не входят — они жёстко закрыты под admin (см. app.audit.require_admin).
+# "Пользователи" и "Роли" сюда не входят — они жёстко закрыты под admin (privilege
+# escalation: правка ролей = выдать себе что угодно; правка юзеров = сброс паролей).
 # Раздел настраивается матрицей ролей: разделы по вертикали, роли по горизонтали
 # (settings.js). Группы (group) идут по соседству — их заголовки рисуются один раз.
 # Секции «Продажи» и «Справочники продаж» покрывают вложенные подстраницы:
@@ -25,16 +26,28 @@ SECTIONS = [
     {"key": "sales_dashboard",   "label": "Продажи · Дашборд",       "group": "Продажи", "actions": ["view", "edit"]},
     {"key": "sales_registry",    "label": "Продажи · Реестр сделок",  "group": "Продажи", "actions": ["view", "edit"]},
     {"key": "sales_analytics",   "label": "Продажи · Аналитика",      "group": "Продажи", "actions": ["view", "edit"]},
-    {"key": "operations",        "label": "Операции",           "group": None,        "actions": ["view", "create", "edit", "delete"]},
-    {"key": "import",            "label": "Импорт",             "group": None,        "actions": ["view"]},
+    # Медиапланы (контур аккаунта): реестр и конструктор — раздельно.
+    {"key": "media_plans",        "label": "Медиапланы · Реестр",      "group": "Медиапланы", "actions": ["view", "edit"]},
+    {"key": "media_plans_editor", "label": "Медиапланы · Конструктор", "group": "Медиапланы", "actions": ["view", "edit"]},
+    {"key": "operations",        "label": "Операции",           "group": "Финансы",   "actions": ["view", "create", "edit", "delete"]},
+    {"key": "import",            "label": "Импорт",             "group": "Финансы",   "actions": ["view"]},
     {"key": "counterparties",    "label": "Контрагенты",        "group": "Справочники", "actions": ["view", "edit", "delete", "view_operations"]},
     {"key": "contracts",         "label": "Договоры",           "group": "Справочники", "actions": ["view", "edit"]},
     {"key": "dir_advertisers",   "label": "Рекламодатели",      "group": "Справочники", "actions": ["view", "edit", "delete"]},
     {"key": "dir_agencies",      "label": "Агентства",          "group": "Справочники", "actions": ["view", "edit", "delete"]},
-    # Единое право «Настройки»: покрывает Остатки по банкам, Статьи, Воронки
-    # (вкладки страницы /settings). Отдельных прав у Статей/Воронок нет.
-    {"key": "settings",          "label": "Настройки · остатки, статьи, воронки", "group": "Настройки", "actions": ["view", "edit"]},
+    # Настройки разнесены на отдельные страницы (/settings/*) — по праву на раздел,
+    # как справочники. Пользователи и Роли сюда НЕ входят (admin-only, см. выше).
+    {"key": "settings_balances",    "label": "Настройки · Остатки",  "group": "Настройки", "actions": ["view", "edit"]},
+    {"key": "settings_articles",    "label": "Настройки · Статьи",   "group": "Настройки", "actions": ["view", "edit"]},
+    {"key": "settings_pipelines",   "label": "Настройки · Воронки",  "group": "Настройки", "actions": ["view", "edit"]},
+    {"key": "settings_services",    "label": "Настройки · Услуги",   "group": "Настройки", "actions": ["view", "edit"]},
+    {"key": "settings_field_audit", "label": "Настройки · Сверка полей", "group": "Настройки", "actions": ["view"]},
+    {"key": "settings_audit",       "label": "Настройки · Журнал действий", "group": "Настройки", "actions": ["view"]},
 ]
+
+# Разделы настроек (для фронта: SettingsTabs, редирект, гейт страниц).
+SETTINGS_SECTIONS = ("settings_balances", "settings_articles", "settings_pipelines",
+                     "settings_services", "settings_field_audit", "settings_audit")
 
 # Секции продаж (5-уровневый контроль со свои/все) — для UI-матрицы и gate-хелперов.
 SALES_SECTIONS = ("sales_dashboard", "sales_registry", "sales_analytics")

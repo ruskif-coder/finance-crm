@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, Role, AuditLog
 from app.audit import log_action, require_admin
+from app.permissions import require_permission
 from app.routers.auth import get_password_hash
 from pydantic import BaseModel
 from typing import Optional
@@ -225,7 +226,7 @@ def get_audit_log(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(require_permission("settings_audit", "view"))
 ):
     query = db.query(AuditLog)
     if action:

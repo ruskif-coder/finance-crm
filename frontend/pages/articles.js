@@ -4,6 +4,7 @@ import api, { auth } from '../lib/http'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import DirectoryTabs from '../components/DirectoryTabs'
+import { inp, btn, th, td } from '../components/salesTableKit'
 
 
 const TYPE_META = {
@@ -29,7 +30,7 @@ export default function Articles({ embedded = false } = {}) {
   const [overIdx, setOverIdx] = useState(null)
   const [showForm, setShowForm] = useState(false)
 
-  const mayEdit = can(perms, 'articles', 'edit')
+  const mayEdit = can(perms, 'settings_articles', 'edit')
 
   const load = async () => {
     setLoading(true); setError('')
@@ -111,13 +112,7 @@ export default function Articles({ embedded = false } = {}) {
     ? items.filter(a => a.name.toLowerCase().includes(search.toLowerCase()) || (a.group || '').toLowerCase().includes(search.toLowerCase()))
     : items
 
-  const inp = { padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-input)',
-    fontSize: 13, background: 'var(--bg-card)', color: 'inherit' }
-  const btn = (p) => ({ padding: '7px 15px', borderRadius: 'var(--radius-btn)', border: 'none', cursor: 'pointer',
-    fontSize: 13, fontWeight: 500, background: p ? 'var(--accent)' : 'var(--bg-subtle)', color: p ? '#fff' : 'inherit' })
-  const th = { padding: '9px 10px', textAlign: 'left', fontSize: 11.5, fontWeight: 600,
-    color: 'var(--muted)', borderBottom: '1px solid var(--border-card)', whiteSpace: 'nowrap' }
-  const td = { padding: '8px 10px', fontSize: 13, borderBottom: '1px solid var(--border-row)' }
+  // стили inp/btn/th/td — общий модуль components/salesTableKit
   const dash = <span style={{ color: 'var(--muted)' }}>—</span>
   const typeBadge = (t) => {
     const m = TYPE_META[t] || TYPE_META.expense

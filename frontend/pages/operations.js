@@ -28,7 +28,16 @@ const fmt = (n) => (n ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) : '
 // с копейками (для сумм выбранного): всегда 2 знака
 const fmt2 = (n) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0)
 const fmtDate = (d) => { if (!d) return ''; const [y, m, dd] = String(d).slice(0, 10).split('-'); return dd ? `${dd}.${m}.${y.slice(2)}` : d }
-const emptyForm = () => ({ date: new Date().toISOString().slice(0, 10), status: 'ОПЛАЧЕНО', income: 0, expense: 0, bank: 'АльфаБанк', period: '', vat_rate: 0, article_id: '', counterparty_id: '', ds_num: '', invoice: '', invoice_date: '', description: '', document_link: '' })
+const emptyForm = () => ({ date: new Date().toISOString().slice(0, 10), status: 'ОПЛАЧЕНО', income: '', expense: '', bank: 'АльфаБанк', period: '', vat_rate: 0, article_id: '', counterparty_id: '', ds_num: '', invoice: '', invoice_date: '', description: '', document_link: '' })
+
+// Ввод суммы с копейками: цифры + один разделитель (точка/запятая). Храним строкой во
+// время ввода (чтобы курсор не прыгал и можно было набрать копейки), парсим при сохранении.
+const sanMoney = (s) => {
+  s = String(s ?? '').replace(/[^\d.,]/g, '')
+  const i = s.search(/[.,]/)
+  return i === -1 ? s : s.slice(0, i + 1) + s.slice(i + 1).replace(/[.,]/g, '')
+}
+const moneyNum = (v) => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0 }
 
 const CARD = { background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)' }
 const lbl = { fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5, display: 'block' }
@@ -95,8 +104,8 @@ function OpFields({ f, set, articles, counterparties, accent }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 14 }}>
         <Cell label="Статус">{sel(f.status, v => set({ status: v }), STATUSES.map(s => ({ value: s, label: s })), 'статус')}</Cell>
         <Cell label="Дата" opt accent={accent}>{<input type="date" value={f.date} onChange={e => set({ date: e.target.value })} style={{ ...inp, ...(accent === 'warn' ? { borderColor: 'var(--dot-current-dz)' } : {}) }} />}</Cell>
-        <Cell label="Поступление"><input inputMode="numeric" value={f.income || ''} onChange={e => set({ income: +e.target.value.replace(/\D/g, '') || 0 })} placeholder="0 ₽" style={{ ...inp, fontFamily: MONO }} /></Cell>
-        <Cell label="Списание"><input inputMode="numeric" value={f.expense || ''} onChange={e => set({ expense: +e.target.value.replace(/\D/g, '') || 0 })} placeholder="0 ₽" style={{ ...inp, fontFamily: MONO }} /></Cell>
+        <Cell label="Поступление"><input inputMode="decimal" value={f.income ?? ''} onChange={e => set({ income: sanMoney(e.target.value) })} placeholder="0 ₽" style={{ ...inp, fontFamily: MONO }} /></Cell>
+        <Cell label="Списание"><input inputMode="decimal" value={f.expense ?? ''} onChange={e => set({ expense: sanMoney(e.target.value) })} placeholder="0 ₽" style={{ ...inp, fontFamily: MONO }} /></Cell>
         <Cell label="Банк" opt accent={accent}>{sel(f.bank, v => set({ bank: v }), BANKS.map(b => ({ value: b, label: b })), 'не указан')}</Cell>
         <Cell label="Период"><PeriodSelect dense value={f.period} onChange={v => set({ period: v })} /></Cell>
       </div>
@@ -201,7 +210,7 @@ export default function Operations2() {
   // Приведение формы к типам бэкенда: пустые строки в id/датах → null, иначе
   // pydantic (Optional[int]/Optional[date]) отвергает '' → 422 «ошибка сохранения».
   const cleanOp = (f) => ({
-    date: f.date || null, status: f.status, income: +f.income || 0, expense: +f.expense || 0,
+    date: f.date || null, status: f.status, income: moneyNum(f.income), expense: moneyNum(f.expense),
     bank: f.bank || null, period: f.period || null, vat_rate: +f.vat_rate || 0,
     article_id: f.article_id ? +f.article_id : null, counterparty_id: f.counterparty_id ? +f.counterparty_id : null,
     ds_num: f.ds_num || '', invoice: f.invoice || '', invoice_date: f.invoice_date || null,
@@ -235,7 +244,7 @@ export default function Operations2() {
     } catch (e) { alert('Не удалось выгрузить') }
   }
   const openEdit = (op) => {
-    setEditing({ id: op.id, date: op.date || '', status: op.status || 'ОПЛАЧЕНО', income: op.income || 0, expense: op.expense || 0, bank: op.bank || '', period: op.period || '', vat_rate: op.vat_rate || 0, article_id: op.article_id || '', counterparty_id: op.counterparty_id || '', ds_num: op.ds_num || '', invoice: op.invoice || '', invoice_date: op.invoice_date || '', description: op.description || '', document_link: op.document_link || '' })
+    setEditing({ id: op.id, date: op.date || '', status: op.status || 'ОПЛАЧЕНО', income: op.income || '', expense: op.expense || '', bank: op.bank || '', period: op.period || '', vat_rate: op.vat_rate || 0, article_id: op.article_id || '', counterparty_id: op.counterparty_id || '', ds_num: op.ds_num || '', invoice: op.invoice || '', invoice_date: op.invoice_date || '', description: op.description || '', document_link: op.document_link || '' })
     requestAnimationFrame(() => { const el = editAnchor.current; if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 24, behavior: 'smooth' }) })
   }
   const saveEdit = async () => {
@@ -247,7 +256,7 @@ export default function Operations2() {
   // копируемой — пользователь правит и подтверждает (POST на «Добавить операцию»).
   const dupOp = (op) => {
     setEditing(null)
-    setCreateForm({ date: op.date || '', status: op.status || 'ОПЛАЧЕНО', income: op.income || 0, expense: op.expense || 0, bank: op.bank || 'АльфаБанк', period: op.period || '', vat_rate: op.vat_rate || 0, article_id: op.article_id || '', counterparty_id: op.counterparty_id || '', ds_num: op.ds_num || '', invoice: op.invoice || '', invoice_date: op.invoice_date || '', description: op.description || '', document_link: op.document_link || '' })
+    setCreateForm({ date: op.date || '', status: op.status || 'ОПЛАЧЕНО', income: op.income || '', expense: op.expense || '', bank: op.bank || 'АльфаБанк', period: op.period || '', vat_rate: op.vat_rate || 0, article_id: op.article_id || '', counterparty_id: op.counterparty_id || '', ds_num: op.ds_num || '', invoice: op.invoice || '', invoice_date: op.invoice_date || '', description: op.description || '', document_link: op.document_link || '' })
     setCreateOpen(true)
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }))
   }

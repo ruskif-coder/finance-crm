@@ -318,13 +318,18 @@ def get_pl(
 
     # Формируем структуру для фронтенда
     result_groups = []
+    # Якоря итоговых строк P&L: рендерим их всегда (даже пустыми), иначе на фронте
+    # пропадает подытог (ВАЛОВАЯ/EBITDA/ЧИСТАЯ), привязанный к наличию группы.
+    ANCHOR_GROUPS = ("СЕБЕСТОИМОСТЬ", "МАРКЕТИНГ", "НАЛОГИ")
     for group in PL_GROUPS_ORDER:
-        if group not in data or group == 'НЕ В P&L':
+        if group == 'НЕ В P&L':
+            continue
+        if group not in data and group not in ANCHOR_GROUPS:
             continue
         subgroups_list = []
         group_totals = {p: {'income': 0, 'expense': 0} for p in periods_set}
 
-        for subgroup, articles_data in sorted(data[group].items()):
+        for subgroup, articles_data in sorted(data.get(group, {}).items()):
             articles_list = []
             subgroup_totals = {p: {'income': 0, 'expense': 0} for p in periods_set}
 

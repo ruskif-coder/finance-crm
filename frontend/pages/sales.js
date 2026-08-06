@@ -4,6 +4,7 @@ import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import SalesTabs from '../components/SalesTabs'
 import DealCreateForm from '../components/DealCreateForm'
+import DealDetail from '../components/sales/DealDetail'
 import DealBriefCell from '../components/DealBriefCell'
 import ValuePopover from '../components/ValuePopover'
 import api, { auth } from '../lib/api'
@@ -21,7 +22,7 @@ const REG_FILTER_DROPS = FILTER_DROPS.flatMap(fd => fd[0] === 'account_manager_i
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 const COLS = [
-  { key: 'sel', w: '28px', label: '', fixed: true },
+  { key: 'sel', w: '52px', label: '', fixed: true },
   { key: 'brief', w: '46px', label: 'Бриф', fixed: true },
   { key: 'bitrix_id', w: '62px', label: 'BX_ID', sortable: true },
   { key: 'agency', w: '92px', label: 'Агентство', sortable: true },
@@ -83,6 +84,8 @@ export default function SalesRegistry2() {
   const [periodOpen, setPeriodOpen] = useState(false)
 
   const [fopts, setFopts] = useState({})
+  const [serviceDir, setServiceDir] = useState([])   // справочник услуг (sort_order) — для списков услуг
+  const [expandedId, setExpandedId] = useState(null) // раскрытая строка-детализация сделки
   const [brandsByAdv, setBrandsByAdv] = useState({})
   const [vpop, setVpop] = useState(null)
   const [createOpen, setCreateOpen] = useState(false)
@@ -174,7 +177,18 @@ export default function SalesRegistry2() {
     try { setPerms(JSON.parse(localStorage.getItem('permissions') || '{}')) } catch (e) {}
     api.get('/sales/filters', auth()).then(r => setFopts(r.data || {})).catch(() => {})
     api.get('/sales/brands-by-advertiser', auth()).then(r => setBrandsByAdv(r.data || {})).catch(() => {})
+    // Справочник услуг (в порядке sort_order) — источник для всех выпадающих списков услуг.
+    api.get('/sales/directories/services?only_active=true', auth()).then(r => setServiceDir(r.data.items || [])).catch(() => {})
   }, [])
+
+  // Опции услуг для пикеров/фильтра/bulk: справочник в заданном порядке, плюс «сироты»
+  // — значения product из существующих сделок, которых нет в справочнике (не теряем их).
+  const productOpts = (() => {
+    const dir = serviceDir.map(s => ({ value: s.name, label: s.name }))
+    const known = new Set(dir.map(o => o.value))
+    const orphans = (fopts.product || []).filter(o => o && !known.has(o.value))
+    return [...dir, ...orphans]
+  })()
 
   const buildBase = () => {
     const b = new URLSearchParams()
@@ -286,7 +300,7 @@ export default function SalesRegistry2() {
             patchCell(d.id, { brand_id: id }, { brand_id: id, brand: name }); setVpop(null)
           } catch (e) { alert(e.response?.data?.detail || 'Не удалось создать бренд') }
         } : undefined },
-      service: { title: 'Услуга', options: (fopts.product || []).map(o => ({ value: o.value, label: o.label || o.value })), value: d.product, apply: (v) => patchCell(d.id, { product: v }, { product: v }) },
+      service: { title: 'Услуга', options: productOpts.map(o => ({ value: o.value, label: o.label || o.value })), value: d.product, apply: (v) => patchCell(d.id, { product: v }, { product: v }) },
     }[field]
     if (!cfg) return
     setVpop({ rect, dealLabel: `сделка ${d.bitrix_id}`, ...cfg })
@@ -343,6 +357,12 @@ export default function SalesRegistry2() {
     } catch (e) { alert('Не удалось скачать файл') }
   }
   const SYNC_LABELS = { amount: 'Сумма до НДС', amount_with_vat: 'Сумма с НДС', sales_rep_id: 'Продавец', account_manager_id: 'Аккаунт', advertiser_id: 'Рекламодатель', brand_id: 'Бренд', period_from: 'Старт РК' }
+  // Действия карточки-детализации (раскрытие строки). Открыть — в Битрикс; правка и
+  // загрузка МП — заглушки (доработаем).
+  const openDeal = (d) => { if (d.bitrix_id && !String(d.bitrix_id).startsWith('local-')) window.open(BITRIX_DEAL_URL(d.bitrix_id), '_blank') }
+  const editDeal = () => alert('Редактирование сделки — скоро')
+  const addMp = () => alert('Загрузка/создание МП — скоро')
+
   const FILE_LABEL = { mp: 'МП', contract: 'Договор' }
   const ISSUE_LABELS = { advertiser: 'Рекламодатель', brand: 'Бренд', sales_rep: 'Продавец', account_manager: 'Аккаунт', mp: 'МП', contract: 'Договор' }
   // Светофор синхронизации: зелёный — совпадает, синий — мы полнее, красный — расхождение.
@@ -366,11 +386,15 @@ export default function SalesRegistry2() {
   const cellFor = (key, d) => {
     const none = !FILL[d.money_layer]; const n = FILL[d.money_layer] || 0
     switch (key) {
-      case 'sel': return canEdit
-        ? <input type="checkbox" checked={!!selDeals[d.id]} readOnly onClick={e => { e.stopPropagation(); toggleRow(deals.indexOf(d), d.id, e.shiftKey) }} title="Shift+клик — диапазон" style={{ cursor: 'pointer' }} />
-        : <span />
-      case 'brief': return (
+      case 'sel': return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          {canEdit && <input type="checkbox" checked={!!selDeals[d.id]} readOnly onClick={e => { e.stopPropagation(); toggleRow(deals.indexOf(d), d.id, e.shiftKey) }} title="Shift+клик — диапазон" style={{ cursor: 'pointer' }} />}
+          <button onClick={e => { e.stopPropagation(); router.push(`/deals/${d.id}`) }} title="Открыть карточку сделки"
+            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, padding: 0, border: '1px solid var(--border-card)', background: 'var(--bg-card)', borderRadius: 6, color: 'var(--accent)', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>↗</button>
+        </span>
+      )
+      case 'brief': return (
+        <span className="d2-brief" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           <DealBriefCell deal={d} canEdit={canEdit} v2 />
           {renderSyncDot(d)}
         </span>
@@ -387,7 +411,7 @@ export default function SalesRegistry2() {
             <a href={BITRIX_DEAL_URL(d.bitrix_id)} target="_blank" rel="noreferrer"
               title={fresh ? 'Импортирована недавно (до 3 суток)' : undefined}
               style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none', ...(fresh ? { background: 'var(--warning-tint)', borderRadius: 6, padding: '2px 6px' } : {}) }}>{d.bitrix_id}</a>
-            {canEdit && <span onClick={() => syncingId !== d.id && syncDeal(d)} title="Обновить из Битрикса (поля + файлы)"
+            {canEdit && <span onClick={e => { e.stopPropagation(); syncingId !== d.id && syncDeal(d) }} title="Обновить из Битрикса (поля + файлы)"
               style={{ cursor: syncingId === d.id ? 'default' : 'pointer', fontSize: 12, lineHeight: 1, color: syncingId === d.id ? 'var(--text-faint)' : 'var(--accent)' }}>{syncingId === d.id ? '⏳' : '⟳'}</span>}
           </span>
         )
@@ -626,10 +650,10 @@ export default function SalesRegistry2() {
                     <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>Выбрано: {selDealIds.length}</span>
                     {(() => {
                       const W = { flexShrink: 0, width: 132, maxWidth: 132, textOverflow: 'ellipsis' }
-                      const bsel = (k, opt, ph) => <select style={{ ...bulkInp, ...W }} value={bulkForm[k]} onChange={e => setBulkForm({ ...bulkForm, [k]: e.target.value })}><option value="">{ph}</option>{(fopts[opt] || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+                      const bsel = (k, opt, ph, optsOverride) => <select style={{ ...bulkInp, ...W }} value={bulkForm[k]} onChange={e => setBulkForm({ ...bulkForm, [k]: e.target.value })}><option value="">{ph}</option>{(optsOverride || fopts[opt] || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
                       return <>
                         {bsel('bitrix_stage', 'bitrix_stage', 'стадия —')}
-                        {bsel('product', 'product', 'услуга —')}
+                        {bsel('product', 'product', 'услуга —', productOpts)}
                         <input type="month" style={{ ...bulkInp, flexShrink: 0, width: 120 }} value={bulkForm.period} onChange={e => setBulkForm({ ...bulkForm, period: e.target.value })} />
                         {bsel('advertiser_id', 'advertiser_id', 'рекл. —')}
                         {bsel('agency_id', 'agency_id', 'агентство —')}
@@ -652,7 +676,7 @@ export default function SalesRegistry2() {
                     <DealsMobileControls dealsTotal={dealsTotal} search={search} setSearch={setSearch} mobSearchOpen={mobSearchOpen} setMobSearchOpen={setMobSearchOpen}
                       mobView={mobView} setMobView={setMobView} filtersOpen={filtersOpen} setFiltersOpen={setFiltersOpen} activeFilterCount={activeFilterCount}
                       sel={sel} setSel={setSel} gaps={gaps} setGaps={setGaps} dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo}
-                      hideArchive={hideArchive} setHideArchive={setHideArchive} fopts={fopts} resetFilters={resetFilters} exportCsv={exportCsv} filterDrops={REG_FILTER_DROPS} />
+                      hideArchive={hideArchive} setHideArchive={setHideArchive} fopts={fopts} productOpts={productOpts} resetFilters={resetFilters} exportCsv={exportCsv} filterDrops={REG_FILTER_DROPS} />
                   ) : (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <div style={{ flex: '0 0 auto', width: searchFocus ? 300 : 148, display: 'inline-flex', alignItems: 'center', gap: 7, border: `1px solid ${searchFocus ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '7px 10px', transition: 'width .22s cubic-bezier(0.22,1,0.36,1), border-color .15s' }}>
@@ -681,7 +705,7 @@ export default function SalesRegistry2() {
                       </>)}
                     </div>
                     {REG_FILTER_DROPS.map(([k, lbl]) => (
-                      <MultiDrop key={k} label={lbl} options={fopts[k]} selected={sel[k]} onChange={v => { setSel(s => ({ ...s, [k]: v })); if (k === 'bitrix_stage' && hideArchive && v.some(x => /архив/i.test(x))) setHideArchive(false) }} />
+                      <MultiDrop key={k} label={lbl} options={k === 'product' ? productOpts : fopts[k]} selected={sel[k]} onChange={v => { setSel(s => ({ ...s, [k]: v })); if (k === 'bitrix_stage' && hideArchive && v.some(x => /архив/i.test(x))) setHideArchive(false) }} />
                     ))}
                     <MultiDrop label="Незаполненные" options={GAP_FIELDS} selected={gaps} onChange={setGaps} />
                     <div style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
@@ -715,7 +739,9 @@ export default function SalesRegistry2() {
                       </div>
 
                       {deals.map(d => (
-                        <div key={d.id} className="d2-row" style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 12, color: 'var(--text-primary)', background: selDeals[d.id] ? 'var(--accent-tint)' : undefined }}>
+                        <Fragment key={d.id}>
+                        <div className="d2-row" onClick={e => { if (e.target.closest('.d2-cell, .d2-gen, .d2-brief, input, select, button, a, textarea')) return; setExpandedId(x => x === d.id ? null : d.id) }}
+                          style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 12, color: 'var(--text-primary)', cursor: 'pointer', background: expandedId === d.id ? 'var(--accent-tint)' : (selDeals[d.id] ? 'var(--accent-tint)' : undefined) }}>
                           {visibleCols.map(c => {
                             const attn = ATTN_COLS.has(c.key) && (d.sync_issues || []).some(i => i.field === c.key)
                             return <Fragment key={c.key}>{attn
@@ -723,6 +749,8 @@ export default function SalesRegistry2() {
                               : cellFor(c.key, d)}</Fragment>
                           })}
                         </div>
+                        {expandedId === d.id && <DealDetail deal={d} canEdit={canEdit} onOpen={openDeal} onEdit={editDeal} onAddMp={addMp} />}
+                        </Fragment>
                       ))}
                       {!deals.length && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Нет сделок по выбранным фильтрам</div>}
                     </div>

@@ -8,6 +8,7 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 МБ — максимальный ра
 ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".jpeg", ".png", ".zip"}
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.xlsx_safe import xlsx_safe
 from app.models import Contract, Counterparty, User
 from app.permissions import require_permission
 from app.audit import log_action
@@ -537,7 +538,7 @@ def export_contracts(
             'note': c.note, 'document_link': c.document_link,
         }
         for ci, (field, _, _, readonly) in enumerate(_EXPORT_COLS, 1):
-            cell = ws.cell(row=ri, column=ci, value=vals[field])
+            cell = ws.cell(row=ri, column=ci, value=xlsx_safe(vals[field]))
             if readonly:
                 cell.fill = fill_ro_data
             if field == 'contract_date' and vals[field]:

@@ -4,7 +4,7 @@ import api, { auth } from '../lib/http'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import DirectoryTabs from '../components/DirectoryTabs'
-import { MONO, UI, IconBtn } from '../components/salesTableKit'
+import { MONO, UI, IconBtn, inp, btn, cell, headCell } from '../components/salesTableKit'
 import useIsMobile from '../components/mobile/useIsMobile'
 import AgenciesMobile from '../components/mobile/AgenciesMobile'
 
@@ -152,13 +152,7 @@ export default function Agencies() {
       || (a.counterparties || []).some(c => (c.name || '').toLowerCase().includes(q))
   })
 
-  const inp = { padding: '8px 11px', border: '1px solid var(--border-card)', borderRadius: 10,
-    fontSize: 13, background: 'var(--bg-card)', color: 'var(--text-primary)', fontFamily: UI, outline: 'none' }
-  const btn = (p) => ({ padding: '8px 15px', borderRadius: 10, border: p ? 'none' : '1px solid var(--border-card)', cursor: 'pointer',
-    fontSize: 13, fontWeight: p ? 700 : 600, background: p ? 'var(--accent)' : 'var(--bg-card)', color: p ? '#fff' : 'var(--text-secondary)', fontFamily: UI })
-  const th = { padding: '0 10px 10px', textAlign: 'left', fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 600,
-    color: 'var(--text-faint)', borderBottom: '1px solid var(--border-card)', whiteSpace: 'nowrap' }
-  const td = { padding: '10px 10px', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-row)', verticalAlign: 'middle' }
+  // стили inp/btn + cell/headCell — общий модуль components/salesTableKit
   const dash = <span style={{ color: 'var(--text-faint)' }}>—</span>
 
   const formOpen = showForm && !editId
@@ -254,8 +248,6 @@ export default function Agencies() {
 
         {!loading && (() => {
           const GGRID = '26px 64px minmax(120px,1fr) minmax(120px,1fr) minmax(120px,1fr) minmax(110px,0.9fr) 62px 56px minmax(180px,1.4fr) 210px'
-          const cell = { padding: '0 8px', fontSize: 13, color: 'var(--text-primary)', minWidth: 0 }
-          const headCell = (label, right) => <div style={{ padding: '0 8px 10px', fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-faint)', textAlign: right ? 'right' : 'left', whiteSpace: 'nowrap' }}>{label}</div>
           return (
           <div style={{ overflowX: 'auto', maxWidth: '100%', margin: '4px -4px 0' }}>
             <div style={{ minWidth: 1320 }}>

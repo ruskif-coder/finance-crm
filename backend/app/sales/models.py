@@ -32,9 +32,140 @@ class SalesService(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False, unique=True)
     group = Column("group", String)  # денормализовано строкой, как Article.group
-    sort_order = Column(Integer, nullable=False, default=0)
+    sort_order = Column(Integer, nullable=False, default=0)  # порядок в списках (drag-n-drop в настройках)
     is_active = Column(Boolean, nullable=False, default=True)
     note = Column(Text)
+    # Параметры для конструктора МП (см. docs/bridge_deals_operations.md):
+    placement_type = Column(String)     # тип размещения: OLV / Banners / Native / … (список на фронте)
+    calc_form = Column(String)          # форма расчёта: CPM / CPC / CPV / CPD / Фикс / Пакет (общая)
+    separate_price = Column(Boolean, nullable=False, default=False)  # раздельный прайс web/app
+    unit_price = Column(Float)          # единая цена/ед (когда separate_price=False)
+    unit_price_web = Column(Float)      # цена/ед web (когда separate_price=True)
+    unit_price_app = Column(Float)      # цена/ед app (когда separate_price=True)
+    # Базовые константы под форму расчёта (CTR для CPM/CPC, VTR для CPV…): {key: value}.
+    # Нужны конструктору МП для производных метрик (показы↔клики и т.п.).
+    constants = Column(JSONB)
+    # Привязка к услуге в Битриксе (элемент СП 1050 «Продукты Simb-ad»): синк матчит
+    # по bx_id, а не по имени, чтобы переименование локальной услуги не рвало связь
+    # и не плодило дубли. bx_title — кэш битрикс-имени на момент привязки.
+    bx_id = Column(String, index=True)
+    bx_title = Column(String)
+
+
+class SalesAddonService(Base):
+    """Доп. услуга (не размещение): фикс-позиция с ценой. can_be_bonus — может идти
+    бонусом (при выполнении условий, задаются позже) со скидкой 100%."""
+    __tablename__ = "sales_addon_services"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    unit_price = Column(Float)
+    period = Column(String)     # период по умолчанию (напр. «первый месяц», «по итогам РК»)
+    can_be_bonus = Column(Boolean, nullable=False, default=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+
+class SalesFormat(Base):
+    """Справочник форматов размещения (Banners / Rich Media / Video / …). Услуга ссылается
+    на допустимые форматы через M2M SalesServiceFormat; в строке МП формат выбирается из них.
+    group — категория для группировки в выпадашке (Медийка/Видео/Аудио/…)."""
+    __tablename__ = "sales_formats"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
+    group = Column("group", String)
+    sort_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+
+class SalesServiceFormat(Base):
+    """M2M услуга ↔ формат. Дефолтный формат услуги хранится строкой в
+    SalesService.placement_type (имя формата из числа привязанных) — вариант B."""
+    __tablename__ = "sales_service_formats"
+    id = Column(Integer, primary_key=True)
+    service_id = Column(Integer, ForeignKey("sales_services.id"), nullable=False)
+    format_id = Column(Integer, ForeignKey("sales_formats.id"), nullable=False)
+    __table_args__ = (UniqueConstraint("service_id", "format_id", name="uq_service_format"),)
+
+
+class SalesTargetingItem(Base):
+    """Общий каталог значений таргетинга по группам (audience/buys/interests/behavior/
+    competitors). Чипы в брифе МП выбираются отсюда; «+добавить» пишет новое значение."""
+    __tablename__ = "sales_targeting_items"
+    id = Column(Integer, primary_key=True)
+    group = Column("group", String, nullable=False)
+    value = Column(String, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+    __table_args__ = (UniqueConstraint("group", "value", name="uq_targeting_group_value"),)
+
+
+class SalesGeo(Base):
+    """Справочник гео для брифа МП."""
+    __tablename__ = "sales_geo"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+
+class SalesMediaPlan(Base):
+    """Сохранённый медиаплан (шапка). Версии одного МП связаны group_id; в БД держим
+    максимум 3 версии на group_id (старейшая удаляется). deal_id — на будущее (привязка
+    к сделке пока не пишет в deal.amount). id-поля денормализованы (без FK)."""
+    __tablename__ = "sales_media_plans"
+    id = Column(Integer, primary_key=True)
+    group_id = Column(Integer, index=True)
+    version = Column(Integer, nullable=False, default=1)
+    status = Column(String, nullable=False, default="draft")   # draft/review/approved/rejected/archived
+    title = Column(String)
+    advertiser_id = Column(Integer)
+    brand_id = Column(Integer)
+    agency_id = Column(Integer)
+    payer_counterparty_id = Column(Integer)
+    period = Column(String)
+    geo_id = Column(Integer)
+    date_from = Column(Date)
+    date_to = Column(Date)
+    targeting = Column(JSONB)
+    goals = Column(JSONB)
+    sales_rep_id = Column(Integer)
+    account_manager_id = Column(Integer)
+    traffic_manager_id = Column(Integer)
+    amount_net = Column(Float)
+    amount_gross = Column(Float)
+    deal_id = Column(Integer)
+    created_by = Column(Integer)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class SalesMediaPlanRow(Base):
+    """Строка размещения МП."""
+    __tablename__ = "sales_media_plan_rows"
+    id = Column(Integer, primary_key=True)
+    plan_id = Column(Integer, ForeignKey("sales_media_plans.id", ondelete="CASCADE"), nullable=False, index=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    position = Column(String)
+    format = Column(String)
+    model = Column(String)
+    inventory = Column(String)  # 'web' / 'app' / 'cross' — выбор при раздельном прайсе услуги
+    volume = Column(Float)
+    unit_price = Column(Float)
+    discount = Column(Float)
+    forecast = Column(JSONB)   # {freq,ctr,cr,price,sov} — ручной ввод прогноза
+
+
+class SalesMediaPlanExtra(Base):
+    """Доп. услуга в МП."""
+    __tablename__ = "sales_media_plan_extras"
+    id = Column(Integer, primary_key=True)
+    plan_id = Column(Integer, ForeignKey("sales_media_plans.id", ondelete="CASCADE"), nullable=False, index=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    name = Column(String)
+    period = Column(String)
+    mode = Column(String)
+    price = Column(Float)
+    total = Column(Float)
 
 
 class SalesAdvertiser(Base):
@@ -153,6 +284,10 @@ class SalesRep(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     is_active = Column(Boolean, nullable=False, default=True)
     is_sales_head = Column(Boolean, nullable=False, default=False)  # рук отдела сейлзов — видит дашборды всех
+    # role_group / is_master были на SalesRep в первой итерации — отменены: рабочая группа
+    # для МП живёт на Role (Role.staff_group / is_master). Колонки в БД могли остаться на
+    # локали, но НЕ читаются/не пишутся — из модели убраны, чтобы query(SalesRep) не падал
+    # на проде, где этих колонок нет (см. предрелизный аудит v2.2.0).
 
 
 class SalesPipeline(Base):

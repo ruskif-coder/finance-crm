@@ -1,0 +1,12 @@
+{
+  "name": "finance-pdf-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Headless Chromium sidecar: рендерит страницу медиаплана в нативный (текстовый) PDF",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "playwright": "1.48.0"
+  }
+}

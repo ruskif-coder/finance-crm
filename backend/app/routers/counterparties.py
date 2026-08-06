@@ -5,7 +5,7 @@ from app.database import get_db
 from app.models import Counterparty, CounterpartyBankAccount, Operation, Article, Contract, User
 from app.sales.models import SalesAgency, SalesAgencyCounterparty
 from app.routers.auth import get_current_user
-from app.permissions import require_permission
+from app.permissions import require_permission, require_any_permission
 from app.audit import log_action
 from app.routers.reports import DEFAULT_TERM_DAYS
 from pydantic import BaseModel
@@ -89,7 +89,8 @@ def get_counterparties(
 def create_counterparty(
     data: CounterpartyCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    # Создание контрагента — правка справочника ИЛИ инлайн-создание из формы операций.
+    current_user: User = Depends(require_any_permission(("counterparties", "operations"), "edit"))
 ):
     existing = db.query(Counterparty).filter(Counterparty.name == data.name).first()
     if existing:
@@ -98,6 +99,8 @@ def create_counterparty(
     db.add(counterparty)
     db.commit()
     db.refresh(counterparty)
+    log_action(db, current_user, "create_counterparty", entity_type="counterparty", entity_id=counterparty.id,
+               details=f"Создан контрагент «{counterparty.name}»")
     return {"id": counterparty.id, "message": "Контрагент создан"}
 
 @router.put("/{counterparty_id}")
@@ -105,14 +108,17 @@ def update_counterparty(
     counterparty_id: int,
     data: CounterpartyCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("counterparties", "edit"))
 ):
     counterparty = db.query(Counterparty).filter(Counterparty.id == counterparty_id).first()
     if not counterparty:
         raise HTTPException(status_code=404, detail="Контрагент не найден")
+    old_name = counterparty.name
     counterparty.name = data.name
     counterparty.vat_rate = data.vat_rate
     db.commit()
+    log_action(db, current_user, "update_counterparty", entity_type="counterparty", entity_id=counterparty.id,
+               details=f"Контрагент {old_name} → {data.name}, НДС {data.vat_rate}")
     return {"message": "Контрагент обновлён"}
 
 @router.delete("/bulk")
@@ -410,7 +416,8 @@ def update_counterparty_registry(
     # contract_number/contract_date намеренно НЕ трогаются (см. CounterpartyRegistryUpdate
     # выше) — старые значения остаются как историческая заморозка, не перезаписываются в None.
     counterparty.term_days = data.term_days
-    if data.is_own_company is not None:
+    # Флаг «наше юрлицо» влияет на платёжки/автоштамп own_company_id — меняет только admin.
+    if data.is_own_company is not None and current_user.role.key == "admin":
         if not data.is_own_company and counterparty.is_own_company:
             changes.append("is_own_company: Наша → нет")
         elif data.is_own_company and not counterparty.is_own_company:

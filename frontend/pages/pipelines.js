@@ -17,8 +17,8 @@ export default function Pipelines({ embedded = false } = {}) {
   const [expandAll, setExpandAll] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  const mayEdit = can(perms, 'settings', 'edit')
-  const mayDelete = can(perms, 'settings', 'edit')
+  const mayEdit = can(perms, 'settings_pipelines', 'edit')
+  const mayDelete = can(perms, 'settings_pipelines', 'edit')
 
   const load = async () => {
     setLoading(true); setError('')

@@ -24,7 +24,7 @@ import os
 import re
 
 from app.database import get_db
-from app.models import User, Counterparty
+from app.models import User, Counterparty, AuditLog
 from app.permissions import require_permission, require_any_permission
 from app.audit import log_action
 from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
@@ -458,7 +458,8 @@ def dashboard_bonus(
     default_sk_pct = SALES_AGENCY_SK * 100
 
     def net_of(amount, agency_id):
-        pct = sk_by_agency.get(agency_id, default_sk_pct)
+        # Прямая сделка (без агентства) → СК нет, вся сумма наша.
+        pct = sk_by_agency.get(agency_id, default_sk_pct) if agency_id else 0
         return float(amount or 0) * (1 - (pct or 0) / 100)
 
     sandbox_cnt = 0
@@ -622,6 +623,9 @@ def deals_registry(
     brands = dict(db.query(SalesBrand.id, SalesBrand.name).all())
     cps = dict(db.query(Counterparty.id, Counterparty.name).all())
     agencies = dict(db.query(SalesAgency.id, func.coalesce(SalesAgency.short_name, SalesAgency.name)).all())
+    # СК по агентству (как в сводке) — для «нашей суммы» в карточке сделки.
+    sk_by_agency = dict(db.query(SalesAgency.id, SalesAgency.sk_percent).all())
+    default_sk_pct = SALES_AGENCY_SK * 100
 
     # Полная подпись «краткое | ENG | Рус» для тултипа в реестре (наведение на
     # агентство/рекламодателя, где показано только краткое имя).
@@ -697,6 +701,7 @@ def deals_registry(
             "payer_counterparty_id": d.payer_counterparty_id,
             "agency_legals": payer_options(d),
             "amount": d.amount,
+            "our_sum": round(float(d.amount or 0) * (1 - ((sk_by_agency.get(d.agency_id, default_sk_pct) if d.agency_id else 0) or 0) / 100)),
             "currency": d.currency,
             "advertiser": adv.get(d.advertiser_id),
             "advertiser_full": adv_full.get(d.advertiser_id),
@@ -797,6 +802,14 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
     changes = payload.dict(exclude_unset=True, exclude={"deal_ids"})
     if not changes:
         raise HTTPException(status_code=400, detail="Не задано ни одного поля")
+
+    # own-scope: как в patch_deal — own-роль может назначать сделки только на себя
+    own = _own_rep_ids_or_all(db, current_user)
+    if own is not None:
+        own_set = set(own)
+        for fld in ("sales_rep_id", "account_manager_id"):
+            if changes.get(fld) is not None and changes[fld] not in own_set:
+                raise HTTPException(status_code=403, detail="Можно назначать сделки только на себя")
 
     # period ГГГГ-ММ -> period_from = первое число месяца
     updates = {}
@@ -1214,7 +1227,7 @@ def _stringify(v):
 
 @router.get("/field-audit/deal/{deal_id}")
 def field_audit_deal(deal_id: int, db: Session = Depends(get_db),
-                     current_user: User = Depends(require_permission("settings", "view"))):
+                     current_user: User = Depends(require_permission("settings_field_audit", "view"))):
     """Сверка одной сделки: наши поля ↔ живой payload Битрикса (читается каждый раз)."""
     from app.sales.bitrix.transport import vibecode_get
     deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
@@ -1258,7 +1271,7 @@ def field_audit_deal(deal_id: int, db: Session = Depends(get_db),
 
 @router.get("/field-audit/company/{kind}/{our_id}")
 def field_audit_company(kind: str, our_id: int, db: Session = Depends(get_db),
-                        current_user: User = Depends(require_permission("settings", "view"))):
+                        current_user: User = Depends(require_permission("settings_field_audit", "view"))):
     """Сверка одной компании (агентство/рекламодатель): наши поля ↔ живой Битрикс."""
     from app.sales.bitrix.transport import vibecode_get
     if kind == "agency":
@@ -1370,6 +1383,93 @@ def download_deal_file(deal_id: int, kind: str, db: Session = Depends(get_db),
         raise HTTPException(status_code=404, detail="Файл отсутствует на диске")
     return FileResponse(abspath, filename=rec.filename or "file",
                         media_type=rec.content_type or "application/octet-stream")
+
+
+# Человекочитаемые ярлыки событий сделки и полей — для секции «История» в карточке.
+_DEAL_EVENT_LABELS = {
+    "create_deal": "Сделка создана",
+    "patch_sales_deal": "Изменение полей",
+    "save_deal_brief": "Бриф обновлён",
+    "push_deal_to_bitrix": "Отправлена в Битрикс",
+    "sync_deal_from_bitrix": "Синхронизирована из Битрикса",
+}
+_DEAL_FIELD_LABELS = {
+    "title": "Название", "advertiser_id": "Рекламодатель", "brand_id": "Бренд",
+    "agency_id": "Агентство", "sales_rep_id": "Продавец", "account_manager_id": "Аккаунт",
+    "payer_counterparty_id": "Плательщик", "period_from": "Старт РК", "period_to": "Конец РК",
+    "product": "Услуга", "bitrix_stage": "Стадия",
+}
+
+
+@router.get("/deals/{deal_id}/history")
+def deal_history(deal_id: int, db: Session = Depends(get_db),
+                 current_user: User = Depends(require_permission("sales_registry", "view"))):
+    """История сделки из журнала действий (audit_log) — событие, инициатор, время.
+    Показывает только действия через наше приложение (правки прямо в Битриксе сюда не
+    попадают); массовые операции пишутся без entity_id и здесь не отображаются."""
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+    rows = (db.query(AuditLog)
+            .filter(AuditLog.entity_type == "sales_deal", AuditLog.entity_id == deal_id)
+            .order_by(AuditLog.created_at.desc()).limit(100).all())
+
+    def _detail(r):
+        if r.action == "patch_sales_deal" and r.details:
+            return ", ".join(_DEAL_FIELD_LABELS.get(f.strip(), f.strip()) for f in r.details.split(","))
+        return r.details
+
+    return {"items": [{
+        "action": r.action,
+        "label": _DEAL_EVENT_LABELS.get(r.action, r.action),
+        "who": r.user_name,          # инициатор (денормализовано в audit_log)
+        "at": r.created_at,          # UTC; фронт показывает в Europe/Moscow
+        "details": _detail(r),
+    } for r in rows]}
+
+
+@router.get("/deals/{deal_id}")
+def get_deal(deal_id: int, db: Session = Depends(get_db),
+             current_user: User = Depends(require_permission("sales_registry", "view"))):
+    """Одна сделка для карточки /deals/{id}: поля как в реестре + our_sum и файлы."""
+    from app.sales.models import SalesDealFile
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+
+    adv = db.query(SalesAdvertiser).filter(SalesAdvertiser.id == deal.advertiser_id).first() if deal.advertiser_id else None
+    agc = db.query(SalesAgency).filter(SalesAgency.id == deal.agency_id).first() if deal.agency_id else None
+    brand = db.query(SalesBrand).filter(SalesBrand.id == deal.brand_id).first() if deal.brand_id else None
+    rep = db.query(SalesRep).filter(SalesRep.id == deal.sales_rep_id).first() if deal.sales_rep_id else None
+    acc = db.query(SalesRep).filter(SalesRep.id == deal.account_manager_id).first() if deal.account_manager_id else None
+    payer = None
+    if deal.payer_counterparty_id:
+        cp = db.query(Counterparty).filter(Counterparty.id == deal.payer_counterparty_id).first()
+        payer = cp.name if cp else None
+    payer = payer or deal.payer_name
+    # Прямая сделка (без агентства) → СК нет, вся сумма наша.
+    sk_pct = dict(db.query(SalesAgency.id, SalesAgency.sk_percent).all()).get(deal.agency_id, SALES_AGENCY_SK * 100) if deal.agency_id else 0
+    files = [{"kind": f.kind, "filename": f.filename} for f in
+             db.query(SalesDealFile).filter(SalesDealFile.deal_id == deal_id).all()]
+    return {
+        "id": deal.id, "bitrix_id": deal.bitrix_id, "title": deal.title,
+        "advertiser": (adv.short_name or adv.name) if adv else None, "advertiser_id": deal.advertiser_id,
+        "brand": brand.name if brand else None,
+        "agency": (agc.short_name or agc.name) if agc else None, "agency_id": deal.agency_id,
+        "product": deal.product,
+        "payer": payer, "payer_counterparty_id": deal.payer_counterparty_id,
+        "counterparty_id": deal.payer_counterparty_id or deal.counterparty_id,
+        "period": deal.period_from.strftime("%Y-%m") if deal.period_from else None,
+        "period_from": deal.period_from, "period_to": deal.period_to,
+        "bitrix_stage": deal.bitrix_stage,
+        "sales_rep": _short_fio(rep.name) if rep else None,
+        "account_manager": _short_fio(acc.name) if acc else None,
+        "amount": deal.amount,
+        "our_sum": round(float(deal.amount or 0) * (1 - (sk_pct or 0) / 100)),
+        "currency": deal.currency, "files": files, "date_create": deal.date_create,
+    }
 
 
 @router.patch("/deals/{deal_id}")

@@ -7,7 +7,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.database import engine, Base, SessionLocal
 from app.routers import (auth, operations, reports, counterparties, articles, settings,
                          users, roles, contracts, sales_directories, sales_dashboard,
-                         sales_reconcile)
+                         sales_reconcile, media_plans)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -51,6 +51,28 @@ with engine.begin() as _conn:
     _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS sync_status VARCHAR"))
     _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS sync_checked_at TIMESTAMP"))
     _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS sync_report JSONB"))
+    # Справочник услуг: параметры для конструктора МП. sales_addon_services создаётся
+    # через create_all. Промежуточная таблица вариантов больше не нужна.
+    _conn.execute(text("DROP TABLE IF EXISTS sales_service_variants"))
+    _conn.execute(text("ALTER TABLE sales_services DROP COLUMN IF EXISTS platform"))
+    _conn.execute(text("ALTER TABLE sales_services DROP COLUMN IF EXISTS currency"))
+    for _col, _type in [("placement_type", "VARCHAR"), ("calc_form", "VARCHAR"),
+                        ("unit_price", "DOUBLE PRECISION"), ("unit_price_web", "DOUBLE PRECISION"),
+                        ("unit_price_app", "DOUBLE PRECISION")]:
+        _conn.execute(text(f"ALTER TABLE sales_services ADD COLUMN IF NOT EXISTS {_col} {_type}"))
+    _conn.execute(text("ALTER TABLE sales_services ADD COLUMN IF NOT EXISTS separate_price BOOLEAN NOT NULL DEFAULT FALSE"))
+    _conn.execute(text("ALTER TABLE sales_services ADD COLUMN IF NOT EXISTS constants JSONB"))
+    # Привязка услуги к элементу СП 1050 Битрикса (синк по bx_id, не по имени).
+    _conn.execute(text("ALTER TABLE sales_services ADD COLUMN IF NOT EXISTS bx_id VARCHAR"))
+    _conn.execute(text("ALTER TABLE sales_services ADD COLUMN IF NOT EXISTS bx_title VARCHAR"))
+    _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_services_bx_id ON sales_services (bx_id)"))
+    _conn.execute(text("ALTER TABLE sales_addon_services ADD COLUMN IF NOT EXISTS period VARCHAR"))
+    # Рабочая группа + мастер — на РОЛИ (классификация продавец/аккаунт/трафик для
+    # пикеров ответственных в конструкторе МП; наследуется пользователем через роль).
+    _conn.execute(text("ALTER TABLE roles ADD COLUMN IF NOT EXISTS staff_group VARCHAR"))
+    _conn.execute(text("ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_master BOOLEAN NOT NULL DEFAULT FALSE"))
+    # Инвентарь строки МП (web/app/cross) — выбор при раздельном прайсе услуги.
+    _conn.execute(text("ALTER TABLE sales_media_plan_rows ADD COLUMN IF NOT EXISTS inventory VARCHAR"))
     # Индексы под запросы витрины продаж (money-layer JOIN по (pipeline,bitrix_stage),
     # own-scope и GROUP BY по FK, срез по периоду). На проде уже есть — IF NOT EXISTS
     # делает это no-op; на чистой БД воссоздаёт (раньше индексы жили вне репозитория).
@@ -95,9 +117,9 @@ seed_article_groups()
 def seed_split_permissions():
     """Идемпотентно раскладывает права старых «связок» на новые per-page ключи,
     чтобы существующие роли не потеряли доступ после расщепления:
-      sales_registry/sales_analytics ← sales_dashboard;
-      dir_advertisers/dir_agencies   ← sales_directories;
-      settings                       ← max(settings_balances, articles).
+      sales_dashboard   → sales_registry + sales_analytics;
+      sales_directories → dir_advertisers + dir_agencies;
+      settings          → settings_balances + settings_articles + settings_pipelines + settings_services.
     Создаёт только отсутствующие строки — прогон повторно безопасен."""
     from app.models import Role, RolePermission
     db = SessionLocal()
@@ -121,10 +143,15 @@ def seed_split_permissions():
             if sdir:
                 add("dir_advertisers", sdir.can_view, sdir.can_edit, delete=sdir.can_delete)
                 add("dir_agencies", sdir.can_view, sdir.can_edit, delete=sdir.can_delete)
-            sb, art = rows.get("settings_balances"), rows.get("articles")
-            add("settings",
-                (sb and sb.can_view) or (art and art.can_view),
-                (sb and sb.can_edit) or (art and art.can_edit))
+            # Настройки: старое единое право `settings` → per-раздел (остатки/статьи/
+            # воронки/услуги). settings_field_audit (раньше был под `settings`) и
+            # settings_audit (раньше был admin-only) намеренно НЕ переносим: по новой
+            # модели доступ к настройкам default-deny, выдаётся ролям точечно через
+            # конструктор ролей (админ и так видит всё через bypass).
+            st = rows.get("settings")
+            if st:
+                for k in ("settings_balances", "settings_articles", "settings_pipelines", "settings_services"):
+                    add(k, st.can_view, st.can_edit)
         db.commit()
         logger.info("seed_split_permissions: права per-page разложены")
     except Exception:
@@ -135,6 +162,92 @@ def seed_split_permissions():
 
 
 seed_split_permissions()
+
+
+def seed_sales_formats():
+    """Идемпотентно наполняет справочник форматов (sales_formats) базовым набором + любыми
+    значениями SalesService.placement_type, и бэкфиллит связки услуга↔формат. Дефолтный
+    формат остаётся строкой в placement_type (вариант B). Прогон повторно безопасен."""
+    from app.sales.models import SalesService, SalesFormat, SalesServiceFormat
+    CATALOG = [
+        ("Медийка", ["Banners", "Rich Media", "Native", "Interstitial"]),
+        ("Видео", ["OLV In-stream", "OLV Out-stream", "Rewarded video", "CTV/OTT"]),
+        ("Аудио", ["Audio"]),
+        ("In-App", ["Playable", "App install"]),
+        ("Наружка", ["DOOH"]),
+        ("Прочее", ["Push", "Pop-under", "Соцсети"]),
+    ]
+    db = SessionLocal()
+    try:
+        existing = {f.name: f for f in db.query(SalesFormat).all()}
+        order = db.query(func.max(SalesFormat.sort_order)).scalar() or 0
+        for group, names in CATALOG:
+            for nm in names:
+                if nm not in existing:
+                    order += 1
+                    f = SalesFormat(name=nm, group=group, sort_order=order)
+                    db.add(f); db.flush(); existing[nm] = f
+        svcs = db.query(SalesService).all()
+        for s in svcs:                          # placement_type, которых нет в справочнике
+            pt = (s.placement_type or "").strip()
+            if pt and pt not in existing:
+                order += 1
+                f = SalesFormat(name=pt, sort_order=order)
+                db.add(f); db.flush(); existing[pt] = f
+        links = {(l.service_id, l.format_id) for l in db.query(SalesServiceFormat).all()}
+        for s in svcs:                          # бэкфилл связок из placement_type
+            pt = (s.placement_type or "").strip()
+            if pt and (s.id, existing[pt].id) not in links:
+                db.add(SalesServiceFormat(service_id=s.id, format_id=existing[pt].id))
+                links.add((s.id, existing[pt].id))
+        db.commit()
+        logger.info("seed_sales_formats: форматы и связки засеяны")
+    except Exception:
+        logger.exception("seed_sales_formats: ошибка")
+        db.rollback()
+    finally:
+        db.close()
+
+
+seed_sales_formats()
+
+
+def seed_targeting_and_geo():
+    """Идемпотентно засевает каталог таргетинга (по группам) и справочник гео из шаблона."""
+    from app.sales.models import SalesTargetingItem, SalesGeo
+    TARGETING = {
+        "audience": ["Ж/М 30–60"],
+        "buys": ["витамины группы B", "препараты при нейропатии", "обезболивающие при болях в спине", "средства при диабетической полинейропатии"],
+        "interests": ["неврология", "здоровье спины и суставов", "медицина и здоровье"],
+        "behavior": ["сайты аптек", "онлайн-заказ лекарств", "медицинские порталы", "запись к неврологу"],
+        "competitors": ["Комбилипен", "Нейромультивит", "Нейробион", "Бенфогамма", "Тиогамма"],
+    }
+    GEO = ["РФ", "Москва", "Санкт-Петербург", "Города 500K+", "Регионы"]
+    db = SessionLocal()
+    try:
+        existing = {(t.group, t.value) for t in db.query(SalesTargetingItem).all()}
+        for grp, vals in TARGETING.items():
+            order = db.query(func.max(SalesTargetingItem.sort_order)).filter(SalesTargetingItem.group == grp).scalar() or 0
+            for v in vals:
+                if (grp, v) not in existing:
+                    order += 1
+                    db.add(SalesTargetingItem(group=grp, value=v, sort_order=order)); existing.add((grp, v))
+        geo_existing = {g.name for g in db.query(SalesGeo).all()}
+        gord = db.query(func.max(SalesGeo.sort_order)).scalar() or 0
+        for nm in GEO:
+            if nm not in geo_existing:
+                gord += 1
+                db.add(SalesGeo(name=nm, sort_order=gord)); geo_existing.add(nm)
+        db.commit()
+        logger.info("seed_targeting_and_geo: каталоги засеяны")
+    except Exception:
+        logger.exception("seed_targeting_and_geo: ошибка")
+        db.rollback()
+    finally:
+        db.close()
+
+
+seed_targeting_and_geo()
 
 
 def backfill_sales_scope():
@@ -220,6 +333,7 @@ app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(roles.router, prefix="/api/roles", tags=["roles"])
 app.include_router(contracts.router, prefix="/api/contracts", tags=["contracts"])
 app.include_router(sales_directories.router, prefix="/api/sales/directories", tags=["sales"])
+app.include_router(media_plans.router, prefix="/api/sales/media-plans", tags=["sales"])
 app.include_router(sales_reconcile.router, prefix="/api/sales/reconcile", tags=["sales"])
 # Монтируется ПОСЛЕ справочников/сверки, чтобы их префиксы не перехватывались
 app.include_router(sales_dashboard.router, prefix="/api/sales", tags=["sales"])

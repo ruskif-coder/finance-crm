@@ -11,6 +11,11 @@ class Role(Base):
     label = Column(String, nullable=False)
     is_system = Column(Integer, default=0)  # 1 — системная роль (admin/manager/viewer), нельзя изменить/удалить
     created_at = Column(DateTime, server_default=func.now())
+    # Рабочая группа роли (для конструктора МП): 'seller' / 'account' / 'traffic' / None.
+    # Пользователи наследуют её через свою роль — это классификация «кто продавец/аккаунт»,
+    # отдельная от прав доступа. is_master — «мастер группы» (помечается ★ в пикерах МП).
+    staff_group = Column(String)
+    is_master = Column(Boolean, nullable=False, default=False)
     permissions = relationship("RolePermission", back_populates="role", cascade="all, delete-orphan")
 
 class RolePermission(Base):

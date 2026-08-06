@@ -4,7 +4,7 @@ import api, { auth } from '../lib/http'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import DirectoryTabs from '../components/DirectoryTabs'
-import { MONO, UI, IconBtn } from '../components/salesTableKit'
+import { MONO, UI, IconBtn, inp, inpSm, selSm, btn, btnSm } from '../components/salesTableKit'
 import useIsMobile from '../components/mobile/useIsMobile'
 import ContractsMobile from '../components/mobile/ContractsMobile'
 import { T } from '../lib/tokens'
@@ -441,17 +441,7 @@ export default function Contracts() {
   const toggleAll = () => setSelectedIds(allSelected ? [] : filtered.map(c => c.id))
   const toggleOne = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
 
-  const inp = { padding: '8px 11px', border: '1px solid var(--border-card)', borderRadius: 10,
-    fontSize: 13, background: 'var(--bg-card)', color: 'var(--text-primary)', fontFamily: UI, outline: 'none' }
-  const inpSm = (w) => ({ ...inp, width: w, padding: '6px 9px' })
-  const selSm = (w) => ({ ...inp, width: w, padding: '6px 9px' })
-  const btn = (p) => ({ padding: '8px 15px', borderRadius: 10, border: p ? 'none' : '1px solid var(--border-card)', cursor: 'pointer',
-    fontSize: 13, fontWeight: p ? 700 : 600, background: p ? 'var(--accent)' : 'var(--bg-card)', color: p ? '#fff' : 'var(--text-secondary)', fontFamily: UI })
-  const btnSm = (p) => ({ ...btn(p), padding: '4px 10px', fontSize: 12 })
-  const th = { padding: '0 10px 10px', textAlign: 'left', fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 600,
-    color: 'var(--text-faint)', borderBottom: '1px solid var(--border-card)', whiteSpace: 'nowrap',
-    cursor: 'pointer', userSelect: 'none' }
-  const td = { padding: '10px 10px', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-row)', verticalAlign: 'middle' }
+  // стили inp/inpSm/selSm/btn/btnSm — общий модуль components/salesTableKit
   const dash = <span style={{ color: 'var(--text-faint)' }}>—</span>
 
   return (
