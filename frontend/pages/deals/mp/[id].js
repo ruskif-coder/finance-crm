@@ -5,6 +5,7 @@ import api, { auth } from '../../../lib/api'
 import Navbar, { can } from '../../../components/Navbar'
 import MediaPlanBuilder from '../../../components/mediaplan/MediaPlanBuilder'
 import { downloadName } from '../../../lib/salesFormat'
+import { DownloadOverlay } from '../../../components/LogoLoader'
 
 // Редактор/генератор медиаплана. id === 'new' — новый; число — правка сохранённого.
 const DEFAULT_FORMATS = ['Banners', 'Rich', 'Video', 'Native']
@@ -18,6 +19,8 @@ export default function MpEditor() {
   const isNew = id === 'new'
   const [loaded, setLoaded] = useState(null)   // сохранённый МП (initial)
   const [savedId, setSavedId] = useState(null)
+  const [downloading, setDownloading] = useState(false)   // оверлей 1c на время выгрузки
+  const [versions, setVersions] = useState([])            // история версий (для дропдауна)
 
   const [catalog, setCatalog] = useState(null)
   const [extraCatalog, setExtraCatalog] = useState(null)
@@ -36,6 +39,7 @@ export default function MpEditor() {
   const loadBrands = useCallback(() => api.get('/sales/directories/brands', auth()).then(r => {
     const m = {}; (r.data.items || []).forEach(b => { (m[b.advertiser_id] = m[b.advertiser_id] || []).push({ value: b.id, label: b.name }) }); setBrandsByAdv(m)
   }).catch(() => {}), [])
+  const loadVersions = useCallback(() => { if (!id || id === 'new') return; api.get(`/sales/media-plans/${id}/versions`, auth()).then(r => setVersions(r.data.items || [])).catch(() => setVersions([])) }, [id])
 
   useEffect(() => {
     if (typeof window === 'undefined' || !id) return
@@ -79,6 +83,7 @@ export default function MpEditor() {
     if (!isNew) {
       setSavedId(+id)
       api.get(`/sales/media-plans/${id}`, auth()).then(r => setLoaded(r.data)).catch(() => router.replace('/deals/mp'))
+      loadVersions()
     }
   }, [id])
 
@@ -105,10 +110,10 @@ export default function MpEditor() {
     try {
       if (o.action === 'submit') {
         const r = await api.post('/sales/media-plans', { ...payload, group_id: loaded?.group_id || undefined }, auth())
-        alert(`Отправлено на согласование (версия ${r.data.version})`)
+        alert(r.data.unchanged ? `Без изменений — версия ${r.data.version} осталась` : `Отправлено на согласование (версия ${r.data.version})`)
         router.replace(`/deals/mp/${r.data.id}`)
       } else if (savedId) {
-        await api.put(`/sales/media-plans/${savedId}`, payload, auth()); alert('Черновик сохранён')
+        await api.put(`/sales/media-plans/${savedId}`, payload, auth()); alert('Черновик сохранён'); loadVersions()
       } else {
         const r = await api.post('/sales/media-plans', payload, auth()); router.replace(`/deals/mp/${r.data.id}`)
       }
@@ -117,10 +122,11 @@ export default function MpEditor() {
 
   const onExportXlsx = async () => {
     if (!savedId) { alert('Сначала сохраните медиаплан'); return }
+    setDownloading(true)
     try {
       const r = await api.get(`/sales/media-plans/${savedId}/export.xlsx`, { ...auth(), responseType: 'blob' })
       const url = URL.createObjectURL(r.data); const a = document.createElement('a'); a.href = url; a.download = downloadName(loaded?.title, 'xlsx', 'MP Simb-AD'); a.click(); URL.revokeObjectURL(url)
-    } catch (e) { alert('Ошибка выгрузки') }
+    } catch (e) { alert('Ошибка выгрузки') } finally { setDownloading(false) }
   }
 
   if (!isNew && !loaded) return <div style={{ padding: 40, color: 'var(--text-muted)' }}>Загрузка…</div>
@@ -131,6 +137,7 @@ export default function MpEditor() {
   return (
     <>
       <Head><title>Конструктор медиаплана</title></Head>
+      {downloading && <DownloadOverlay />}
       <Navbar active="" />
       <MediaPlanBuilder
         key={id}
@@ -138,6 +145,8 @@ export default function MpEditor() {
         bound={!!loaded?.deal_id}
         backLabel={backLabel}
         onBack={() => router.push(backTo)}
+        versions={versions}
+        onOpenVersion={(vid) => router.push(`/deals/mp/${vid}`)}
         catalog={catalog || undefined} extraCatalog={extraCatalog || undefined}
         advertisers={advertisers} agencies={agencies} brandsByAdv={brandsByAdv} advCps={advCps} agencyCps={agencyCps}
         geoList={geoList} targetingCatalog={targetingCatalog} staff={staff || { 'Продавец': [], 'Аккаунт': [] }}
@@ -145,10 +154,11 @@ export default function MpEditor() {
         onSave={onSave} onExportXlsx={onExportXlsx}
         onPreviewPdf={async () => {
           if (!savedId) { alert('Сначала сохраните медиаплан'); return }
+          setDownloading(true)
           try {
             const r = await api.get(`/sales/media-plans/${savedId}/pdf`, { ...auth(), responseType: 'blob' })
             const url = URL.createObjectURL(r.data); const a = document.createElement('a'); a.href = url; a.download = downloadName(loaded?.title, 'pdf', 'MP Simb-AD'); a.click(); URL.revokeObjectURL(url)
-          } catch (e) { alert('Ошибка генерации PDF') }
+          } catch (e) { alert('Ошибка генерации PDF') } finally { setDownloading(false) }
         }}
         onLinkDeal={() => alert('Привязка к сделке — позже')} onCreateDeal={() => alert('Создание сделки — позже')}
       />

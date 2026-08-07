@@ -5,6 +5,7 @@ import Navbar, { can } from '../../../components/Navbar'
 import { MONO, UI, card, primaryBtn, MultiDrop } from '../../../components/salesTableKit'
 import api, { auth } from '../../../lib/api'
 import { downloadName, fmtFull, fmtMoney } from '../../../lib/salesFormat'
+import { DownloadOverlay } from '../../../components/LogoLoader'
 import ValuePopover from '../../../components/ValuePopover'
 
 // Реестр медиапланов (контур аккаунта). Тулбар (поиск/период/фильтры/сортировка) и
@@ -50,6 +51,7 @@ export default function MpRegistry() {
   const [editTitleId, setEditTitleId] = useState(null)
   const [titleDraft, setTitleDraft] = useState('')
   const [pdfBusy, setPdfBusy] = useState(null)
+  const [downloading, setDownloading] = useState(false)   // оверлей 1c на время выгрузки
 
   // тулбар: поиск / период / фильтры / сортировка
   const [search, setSearch] = useState('')
@@ -189,17 +191,18 @@ export default function MpRegistry() {
     try { await api.delete(`/sales/media-plans/${it.id}?whole_group=true`, auth()); load() } catch (e) { alert('Ошибка удаления') }
   }
   const exportXlsx = async (it) => {
+    setDownloading(true)
     try {
       const r = await api.get(`/sales/media-plans/${it.id}/export.xlsx`, { ...auth(), responseType: 'blob' })
       const url = URL.createObjectURL(r.data); const a = document.createElement('a'); a.href = url; a.download = downloadName(it.title, 'xlsx', 'MP Simb-AD'); a.click(); URL.revokeObjectURL(url)
-    } catch (e) { alert('Ошибка выгрузки') }
+    } catch (e) { alert('Ошибка выгрузки') } finally { setDownloading(false) }
   }
   const downloadPdf = async (it) => {
-    setPdfBusy(it.id)
+    setPdfBusy(it.id); setDownloading(true)
     try {
       const r = await api.get(`/sales/media-plans/${it.id}/pdf`, { ...auth(), responseType: 'blob' })
       const url = URL.createObjectURL(r.data); const a = document.createElement('a'); a.href = url; a.download = downloadName(it.title, 'pdf', 'MP Simb-AD'); a.click(); URL.revokeObjectURL(url)
-    } catch (e) { alert('Ошибка генерации PDF') } finally { setPdfBusy(null) }
+    } catch (e) { alert('Ошибка генерации PDF') } finally { setPdfBusy(null); setDownloading(false) }
   }
 
   const act = { padding: '4px 8px', borderRadius: 7, border: '1px solid var(--border-card)', background: 'var(--bg-card)', cursor: 'pointer', fontSize: 11.5, color: 'var(--text-secondary)' }
@@ -214,6 +217,7 @@ export default function MpRegistry() {
   return (
     <>
       <Head><title>Медиапланы</title></Head>
+      {downloading && <DownloadOverlay />}
       <Navbar active="" />
       <style>{`.d2-row:hover{background:var(--bg-subtle)!important}`}</style>
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
@@ -228,7 +232,7 @@ export default function MpRegistry() {
           <div style={{ flex: '0 0 auto', width: searchFocus ? 300 : 160, display: 'inline-flex', alignItems: 'center', gap: 7, border: `1px solid ${searchFocus ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '7px 10px', transition: 'width .22s cubic-bezier(0.22,1,0.36,1), border-color .15s' }}>
             <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>⌕</span>
             <input value={search} onChange={e => setSearch(e.target.value)} onFocus={() => setSearchFocus(true)} onBlur={() => setSearchFocus(false)}
-              placeholder="поиск: название, контрагент, продавец…" style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: 12.5, color: 'inherit', fontFamily: UI }} />
+              placeholder="поиск: название, контрагент, продавец…" style={{ flex: 1, minWidth: 0, width: 0, border: 'none', outline: 'none', background: 'transparent', fontSize: 12.5, color: 'inherit', fontFamily: UI }} />
           </div>
 
           <div style={{ position: 'relative' }}>

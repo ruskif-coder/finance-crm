@@ -1,9 +1,10 @@
 import '../styles/globals.css'
 import localFont from 'next/font/local'
 import Head from 'next/head'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
+import { PageLoader } from '../components/LogoLoader'
 
 // Локальный шрифт вместо next/font/google: раньше каждая сборка (docker compose
 // up -d --build) скачивала Onest с fonts.googleapis.com/fonts.gstatic.com, и при
@@ -43,6 +44,24 @@ export default function App({ Component, pageProps }) {
       .finally(() => setReady(true))
   }, [])
 
+  // Загрузчик 1a «Волна» на переходах между страницами (с дебаунсом ~180мс, чтобы
+  // не мигал на мгновенной клиентской навигации). Начальная загрузка — через `ready`.
+  const [nav, setNav] = useState(false)
+  const navTimer = useRef(null)
+  useEffect(() => {
+    const start = () => { navTimer.current = setTimeout(() => setNav(true), 180) }
+    const stop = () => { clearTimeout(navTimer.current); setNav(false) }
+    router.events.on('routeChangeStart', start)
+    router.events.on('routeChangeComplete', stop)
+    router.events.on('routeChangeError', stop)
+    return () => {
+      clearTimeout(navTimer.current)
+      router.events.off('routeChangeStart', start)
+      router.events.off('routeChangeComplete', stop)
+      router.events.off('routeChangeError', stop)
+    }
+  }, [router])
+
   return (
     <>
       {/* Next по умолчанию инжектит только width=device-width (без initial-scale) —
@@ -52,6 +71,7 @@ export default function App({ Component, pageProps }) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
       <main className={onest.className}>
+        {(!ready || nav) && <PageLoader />}
         {ready ? <Component {...pageProps} /> : null}
       </main>
     </>

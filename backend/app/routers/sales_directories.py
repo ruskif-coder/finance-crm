@@ -353,7 +353,7 @@ def list_targeting(only_active: bool = True, db: Session = Depends(get_db),
 
 @router.post("/targeting")
 def create_targeting(data: TargetingIn, db: Session = Depends(get_db),
-                     current_user: User = Depends(require_permission("sales_registry", "edit"))):
+                     current_user: User = Depends(require_any_permission(("sales_registry", "media_plans_editor"), "edit"))):
     grp = (data.group or "").strip()
     if grp not in _TARGETING_GROUPS:
         raise HTTPException(status_code=400, detail="Неизвестная группа таргетинга")
@@ -395,7 +395,7 @@ def list_geo(only_active: bool = True, db: Session = Depends(get_db),
 
 @router.post("/geo")
 def create_geo(data: GeoIn, db: Session = Depends(get_db),
-               current_user: User = Depends(require_permission("sales_registry", "edit"))):
+               current_user: User = Depends(require_any_permission(("sales_registry", "media_plans_editor"), "edit"))):
     name = _clean_name(data.name)
     _reject_duplicate(db, SalesGeo, name)
     order = db.query(func.max(SalesGeo.sort_order)).scalar() or 0

@@ -273,9 +273,10 @@ function useDismiss(setSel) {
    ══════════════════════════════════════════════════════════════════════ */
 export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalog = EXTRA_CATALOG, staff = STAFF, models = MODELS, modes = MODES,
   advertisers = [], agencies = [], brandsByAdv = {}, advCps = {}, agencyCps = {}, geoList = [], targetingCatalog = {},
-  bound = false, initial, backLabel = 'Реестр медиапланов', onBack,
+  bound = false, initial, backLabel = 'Реестр медиапланов', onBack, versions = [], onOpenVersion,
   onAddTargeting, onAddGeo, onCreateBrand, onSave, onExportXlsx, onPreviewPdf, onEditBrief, onLinkDeal, onCreateDeal }) {
   const init = initial || {};
+  const [verOpen, setVerOpen] = useState(false);   // дропдаун истории версий
   // Новый МП — пустой (одна незаполненная строка); сохранённый — префилл из initial.
   const main = useAnimatedRows((init.rows && init.rows.length)
     ? init.rows.map((r, i) => ({ id: i + 1, position: r.position || '', format: r.format || '', model: r.model || 'CPM', inventory: r.inventory || 'cross', volume: r.volume || 0, unit: r.unit_price || 0, discount: r.discount || 0 }))
@@ -322,6 +323,8 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
   // новое значение в ОБЩИЙ каталог (сохраняется) + сразу выбирается в этом МП
   const addTgToCatalog = async (g) => { const v = (tgCat[g] || '').trim(); if (!v) return; if (onAddTargeting) await onAddTargeting(g, v); setBf(s => ({ ...s, targeting: { ...s.targeting, [g]: [...new Set([...(s.targeting[g] || []), v])] } })); setTgCat(d => ({ ...d, [g]: '' })); };
   const addGeo = async () => { const v = geoAdd.trim(); if (!v) return; const id = onAddGeo ? await onAddGeo(v) : null; setBf(s => ({ ...s, geo_id: id ?? s.geo_id })); setGeoAdd(''); };
+  // Free-text таргетинга коммитится по Enter/«+»; если не нажали — досбираем черновики при сохранении (иначе текст терялся).
+  const mergeTgDrafts = () => { const out = { ...bf.targeting }; TG_GROUPS.forEach(([g]) => { const v = (tgDraft[g] || '').trim(); if (v) out[g] = [...new Set([...(out[g] || []), v])]; }); return out; };
   const [sel, setSel] = useState(null);       // {kind,id,field} — открытый поповер
   const [ownerOpen, setOwnerOpen] = useState(null);
   useDismiss(setSel);
@@ -435,7 +438,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
         <div style={{ width: '100%', maxWidth: 1760, display: 'flex', flexDirection: 'column', gap: 14 }}>
 
           {/* хлебные крошки + действия */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', animation: `riseIn .4s ${T.ease} both` }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', animation: `riseIn .4s ${T.ease} both`, position: 'relative', zIndex: verOpen ? 5000 : undefined }}>
             <span onClick={onBack} style={{ fontSize: 13, fontWeight: 600, color: T.t3, cursor: onBack ? 'pointer' : 'default' }}>← {backLabel}</span>
             <span style={{ color: T.hoverBorder }}>/</span>
             <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.02em' }}>Конструктор медиаплана</span>
@@ -443,12 +446,34 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
               <span style={{ width: 7, height: 7, borderRadius: 2, background: T.warning }} />
               {({ draft: 'Черновик', review: 'На согласовании', approved: 'Согласован', rejected: 'Отклонён', archived: 'Архив' }[init.status] || 'Черновик')}{init.version ? ` v${init.version}` : ''}
             </span>
+            {versions.length > 1 && (
+              <span style={{ position: 'relative' }}>
+                <span onClick={() => setVerOpen(o => !o)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontSize: 12, fontWeight: 600, color: T.t2, border: `1px solid ${T.border}`, borderRadius: 9, padding: '5px 10px', background: T.card }}>🕑 Версии ({versions.length}) ▾</span>
+                {verOpen && (
+                  <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 1000, minWidth: 250, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: '0 12px 32px rgba(20,22,28,.16)', padding: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {versions.map(v => {
+                      const cur = v.id === init.id;
+                      const st = ({ draft: 'Черновик', review: 'На согласовании', approved: 'Согласован', rejected: 'Отклонён', archived: 'Архив' }[v.status] || v.status);
+                      return (
+                        <span key={v.id} onClick={() => { if (!cur && onOpenVersion) onOpenVersion(v.id); setVerOpen(false); }}
+                          style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '7px 9px', borderRadius: 8, cursor: cur ? 'default' : 'pointer', background: cur ? T.accentTint : 'transparent' }}>
+                          <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: cur ? T.accent : T.t1 }}>v{v.version}</span>
+                          <span style={{ fontSize: 11.5, color: T.t3 }}>{st}</span>
+                          <span style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 11, color: T.t2 }}>{v.amount_gross ? Math.round(v.amount_gross).toLocaleString('ru-RU') + ' ₽' : '—'}</span>
+                          {cur && <span style={{ fontSize: 10, color: T.accent, fontWeight: 700 }}>• текущая</span>}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </span>
+            )}
             <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}>
               <span className="mp-outline" onClick={onPreviewPdf} style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 13px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>PDF</span>
               {onExportXlsx && <span className="mp-outline" onClick={onExportXlsx} style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 13px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>Excel</span>}
-              <span className="mp-outline" onClick={() => onSave?.({ brief: { ...bf, title: effectiveTitle }, main: main.rows, extras: extras.rows, fc, goals, owners, action: 'draft' })} style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px', background: T.card, border: `1px solid ${T.accentBorder}`, color: T.accent, borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>Сохранить черновик</span>
+              <span className="mp-outline" onClick={() => onSave?.({ brief: { ...bf, title: effectiveTitle, targeting: mergeTgDrafts() }, main: main.rows, extras: extras.rows, fc, goals, owners, action: 'draft' })} style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px', background: T.card, border: `1px solid ${T.accentBorder}`, color: T.accent, borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>Сохранить черновик</span>
               {(() => { const submitOk = !emptyMain && calc.filled.length > 0; return (
-                <span className={submitOk ? 'mp-primary' : undefined} onClick={() => { if (submitOk) onSave?.({ brief: { ...bf, title: effectiveTitle }, main: main.rows, extras: extras.rows, fc, goals, owners, action: 'submit' }); }}
+                <span className={submitOk ? 'mp-primary' : undefined} onClick={() => { if (submitOk) onSave?.({ brief: { ...bf, title: effectiveTitle, targeting: mergeTgDrafts() }, main: main.rows, extras: extras.rows, fc, goals, owners, action: 'submit' }); }}
                   title={submitOk ? undefined : (calc.filled.length ? 'Заполните все строки' : 'Добавьте хотя бы одну строку размещения')}
                   style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px', background: submitOk ? T.accent : '#8792A6', color: '#FFF', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: submitOk ? 'pointer' : 'default' }}>
                   На согласование
@@ -531,7 +556,8 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                                   </div>
                                 </Popover>
                               </span>
-                              <input value={tgDraft[g] || ''} onChange={e => setTgDraft(d => ({ ...d, [g]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') addTg(g); }} placeholder="+ текст (разово, не в каталог)" style={{ ...selSt, flex: '1 1 120px', minWidth: 90, width: 'auto', height: 26, fontSize: 11, padding: '0 8px' }} />
+                              <input value={tgDraft[g] || ''} onChange={e => setTgDraft(d => ({ ...d, [g]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') addTg(g); }} placeholder="+ текст (разово, не в каталог)" style={{ ...selSt, flex: '1 1 110px', minWidth: 80, width: 'auto', height: 26, fontSize: 11, padding: '0 8px' }} />
+                              {(tgDraft[g] || '').trim() && <span onClick={() => addTg(g)} title="Добавить текст" style={{ display: 'inline-flex', alignItems: 'center', height: 26, padding: '0 9px', background: T.accent, color: '#FFF', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>+</span>}
                             </div>
                           </div>
                         );
