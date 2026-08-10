@@ -59,7 +59,7 @@ function OpCard({ o, artName, cpName, open, onToggle, onEdit, onCopy }) {
       {open && (
         <div style={{ animation: 'opRise .24s ease both' }}>
           <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-row)', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 10px', fontSize: 12.5 }}>
-            <span style={{ color: 'var(--text-muted)' }}>НДС</span><span style={{ color: 'var(--text-primary)', textAlign: 'right', fontFamily: MONO }}>{o.vat_rate ? `${o.vat_rate}% · ${fmt(o.vat_amount || 0)} ₽` : '—'}</span>
+            <span style={{ color: 'var(--text-muted)' }}>НДС</span><span style={{ color: 'var(--text-primary)', textAlign: 'right', fontFamily: MONO }}>{o.vat_rate ? `${o.vat_rate}% · ${fmt(o.vat_fact || 0)} ₽` : '—'}</span>
             <span style={{ color: 'var(--text-muted)' }}>№ счёта</span><span style={{ color: 'var(--text-primary)', textAlign: 'right', fontFamily: MONO }}>{o.invoice || '—'}</span>
             <span style={{ color: 'var(--text-muted)' }}>Доп. соглашение</span><span style={{ color: 'var(--text-primary)', textAlign: 'right', fontFamily: MONO }}>{o.ds_num || '—'}</span>
             <span style={{ color: 'var(--text-muted)' }}>Описание</span><span style={{ color: 'var(--text-primary)', textAlign: 'right', wordBreak: 'break-word' }}>{o.description || '—'}</span>

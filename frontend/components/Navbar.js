@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
 import { motion } from 'framer-motion'
+import axios from 'axios'
 import { getPermissions, can } from '../lib/auth'
 
 // Ре-экспорт: многие страницы делают `import Navbar, { can } from '../components/Navbar'`.
@@ -111,6 +112,29 @@ export default function Navbar({ active, children, onSearch }) {
     return () => document.removeEventListener('mousedown', h)
   }, [])
 
+  // Уведомления (колокольчик): загрузка + опрос раз в минуту + закрытие по клику вне.
+  const notifRef = useRef(null)
+  const [notifOpen, setNotifOpen] = useState(false)
+  const [notifs, setNotifs] = useState([])
+  const [unread, setUnread] = useState(0)
+  const _authHdr = () => ({ headers: { Authorization: `Bearer ${typeof window !== 'undefined' ? localStorage.getItem('token') : ''}` } })
+  const loadNotifs = () => {
+    if (typeof window === 'undefined' || !localStorage.getItem('token')) return
+    axios.get('/api/notifications?limit=20', _authHdr()).then(r => { setNotifs(r.data.items || []); setUnread(r.data.unread || 0) }).catch(() => {})
+  }
+  useEffect(() => {
+    loadNotifs()
+    const t = setInterval(loadNotifs, 60000)
+    const h = (e) => { if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => { clearInterval(t); document.removeEventListener('mousedown', h) }
+  }, [])
+  const openNotifs = () => {
+    const willOpen = !notifOpen
+    setNotifOpen(willOpen)
+    if (willOpen && unread > 0) axios.post('/api/notifications/read', {}, _authHdr()).then(() => { setUnread(0); setNotifs(ns => ns.map(n => ({ ...n, is_read: true }))) }).catch(() => {})
+  }
+
   // блок скролла body + Esc при открытом мобильном меню
   useEffect(() => {
     if (!drawer) return
@@ -202,6 +226,28 @@ export default function Navbar({ active, children, onSearch }) {
             {canMp && <button className="nav-out" onClick={() => router.push('/deals/mp')} style={outBtn}>МП</button>}
             {canOperations && <button className="nav-out" onClick={() => router.push('/operations')} style={outBtn}>Операции</button>}
             {canDirectories && <button className="nav-out" onClick={() => router.push(dirHref)} style={outBtn}>Справочники</button>}
+
+            <div ref={notifRef} style={{ position: 'relative' }}>
+              <button className="nav-ico" onClick={openNotifs} title="Уведомления" aria-label="Уведомления"
+                style={{ width: 32, height: 32, borderRadius: 10, border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', position: 'relative', fontSize: 16 }}>
+                🔔
+                {unread > 0 && <span style={{ position: 'absolute', top: 1, right: 0, minWidth: 15, height: 15, padding: '0 3px', borderRadius: 8, background: 'var(--danger)', color: '#fff', fontSize: 9, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontFamily: MONO }}>{unread > 9 ? '9+' : unread}</span>}
+              </button>
+              {notifOpen && (
+                <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 3000, width: 340, maxHeight: 420, overflowY: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 14, boxShadow: '0 12px 40px rgba(20,22,28,.18)', padding: 6 }}>
+                  <div style={{ padding: '8px 10px', fontSize: 11, fontFamily: MONO, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>Уведомления</div>
+                  {!notifs.length && <div style={{ padding: '14px 10px', fontSize: 13, color: 'var(--text-muted)' }}>Пока пусто</div>}
+                  {notifs.map(n => (
+                    <div key={n.id} onClick={() => { setNotifOpen(false); if (n.link) router.push(n.link) }}
+                      style={{ padding: '9px 10px', borderRadius: 9, cursor: n.link ? 'pointer' : 'default', background: n.is_read ? 'transparent' : 'var(--accent-tint)', display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 2 }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>{n.title}</span>
+                      {n.body && <span style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>{n.body}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {canSettings && <button className="nav-ico" onClick={() => router.push('/settings')} title="Настройки" aria-label="Настройки"
               style={{ width: 32, height: 32, borderRadius: 10, border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{IcoGear}</button>}
 

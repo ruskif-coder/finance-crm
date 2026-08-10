@@ -93,16 +93,41 @@ const Cell = ({ label, opt, accent, children }) => (
   <div><span style={lbl}>{label}{opt ? <span style={{ color: accent === 'warn' ? T.warningText : 'var(--text-faint)', marginLeft: 6 }}>необяз.</span> : ''}</span>{children}</div>
 )
 
-function OpFields({ f, set, articles, counterparties, accent }) {
+function OpFields({ f, set, articles, counterparties, accent, mode = 'edit' }) {
   const artOpts = articles.map(a => ({ value: a.id, label: a.name }))
   const cpOpts = counterparties.map(c => ({ value: c.id, label: c.name }))
+  const cpById = Object.fromEntries(counterparties.map(c => [c.id, c]))
+  const toNum = (v) => Number(String(v ?? '').replace(/[^0-9.]/g, '')) || 0
+  const amt = toNum(f.income) || toNum(f.expense)
+  const vatAmount = f.vat_rate > 0 && amt > 0 ? Math.round(amt * f.vat_rate / (100 + f.vat_rate)) : 0
+  // Смена статуса (только при создании): «оплачено» — дата сегодня + банк по умолчанию;
+  // «план оплат/поступлений» — дата и банк пустые (даже при переключении).
+  const onStatus = (v) => {
+    if (mode !== 'create') return set({ status: v })
+    if (v === 'ОПЛАЧЕНО') set({ status: v, date: f.date || new Date().toISOString().slice(0, 10), bank: f.bank || 'АльфаБанк' })
+    else set({ status: v, date: '', bank: '' })
+  }
+  // Выбор контрагента подтягивает его статью/НДС по умолчанию — по направлению суммы
+  // (поступление → доходные, списание → расходные).
+  const onCounterparty = (v) => {
+    const patch = { counterparty_id: v }
+    const cp = cpById[+v] || cpById[v]
+    if (cp) {
+      const inc = toNum(f.income) > 0, exp = toNum(f.expense) > 0
+      const art = inc ? cp.default_article_income_id : exp ? cp.default_article_expense_id : null
+      if (art) patch.article_id = art
+      const vr = inc ? cp.vat_rate_income : exp ? cp.vat_rate_expense : null
+      if (vr != null) patch.vat_rate = vr
+    }
+    set(patch)
+  }
   const sel = (val, onCh, opts, ph) => (
     <select value={val} onChange={e => onCh(e.target.value)} style={inp}><option value="">{ph}</option>{opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
   )
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 14 }}>
-        <Cell label="Статус">{sel(f.status, v => set({ status: v }), STATUSES.map(s => ({ value: s, label: s })), 'статус')}</Cell>
+        <Cell label="Статус">{sel(f.status, onStatus, STATUSES.map(s => ({ value: s, label: s })), 'статус')}</Cell>
         <Cell label="Дата" opt accent={accent}>{<input type="date" value={f.date} onChange={e => set({ date: e.target.value })} style={{ ...inp, ...(accent === 'warn' ? { borderColor: 'var(--dot-current-dz)' } : {}) }} />}</Cell>
         <Cell label="Поступление"><input inputMode="decimal" value={f.income ?? ''} onChange={e => set({ income: sanMoney(e.target.value) })} placeholder="0 ₽" style={{ ...inp, fontFamily: MONO }} /></Cell>
         <Cell label="Списание"><input inputMode="decimal" value={f.expense ?? ''} onChange={e => set({ expense: sanMoney(e.target.value) })} placeholder="0 ₽" style={{ ...inp, fontFamily: MONO }} /></Cell>
@@ -110,9 +135,17 @@ function OpFields({ f, set, articles, counterparties, accent }) {
         <Cell label="Период"><PeriodSelect dense value={f.period} onChange={v => set({ period: v })} /></Cell>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 14 }}>
-        <Cell label="НДС"><Seg mono options={VAT_OPTIONS.map(v => ({ value: v, label: v + '%' }))} value={f.vat_rate} onChange={v => set({ vat_rate: v })} /></Cell>
+        <Cell label="НДС">
+          <div style={{ display: 'flex', gap: 6 }}>
+            <select value={f.vat_rate} onChange={e => set({ vat_rate: +e.target.value })} style={{ ...inp, flex: '0 0 44%', fontFamily: MONO }}>
+              {VAT_OPTIONS.map(v => <option key={v} value={v}>{v}%</option>)}
+            </select>
+            <input readOnly value={vatAmount ? fmt(vatAmount) + ' ₽' : '—'} title="Сумма НДС по ставке (не редактируется)"
+              style={{ ...inp, flex: 1, minWidth: 0, fontFamily: MONO, textAlign: 'right', background: 'var(--bg-subtle)', color: 'var(--text-muted)' }} />
+          </div>
+        </Cell>
         <Cell label="Статья"><SingleSelect value={f.article_id} onChange={v => set({ article_id: v })} options={artOpts} placeholder="не выбрана" emptyLabel="— не выбрано —" /></Cell>
-        <Cell label="Контрагент"><SingleSelect value={f.counterparty_id} onChange={v => set({ counterparty_id: v })} options={cpOpts} placeholder="выберите или введите" emptyLabel="— не выбрано —" /></Cell>
+        <Cell label="Контрагент"><SingleSelect value={f.counterparty_id} onChange={onCounterparty} options={cpOpts} placeholder="выберите или введите" emptyLabel="— не выбрано —" /></Cell>
         <Cell label="№ ДС"><input value={f.ds_num} onChange={e => set({ ds_num: e.target.value })} placeholder="—" style={{ ...inp, fontFamily: MONO }} /></Cell>
         <Cell label="№ счёта"><input value={f.invoice} onChange={e => set({ invoice: e.target.value })} placeholder="—" style={{ ...inp, fontFamily: MONO }} /></Cell>
         <Cell label="Дата счёта"><input type="date" value={f.invoice_date} onChange={e => set({ invoice_date: e.target.value })} style={inp} /></Cell>
@@ -218,6 +251,14 @@ export default function Operations2() {
   })
 
   const saveCreate = async () => {
+    const f = createForm
+    const isPaid = f.status === 'ОПЛАЧЕНО'
+    const miss = []
+    if (!f.period) miss.push('период')
+    if (!f.article_id) miss.push('статья')
+    if (!f.counterparty_id) miss.push('контрагент')
+    if (isPaid) { if (!f.date) miss.push('дата'); if (!f.bank) miss.push('банк') }
+    if (miss.length) { alert('Заполните обязательные поля: ' + miss.join(', ')); return }
     setSaving(true)
     try { await api(tok()).post('/operations/', cleanOp(createForm)); setCreateForm(emptyForm()); setCreateOpen(false); loadOps() }
     catch (e) { alert(e.response?.data?.detail || 'Не удалось создать') } finally { setSaving(false) }
@@ -314,14 +355,14 @@ export default function Operations2() {
       case 'date': return <span style={{ fontFamily: MONO }}>{fmtDate(o.date) || '—'}</span>
       case 'status': { const [bg, fg, dot] = statusChip(o.status); return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: bg, color: fg, borderRadius: 8, padding: '3px 8px', fontFamily: MONO, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', whiteSpace: 'nowrap' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: dot }} />{o.status}</span> }
       case 'dz': { const rs = o.receivable_status; const meta = { overdue: ['Просрочка', 'var(--dot-overdue)'], current: ['Текущая', 'var(--dot-current-dz)'], future: ['План', 'var(--accent)'] }[rs]; return meta ? <span title={meta[0]} style={{ width: 10, height: 10, borderRadius: '50%', background: meta[1], display: 'inline-block' }} /> : <span style={{ color: '#C3C9D8' }}>—</span> }
-      case 'income': return o.income ? <span style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--income)' }}>{fmt(o.income)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
-      case 'expense': return o.expense ? <span style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(o.expense)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
+      case 'income': return o.income ? <span title={fmt2(o.income) + ' ₽'} style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--income)' }}>{fmt(o.income)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
+      case 'expense': return o.expense ? <span title={fmt2(o.expense) + ' ₽'} style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(o.expense)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
       case 'bank': return o.bank ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)' }}><span style={{ width: 8, height: 8, borderRadius: 2, background: BANK_COLOR[o.bank] || 'var(--text-faint)' }} />{o.bank}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
       case 'period': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.period || '—'}</span>
       case 'article': return <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{artName[o.article_id] || o.article || '—'}</span>
       case 'counterparty': return <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cpName[o.counterparty_id] || o.counterparty || '—'}</span>
       case 'vat': return <span style={{ fontFamily: MONO }}>{o.vat_rate ? o.vat_rate + '%' : <span style={{ color: '#C3C9D8' }}>—</span>}</span>
-      case 'vat_amount': return o.vat_amount ? <span style={{ fontFamily: MONO }}>{fmt(o.vat_amount)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
+      case 'vat_amount': return o.vat_fact ? <span title={fmt2(o.vat_fact) + ' ₽'} style={{ fontFamily: MONO }}>{fmt(o.vat_fact)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
       case 'ds_num': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.ds_num || '—'}</span>
       case 'invoice': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.invoice || '—'}</span>
       case 'invoice_date': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{fmtDate(o.invoice_date) || '—'}</span>
@@ -398,7 +439,7 @@ export default function Operations2() {
         {createOpen && canEdit && (
           <div style={{ ...CARD, position: 'relative', zIndex: 30, border: '1px solid #D7DEFA', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 8px 28px rgba(79,108,230,.10)', animation: 'opRise .28s cubic-bezier(0.22,1,0.36,1) both' }}>
             <HeadCard title="Новая операция" iconBg="var(--accent-tint)" iconFg="var(--accent)" iconPath={<><path d="M12 5v14" /><path d="M5 12h14" /></>} onClose={() => setCreateOpen(false)} />
-            <div style={{ padding: '20px 24px' }}><OpFields f={createForm} set={p => setCreateForm(s => ({ ...s, ...p }))} articles={articles} counterparties={counterparties} /></div>
+            <div style={{ padding: '20px 24px' }}><OpFields f={createForm} set={p => setCreateForm(s => ({ ...s, ...p }))} articles={articles} counterparties={counterparties} mode="create" /></div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', background: '#FBFCFE', borderTop: '1px solid var(--border-inner)' }}>
               <button onClick={saveCreate} disabled={saving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Добавить операцию</button>
               <button onClick={() => setCreateOpen(false)} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, padding: '9px 16px', fontSize: 13, cursor: 'pointer' }}>Отмена</button>

@@ -8,6 +8,7 @@ import DealDetail from '../components/sales/DealDetail'
 import DealBriefCell from '../components/DealBriefCell'
 import ValuePopover from '../components/ValuePopover'
 import api, { auth } from '../lib/api'
+import { DownloadOverlay } from '../components/LogoLoader'
 import { fmtMoney, fmtDate, mln } from '../lib/salesFormat'
 import { BITRIX_DEAL_URL } from '../lib/salesLayers'
 import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn } from '../components/salesTableKit'
@@ -40,6 +41,7 @@ const COLS = [
   { key: 'period_from', w: '84px', label: 'Старт РК', sortable: true },
   { key: 'period_to', w: '84px', label: 'Конец РК', sortable: true },
   { key: 'title', w: '1.5fr', label: 'Сделка', sortable: true },
+  { key: 'files', w: '120px', label: 'Файлы' },
 ]
 // по умолчанию скрыты (доступны в меню «Колонки»)
 const DEFAULT_HIDDEN = ['pipeline', 'period_from', 'period_to']
@@ -118,6 +120,8 @@ export default function SalesRegistry2() {
   const [syncingId, setSyncingId] = useState(null)   // id сделки в процессе синхронизации из Битрикса
   const [syncResult, setSyncResult] = useState(null) // { deal, changes, files, warnings } — попап результата
   const [bulkResult, setBulkResult] = useState(null) // сводка массовой синхронизации
+  const [syncBulkBusy, setSyncBulkBusy] = useState(false) // кубик-оверлей на время конвеера
+  const [syncProgress, setSyncProgress] = useState(null)  // { done, total } для прогресс-бара
   const [pushPreview, setPushPreview] = useState(null) // превью/результат заливки правок в Битрикс
   const [pushBusy, setPushBusy] = useState(false)
   const [advConfirm, setAdvConfirm] = useState(null) // подтверждение смены рекламодателя со сбросом бренда
@@ -319,14 +323,30 @@ export default function SalesRegistry2() {
     finally { setSyncingId(null) }
   }
   // Массовая синхронизация выбранных сделок
+  // Конвеер на клиенте: последовательно синхронизируем выбранные (пер-сделочный эндпоинт),
+  // обновляя прогресс «X из N» после каждой. Так виден живой прогресс и где отвалилось.
   const syncBulk = async () => {
-    if (!selDealIds.length) return
-    setSaving(true)
-    try {
-      const r = await api.post('/sales/deals/bulk-sync-from-bitrix', { deal_ids: selDealIds }, auth())
-      setBulkResult(r.data); setSelDeals({}); load(offset)
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка массовой синхронизации') }
-    finally { setSaving(false) }
+    const ids = selDealIds.slice(0, 50)   // кап 50 за раз
+    if (!ids.length) return
+    const dmap = Object.fromEntries(deals.map(d => [d.id, d]))
+    const acc = { green: 0, blue: 0, red: 0, errors: 0, skipped: 0, done: 0, total: ids.length, failed: [] }
+    setSaving(true); setSyncBulkBusy(true); setSyncProgress({ done: 0, total: ids.length })
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i]; const d = dmap[id]
+      if (d && String(d.bitrix_id || '').startsWith('local-')) { acc.skipped++; setSyncProgress({ done: i + 1, total: ids.length }); continue }
+      try {
+        const r = await api.post(`/sales/deals/${id}/sync-from-bitrix`, {}, { ...auth(), timeout: 0 })
+        const st = r.data && r.data.status
+        if (st && acc[st] != null) acc[st]++
+        acc.done++
+      } catch (e) {
+        acc.errors++
+        acc.failed.push({ id, title: (d && d.title) || ('#' + id), error: e.response?.data?.detail || 'ошибка синхронизации' })
+      }
+      setSyncProgress({ done: i + 1, total: ids.length })
+    }
+    setSaving(false); setSyncBulkBusy(false); setSyncProgress(null)
+    setBulkResult(acc); setSelDeals({}); load(offset)
   }
   // «Залить правки в Битрикс» — превью (commit=0) → подтверждение → запись (commit=1)
   const PUSH_FIELD_LABELS = { title: 'Название', advertiser_id: 'Рекламодатель', brand_id: 'Бренд', agency_id: 'Агентство', sales_rep_id: 'Продавец', account_manager_id: 'Аккаунт', payer_counterparty_id: 'Плательщик', period_from: 'Старт РК', period_to: 'Конец РК', product: 'Услуга', bitrix_stage: 'Стадия' }
@@ -431,6 +451,25 @@ export default function SalesRegistry2() {
       case 'sales_rep': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.sales_rep ?? '—'}</span>
       case 'period_from': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{d.period_from ? fmtDate(d.period_from) : '—'}</span>
       case 'period_to': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{d.period_to ? fmtDate(d.period_to) : '—'}</span>
+      case 'files': {
+        const fs = d.files || []; const ours = d.our_mps || []
+        if (!fs.length && !ours.length) return <span style={{ color: 'var(--text-faint)' }}>—</span>
+        const chip = (extra) => ({ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 6px', borderRadius: 6, fontSize: 10.5, cursor: 'pointer', whiteSpace: 'nowrap', ...extra })
+        return <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start' }}>
+          {fs.map(f => (
+            <span key={f.kind} onClick={e => { e.stopPropagation(); downloadDealFile(d.id, f.kind, f.filename) }}
+              title={f.filename || ''} style={chip({ border: '1px solid var(--accent)', color: 'var(--accent)' })}>
+              ⭳ {f.kind === 'mp' ? 'МП · Битрикс' : (FILE_LABEL[f.kind] || f.kind)}
+            </span>
+          ))}
+          {ours.map(m => (
+            <span key={'mp' + m.id} onClick={e => { e.stopPropagation(); router.push(`/deals/mp/${m.id}`) }}
+              title={(m.title || 'Медиаплан') + ' · ' + (m.status || '')} style={chip({ border: '1px solid var(--income)', color: 'var(--income)', background: 'var(--income-tint)' })}>
+              ↗ наш МП v{m.version}
+            </span>
+          ))}
+        </span>
+      }
       case 'title': {
         if (editTitleId === d.id) return <input autoFocus value={titleDraft} onChange={e => setTitleDraft(e.target.value)} onBlur={() => { saveTitle(d.id, titleDraft); setEditTitleId(null) }} onKeyDown={e => { if (e.key === 'Enter') { saveTitle(d.id, titleDraft); setEditTitleId(null) } else if (e.key === 'Escape') setEditTitleId(null) }} style={{ width: '100%', minWidth: 0, padding: '3px 6px', fontSize: 12, border: '1px solid var(--accent)', borderRadius: 6, outline: 'none', fontFamily: UI }} />
         return (
@@ -663,6 +702,7 @@ export default function SalesRegistry2() {
                     })()}
                     <button onClick={applyBulk} disabled={saving} style={{ ...btnAcc, flexShrink: 0 }}>Применить</button>
                     <button onClick={syncBulk} disabled={saving} title="Синхронизировать выбранные из Битрикса (до 50 за раз)" style={{ ...btnSec, color: 'var(--accent)', borderColor: 'var(--accent)', flexShrink: 0 }}>{saving ? '…' : `⟳ Синхронизировать`}</button>
+                    {selDealIds.length > 25 && <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', flexShrink: 0 }} title="Каждая сделка ≈ 6 сек">выбрано {selDealIds.length} — займёт ≈ {Math.ceil(selDealIds.length * 6 / 60)} мин</span>}
                     <button onClick={deleteBulk} disabled={saving} style={{ ...btnSec, color: 'var(--danger)', flexShrink: 0 }}>Удалить</button>
                     <button onClick={() => setSelDeals({})} style={{ ...btnSec, flexShrink: 0 }}>Сбросить</button>
                   </div>
@@ -827,12 +867,14 @@ export default function SalesRegistry2() {
           </div>
         )}
 
+        {syncBulkBusy && <DownloadOverlay label="Синхронизация сделок" progress={syncProgress} />}
+
         {/* ── Сводка массовой синхронизации ── */}
         {bulkResult && (
           <div onClick={() => setBulkResult(null)} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(20,26,40,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, boxShadow: 'var(--shadow-card)', width: 360, maxWidth: '92vw', padding: '20px 22px', fontFamily: UI }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>Синхронизировано: {bulkResult.total}</span>
+                <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>Обработано {bulkResult.done != null ? bulkResult.done : (bulkResult.total - (bulkResult.skipped || 0) - (bulkResult.errors || 0))} из {bulkResult.total}</span>
                 <span onClick={() => setBulkResult(null)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>✕</span>
               </div>
               {[['green', 'Совпадает', 'var(--income)'], ['blue', 'Мы полнее', 'var(--accent)'], ['red', 'Расхождения', 'var(--dot-overdue)']].map(([k, l, c]) => (
@@ -846,6 +888,17 @@ export default function SalesRegistry2() {
                 <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-row)', fontSize: 12, color: 'var(--text-muted)' }}>
                   {bulkResult.skipped > 0 && <span>пропущено (локальные): {bulkResult.skipped}. </span>}
                   {bulkResult.errors > 0 && <span style={{ color: '#C93A3E' }}>ошибок: {bulkResult.errors}</span>}
+                </div>
+              )}
+              {bulkResult.failed && bulkResult.failed.length > 0 && (
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-row)', maxHeight: 160, overflowY: 'auto' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#C93A3E', marginBottom: 4 }}>Где отвалилось:</div>
+                  {bulkResult.failed.map(f => (
+                    <div key={f.id} style={{ fontSize: 12, padding: '3px 0', color: 'var(--text-secondary)' }}>
+                      <span style={{ fontFamily: MONO, color: 'var(--text-primary)' }}>#{f.id}</span> {f.title}
+                      <div style={{ fontSize: 11, color: '#C93A3E' }}>{f.error}</div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

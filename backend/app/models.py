@@ -28,6 +28,7 @@ class RolePermission(Base):
     can_edit = Column(Integer, default=0)
     can_delete = Column(Integer, default=0)
     can_view_operations = Column(Integer, default=0)  # counterparties: показывать операции в карточке
+    can_approve = Column(Integer, default=0)          # media_plans: согласование/отклонение/архив
     # Видимость сделок: 'all' — все, 'own' — только свои (где пользователь сейлз/аккаунт
     # через SalesRep.user_id). Осмысленно для секции sales_dashboard.
     deals_scope = Column(String, default="all")
@@ -207,3 +208,19 @@ class LoginAttempt(Base):
     failed_count = Column(Integer, default=0, nullable=False)
     locked_until = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Notification(Base):
+    """In-app уведомление пользователю (общее, переиспользуемое). Создаётся при событиях
+    (напр. смена статуса медиаплана). Таблица создаётся через create_all() при старте."""
+    __tablename__ = "notifications"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(40))                 # напр. 'mp_status'
+    title = Column(String(300), nullable=False)
+    body = Column(Text)
+    link = Column(String(300))                # куда вести по клику, напр. /deals/mp/123
+    entity_type = Column(String(40))
+    entity_id = Column(Integer)
+    is_read = Column(Boolean, nullable=False, default=False, index=True)
+    created_at = Column(DateTime, server_default=func.now(), index=True)

@@ -27,7 +27,7 @@ SECTIONS = [
     {"key": "sales_registry",    "label": "Продажи · Реестр сделок",  "group": "Продажи", "actions": ["view", "edit"]},
     {"key": "sales_analytics",   "label": "Продажи · Аналитика",      "group": "Продажи", "actions": ["view", "edit"]},
     # Медиапланы (контур аккаунта): реестр и конструктор — раздельно.
-    {"key": "media_plans",        "label": "Медиапланы · Реестр",      "group": "Медиапланы", "actions": ["view", "edit"]},
+    {"key": "media_plans",        "label": "Медиапланы · Реестр",      "group": "Медиапланы", "actions": ["view", "edit", "approve"]},
     {"key": "media_plans_editor", "label": "Медиапланы · Конструктор", "group": "Медиапланы", "actions": ["view", "edit"]},
     {"key": "operations",        "label": "Операции",           "group": "Финансы",   "actions": ["view", "create", "edit", "delete"]},
     {"key": "import",            "label": "Импорт",             "group": "Финансы",   "actions": ["view"]},
@@ -52,7 +52,7 @@ SETTINGS_SECTIONS = ("settings_balances", "settings_articles", "settings_pipelin
 # Секции продаж (5-уровневый контроль со свои/все) — для UI-матрицы и gate-хелперов.
 SALES_SECTIONS = ("sales_dashboard", "sales_registry", "sales_analytics")
 
-ACTION_FIELDS = {"view": "can_view", "create": "can_create", "edit": "can_edit", "delete": "can_delete", "view_operations": "can_view_operations"}
+ACTION_FIELDS = {"view": "can_view", "create": "can_create", "edit": "can_edit", "delete": "can_delete", "view_operations": "can_view_operations", "approve": "can_approve"}
 
 
 def get_permissions_for_user(db: Session, user: User) -> dict:

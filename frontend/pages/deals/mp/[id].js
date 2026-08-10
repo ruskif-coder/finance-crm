@@ -21,6 +21,7 @@ export default function MpEditor() {
   const [savedId, setSavedId] = useState(null)
   const [downloading, setDownloading] = useState(false)   // оверлей 1c на время выгрузки
   const [versions, setVersions] = useState([])            // история версий (для дропдауна)
+  const [canApprove, setCanApprove] = useState(false)     // право media_plans:approve
 
   const [catalog, setCatalog] = useState(null)
   const [extraCatalog, setExtraCatalog] = useState(null)
@@ -44,7 +45,10 @@ export default function MpEditor() {
   useEffect(() => {
     if (typeof window === 'undefined' || !id) return
     if (!localStorage.getItem('token')) { router.push('/login'); return }
-    if (localStorage.getItem('role') !== 'admin') {
+    const _isAdm = localStorage.getItem('role') === 'admin'
+    { let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}
+      setCanApprove(_isAdm || can(p, 'media_plans', 'approve')) }
+    if (!_isAdm) {
       let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}
       if (!can(p, 'media_plans_editor', 'view')) { router.replace('/deals/mp'); return }
     }
@@ -120,6 +124,14 @@ export default function MpEditor() {
     } catch (e) { alert(e.response?.data?.detail || 'Ошибка сохранения') }
   }
 
+  const onTransition = async (to, comment) => {
+    if (!savedId) return
+    try {
+      await api.post(`/sales/media-plans/${savedId}/status`, { to, comment }, auth())
+      const r = await api.get(`/sales/media-plans/${savedId}`, auth()); setLoaded(r.data); loadVersions()
+    } catch (e) { alert(e.response?.data?.detail || 'Ошибка смены статуса') }
+  }
+
   const onExportXlsx = async () => {
     if (!savedId) { alert('Сначала сохраните медиаплан'); return }
     setDownloading(true)
@@ -147,6 +159,8 @@ export default function MpEditor() {
         onBack={() => router.push(backTo)}
         versions={versions}
         onOpenVersion={(vid) => router.push(`/deals/mp/${vid}`)}
+        canApprove={canApprove}
+        onTransition={onTransition}
         catalog={catalog || undefined} extraCatalog={extraCatalog || undefined}
         advertisers={advertisers} agencies={agencies} brandsByAdv={brandsByAdv} advCps={advCps} agencyCps={agencyCps}
         geoList={geoList} targetingCatalog={targetingCatalog} staff={staff || { 'Продавец': [], 'Аккаунт': [] }}

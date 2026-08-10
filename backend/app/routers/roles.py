@@ -27,6 +27,7 @@ class PermissionInput(BaseModel):
     can_edit: Optional[bool] = None
     can_delete: Optional[bool] = None
     can_view_operations: Optional[bool] = None
+    can_approve: Optional[bool] = None   # media_plans: согласование/отклонение/архив
     deals_scope: Optional[str] = None   # all | own — для секции sales_dashboard
 
 

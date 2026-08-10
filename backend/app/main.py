@@ -7,7 +7,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.database import engine, Base, SessionLocal
 from app.routers import (auth, operations, reports, counterparties, articles, settings,
                          users, roles, contracts, sales_directories, sales_dashboard,
-                         sales_reconcile, media_plans)
+                         sales_reconcile, media_plans, notifications)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -73,6 +73,14 @@ with engine.begin() as _conn:
     _conn.execute(text("ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_master BOOLEAN NOT NULL DEFAULT FALSE"))
     # Инвентарь строки МП (web/app/cross) — выбор при раздельном прайсе услуги.
     _conn.execute(text("ALTER TABLE sales_media_plan_rows ADD COLUMN IF NOT EXISTS inventory VARCHAR"))
+    # Статус-воркфлоу МП: причина отклонения + кто/когда принял решение (approve/reject/archive).
+    _conn.execute(text("ALTER TABLE sales_media_plans ADD COLUMN IF NOT EXISTS reject_reason TEXT"))
+    _conn.execute(text("ALTER TABLE sales_media_plans ADD COLUMN IF NOT EXISTS decided_by INTEGER"))
+    _conn.execute(text("ALTER TABLE sales_media_plans ADD COLUMN IF NOT EXISTS decided_at TIMESTAMPTZ"))
+    # Право согласования МП (approve/reject/archive) — новое действие RBAC.
+    _conn.execute(text("ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_approve INTEGER DEFAULT 0"))
+    # Индекс под выборку непрочитанных уведомлений пользователя.
+    _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notifications_user_unread ON notifications (user_id, is_read, created_at DESC)"))
     # Индексы под запросы витрины продаж (money-layer JOIN по (pipeline,bitrix_stage),
     # own-scope и GROUP BY по FK, срез по периоду). На проде уже есть — IF NOT EXISTS
     # делает это no-op; на чистой БД воссоздаёт (раньше индексы жили вне репозитория).
@@ -334,6 +342,7 @@ app.include_router(roles.router, prefix="/api/roles", tags=["roles"])
 app.include_router(contracts.router, prefix="/api/contracts", tags=["contracts"])
 app.include_router(sales_directories.router, prefix="/api/sales/directories", tags=["sales"])
 app.include_router(media_plans.router, prefix="/api/sales/media-plans", tags=["sales"])
+app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
 app.include_router(sales_reconcile.router, prefix="/api/sales/reconcile", tags=["sales"])
 # Монтируется ПОСЛЕ справочников/сверки, чтобы их префиксы не перехватывались
 app.include_router(sales_dashboard.router, prefix="/api/sales", tags=["sales"])

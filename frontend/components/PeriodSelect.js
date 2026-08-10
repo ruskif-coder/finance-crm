@@ -61,12 +61,12 @@ export function PeriodSelect({ value, onChange, allowQuarter = true, dense = fal
           </div>
         )}
         {mode === 'month' ? (
-          <select value={m} onChange={e => { setM(e.target.value); emit('month', y, e.target.value, q) }} style={{ ...sel, flex: 1, minWidth: 0 }}>
+          <select value={m} onChange={e => { const nm = e.target.value; const ny = y || (nm ? String(nowY) : ''); setM(nm); setY(ny); emit('month', ny, nm, q) }} style={{ ...sel, flex: 1, minWidth: 0 }}>
             <option value="">Месяц</option>
             {MONTHS_RU.map((mn, i) => <option key={i} value={String(i + 1).padStart(2, '0')}>{mn}</option>)}
           </select>
         ) : (
-          <select value={q} onChange={e => { setQ(e.target.value); emit('quarter', y, m, e.target.value) }} style={{ ...sel, flex: 1, minWidth: 0 }}>
+          <select value={q} onChange={e => { const nq = e.target.value; const ny = y || (nq ? String(nowY) : ''); setQ(nq); setY(ny); emit('quarter', ny, m, nq) }} style={{ ...sel, flex: 1, minWidth: 0 }}>
             <option value="">Квартал</option>
             {[1, 2, 3, 4].map(n => <option key={n} value={String(n)}>{n}-й кв</option>)}
           </select>

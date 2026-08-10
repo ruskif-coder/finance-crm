@@ -137,6 +137,9 @@ class SalesMediaPlan(Base):
     created_by = Column(Integer)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    reject_reason = Column(Text)                       # причина отклонения (rejected — терминальный)
+    decided_by = Column(Integer)                       # кто принял решение (approve/reject/archive)
+    decided_at = Column(DateTime(timezone=True))       # когда принято решение
 
 
 class SalesMediaPlanRow(Base):

@@ -274,9 +274,12 @@ function useDismiss(setSel) {
 export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalog = EXTRA_CATALOG, staff = STAFF, models = MODELS, modes = MODES,
   advertisers = [], agencies = [], brandsByAdv = {}, advCps = {}, agencyCps = {}, geoList = [], targetingCatalog = {},
   bound = false, initial, backLabel = 'Реестр медиапланов', onBack, versions = [], onOpenVersion,
+  canApprove = false, onTransition,
   onAddTargeting, onAddGeo, onCreateBrand, onSave, onExportXlsx, onPreviewPdf, onEditBrief, onLinkDeal, onCreateDeal }) {
   const init = initial || {};
   const [verOpen, setVerOpen] = useState(false);   // дропдаун истории версий
+  const [rejectOpen, setRejectOpen] = useState(false);   // модалка причины отклонения
+  const [rejectText, setRejectText] = useState('');
   // Новый МП — пустой (одна незаполненная строка); сохранённый — префилл из initial.
   const main = useAnimatedRows((init.rows && init.rows.length)
     ? init.rows.map((r, i) => ({ id: i + 1, position: r.position || '', format: r.format || '', model: r.model || 'CPM', inventory: r.inventory || 'cross', volume: r.volume || 0, unit: r.unit_price || 0, discount: r.discount || 0 }))
@@ -435,7 +438,32 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
       </div>
 
       <div id="mp-desktop" style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '26px 32px 40px', display: 'flex', justifyContent: 'center' }}>
+        {rejectOpen && (
+          <div onClick={() => setRejectOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(20,22,28,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div onClick={e => e.stopPropagation()} style={{ width: 430, maxWidth: '92vw', background: T.card, borderRadius: 16, padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 12, boxShadow: '0 16px 48px rgba(20,22,28,.3)' }}>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>Отклонить медиаплан</span>
+              <span style={{ fontSize: 12.5, color: T.t3 }}>Укажите причину — она сохранится и уйдёт автору в уведомлении.</span>
+              <textarea autoFocus value={rejectText} onChange={e => setRejectText(e.target.value)} rows={4} placeholder="Причина отклонения…" style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 10, border: `1px solid ${T.border}`, fontSize: 13, fontFamily: T.sans, outline: 'none', resize: 'vertical' }} />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <span onClick={() => setRejectOpen(false)} style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 14px', border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>Отмена</span>
+                <span onClick={() => { const r = rejectText.trim(); if (!r) return; setRejectOpen(false); onTransition?.('rejected', r); }} style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 14px', background: rejectText.trim() ? (T.danger || '#D64545') : '#B9A0A0', color: '#FFF', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: rejectText.trim() ? 'pointer' : 'default' }}>Отклонить</span>
+              </div>
+            </div>
+          </div>
+        )}
         <div style={{ width: '100%', maxWidth: 1760, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {init.status === 'rejected' && init.reject_reason && (
+            <div style={{ background: 'rgba(214,69,69,.10)', border: `1px solid ${(T.danger || '#D64545')}44`, borderRadius: 12, padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'baseline' }}>
+              <span style={{ fontSize: 12, fontWeight: 800, color: T.danger || '#D64545', whiteSpace: 'nowrap' }}>Отклонён</span>
+              <span style={{ fontSize: 13, color: T.t2 }}>{init.reject_reason}{init.decided_by_name ? ` — ${init.decided_by_name}` : ''}</span>
+            </div>
+          )}
+          {init.status === 'approved' && init.decided_by_name && (
+            <div style={{ background: 'rgba(30,158,106,.10)', border: `1px solid ${(T.income || '#1E9E6A')}44`, borderRadius: 12, padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'baseline' }}>
+              <span style={{ fontSize: 12, fontWeight: 800, color: T.income || '#1E9E6A', whiteSpace: 'nowrap' }}>Согласован</span>
+              <span style={{ fontSize: 13, color: T.t2 }}>{init.decided_by_name}</span>
+            </div>
+          )}
 
           {/* хлебные крошки + действия */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', animation: `riseIn .4s ${T.ease} both`, position: 'relative', zIndex: verOpen ? 5000 : undefined }}>
@@ -471,13 +499,25 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
             <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}>
               <span className="mp-outline" onClick={onPreviewPdf} style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 13px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>PDF</span>
               {onExportXlsx && <span className="mp-outline" onClick={onExportXlsx} style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 13px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>Excel</span>}
-              <span className="mp-outline" onClick={() => onSave?.({ brief: { ...bf, title: effectiveTitle, targeting: mergeTgDrafts() }, main: main.rows, extras: extras.rows, fc, goals, owners, action: 'draft' })} style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px', background: T.card, border: `1px solid ${T.accentBorder}`, color: T.accent, borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>Сохранить черновик</span>
-              {(() => { const submitOk = !emptyMain && calc.filled.length > 0; return (
-                <span className={submitOk ? 'mp-primary' : undefined} onClick={() => { if (submitOk) onSave?.({ brief: { ...bf, title: effectiveTitle, targeting: mergeTgDrafts() }, main: main.rows, extras: extras.rows, fc, goals, owners, action: 'submit' }); }}
-                  title={submitOk ? undefined : (calc.filled.length ? 'Заполните все строки' : 'Добавьте хотя бы одну строку размещения')}
-                  style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px', background: submitOk ? T.accent : '#8792A6', color: '#FFF', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: submitOk ? 'pointer' : 'default' }}>
-                  На согласование
-                </span>); })()}
+              {(() => {
+                const st = init.status || 'draft';
+                const submitOk = !emptyMain && calc.filled.length > 0;
+                const btn = (bg, color, bd) => ({ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px', background: bg, border: bd || 'none', color, borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' });
+                const save = (action) => onSave?.({ brief: { ...bf, title: effectiveTitle, targeting: mergeTgDrafts() }, main: main.rows, extras: extras.rows, fc, goals, owners, action });
+                return (<>
+                  {(st === 'draft' || !init.id) && <span className="mp-outline" onClick={() => save('draft')} style={btn(T.card, T.accent, `1px solid ${T.accentBorder}`)}>Сохранить черновик</span>}
+                  {(st === 'draft' || st === 'rejected' || st === 'approved') && (
+                    <span className={submitOk ? 'mp-primary' : undefined} onClick={() => { if (submitOk) save('submit'); }}
+                      title={submitOk ? undefined : (calc.filled.length ? 'Заполните все строки' : 'Добавьте хотя бы одну строку размещения')}
+                      style={{ ...btn(submitOk ? T.accent : '#8792A6', '#FFF'), cursor: submitOk ? 'pointer' : 'default' }}>
+                      {st === 'draft' ? 'На согласование' : 'Новая версия на согласование'}
+                    </span>)}
+                  {st === 'review' && <span onClick={() => onTransition?.('draft')} style={btn(T.card, T.t2, `1px solid ${T.border}`)}>Вернуть в черновик</span>}
+                  {st === 'review' && canApprove && <span onClick={() => onTransition?.('approved')} style={btn(T.income || '#1E9E6A', '#FFF')}>Согласовать</span>}
+                  {st === 'review' && canApprove && <span onClick={() => { setRejectText(''); setRejectOpen(true); }} style={btn(T.danger || '#D64545', '#FFF')}>Отклонить</span>}
+                  {(st === 'approved' || st === 'rejected') && canApprove && <span onClick={() => onTransition?.('archived')} style={btn(T.card, T.t3, `1px solid ${T.border}`)}>В архив</span>}
+                </>);
+              })()}
             </span>
           </div>
 

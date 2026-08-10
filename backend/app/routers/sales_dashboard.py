@@ -669,14 +669,22 @@ def deals_registry(
     page_ids = [d.id for d, _, _ in rows]
     manual = {}
     files_map = {}
+    our_mp_map = {}
     if page_ids:
         for o in (db.query(SalesDealFieldOverride)
                   .filter(SalesDealFieldOverride.deal_id.in_(page_ids)).all()):
             manual.setdefault(o.deal_id, []).append(o.field_name)
-        from app.sales.models import SalesDealFile
+        from app.sales.models import SalesDealFile, SalesMediaPlan
         for frec in (db.query(SalesDealFile)
                      .filter(SalesDealFile.deal_id.in_(page_ids)).all()):
             files_map.setdefault(frec.deal_id, []).append({"kind": frec.kind, "filename": frec.filename})
+        # Наши медиапланы, привязанные к сделке (последняя версия каждого group_id).
+        for p in (db.query(SalesMediaPlan)
+                  .filter(SalesMediaPlan.deal_id.in_(page_ids))
+                  .order_by(SalesMediaPlan.group_id, SalesMediaPlan.version.desc()).all()):
+            g = our_mp_map.setdefault(p.deal_id, {})
+            if p.group_id not in g:
+                g[p.group_id] = {"id": p.id, "title": p.title, "version": p.version, "status": p.status}
 
     return {
         "total": total,
@@ -721,6 +729,7 @@ def deals_registry(
             "account_manager_id": d.account_manager_id,
             "manual_fields": manual.get(d.id, []),
             "files": files_map.get(d.id, []),
+            "our_mps": list(our_mp_map.get(d.id, {}).values()),
             # состояние брифа для иконки: none — ещё не подгружали, empty — пусто,
             # filled — есть текст. Текст брифа тут НЕ отдаём (ленивая подгрузка по клику).
             "brief_state": ("none" if d.brief is None
@@ -1346,6 +1355,7 @@ def sync_bulk_from_bitrix(payload: SyncBulkIn, db: Session = Depends(get_db),
     from app.sales.bitrix.deal_sync import sync_deal_from_bitrix
     ids = list(dict.fromkeys(payload.deal_ids))[:50]
     summary = {"green": 0, "blue": 0, "red": 0, "errors": 0, "skipped": 0, "total": len(ids)}
+    failed = []   # где отвалилось: [{id, title, error}]
     for did in ids:
         deal = db.query(SalesDeal).filter(SalesDeal.id == did).first()
         if not deal or (deal.bitrix_id or "").startswith("local-"):
@@ -1358,8 +1368,11 @@ def sync_bulk_from_bitrix(payload: SyncBulkIn, db: Session = Depends(get_db),
         except Exception as e:
             logger.error("sync_bulk %s: %s", did, e)
             summary["errors"] += 1
+            failed.append({"id": did, "title": (deal.title or f"#{did}"), "error": str(e)[:160]})
+    summary["done"] = summary["green"] + summary["blue"] + summary["red"]   # успешно отработано
+    summary["failed"] = failed
     log_action(db, current_user, "sync_bulk_from_bitrix", "sales_deal", None,
-               f"массовая синхронизация {summary}")
+               f"массовая синхронизация: всего {summary['total']}, ок {summary['done']}, ошибок {summary['errors']}, пропущено {summary['skipped']}")
     return summary
 
 

@@ -133,6 +133,7 @@ export default function SettingsRoles() {
       can_edit: s.actions.includes('edit') ? !!draft[s.key]?.edit : undefined,
       can_delete: s.actions.includes('delete') ? !!draft[s.key]?.delete : undefined,
       can_view_operations: s.actions.includes('view_operations') ? !!draft[s.key]?.view_operations : undefined,
+      can_approve: s.actions.includes('approve') ? !!draft[s.key]?.approve : undefined,
       deals_scope: SCOPED_KEYS.includes(s.key) ? (roleScopes[roleId]?.[SCOPE_GROUP[s.key]] || 'all') : undefined,
     }))
   }
@@ -324,6 +325,13 @@ export default function SettingsRoles() {
                                   style={{ ...sel, fontSize: 13, padding: '5px 8px', width: '100%', maxWidth: 200 }}>
                                   {levelsFor(s).map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
                                 </select>
+                              )}
+                              {s.actions.includes('approve') && !isAdmin && (
+                                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, marginTop: 5, fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }} title="Право согласовывать/отклонять/архивировать МП">
+                                  <input type="checkbox" checked={!!editingRolePerms[r.id]?.[s.key]?.approve}
+                                    onChange={e => setEditingRolePerms(prev => ({ ...prev, [r.id]: { ...prev[r.id], [s.key]: { ...prev[r.id]?.[s.key], approve: e.target.checked } } }))} />
+                                  согласование
+                                </label>
                               )}
                             </td>
                           )

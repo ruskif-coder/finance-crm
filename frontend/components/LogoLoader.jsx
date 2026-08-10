@@ -47,13 +47,21 @@ export function PageLoader() {
   )
 }
 
-// Оверлей на время скачивания файла (1c спиннер) + подпись.
-export function DownloadOverlay({ label = 'Готовим файл…' }) {
+// Оверлей на время задачи (1c спиннер) + подпись + опциональный прогресс-бар {done,total}.
+export function DownloadOverlay({ label = 'Готовим файл…', progress = null }) {
+  const pct = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : null
   return (
     <div style={{ ...overlay, background: 'rgba(20,22,28,.42)', backdropFilter: 'blur(3px)' }} role="status" aria-label={label}>
       <div style={card}>
         <Cube variant="spinner" size={72} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: '#3a3f4a', letterSpacing: '.01em' }}>{label}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#3a3f4a', letterSpacing: '.01em' }}>
+          {label}{progress ? ` — ${progress.done} из ${progress.total}` : ''}
+        </span>
+        {pct != null && (
+          <div style={{ width: 220, height: 6, borderRadius: 3, background: '#e6e8ee', overflow: 'hidden' }}>
+            <div style={{ width: pct + '%', height: '100%', background: '#4F6CE6', transition: 'width .25s ease' }} />
+          </div>
+        )}
       </div>
     </div>
   )

@@ -11,14 +11,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional, List
 
 from app.database import get_db
 from app.routers.auth import get_current_user
-from app.permissions import require_permission
+from app.permissions import require_permission, ACTION_FIELDS
 from app.audit import log_action
-from app.models import User, Counterparty, RolePermission
+from app.routers.notifications import notify_many
+from app.models import User, Counterparty, RolePermission, Role
 from app.sales.models import (SalesMediaPlan, SalesMediaPlanRow, SalesMediaPlanExtra,
                               SalesAdvertiser, SalesBrand, SalesAgency, SalesGeo)
 
@@ -238,12 +240,16 @@ def create_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: U
         # Новую версию создаём ТОЛЬКО при изменении содержимого. Если контент совпал с
         # последней версией — версию не плодим, лишь при необходимости меняем статус
         # (напр. черновик → «на согласование»).
-        if _content_sig(data, data.rows, data.extras) == _plan_content_sig(db, existing):
+        if (existing.status in ("draft", "review")
+                and _content_sig(data, data.rows, data.extras) == _plan_content_sig(db, existing)):
             if data.status and existing.status != data.status:
                 existing.status = data.status
-                db.commit()
+                db.flush()
                 log_action(db, current_user, "submit_media_plan", "media_plan", existing.id,
                            f"{existing.title} v{existing.version} → {existing.status} (без изменений содержимого)")
+                if existing.status == "review":
+                    _notify_submit(db, existing, current_user)
+                db.commit()
             return {"id": existing.id, "group_id": existing.group_id, "version": existing.version,
                     "status": existing.status, "unchanged": True}
         version = (existing.version or 0) + 1
@@ -257,9 +263,12 @@ def create_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: U
         p.group_id = p.id
     _write_children(db, p.id, data)
     _enforce_cap(db, p.group_id)
+    db.flush()
+    log_action(db, current_user, "create_media_plan", "media_plan", p.id, f"{p.title} v{p.version}")
+    if p.status == "review":
+        _notify_submit(db, p, current_user)
     db.commit()
     db.refresh(p)
-    log_action(db, current_user, "create_media_plan", "media_plan", p.id, f"{p.title} v{p.version}")
     return {"id": p.id, "group_id": p.group_id, "version": p.version, "status": p.status}
 
 
@@ -271,8 +280,8 @@ def update_media_plan(plan_id: int, data: MpIn, db: Session = Depends(get_db), c
     _guard_owned(db, p, current_user, "media_plans_editor")
     # Отправленную/согласованную версию нельзя перетирать черновиком (иначе теряется
     # «версия неизменна»): правки идут только новой версией «на согласование».
-    if p.status in ("review", "approved", "archived"):
-        raise HTTPException(status_code=409, detail="Нельзя править отправленную/согласованную версию — создайте новую версию «на согласование»")
+    if p.status in ("review", "approved", "rejected", "archived"):
+        raise HTTPException(status_code=409, detail="Нельзя править отправленную/согласованную/отклонённую версию — создайте новую версию «на согласование»")
     _apply_fields(p, data)
     _write_children(db, p.id, data)
     db.commit()
@@ -306,6 +315,98 @@ def patch_media_plan(plan_id: int, data: MpPatch, db: Session = Depends(get_db),
     db.commit()
     log_action(db, current_user, "patch_media_plan", "media_plan", p.id, ", ".join(fields.keys()))
     return {"ok": True}
+
+
+# ── Статус-воркфлоу ──────────────────────────────────────────────────────────
+# draft→review (submit, через create); review→approved/rejected/draft(recall);
+# approved/rejected→archived. approve/reject/archive — право media_plans:approve.
+_MP_TRANSITIONS = {
+    "review": {"approved", "rejected", "draft"},
+    "approved": {"archived"},
+    "rejected": {"archived"},
+}
+
+
+def _has_perm(db, user, section, action):
+    if user.role and user.role.key == "admin":
+        return True
+    row = db.query(RolePermission).filter(RolePermission.role_id == user.role_id,
+                                          RolePermission.section == section).first()
+    return bool(row) and bool(getattr(row, ACTION_FIELDS.get(action, "can_view"), 0))
+
+
+def _approver_user_ids(db):
+    """id активных пользователей, кто может согласовывать МП (право approve) + админы."""
+    role_ids = [r.role_id for r in db.query(RolePermission)
+                .filter(RolePermission.section == "media_plans", RolePermission.can_approve == 1).all()]
+    admin = db.query(Role).filter(Role.key == "admin").first()
+    if admin:
+        role_ids.append(admin.id)
+    if not role_ids:
+        return []
+    return [u.id for u in db.query(User).filter(User.role_id.in_(role_ids), User.is_active == 1).all()]
+
+
+def _notify_submit(db, p, actor):
+    recips = set(_approver_user_ids(db))
+    recips.discard(actor.id if actor else None)
+    notify_many(db, recips, kind="mp_status", entity_type="media_plan", entity_id=p.id,
+                link=f"/deals/mp/{p.id}", title=f"Новый МП на согласование: {p.title or ('#' + str(p.id))}")
+
+
+def _notify_status(db, p, frm, to, actor):
+    name = p.title or ("#" + str(p.id))
+    titles = {"approved": f"МП согласован: {name}", "rejected": f"МП отклонён: {name}",
+              "archived": f"МП в архиве: {name}", "draft": f"МП отозван из согласования: {name}"}
+    title = titles.get(to)
+    if not title:
+        return
+    if to == "draft":                       # recall → уведомляем согласующих
+        recips, body = set(_approver_user_ids(db)), None
+    else:                                    # approve/reject/archive → автор + ответственные
+        recips = {p.created_by, p.sales_rep_id, p.account_manager_id, p.traffic_manager_id}
+        body = p.reject_reason if to == "rejected" else None
+    recips.discard(actor.id)
+    recips.discard(None)
+    notify_many(db, recips, kind="mp_status", title=title, body=body,
+                link=f"/deals/mp/{p.id}", entity_type="media_plan", entity_id=p.id)
+
+
+class MpStatusIn(BaseModel):
+    to: str
+    comment: Optional[str] = None
+
+
+@router.post("/{plan_id}/status")
+def change_status(plan_id: int, data: MpStatusIn, db: Session = Depends(get_db),
+                  current_user: User = Depends(get_current_user)):
+    """Переход по стейт-машине. approve/reject/archive — право media_plans:approve
+    (само-согласование разрешено); recall review→draft — автор (media_plans_editor)."""
+    p = db.query(SalesMediaPlan).filter(SalesMediaPlan.id == plan_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Медиаплан не найден")
+    frm, to = p.status, data.to
+    if to not in _MP_TRANSITIONS.get(frm, set()):
+        raise HTTPException(status_code=409, detail=f"Недопустимый переход: {frm} → {to}")
+    if frm == "review" and to == "draft":            # recall — автор отзывает свою заявку
+        _guard_owned(db, p, current_user, "media_plans_editor")
+    elif not _has_perm(db, current_user, "media_plans", "approve"):
+        raise HTTPException(status_code=403, detail="Недостаточно прав для согласования")
+    if to == "rejected":
+        reason = (data.comment or "").strip()
+        if not reason:
+            raise HTTPException(status_code=400, detail="Укажите причину отклонения")
+        p.reject_reason = reason
+    p.status = to
+    if to in ("approved", "rejected"):
+        p.decided_by = current_user.id
+        p.decided_at = func.now()
+    db.flush()
+    log_action(db, current_user, f"mp_status_{to}", "media_plan", p.id,
+               f"{frm}→{to}" + (f": {p.reject_reason}" if to == "rejected" else ""))
+    _notify_status(db, p, frm, to, current_user)
+    db.commit()
+    return {"id": p.id, "status": p.status, "reject_reason": p.reject_reason}
 
 
 def _names(db):
@@ -360,6 +461,8 @@ def _plan_full(db, p, n):
         "sales_rep_id": p.sales_rep_id, "account_manager_id": p.account_manager_id, "traffic_manager_id": p.traffic_manager_id,
         "amount_net": p.amount_net, "amount_gross": p.amount_gross, "deal_id": p.deal_id,
         "created_at": p.created_at, "updated_at": p.updated_at,
+        "reject_reason": p.reject_reason, "decided_by": p.decided_by, "decided_at": p.decided_at,
+        "decided_by_name": n["user"].get(p.decided_by),
         "advertiser": n["adv"].get(p.advertiser_id), "brand": n["brand"].get(p.brand_id), "agency": n["agency"].get(p.agency_id),
         "payer": n["cp"].get(p.payer_counterparty_id), "geo": n["geo"].get(p.geo_id),
         "rows": [{"position": r.position, "format": r.format, "model": r.model, "inventory": r.inventory,
