@@ -20,6 +20,7 @@ export default function Advertisers() {
   const [ok, setOk] = useState('')
   const [perms, setPerms] = useState({})
   const [search, setSearch] = useState('')
+  const [showHidden, setShowHidden] = useState(false)   // по умолчанию скрытые не показываем
   const [searchOpen, setSearchOpen] = useState(false)
   const [form, setForm] = useState(EMPTY)
   const [editId, setEditId] = useState(null)
@@ -84,6 +85,7 @@ export default function Advertisers() {
 
   // Выбор рекламодателей (производителей) для схлопывания — отдельно от брендов
   const [selAdv, setSelAdv] = useState({})   // { id: {name, deals} }
+  const [keepAdvId, setKeepAdvId] = useState(null)   // сторона слияния (кого оставить); null → авто
   const selAdvIds = Object.keys(selAdv).map(Number)
   const toggleAdv = (a) => {
     setSel({})   // взаимоисключение: либо производители, либо бренды
@@ -96,8 +98,9 @@ export default function Advertisers() {
 
   const mergeSelectedProducers = async () => {
     if (selAdvIds.length < 2) return
-    // оставляем того, у кого больше сделок — обычно это основная запись
-    const keepId = selAdvIds.slice().sort((x, y) => (selAdv[y].deals) - (selAdv[x].deals))[0]
+    // сторону выбирает пользователь; по умолчанию — у кого больше сделок
+    const keepId = (keepAdvId && selAdv[keepAdvId]) ? keepAdvId
+      : selAdvIds.slice().sort((x, y) => (selAdv[y].deals) - (selAdv[x].deals))[0]
     const keepName = selAdv[keepId].name
     const dropIds = selAdvIds.filter(id => id !== keepId)
     const dropNames = dropIds.map(id => selAdv[id].name).join(', ')
@@ -111,7 +114,26 @@ export default function Advertisers() {
         await api.post(`/sales/directories/producers/${keepId}/merge`, { source_id: dropId }, auth())
       }
       flash(`Схлопнуто ${dropIds.length} в «${keepName}»`)
-      setSelAdv({}); load()
+      setSelAdv({}); setKeepAdvId(null); load()
+    } catch (e) {
+      const d = e.response?.data?.detail
+      setError((Array.isArray(d) ? JSON.stringify(d) : d) || (e.response ? `HTTP ${e.response.status}` : `Сеть: ${e.message}`))
+    }
+  }
+
+  const restoreProducer = async (id) => {
+    try { await api.post(`/sales/directories/producers/${id}/restore`, {}, auth()); flash('Возвращён в справочник'); load() }
+    catch (e) { setError(e.response?.data?.detail || 'Не удалось вернуть') }
+  }
+
+  const deleteSelectedProducers = async () => {
+    if (!selAdvIds.length) return
+    if (!window.confirm(`Скрыть из справочника выбранных рекламодателей (${selAdvIds.length})?\nСделки не удаляются, записи деактивируются.`)) return
+    setError('')
+    try {
+      for (const id of selAdvIds) await api.delete(`/sales/directories/producers/${id}`, auth())
+      flash(`Скрыто: ${selAdvIds.length}`)
+      setSelAdv({}); setKeepAdvId(null); load()
     } catch (e) {
       const d = e.response?.data?.detail
       setError((Array.isArray(d) ? JSON.stringify(d) : d) || (e.response ? `HTTP ${e.response.status}` : `Сеть: ${e.message}`))
@@ -273,7 +295,9 @@ export default function Advertisers() {
     // без прокрутки в шапку — правка идёт прямо в строке
   }
 
+  const hiddenCount = items.filter(a => !a.is_active).length
   const filtered = items.filter(a => {
+    if (!showHidden && !a.is_active) return false
     const q = search.trim().toLowerCase()
     if (!q) return true
     return [a.short_name, a.name, a.name_en, a.name_ru].some(v => (v || '').toLowerCase().includes(q))
@@ -318,6 +342,9 @@ export default function Advertisers() {
           {mayEdit && <button style={btn(false)} onClick={() => showDupes ? setShowDupes(false) : loadDupes()}>
             {showDupes ? 'Скрыть дубли' : 'Найти дубли'}
           </button>}
+          <button style={btn(showHidden)} onClick={() => setShowHidden(v => !v)} title="Показать/спрятать скрытые записи">
+            {showHidden ? 'Прятать скрытые' : `Скрытые${hiddenCount ? ` (${hiddenCount})` : ''}`}
+          </button>
           {mayEdit && !editId && (
             <button style={{ ...btn(true), marginLeft: 'auto' }} onClick={() => showForm ? cancelForm() : setShowForm(true)}>
               {showForm ? 'Отмена' : '+ Рекламодатель'}
@@ -578,12 +605,17 @@ export default function Advertisers() {
                         </>
                       ) : mayEdit && (
                         <>
-                          <button style={{ ...btn(false), padding: '5px 12px', fontSize: 12, whiteSpace: 'nowrap' }}
-                            onClick={() => { setAttachToAdv(attachToAdv === a.id ? null : a.id); setCpQueryAdv('') }}>
-                            + контрагент
-                          </button>
-                          <button style={{ ...btn(false), padding: '5px 12px', fontSize: 12, whiteSpace: 'nowrap' }}
-                            onClick={() => startEdit(a)}>Изменить</button>
+                          {!a.is_active && <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--danger)', border: '1px solid var(--danger)', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap' }}>скрыт</span>}
+                          {!a.is_active && mayEdit
+                            ? <button style={{ ...btn(true), padding: '5px 12px', fontSize: 12, whiteSpace: 'nowrap' }} onClick={() => restoreProducer(a.id)}>Вернуть</button>
+                            : <>
+                                <button style={{ ...btn(false), padding: '5px 12px', fontSize: 12, whiteSpace: 'nowrap' }}
+                                  onClick={() => { setAttachToAdv(attachToAdv === a.id ? null : a.id); setCpQueryAdv('') }}>
+                                  + контрагент
+                                </button>
+                                <button style={{ ...btn(false), padding: '5px 12px', fontSize: 12, whiteSpace: 'nowrap' }}
+                                  onClick={() => startEdit(a)}>Изменить</button>
+                              </>}
                         </>
                       )}
                     </div>
@@ -605,15 +637,21 @@ export default function Advertisers() {
             borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-card)',
             padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 13, fontWeight: 600 }}>Выбрано производителей: {selAdvIds.length}</span>
-            <button style={{ ...btn(true), padding: '6px 14px', fontSize: 13 }}
-              disabled={selAdvIds.length < 2} onClick={mergeSelectedProducers}>Схлопнуть в один</button>
-            <button style={{ ...btn(false), padding: '6px 14px', fontSize: 13 }}
-              onClick={() => setSelAdv({})}>Сбросить</button>
             {selAdvIds.length >= 2 && (
-              <span style={{ fontSize: 11.5, color: 'var(--muted)', width: '100%' }}>
-                оставим того, у кого больше сделок
-              </span>
+              <>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>оставить:</span>
+                <select value={keepAdvId ?? ''} onChange={e => setKeepAdvId(e.target.value ? Number(e.target.value) : null)}
+                  style={{ ...inp, padding: '6px 10px', fontSize: 13, width: 'auto', maxWidth: 220 }}>
+                  <option value="">авто (больше сделок)</option>
+                  {selAdvIds.map(id => <option key={id} value={id}>{selAdv[id].name} · {selAdv[id].deals}</option>)}
+                </select>
+                <button style={{ ...btn(true), padding: '6px 14px', fontSize: 13 }} onClick={mergeSelectedProducers}>Слить в выбранного</button>
+              </>
             )}
+            <button style={{ ...btn(false), padding: '6px 14px', fontSize: 13, color: 'var(--danger)', borderColor: 'var(--danger)' }}
+              onClick={deleteSelectedProducers}>Скрыть выбранные</button>
+            <button style={{ ...btn(false), padding: '6px 14px', fontSize: 13 }}
+              onClick={() => { setSelAdv({}); setKeepAdvId(null) }}>Сбросить</button>
           </div>
         )}
 

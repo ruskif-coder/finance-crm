@@ -23,6 +23,7 @@ export default function Agencies() {
   const [ok, setOk] = useState('')
   const [perms, setPerms] = useState({})
   const [search, setSearch] = useState('')
+  const [showHidden, setShowHidden] = useState(false)   // по умолчанию скрытые не показываем
   const [form, setForm] = useState(EMPTY)
   const [editId, setEditId] = useState(null)
   const [editFull, setEditFull] = useState('')
@@ -44,6 +45,7 @@ export default function Agencies() {
 
   // Мультивыбор и склейка дублей агентств
   const [selAg, setSelAg] = useState({})   // { id: {name, deals} }
+  const [keepAgId, setKeepAgId] = useState(null)   // сторона слияния (кого оставить); null → авто
   const selAgIds = Object.keys(selAg).map(Number)
   const toggleAg = (a) => setSelAg(s => {
     const n = { ...s }
@@ -52,7 +54,8 @@ export default function Agencies() {
   })
   const mergeSelectedAgencies = async () => {
     if (selAgIds.length < 2) return
-    const keepId = selAgIds.slice().sort((x, y) => selAg[y].deals - selAg[x].deals)[0]  // оставляем с макс. сделками
+    const keepId = (keepAgId && selAg[keepAgId]) ? keepAgId
+      : selAgIds.slice().sort((x, y) => selAg[y].deals - selAg[x].deals)[0]  // по умолчанию — макс. сделок
     const keepName = selAg[keepId].name
     const dropIds = selAgIds.filter(id => id !== keepId)
     if (!window.confirm(
@@ -64,8 +67,24 @@ export default function Agencies() {
         await api.post(`/sales/directories/agencies/${keepId}/merge`, { source_id: dropId }, auth())
       }
       flash(`Схлопнуто ${dropIds.length} в «${keepName}»`)
-      setSelAg({}); load()
+      setSelAg({}); setKeepAgId(null); load()
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось слить агентства') }
+  }
+
+  const restoreAgency = async (id) => {
+    try { await api.post(`/sales/directories/agencies/${id}/restore`, {}, auth()); flash('Возвращено в справочник'); load() }
+    catch (e) { setError(e.response?.data?.detail || 'Не удалось вернуть') }
+  }
+
+  const deleteSelectedAgencies = async () => {
+    if (!selAgIds.length) return
+    if (!window.confirm(`Скрыть из справочника выбранные агентства (${selAgIds.length})?\nСделки не удаляются, записи деактивируются.`)) return
+    setError('')
+    try {
+      for (const id of selAgIds) await api.delete(`/sales/directories/agencies/${id}`, auth())
+      flash(`Скрыто: ${selAgIds.length}`)
+      setSelAg({}); setKeepAgId(null); load()
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось скрыть агентства') }
   }
 
   const load = async () => {
@@ -145,7 +164,9 @@ export default function Agencies() {
     setShowForm(false)
   }
 
+  const hiddenCount = items.filter(a => !a.is_active).length
   const filtered = items.filter(a => {
+    if (!showHidden && !a.is_active) return false
     const q = search.trim().toLowerCase()
     if (!q) return true
     return [a.short_name, a.name_en, a.name_ru, a.holding].some(v => (v || '').toLowerCase().includes(q))
@@ -207,6 +228,9 @@ export default function Agencies() {
           <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginRight: 4 }}>показано {filtered.length} из {items.length}</span>
           <input style={{ ...inp, width: 280 }} placeholder="название, холдинг, юрлицо…"
             value={search} onChange={e => setSearch(e.target.value)} />
+          <button style={btn(showHidden)} onClick={() => setShowHidden(v => !v)} title="Показать/спрятать скрытые записи">
+            {showHidden ? 'Прятать скрытые' : `Скрытые${hiddenCount ? ` (${hiddenCount})` : ''}`}
+          </button>
           {mayEdit && (
             <button style={{ marginLeft: 'auto', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '8px 15px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}
               onClick={() => formOpen ? cancelForm() : setShowForm(true)}>
@@ -380,16 +404,17 @@ export default function Agencies() {
                           )}
                         </div>
                         <div style={{ ...cell, display: 'flex', flexWrap: 'nowrap', gap: 6, justifyContent: 'flex-end', alignItems: 'flex-start' }}>
-                          {mayEdit && (
-                            <>
-                              <button style={{ ...btn(false), padding: '5px 12px', fontSize: 12, whiteSpace: 'nowrap' }}
-                                onClick={() => { setAttachTo(attachTo === a.id ? null : a.id); setCpQuery('') }}>
-                                + контрагент
-                              </button>
-                              <button style={{ ...btn(false), padding: '5px 12px', fontSize: 12, whiteSpace: 'nowrap' }}
-                                onClick={() => startEdit(a)}>Изменить</button>
-                            </>
-                          )}
+                          {!a.is_active && <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--danger)', border: '1px solid var(--danger)', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap' }}>скрыт</span>}
+                          {mayEdit && (!a.is_active
+                            ? <button style={{ ...btn(true), padding: '5px 12px', fontSize: 12, whiteSpace: 'nowrap' }} onClick={() => restoreAgency(a.id)}>Вернуть</button>
+                            : <>
+                                <button style={{ ...btn(false), padding: '5px 12px', fontSize: 12, whiteSpace: 'nowrap' }}
+                                  onClick={() => { setAttachTo(attachTo === a.id ? null : a.id); setCpQuery('') }}>
+                                  + контрагент
+                                </button>
+                                <button style={{ ...btn(false), padding: '5px 12px', fontSize: 12, whiteSpace: 'nowrap' }}
+                                  onClick={() => startEdit(a)}>Изменить</button>
+                              </>)}
                         </div>
                       </>
                     )}
@@ -411,15 +436,21 @@ export default function Agencies() {
             borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-card)',
             padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 13, fontWeight: 600 }}>Выбрано агентств: {selAgIds.length}</span>
-            <button style={{ ...btn(true), padding: '6px 14px', fontSize: 13 }}
-              disabled={selAgIds.length < 2} onClick={mergeSelectedAgencies}>Схлопнуть в один</button>
-            <button style={{ ...btn(false), padding: '6px 14px', fontSize: 13 }}
-              onClick={() => setSelAg({})}>Сбросить</button>
             {selAgIds.length >= 2 && (
-              <span style={{ fontSize: 11.5, color: 'var(--muted)', width: '100%' }}>
-                оставим того, у кого больше сделок; юрлица и сделки перейдут на него
-              </span>
+              <>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>оставить:</span>
+                <select value={keepAgId ?? ''} onChange={e => setKeepAgId(e.target.value ? Number(e.target.value) : null)}
+                  style={{ ...inp, padding: '6px 10px', fontSize: 13, width: 'auto', maxWidth: 220 }}>
+                  <option value="">авто (больше сделок)</option>
+                  {selAgIds.map(id => <option key={id} value={id}>{selAg[id].name} · {selAg[id].deals}</option>)}
+                </select>
+                <button style={{ ...btn(true), padding: '6px 14px', fontSize: 13 }} onClick={mergeSelectedAgencies}>Слить в выбранного</button>
+              </>
             )}
+            <button style={{ ...btn(false), padding: '6px 14px', fontSize: 13, color: 'var(--danger)', borderColor: 'var(--danger)' }}
+              onClick={deleteSelectedAgencies}>Скрыть выбранные</button>
+            <button style={{ ...btn(false), padding: '6px 14px', fontSize: 13 }}
+              onClick={() => { setSelAg({}); setKeepAgId(null) }}>Сбросить</button>
           </div>
         )}
       </div>

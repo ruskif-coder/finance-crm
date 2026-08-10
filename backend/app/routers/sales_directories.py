@@ -742,6 +742,16 @@ def deactivate_advertiser(advertiser_id: int, db: Session = Depends(get_db),
     return {"message": "Рекламодатель скрыт из справочника"}
 
 
+@router.post("/producers/{advertiser_id}/restore")
+def restore_advertiser(advertiser_id: int, db: Session = Depends(get_db),
+                       current_user: User = Depends(ADV_DELETE)):
+    adv = _require(db, SalesAdvertiser, advertiser_id, "Рекламодатель")
+    adv.is_active = True
+    db.commit()
+    log_action(db, current_user, "restore_sales_advertiser", "sales_advertiser", adv.id, adv.name)
+    return {"message": "Рекламодатель возвращён в справочник"}
+
+
 @router.post("/producers/{advertiser_id}/counterparties")
 def attach_producer_counterparty(advertiser_id: int, data: CounterpartyLink,
                                   db: Session = Depends(get_db),
@@ -1197,6 +1207,16 @@ def deactivate_agency(agency_id: int, db: Session = Depends(get_db),
     db.commit()
     log_action(db, current_user, "deactivate_sales_agency", "sales_agency", agency.id, agency.name)
     return {"message": "Агентство скрыто из справочника"}
+
+
+@router.post("/agencies/{agency_id}/restore")
+def restore_agency(agency_id: int, db: Session = Depends(get_db),
+                   current_user: User = Depends(AG_DELETE)):
+    agency = _require(db, SalesAgency, agency_id, "Агентство")
+    agency.is_active = True
+    db.commit()
+    log_action(db, current_user, "restore_sales_agency", "sales_agency", agency.id, agency.name)
+    return {"message": "Агентство возвращено в справочник"}
 
 
 # ==================== Слияние дублей рекламодателей ====================

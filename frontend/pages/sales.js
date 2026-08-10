@@ -222,6 +222,17 @@ export default function SalesRegistry2() {
 
   // фильтры/сортировка → перезагрузка с 1-й страницы (дебаунс 300 мс)
   useEffect(() => { const t = setTimeout(() => load(0), 300); return () => clearTimeout(t) }, [sel, gaps, hideArchive, searchQ, dateFrom, dateTo, sortKey, sortDir])
+
+  // Диплинк из справочника (счётчик сделок): ?advertiser_id / ?agency_id — ставим фильтр
+  // и показываем в т.ч. архивные (иначе часть сделок не видна).
+  useEffect(() => {
+    if (!router.isReady) return
+    const advId = router.query.advertiser_id, agId = router.query.agency_id
+    if (advId || agId) {
+      setSel(s => ({ ...s, ...(advId ? { advertiser_id: [Number(advId)] } : {}), ...(agId ? { agency_id: [Number(agId)] } : {}) }))
+      setHideArchive(false)
+    }
+  }, [router.isReady])
   useEffect(() => { const t = setTimeout(() => setSearchQ(search), 300); return () => clearTimeout(t) }, [search])
   useEffect(() => { setLastIdx(null) }, [deals])
 
