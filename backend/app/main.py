@@ -331,6 +331,18 @@ class ExceptionLoggingMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(ExceptionLoggingMiddleware)
 
+
+@app.middleware("http")
+async def _neutralize_ad_query(request: Request, call_next):
+    """Блокировщики рекламы (uBlock/AdGuard) режут запросы с "advertiser" в URL.
+    Фронт шлёт нейтральный producer_id — здесь возвращаем имя параметра обратно
+    в advertiser_id, чтобы эндпоинты/фильтры не меняли (единая точка на бэке)."""
+    qs = request.scope.get("query_string", b"")
+    if b"producer_id" in qs:
+        request.scope["query_string"] = qs.replace(b"producer_id", b"advertiser_id")
+    return await call_next(request)
+
+
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(operations.router, prefix="/api/operations", tags=["operations"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])

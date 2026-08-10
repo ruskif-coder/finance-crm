@@ -23,8 +23,7 @@ export default function DirectoryTabs({ active, actions }) {
   if (isAdmin || can(perms, 'contracts', 'view')) tabs.push({ id: 'contracts', label: 'Договора', href: '/contracts' })
   if (isAdmin || can(perms, 'dir_advertisers', 'view')) tabs.push({ id: 'advertisers', label: 'Рекламодатели', href: '/advertisers' })
   if (isAdmin || can(perms, 'dir_agencies', 'view')) tabs.push({ id: 'agencies', label: 'Агентства', href: '/agencies' })
-  // Временный инструмент сверки справочников с Битриксом — только админ.
-  if (isAdmin) tabs.push({ id: 'reconcile', label: 'Сверка с Битриксом', href: '/reconcile' })
+  if (isAdmin || can(perms, 'bx_reconcile', 'view')) tabs.push({ id: 'reconcile', label: 'Сверка с Битриксом', href: '/reconcile' })
 
   return (
     <div className="desktop-only" style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, padding: '10px 14px', marginBottom: 16 }}>

@@ -35,6 +35,7 @@ SECTIONS = [
     {"key": "contracts",         "label": "Договоры",           "group": "Справочники", "actions": ["view", "edit"]},
     {"key": "dir_advertisers",   "label": "Рекламодатели",      "group": "Справочники", "actions": ["view", "edit", "delete"]},
     {"key": "dir_agencies",      "label": "Агентства",          "group": "Справочники", "actions": ["view", "edit", "delete"]},
+    {"key": "bx_reconcile",      "label": "Сверка с Битриксом", "group": "Справочники", "actions": ["view", "edit"]},
     # Настройки разнесены на отдельные страницы (/settings/*) — по праву на раздел,
     # как справочники. Пользователи и Роли сюда НЕ входят (admin-only, см. выше).
     {"key": "settings_balances",    "label": "Настройки · Остатки",  "group": "Настройки", "actions": ["view", "edit"]},

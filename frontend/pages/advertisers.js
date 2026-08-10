@@ -466,7 +466,7 @@ export default function Advertisers() {
                         <div style={{ ...cell, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name_ru || dash}</div>
                         <div style={{ ...cell, fontFamily: MONO, fontSize: 12, textAlign: 'right' }}>
                           {a.deals > 0
-                            ? <a href={`/sales?advertiser_id=${a.id}`} target="_blank" rel="noreferrer"
+                            ? <a href={`/sales?producer_id=${a.id}`} target="_blank" rel="noreferrer"
                                  style={{ color: 'var(--accent)', textDecoration: 'none' }}
                                  title="Открыть сделки рекламодателя в реестре">{a.deals}</a>
                             : <span style={{ color: 'var(--text-faint)' }}>{a.deals}</span>}

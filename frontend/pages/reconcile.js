@@ -4,6 +4,7 @@ import { useRouter } from 'next/router'
 import Navbar from '../components/Navbar'
 import DirectoryTabs from '../components/DirectoryTabs'
 import api, { auth } from '../lib/api'
+import { can } from '../components/Navbar'
 const THRESHOLDS = [['Точное', 0.95], ['Высокое', 0.80], ['Среднее', 0.60]]
 
 const btn = { padding: '5px 10px', borderRadius: 8, border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', fontSize: 13 }
@@ -73,7 +74,14 @@ export default function Reconcile() {
     } catch (e) { /* счётчики некритичны — молчим */ }
     finally { setCountsLoading(false) }
   }
-  useEffect(() => { load() }, [kind])
+  useEffect(() => {
+    const role = localStorage.getItem('role') || ''
+    const perms = JSON.parse(localStorage.getItem('permissions') || '{}')
+    if (role !== 'admin' && !can(perms, 'bx_reconcile', 'view')) {
+      router.replace('/'); return
+    }
+    load()
+  }, [kind])
 
   const post = async (path, body) => {
     setBusy(true)

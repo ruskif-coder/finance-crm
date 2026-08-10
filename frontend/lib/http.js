@@ -17,6 +17,20 @@ import axios from 'axios'
 // 401 (протухшая/невалидная сессия) → чистим токен и уводим на логин.
 // 403 (нет прав) НЕ трогаем — пользователь залогинен, просто нет доступа к ресурсу.
 function attach401(instance) {
+  // Блокировщики рекламы (uBlock/AdGuard, EasyList) режут запросы с подстрокой
+  // "advertiser" в URL. Единая точка на весь фронт: подменяем advertiser_id →
+  // producer_id на исходящих запросах; бэкенд-мидлварь маппит обратно, поэтому
+  // ни фильтры реестра, ни эндпоинты трогать не нужно.
+  instance.interceptors.request.use((config) => {
+    if (typeof config.url === 'string' && config.url.includes('advertiser_id')) {
+      config.url = config.url.replace(/advertiser_id/g, 'producer_id')
+    }
+    if (config.params && typeof config.params === 'object' && 'advertiser_id' in config.params) {
+      config.params = { ...config.params, producer_id: config.params.advertiser_id }
+      delete config.params.advertiser_id
+    }
+    return config
+  })
   instance.interceptors.response.use(
     (r) => r,
     (err) => {
