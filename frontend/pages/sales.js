@@ -6,12 +6,13 @@ import SalesTabs from '../components/SalesTabs'
 import DealCreateForm from '../components/DealCreateForm'
 import DealDetail from '../components/sales/DealDetail'
 import DealBriefCell from '../components/DealBriefCell'
+import MoveDealDialog from '../components/sales/MoveDealDialog'
 import ValuePopover from '../components/ValuePopover'
 import api, { auth } from '../lib/api'
 import { DownloadOverlay } from '../components/LogoLoader'
 import { fmtMoney, fmtDate, mln } from '../lib/salesFormat'
 import { BITRIX_DEAL_URL } from '../lib/salesLayers'
-import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn } from '../components/salesTableKit'
+import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar } from '../components/salesTableKit'
 import useIsMobile from '../components/mobile/useIsMobile'
 import DealCardList from '../components/mobile/DealCardList'
 import DealsMobileControls from '../components/sales/DealsMobileControls'
@@ -22,8 +23,15 @@ import BottomSheet from '../components/mobile/BottomSheet'
 const REG_FILTER_DROPS = FILTER_DROPS.flatMap(fd => fd[0] === 'account_manager_id' ? [['sales_rep_id', 'Продавец'], fd] : [fd])
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
+// Светофор вероятности сделки (наша ручная разметка): цвет лампы по вероятности.
+const PROB_COLORS = { grey: 'var(--muted)', orange: 'var(--warning, #d97706)', green: 'var(--success)' }
+const PROB_ORDER = ['grey', 'orange', 'green']
+const PROB_LABEL = { grey: 'малая', orange: 'средняя', green: 'высокая' }
+
 const COLS = [
+  { key: 'prob', w: '26px', label: '', fixed: true },
   { key: 'sel', w: '52px', label: '', fixed: true },
+  { key: 'move', w: '1.25fr', label: 'Стадия', fixed: true },
   { key: 'brief', w: '46px', label: 'Бриф', fixed: true },
   { key: 'bitrix_id', w: '62px', label: 'BX_ID', sortable: true },
   { key: 'agency', w: '92px', label: 'Агентство', sortable: true },
@@ -31,16 +39,14 @@ const COLS = [
   { key: 'brand', w: '1fr', label: 'Бренд', sortable: true },
   { key: 'product', w: '1fr', label: 'Услуга', sortable: true },
   { key: 'period', w: '78px', label: 'Период', sortable: true },
-  { key: 'bitrix_stage', w: '1.15fr', label: 'Стадия', sortable: true },
   { key: 'amount', w: '88px', label: 'Сумма', sortable: true, right: true },
   { key: 'sales_rep', w: '92px', label: 'Продавец', sortable: true },
   { key: 'account_manager', w: '88px', label: 'Аккаунт', sortable: true },
   { key: 'payer', w: '1.15fr', label: 'Плательщик', sortable: true },
-  { key: 'money_layer', w: '74px', label: 'Слой' },
   { key: 'pipeline', w: '92px', label: 'Воронка', sortable: true },
   { key: 'period_from', w: '84px', label: 'Старт РК', sortable: true },
   { key: 'period_to', w: '84px', label: 'Конец РК', sortable: true },
-  { key: 'title', w: '1.5fr', label: 'Сделка', sortable: true },
+  { key: 'title', w: '2.5fr', label: 'Сделка', sortable: true },
   { key: 'files', w: '120px', label: 'Файлы' },
 ]
 // по умолчанию скрыты (доступны в меню «Колонки»)
@@ -63,6 +69,8 @@ export default function SalesRegistry2() {
 
   const [deals, setDeals] = useState([])
   const [dealsTotal, setDealsTotal] = useState(0)
+  const [probPick, setProbPick] = useState(null)   // {dealId, rect} — пикер светофора вероятности
+  const [moveDeal, setMoveDeal] = useState(null)   // сделка в диалоге движения по каталогу
   const [offset, setOffset] = useState(0)
   const [summary, setSummary] = useState(null)
   const [pageSize, setPageSize] = useState(100)
@@ -156,7 +164,7 @@ export default function SalesRegistry2() {
     setDragIdx(null)
   }
   // чекбокс (при праве) → бриф → переставленные видимые колонки (генерация — внутри «Сделка»).
-  const visibleCols = [canEdit ? COL_BY_KEY.sel : null, COL_BY_KEY.brief, ...colOrder.map(k => COL_BY_KEY[k]).filter(c => c && !hidden.has(c.key))].filter(Boolean)
+  const visibleCols = [COL_BY_KEY.prob, canEdit ? COL_BY_KEY.sel : null, COL_BY_KEY.brief, COL_BY_KEY.move, ...colOrder.map(k => COL_BY_KEY[k]).filter(c => c && !hidden.has(c.key))].filter(Boolean)
   const gridTemplate = visibleCols.map(c => c.w).join(' ')
   const isMobile = useIsMobile()
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -192,6 +200,20 @@ export default function SalesRegistry2() {
     const known = new Set(dir.map(o => o.value))
     const orphans = (fopts.product || []).filter(o => o && !known.has(o.value))
     return [...dir, ...orphans]
+  })()
+
+  // Опции для МАССОВОЙ смены стадии: плоский список ПРОСТЫХ имён стадий.
+  // В fopts.bitrix_stage value = "воронка\x1fстадия" (составной ключ фильтра, чтобы
+  // одноимённые стадии в разных воронках фильтровались независимо). В bitrix_stage
+  // сделки должно лечь ТОЛЬКО имя стадии — иначе в базу утекает "Песочница\x1fМП…"
+  // и в реестре плодятся стадии-двойники. Дедуп по имени.
+  const stageEditOpts = (() => {
+    const seen = new Set(); const out = []
+    for (const o of (fopts.bitrix_stage || [])) {
+      const name = o.label ?? String(o.value).split('\x1f').pop()
+      if (name && !seen.has(name)) { seen.add(name); out.push({ value: name, label: name }) }
+    }
+    return out
   })()
 
   const buildBase = () => {
@@ -256,6 +278,8 @@ export default function SalesRegistry2() {
       if (v === '__clear__') { body[k] = null; any = true }
       else if (v !== '' && v !== null) { body[k] = STR.includes(k) ? v : Number(v); any = true }
     }
+    // Стадия — только простое имя: срезаем возможный составной ключ "воронка\x1fстадия".
+    if (typeof body.bitrix_stage === 'string' && body.bitrix_stage.includes('\x1f')) body.bitrix_stage = body.bitrix_stage.split('\x1f').pop()
     if (!any) { setErr('Заполните хотя бы одно поле для изменения'); return }
     setSaving(true); setErr('')
     try {
@@ -323,6 +347,13 @@ export default function SalesRegistry2() {
   }
   const templateTitle = (d) => [d.advertiser, d.brand, d.agency, d.product, d.period].filter(v => v != null && String(v).trim() !== '').join(' | ')
   const saveTitle = async (id, title) => { try { await api.patch(`/sales/deals/${id}`, { title }, auth()); setDeals(prev => prev.map(x => x.id === id ? { ...x, title } : x)) } catch (e) { alert('Не удалось сохранить название') } }
+  const setProbability = async (id, color) => {
+    setProbPick(null)
+    const prev = deals.find(x => x.id === id)?.probability_color ?? null
+    setDeals(ps => ps.map(x => x.id === id ? { ...x, probability_color: color } : x))
+    try { await api.post(`/sales/deals/${id}/probability`, { color }, auth()) }
+    catch (e) { setDeals(ps => ps.map(x => x.id === id ? { ...x, probability_color: prev } : x)); alert('Не удалось сохранить вероятность') }
+  }
 
   // ── синхронизация одной сделки из Битрикса (кнопка ⟳ в строке) ──
   const syncDeal = async (d) => {
@@ -393,7 +424,7 @@ export default function SalesRegistry2() {
   // загрузка МП — заглушки (доработаем).
   const openDeal = (d) => { if (d.bitrix_id && !String(d.bitrix_id).startsWith('local-')) window.open(BITRIX_DEAL_URL(d.bitrix_id), '_blank') }
   const editDeal = () => alert('Редактирование сделки — скоро')
-  const addMp = () => alert('Загрузка/создание МП — скоро')
+  const addMp = (d) => router.push(`/deals/mp/new?deal=${d.id}`)
 
   const FILE_LABEL = { mp: 'МП', contract: 'Договор' }
   const ISSUE_LABELS = { advertiser: 'Рекламодатель', brand: 'Бренд', sales_rep: 'Продавец', account_manager: 'Аккаунт', mp: 'МП', contract: 'Договор' }
@@ -418,6 +449,28 @@ export default function SalesRegistry2() {
   const cellFor = (key, d) => {
     const none = !FILL[d.money_layer]; const n = FILL[d.money_layer] || 0
     switch (key) {
+      case 'move': {
+        const os = d.our_stage
+        return (
+          <span className={canEdit ? 'd2-cell' : ''} onClick={e => { e.stopPropagation(); if (canEdit) setMoveDeal(d) }}
+            title={canEdit ? 'Двинуть сделку' : (os?.name || '')}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: canEdit ? 'pointer' : 'default', overflow: 'hidden' }}>
+            {os ? (<>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)', flex: '1 1 auto', minWidth: 0 }}>{os.name}</span>
+              <StageLayerBar os={os} />
+              {canEdit && <span style={{ color: 'var(--accent)', fontWeight: 700, flex: '0 0 auto' }}>▸</span>}
+            </>) : <span style={{ color: 'var(--text-faint)' }}>{canEdit ? '— двинуть —' : '—'}</span>}
+          </span>
+        )
+      }
+      case 'prob': {
+        const col = PROB_COLORS[d.probability_color]
+        return (
+          <button onClick={e => { e.stopPropagation(); if (canEdit) setProbPick({ dealId: d.id, rect: e.currentTarget.getBoundingClientRect() }) }}
+            title={d.probability_color ? `Вероятность: ${PROB_LABEL[d.probability_color]}` : 'Вероятность не задана'}
+            style={{ display: 'inline-block', width: 14, height: 14, borderRadius: '50%', border: col ? 'none' : '1.5px solid var(--border-card)', background: col || 'transparent', cursor: canEdit ? 'pointer' : 'default', padding: 0 }} />
+        )
+      }
       case 'sel': return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           {canEdit && <input type="checkbox" checked={!!selDeals[d.id]} readOnly onClick={e => { e.stopPropagation(); toggleRow(deals.indexOf(d), d.id, e.shiftKey) }} title="Shift+клик — диапазон" style={{ cursor: 'pointer' }} />}
@@ -517,6 +570,19 @@ export default function SalesRegistry2() {
 
       {vpop && <ValuePopover anchor={vpop.rect} title={vpop.title} dealLabel={vpop.dealLabel} options={vpop.options} value={vpop.value} clearLabel={vpop.clearLabel} onAddNew={vpop.onAddNew}
         onPick={(v) => { vpop.apply(v); setVpop(null) }} onClose={() => setVpop(null)} />}
+      {probPick && (<>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 60 }} onClick={() => setProbPick(null)} />
+        <div style={{ position: 'fixed', zIndex: 61, left: Math.min(probPick.rect.left, window.innerWidth - 160), top: Math.min(probPick.rect.bottom + 6, window.innerHeight - 70),
+          background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)', padding: 8, display: 'flex', gap: 8, alignItems: 'center', fontFamily: UI }}>
+          {PROB_ORDER.map(c => (
+            <button key={c} onClick={() => setProbability(probPick.dealId, c)} title={PROB_LABEL[c]}
+              style={{ width: 22, height: 22, borderRadius: '50%', border: '1px solid var(--border-card)', background: PROB_COLORS[c], cursor: 'pointer', padding: 0 }} />
+          ))}
+          <span onClick={() => setProbability(probPick.dealId, null)} title="Снять" style={{ cursor: 'pointer', color: 'var(--text-faint)', fontSize: 14, marginLeft: 2 }}>✕</span>
+        </div>
+      </>)}
+      {moveDeal && <MoveDealDialog deal={moveDeal} onClose={() => setMoveDeal(null)}
+        onMoved={(upd) => { setDeals(prev => prev.map(x => x.id === moveDeal.id ? { ...x, ...upd } : x)); setMoveDeal(null) }} />}
       {periodEdit && (<>
         <div style={{ position: 'fixed', inset: 0, zIndex: 60 }} onClick={() => setPeriodEdit(null)} />
         <div style={{ position: 'fixed', zIndex: 61, left: Math.min(periodEdit.rect.left, window.innerWidth - 248), top: Math.min(periodEdit.rect.bottom + 6, window.innerHeight - 130),
@@ -703,7 +769,7 @@ export default function SalesRegistry2() {
                       const W = { flexShrink: 0, width: 132, maxWidth: 132, textOverflow: 'ellipsis' }
                       const bsel = (k, opt, ph, optsOverride) => <select style={{ ...bulkInp, ...W }} value={bulkForm[k]} onChange={e => setBulkForm({ ...bulkForm, [k]: e.target.value })}><option value="">{ph}</option>{(optsOverride || fopts[opt] || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
                       return <>
-                        {bsel('bitrix_stage', 'bitrix_stage', 'стадия —')}
+                        {bsel('bitrix_stage', 'bitrix_stage', 'стадия —', stageEditOpts)}
                         {bsel('product', 'product', 'услуга —', productOpts)}
                         <input type="month" style={{ ...bulkInp, flexShrink: 0, width: 120 }} value={bulkForm.period} onChange={e => setBulkForm({ ...bulkForm, period: e.target.value })} />
                         {bsel('advertiser_id', 'advertiser_id', 'рекл. —')}
@@ -801,7 +867,7 @@ export default function SalesRegistry2() {
                               : cellFor(c.key, d)}</Fragment>
                           })}
                         </div>
-                        {expandedId === d.id && <DealDetail deal={d} canEdit={canEdit} onOpen={openDeal} onEdit={editDeal} onAddMp={addMp} />}
+                        {expandedId === d.id && <DealDetail deal={d} canEdit={canEdit} onOpen={openDeal} onEdit={editDeal} onAddMp={addMp} onChanged={() => load(offset)} />}
                         </Fragment>
                       ))}
                       {!deals.length && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Нет сделок по выбранным фильтрам</div>}

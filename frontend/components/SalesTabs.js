@@ -18,6 +18,7 @@ export default function SalesTabs({ active }) {
     { id: 'dashboard', label: 'Дашборд', href: '/sales-dashboard', section: 'sales_dashboard' },
     { id: 'registry', label: 'Реестр сделок', href: '/sales', section: 'sales_registry' },
     { id: 'analytics', label: 'Аналитика', href: '/analytics', section: 'sales_analytics' },
+    { id: 'year_plan', label: 'Годовой план', href: '/deals/year-plan', section: 'year_plan' },
   ].filter(t => isAdmin || can(perms, t.section, 'view'))
   if (!tabs.length) return null
 

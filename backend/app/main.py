@@ -7,7 +7,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.database import engine, Base, SessionLocal
 from app.routers import (auth, operations, reports, counterparties, articles, settings,
                          users, roles, contracts, sales_directories, sales_dashboard,
-                         sales_reconcile, media_plans, notifications)
+                         sales_reconcile, media_plans, notifications, year_plan)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -51,6 +51,13 @@ with engine.begin() as _conn:
     _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS sync_status VARCHAR"))
     _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS sync_checked_at TIMESTAMP"))
     _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS sync_report JSONB"))
+    # T3: светофор вероятности (наша ручная разметка): grey|orange|green
+    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS probability_color VARCHAR"))
+    # E1/E2: движение сделки по нашему каталогу
+    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS our_stage_id INTEGER"))
+    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS realization_pipeline_id INTEGER"))
+    _conn.execute(text("ALTER TABLE sales_stage_phases ADD COLUMN IF NOT EXISTS is_realization BOOLEAN NOT NULL DEFAULT FALSE"))
+    _conn.execute(text("ALTER TABLE sales_stages ADD COLUMN IF NOT EXISTS requires_media_plan BOOLEAN NOT NULL DEFAULT FALSE"))
     # Справочник услуг: параметры для конструктора МП. sales_addon_services создаётся
     # через create_all. Промежуточная таблица вариантов больше не нужна.
     _conn.execute(text("DROP TABLE IF EXISTS sales_service_variants"))
@@ -65,6 +72,10 @@ with engine.begin() as _conn:
     # Привязка услуги к элементу СП 1050 Битрикса (синк по bx_id, не по имени).
     _conn.execute(text("ALTER TABLE sales_services ADD COLUMN IF NOT EXISTS bx_id VARCHAR"))
     _conn.execute(text("ALTER TABLE sales_services ADD COLUMN IF NOT EXISTS bx_title VARCHAR"))
+    # E0: маппинг услуга → статья выручки (мост «сделка → операция»)
+    _conn.execute(text("ALTER TABLE sales_services ADD COLUMN IF NOT EXISTS revenue_article_id INTEGER"))
+    # E1: под-этап 2/2/2 у наших стадий (STAGE_CATALOG key); money_layer выводится из него
+    _conn.execute(text("ALTER TABLE sales_stages ADD COLUMN IF NOT EXISTS stage_key VARCHAR"))
     _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_services_bx_id ON sales_services (bx_id)"))
     _conn.execute(text("ALTER TABLE sales_addon_services ADD COLUMN IF NOT EXISTS period VARCHAR"))
     # Рабочая группа + мастер — на РОЛИ (классификация продавец/аккаунт/трафик для
@@ -258,6 +269,124 @@ def seed_targeting_and_geo():
 seed_targeting_and_geo()
 
 
+def seed_stage_catalog():
+    """Идемпотентно засевает НАШ каталог стадий (E1) из минимального набора CSV.
+    Каждая стадия привязана к под-этапу 2/2/2 (STAGE_CATALOG key), из него выводится
+    money_layer. Полный сев — только если каталог пуст; иначе бэкфиллит stage_key для
+    строк, оставшихся с прошлой (money_layer-только) версии."""
+    from app.sales.models import SalesStagePhase, SalesStage
+    from app.sales.stages import STAGE_BY_KEY
+    CATALOG = [
+        ("Песочница", [
+            ("МП Подготовка", "media_plan", False),
+            ("МП согласование", "media_plan", False),
+            ("МП Отправлено", "media_plan", False),
+            ("Сделка не случилась", None, True),
+        ]),
+        ("Услуги", [
+            ("Бронь", "booking", False),
+            ("Готовятся к старту", "launch_prep", False),
+            ("В размещении", "launch", False),
+            ("Предварительная сверка", "launch", False),
+            ("Сделка сорвалась", None, True),
+        ]),
+        ("Документооборот (ДО)", [
+            ("Подготовка ДС", "closing", False),
+            ("Согласование ДС", "closing", False),
+            ("Подготовка закрывающих", "closing", False),
+            ("ЭДО", "closing", False),
+            ("Отчёты в ОРД", "closing", False),
+            ("Оплата", "closing", False),
+            ("Архив успешных сделок", "archive", False),
+        ]),
+    ]
+    layer_of = lambda key: (STAGE_BY_KEY[key]["money_layer"] if key in STAGE_BY_KEY else None)
+    db = SessionLocal()
+    try:
+        if not db.query(SalesStagePhase).first():
+            for pi, (pname, stages) in enumerate(CATALOG):
+                ph = SalesStagePhase(name=pname, sort_order=pi)
+                db.add(ph); db.flush()
+                for si, (sname, key, term) in enumerate(stages):
+                    db.add(SalesStage(phase_id=ph.id, name=sname, sort_order=si,
+                                      stage_key=key, money_layer=layer_of(key), is_terminal=term,
+                                      requires_media_plan=(not term and sname != "МП Подготовка")))
+            # этап «Услуги» — реализационный (воронка выбирается на сделке)
+            for ph in db.query(SalesStagePhase).filter(SalesStagePhase.name == "Услуги").all():
+                ph.is_realization = True
+            db.commit()
+            logger.info("seed_stage_catalog: каталог стадий засеян из CSV")
+            return
+        # каталог уже есть — бэкфилл stage_key по имени (миграция с money_layer-версии)
+        name_to_key = {sname: key for _, stages in CATALOG for sname, key, _ in stages}
+        changed = 0
+        for s in db.query(SalesStage).filter(SalesStage.stage_key.is_(None)).all():
+            key = name_to_key.get(s.name)
+            if key:
+                s.stage_key, s.money_layer, changed = key, layer_of(key), changed + 1
+        # добиваем флаг реализации у «Услуги» (для БД, засеянных до его появления)
+        for ph in db.query(SalesStagePhase).filter(SalesStagePhase.name == "Услуги",
+                                                   SalesStagePhase.is_realization.is_(False)).all():
+            ph.is_realization = True; changed += 1
+        # requires_media_plan по правилу: нетерминальные, кроме «МП Подготовка»
+        for s in db.query(SalesStage).all():
+            want = (not s.is_terminal) and s.name != "МП Подготовка"
+            if bool(s.requires_media_plan) != want:
+                s.requires_media_plan = want; changed += 1
+        if changed:
+            db.commit()
+            logger.info(f"seed_stage_catalog: backfill {changed} стадий/этапов")
+    except Exception:
+        logger.exception("seed_stage_catalog: ошибка")
+        db.rollback()
+    finally:
+        db.close()
+
+
+seed_stage_catalog()
+
+
+def backfill_deal_our_stage():
+    """Сидирует our_stage_id сделкам без него: (pipeline, bitrix_stage) → stage_key
+    (через sales_bitrix_stage_map) → первая наша стадия с этим stage_key. Работает
+    со всеми сделками независимо от происхождения; фолбэк — не трогаем (остаётся NULL)."""
+    from app.sales.models import SalesDeal, SalesStage, SalesBitrixStageMap
+    from app.sales.stages import build_stage_index
+    from app.sales.normalize import normalize_name
+    db = SessionLocal()
+    try:
+        stages = db.query(SalesStage).all()
+        if not stages:
+            return
+        # первая (по phase/sort) стадия на каждый stage_key
+        from app.sales.catalog import Catalog
+        cat = Catalog(db)
+        first_by_key = {}
+        for s in cat.stages:
+            if s.stage_key and s.stage_key not in first_by_key:
+                first_by_key[s.stage_key] = s.id
+        # карта (воронка, стадия) → stage_key
+        rows = db.query(SalesBitrixStageMap).all()
+        key_by_pair = {(normalize_name(r.pipeline), normalize_name(r.bitrix_stage)): r.stage_key for r in rows}
+        changed = 0
+        for d in db.query(SalesDeal).filter(SalesDeal.our_stage_id.is_(None)).all():
+            key = key_by_pair.get((normalize_name(d.pipeline or ""), normalize_name(d.bitrix_stage or "")))
+            sid = first_by_key.get(key) if key else None
+            if sid:
+                d.our_stage_id = sid; changed += 1
+        if changed:
+            db.commit()
+            logger.info(f"backfill_deal_our_stage: проставлено {changed} сделкам")
+    except Exception:
+        logger.exception("backfill_deal_our_stage: ошибка")
+        db.rollback()
+    finally:
+        db.close()
+
+
+backfill_deal_our_stage()
+
+
 def backfill_sales_scope():
     """Выравнивает deals_scope трёх sales-секций по строке sales_dashboard (источник
     отображения в UI). Раньше update_role писал scope только в sales_dashboard, а
@@ -358,6 +487,7 @@ app.include_router(notifications.router, prefix="/api/notifications", tags=["not
 app.include_router(sales_reconcile.router, prefix="/api/sales/reconcile", tags=["sales"])
 # Монтируется ПОСЛЕ справочников/сверки, чтобы их префиксы не перехватывались
 app.include_router(sales_dashboard.router, prefix="/api/sales", tags=["sales"])
+app.include_router(year_plan.router, prefix="/api/sales/year-plan", tags=["sales"])
 
 @app.get("/")
 def root():

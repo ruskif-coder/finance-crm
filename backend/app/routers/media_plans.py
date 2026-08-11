@@ -226,6 +226,207 @@ def _plan_content_sig(db, plan):
     return _content_sig(plan, rows, extras)
 
 
+class LinkDealIn(BaseModel):
+    deal_id: Optional[int] = None   # None → отвязать
+
+
+@router.get("/deals-lookup")
+def deals_lookup(q: str = "", sort: str = "id", direction: str = "desc",
+                 db: Session = Depends(get_db), current_user: User = Depends(MP_ED_VIEW)):
+    """Табличный поиск сделок для привязки МП: поиск по всем полям, сортировка, статус
+    «есть ли МП». Только сделки ДО «Брони» включительно (МП привязывают до реализации).
+    Доступ по праву конструктора МП (без прав продаж). Объявлен ДО /{plan_id}."""
+    from app.sales.models import (SalesDeal, SalesAdvertiser, SalesBrand, SalesAgency,
+                                  SalesRep, SalesStage, SalesMediaPlan)
+    from app.sales.catalog import Catalog
+    from sqlalchemy import or_
+    from sqlalchemy.orm import aliased
+
+    cat = Catalog(db)
+    # стадии до «Бронь» включительно (по основной цепочке)
+    allowed_ids = None
+    bron = next((s for s in cat.stages if s.name.strip().lower() == "бронь"), None)
+    if bron and bron.id in cat.flow:
+        allowed_ids = set(cat.flow[:cat.flow.index(bron.id) + 1])
+
+    adv = aliased(SalesAdvertiser); br = aliased(SalesBrand); ag = aliased(SalesAgency)
+    rep = aliased(SalesRep); acc = aliased(SalesRep); st = aliased(SalesStage)
+    qy = (db.query(SalesDeal, adv, br, ag, rep, acc, st)
+          .outerjoin(adv, adv.id == SalesDeal.advertiser_id)
+          .outerjoin(br, br.id == SalesDeal.brand_id)
+          .outerjoin(ag, ag.id == SalesDeal.agency_id)
+          .outerjoin(rep, rep.id == SalesDeal.sales_rep_id)
+          .outerjoin(acc, acc.id == SalesDeal.account_manager_id)
+          .outerjoin(st, st.id == SalesDeal.our_stage_id))
+    if allowed_ids is not None:
+        qy = qy.filter(or_(SalesDeal.our_stage_id.in_(allowed_ids), SalesDeal.our_stage_id.is_(None)))
+
+    qs = (q or "").strip()
+    if qs:
+        like = f"%{qs}%"
+        qy = qy.filter(or_(
+            SalesDeal.title.ilike(like), SalesDeal.bitrix_id.ilike(like),
+            adv.name.ilike(like), adv.short_name.ilike(like), br.name.ilike(like),
+            ag.name.ilike(like), ag.short_name.ilike(like), rep.name.ilike(like), acc.name.ilike(like)))
+
+    sortmap = {"id": SalesDeal.id, "bitrix_id": SalesDeal.bitrix_id, "title": SalesDeal.title,
+               "advertiser": adv.name, "brand": br.name, "agency": ag.short_name,
+               "sales_rep": rep.name, "account_manager": acc.name,
+               "period": SalesDeal.period_from, "amount": SalesDeal.amount, "our_stage": st.sort_order}
+    col = sortmap.get(sort, SalesDeal.id)
+    qy = qy.order_by(col.desc() if direction == "desc" else col.asc())
+    rows = qy.limit(300).all()
+
+    deal_ids = [r[0].id for r in rows]
+    mp_deals = set()
+    if deal_ids:
+        for (did,) in (db.query(SalesMediaPlan.deal_id)
+                       .filter(SalesMediaPlan.deal_id.in_(deal_ids)).distinct()):
+            mp_deals.add(did)
+
+    items = [{
+        "id": d.id, "bitrix_id": d.bitrix_id, "title": d.title,
+        "advertiser": (adv_r.short_name or adv_r.name) if adv_r else None,
+        "brand": br_r.name if br_r else None,
+        "agency": (ag_r.short_name or ag_r.name) if ag_r else None,
+        "sales_rep": rep_r.name if rep_r else None,
+        "account_manager": acc_r.name if acc_r else None,
+        "period": d.period_from.strftime("%Y-%m") if d.period_from else None,
+        "amount": d.amount,
+        "our_stage": st_r.name if st_r else None,
+        "has_mp": d.id in mp_deals,
+    } for d, adv_r, br_r, ag_r, rep_r, acc_r, st_r in rows]
+    return {"items": items}
+
+
+@router.post("/{plan_id}/link-deal")
+def link_deal(plan_id: int, data: LinkDealIn, db: Session = Depends(get_db),
+              current_user: User = Depends(MP_EDIT)):
+    """Привязать/отвязать сделку. Пишем во ВСЕ версии группы — связь переживает
+    версионирование (новые версии при «на согласование» наследуют её)."""
+    p = db.query(SalesMediaPlan).filter(SalesMediaPlan.id == plan_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Медиаплан не найден")
+    _guard_owned(db, p, current_user, "media_plans_editor")
+    if data.deal_id is not None:
+        from app.sales.models import SalesDeal
+        if not db.query(SalesDeal).filter(SalesDeal.id == data.deal_id).first():
+            raise HTTPException(status_code=400, detail="Сделка не найдена")
+    for pl in db.query(SalesMediaPlan).filter(SalesMediaPlan.group_id == p.group_id).all():
+        pl.deal_id = data.deal_id
+    db.commit()
+    log_action(db, current_user, "link_deal_media_plan", "media_plan", p.id, f"deal_id={data.deal_id}")
+    return {"message": "Сделка привязана" if data.deal_id else "Привязка снята", "deal_id": data.deal_id}
+
+
+class DealBriefIn(BaseModel):
+    brief: Optional[str] = None
+
+
+@router.get("/{plan_id}/deal-brief")
+def mp_get_deal_brief(plan_id: int, refresh: int = 0, db: Session = Depends(get_db),
+                      current_user: User = Depends(MP_ED_VIEW)):
+    """Бриф связанной сделки для конструктора МП (по праву МП, без прав продаж).
+    Ленивая подгрузка из Битрикса (поле ufCrm_1761318500) + кэш, как в реестре сделок."""
+    p = db.query(SalesMediaPlan).filter(SalesMediaPlan.id == plan_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Медиаплан не найден")
+    _guard_owned(db, p, current_user, "media_plans_editor")
+    from app.sales.models import SalesDeal
+    from app.routers.sales_dashboard import BRIEF_FIELD, _deal_is_local
+    from datetime import datetime as _dt
+    deal = db.query(SalesDeal).filter(SalesDeal.id == p.deal_id).first() if p.deal_id else None
+    if not deal:
+        return {"has_deal": False, "deal_id": None, "brief": "", "is_local": None, "synced_at": None}
+    if (deal.brief is None or refresh) and not _deal_is_local(deal):
+        from app.sales.bitrix.transport import vibecode_get
+        try:
+            r = vibecode_get(f"/deals/{deal.bitrix_id}", {})
+            d = (r.get("data") if isinstance(r, dict) else None) or {}
+            deal.brief = d.get(BRIEF_FIELD) or ""
+            deal.brief_synced_at = _dt.utcnow()
+            db.commit()
+        except Exception:
+            if deal.brief is None:
+                raise HTTPException(status_code=502, detail="Битрикс недоступен")
+    return {"has_deal": True, "deal_id": deal.id, "brief": deal.brief or "",
+            "is_local": _deal_is_local(deal),
+            "synced_at": deal.brief_synced_at.isoformat() if deal.brief_synced_at else None}
+
+
+@router.put("/{plan_id}/deal-brief")
+def mp_save_deal_brief(plan_id: int, data: DealBriefIn, db: Session = Depends(get_db),
+                       current_user: User = Depends(MP_EDIT)):
+    """Сохранение брифа связанной сделки (двусторонняя запись в Битрикс для не-локальных)."""
+    p = db.query(SalesMediaPlan).filter(SalesMediaPlan.id == plan_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Медиаплан не найден")
+    _guard_owned(db, p, current_user, "media_plans_editor")
+    if not p.deal_id:
+        raise HTTPException(status_code=400, detail="Медиаплан не привязан к сделке")
+    from app.sales.models import SalesDeal
+    from app.routers.sales_dashboard import BRIEF_FIELD, _deal_is_local
+    from datetime import datetime as _dt
+    deal = db.query(SalesDeal).filter(SalesDeal.id == p.deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    text_val = data.brief or ""
+    pushed = False
+    if not _deal_is_local(deal):
+        from app.sales.bitrix.transport import vibecode_patch
+        try:
+            vibecode_patch(f"/deals/{deal.bitrix_id}", {BRIEF_FIELD: text_val})
+            pushed = True
+        except Exception:
+            raise HTTPException(status_code=502, detail="Битрикс отклонил запись брифа")
+    deal.brief = text_val
+    deal.brief_synced_at = _dt.utcnow()
+    db.commit()
+    log_action(db, current_user, "save_deal_brief_mp", "media_plan", p.id, f"бриф {len(text_val)} симв.")
+    return {"brief": deal.brief, "pushed_to_bitrix": pushed, "is_local": _deal_is_local(deal)}
+
+
+@router.get("/deal-prefill/{deal_id}")
+def mp_deal_prefill(deal_id: int, db: Session = Depends(get_db),
+                    current_user: User = Depends(MP_ED_VIEW)):
+    """Данные сделки для префилла нового МП (создание МП из карточки сделки): реквизиты
+    брифа + free-text бриф. Доступ по праву конструктора МП."""
+    from app.sales.models import SalesDeal
+    from app.routers.sales_dashboard import BRIEF_FIELD, _deal_is_local
+    from datetime import datetime as _dt
+    from app.sales.models import SalesRep
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    # Ответственные МП = id ПОЛЬЗОВАТЕЛЕЙ; у сделки — id SalesRep (Битрикс) → user_id
+    def _rep_user(rid):
+        if not rid:
+            return None
+        r = db.query(SalesRep.user_id).filter(SalesRep.id == rid).first()
+        return r[0] if r else None
+    if deal.brief is None and not _deal_is_local(deal):
+        from app.sales.bitrix.transport import vibecode_get
+        try:
+            r = vibecode_get(f"/deals/{deal.bitrix_id}", {})
+            d = (r.get("data") if isinstance(r, dict) else None) or {}
+            deal.brief = d.get(BRIEF_FIELD) or ""
+            deal.brief_synced_at = _dt.utcnow()
+            db.commit()
+        except Exception:
+            pass
+    return {
+        "deal_id": deal.id, "title": deal.title,
+        "advertiser_id": deal.advertiser_id, "brand_id": deal.brand_id,
+        "agency_id": deal.agency_id, "payer_counterparty_id": deal.payer_counterparty_id,
+        "period": deal.period_from.strftime("%Y-%m") if deal.period_from else None,
+        "product": deal.product,   # услуга сделки → первая строка МП
+        "amount": deal.amount,     # сумма сделки (без НДС) → сумма первой строки МП
+        "sales_rep_id": _rep_user(deal.sales_rep_id),         # user id (для owners МП)
+        "account_manager_id": _rep_user(deal.account_manager_id),
+        "brief": deal.brief or "", "is_local": _deal_is_local(deal),
+    }
+
+
 @router.post("")
 def create_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: User = Depends(MP_EDIT)):
     """Новый МП или новая версия существующего (если задан group_id). Держим 3 версии."""

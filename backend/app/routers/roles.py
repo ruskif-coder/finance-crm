@@ -17,7 +17,10 @@ _SALES_SECTIONS = ("sales_dashboard", "sales_registry", "sales_analytics")
 # Медиапланы несут собственный (независимый от продаж) deals_scope: реестр и
 # конструктор делят одно значение, UI шлёт его в обе секции (см. settings/roles.js).
 _MP_SECTIONS = ("media_plans", "media_plans_editor")
-_SCOPED_SECTIONS = _SALES_SECTIONS + _MP_SECTIONS
+# Годовой план несёт собственный (независимый) deals_scope: «свои» = свой план сейлза,
+# «все» = мастер (видит/правит чужие и режим «Показать все»). Читается в year_plan.py::_is_master.
+_YP_SECTIONS = ("year_plan",)
+_SCOPED_SECTIONS = _SALES_SECTIONS + _MP_SECTIONS + _YP_SECTIONS
 
 
 class PermissionInput(BaseModel):
@@ -57,8 +60,10 @@ def _serialize_role(db: Session, role: Role) -> dict:
     user_count = db.query(User).filter(User.role_id == role.id).count()
     sd = rows.get("sales_dashboard")
     mp = rows.get("media_plans")
+    yp = rows.get("year_plan")
     deals_scope = "all" if role.key == "admin" else ((sd.deals_scope if sd else None) or "all")
     mp_scope = "all" if role.key == "admin" else ((mp.deals_scope if mp else None) or "all")
+    year_plan_scope = "all" if role.key == "admin" else ((yp.deals_scope if yp else None) or "all")
     return {
         "id": role.id,
         "key": role.key,
@@ -68,6 +73,7 @@ def _serialize_role(db: Session, role: Role) -> dict:
         "permissions": permissions,
         "deals_scope": deals_scope,
         "mp_scope": mp_scope,
+        "year_plan_scope": year_plan_scope,
         "staff_group": role.staff_group or "",
         "is_master": bool(role.is_master),
     }

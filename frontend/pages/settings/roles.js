@@ -15,6 +15,7 @@ import api, { auth } from '../../lib/http'
 const SCOPE_GROUP = {
   sales_dashboard: 'sales', sales_registry: 'sales', sales_analytics: 'sales',
   media_plans: 'mp', media_plans_editor: 'mp',
+  year_plan: 'yp',
 }
 const SCOPED_KEYS = Object.keys(SCOPE_GROUP)
 
@@ -81,7 +82,7 @@ export default function SettingsRoles() {
       res.data.roles.forEach(r => {
         draft[r.id] = JSON.parse(JSON.stringify(r.permissions))
         labels[r.id] = r.label
-        scopes[r.id] = { sales: r.deals_scope || 'all', mp: r.mp_scope || 'all' }
+        scopes[r.id] = { sales: r.deals_scope || 'all', mp: r.mp_scope || 'all', yp: r.year_plan_scope || 'all' }
         groups[r.id] = r.staff_group || ''
         masters[r.id] = !!r.is_master
       })

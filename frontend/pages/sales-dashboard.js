@@ -11,13 +11,19 @@ import ValuePopover from '../components/ValuePopover'
 import api, { auth } from '../lib/api'
 import { fmtMoney, fmtDate } from '../lib/salesFormat'
 import { BITRIX_DEAL_URL } from '../lib/salesLayers'
-import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn } from '../components/salesTableKit'
+import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar } from '../components/salesTableKit'
 import useIsMobile from '../components/mobile/useIsMobile'
 import DealsMobileControls from '../components/sales/DealsMobileControls'
 import DealCardList from '../components/mobile/DealCardList'
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
+// Светофор вероятности сделки (наша ручная разметка): цвет лампы по вероятности.
+const PROB_COLORS = { grey: 'var(--muted)', orange: 'var(--warning, #d97706)', green: 'var(--success)' }
+const PROB_ORDER = ['grey', 'orange', 'green']
+const PROB_LABEL = { grey: 'малая', orange: 'средняя', green: 'высокая' }
+
 const COLS = [
+  { key: 'prob', w: '26px', label: '', fixed: true },
   { key: 'brief', w: '30px', label: 'Бриф', fixed: true },
   { key: 'bitrix_id', w: '62px', label: 'BX_ID', sortable: true },
   { key: 'agency', w: '92px', label: 'Агентство', sortable: true },
@@ -25,16 +31,15 @@ const COLS = [
   { key: 'brand', w: '1fr', label: 'Бренд', sortable: true },
   { key: 'product', w: '1fr', label: 'Услуга', sortable: true },
   { key: 'period', w: '78px', label: 'Период', sortable: true },
-  { key: 'bitrix_stage', w: '1.15fr', label: 'Стадия', sortable: true },
+  { key: 'bitrix_stage', w: '1.25fr', label: 'Стадия', sortable: true },
   { key: 'amount', w: '88px', label: 'Сумма', sortable: true, right: true },
   { key: 'sales_rep', w: '92px', label: 'Продавец', sortable: true },
   { key: 'account_manager', w: '88px', label: 'Аккаунт', sortable: true },
   { key: 'payer', w: '1.15fr', label: 'Плательщик', sortable: true },
-  { key: 'money_layer', w: '74px', label: 'Слой' },
   { key: 'pipeline', w: '92px', label: 'Воронка', sortable: true },
   { key: 'period_from', w: '84px', label: 'Старт РК', sortable: true },
   { key: 'period_to', w: '84px', label: 'Конец РК', sortable: true },
-  { key: 'title', w: '1.5fr', label: 'Сделка', sortable: true },
+  { key: 'title', w: '2.5fr', label: 'Сделка', sortable: true },
 ]
 // по умолчанию скрыты (доступны в меню «Колонки»)
 const DEFAULT_HIDDEN = ['pipeline', 'period_from', 'period_to']
@@ -84,6 +89,7 @@ export default function SalesDashboard2() {
   const canDirAdv = can(perms, 'dir_advertisers', 'edit')
 
   const [deals, setDeals] = useState([])
+  const [probPick, setProbPick] = useState(null)   // {dealId, rect} — пикер светофора вероятности
   const [dealsTotal, setDealsTotal] = useState(0)
   const [summary, setSummary] = useState(null)
   const [pageSize, setPageSize] = useState(50)
@@ -161,7 +167,7 @@ export default function SalesDashboard2() {
     setDragIdx(null)
   }
   // brief фиксирован первым; далее — переставленные видимые колонки (кнопка генерации живёт внутри ячейки «Сделка»).
-  const visibleCols = [COL_BY_KEY.brief, ...colOrder.map(k => COL_BY_KEY[k]).filter(c => c && !hidden.has(c.key))].filter(Boolean)
+  const visibleCols = [COL_BY_KEY.prob, COL_BY_KEY.brief, ...colOrder.map(k => COL_BY_KEY[k]).filter(c => c && !hidden.has(c.key))].filter(Boolean)
   const gridTemplate = visibleCols.map(c => c.w).join(' ')
   const isMobile = useIsMobile()
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -277,6 +283,13 @@ export default function SalesDashboard2() {
   }
   const templateTitle = (d) => [d.advertiser, d.brand, d.agency, d.product, d.period].filter(v => v != null && String(v).trim() !== '').join(' | ')
   const saveTitle = async (id, title) => { try { await api.patch(`/sales/deals/${id}`, { title }, auth()); setDeals(prev => prev.map(x => x.id === id ? { ...x, title } : x)) } catch (e) { alert('Не удалось сохранить название') } }
+  const setProbability = async (id, color) => {
+    setProbPick(null)
+    const prev = deals.find(x => x.id === id)?.probability_color ?? null
+    setDeals(ps => ps.map(x => x.id === id ? { ...x, probability_color: color } : x))
+    try { await api.post(`/sales/deals/${id}/probability`, { color }, auth()) }
+    catch (e) { setDeals(ps => ps.map(x => x.id === id ? { ...x, probability_color: prev } : x)); alert('Не удалось сохранить вероятность') }
+  }
 
   const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }
 
@@ -290,6 +303,14 @@ export default function SalesDashboard2() {
   const cellFor = (key, d) => {
     const none = !FILL[d.money_layer]; const n = FILL[d.money_layer] || 0
     switch (key) {
+      case 'prob': {
+        const col = PROB_COLORS[d.probability_color]
+        return (
+          <button onClick={e => { e.stopPropagation(); if (canEdit) setProbPick({ dealId: d.id, rect: e.currentTarget.getBoundingClientRect() }) }}
+            title={d.probability_color ? `Вероятность: ${PROB_LABEL[d.probability_color]}` : 'Вероятность не задана'}
+            style={{ display: 'inline-block', width: 14, height: 14, borderRadius: '50%', border: col ? 'none' : '1.5px solid var(--border-card)', background: col || 'transparent', cursor: canEdit ? 'pointer' : 'default', padding: 0 }} />
+        )
+      }
       case 'brief': return <span className="d2-brief" style={{ display: 'inline-flex' }}><DealBriefCell deal={d} canEdit={canEdit} v2 /></span>
       case 'bitrix_id': return String(d.bitrix_id || '').startsWith('local-')
         ? (canEdit
@@ -302,7 +323,12 @@ export default function SalesDashboard2() {
       case 'product': return <span className={canEdit ? 'd2-cell' : ''} onClick={e => openPicker('service', d, e)} style={{ color: 'var(--text-secondary)' }} title={d.product || 'выбрать'}>{d.product ?? '—'}</span>
       case 'period': return <span className={canEdit ? 'd2-cell' : ''} onClick={e => { if (canEdit) setPeriodEdit({ dealId: d.id, rect: e.currentTarget.getBoundingClientRect(), month: d.period || '', current: d.period }) }}
         style={{ fontFamily: MONO, color: 'var(--text-secondary)' }} title={canEdit ? 'Изменить период (месяц старта РК)' : undefined}>{d.period ?? '—'}</span>
-      case 'bitrix_stage': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.bitrix_stage}>{d.bitrix_stage ?? '—'}</span>
+      case 'bitrix_stage': { const os = d.our_stage; return os
+        ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0, overflow: 'hidden' }} title={os.name}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)', flex: '1 1 auto', minWidth: 0 }}>{os.name}</span>
+            <StageLayerBar os={os} />
+          </span>
+        : <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.bitrix_stage}>{d.bitrix_stage ?? '—'}</span> }
       case 'amount': return <span style={{ fontFamily: MONO, fontWeight: 700, textAlign: 'right' }} title={d.amount != null ? new Intl.NumberFormat('ru-RU').format(d.amount) + ' ₽' : ''}>{fmtMoney(d.amount)}</span>
       case 'account_manager': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.account_manager ?? '—'}</span>
       case 'payer': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.payer}>{d.payer ?? '—'}</span>
@@ -346,6 +372,17 @@ export default function SalesDashboard2() {
 
       {vpop && <ValuePopover anchor={vpop.rect} title={vpop.title} dealLabel={vpop.dealLabel} options={vpop.options} value={vpop.value} clearLabel={vpop.clearLabel} onAddNew={vpop.onAddNew}
         onPick={(v) => { vpop.apply(v); setVpop(null) }} onClose={() => setVpop(null)} />}
+      {probPick && (<>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 60 }} onClick={() => setProbPick(null)} />
+        <div style={{ position: 'fixed', zIndex: 61, left: Math.min(probPick.rect.left, window.innerWidth - 160), top: Math.min(probPick.rect.bottom + 6, window.innerHeight - 70),
+          background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)', padding: 8, display: 'flex', gap: 8, alignItems: 'center', fontFamily: UI }}>
+          {PROB_ORDER.map(c => (
+            <button key={c} onClick={() => setProbability(probPick.dealId, c)} title={PROB_LABEL[c]}
+              style={{ width: 22, height: 22, borderRadius: '50%', border: '1px solid var(--border-card)', background: PROB_COLORS[c], cursor: 'pointer', padding: 0 }} />
+          ))}
+          <span onClick={() => setProbability(probPick.dealId, null)} title="Снять" style={{ cursor: 'pointer', color: 'var(--text-faint)', fontSize: 14, marginLeft: 2 }}>✕</span>
+        </div>
+      </>)}
       {periodEdit && (<>
         <div style={{ position: 'fixed', inset: 0, zIndex: 60 }} onClick={() => setPeriodEdit(null)} />
         <div style={{ position: 'fixed', zIndex: 61, left: Math.min(periodEdit.rect.left, window.innerWidth - 248), top: Math.min(periodEdit.rect.bottom + 6, window.innerHeight - 130),
@@ -540,7 +577,7 @@ export default function SalesDashboard2() {
                           style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 12, color: 'var(--text-primary)', cursor: 'pointer', background: expandedId === d.id ? 'var(--accent-tint)' : undefined }}>
                           {visibleCols.map(c => <Fragment key={c.key}>{cellFor(c.key, d)}</Fragment>)}
                         </div>
-                        {expandedId === d.id && <DealDetail deal={d} canEdit={canEdit} onOpen={openDeal} onEdit={editDeal} onAddMp={addMp} />}
+                        {expandedId === d.id && <DealDetail deal={d} canEdit={canEdit} onOpen={openDeal} onEdit={editDeal} onAddMp={addMp} onChanged={() => load()} />}
                         </Fragment>
                       ))}
                       {!deals.length && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Нет сделок по выбранным фильтрам</div>}

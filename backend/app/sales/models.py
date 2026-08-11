@@ -50,6 +50,10 @@ class SalesService(Base):
     # и не плодило дубли. bx_title — кэш битрикс-имени на момент привязки.
     bx_id = Column(String, index=True)
     bx_title = Column(String)
+    # Статья выручки для моста «сделка → операция» (E0): при закрытии сделки операция
+    # по этой услуге попадёт в соответствующую статью P&L (группа ВЫРУЧКА). FK на реестр
+    # статей финмодуля (app.models.Article). NULL — услуга ещё не сопоставлена.
+    revenue_article_id = Column(Integer, ForeignKey("articles.id"))
 
 
 class SalesAddonService(Base):
@@ -394,6 +398,61 @@ class SalesStageRequirement(Base):
     is_blocking = Column(Boolean, nullable=False, default=False)
 
 
+# ============ НАШ КАТАЛОГ СТАДИЙ (E1: движение сделки внутри системы) ============
+# Собственный, редактируемый каталог стадий, которым владеем МЫ (в отличие от
+# хардкода STAGE_CATALOG в stages.py). Стадии сгруппированы по ЭТАПАМ (орг-группировка:
+# Песочница / Услуги / ДО …). Каждая стадия несёт разметку 2/2/2 (money_layer — как ДДС
+# трактует деньги стадии) и ОДНУ привязку к битрикс воронка+стадия (1:1, чтобы движение
+# сделки однозначно толкалось и в Битрикс, пока от него не отказались).
+
+class SalesStagePhase(Base):
+    """Этап — орг-группировка наших стадий (Песочница / Услуги / ДО)."""
+    __tablename__ = "sales_stage_phases"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    # Этап реализации: его стадии берут воронку Битрикса не из стадии (там только
+    # bitrix_status_id), а из выбранной на сделке воронки (deal.realization_pipeline_id).
+    # При входе в такой этап диалог движения просит выбрать воронку под продукт.
+    is_realization = Column(Boolean, nullable=False, default=False)
+    stages = relationship("SalesStage", back_populates="phase",
+                          cascade="all, delete-orphan", order_by="SalesStage.sort_order")
+
+
+class SalesStage(Base):
+    """Наша стадия сделки. money_layer — разметка 2/2/2 для ДДС (планируемые/реализуемые/
+    фактические; None у терминальных). bitrix_pipeline_id + bitrix_status_id — единственная
+    привязка к битрикс воронка+стадия (для синка и толкания сделки обратно в Битрикс)."""
+    __tablename__ = "sales_stages"
+    id = Column(Integer, primary_key=True)
+    phase_id = Column(Integer, ForeignKey("sales_stage_phases.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    # Под-этап 2/2/2 — одна из 6 позиций STAGE_CATALOG (media_plan/booking/launch_prep/
+    # launch/closing/archive). Из него выводится money_layer (слой ДДС). None у терминальных.
+    stage_key = Column(String)
+    money_layer = Column(String)          # производное от stage_key; хранится для джойнов/отчётов
+    is_terminal = Column(Boolean, nullable=False, default=False)  # «не случилась»/«сорвалась»
+    # Требует привязанный медиаплан для входа (со стадии «МП согласование» и далее).
+    requires_media_plan = Column(Boolean, nullable=False, default=False)
+    bitrix_pipeline_id = Column(Integer, ForeignKey("sales_pipelines.id"))  # наша SalesPipeline.id
+    bitrix_status_id = Column(String)     # status_id стадии в этой воронке
+    phase = relationship("SalesStagePhase", back_populates="stages")
+
+
+class SalesDealChecklistState(Base):
+    """Отметки чек-листа полноты данных по сделке на конкретной стадии (кто/когда).
+    Механизм заложен; наполнение strict/soft-пунктов по стадиям — позже (v1 не блокирует)."""
+    __tablename__ = "sales_deal_checklist_state"
+    __table_args__ = (UniqueConstraint("deal_id", "stage_id", "item"),)
+    id = Column(Integer, primary_key=True)
+    deal_id = Column(Integer, ForeignKey("sales_deals.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage_id = Column(Integer, ForeignKey("sales_stages.id", ondelete="CASCADE"), nullable=False)
+    item = Column(String, nullable=False)
+    checked_by = Column(Integer)
+    checked_at = Column(DateTime(timezone=True))
+
+
 # ========================= СДЕЛКИ И ПРИЛОЖЕНИЯ =========================
 
 class SalesAnnex(Base):
@@ -426,6 +485,12 @@ class SalesDeal(Base):
     amount = Column(Float)
     amount_with_vat = Column(Float, nullable=True)  # сумма С НДС (клиентская); amount — БЕЗ НДС
     currency = Column(String, nullable=False, default="RUB")
+    # Светофор вероятности (наша ручная разметка, не из Битрикса): grey|orange|green|None.
+    # Серый — малая вероятность, оранжевый — средняя, зелёный — высокая.
+    probability_color = Column(String)
+    # E1/E2: движение сделки по НАШЕМУ каталогу стадий.
+    our_stage_id = Column(Integer, ForeignKey("sales_stages.id"))          # текущая стадия у нас
+    realization_pipeline_id = Column(Integer, ForeignKey("sales_pipelines.id"))  # выбранная воронка реализации
     counterparty_id = Column(Integer, ForeignKey("counterparties.id"))
     advertiser_id = Column(Integer, ForeignKey("sales_advertisers.id"))
     # Одиночная ссылка: один медиаплан — один бренд. Несколько брендов дают
@@ -585,6 +650,36 @@ class SalesDealFile(Base):
     size = Column(Integer)
     content_type = Column(String)
     synced_at = Column(DateTime, server_default=func.now())
+
+
+class SalesYearPlanLine(Base):
+    """Строка годового плана: один рекламодатель × один бренд × год.
+    Факт/бронь НЕ хранятся вычислением — по кнопке «Обновить данные о сделках»
+    метчатся реальные сделки и результат замораживается в `deals` (статика).
+
+    JSON-карты ключуются строковым индексом месяца '0'..'11' (JSON-объект не имеет
+    целочисленных ключей). Фронт нормализует обратно в числа.
+    """
+    __tablename__ = "sales_year_plan_lines"
+    id = Column(Integer, primary_key=True)
+    year = Column(Integer, nullable=False, index=True)
+    # Персональный план: строка принадлежит сейлзу. NULL — «общий/безхозный» (легаси/черновик).
+    # «Свой» план — sales_rep_id == SalesRep.user_id текущего юзера; мастер (year_plan.deals_scope
+    # 'all' или admin) видит и выбирает чужой. См. _own_rep_ids_or_all в дашборде.
+    sales_rep_id = Column(Integer, ForeignKey("sales_reps.id"), nullable=True, index=True)
+    # nullable — легальный черновик: строка без выбранного рекламодателя/бренда.
+    advertiser_id = Column(Integer, ForeignKey("sales_advertisers.id"), nullable=True)
+    brand_id = Column(Integer, ForeignKey("sales_brands.id"), nullable=True)
+    plan_amount = Column(Float, nullable=False, default=0)
+    months_on = Column(JSONB, nullable=False, default=list)     # [0|1]×12
+    sums = Column(JSONB, nullable=False, default=dict)          # {"m": сумма руками}
+    locks = Column(JSONB, nullable=False, default=dict)         # {"m": 1}
+    products = Column(JSONB, nullable=False, default=dict)      # {"m": [service_id,...]}
+    deals = Column(JSONB, nullable=False, default=dict)         # {"m": [[bx_id, amount, closed],...]}
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 class SalesMatchQueue(Base):

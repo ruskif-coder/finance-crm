@@ -8,6 +8,7 @@ const SECTIONS = [
   { id: 'balances', label: 'Остатки', href: '/settings/balances', perm: 'settings_balances' },
   { id: 'articles', label: 'Статьи', href: '/settings/articles', perm: 'settings_articles' },
   { id: 'pipelines', label: 'Воронки', href: '/settings/pipelines', perm: 'settings_pipelines' },
+  { id: 'stages', label: 'Стадии', href: '/settings/stages', perm: 'settings_pipelines' },
   { id: 'services', label: 'Услуги', href: '/settings/services', perm: 'settings_services' },
   { id: 'field_audit', label: 'Сверка полей', href: '/settings/field-audit', perm: 'settings_field_audit' },
   { id: 'audit', label: 'Журнал', href: '/settings/audit', perm: 'settings_audit' },

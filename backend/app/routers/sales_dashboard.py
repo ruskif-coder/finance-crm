@@ -29,8 +29,10 @@ from app.permissions import require_permission, require_any_permission
 from app.audit import log_action
 from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
                               SalesRep, SalesBrand, SalesBitrixSyncLog,
-                              SalesDealFieldOverride, SalesAgency)
+                              SalesDealFieldOverride, SalesAgency,
+                              SalesStage, SalesPipeline)
 from app.sales.stages import STAGE_CATALOG
+from app.sales.catalog import Catalog, stage_public
 import logging
 
 router = APIRouter()
@@ -172,8 +174,8 @@ def _apply_extra_filters(q, db, hide_archive=False, search=None, gaps=None):
     поиск (название/ID/рекламодатель/бренд), «незаполненные» (включая плательщика).
     Держим в одном месте, чтобы список и сводка считались по одинаковым условиям."""
     if hide_archive:
-        q = q.filter(or_(SalesBitrixStageMap.stage_key.is_(None),
-                         SalesBitrixStageMap.stage_key != "archive"))
+        q = q.filter(or_(SalesStage.stage_key.is_(None),
+                         SalesStage.stage_key != "archive"))
     if search:
         pattern = f"%{search.strip()}%"
         adv_ids = (db.query(SalesAdvertiser.id)
@@ -211,17 +213,15 @@ def _base_query(db: Session, date_from, date_to, pipeline, sales_rep_id,
                 account_manager_id, advertiser_id, money_layer,
                 bitrix_stage=None, brand_id=None, agency_id=None,
                 product=None, stage_key=None):
-    """Сделки, склеенные с маппингом стадий. Джойн LEFT и только по активным
-    строкам маппинга: неизвестная или намеренно отключённая стадия («Сделка
-    провалена») даёт NULL и попадает в «Без группы», а не исчезает."""
+    """Сделки, склеенные со слоем денег НАШЕЙ стадии (our_stage — мастер).
+    Джойн LEFT по our_stage_id: у сделки без нашей стадии (сид не сматчил —
+    «требует разбора») слой NULL → «Без группы», а не исчезает.
+    Битрикс-маппинг (SalesBitrixStageMap) больше НЕ мастер денег — только
+    легаси-мост при сидировании our_stage (см. app/sales/stage_resolve.py)."""
     q = db.query(SalesDeal,
-                 SalesBitrixStageMap.money_layer.label("layer"),
-                 SalesBitrixStageMap.stage_key.label("stage_key")).outerjoin(
-        SalesBitrixStageMap,
-        and_(SalesBitrixStageMap.pipeline == SalesDeal.pipeline,
-             SalesBitrixStageMap.bitrix_stage == SalesDeal.bitrix_stage,
-             SalesBitrixStageMap.is_active.is_(True)),
-    )
+                 SalesStage.money_layer.label("layer"),
+                 SalesStage.stage_key.label("stage_key")).outerjoin(
+        SalesStage, SalesStage.id == SalesDeal.our_stage_id)
 
     start, end = _month_bounds(date_from, False), _month_bounds(date_to, True)
     if start or end:
@@ -243,8 +243,8 @@ def _base_query(db: Session, date_from, date_to, pipeline, sales_rep_id,
         _in(SalesDeal.brand_id, brand_id),
         _in(SalesDeal.agency_id, agency_id),
         _in(SalesDeal.product, product),
-        _in(SalesBitrixStageMap.money_layer, money_layer),
-        _in(SalesBitrixStageMap.stage_key, stage_key),
+        _in(SalesStage.money_layer, money_layer),
+        _in(SalesStage.stage_key, stage_key),
     ):
         if condition is not None:
             q = q.filter(condition)
@@ -450,8 +450,8 @@ def dashboard_bonus(
     deals = (db.query(SalesDeal)
              .filter(SalesDeal.sales_rep_id.in_(rep_ids),
                      SalesDeal.period_from >= start, SalesDeal.period_from < end).all())
-    stage_key = {(m.pipeline, m.bitrix_stage): m.stage_key
-                 for m in db.query(SalesBitrixStageMap).all()}
+    # Слой/под-этап — от НАШЕЙ стадии сделки (our_stage — мастер), не от Битрикса.
+    stage_key_by_id = {s.id: s.stage_key for s in db.query(SalesStage).all()}
 
     # СК берём по агентству сделки (sales_agencies.sk_percent), дефолт — константа, если агентства нет.
     sk_by_agency = dict(db.query(SalesAgency.id, SalesAgency.sk_percent).all())
@@ -472,7 +472,7 @@ def dashboard_bonus(
             closed_sum += amt
             closed_our += net_of(amt, d.agency_id)
             continue
-        sk = stage_key.get((d.pipeline, d.bitrix_stage))
+        sk = stage_key_by_id.get(d.our_stage_id)
         if sk in _SANDBOX_KEYS:
             sandbox_cnt += 1
             sandbox_sum += amt
@@ -585,7 +585,7 @@ def deals_registry(
         "product": SalesDeal.product,
         "period": SalesDeal.period_from,
         "bitrix_stage": SalesDeal.bitrix_stage,
-        "money_layer": SalesBitrixStageMap.money_layer,
+        "money_layer": SalesStage.money_layer,
         "amount": SalesDeal.amount,
         "advertiser": adv_a.name,
         "brand": brand_a.name,
@@ -686,6 +686,8 @@ def deals_registry(
             if p.group_id not in g:
                 g[p.group_id] = {"id": p.id, "title": p.title, "version": p.version, "status": p.status}
 
+    cat = Catalog(db)   # наш каталог стадий — для our_stage/следующей стадии в строке
+
     return {
         "total": total,
         "limit": limit,
@@ -696,10 +698,14 @@ def deals_registry(
             "title": d.title,
             "pipeline": d.pipeline,
             "product": d.product,
+            "probability_color": d.probability_color,
             "period": d.period_from.strftime("%Y-%m") if d.period_from else None,
             "bitrix_stage": d.bitrix_stage,
             "money_layer": layer or NO_GROUP,
             "stage_key": stage_key,
+            "our_stage": stage_public(cat.by_id.get(d.our_stage_id)),
+            "our_next_stage": stage_public(cat.next_of(d.our_stage_id)),
+            "realization_pipeline_id": d.realization_pipeline_id,
             "agency": agencies.get(d.agency_id),
             "agency_full": agency_full.get(d.agency_id),
             "agency_id": d.agency_id,
@@ -811,6 +817,12 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
     changes = payload.dict(exclude_unset=True, exclude={"deal_ids"})
     if not changes:
         raise HTTPException(status_code=400, detail="Не задано ни одного поля")
+
+    # Стадия — денормализованный строковый ключ (только имя). Фронт-фильтр склеивает
+    # опции как "воронка\x1fстадия" (\x1f = разделитель): если такое значение прилетит
+    # в bitrix_stage, срезаем префикс, иначе в реестре плодятся стадии-двойники.
+    if isinstance(changes.get("bitrix_stage"), str) and "\x1f" in changes["bitrix_stage"]:
+        changes["bitrix_stage"] = changes["bitrix_stage"].split("\x1f")[-1]
 
     # own-scope: как в patch_deal — own-роль может назначать сделки только на себя
     own = _own_rep_ids_or_all(db, current_user)
@@ -1005,6 +1017,16 @@ class DealCreate(BaseModel):
     title: Optional[str] = None
 
 
+@router.get("/deals/whoami")
+def deal_whoami(db: Session = Depends(get_db),
+                current_user: User = Depends(require_permission("sales_registry", "view"))):
+    """Кто создаёт сделку: rep_id пользователя + его рабочая группа (seller/account/…) —
+    фронт формы автоподставляет продавца ИЛИ аккаунта. Объявлен ДО /deals/{deal_id}."""
+    r = db.query(SalesRep.id).filter(SalesRep.user_id == current_user.id).first()
+    return {"rep_id": (r[0] if r else None),
+            "group": getattr(current_user.role, "staff_group", None)}
+
+
 @router.post("/deals")
 def create_deal(payload: DealCreate, db: Session = Depends(get_db),
                 current_user: User = Depends(require_permission("sales_registry", "edit"))):
@@ -1024,14 +1046,29 @@ def create_deal(payload: DealCreate, db: Session = Depends(get_db),
         if payload.advertiser_id and brand.advertiser_id != payload.advertiser_id:
             raise HTTPException(status_code=400, detail="Бренд не принадлежит рекламодателю сделки")
 
+    # Автоподстановка создателя: продавец ИЛИ аккаунт — по рабочей группе его роли.
+    my_rep = db.query(SalesRep.id).filter(SalesRep.user_id == current_user.id).first()
+    my_rep = my_rep[0] if my_rep else None
+    group = getattr(current_user.role, "staff_group", None)
     rep_id = payload.sales_rep_id
-    if rep_id is None:
-        r = db.query(SalesRep.id).filter(SalesRep.user_id == current_user.id).first()
-        rep_id = r[0] if r else None
-    # own-роль может создавать сделки только на себя, не на чужого продавца
+    acc_id = payload.account_manager_id
+    if group == "account":
+        if acc_id is None:
+            acc_id = my_rep
+    else:  # продавец и прочие — создатель по умолчанию продавец
+        if rep_id is None:
+            rep_id = my_rep
+    # own-роль создаёт сделки только на себя (свой = продавец ИЛИ аккаунт)
     own = _own_rep_ids_or_all(db, current_user)
-    if own is not None and rep_id not in set(own):
-        raise HTTPException(status_code=403, detail="Можно создавать сделки только на себя")
+    if own is not None:
+        own_set = set(own)
+        if rep_id not in own_set and acc_id not in own_set:
+            raise HTTPException(status_code=403, detail="Можно создавать сделки только на себя")
+
+    # Сделка рождается у нас — стартовая стадия каталога (МП Подготовка)
+    from app.sales.catalog import Catalog
+    _first = Catalog(db).first()
+    our_stage_id = _first.id if _first else None
 
     # Единый базис: amount = БЕЗ НДС. Дозаполняем недостающую сумму по ставке НДС.
     vat_mult = 1 + SALES_VAT_RATE
@@ -1047,7 +1084,8 @@ def create_deal(payload: DealCreate, db: Session = Depends(get_db),
         title=payload.title, pipeline=payload.pipeline, bitrix_stage=payload.bitrix_stage,
         amount=amount, amount_with_vat=amount_wv, currency="RUB",
         advertiser_id=payload.advertiser_id, brand_id=payload.brand_id, agency_id=payload.agency_id,
-        product=payload.product, sales_rep_id=rep_id, account_manager_id=payload.account_manager_id,
+        product=payload.product, sales_rep_id=rep_id, account_manager_id=acc_id,
+        our_stage_id=our_stage_id,
         period_from=pf, period_to=pt,
         date_create=datetime.utcnow(),
     )
@@ -1485,6 +1523,117 @@ def get_deal(deal_id: int, db: Session = Depends(get_db),
     }
 
 
+class ProbabilityIn(BaseModel):
+    color: Optional[str] = None   # grey | orange | green | None (снять)
+
+
+@router.post("/deals/{deal_id}/probability")
+def set_deal_probability(
+    deal_id: int,
+    payload: ProbabilityIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("sales_registry", "edit")),
+):
+    """Светофор вероятности сделки (наша ручная разметка): grey|orange|green|None.
+    В синке/заливке в Битрикс НЕ участвует — это чисто наш индикатор."""
+    color = (payload.color or "").strip().lower() or None
+    if color is not None and color not in ("grey", "orange", "green"):
+        raise HTTPException(status_code=400, detail="Недопустимый цвет")
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+    deal.probability_color = color
+    db.commit()
+    return {"message": "Сохранено", "probability_color": color}
+
+
+class MoveIn(BaseModel):
+    to_stage_id: Optional[int] = None       # None → следующая стадия по цепочке
+    comment: str
+    realization_pipeline_id: Optional[int] = None
+    override_reason: Optional[str] = None
+
+
+def _reflect_stage_binding(db, deal, target):
+    """Отражает привязку целевой стадии на полях deal.pipeline/bitrix_stage (для реестра
+    и последующего толкания в Битрикс). Воронка: реализационный этап → выбранная на сделке,
+    иначе — зафиксированная на стадии. No-op, если привязка не задана."""
+    from app.sales.models import SalesPipelineStage
+    realization = bool(target.phase and target.phase.is_realization)
+    pipe_id = deal.realization_pipeline_id if realization else target.bitrix_pipeline_id
+    if not pipe_id or not target.bitrix_status_id:
+        return
+    pipe = db.query(SalesPipeline).filter(SalesPipeline.id == pipe_id).first()
+    st = (db.query(SalesPipelineStage)
+          .filter(SalesPipelineStage.pipeline_id == pipe_id,
+                  SalesPipelineStage.status_id == target.bitrix_status_id).first())
+    if pipe:
+        deal.pipeline = pipe.name
+    if st:
+        deal.bitrix_stage = st.name
+
+
+@router.post("/deals/{deal_id}/move")
+def move_deal(
+    deal_id: int,
+    payload: MoveIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("sales_registry", "edit")),
+):
+    """Двигает сделку по нашему каталогу стадий (E2). Дефолт (to_stage_id=None) — на
+    следующую стадию. Назад — только мастера. Реализационный этап требует воронку.
+    Комментарий обязателен. Толкание в Битрикс — отражением привязки (см. _reflect)."""
+    if not (payload.comment or "").strip():
+        raise HTTPException(status_code=400, detail="Комментарий обязателен")
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+
+    cat = Catalog(db)
+    if not cat.stages:
+        raise HTTPException(status_code=400, detail="Каталог стадий пуст")
+    cur_id = deal.our_stage_id
+    target = cat.by_id.get(payload.to_stage_id) if payload.to_stage_id else cat.next_of(cur_id)
+    if target is None:
+        raise HTTPException(status_code=400, detail="Некуда двигать — сделка на последней стадии")
+
+    is_back = cur_id is not None and not target.is_terminal and cat.is_before(target.id, cur_id)
+    is_master = (current_user.role.key == "admin") or bool(getattr(current_user.role, "is_master", False))
+    if is_back and not is_master:
+        raise HTTPException(status_code=403, detail="Двигать сделку назад может только мастер")
+
+    # МП обязателен со стадии «МП согласование» и далее — двигаем только с привязанным МП
+    if getattr(target, "requires_media_plan", False) and not target.is_terminal:
+        from app.sales.models import SalesMediaPlan
+        has_mp = db.query(SalesMediaPlan.id).filter(SalesMediaPlan.deal_id == deal.id).first()
+        if not has_mp:
+            raise HTTPException(status_code=400,
+                detail="Нужен привязанный медиаплан — привяжите МП к сделке в конструкторе")
+
+    if target.phase and target.phase.is_realization:
+        if payload.realization_pipeline_id is not None:
+            deal.realization_pipeline_id = payload.realization_pipeline_id
+        if not deal.realization_pipeline_id:
+            raise HTTPException(status_code=400, detail="Выберите воронку реализации под продукт")
+
+    prev = cat.by_id.get(cur_id)
+    deal.our_stage_id = target.id
+    _reflect_stage_binding(db, deal, target)
+    db.commit()
+
+    label = f"{prev.name if prev else '—'} → {target.name}"
+    if payload.override_reason:
+        label += f" (оверрайд: {payload.override_reason})"
+    log_action(db, current_user, "move_deal", "sales_deal", deal.id,
+               f"{label}. Комментарий: {payload.comment.strip()}")
+    return {"message": "Сделка перемещена",
+            "our_stage": stage_public(target),
+            "our_next_stage": stage_public(cat.next_of(target.id)),
+            "realization_pipeline_id": deal.realization_pipeline_id}
+
+
 @router.patch("/deals/{deal_id}")
 def patch_deal(
     deal_id: int,
@@ -1505,6 +1654,10 @@ def patch_deal(
     changes = payload.dict(exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=400, detail="Не передано ни одного поля")
+
+    # Стадия — только имя (см. bulk_update_deals): срезаем составной ключ "воронка\x1fстадия".
+    if isinstance(changes.get("bitrix_stage"), str) and "\x1f" in changes["bitrix_stage"]:
+        changes["bitrix_stage"] = changes["bitrix_stage"].split("\x1f")[-1]
 
     # Бренд можно поставить только принадлежащий рекламодателю сделки.
     if changes.get("brand_id"):
@@ -1665,11 +1818,9 @@ def filter_options(db: Session = Depends(get_db),
     # Число сделок по позициям светофора 2/2/2 — для фильтра «Слой денег» (6 пунктов).
     sk_counts = dict(
         _apply_own_scope(
-            db.query(SalesBitrixStageMap.stage_key, func.count(SalesDeal.id))
-              .join(SalesDeal, and_(SalesBitrixStageMap.pipeline == SalesDeal.pipeline,
-                                    SalesBitrixStageMap.bitrix_stage == SalesDeal.bitrix_stage,
-                                    SalesBitrixStageMap.is_active.is_(True))), own)
-          .group_by(SalesBitrixStageMap.stage_key).all())
+            db.query(SalesStage.stage_key, func.count(SalesDeal.id))
+              .join(SalesStage, SalesStage.id == SalesDeal.our_stage_id), own)
+          .group_by(SalesStage.stage_key).all())
 
     # ── Воронки в логическом порядке (настройки: sort_order) + группировка стадий ──
     from app.sales.models import SalesPipeline, SalesPipelineStage

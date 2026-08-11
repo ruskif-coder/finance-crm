@@ -30,7 +30,8 @@ from app.sales.models import (SalesService, SalesAddonService, SalesServiceGroup
                               SalesPipeline, SalesDeal, SalesPipelineStage,
                               SalesBitrixStageMap, SalesAnnexItem,
                               SalesFormat, SalesServiceFormat, SalesTargetingItem, SalesGeo,
-                              SalesAgencyCounterparty, SalesAdvertiserCounterparty)
+                              SalesAgencyCounterparty, SalesAdvertiserCounterparty,
+                              SalesStagePhase, SalesStage)
 from app.sales.normalize import normalize_name, normalize_inn
 from app.sales.stages import STAGE_CATALOG, STAGE_BY_KEY
 import logging
@@ -66,6 +67,7 @@ class ServiceIn(BaseModel):
     bx_id: Optional[str] = None       # привязка к услуге в Битриксе (элемент СП 1050)
     bx_title: Optional[str] = None    # кэш имени битрикс-услуги на момент привязки
     format_ids: Optional[List[int]] = None  # привязанные форматы (M2M); None — не трогать
+    revenue_article_id: Optional[int] = None  # статья выручки (E0, мост сделка→операция)
 
 
 class FormatIn(BaseModel):
@@ -196,7 +198,8 @@ def list_services(only_active: bool = True, db: Session = Depends(get_db),
                        "calc_form": s.calc_form, "separate_price": bool(s.separate_price),
                        "unit_price": s.unit_price, "unit_price_web": s.unit_price_web,
                        "unit_price_app": s.unit_price_app, "constants": s.constants or {},
-                       "bx_id": s.bx_id, "bx_title": s.bx_title}
+                       "bx_id": s.bx_id, "bx_title": s.bx_title,
+                       "revenue_article_id": s.revenue_article_id}
                       for s in rows]}
 
 
@@ -208,6 +211,7 @@ def _set_service_fields(svc, data):
     svc.unit_price_web = data.unit_price_web
     svc.unit_price_app = data.unit_price_app
     svc.constants = data.constants or {}
+    svc.revenue_article_id = data.revenue_article_id
 
 
 def _apply_bx_link(db, svc, bx_id, bx_title, exclude_id=None):
@@ -1069,6 +1073,126 @@ def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db),
     log_action(db, current_user, "delete_sales_pipeline", "sales_pipeline", pipeline_id,
                f"{p.name}: удалено сделок {len(deal_ids)}")
     return {"message": f"Воронка «{p.name}» удалена вместе с {len(deal_ids)} сделками"}
+
+
+# ==================== НАШ КАТАЛОГ СТАДИЙ (E1: движение сделки) ====================
+# Собственный каталог: этапы → стадии, разметка 2/2/2 (money_layer для ДДС) + ОДНА
+# привязка к битрикс воронка+стадия (1:1, чтобы движение однозначно толкалось в Битрикс).
+# Правки идут одним bulk-запросом («Сохранить все»): upsert по id + удаление убранного.
+
+class StageIn(BaseModel):
+    id: Optional[int] = None
+    name: str
+    stage_key: Optional[str] = None   # под-этап 2/2/2 из STAGE_CATALOG; money_layer выводится
+    is_terminal: Optional[bool] = False
+    bitrix_pipeline_id: Optional[int] = None
+    bitrix_status_id: Optional[str] = None
+
+
+class PhaseIn(BaseModel):
+    id: Optional[int] = None
+    name: str
+    stages: List[StageIn] = []
+
+
+class StageCatalogIn(BaseModel):
+    phases: List[PhaseIn] = []
+
+
+def _stage_dict(s):
+    cat = STAGE_BY_KEY.get(s.stage_key)
+    return {"id": s.id, "name": s.name, "sort_order": s.sort_order,
+            "stage_key": s.stage_key,
+            "stage_label": cat["label"] if cat else None,
+            "money_layer": cat["money_layer"] if cat else s.money_layer,
+            "is_terminal": bool(s.is_terminal),
+            "requires_media_plan": bool(s.requires_media_plan),
+            "bitrix_pipeline_id": s.bitrix_pipeline_id, "bitrix_status_id": s.bitrix_status_id}
+
+
+@router.get("/stage-catalog")
+def get_stage_catalog(db: Session = Depends(get_db),
+                      current_user: User = Depends(get_current_user)):
+    """Наш каталог: этапы со стадиями + справочник под-этапов 2/2/2 (STAGE_CATALOG).
+    Открыт любому авторизованному — читается и в UI настроек, и (позже) в движении сделок."""
+    phases = (db.query(SalesStagePhase)
+              .order_by(SalesStagePhase.sort_order, SalesStagePhase.id).all())
+    return {
+        "phases": [
+            {"id": ph.id, "name": ph.name, "sort_order": ph.sort_order,
+             "is_realization": bool(ph.is_realization),
+             "stages": [_stage_dict(s) for s in sorted(ph.stages, key=lambda x: (x.sort_order, x.id))]}
+            for ph in phases
+        ],
+        "catalog": [{"key": c["key"], "label": c["label"], "money_layer": c["money_layer"]}
+                    for c in STAGE_CATALOG],
+    }
+
+
+@router.get("/stage-catalog/bitrix-options")
+def stage_catalog_bitrix_options(db: Session = Depends(get_db),
+                                 current_user: User = Depends(get_current_user)):
+    """Воронки Битрикса со стадиями — для двух выпадающих (воронка → стадия) привязки."""
+    pipelines = (db.query(SalesPipeline)
+                 .order_by(SalesPipeline.sort_order, SalesPipeline.name).all())
+    rows = (db.query(SalesPipelineStage)
+            .order_by(SalesPipelineStage.sort_order).all())
+    by_pipe = {}
+    for s in rows:
+        by_pipe.setdefault(s.pipeline_id, []).append({"status_id": s.status_id, "name": s.name})
+    return {"pipelines": [
+        {"id": p.id, "name": p.name, "stages": by_pipe.get(p.id, [])}
+        for p in pipelines
+    ]}
+
+
+@router.put("/stage-catalog")
+def save_stage_catalog(data: StageCatalogIn, db: Session = Depends(get_db),
+                       current_user: User = Depends(PIPE_EDIT)):
+    """«Сохранить все»: upsert всего каталога одним запросом. Строки с id обновляются,
+    без id — создаются, отсутствующие в payload — удаляются (каскадом стадии этапа)."""
+    for ph in data.phases:
+        for s in ph.stages:
+            if s.stage_key and s.stage_key not in STAGE_BY_KEY:
+                raise HTTPException(status_code=400, detail=f"Неизвестный под-этап: {s.stage_key}")
+    existing_phases = {p.id: p for p in db.query(SalesStagePhase).all()}
+    existing_stages = {s.id: s for s in db.query(SalesStage).all()}
+    keep_phases, keep_stages = set(), set()
+    for pi, ph_in in enumerate(data.phases):
+        ph = existing_phases.get(ph_in.id) if ph_in.id else None
+        if ph is None:
+            ph = SalesStagePhase(name=(ph_in.name or "").strip() or "Этап", sort_order=pi)
+            db.add(ph); db.flush()
+        else:
+            ph.name = (ph_in.name or "").strip() or ph.name
+            ph.sort_order = pi
+        keep_phases.add(ph.id)
+        for si, s_in in enumerate(ph_in.stages):
+            st = existing_stages.get(s_in.id) if s_in.id else None
+            if st is None:
+                st = SalesStage(phase_id=ph.id)
+                db.add(st)
+            st.phase_id = ph.id
+            st.name = (s_in.name or "").strip() or "Стадия"
+            st.sort_order = si
+            st.stage_key = s_in.stage_key or None
+            cat = STAGE_BY_KEY.get(s_in.stage_key)
+            st.money_layer = cat["money_layer"] if cat else None
+            st.is_terminal = bool(s_in.is_terminal)
+            st.bitrix_pipeline_id = s_in.bitrix_pipeline_id
+            st.bitrix_status_id = (s_in.bitrix_status_id or "").strip() or None
+            db.flush()
+            keep_stages.add(st.id)
+    for s in list(existing_stages.values()):
+        if s.id not in keep_stages:
+            db.delete(s)
+    for p in list(existing_phases.values()):
+        if p.id not in keep_phases:
+            db.delete(p)
+    db.commit()
+    log_action(db, current_user, "save_stage_catalog", "sales_stage_catalog", None,
+               f"этапов {len(data.phases)}")
+    return {"message": "Каталог сохранён"}
 
 
 # ============================ Агентства ============================

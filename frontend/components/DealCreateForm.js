@@ -8,16 +8,18 @@ const UI = "'Manrope', system-ui, sans-serif"
 
 const LBL = { fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5, display: 'block' }
 const INP = { width: '100%', boxSizing: 'border-box', padding: '9px 11px', border: '1px solid var(--border-card)', borderRadius: 10, fontSize: 13, background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none', fontFamily: UI }
+// Обводка обязательного поля: оранжевая пока пусто, зелёная когда заполнено.
+const reqColor = (filled) => filled ? 'var(--success)' : 'var(--warning, #d97706)'
 
 // Выпадашка с поиском (v2). disabled — заблокированный вид (бренд до рекламодателя).
-function Search({ placeholder, options, value, onChange, disabled }) {
+function Search({ placeholder, options, value, onChange, disabled, hl }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const opts = options || []
   const sel = opts.find(o => String(o.value) === String(value))
   const shown = opts.filter(o => !q.trim() || String(o.label).toLowerCase().includes(q.trim().toLowerCase())).slice(0, 80)
   const box = { ...INP, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, cursor: disabled ? 'default' : 'pointer', whiteSpace: 'nowrap', overflow: 'hidden',
-    background: disabled ? 'var(--bg-subtle)' : 'var(--bg-card)', borderColor: disabled ? 'var(--border-inner)' : 'var(--border-card)',
+    background: disabled ? 'var(--bg-subtle)' : 'var(--bg-card)', borderColor: disabled ? 'var(--border-inner)' : (hl || 'var(--border-card)'),
     color: sel ? 'var(--text-primary)' : 'var(--text-faint)', fontWeight: sel ? 600 : 400 }
   return (
     <div style={{ position: 'relative' }}>
@@ -41,7 +43,7 @@ function Search({ placeholder, options, value, onChange, disabled }) {
 }
 
 // Сумма с разбивкой разрядов: в фокусе — сырое, вне — «1 500 000». Моноширинный.
-function AmountInput({ value, onChange }) {
+function AmountInput({ value, onChange, hl }) {
   const [focused, setFocused] = useState(false)
   const group = (v) => {
     if (v === '' || v == null) return ''
@@ -50,7 +52,7 @@ function AmountInput({ value, onChange }) {
     return d !== undefined ? `${gi}.${d}` : gi
   }
   return (
-    <input style={{ ...INP, fontFamily: MONO }} inputMode="decimal" placeholder="0 ₽"
+    <input style={{ ...INP, fontFamily: MONO, ...(hl ? { borderColor: hl } : {}) }} inputMode="decimal" placeholder="0 ₽"
       value={focused ? (value ?? '') : group(value)}
       onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
       onChange={e => onChange(e.target.value.replace(/\s/g, '').replace(',', '.'))} />
@@ -72,7 +74,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
   const [brands, setBrands] = useState([])
   const [f, setF] = useState({ agency_id: '', advertiser_id: '', brand_id: '', product: '', pipeline: '', bitrix_stage: '', period: '', amount: '', amount_with_vat: '', sales_rep_id: '', account_manager_id: '', title: '' })
   const [brief, setBrief] = useState('')
-  const [briefOpen, setBriefOpen] = useState(false)
+  const [briefOpen, setBriefOpen] = useState(true)   // бриф открыт по умолчанию
   const [busy, setBusy] = useState(false)
   const isMobile = useIsMobile()
   const set = (k, v) => setF(p => ({ ...p, [k]: v }))
@@ -83,8 +85,16 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
     api.get('/sales/directories/services?only_active=true', auth()).then(r => setServices(r.data.items || [])).catch(() => {})
     api.get('/sales/directories/pipelines', auth()).then(r => {
       const items = r.data.items || []; setPipelines(items)
-      const gen = items.find(p => p.name === 'Общая') || items[0]
-      if (gen) set('pipeline', String(gen.id))
+      // Воронка по умолчанию — Песочница (сделка рождается там)
+      const def = items.find(p => /песочниц/i.test(p.name)) || items.find(p => p.name === 'Общая') || items[0]
+      if (def) set('pipeline', String(def.id))
+    }).catch(() => {})
+    // Автоподстановка создателя: продавец ИЛИ аккаунт по его рабочей группе
+    api.get('/sales/deals/whoami', auth()).then(r => {
+      const { rep_id, group } = r.data || {}
+      if (!rep_id) return
+      if (group === 'account') set('account_manager_id', String(rep_id))
+      else if (canPickRep) set('sales_rep_id', String(rep_id))
     }).catch(() => {})
   }, [open])
 
@@ -97,7 +107,10 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
   useEffect(() => {
     if (!f.pipeline) { setStages([]); return }
     api.get(`/sales/directories/pipelines/${f.pipeline}/stages`, auth())
-      .then(r => { const it = r.data.items || []; setStages(it); if (it[0]) set('bitrix_stage', it[0].name) })
+      .then(r => { const it = r.data.items || []; setStages(it)
+        // Стадия по умолчанию — «МП подготовка» (первая в Песочнице), иначе первая
+        const def = it.find(s => /подгот/i.test(s.name)) || it[0]
+        if (def) set('bitrix_stage', def.name) })
       .catch(() => setStages([]))
   }, [f.pipeline])
 
@@ -137,15 +150,15 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
       }, auth())
       if (brief.trim() && r.data?.id) { try { await api.put(`/sales/deals/${r.data.id}/brief`, { brief }, auth()) } catch (e) {} }
       setF({ agency_id: '', advertiser_id: '', brand_id: '', product: '', pipeline: f.pipeline, bitrix_stage: f.bitrix_stage, period: '', amount: '', amount_with_vat: '', sales_rep_id: '', account_manager_id: '', title: '' })
-      setBrief(''); setBriefOpen(false)
+      setBrief(''); setBriefOpen(true)
       onCreated && onCreated(); onClose()
     } catch (e) { alert(e.response?.data?.detail || 'Не удалось создать сделку') }
     finally { setBusy(false) }
   }
 
   if (!open) return null
-  // обязательны: агентство, рекламодатель, услуга, период, сумма
-  const canSubmit = f.agency_id && f.advertiser_id && f.product && f.period && (f.amount || f.amount_with_vat)
+  // обязательны: рекламодатель, услуга, период, сумма (агентство — опционально)
+  const canSubmit = f.advertiser_id && f.product && f.period && (f.amount || f.amount_with_vat)
   const st = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }
 
   // Поля формы (общие для десктопа и мобилы); на мобиле — одна колонка
@@ -153,15 +166,15 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
     <>
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(5,1fr)', gap: 14 }}>
         <div><span style={LBL}>Агентство</span><Search placeholder="не выбрано" options={opts.agency_id} value={f.agency_id} onChange={v => set('agency_id', v)} /></div>
-        <div><span style={LBL}>Рекламодатель</span><Search placeholder="не выбран" options={opts.advertiser_id} value={f.advertiser_id} onChange={v => { set('advertiser_id', v); set('brand_id', '') }} /></div>
+        <div><span style={LBL}>Рекламодатель</span><Search placeholder="не выбран" options={opts.advertiser_id} value={f.advertiser_id} onChange={v => { set('advertiser_id', v); set('brand_id', '') }} hl={reqColor(!!f.advertiser_id)} /></div>
         <div><span style={LBL}>Бренд</span><Search placeholder={f.advertiser_id ? 'не выбран' : 'сначала рекламодатель'} options={brands} value={f.brand_id} onChange={v => set('brand_id', v)} disabled={!f.advertiser_id} /></div>
-        <div><span style={LBL}>Услуга</span><Search placeholder="не выбрана" options={services.map(s => ({ value: s.name, label: s.name }))} value={f.product} onChange={v => set('product', v)} /></div>
-        <div><span style={LBL}>Планируется в период</span><input type="month" style={{ ...INP, fontFamily: MONO }} value={f.period} onChange={e => set('period', e.target.value)} /></div>
+        <div><span style={LBL}>Услуга</span><Search placeholder="не выбрана" options={services.map(s => ({ value: s.name, label: s.name }))} value={f.product} onChange={v => set('product', v)} hl={reqColor(!!f.product)} /></div>
+        <div><span style={LBL}>Планируется в период</span><input type="month" style={{ ...INP, fontFamily: MONO, borderColor: reqColor(!!f.period) }} value={f.period} onChange={e => set('period', e.target.value)} /></div>
 
         <div><span style={LBL}>Воронка</span><select style={INP} value={f.pipeline} onChange={e => set('pipeline', e.target.value)}>{pipelines.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
         <div><span style={LBL}>Стадия</span><select style={INP} value={f.bitrix_stage} onChange={e => set('bitrix_stage', e.target.value)}>{stages.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}</select></div>
-        <div><span style={LBL}>Сумма с НДС</span><AmountInput value={f.amount_with_vat} onChange={v => onAmount(true, v)} /></div>
-        <div><span style={LBL}>Без НДС · клиентская ⇄</span><AmountInput value={f.amount} onChange={v => onAmount(false, v)} /></div>
+        <div><span style={LBL}>Сумма с НДС</span><AmountInput value={f.amount_with_vat} onChange={v => onAmount(true, v)} hl={reqColor(!!(f.amount || f.amount_with_vat))} /></div>
+        <div><span style={LBL}>Без НДС · клиентская ⇄</span><AmountInput value={f.amount} onChange={v => onAmount(false, v)} hl={reqColor(!!(f.amount || f.amount_with_vat))} /></div>
         <div><span style={LBL}>Продавец</span>
           {canPickRep
             ? <Search placeholder="не выбран" options={opts.sales_rep_id} value={f.sales_rep_id} onChange={v => set('sales_rep_id', v)} />
@@ -206,7 +219,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
   )
 
   const header = (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: isMobile ? '14px 16px' : '18px 24px', borderBottom: '1px solid var(--border-inner)', position: isMobile ? 'sticky' : 'static', top: 0, background: 'var(--bg-card)', zIndex: 3 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: isMobile ? '14px 16px' : '18px 24px', borderBottom: '1px solid var(--border-inner)', position: isMobile ? 'sticky' : 'static', top: 0, background: 'var(--bg-card)', zIndex: 3, borderTopLeftRadius: 18, borderTopRightRadius: 18 }}>
       <span style={{ width: 30, height: 30, borderRadius: 9, background: 'var(--accent-tint)', color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 700 }}>+</span>
       <span style={{ flex: 1, fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>Новая сделка</span>
       <button onClick={onClose} title="Закрыть" style={{ width: 32, height: 32, borderRadius: 9, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18 }}>✕</button>
@@ -231,17 +244,17 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
   return (
     <div onClick={e => { if (e.target === e.currentTarget) onClose() }}
       style={{ position: 'fixed', inset: 0, zIndex: 55, background: 'rgba(28,36,51,.32)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40, overflow: 'auto', fontFamily: UI }}>
-      <div style={{ width: 1080, maxWidth: '100%', margin: 'auto', background: 'var(--bg-card)', borderRadius: 18, overflow: 'hidden', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)', animation: 'riseIn .28s cubic-bezier(0.22,1,0.36,1) both' }}>
+      <div style={{ width: 1080, maxWidth: '100%', margin: 'auto', background: 'var(--bg-card)', borderRadius: 18, overflow: 'visible', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)', animation: 'riseIn .28s cubic-bezier(0.22,1,0.36,1) both' }}>
         <style>{`@keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}`}</style>
         {header}
         <div style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 18 }}>{fields}</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', borderTop: '1px solid var(--border-inner)', background: 'var(--bg-subtle)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', borderTop: '1px solid var(--border-inner)', background: 'var(--bg-subtle)', borderBottomLeftRadius: 18, borderBottomRightRadius: 18 }}>
           <button onClick={submit} disabled={busy || !canSubmit}
             style={{ padding: '9px 20px', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, fontFamily: MONO,
               background: canSubmit ? 'var(--accent)' : 'var(--accent-tint)', color: canSubmit ? '#fff' : '#A9B6F2', cursor: canSubmit ? 'pointer' : 'not-allowed' }}>
             {busy ? 'Создание…' : 'Создать сделку'}</button>
           <button onClick={onClose} style={{ padding: '9px 16px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-primary)', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Отмена</button>
-          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>суммы пересчитываются в обе стороны по НДС 22% · обязательны: агентство, рекламодатель, услуга, период, сумма</span>
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>суммы пересчитываются в обе стороны по НДС 22% · обязательны: рекламодатель, услуга, период, сумма</span>
         </div>
       </div>
     </div>

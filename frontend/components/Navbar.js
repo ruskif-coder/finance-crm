@@ -33,6 +33,7 @@ const SECTION_SUBNAV = {
     { label: 'Дашборд', href: '/sales-dashboard', section: 'sales_dashboard' },
     { label: 'Реестр', href: '/sales', section: 'sales_registry' },
     { label: 'Аналитика', href: '/analytics', section: 'sales_analytics' },
+    { label: 'Годовой план', href: '/deals/year-plan', section: 'year_plan' },
   ],
   directories: [
     { label: 'Контрагенты', href: '/counterparties', section: 'counterparties' },
@@ -50,6 +51,7 @@ const LANDING_ORDER = [
   ['sales_dashboard', '/sales-dashboard'],
   ['sales_registry', '/sales'],
   ['sales_analytics', '/analytics'],
+  ['year_plan', '/deals/year-plan'],
   ['media_plans', '/deals/mp'],
   ['pl', '/pl'],
   ['balance', '/balance'],
@@ -153,6 +155,7 @@ export default function Navbar({ active, children, onSearch }) {
     { key: 'sales_dashboard', href: '/sales-dashboard' },
     { key: 'sales_registry', href: '/sales' },
     { key: 'sales_analytics', href: '/analytics' },
+    { key: 'year_plan', href: '/deals/year-plan' },
   ]
   const isAdmin = role === 'admin'
   const firstSales = SALES.find(x => isAdmin || can(permissions, x.key))

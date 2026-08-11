@@ -22,9 +22,8 @@ function AddCompany({ options, onPick, disabled }) {
   return (
     <div style={{ marginTop: 6 }}>
       <input autoFocus placeholder="поиск компании в Битриксе…" value={q} onChange={e => setQ(e.target.value)}
-        style={{ ...btn, width: 320, cursor: 'text' }} />
-      <button style={{ ...btn, marginLeft: 6, fontSize: 12 }} onClick={() => { setOpen(false); setQ('') }}>×</button>
-      <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, marginTop: 4, maxWidth: 400, background: '#fff' }}>
+        style={{ ...btn, width: '100%', boxSizing: 'border-box', cursor: 'text' }} />
+      <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, marginTop: 4, background: '#fff' }}>
         {matches.map(o => (
           <div key={o.id} onClick={() => { onPick(o.id); setOpen(false); setQ('') }}
             style={{ padding: '5px 10px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid #f3f4f6' }}>
@@ -32,6 +31,7 @@ function AddCompany({ options, onPick, disabled }) {
           </div>
         ))}
         {matches.length === 0 && <div style={{ padding: '5px 10px', color: '#9ca3af', fontSize: 13 }}>ничего не найдено</div>}
+        <div onClick={() => { setOpen(false); setQ('') }} style={{ padding: '5px 10px', cursor: 'pointer', fontSize: 12, color: '#6b7280' }}>× закрыть</div>
       </div>
     </div>
   )
@@ -50,6 +50,7 @@ export default function Reconcile() {
   const [primary, setPrimary] = useState({})         // our_id -> bx_id главной при склейке
   const [dealCounts, setDealCounts] = useState({})   // bx_id -> кол-во сделок Битрикса (грузится отдельно)
   const [countsLoading, setCountsLoading] = useState(false)
+  const [dragOver, setDragOver] = useState(null)     // ключ карточки под курсором при перетаскивании
 
   const load = async (refresh = false) => {
     setLoading(true); setErr('')
@@ -100,7 +101,9 @@ export default function Reconcile() {
     finally { setBusy(false) }
   }
 
-  const primaryOf = (l) => primary[l.our_id] || l.companies[0].bx_id
+  // Главная компания записи: явно выбранная звёздочкой, иначе первая привязанная.
+  // primary хранится строго по our_id — каждая запись независима.
+  const primaryOf = (l) => primary[l.our_id] ?? l.companies[0]?.bx_id
 
   const consolidate = async (l) => {
     const pbx = primaryOf(l)
@@ -132,29 +135,65 @@ export default function Reconcile() {
     return data.all_bitrix.filter(c => !taken.has(c.id))
   }, [data])
 
-  const th = { textAlign: 'left', padding: '8px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 13, color: '#6b7280' }
-  const td = { padding: '8px 10px', borderBottom: '1px solid #f3f4f6', fontSize: 14, verticalAlign: 'top' }
-  const table = { width: '100%', borderCollapse: 'collapse', marginBottom: 8 }
-  const chip = { display: 'inline-flex', alignItems: 'center', gap: 6, background: '#eef2ff', borderRadius: 14, padding: '3px 6px 3px 10px', fontSize: 13, margin: '2px 4px 2px 0' }
+  // ── Drag & drop ─────────────────────────────────────────────────────────────
+  // Перетаскиваемый токен несёт одну сторону связи (our_id ИЛИ bx_id), а если это
+  // уже привязанная компания — ещё from_our_id (откуда её забрали). Цель несёт свою
+  // сторону. На дропе объединяем: получаем пару (our_id, bx_id) → связываем.
+  const startDrag = (e, payload) => {
+    e.dataTransfer.setData('text/plain', JSON.stringify(payload))
+    e.dataTransfer.effectAllowed = 'move'
+  }
+  const allowDrop = (e, key) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (dragOver !== key) setDragOver(key)
+  }
+  const doDrop = async (e, target) => {
+    e.preventDefault()
+    setDragOver(null)
+    let src
+    try { src = JSON.parse(e.dataTransfer.getData('text/plain')) } catch { return }
+    const our_id = target.our_id ?? src.our_id
+    const bx_id = target.bx_id ?? src.bx_id
+    if (our_id == null || bx_id == null) return          // нужна ровно одна наша + одна bx-сторона
+    if (src.from_our_id === our_id) return                // компания уже на этой записи
+    setBusy(true)
+    try {
+      // перенос между связанными: сначала снять со старой записи, чтобы link не упал 409
+      if (src.from_our_id != null && src.from_our_id !== our_id) {
+        await api.post(`/sales/reconcile/${kind}/unlink`, { our_id: src.from_our_id, bx_id }, auth())
+      }
+      await api.post(`/sales/reconcile/${kind}/link`, { our_id, bx_id, master }, auth())
+      await load()
+    } catch (err) { alert(err.response?.data?.detail || 'Ошибка связывания') }
+    finally { setBusy(false) }
+  }
+
   const nameCell = (short, full, holding, count) => (
     <>
-      <div>{short}{count != null && <span style={{ color: '#9ca3af', fontWeight: 400 }}> · {count} сд.</span>}</div>
+      <div style={{ fontSize: 14 }}>{short}{count != null && <span style={{ color: '#9ca3af', fontWeight: 400 }}> · {count} сд.</span>}</div>
       {full && full !== short && <div style={{ color: '#9ca3af', fontSize: 12 }}>{full}</div>}
       {holding && <div style={{ color: '#9ca3af', fontSize: 12 }}>холдинг: {holding}</div>}
     </>
   )
-  const section = (title, n, hint) => (
-    <h3 style={{ margin: '22px 0 8px', fontSize: 15 }}>{title} <span style={{ color: '#9ca3af', fontWeight: 400 }}>· {n}</span>
-      {hint && <span style={{ color: '#9ca3af', fontWeight: 400, fontSize: 12, marginLeft: 8 }}>{hint}</span>}</h3>
-  )
+
+  // ── Стили колонок/карточек ──────────────────────────────────────────────────
+  const colWrap = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', border: '1px solid #e5e7eb', borderRadius: 12, background: '#fafafa', overflow: 'hidden' }
+  const colHead = { padding: '10px 12px', borderBottom: '1px solid #e5e7eb', fontSize: 14, fontWeight: 600, background: '#fff', flexShrink: 0 }
+  const colBody = { overflowY: 'auto', padding: 10, flex: 1 }
+  const subHead = { fontSize: 12, color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.03em', margin: '4px 2px 6px' }
+  const cardS = (hl) => ({ background: '#fff', border: `1px solid ${hl ? '#6366f1' : '#e5e7eb'}`, boxShadow: hl ? '0 0 0 2px #c7d2fe' : 'none', borderRadius: 10, padding: 10, marginBottom: 8, transition: 'box-shadow .1s, border-color .1s' })
+  const chip = { display: 'inline-flex', alignItems: 'center', gap: 6, background: '#eef2ff', borderRadius: 14, padding: '3px 8px 3px 8px', fontSize: 13, margin: '2px 4px 2px 0' }
+  const handle = { cursor: 'grab', color: '#cbd5e1', fontSize: 15, lineHeight: 1, userSelect: 'none', marginRight: 6 }
+  const count = (n) => n != null ? <span style={{ color: '#9ca3af' }}> · {n} сд.</span> : null
 
   return (
     <>
       <Head><title>Сверка с Битриксом</title></Head>
       <Navbar active="directories" />
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '16px 20px' }}>
+      <div style={{ padding: '12px 20px', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 56px)', boxSizing: 'border-box' }}>
         <DirectoryTabs active="reconcile" />
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', margin: '12px 0' }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', margin: '10px 0', flexShrink: 0 }}>
           <select value={kind} onChange={e => setKind(e.target.value)} style={btn}>
             <option value="agencies">Агентства</option>
             <option value="advertisers">Рекламодатели</option>
@@ -173,103 +212,134 @@ export default function Reconcile() {
           <button onClick={autoLink} disabled={busy || loading} style={{ ...btn, fontWeight: 600, background: '#eef2ff' }}>Авто-связать всё ≥ порога</button>
           <button onClick={() => load(true)} disabled={busy || loading} style={btn}>Обновить из Битрикса</button>
           {countsLoading && <span style={{ color: '#9ca3af', fontSize: 12 }}>считаю сделки Битрикса…</span>}
+          <span style={{ color: '#9ca3af', fontSize: 12, marginLeft: 'auto' }}>перетащите карточку из «Только в одной системе» на пару, чтобы связать</span>
         </div>
 
-        {err && <div style={{ color: '#dc2626', padding: '8px 0' }}>{err}</div>}
+        {err && <div style={{ color: '#dc2626', padding: '8px 0', flexShrink: 0 }}>{err}</div>}
         {loading && <div style={{ color: '#6b7280', padding: 20 }}>Загрузка…</div>}
         {data && !loading && (
-          <>
-            {section('Связанные', data.linked.length, 'одна запись может иметь несколько компаний')}
-            <table style={table}>
-              <thead><tr><th style={{ ...th, width: '30%' }}>Наша запись</th><th style={th}>Компании в Битриксе</th><th style={{ ...th, width: 130 }}>Мастер</th></tr></thead>
-              <tbody>{data.linked.map(l => {
-                const multi = l.companies.length >= 2
-                const pbx = primaryOf(l)
-                return (
-                <tr key={l.our_id}>
-                  <td style={td}>{nameCell(l.our_name, l.our_full, l.our_holding, l.our_deal_count)}</td>
-                  <td style={td}>
-                    <div>{l.companies.map(c => (
-                      <span key={c.bx_id} style={chip}>
-                        {multi && (
-                          <button title="сделать главной" disabled={busy}
-                            onClick={() => setPrimary(p => ({ ...p, [l.our_id]: c.bx_id }))}
-                            style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 14, lineHeight: 1, color: pbx === c.bx_id ? '#f59e0b' : '#cbd5e1' }}>
-                            {pbx === c.bx_id ? '★' : '☆'}
-                          </button>
-                        )}
-                        {c.bx_title} <span style={{ color: '#9ca3af' }}>#{c.bx_id}{dealCounts[c.bx_id] != null ? ` · ${dealCounts[c.bx_id]} сд.` : ''}</span>
-                        <button title="отвязать" disabled={busy} onClick={() => post('unlink', { our_id: l.our_id, bx_id: c.bx_id })}
-                          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#6b7280', fontSize: 15, lineHeight: 1 }}>×</button>
-                      </span>
-                    ))}</div>
-                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 4 }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', flex: 1, minHeight: 0 }}>
+
+            {/* ── Колонка 1: Связанные ─────────────────────────────────────── */}
+            <div style={colWrap}>
+              <div style={colHead}>Связанные <span style={{ color: '#9ca3af', fontWeight: 400 }}>· {data.linked.length}</span></div>
+              <div style={colBody}>
+                {data.linked.map(l => {
+                  const multi = l.companies.length >= 2
+                  const pbx = primaryOf(l)
+                  const key = `L${l.our_id}`
+                  return (
+                    <div key={l.our_id} style={cardS(dragOver === key)}
+                      onDragOver={e => allowDrop(e, key)} onDragLeave={() => setDragOver(null)}
+                      onDrop={e => doDrop(e, { our_id: l.our_id })}>
+                      <div style={{ fontWeight: 500 }}>{nameCell(l.our_name, l.our_full, l.our_holding, l.our_deal_count)}</div>
+                      <div style={{ marginTop: 6 }}>{l.companies.map(c => (
+                        <span key={c.bx_id} style={chip}>
+                          <span style={{ cursor: 'grab', color: '#c7c9d1', fontSize: 13, lineHeight: 1, userSelect: 'none' }} draggable
+                            onDragStart={e => startDrag(e, { bx_id: c.bx_id, from_our_id: l.our_id })} title="перетащите на другую запись, чтобы перенести">⠿</span>
+                          {multi && (
+                            <button type="button" title="сделать главной" disabled={busy}
+                              onClick={() => setPrimary(p => ({ ...p, [l.our_id]: c.bx_id }))}
+                              style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0, color: pbx === c.bx_id ? '#f59e0b' : '#cbd5e1' }}>
+                              {pbx === c.bx_id ? '★' : '☆'}
+                            </button>
+                          )}
+                          {c.bx_title} <span style={{ color: '#9ca3af' }}>#{c.bx_id}{dealCounts[c.bx_id] != null ? ` · ${dealCounts[c.bx_id]} сд.` : ''}</span>
+                          <button type="button" title="отвязать" disabled={busy} onClick={() => post('unlink', { our_id: l.our_id, bx_id: c.bx_id })}
+                            style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#6b7280', fontSize: 15, lineHeight: 1, padding: 0 }}>×</button>
+                        </span>
+                      ))}</div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+                        <select value={l.bx_master || 'ours'} disabled={busy} style={{ ...btn, fontSize: 12 }}
+                          onChange={e => post('set-master', { our_id: l.our_id, master: e.target.value })}>
+                          <option value="ours">мастер: наша</option>
+                          <option value="bitrix">мастер: Битрикс</option>
+                        </select>
+                        {multi && <button style={{ ...btn, fontSize: 12, fontWeight: 600, background: '#fef3c7', borderColor: '#fcd34d' }}
+                          disabled={busy} onClick={() => consolidate(l)}>⇢ Свести (★ главная)</button>}
+                      </div>
                       <AddCompany options={unlinked} disabled={busy}
                         onPick={bxid => post('link', { our_id: l.our_id, bx_id: bxid, master: l.bx_master || master })} />
-                      {multi && <button style={{ ...btn, fontSize: 12, fontWeight: 600, background: '#fef3c7', borderColor: '#fcd34d' }}
-                        disabled={busy} onClick={() => consolidate(l)}>⇢ Свести в Битриксе (★ главная)</button>}
                     </div>
-                  </td>
-                  <td style={td}>
-                    <select value={l.bx_master || 'ours'} disabled={busy} style={btn}
-                      onChange={e => post('set-master', { our_id: l.our_id, master: e.target.value })}>
-                      <option value="ours">Наша база</option>
-                      <option value="bitrix">Битрикс</option>
-                    </select>
-                  </td>
-                </tr>)
-              })}
-                {data.linked.length === 0 && <tr><td style={td} colSpan={3}><span style={{ color: '#9ca3af' }}>пусто</span></td></tr>}
-              </tbody>
-            </table>
+                  )
+                })}
+                {data.linked.length === 0 && <div style={{ color: '#9ca3af', padding: 12, fontSize: 13 }}>пусто</div>}
+              </div>
+            </div>
 
-            {section('Кандидаты на связку', data.candidates.length)}
-            <table style={table}>
-              <thead><tr><th style={{ ...th, width: '30%' }}>Наша запись</th><th style={th}>Матч в Битриксе</th><th style={{ ...th, width: 60 }}>%</th><th style={{ ...th, width: 100 }}></th></tr></thead>
-              <tbody>{data.candidates.map(c => (
-                <tr key={c.our_id}>
-                  <td style={td}>{nameCell(c.our_name, c.our_full, c.our_holding, c.our_deal_count)}</td>
-                  <td style={td}>
-                    <select value={picks[c.our_id] ?? c.best.bx_id} style={{ ...btn, maxWidth: 460 }}
-                      onChange={e => setPicks(p => ({ ...p, [c.our_id]: e.target.value }))}>
-                      {[c.best, ...c.alternates].map(a => (
-                        <option key={a.bx_id} value={a.bx_id}>{a.bx_title} · #{a.bx_id} ({Math.round(a.score * 100)}%)</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td style={td}>{Math.round(c.best.score * 100)}%</td>
-                  <td style={td}><button style={{ ...btn, fontWeight: 600 }} disabled={busy}
-                    onClick={() => post('link', { our_id: c.our_id, bx_id: picks[c.our_id] ?? c.best.bx_id, master })}>Связать</button></td>
-                </tr>))}
-                {data.candidates.length === 0 && <tr><td style={td} colSpan={4}><span style={{ color: '#9ca3af' }}>пусто</span></td></tr>}
-              </tbody>
-            </table>
+            {/* ── Колонка 2: Кандидаты ─────────────────────────────────────── */}
+            <div style={colWrap}>
+              <div style={colHead}>Кандидаты на связку <span style={{ color: '#9ca3af', fontWeight: 400 }}>· {data.candidates.length}</span></div>
+              <div style={colBody}>
+                {data.candidates.map(c => {
+                  const key = `C${c.our_id}`
+                  return (
+                    <div key={c.our_id} style={cardS(dragOver === key)}
+                      onDragOver={e => allowDrop(e, key)} onDragLeave={() => setDragOver(null)}
+                      onDrop={e => doDrop(e, { our_id: c.our_id })}>
+                      <div style={{ fontWeight: 500 }}>{nameCell(c.our_name, c.our_full, c.our_holding, c.our_deal_count)}</div>
+                      <div style={{ marginTop: 6, display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <select value={picks[c.our_id] ?? c.best.bx_id} style={{ ...btn, flex: 1, minWidth: 0 }}
+                          onChange={e => setPicks(p => ({ ...p, [c.our_id]: e.target.value }))}>
+                          {[c.best, ...c.alternates].map(a => (
+                            <option key={a.bx_id} value={a.bx_id}>{a.bx_title} · #{a.bx_id} ({Math.round(a.score * 100)}%)</option>
+                          ))}
+                        </select>
+                        <span style={{ fontSize: 12, color: '#9ca3af', whiteSpace: 'nowrap' }}>{Math.round(c.best.score * 100)}%</span>
+                      </div>
+                      <button style={{ ...btn, fontWeight: 600, marginTop: 6 }} disabled={busy}
+                        onClick={() => post('link', { our_id: c.our_id, bx_id: picks[c.our_id] ?? c.best.bx_id, master })}>Связать</button>
+                    </div>
+                  )
+                })}
+                {data.candidates.length === 0 && <div style={{ color: '#9ca3af', padding: 12, fontSize: 13 }}>пусто</div>}
+              </div>
+            </div>
 
-            {section('Только у нас', data.only_ours.length, 'нет пары в Битриксе')}
-            <table style={table}>
-              <tbody>{data.only_ours.map(o => (
-                <tr key={o.our_id}>
-                  <td style={{ ...td, width: '30%' }}>{nameCell(o.our_name, o.our_full, o.our_holding, o.our_deal_count)}</td>
-                  <td style={td}><label style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={!!o.pending_create} disabled={busy}
-                      onChange={e => post('flag-create', { our_id: o.our_id, on: e.target.checked })} /> завести в Битриксе
-                  </label></td>
-                </tr>))}
-                {data.only_ours.length === 0 && <tr><td style={td}><span style={{ color: '#9ca3af' }}>пусто</span></td></tr>}
-              </tbody>
-            </table>
+            {/* ── Колонка 3: Только в одной системе ────────────────────────── */}
+            <div style={colWrap}>
+              <div style={colHead}>Только в одной системе <span style={{ color: '#9ca3af', fontWeight: 400 }}>· {data.only_ours.length + data.only_bitrix.length}</span></div>
+              <div style={colBody}>
+                <div style={subHead}>Только у нас · {data.only_ours.length}</div>
+                {data.only_ours.map(o => {
+                  const key = `O${o.our_id}`
+                  return (
+                    <div key={o.our_id} style={cardS(dragOver === key)}
+                      onDragOver={e => allowDrop(e, key)} onDragLeave={() => setDragOver(null)}
+                      onDrop={e => doDrop(e, { our_id: o.our_id })}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+                        <span style={handle} draggable onDragStart={e => startDrag(e, { our_id: o.our_id })} title="перетащить, чтобы связать">⠿</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>{nameCell(o.our_name, o.our_full, o.our_holding, o.our_deal_count)}</div>
+                      </div>
+                      <label style={{ fontSize: 12, color: '#6b7280', cursor: 'pointer', display: 'block', marginTop: 4 }}>
+                        <input type="checkbox" checked={!!o.pending_create} disabled={busy}
+                          onChange={e => post('flag-create', { our_id: o.our_id, on: e.target.checked })} /> завести в Битриксе
+                      </label>
+                    </div>
+                  )
+                })}
+                {data.only_ours.length === 0 && <div style={{ color: '#9ca3af', padding: '4px 8px 8px', fontSize: 13 }}>пусто</div>}
 
-            {section('Только в Битриксе', data.only_bitrix.length, 'нет нашей записи')}
-            <table style={table}>
-              <tbody>{data.only_bitrix.map(b => (
-                <tr key={b.id}>
-                  <td style={td}>{b.title} <span style={{ color: '#9ca3af' }}>#{b.id}{dealCounts[b.id] != null ? ` · ${dealCounts[b.id]} сд.` : ''}</span></td>
-                  <td style={td}><button style={btn} disabled={busy} onClick={() => post('import', { bx_id: b.id })}>Импортировать к нам</button></td>
-                </tr>))}
-                {data.only_bitrix.length === 0 && <tr><td style={td}><span style={{ color: '#9ca3af' }}>пусто</span></td></tr>}
-              </tbody>
-            </table>
-          </>
+                <div style={{ ...subHead, marginTop: 14 }}>Только в Битриксе · {data.only_bitrix.length}</div>
+                {data.only_bitrix.map(b => {
+                  const key = `B${b.id}`
+                  return (
+                    <div key={b.id} style={cardS(dragOver === key)}
+                      onDragOver={e => allowDrop(e, key)} onDragLeave={() => setDragOver(null)}
+                      onDrop={e => doDrop(e, { bx_id: b.id })}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+                        <span style={handle} draggable onDragStart={e => startDrag(e, { bx_id: b.id })} title="перетащить, чтобы связать">⠿</span>
+                        <div style={{ flex: 1, minWidth: 0, fontSize: 14 }}>{b.title} <span style={{ color: '#9ca3af' }}>#{b.id}{count(dealCounts[b.id])}</span></div>
+                      </div>
+                      <button style={{ ...btn, fontSize: 12, marginTop: 4 }} disabled={busy} onClick={() => post('import', { bx_id: b.id })}>Импортировать к нам</button>
+                    </div>
+                  )
+                })}
+                {data.only_bitrix.length === 0 && <div style={{ color: '#9ca3af', padding: '4px 8px 8px', fontSize: 13 }}>пусто</div>}
+              </div>
+            </div>
+
+          </div>
         )}
       </div>
     </>

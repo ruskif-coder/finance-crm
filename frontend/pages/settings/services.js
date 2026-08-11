@@ -26,7 +26,7 @@ const CONSTANTS_BY_FORM = {
 }
 const constsFor = (f) => CONSTANTS_BY_FORM[f] || []
 const numOrNull = (v) => (v === '' || v == null) ? null : Number(v)
-const NEW_SVC = { name: '', placement_type: '', calc_form: '', separate_price: false, unit_price: '', unit_price_web: '', unit_price_app: '', constants: {} }
+const NEW_SVC = { name: '', placement_type: '', calc_form: '', separate_price: false, unit_price: '', unit_price_web: '', unit_price_app: '', constants: {}, revenue_article_id: '' }
 
 export default function SettingsServices() {
   const router = useRouter()
@@ -43,6 +43,7 @@ export default function SettingsServices() {
   const [bxOptions, setBxOptions] = useState([])       // услуги Битрикса (СП 1050) для привязки
   const [bxErr, setBxErr] = useState(false)            // Битрикс недоступен → селект работает по кэшу
   const [formats, setFormats] = useState([])           // справочник форматов размещения
+  const [articles, setArticles] = useState([])         // реестр статей (для маппинга услуга→статья выручки)
   const [newFormat, setNewFormat] = useState({ name: '', group: '' })
   const [fmtOpen, setFmtOpen] = useState(null)         // id услуги с открытым пикером форматов
 
@@ -64,24 +65,26 @@ export default function SettingsServices() {
   const load = async () => {
     setLoading(true)
     try {
-      const [s, a, f] = await Promise.all([
+      const [s, a, f, art] = await Promise.all([
         api.get('/sales/directories/services?only_active=false', auth()),
         api.get('/sales/directories/services/addons', auth()),
         api.get('/sales/directories/services/formats', auth()),
+        api.get('/articles/', auth()),
       ])
       setServices(s.data.items || []); setAddons(a.data.items || []); setFormats(f.data.items || [])
+      setArticles(Array.isArray(art.data) ? art.data : (art.data.items || []))
     } catch (e) { if (e.response?.status === 401) router.push('/login') }
     finally { setLoading(false) }
   }
 
   // ── услуги ──
-  const svcSeed = (s) => ({ name: s.name, group: s.group || '', placement_type: s.placement_type || '', calc_form: s.calc_form || '', separate_price: !!s.separate_price, unit_price: s.unit_price ?? '', unit_price_web: s.unit_price_web ?? '', unit_price_app: s.unit_price_app ?? '', constants: s.constants || {}, bx_id: s.bx_id || '', bx_title: s.bx_title || '', format_ids: (s.formats || []).map(f => f.id) })
+  const svcSeed = (s) => ({ name: s.name, group: s.group || '', placement_type: s.placement_type || '', calc_form: s.calc_form || '', separate_price: !!s.separate_price, unit_price: s.unit_price ?? '', unit_price_web: s.unit_price_web ?? '', unit_price_app: s.unit_price_app ?? '', constants: s.constants || {}, bx_id: s.bx_id || '', bx_title: s.bx_title || '', format_ids: (s.formats || []).map(f => f.id), revenue_article_id: s.revenue_article_id ?? '' })
   const bxTitleFor = (id) => (id ? (bxOptions.find(o => o.id === id)?.title || null) : null)
   const svcEd = (s) => editingServices[s.id] || svcSeed(s)
   const svcSet = (s, f, v) => setEditingServices(p => ({ ...p, [s.id]: { ...(p[s.id] || svcSeed(s)), [f]: v } }))
   const svcSetConst = (s, k, v) => setEditingServices(p => { const cur = p[s.id] || svcSeed(s); return { ...p, [s.id]: { ...cur, constants: { ...(cur.constants || {}), [k]: v } } } })
   const svcDirty = (id) => !!editingServices[id]
-  const svcPayload = (ed) => ({ name: ed.name, group: ed.group || null, placement_type: ed.placement_type || null, calc_form: ed.calc_form || null, separate_price: !!ed.separate_price, unit_price: ed.separate_price ? null : numOrNull(ed.unit_price), unit_price_web: ed.separate_price ? numOrNull(ed.unit_price_web) : null, unit_price_app: ed.separate_price ? numOrNull(ed.unit_price_app) : null, constants: ed.constants || {}, bx_id: ed.bx_id || null, bx_title: ed.bx_id ? (bxTitleFor(ed.bx_id) || ed.bx_title || null) : null, format_ids: ed.format_ids ?? null })
+  const svcPayload = (ed) => ({ name: ed.name, group: ed.group || null, placement_type: ed.placement_type || null, calc_form: ed.calc_form || null, separate_price: !!ed.separate_price, unit_price: ed.separate_price ? null : numOrNull(ed.unit_price), unit_price_web: ed.separate_price ? numOrNull(ed.unit_price_web) : null, unit_price_app: ed.separate_price ? numOrNull(ed.unit_price_app) : null, constants: ed.constants || {}, bx_id: ed.bx_id || null, bx_title: ed.bx_id ? (bxTitleFor(ed.bx_id) || ed.bx_title || null) : null, format_ids: ed.format_ids ?? null, revenue_article_id: ed.revenue_article_id ? Number(ed.revenue_article_id) : null })
   const saveService = async (id) => {
     const ed = editingServices[id]; if (!ed) return
     try { await api.put(`/sales/directories/services/${id}`, svcPayload(ed), auth()); setEditingServices(p => { const n = { ...p }; delete n[id]; return n }); await load(); loadBx() }
@@ -175,6 +178,14 @@ export default function SettingsServices() {
     {CALC_FORMS.map(f => <option key={f} value={f}>{f}</option>)}
     {val && !CALC_FORMS.includes(val) && <option value={val}>{val}</option>}
   </>)
+  // статьи выручки из реестра статей, сгруппированы по группе (ВЫРУЧКА первой)
+  const artGroups = Object.entries(articles.reduce((acc, a) => { const g = a.group || 'Без группы'; (acc[g] = acc[g] || []).push(a); return acc }, {}))
+    .sort(([g1], [g2]) => (g1 === 'ВЫРУЧКА' ? -1 : g2 === 'ВЫРУЧКА' ? 1 : g1.localeCompare(g2)))
+    .map(([group, items]) => ({ group, items }))
+  const articleOpts = () => (<>
+    <option value="">— статья —</option>
+    {artGroups.map(g => <optgroup key={g.group} label={g.group}>{g.items.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</optgroup>)}
+  </>)
 
   return (
     <>
@@ -191,6 +202,7 @@ export default function SettingsServices() {
             {fmtGroupsActive.map(g => <optgroup key={g.group} label={g.group}>{g.items.map(f => <option key={f.id} value={f.name}>{f.name}</option>)}</optgroup>)}
           </select>
           <select value={newService.calc_form} onChange={e => setNewService(p => ({ ...p, calc_form: e.target.value }))} style={{ ...sel, width: 100 }}>{formOpts(newService.calc_form)}</select>
+          <select value={newService.revenue_article_id} onChange={e => setNewService(p => ({ ...p, revenue_article_id: e.target.value }))} style={{ ...sel, width: 170 }} title="Статья выручки">{articleOpts()}</select>
           <label style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
             <input type="checkbox" checked={newService.separate_price} onChange={e => setNewService(p => ({ ...p, separate_price: e.target.checked }))} />раздельный прайс
           </label>
@@ -230,6 +242,7 @@ export default function SettingsServices() {
                 <th style={{ ...th, textAlign: 'center', width: 56 }}>Разд.</th>
                 <th style={{ ...th, width: 200 }}>Цена / ед</th>
                 <th style={{ ...th, width: 120 }}>Группа</th>
+                <th style={{ ...th, width: 190 }}>Статья выручки</th>
                 <th style={{ ...th, textAlign: 'center', width: 44 }}>Исп.</th>
                 <th style={{ ...th, width: 84 }}></th>
               </tr></thead>
@@ -282,6 +295,7 @@ export default function SettingsServices() {
                         <input type="number" value={ed.unit_price} onChange={e => svcSet(s, 'unit_price', e.target.value)} style={{ ...ci, textAlign: 'right' }} />
                       )}</td>
                       <td style={td}><input value={ed.group} onChange={e => svcSet(s, 'group', e.target.value)} style={ci} /></td>
+                      <td style={td}><select value={ed.revenue_article_id ?? ''} onChange={e => svcSet(s, 'revenue_article_id', e.target.value)} style={cs} title="Статья выручки для моста сделка→операция">{articleOpts()}</select></td>
                       <td style={{ ...td, textAlign: 'center' }}><input type="checkbox" checked={!!s.is_active} onChange={e => toggleUse(s.id, e.target.checked)} style={{ cursor: 'pointer' }} /></td>
                       <td style={{ ...td, textAlign: 'center', whiteSpace: 'nowrap' }}>
                         {svcDirty(s.id) && <button onClick={() => saveService(s.id)} style={{ padding: '6px 10px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: 'var(--accent)', color: '#fff', marginRight: 6 }}>✓</button>}
@@ -290,7 +304,7 @@ export default function SettingsServices() {
                     </tr>
                   )
                 })}
-                {!services.length && <tr><td colSpan={11} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Услуг нет — добавьте или нажмите «Обновить из Битрикса»</td></tr>}
+                {!services.length && <tr><td colSpan={12} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Услуг нет — добавьте или нажмите «Обновить из Битрикса»</td></tr>}
               </tbody>
             </table>
             </div>

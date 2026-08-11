@@ -8,6 +8,13 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.audit import log_action, require_admin
+from app.permissions import require_permission
+
+# Сверка гейтится правом bx_reconcile: чтение — view, любые записи (link/unlink/
+# master/import/flag/auto/consolidate) — edit. import-deals остаётся admin-only
+# (это глобальный импорт сделок, не операция справочника).
+_can_view = require_permission("bx_reconcile", "view")
+_can_edit = require_permission("bx_reconcile", "edit")
 from app.sales.models import SalesAgency, SalesAdvertiser, SalesBitrixLink, SalesDeal
 from app.sales.reconcile import build_buckets, plan_auto_link, standard_name, TYPE_ID
 from app.bitrix_api import (list_bitrix_companies, vibecode_get, vibecode_patch,
@@ -108,7 +115,7 @@ def _sync_primary(db: Session, model, kind: str, our_id: int):
 
 @router.get("/{kind}")
 def get_reconcile(kind: str, refresh: int = Query(0),
-                  db: Session = Depends(get_db), _=Depends(require_admin)):
+                  db: Session = Depends(get_db), _=Depends(_can_view)):
     model = _kind_or_400(kind)
     try:
         companies = _fetch_companies(kind, refresh=bool(refresh))
@@ -139,7 +146,7 @@ def import_deals(commit: int = Query(0), db: Session = Depends(get_db),
 
 
 @router.get("/{kind}/deal-counts")
-def deal_counts(kind: str, refresh: int = Query(0), _=Depends(require_admin)):
+def deal_counts(kind: str, refresh: int = Query(0), _=Depends(_can_view)):
     """Карта {bx_id: кол-во сделок в Битриксе} — грузится фронтом отдельно, после букетов."""
     _kind_or_400(kind)
     try:
@@ -157,7 +164,7 @@ class LinkIn(BaseModel):
 
 @router.post("/{kind}/link")
 def link(kind: str, data: LinkIn, db: Session = Depends(get_db),
-         current_user=Depends(require_admin)):
+         current_user=Depends(_can_edit)):
     model = _kind_or_400(kind)
     row = db.query(model).filter(model.id == data.our_id).first()
     if not row:
@@ -187,7 +194,7 @@ class UnlinkIn(BaseModel):
 
 @router.post("/{kind}/unlink")
 def unlink(kind: str, data: UnlinkIn, db: Session = Depends(get_db),
-           current_user=Depends(require_admin)):
+           current_user=Depends(_can_edit)):
     model = _kind_or_400(kind)
     row = db.query(model).filter(model.id == data.our_id).first()
     if not row:
@@ -212,7 +219,7 @@ class SetMasterIn(BaseModel):
 
 @router.post("/{kind}/set-master")
 def set_master(kind: str, data: SetMasterIn, db: Session = Depends(get_db),
-               current_user=Depends(require_admin)):
+               current_user=Depends(_can_edit)):
     model = _kind_or_400(kind)
     row = db.query(model).filter(model.id == data.our_id).first()
     if not row:
@@ -230,7 +237,7 @@ class ImportIn(BaseModel):
 
 @router.post("/{kind}/import")
 def import_company(kind: str, data: ImportIn, db: Session = Depends(get_db),
-                   current_user=Depends(require_admin)):
+                   current_user=Depends(_can_edit)):
     model = _kind_or_400(kind)
     if db.query(SalesBitrixLink).filter(
             SalesBitrixLink.kind == kind, SalesBitrixLink.bx_id == data.bx_id).first():
@@ -262,7 +269,7 @@ class FlagIn(BaseModel):
 
 @router.post("/{kind}/flag-create")
 def flag_create(kind: str, data: FlagIn, db: Session = Depends(get_db),
-                current_user=Depends(require_admin)):
+                current_user=Depends(_can_edit)):
     model = _kind_or_400(kind)
     row = db.query(model).filter(model.id == data.our_id).first()
     if not row:
@@ -325,7 +332,7 @@ def _consolidate_plan(kind: str, row: dict, links: list, primary_bx_id: str, wit
 
 @router.post("/{kind}/consolidate/preview")
 def consolidate_preview(kind: str, data: ConsolidateIn, db: Session = Depends(get_db),
-                        _=Depends(require_admin)):
+                        _=Depends(_can_edit)):
     model = _kind_or_400(kind)
     _r, row, links = _record_and_links(db, model, kind, data.our_id)
     primary, redundant = _consolidate_plan(kind, row, links, data.primary_bx_id, with_counts=True)
@@ -335,7 +342,7 @@ def consolidate_preview(kind: str, data: ConsolidateIn, db: Session = Depends(ge
 
 @router.post("/{kind}/consolidate")
 def consolidate(kind: str, data: ConsolidateIn, db: Session = Depends(get_db),
-                current_user=Depends(require_admin)):
+                current_user=Depends(_can_edit)):
     """ЗАПИСЬ В ПРОД-БИТРИКС. Перебрасывает сделки редундантных компаний на главную,
     переименовывает главную под наш стандарт, редундантные → XXX_старое имя (НЕ удаляет).
     Перед записью пишет бэкап на персистентный том И в лог; при сбое на середине
@@ -416,7 +423,7 @@ class AutoLinkIn(BaseModel):
 
 @router.post("/{kind}/auto-link")
 def auto_link(kind: str, data: AutoLinkIn, db: Session = Depends(get_db),
-              current_user=Depends(require_admin)):
+              current_user=Depends(_can_edit)):
     model = _kind_or_400(kind)
     try:
         companies = _fetch_companies(kind)

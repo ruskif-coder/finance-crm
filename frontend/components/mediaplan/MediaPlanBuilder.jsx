@@ -3,7 +3,7 @@
  * Зависимость только React. Стили инлайновые, токены — из design_system/ds.jsx.
  * Данные-справочники в CATALOG / EXTRA_CATALOG / STAFF — заменить на API.
  */
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { MONO, UI } from '../salesTableKit';
 
@@ -275,7 +275,8 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
   advertisers = [], agencies = [], brandsByAdv = {}, advCps = {}, agencyCps = {}, geoList = [], targetingCatalog = {},
   bound = false, initial, backLabel = 'Реестр медиапланов', onBack, versions = [], onOpenVersion,
   canApprove = false, onTransition,
-  onAddTargeting, onAddGeo, onCreateBrand, onSave, onExportXlsx, onPreviewPdf, onEditBrief, onLinkDeal, onCreateDeal }) {
+  onAddTargeting, onAddGeo, onCreateBrand, onSave, onExportXlsx, onPreviewPdf, onEditBrief, onLinkDeal, onCreateDeal,
+  dealBrief, onDealBriefSave, onDealBriefSync }) {
   const init = initial || {};
   const [verOpen, setVerOpen] = useState(false);   // дропдаун истории версий
   const [rejectOpen, setRejectOpen] = useState(false);   // модалка причины отклонения
@@ -303,6 +304,13 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
     title: init.title || '',   // '' = собирается авто; непустое = ручное (правится/дописывается)
     targeting: init.targeting || { audience: [], buys: [], interests: [], behavior: [], competitors: [] },
   });
+  // Free-text бриф связанной сделки (виджет открывается по иконке в шапке брифа)
+  const [briefPanel, setBriefPanel] = useState(false);
+  const [briefText, setBriefText] = useState('');
+  const [briefBusy, setBriefBusy] = useState(false);
+  useEffect(() => { setBriefText(dealBrief?.brief || ''); }, [dealBrief?.brief]);
+  const briefHasDeal = !!dealBrief?.has_deal;
+  const briefHas = !!(dealBrief?.brief || '').trim();
   const [titleEdit, setTitleEdit] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [periodConfirm, setPeriodConfirm] = useState(null);   // {ym} — подтверждение смены дат при заполненных данных
@@ -547,6 +555,13 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                     )}
                     <span style={meta}>бриф · черновик</span>
                     {(bf.title || '').trim() && !titleEdit && <span onClick={() => setBf(s => ({ ...s, title: '' }))} title="Собрать название автоматически" style={{ fontSize: 11, color: T.accent, cursor: 'pointer' }}>↻ авто</span>}
+                    <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: briefHas ? T.accent : T.t3 }}>{briefHas ? 'бриф есть' : 'брифа нет'}</span>
+                      <button type="button" onClick={() => setBriefPanel(o => !o)} title="Бриф сделки"
+                        style={{ width: 34, height: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${briefHas ? T.accent : T.border}`, background: briefHas ? T.accentTint : T.card, borderRadius: 9, color: briefHas ? T.accent : T.t3, cursor: 'pointer' }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" /><path d="M9 12h6" /><path d="M9 16h4" /></svg>
+                      </button>
+                    </span>
                   </div>
 
                   <div style={{ display: 'flex', gap: 22, alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -666,6 +681,32 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
               </span>
             </Card>
           </div>
+
+          {/* ── БРИФ СДЕЛКИ (free-text, раскрывается иконкой в шапке брифа) ── */}
+          {briefPanel && (
+            <Card delay={0.05} pad="16px 22px 16px" gap={10}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <span style={capTitle}>Бриф сделки</span>
+                {!briefHasDeal && <span style={{ fontSize: 12, color: T.t3 }}>привяжите сделку, чтобы сохранять и синхронизировать бриф</span>}
+                {dealBrief?.is_local && <span style={{ fontSize: 11, color: T.t4 }}>локальная сделка — без Битрикса</span>}
+                <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}>
+                  <button type="button" disabled={!briefHasDeal || dealBrief?.is_local || briefBusy}
+                    onClick={async () => { setBriefBusy(true); try { await onDealBriefSync?.(); } finally { setBriefBusy(false); } }}
+                    style={{ padding: '7px 12px', borderRadius: 9, border: `1px solid ${T.border}`, background: T.card, color: (!briefHasDeal || dealBrief?.is_local) ? T.t4 : T.accent, fontSize: 12, fontWeight: 700, cursor: (!briefHasDeal || dealBrief?.is_local) ? 'default' : 'pointer', opacity: (!briefHasDeal || dealBrief?.is_local) ? 0.5 : 1 }}>
+                    ⟳ С Битрикса
+                  </button>
+                  <button type="button" disabled={!briefHasDeal || briefBusy}
+                    onClick={async () => { setBriefBusy(true); try { await onDealBriefSave?.(briefText); } finally { setBriefBusy(false); } }}
+                    style={{ padding: '7px 14px', borderRadius: 9, border: 'none', background: T.accent, color: '#FFF', fontSize: 12, fontWeight: 700, cursor: (!briefHasDeal || briefBusy) ? 'default' : 'pointer', opacity: (!briefHasDeal || briefBusy) ? 0.5 : 1 }}>
+                    {briefBusy ? 'Сохранение…' : 'Сохранить'}
+                  </button>
+                </span>
+              </div>
+              <textarea value={briefText} onChange={e => setBriefText(e.target.value)}
+                placeholder={briefHasDeal ? 'Задачи, ЦА, гео, форматы, KPI, бюджет…' : 'Бриф сохранится в сделку после привязки'}
+                style={{ width: '100%', boxSizing: 'border-box', minHeight: 130, resize: 'vertical', padding: '11px 13px', border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 13.5, lineHeight: 1.5, fontFamily: T.sans, color: T.t1, background: T.card, outline: 'none' }} />
+            </Card>
+          )}
 
           {/* ── МЕДИАПЛАН + ДОП. УСЛУГИ + ЦЕЛЕВЫЕ ────────────────────── */}
           <Card delay={0.14} pad="20px 26px 18px" gap={14}>

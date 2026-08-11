@@ -26,6 +26,7 @@ SECTIONS = [
     {"key": "sales_dashboard",   "label": "Продажи · Дашборд",       "group": "Продажи", "actions": ["view", "edit"]},
     {"key": "sales_registry",    "label": "Продажи · Реестр сделок",  "group": "Продажи", "actions": ["view", "edit"]},
     {"key": "sales_analytics",   "label": "Продажи · Аналитика",      "group": "Продажи", "actions": ["view", "edit"]},
+    {"key": "year_plan",         "label": "Продажи · Годовой план",   "group": "Продажи", "actions": ["view", "edit"]},
     # Медиапланы (контур аккаунта): реестр и конструктор — раздельно.
     {"key": "media_plans",        "label": "Медиапланы · Реестр",      "group": "Медиапланы", "actions": ["view", "edit", "approve"]},
     {"key": "media_plans_editor", "label": "Медиапланы · Конструктор", "group": "Медиапланы", "actions": ["view", "edit"]},

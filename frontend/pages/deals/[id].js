@@ -133,8 +133,10 @@ export default function DealCard() {
                 </span>
                 <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{meta || '—'}</span>
               </span>
+              <button onClick={() => router.push(`/deals/mp/new?deal=${d.id}`)} title="Создать медиаплан из сделки — реквизиты и бриф подставятся автоматически"
+                style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 15px', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ МП</button>
               {d.bitrix_stage && (
-                <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, background: 'var(--warning-tint)', color: '#B26A0C', borderRadius: 10, padding: '7px 13px', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'var(--warning-tint)', color: '#B26A0C', borderRadius: 10, padding: '7px 13px', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--warning)' }} />{d.bitrix_stage}
                 </span>
               )}

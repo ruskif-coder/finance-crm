@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, LoginAttempt
 from passlib.context import CryptContext
+from pydantic import BaseModel
 from sqlalchemy import func
 import jwt
 from jwt.exceptions import InvalidTokenError
@@ -174,6 +175,21 @@ def get_me(current_user: User = Depends(get_current_user), db: Session = Depends
         "is_admin": current_user.role.key == "admin",
         "permissions": get_permissions_for_user(db, current_user),
     }
+
+
+class _PwdCheck(BaseModel):
+    password: str
+
+
+@router.post("/verify-password")
+def verify_current_password(body: _PwdCheck,
+                            current_user: User = Depends(get_current_user)):
+    """Подтверждение действия повторным вводом пароля (напр. удаление строки плана).
+    Возвращает {ok: True} при совпадении, иначе 401 — фронт по этому гейту пропускает
+    деструктивное действие. Пароль проверяется, но не логируется и никуда не пишется."""
+    if not verify_password(body.password or "", current_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Неверный пароль")
+    return {"ok": True}
 
 
 @router.post("/accept-consent")
