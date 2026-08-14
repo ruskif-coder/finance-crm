@@ -95,13 +95,26 @@ class MpIn(BaseModel):
     deal_id: Optional[int] = None
     rows: List[MpRowIn] = []
     extras: List[MpExtraIn] = []
+    # Отметки конструктора: «проверено» по блокам (размещения + прогноз) и
+    # необязательный комментарий о причинах изменений при отправке на согласование.
+    # Оба — только для журнала: в самой версии МП не хранятся, проставляются заново
+    # при каждом сохранении (это чек-лист перед сохранением, а не свойство плана).
+    verified: Optional[bool] = None
+    change_note: Optional[str] = None
+
+
+def _is_cpm(model) -> bool:
+    """Модель закупки — CPM? Сравнение регистронезависимое и с обрезкой пробелов:
+    справочник услуг заполняется руками, и «cpm» вместо «CPM» дало бы объём×цену
+    вместо объём/1000×цены — ошибку в тысячу раз, причём молча."""
+    return (model or "").strip().upper() == "CPM"
 
 
 def _row_net(r):
     if not (r.position and r.volume and r.unit_price):
         return 0
     # Формула зависит от модели: CPM — за 1000, иначе кол-во×цена (Fix/CPC).
-    div = 1000 if (getattr(r, "model", None) or "") == "CPM" else 1
+    div = 1000 if _is_cpm(getattr(r, "model", None)) else 1
     return round((r.volume or 0) * (r.unit_price or 0) * (1 - (r.discount or 0)) / div)
 
 
@@ -386,6 +399,37 @@ def mp_save_deal_brief(plan_id: int, data: DealBriefIn, db: Session = Depends(ge
     return {"brief": deal.brief, "pushed_to_bitrix": pushed, "is_local": _deal_is_local(deal)}
 
 
+def _prefill_rows(db, deal):
+    """Строка размещения для нового МП из сделки — собирается так же, как в конвейере
+    годового плана (_build_mp): услуга ищется в справочнике по названию, дальше её
+    тариф решает всё. Объём = сумма ÷ цену × (CPM → 1000), чтобы бюджет строки сошёлся
+    с суммой сделки копейка в копейку.
+
+    Услуги нет в справочнике (свободный текст в сделке) → отдаём Fix-строку
+    «объём 1 × сумма»: бюджет всё равно верный, а объём проставят руками."""
+    from app.sales.models import SalesService
+    name = (deal.product or "").strip()
+    amt = float(deal.amount or 0)
+    if not name:
+        return []
+    svc = (db.query(SalesService)
+           .filter(func.lower(SalesService.name) == name.lower()).first())
+    if not svc:
+        return [{"position": name, "format": None, "model": "Fix", "inventory": None,
+                 "volume": 1, "unit_price": amt, "discount": 0, "forecast": {}}]
+    # inventory строго по прайсу услуги: раздельный → web (дефолт), иначе кросс-девайс
+    if svc.separate_price:
+        inv, price = "web", svc.unit_price_web
+    else:
+        inv, price = "cross", svc.unit_price
+    volume = (amt / price * (1000 if _is_cpm(svc.calc_form) else 1)) if price and price > 0 else 1
+    return [{
+        "position": svc.name, "format": svc.placement_type, "model": svc.calc_form,
+        "inventory": inv, "volume": volume, "unit_price": price or amt,
+        "discount": 0, "forecast": {},
+    }]
+
+
 @router.get("/deal-prefill/{deal_id}")
 def mp_deal_prefill(deal_id: int, db: Session = Depends(get_db),
                     current_user: User = Depends(MP_ED_VIEW)):
@@ -421,10 +465,53 @@ def mp_deal_prefill(deal_id: int, db: Session = Depends(get_db),
         "period": deal.period_from.strftime("%Y-%m") if deal.period_from else None,
         "product": deal.product,   # услуга сделки → первая строка МП
         "amount": deal.amount,     # сумма сделки (без НДС) → сумма первой строки МП
+        "rows": _prefill_rows(db, deal),   # готовая строка размещения (как в конвейере)
         "sales_rep_id": _rep_user(deal.sales_rep_id),         # user id (для owners МП)
         "account_manager_id": _rep_user(deal.account_manager_id),
         "brief": deal.brief or "", "is_local": _deal_is_local(deal),
     }
+
+
+def _advance_deal_after_verify(db, current_user, p):
+    """Сделка, рождённая конвейером годового плана, приходит на ПЕРВУЮ стадию
+    («МП Подготовка») — её МП собран автоматом и ещё никем не смотрен. В интерфейсе
+    такая сделка светится жёлтым: «есть МП, но он не завизирован».
+
+    Аккаунт открывает МП, жмёт обе отметки «Проверено» и сохраняет — вот здесь
+    сделка и уходит на следующую стадию, а жёлтый гаснет. Двигаем только с первой
+    стадии: если сделка уже дальше, повторное сохранение МП её не откатывает и не
+    перепрыгивает вперёд."""
+    if not p.deal_id:
+        return
+    from app.sales.models import SalesDeal
+    from app.sales.catalog import Catalog
+    deal = db.query(SalesDeal).filter(SalesDeal.id == p.deal_id).first()
+    if not deal:
+        return
+    cat = Catalog(db)
+    first = cat.first()
+    if not first or deal.our_stage_id != first.id:
+        return
+    nxt = cat.next_of(first.id)
+    if not nxt:
+        return
+    deal.our_stage_id = nxt.id
+    db.flush()
+    log_action(db, current_user, "move_deal", "sales_deal", deal.id,
+               f"{first.name} → {nxt.name} (медиаплан проверен и сохранён)")
+
+
+def _log_verify_note(db, current_user, p, data):
+    """Журнал конструктора: отметка «МП проверен» и комментарий к изменениям.
+    Пишем отдельными записями, чтобы их было видно в истории сделки/МП."""
+    if getattr(data, "verified", None):
+        log_action(db, current_user, "verify_media_plan", "media_plan", p.id,
+                   f"МП проверен · {p.title} v{p.version}")
+        _advance_deal_after_verify(db, current_user, p)
+    note = (getattr(data, "change_note", None) or "").strip()
+    if note:
+        log_action(db, current_user, "media_plan_change_note", "media_plan", p.id,
+                   f"причина изменений: {note[:500]}")
 
 
 @router.post("")
@@ -448,6 +535,7 @@ def create_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: U
                 db.flush()
                 log_action(db, current_user, "submit_media_plan", "media_plan", existing.id,
                            f"{existing.title} v{existing.version} → {existing.status} (без изменений содержимого)")
+                _log_verify_note(db, current_user, existing, data)
                 if existing.status == "review":
                     _notify_submit(db, existing, current_user)
                 db.commit()
@@ -466,6 +554,7 @@ def create_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: U
     _enforce_cap(db, p.group_id)
     db.flush()
     log_action(db, current_user, "create_media_plan", "media_plan", p.id, f"{p.title} v{p.version}")
+    _log_verify_note(db, current_user, p, data)
     if p.status == "review":
         _notify_submit(db, p, current_user)
     db.commit()
@@ -485,8 +574,9 @@ def update_media_plan(plan_id: int, data: MpIn, db: Session = Depends(get_db), c
         raise HTTPException(status_code=409, detail="Нельзя править отправленную/согласованную/отклонённую версию — создайте новую версию «на согласование»")
     _apply_fields(p, data)
     _write_children(db, p.id, data)
-    db.commit()
     log_action(db, current_user, "update_media_plan", "media_plan", p.id, f"{p.title} v{p.version}")
+    _log_verify_note(db, current_user, p, data)
+    db.commit()
     return {"id": p.id, "group_id": p.group_id, "version": p.version, "status": p.status}
 
 
@@ -551,7 +641,7 @@ def _approver_user_ids(db):
 def _notify_submit(db, p, actor):
     recips = set(_approver_user_ids(db))
     recips.discard(actor.id if actor else None)
-    notify_many(db, recips, kind="mp_status", entity_type="media_plan", entity_id=p.id,
+    notify_many(db, recips, kind="mp_submit", entity_type="media_plan", entity_id=p.id,
                 link=f"/deals/mp/{p.id}", title=f"Новый МП на согласование: {p.title or ('#' + str(p.id))}")
 
 
@@ -569,7 +659,10 @@ def _notify_status(db, p, frm, to, actor):
         body = p.reject_reason if to == "rejected" else None
     recips.discard(actor.id)
     recips.discard(None)
-    notify_many(db, recips, kind="mp_status", title=title, body=body,
+    # вид события — свой на каждый переход: от него зависят тон и кнопка в виджете
+    kind = {"approved": "mp_approved", "rejected": "mp_rejected",
+            "archived": "mp_archived", "draft": "mp_recalled"}.get(to, "mp_status")
+    notify_many(db, recips, kind=kind, title=title, body=body,
                 link=f"/deals/mp/{p.id}", entity_type="media_plan", entity_id=p.id)
 
 
@@ -651,16 +744,63 @@ def list_media_plans(db: Session = Depends(get_db), current_user: User = Depends
     return {"items": items}
 
 
+def _deal_code(db, deal_id):
+    """Наш 6-значный код сделки (см. deal-code) — в интерфейсе показываем его,
+    а не внутренний id и не bitrix_id."""
+    if not deal_id:
+        return None
+    from app.sales.models import SalesDeal
+    row = db.query(SalesDeal.code).filter(SalesDeal.id == deal_id).first()
+    return row[0] if row else None
+
+
+def _year_plan_of_deal(db, deal_id):
+    """Материнский годовой план сделки, к которой прикреплён МП (или None).
+    Тот же контракт, что в раскрытии сделки: deal → строка плана → пакет."""
+    if not deal_id:
+        return None
+    from app.sales.models import SalesYearPlanLine, SalesYearPlan, SalesDeal
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal or not deal.year_plan_line_id:
+        return None
+    ln = db.query(SalesYearPlanLine).filter(SalesYearPlanLine.id == deal.year_plan_line_id).first()
+    if not ln:
+        return None
+    pl = db.query(SalesYearPlan).filter(SalesYearPlan.id == ln.plan_id).first() if ln.plan_id else None
+    # Комментарий рекламодателя из формы плана (brief.adv_comment): своя строка,
+    # иначе любая соседняя того же плана.
+    comment = ((ln.brief or {}).get("adv_comment") or "").strip()
+    if not comment and ln.plan_id:
+        for sl in db.query(SalesYearPlanLine).filter(SalesYearPlanLine.plan_id == ln.plan_id).all():
+            c = ((sl.brief or {}).get("adv_comment") or "").strip()
+            if c:
+                comment = c
+                break
+    return {
+        "line_id": ln.id, "plan_id": ln.plan_id,
+        "title": (pl.title if pl else None),
+        "comment": comment or None,
+        "year": (pl.year if pl else ln.year),
+        "rep_id": (pl.sales_rep_id if pl else ln.sales_rep_id),
+        "month": deal.plan_month,
+        "deal_code": deal.code,
+    }
+
+
 def _plan_full(db, p, n):
     rows = db.query(SalesMediaPlanRow).filter(SalesMediaPlanRow.plan_id == p.id).order_by(SalesMediaPlanRow.sort_order).all()
     extras = db.query(SalesMediaPlanExtra).filter(SalesMediaPlanExtra.plan_id == p.id).order_by(SalesMediaPlanExtra.sort_order).all()
     return {
+        "year_plan": _year_plan_of_deal(db, p.deal_id),
         "id": p.id, "group_id": p.group_id, "version": p.version, "status": p.status, "title": p.title,
         "advertiser_id": p.advertiser_id, "brand_id": p.brand_id, "agency_id": p.agency_id,
         "payer_counterparty_id": p.payer_counterparty_id, "period": p.period, "geo_id": p.geo_id,
         "date_from": p.date_from, "date_to": p.date_to, "targeting": p.targeting or {}, "goals": p.goals or {},
         "sales_rep_id": p.sales_rep_id, "account_manager_id": p.account_manager_id, "traffic_manager_id": p.traffic_manager_id,
         "amount_net": p.amount_net, "amount_gross": p.amount_gross, "deal_id": p.deal_id,
+        # наш код сделки — для ссылки «← Сделка XXXXXX» в конструкторе (bitrix_id/внутренний
+        # id в интерфейсе не показываем, см. deal-code)
+        "deal_code": _deal_code(db, p.deal_id),
         "created_at": p.created_at, "updated_at": p.updated_at,
         "reject_reason": p.reject_reason, "decided_by": p.decided_by, "decided_at": p.decided_at,
         "decided_by_name": n["user"].get(p.decided_by),
@@ -873,7 +1013,7 @@ def _wb_programmatic(full, p):
     for row in full["rows"]:
         net = _row_net(MpRowIn(**{k: row.get(k) for k in ("position", "format", "model", "volume", "unit_price", "discount")}))
         model = row.get("model") or ""
-        div = 1000 if model == "CPM" else 1
+        div = 1000 if _is_cpm(model) else 1
         vol, unit, disc = row.get("volume") or 0, row.get("unit_price") or 0, row.get("discount") or 0
         n_noded = round(vol * unit / div) if (vol and unit) else 0     # до скидки
         disc_rub = n_noded - net
@@ -887,7 +1027,7 @@ def _wb_programmatic(full, p):
         put(r, 7, "Динамика", align=CTR, border=BORD)
         put(r, 8, model, align=CTR, border=BORD)
         put(r, 9, vol, align=RIGHT, border=BORD, numfmt=INT)
-        put(r, 10, _MP_UNIT.get(model, "—"), align=CTR, border=BORD)
+        put(r, 10, _MP_UNIT.get((model or "").strip().upper(), "—"), align=CTR, border=BORD)
         put(r, 11, row.get("period") or full.get("period"), align=CTR, border=BORD)
         put(r, 12, 1, align=CTR, border=BORD, numfmt=INT)
         put(r, 13, unit, align=RIGHT, border=BORD, numfmt=MONEY)
@@ -1033,7 +1173,7 @@ def _insert_logo(ws, coord):
 def _row_ctx(row, full):
     net = _row_net(MpRowIn(**{k: row.get(k) for k in ("position", "format", "model", "volume", "unit_price", "discount")}))
     model = row.get("model") or ""
-    div = 1000 if model == "CPM" else 1
+    div = 1000 if _is_cpm(model) else 1
     vol, unit, disc = row.get("volume") or 0, row.get("unit_price") or 0, row.get("discount") or 0
     n_nodisc = round(vol * unit / div) if (vol and unit) else 0
     m = _fc_metrics(row, net)
@@ -1041,7 +1181,7 @@ def _row_ctx(row, full):
         "r.place": "SIMB-AD", "r.position": row.get("position"), "r.geo": full.get("geo") or "—",
         "r.format": row.get("format"), "r.device": _MP_INV.get(row.get("inventory") or "cross", "Кросс-девайс"),
         "r.rotation": "Динамика", "r.model": model, "r.volume": vol,
-        "r.unit_name": _MP_UNIT.get(model, "—"), "r.period": full.get("period"), "r.season": 1,
+        "r.unit_name": _MP_UNIT.get((model or "").strip().upper(), "—"), "r.period": full.get("period"), "r.season": 1,
         "r.unit_price": unit, "r.net_nodisc": n_nodisc, "r.disc_pct": round(disc * 100),
         "r.disc_rub": n_nodisc - net, "r.net": net, "r.vat": round(net * VAT), "r.gross": round(net * (1 + VAT)),
         "r.freq": m["freq"], "r.reach": m["reach"], "r.imp": m["imp"], "r.ctr": m["ctr"],
@@ -1158,7 +1298,7 @@ def _row_formula_ctx(row, full, C, R):
         "r.place": "SIMB-AD", "r.position": row.get("position"), "r.geo": full.get("geo") or "—",
         "r.format": row.get("format"), "r.device": _MP_INV.get(row.get("inventory") or "cross", "Кросс-девайс"),
         "r.rotation": "Динамика", "r.model": model, "r.volume": row.get("volume") or 0,
-        "r.unit_name": _MP_UNIT.get(model, "—"), "r.period": full.get("period"), "r.season": 1,
+        "r.unit_name": _MP_UNIT.get((model or "").strip().upper(), "—"), "r.period": full.get("period"), "r.season": 1,
         "r.unit_price": row.get("unit_price") or 0, "r.disc_pct": round(disc * 100),
         "r.freq": n(fc.get("freq")), "r.ctr": n(fc.get("ctr")), "r.cr": n(fc.get("cr")),
         "r.price": n(fc.get("price")), "r.sov": n(fc.get("sov")),
@@ -1276,7 +1416,10 @@ def _render_from_template(full, p, path):
         "title": full.get("title") or "—", "period": full.get("period") or "—",
         "date": created, "date_from": d(full.get("date_from")) or "—", "date_to": d(full.get("date_to")) or "—",
         "mp_title": f"Медиаплан · {adv or '—'}" + (f" | {brand}" if brand else ""),
-        "mp_subtitle": f"SIMB-AD · {agency or adv or '—'} · от {created} · МП актуален 14 дней",
+        # В конце подзаголовка — код сделки, к которой прикреплён МП, через вертикальный
+        # разделитель: по выгрузке видно, к какой сделке она относится. Нет привязки — нет хвоста.
+        "mp_subtitle": (f"SIMB-AD · {agency or adv or '—'} · от {created} · МП актуален 14 дней"
+                        + (f" | {full['deal_code']}" if full.get("deal_code") else "")),
         "geo": full.get("geo") or "—", "ca": ca or "—",
         "tg_geo": full.get("geo") or "—", "tg_audience": _tg_join(full, "audience"),
         "tg_buys": _tg_join(full, "buys"), "tg_interests": _tg_join(full, "interests"),

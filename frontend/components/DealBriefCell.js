@@ -4,8 +4,13 @@ import api, { auth } from '../lib/api'
 // Иконка «бриф» в строке сделки + всплывающее окно с текстом и инлайн-правкой.
 // Ленивая загрузка: текст тянется только при первом открытии (GET), дальше — из кэша БД.
 // Сохранение двустороннее: наша БД + поле ufCrm_1761318500 в Битриксе (на бэке).
-export default function DealBriefCell({ deal, canEdit, v2 }) {
-  const [open, setOpen] = useState(false)
+// controlledOpen/onClose — управление снаружи (кнопка «Бриф» на канбан-доске):
+// иконку-триггер в этом режиме не рисуем, показываем только сам попап.
+export default function DealBriefCell({ deal, canEdit, v2, controlledOpen, onClose }) {
+  const controlled = controlledOpen !== undefined
+  const [openState, setOpenState] = useState(false)
+  const open = controlled ? controlledOpen : openState
+  const setOpen = (v) => { if (controlled) { if (!v && onClose) onClose() } else setOpenState(v) }
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -53,7 +58,7 @@ export default function DealBriefCell({ deal, canEdit, v2 }) {
 
   return (
     <>
-      {v2 ? (
+      {controlled ? null : v2 ? (
         <span title={hasBrief ? 'Бриф подгружен' : 'Базовый бриф'}
           onClick={(e) => { e.stopPropagation(); setOpen(true) }}
           style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 8, cursor: 'pointer',
@@ -86,7 +91,7 @@ export default function DealBriefCell({ deal, canEdit, v2 }) {
               <span style={{ fontSize: 15 }}>📋</span>
               <div style={{ fontWeight: 600, fontSize: 15, flex: 1, overflow: 'hidden',
                 textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                Бриф · {deal.title || `сделка #${deal.id}`}
+                Бриф · {deal.title || `сделка ${deal.code || deal.id}`}
               </div>
               <button onClick={() => setOpen(false)} title="Закрыть"
                 style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 18,

@@ -151,7 +151,7 @@ function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
             <EditField {...ef} label="Название" field="title" type="text" />
             <EditField {...ef} label="Агентство" field="agency_id" clear="— прямой договор —" />
             <EditField {...ef} label="Рекламодатель" field="advertiser_id" clear="— не указан —" />
-            <EditField {...ef} label="Плательщик" field="payer_counterparty_id" clear="— по умолчанию —" />
+            <EditField {...ef} label="Контрагент" field="payer_counterparty_id" clear="— по умолчанию —" />
             <EditField {...ef} label="Услуга" field="product" clear="— не указана —" />
             <EditField {...ef} label="Стадия" field="bitrix_stage" clear="— не указана —" />
             <EditField {...ef} label="Продавец" field="sales_rep_id" clear="— не указан —" />
@@ -166,7 +166,7 @@ function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
               <Row k="Агентство" v={d.agency} />
               <Row k="Аккаунт" v={d.account_manager} />
               <Row k="Продавец" v={d.sales_rep} />
-              <Row k="Плательщик" v={d.payer} />
+              <Row k="Контрагент" v={d.payer} />
               <Row k="Стадия" v={d.bitrix_stage} />
               <Row k="Название" v={d.title} />
               <Row k="Слой денег" v={layerLabel} strong />
@@ -252,7 +252,7 @@ function DealCard({ d, onOpen, canEdit, expanded, onToggle }) {
         <div style={{ animation: 'sheetFade .2s ease both' }}>
           <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-row)', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 10px', fontSize: 12.5 }}>
             <span style={{ color: 'var(--text-muted)' }}>Аккаунт</span><span style={{ color: 'var(--text-primary)', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.account_manager || '—'}</span>
-            <span style={{ color: 'var(--text-muted)' }}>Плательщик</span><span style={{ color: 'var(--text-primary)', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.payer || '—'}</span>
+            <span style={{ color: 'var(--text-muted)' }}>Контрагент</span><span style={{ color: 'var(--text-primary)', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.payer || '—'}</span>
             <span style={{ color: 'var(--text-muted)' }}>Название</span><span style={{ color: 'var(--text-primary)', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.title || '—'}</span>
           </div>
           <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>

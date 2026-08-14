@@ -74,7 +74,7 @@ const initials = n => n.split(' ').map(w => w[0]).join('').slice(0, 2);
 /* ── сетки (одна на шапку, строки и итог) ───────────────────────────── */
 const MAIN_COLS =
   '16px minmax(0,1.05fr) minmax(0,0.56fr) minmax(0,0.5fr) 40px minmax(56px,0.52fr) minmax(52px,0.48fr) minmax(34px,0.28fr) minmax(96px,1fr) minmax(96px,1fr) 20px';
-const EXTRA_COLS = '16px minmax(0,1.5fr) minmax(0,0.85fr) 88px 1fr 96px 108px 20px';
+const EXTRA_COLS = '16px minmax(0,1.5fr) minmax(0,0.85fr) 88px 1fr 96px 108px 108px 20px';
 const FC_COLS = 'minmax(220px,1.6fr) repeat(15,minmax(64px,1fr))';
 // Инвентарь строки размещения (при раздельном прайсе услуги). App → IN-App в UI.
 const INV_LABEL = { web: 'Web', app: 'IN-App', cross: 'Кросс-девайс' };
@@ -218,6 +218,26 @@ const Warn = ({ children }) => (
   </span>
 );
 
+// Отметка «проверено» у заголовка блока. Обе (размещения + прогноз) обязательны,
+// чтобы сохранить МП — чек-лист конкретного сохранения, а не свойство плана.
+const VerifyBtn = ({ on, onClick, title, big }) => (
+  <span onClick={onClick} title={title}
+    style={{
+      display: 'inline-flex', alignItems: 'center', gap: big ? 8 : 5,
+      height: big ? 38 : 22, padding: big ? '0 16px' : '0 9px', borderRadius: big ? 10 : 7,
+      cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap',
+      background: on ? '#E6F5EF' : T.card, border: `1px solid ${on ? '#9FD9C3' : T.border}`,
+      color: on ? '#1F7D5E' : T.t3, fontSize: big ? 12.5 : 10, fontWeight: 800,
+      letterSpacing: '.04em', textTransform: 'uppercase',
+      boxShadow: on && big ? '0 1px 0 rgba(31,125,94,.08)' : 'none',
+    }}>
+    <svg width={big ? 15 : 11} height={big ? 15 : 11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+      {on ? <path d="M20 6L9 17l-5-5" /> : <circle cx="12" cy="12" r="8" strokeWidth="1.8" />}
+    </svg>
+    Проверено
+  </span>
+);
+
 const Plus = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>;
 const Cross = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>;
 const Pencil = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h4l10-10-4-4L4 16v4z" /><path d="M14.5 5.5l4 4" /></svg>;
@@ -281,6 +301,15 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
   const [verOpen, setVerOpen] = useState(false);   // дропдаун истории версий
   const [rejectOpen, setRejectOpen] = useState(false);   // модалка причины отклонения
   const [rejectText, setRejectText] = useState('');
+  // Чек-лист перед сохранением: обе отметки «проверено» (размещения + прогноз).
+  // Не свойство плана, а подтверждение конкретного сохранения — сбрасывается после него.
+  const [okMain, setOkMain] = useState(false);
+  const [okFc, setOkFc] = useState(false);
+  const verified = okMain && okFc;
+  // Комментарий о причинах изменений при отправке на согласование (необязательный).
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const doSaveRef = useRef(null);   // ссылка на save() из блока кнопок — зовём из модалки
   // Новый МП — пустой (одна незаполненная строка); сохранённый — префилл из initial.
   const main = useAnimatedRows((init.rows && init.rows.length)
     ? init.rows.map((r, i) => ({ id: i + 1, position: r.position || '', format: r.format || '', model: r.model || 'CPM', inventory: r.inventory || 'cross', volume: r.volume || 0, unit: r.unit_price || 0, discount: r.discount || 0 }))
@@ -459,6 +488,23 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
             </div>
           </div>
         )}
+        {/* Комментарий о причинах изменений перед отправкой на согласование.
+            Поле необязательное: «Отправить» работает и с пустым — попадёт в журнал. */}
+        {noteOpen && (
+          <div onClick={() => setNoteOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(20,22,28,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div onClick={e => e.stopPropagation()} style={{ width: 460, maxWidth: '92vw', background: T.card, borderRadius: 16, padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 12, boxShadow: '0 16px 48px rgba(20,22,28,.3)' }}>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>Отправить на согласование</span>
+              <span style={{ fontSize: 12.5, color: T.t3 }}>Оставьте комментарий о причинах изменений — он попадёт в историю. Поле необязательное.</span>
+              <textarea autoFocus value={noteText} onChange={e => setNoteText(e.target.value)} rows={4} placeholder="Причины изменений…"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 10, border: `1px solid ${T.border}`, fontSize: 13, fontFamily: T.sans, outline: 'none', resize: 'vertical' }} />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <span onClick={() => setNoteOpen(false)} style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 14px', border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>Отмена</span>
+                <span onClick={() => { const n = noteText.trim(); setNoteOpen(false); doSaveRef.current && doSaveRef.current('submit', n); }}
+                  style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 16px', background: T.accent, color: '#FFF', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>ОК, отправить</span>
+              </div>
+            </div>
+          </div>
+        )}
         <div style={{ width: '100%', maxWidth: 1760, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {init.status === 'rejected' && init.reject_reason && (
             <div style={{ background: 'rgba(214,69,69,.10)', border: `1px solid ${(T.danger || '#D64545')}44`, borderRadius: 12, padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'baseline' }}>
@@ -509,14 +555,23 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
               {onExportXlsx && <span className="mp-outline" onClick={onExportXlsx} style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 13px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>Excel</span>}
               {(() => {
                 const st = init.status || 'draft';
-                const submitOk = !emptyMain && calc.filled.length > 0;
+                // Сохранять можно только с обеими отметками «проверено» (чек-лист над блоками).
+                const submitOk = !emptyMain && calc.filled.length > 0 && verified;
+                const notVerifiedHint = 'Завизируйте правки';
                 const btn = (bg, color, bd) => ({ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px', background: bg, border: bd || 'none', color, borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' });
-                const save = (action) => onSave?.({ brief: { ...bf, title: effectiveTitle, targeting: mergeTgDrafts() }, main: main.rows, extras: extras.rows, fc, goals, owners, action });
+                const save = (action, note) => onSave?.({ brief: { ...bf, title: effectiveTitle, targeting: mergeTgDrafts() }, main: main.rows, extras: extras.rows, fc, goals, owners, action, verified: true, change_note: note || '' });
+                doSaveRef.current = save;   // чтобы модалка комментария могла отправить
                 return (<>
-                  {(st === 'draft' || !init.id) && <span className="mp-outline" onClick={() => save('draft')} style={btn(T.card, T.accent, `1px solid ${T.accentBorder}`)}>Сохранить черновик</span>}
+                  {(st === 'draft' || !init.id) && (
+                    <span className={verified ? 'mp-outline' : undefined} onClick={() => { if (verified) save('draft'); }}
+                      title={verified ? undefined : notVerifiedHint}
+                      style={{ ...btn(T.card, verified ? T.accent : '#8792A6', `1px solid ${verified ? T.accentBorder : T.border}`), cursor: verified ? 'pointer' : 'default' }}>
+                      Сохранить черновик
+                    </span>)}
                   {(st === 'draft' || st === 'rejected' || st === 'approved') && (
-                    <span className={submitOk ? 'mp-primary' : undefined} onClick={() => { if (submitOk) save('submit'); }}
-                      title={submitOk ? undefined : (calc.filled.length ? 'Заполните все строки' : 'Добавьте хотя бы одну строку размещения')}
+                    <span className={submitOk ? 'mp-primary' : undefined}
+                      onClick={() => { if (submitOk) { setNoteText(''); setNoteOpen(true); } }}
+                      title={submitOk ? undefined : (!verified ? notVerifiedHint : (calc.filled.length ? 'Заполните все строки' : 'Добавьте хотя бы одну строку размещения'))}
                       style={{ ...btn(submitOk ? T.accent : '#8792A6', '#FFF'), cursor: submitOk ? 'pointer' : 'default' }}>
                       {st === 'draft' ? 'На согласование' : 'Новая версия на согласование'}
                     </span>)}
@@ -566,7 +621,8 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
 
                   <div style={{ display: 'flex', gap: 22, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                     {/* Параметры РК — слева, 2 колонки × 3 строки (колоночный порядок) */}
-                    <div style={{ flex: '0 0 30%', minWidth: 240, display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gridTemplateRows: 'repeat(3,auto)', gridAutoFlow: 'column', columnGap: 16 }}>
+                    <div style={{ flex: '0 0 30%', minWidth: 240, display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gridTemplateRows: 'repeat(3,auto)', gridAutoFlow: 'column', columnGap: 16 }}>
                       <BriefField label="Рекламодатель" open={isOpen('brief', 0, 'adv')} onToggle={() => toggle('brief', 0, 'adv')} value={bf.advertiser_id} options={advertisers} onPick={v => { setBf(s => ({ ...s, advertiser_id: v, brand_id: '', payer_id: '' })); setSel(null); }} />
                       <BriefField label="Бренд" open={isOpen('brief', 0, 'brand')} onToggle={() => bf.advertiser_id && toggle('brief', 0, 'brand')} value={bf.brand_id} options={brOpts} placeholder={bf.advertiser_id ? '—' : 'сначала рекламодатель'} onPick={v => { setBf(s => ({ ...s, brand_id: v })); setSel(null); }}
                         onAddNew={(bf.advertiser_id && onCreateBrand) ? (async (name) => { const id = await onCreateBrand(bf.advertiser_id, name); if (id) { setBf(s => ({ ...s, brand_id: id })); setSel(null); } }) : undefined} addPlaceholder="+ новый бренд" />
@@ -579,6 +635,27 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                           : <span className="mp-cell" onClick={() => setPeriodEdit(true)} style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 600, lineHeight: 1.3, color: bf.period ? T.t1 : T.t4, cursor: 'pointer' }}>{bf.period || '—'}</span>}
                       </span>
                       <BriefField label="Гео" open={isOpen('brief', 0, 'geo')} onToggle={() => toggle('brief', 0, 'geo')} value={bf.geo_id} options={geoList.map(g => ({ value: g.id, label: g.name }))} minWidth={180} onPick={v => { setBf(s => ({ ...s, geo_id: v })); setSel(null); }} onAddNew={async (name) => { const id = onAddGeo ? await onAddGeo(name) : null; setBf(s => ({ ...s, geo_id: id ?? s.geo_id })); setSel(null); }} addPlaceholder="+ гео" />
+                    </div>
+                      {/* Плашка материнского годового плана — если МП прикреплён к сделке,
+                          рождённой конвейером плана. Тот же смысл, что в раскрытии сделки. */}
+                      {init.year_plan && (
+                        <span style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, background: T.subtle, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px' }}>
+                          <span style={{ minWidth: 0, flex: 1 }}>
+                            <span style={{ display: 'block', fontFamily: T.mono, fontSize: 8.5, letterSpacing: '.06em', textTransform: 'uppercase', color: T.t3 }}>Годовой план</span>
+                            <span style={{ display: 'block', fontSize: 12, fontWeight: 700, color: T.t1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                              title={[init.year_plan.title, init.year_plan.comment].filter(Boolean).join(' · ')}>
+                              {init.year_plan.title || `План ${init.year_plan.year || ''}`}
+                              {init.year_plan.comment ? <span style={{ fontWeight: 600, color: T.t2 }}> · {init.year_plan.comment}</span> : null}
+                              {init.year_plan.month != null ? <span style={{ fontFamily: T.mono, fontWeight: 600, color: T.t3 }}> · мес. {init.year_plan.month + 1}</span> : null}
+                            </span>
+                          </span>
+                          <a href={`/deals/year-plan?year=${init.year_plan.year}${init.year_plan.rep_id ? `&rep=${init.year_plan.rep_id}` : ''}`}
+                            target="_blank" rel="noreferrer" title="Открыть годовой план в новой вкладке"
+                            style={{ display: 'inline-flex', alignItems: 'center', height: 26, padding: '0 10px', borderRadius: 8, background: T.accentTint, border: `1px solid ${T.accentBorder}`, color: T.accent, fontSize: 11, fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap', flex: '0 0 auto' }}>
+                            Открыть план →
+                          </a>
+                        </span>
+                      )}
                     </div>
 
                     {/* Таргетинг — справа: чипы из каталога (пикер) + свободный текст */}
@@ -854,7 +931,8 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   <div style={{ display: 'grid', gridTemplateColumns: EXTRA_COLS, gap: 4, padding: '0 6px 8px', borderBottom: `1px solid ${T.border}`, ...colHead }}>
                     <span /><span>Услуга</span><span>Период</span><span style={{ textAlign: 'center' }}>Условие</span><span />
-                    <span style={{ textAlign: 'right' }}>Цена</span><span style={{ textAlign: 'right' }}>Итого</span><span />
+                    <span style={{ textAlign: 'right' }}>Цена</span><span style={{ textAlign: 'right' }}>Итого</span>
+                    <span style={{ textAlign: 'right' }}>С НДС</span><span />
                   </div>
 
                   {extras.rows.map((e, i) => {
@@ -901,6 +979,8 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                         <span />
                         <span style={{ fontFamily: T.mono, fontSize: 11, color: T.t4, textAlign: 'right', whiteSpace: 'nowrap', textDecoration: e.total < e.price ? 'line-through' : 'none' }}>{dec(e.price)}</span>
                         <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: e.total ? T.t1 : T.income, textAlign: 'right', whiteSpace: 'nowrap' }}>{dec(e.total)}</span>
+                        {/* цена с НДС — от «Итого» (что реально в счёте), а не от прайса */}
+                        <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: T.accent, textAlign: 'right', whiteSpace: 'nowrap' }}>{dec(Math.round((e.total || 0) * (1 + VAT)))}</span>
                         <DeleteBtn onClick={() => extras.remove(e.id)} />
                       </div>
                     );
@@ -914,6 +994,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                     <span style={{ ...colHead, fontWeight: 700, color: T.t3 }}>Итого доп.</span>
                     <span /><span /><span /><span />
                     <span style={{ fontFamily: T.mono, fontSize: 12.5, fontWeight: 700, color: T.income, textAlign: 'right' }}>{rub(calc.extrasNet)}</span>
+                    <span style={{ fontFamily: T.mono, fontSize: 12.5, fontWeight: 700, color: T.accent, textAlign: 'right' }}>{rub(Math.round(calc.extrasNet * (1 + VAT)))}</span>
                     <span />
                   </span>
                 </div>
@@ -937,8 +1018,8 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
               </div>
             </div>
 
-            {/* итоговая строка — на всю ширину карточки */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1.35fr repeat(5,minmax(0,1fr))', alignItems: 'end', marginTop: 16, paddingTop: 18, borderTop: `1px solid ${T.border}` }}>
+            {/* итоговая строка — на всю ширину карточки; в конце отметка «проверено» */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1.35fr repeat(5,minmax(0,1fr)) auto', alignItems: 'end', marginTop: 16, paddingTop: 18, borderTop: `1px solid ${T.border}` }}>
               <span style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingRight: 16, minWidth: 0 }}>
                 <span style={{ fontFamily: T.mono, fontSize: 9.5, letterSpacing: '.08em', textTransform: 'uppercase', color: T.t3 }}>Итого с НДС</span>
                 <span style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1, whiteSpace: 'nowrap' }}>{rub(calc.grandNet * (1 + VAT))}</span>
@@ -949,6 +1030,10 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                   <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1, color: s.color, whiteSpace: 'nowrap' }}>{s.value}</span>
                 </span>
               ))}
+              <span style={{ paddingLeft: 16, borderLeft: `1px solid ${T.inner}`, display: 'flex', alignItems: 'flex-end' }}>
+                <VerifyBtn big on={okMain} onClick={() => setOkMain(v => !v)}
+                  title="Отметьте, что блок размещений проверен — без этого сохранение недоступно" />
+              </span>
             </div>
 
             {emptyMain > 0 && (
@@ -1040,13 +1125,17 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
               </div>
             </div>
 
-            {/* легенда формул — ВНЕ скролл-контейнера */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 20px', background: T.tint, borderRadius: 10, padding: '9px 12px', marginTop: 4 }}>
-              {FC_RULES.map(([metric, rule]) => (
-                <span key={metric} style={{ fontSize: 10, color: T.t2, lineHeight: 1.4 }}>
+            {/* легенда формул — ВНЕ скролл-контейнера; справа отметка «проверено» */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '2px 20px', alignItems: 'center', background: T.tint, borderRadius: 10, padding: '9px 12px', marginTop: 4 }}>
+              {FC_RULES.map(([metric, rule], i) => (
+                <span key={metric} style={{ fontSize: 10, color: T.t2, lineHeight: 1.4, gridColumn: (i % 2) + 1 }}>
                   <span style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase', color: T.t3 }}>{metric}</span> — {rule}
                 </span>
               ))}
+              <span style={{ gridColumn: 3, gridRow: `1 / span ${Math.ceil(FC_RULES.length / 2)}`, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingLeft: 16 }}>
+                <VerifyBtn big on={okFc} onClick={() => setOkFc(v => !v)}
+                  title="Отметьте, что прогноз проверен — без этого сохранение недоступно" />
+              </span>
             </div>
           </Card>
         </div>

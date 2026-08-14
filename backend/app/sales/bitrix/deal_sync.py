@@ -32,6 +32,10 @@ F_PERIOD_FROM = "ufCrm_1723639172"     # дата — Старт РК
 F_MP = "ufCrm_1690138838403"           # file — МП
 F_CONTRACT = "ufCrm_1690897647759"     # file — Договор и приложения
 
+# Потолок правдоподобия для суммы с НДС относительно суммы до НДС: ставка 22 % плюс
+# запас на округления и старые ставки. Выше — считаем присланное ошибкой заполнения.
+_MAX_GROSS_K = 1.31
+
 
 def _num(v):
     try:
@@ -218,8 +222,21 @@ def sync_deal_from_bitrix(db: Session, deal: SalesDeal, download_files: bool = T
         if w:
             issues.append({"field": field, "message": w})
 
-    setf("amount_with_vat", _num(d.get("amount")))       # стандартное opportunity — с НДС
+    # Порядок важен: сначала сумма до НДС (наше достоверное поле), затем проверка
+    # opportunity об неё. Стандартное opportunity заполняют не всегда и не всегда верно:
+    # встречались 0, сумма меньше суммы без НДС и завышение втрое. Такое значение не
+    # импортируем вовсе — иначе каждый синк затирал бы корректную цифру, — а поднимаем
+    # issue, чтобы расхождение увидели в отчёте сверки.
     setf("amount", _money(d.get(F_AMOUNT_NET)))          # до НДС
+    _gross = _num(d.get("amount"))                       # стандартное opportunity — с НДС
+    _net = deal.amount
+    if _gross is not None and _net:
+        if _gross < _net - 1 or _gross > _net * _MAX_GROSS_K:
+            issue("amount_with_vat",
+                  f"Битрикс прислал сумму с НДС {_gross:,.0f} при сумме до НДС {_net:,.0f} — "
+                  f"значение не импортировано".replace(",", " "))
+            _gross = None
+    setf("amount_with_vat", _gross)
     setf("period_from", _parse_date(d.get(F_PERIOD_FROM)))
 
     rid, w = _resolve_rep_id(db, _first(d.get(F_SALE_MGR)))

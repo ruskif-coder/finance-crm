@@ -42,12 +42,18 @@ class Catalog:
         return False
 
 
-def stage_public(s):
-    """Публичное представление стадии для API."""
+def stage_public(s, catalog=None):
+    """Публичное представление стадии для API.
+
+    catalog (опционально) — чтобы отдать `is_first`: первая стадия цепочки.
+    Интерфейсу нужен признак «сделка только пришла и ждёт медиаплана», и опираться
+    на название («МП Подготовка») нельзя — его переименуют; на числовой id тоже
+    (зависит от засева). Позиция в цепочке — устойчивый признак."""
     if not s:
         return None
     cat = STAGE_BY_KEY.get(s.stage_key)
     return {
+        "is_first": (bool(catalog.flow) and catalog.flow[0] == s.id) if catalog else None,
         "id": s.id, "name": s.name,
         "phase_id": s.phase_id,
         "phase": s.phase.name if s.phase else None,

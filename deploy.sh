@@ -33,6 +33,12 @@ case "$ACTION" in
     docker cp $PROJECT/frontend/components finance_frontend:/app/
     docker cp $PROJECT/frontend/styles finance_frontend:/app/
     docker cp $PROJECT/frontend/public finance_frontend:/app/
+    docker cp $PROJECT/frontend/lib finance_frontend:/app/
+    docker cp $PROJECT/frontend/helpers finance_frontend:/app/
+    # next.config.js читает версию из package.json на этапе сборки — без них
+    # в меню профиля останется версия, вшитая при последней полной пересборке.
+    docker cp $PROJECT/frontend/next.config.js finance_frontend:/app/
+    docker cp $PROJECT/frontend/package.json finance_frontend:/app/
     echo "[3/3] Rebuilding Next.js (3-5 min)..."
     docker exec finance_frontend sh -c "cd /app && rm -rf .next && npm run build"
     docker restart finance_frontend

@@ -478,6 +478,9 @@ class SalesDeal(Base):
     иначе правка маппинга не влияла бы на уже загруженные сделки."""
     __tablename__ = "sales_deals"
     id = Column(Integer, primary_key=True)
+    # Наш 6-значный отпечаток сделки (метка) — стабилен навсегда, показывается в UI и ссылках.
+    # bitrix_id ниже НЕ показываем: он несущий ключ синка/надгробий (не путать с code).
+    code = Column(String(6), unique=True, index=True)
     bitrix_id = Column(String, nullable=False, unique=True)
     title = Column(String)
     pipeline = Column(String)
@@ -489,6 +492,17 @@ class SalesDeal(Base):
     # Серый — малая вероятность, оранжевый — средняя, зелёный — высокая.
     probability_color = Column(String)
     # E1/E2: движение сделки по НАШЕМУ каталогу стадий.
+    # Жёсткий линк на годовой план: сделка принадлежит ячейке плана (строка × месяц).
+    # ТОЛЬКО так сделка попадает в план — никакого мягкого матча по advertiser+brand.
+    # Сделки, созданные отдельно, в план не входят, пока не прикреплены вручную.
+    # План выводится через строку: deal → line.plan_id → SalesYearPlan.
+    year_plan_line_id = Column(Integer, ForeignKey("sales_year_plan_lines.id"), nullable=True, index=True)
+    plan_month = Column(Integer, nullable=True)                             # 0..11
+    # Порядковый номер сделки ВНУТРИ месяца: в конструкторе услуги делятся кнопкой
+    # «+ сделка» на группы (products[m][*].deal_idx). Без этого поля повторный прогон
+    # конвейера не отличил бы 2-ю сделку месяца от 1-й и плодил бы дубли.
+    # Ключ линка: (year_plan_line_id, plan_month, plan_deal_idx). Легаси-сделки — 0.
+    plan_deal_idx = Column(Integer, nullable=True, default=0)
     our_stage_id = Column(Integer, ForeignKey("sales_stages.id"))          # текущая стадия у нас
     realization_pipeline_id = Column(Integer, ForeignKey("sales_pipelines.id"))  # выбранная воронка реализации
     counterparty_id = Column(Integer, ForeignKey("counterparties.id"))
@@ -652,6 +666,26 @@ class SalesDealFile(Base):
     synced_at = Column(DateTime, server_default=func.now())
 
 
+class SalesYearPlan(Base):
+    """План/пакет годового планирования = группировка под задачу.
+
+    Один рекламодатель может иметь НЕСКОЛЬКО планов за год (разные агентства /
+    номенклатуры брендов = независимые планы). title различает их для человека
+    (автоген по умолчанию + ручная правка, как заголовок сделки). Строки-бренды
+    (SalesYearPlanLine) принадлежат плану через plan_id; сделки — через строку.
+    """
+    __tablename__ = "sales_year_plans"
+    id = Column(Integer, primary_key=True)
+    advertiser_id = Column(Integer, ForeignKey("sales_advertisers.id"), nullable=True, index=True)
+    year = Column(Integer, nullable=False, index=True)
+    title = Column(String)                                       # редактируемый заголовок
+    account_manager_id = Column(Integer, ForeignKey("sales_reps.id"), nullable=True)  # аккаунт-создатель (мастер может сменить)
+    sales_rep_id = Column(Integer, ForeignKey("sales_reps.id"), nullable=True, index=True)  # в чей дашборд по умолчанию
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class SalesYearPlanLine(Base):
     """Строка годового плана: один рекламодатель × один бренд × год.
     Факт/бронь НЕ хранятся вычислением — по кнопке «Обновить данные о сделках»
@@ -662,6 +696,8 @@ class SalesYearPlanLine(Base):
     """
     __tablename__ = "sales_year_plan_lines"
     id = Column(Integer, primary_key=True)
+    # Родитель — план/пакет. NULL только у легаси-строк до бэкфилла.
+    plan_id = Column(Integer, ForeignKey("sales_year_plans.id"), nullable=True, index=True)
     year = Column(Integer, nullable=False, index=True)
     # Персональный план: строка принадлежит сейлзу. NULL — «общий/безхозный» (легаси/черновик).
     # «Свой» план — sales_rep_id == SalesRep.user_id текущего юзера; мастер (year_plan.deals_scope
@@ -674,8 +710,17 @@ class SalesYearPlanLine(Base):
     months_on = Column(JSONB, nullable=False, default=list)     # [0|1]×12
     sums = Column(JSONB, nullable=False, default=dict)          # {"m": сумма руками}
     locks = Column(JSONB, nullable=False, default=dict)         # {"m": 1}
-    products = Column(JSONB, nullable=False, default=dict)      # {"m": [service_id,...]}
+    # {"m": [{ref_id, type:'service'|'addon', amount, units}, ...]} — помесячно, сумма+объём
+    # закупки на услугу. Есть услуги в месяце → sums[m] = Σ amount (фронт).
+    products = Column(JSONB, nullable=False, default=dict)
     deals = Column(JSONB, nullable=False, default=dict)         # {"m": [[bx_id, amount, closed],...]}
+    # Бриф строки-бренда (одна на строку): {agency_id, payer_counterparty_id, geo_id,
+    # targeting{audience,buys,interests,behavior,competitors}, sales_rep_id,
+    # account_manager_id, text}. Повторяет бриф конструктора МП без блока медиаплана.
+    brief = Column(JSONB, nullable=False, default=dict)
+    # Прогноз на услугу ЗА ГОД: {"<type>:<ref_id>": {freq,ctr,cr,price,sov,volume}}.
+    # Поля ввода как в МП; считается на суммарные деньги+units услуги по всем месяцам.
+    service_forecast = Column(JSONB, nullable=False, default=dict)
     sort_order = Column(Integer, nullable=False, default=0)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())

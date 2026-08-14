@@ -55,6 +55,41 @@ with engine.begin() as _conn:
     _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS probability_color VARCHAR"))
     # E1/E2: движение сделки по нашему каталогу
     _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS our_stage_id INTEGER"))
+    # Метка сделки (наш 6-значный код) — на неё завязаны интерфейс и ссылки.
+    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS code VARCHAR(6)"))
+    _conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_sales_deals_code ON sales_deals (code)"))
+    # Жёсткий линк сделки на ячейку годового плана: строка × месяц × номер сделки в месяце.
+    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS year_plan_line_id INTEGER"))
+    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS plan_month INTEGER"))
+    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS plan_deal_idx INTEGER DEFAULT 0"))
+    _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_deals_year_plan_line ON sales_deals (year_plan_line_id)"))
+    _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_deals_plan_link "
+                       "ON sales_deals (year_plan_line_id, plan_month, plan_deal_idx)"))
+    _conn.execute(text("UPDATE sales_deals SET plan_deal_idx = 0 "
+                       "WHERE year_plan_line_id IS NOT NULL AND plan_deal_idx IS NULL"))
+    # Годовой план как пакет: строка принадлежит плану, бриф и прогноз живут на строке.
+    _conn.execute(text("ALTER TABLE sales_year_plan_lines ADD COLUMN IF NOT EXISTS plan_id INTEGER"))
+    _conn.execute(text("ALTER TABLE sales_year_plan_lines ADD COLUMN IF NOT EXISTS brief JSONB NOT NULL DEFAULT '{}'::jsonb"))
+    _conn.execute(text("ALTER TABLE sales_year_plan_lines ADD COLUMN IF NOT EXISTS service_forecast JSONB NOT NULL DEFAULT '{}'::jsonb"))
+    _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_year_plan_lines_plan ON sales_year_plan_lines (plan_id)"))
+    # Легаси-строки без плана: под каждую уникальную (рекламодатель, год, сейлз) заводим
+    # план с автозаголовком и привязываем. Идемпотентно — работает только по plan_id IS NULL.
+    _conn.execute(text("""
+        INSERT INTO sales_year_plans (advertiser_id, year, sales_rep_id, title, created_at)
+        SELECT DISTINCT l.advertiser_id, l.year, l.sales_rep_id,
+               COALESCE(a.short_name, a.name, 'Без рекламодателя') || ' · ' || l.year::text, now()
+          FROM sales_year_plan_lines l
+          LEFT JOIN sales_advertisers a ON a.id = l.advertiser_id
+         WHERE l.plan_id IS NULL
+    """))
+    _conn.execute(text("""
+        UPDATE sales_year_plan_lines l SET plan_id = p.id
+          FROM sales_year_plans p
+         WHERE l.plan_id IS NULL
+           AND p.advertiser_id IS NOT DISTINCT FROM l.advertiser_id
+           AND p.year = l.year
+           AND p.sales_rep_id IS NOT DISTINCT FROM l.sales_rep_id
+    """))
     _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS realization_pipeline_id INTEGER"))
     _conn.execute(text("ALTER TABLE sales_stage_phases ADD COLUMN IF NOT EXISTS is_realization BOOLEAN NOT NULL DEFAULT FALSE"))
     _conn.execute(text("ALTER TABLE sales_stages ADD COLUMN IF NOT EXISTS requires_media_plan BOOLEAN NOT NULL DEFAULT FALSE"))
@@ -308,9 +343,13 @@ def seed_stage_catalog():
                 ph = SalesStagePhase(name=pname, sort_order=pi)
                 db.add(ph); db.flush()
                 for si, (sname, key, term) in enumerate(stages):
+                    # Точка входа каталога — первая стадия первого этапа: сделка на ней
+                    # рождается, МП там ещё нет. Признак позиционный, а не по имени:
+                    # стадию переименуют, и правило по имени сломает создание сделок.
+                    entry = (pi == 0 and si == 0)
                     db.add(SalesStage(phase_id=ph.id, name=sname, sort_order=si,
                                       stage_key=key, money_layer=layer_of(key), is_terminal=term,
-                                      requires_media_plan=(not term and sname != "МП Подготовка")))
+                                      requires_media_plan=(not term and not entry)))
             # этап «Услуги» — реализационный (воронка выбирается на сделке)
             for ph in db.query(SalesStagePhase).filter(SalesStagePhase.name == "Услуги").all():
                 ph.is_realization = True
@@ -328,11 +367,21 @@ def seed_stage_catalog():
         for ph in db.query(SalesStagePhase).filter(SalesStagePhase.name == "Услуги",
                                                    SalesStagePhase.is_realization.is_(False)).all():
             ph.is_realization = True; changed += 1
-        # requires_media_plan по правилу: нетерминальные, кроме «МП Подготовка»
-        for s in db.query(SalesStage).all():
-            want = (not s.is_terminal) and s.name != "МП Подготовка"
-            if bool(s.requires_media_plan) != want:
-                s.requires_media_plan = want; changed += 1
+        # requires_media_plan — РАЗОВАЯ инициализация для баз, засеянных до появления
+        # флага. Раньше этот блок выполнялся на каждом старте и выводил флаг из имени
+        # стадии: переименование «МП Подготовки» ломало создание сделок, а ручная
+        # настройка флага откатывалась ближайшим рестартом. Теперь правило позиционное
+        # (точка входа = первая нетерминальная стадия каталога), и если флаг уже кем-то
+        # выставлен — не трогаем вовсе.
+        all_stages = (db.query(SalesStage).join(SalesStagePhase)
+                      .order_by(SalesStagePhase.sort_order, SalesStage.sort_order,
+                                SalesStage.id).all())
+        if not any(s.requires_media_plan for s in all_stages):
+            entry = next((s for s in all_stages if not s.is_terminal), None)
+            for s in all_stages:
+                want = (not s.is_terminal) and (entry is None or s.id != entry.id)
+                if bool(s.requires_media_plan) != want:
+                    s.requires_media_plan = want; changed += 1
         if changed:
             db.commit()
             logger.info(f"seed_stage_catalog: backfill {changed} стадий/этапов")
@@ -415,6 +464,37 @@ def backfill_sales_scope():
 
 
 backfill_sales_scope()
+
+
+def add_missing_foreign_keys():
+    """Внешние ключи — ОТДЕЛЬНО от блока колонок и каждый в своей транзакции.
+
+    ADD CONSTRAINT падает, если в данных есть висячие ссылки. Внутри общего
+    `with engine.begin()` такая ошибка отравила бы транзакцию и уронила импорт модуля,
+    то есть контейнер не поднялся бы вовсе — цена за недостающий ключ несоразмерна.
+    Здесь неудача только пишется в лог: приложение стартует, ключ просто не создан,
+    а расчистить висячие ссылки можно спокойно и потом.
+    """
+    from sqlalchemy import text as _t
+    fks = [
+        ("sales_deals_our_stage_id_fkey", "sales_deals", "our_stage_id", "sales_stages(id)"),
+        ("sales_deals_year_plan_line_id_fkey", "sales_deals", "year_plan_line_id", "sales_year_plan_lines(id)"),
+        ("sales_year_plan_lines_plan_id_fkey", "sales_year_plan_lines", "plan_id", "sales_year_plans(id)"),
+    ]
+    for name, table, col, ref in fks:
+        try:
+            with engine.begin() as c:
+                if c.execute(_t("SELECT 1 FROM pg_constraint WHERE conname = :n"), {"n": name}).first():
+                    continue
+                c.execute(_t(f"ALTER TABLE {table} ADD CONSTRAINT {name} "
+                             f"FOREIGN KEY ({col}) REFERENCES {ref}"))
+                logger.info(f"add_missing_foreign_keys: {name} создан")
+        except Exception:
+            logger.exception(f"add_missing_foreign_keys: {name} не создан — "
+                             "вероятно, есть висячие ссылки; старт продолжается")
+
+
+add_missing_foreign_keys()
 
 # В DEBUG=true (локальная разработка) Swagger UI доступен на /docs.
 # В production (DEBUG не задан или false) документация закрыта — /docs, /redoc, /openapi.json

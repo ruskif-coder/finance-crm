@@ -38,6 +38,11 @@ services:
       DOMAIN: ${DOMAIN:-localhost}
       # Сайдкар генерации нативного PDF (headless Chromium). Только внутренняя сеть.
       PDF_SERVICE_URL: http://pdf:3001
+      # Ключ доступа к Битриксу через VibeCode (синк сделок). Значение — в .env
+      # (gitignored), сюда только ссылка. Раньше ключ клали файлом /app/vibecode.key
+      # внутрь ЖИВОГО контейнера через docker cp — он терялся при каждом
+      # up --force-recreate / пересборке. Через env переживает пересоздание.
+      VIBECODE_API_KEY: ${VIBECODE_API_KEY:-}
     volumes:
       - ./backend/logs:/app/logs
       - ./uploads:/app/uploads   # персистентное хранилище прикреплённых файлов договоров

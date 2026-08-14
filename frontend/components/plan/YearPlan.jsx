@@ -10,6 +10,8 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { PortalPopover } from '../salesTableKit';
+import BrandBrief from './BrandBrief';
+import { DownloadOverlay } from '../LogoLoader';
 
 /* ── токены ─────────────────────────────────────────────────────────── */
 export const T = {
@@ -21,6 +23,7 @@ export const T = {
   t1: '#1C2433', t2: '#525C70', t3: '#79839A', t4: '#A3ABBD', t5: '#C3C9D8',
   accent: '#4F6CE6', accentHover: '#3A50BE', accentTint: '#ECEFFD', accentBorder: '#D7DEFA',
   planBar: '#A9B6F2', fact: '#2FA37C', factText: '#1F7D5E',
+  addon: '#8A5CD1', addonTint: '#F1EAFB', addonBorder: '#E0D2F5',
   booked: '#C3CCEA', bookedText: '#8E9AC0', bookedGrey: '#8B93A6',
   warning: '#E89020', danger: '#C93A3E',
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
@@ -43,19 +46,62 @@ export const pctColor = p => (p >= 80 ? T.fact : p >= 50 ? T.warning : T.danger)
 const stop = e => e && e.stopPropagation && e.stopPropagation();
 
 /* ── расчёты (единственная точка правды) ────────────────────────────── */
+// Сумма услуг месяца (Σ amount по продуктам). Есть услуги → месяц считается ОТ них.
+export const svcSum = (b, i) => (b.products[i] || []).reduce((a, it) => a + (+((it && it.amount) || 0) || 0), 0);
+export const hasSvc = (b, i) => (b.products[i] || []).length > 0;
+// Услуги месяца, разложенные по сделкам (разделитель «+ сделка»): [{idx, rows:[{it,j}]}].
+// idx — deal_idx услуги; НЕ переиндексируем при удалении группы (дырки допустимы),
+// иначе у уже созданных сделок разъехался бы жёсткий линк (line+month+idx).
+export const groupsOf = (items) => {
+  const by = new Map();
+  (items || []).forEach((it, j) => {
+    const k = +(it && it.deal_idx) || 0;
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push({ it, j });
+  });
+  return [...by.entries()].sort((a, c) => a[0] - c[0]).map(([idx, rows]) => ({ idx, rows }));
+};
+const mainCount = (rows) => rows.filter(r => r.it.type !== 'addon').length;
+// Прогнозные поля, без которых МП соберётся кривым (охват/клики/чеки/доход не посчитаются).
+// SOV не требуем — он справочный и на расчёт МП не влияет.
+const FC_REQUIRED = ['freq', 'ctr', 'cr', 'price'];
+// Услуги-размещения бренда, у которых в брифе не заполнен прогноз. Доп услуги —
+// фиксированная цена, прогноз им не нужен. Возвращает список ref_id.
+export const fcGaps = (b) => {
+  const used = new Set();
+  Object.values(b.products || {}).forEach(arr => (arr || []).forEach(it => {
+    if (it && it.ref_id != null && (it.type || 'service') !== 'addon') used.add(it.ref_id);
+  }));
+  const fc = b.service_forecast || {};
+  return [...used].filter(id => {
+    const row = fc[`service:${id}`] || {};
+    return FC_REQUIRED.some(f => row[f] === undefined || row[f] === null || String(row[f]).trim() === '');
+  });
+};
+// «Зафиксированное» значение месяца: услуги → Σ amount; иначе ручная sums[i]; иначе null (в распределение).
+const fixedVal = (b, i) => {
+  if (!b.on[i]) return 0;
+  if (hasSvc(b, i)) return svcSum(b, i);
+  if (b.sums[i] != null) return b.sums[i];
+  return null;
+};
 export const monthValue = (b, i) => {
   if (!b.on[i]) return 0;
-  if (b.sums[i] != null) return b.sums[i];
-  const lockedSum = Object.keys(b.locks).reduce((a, k) => a + (b.on[k] && b.sums[k] != null ? b.sums[k] : 0), 0);
-  const free = b.on.reduce((a, v, k) => a + (v && !b.locks[k] ? 1 : 0), 0);
-  return free > 0 ? Math.max(0, b.plan - lockedSum) / free : 0;
+  const fv = fixedVal(b, i);
+  if (fv != null) return fv;
+  // остаток плана делится между месяцами без фикс-значения (без услуг и без ручной суммы)
+  const fixedSum = b.on.reduce((a, v, k) => a + (v ? (fixedVal(b, k) || 0) : 0), 0);
+  const free = b.on.reduce((a, v, k) => a + (v && fixedVal(b, k) == null ? 1 : 0), 0);
+  return free > 0 ? Math.max(0, b.plan - fixedSum) / free : 0;
 };
 export const factOf = (b, i) => (b.deals[i] || []).reduce((a, d) => a + (d[2] ? d[1] : 0), 0);
 export const bookedOf = (b, i) => (b.deals[i] || []).reduce((a, d) => a + (d[2] ? 0 : d[1]), 0);
 const sumMonths = (b, fn) => MONTHS.reduce((a, _, i) => a + fn(b, i), 0);
 
 /* ── сетки ──────────────────────────────────────────────────────────── */
-const PLAN_COLS = `minmax(340px,1.7fr) 120px repeat(12, minmax(80px,1fr)) 66px`;
+// Спейсеры: 16px отделяет «Годовой план» от января, 20px — декабрь от колонки действий.
+// Колонка действий шире обычного: конвейер + обновить + сохранить + копия/удаление.
+const PLAN_COLS = `minmax(340px,1.7fr) 120px 16px repeat(12, minmax(80px,1fr)) 20px 118px`;
 const PROG_COLS = '1.5fr 108px 108px 1fr 88px 74px';
 
 /* ── типографика ────────────────────────────────────────────────────── */
@@ -110,6 +156,8 @@ const IconBtn = ({ title, onClick, children, size = 32, disabled }) => (
 );
 
 const Plus = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>;
+// «Создать сделки» — документ с плюсом
+const ConveyorIcon = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" /><path d="M12 11v6M9 14h6" /></svg>;
 const Pencil = () => <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h4l10-10-4-4L4 16v4z" /><path d="M14.5 5.5l4 4" /></svg>;
 const Refresh = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg>;
 const Spread = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h18" /><path d="M7 8l-4 4 4 4" /><path d="M17 8l4 4-4 4" /></svg>;
@@ -121,17 +169,18 @@ const Lock = ({ locked }) => (
   </svg>
 );
 
-const blankBrand = id => ({ id, brand: '', brand_id: null, plan: 0, on: Array(12).fill(0), sums: {}, locks: {}, products: {}, deals: {} });
+const blankBrand = id => ({ id, line_id: null, brand: '', brand_id: null, plan: 0, on: Array(12).fill(0), sums: {}, locks: {}, products: {}, deals: {}, brief: {}, service_forecast: {} });
 
 /* ══════════════════════════════════════════════════════════════════════
    СТРАНИЦА
    ══════════════════════════════════════════════════════════════════════ */
 export default function YearPlan({
   year, years = [], onYear,
-  groups: initial = [], advertisers = [], services = [],
+  groups: initial = [], advertisers = [], services = [], addons = [], briefCatalogs = {},
   onSave, onMatch, saving = false, matching = false, savedAt = '', readOnly = false,
   reps = [], repValue = null, onRep = () => {}, ownRepId = null, isMaster = false,
-  mode = 'edit', allData = [], onVerifyPassword,
+  mode = 'edit', allData = [], onVerifyPassword, onAddTargeting,
+  onConveyorPreview, onConveyorApply,
 }) {
   const [groups, setGroups] = useState(initial);
   const [pendingDel, setPendingDel] = useState(null);   // { kind:'group'|'brand', gid, bid, label }
@@ -140,7 +189,55 @@ export default function YearPlan({
   const [pwBusy, setPwBusy] = useState(false);
   const [sel, setSel] = useState(null);       // открытый поповер
   const [edit, setEdit] = useState(null);     // редактируемая ячейка суммы `${brandId}_${month}`
+  // Открытая (ещё пустая) группа-сделка в конструкторе месяца: {popKey: deal_idx}.
+  // Группы выводятся из услуг, поэтому пустая новая сделка живёт только тут, пока
+  // в неё не добавили первую услугу.
+  const [pendGrp, setPendGrp] = useState({});
+  const dragRow = useRef(null);               // {popKey, j} — перетаскиваемая строка услуги
+  const [dragOver, setDragOver] = useState(null);   // `${popKey}_${idx}` — подсветка цели
   const [openProg, setOpenProg] = useState(null);
+  const [briefFor, setBriefFor] = useState(null);   // {gid,bid} — открытый бриф бренда
+  // Поля брифа, наследуемые от соседнего бренда того же рекламодателя (если пусты)
+  const BRIEF_INHERIT = ['agency_id', 'payer_counterparty_id', 'sales_rep_id', 'account_manager_id', 'geo_id'];
+  const openBrief = (gid, bid) => {
+    const g = groups.find(x => x.id === gid);
+    const b = g && g.brands.find(x => x.id === bid);
+    if (g && b) {
+      const cur = b.brief || {};
+      const patch = {};
+      BRIEF_INHERIT.forEach(f => {
+        if (cur[f] == null || cur[f] === '') {
+          const donor = g.brands.find(x => x.id !== bid && x.brief && x.brief[f] != null && x.brief[f] !== '');
+          if (donor) patch[f] = donor.brief[f];
+        }
+      });
+      if (Object.keys(patch).length) patchBrand(gid, bid, { brief: { ...cur, ...patch } });
+    }
+    setBriefFor({ gid, bid });
+  };
+  const [conv, setConv] = useState(null);           // конвейер: {target,label,loading,preview,busy,done}
+
+  // Открыть конвейер: preview → показать что создастся/изменится
+  const startConveyor = async (target, label) => {
+    if (!onConveyorPreview) return;
+    setConv({ target, label, loading: true });
+    try {
+      const preview = await onConveyorPreview(target);
+      setConv({ target, label, preview });
+    } catch (e) {
+      setConv({ target, label, error: e?.response?.data?.detail || 'Не удалось получить предпросмотр' });
+    }
+  };
+  const applyConveyor = async () => {
+    if (!conv || !onConveyorApply) return;
+    setConv(c => ({ ...c, busy: true }));
+    try {
+      const done = await onConveyorApply(conv.target);
+      setConv(c => ({ ...c, busy: false, done }));
+    } catch (e) {
+      setConv(c => ({ ...c, busy: false, error: e?.response?.data?.detail || 'Ошибка создания' }));
+    }
+  };
   const [yearOpen, setYearOpen] = useState(false);
   const [repOpen, setRepOpen] = useState(false);
   const allMode = mode === 'all';
@@ -149,10 +246,19 @@ export default function YearPlan({
     : (reps.find(r => r.id === repValue)?.name || 'Мой план');
   const seq = useRef(100000);
 
-  useEffect(() => { setGroups(initial); }, [initial]);
+  const savedRef = useRef(null);
+  useEffect(() => { setGroups(initial); savedRef.current = JSON.parse(JSON.stringify(initial || [])); }, [initial]);
+  // сериализация значимых полей (без UI-состояний open/id) — для детекта несохранённых правок
+  const serGroups = gs => JSON.stringify((gs || []).map(x => ({ a: x.adv_id, b: (x.brands || []).map(b => ({ i: b.line_id, r: b.brand_id, p: b.plan, on: b.on, s: b.sums, l: b.locks, pr: b.products, bf: b.brief, sf: b.service_forecast })) })));
+  const dirty = !readOnly && savedRef.current != null && serGroups(groups) !== serGroups(savedRef.current);
+  const cancelEdits = () => { if (savedRef.current) setGroups(JSON.parse(JSON.stringify(savedRef.current))); };
 
   const advById = useMemo(() => Object.fromEntries(advertisers.map(a => [a.id, a])), [advertisers]);
   const svcName = useMemo(() => Object.fromEntries(services.map(s => [s.id, s.name])), [services]);
+  const svcById = useMemo(() => Object.fromEntries(services.map(s => [s.id, s])), [services]);
+  const addonName = useMemo(() => Object.fromEntries(addons.map(a => [a.id, a.name])), [addons]);
+  const addonById = useMemo(() => Object.fromEntries(addons.map(a => [a.id, a])), [addons]);
+  const nameOf = it => (it && it.type === 'addon' ? (addonName[it.ref_id] || `#${it.ref_id}`) : (svcName[it.ref_id] || `#${it.ref_id}`));
 
   useEffect(() => {
     const off = e => { if (!e.target.closest('[data-pop-root]')) { setSel(null); setYearOpen(false); setRepOpen(false); } };
@@ -165,7 +271,12 @@ export default function YearPlan({
   const patchBrand = (gid, bid, p) => setGroups(gs => gs.map(g => (g.id !== gid ? g : {
     ...g, brands: g.brands.map(b => (b.id === bid ? { ...b, ...p } : b)),
   })));
-  const toggleSel = key => setSel(s => (s === key ? null : key));
+  const [optSearch, setOptSearch] = useState('');   // поиск в выпадашках рекламодателя/бренда
+  const toggleSel = key => { setOptSearch(''); setSel(s => (s === key ? null : key)); };
+  // Обновить услуги месяца i у бренда (next = массив объектов {ref_id,type,amount,units}).
+  const setMonthProducts = (gid, bid, i, next) => setGroups(gs => gs.map(g => (g.id !== gid ? g : {
+    ...g, brands: g.brands.map(b => { if (b.id !== bid) return b; const p = { ...b.products }; if (next && next.length) p[i] = next; else delete p[i]; return { ...b, products: p }; }),
+  })));
 
   /* итоги */
   const totals = useMemo(() => {
@@ -200,10 +311,11 @@ export default function YearPlan({
 
   /* распределение остатка по незакреплённым месяцам */
   const distribute = (gid, b) => {
-    const lockedSum = Object.keys(b.locks).reduce((a, k) => a + (b.on[k] && b.sums[k] != null ? b.sums[k] : 0), 0);
-    const freeIdx = b.on.map((v, i) => (v && !b.locks[i] ? i : -1)).filter(i => i >= 0);
+    // фикс-месяцы (услуги ИЛИ ручная закреплённая сумма) не трогаем — делим остаток по свободным
+    const fixedSum = b.on.reduce((a, v, k) => a + (v && (hasSvc(b, k) || (b.locks[k] && b.sums[k] != null)) ? (hasSvc(b, k) ? svcSum(b, k) : b.sums[k]) : 0), 0);
+    const freeIdx = b.on.map((v, i) => (v && !b.locks[i] && !hasSvc(b, i) ? i : -1)).filter(i => i >= 0);
     if (!freeIdx.length) return;
-    const per = Math.max(0, b.plan - lockedSum) / freeIdx.length;
+    const per = Math.max(0, b.plan - fixedSum) / freeIdx.length;
     const sums = { ...b.sums };
     freeIdx.forEach(i => { sums[i] = per; });
     patchBrand(gid, b.id, { sums });
@@ -215,8 +327,9 @@ export default function YearPlan({
   const copyBrand = (gid, b) => setGroups(gs => gs.map(g => (g.id !== gid ? g : {
     ...g,
     brands: g.brands.flatMap(x => (x.id !== b.id ? [x] : [x, {
-      ...x, id: ++seq.current, brand: '', brand_id: null, deals: {},
+      ...x, id: ++seq.current, line_id: null, brand: '', brand_id: null, deals: {},
       on: x.on.slice(), sums: { ...x.sums }, locks: { ...x.locks }, products: { ...x.products },
+      brief: { ...(x.brief || {}) }, service_forecast: { ...(x.service_forecast || {}) },
     }])),
   })));
   const doMatch = async () => {
@@ -237,6 +350,9 @@ export default function YearPlan({
 
   // удаление строки плана — под подтверждение повторным вводом пароля
   const askDelete = (payload) => { setPwd(''); setPwErr(''); setPendingDel(payload); };
+  // незаполненную строку (без бренда / без рекламодателя) удаляем сразу, без пароля
+  const removeBrand = (gid, bid) => setGroups(gs => gs.map(x => (x.id === gid ? { ...x, brands: x.brands.filter(y => y.id !== bid) } : x)));
+  const removeGroup = (gid) => setGroups(gs => gs.filter(x => x.id !== gid));
   const confirmDelete = async () => {
     if (!pendingDel) return;
     setPwBusy(true); setPwErr('');
@@ -253,6 +369,104 @@ export default function YearPlan({
   return (
     <>
       <style>{CSS}</style>
+
+      {briefFor && (() => {
+        const g = groups.find(x => x.id === briefFor.gid);
+        const b = g && g.brands.find(x => x.id === briefFor.bid);
+        if (!b) return null;
+        return (
+          <BrandBrief open onClose={() => setBriefFor(null)}
+            brandLabel={b.brand} advertiserId={g.adv_id}
+            brief={b.brief || {}} forecast={b.service_forecast || {}} products={b.products || {}}
+            catalogs={{ ...briefCatalogs, svcName, addonName, services }}
+            readOnly={readOnly} isMaster={isMaster} onAddTargeting={onAddTargeting}
+            onChange={patch => patchBrand(g.id, b.id, patch.brief ? { brief: patch.brief } : { service_forecast: patch.forecast })} />
+        );
+      })()}
+
+      {/* конвейер: анимация процесса */}
+      {conv?.busy && <DownloadOverlay label="Создаём сделки и медиапланы…" />}
+
+      {/* конвейер: модалка подтверждения / результата */}
+      {conv && !conv.busy && (
+        <div onClick={() => setConv(null)} style={{ position: 'fixed', inset: 0, zIndex: 9500, background: 'rgba(28,36,51,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div onClick={stop} style={{ width: 460, maxWidth: '100%', maxHeight: '80vh', overflowY: 'auto', background: T.card, borderRadius: 16, boxShadow: T.pop, padding: '22px 22px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.01em' }}>Создать сделки · {conv.label}</span>
+            {conv.loading && <span style={{ fontSize: 13, color: T.t3 }}>Готовим предпросмотр…</span>}
+            {conv.error && <span style={{ fontSize: 13, color: T.danger }}>{conv.error}</span>}
+            {conv.done && (
+              <>
+                <span style={{ fontSize: 13.5, color: T.t2, lineHeight: 1.5 }}>
+                  Готово: создано <b style={{ color: T.fact }}>{conv.done.created}</b>, обновлено <b style={{ color: T.warning }}>{conv.done.updated}</b>{conv.done.blocked ? <>, без брифа пропущено <b style={{ color: T.danger }}>{conv.done.blocked}</b></> : null}{conv.done.frozen ? <>, под замком пропущено <b style={{ color: T.accent }}>{conv.done.frozen}</b></> : null}.
+                </span>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <span onClick={() => setConv(null)} style={{ padding: '9px 18px', borderRadius: 10, background: T.accent, color: '#FFF', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Готово</span>
+                </div>
+              </>
+            )}
+            {conv.preview && !conv.done && !conv.error && (() => {
+              const { new: neu = [], changed = [], unchanged = 0, blocked = [], locked: frozen = [] } = conv.preview;
+              const nothing = neu.length === 0 && changed.length === 0;
+              return (
+                <>
+                  {!nothing && <span style={{ fontSize: 13.5, color: T.t2, lineHeight: 1.5 }}>По всем запланированным месяцам будут созданы сделки. Вы уверены?</span>}
+                  <div style={{ display: 'flex', gap: 14, fontSize: 12.5, color: T.t3, fontFamily: T.mono, flexWrap: 'wrap' }}>
+                    <span>новых: <b style={{ color: T.fact }}>{neu.length}</b></span>
+                    <span>обновится: <b style={{ color: T.warning }}>{changed.length}</b></span>
+                    <span>без изменений: <b style={{ color: T.t2 }}>{unchanged}</b></span>
+                    {blocked.length > 0 && <span>без брифа: <b style={{ color: T.danger }}>{blocked.length}</b></span>}
+                    {frozen.length > 0 && <span>заморожено замком: <b style={{ color: T.accent }}>{frozen.length}</b></span>}
+                  </div>
+                  {frozen.length > 0 && (
+                    <div style={{ border: `1px solid ${T.lockBorder}`, background: T.lockBg, borderRadius: 10, padding: '10px 12px', maxHeight: 140, overflowY: 'auto' }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: T.accentHover }}>Месяцы под замком — не трогаем (ни создания, ни обновления):</span>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                        {frozen.map((c, k) => (
+                          <span key={k} style={{ fontFamily: T.mono, fontSize: 11, color: T.t2, background: T.card, border: `1px solid ${T.lockBorder}`, borderRadius: 6, padding: '2px 7px' }}>
+                            {c.brand} · {MONTHS[c.month]}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {blocked.length > 0 && (
+                    <div style={{ border: `1px solid ${T.danger}`, background: '#FCEBEC', borderRadius: 10, padding: '10px 12px', maxHeight: 180, overflowY: 'auto' }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: T.danger }}>Бриф не заполнен — сделки не создаются:</span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                        {blocked.map((c, k) => (
+                          <span key={k} style={{ fontSize: 11.5, color: T.t2 }}>
+                            <b style={{ color: T.t1 }}>{c.brand || 'бренд'}</b> — нет: {(c.missing || []).join(', ')}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {changed.length > 0 && (
+                    <div style={{ border: `1px solid ${T.warning}`, background: '#FFF9F0', borderRadius: 10, padding: '10px 12px', maxHeight: 220, overflowY: 'auto' }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: T.warning }}>Будут изменены ранее созданные сделки:</span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                        {changed.map((c, k) => (
+                          <span key={k} style={{ fontFamily: T.mono, fontSize: 11.5, color: T.t2 }}>
+                            {c.brand} · {MONTHS[c.month]}: <span style={{ color: T.t4 }}>{num(c.old_amount)}</span> → <b style={{ color: T.t1 }}>{num(c.amount)}</b> ₽
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {nothing
+                    ? <span style={{ fontSize: 13, color: T.t3 }}>Нечего создавать: нет запланированных месяцев с услугами, либо всё уже создано.</span>
+                    : (
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        <span onClick={() => setConv(null)} style={{ padding: '9px 16px', borderRadius: 10, border: `1px solid ${T.border}`, background: T.card, color: T.t2, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Отмена</span>
+                        <span onClick={applyConveyor} style={{ padding: '9px 18px', borderRadius: 10, background: T.fact, color: '#FFF', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Создать</span>
+                      </div>
+                    )}
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
 
       {pendingDel && (
         <div onClick={() => !pwBusy && setPendingDel(null)}
@@ -331,9 +545,20 @@ export default function YearPlan({
               </span>
             )}
             {!readOnly && (
-              <span className="yp-primary" onClick={saving ? undefined : save}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 32, padding: '0 16px', background: T.accent, color: '#FFF', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.6 : 1 }}>
-                {saving ? 'Сохраняю…' : 'Сохранить'}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                {/* цветовая индикация состояния плана */}
+                <span title={dirty ? 'Есть несохранённые правки' : 'Всё сохранено'}
+                  style={{ width: 9, height: 9, borderRadius: '50%', flex: '0 0 9px', background: dirty ? T.warning : T.fact, boxShadow: dirty ? '0 0 0 3px rgba(232,144,32,.18)' : 'none', transition: 'background .2s' }} />
+                {dirty && (
+                  <span className="yp-ghost" onClick={saving ? undefined : cancelEdits}
+                    style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 13px', background: T.card, border: `1px solid ${T.warning}`, borderRadius: 10, fontSize: 12.5, fontWeight: 700, color: T.warning, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.6 : 1 }}>
+                    Отменить
+                  </span>
+                )}
+                <span className="yp-primary" onClick={(saving || !dirty) ? undefined : save}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 32, padding: '0 16px', background: dirty ? T.warning : T.accent, color: '#FFF', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: (saving || !dirty) ? 'default' : 'pointer', opacity: (saving || !dirty) ? 0.5 : 1 }}>
+                  {saving ? 'Сохраняю…' : 'Сохранить'}
+                </span>
               </span>
             )}
             {!readOnly && (
@@ -345,7 +570,8 @@ export default function YearPlan({
           </span>
         </div>
 
-        {allMode && <AllSummary year={year} data={allData} />}
+        {allMode && <AllSummary year={year} data={allData} canEdit={!readOnly}
+          onOpenRep={rid => { if (rid != null) onRep(rid); }} />}
 
         {!allMode && <>
         {/* верхний ряд: до 1920 — 2 этажа, после — в один ряд */}
@@ -415,8 +641,9 @@ export default function YearPlan({
               <div style={{ display: 'grid', gridTemplateColumns: PLAN_COLS, gap: 6, padding: '0 8px 9px', borderBottom: `1px solid ${T.border}`, ...colHead }}>
                 <span>Рекламодатель / бренд</span>
                 <span style={{ textAlign: 'right' }}>Годовой план, ₽</span>
-                {MONTHS.map(m => <span key={m} style={{ textAlign: 'center' }}>{m}</span>)}
                 <span />
+                {MONTHS.map(m => <span key={m} style={{ textAlign: 'center' }}>{m}</span>)}
+                <span /><span />
               </div>
 
               {groups.length === 0 && (
@@ -443,7 +670,9 @@ export default function YearPlan({
                           </span>
                           {sel === ('g' + g.id) && (
                             <Popover minWidth={260}>
-                              {advertisers.map(a => (
+                              <input autoFocus value={optSearch} onChange={e => setOptSearch(e.target.value)} placeholder="Поиск рекламодателя"
+                                style={{ width: '100%', boxSizing: 'border-box', margin: '0 0 4px', padding: '7px 9px', borderRadius: 8, border: `1px solid ${T.border}`, fontSize: 12, outline: 'none', fontFamily: T.sans }} />
+                              {advertisers.filter(a => (a.name || '').toLowerCase().includes(optSearch.trim().toLowerCase())).map(a => (
                                 <Option key={a.id} active={a.id === g.adv_id} label={a.name}
                                   onPick={() => {
                                     setGroups(gs => gs.map(x => (x.id === g.id ? {
@@ -458,8 +687,29 @@ export default function YearPlan({
                           )}
                         </span>
                         <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T.t4, whiteSpace: 'nowrap' }}>{g.brands.length} бренд.</span>
+                        {/* Свободный комментарий к рекламодателю. Отдельной сущности «группа» в БД
+                            нет (группа = строки одного рекламодателя), поэтому пишем в brief.adv_comment
+                            всех его строк — так он едет обычным сохранением плана без новой колонки.
+                            Читаем первый непустой. */}
+                        {!readOnly && g.adv_id && (
+                          <input value={(g.brands.find(x => (x.brief || {}).adv_comment) || {}).brief?.adv_comment || ''}
+                            placeholder="комментарий…" onClick={stop}
+                            onChange={e => {
+                              const v = e.target.value;
+                              setGroups(gs => gs.map(x => (x.id !== g.id ? x : {
+                                ...x, brands: x.brands.map(bb => ({ ...bb, brief: { ...(bb.brief || {}), adv_comment: v } })),
+                              })));
+                            }}
+                            style={{ flex: '1 1 120px', minWidth: 80, maxWidth: 340, boxSizing: 'border-box', height: 26, padding: '0 9px', border: `1px solid ${T.inner}`, borderRadius: 8, background: T.card, fontSize: 11.5, fontWeight: 600, color: T.t2, outline: 'none', fontFamily: T.sans }} />
+                        )}
+                        {readOnly && (g.brands.find(x => (x.brief || {}).adv_comment) || {}).brief?.adv_comment && (
+                          <span style={{ fontSize: 11.5, color: T.t3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {(g.brands.find(x => (x.brief || {}).adv_comment) || {}).brief.adv_comment}
+                          </span>
+                        )}
                       </span>
                       <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, textAlign: 'right' }}>{plan ? num(plan) : '—'}</span>
+                      <span />
                       {MONTHS.map((m, i) => {
                         const p = g.brands.reduce((a, b) => a + monthValue(b, i), 0);
                         const f = g.brands.reduce((a, b) => a + factOf(b, i), 0);
@@ -472,10 +722,35 @@ export default function YearPlan({
                           </span>
                         );
                       })}
-                      <span style={{ display: 'flex', justifyContent: 'center' }}>
+                      <span />
+                      <span style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 4 }}>
+                        {!readOnly && g.adv_id && (
+                          <span title={dirty ? 'Сохраните план перед созданием сделок' : `Создать сделки по всем брендам «${g.adv}»`}
+                            onClick={dirty ? undefined : e => { stop(e); startConveyor({ advertiser_id: g.adv_id }, `Рекламодатель «${g.adv}»`); }}
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 8, cursor: dirty ? 'default' : 'pointer', background: dirty ? T.subtle : T.onBg, border: `1px solid ${dirty ? T.border : T.onBorder}`, color: dirty ? T.t4 : T.factText, opacity: dirty ? 0.5 : 1 }}>
+                            <ConveyorIcon />
+                          </span>
+                        )}
+                        {/* Обновить данные о сделках и Сохранить — дублируем в строку рекламодателя,
+                            чтобы не тянуться к шапке. Действия общие (весь план), но под рукой.
+                            Сохранение подсвечено оранжевым, пока есть несохранённые правки. */}
+                        {!readOnly && onMatch && (
+                          <span title={matching ? 'Обновляю данные о сделках…' : 'Обновить данные о сделках'}
+                            onClick={matching ? undefined : e => { stop(e); doMatch(); }}
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 8, cursor: matching ? 'default' : 'pointer', background: T.card, border: `1px solid ${T.border}`, color: T.t3, opacity: matching ? 0.5 : 1 }}>
+                            <Refresh />
+                          </span>
+                        )}
+                        {!readOnly && (
+                          <span title={dirty ? 'Есть несохранённые правки — сохранить план' : (saving ? 'Сохраняю…' : 'Всё сохранено')}
+                            onClick={(!dirty || saving) ? undefined : e => { stop(e); onSave && onSave(groups); }}
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 8, cursor: (!dirty || saving) ? 'default' : 'pointer', background: dirty ? '#FFF9F0' : T.card, border: `1px solid ${dirty ? T.warning : T.border}`, color: dirty ? T.warning : T.t4, opacity: saving ? 0.5 : 1 }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><path d="M17 21v-8H7v8" /><path d="M7 3v5h8" /></svg>
+                          </span>
+                        )}
                         {!readOnly && (
                           <IconBtn size={26} title="Удалить рекламодателя из плана"
-                            onClick={() => { stop(); askDelete({ kind: 'group', gid: g.id, label: g.adv ? `Рекламодатель «${g.adv}»` : 'Рекламодатель' }); }}>
+                            onClick={() => { stop(); g.adv_id ? askDelete({ kind: 'group', gid: g.id, label: `Рекламодатель «${g.adv}»` }) : removeGroup(g.id); }}>
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" /></svg>
                           </IconBtn>
                         )}
@@ -488,8 +763,13 @@ export default function YearPlan({
                         {g.brands.map(b => {
                           const brandList = (advById[g.adv_id] && advById[g.adv_id].brands) || [];
                           // сумма закреплённых месяцев; если она больше годового плана — план не сходится
-                          const lockedSum = Object.keys(b.locks).reduce((a, k) => a + (b.on[k] && b.sums[k] != null ? b.sums[k] : 0), 0);
-                          const overLocked = Object.keys(b.locks).length > 0 && lockedSum > (b.plan || 0);
+                          // сумма всех фикс-месяцев: услуги (Σ amount) ИЛИ ручная сумма
+                          const committed = b.on.reduce((a, on, k) => a + (on ? (hasSvc(b, k) ? svcSum(b, k) : (b.sums[k] != null ? b.sums[k] : 0)) : 0), 0);
+                          const lockedSum = committed;
+                          const overLocked = (b.plan || 0) > 0 && committed > (b.plan || 0);
+                          // мини-аналитика: кол-во и сумма добавленных за год услуг
+                          const svcCount = Object.values(b.products || {}).reduce((a, arr) => a + ((arr && arr.length) || 0), 0);
+                          const svcTotal = b.on.reduce((a, on, m) => a + (on ? svcSum(b, m) : 0), 0);
                           // сводка по сметченным сделкам бренда (все месяцы)
                           const allDeals = Object.values(b.deals || {}).reduce((a, arr) => a.concat(arr), []);
                           const dCount = allDeals.length;
@@ -497,7 +777,7 @@ export default function YearPlan({
                           const dBooked = allDeals.reduce((a, d) => a + (d[2] ? 0 : d[1]), 0);
                           const brandLocked = !!b.brand_id;   // после выбора бренд фиксируется (копия — для нового)
                           return (
-                            <div key={b.id} title={overLocked ? `Закреплено ${num(lockedSum)} ₽ — больше годового плана` : undefined}
+                            <div key={b.id} title={overLocked ? `Услуги/суммы за год: ${num(committed)} ₽ — больше годового плана ${num(b.plan || 0)} ₽` : undefined}
                               style={{ display: 'grid', gridTemplateColumns: PLAN_COLS, gap: 6, alignItems: 'center', padding: '7px 0', borderTop: `1px solid ${T.nestedRow}`, background: overLocked ? '#FCEBEC' : undefined, borderRadius: overLocked ? 8 : undefined }}>
                               <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, paddingLeft: 27 }}>
                                 <span data-pop-root style={{ position: 'relative', minWidth: 0, flex: '0 1 auto' }}>
@@ -508,20 +788,105 @@ export default function YearPlan({
                                     fontSize: 12, fontWeight: 600, color: b.brand_id ? T.t1 : T.warning, cursor: (readOnly || brandLocked) ? 'default' : 'pointer', whiteSpace: 'nowrap',
                                   }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{b.brand || 'выберите бренд'}</span>{!readOnly && !brandLocked && <span style={{ color: T.t4, fontSize: 9, flex: '0 0 auto' }}>▾</span>}</span>
                                   {sel === ('b' + b.id) && (
-                                    <Popover minWidth={200}>
+                                    <Popover minWidth={220}>
                                       {brandList.length
-                                        ? brandList.map(x => (
-                                          <Option key={x.id} active={x.id === b.brand_id} label={x.name}
-                                            onPick={() => { patchBrand(g.id, b.id, { brand: x.name, brand_id: x.id }); setSel(null); }} />
-                                        ))
+                                        ? [
+                                          <input key="__s" autoFocus value={optSearch} onChange={e => setOptSearch(e.target.value)} placeholder="Поиск бренда"
+                                            style={{ width: '100%', boxSizing: 'border-box', margin: '0 0 4px', padding: '7px 9px', borderRadius: 8, border: `1px solid ${T.border}`, fontSize: 12, outline: 'none', fontFamily: T.sans }} />,
+                                          ...brandList.filter(x => (x.name || '').toLowerCase().includes(optSearch.trim().toLowerCase())).map(x => (
+                                            <Option key={x.id} active={x.id === b.brand_id} label={x.name}
+                                              onPick={() => { patchBrand(g.id, b.id, { brand: x.name, brand_id: x.id }); setSel(null); }} />
+                                          )),
+                                        ]
                                         : <Option active={false} label="— выберите рекламодателя" onPick={() => setSel(null)} />}
                                     </Popover>
                                   )}
                                 </span>
-                                {dCount > 0 && (
-                                  <span title={`Сметчено сделок: ${dCount} · факт ${num(dFact)} ₽ · бронь ${num(dBooked)} ₽`}
-                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 7, background: dBooked > 0 ? '#F0F2F7' : T.onBg, color: dBooked > 0 ? T.t3 : T.factText, fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, whiteSpace: 'nowrap', flex: '0 0 auto' }}>
-                                    <Dot color={dFact > 0 ? T.fact : T.bookedGrey} size={6} />{dCount} сд · {kk(dFact + dBooked)}
+                                {b.brand_id && (() => {
+                                  const bh = !!(b.brief && (b.brief.agency_id || b.brief.geo_id || (b.brief.text || '').trim() || b.brief.sales_rep_id || (b.brief.targeting && Object.values(b.brief.targeting).some(a => a && a.length)))) || !!(b.service_forecast && Object.keys(b.service_forecast).length);
+                                  // Красный: в месяцы добавлены услуги, а прогноз по ним в брифе пуст —
+                                  // МП соберётся кривым (не посчитаются охват/клики/чеки/доход).
+                                  const gaps = fcGaps(b);
+                                  const bad = gaps.length > 0;
+                                  const gapNames = gaps.map(id => (svcById[id] && svcById[id].name) || `#${id}`);
+                                  return (
+                                    <span title={bad
+                                      ? `Не заполнен прогноз по услугам: ${gapNames.join(', ')}. Без частоты / CTR / CR / цены медиаплан соберётся неполным.`
+                                      : 'Бриф бренда (агентство, юрлицо, гео, таргетинг, прогноз)'}
+                                      onClick={() => openBrief(g.id, b.id)}
+                                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, height: 24, padding: '0 9px', borderRadius: 8, cursor: 'pointer', flex: '0 0 auto', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap', background: bad ? '#FCEBEC' : (bh ? T.accentTint : T.subtle), color: bad ? T.danger : (bh ? T.accent : T.t3), border: `1px solid ${bad ? T.danger : (bh ? T.accentBorder : T.border)}` }}>
+                                      ✦ Бриф{bad ? ` · ${gaps.length}` : ''}
+                                    </span>
+                                  );
+                                })()}
+                                {(svcCount > 0 || dCount > 0) && (
+                                  <span style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: '0 0 auto', alignItems: 'flex-start' }}>
+                                    {svcCount > 0 && (() => {
+                                      const svKey = `sv${b.id}`;
+                                      const agg = {};
+                                      Object.values(b.products || {}).forEach(arr => (arr || []).forEach(it => {
+                                        if (!it || it.ref_id == null) return;
+                                        const k = `${it.type || 'service'}:${it.ref_id}`;
+                                        if (!agg[k]) agg[k] = { type: it.type || 'service', ref_id: it.ref_id, amount: 0, units: 0, months: 0 };
+                                        agg[k].amount += +it.amount || 0; agg[k].units += +it.units || 0; agg[k].months += 1;
+                                      }));
+                                      const rows = Object.values(agg).sort((a, z) => z.amount - a.amount);
+                                      return (
+                                        <span data-pop-root style={{ position: 'relative' }}>
+                                          <span title="Детализация услуг за год" onClick={e => { stop(e); toggleSel(svKey); }}
+                                            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 7, background: T.accentTint, color: T.accent, fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                                            {svcCount} усл · {kk(svcTotal)} <span style={{ fontSize: 8, opacity: 0.7 }}>▾</span>
+                                          </span>
+                                          {sel === svKey && (
+                                            <Popover minWidth={300}>
+                                              <span style={{ ...colHead, padding: '4px 10px 6px' }}>Услуги за год · {b.brand || 'бренд'}</span>
+                                              {rows.map((r, k) => (
+                                                <div key={k} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '3px 10px' }}>
+                                                  <span style={{ flex: '1 1 auto', minWidth: 0, fontSize: 11.5, fontWeight: 600, color: r.type === 'addon' ? T.addon : T.t1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nameOf({ type: r.type, ref_id: r.ref_id })}</span>
+                                                  <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.t1, flex: '0 0 auto' }}>{num(r.amount)} ₽</span>
+                                                </div>
+                                              ))}
+                                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px 4px', borderTop: `1px solid ${T.inner}`, marginTop: 3 }}>
+                                                <span style={{ flex: '1 1 auto', ...colHead, fontWeight: 700, color: T.t3 }}>Итого</span>
+                                                <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 800, color: T.accent }}>{num(svcTotal)} ₽</span>
+                                              </div>
+                                            </Popover>
+                                          )}
+                                        </span>
+                                      );
+                                    })()}
+                                    {dCount > 0 && (() => {
+                                      const dKey = `dl${b.id}`;
+                                      const dr = [];
+                                      Object.keys(b.deals || {}).forEach(mo => (b.deals[mo] || []).forEach(d => dr.push({ code: d[0], amount: d[1], closed: d[2], month: +mo })));
+                                      dr.sort((a, z) => a.month - z.month);
+                                      return (
+                                        <span data-pop-root style={{ position: 'relative' }}>
+                                          <span title="Детализация сделок" onClick={e => { stop(e); toggleSel(dKey); }}
+                                            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 7, background: dBooked > 0 ? '#F0F2F7' : T.onBg, color: dBooked > 0 ? T.t3 : T.factText, fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                                            <Dot color={dFact > 0 ? T.fact : T.bookedGrey} size={6} />{dCount} сд · {kk(dFact + dBooked)} <span style={{ fontSize: 8, opacity: 0.7 }}>▾</span>
+                                          </span>
+                                          {sel === dKey && (
+                                            <Popover minWidth={300}>
+                                              <span style={{ ...colHead, padding: '4px 10px 6px' }}>Сделки · {b.brand || 'бренд'}</span>
+                                              {dr.map((d, k) => (
+                                                <div key={k} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '3px 10px' }}>
+                                                  <a href={`/deals/${encodeURIComponent(d.code)}`} target="_blank" rel="noreferrer" onClick={stop}
+                                                    style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent, textDecoration: 'none', flex: '0 0 auto' }}>{d.code}</a>
+                                                  <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T.t4, flex: '1 1 auto' }}>{MONTHS[d.month]} · {d.closed ? 'факт' : 'бронь'}</span>
+                                                  <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: d.closed ? T.factText : T.t3, flex: '0 0 auto' }}>{num(d.amount)} ₽</span>
+                                                </div>
+                                              ))}
+                                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px 4px', borderTop: `1px solid ${T.inner}`, marginTop: 3 }}>
+                                                <span style={{ flex: '1 1 auto', ...colHead, fontWeight: 700, color: T.t3 }}>Итого {dCount} сд</span>
+                                                <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.factText }}>{num(dFact)}</span>
+                                                {dBooked > 0 && <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.bookedGrey }}>+бронь {num(dBooked)}</span>}
+                                              </div>
+                                            </Popover>
+                                          )}
+                                        </span>
+                                      );
+                                    })()}
                                   </span>
                                 )}
                               </span>
@@ -529,12 +894,17 @@ export default function YearPlan({
                               <span style={{ display: 'flex', alignItems: 'center', gap: 4, height: 28, padding: '0 4px 0 8px', background: T.card, border: `1px solid ${overLocked ? T.danger : T.border}`, borderRadius: 9 }}>
                                 <input value={b.plan ? num(b.plan) : ''} placeholder="" disabled={readOnly} onChange={e => patchBrand(g.id, b.id, { plan: parseN(e.target.value) })}
                                   style={{ width: '100%', minWidth: 0, border: 'none', background: 'transparent', outline: 'none', fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, textAlign: 'right', color: overLocked ? T.danger : T.t1 }} />
+                                {!readOnly && overLocked && (
+                                  <span title={`Подставить сумму услуг в план (${num(committed)} ₽)`} onClick={() => patchBrand(g.id, b.id, { plan: Math.round(committed) })}
+                                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', height: 20, padding: '0 6px', borderRadius: 6, background: T.warning, color: '#FFF', fontFamily: T.mono, fontSize: 9, fontWeight: 700, cursor: 'pointer', flex: '0 0 auto', whiteSpace: 'nowrap' }}>= {kk(committed)}</span>
+                                )}
                                 {!readOnly && (
                                   <span className="yp-ghost" title="Распределить остаток плана по незакреплённым месяцам" onClick={() => distribute(g.id, b)}
                                     style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, borderRadius: 6, color: T.accent, cursor: 'pointer', flex: '0 0 20px' }}><Spread /></span>
                                 )}
                               </span>
 
+                              <span />
                               {b.on.map((onRaw, i) => {
                                 const on = !!onRaw;   // b.on[i] — число 0/1; {0 && …} отрендерил бы литерал «0»
                                 const locked = !!b.locks[i];
@@ -544,19 +914,22 @@ export default function YearPlan({
                                 const deals = b.deals[i] || [];
                                 const popKey = `p${b.id}_${i}`;
                                 return (
-                                  <span key={i} style={{ position: 'relative', zIndex: sel === popKey ? 40 : 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                  <span key={i} style={{ position: 'relative', zIndex: sel === popKey ? 40 : 1, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', gap: 2 }}>
                                     {deals.length > 0 && (
                                       <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                                         {deals.map(d => (
-                                          <span key={d[0]} title={`${d[0]} · ${num(d[1])} ₽ · ${d[2] ? 'закрыта' : 'бронь'}`}
-                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '1px 4px', borderRadius: 5, background: d[2] ? T.onBg : '#F0F2F7', color: d[2] ? T.factText : T.t3, fontFamily: T.mono, fontSize: 8.5, fontWeight: 700 }}>
+                                          <a key={d[0]} href={`/deals/${encodeURIComponent(d[0])}`} target="_blank" rel="noreferrer" onClick={stop}
+                                            title={`Сделка ${d[0]} · ${num(d[1])} ₽ · ${d[2] ? 'закрыта' : 'бронь'} — открыть`}
+                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '1px 4px', borderRadius: 5, background: d[2] ? T.onBg : '#F0F2F7', color: d[2] ? T.factText : T.t3, fontFamily: T.mono, fontSize: 8.5, fontWeight: 700, textDecoration: 'none' }}>
                                             {d[0]} · {kk(d[1])}
-                                          </span>
+                                          </a>
                                         ))}
                                       </span>
                                     )}
                                     <span onClick={() => {
                                       if (readOnly) return;
+                                      if (on && locked) return;         // заморожен замком — сначала снять замок
+                                      if (on && items.length) return;   // месяц с услугами не снимаем кликом по ячейке
                                       const on2 = b.on.slice(); on2[i] = on ? 0 : 1;
                                       const p = { ...b.products }, s = { ...b.sums }, l = { ...b.locks };
                                       if (on) { delete p[i]; delete s[i]; delete l[i]; }
@@ -564,13 +937,19 @@ export default function YearPlan({
                                     }}
                                       title={`${MONTHS[i]}${on ? ' · ' + num(value) + ' ₽' + (locked ? ' (закреплено)' : '') : ' · не планируется'}`}
                                       style={{
-                                        position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-                                        minHeight: 42, padding: '5px 4px', borderRadius: 9, cursor: readOnly ? 'default' : 'pointer',
+                                        position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: on ? 'flex-start' : 'center', gap: 2,
+                                        minHeight: 42, padding: on ? '16px 5px 5px' : '5px 4px', borderRadius: 9, cursor: readOnly ? 'default' : 'pointer',
+                                        // заблокированный месяц — синий (заморожен), обычный планируемый — зелёный
                                         background: on ? (locked ? T.lockBg : T.onBg) : T.subtle,
                                         border: `1px solid ${on ? (locked ? T.lockBorder : T.onBorder) : T.inner}`,
                                       }}>
+                                      {!on && !readOnly && (
+                                        <span style={{ fontSize: 16, fontWeight: 800, lineHeight: 1, color: T.accent, opacity: 0.85 }}>+</span>
+                                      )}
                                       {on && !editing && (
-                                        <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: locked ? T.accentHover : T.factText }}>{kk(value)}</span>
+                                        <span onClick={items.length || readOnly ? undefined : e => { stop(e); setEdit(`${b.id}_${i}`); setSel(null); }}
+                                          title={items.length ? undefined : 'Клик — изменить сумму'}
+                                          style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: locked ? T.accentHover : T.factText, cursor: (items.length || readOnly) ? 'default' : 'text' }}>{kk(value)}</span>
                                       )}
                                       {on && editing && (
                                         <input autoFocus defaultValue={b.sums[i] != null ? num(b.sums[i]) : (value ? num(value) : '')}
@@ -578,64 +957,190 @@ export default function YearPlan({
                                           onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                                           style={{ width: '100%', minWidth: 0, boxSizing: 'border-box', height: 20, padding: '0 4px', border: `1px solid ${T.accent}`, borderRadius: 6, background: 'rgba(255,255,255,.85)', fontFamily: T.mono, fontSize: 11, fontWeight: 700, textAlign: 'center', outline: 'none' }} />
                                       )}
+                                      {/* замок — слева сверху. Месяц с услугами: замок = заморозка сделок
+                                          (конвейер их не создаёт и не пересобирает, обновление не перетирает
+                                          пины). Месяц без услуг: как раньше — закрепление суммы. */}
                                       {on && !readOnly && (
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                                          <span title="Изменить сумму" onClick={e => { stop(e); setEdit(`${b.id}_${i}`); setSel(null); }}
-                                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: 5, background: 'rgba(255,255,255,.55)', color: locked ? T.accent : '#4F9C82' }}><Pencil /></span>
-                                          <span title={locked ? 'Снять закрепление суммы' : 'Закрепить сумму месяца'}
-                                            onClick={e => {
-                                              stop(e);
-                                              const l = { ...b.locks }, s = { ...b.sums };
-                                              if (locked) delete l[i]; else { l[i] = 1; if (s[i] == null) s[i] = value; }
-                                              patchBrand(g.id, b.id, { locks: l, sums: s });
-                                            }}
-                                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: 5, background: locked ? T.accent : 'rgba(255,255,255,.55)', color: locked ? '#FFF' : '#4F9C82' }}><Lock locked={locked} /></span>
-                                          <span data-pop-root style={{ position: 'relative' }}>
-                                            <span title="Продукты месяца" onClick={e => { stop(e); toggleSel(popKey); }}
-                                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 16, height: 16, padding: '0 4px', borderRadius: 5, background: items.length ? 'rgba(255,255,255,.7)' : 'transparent', color: items.length ? T.factText : '#4F9C82', fontFamily: T.mono, fontSize: 8.5, fontWeight: 700 }}>
-                                              {items.length || '+ прод.'}
-                                            </span>
-                                            {sel === popKey && (
-                                              <Popover minWidth={200}>
-                                                <span style={{ ...colHead, padding: '4px 10px 6px' }}>{MONTHS[i]} · продукты</span>
-                                                {services.map(pr => {
-                                                  const active = items.includes(pr.id);
-                                                  return (
-                                                    <Option key={pr.id} active={active} label={pr.name} onPick={() => {
-                                                      const next = active ? items.filter(x => x !== pr.id) : [...items, pr.id];
-                                                      const p = { ...b.products };
-                                                      if (next.length) p[i] = next; else delete p[i];
-                                                      patchBrand(g.id, b.id, { products: p });
-                                                    }} />
-                                                  );
-                                                })}
-                                              </Popover>
-                                            )}
+                                        <span title={locked
+                                          ? (items.length ? 'Месяц заморожен: сделки не пересоздаются и не обновляются. Снять замок' : 'Снять закрепление суммы')
+                                          : (items.length ? 'Заморозить месяц: сделки не будут пересоздаваться и обновляться' : 'Закрепить сумму месяца')}
+                                          onClick={e => {
+                                            stop(e);
+                                            const l = { ...b.locks }, s = { ...b.sums };
+                                            if (locked) delete l[i];
+                                            else { l[i] = 1; if (!items.length && s[i] == null) s[i] = value; }
+                                            patchBrand(g.id, b.id, { locks: l, sums: s });
+                                          }}
+                                          style={{ position: 'absolute', top: 3, left: 3, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 15, height: 15, borderRadius: 4, background: locked ? T.accent : 'rgba(255,255,255,.4)', color: locked ? '#FFF' : '#4F9C82' }}><Lock locked={locked} /></span>
+                                      )}
+                                      {/* счётчик услуг — справа от суммы (сверху), открывает редактор */}
+                                      {on && !readOnly && (
+                                        <span data-pop-root style={{ position: 'absolute', top: 3, right: 3 }}>
+                                          <span title="Услуги месяца (сумма = Σ услуг)" onClick={e => { stop(e); toggleSel(popKey); }}
+                                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 15, height: 15, padding: '0 3px', borderRadius: 4, background: items.length ? 'rgba(255,255,255,.8)' : 'rgba(255,255,255,.4)', color: items.length ? T.factText : '#4F9C82', fontFamily: T.mono, fontSize: 8.5, fontWeight: 700 }}>
+                                            {items.length || '+'}
                                           </span>
+                                          {sel === popKey && (
+                                            <Popover minWidth={300}>
+                                              <span style={{ ...colHead, padding: '4px 10px 6px' }}>{MONTHS[i]} · услуги{items.length ? ` · Σ ${num(svcSum(b, i))} ₽` : ''}</span>
+                                              {(() => {
+                                                const grps = groupsOf(items);
+                                                const pend = pendGrp[popKey];
+                                                // куда падают новые услуги: открытая пустая сделка, иначе последняя
+                                                const lastIdx = grps.length ? grps[grps.length - 1].idx : 0;
+                                                const target = pend != null ? pend : lastIdx;
+                                                const shown = pend != null && !grps.some(x => x.idx === pend)
+                                                  ? [...grps, { idx: pend, rows: [] }] : grps;
+                                                const multi = shown.length > 1;
+                                                // перенос услуги в другую сделку (drag за ⠿)
+                                                const moveTo = (j, toIdx) => setMonthProducts(g.id, b.id, i,
+                                                  items.map((x, k) => (k === j ? { ...x, deal_idx: toIdx } : x)));
+                                                return shown.map((gr, gi) => (
+                                                  <div key={gr.idx}
+                                                    onDragOver={e => { e.preventDefault(); setDragOver(`${popKey}_${gr.idx}`); }}
+                                                    onDragLeave={() => setDragOver(null)}
+                                                    onDrop={e => {
+                                                      e.preventDefault(); setDragOver(null);
+                                                      const d = dragRow.current;
+                                                      if (d && d.popKey === popKey) moveTo(d.j, gr.idx);
+                                                      dragRow.current = null;
+                                                    }}
+                                                    style={{
+                                                      borderTop: gi ? `1px dashed ${T.accentBorder}` : 'none',
+                                                      background: dragOver === `${popKey}_${gr.idx}` ? T.accentTint : 'transparent',
+                                                      paddingBottom: 2,
+                                                    }}>
+                                                    {(multi || gr.rows.length === 0) && (
+                                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px 2px' }}>
+                                                        <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', color: gr.idx === target ? T.accent : T.t4 }}>
+                                                          Сделка {gi + 1}{gr.rows.length ? ` · ${kk(gr.rows.reduce((a, r) => a + (+r.it.amount || 0), 0))}` : ' · пусто'}
+                                                        </span>
+                                                        <span style={{ flex: 1 }} />
+                                                        <span title="Удалить эту сделку из месяца (услуги будут убраны)"
+                                                          onClick={e => {
+                                                            stop(e);
+                                                            setPendGrp(p => { const n = { ...p }; if (n[popKey] === gr.idx) delete n[popKey]; return n; });
+                                                            if (gr.rows.length) setMonthProducts(g.id, b.id, i, items.filter(x => (+(x.deal_idx) || 0) !== gr.idx));
+                                                          }}
+                                                          style={{ cursor: 'pointer', color: T.danger, fontSize: 14, lineHeight: 1, padding: '0 2px' }}>×</span>
+                                                      </div>
+                                                    )}
+                                                    {mainCount(gr.rows) > 1 && (
+                                                      <div style={{ margin: '0 8px 3px', padding: '3px 7px', borderRadius: 6, background: '#FFF9F0', border: `1px solid ${T.warning}`, color: T.warning, fontSize: 9.5, fontWeight: 700, lineHeight: 1.3 }}>
+                                                        Сделка будет создана по 1 услуге из списка. Разделите кнопкой «+ сделка».
+                                                      </div>
+                                                    )}
+                                                    {gr.rows.length === 0 && (
+                                                      <div style={{ padding: '2px 10px 6px', fontSize: 10, color: T.t4 }}>Выберите услуги ниже — попадут сюда</div>
+                                                    )}
+                                                    {gr.rows.map(({ it, j: idx }) => (
+                                                <div key={idx} draggable={multi} onDragStart={() => { dragRow.current = { popKey, j: idx }; }}
+                                                  onDragEnd={() => { dragRow.current = null; setDragOver(null); }}
+                                                  style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px' }}>
+                                                  {multi && <span title="Перетащить в другую сделку" style={{ cursor: 'grab', color: T.t4, fontSize: 11, userSelect: 'none', flex: '0 0 auto' }}>⠿</span>}
+                                                  <span title={nameOf(it)} style={{ flex: '1 1 auto', minWidth: 0, fontSize: 11, fontWeight: 600, color: it.type === 'addon' ? T.addon : T.t1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nameOf(it)}</span>
+                                                  {it.type === 'service' && svcById[it.ref_id] && svcById[it.ref_id].separate_price && (
+                                                    <span style={{ display: 'inline-flex', flex: '0 0 auto', border: `1px solid ${T.border}`, borderRadius: 6, overflow: 'hidden' }}>
+                                                      {[['web', 'Web'], ['app', 'Моб']].map(([inv, lbl]) => {
+                                                        const act = (it.inventory || 'web') === inv;
+                                                        return (
+                                                          <span key={inv} title={`Прайс: ${lbl}`} onClick={e => { stop(e); setMonthProducts(g.id, b.id, i, items.map((x, j) => (j === idx ? { ...x, inventory: inv } : x))); }}
+                                                            style={{ padding: '3px 6px', fontSize: 9, fontWeight: 700, cursor: 'pointer', background: act ? T.accent : 'transparent', color: act ? '#FFF' : T.t3 }}>{lbl}</span>
+                                                        );
+                                                      })}
+                                                    </span>
+                                                  )}
+                                                  {it.type === 'addon' && (
+                                                    <span style={{ display: 'inline-flex', flex: '0 0 auto', border: `1px solid ${T.addonBorder}`, borderRadius: 6, overflow: 'hidden' }}>
+                                                      {[['full', '100%', 1], ['half', '50%', 0.5], ['bonus', 'Бонус', 0]].map(([m, lbl, rate]) => {
+                                                        const act = (it.mode || 'full') === m;
+                                                        const base = (addonById[it.ref_id] && addonById[it.ref_id].unit_price) || 0;
+                                                        return (
+                                                          <span key={m} title={`Режим цены: ${lbl}`} onClick={e => { stop(e); setMonthProducts(g.id, b.id, i, items.map((x, j) => (j === idx ? { ...x, mode: m, amount: Math.round(base * rate) } : x))); }}
+                                                            style={{ padding: '3px 6px', fontSize: 9, fontWeight: 700, cursor: 'pointer', background: act ? T.addon : 'transparent', color: act ? '#FFF' : T.t3 }}>{lbl}</span>
+                                                        );
+                                                      })}
+                                                    </span>
+                                                  )}
+                                                  <input value={it.amount || ''} placeholder="₽" onClick={stop}
+                                                    onChange={e => setMonthProducts(g.id, b.id, i, items.map((x, j) => (j === idx ? { ...x, amount: parseN(e.target.value) } : x)))}
+                                                    style={{ width: 64, boxSizing: 'border-box', height: 22, padding: '0 5px', border: `1px solid ${T.border}`, borderRadius: 6, fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, textAlign: 'right', outline: 'none' }} />
+                                                  <input value={it.units || ''} placeholder="ед" onClick={stop}
+                                                    onChange={e => setMonthProducts(g.id, b.id, i, items.map((x, j) => (j === idx ? { ...x, units: parseN(e.target.value) } : x)))}
+                                                    style={{ width: 48, boxSizing: 'border-box', height: 22, padding: '0 5px', border: `1px solid ${T.border}`, borderRadius: 6, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, textAlign: 'right', outline: 'none' }} />
+                                                  <span title="Убрать" onClick={() => setMonthProducts(g.id, b.id, i, items.filter((_, j) => j !== idx))}
+                                                    style={{ cursor: 'pointer', color: T.danger, fontSize: 15, lineHeight: 1, padding: '0 2px' }}>×</span>
+                                                </div>
+                                                    ))}
+                                                  </div>
+                                                ));
+                                              })()}
+                                              {(() => {
+                                                const grps = groupsOf(items);
+                                                const pend = pendGrp[popKey];
+                                                const lastIdx = grps.length ? grps[grps.length - 1].idx : 0;
+                                                const target = pend != null ? pend : lastIdx;
+                                                const freeIdx = Math.max(lastIdx, pend != null ? pend : 0) + 1;
+                                                const canAdd = items.length > 0 && pend == null;   // пустую сделку не плодим
+                                                const add = (obj) => {
+                                                  setMonthProducts(g.id, b.id, i, [...items, { ...obj, deal_idx: target }]);
+                                                  setPendGrp(p => { const n = { ...p }; delete n[popKey]; return n; });
+                                                };
+                                                return (<>
+                                                  <div style={{ padding: '5px 8px 2px' }}>
+                                                    <span title={canAdd ? 'Следующие выбранные услуги пойдут в новую сделку' : (pend != null ? 'Сначала добавьте услугу в открытую сделку' : 'Сначала добавьте услугу')}
+                                                      onClick={canAdd ? e => { stop(e); setPendGrp(p => ({ ...p, [popKey]: freeIdx })); } : undefined}
+                                                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 10px', borderRadius: 8, border: `1px dashed ${canAdd ? T.accent : T.border}`, color: canAdd ? T.accent : T.t4, background: canAdd ? T.accentTint : 'transparent', fontSize: 10.5, fontWeight: 800, cursor: canAdd ? 'pointer' : 'default' }}>
+                                                      + сделка
+                                                    </span>
+                                                  </div>
+                                                  <span style={{ ...colHead, padding: '6px 10px 2px' }}>+ размещение{grps.length > 1 || pend != null ? ` → в сделку ${(pend != null && !grps.some(x => x.idx === pend) ? grps.length : grps.findIndex(x => x.idx === target)) + 1}` : ''}</span>
+                                                  {services.map(pr => (
+                                                    <Option key={'s' + pr.id} active={false} label={pr.name}
+                                                      onPick={() => add({ ref_id: pr.id, type: 'service', amount: 0, units: 0, ...(pr.separate_price ? { inventory: 'web' } : {}) })} />
+                                                  ))}
+                                                  {addons.length > 0 && <span style={{ ...colHead, padding: '6px 10px 2px', color: T.addon }}>+ доп услуга</span>}
+                                                  {addons.map(ad => (
+                                                    <Option key={'a' + ad.id} active={false} label={ad.name}
+                                                      onPick={() => add({ ref_id: ad.id, type: 'addon', amount: ad.unit_price || 0, units: 0, mode: 'full' })} />
+                                                  ))}
+                                                </>);
+                                              })()}
+                                            </Popover>
+                                          )}
+                                        </span>
+                                      )}
+                                      {/* пины услуг — ВНУТРИ ячейки, под суммой; сумма первой */}
+                                      {on && items.length > 0 && (
+                                        <span style={{ display: 'flex', flexDirection: 'column', gap: 1, width: '100%', marginTop: 1 }}>
+                                          {items.map((it, idx) => (
+                                            <span key={idx} title={`${nameOf(it)} · ${num(it.amount || 0)} ₽${it.units ? ' · ' + num(it.units) + ' ед' : ''}`}
+                                              style={{ padding: '1px 4px', borderRadius: 4, background: it.type === 'addon' ? T.addonTint : T.accentTint, color: it.type === 'addon' ? T.addon : T.accent, fontSize: 8, fontWeight: 700, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                              {kk(it.amount || 0)} · {nameOf(it)}
+                                            </span>
+                                          ))}
                                         </span>
                                       )}
                                     </span>
-                                    {on && items.length > 0 && (
-                                      <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                                        {items.map(id => (
-                                          <span key={id} title={svcName[id]}
-                                            style={{ padding: '1px 5px', borderRadius: 5, background: T.accentTint, color: T.accent, fontSize: 8.5, fontWeight: 700, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                            {svcName[id] || `#${id}`}
-                                          </span>
-                                        ))}
-                                      </span>
-                                    )}
                                   </span>
                                 );
                               })}
+                              <span />
                               <span style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 4 }}>
+                                {!readOnly && b.brand_id && (
+                                  <span title={!b.line_id ? 'Сначала сохраните план' : dirty ? 'Сохраните план перед созданием сделок' : `Создать сделки по всем месяцам «${b.brand}»`}
+                                    onClick={(!b.line_id || dirty) ? undefined : e => { stop(e); startConveyor({ line_id: b.line_id }, `Бренд «${b.brand}»`); }}
+                                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 8, cursor: (!b.line_id || dirty) ? 'default' : 'pointer', background: (!b.line_id || dirty) ? T.subtle : T.onBg, border: `1px solid ${(!b.line_id || dirty) ? T.border : T.onBorder}`, color: (!b.line_id || dirty) ? T.t4 : T.factText, opacity: (!b.line_id || dirty) ? 0.5 : 1 }}>
+                                    <ConveyorIcon />
+                                  </span>
+                                )}
                                 {!readOnly && (
                                   <IconBtn size={26} title="Копировать настройки года (новый бренд)"
                                     onClick={() => copyBrand(g.id, b)}><Copy /></IconBtn>
                                 )}
                                 {!readOnly && (
                                   <IconBtn size={26} title="Удалить бренд из плана"
-                                    onClick={() => askDelete({ kind: 'brand', gid: g.id, bid: b.id, label: b.brand ? `Бренд «${b.brand}»` : 'Бренд' })}>
+                                    onClick={() => (b.brand_id ? askDelete({ kind: 'brand', gid: g.id, bid: b.id, label: `Бренд «${b.brand}»` }) : removeBrand(g.id, b.id))}>
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" /></svg>
                                   </IconBtn>
                                 )}
@@ -670,10 +1175,11 @@ export default function YearPlan({
               <div style={{ display: 'grid', gridTemplateColumns: PLAN_COLS, gap: 6, alignItems: 'center', padding: '12px 8px 6px' }}>
                 <span style={{ ...colHead, fontWeight: 700, color: T.t3 }}>Итого план</span>
                 <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, textAlign: 'right' }}>{num(totals.plan)} ₽</span>
+                <span />
                 {monthTotals.map((m, i) => (
                   <span key={i} style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, textAlign: 'center', color: m.plan ? T.t1 : T.t5 }}>{m.plan ? kk(m.plan) : '—'}</span>
                 ))}
-                <span />
+                <span /><span />
               </div>
             </div>
           </div>
@@ -782,8 +1288,9 @@ export default function YearPlan({
 }
 
 /* ── сводка «Показать все» — read-only, группировка по сейлзам ────────── */
-function AllSummary({ year, data = [] }) {
+function AllSummary({ year, data = [], onOpenRep, canEdit = false }) {
   const [open, setOpen] = useState(null);
+  const [openAdv, setOpenAdv] = useState(null);   // `${repKey}_${advertiser_id}` — раскрытые планы
   const tot = data.reduce((a, r) => ({ plan: a.plan + r.plan, fact: a.fact + r.fact, booked: a.booked + r.booked }), { plan: 0, fact: 0, booked: 0 });
   const pct = tot.plan ? (tot.fact / tot.plan) * 100 : 0;
   const months = MONTHS.map((_, i) => data.reduce((a, r) => a + ((r.months && r.months[i]) || 0), 0));
@@ -880,11 +1387,21 @@ function AllSummary({ year, data = [] }) {
                   {r.advertisers.map((a, ai) => {
                     const ap = a.plan ? (a.fact / a.plan) * 100 : 0;
                     const agap = a.fact + a.booked - a.plan;
+                    const advKey = `${key}_${a.advertiser_id}`;
+                    const advOpen = openAdv === advKey;
+                    const plans = a.plans || [];
                     return (
-                      <div key={ai} style={{ display: 'grid', gridTemplateColumns: PROG_COLS, gap: 12, alignItems: 'center', padding: '6px 0', borderTop: `1px solid ${T.nestedRow}` }}>
+                      <React.Fragment key={ai}>
+                      <div style={{ display: 'grid', gridTemplateColumns: PROG_COLS, gap: 12, alignItems: 'center', padding: '6px 0', borderTop: `1px solid ${T.nestedRow}` }}>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, paddingLeft: 27 }}>
+                          <span title={plans.length ? (advOpen ? 'Свернуть планы' : `Показать планы (${plans.length})`) : 'Планов нет'}
+                            onClick={plans.length ? () => setOpenAdv(advOpen ? null : advKey) : undefined}
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: 5, flex: '0 0 16px', fontSize: 7, cursor: plans.length ? 'pointer' : 'default', background: plans.length ? T.accentTint : 'transparent', color: plans.length ? T.accent : 'transparent' }}>
+                            {advOpen ? '▲' : '▼'}
+                          </span>
                           <Dot color={pctColor(ap)} size={7} />
                           <span style={{ fontSize: 12, fontWeight: 600, color: T.t2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+                          {plans.length > 1 && <span style={{ fontFamily: T.mono, fontSize: 9, color: T.t4, whiteSpace: 'nowrap' }}>{plans.length} плана</span>}
                         </span>
                         <span style={{ fontFamily: T.mono, fontSize: 11.5, textAlign: 'right' }}>{kk(a.plan)} ₽</span>
                         <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: T.fact, textAlign: 'right' }}>{kk(a.fact)} ₽</span>
@@ -895,6 +1412,45 @@ function AllSummary({ year, data = [] }) {
                         <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.t3, textAlign: 'right' }}>{a.booked ? kk(a.booked) + ' ₽' : '—'}</span>
                         <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, color: agap >= 0 ? T.fact : T.danger, textAlign: 'right' }}>{(agap >= 0 ? '+' : '−') + kk(Math.abs(agap))}</span>
                       </div>
+                      {/* Сами сформированные планы рекламодателя: раскрываются по ▼, каждый
+                          можно открыть — переключаемся на план этого сейлза (там он
+                          редактируется, если есть права). */}
+                      {advOpen && plans.map((pk, pi) => (
+                        <div key={pk.plan_id ?? `p${pi}`} style={{ margin: '2px 0 6px 44px', border: `1px solid ${T.border}`, borderRadius: 10, background: T.card, animation: `rowIn .2s ${T.ease} both` }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderBottom: pk.brands.length ? `1px solid ${T.inner}` : 'none' }}>
+                            <span style={{ fontSize: 11.5, fontWeight: 700, color: T.t1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {pk.title || `План ${year} · ${a.name}`}
+                            </span>
+                            <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T.t4, whiteSpace: 'nowrap' }}>{pk.brands.length} бренд.</span>
+                            <span style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>{kk(pk.plan)} ₽</span>
+                            {onOpenRep && (
+                              <span title={canEdit ? 'Открыть план сейлза для редактирования' : 'Открыть план сейлза'}
+                                onClick={e => { e.stopPropagation(); onOpenRep(r.rep_id); }}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 10px', borderRadius: 8, background: T.accentTint, border: `1px solid ${T.accentBorder}`, color: T.accent, fontSize: 10.5, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flex: '0 0 auto' }}>
+                                {canEdit ? 'Открыть и править' : 'Открыть'} →
+                              </span>
+                            )}
+                          </div>
+                          {pk.brands.map((br, bi2) => {
+                            const bp = br.plan ? (br.fact / br.plan) * 100 : 0;
+                            return (
+                              <div key={br.line_id ?? bi2} style={{ display: 'grid', gridTemplateColumns: '1.6fr 90px 90px 1fr', gap: 10, alignItems: 'center', padding: '5px 10px', borderTop: bi2 ? `1px solid ${T.row}` : 'none' }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                                  <Dot color={pctColor(bp)} size={6} />
+                                  <span style={{ fontSize: 11.5, color: T.t2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{br.brand}</span>
+                                  <span style={{ fontFamily: T.mono, fontSize: 9, color: T.t5, whiteSpace: 'nowrap' }}>
+                                    {(br.months_on || []).reduce((s, v) => s + (v ? 1 : 0), 0)} мес.
+                                  </span>
+                                </span>
+                                <span style={{ fontFamily: T.mono, fontSize: 11, textAlign: 'right' }}>{kk(br.plan)} ₽</span>
+                                <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.fact, textAlign: 'right' }}>{br.fact ? kk(br.fact) + ' ₽' : '—'}</span>
+                                <ProgressBar plan={br.plan} fact={br.fact} booked={br.booked} height={5} bg="#E1E7F7" />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                      </React.Fragment>
                     );
                   })}
                 </div>

@@ -200,6 +200,8 @@ def delete_user(
 
 
 ACTION_LABELS = {
+    "verify_media_plan": "МП проверен",
+    "media_plan_change_note": "Причина изменений МП",
     "login_success": "Вход выполнен",
     "login_failed": "Неудачный вход",
     "create_user": "Создание пользователя",

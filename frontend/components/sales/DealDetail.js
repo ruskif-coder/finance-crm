@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import api, { auth } from '../../lib/api'
+import { BITRIX_DEAL_URL } from '../../lib/salesLayers'
 import { MONO, UI, CAP, docCard, addBtn, iconSq, DocIcon, DownloadIcon, EditIcon, StageLayerBar } from '../salesTableKit'
+import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc } from '../../lib/dealDocs'
 
 // ── Раскрытая сводка сделки (раскрытие строки реестра /sales и дашборда) ──
 // Четыре колонки: Данные сделки → Медиаплан и документы → История → Оплаты.
@@ -22,14 +24,8 @@ const EVENT_COLOR = {
 
 const LBL = { fontSize: 12, color: 'var(--text-muted)', flex: '0 0 132px' }
 
-// Скачивание blob по URL (файлы сделки, PDF/XLS медиаплана).
-async function blobGet(url, filename) {
-  try {
-    const r = await api.get(url, { ...auth(), responseType: 'blob' })
-    const href = URL.createObjectURL(r.data)
-    const a = document.createElement('a'); a.href = href; a.download = filename || 'file'; a.click(); URL.revokeObjectURL(href)
-  } catch { alert('Не удалось скачать файл') }
-}
+// Скачивание blob по URL (файлы сделки, PDF/XLS медиаплана) — общий хелпер.
+const blobGet = downloadBlob
 
 // Строка «лейбл — значение».
 function Row({ label, children, mono }) {
@@ -89,14 +85,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   const startEdit = () => { if (canEdit) { setDraft(title); setEditing(true) } }
   // «+ Добавить» у «МП наш» → всегда конструктор МП этой сделки (страничные onAddMp бывают заглушками).
   const addMp = () => router.push(`/deals/mp/new?deal=${d.id}`)
-  // Прочие документы (ДС/Отчёт/УПД/Счёт): пока просто форма выбора файла (бэка под эти типы нет).
-  const [picked, setPicked] = useState({})
-  const pickFile = (kind) => {
-    const inp = document.createElement('input')
-    inp.type = 'file'
-    inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) setPicked(p => ({ ...p, [kind]: f.name })) }
-    inp.click()
-  }
+  const [docBusy, setDocBusy] = useState('')   // вид документа в процессе загрузки/удаления
   const genTitle = () => {
     const t = templateTitle()
     if (!t) { alert('Нечего собрать: нет рекламодателя / бренда / агентства / услуги / периода.'); return }
@@ -143,7 +132,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
         </div>
         <Row label="Рекламодатель / бренд">{[d.advertiser, d.brand].filter(Boolean).join(' · ') || '—'}</Row>
         <Row label="Агентство">{d.agency || '—'}</Row>
-        <Row label="Плательщик">{d.payer || '—'}</Row>
+        <Row label="Контрагент">{d.payer || '—'}</Row>
         <Row label="Услуга">{d.product || '—'}</Row>
         <Row label="Период / стадия" mono>{[d.period, d.our_stage?.name].filter(Boolean).join(' · ') || '—'}</Row>
         <Row label="Продавец">{d.sales_rep || '—'}</Row>
@@ -169,11 +158,26 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
               <button style={iconSq(true)} title="Открыть конструктор" onClick={() => router.push(`/deals/mp/${mpOur.id}`)}><EditIcon /></button>
             </span>
           ) : undefined} />
-        {/* Реализация: бэка под эти типы ещё нет — «+ Добавить» открывает форму выбора файла */}
-        {[['ДС', 'ds'], ['Отчёт', 'report'], ['УПД', 'upd'], ['Счёт', 'invoice']].map(([t, k]) => (
-          <DocLine key={k} title={t} empty={!picked[k]} meta={picked[k] ? `выбран: ${picked[k]}` : ''}
-            onAdd={canEdit ? () => pickFile(k) : undefined} addLabel={picked[k] ? 'Заменить' : '+ Добавить'} />
-        ))}
+        {/* Реальные документы сделки: загрузка/замена/скачивание/удаление.
+            Список видов — общий с карточкой и доской (lib/dealDocs); битриксовые
+            (договор) сюда не берём, они выше отдельными строками. */}
+        {DEAL_DOCS.filter(x => !x.bx).map(({ kind, label }) => {
+          const f = (d.files || []).find(x => x.kind === kind)
+          const busy = docBusy === kind
+          return (
+            <DocLine key={kind} title={label} empty={!f}
+              meta={busy ? 'загрузка…' : (f ? f.filename : '')}
+              right={
+                <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}>
+                  {f && <button style={iconSq(false)} title={`Скачать · ${f.filename || ''}`}
+                    onClick={() => downloadBlob(`/sales/deals/${d.id}/files/${kind}/download`, f.filename)}><DownloadIcon /></button>}
+                  {canEdit && <button style={addBtn} onClick={() => pickAndUploadDoc(d.id, kind, onChanged, setDocBusy)}>{f ? 'Заменить' : '+ Добавить'}</button>}
+                  {canEdit && f && <button style={{ ...addBtn, color: 'var(--danger)' }} title="Удалить"
+                    onClick={() => deleteDoc(d.id, kind, onChanged, setDocBusy)}>×</button>}
+                </span>
+              } />
+          )
+        })}
       </div>
 
       {/* 3. История */}
@@ -206,6 +210,26 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
             {d.our_stage?.money_layer && <span style={{ fontFamily: MONO, color: 'var(--text-faint)' }}>· {d.our_stage.money_layer}</span>}
           </div>
         </div>
+        {/* Материнский годовой план — если сделка создана конвейером из плана */}
+        {d.year_plan && (
+          <div style={{ marginBottom: 18 }}>
+            <div style={CAP}>Годовой план</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, padding: '9px 11px' }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  title={[d.year_plan.title, d.year_plan.comment].filter(Boolean).join(' · ')}>
+                  {d.year_plan.title || `План ${d.year_plan.year || ''}`}
+                  {d.year_plan.comment ? <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}> · {d.year_plan.comment}</span> : null}
+                </div>
+                <div style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)', marginTop: 2 }}>
+                  {d.year_plan.year}{d.plan_month != null ? ` · мес. ${d.plan_month + 1}` : ''}
+                </div>
+              </div>
+              <button onClick={() => router.push(`/deals/year-plan?year=${d.year_plan.year}${d.year_plan.rep_id ? `&rep=${d.year_plan.rep_id}` : ''}`)}
+                title="Открыть годовой план" style={{ ...addBtn, whiteSpace: 'nowrap' }}>Открыть план</button>
+            </div>
+          </div>
+        )}
         <div style={CAP}>Оплаты</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--income)' }} />
@@ -225,10 +249,16 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
           <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 800, color: 'var(--income)' }}>{rub(d.our_sum)}</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 'auto', paddingTop: 14 }}>
-          <button onClick={() => router.push(`/deals/${d.id}`)} title="Открыть карточку сделки"
+          <button onClick={() => router.push(`/deals/${d.code || d.id}`)} title="Открыть карточку сделки"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 14px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>
             <DocIcon /> Карточка
           </button>
+          {d.bitrix_id && !local && (
+            <button onClick={() => window.open(BITRIX_DEAL_URL(d.bitrix_id), '_blank', 'noopener')} title="Открыть сделку в Битрикс24 (в новой вкладке)"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 12px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--accent-tint)', color: 'var(--accent)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>
+              Битрикс ↗
+            </button>
+          )}
           <button title="Бриф" onClick={() => (onOpenBrief ? onOpenBrief(d) : router.push(`/deals/${d.id}`))} style={{ ...iconSq(false), width: 34, height: 34 }}><DocIcon /></button>
           {onEdit && <button title="Редактировать" onClick={() => onEdit(d)} style={{ ...iconSq(false), width: 34, height: 34 }}><EditIcon /></button>}
         </div>

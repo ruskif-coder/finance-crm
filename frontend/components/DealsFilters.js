@@ -65,7 +65,7 @@ const GAP_FIELDS = [
   { value: 'account_manager_id', label: 'без аккаунта' },
   { value: 'period_from', label: 'без старта РК' },
   { value: 'period_to', label: 'без конца РК' },
-  { value: 'payer', label: 'плательщик не из базы' },
+  { value: 'payer', label: 'контрагент не из базы' },
 ]
 
 const FILTER_FIELDS = [

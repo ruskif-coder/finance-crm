@@ -90,8 +90,88 @@ export const FILTER_DROPS = [
 export const GAP_FIELDS = [
   { value: 'advertiser_id', label: 'без рекламодателя' }, { value: 'brand_id', label: 'без бренда' },
   { value: 'agency_id', label: 'без агентства' }, { value: 'sales_rep_id', label: 'без сейлза' }, { value: 'account_manager_id', label: 'без аккаунта' },
-  { value: 'period_from', label: 'без старта РК' }, { value: 'payer', label: 'плательщик не из базы' },
+  { value: 'period_from', label: 'без старта РК' }, { value: 'payer', label: 'контрагент не из базы' },
 ]
+
+// ─── Единый шаблон настраиваемых колонок таблиц сделок ─────────────────
+// ОДИН источник правды для реестра (/sales) и дашборда (/sales-dashboard):
+// обе таблицы настраиваются как внешний шаблон, а не по отдельности.
+// Здесь только «средние» (переставляемые/скрываемые) колонки. Служебные
+// prob/sel/brief — фиксированный префикс, задаётся на странице (у реестра есть
+// чекбоксы выбора, у дашборда — нет), в меню «Колонки» они не участвуют.
+export const DEAL_COLS = [
+  { key: 'bitrix_id', w: '82px', label: 'Код', sortable: true },
+  { key: 'agency', w: '92px', label: 'Агентство', sortable: true },
+  { key: 'advertiser', w: '1.1fr', label: 'Рекламодатель', sortable: true },
+  { key: 'brand', w: '1fr', label: 'Бренд', sortable: true },
+  { key: 'product', w: '1fr', label: 'Услуга', sortable: true },
+  { key: 'period', w: '78px', label: 'Период', sortable: true },
+  { key: 'bitrix_stage', w: '1.25fr', label: 'Стадия', sortable: true },
+  { key: 'amount', w: '88px', label: 'Сумма', sortable: true, right: true },
+  { key: 'sales_rep', w: '92px', label: 'Продавец', sortable: true },
+  { key: 'account_manager', w: '88px', label: 'Аккаунт', sortable: true },
+  { key: 'payer', w: '1.15fr', label: 'Контрагент', sortable: true },
+  { key: 'pipeline', w: '92px', label: 'Воронка', sortable: true },
+  { key: 'period_from', w: '84px', label: 'Старт РК', sortable: true },
+  { key: 'period_to', w: '84px', label: 'Конец РК', sortable: true },
+  { key: 'title', w: '2.5fr', label: 'Сделка', sortable: true },
+  { key: 'files', w: '120px', label: 'Файлы' },
+]
+export const DEAL_DEFAULT_HIDDEN = ['pipeline', 'period_from', 'period_to']
+export const DEAL_COL_BY_KEY = Object.fromEntries(DEAL_COLS.map(c => [c.key, c]))
+export const DEAL_MIDDLE_KEYS = DEAL_COLS.map(c => c.key)
+
+// Меню «Колонки ▾» — общий компонент: чекбокс скрытия + drag-перестановка.
+// Порядок/скрытие хранит страница (в своём localStorage), сюда приходят как пропсы —
+// так обе таблицы рисуют ОДИН и тот же список.
+export function ColumnsMenu({ open, setOpen, colOrder, hidden, onToggle, onReorder }) {
+  const [dragIdx, setDragIdx] = useState(null)
+  const drop = (i) => { if (dragIdx === null || dragIdx === i) { setDragIdx(null); return } onReorder(dragIdx, i); setDragIdx(null) }
+  return (
+    <div style={{ position: 'relative' }}>
+      <div onClick={() => setOpen(o => !o)} style={{ border: '1px solid var(--border-card)', background: 'var(--bg-card)', borderRadius: 10, padding: '8px 13px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer' }}>Колонки ▾</div>
+      {open && (<>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 39 }} onClick={() => setOpen(false)} />
+        <div style={{ position: 'absolute', right: 0, top: '110%', marginTop: 4, zIndex: 40, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 10, minWidth: 210 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Колонки (тащите за ⠿ для порядка)</div>
+          {colOrder.map((k, i) => {
+            const c = DEAL_COL_BY_KEY[k]; if (!c) return null
+            return (
+              <div key={k} draggable
+                onDragStart={() => setDragIdx(i)} onDragOver={e => e.preventDefault()} onDrop={() => drop(i)} onDragEnd={() => setDragIdx(null)}
+                style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, padding: '4px 2px', borderRadius: 6, background: dragIdx === i ? 'var(--accent-tint)' : 'transparent' }}>
+                <span title="перетащить" style={{ cursor: 'grab', color: 'var(--text-faint)', userSelect: 'none' }}>⠿</span>
+                <input type="checkbox" checked={!hidden.has(k)} onChange={() => onToggle(k)} style={{ cursor: 'pointer' }} />
+                <span style={{ flex: 1 }}>{c.label || k}</span>
+              </div>
+            )
+          })}
+        </div>
+      </>)}
+    </div>
+  )
+}
+
+// ─── Рабочая очередь аккаунта: подсветка строки ────────────────────────
+// Обе таблицы (реестр и дашборд) красят строку по состоянию сделки на ПЕРВОЙ стадии
+// цепочки («МП Подготовка»). Первую стадию берём по признаку our_stage.is_first —
+// не по названию (его переименуют) и не по числовому id (зависит от засева).
+//
+//   ЗЕЛЁНЫЙ  — МП нет вообще (ни нашего, ни из Битрикса): сделку надо посчитать.
+//   ЖЁЛТЫЙ   — МП есть, но сделка всё ещё на первой стадии: он собран конвейером
+//              автоматически и не завизирован. Гаснет, когда аккаунт откроет МП,
+//              отметит обе «Проверено» и сохранит — тогда сделка уходит на
+//              следующую стадию (см. _advance_deal_after_verify на бэкенде).
+export const NEEDS_MP_BG = '#EEF9F4'        // мягкая зелёная заливка строки
+export const NEEDS_MP_BORDER = '#CDEBDD'
+export const UNVERIFIED_BG = '#FFF8E8'      // мягкая жёлтая заливка строки
+export const UNVERIFIED_BORDER = '#F2E0B8'
+
+const onFirstStage = (d) => !!(d && d.our_stage && d.our_stage.is_first)
+const hasAnyMp = (d) => !!((d.our_mps || []).length || (d.files || []).some(f => f.kind === 'mp'))
+
+export const needsMp = (d) => onFirstStage(d) && !hasAnyMp(d)          // зелёный
+export const needsMpCheck = (d) => onFirstStage(d) && hasAnyMp(d)      // жёлтый
 
 export const shortLabel = (lab) => (lab ? String(lab).split(' | ')[0].trim() : null)
 

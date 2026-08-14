@@ -35,7 +35,7 @@ const COLS = [
   { key: 'amount', w: '88px', label: 'Сумма', right: true },
   { key: 'sales_rep', w: '92px', label: 'Продавец' },
   { key: 'account_manager', w: '88px', label: 'Аккаунт' },
-  { key: 'payer', w: '1.15fr', label: 'Плательщик' },
+  { key: 'payer', w: '1.15fr', label: 'Контрагент' },
   { key: 'title', w: '2.5fr', label: 'Сделка' },
 ]
 const gridTemplate = COLS.map(c => c.w).join(' ')

@@ -99,12 +99,10 @@ export default function MpEditor() {
     } else if (dealParam) {
       // Создание МП из сделки — префилл реквизитов + брифа
       api.get(`/sales/media-plans/deal-prefill/${dealParam}`, auth()).then(r => {
-        // услуга сделки → первая строка медиаплана; сумма сделки (без НДС) → сумма строки
-        // (модель Fix, объём 1, цена = сумма → нетто строки = сумма сделки)
-        const rows = r.data.product
-          ? [{ position: r.data.product, model: 'Fix', volume: 1, unit_price: r.data.amount || 0, discount: 0 }]
-          : []
-        setPrefill({ ...r.data, rows })
+        // Строку размещения собирает бэкенд (_prefill_rows) — по тарифу услуги, как
+        // конвейер годового плана: модель/формат/инвентарь из справочника,
+        // объём = сумма ÷ цену × (CPM → 1000). Здесь ничего не пересчитываем.
+        setPrefill({ ...r.data, rows: r.data.rows || [] })
         setDealBrief({ has_deal: true, deal_id: +dealParam, brief: r.data.brief || '', is_local: r.data.is_local })
       }).catch(() => setPrefill({}))
     }
@@ -124,6 +122,9 @@ export default function MpEditor() {
       sales_rep_id: num(ow['Продавец']), account_manager_id: num(ow['Аккаунт']), traffic_manager_id: num(ow['Трафик']),
       deal_id: loaded?.deal_id ?? (dealParam ? +dealParam : null),   // привязка к сделке (сохранённая или из префилла)
       status: o.action === 'submit' ? 'review' : 'draft',
+      // отметка «проверено» (обе галочки в конструкторе) и комментарий о причинах
+      // изменений — идут только в журнал, в самой версии МП не хранятся
+      verified: !!o.verified, change_note: o.change_note || '',
       rows: (o.main || []).map(r => ({ position: r.position || null, format: r.format || null, model: r.model || null, inventory: r.inventory || null, volume: r.volume || 0, unit_price: r.unit || 0, discount: r.discount || 0, forecast: (o.fc || {})[r.id] || {} })),
       extras: (o.extras || []).map(e => ({ name: e.name || null, period: e.period || null, mode: e.mode || null, price: e.price || 0, total: e.total || 0 })),
     }
@@ -198,8 +199,11 @@ export default function MpEditor() {
   if (!isNew && !loaded) return <div style={{ padding: 40, color: 'var(--text-muted)' }}>Загрузка…</div>
   if (isNew && dealParam && !prefill) return <div style={{ padding: 40, color: 'var(--text-muted)' }}>Подготовка медиаплана из сделки…</div>
 
-  const backTo = loaded?.deal_id ? `/deals/${loaded.deal_id}` : '/deals/mp'
-  const backLabel = loaded?.deal_id ? `Сделка #${loaded.deal_id}` : 'Реестр медиапланов'
+  // В интерфейсе сделка обозначается НАШИМ кодом, а не внутренним id (см. deal-code).
+  // Ссылка тоже по коду — роут /deals/[id] резолвит и код, и id.
+  const backRef = loaded?.deal_code || loaded?.deal_id
+  const backTo = loaded?.deal_id ? `/deals/${backRef}` : '/deals/mp'
+  const backLabel = loaded?.deal_id ? `Сделка ${backRef}` : 'Реестр медиапланов'
 
   return (
     <>

@@ -12,7 +12,7 @@ import api, { auth } from '../lib/api'
 import { DownloadOverlay } from '../components/LogoLoader'
 import { fmtMoney, fmtDate, mln } from '../lib/salesFormat'
 import { BITRIX_DEAL_URL } from '../lib/salesLayers'
-import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar } from '../components/salesTableKit'
+import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, needsMp, needsMpCheck, NEEDS_MP_BG, NEEDS_MP_BORDER, UNVERIFIED_BG, UNVERIFIED_BORDER } from '../components/salesTableKit'
 import useIsMobile from '../components/mobile/useIsMobile'
 import DealCardList from '../components/mobile/DealCardList'
 import DealsMobileControls from '../components/sales/DealsMobileControls'
@@ -28,33 +28,16 @@ const PROB_COLORS = { grey: 'var(--muted)', orange: 'var(--warning, #d97706)', g
 const PROB_ORDER = ['grey', 'orange', 'green']
 const PROB_LABEL = { grey: 'малая', orange: 'средняя', green: 'высокая' }
 
-const COLS = [
-  { key: 'prob', w: '26px', label: '', fixed: true },
-  { key: 'sel', w: '52px', label: '', fixed: true },
-  { key: 'move', w: '1.25fr', label: 'Стадия', fixed: true },
-  { key: 'brief', w: '46px', label: 'Бриф', fixed: true },
-  { key: 'bitrix_id', w: '62px', label: 'BX_ID', sortable: true },
-  { key: 'agency', w: '92px', label: 'Агентство', sortable: true },
-  { key: 'advertiser', w: '1.1fr', label: 'Рекламодатель', sortable: true },
-  { key: 'brand', w: '1fr', label: 'Бренд', sortable: true },
-  { key: 'product', w: '1fr', label: 'Услуга', sortable: true },
-  { key: 'period', w: '78px', label: 'Период', sortable: true },
-  { key: 'amount', w: '88px', label: 'Сумма', sortable: true, right: true },
-  { key: 'sales_rep', w: '92px', label: 'Продавец', sortable: true },
-  { key: 'account_manager', w: '88px', label: 'Аккаунт', sortable: true },
-  { key: 'payer', w: '1.15fr', label: 'Плательщик', sortable: true },
-  { key: 'pipeline', w: '92px', label: 'Воронка', sortable: true },
-  { key: 'period_from', w: '84px', label: 'Старт РК', sortable: true },
-  { key: 'period_to', w: '84px', label: 'Конец РК', sortable: true },
-  { key: 'title', w: '2.5fr', label: 'Сделка', sortable: true },
-  { key: 'files', w: '120px', label: 'Файлы' },
-]
-// по умолчанию скрыты (доступны в меню «Колонки»)
-const DEFAULT_HIDDEN = ['pipeline', 'period_from', 'period_to']
+// Колонки — из общего шаблона salesTableKit (DEAL_COLS): реестр и дашборд
+// настраиваются как один внешний шаблон. Служебный префикс (prob/sel/brief) —
+// фиксированный, в меню «Колонки» не участвует и задаётся тут локально.
+const FIXED_COLS = { prob: { key: 'prob', w: '26px' }, sel: { key: 'sel', w: '52px' }, brief: { key: 'brief', w: '46px' } }
+const COLS = DEAL_COLS
+const DEFAULT_HIDDEN = DEAL_DEFAULT_HIDDEN
 const COLS_KEY = 'sr3_hidden_cols'
 const COLS_ORDER_KEY = 'sr3_col_order'
-const COL_BY_KEY = Object.fromEntries(COLS.map(c => [c.key, c]))
-const MIDDLE_KEYS = COLS.filter(c => !c.fixed).map(c => c.key)   // переставляемые/скрываемые (brief/gen фиксированы)
+const COL_BY_KEY = DEAL_COL_BY_KEY
+const MIDDLE_KEYS = DEAL_MIDDLE_KEYS   // переставляемые/скрываемые
 
 export default function SalesRegistry2() {
   const router = useRouter()
@@ -86,6 +69,7 @@ export default function SalesRegistry2() {
   const [sel, setSel] = useState(Object.fromEntries(REG_FILTER_DROPS.map(([k]) => [k, []])))
   const [gaps, setGaps] = useState([])
   const [hideArchive, setHideArchive] = useState(true)
+  const [onlyPlanned, setOnlyPlanned] = useState(false)   // показывать только сделки из годового плана
   const [search, setSearch] = useState('')
   const [searchQ, setSearchQ] = useState('')
   const [searchFocus, setSearchFocus] = useState(false)
@@ -121,7 +105,6 @@ export default function SalesRegistry2() {
   const [titleDraft, setTitleDraft] = useState('')
   const [hidden, setHidden] = useState(new Set(DEFAULT_HIDDEN))   // скрытые колонки (Колонки ▾)
   const [colOrder, setColOrder] = useState(MIDDLE_KEYS) // порядок переставляемых колонок
-  const [dragIdx, setDragIdx] = useState(null)
   const [colPicker, setColPicker] = useState(false)
   const [periodEdit, setPeriodEdit] = useState(null) // { dealId, rect, month } — правка периода строки
   const [genConfirm, setGenConfirm] = useState(null) // { dealId, rect, text, current } — подтверждение генерации имени
@@ -155,16 +138,12 @@ export default function SalesRegistry2() {
     const next = new Set(prev); next.has(k) ? next.delete(k) : next.add(k)
     localStorage.setItem(COLS_KEY, JSON.stringify([...next])); return next
   })
-  const dropCol = (targetIdx) => {
-    if (dragIdx === null || dragIdx === targetIdx) { setDragIdx(null); return }
-    setColOrder(prev => {
-      const next = [...prev]; const [moved] = next.splice(dragIdx, 1); next.splice(targetIdx, 0, moved)
-      localStorage.setItem(COLS_ORDER_KEY, JSON.stringify(next)); return next
-    })
-    setDragIdx(null)
-  }
+  const reorderCol = (from, to) => setColOrder(prev => {
+    const next = [...prev]; const [moved] = next.splice(from, 1); next.splice(to, 0, moved)
+    localStorage.setItem(COLS_ORDER_KEY, JSON.stringify(next)); return next
+  })
   // чекбокс (при праве) → бриф → переставленные видимые колонки (генерация — внутри «Сделка»).
-  const visibleCols = [COL_BY_KEY.prob, canEdit ? COL_BY_KEY.sel : null, COL_BY_KEY.brief, COL_BY_KEY.move, ...colOrder.map(k => COL_BY_KEY[k]).filter(c => c && !hidden.has(c.key))].filter(Boolean)
+  const visibleCols = [FIXED_COLS.prob, canEdit ? FIXED_COLS.sel : null, FIXED_COLS.brief, ...colOrder.map(k => COL_BY_KEY[k]).filter(c => c && !hidden.has(c.key))].filter(Boolean)
   const gridTemplate = visibleCols.map(c => c.w).join(' ')
   const isMobile = useIsMobile()
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -175,9 +154,9 @@ export default function SalesRegistry2() {
 
   // Выгрузка текущей выборки в CSV (клиентская).
   const exportCsv = () => {
-    const head = ['BX_ID', 'Агентство', 'Рекламодатель', 'Бренд', 'Услуга', 'Период', 'Стадия', 'Сумма', 'Аккаунт', 'Плательщик', 'Слой', 'Сделка']
+    const head = ['Код', 'Агентство', 'Рекламодатель', 'Бренд', 'Услуга', 'Период', 'Стадия', 'Сумма', 'Аккаунт', 'Контрагент', 'Слой', 'Сделка']
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const lines = deals.map(d => [d.bitrix_id, d.agency, d.advertiser, d.brand, d.product, d.period, d.bitrix_stage, d.amount, d.account_manager, d.payer, d.money_layer, d.title].map(esc).join(';'))
+    const lines = deals.map(d => [d.code || d.bitrix_id, d.agency, d.advertiser, d.brand, d.product, d.period, d.bitrix_stage, d.amount, d.account_manager, d.payer, d.money_layer, d.title].map(esc).join(';'))
     const csv = '﻿' + head.map(esc).join(';') + '\n' + lines.join('\n')
     const url = window.URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
     const a = document.createElement('a'); a.href = url; a.download = `deals_${new Date().toISOString().slice(0, 10)}.csv`
@@ -221,6 +200,7 @@ export default function SalesRegistry2() {
     Object.entries(sel).forEach(([k, arr]) => arr.forEach(v => b.append(k, v)))
     gaps.forEach(g => b.append('gaps', g))
     if (hideArchive) b.append('hide_archive', 'true')
+    if (onlyPlanned) b.append('only_planned', 'true')
     if (searchQ.trim()) b.append('search', searchQ.trim())
     if (dateFrom) b.append('date_from', dateFrom)
     if (dateTo) b.append('date_to', dateTo)
@@ -243,7 +223,7 @@ export default function SalesRegistry2() {
   }
 
   // фильтры/сортировка → перезагрузка с 1-й страницы (дебаунс 300 мс)
-  useEffect(() => { const t = setTimeout(() => load(0), 300); return () => clearTimeout(t) }, [sel, gaps, hideArchive, searchQ, dateFrom, dateTo, sortKey, sortDir])
+  useEffect(() => { const t = setTimeout(() => load(0), 300); return () => clearTimeout(t) }, [sel, gaps, hideArchive, onlyPlanned, searchQ, dateFrom, dateTo, sortKey, sortDir])
 
   // Диплинк из справочника (счётчик сделок): ?producer_id / ?agency_id — ставим фильтр
   // и показываем в т.ч. архивные (иначе часть сделок не видна). producer_id вместо
@@ -312,7 +292,7 @@ export default function SalesRegistry2() {
   const bulkInp = { padding: '7px 9px', border: '1px solid var(--border-card)', borderRadius: 8, fontSize: 12.5, background: 'var(--bg-card)', color: 'inherit', fontFamily: UI }
 
   const onSort = (k, sortable) => { if (!sortable) return; if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(k); setSortDir('desc') } }
-  const resetFilters = () => { setSel(Object.fromEntries(REG_FILTER_DROPS.map(([k]) => [k, []]))); setGaps([]); setHideArchive(true); setSearch(''); setSearchQ(''); setDateFrom(''); setDateTo('') }
+  const resetFilters = () => { setSel(Object.fromEntries(REG_FILTER_DROPS.map(([k]) => [k, []]))); setGaps([]); setHideArchive(true); setOnlyPlanned(false); setSearch(''); setSearchQ(''); setDateFrom(''); setDateTo('') }
 
   const patchCell = async (id, patch, localApply) => {
     try { await api.patch(`/sales/deals/${id}`, patch, auth()); setDeals(prev => prev.map(x => x.id === id ? { ...x, ...localApply } : x)); return true }
@@ -392,7 +372,7 @@ export default function SalesRegistry2() {
     setBulkResult(acc); setSelDeals({}); load(offset)
   }
   // «Залить правки в Битрикс» — превью (commit=0) → подтверждение → запись (commit=1)
-  const PUSH_FIELD_LABELS = { title: 'Название', advertiser_id: 'Рекламодатель', brand_id: 'Бренд', agency_id: 'Агентство', sales_rep_id: 'Продавец', account_manager_id: 'Аккаунт', payer_counterparty_id: 'Плательщик', period_from: 'Старт РК', period_to: 'Конец РК', product: 'Услуга', bitrix_stage: 'Стадия' }
+  const PUSH_FIELD_LABELS = { title: 'Название', advertiser_id: 'Рекламодатель', brand_id: 'Бренд', agency_id: 'Агентство', sales_rep_id: 'Продавец', account_manager_id: 'Аккаунт', payer_counterparty_id: 'Контрагент', period_from: 'Старт РК', period_to: 'Конец РК', product: 'Услуга', bitrix_stage: 'Стадия' }
   const openPushEdits = async () => {
     setPushBusy(true)
     try { const r = await api.post('/sales/push-edits?commit=0', {}, auth()); setPushPreview(r.data) }
@@ -449,20 +429,6 @@ export default function SalesRegistry2() {
   const cellFor = (key, d) => {
     const none = !FILL[d.money_layer]; const n = FILL[d.money_layer] || 0
     switch (key) {
-      case 'move': {
-        const os = d.our_stage
-        return (
-          <span className={canEdit ? 'd2-cell' : ''} onClick={e => { e.stopPropagation(); if (canEdit) setMoveDeal(d) }}
-            title={canEdit ? 'Двинуть сделку' : (os?.name || '')}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: canEdit ? 'pointer' : 'default', overflow: 'hidden' }}>
-            {os ? (<>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)', flex: '1 1 auto', minWidth: 0 }}>{os.name}</span>
-              <StageLayerBar os={os} />
-              {canEdit && <span style={{ color: 'var(--accent)', fontWeight: 700, flex: '0 0 auto' }}>▸</span>}
-            </>) : <span style={{ color: 'var(--text-faint)' }}>{canEdit ? '— двинуть —' : '—'}</span>}
-          </span>
-        )
-      }
       case 'prob': {
         const col = PROB_COLORS[d.probability_color]
         return (
@@ -485,19 +451,16 @@ export default function SalesRegistry2() {
         </span>
       )
       case 'bitrix_id': {
-        if (String(d.bitrix_id || '').startsWith('local-'))
-          return canEdit
-            ? <button onClick={() => api.post(`/sales/deals/${d.id}/push-to-bitrix`, {}, auth()).then(() => load(offset)).catch(e => alert(e.response?.data?.detail || 'Ошибка'))} title="Отправить в Битрикс" style={{ border: '1px solid var(--accent)', background: 'var(--accent-tint)', color: 'var(--accent)', borderRadius: 6, cursor: 'pointer', fontSize: 11, padding: '2px 6px', fontFamily: MONO, justifySelf: 'start' }}>→ БХ</button>
-            : <span style={{ color: 'var(--text-faint)', fontSize: 11, fontFamily: MONO }}>локально</span>
-        // Свежий импорт: подсвечиваем ячейку BX_ID 3 суток после попадания в базу.
-        const fresh = d.date_create && (Date.now() - new Date(d.date_create).getTime()) < 2592e5
+        const isLocal = String(d.bitrix_id || '').startsWith('local-')
         return (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <a href={BITRIX_DEAL_URL(d.bitrix_id)} target="_blank" rel="noreferrer"
-              title={fresh ? 'Импортирована недавно (до 3 суток)' : undefined}
-              style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none', ...(fresh ? { background: 'var(--warning-tint)', borderRadius: 6, padding: '2px 6px' } : {}) }}>{d.bitrix_id}</a>
-            {canEdit && <span onClick={e => { e.stopPropagation(); syncingId !== d.id && syncDeal(d) }} title="Обновить из Битрикса (поля + файлы)"
-              style={{ cursor: syncingId === d.id ? 'default' : 'pointer', fontSize: 12, lineHeight: 1, color: syncingId === d.id ? 'var(--text-faint)' : 'var(--accent)' }}>{syncingId === d.id ? '⏳' : '⟳'}</span>}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <a href={`/deals/${encodeURIComponent(d.code || d.id)}`} title="Открыть карточку сделки"
+              style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>{d.code || '—'}</a>
+            {isLocal
+              ? (canEdit && <button onClick={e => { e.stopPropagation(); api.post(`/sales/deals/${d.id}/push-to-bitrix`, {}, auth()).then(() => load(offset)).catch(er => alert(er.response?.data?.detail || 'Ошибка')) }} title="Отправить в Битрикс"
+                  style={{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-faint)', borderRadius: 5, cursor: 'pointer', fontSize: 9, padding: '1px 4px', fontFamily: MONO }}>→БХ</button>)
+              : (canEdit && <span onClick={e => { e.stopPropagation(); syncingId !== d.id && syncDeal(d) }} title="Обновить из Битрикса (поля + файлы)"
+                  style={{ cursor: syncingId === d.id ? 'default' : 'pointer', fontSize: 12, lineHeight: 1, color: syncingId === d.id ? 'var(--text-faint)' : 'var(--accent)' }}>{syncingId === d.id ? '⏳' : '⟳'}</span>)}
           </span>
         )
       }
@@ -507,7 +470,20 @@ export default function SalesRegistry2() {
       case 'product': return <span className={canEdit ? 'd2-cell' : ''} onClick={e => openPicker('service', d, e)} style={{ color: 'var(--text-secondary)' }} title={d.product || 'выбрать'}>{d.product ?? '—'}</span>
       case 'period': return <span className={canEdit ? 'd2-cell' : ''} onClick={e => { if (canEdit) setPeriodEdit({ dealId: d.id, rect: e.currentTarget.getBoundingClientRect(), month: d.period || '', current: d.period }) }}
         style={{ fontFamily: MONO, color: 'var(--text-secondary)' }} title={canEdit ? 'Изменить период (месяц старта РК)' : undefined}>{d.period ?? '—'}</span>
-      case 'bitrix_stage': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.bitrix_stage}>{d.bitrix_stage ?? '—'}</span>
+      case 'bitrix_stage': {
+        const os = d.our_stage
+        return (
+          <span className={canEdit ? 'd2-cell' : ''} onClick={e => { e.stopPropagation(); if (canEdit) setMoveDeal(d) }}
+            title={canEdit ? 'Двинуть сделку' : (os?.name || '')}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: canEdit ? 'pointer' : 'default', overflow: 'hidden' }}>
+            {os ? (<>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)', flex: '1 1 auto', minWidth: 0 }}>{os.name}</span>
+              <StageLayerBar os={os} />
+              {canEdit && <span style={{ color: 'var(--accent)', fontWeight: 700, flex: '0 0 auto' }}>▸</span>}
+            </>) : <span style={{ color: 'var(--text-faint)' }}>{canEdit ? '— двинуть —' : '—'}</span>}
+          </span>
+        )
+      }
       case 'amount': return <span style={{ fontFamily: MONO, fontWeight: 700, textAlign: 'right' }} title={d.amount != null ? new Intl.NumberFormat('ru-RU').format(d.amount) + ' ₽' : ''}>{fmtMoney(d.amount)}</span>
       case 'account_manager': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.account_manager ?? '—'}</span>
       case 'payer': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.payer}>{d.payer ?? '—'}</span>
@@ -732,27 +708,7 @@ export default function SalesRegistry2() {
                     <span style={{ fontFamily: MONO, fontSize: 13, color: 'var(--text-muted)' }}>{dealsTotal}</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ position: 'relative' }}>
-                      <div onClick={() => setColPicker(o => !o)} style={{ border: '1px solid var(--border-card)', background: 'var(--bg-card)', borderRadius: 10, padding: '8px 13px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer' }}>Колонки ▾</div>
-                      {colPicker && (<>
-                        <div style={{ position: 'fixed', inset: 0, zIndex: 39 }} onClick={() => setColPicker(false)} />
-                        <div style={{ position: 'absolute', right: 0, top: '110%', marginTop: 4, zIndex: 40, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 10, minWidth: 210 }}>
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Колонки (тащите за ⠿ для порядка)</div>
-                          {colOrder.map((k, i) => {
-                            const c = COL_BY_KEY[k]; if (!c) return null
-                            return (
-                              <div key={k} draggable
-                                onDragStart={() => setDragIdx(i)} onDragOver={e => e.preventDefault()} onDrop={() => dropCol(i)} onDragEnd={() => setDragIdx(null)}
-                                style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, padding: '4px 2px', borderRadius: 6, background: dragIdx === i ? 'var(--accent-tint)' : 'transparent' }}>
-                                <span title="перетащить" style={{ cursor: 'grab', color: 'var(--text-faint)', userSelect: 'none' }}>⠿</span>
-                                <input type="checkbox" checked={!hidden.has(k)} onChange={() => toggleColHidden(k)} style={{ cursor: 'pointer' }} />
-                                <span style={{ flex: 1 }}>{c.label || k}</span>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </>)}
-                    </div>
+                    <ColumnsMenu open={colPicker} setOpen={setColPicker} colOrder={colOrder} hidden={hidden} onToggle={toggleColHidden} onReorder={reorderCol} />
                     <div className="d2-ico" title="Скачать в CSV" onClick={exportCsv}
                       style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-card)', background: 'var(--bg-card)', borderRadius: 10, color: 'var(--text-secondary)', cursor: 'pointer' }}>
                       <svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg>
@@ -800,7 +756,7 @@ export default function SalesRegistry2() {
                     <div style={{ flex: '0 0 auto', width: searchFocus ? 300 : 148, display: 'inline-flex', alignItems: 'center', gap: 7, border: `1px solid ${searchFocus ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '7px 10px', transition: 'width .22s cubic-bezier(0.22,1,0.36,1), border-color .15s' }}>
                       <svg width="13" height="13" viewBox="0 0 24 24" style={{ ...stroke, strokeWidth: 2, flex: '0 0 13px', color: 'var(--text-faint)' }}><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></svg>
                       <input value={search} onChange={e => setSearch(e.target.value)} onFocus={() => setSearchFocus(true)} onBlur={() => setSearchFocus(false)}
-                        placeholder="ID, агентство, рекл, бренд…" title="Поиск: ID, агентство, рекламодатель, бренд, плательщик, название сделки"
+                        placeholder="код, агентство, рекл, бренд, контрагент…" title="Поиск: ID, агентство, рекламодатель, бренд, контрагент, название сделки"
                         style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: 12, color: 'var(--text-secondary)', width: '100%', fontFamily: UI }} />
                     </div>
                     <div style={{ position: 'relative', flex: '0 0 auto' }}>
@@ -827,6 +783,9 @@ export default function SalesRegistry2() {
                     ))}
                     <MultiDrop label="Незаполненные" options={GAP_FIELDS} selected={gaps} onChange={setGaps} />
                     <div style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
+                      <IconBtn title={onlyPlanned ? 'Показаны только плановые — показать все' : 'Показать только плановые сделки (из годового плана)'} active={onlyPlanned} onClick={() => setOnlyPlanned(v => !v)}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" style={stroke}><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18" /><path d="M8 2v4" /><path d="M16 2v4" /><path d="M8.5 14.5l2 2 4-4" /></svg>
+                      </IconBtn>
                       <IconBtn title={hideArchive ? 'Архив скрыт — показать архивные' : 'Архив показан — скрыть'} active={hideArchive} onClick={() => setHideArchive(v => !v)}>
                         <svg width="15" height="15" viewBox="0 0 24 24" style={stroke}><path d="M4 8h16v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" /><path d="M3 4h18v4H3z" /><path d="M10 12h4" /></svg>
                       </IconBtn>
@@ -858,8 +817,10 @@ export default function SalesRegistry2() {
 
                       {deals.map(d => (
                         <Fragment key={d.id}>
-                        <div className="d2-row" onClick={e => { if (e.target.closest('.d2-cell, .d2-gen, .d2-brief, input, select, button, a, textarea')) return; setExpandedId(x => x === d.id ? null : d.id) }}
-                          style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 12, color: 'var(--text-primary)', cursor: 'pointer', background: expandedId === d.id ? 'var(--accent-tint)' : (selDeals[d.id] ? 'var(--accent-tint)' : undefined) }}>
+                        <div className="d2-row" title={needsMp(d) ? 'Требует расчёта: медиаплана ещё нет'
+                          : (needsMpCheck(d) ? 'Медиаплан не завизирован: откройте МП, отметьте «Проверено» и сохраните' : undefined)}
+                          onClick={e => { if (e.target.closest('.d2-cell, .d2-gen, .d2-brief, input, select, button, a, textarea')) return; setExpandedId(x => x === d.id ? null : d.id) }}
+                          style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: `1px solid ${needsMp(d) ? NEEDS_MP_BORDER : (needsMpCheck(d) ? UNVERIFIED_BORDER : 'var(--border-row)')}`, fontSize: 12, color: 'var(--text-primary)', cursor: 'pointer', background: (expandedId === d.id || selDeals[d.id]) ? 'var(--accent-tint)' : (needsMp(d) ? NEEDS_MP_BG : (needsMpCheck(d) ? UNVERIFIED_BG : undefined)) }}>
                           {visibleCols.map(c => {
                             const attn = ATTN_COLS.has(c.key) && (d.sync_issues || []).some(i => i.field === c.key)
                             return <Fragment key={c.key}>{attn

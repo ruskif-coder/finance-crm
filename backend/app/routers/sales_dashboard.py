@@ -14,7 +14,7 @@
    с общим итогом. Это прямая профилактика дефекта, известного в P&L финмодуля,
    где операции без article.group молча исчезают из отчёта.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy import func, or_, and_, case
 from sqlalchemy.orm import Session, aliased
 from typing import Optional, List, Annotated
@@ -171,7 +171,8 @@ def _brand_orphaned(brand_advertiser_id, new_advertiser_id):
 
 def _apply_extra_filters(q, db, hide_archive=False, search=None, gaps=None):
     """Фильтры, общие для реестра и его строки статистики: «скрыть архив»,
-    поиск (название/ID/рекламодатель/бренд), «незаполненные» (включая плательщика).
+    поиск (название / код / bitrix_id / рекламодатель / бренд / агентство /
+    контрагент-плательщик), «незаполненные» (включая контрагента).
     Держим в одном месте, чтобы список и сводка считались по одинаковым условиям."""
     if hide_archive:
         q = q.filter(or_(SalesStage.stage_key.is_(None),
@@ -182,10 +183,36 @@ def _apply_extra_filters(q, db, hide_archive=False, search=None, gaps=None):
                    .filter(func.coalesce(SalesAdvertiser.short_name,
                                          SalesAdvertiser.name).ilike(pattern)))
         brand_ids = db.query(SalesBrand.id).filter(SalesBrand.name.ilike(pattern))
+        agency_ids = (db.query(SalesAgency.id)
+                      .filter(func.coalesce(SalesAgency.short_name,
+                                            SalesAgency.name).ilike(pattern)))
+        # Контрагент (плательщик): ищем по тому же правилу, по которому он выводится
+        # в колонке (resolve_payer) — ручное юрлицо -> юрлицо агентства ->
+        # юрлицо рекламодателя -> текстовое имя. Иначе поиск не нашёл бы тех,
+        # у кого плательщик подставлен по связи, а не выбран руками.
+        from app.sales.models import SalesAgencyCounterparty, SalesAdvertiserCounterparty
+        cp_ids = db.query(Counterparty.id).filter(Counterparty.name.ilike(pattern))
+        ag_by_cp = (db.query(SalesAgencyCounterparty.agency_id)
+                    .filter(SalesAgencyCounterparty.counterparty_id.in_(cp_ids)))
+        adv_by_cp = (db.query(SalesAdvertiserCounterparty.advertiser_id)
+                     .filter(SalesAdvertiserCounterparty.counterparty_id.in_(cp_ids)))
+        payer_match = or_(
+            SalesDeal.payer_counterparty_id.in_(cp_ids),
+            SalesDeal.payer_name.ilike(pattern),
+            and_(SalesDeal.payer_counterparty_id.is_(None),
+                 SalesDeal.agency_id.isnot(None),
+                 SalesDeal.agency_id.in_(ag_by_cp)),
+            and_(SalesDeal.payer_counterparty_id.is_(None),
+                 SalesDeal.agency_id.is_(None),
+                 SalesDeal.advertiser_id.in_(adv_by_cp)),
+        )
         q = q.filter(or_(SalesDeal.title.ilike(pattern),
                          SalesDeal.bitrix_id.ilike(pattern),
+                         SalesDeal.code.ilike(pattern),
                          SalesDeal.advertiser_id.in_(adv_ids),
-                         SalesDeal.brand_id.in_(brand_ids)))
+                         SalesDeal.brand_id.in_(brand_ids),
+                         SalesDeal.agency_id.in_(agency_ids),
+                         payer_match))
     if gaps:
         gap_columns = {
             "advertiser_id": SalesDeal.advertiser_id, "agency_id": SalesDeal.agency_id,
@@ -523,12 +550,16 @@ def deals_registry(
     money_layer: Annotated[Optional[List[str]], Query()] = None,
     stage_key: Annotated[Optional[List[str]], Query()] = None,
     hide_archive: bool = False,
+    only_planned: bool = False,
     search: Optional[str] = None,
     gaps: Annotated[Optional[List[str]], Query()] = None,
     sort: str = "period_from",
     direction: str = "desc",
-    limit: int = 100,
-    offset: int = 0,
+    # Границы задаём в валидации, а не в SQL: min(limit, 500) не спасал от отрицательного
+    # значения — Postgres отвечал «LIMIT must not be negative», и ?limit=-1 роняло реестр
+    # в 500 вместо 422.
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("sales_registry", "view")),
 ):
@@ -548,6 +579,10 @@ def deals_registry(
     # Общие фильтры (скрыть архив, поиск, незаполненные) — в одном месте,
     # чтобы список и строка статистики считались по одинаковым условиям.
     q = _apply_extra_filters(q, db, hide_archive, search, gaps)
+
+    # «Только плановые» — сделки, привязанные жёстким линком к строке годового плана.
+    if only_planned:
+        q = q.filter(SalesDeal.year_plan_line_id.isnot(None))
 
     total = q.count()
 
@@ -616,7 +651,7 @@ def deals_registry(
     # Вторичная сортировка — по рекламодателю: в рамках одного ключа
     # сделки идут по алфавиту рекламодателя.
     rows = (q.order_by(local_first, ordering, adv_a.name.asc().nullslast(), SalesDeal.id.desc())
-            .limit(min(limit, 500)).offset(offset).all())
+            .limit(limit).offset(offset).all())   # границы — в Query(ge=…, le=…) выше
 
     adv = dict(db.query(SalesAdvertiser.id, func.coalesce(SalesAdvertiser.short_name, SalesAdvertiser.name)).all())
     reps = dict(db.query(SalesRep.id, SalesRep.name).all())
@@ -686,6 +721,36 @@ def deals_registry(
             if p.group_id not in g:
                 g[p.group_id] = {"id": p.id, "title": p.title, "version": p.version, "status": p.status}
 
+    # Материнский годовой план сделки (для блока «Годовой план» в раскрытии строки).
+    # deal → year_plan_line_id → строка → plan_id → SalesYearPlan.
+    plan_meta = {}   # line_id -> {plan_id, line_id, title, comment, year, rep_id}
+    line_ids = list({d.year_plan_line_id for d, _, _ in rows if d.year_plan_line_id})
+    if line_ids:
+        from app.sales.models import SalesYearPlanLine, SalesYearPlan
+        pairs = (db.query(SalesYearPlanLine, SalesYearPlan)
+                 .outerjoin(SalesYearPlan, SalesYearPlan.id == SalesYearPlanLine.plan_id)
+                 .filter(SalesYearPlanLine.id.in_(line_ids)).all())
+        # Комментарий рекламодателя из плана хранится в brief.adv_comment строк
+        # (см. year_plan): у своей строки, иначе — у любой соседней того же плана.
+        plan_ids = {ln.plan_id for ln, _ in pairs if ln.plan_id}
+        siblings = {}
+        if plan_ids:
+            for sl in (db.query(SalesYearPlanLine)
+                       .filter(SalesYearPlanLine.plan_id.in_(plan_ids)).all()):
+                c = ((sl.brief or {}).get("adv_comment") or "").strip()
+                if c and not siblings.get(sl.plan_id):
+                    siblings[sl.plan_id] = c
+        for ln, pl in pairs:
+            own = ((ln.brief or {}).get("adv_comment") or "").strip()
+            plan_meta[ln.id] = {
+                "line_id": ln.id,
+                "plan_id": ln.plan_id,
+                "title": (pl.title if pl else None),
+                "comment": own or siblings.get(ln.plan_id) or None,
+                "year": (pl.year if pl else ln.year),
+                "rep_id": (pl.sales_rep_id if pl else ln.sales_rep_id),
+            }
+
     cat = Catalog(db)   # наш каталог стадий — для our_stage/следующей стадии в строке
 
     return {
@@ -694,6 +759,7 @@ def deals_registry(
         "offset": offset,
         "items": [{
             "id": d.id,
+            "code": d.code,
             "bitrix_id": d.bitrix_id,
             "title": d.title,
             "pipeline": d.pipeline,
@@ -703,7 +769,7 @@ def deals_registry(
             "bitrix_stage": d.bitrix_stage,
             "money_layer": layer or NO_GROUP,
             "stage_key": stage_key,
-            "our_stage": stage_public(cat.by_id.get(d.our_stage_id)),
+            "our_stage": stage_public(cat.by_id.get(d.our_stage_id), cat),
             "our_next_stage": stage_public(cat.next_of(d.our_stage_id)),
             "realization_pipeline_id": d.realization_pipeline_id,
             "agency": agencies.get(d.agency_id),
@@ -726,6 +792,9 @@ def deals_registry(
             "period_from": d.period_from,
             "period_to": d.period_to,
             "annex_id": d.annex_id,
+            "year_plan_line_id": d.year_plan_line_id,
+            "plan_month": d.plan_month,
+            "year_plan": plan_meta.get(d.year_plan_line_id) if d.year_plan_line_id else None,
             "date_create": d.date_create,
             "date_modify": d.date_modify,
             # id нужны интерфейсу для выпадающих списков при правке
@@ -1089,12 +1158,14 @@ def create_deal(payload: DealCreate, db: Session = Depends(get_db),
         period_from=pf, period_to=pt,
         date_create=datetime.utcnow(),
     )
+    from app.sales.deal_code import assign_code
+    assign_code(db, deal)
     db.add(deal)
     db.commit()
     db.refresh(deal)
     log_action(db, current_user, "create_deal", "sales_deal", deal.id,
                f"локально: {payload.title or '(без названия)'} · {payload.period}")
-    return {"id": deal.id, "bitrix_id": deal.bitrix_id}
+    return {"id": deal.id, "code": deal.code, "bitrix_id": deal.bitrix_id}
 
 
 @router.post("/deals/{deal_id}/push-to-bitrix")
@@ -1170,12 +1241,23 @@ def _deal_is_local(deal) -> bool:
     return (deal.bitrix_id or "").startswith("local-")
 
 
+def _deal_by_ref(db, ref):
+    """Резолв сделки по числовому id ИЛИ по нашей метке (code, 6 симв, регистронезависимо)."""
+    ref = str(ref).strip()
+    if ref.isdigit():
+        return db.query(SalesDeal).filter(SalesDeal.id == int(ref)).first()
+    d = db.query(SalesDeal).filter(func.upper(SalesDeal.code) == ref.upper()).first()
+    if not d:   # фолбэк для старых пинов/ссылок с bitrix_id (в т.ч. local-…)
+        d = db.query(SalesDeal).filter(SalesDeal.bitrix_id == ref).first()
+    return d
+
+
 @router.get("/deals/{deal_id}/brief")
-def get_deal_brief(deal_id: int, refresh: int = 0, db: Session = Depends(get_db),
+def get_deal_brief(deal_id: str, refresh: int = 0, db: Session = Depends(get_db),
                    current_user: User = Depends(require_permission("sales_registry", "view"))):
     """Бриф сделки. Ленивая подгрузка: если ещё не тянули (brief IS NULL) или refresh=1 —
     читаем из Битрикса поле ufCrm_1761318500 и кэшируем. Локальные сделки (local-) — только БД."""
-    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    deal = _deal_by_ref(db, deal_id)
     if not deal:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
     _assert_deal_in_scope(db, current_user, deal)
@@ -1374,6 +1456,11 @@ def sync_from_bitrix(deal_id: int, db: Session = Depends(get_db),
         report = sync_deal_from_bitrix(db, deal)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        # Не настроена интеграция (нет VIBECODE_API_KEY) — это конфигурация, а не сбой.
+        # Показываем причину прямо в интерфейсе, иначе «детали в логе сервера» ничего не говорят.
+        logger.error("sync_from_bitrix %s: %s", deal_id, e)
+        raise HTTPException(status_code=503, detail=f"Синхронизация с Битриксом не настроена: {e}")
     except Exception as e:
         logger.error("sync_from_bitrix %s: %s", deal_id, e)
         raise HTTPException(status_code=502, detail="Ошибка синхронизации с Битриксом (детали в логе сервера)")
@@ -1436,8 +1523,107 @@ def download_deal_file(deal_id: int, kind: str, db: Session = Depends(get_db),
                         media_type=rec.content_type or "application/octet-stream")
 
 
+# Документы сделки: что можно грузить руками. mp/contract приходят из Битрикса
+# синком — их не даём перетирать вручную, чтобы синк и ручная копия не разъезжались.
+DEAL_DOC_KINDS = {
+    "ds": "Доп. соглашение", "invoice": "Счёт", "upd": "УПД", "report": "Отчёт", "act": "Акт",
+    "creatives": "Креативы", "brief_file": "Бриф (файл)",
+}
+# Креативы — рекламные материалы под размещение: почти всегда архив или картинки,
+# поэтому список расширений общий (zip/rar/7z/jpg/png уже разрешены).
+DEAL_DOC_EXTS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".jpeg", ".png", ".gif",
+                 ".zip", ".rar", ".7z"}
+DEAL_DOC_MAX_BYTES = 20 * 1024 * 1024   # как в договорах — 20 МБ
+
+
+@router.post("/deals/{deal_id}/files/{kind}")
+async def upload_deal_file(deal_id: str, kind: str, file: UploadFile = File(...),
+                           db: Session = Depends(get_db),
+                           current_user: User = Depends(require_permission("sales_registry", "edit"))):
+    """Загрузка документа сделки (ДС/счёт/отчёт/акт/бриф-файл). Один файл на вид:
+    повторная загрузка заменяет предыдущий (UNIQUE(deal_id, kind) в модели)."""
+    import os
+    import re as _re
+    from app.sales.models import SalesDealFile
+    if kind not in DEAL_DOC_KINDS:
+        raise HTTPException(status_code=400, detail=f"Неизвестный вид документа: {kind}")
+    deal = _deal_by_ref(db, deal_id)
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+
+    original = file.filename or "document"
+    ext = os.path.splitext(original)[1].lower()
+    if ext not in DEAL_DOC_EXTS:
+        raise HTTPException(status_code=415,
+                            detail=f"Недопустимый тип файла. Разрешены: {', '.join(sorted(DEAL_DOC_EXTS))}")
+    content = await file.read()
+    if len(content) > DEAL_DOC_MAX_BYTES:
+        raise HTTPException(status_code=413,
+                            detail=f"Файл слишком большой (максимум {DEAL_DOC_MAX_BYTES // 1024 // 1024} МБ)")
+
+    subdir = os.path.join("/app/uploads", "deal_files")
+    os.makedirs(subdir, exist_ok=True)
+    safe = _re.sub(r"[^\w\.\-]", "_", original)
+    rel = os.path.join("deal_files", f"{deal.id}_{kind}_{safe}")
+    rec = (db.query(SalesDealFile)
+           .filter(SalesDealFile.deal_id == deal.id, SalesDealFile.kind == kind).first())
+    if rec:   # заменяем: старый файл с диска убираем, чтобы не копить мусор
+        old = os.path.join("/app/uploads", rec.path or "")
+        if rec.path and os.path.exists(old) and old != os.path.join("/app/uploads", rel):
+            try:
+                os.remove(old)
+            except OSError:
+                logger.warning("upload_deal_file: не удалось удалить старый %s", old)
+    with open(os.path.join("/app/uploads", rel), "wb") as fh:
+        fh.write(content)
+    if not rec:
+        rec = SalesDealFile(deal_id=deal.id, kind=kind)
+        db.add(rec)
+    rec.filename = original
+    rec.path = rel
+    rec.size = len(content)
+    rec.content_type = file.content_type
+    db.commit()
+    log_action(db, current_user, "upload_deal_file", "sales_deal", deal.id,
+               f"{DEAL_DOC_KINDS[kind]}: {original}")
+    return {"kind": kind, "filename": original, "size": len(content)}
+
+
+@router.delete("/deals/{deal_id}/files/{kind}")
+def delete_deal_file(deal_id: str, kind: str, db: Session = Depends(get_db),
+                     current_user: User = Depends(require_permission("sales_registry", "edit"))):
+    """Удаление документа сделки. Файлы из Битрикса (mp/contract) не трогаем —
+    их владелец синк, ручное удаление разошлось бы с источником."""
+    import os
+    from app.sales.models import SalesDealFile
+    if kind not in DEAL_DOC_KINDS:
+        raise HTTPException(status_code=400, detail="Этот документ удаляется только синхронизацией")
+    deal = _deal_by_ref(db, deal_id)
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+    rec = (db.query(SalesDealFile)
+           .filter(SalesDealFile.deal_id == deal.id, SalesDealFile.kind == kind).first())
+    if not rec:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    p = os.path.join("/app/uploads", rec.path or "")
+    if rec.path and os.path.exists(p):
+        try:
+            os.remove(p)
+        except OSError:
+            logger.warning("delete_deal_file: не удалось удалить %s", p)
+    db.delete(rec)
+    db.commit()
+    log_action(db, current_user, "delete_deal_file", "sales_deal", deal.id, DEAL_DOC_KINDS[kind])
+    return {"message": "Файл удалён", "kind": kind}
+
+
 # Человекочитаемые ярлыки событий сделки и полей — для секции «История» в карточке.
 _DEAL_EVENT_LABELS = {
+    "upload_deal_file": "Документ загружен",
+    "delete_deal_file": "Документ удалён",
+    "move_deal": "Смена стадии",
     "create_deal": "Сделка создана",
     "patch_sales_deal": "Изменение полей",
     "save_deal_brief": "Бриф обновлён",
@@ -1453,17 +1639,17 @@ _DEAL_FIELD_LABELS = {
 
 
 @router.get("/deals/{deal_id}/history")
-def deal_history(deal_id: int, db: Session = Depends(get_db),
+def deal_history(deal_id: str, db: Session = Depends(get_db),
                  current_user: User = Depends(require_permission("sales_registry", "view"))):
     """История сделки из журнала действий (audit_log) — событие, инициатор, время.
     Показывает только действия через наше приложение (правки прямо в Битриксе сюда не
     попадают); массовые операции пишутся без entity_id и здесь не отображаются."""
-    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    deal = _deal_by_ref(db, deal_id)
     if not deal:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
     _assert_deal_in_scope(db, current_user, deal)
     rows = (db.query(AuditLog)
-            .filter(AuditLog.entity_type == "sales_deal", AuditLog.entity_id == deal_id)
+            .filter(AuditLog.entity_type == "sales_deal", AuditLog.entity_id == deal.id)
             .order_by(AuditLog.created_at.desc()).limit(100).all())
 
     def _detail(r):
@@ -1480,12 +1666,38 @@ def deal_history(deal_id: int, db: Session = Depends(get_db),
     } for r in rows]}
 
 
+def _year_plan_of_deal(db, deal):
+    """Материнский годовой план сделки для карточки (тот же контракт, что в реестре).
+    Комментарий рекламодателя живёт в brief.adv_comment строк плана."""
+    if not deal or not deal.year_plan_line_id:
+        return None
+    from app.sales.models import SalesYearPlanLine, SalesYearPlan
+    ln = db.query(SalesYearPlanLine).filter(SalesYearPlanLine.id == deal.year_plan_line_id).first()
+    if not ln:
+        return None
+    pl = db.query(SalesYearPlan).filter(SalesYearPlan.id == ln.plan_id).first() if ln.plan_id else None
+    comment = ((ln.brief or {}).get("adv_comment") or "").strip()
+    if not comment and ln.plan_id:
+        for sl in db.query(SalesYearPlanLine).filter(SalesYearPlanLine.plan_id == ln.plan_id).all():
+            c = ((sl.brief or {}).get("adv_comment") or "").strip()
+            if c:
+                comment = c
+                break
+    return {
+        "line_id": ln.id, "plan_id": ln.plan_id,
+        "title": (pl.title if pl else None), "comment": comment or None,
+        "year": (pl.year if pl else ln.year),
+        "rep_id": (pl.sales_rep_id if pl else ln.sales_rep_id),
+        "month": deal.plan_month,
+    }
+
+
 @router.get("/deals/{deal_id}")
-def get_deal(deal_id: int, db: Session = Depends(get_db),
+def get_deal(deal_id: str, db: Session = Depends(get_db),
              current_user: User = Depends(require_permission("sales_registry", "view"))):
-    """Одна сделка для карточки /deals/{id}: поля как в реестре + our_sum и файлы."""
+    """Одна сделка для карточки /deals/{code|id}: поля как в реестре + our_sum и файлы."""
     from app.sales.models import SalesDealFile
-    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    deal = _deal_by_ref(db, deal_id)
     if not deal:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
     _assert_deal_in_scope(db, current_user, deal)
@@ -1502,10 +1714,19 @@ def get_deal(deal_id: int, db: Session = Depends(get_db),
     payer = payer or deal.payer_name
     # Прямая сделка (без агентства) → СК нет, вся сумма наша.
     sk_pct = dict(db.query(SalesAgency.id, SalesAgency.sk_percent).all()).get(deal.agency_id, SALES_AGENCY_SK * 100) if deal.agency_id else 0
-    files = [{"kind": f.kind, "filename": f.filename} for f in
-             db.query(SalesDealFile).filter(SalesDealFile.deal_id == deal_id).all()]
+    files = [{"kind": f.kind, "filename": f.filename, "size": f.size} for f in
+             db.query(SalesDealFile).filter(SalesDealFile.deal_id == deal.id).all()]
+    # Наши медиапланы сделки — последняя версия каждой группы (как в реестре).
+    from app.sales.models import SalesMediaPlan
+    our_mps = {}
+    for mp in (db.query(SalesMediaPlan).filter(SalesMediaPlan.deal_id == deal.id)
+               .order_by(SalesMediaPlan.group_id, SalesMediaPlan.version.desc()).all()):
+        if mp.group_id not in our_mps:
+            our_mps[mp.group_id] = {"id": mp.id, "title": mp.title, "version": mp.version,
+                                    "status": mp.status, "updated_at": mp.updated_at}
+    cat = Catalog(db)
     return {
-        "id": deal.id, "bitrix_id": deal.bitrix_id, "title": deal.title,
+        "id": deal.id, "code": deal.code, "bitrix_id": deal.bitrix_id, "title": deal.title,
         "advertiser": (adv.short_name or adv.name) if adv else None, "advertiser_id": deal.advertiser_id,
         "brand": brand.name if brand else None,
         "agency": (agc.short_name or agc.name) if agc else None, "agency_id": deal.agency_id,
@@ -1518,8 +1739,19 @@ def get_deal(deal_id: int, db: Session = Depends(get_db),
         "sales_rep": _short_fio(rep.name) if rep else None,
         "account_manager": _short_fio(acc.name) if acc else None,
         "amount": deal.amount,
+        # amount — до НДС; gross берём сохранённый, а если его нет (старые записи) —
+        # считаем по ставке, чтобы карточка не показывала пусто
+        "amount_with_vat": deal.amount_with_vat if deal.amount_with_vat is not None
+        else (round(float(deal.amount) * (1 + SALES_VAT_RATE), 2) if deal.amount is not None else None),
         "our_sum": round(float(deal.amount or 0) * (1 - (sk_pct or 0) / 100)),
         "currency": deal.currency, "files": files, "date_create": deal.date_create,
+        "plan_month": deal.plan_month, "year_plan_line_id": deal.year_plan_line_id,
+        "year_plan": _year_plan_of_deal(db, deal),
+        # для бара стадий и диалога движения — тот же контракт, что в реестре
+        "our_stage": stage_public(cat.by_id.get(deal.our_stage_id), cat),
+        "our_next_stage": stage_public(cat.next_of(deal.our_stage_id)),
+        "realization_pipeline_id": deal.realization_pipeline_id,
+        "our_mps": list(our_mps.values()),
     }
 
 
@@ -1595,9 +1827,17 @@ def move_deal(
     if not cat.stages:
         raise HTTPException(status_code=400, detail="Каталог стадий пуст")
     cur_id = deal.our_stage_id
-    target = cat.by_id.get(payload.to_stage_id) if payload.to_stage_id else cat.next_of(cur_id)
-    if target is None:
-        raise HTTPException(status_code=400, detail="Некуда двигать — сделка на последней стадии")
+    if payload.to_stage_id:
+        # Неизвестный id раньше проваливался в общую ветку и отвечал «сделка на последней
+        # стадии» — сообщение, по которому невозможно понять, что стадии просто нет.
+        target = cat.by_id.get(payload.to_stage_id)
+        if target is None:
+            raise HTTPException(status_code=404,
+                                detail=f"Стадия {payload.to_stage_id} не найдена в каталоге")
+    else:
+        target = cat.next_of(cur_id)
+        if target is None:
+            raise HTTPException(status_code=400, detail="Некуда двигать — сделка на последней стадии")
 
     is_back = cur_id is not None and not target.is_terminal and cat.is_before(target.id, cur_id)
     is_master = (current_user.role.key == "admin") or bool(getattr(current_user.role, "is_master", False))
@@ -1612,7 +1852,11 @@ def move_deal(
             raise HTTPException(status_code=400,
                 detail="Нужен привязанный медиаплан — привяжите МП к сделке в конструкторе")
 
-    if target.phase and target.phase.is_realization:
+    # Воронка нужна рабочим стадиям реализационного этапа: одна и та же стадия живёт в
+    # каждой продуктовой воронке. Терминальные — исключение: сделка умерла, привязывать
+    # её к воронке незачем, а требование воронки сделало бы «сорвалась» недостижимой у
+    # сделок, которые до реализации не дошли.
+    if target.phase and target.phase.is_realization and not target.is_terminal:
         if payload.realization_pipeline_id is not None:
             deal.realization_pipeline_id = payload.realization_pipeline_id
         if not deal.realization_pipeline_id:
@@ -1629,7 +1873,7 @@ def move_deal(
     log_action(db, current_user, "move_deal", "sales_deal", deal.id,
                f"{label}. Комментарий: {payload.comment.strip()}")
     return {"message": "Сделка перемещена",
-            "our_stage": stage_public(target),
+            "our_stage": stage_public(target, cat),
             "our_next_stage": stage_public(cat.next_of(target.id)),
             "realization_pipeline_id": deal.realization_pipeline_id}
 

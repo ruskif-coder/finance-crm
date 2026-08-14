@@ -1183,9 +1183,23 @@ def save_stage_catalog(data: StageCatalogIn, db: Session = Depends(get_db),
             st.bitrix_status_id = (s_in.bitrix_status_id or "").strip() or None
             db.flush()
             keep_stages.add(st.id)
-    for s in list(existing_stages.values()):
-        if s.id not in keep_stages:
-            db.delete(s)
+    # Удалять можно только неиспользуемые стадии. FK на sales_deals.our_stage_id в БД нет,
+    # поэтому удаление использованной стадии не упало бы, а молча оставило сделки с
+    # указателем в никуда. Проверяем здесь и отказываем целиком, до commit.
+    doomed = [s for s in existing_stages.values() if s.id not in keep_stages]
+    if doomed:
+        used = dict(db.query(SalesDeal.our_stage_id, func.count(SalesDeal.id))
+                    .filter(SalesDeal.our_stage_id.in_([s.id for s in doomed]))
+                    .group_by(SalesDeal.our_stage_id).all())
+        if used:
+            db.rollback()
+            parts = [f"«{s.name}» — {used[s.id]}" for s in doomed if s.id in used]
+            raise HTTPException(
+                status_code=400,
+                detail="Нельзя удалить стадии, на которых стоят сделки: "
+                       + "; ".join(parts) + ". Сначала переведите сделки на другую стадию.")
+    for s in doomed:
+        db.delete(s)
     for p in list(existing_phases.values()):
         if p.id not in keep_phases:
             db.delete(p)

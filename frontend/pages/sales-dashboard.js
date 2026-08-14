@@ -11,10 +11,13 @@ import ValuePopover from '../components/ValuePopover'
 import api, { auth } from '../lib/api'
 import { fmtMoney, fmtDate } from '../lib/salesFormat'
 import { BITRIX_DEAL_URL } from '../lib/salesLayers'
-import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar } from '../components/salesTableKit'
+import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, needsMp, needsMpCheck, NEEDS_MP_BG, NEEDS_MP_BORDER, UNVERIFIED_BG, UNVERIFIED_BORDER } from '../components/salesTableKit'
 import useIsMobile from '../components/mobile/useIsMobile'
 import DealsMobileControls from '../components/sales/DealsMobileControls'
 import DealCardList from '../components/mobile/DealCardList'
+import DealsBoard, { BoardTabs } from '../components/sales/DealsBoard'
+import MoveDealDialog from '../components/sales/MoveDealDialog'
+import NotificationsWidget, { NotificationsSlot, toItem } from '../components/dashboard/NotificationsWidget'
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 // Светофор вероятности сделки (наша ручная разметка): цвет лампы по вероятности.
@@ -22,31 +25,16 @@ const PROB_COLORS = { grey: 'var(--muted)', orange: 'var(--warning, #d97706)', g
 const PROB_ORDER = ['grey', 'orange', 'green']
 const PROB_LABEL = { grey: 'малая', orange: 'средняя', green: 'высокая' }
 
-const COLS = [
-  { key: 'prob', w: '26px', label: '', fixed: true },
-  { key: 'brief', w: '30px', label: 'Бриф', fixed: true },
-  { key: 'bitrix_id', w: '62px', label: 'BX_ID', sortable: true },
-  { key: 'agency', w: '92px', label: 'Агентство', sortable: true },
-  { key: 'advertiser', w: '1.1fr', label: 'Рекламодатель', sortable: true },
-  { key: 'brand', w: '1fr', label: 'Бренд', sortable: true },
-  { key: 'product', w: '1fr', label: 'Услуга', sortable: true },
-  { key: 'period', w: '78px', label: 'Период', sortable: true },
-  { key: 'bitrix_stage', w: '1.25fr', label: 'Стадия', sortable: true },
-  { key: 'amount', w: '88px', label: 'Сумма', sortable: true, right: true },
-  { key: 'sales_rep', w: '92px', label: 'Продавец', sortable: true },
-  { key: 'account_manager', w: '88px', label: 'Аккаунт', sortable: true },
-  { key: 'payer', w: '1.15fr', label: 'Плательщик', sortable: true },
-  { key: 'pipeline', w: '92px', label: 'Воронка', sortable: true },
-  { key: 'period_from', w: '84px', label: 'Старт РК', sortable: true },
-  { key: 'period_to', w: '84px', label: 'Конец РК', sortable: true },
-  { key: 'title', w: '2.5fr', label: 'Сделка', sortable: true },
-]
-// по умолчанию скрыты (доступны в меню «Колонки»)
-const DEFAULT_HIDDEN = ['pipeline', 'period_from', 'period_to']
+// Колонки — из общего шаблона salesTableKit (DEAL_COLS): дашборд и реестр
+// настраиваются как один внешний шаблон. Служебный префикс (prob/brief) —
+// фиксированный, в меню «Колонки» не участвует и задаётся тут локально.
+const FIXED_COLS = { prob: { key: 'prob', w: '26px' }, brief: { key: 'brief', w: '30px' } }
+const COLS = DEAL_COLS
+const DEFAULT_HIDDEN = DEAL_DEFAULT_HIDDEN
 const COLS_KEY = 'sd3_hidden_cols'
 const COLS_ORDER_KEY = 'sd3_col_order'
-const COL_BY_KEY = Object.fromEntries(COLS.map(c => [c.key, c]))
-const MIDDLE_KEYS = COLS.filter(c => !c.fixed).map(c => c.key)   // переставляемые/скрываемые (brief/gen фиксированы)
+const COL_BY_KEY = DEAL_COL_BY_KEY
+const MIDDLE_KEYS = DEAL_MIDDLE_KEYS   // переставляемые/скрываемые
 
 function recentQuarters(n = 6) {
   const out = []; const d = new Date()
@@ -78,6 +66,23 @@ export default function SalesDashboard2() {
   const router = useRouter()
   const [data, setData] = useState(null)
   const [expandedId, setExpandedId] = useState(null) // раскрытая строка-детализация сделки
+  // Вид дашборда: таблица (текущая) | канбан по месяцам | канбан по стадиям
+  const [boardView, setBoardView] = useState('table')
+  const [boardRange, setBoardRange] = useState(6)     // 6 | 12 месяцев — только для «По месяцам»
+  const [stageList, setStageList] = useState([])      // наш каталог стадий — колонки вида «По стадиям»
+  const [moveDeal, setMoveDeal] = useState(null)      // сделка в диалоге движения
+  const [briefDeal, setBriefDeal] = useState(null)    // сделка в попапе брифа
+  const [notifItems, setNotifItems] = useState([])    // уведомления правой колонки
+
+  // Уведомления: тон/группа/подпись кнопки приходят с бэкенда (KIND_META).
+  const loadNotifs = () => api.get('/notifications?limit=50', auth())
+    .then(r => setNotifItems((r.data.items || []).map(toItem)))
+    .catch(() => setNotifItems([]))
+  const markRead = (ids) => {
+    // локально гасим сразу, чтобы бейдж не «моргал» ожиданием ответа
+    setNotifItems(list => list.map(n => (!ids || ids.includes(n.id)) ? { ...n, unread: false } : n))
+    api.post('/notifications/read', { ids: ids || null }, auth()).catch(() => {})
+  }
   const [quarter, setQuarter] = useState('')
   const [repId, setRepId] = useState('')
   const [reps, setReps] = useState([])
@@ -99,6 +104,7 @@ export default function SalesDashboard2() {
   const [sel, setSel] = useState(Object.fromEntries(FILTER_DROPS.map(([k]) => [k, []])))
   const [gaps, setGaps] = useState([])
   const [hideArchive, setHideArchive] = useState(true)
+  const [onlyPlanned, setOnlyPlanned] = useState(false)   // только сделки из годового плана
   const [search, setSearch] = useState('')
   const [searchQ, setSearchQ] = useState('')
   const [searchFocus, setSearchFocus] = useState(false)
@@ -131,7 +137,6 @@ export default function SalesDashboard2() {
   const [titleDraft, setTitleDraft] = useState('')
   const [hidden, setHidden] = useState(new Set(DEFAULT_HIDDEN))   // скрытые колонки (Колонки ▾)
   const [colOrder, setColOrder] = useState(MIDDLE_KEYS) // порядок переставляемых колонок
-  const [dragIdx, setDragIdx] = useState(null)
   const [colPicker, setColPicker] = useState(false)
   const [periodEdit, setPeriodEdit] = useState(null) // { dealId, rect, month } — правка периода строки
   const [genConfirm, setGenConfirm] = useState(null) // { dealId, rect, text, current } — подтверждение генерации имени
@@ -158,16 +163,12 @@ export default function SalesDashboard2() {
     const next = new Set(prev); next.has(k) ? next.delete(k) : next.add(k)
     localStorage.setItem(COLS_KEY, JSON.stringify([...next])); return next
   })
-  const dropCol = (targetIdx) => {
-    if (dragIdx === null || dragIdx === targetIdx) { setDragIdx(null); return }
-    setColOrder(prev => {
-      const next = [...prev]; const [moved] = next.splice(dragIdx, 1); next.splice(targetIdx, 0, moved)
-      localStorage.setItem(COLS_ORDER_KEY, JSON.stringify(next)); return next
-    })
-    setDragIdx(null)
-  }
-  // brief фиксирован первым; далее — переставленные видимые колонки (кнопка генерации живёт внутри ячейки «Сделка»).
-  const visibleCols = [COL_BY_KEY.prob, COL_BY_KEY.brief, ...colOrder.map(k => COL_BY_KEY[k]).filter(c => c && !hidden.has(c.key))].filter(Boolean)
+  const reorderCol = (from, to) => setColOrder(prev => {
+    const next = [...prev]; const [moved] = next.splice(from, 1); next.splice(to, 0, moved)
+    localStorage.setItem(COLS_ORDER_KEY, JSON.stringify(next)); return next
+  })
+  // prob/brief фиксированы первыми; далее — переставленные видимые колонки (кнопка генерации живёт внутри ячейки «Сделка»).
+  const visibleCols = [FIXED_COLS.prob, FIXED_COLS.brief, ...colOrder.map(k => COL_BY_KEY[k]).filter(c => c && !hidden.has(c.key))].filter(Boolean)
   const gridTemplate = visibleCols.map(c => c.w).join(' ')
   const isMobile = useIsMobile()
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -178,9 +179,9 @@ export default function SalesDashboard2() {
 
   // Выгрузка текущей выборки в CSV (клиентская).
   const exportCsv = () => {
-    const head = ['BX_ID', 'Агентство', 'Рекламодатель', 'Бренд', 'Услуга', 'Период', 'Стадия', 'Сумма', 'Аккаунт', 'Плательщик', 'Слой', 'Сделка']
+    const head = ['Код', 'Агентство', 'Рекламодатель', 'Бренд', 'Услуга', 'Период', 'Стадия', 'Сумма', 'Аккаунт', 'Контрагент', 'Слой', 'Сделка']
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const lines = deals.map(d => [d.bitrix_id, d.agency, d.advertiser, d.brand, d.product, d.period, d.bitrix_stage, d.amount, d.account_manager, d.payer, d.money_layer, d.title].map(esc).join(';'))
+    const lines = deals.map(d => [d.code || d.bitrix_id, d.agency, d.advertiser, d.brand, d.product, d.period, d.bitrix_stage, d.amount, d.account_manager, d.payer, d.money_layer, d.title].map(esc).join(';'))
     const csv = '﻿' + head.map(esc).join(';') + '\n' + lines.join('\n')
     const url = window.URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
     const a = document.createElement('a'); a.href = url; a.download = `deals_${new Date().toISOString().slice(0, 10)}.csv`
@@ -219,6 +220,7 @@ export default function SalesDashboard2() {
     Object.entries(sel).forEach(([k, arr]) => arr.forEach(v => b.append(k, v)))
     gaps.forEach(g => b.append('gaps', g))
     if (hideArchive) b.append('hide_archive', 'true')
+    if (onlyPlanned) b.append('only_planned', 'true')
     if (searchQ.trim()) b.append('search', searchQ.trim())
     // Период таблицы: ручной диапазон С/По имеет приоритет; иначе — по выбранному
     // кварталу; «Показать все» (quarter==='all') снимает ограничение периода.
@@ -244,11 +246,18 @@ export default function SalesDashboard2() {
   }
 
   useEffect(() => { load() }, [quarter, repId])
-  useEffect(() => { if (data?.rep_ids?.length) loadDeals(data.rep_ids) }, [sortKey, sortDir, pageSize, sel, gaps, hideArchive, searchQ, dateFrom, dateTo])
+  useEffect(() => { loadNotifs() }, [])
+  // Каталог стадий — для колонок вида «По стадиям» (порядок цепочки берём с сервера).
+  useEffect(() => {
+    api.get('/sales/directories/stage-catalog', auth())
+      .then(r => setStageList((r.data.phases || []).flatMap(ph => (ph.stages || []).map(s => ({ ...s, phase: ph.name })))))
+      .catch(() => setStageList([]))
+  }, [])
+  useEffect(() => { if (data?.rep_ids?.length) loadDeals(data.rep_ids) }, [sortKey, sortDir, pageSize, sel, gaps, hideArchive, onlyPlanned, searchQ, dateFrom, dateTo])
   useEffect(() => { const t = setTimeout(() => setSearchQ(search), 300); return () => clearTimeout(t) }, [search])
 
   const onSort = (k, sortable) => { if (!sortable) return; if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(k); setSortDir('desc') } }
-  const resetFilters = () => { setSel(Object.fromEntries(FILTER_DROPS.map(([k]) => [k, []]))); setGaps([]); setHideArchive(true); setSearch(''); setSearchQ(''); setDateFrom(''); setDateTo('') }
+  const resetFilters = () => { setSel(Object.fromEntries(FILTER_DROPS.map(([k]) => [k, []]))); setGaps([]); setHideArchive(true); setOnlyPlanned(false); setSearch(''); setSearchQ(''); setDateFrom(''); setDateTo('') }
 
   const patchCell = async (id, patch, localApply) => {
     try { await api.patch(`/sales/deals/${id}`, patch, auth()); setDeals(prev => prev.map(x => x.id === id ? { ...x, ...localApply } : x)); return true }
@@ -293,6 +302,16 @@ export default function SalesDashboard2() {
 
   const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }
 
+  // Скачивание файла сделки (МП/договор из Битрикса) — как в реестре.
+  const FILE_LABEL = { mp: 'МП', contract: 'Договор' }
+  const downloadDealFile = async (dealId, kind, filename) => {
+    try {
+      const r = await api.get(`/sales/deals/${dealId}/files/${kind}/download`, { ...auth(), responseType: 'blob' })
+      const href = URL.createObjectURL(r.data)
+      const a = document.createElement('a'); a.href = href; a.download = filename || 'file'; a.click(); URL.revokeObjectURL(href)
+    } catch { alert('Не удалось скачать файл') }
+  }
+
   // Ячейка строки по ключу колонки (для итерации по видимым колонкам).
   // Действия карточки-детализации (раскрытие строки). Открыть — в Битрикс; правка и
   // загрузка МП — заглушки (доработаем).
@@ -312,11 +331,17 @@ export default function SalesDashboard2() {
         )
       }
       case 'brief': return <span className="d2-brief" style={{ display: 'inline-flex' }}><DealBriefCell deal={d} canEdit={canEdit} v2 /></span>
-      case 'bitrix_id': return String(d.bitrix_id || '').startsWith('local-')
-        ? (canEdit
-          ? <button onClick={() => api.post(`/sales/deals/${d.id}/push-to-bitrix`, {}, auth()).then(() => loadDeals(data.rep_ids)).catch(e => alert(e.response?.data?.detail || 'Ошибка'))} title="Отправить в Битрикс" style={{ border: '1px solid var(--accent)', background: 'var(--accent-tint)', color: 'var(--accent)', borderRadius: 6, cursor: 'pointer', fontSize: 11, padding: '2px 6px', fontFamily: MONO, justifySelf: 'start' }}>→ БХ</button>
-          : <span style={{ color: 'var(--text-faint)', fontSize: 11, fontFamily: MONO }}>локально</span>)
-        : <a href={BITRIX_DEAL_URL(d.bitrix_id)} target="_blank" rel="noreferrer" style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>{d.bitrix_id}</a>
+      case 'bitrix_id': {
+        const isLocal = String(d.bitrix_id || '').startsWith('local-')
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <a href={`/deals/${encodeURIComponent(d.code || d.id)}`} title="Открыть карточку сделки"
+              style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>{d.code || '—'}</a>
+            {isLocal && canEdit && <button onClick={e => { e.stopPropagation(); api.post(`/sales/deals/${d.id}/push-to-bitrix`, {}, auth()).then(() => loadDeals(data.rep_ids)).catch(er => alert(er.response?.data?.detail || 'Ошибка')) }} title="Отправить в Битрикс"
+              style={{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-faint)', borderRadius: 5, cursor: 'pointer', fontSize: 9, padding: '1px 4px', fontFamily: MONO }}>→БХ</button>}
+          </span>
+        )
+      }
       case 'agency': return <span className={canEdit ? 'd2-cell' : ''} onClick={e => openPicker('agency', d, e)} style={{ fontWeight: 600 }} title={d.agency_full || d.agency || 'выбрать'}>{d.agency ?? '—'}</span>
       case 'advertiser': return <span className={canEdit ? 'd2-cell' : ''} onClick={e => openPicker('advertiser', d, e)} title={d.advertiser_full || d.advertiser || 'выбрать'}>{d.advertiser ?? '—'}</span>
       case 'brand': return <span className={canEdit ? 'd2-cell' : ''} onClick={e => openPicker('brand', d, e)} title={d.brand || 'выбрать'}>{d.brand ?? '—'}</span>
@@ -350,6 +375,25 @@ export default function SalesDashboard2() {
             )}
           </div>
         )
+      }
+      case 'files': {
+        const fs = d.files || []; const ours = d.our_mps || []
+        if (!fs.length && !ours.length) return <span style={{ color: 'var(--text-faint)' }}>—</span>
+        const chip = (extra) => ({ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 6px', borderRadius: 6, fontSize: 10.5, cursor: 'pointer', whiteSpace: 'nowrap', ...extra })
+        return <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start' }}>
+          {fs.map(f => (
+            <span key={f.kind} onClick={e => { e.stopPropagation(); downloadDealFile(d.id, f.kind, f.filename) }}
+              title={f.filename || ''} style={chip({ border: '1px solid var(--accent)', color: 'var(--accent)' })}>
+              ⭳ {f.kind === 'mp' ? 'МП · Битрикс' : (FILE_LABEL[f.kind] || f.kind)}
+            </span>
+          ))}
+          {ours.map(m => (
+            <span key={'mp' + m.id} onClick={e => { e.stopPropagation(); router.push(`/deals/mp/${m.id}`) }}
+              title={(m.title || 'Медиаплан') + ' · ' + (m.status || '')} style={chip({ border: '1px solid var(--income)', color: 'var(--income)', background: 'var(--income-tint)' })}>
+              ↗ наш МП v{m.version}
+            </span>
+          ))}
+        </span>
       }
       default: return <span />
     }
@@ -452,17 +496,40 @@ export default function SalesDashboard2() {
       <div style={{ padding: isMobile ? 14 : 24 }}>
         <SalesTabs active="dashboard" />
         <DealCreateForm open={createOpen} onClose={() => setCreateOpen(false)} canPickRep={!!data?.can_view_others} onCreated={() => { setSortKey('date_create'); setSortDir('desc') }} />
+        {/* Движение и бриф с канбан-доски: те же диалоги, что и в реестре */}
+        {moveDeal && (
+          <MoveDealDialog deal={moveDeal} onClose={() => setMoveDeal(null)}
+            onMoved={() => { setMoveDeal(null); loadDeals(data?.rep_ids) }} />
+        )}
+        {briefDeal && (
+          <DealBriefCell deal={briefDeal} canEdit={canEdit} v2 controlledOpen onClose={() => setBriefDeal(null)} />
+        )}
 
         {err && <div style={{ color: 'var(--danger)', marginBottom: 12 }}>{err}</div>}
         {loading && !data && <div style={{ color: 'var(--text-muted)', padding: 40 }}>Загрузка…</div>}
 
         {data && (
           <div>{/* без transform-обёртки: иначе position:fixed модалок центрируется относительно неё, а не экрана */}
-            <SalesQuarterWidgets data={data} summary={summary} lastSyncAt={summary?.last_sync_at}
-              quarter={quarter} setQuarter={setQuarter} quarters={recentQuarters()}
-              repId={repId} setRepId={setRepId} reps={reps} canViewOthers={!!data.can_view_others}
-              onCreate={canEdit ? () => setCreateOpen(true) : undefined}
-              onCreateAgency={canDirAg ? openAgency : undefined} onCreateAdvertiser={canDirAdv ? openAdvertiser : undefined} />
+            {/* Ряд: слева «Мой квартал», справа уведомления (25 %).
+                align-items:stretch + absolute-карточка внутри слота — виджет ровно по
+                высоте соседа и не растягивает ряд числом уведомлений. */}
+            <div style={{ display: 'flex', gap: 16, alignItems: 'stretch' }}>
+              <div style={{ flex: '1 1 0', minWidth: 0 }}>
+                <SalesQuarterWidgets data={data} summary={summary} lastSyncAt={summary?.last_sync_at}
+                  quarter={quarter} setQuarter={setQuarter} quarters={recentQuarters()}
+                  repId={repId} setRepId={setRepId} reps={reps} canViewOthers={!!data.can_view_others}
+                  onCreate={canEdit ? () => setCreateOpen(true) : undefined}
+                  onCreateAgency={canDirAg ? openAgency : undefined} onCreateAdvertiser={canDirAdv ? openAdvertiser : undefined} />
+              </div>
+              {!isMobile && (
+                <NotificationsSlot>
+                  <NotificationsWidget items={notifItems}
+                    onOpen={n => { markRead([n.id]); if (n.href) router.push(n.href) }}
+                    onAction={n => { markRead([n.id]); if (n.href) router.push(n.href) }}
+                    onReadAll={() => markRead(null)} />
+                </NotificationsSlot>
+              )}
+            </div>
 
             {!data.linked ? (
               <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, padding: 32, textAlign: 'center', color: 'var(--text-muted)', marginTop: 16, maxWidth: 700 }}>
@@ -478,27 +545,14 @@ export default function SalesDashboard2() {
                     <span style={{ fontFamily: MONO, fontSize: 13, color: 'var(--text-muted)' }}>{dealsTotal}</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ position: 'relative' }}>
-                      <div onClick={() => setColPicker(o => !o)} style={{ border: '1px solid var(--border-card)', background: 'var(--bg-card)', borderRadius: 10, padding: '8px 13px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer' }}>Колонки ▾</div>
-                      {colPicker && (<>
-                        <div style={{ position: 'fixed', inset: 0, zIndex: 39 }} onClick={() => setColPicker(false)} />
-                        <div style={{ position: 'absolute', right: 0, top: '110%', marginTop: 4, zIndex: 40, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 10, minWidth: 210 }}>
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Колонки (тащите за ⠿ для порядка)</div>
-                          {colOrder.map((k, i) => {
-                            const c = COL_BY_KEY[k]; if (!c) return null
-                            return (
-                              <div key={k} draggable
-                                onDragStart={() => setDragIdx(i)} onDragOver={e => e.preventDefault()} onDrop={() => dropCol(i)} onDragEnd={() => setDragIdx(null)}
-                                style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, padding: '4px 2px', borderRadius: 6, background: dragIdx === i ? 'var(--accent-tint)' : 'transparent' }}>
-                                <span title="перетащить" style={{ cursor: 'grab', color: 'var(--text-faint)', userSelect: 'none' }}>⠿</span>
-                                <input type="checkbox" checked={!hidden.has(k)} onChange={() => toggleColHidden(k)} style={{ cursor: 'pointer' }} />
-                                <span style={{ flex: 1 }}>{c.label || k}</span>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </>)}
-                    </div>
+                    {/* Тумблер вида — перед настройкой колонок. «Таблица» — текущая
+                        реализация, «По месяцам»/«По стадиям» — канбан-доска. */}
+                    <BoardTabs items={[['table', 'Таблица'], ['months', 'По месяцам'], ['stages', 'По стадиям']]}
+                      value={boardView} onChange={setBoardView} />
+                    {boardView === 'months' && (
+                      <BoardTabs mono items={[[6, '6 мес'], [12, 'год']]} value={boardRange} onChange={setBoardRange} />
+                    )}
+                    <ColumnsMenu open={colPicker} setOpen={setColPicker} colOrder={colOrder} hidden={hidden} onToggle={toggleColHidden} onReorder={reorderCol} />
                     <div className="d2-ico" title="Скачать в CSV" onClick={exportCsv}
                       style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-card)', background: 'var(--bg-card)', borderRadius: 10, color: 'var(--text-secondary)', cursor: 'pointer' }}>
                       <svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg>
@@ -521,7 +575,7 @@ export default function SalesDashboard2() {
                     <div style={{ flex: '0 0 auto', width: searchFocus ? 300 : 148, display: 'inline-flex', alignItems: 'center', gap: 7, border: `1px solid ${searchFocus ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '7px 10px', transition: 'width .22s cubic-bezier(0.22,1,0.36,1), border-color .15s' }}>
                       <svg width="13" height="13" viewBox="0 0 24 24" style={{ ...stroke, strokeWidth: 2, flex: '0 0 13px', color: 'var(--text-faint)' }}><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></svg>
                       <input value={search} onChange={e => setSearch(e.target.value)} onFocus={() => setSearchFocus(true)} onBlur={() => setSearchFocus(false)}
-                        placeholder="ID, агентство, рекл, бренд…" title="Поиск: ID, агентство, рекламодатель, бренд, плательщик, название сделки"
+                        placeholder="код, агентство, рекл, бренд, контрагент…" title="Поиск: ID, агентство, рекламодатель, бренд, контрагент, название сделки"
                         style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: 12, color: 'var(--text-secondary)', width: '100%', fontFamily: UI }} />
                     </div>
                     <div style={{ position: 'relative', flex: '0 0 auto' }}>
@@ -548,6 +602,9 @@ export default function SalesDashboard2() {
                     ))}
                     <MultiDrop label="Незаполненные" options={GAP_FIELDS} selected={gaps} onChange={setGaps} />
                     <div style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
+                      <IconBtn title={onlyPlanned ? 'Показаны только плановые — показать все' : 'Показать только плановые сделки (из годового плана)'} active={onlyPlanned} onClick={() => setOnlyPlanned(v => !v)}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" style={stroke}><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18" /><path d="M8 2v4" /><path d="M16 2v4" /><path d="M8.5 14.5l2 2 4-4" /></svg>
+                      </IconBtn>
                       <IconBtn title={hideArchive ? 'Архив скрыт — показать архивные' : 'Архив показан — скрыть'} active={hideArchive} onClick={() => setHideArchive(v => !v)}>
                         <svg width="15" height="15" viewBox="0 0 24 24" style={stroke}><path d="M4 8h16v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" /><path d="M3 4h18v4H3z" /><path d="M10 12h4" /></svg>
                       </IconBtn>
@@ -559,8 +616,18 @@ export default function SalesDashboard2() {
                   </div>
                   )}
 
+                  {/* канбан-доска (только десктоп, вид ≠ таблица) */}
+                  {!isMobile && boardView !== 'table' && (
+                    <DealsBoard deals={deals} view={boardView} range={boardRange} stages={stageList} canEdit={canEdit}
+                      onAdvance={d => setMoveDeal(d)}
+                      onOpenCard={d => router.push(`/deals/${d.code || d.id}`)}
+                      onBrief={d => setBriefDeal(d)}
+                      onEdit={d => router.push(`/deals/${d.code || d.id}`)}
+                      onAdd={() => setCreateOpen(true)} />
+                  )}
+
                   {/* таблица (десктоп) / карточки (мобайл) */}
-                  {isMobile ? <DealCardList deals={deals} canEdit={canEdit} view={mobView} total={dealsTotal} onLoadMore={loadMoreMobile} fopts={fopts} onPatch={patchCell} /> : (
+                  {isMobile ? <DealCardList deals={deals} canEdit={canEdit} view={mobView} total={dealsTotal} onLoadMore={loadMoreMobile} fopts={fopts} onPatch={patchCell} /> : boardView !== 'table' ? null : (
                   <div style={{ overflowX: 'auto' }}>
                     <div style={{ minWidth: 1180 }}>
                       <div style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, padding: '0 0 10px', borderBottom: '1px solid var(--border-inner)', fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
@@ -573,8 +640,10 @@ export default function SalesDashboard2() {
 
                       {deals.map(d => (
                         <Fragment key={d.id}>
-                        <div className="d2-row" onClick={e => { if (e.target.closest('.d2-cell, .d2-gen, .d2-brief, input, select, button, a, textarea')) return; setExpandedId(x => x === d.id ? null : d.id) }}
-                          style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 12, color: 'var(--text-primary)', cursor: 'pointer', background: expandedId === d.id ? 'var(--accent-tint)' : undefined }}>
+                        <div className="d2-row" title={needsMp(d) ? 'Требует расчёта: медиаплана ещё нет'
+                          : (needsMpCheck(d) ? 'Медиаплан не завизирован: откройте МП, отметьте «Проверено» и сохраните' : undefined)}
+                          onClick={e => { if (e.target.closest('.d2-cell, .d2-gen, .d2-brief, input, select, button, a, textarea')) return; setExpandedId(x => x === d.id ? null : d.id) }}
+                          style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: `1px solid ${needsMp(d) ? NEEDS_MP_BORDER : (needsMpCheck(d) ? UNVERIFIED_BORDER : 'var(--border-row)')}`, fontSize: 12, color: 'var(--text-primary)', cursor: 'pointer', background: expandedId === d.id ? 'var(--accent-tint)' : (needsMp(d) ? NEEDS_MP_BG : (needsMpCheck(d) ? UNVERIFIED_BG : undefined)) }}>
                           {visibleCols.map(c => <Fragment key={c.key}>{cellFor(c.key, d)}</Fragment>)}
                         </div>
                         {expandedId === d.id && <DealDetail deal={d} canEdit={canEdit} onOpen={openDeal} onEdit={editDeal} onAddMp={addMp} onChanged={() => load()} />}
