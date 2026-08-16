@@ -2,7 +2,7 @@ import { MONO, UI, MultiDrop, FILTER_DROPS, GAP_FIELDS } from '../salesTableKit'
 import BottomSheet from '../mobile/BottomSheet'
 
 // Общие мобильные контролы реестра сделок (эталон-тулбар + шторка фильтров).
-// Используются и на /sales, и на /sales-dashboard — единственный источник правды,
+// Используются и на /sales/deals, и на /sales/dashboard — единственный источник правды,
 // чтобы правки не приходилось дублировать в обеих страницах.
 const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }
 const plur = (n) => { const a = Math.abs(n) % 100, b = a % 10; if (a > 10 && a < 20) return 'сделок'; if (b === 1) return 'сделку'; if (b > 1 && b < 5) return 'сделки'; return 'сделок' }

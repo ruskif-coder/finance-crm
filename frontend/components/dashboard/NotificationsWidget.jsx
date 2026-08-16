@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
+import { resolveLegacy } from '@/lib/nav'
 
 /**
  * Виджет «Уведомления» — правая колонка дашборда (25 % ширины ряда).
@@ -55,7 +56,9 @@ export function toItem(n) {
     action: n.action || '',
     unread: !n.is_read,
     group: n.group || 'Сделки',
-    href: n.link || null,
+    // Адрес лежит в БД строкой и мог быть записан до переезда разделов —
+    // прогоняем через те же правила, что и серверные редиректы.
+    href: n.link ? resolveLegacy(n.link) : null,
   }
 }
 

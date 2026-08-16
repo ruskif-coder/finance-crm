@@ -7,7 +7,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.database import engine, Base, SessionLocal
 from app.routers import (auth, operations, reports, counterparties, articles, settings,
                          users, roles, contracts, sales_directories, sales_dashboard,
-                         sales_reconcile, media_plans, notifications, year_plan)
+                         sales_reconcile, media_plans, notifications, notify_settings,
+                         year_plan, finreport, backlog)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -555,6 +556,7 @@ async def _neutralize_ad_query(request: Request, call_next):
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(operations.router, prefix="/api/operations", tags=["operations"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
+app.include_router(finreport.router, prefix="/api/finreport", tags=["reports"])
 app.include_router(counterparties.router, prefix="/api/counterparties", tags=["counterparties"])
 app.include_router(articles.router, prefix="/api/articles", tags=["articles"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
@@ -563,11 +565,16 @@ app.include_router(roles.router, prefix="/api/roles", tags=["roles"])
 app.include_router(contracts.router, prefix="/api/contracts", tags=["contracts"])
 app.include_router(sales_directories.router, prefix="/api/sales/directories", tags=["sales"])
 app.include_router(media_plans.router, prefix="/api/sales/media-plans", tags=["sales"])
+# Настройки монтируются ПЕРЕД колокольчиком: у notifications есть @router.get(""),
+# и вложенный префикс не должен им перехватываться.
+app.include_router(notify_settings.router, prefix="/api/notifications/settings",
+                   tags=["notifications"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
 app.include_router(sales_reconcile.router, prefix="/api/sales/reconcile", tags=["sales"])
 # Монтируется ПОСЛЕ справочников/сверки, чтобы их префиксы не перехватывались
 app.include_router(sales_dashboard.router, prefix="/api/sales", tags=["sales"])
 app.include_router(year_plan.router, prefix="/api/sales/year-plan", tags=["sales"])
+app.include_router(backlog.router, prefix="/api/backlog", tags=["backlog"])
 
 @app.get("/")
 def root():

@@ -2,7 +2,6 @@ import { useState, useEffect, Fragment } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
-import DirectoryTabs from '../components/DirectoryTabs'
 import api, { auth } from '../lib/api'
 
 export default function Pipelines({ embedded = false } = {}) {
@@ -152,7 +151,6 @@ export default function Pipelines({ embedded = false } = {}) {
       {!embedded && <Navbar active="directories" />}
       <div style={{ padding: embedded ? 0 : '20px 24px 50px' }}>
 
-        {!embedded && <DirectoryTabs active="pipelines" />}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 6 }}>
           <h1 style={{ fontSize: 19, fontWeight: 600, margin: 0 }}>Воронки</h1>

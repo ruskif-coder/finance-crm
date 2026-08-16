@@ -31,8 +31,11 @@ def notify_many(db: Session, user_ids, **kw):
 
 
 # ── Вид события → тон, вкладка виджета и подпись кнопки ──────────────────
-# Единственная точка правды для оформления уведомления. Новый тип события =
-# одна строка здесь; в интерфейсе ничего не хардкодим.
+# Оформление берётся из реестра событий (app/notify/registry.py) — там же, где
+# объявлены получатели и каналы. Карта ниже осталась ТОЛЬКО как запасной вариант
+# для легаси-строк: в notifications лежат kind'ы, которые эмитились до реестра
+# (deal_stage, deal_brief, payment) и пока не имеют обслуживающего кода. Когда
+# событие переезжает в реестр, строку отсюда можно убирать.
 #   tone:  danger | warning | success | info
 #   group: Сделки | Документы | Оплаты | Брифы (вкладки виджета на дашборде)
 KIND_META = {
@@ -48,6 +51,15 @@ KIND_META = {
     "payment":     {"tone": "success", "group": "Оплаты", "action": ""},
 }
 DEFAULT_META = {"tone": "info", "group": "Сделки", "action": ""}
+
+
+def _meta(kind: str):
+    """Оформление строки: сначала реестр событий, затем легаси-карта, затем дефолт."""
+    from app.notify import registry
+    ev = registry.get(kind or "")
+    if ev is not None:
+        return {"tone": ev.tone, "group": ev.widget_group, "action": ev.action}
+    return KIND_META.get(kind or "", DEFAULT_META)
 
 
 def _where_map(db, rows):
@@ -91,7 +103,7 @@ def list_notifications(unread_only: bool = False, limit: int = 30, db: Session =
     where = _where_map(db, rows)
 
     def item(n):
-        m = KIND_META.get(n.kind or "", DEFAULT_META)
+        m = _meta(n.kind)
         return {
             "id": n.id, "kind": n.kind, "title": n.title, "body": n.body, "link": n.link,
             "is_read": bool(n.is_read), "created_at": n.created_at,

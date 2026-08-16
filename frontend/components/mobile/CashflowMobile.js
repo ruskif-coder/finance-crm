@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
 import { grp, mln, signRub, bankColor } from '../../lib/salesFormat'
 import { T } from '../../lib/tokens'
-import { CARD, monoLbl, Marker } from './kit'
+import { monoLbl, Marker, rise } from './kit'
+import ReportShell, { ReportSection } from './ReportShell'
 
 // Мобильный ДДС (< 1024px) по хендоффу design_handoff_cashflow_mobile.
 // Данные считаются в pages/dashboard.js — компонент только рисует.
@@ -74,37 +75,30 @@ export default function CashflowMobile({
 
   const seg = (active) => ({ border: 'none', borderRadius: 8, padding: '6px 14px', whiteSpace: 'nowrap', fontFamily: UI, fontSize: 13, fontWeight: active ? 700 : 600, cursor: 'pointer', background: active ? 'var(--accent-tint)' : 'transparent', color: active ? 'var(--accent)' : 'var(--text-secondary)' })
 
-  return (
-    <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12, fontFamily: UI }}>
-      <style>{`@keyframes ddsRise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){[style*="animation"]{animation:none!important}}`}</style>
-
-      {/* заголовок + обновлено */}
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-        <span style={{ fontSize: 19, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text-primary)' }}>Движение денег</span>
-        <span style={monoLbl}>обновлено {updated}</span>
-      </div>
-
-      {/* фильтры: период + сегмент */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, position: 'relative' }}>
-        <button onClick={() => setPeriodOpen(o => !o)} style={{ flex: '0 0 auto', height: 38, border: `1px solid ${periodOpen ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '0 12px', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer' }}>
-          {rangeShort(dateFrom, dateTo)} ▾
-        </button>
-        {periodOpen && (<>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 39 }} onClick={() => setPeriodOpen(false)} />
-          <div style={{ position: 'absolute', top: 44, left: 0, zIndex: 40, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ border: '1px solid var(--border-card)', borderRadius: 8, padding: '7px 8px', fontSize: 12, fontFamily: MONO, outline: 'none' }} />
-            <span style={{ color: 'var(--text-faint)' }}>—</span>
-            <input type="month" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ border: '1px solid var(--border-card)', borderRadius: 8, padding: '7px 8px', fontSize: 12, fontFamily: MONO, outline: 'none' }} />
-          </div>
-        </>)}
-        <div style={{ marginLeft: 'auto', display: 'inline-flex', border: '1px solid var(--border-card)', borderRadius: 10, padding: 3, background: 'var(--bg-card)' }}>
-          <button onClick={() => setGroupBy('period')} style={seg(groupBy === 'period')}>Период</button>
-          <button onClick={() => setGroupBy('date')} style={seg(groupBy === 'date')}>Дата</button>
+  const filters = (
+    <>
+      <button onClick={() => setPeriodOpen(o => !o)} style={{ flex: '0 0 auto', height: 38, border: `1px solid ${periodOpen ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '0 12px', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer' }}>
+        {rangeShort(dateFrom, dateTo)} ▾
+      </button>
+      {periodOpen && (<>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 39 }} onClick={() => setPeriodOpen(false)} />
+        <div style={{ position: 'absolute', top: 44, left: 0, zIndex: 40, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ border: '1px solid var(--border-card)', borderRadius: 8, padding: '7px 8px', fontSize: 12, fontFamily: MONO, outline: 'none' }} />
+          <span style={{ color: 'var(--text-faint)' }}>—</span>
+          <input type="month" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ border: '1px solid var(--border-card)', borderRadius: 8, padding: '7px 8px', fontSize: 12, fontFamily: MONO, outline: 'none' }} />
         </div>
+      </>)}
+      <div style={{ marginLeft: 'auto', display: 'inline-flex', border: '1px solid var(--border-card)', borderRadius: 10, padding: 3, background: 'var(--bg-card)' }}>
+        <button onClick={() => setGroupBy('period')} style={seg(groupBy === 'period')}>Период</button>
+        <button onClick={() => setGroupBy('date')} style={seg(groupBy === 'date')}>Дата</button>
       </div>
+    </>
+  )
 
+  return (
+    <ReportShell title="Движение денег" meta={`обновлено ${updated}`} filters={filters}>
       {/* KPI 2×2 */}
-      <div style={{ ...CARD, animation: 'ddsRise .4s cubic-bezier(0.22,1,0.36,1) both', animationDelay: '.07s' }}>
+      <ReportSection padded={false}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
           <div style={{ borderRight: '1px solid var(--border-row)', borderBottom: '1px solid var(--border-row)' }}>
             <Kpi label="Актуальный баланс" val={mln2(kpi.actualBalance)} unit="млн ₽" color={kpi.actualBalance >= 0 ? INCOME : DANGER_TXT} sub={`${kpi.accountsCount} источника`} />
@@ -119,17 +113,15 @@ export default function CashflowMobile({
             <Kpi label="План расходов" val={mln2(kpi.planExpense)} unit="млн ₽" color="var(--text-primary)" sub={`${kpi.expenseCount} операций`} />
           </div>
         </div>
-      </div>
+      </ReportSection>
 
       {/* По неделям */}
-      <div style={{ ...CARD, padding: 16, display: 'flex', flexDirection: 'column', gap: 12, animation: 'ddsRise .4s cubic-bezier(0.22,1,0.36,1) both', animationDelay: '.14s' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>По неделям</span>
-          <span style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--text-muted)' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Marker c={INCOME} />приход</span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Marker c={OUTFLOW} />расход</span>
-          </span>
-        </div>
+      <ReportSection title="По неделям" aside={
+        <span style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--text-muted)' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Marker c={INCOME} />приход</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Marker c={OUTFLOW} />расход</span>
+        </span>
+      }>
         <div style={{ background: '#F6F8FF', borderRadius: 12, padding: '10px 12px', minHeight: 44, display: 'flex', alignItems: 'center', gap: 10 }}>
           {sel ? (<>
             <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>{sel.monthLabel} · неделя {sel.week}</span>
@@ -143,27 +135,24 @@ export default function CashflowMobile({
           {cashWeeks.map((w, i) => <CashBar key={i} income={w.income} expense={w.expense} scale={cashScale} selected={selWeek === i} onClick={() => setSelWeek(selWeek === i ? null : i)} />)}
         </div>
         <MonthAxis months={months} />
-      </div>
+      </ReportSection>
 
       {/* Счета */}
-      <div style={{ ...CARD, padding: '14px 14px 10px', animation: 'ddsRise .4s cubic-bezier(0.22,1,0.36,1) both', animationDelay: '.21s' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
-          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Счета</span>
-          <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>остаток</span>
+      <ReportSection title="Счета" padding="14px 14px 10px" gap={4} aside={<span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>остаток</span>}>
+        <div>
+          {accounts.map(b => (
+            <div key={b.bank} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '6px 0', borderTop: '1px solid var(--border-row)' }}>
+              <Marker c={bankColor(b.bank)} size={8} />
+              <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.bank}</span>
+              <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{RUB(b.balance)} ₽</span>
+            </div>
+          ))}
+          {accounts.length === 0 && <div style={{ padding: 16, textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>Нет счетов</div>}
         </div>
-        {accounts.map(b => (
-          <div key={b.bank} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '6px 0', borderTop: '1px solid var(--border-row)' }}>
-            <Marker c={bankColor(b.bank)} size={8} />
-            <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.bank}</span>
-            <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{RUB(b.balance)} ₽</span>
-          </div>
-        ))}
-        {accounts.length === 0 && <div style={{ padding: 16, textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>Нет счетов</div>}
-      </div>
+      </ReportSection>
 
       {/* Накопительный остаток */}
-      <div style={{ ...CARD, padding: 16, display: 'flex', flexDirection: 'column', gap: 10, animation: 'ddsRise .4s cubic-bezier(0.22,1,0.36,1) both', animationDelay: '.28s' }}>
-        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Накопительный остаток</span>
+      <ReportSection title="Накопительный остаток" gap={10}>
         <div style={{ display: 'flex', gap: 1, height: 96, alignItems: 'stretch' }}>
           {cumWeeks.map((w, i) => {
             const n = w.value > 0 ? Math.max(1, Math.round(w.value / cumScale * 12)) : 0
@@ -176,16 +165,15 @@ export default function CashflowMobile({
           })}
         </div>
         <MonthAxis months={months} />
-      </div>
+      </ReportSection>
 
       {/* Детализация по месяцам */}
-      <div style={{ ...CARD, padding: '14px 14px 8px', display: 'flex', flexDirection: 'column', animation: 'ddsRise .4s cubic-bezier(0.22,1,0.36,1) both', animationDelay: '.35s' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Детализация по месяцам</span>
-          <button onClick={exportCsv} aria-label="Выгрузить в Excel" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg>
-          </button>
-        </div>
+      <ReportSection title="Детализация по месяцам" padding="14px 14px 8px" gap={6} aside={
+        <button onClick={exportCsv} aria-label="Выгрузить в Excel" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg>
+        </button>
+      }>
+        <div>
         {months.map(m => {
           const open = expanded === m.period
           return (
@@ -205,7 +193,7 @@ export default function CashflowMobile({
                 <span style={{ color: 'var(--text-faint)', fontSize: 10, textAlign: 'center' }}>{open ? '▴' : '▾'}</span>
               </div>
               {open && (
-                <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '6px 0 8px', padding: '4px 10px', animation: 'ddsRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
+                <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '6px 0 8px', padding: '4px 10px', ...rise(0, '.24s') }}>
                   {Object.entries(m.by_bank || {}).map(([bank, d]) => {
                     const net = d.net ?? (d.income - d.expense)
                     return (
@@ -227,7 +215,8 @@ export default function CashflowMobile({
           <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Итого</span>
           <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: 'var(--accent)' }}>{RUB(totals.lastCum)} ₽</span>
         </div>
-      </div>
-    </div>
+        </div>
+      </ReportSection>
+    </ReportShell>
   )
 }

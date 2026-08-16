@@ -100,7 +100,7 @@ export default function DealDetailDemo({ deal, onClose }) {
             <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}>
               <button style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }}>PDF</button>
               <button style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }}>XLS</button>
-              <button style={iconSq(true)} title="Открыть конструктор" onClick={() => router.push(`/deals/mp/${mpOur.id}`)}><EditIcon /></button>
+              <button style={iconSq(true)} title="Открыть конструктор" onClick={() => router.push(`/accounts/mp/${mpOur.id}`)}><EditIcon /></button>
             </span>
           ) : undefined} />
         {[['ДС', 'ds'], ['Отчёт', 'report'], ['УПД', 'upd'], ['Счёт', 'invoice']].map(([t, k]) => (
@@ -150,7 +150,7 @@ export default function DealDetailDemo({ deal, onClose }) {
         </div>
         {/* действия — прижаты к правому краю */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 'auto', paddingTop: 14 }}>
-          <button onClick={() => router.push(`/deals/${d.id}`)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 14px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>
+          <button onClick={() => router.push(`/sales/deals/${d.id}`)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 14px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>
             <DocIcon /> Карточка
           </button>
           <button title="Бриф" style={{ ...iconSq(false), width: 34, height: 34 }}><DocIcon /></button>

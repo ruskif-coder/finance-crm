@@ -117,13 +117,6 @@ body {
   .sales-widget-grid { grid-template-columns: 1fr; }
 }
 
-/* ── Mobile-kit: утилиты видимости (единый брейкпоинт 1024px) ──
-   .desktop-only — скрыто на мобиле; .mobile-only — скрыто на десктопе.
-   Фундамент мобильной адаптации: десктоп-разметку не трогаем, мобильную
-   ветку показываем/прячем этими классами или через useIsMobile(). */
-@media (max-width: 1023px) { .desktop-only { display: none !important; } }
-@media (min-width: 1024px) { .mobile-only  { display: none !important; } }
-
 /* ── Mobile-kit: анимации bottom sheet ── */
 @keyframes sheetFade { from { opacity: 0 } to { opacity: 1 } }
 @keyframes sheetUp { from { transform: translateY(100%) } to { transform: translateY(0) } }

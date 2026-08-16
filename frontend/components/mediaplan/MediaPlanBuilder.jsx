@@ -649,7 +649,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                               {init.year_plan.month != null ? <span style={{ fontFamily: T.mono, fontWeight: 600, color: T.t3 }}> · мес. {init.year_plan.month + 1}</span> : null}
                             </span>
                           </span>
-                          <a href={`/deals/year-plan?year=${init.year_plan.year}${init.year_plan.rep_id ? `&rep=${init.year_plan.rep_id}` : ''}`}
+                          <a href={`/sales/year-plan?year=${init.year_plan.year}${init.year_plan.rep_id ? `&rep=${init.year_plan.rep_id}` : ''}`}
                             target="_blank" rel="noreferrer" title="Открыть годовой план в новой вкладке"
                             style={{ display: 'inline-flex', alignItems: 'center', height: 26, padding: '0 10px', borderRadius: 8, background: T.accentTint, border: `1px solid ${T.accentBorder}`, color: T.accent, fontSize: 11, fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap', flex: '0 0 auto' }}>
                             Открыть план →

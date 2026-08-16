@@ -19,7 +19,7 @@ from app.database import get_db
 from app.routers.auth import get_current_user
 from app.permissions import require_permission, ACTION_FIELDS
 from app.audit import log_action
-from app.routers.notifications import notify_many
+from app.notify import emit
 from app.models import User, Counterparty, RolePermission, Role
 from app.sales.models import (SalesMediaPlan, SalesMediaPlanRow, SalesMediaPlanExtra,
                               SalesAdvertiser, SalesBrand, SalesAgency, SalesGeo)
@@ -626,23 +626,10 @@ def _has_perm(db, user, section, action):
     return bool(row) and bool(getattr(row, ACTION_FIELDS.get(action, "can_view"), 0))
 
 
-def _approver_user_ids(db):
-    """id активных пользователей, кто может согласовывать МП (право approve) + админы."""
-    role_ids = [r.role_id for r in db.query(RolePermission)
-                .filter(RolePermission.section == "media_plans", RolePermission.can_approve == 1).all()]
-    admin = db.query(Role).filter(Role.key == "admin").first()
-    if admin:
-        role_ids.append(admin.id)
-    if not role_ids:
-        return []
-    return [u.id for u in db.query(User).filter(User.role_id.in_(role_ids), User.is_active == 1).all()]
-
-
 def _notify_submit(db, p, actor):
-    recips = set(_approver_user_ids(db))
-    recips.discard(actor.id if actor else None)
-    notify_many(db, recips, kind="mp_submit", entity_type="media_plan", entity_id=p.id,
-                link=f"/deals/mp/{p.id}", title=f"Новый МП на согласование: {p.title or ('#' + str(p.id))}")
+    emit(db, "mp_submit", entity_type="media_plan", entity_id=p.id,
+         link=f"/accounts/mp/{p.id}", actor=actor, ctx={"media_plan": p},
+         title=f"Новый МП на согласование: {p.title or ('#' + str(p.id))}")
 
 
 def _notify_status(db, p, frm, to, actor):
@@ -652,18 +639,16 @@ def _notify_status(db, p, frm, to, actor):
     title = titles.get(to)
     if not title:
         return
-    if to == "draft":                       # recall → уведомляем согласующих
-        recips, body = set(_approver_user_ids(db)), None
-    else:                                    # approve/reject/archive → автор + ответственные
-        recips = {p.created_by, p.sales_rep_id, p.account_manager_id, p.traffic_manager_id}
-        body = p.reject_reason if to == "rejected" else None
-    recips.discard(actor.id)
-    recips.discard(None)
-    # вид события — свой на каждый переход: от него зависят тон и кнопка в виджете
-    kind = {"approved": "mp_approved", "rejected": "mp_rejected",
-            "archived": "mp_archived", "draft": "mp_recalled"}.get(to, "mp_status")
-    notify_many(db, recips, kind=kind, title=title, body=body,
-                link=f"/deals/mp/{p.id}", entity_type="media_plan", entity_id=p.id)
+    # вид события — свой на каждый переход: от него зависят получатели, тон и кнопка.
+    # Кому слать, объявлено в реестре (app/notify/registry.py): recall → согласующим,
+    # остальные переходы → автору и ответственным по плану.
+    event_key = {"approved": "mp_approved", "rejected": "mp_rejected",
+                 "archived": "mp_archived", "draft": "mp_recalled"}.get(to)
+    if not event_key:
+        return
+    body = p.reject_reason if to == "rejected" else None
+    emit(db, event_key, title=title, body=body, link=f"/accounts/mp/{p.id}",
+         entity_type="media_plan", entity_id=p.id, actor=actor, ctx={"media_plan": p})
 
 
 class MpStatusIn(BaseModel):
@@ -1339,32 +1324,77 @@ def _extra_formula_ctx(e, C, R):
 
 def _fill_block(ws, src, prefix, items, ctx_fn, fallback_fn):
     """Клонировать строку-образец src под len(items), заполнить каждую (формулы/значения).
-    Возвращает (первую_строку_данных, последнюю_строку_данных, {field: колонка})."""
+
+    Элемент вида {"_band": "Название"} — не размещение, а полоса-разделитель (годовая
+    выгрузка отбивает ею бренды). Токены такой строки гасятся, а сама строка попадает
+    в возвращаемый список полос для последующего оформления. Числовых значений в ней
+    нет, поэтому =СУММ по диапазону блока полосу просто не замечает.
+
+    Возвращает (первая_строка, последняя_строка, {field: колонка}, [(строка, текст)])."""
     maxc = ws.max_column
     cols = _token_cols(ws, src, prefix)
     n = len(items)
     if n == 0:
         for c in range(1, maxc + 1):
             _sub_cell(ws.cell(src, c), {})   # пусто — гасим токены образца
-        return src, src, cols
+        return src, src, cols, []
     if n > 1:
         _clone_below(ws, src, n - 1)
+    bands = []
     for i, it in enumerate(items):
         R = src + i
+        if isinstance(it, dict) and it.get("_band"):
+            for c in range(1, maxc + 1):
+                _sub_cell(ws.cell(R, c), {})
+            bands.append((R, it["_band"]))
+            continue
         try:
             ctx = ctx_fn(it, cols, R)
         except KeyError:
             ctx = fallback_fn(it)            # нет нужной колонки в шаблоне → числа
         for c in range(1, maxc + 1):
             _sub_cell(ws.cell(R, c), ctx)
-    return src, src + n - 1, cols
+    return src, src + n - 1, cols, bands
 
 
-def _render_from_template(full, p, path):
-    from openpyxl import load_workbook
-    wb = load_workbook(path)
-    ws = wb["МП"] if "МП" in wb.sheetnames else wb.active
-    rows, extras = full["rows"], full["extras"]
+# Полоса-разделитель бренда на месячном листе годовой выгрузки: цвета из макета
+# сводной (navy-tint-200 / navy-700), чтобы месячные листы читались одной семьёй.
+BAND_FILL, BAND_TEXT = "DFE4F0", "14265E"
+
+
+def _style_bands(ws, bands, cols):
+    """Оформить строки-полосы: объединить по ширине блока, подписать бренд."""
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import column_index_from_string
+    if not bands or not cols:
+        return
+    idx = [column_index_from_string(c) for c in cols.values()]
+    c1, c2 = min(idx), max(idx)
+    for r, text in bands:
+        # В строке-образце шаблона уже есть свои объединения (название позиции растянуто
+        # на несколько колонок), и они клонируются вместе с ней. Наложить поверх ещё одно
+        # нельзя: пересекающиеся объединения Excel считает повреждением файла и «чинит»
+        # его, выкидывая их при открытии. Снимаем прежние по этой строке.
+        for mr in list(ws.merged_cells.ranges):
+            if mr.min_row <= r <= mr.max_row and not (mr.max_col < c1 or mr.min_col > c2):
+                ws.unmerge_cells(str(mr))
+        ws.merge_cells(start_row=r, end_row=r, start_column=c1, end_column=c2)
+        cell = ws.cell(r, c1)
+        cell.value = text
+        cell.font = Font(name="Arial", size=10, bold=True, color=BAND_TEXT)
+        cell.fill = PatternFill("solid", fgColor=BAND_FILL)
+        cell.alignment = Alignment(horizontal="left", vertical="center")
+
+
+def render_mp_sheet(ws, full, rows=None, extras=None):
+    """Заполнить ОДИН лист-шаблон МП данными плана.
+
+    Вынесено из _render_from_template, чтобы годовая выгрузка могла отрендерить этим же
+    кодом двенадцать месячных листов в одной книге: месячный лист годовой выгрузки —
+    это тот же МП, только строки собраны по всем брендам и отбиты полосами.
+    rows/extras можно передать явно (полосы = элементы {"_band": ...})."""
+    rows = full["rows"] if rows is None else rows
+    extras = full["extras"] if extras is None else extras
 
     net_cell = _find_token_cell(ws, "total_net")
     gross_cell = _find_token_cell(ws, "total_gross")
@@ -1374,10 +1404,11 @@ def _render_from_template(full, p, path):
     t_map = {}
     if src_r:
         tcol = _token_cols(ws, src_r + 1, "t")   # колонки итоговой строки (до сдвига)
-        first, last, rcol = _fill_block(ws, src_r,
-                                        "r", rows,
-                                        lambda it, C, R: _row_formula_ctx(it, full, C, R),
-                                        lambda it: _row_ctx(it, full))
+        first, last, rcol, bands = _fill_block(ws, src_r,
+                                               "r", rows,
+                                               lambda it, C, R: _row_formula_ctx(it, full, C, R),
+                                               lambda it: _row_ctx(it, full))
+        _style_bands(ws, bands, rcol)
         tot_row = last + 1
         tctx = {f"t.{f}": f"=SUM({rcol.get(f, col)}{first}:{rcol.get(f, col)}{last})" for f, col in tcol.items()}
         for c in range(1, ws.max_column + 1):
@@ -1389,10 +1420,11 @@ def _render_from_template(full, p, path):
     te_map = {}
     if src_e:
         tecol = _token_cols(ws, src_e + 1, "te")
-        efirst, elast, ecol = _fill_block(ws, src_e,
-                                          "e", extras,
-                                          lambda it, C, R: _extra_formula_ctx(it, C, R),
-                                          lambda it: _extra_ctx(it))
+        efirst, elast, ecol, ebands = _fill_block(ws, src_e,
+                                                  "e", extras,
+                                                  lambda it, C, R: _extra_formula_ctx(it, C, R),
+                                                  lambda it: _extra_ctx(it))
+        _style_bands(ws, ebands, ecol)
         etot_row = elast + 1
         tectx = {f"te.{f}": f"=SUM({ecol.get(f, col)}{efirst}:{ecol.get(f, col)}{elast})" for f, col in tecol.items()}
         for c in range(1, ws.max_column + 1):
@@ -1426,12 +1458,21 @@ def _render_from_template(full, p, path):
         "tg_behavior": _tg_join(full, "behavior"), "tg_competitors": _tg_join(full, "competitors"),
         "total_net": net_f, "total_gross": gross_f, "total_vat": vat_f,
     }
+    g.update(full.get("head_override") or {})   # годовая выгрузка правит шапку (бренд, подзаголовок)
     logo_coord = _find_token_cell(ws, "logo")   # до подстановки: {{logo}} очистится в проходе ниже
     for row in ws.iter_rows():
         for cell in row:
             if isinstance(cell.value, str) and "{{" in cell.value:
                 _sub_cell(cell, g)
     _insert_logo(ws, logo_coord)
+    return ws
+
+
+def _render_from_template(full, p, path):
+    from openpyxl import load_workbook
+    wb = load_workbook(path)
+    ws = wb["МП"] if "МП" in wb.sheetnames else wb.active
+    render_mp_sheet(ws, full)
     try:
         wb.calculation.fullCalcOnLoad = True   # Excel пересчитает формулы при открытии
     except Exception:

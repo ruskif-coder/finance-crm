@@ -45,6 +45,9 @@ class User(Base):
     created_at = Column(DateTime, server_default=func.now())
     consent_accepted_at = Column(DateTime, nullable=True)  # 152-ФЗ: момент принятия согласия на обработку ПДн
     bitrix_user_id = Column(String, nullable=True)  # привязка к сотруднику в Битрикс24 (ручной выбор в настройках)
+    # Профиль уведомлений (app/notify). NULL = профиль по умолчанию (is_default).
+    # Сознательно отдельно от роли: роль = «что можно видеть», профиль = «что касается».
+    notification_profile_id = Column(Integer, ForeignKey("notification_profiles.id"), nullable=True)
     role = relationship("Role")
 
 class AuditLog(Base):
@@ -219,7 +222,7 @@ class Notification(Base):
     kind = Column(String(40))                 # напр. 'mp_status'
     title = Column(String(300), nullable=False)
     body = Column(Text)
-    link = Column(String(300))                # куда вести по клику, напр. /deals/mp/123
+    link = Column(String(300))                # куда вести по клику, напр. /accounts/mp/123
     entity_type = Column(String(40))
     entity_id = Column(Integer)
     is_read = Column(Boolean, nullable=False, default=False, index=True)

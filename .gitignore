@@ -28,8 +28,13 @@ AUDIT.md
 IMPLEMENTATION_PLAN.md
 docs/
 
-# SQL migration scripts — applied manually, local only
+# SQL — дампы и разовые скрипты держим локально, они содержат данные
 *.sql
+
+# Исключение: миграции схемы. Это DDL без данных, и без них деплой невоспроизводим —
+# на сервере после git pull каталога backend/migrations/ просто не было, из-за чего
+# шаг «накатить миграции» выполнить нечем. Добавлено 2026-08-16 перед релизом v2.4.0.
+!backend/migrations/*.sql
 
 # Fallback-страницы — держим локально до перехода на прод
 frontend/pages/OLD_*.js

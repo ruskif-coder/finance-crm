@@ -3,6 +3,7 @@ import { MONO, UI } from '../salesTableKit'
 import { makeApi as api } from '../../lib/http'
 import { bankColor } from '../../lib/salesFormat'
 import { T } from '../../lib/tokens'
+import CardShell from './CardShell'
 
 const rub = (n) => (n || n === 0) ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) + ' ₽' : '—'
 const mln = (n) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format((n || 0) / 1e6)
@@ -131,7 +132,12 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
   const factCnt = (analytics?.by_status || []).filter(s => s.status === 'ОПЛАЧЕНО').reduce((a, s) => a + (s.cnt || 0), 0)
   const saldo = stats.saldo || 0
 
-  const TABS = [['analytics', 'Аналитика'], ['requisites', 'Реквизиты'], ['contracts', 'Договора'], ['operations', 'Операции']]
+  const TABS = [
+    { key: 'analytics', label: 'Аналитика' },
+    { key: 'requisites', label: 'Реквизиты' },
+    { key: 'contracts', label: 'Договора' },
+    { key: 'operations', label: 'Операции' },
+  ]
 
   // ── режим правки реквизитов ──
   if (editMode && editData) {
@@ -177,54 +183,50 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
     )
   }
 
-  return (
-    <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12, fontFamily: UI, paddingBottom: 40 }}>
-      <style>{`@keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){[style*="animation"]{animation:none!important}}`}</style>
+  // шапка сущности: назад · имя+подпись · редактировать — переезжает в title CardShell
+  const titleNode = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <button onClick={onBack} aria-label="Назад" style={{ width: 36, height: 36, flexShrink: 0, borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>‹</button>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{card.name}</div>
+        <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>Контрагент · #{id}</div>
+      </div>
+      {canEdit && <button onClick={onEdit} aria-label="Редактировать" style={{ width: 36, height: 36, flexShrink: 0, borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="15" height="15" viewBox="0 0 24 24" style={stroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>}
+    </div>
+  )
 
-      {/* шапка карточки */}
-      <div style={{ ...CARD, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <button onClick={onBack} aria-label="Назад" style={{ width: 36, height: 36, flexShrink: 0, borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>‹</button>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{card.name}</div>
-          <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>Контрагент · #{id}</div>
+  // лента чипов — переезжает в badges CardShell
+  const badgesNode = (
+    <>
+      <Chip label={card.status} bg={isActive ? '#E6F5EF' : 'var(--bg-subtle)'} fg={isActive ? 'var(--income)' : 'var(--text-muted)'} />
+      {relation && <Chip label={relation} bg="#F1EDFC" fg="#7B62D6" />}
+      {card.website && <Chip label={card.website.replace(/^https?:\/\//i, '').replace(/\/$/, '')} bg="var(--bg-card)" fg="var(--accent)" href={normalizeUrl(card.website)} />}
+      {(card.linked_agencies || []).map(a => <Chip key={a.id} label={a.name_en || a.name} bg="var(--bg-card)" fg="var(--text-secondary)" />)}
+    </>
+  )
+
+  // KPI 2×2 — переезжает в слот kpi CardShell (между шапкой и рядом табов, как в оригинале)
+  const kpiNode = (
+    <div style={{ ...CARD, padding: '2px 14px', display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
+      {[
+        { l: 'Операций всего', v: stats.op_count || 0, sub: `${planCnt} плана · ${factCnt} факт`, c: 'var(--text-primary)', br: true, bb: true },
+        { l: 'Дебиторка', v: mln(stats.receivable), sub: stats.receivable > 0 ? 'есть задолженность' : 'нет просрочки', c: 'var(--accent)', bb: true },
+        { l: 'Кредиторка', v: mln(stats.payable), sub: 'млн ₽', c: T.warning, br: true },
+        { l: 'Сальдо', v: (saldo < 0 ? '−' : '') + mln(Math.abs(saldo)), sub: `млн ₽ · ${saldo < 0 ? 'мы должны' : 'нам должны'}`, c: saldo < 0 ? T.danger : 'var(--income)' },
+      ].map((k, i) => (
+        <div key={i} style={{ padding: '14px 4px 14px 0', borderRight: k.br ? '1px solid var(--border-row)' : 'none', borderBottom: k.bb ? '1px solid var(--border-row)' : 'none', paddingLeft: (i % 2) ? 14 : 0 }}>
+          <div style={monoLbl}>{k.l}</div>
+          <div style={{ fontFamily: MONO, fontSize: 24, fontWeight: 700, letterSpacing: '-.02em', color: k.c, margin: '4px 0 2px' }}>{k.v}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>{k.sub}</div>
         </div>
-        {canEdit && <button onClick={onEdit} aria-label="Редактировать" style={{ width: 36, height: 36, flexShrink: 0, borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="15" height="15" viewBox="0 0 24 24" style={stroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>}
-      </div>
+      ))}
+    </div>
+  )
 
-      {/* лента чипов */}
-      <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
-        <Chip label={card.status} bg={isActive ? '#E6F5EF' : 'var(--bg-subtle)'} fg={isActive ? 'var(--income)' : 'var(--text-muted)'} />
-        {relation && <Chip label={relation} bg="#F1EDFC" fg="#7B62D6" />}
-        {card.website && <Chip label={card.website.replace(/^https?:\/\//i, '').replace(/\/$/, '')} bg="var(--bg-card)" fg="var(--accent)" href={normalizeUrl(card.website)} />}
-        {(card.linked_agencies || []).map(a => <Chip key={a.id} label={a.name_en || a.name} bg="var(--bg-card)" fg="var(--text-secondary)" />)}
-      </div>
-
-      {/* KPI 2×2 */}
-      <div style={{ ...CARD, padding: '2px 14px', display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
-        {[
-          { l: 'Операций всего', v: stats.op_count || 0, sub: `${planCnt} плана · ${factCnt} факт`, c: 'var(--text-primary)', br: true, bb: true },
-          { l: 'Дебиторка', v: mln(stats.receivable), sub: stats.receivable > 0 ? 'есть задолженность' : 'нет просрочки', c: 'var(--accent)', bb: true },
-          { l: 'Кредиторка', v: mln(stats.payable), sub: 'млн ₽', c: T.warning, br: true },
-          { l: 'Сальдо', v: (saldo < 0 ? '−' : '') + mln(Math.abs(saldo)), sub: `млн ₽ · ${saldo < 0 ? 'мы должны' : 'нам должны'}`, c: saldo < 0 ? T.danger : 'var(--income)' },
-        ].map((k, i) => (
-          <div key={i} style={{ padding: '14px 4px 14px 0', borderRight: k.br ? '1px solid var(--border-row)' : 'none', borderBottom: k.bb ? '1px solid var(--border-row)' : 'none', paddingLeft: (i % 2) ? 14 : 0 }}>
-            <div style={monoLbl}>{k.l}</div>
-            <div style={{ fontFamily: MONO, fontSize: 24, fontWeight: 700, letterSpacing: '-.02em', color: k.c, margin: '4px 0 2px' }}>{k.v}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>{k.sub}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* табы */}
-      <div style={{ display: 'flex', gap: 6 }}>
-        {TABS.map(([id2, label]) => {
-          const on = tab === id2
-          return <button key={id2} onClick={() => setTab(id2)} style={{ flex: 1, padding: '9px 4px', borderRadius: 10, fontSize: 12, fontWeight: on ? 700 : 600, cursor: 'pointer', border: `1px solid ${on ? '#D7DEFA' : 'var(--border-card)'}`, background: on ? 'var(--accent-tint)' : 'var(--bg-card)', color: on ? 'var(--accent)' : 'var(--text-secondary)' }}>{label}</button>
-        })}
-      </div>
-
+  return (
+    <CardShell title={titleNode} badges={badgesNode} kpi={kpiNode} tabs={TABS} tab={tab} setTab={setTab} tabsLayout="equal">
       {/* контент таба */}
-      <div key={tab} style={{ animation: 'riseIn .24s ease both', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div key={tab} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {tab === 'analytics' && (
           <div style={{ ...CARD, padding: '14px 16px' }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>Оборот по месяцам</div>
@@ -320,7 +322,7 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
           <>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 2px' }}>
               <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Договора <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)' }}>{(card.contracts || []).length}</span></span>
-              <a href="/contracts" style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none' }}>В реестр →</a>
+              <a href="/directory/contracts" style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none' }}>В реестр →</a>
             </div>
             {(card.contracts || []).length === 0 ? <div style={{ ...CARD, padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Договоров нет</div>
               : card.contracts.map(c => {
@@ -392,7 +394,7 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
           </>
         )}
       </div>
-    </div>
+    </CardShell>
   )
 }
 

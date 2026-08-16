@@ -3,7 +3,6 @@ import Head from 'next/head'
 import api, { auth } from '../lib/http'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
-import DirectoryTabs from '../components/DirectoryTabs'
 import { inp, btn, th, td } from '../components/salesTableKit'
 
 
@@ -126,7 +125,6 @@ export default function Articles({ embedded = false } = {}) {
       {!embedded && <Navbar active="directories" />}
       <div style={{ padding: embedded ? 0 : '20px 24px 50px' }}>
 
-        {!embedded && <DirectoryTabs active="articles" />}
 
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 14 }}>
           <h1 style={{ fontSize: 19, fontWeight: 600, margin: 0 }}>Статьи</h1>

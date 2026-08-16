@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/router'
 import { MONO, UI } from '../salesTableKit'
 import { grp } from '../../lib/salesFormat'
-import { CARD, Marker } from './kit'
+import { CARD, Marker, rise } from './kit'
 import BottomSheet from './BottomSheet'
 import DirectoryMobile, { FilterChip } from './DirectoryMobile'
 
@@ -53,7 +53,7 @@ function AdvCard({ a, open, onToggle, onEdit, onDeals, canEdit }) {
         </div>
       </div>
       {open && (
-        <div style={{ animation: 'riseIn .24s ease both', marginTop: 10 }}>
+        <div style={{ ...rise(0, '.24s'), marginTop: 10 }}>
           <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, padding: '2px 12px' }}>
             {[
               ['Английское', a.name_en || '—'],
@@ -149,7 +149,7 @@ export default function AdvertisersMobile({
 
   const openCreate = () => setForm({ editId: null, initial: { short_name: '', name_en: '', name_ru: '', website: '', inn: '' } })
   const openEdit = (a) => setForm({ editId: a.id, initial: { short_name: a.short_name || a.name || '', name_en: a.name_en || '', name_ru: a.name_ru || '', website: a.website || '', inn: a.inn || '' } })
-  const openDeals = (a) => router.push(`/sales?producer_id=${a.id}`)
+  const openDeals = (a) => router.push(`/sales/deals?producer_id=${a.id}`)
 
   const save = async (f, editId) => {
     const ok = await onSave(f, editId)

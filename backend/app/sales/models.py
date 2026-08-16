@@ -291,6 +291,11 @@ class SalesRep(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     is_active = Column(Boolean, nullable=False, default=True)
     is_sales_head = Column(Boolean, nullable=False, default=False)  # рук отдела сейлзов — видит дашборды всех
+    # Дерево мастеров для эскалаций в уведомлениях (2026-08-15_notifications.sql).
+    # Пока не заполнено ни у кого — резолвер master_of_responsible падает на is_sales_head.
+    # ВНИМАНИЕ: колонка добавляется миграцией, накатывать её ДО выкладки кода — иначе
+    # query(SalesRep) упадёт на проде, ровно как описано ниже про role_group/is_master.
+    master_id = Column(Integer, ForeignKey("sales_reps.id"))
     # role_group / is_master были на SalesRep в первой итерации — отменены: рабочая группа
     # для МП живёт на Role (Role.staff_group / is_master). Колонки в БД могли остаться на
     # локали, но НЕ читаются/не пишутся — из модели убраны, чтобы query(SalesRep) не падал

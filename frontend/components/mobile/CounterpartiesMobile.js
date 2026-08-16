@@ -3,7 +3,7 @@ import { useRouter } from 'next/router'
 import { MONO, UI } from '../salesTableKit'
 import { grp } from '../../lib/salesFormat'
 import { T } from '../../lib/tokens'
-import { CARD, Marker } from './kit'
+import { CARD, Marker, rise } from './kit'
 import BottomSheet from './BottomSheet'
 import DirectoryMobile, { FilterChip } from './DirectoryMobile'
 
@@ -54,7 +54,7 @@ function CpCard({ c, open, onToggle, onOpen, onEdit, canEdit }) {
         </div>
       </div>
       {open && (
-        <div style={{ animation: 'riseIn .24s ease both', marginTop: 10 }}>
+        <div style={{ ...rise(0, '.24s'), marginTop: 10 }}>
           <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, padding: '2px 12px' }}>
             {[
               ['Поступления', c.income_paid > 0 ? fmt(c.income_paid) : '—', 'var(--income)'],
@@ -130,7 +130,7 @@ export default function CounterpartiesMobile({
 
   const openCreate = () => setForm({ editId: null, initial: { name: '', inn: '', status: 'действующий', term_days: '', is_own_company: false } })
   const openEdit = (c) => setForm({ editId: c.id, initial: { name: c.name, inn: c.inn || '', status: c.status, term_days: c.term_days != null ? String(c.term_days) : '', is_own_company: !!c.is_own_company } })
-  const openCard = (c) => router.push(`/counterparty/${c.id}`)
+  const openCard = (c) => router.push(`/directory/counterparties/${c.id}`)
 
   const save = async (f, editId) => {
     const ok = await onSave(f, editId)

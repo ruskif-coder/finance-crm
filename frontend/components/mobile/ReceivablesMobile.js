@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
 import { grp, mln, fmtDateShort, fmtDateFull } from '../../lib/salesFormat'
 import { T } from '../../lib/tokens'
-import { CARD, monoLbl, Marker } from './kit'
+import { monoLbl, Marker, rise } from './kit'
+import ReportShell, { ReportSection } from './ReportShell'
 
 // Мобильная дебиторка (< 1024px) по хендоффу design_handoff_receivables_mobile.
 // Получает уже вычисленные данные из pages/receivables.js (единый источник логики).
@@ -87,7 +88,7 @@ function DebtorRow({ r, open, onToggle, notes, setNotes, savedNotes, saveNote, c
         </div>
       </div>
       {open && (
-        <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '6px 0 8px', padding: 10, animation: 'rcvRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
+        <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, margin: '6px 0 8px', padding: 10, ...rise(0, '.24s') }}>
           <div style={{ display: 'flex', gap: 14, ...monoLbl, fontSize: 9, marginBottom: 8 }}>
             <span>ИНН {r.inn || '—'}</span><span>отсрочка {r.term_days} дн.</span>
           </div>
@@ -135,29 +136,22 @@ export default function ReceivablesMobile({
 
   const seg = (active) => ({ flex: 1, border: 'none', borderRadius: 8, padding: '7px 0', fontFamily: UI, fontSize: 13, fontWeight: active ? 700 : 600, cursor: 'pointer', background: active ? 'var(--accent-tint)' : 'transparent', color: active ? 'var(--accent)' : 'var(--text-secondary)' })
 
+  const filters = (
+    <>
+      <div style={{ display: 'inline-flex', flex: '0 0 auto', border: '1px solid var(--border-card)', borderRadius: 10, padding: 3, background: 'var(--bg-card)', width: 200 }}>
+        <button onClick={() => setOnlyActual(true)} style={seg(onlyActual)}>Актуальные</button>
+        <button onClick={() => setOnlyActual(false)} style={seg(!onlyActual)}>Все</button>
+      </div>
+      <button onClick={downloadExport} aria-label="Выгрузить в Excel" style={{ marginLeft: 'auto', width: 38, height: 38, borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg>
+      </button>
+    </>
+  )
+
   return (
-    <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12, fontFamily: UI }}>
-      <style>{`@keyframes rcvRise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){[style*="animation"]{animation:none!important}}`}</style>
-
-      {/* заголовок + дата */}
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-        <span style={{ fontSize: 19, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text-primary)' }}>Дебиторка</span>
-        <span style={{ ...monoLbl }}>на {fullDate(asOf)}</span>
-      </div>
-
-      {/* фильтры: сегмент + выгрузка */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ display: 'inline-flex', flex: '0 0 auto', border: '1px solid var(--border-card)', borderRadius: 10, padding: 3, background: 'var(--bg-card)', width: 200 }}>
-          <button onClick={() => setOnlyActual(true)} style={seg(onlyActual)}>Актуальные</button>
-          <button onClick={() => setOnlyActual(false)} style={seg(!onlyActual)}>Все</button>
-        </div>
-        <button onClick={downloadExport} aria-label="Выгрузить в Excel" style={{ marginLeft: 'auto', width: 38, height: 38, borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg>
-        </button>
-      </div>
-
+    <ReportShell title="Дебиторка" meta={`на ${fullDate(asOf)}`} filters={filters}>
       {/* KPI 2×2 */}
-      <div style={{ ...CARD, animation: 'rcvRise .4s cubic-bezier(0.22,1,0.36,1) both', animationDelay: '.07s' }}>
+      <ReportSection padded={false}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
           <div style={{ borderRight: '1px solid var(--border-row)', borderBottom: '1px solid var(--border-row)' }}>
             <Kpi label="Итого дебиторка" val={mlnK(kpi.total)} unit="млн ₽" color="var(--text-primary)" sub={`${kpi.cpCount} контрагентов · ${kpi.opCount} счетов`} />
@@ -172,14 +166,10 @@ export default function ReceivablesMobile({
             <Kpi marker={C.plan} label="План" val={mlnK(kpi.future.a)} unit="млн ₽" color={C.accent} sub={`${kpi.pctOf(kpi.future.a)}% · ${kpi.future.c} операции`} />
           </div>
         </div>
-      </div>
+      </ReportSection>
 
       {/* Структура по срокам */}
-      <div style={{ ...CARD, padding: 16, display: 'flex', flexDirection: 'column', gap: 12, animation: 'rcvRise .4s cubic-bezier(0.22,1,0.36,1) both', animationDelay: '.14s' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Структура по срокам</span>
-          <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>дни от срока</span>
-        </div>
+      <ReportSection title="Структура по срокам" aside={<span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>дни от срока</span>}>
         {/* сводка */}
         <div style={{ background: '#F6F8FF', borderRadius: 12, padding: '10px 12px', minHeight: 44, display: 'flex', alignItems: 'center', gap: 10 }}>
           {sel ? (<>
@@ -208,26 +198,24 @@ export default function ReceivablesMobile({
             <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Marker c={s.color} />{s.label.toLowerCase()} {pct(s.a)}%</span>
           ))}
         </div>
-      </div>
+      </ReportSection>
 
       {/* Контрагенты-должники */}
-      <div style={{ ...CARD, padding: '14px 14px 8px', display: 'flex', flexDirection: 'column', animation: 'rcvRise .4s cubic-bezier(0.22,1,0.36,1) both', animationDelay: '.21s' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Контрагенты-должники</span>
-          <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>{rows.length} из {rowsCount}</span>
+      <ReportSection title="Контрагенты-должники" padding="14px 14px 8px" gap={6} aside={<span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>{rows.length} из {rowsCount}</span>}>
+        <div>
+          {rows.length === 0 && <div style={{ padding: 26, textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>Нет задолженности по фильтрам</div>}
+          {rows.map(r => (
+            <DebtorRow key={r.counterparty_id} r={r} open={!!expanded[r.counterparty_id]} onToggle={() => toggleExpand(r.counterparty_id)}
+              notes={notes} setNotes={setNotes} savedNotes={savedNotes} saveNote={saveNote} canEditNote={canEditNote} noteStatus={noteStatus} />
+          ))}
+          {rows.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 12, marginTop: 4, borderTop: '1px solid var(--border-inner)' }}>
+              <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Итого</span>
+              <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(totalFiltered)} ₽</span>
+            </div>
+          )}
         </div>
-        {rows.length === 0 && <div style={{ padding: 26, textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>Нет задолженности по фильтрам</div>}
-        {rows.map(r => (
-          <DebtorRow key={r.counterparty_id} r={r} open={!!expanded[r.counterparty_id]} onToggle={() => toggleExpand(r.counterparty_id)}
-            notes={notes} setNotes={setNotes} savedNotes={savedNotes} saveNote={saveNote} canEditNote={canEditNote} noteStatus={noteStatus} />
-        ))}
-        {rows.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 12, marginTop: 4, borderTop: '1px solid var(--border-inner)' }}>
-            <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Итого</span>
-            <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(totalFiltered)} ₽</span>
-          </div>
-        )}
-      </div>
-    </div>
+      </ReportSection>
+    </ReportShell>
   )
 }

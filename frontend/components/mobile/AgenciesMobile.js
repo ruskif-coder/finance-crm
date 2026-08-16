@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
-import { CARD, Marker } from './kit'
+import { CARD, Marker, rise } from './kit'
 import BottomSheet from './BottomSheet'
 import DirectoryMobile from './DirectoryMobile'
 
@@ -30,7 +30,7 @@ function AgCard({ a, open, onToggle, onEdit, canEdit }) {
         </div>
       </div>
       {open && (
-        <div style={{ animation: 'riseIn .24s ease both', marginTop: 10 }}>
+        <div style={{ ...rise(0, '.24s'), marginTop: 10 }}>
           <div style={{ background: 'var(--bg-subtle)', borderRadius: 12, padding: '2px 12px' }}>
             {[
               ['Английское', a.name_en || '—'],

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
-import Navbar from '../../components/Navbar'
+import Navbar, { firstAllowedHref } from '../../components/Navbar'
 import SettingsTabs from '../../components/SettingsTabs'
 import { MONO, UI, card, inp, sel, th, td, primaryBtn } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
@@ -20,6 +20,7 @@ export default function SettingsUsers() {
   const [users, setUsers] = useState([])
   const [loadingUsers, setLoadingUsers] = useState(true)
   const [editingUsers, setEditingUsers] = useState({})
+  const [profiles, setProfiles] = useState([])   // профили уведомлений (app/notify)
   const [savingUsers, setSavingUsers] = useState({})
   const [savingAllUsers, setSavingAllUsers] = useState(false)
   const [hideInactive, setHideInactive] = useState(false)
@@ -34,7 +35,7 @@ export default function SettingsUsers() {
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }
-    if (localStorage.getItem('role') !== 'admin') { router.push('/dashboard'); return }
+    if (localStorage.getItem('role') !== 'admin') { let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}; router.push(firstAllowedHref(p, localStorage.getItem('role'))); return }
     loadRoles()
     loadUsers()
     api.get('/auth/me', auth()).then(res => setSelfId(res.data.id)).catch(() => {})
@@ -45,7 +46,17 @@ export default function SettingsUsers() {
     try {
       const res = await api.get('/roles/', auth())
       setAllRoles(res.data.roles)
+      loadProfiles()
     } catch (e) { if (e.response?.status === 401) router.push('/login') }
+  }
+
+  // Профили уведомлений — для селектора в строке. Отдельный лёгкий список, чтобы
+  // страница не тянула настройки уведомлений целиком.
+  const loadProfiles = async () => {
+    try {
+      const res = await api.get('/users/notification-profiles', auth())
+      setProfiles(res.data)
+    } catch (e) { /* профилей может не быть на старой базе — селектор просто пустой */ }
   }
 
   const loadUsers = async () => {
@@ -54,7 +65,7 @@ export default function SettingsUsers() {
       const res = await api.get('/users/', auth())
       setUsers(res.data)
       const ed = {}
-      res.data.forEach(u => { ed[u.id] = { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '', bitrix_user_id: u.bitrix_user_id || '' } })
+      res.data.forEach(u => { ed[u.id] = { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '', bitrix_user_id: u.bitrix_user_id || '', notification_profile_id: u.notification_profile_id || 0 } })
       setEditingUsers(ed)
     } catch (e) {
       if (e.response?.status === 401) router.push('/login')
@@ -110,7 +121,7 @@ export default function SettingsUsers() {
     const ed = editingUsers[id]
     setSavingUsers(prev => ({ ...prev, [id]: true }))
     try {
-      const payload = { name: ed.name, email: ed.email, role: ed.role, is_active: ed.is_active, bitrix_user_id: ed.bitrix_user_id || '' }
+      const payload = { name: ed.name, email: ed.email, role: ed.role, is_active: ed.is_active, bitrix_user_id: ed.bitrix_user_id || '', notification_profile_id: ed.notification_profile_id || 0 }
       if (ed.password) payload.password = ed.password
       await api.put(`/users/${id}`, payload, auth())
       await loadUsers()
@@ -128,7 +139,7 @@ export default function SettingsUsers() {
       const ed = editingUsers[u.id]
       if (!ed) continue
       try {
-        const payload = { name: ed.name, email: ed.email, role: ed.role, is_active: ed.is_active, bitrix_user_id: ed.bitrix_user_id || '' }
+        const payload = { name: ed.name, email: ed.email, role: ed.role, is_active: ed.is_active, bitrix_user_id: ed.bitrix_user_id || '', notification_profile_id: ed.notification_profile_id || 0 }
         if (ed.password) payload.password = ed.password
         await api.put(`/users/${u.id}`, payload, auth())
         ok++
@@ -213,6 +224,7 @@ export default function SettingsUsers() {
                   <th style={th}>Email</th>
                   <th style={th}>Роль</th>
                   <th style={th}>Активен</th>
+                  <th style={th}>Профиль уведомлений</th>
                   <th style={th}>Сотрудник в Битрикс24</th>
                   <th style={th}>Новый пароль</th>
                   <th style={th}></th>
@@ -220,7 +232,7 @@ export default function SettingsUsers() {
               </thead>
               <tbody>
                 {users.filter(u => !hideInactive || u.is_active).map(u => {
-                  const ed = editingUsers[u.id] || { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '', bitrix_user_id: u.bitrix_user_id || '' }
+                  const ed = editingUsers[u.id] || { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '', bitrix_user_id: u.bitrix_user_id || '', notification_profile_id: u.notification_profile_id || 0 }
                   const isSelf = u.id === selfId
                   const cur = ed.bitrix_user_id || ''
                   const known = bitrixUsers.some(b => String(b.id) === String(cur))
@@ -250,6 +262,16 @@ export default function SettingsUsers() {
                           style={{ padding: '5px 12px', borderRadius: 20, border: '1px solid ' + (ed.is_active ? 'var(--border-card)' : 'var(--danger-tint)'), cursor: isSelf ? 'default' : 'pointer', fontSize: 13, fontWeight: 600, fontFamily: UI, background: ed.is_active ? 'var(--bg-subtle)' : 'var(--danger-tint)', color: ed.is_active ? 'var(--success)' : 'var(--danger)' }}>
                           {ed.is_active ? 'Активен' : 'Деактивирован'}
                         </button>
+                      </td>
+                      <td style={td}>
+                        {/* Профиль уведомлений НЕ выводится из роли: роль = что можно
+                            видеть, профиль = что человека касается (см. app/notify). */}
+                        <select value={ed.notification_profile_id || 0}
+                          onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, notification_profile_id: Number(e.target.value) } }))}
+                          style={{ ...sel, minWidth: 170 }}>
+                          <option value={0}>— по умолчанию —</option>
+                          {profiles.map(p => <option key={p.id} value={p.id}>{p.label}{p.is_default ? ' (умолч.)' : ''}</option>)}
+                        </select>
                       </td>
                       <td style={td}>
                         <select value={cur}
@@ -296,7 +318,7 @@ export default function SettingsUsers() {
                   )
                 })}
                 {!users.filter(u => !hideInactive || u.is_active).length && (
-                  <tr><td colSpan={7} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Пользователей нет</td></tr>
+                  <tr><td colSpan={8} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Пользователей нет</td></tr>
                 )}
               </tbody>
             </table>

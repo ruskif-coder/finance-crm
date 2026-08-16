@@ -26,6 +26,9 @@ class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
     password: Optional[str] = None
     bitrix_user_id: Optional[str] = None  # "" → отвязать, None → не трогать
+    # Профиль уведомлений (app/notify): 0 → сбросить на профиль по умолчанию.
+    # Сознательно НЕ выводится из роли — роль отвечает за доступ, профиль за рассылку.
+    notification_profile_id: Optional[int] = None
 
 
 @router.get("/")
@@ -44,9 +47,20 @@ def list_users(
             "is_active": bool(u.is_active),
             "created_at": u.created_at,
             "bitrix_user_id": u.bitrix_user_id,
+            "notification_profile_id": u.notification_profile_id,
         }
         for u in users
     ]
+
+
+@router.get("/notification-profiles")
+def notification_profiles(db: Session = Depends(get_db),
+                          current_user: User = Depends(require_admin)):
+    """Профили уведомлений для селектора в карточке пользователя. Отдельный лёгкий
+    список, чтобы страница пользователей не тянула настройки уведомлений целиком."""
+    from app.notify.models import NotificationProfile
+    rows = db.query(NotificationProfile).order_by(NotificationProfile.id).all()
+    return [{"id": p.id, "label": p.label, "is_default": p.is_default} for p in rows]
 
 
 @router.get("/bitrix-directory")
@@ -144,6 +158,19 @@ def update_user(
         if new_bx != user.bitrix_user_id:
             changes.append(f"Битрикс-привязка: {user.bitrix_user_id or '—'} → {new_bx or '—'}")
             user.bitrix_user_id = new_bx
+
+    if data.notification_profile_id is not None:
+        from app.notify.models import NotificationProfile
+        new_pid = data.notification_profile_id or None        # 0 → сброс на профиль по умолчанию
+        if new_pid and not db.query(NotificationProfile).filter(
+                NotificationProfile.id == new_pid).first():
+            raise HTTPException(status_code=400, detail="Профиль уведомлений не найден")
+        if new_pid != user.notification_profile_id:
+            labels = dict(db.query(NotificationProfile.id, NotificationProfile.label).all())
+            changes.append("профиль уведомлений: "
+                           f"{labels.get(user.notification_profile_id, '— по умолчанию')} → "
+                           f"{labels.get(new_pid, '— по умолчанию')}")
+            user.notification_profile_id = new_pid
 
     db.commit()
 

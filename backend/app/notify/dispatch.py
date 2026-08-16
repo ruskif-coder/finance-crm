@@ -1,0 +1,75 @@
+"""Досылка отложенного: строки журнала со статусом queued.
+
+Зачем: сообщение может не уйти в момент события — тихие часы у получателя, не привязан
+Telegram, не задан токен бота. Терять его нельзя, поэтому оно ложится в журнал как
+queued и уходит отсюда, когда причина отпала.
+
+    docker exec finance_backend python -m app.notify.dispatch --dry-run
+    docker exec finance_backend python -m app.notify.dispatch
+
+Ставится в cron почаще сканера (раз в час): его задача — не искать события, а
+разгребать очередь.
+
+Протухшее не шлём: напоминание «срок оплаты через 10 дней», доставленное через неделю,
+хуже, чем недоставленное. Порог — MAX_AGE_HOURS.
+"""
+import sys
+from datetime import datetime, timedelta
+
+from app.database import SessionLocal
+from app.notify import registry, telegram
+from app.notify.bus import _quiet_now
+from app.notify.models import NotificationDelivery, UserNotificationChannels
+
+MAX_AGE_HOURS = 48
+
+
+def flush(dry_run: bool = False) -> dict:
+    db = SessionLocal()
+    stats = {"queued": 0, "sent": 0, "skipped": 0, "expired": 0, "failed": 0}
+    now = datetime.utcnow()
+    try:
+        rows = (db.query(NotificationDelivery)
+                .filter(NotificationDelivery.status == "queued",
+                        NotificationDelivery.channel == "tg")
+                .order_by(NotificationDelivery.id).limit(500).all())
+        stats["queued"] = len(rows)
+        for r in rows:
+            age = now - (r.created_at or now)
+            if age > timedelta(hours=MAX_AGE_HOURS):
+                stats["expired"] += 1
+                if not dry_run:
+                    r.status = "suppressed"
+                    r.suppress_reason = "expired"
+                continue
+            ev = registry.get(r.event_key)
+            ch = (db.query(UserNotificationChannels)
+                  .filter(UserNotificationChannels.user_id == r.user_id).first())
+            if not telegram.configured() or ch is None or not ch.tg_chat_id or not ch.tg_verified_at:
+                stats["skipped"] += 1
+                continue
+            if ev is not None and _quiet_now(ch, ev):
+                stats["skipped"] += 1          # всё ещё тихие часы — придём в следующий раз
+                continue
+            if dry_run:
+                stats["sent"] += 1
+                print(f"    (сухой прогон) → {r.user_id}: {r.title}")
+                continue
+            try:
+                telegram.send_message(ch.tg_chat_id, r.title or "")
+                r.status, r.suppress_reason = "sent", None
+                stats["sent"] += 1
+            except Exception as e:
+                r.status, r.error = "failed", str(e)[:400]
+                stats["failed"] += 1
+        db.commit()
+        print(f"Очередь Telegram: в очереди {stats['queued']}, отправлено {stats['sent']}, "
+              f"отложено {stats['skipped']}, протухло {stats['expired']}, "
+              f"ошибок {stats['failed']}" + (" (СУХОЙ ПРОГОН)" if dry_run else ""))
+        return stats
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    flush(dry_run="--dry-run" in sys.argv)

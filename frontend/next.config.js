@@ -14,4 +14,12 @@ module.exports = {
       { source: '/api/:path*', destination: 'http://backend:8000/api/:path*' },
     ]
   },
+  // Старые адреса живут за счёт этого слоя: по ним ходят закладки сотрудников и ссылки
+  // внутри уже разосланных уведомлений (они лежат в notifications.link строками, задним
+  // числом их не переписать). Временные (307), а не постоянные: постоянный редирект
+  // браузер кэширует навсегда, и ошибка в адресе не лечится сбросом кэша у пользователя.
+  async redirects() {
+    const nav = require('./lib/nav.data.json')
+    return nav.redirects.map(r => ({ source: r.from, destination: r.to, permanent: false }))
+  },
 }

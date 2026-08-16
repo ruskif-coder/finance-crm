@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
-import Navbar from '../../components/Navbar'
+import Navbar, { firstAllowedHref } from '../../components/Navbar'
 import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsTabs'
 import { UI } from '../../components/salesTableKit'
 import FieldAuditPanel from '../../components/FieldAuditPanel'
@@ -11,7 +11,7 @@ export default function SettingsFieldAudit() {
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }
-    if (!settingsSectionAllowed('field_audit')) { router.push('/dashboard'); return }
+    if (!settingsSectionAllowed('field_audit')) { let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}; router.push(firstAllowedHref(p, localStorage.getItem('role'))); return }
   }, [])
   return (
     <>

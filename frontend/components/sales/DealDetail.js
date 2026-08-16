@@ -84,7 +84,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   }
   const startEdit = () => { if (canEdit) { setDraft(title); setEditing(true) } }
   // «+ Добавить» у «МП наш» → всегда конструктор МП этой сделки (страничные onAddMp бывают заглушками).
-  const addMp = () => router.push(`/deals/mp/new?deal=${d.id}`)
+  const addMp = () => router.push(`/accounts/mp/new?deal=${d.id}`)
   const [docBusy, setDocBusy] = useState('')   // вид документа в процессе загрузки/удаления
   const genTitle = () => {
     const t = templateTitle()
@@ -155,7 +155,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
             <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}>
               <button style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }} title="Скачать PDF" onClick={() => blobGet(`/media-plans/${mpOur.id}/pdf`, `MP_${mpOur.id}_v${mpOur.version}.pdf`)}>PDF</button>
               <button style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }} title="Скачать XLSX" onClick={() => blobGet(`/media-plans/${mpOur.id}/export.xlsx`, `MP_${mpOur.id}_v${mpOur.version}.xlsx`)}>XLS</button>
-              <button style={iconSq(true)} title="Открыть конструктор" onClick={() => router.push(`/deals/mp/${mpOur.id}`)}><EditIcon /></button>
+              <button style={iconSq(true)} title="Открыть конструктор" onClick={() => router.push(`/accounts/mp/${mpOur.id}`)}><EditIcon /></button>
             </span>
           ) : undefined} />
         {/* Реальные документы сделки: загрузка/замена/скачивание/удаление.
@@ -225,7 +225,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
                   {d.year_plan.year}{d.plan_month != null ? ` · мес. ${d.plan_month + 1}` : ''}
                 </div>
               </div>
-              <button onClick={() => router.push(`/deals/year-plan?year=${d.year_plan.year}${d.year_plan.rep_id ? `&rep=${d.year_plan.rep_id}` : ''}`)}
+              <button onClick={() => router.push(`/sales/year-plan?year=${d.year_plan.year}${d.year_plan.rep_id ? `&rep=${d.year_plan.rep_id}` : ''}`)}
                 title="Открыть годовой план" style={{ ...addBtn, whiteSpace: 'nowrap' }}>Открыть план</button>
             </div>
           </div>
@@ -249,7 +249,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
           <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 800, color: 'var(--income)' }}>{rub(d.our_sum)}</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 'auto', paddingTop: 14 }}>
-          <button onClick={() => router.push(`/deals/${d.code || d.id}`)} title="Открыть карточку сделки"
+          <button onClick={() => router.push(`/sales/deals/${d.code || d.id}`)} title="Открыть карточку сделки"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 14px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>
             <DocIcon /> Карточка
           </button>
@@ -259,7 +259,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
               Битрикс ↗
             </button>
           )}
-          <button title="Бриф" onClick={() => (onOpenBrief ? onOpenBrief(d) : router.push(`/deals/${d.id}`))} style={{ ...iconSq(false), width: 34, height: 34 }}><DocIcon /></button>
+          <button title="Бриф" onClick={() => (onOpenBrief ? onOpenBrief(d) : router.push(`/sales/deals/${d.id}`))} style={{ ...iconSq(false), width: 34, height: 34 }}><DocIcon /></button>
           {onEdit && <button title="Редактировать" onClick={() => onEdit(d)} style={{ ...iconSq(false), width: 34, height: 34 }}><EditIcon /></button>}
         </div>
       </div>

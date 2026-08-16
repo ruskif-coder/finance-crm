@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { MONO, UI, MultiDrop } from '../salesTableKit'
 import { grp, signRub, fmtDateShort, bankColor } from '../../lib/salesFormat'
-import { CARD, monoLbl, Marker, PeriodSelect } from './kit'
+import { CARD, monoLbl, Marker, PeriodSelect, rise } from './kit'
 import BottomSheet from './BottomSheet'
+import DirectoryMobile from './DirectoryMobile'
 
 const fmt = (n) => grp(Math.abs(n || 0))
 
@@ -23,7 +24,6 @@ const statusMeta = (s) => STATUS_META[s] || { label: (s || '').toLowerCase(), bg
 const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }
 
 function DocIco() { return <svg width="13" height="13" viewBox="0 0 24 24" style={stroke}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg> }
-function EditIco() { return <svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg> }
 
 // ── Карточка операции (аккордеон) ──
 function OpCard({ o, artName, cpName, open, onToggle, onEdit, onCopy }) {
@@ -57,7 +57,7 @@ function OpCard({ o, artName, cpName, open, onToggle, onEdit, onCopy }) {
         </div>
       </div>
       {open && (
-        <div style={{ animation: 'opRise .24s ease both' }}>
+        <div style={{ ...rise(0, '.24s') }}>
           <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-row)', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 10px', fontSize: 12.5 }}>
             <span style={{ color: 'var(--text-muted)' }}>НДС</span><span style={{ color: 'var(--text-primary)', textAlign: 'right', fontFamily: MONO }}>{o.vat_rate ? `${o.vat_rate}% · ${fmt(o.vat_fact || 0)} ₽` : '—'}</span>
             <span style={{ color: 'var(--text-muted)' }}>№ счёта</span><span style={{ color: 'var(--text-primary)', textAlign: 'right', fontFamily: MONO }}>{o.invoice || '—'}</span>
@@ -194,21 +194,13 @@ function OperationForm({ initial, editId, articles, counterparties, onClose, onS
   )
 }
 
-const FILTER_DROPS = [
-  ['status', 'Статус', STATUSES.map(s => ({ value: s, label: s }))],
-  ['bank', 'Банк', BANKS.map(b => ({ value: b, label: b }))],
-  ['optype', 'Тип', [{ value: 'income', label: 'Поступления' }, { value: 'expense', label: 'Списания' }]],
-]
-
 export default function OperationsMobile({
   total, rows, loading, articles, counterparties, canEdit,
   dateFrom, setDateFrom, dateTo, setDateTo, fStatus, setFStatus, fBank, setFBank,
   fArticle, setFArticle, fCp, setFCp, fOpType, setFOpType, fPeriod, setFPeriod, periodOptions = [], resetFilters,
   pageSize, setPageSize, onSave, onDelete, downloadExport, emptyForm,
 }) {
-  const [expandedId, setExpandedId] = useState(null)
   const [filtersOpen, setFiltersOpen] = useState(false)
-  const [searchOpen, setSearchOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [form, setForm] = useState(null)   // { initial, editId } | null
   useEffect(() => { if (pageSize > 100) setPageSize(100) }, [])   // мобиль: меньшая начальная загрузка + «Показать ещё»
@@ -227,8 +219,8 @@ export default function OperationsMobile({
   const gmap = {}
   shown.forEach(o => {
     const key = o.period || '—'
-    if (!gmap[key]) { gmap[key] = { key, ops: [], turnover: 0 }; groups.push(gmap[key]) }
-    gmap[key].ops.push(o); gmap[key].turnover += (o.income || 0) + (o.expense || 0)
+    if (!gmap[key]) { gmap[key] = { key, rows: [], turnover: 0 }; groups.push(gmap[key]) }
+    gmap[key].rows.push(o); gmap[key].turnover += (o.income || 0) + (o.expense || 0)
   })
 
   const opToForm = (o) => ({ date: o.date || '', status: o.status || 'ОПЛАЧЕНО', income: o.income || 0, expense: o.expense || 0, bank: o.bank || '', period: o.period || '', vat_rate: o.vat_rate || 0, article_id: o.article_id || '', counterparty_id: o.counterparty_id || '', ds_num: o.ds_num || '', invoice: o.invoice || '', invoice_date: o.invoice_date || '', description: o.description || '', document_link: o.document_link || '' })
@@ -236,61 +228,36 @@ export default function OperationsMobile({
   const openCopy = (o) => setForm({ editId: null, initial: opToForm(o) })   // копия → «Новая операция» с данными (POST при сохранении)
   const openCreate = () => setForm({ editId: null, initial: emptyForm() })
 
-  const seg = (active) => ({ border: 'none', borderRadius: 8, padding: '6px 12px', whiteSpace: 'nowrap', fontFamily: MONO, fontSize: 12, fontWeight: active ? 700 : 600, cursor: 'pointer', background: active ? 'var(--accent-tint)' : 'transparent', color: active ? 'var(--accent)' : 'var(--text-secondary)' })
-
   return (
-    <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12, fontFamily: UI, paddingBottom: 90 }}>
-      <style>{`@keyframes opRise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){[style*="animation"]{animation:none!important}}`}</style>
-
-      {/* тулбар */}
-      {searchOpen ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ flex: 1, display: 'inline-flex', alignItems: 'center', gap: 8, border: '1px solid var(--accent)', background: 'var(--bg-card)', borderRadius: 12, padding: '10px 12px' }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" style={{ ...stroke, color: 'var(--text-faint)' }}><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></svg>
-            <input autoFocus value={search} onChange={e => setSearch(e.target.value)} placeholder="контрагент, статья, назначение…" style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', fontSize: 14, color: 'var(--text-secondary)', fontFamily: UI }} />
-            {search && <span onClick={() => setSearch('')} style={{ color: 'var(--text-faint)', cursor: 'pointer', fontSize: 16 }}>✕</span>}
+    <>
+      <DirectoryMobile
+        title="Операции" total={total} shownCount={shown.length} loading={loading} canEdit={canEdit}
+        countLabel={new Intl.NumberFormat('ru-RU').format(total)}
+        search={search} setSearch={setSearch} searchPlaceholder="контрагент, статья, назначение…"
+        filterChips={<>
+          <button onClick={() => setFiltersOpen(true)} style={{ flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${activeFilterCount > 0 ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '0 13px', height: 38, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer', fontFamily: UI }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" style={stroke}><path d="M3 5h18M6 12h12M10 19h4" /></svg>
+            Фильтры{activeFilterCount > 0 && <span style={{ background: 'var(--accent-tint)', color: 'var(--accent)', borderRadius: 8, padding: '0 6px', fontFamily: MONO, fontSize: 11, fontWeight: 700 }}>{activeFilterCount}</span>}
+          </button>
+          <button onClick={downloadExport} aria-label="Выгрузить" style={{ marginLeft: 'auto', flex: '0 0 auto', width: 38, height: 38, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', borderRadius: 10, cursor: 'pointer' }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg>
+          </button>
+        </>}
+        groups={groups}
+        renderGroupHeader={(g) => (
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '2px 4px' }}>
+            <span style={{ ...monoLbl, fontSize: 11, color: 'var(--text-secondary)', fontWeight: 700 }}>{fmtPeriodGroup(g.key)}</span>
+            <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-faint)' }}>{g.rows.length} оп. · {fmt(g.turnover)} ₽</span>
           </div>
-          <button onClick={() => setSearchOpen(false)} style={{ border: 'none', background: 'transparent', color: 'var(--accent)', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Готово</button>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 19, fontWeight: 700, color: 'var(--text-primary)' }}>Операции</span>
-          <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)' }}>{new Intl.NumberFormat('ru-RU').format(total)}</span>
-          <div style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            <button onClick={() => setSearchOpen(true)} aria-label="Поиск" style={{ width: 40, height: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${search ? 'var(--accent)' : 'var(--border-card)'}`, background: search ? 'var(--accent-tint)' : 'var(--bg-card)', color: search ? 'var(--accent)' : 'var(--text-secondary)', borderRadius: 10, cursor: 'pointer' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></svg>
-            </button>
-            <button onClick={() => setFiltersOpen(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${activeFilterCount > 0 ? 'var(--accent)' : 'var(--border-card)'}`, background: 'var(--bg-card)', borderRadius: 10, padding: '0 13px', height: 40, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" style={stroke}><path d="M3 5h18M6 12h12M10 19h4" /></svg>
-              Фильтры{activeFilterCount > 0 && <span style={{ background: 'var(--accent-tint)', color: 'var(--accent)', borderRadius: 8, padding: '0 6px', fontFamily: MONO, fontSize: 11, fontWeight: 700 }}>{activeFilterCount}</span>}
-            </button>
-            <button onClick={downloadExport} aria-label="Выгрузить" style={{ width: 40, height: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', borderRadius: 10, cursor: 'pointer' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* список по группам */}
-      {loading && !rows.length ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Загрузка…</div>
-        : groups.length === 0 ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Нет операций по фильтрам</div>
-          : groups.map(g => (
-            <div key={g.key} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '2px 4px' }}>
-                <span style={{ ...monoLbl, fontSize: 11, color: 'var(--text-secondary)', fontWeight: 700 }}>{fmtPeriodGroup(g.key)}</span>
-                <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-faint)' }}>{g.ops.length} оп. · {fmt(g.turnover)} ₽</span>
-              </div>
-              {g.ops.map(o => (
-                <OpCard key={o.id} o={o} artName={artName} cpName={cpName} open={expandedId === o.id}
-                  onToggle={() => setExpandedId(id => id === o.id ? null : o.id)} onEdit={openEdit} onCopy={openCopy} />
-              ))}
-            </div>
-          ))}
-
-      {/* показать ещё */}
-      {rows.length < total && (
-        <button onClick={() => setPageSize(p => (p < 100 ? 100 : p < 300 ? 300 : p < 500 ? 500 : p + 500))} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, padding: '13px', fontSize: 13, fontWeight: 700, color: 'var(--accent)', cursor: 'pointer', fontFamily: UI }}>Показать ещё · {rows.length} из {new Intl.NumberFormat('ru-RU').format(total)}</button>
-      )}
+        )}
+        renderCard={(o, open, toggle) => (
+          <OpCard o={o} artName={artName} cpName={cpName} open={open} onToggle={toggle} onEdit={openEdit} onCopy={openCopy} />
+        )}
+        emptyText="Нет операций по фильтрам"
+        hasMore={rows.length < total}
+        onMore={() => setPageSize(p => (p < 100 ? 100 : p < 300 ? 300 : p < 500 ? 500 : p + 500))}
+        moreLabel={`Показать ещё · ${rows.length} из ${new Intl.NumberFormat('ru-RU').format(total)}`}
+      />
 
       {/* плавающая кнопка + */}
       {canEdit && (
@@ -326,6 +293,6 @@ export default function OperationsMobile({
         <OperationForm initial={form.initial} editId={form.editId} articles={articles} counterparties={counterparties}
           onClose={() => setForm(null)} onSave={onSave} onDelete={onDelete} />
       )}
-    </div>
+    </>
   )
 }

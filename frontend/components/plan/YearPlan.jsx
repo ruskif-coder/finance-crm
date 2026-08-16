@@ -180,7 +180,7 @@ export default function YearPlan({
   onSave, onMatch, saving = false, matching = false, savedAt = '', readOnly = false,
   reps = [], repValue = null, onRep = () => {}, ownRepId = null, isMaster = false,
   mode = 'edit', allData = [], onVerifyPassword, onAddTargeting,
-  onConveyorPreview, onConveyorApply,
+  onConveyorPreview, onConveyorApply, onExport,
 }) {
   const [groups, setGroups] = useState(initial);
   const [pendingDel, setPendingDel] = useState(null);   // { kind:'group'|'brand', gid, bid, label }
@@ -653,6 +653,8 @@ export default function YearPlan({
               {groups.map(g => {
                 const plan = g.brands.reduce((a, b) => a + b.plan, 0);
                 const emptyAdv = !g.adv_id;
+                // Группа считается сохранённой, как только у любой её строки есть line_id.
+                const advLocked = g.brands.some(b => b.line_id);
                 return (
                   <div key={g.id} style={{ display: 'flex', flexDirection: 'column' }}>
                     {/* строка рекламодателя */}
@@ -665,10 +667,15 @@ export default function YearPlan({
                       <span style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
                         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 6, background: T.accentTint, color: T.accent, fontSize: 8, flex: '0 0 18px' }}>{g.open ? '▲' : '▼'}</span>
                         <span data-pop-root style={{ position: 'relative', minWidth: 0 }}>
-                          <span onClick={e => { stop(e); if (!readOnly) toggleSel('g' + g.id); }} style={{ display: 'inline-block', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'middle', fontSize: 13, fontWeight: 700, color: emptyAdv ? T.warning : T.t1, cursor: readOnly ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
-                            {g.adv || 'выберите рекламодателя'} {!readOnly && <span style={{ color: T.t4, fontSize: 9 }}>▾</span>}
+                          {/* Рекламодатель меняется только у НЕсохранённой группы — как и бренд.
+                              У сохранённой строки к нему привязаны услуги, суммы, бриф и сделки;
+                              смена назначения делается удалением строки (бэкенд вернёт 400). */}
+                          <span onClick={e => { stop(e); if (!readOnly && !advLocked) toggleSel('g' + g.id); }}
+                            title={advLocked ? 'Рекламодатель сохранённой строки не меняется — удалите строку и заведите у нужного' : undefined}
+                            style={{ display: 'inline-block', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'middle', fontSize: 13, fontWeight: 700, color: emptyAdv ? T.warning : T.t1, cursor: (readOnly || advLocked) ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+                            {g.adv || 'выберите рекламодателя'} {!readOnly && !advLocked && <span style={{ color: T.t4, fontSize: 9 }}>▾</span>}
                           </span>
-                          {sel === ('g' + g.id) && (
+                          {sel === ('g' + g.id) && !advLocked && (
                             <Popover minWidth={260}>
                               <input autoFocus value={optSearch} onChange={e => setOptSearch(e.target.value)} placeholder="Поиск рекламодателя"
                                 style={{ width: '100%', boxSizing: 'border-box', margin: '0 0 4px', padding: '7px 9px', borderRadius: 8, border: `1px solid ${T.border}`, fontSize: 12, outline: 'none', fontFamily: T.sans }} />
@@ -724,6 +731,17 @@ export default function YearPlan({
                       })}
                       <span />
                       <span style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 4 }}>
+                        {/* Годовой МП в Excel: сводная + бриф + лист на каждый месяц с закупкой.
+                            Выгрузка идёт по ПЛАНУ целиком (рекламодатель + все его бренды),
+                            поэтому кнопка живёт в строке рекламодателя, а не на бренде.
+                            Доступна и в режиме просмотра — это чтение, а не правка. */}
+                        {onExport && g.adv_id && (
+                          <span title={dirty ? 'Сохраните план перед выгрузкой' : `Выгрузить годовой МП «${g.adv}» (${g.brands.length} бренд(ов)) в Excel`}
+                            onClick={dirty ? undefined : e => { stop(e); onExport(g.adv_id, g.adv); }}
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 8, cursor: dirty ? 'default' : 'pointer', background: T.card, border: `1px solid ${T.border}`, color: T.t3, opacity: dirty ? 0.5 : 1 }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5" /><path d="M12 15V3" /></svg>
+                          </span>
+                        )}
                         {!readOnly && g.adv_id && (
                           <span title={dirty ? 'Сохраните план перед созданием сделок' : `Создать сделки по всем брендам «${g.adv}»`}
                             onClick={dirty ? undefined : e => { stop(e); startConveyor({ advertiser_id: g.adv_id }, `Рекламодатель «${g.adv}»`); }}
@@ -871,7 +889,7 @@ export default function YearPlan({
                                               <span style={{ ...colHead, padding: '4px 10px 6px' }}>Сделки · {b.brand || 'бренд'}</span>
                                               {dr.map((d, k) => (
                                                 <div key={k} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '3px 10px' }}>
-                                                  <a href={`/deals/${encodeURIComponent(d.code)}`} target="_blank" rel="noreferrer" onClick={stop}
+                                                  <a href={`/sales/deals/${encodeURIComponent(d.code)}`} target="_blank" rel="noreferrer" onClick={stop}
                                                     style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent, textDecoration: 'none', flex: '0 0 auto' }}>{d.code}</a>
                                                   <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T.t4, flex: '1 1 auto' }}>{MONTHS[d.month]} · {d.closed ? 'факт' : 'бронь'}</span>
                                                   <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: d.closed ? T.factText : T.t3, flex: '0 0 auto' }}>{num(d.amount)} ₽</span>
@@ -918,7 +936,7 @@ export default function YearPlan({
                                     {deals.length > 0 && (
                                       <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                                         {deals.map(d => (
-                                          <a key={d[0]} href={`/deals/${encodeURIComponent(d[0])}`} target="_blank" rel="noreferrer" onClick={stop}
+                                          <a key={d[0]} href={`/sales/deals/${encodeURIComponent(d[0])}`} target="_blank" rel="noreferrer" onClick={stop}
                                             title={`Сделка ${d[0]} · ${num(d[1])} ₽ · ${d[2] ? 'закрыта' : 'бронь'} — открыть`}
                                             style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '1px 4px', borderRadius: 5, background: d[2] ? T.onBg : '#F0F2F7', color: d[2] ? T.factText : T.t3, fontFamily: T.mono, fontSize: 8.5, fontWeight: 700, textDecoration: 'none' }}>
                                             {d[0]} · {kk(d[1])}

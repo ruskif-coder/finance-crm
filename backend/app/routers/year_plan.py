@@ -255,6 +255,65 @@ def update_plan(plan_id: int, payload: PlanPatch, db: Session = Depends(get_db),
     return _plan_out(plan)
 
 
+@router.get("/export.xlsx")
+def export_year_xlsx(year: int, advertiser_id: int, rep_id: Optional[int] = None,
+                     db: Session = Depends(get_db), current_user: User = Depends(YP_VIEW)):
+    """Годовая выгрузка: сводная + бриф + лист на каждый месяц с закупкой.
+
+    Единица выгрузки — РЕКЛАМОДАТЕЛЬ за год, со всеми его брендами (см.
+    docs/SPEC_годовой_МП_в_Excel.md). Именно так устроена страница годового плана:
+    строка = рекламодатель, внутри бренды. Выгружать по плану/пакету нельзя — бренды
+    одного рекламодателя могут лежать в РАЗНЫХ планах (их заводили в разное время),
+    и тогда в книгу попал бы только один бренд из трёх."""
+    import os
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from types import SimpleNamespace
+    from urllib.parse import quote
+    from app.year_mp_export import build_workbook
+    from app.routers.media_plans import TEMPLATE_PATH, _names
+
+    eff_rep, _master = _resolve_rep(db, current_user, rep_id)
+    q = (db.query(SalesYearPlanLine)
+         .filter(SalesYearPlanLine.year == year,
+                 SalesYearPlanLine.advertiser_id == advertiser_id))
+    q = q.filter(SalesYearPlanLine.sales_rep_id == eff_rep) if eff_rep is not None \
+        else q.filter(SalesYearPlanLine.sales_rep_id.is_(None))
+    lines = q.order_by(SalesYearPlanLine.sort_order, SalesYearPlanLine.id).all()
+    if not lines:
+        raise HTTPException(status_code=404, detail="У рекламодателя нет строк плана на этот год")
+    adv = db.get(SalesAdvertiser, advertiser_id)
+    adv_name = (adv.short_name or adv.name) if adv else f"#{advertiser_id}"
+    # Заголовок берём у плана-пакета только если он один: при нескольких планах его
+    # название описывает лишь часть брендов и вводило бы в заблуждение.
+    plan_ids = {l.plan_id for l in lines if l.plan_id}
+    plan_title = None
+    if len(plan_ids) == 1:
+        p0 = db.get(SalesYearPlan, next(iter(plan_ids)))
+        plan_title = p0.title if p0 else None
+    plan = SimpleNamespace(id=advertiser_id, year=year, advertiser_id=advertiser_id,
+                           title=plan_title or f"{adv_name} · {year}")
+    tpl = os.path.abspath(TEMPLATE_PATH)
+    if not os.path.exists(tpl):
+        raise HTTPException(status_code=500, detail="Нет шаблона медиаплана")
+    wb, data = build_workbook(db, plan, lines, {s.id: s for s in db.query(SalesService).all()},
+                              {a.id: a for a in db.query(SalesAddonService).all()},
+                              _names(db), tpl, SALES_VAT_RATE)
+    if not data["months"]:
+        raise HTTPException(status_code=400, detail="В плане нет месяцев с закупкой")
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    log_action(db, current_user, "year_plan_export", "year_plan", advertiser_id,
+               f"{adv_name} · {year}, брендов: {len(data['brands'])}, месяцев: {len(data['months'])}")
+    name = f"Годовой_МП_{year}_{adv_name}".replace(" ", "_")
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f"attachment; filename=year_plan_{advertiser_id}_{year}.xlsx; "
+                 f"filename*=UTF-8''{quote(name)}.xlsx"})
+
+
 @router.delete("/plans/{plan_id}")
 def delete_plan(plan_id: int, db: Session = Depends(get_db),
                 current_user: User = Depends(YP_EDIT)):
@@ -275,6 +334,25 @@ def delete_plan(plan_id: int, db: Session = Depends(get_db),
     log_action(db, current_user, "year_plan_delete", "year_plan", plan_id,
                f"{plan.title}, строк: {len(line_ids)}")
     return {"ok": True, "deleted_lines": len(line_ids)}
+
+
+def _guard_advertiser_change(db, row: SalesYearPlanLine, new_adv):
+    """Запрет смены рекламодателя у СОХРАНЁННОЙ строки — как и у бренда.
+
+    Назначение строки меняется только через удаление: рекламодатель — это то, чему
+    принадлежат её услуги, суммы, бриф и привязанные сделки. Раньше смена молча
+    проходила обычным setattr и рвала сразу несколько связей: сделки оставались
+    привязанными к строке (факт и бронь уходили чужому рекламодателю), бренд
+    обнулялся при живых услугах и суммах, а пакет sales_year_plans оставался на
+    прежнем рекламодателе — строка и пакет расходились."""
+    if new_adv is None or new_adv == row.advertiser_id:
+        return
+    deals = db.query(SalesDeal.id).filter(SalesDeal.year_plan_line_id == row.id).count()
+    raise HTTPException(status_code=400, detail=(
+        "Нельзя сменить рекламодателя у сохранённой строки плана"
+        + (f" (привязано сделок: {deals})" if deals else "")
+        + ". Услуги, суммы, бриф и сделки строки принадлежат прежнему рекламодателю — "
+          "удалите строку и заведите её у нужного."))
 
 
 # ── сохранение строк (upsert-by-id, FK-safe) ─────────────────────────────
@@ -328,6 +406,7 @@ def save_year_plan(payload: SaveIn, db: Session = Depends(get_db),
             sort_order=ln.sort_order if ln.sort_order else i)
         row = existing.get(ln.id) if ln.id else None
         if row is not None:
+            _guard_advertiser_change(db, row, ln.advertiser_id)
             for f, v in fields.items():
                 setattr(row, f, v)
             seen.add(row.id)
@@ -558,28 +637,21 @@ def _product_label(line, m, svc, add, items=None) -> str:
     return ""
 
 
-def _build_mp(db, deal, line, m, svc, add, created_by, items=None):
-    """Собирает МП (голова + строки размещений + доп услуги) из услуг месяца, брифа и прогноза.
-    items — услуги конкретной сделки месяца (группа «+ сделка»); None = весь месяц.
-    Прогноз каждой строки идёт с поправкой на сезонный коэффициент месяца."""
-    b = line.brief or {}
+def mp_parts(line, m, svc, add, items=None) -> tuple:
+    """Строки размещений и доп. услуг месяца — БЕЗ записи в базу.
+
+    Единственный источник правды для «как из годового плана получается МП»: им
+    пользуется и конвейер сделок (_build_mp), и годовая выгрузка в Excel. Держать
+    две копии этой арифметики нельзя — выгрузка разъедется со сделками.
+
+    Возвращает (rows, extras) словарями в том же виде, в каком их отдаёт
+    media_plans._plan_full, чтобы рендер шаблона принимал их без переходника.
+    """
     period = f"{line.year}-{m + 1:02d}"
-    pf, pt = _pbounds(period)
     mp_items = _month_items(line, m) if items is None else items
-    net = _intended_amount(line, m, mp_items)
     k = _season_k(line, m)
-    mp = SalesMediaPlan(
-        version=1, status="draft", title=deal.title,
-        advertiser_id=line.advertiser_id, brand_id=line.brand_id, agency_id=b.get("agency_id"),
-        payer_counterparty_id=b.get("payer_counterparty_id"), period=period, geo_id=b.get("geo_id"),
-        date_from=pf, date_to=pt, targeting=b.get("targeting") or {}, goals={},
-        sales_rep_id=b.get("sales_rep_id"), account_manager_id=b.get("account_manager_id"),
-        amount_net=net, amount_gross=round(net * (1 + SALES_VAT_RATE), 2),
-        deal_id=deal.id, created_by=created_by)
-    db.add(mp); db.flush()
-    mp.group_id = mp.id
     fc = line.service_forecast or {}
-    order = 0
+    rows, extras = [], []
     for it in mp_items:
         if it.get("type") == "addon":
             a = add.get(it["ref_id"])
@@ -588,9 +660,8 @@ def _build_mp(db, deal, line, m, svc, add, created_by, items=None):
             # конструктор считает доп. услугу нулём и итог МП расходится с суммой сделки.
             charged = float(it.get("amount") or 0)
             base = float((a.unit_price if a else None) or charged)
-            db.add(SalesMediaPlanExtra(plan_id=mp.id, sort_order=order, name=(a.name if a else None),
-                                       period=period, mode=it.get("mode", "full"),
-                                       price=base, total=charged))
+            extras.append({"name": (a.name if a else None), "period": period,
+                           "mode": it.get("mode", "full"), "price": base, "total": charged})
         else:
             s = svc.get(it["ref_id"])
             # inventory строго по прайсу услуги: раздельный → web/app (как выбрали), иначе cross
@@ -607,12 +678,38 @@ def _build_mp(db, deal, line, m, svc, add, created_by, items=None):
                 volume = amt / price * (1000 if model == "CPM" else 1)
             else:
                 volume = float(it.get("units") or 0)
-            db.add(SalesMediaPlanRow(plan_id=mp.id, sort_order=order, position=(s.name if s else None),
-                                     format=(s.placement_type if s else None),
-                                     model=(s.calc_form if s else None),
-                                     inventory=inv, volume=volume, unit_price=price, discount=0,
-                                     forecast=_apply_season(fc.get(f"service:{it['ref_id']}") or {}, k)))
-        order += 1
+            rows.append({"position": (s.name if s else None),
+                         "format": (s.placement_type if s else None),
+                         "model": (s.calc_form if s else None),
+                         "inventory": inv, "volume": volume, "unit_price": price, "discount": 0,
+                         "forecast": _apply_season(fc.get(f"service:{it['ref_id']}") or {}, k)})
+    return rows, extras
+
+
+def _build_mp(db, deal, line, m, svc, add, created_by, items=None):
+    """Собирает МП (голова + строки размещений + доп услуги) из услуг месяца, брифа и прогноза.
+    items — услуги конкретной сделки месяца (группа «+ сделка»); None = весь месяц.
+    Прогноз каждой строки идёт с поправкой на сезонный коэффициент месяца."""
+    b = line.brief or {}
+    period = f"{line.year}-{m + 1:02d}"
+    pf, pt = _pbounds(period)
+    mp_items = _month_items(line, m) if items is None else items
+    net = _intended_amount(line, m, mp_items)
+    mp = SalesMediaPlan(
+        version=1, status="draft", title=deal.title,
+        advertiser_id=line.advertiser_id, brand_id=line.brand_id, agency_id=b.get("agency_id"),
+        payer_counterparty_id=b.get("payer_counterparty_id"), period=period, geo_id=b.get("geo_id"),
+        date_from=pf, date_to=pt, targeting=b.get("targeting") or {}, goals={},
+        sales_rep_id=b.get("sales_rep_id"), account_manager_id=b.get("account_manager_id"),
+        amount_net=net, amount_gross=round(net * (1 + SALES_VAT_RATE), 2),
+        deal_id=deal.id, created_by=created_by)
+    db.add(mp); db.flush()
+    mp.group_id = mp.id
+    rows, extras = mp_parts(line, m, svc, add, mp_items)
+    for order, r in enumerate(rows):
+        db.add(SalesMediaPlanRow(plan_id=mp.id, sort_order=order, **r))
+    for order, e in enumerate(extras):
+        db.add(SalesMediaPlanExtra(plan_id=mp.id, sort_order=order, **e))
     return mp
 
 

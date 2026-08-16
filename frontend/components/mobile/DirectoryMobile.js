@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
+import { RISE_KEYFRAMES, rise } from './kit'
 
 // Общий мобильный шелл справочников (§2 хендоффа «Справочник контрагентов»):
 // тулбар с раскрывающимся поиском · строка фильтр-чипов + синяя «+» ·
-// карточки с одиночным раскрытием (riseIn) · подвал «Показать ещё».
+// карточки с одиночным раскрытием (rise() из kit) · подвал «Показать ещё».
 // Контент карточки задаёт страница через renderCard(row, expanded, toggle).
 const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }
 
@@ -12,15 +13,19 @@ export default function DirectoryMobile({
   search, setSearch, searchPlaceholder = 'поиск…',
   filterChips, onAdd,
   rows, renderCard, keyOf = (r) => r.id,
+  groups, renderGroupHeader,
   hasMore, onMore, moreLabel = 'Показать ещё',
   emptyText = 'Ничего не найдено',
+  countLabel,
 }) {
   const [expandedId, setExpandedId] = useState(null)
   const [searchOpen, setSearchOpen] = useState(false)
+  const rowList = rows || []
+  const hasContent = groups ? groups.length > 0 : rowList.length > 0
 
   return (
     <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12, fontFamily: UI, paddingBottom: 90 }}>
-      <style>{`@keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){[style*="animation"]{animation:none!important}}`}</style>
+      <style>{RISE_KEYFRAMES}</style>
 
       {/* тулбар */}
       {searchOpen ? (
@@ -35,7 +40,7 @@ export default function DirectoryMobile({
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 19, fontWeight: 700, color: 'var(--text-primary)' }}>{title}</span>
-          <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{new Intl.NumberFormat('ru-RU').format(shownCount)} из {new Intl.NumberFormat('ru-RU').format(total)}</span>
+          <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{countLabel !== undefined ? countLabel : `${new Intl.NumberFormat('ru-RU').format(shownCount)} из ${new Intl.NumberFormat('ru-RU').format(total)}`}</span>
           <button onClick={() => setSearchOpen(true)} aria-label="Поиск" style={{ marginLeft: 'auto', width: 40, height: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${search ? 'var(--accent)' : 'var(--border-card)'}`, background: search ? 'var(--accent-tint)' : 'var(--bg-card)', color: search ? 'var(--accent)' : 'var(--text-secondary)', borderRadius: 10, cursor: 'pointer' }}>
             <svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></svg>
           </button>
@@ -52,17 +57,34 @@ export default function DirectoryMobile({
         </div>
       )}
 
-      {/* список карточек */}
-      {loading && !rows.length ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Загрузка…</div>
-        : !rows.length ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{emptyText}</div>
-          : rows.map((r, i) => {
-            const id = keyOf(r)
-            return (
-              <div key={id} style={{ animation: `riseIn .4s ease both`, animationDelay: `${Math.min(i, 6) * 0.07}s` }}>
-                {renderCard(r, expandedId === id, () => setExpandedId(x => x === id ? null : id))}
+      {/* список карточек (плоский или по группам, если передан проп groups) */}
+      {loading && !total ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Загрузка…</div>
+        : !hasContent ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{emptyText}</div>
+          : groups ? (() => {
+            let flatIndex = -1
+            return groups.map((g) => (
+              <div key={g.key} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {renderGroupHeader && renderGroupHeader(g)}
+                {g.rows.map((r) => {
+                  flatIndex += 1
+                  const id = keyOf(r)
+                  return (
+                    <div key={id} style={rise(flatIndex)}>
+                      {renderCard(r, expandedId === id, () => setExpandedId(x => x === id ? null : id))}
+                    </div>
+                  )
+                })}
               </div>
-            )
-          })}
+            ))
+          })()
+            : rowList.map((r, i) => {
+              const id = keyOf(r)
+              return (
+                <div key={id} style={rise(i)}>
+                  {renderCard(r, expandedId === id, () => setExpandedId(x => x === id ? null : id))}
+                </div>
+              )
+            })}
 
       {/* показать ещё */}
       {hasMore && (
