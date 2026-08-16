@@ -20,29 +20,42 @@
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-# Палитра макета (см. README хендоффа, раздел Design Tokens).
-NAVY_900, NAVY_800, NAVY_700 = "0A1433", "0F1C48", "14265E"
-TINT_200, TINT_100, TINT_150 = "DFE4F0", "EEF1F8", "E3E8F4"
-GREY_075, GREY_INACTIVE, BORDER = "F4F5F8", "F7F7F8", "C6C8CC"
-TEXT_MUTED = "6F7480"
+# Палитра причёсанного макета (эталон — «Годовой_МП_2026_BINNO», сверен 2026-08-16).
+# HEAD/GREY/WHITE в эталоне заданы тема-цветами книги (theme3 и theme0 с tint −0.05);
+# здесь они разрешены в конкретный RGB, чтобы вид не зависел от темы шаблона.
+HEAD = "1F497D"          # шапки таблиц и подытоги брендов
+NAVY_700 = "14265E"      # заголовки разделов и полосы брендов
+GREY_BG, WHITE = "F2F2F2", "FFFFFF"
+TEXT, TEXT_MUTED, TEXT_SOFT = "1A1A1A", "6F7480", "4A4A4A"
 
 MONTHS_SHORT = ["янв", "фев", "мар", "апр", "май", "июн",
                 "июл", "авг", "сен", "окт", "ноя", "дек"]
 MONTHS_HDR = [m.capitalize() for m in MONTHS_SHORT]
 QUARTERS = ["I кв", "II кв", "III кв", "IV кв"]
 
-MONEY = "# ##0"
-INT = "# ##0"
+# Числовые форматы эталона. ACC — бухгалтерский (разряды выровнены по колонке,
+# ноль показывается прочерком), MONEY — простой разрядный для клеток месяцев,
+# RUB — крупные итоги с рублём, PCT — доля бренда.
+MONEY = "#\\ ##0"
+INT = "#\\ ##0"
+ACC = '_-* #,##0_-;\\-* #,##0_-;_-* "-"??_-;_-@_-'
+RUB = '_-* #,##0\\ "₽"_-;\\-* #,##0\\ "₽"_-;_-* "-"??\\ "₽"_-;_-@_-'
+PCT = "#,#00%"
 
-_thin = Side(style="thin", color=BORDER)
-BOX = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
+# Рамка — пунктир: в эталоне сетка нарочно приглушена, чтобы читались цифры,
+# а не линовка. Толстая нижняя черта отбивает заголовок раздела от его таблицы.
+_dash = Side(style="dashed")
+BOX = Border(left=_dash, right=_dash, top=_dash, bottom=_dash)
+UNDERLINE = Border(bottom=Side(style="medium"))
 
-# Матрица: A — «Бренд / услуга», B..M — месяцы, N — итог за год.
-C_NAME, C_JAN, C_TOTAL = 1, 2, 14
+# Лист с полями: A и P — узкие пустые колонки. Матрица: B — «Бренд / услуга»,
+# C..N — месяцы, O — итог за год.
+C_NAME, C_JAN, C_TOTAL = 2, 3, 15
+C_PAD_L, C_PAD_R = 1, 16
 
 
-def _f(size=11, bold=False, color="1A1A1A"):
-    return Font(name="Arial", size=size, bold=bold, color=color)
+def _f(size=11, bold=False, color=TEXT):
+    return Font(name="Calibri Light", size=size, bold=bold, color=color)
 
 
 def _put(ws, r, c, v=None, font=None, fill=None, align=None, fmt=None, border=BOX):
@@ -149,12 +162,53 @@ def collect(db, lines, svc, add, names) -> dict:
 
 
 # ── лист «Сводная» ───────────────────────────────────────────────────────
+def _span(ws, r, c1, c2, v=None, font=None, fill=None, align=None, fmt=None, border=BOX):
+    """Объединение с прокраской всей ширины: у MergedCell стиль ставится поячеечно,
+    иначе заливка и рамка остаются только на первой клетке."""
+    if c2 > c1:
+        ws.merge_cells(start_row=r, end_row=r, start_column=c1, end_column=c2)
+    for c in range(c1, c2 + 1):
+        _put(ws, r, c, None, font=font, fill=fill, align=align, border=border)
+    return _put(ws, r, c1, v, font=font, fill=fill, align=align, fmt=fmt, border=border)
+
+
+def _wash(ws, last_col, pad=2):
+    """Залить лист серым до последней заполненной строки.
+
+    Подложка — общий фон обеих вкладок: белым остаются только клетки с данными и
+    итоговые строки, за счёт чего таблицы читаются как карточки на сером поле, а
+    не как сетка. Красим последним шагом и только там, где заливки ещё нет, —
+    иначе затрёт белые ячейки и акцентные шапки.
+    """
+    for r in range(1, ws.max_row + pad + 1):
+        for c in range(1, last_col + 1):
+            cell = ws.cell(r, c)
+            if not cell.fill.patternType:
+                cell.fill = PatternFill("solid", fgColor=GREY_BG)
+
+
+def _caption(ws, r, c1, c2, text, rule_to=None):
+    """Заголовок раздела: капс, толстая нижняя черта, светлая подложка.
+
+    rule_to — докуда тянуть черту, если она шире объединения заголовка: у сводки
+    по брендам подпись занимает не всю таблицу, а черта обязана дойти до её края,
+    иначе обрывается на середине.
+    """
+    cap = _span(ws, r, c1, c2, text, font=_f(12, True, NAVY_700), fill=GREY_BG,
+                align=LEFT, border=UNDERLINE)
+    for c in range(c2 + 1, (rule_to or c2) + 1):
+        _put(ws, r, c, None, fill=GREY_BG, border=UNDERLINE)
+    return cap
+
+
 def sheet_summary(ws, plan, data, names, vat_rate):
     ws.sheet_view.showGridLines = False
-    ws.column_dimensions["A"].width = 34
+    ws.column_dimensions[get_column_letter(C_PAD_L)].width = 2.9
+    ws.column_dimensions[get_column_letter(C_NAME)].width = 35.6
     for c in range(C_JAN, C_JAN + 12):
         ws.column_dimensions[get_column_letter(c)].width = 13
     ws.column_dimensions[get_column_letter(C_TOTAL)].width = 15
+    ws.column_dimensions[get_column_letter(C_PAD_R)].width = 2.8
 
     adv = names["adv"].get(plan.advertiser_id) or "—"
     brands = data["brands"]
@@ -165,190 +219,247 @@ def sheet_summary(ws, plan, data, names, vat_rate):
             agency = a
             break
 
-    # ── шапка
-    ws.merge_cells(start_row=1, end_row=1, start_column=1, end_column=C_TOTAL)
-    _put(ws, 1, 1, f"Сводный медиаплан · {plan.year} · {adv}",
-         font=_f(16, True, NAVY_700), align=LEFT, border=None)
-    ws.merge_cells(start_row=2, end_row=2, start_column=1, end_column=C_TOTAL)
-    _put(ws, 2, 1,
-         f"SIMB-AD · {agency} · брендов: {len(brands)} · суммы в таблицах до НДС",
-         font=_f(10, color="3D3D3D"), align=LEFT, border=None)
+    _header_band(ws, plan, adv, agency, len(brands))
 
-    r = 4
-    # ── блок идентификации плана
-    _put(ws, r, 1, "ПЛАН", font=_f(11, True, NAVY_700), align=LEFT)
+    # ── три блока в один ряд: ПЛАН · СВОДКА ПО БРЕНДАМ · ИТОГО ЗА ГОД.
+    # Раскладка эталона: справочные данные читаются одним взглядом, а матрица
+    # ниже начинается сразу под самым высоким из блоков.
+    _caption(ws, 9, C_NAME, C_NAME + 1, "ПЛАН")
+    _caption(ws, 9, 5, 9, "СВОДКА ПО БРЕНДАМ ЗА ГОД", rule_to=10)
+    _caption(ws, 9, 12, C_TOTAL, "ИТОГО ЗА ГОД")
+    ws.row_dimensions[9].height = 15
+
     ident = [("Агентство", agency), ("Рекламодатель", adv), ("Брендов", len(brands)),
-             ("Период размещения", f"{plan.year}-01 — {plan.year}-12"),
-             ("Месяцев с закупкой", len(data["months"]))]
+             ("Период размещения", f"{plan.year}-01 — {plan.year}-12")]
     for i, (k, v) in enumerate(ident):
-        _put(ws, r + 1 + i, 1, k, font=_f(10, True), align=LEFT)
-        _put(ws, r + 1 + i, 2, v, font=_f(10), align=LEFT)
-    ws.column_dimensions["B"].width = 16
+        _put(ws, 10 + i, C_NAME, k, font=_f(10, True), fill=GREY_BG, align=LEFT)
+        _put(ws, 10 + i, C_NAME + 1, v, font=_f(10), fill=GREY_BG, align=LEFT)
 
-    matrix_top = r + len(ident) + 3
-    total_row = _matrix(ws, matrix_top, brands, data["months"])
+    summary_bottom = _brand_summary(ws, 10, brands, data["months"])
 
-    # ── ИТОГО за год (ссылается на строку портфеля — пересчитается вместе с ней)
+    matrix_top = max(13, summary_bottom) + 2
+    total_row = _matrix(ws, matrix_top, brands)
+
+    # ── ИТОГО ЗА ГОД: ссылки на строку портфеля, поэтому блок пишется после
+    # матрицы, хотя стоит выше неё.
     tl = get_column_letter(C_TOTAL)
-    r2 = total_row + 2
-    _put(ws, r2, 1, "ИТОГО ЗА ГОД", font=_f(11, True, NAVY_700), align=LEFT)
     extras_sum = sum(e["total"] for e in data["extras"])
     net_ref = f"{tl}{total_row}" + (f"+{_num(extras_sum)}" if extras_sum else "")
-    for i, (k, formula, fmt) in enumerate([
-            ("Стоимость до НДС", f"={net_ref}", MONEY),
-            (f"НДС {round(vat_rate * 100)}%", f"=({net_ref})*{vat_rate}", MONEY),
-            ("Стоимость с НДС", f"=({net_ref})*{1 + vat_rate}", MONEY)]):
-        _put(ws, r2 + 1 + i, 1, k, font=_f(10, True), align=LEFT)
-        _put(ws, r2 + 1 + i, 2, formula, font=_f(10, True), align=RIGHT, fmt=fmt,
-             fill=TINT_100 if i == 2 else None)
+    for i, (k, formula) in enumerate([
+            ("Стоимость до НДС", f"={net_ref}"),
+            (f"НДС {round(vat_rate * 100)}%", f"=({net_ref})*{vat_rate}"),
+            ("Стоимость с НДС", f"=({net_ref})*{1 + vat_rate}")]):
+        r = 11 + i
+        _span(ws, r, 12, 13, k, font=_f(12, True), fill=GREY_BG, align=RIGHT)
+        # Белая плашка под крупной суммой: подложка листа серая, и цифра, ради
+        # которой открывают лист, должна с неё выступать.
+        _span(ws, r, 14, C_TOTAL, formula, font=_f(14, color="000000"), fill=WHITE,
+              align=CTR, fmt=RUB)
 
-    r3 = r2 + 5
     if data["extras"]:
-        r3 = _extras_table(ws, r3, data["extras"]) + 2
-    _brand_summary(ws, r3, brands, data["months"])
+        _extras_table(ws, total_row + 3, data["extras"])
+    _wash(ws, C_PAD_R)
 
 
 def _num(x):
-    return f"{round(x, 2)}"
+    """Число в текст формулы. Целое — без «.0»: сумма доп. услуг попадает прямо в
+    формулу ИТОГО, и хвост дробной части там просто мусор перед глазами."""
+    v = round(x, 2)
+    return str(int(v)) if v == int(v) else str(v)
 
 
-def _matrix(ws, top, brands, months):
+def _header_band(ws, plan, adv, agency, n_brands):
+    """Шапка листа: полоса на всю ширину, слева место под логотип, справа —
+    название и подпись. Отбита сверху тонкой, снизу толстой линией."""
+    for r in range(1, 7):
+        for c in range(C_PAD_L, C_PAD_R + 1):
+            _put(ws, r, c, None, fill=GREY_BG, border=None)
+        ws.row_dimensions[r].height = 14.4
+    for c in range(C_NAME, C_TOTAL + 1):
+        _put(ws, 1, c, None, fill=GREY_BG,
+             border=Border(top=Side(style="thin"), bottom=Side(style="medium")))
+        _put(ws, 6, c, None, fill=GREY_BG, border=UNDERLINE)
+    ws.row_dimensions[6].height = 15
+
+    # Логотип — та же картинка и тот же якорь, что на месячных листах (B3):
+    # openpyxl теряет встроенные изображения при round-trip, поэтому лого не живёт
+    # в шаблоне, а вставляется на каждый рендер.
+    from app.routers.media_plans import _insert_logo
+    ws.merge_cells(start_row=3, end_row=5, start_column=C_NAME, end_column=C_NAME + 2)
+    _insert_logo(ws, f"{get_column_letter(C_NAME)}3")
+    ws.merge_cells(start_row=3, end_row=4, start_column=9, end_column=C_TOTAL)
+    _put(ws, 3, 9, f"Сводный медиаплан · {plan.year} · {adv}",
+         font=_f(28, True, NAVY_700), fill=GREY_BG, align=RIGHT, border=None)
+    _span(ws, 5, 9, C_TOTAL,
+          f"SIMB-AD · {agency} · брендов: {n_brands} · суммы в таблицах до НДС",
+          font=_f(10, color="3D3D3D"), fill=GREY_BG, align=RIGHT, border=None)
+
+
+def _matrix(ws, top, brands):
     """Матрица «бренд/услуга × 12 месяцев». Возвращает строку ИТОГО ПОРТФЕЛЬ."""
-    _put(ws, top - 1, 1, "БАЗОВЫЕ УСЛУГИ ПО МЕСЯЦАМ (в строке услуги — стоимость до НДС, "
-                         "ниже — объём; «—» месяц вне флайта)",
-         font=_f(10, True, NAVY_700), align=LEFT, border=None)
+    _span(ws, top, C_NAME, C_TOTAL,
+          "БАЗОВЫЕ УСЛУГИ ПО МЕСЯЦАМ (в строке услуги — стоимость до НДС, "
+          "ниже — объём; «—» месяц вне флайта)",
+          font=_f(10, True, NAVY_700), fill=GREY_BG, align=LEFT, border=UNDERLINE)
+    ws.row_dimensions[top].height = 15
 
     # шапка: кварталы + месяцы
-    _put(ws, top, 1, "Квартал", font=_f(10, True, "FFFFFF"), fill=NAVY_800, align=CTR)
+    hdr = top + 1
+    _put(ws, hdr, C_NAME, "Квартал", font=_f(10, True, WHITE), fill=HEAD, align=CTR)
     for q in range(4):
         c1 = C_JAN + q * 3
-        ws.merge_cells(start_row=top, end_row=top, start_column=c1, end_column=c1 + 2)
-        for c in range(c1, c1 + 3):
-            _put(ws, top, c, None, fill=NAVY_800)
-        _put(ws, top, c1, QUARTERS[q], font=_f(10, True, "FFFFFF"), fill=NAVY_800, align=CTR)
-    ws.merge_cells(start_row=top, end_row=top + 1, start_column=C_TOTAL, end_column=C_TOTAL)
-    _put(ws, top, C_TOTAL, "Итого за год\nдо НДС", font=_f(10, True, "FFFFFF"),
-         fill=NAVY_900, align=CTR)
-    _put(ws, top + 1, 1, "Бренд / услуга", font=_f(10, True, "FFFFFF"), fill=NAVY_700, align=CTR)
+        _span(ws, hdr, c1, c1 + 2, QUARTERS[q], font=_f(10, True, WHITE), fill=HEAD, align=CTR)
+    ws.merge_cells(start_row=hdr, end_row=hdr + 1, start_column=C_TOTAL, end_column=C_TOTAL)
+    _put(ws, hdr + 1, C_TOTAL, None, fill=HEAD)
+    _put(ws, hdr, C_TOTAL, "Итого за год\nдо НДС", font=_f(10, True, WHITE),
+         fill=HEAD, align=CTR)
+    _put(ws, hdr + 1, C_NAME, "Бренд / услуга", font=_f(10, True, WHITE), fill=HEAD, align=CTR)
     for i in range(12):
-        _put(ws, top + 1, C_JAN + i, MONTHS_HDR[i], font=_f(10, True, "FFFFFF"),
-             fill=NAVY_700, align=CTR)
+        _put(ws, hdr + 1, C_JAN + i, MONTHS_HDR[i], font=_f(10, True, WHITE),
+             fill=HEAD, align=CTR)
 
-    r = top + 2
+    r = hdr + 2
     brand_cost_rows = []
     for b in brands:
-        ws.merge_cells(start_row=r, end_row=r, start_column=1, end_column=C_TOTAL)
-        for c in range(1, C_TOTAL + 1):
-            _put(ws, r, c, None, fill=TINT_200)
-        _put(ws, r, 1, b["name"].upper(), font=_f(10, True, NAVY_700), fill=TINT_200, align=LEFT)
+        # Полоса бренда: белая с тёмно-синим капсом. Акцент здесь минимальный —
+        # выделены подытоги, а не заголовки, иначе рябит.
+        _span(ws, r, C_NAME, C_TOTAL, b["name"].upper(),
+              font=_f(10, True, NAVY_700), fill=WHITE, align=LEFT)
         r += 1
         cost_rows = []
         for s in b["services"]:
             price = s["unit_price"] or 0
             meta = f"{s['model'] or ''} {price:,.0f} ₽".replace(",", " ").strip()
             flight = flight_label([m for m in range(12) if s["cost"][m]])
-            _put(ws, r, 1, s["name"], font=_f(10, True), align=LEFT)
-            _put(ws, r + 1, 1, f"{meta} · флайт: {flight}", font=_f(8, color=TEXT_MUTED), align=LEFT)
+            _put(ws, r, C_NAME, s["name"], font=_f(10, True), fill=GREY_BG, align=LEFT)
+            _put(ws, r + 1, C_NAME, f"{meta} · флайт: {flight}",
+                 font=_f(8, color=TEXT_MUTED), fill=GREY_BG, align=LEFT)
             for i in range(12):
                 on = bool(s["cost"][i])
+                # Месяц вне флайта — прочерк по центру на подложке; месяц с закупкой —
+                # число на белом, чтобы флайт читался пятнами белого в сером поле.
                 _put(ws, r, C_JAN + i, s["cost"][i] if on else "—",
                      font=_f(10), align=RIGHT if on else CTR, fmt=MONEY if on else None,
-                     fill=None if on else GREY_INACTIVE)
+                     fill=WHITE if on else GREY_BG)
                 _put(ws, r + 1, C_JAN + i, s["vol"][i] if on else None,
                      font=_f(8, color=TEXT_MUTED), align=RIGHT, fmt=INT,
-                     fill=None if on else GREY_INACTIVE)
-            _sum_row_cell(ws, r, fill=GREY_075, bold=True)
-            _sum_row_cell(ws, r + 1, fill=GREY_075, font=_f(8, color=TEXT_MUTED), fmt=INT)
+                     fill=WHITE if on else GREY_BG)
+            _sum_row_cell(ws, r, fill=WHITE, bold=True, fmt=ACC)
+            _sum_row_cell(ws, r + 1, fill=WHITE, font=_f(8, color=TEXT_MUTED), fmt=ACC)
             cost_rows.append(r)
             r += 2
-        # подытог бренда
-        _put(ws, r, 1, f"Итого {b['name']}", font=_f(10, True, NAVY_700), fill=TINT_100, align=LEFT)
+        # подытог бренда — самая тёмная строка блока
+        _put(ws, r, C_NAME, f"Итого {b['name']}", font=_f(10, True, WHITE), fill=HEAD, align=LEFT)
         for i in range(12):
             col = get_column_letter(C_JAN + i)
             # Через список аргументов, а не через «+»: в месяцах вне флайта стоит «—»,
             # и сложение текста даёт #ЗНАЧ!, тогда как СУММ такие ячейки пропускает.
             f = ",".join(f"{col}{x}" for x in cost_rows)
             _put(ws, r, C_JAN + i, f'=IF(SUM({f})=0,"—",SUM({f}))' if cost_rows else "—",
-                 font=_f(10, True, NAVY_700), fill=TINT_100, align=RIGHT, fmt=MONEY)
-        _sum_row_cell(ws, r, fill=TINT_150, bold=True, color=NAVY_700)
+                 font=_f(10, True, WHITE), fill=HEAD, align=RIGHT, fmt=MONEY)
+        _sum_row_cell(ws, r, fill=HEAD, bold=True, color=WHITE, fmt=ACC)
         brand_cost_rows.append(r)
         r += 1
 
-    # ── ИТОГО ПОРТФЕЛЬ
-    _put(ws, r, 1, "ИТОГО ПОРТФЕЛЬ", font=_f(10, True, "FFFFFF"), fill=NAVY_700, align=LEFT)
+    # ── ИТОГО ПОРТФЕЛЬ: белая строка жирным. Инверсия к подытогам брендов —
+    # итог не спорит с ними за внимание, а закрывает таблицу.
+    _put(ws, r, C_NAME, "ИТОГО ПОРТФЕЛЬ", font=_f(10, True), fill=WHITE, align=LEFT, fmt=ACC)
     for i in range(12):
         col = get_column_letter(C_JAN + i)
         f = ",".join(f"{col}{x}" for x in brand_cost_rows)
         _put(ws, r, C_JAN + i, f'=IF(SUM({f})=0,"—",SUM({f}))' if brand_cost_rows else "—",
-             font=_f(10, True, "FFFFFF"), fill=NAVY_700, align=RIGHT, fmt=MONEY)
-    _sum_row_cell(ws, r, fill=NAVY_900, bold=True, color="FFFFFF")
+             font=_f(10, True), fill=WHITE, align=RIGHT, fmt=ACC)
+    _sum_row_cell(ws, r, fill=WHITE, bold=True, fmt=ACC)
+    ws.row_dimensions[r].height = 27
 
     # суммы кварталов в шапке — ссылками на строку портфеля
     for q in range(4):
         c1 = C_JAN + q * 3
         rng = f"{get_column_letter(c1)}{r}:{get_column_letter(c1 + 2)}{r}"
-        ws.cell(top, c1).value = f'=CONCATENATE("{QUARTERS[q]} · ",TEXT(SUM({rng}),"# ##0")," ₽")'
+        ws.cell(hdr, c1).value = f'=CONCATENATE("{QUARTERS[q]} · ",TEXT(SUM({rng}),"# ##0")," ₽")'
     return r
 
 
-def _sum_row_cell(ws, r, fill=None, bold=False, color="1A1A1A", font=None, fmt=MONEY):
+def _sum_row_cell(ws, r, fill=None, bold=False, color=TEXT, font=None, fmt=ACC):
     a, b = get_column_letter(C_JAN), get_column_letter(C_JAN + 11)
     _put(ws, r, C_TOTAL, f"=SUM({a}{r}:{b}{r})",
          font=font or _f(10, bold, color), fill=fill, align=RIGHT, fmt=fmt)
 
 
 def _extras_table(ws, r, extras):
-    _put(ws, r, 1, "ДОПОЛНИТЕЛЬНЫЕ УСЛУГИ (разово, без показов)",
-         font=_f(10, True, NAVY_700), align=LEFT, border=None)
+    """Разовые услуги под матрицей. Колонки шире матричных, поэтому позиция и
+    период растянуты объединением, а не отдельной шириной колонки."""
+    _span(ws, r, C_NAME, 11, "ДОПОЛНИТЕЛЬНЫЕ УСЛУГИ (разово, без показов)",
+          font=_f(10, True, NAVY_700), fill=GREY_BG, align=LEFT, border=UNDERLINE)
+    ws.row_dimensions[r].height = 15
     r += 1
-    for i, h in enumerate(["Источник", "Позиция", "Бренд", "Период", "Стоимость до НДС"]):
-        _put(ws, r, 1 + i, h, font=_f(10, True, "FFFFFF"), fill=NAVY_700, align=CTR)
+    hdr = _f(10, True, WHITE)
+    _put(ws, r, C_NAME, "Источник", font=hdr, fill=HEAD, align=CTR)
+    _span(ws, r, 3, 7, "Позиция", font=hdr, fill=HEAD, align=CTR)
+    _put(ws, r, 8, "Бренд", font=hdr, fill=HEAD, align=CTR)
+    _span(ws, r, 9, 10, "Период", font=hdr, fill=HEAD, align=CTR)
+    _put(ws, r, 11, "Стоимость до НДС", font=hdr, fill=HEAD, align=CTR)
+    ws.row_dimensions[r].height = 27.6
     for e in extras:
         r += 1
-        _put(ws, r, 1, "SIMB-AD", font=_f(10), align=CTR)
-        _put(ws, r, 2, e["name"], font=_f(10), align=LEFT)
-        _put(ws, r, 3, e["brand"], font=_f(10), align=LEFT)
-        _put(ws, r, 4, f"{e['period']} · разово", font=_f(10), align=CTR)
-        _put(ws, r, 5, e["total"], font=_f(10), align=RIGHT, fmt=MONEY)
+        _put(ws, r, C_NAME, "SIMB-AD", font=_f(10), fill=GREY_BG, align=CTR)
+        _span(ws, r, 3, 7, e["name"], font=_f(10), fill=GREY_BG, align=LEFT)
+        _put(ws, r, 8, e["brand"], font=_f(10), fill=GREY_BG, align=LEFT)
+        _span(ws, r, 9, 10, f"{e['period']} · разово", font=_f(10), fill=GREY_BG, align=CTR)
+        _put(ws, r, 11, e["total"], font=_f(10), fill=GREY_BG, align=RIGHT, fmt=MONEY)
     r += 1
-    _put(ws, r, 1, "ИТОГО", font=_f(10, True, NAVY_700), fill=TINT_100, align=LEFT)
-    for c in (2, 3, 4):
-        _put(ws, r, c, None, fill=TINT_100)
-    _put(ws, r, 5, f"=SUM(E{r - len(extras)}:E{r - 1})" if extras else 0,
-         font=_f(10, True, NAVY_700), fill=TINT_100, align=RIGHT, fmt=MONEY)
+    # Объединения строки ИТОГО повторяют шапку, а не сливаются в одну полосу:
+    # так колонки таблицы остаются видны до самого низа.
+    _put(ws, r, C_NAME, "ИТОГО", font=_f(10, True, NAVY_700), fill=WHITE, align=LEFT)
+    _span(ws, r, 3, 7, None, font=_f(10, True, NAVY_700), fill=WHITE, align=LEFT)
+    _put(ws, r, 8, None, font=_f(10, True, NAVY_700), fill=WHITE, align=LEFT)
+    _span(ws, r, 9, 10, None, font=_f(10, True, NAVY_700), fill=WHITE, align=LEFT)
+    _put(ws, r, 11, f"=SUM(K{r - len(extras)}:K{r - 1})" if extras else 0,
+         font=_f(10, True, NAVY_700), fill=WHITE, align=RIGHT, fmt=MONEY)
     return r
 
 
 def _brand_summary(ws, r, brands, months):
-    _put(ws, r, 1, "СВОДКА ПО БРЕНДАМ ЗА ГОД", font=_f(10, True, NAVY_700), align=LEFT, border=None)
-    r += 1
+    """Сводка по брендам — средний блок верхнего ряда. Возвращает нижнюю строку."""
     # «Объём показов» суммирует ТОЛЬКО услуги с моделью CPM: у фикса и пакетов в этой
     # же ячейке лежат штуки размещений, и сложение их с показами дало бы число, которое
     # ничего не значит.
-    for i, h in enumerate(["Бренд", "Флайты", "Объём показов (CPM)", "Стоимость до НДС", "Доля"]):
-        _put(ws, r, 1 + i, h, font=_f(10, True, "FFFFFF"), fill=NAVY_700, align=CTR)
+    hdr = _f(10, True, WHITE)
+    # Без верхней рамки: шапка стоит вплотную под толстой чертой заголовка, и
+    # пунктир сверху дал бы двойную линию.
+    nt = Border(left=_dash, right=_dash, bottom=_dash)
+    _put(ws, r, 5, "Бренд", font=hdr, fill=HEAD, align=CTR, border=nt)
+    _span(ws, r, 6, 7, "Флайты", font=hdr, fill=HEAD, align=CTR, border=nt)
+    _put(ws, r, 8, "Объём показов (CPM)", font=hdr, fill=HEAD, align=CTR, border=nt)
+    _put(ws, r, 9, "Стоимость до НДС", font=hdr, fill=HEAD, align=CTR, border=nt)
+    _put(ws, r, 10, "Доля", font=hdr, fill=HEAD, align=CTR, border=nt)
+    ws.row_dimensions[r].height = 41.4
     first = r + 1
     for b in brands:
         r += 1
+        ws.row_dimensions[r].height = 30
         active = sorted({m for s in b["services"] for m in range(12) if s["cost"][m]})
         cost = sum(sum(s["cost"]) for s in b["services"])
         vol = sum(sum(s["vol"]) for s in b["services"] if s.get("is_cpm"))
-        _put(ws, r, 1, b["name"], font=_f(10, True), align=LEFT)
-        _put(ws, r, 2, flight_label(active), font=_f(10, color="4A4A4A"), align=LEFT)
-        _put(ws, r, 3, vol, font=_f(10), align=RIGHT, fmt=INT)
-        _put(ws, r, 4, cost, font=_f(10, True), align=RIGHT, fmt=MONEY)
-        _put(ws, r, 5, None, font=_f(10), align=RIGHT, fmt="0,0%")
+        _put(ws, r, 5, b["name"], font=_f(10, True), fill=GREY_BG, align=LEFT)
+        _span(ws, r, 6, 7, flight_label(active), font=_f(9, color=TEXT_SOFT),
+              fill=GREY_BG, align=LEFT)
+        _put(ws, r, 8, vol, font=_f(9), fill=GREY_BG, align=RIGHT, fmt=ACC)
+        _put(ws, r, 9, cost, font=_f(9, True), fill=GREY_BG, align=RIGHT, fmt=ACC)
+        _put(ws, r, 10, None, font=_f(9), fill=GREY_BG, align=RIGHT, fmt=PCT)
     last = r
     for x in range(first, last + 1):
-        ws.cell(x, 5).value = f"=IF(SUM($D${first}:$D${last})=0,\"\",D{x}/SUM($D${first}:$D${last}))"
+        ws.cell(x, 10).value = (f'=IF(SUM($I${first}:$I${last})=0,"",'
+                                f'I{x}/SUM($I${first}:$I${last}))')
     r += 1
-    _put(ws, r, 1, "ИТОГО", font=_f(10, True, NAVY_700), fill=TINT_100, align=LEFT)
-    _put(ws, r, 2, f"{len(months)} мес.", font=_f(10, True, NAVY_700), fill=TINT_100, align=LEFT)
-    _put(ws, r, 3, f"=SUM(C{first}:C{last})", font=_f(10, True, NAVY_700), fill=TINT_100,
-         align=RIGHT, fmt=INT)
-    _put(ws, r, 4, f"=SUM(D{first}:D{last})", font=_f(10, True, NAVY_700), fill=TINT_100,
-         align=RIGHT, fmt=MONEY)
-    _put(ws, r, 5, 1, font=_f(10, True, NAVY_700), fill=TINT_100, align=RIGHT, fmt="0,0%")
+    ws.row_dimensions[r].height = 30
+    _put(ws, r, 5, "ИТОГО", font=_f(10, True, NAVY_700), fill=WHITE, align=LEFT)
+    _span(ws, r, 6, 7, f"{len(months)} мес.", font=_f(9, True, NAVY_700), fill=WHITE, align=RIGHT)
+    _put(ws, r, 8, f"=SUM(H{first}:H{last})", font=_f(9, True, NAVY_700), fill=WHITE,
+         align=RIGHT, fmt=ACC)
+    _put(ws, r, 9, f"=SUM(I{first}:I{last})", font=_f(9, True, NAVY_700), fill=WHITE,
+         align=RIGHT, fmt=ACC)
+    _put(ws, r, 10, 1, font=_f(9, True, NAVY_700), fill=WHITE, align=RIGHT, fmt=PCT)
     return r
 
 
@@ -358,26 +469,28 @@ BRIEF_FIELDS = [("audience", "Аудитория"), ("buys", "Покупают")
 
 
 def sheet_brief(ws, plan, data, names):
-    """Бриф отдельным листом: у каждого бренда он свой, в общую шапку не помещается."""
+    """Бриф отдельным листом: у каждого бренда он свой, в общую шапку не помещается.
+
+    Состав полей сведён к тому, что читает клиент: агентство, гео и таргетинги.
+    Плательщик, сейлз и аккаунт — внутренние роли, в брифе им места нет.
+    """
     ws.sheet_view.showGridLines = False
     ws.column_dimensions["A"].width = 26
-    ws.column_dimensions["B"].width = 70
-    _put(ws, 1, 1, f"Брифы по брендам · {plan.year}", font=_f(14, True, NAVY_700),
-         align=LEFT, border=None)
-    r = 3
+    ws.column_dimensions["B"].width = 83.1
+    ws.column_dimensions["C"].width = 8.9
+    _span(ws, 1, 1, 2, f"Брифы по брендам · {plan.year}", font=_f(28, True, NAVY_700),
+          fill=GREY_BG, align=LEFT, border=None)
+    ws.row_dimensions[1].height = 34.8
+    r = 4
     for b in data["brands"]:
         br = b["line"].brief or {}
         tg = br.get("targeting") or {}
-        ws.merge_cells(start_row=r, end_row=r, start_column=1, end_column=2)
-        for c in (1, 2):
-            _put(ws, r, c, None, fill=TINT_200)
-        _put(ws, r, 1, b["name"].upper(), font=_f(11, True, NAVY_700), fill=TINT_200, align=LEFT)
+        _span(ws, r, 1, 2, b["name"].upper(), font=_f(11, True, NAVY_700), fill=GREY_BG,
+              align=LEFT, border=UNDERLINE)
+        ws.row_dimensions[r].height = 15
         r += 1
         pairs = [("Агентство", names["agency"].get(br.get("agency_id")) or "—"),
-                 ("Плательщик", names["cp"].get(br.get("payer_counterparty_id")) or "—"),
-                 ("ГЕО", names["geo"].get(br.get("geo_id")) or "—"),
-                 ("Ответственный сейлз", names["user"].get(br.get("sales_rep_id")) or "—"),
-                 ("Аккаунт-менеджер", names["user"].get(br.get("account_manager_id")) or "—")]
+                 ("ГЕО", names["geo"].get(br.get("geo_id")) or "—")]
         pairs += [(label, _join(tg.get(key))) for key, label in BRIEF_FIELDS]
         seas = br.get("seasonality") or []
         if any(seas):
@@ -386,10 +499,13 @@ def sheet_brief(ws, plan, data, names):
         if br.get("text"):
             pairs.append(("Комментарий", br["text"]))
         for k, v in pairs:
-            _put(ws, r, 1, k, font=_f(10, True), align=LEFT)
-            _put(ws, r, 2, v, font=_f(10), align=LEFT)
+            _put(ws, r, 1, k, font=_f(10, True), fill=GREY_BG, align=LEFT)
+            _put(ws, r, 2, v, font=_f(10), fill=WHITE, align=LEFT)
             r += 1
         r += 1
+    # Запас больше, чем на «Сводной»: брифы короткие, и подложка, обрывающаяся сразу
+    # под последним блоком, читается как недорисованная, а не как поле.
+    _wash(ws, 10, pad=15)
 
 
 def _join(v):
