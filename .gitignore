@@ -47,9 +47,12 @@ uploads/
 # копируется на сервер напрямую (scp), в репозиторий не идёт
 backend/app/backfill_counterparty_requisites.py
 
-# One-off utility scripts (moved to scripts/ folder)
+# Разовые python/sql-помощники в КОРНЕВОЙ папке scripts/.
+# Ведущий слеш обязателен: без него шаблон матчит папку на любой глубине и утаскивает
+# frontend/scripts/ — из-за этого на сервере не оказалось check-nav.mjs и упал prebuild.
+# Исправлено 2026-08-16 при выкладке v2.4.0.
 make_*.py
-scripts/
+/scripts/
 
 # Stray data exports
 /*.xlsx
