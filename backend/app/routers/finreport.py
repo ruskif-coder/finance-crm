@@ -363,7 +363,7 @@ def get_finreport(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("pl", "view")),
+    current_user: User = Depends(require_permission("finreport", "view")),
 ):
     return build_report(db, basis, vat, date_from, date_to)
 
@@ -393,7 +393,7 @@ def export_finreport(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("pl", "view")),
+    current_user: User = Depends(require_permission("finreport", "view")),
 ):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side

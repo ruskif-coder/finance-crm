@@ -5,7 +5,7 @@
       "items": [
         { "key": "cashflow",    "label": "ДДС",         "href": "/finance/cashflow",    "perm": "dashboard" },
         { "key": "pnl",         "label": "P&L",         "href": "/finance/pnl",         "perm": "pl" },
-        { "key": "report",      "label": "Фин. отчёт",  "href": "/finance/report",      "perm": "pl" },
+        { "key": "report",      "label": "Фин. отчёт",  "href": "/finance/report",      "perm": "finreport" },
         { "key": "balance",     "label": "Баланс",      "href": "/finance/balance",     "perm": "balance" },
         { "key": "receivables", "label": "Дебиторка",   "href": "/finance/receivables", "perm": "receivables" },
         { "key": "planfact",    "label": "План / Факт", "href": "/finance/plan-fact",   "perm": "planfact" },
@@ -25,7 +25,8 @@
     {
       "key": "accounts", "title": "Аккаунты", "accent": "#E89020", "href": "/accounts",
       "items": [
-        { "key": "mp", "label": "Медиапланы", "href": "/accounts/mp", "perm": "media_plans" }
+        { "key": "dashboard", "label": "Дашборд",    "href": "/accounts/dashboard", "perm": "accounts_dashboard" },
+        { "key": "mp",        "label": "Медиапланы", "href": "/accounts/mp",        "perm": "media_plans" }
       ]
     },
     {

@@ -16,6 +16,9 @@ const SCOPE_GROUP = {
   sales_dashboard: 'sales', sales_registry: 'sales', sales_analytics: 'sales',
   media_plans: 'mp', media_plans_editor: 'mp',
   year_plan: 'yp',
+  // Дашборд аккаунта несёт свой scope: очередь «Что делать» — это его сделки, и решать
+  // «свои/все» надо здесь, а не наследовать от продаж. Уровни те же пять, что и везде.
+  accounts_dashboard: 'acc',
 }
 const SCOPED_KEYS = Object.keys(SCOPE_GROUP)
 

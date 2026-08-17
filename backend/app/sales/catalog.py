@@ -61,5 +61,8 @@ def stage_public(s, catalog=None):
         "stage_key": s.stage_key,
         "money_layer": cat["money_layer"] if cat else s.money_layer,
         "is_terminal": bool(s.is_terminal),
+        # is_lost нужен интерфейсу, чтобы отличить провал от успешного закрытия:
+        # у обоих is_terminal, но светофор красит их по-разному (красный штрих и зелёный).
+        "is_lost": bool(s.is_lost),
         "requires_media_plan": bool(s.requires_media_plan),
     }

@@ -10,7 +10,11 @@ CONTOURS = {"Финансы", "Продажи", "Аккаунты", "Справ�
 
 EXPECTED_KEYS = {
     "dashboard", "pl", "balance", "planfact", "receivables",
+    # Добавлен 2026-08-17: у «Фин. отчёта» появилось своё право (был на pl).
+    "finreport",
     "sales_dashboard", "sales_registry", "sales_analytics", "year_plan",
+    # Добавлен 2026-08-17 вместе с дашбордом аккаунта (очередь «Что делать»).
+    "accounts_dashboard",
     "media_plans", "media_plans_editor",
     "operations", "import",
     "counterparties", "contracts", "dir_advertisers", "dir_agencies", "bx_reconcile",

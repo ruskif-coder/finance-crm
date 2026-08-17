@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react'
-import { MONO, UI, HATCH, HATCH_RED } from '../salesTableKit'
+import { MONO, UI, HATCH, HATCH_RED, HATCH_GREEN } from '../salesTableKit'
 import { DEAL_DOCS, docState } from '../../lib/dealDocs'
 
 /**
@@ -65,7 +65,10 @@ const daysAgo = (iso) => {
 
 /** 6 квадратных ячеек индикатора слоя. Терминал — красная штриховка, без слоя — серая. */
 function cellsFor(st) {
-  if (st && st.is_terminal) return Array.from({ length: 6 }, () => HATCH_RED)
+  // Красный штрих — только срыв. Раньше сюда попадал и «Архив успешных сделок»
+  // (он тоже is_terminal), то есть успешно закрытая сделка красилась как провал.
+  if (st && st.is_lost) return Array.from({ length: 6 }, () => HATCH_RED)
+  if (st && st.is_terminal) return Array.from({ length: 6 }, () => HATCH_GREEN)
   const L = st && LAYER[st.money_layer]
   if (!L) return Array.from({ length: 6 }, () => HATCH)
   return Array.from({ length: 6 }, (_, i) => (i < L.fill ? L.color : T.inner))

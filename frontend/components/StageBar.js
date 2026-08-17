@@ -1,13 +1,14 @@
 // Полоса «светофор 2/2/2»: шесть стадий сделки по слоям денег.
 // Цвет — слой: серый прогноз, оранжевый в работе, зелёный факт.
 // Общий компонент реестра и дашборда (был продублирован байт-в-байт).
+// Шесть позиций = LIGHT_KEYS бэкенда. Архива здесь нет: он терминальный исход.
 export const STAGES = [
   { key: 'media_plan', label: 'Медиаплан', color: 'var(--muted)' },
   { key: 'booking', label: 'Бронь', color: 'var(--muted)' },
   { key: 'launch_prep', label: 'Сбор запуска', color: 'var(--warning, #d97706)' },
   { key: 'launch', label: 'Запуск', color: 'var(--warning, #d97706)' },
-  { key: 'closing', label: 'Закрытие', color: 'var(--success)' },
-  { key: 'archive', label: 'Архив', color: 'var(--success)' },
+  { key: 'closing', label: 'Закрытие подготовка', color: 'var(--success)' },
+  { key: 'closing_fact', label: 'Закрытие фактическое', color: 'var(--success)' },
 ]
 
 /** Полоса из шести стадий: пройденные закрашены, текущая ярче остальных. */

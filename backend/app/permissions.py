@@ -17,6 +17,9 @@ from app.routers.auth import get_current_user
 SECTIONS = [
     {"key": "dashboard",         "label": "ДДС",                "group": "Финансы",    "actions": ["view"]},
     {"key": "pl",                "label": "P&L",                "group": "Финансы",    "actions": ["view"]},
+    # Фин. отчёт до 2026-08-17 висел на праве P&L: выдать одно без другого было нельзя.
+    # Ключ новый, а не переименованный: ключи неизменяемы (см. tests/test_permissions_groups).
+    {"key": "finreport",         "label": "Фин. отчёт",         "group": "Финансы",    "actions": ["view"]},
     {"key": "balance",           "label": "Баланс",             "group": "Финансы",    "actions": ["view"]},
     {"key": "planfact",          "label": "План / Факт",        "group": "Финансы",    "actions": ["view"]},
     {"key": "receivables",       "label": "Дебиторская задолженность", "group": "Финансы", "actions": ["view", "edit"]},
@@ -27,6 +30,11 @@ SECTIONS = [
     {"key": "sales_registry",    "label": "Продажи · Реестр сделок",  "group": "Продажи", "actions": ["view", "edit"]},
     {"key": "sales_analytics",   "label": "Продажи · Аналитика",      "group": "Продажи", "actions": ["view", "edit"]},
     {"key": "year_plan",         "label": "Продажи · Годовой план",   "group": "Продажи", "actions": ["view", "edit"]},
+    # Рабочий экран аккаунт-менеджера — очередь «Что делать». Входной экран контура.
+    # deals_scope (all/own) берётся от sales_registry: очередь показывает те же сделки,
+    # что и реестр, — своё право на видимость завело бы два разных ответа на вопрос
+    # «мои это сделки или нет».
+    {"key": "accounts_dashboard", "label": "Аккаунты · Дашборд",       "group": "Аккаунты", "actions": ["view", "edit"]},
     # Медиапланы (контур аккаунта): реестр и конструктор — раздельно.
     {"key": "media_plans",        "label": "Медиапланы · Реестр",      "group": "Аккаунты", "actions": ["view", "edit", "approve"]},
     {"key": "media_plans_editor", "label": "Медиапланы · Конструктор", "group": "Аккаунты", "actions": ["view", "edit"]},

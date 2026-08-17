@@ -20,7 +20,10 @@ _MP_SECTIONS = ("media_plans", "media_plans_editor")
 # Годовой план несёт собственный (независимый) deals_scope: «свои» = свой план сейлза,
 # «все» = мастер (видит/правит чужие и режим «Показать все»). Читается в year_plan.py::_is_master.
 _YP_SECTIONS = ("year_plan",)
-_SCOPED_SECTIONS = _SALES_SECTIONS + _MP_SECTIONS + _YP_SECTIONS
+# Дашборд аккаунта — свой deals_scope: «свои» = сделки, где человек аккаунт или сейлз,
+# «все» = мастер раздела. Читается в sales_dashboard.py::_queue_deals.
+_ACC_SECTIONS = ("accounts_dashboard",)
+_SCOPED_SECTIONS = _SALES_SECTIONS + _MP_SECTIONS + _YP_SECTIONS + _ACC_SECTIONS
 
 
 class PermissionInput(BaseModel):
