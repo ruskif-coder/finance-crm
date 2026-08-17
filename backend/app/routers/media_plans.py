@@ -495,7 +495,14 @@ def _advance_deal_after_verify(db, current_user, p):
     nxt = cat.next_of(first.id)
     if not nxt:
         return
+    from app.sales.models import SalesDealStageHistory
     deal.our_stage_id = nxt.id
+    # История стадий пишется и здесь: это второе место в системе, которое двигает
+    # сделку (первое — /deals/{id}/move). Без этой записи «сколько сделка стоит на
+    # стадии» считалось бы от неизвестной даты, а автор перехода терялся.
+    db.add(SalesDealStageHistory(deal_id=deal.id, from_stage_id=first.id,
+                                 to_stage_id=nxt.id, user_id=current_user.id,
+                                 reason="медиаплан проверен и сохранён"))
     db.flush()
     log_action(db, current_user, "move_deal", "sales_deal", deal.id,
                f"{first.name} → {nxt.name} (медиаплан проверен и сохранён)")

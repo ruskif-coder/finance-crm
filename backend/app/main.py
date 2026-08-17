@@ -8,7 +8,7 @@ from app.database import engine, Base, SessionLocal
 from app.routers import (auth, operations, reports, counterparties, articles, settings,
                          users, roles, contracts, sales_directories, sales_dashboard,
                          sales_reconcile, media_plans, notifications, notify_settings,
-                         year_plan, finreport, backlog)
+                         year_plan, finreport, backlog, account_dashboard)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -305,6 +305,25 @@ def seed_targeting_and_geo():
 seed_targeting_and_geo()
 
 
+def assign_notification_profiles():
+    """Разложить по профилям уведомлений тех, у кого профиль не проставлен.
+
+    Идемпотентно: трогает только NULL, вручную назначенный профиль не перебивает.
+    Нужен здесь, а не разовым скриптом: пока его никто не вызывал, все 15 человек
+    сидели с NULL, и в настройках уведомлений каждый профиль показывал «0 человек».
+    """
+    try:
+        from app.notify.seed_profiles import assign_profiles
+        n = assign_profiles()
+        if n:
+            logger.info("assign_notification_profiles: назначено профилей %s", n)
+    except Exception as e:
+        logger.error("assign_notification_profiles: %s", e)
+
+
+assign_notification_profiles()
+
+
 def seed_stage_catalog():
     """Идемпотентно засевает НАШ каталог стадий (E1) из минимального набора CSV.
     Каждая стадия привязана к под-этапу 2/2/2 (STAGE_CATALOG key), из него выводится
@@ -314,8 +333,9 @@ def seed_stage_catalog():
     from app.sales.stages import STAGE_BY_KEY
     CATALOG = [
         ("Песочница", [
+            # Стартовых стадий две. «МП согласование» убрана 2026-08-17 как бюрократия
+            # (миграция 2026-08-17_drop_mp_approval_stage.sql) — не возвращать.
             ("МП Подготовка", "media_plan", False),
-            ("МП согласование", "media_plan", False),
             ("МП Отправлено", "media_plan", False),
             ("Сделка не случилась", None, True),
         ]),
@@ -323,16 +343,21 @@ def seed_stage_catalog():
             ("Бронь", "booking", False),
             ("Готовятся к старту", "launch_prep", False),
             ("В размещении", "launch", False),
-            ("Предварительная сверка", "launch", False),
+            # Сверка одна (миграции 2026-08-17_stage_final_reconcile + _merge_reconcile_stage):
+            # предварительной и итоговой по отдельности не существует. Слой «реализуемые» —
+            # сверка не закрытие, деньги на ней в работе, а не факт.
+            ("Итоговая сверка", "launch", False),
             ("Сделка сорвалась", None, True),
         ]),
         ("Документооборот (ДО)", [
             ("Подготовка ДС", "closing", False),
             ("Согласование ДС", "closing", False),
             ("Подготовка закрывающих", "closing", False),
-            ("ЭДО", "closing", False),
-            ("Отчёты в ОРД", "closing", False),
-            ("Оплата", "closing", False),
+            # С ЭДО начинается вторая половина факта — документы в обороте
+            # (миграция 2026-08-17_split_closing_layer.sql).
+            ("ЭДО", "closing_fact", False),
+            ("Отчёты в ОРД", "closing_fact", False),
+            ("Оплата", "closing_fact", False),
             ("Архив успешных сделок", "archive", False),
         ]),
     ]
@@ -573,6 +598,9 @@ app.include_router(notifications.router, prefix="/api/notifications", tags=["not
 app.include_router(sales_reconcile.router, prefix="/api/sales/reconcile", tags=["sales"])
 # Монтируется ПОСЛЕ справочников/сверки, чтобы их префиксы не перехватывались
 app.include_router(sales_dashboard.router, prefix="/api/sales", tags=["sales"])
+# Очередь аккаунта — тот же префикс: адреса /api/sales/account-* не менялись при выносе
+# в отдельный роутер (app/routers/account_dashboard.py).
+app.include_router(account_dashboard.router, prefix="/api/sales", tags=["sales"])
 app.include_router(year_plan.router, prefix="/api/sales/year-plan", tags=["sales"])
 app.include_router(backlog.router, prefix="/api/backlog", tags=["backlog"])
 

@@ -19,7 +19,7 @@ from sqlalchemy import func, or_, and_, case
 from sqlalchemy.orm import Session, aliased
 from typing import Optional, List, Annotated
 from pydantic import BaseModel
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import os
 import re
 
@@ -30,9 +30,11 @@ from app.audit import log_action
 from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
                               SalesRep, SalesBrand, SalesBitrixSyncLog,
                               SalesDealFieldOverride, SalesAgency,
-                              SalesStage, SalesPipeline)
+                              SalesStage, SalesPipeline,
+                              SalesDealStageHistory, SalesDealSnooze)
 from app.sales.stages import STAGE_CATALOG
 from app.sales.catalog import Catalog, stage_public
+from app.sales.row_context import load_row_context
 import logging
 
 router = APIRouter()
@@ -522,17 +524,35 @@ def dashboard_bonus(
 
 
 @router.get("/reps")
-def list_reps(db: Session = Depends(get_db),
-              current_user: User = Depends(require_any_permission(("sales_dashboard", "sales_registry", "sales_analytics"), "view"))):
-    """Продавцы (SalesRep) — для селектора «смотреть чужой» на дашборде (админ).
-    Только сейлзы: мастер-сейлз (is_sales_head) ИЛИ кто хоть раз был продавцом сделки
-    (sales_rep_id). Чистые аккаунт-менеджеры (только account_manager_id) отсекаются."""
-    seller_ids = {r[0] for r in db.query(SalesDeal.sales_rep_id)
-                  .filter(SalesDeal.sales_rep_id.isnot(None)).distinct().all()}
+def list_reps(role: str = "sales", db: Session = Depends(get_db),
+              current_user: User = Depends(require_any_permission(
+                  ("sales_dashboard", "sales_registry", "sales_analytics",
+                   "accounts_dashboard"), "view"))):
+    """Сотрудники (SalesRep) для селектора «смотреть чужого».
+
+    role='sales'  — продавцы: мастер-сейлз (is_sales_head) ИЛИ кто хоть раз был
+                    продавцом сделки. Чистые аккаунт-менеджеры отсекаются.
+    role='account'— аккаунты: кто хоть раз был account_manager_id. Отдельный список,
+                    а не тот же: в очереди аккаунта выбирать сейлза, который никогда
+                    не вёл сделку как аккаунт, бессмысленно — он всегда будет пустым.
+
+    `mine` в ответе — id профиля текущего пользователя (или None): интерфейсу нужно
+    отметить «меня» звёздочкой, не угадывая по имени.
+
+    Список НЕ сужается под own-scope сознательно (решение владельца 2026-08-17): имена
+    сотрудников в компании считаются открытыми. Роль со scope='own' увидит коллег
+    в селекторе, но их сделки ей всё равно не отдадут — видимость режется отдельно
+    (_apply_own_scope), и селектор чужого её не обходит."""
+    field = SalesDeal.account_manager_id if role == "account" else SalesDeal.sales_rep_id
+    seen = {r[0] for r in db.query(field).filter(field.isnot(None)).distinct().all()}
     rows = db.query(SalesRep).order_by(SalesRep.name).all()
+    keep = (lambda r: r.id in seen) if role == "account" else \
+           (lambda r: r.is_sales_head or r.id in seen)
+    mine = db.query(SalesRep.id).filter(SalesRep.user_id == current_user.id).first()
     return {"items": [{"id": r.id, "name": r.name, "linked": r.user_id is not None,
                        "is_head": r.is_sales_head}
-                      for r in rows if r.is_sales_head or r.id in seller_ids]}
+                      for r in rows if keep(r)],
+            "mine": mine[0] if mine else None}
 
 
 @router.get("/deals")
@@ -752,18 +772,25 @@ def deals_registry(
             }
 
     cat = Catalog(db)   # наш каталог стадий — для our_stage/следующей стадии в строке
+    # Цвет услуги и документы — общие для реестра и очереди аккаунта, поэтому берутся
+    # одним контекстом (app/sales/row_context.py), а не считаются здесь на месте.
+    row_ctx = load_row_context(db, page_ids)
+
+    def _row_extra(item, deal):
+        return row_ctx.apply(item, deal)
 
     return {
         "total": total,
         "limit": limit,
         "offset": offset,
-        "items": [{
+        "items": [_row_extra({
             "id": d.id,
             "code": d.code,
             "bitrix_id": d.bitrix_id,
             "title": d.title,
             "pipeline": d.pipeline,
             "product": d.product,
+            # docs и product_color дописываются ниже из row_ctx (общий контекст строки).
             "probability_color": d.probability_color,
             "period": d.period_from.strftime("%Y-%m") if d.period_from else None,
             "bitrix_stage": d.bitrix_stage,
@@ -813,7 +840,7 @@ def deals_registry(
             "sync_issues": (d.sync_report or {}).get("issues", []),
             "sync_changes": (d.sync_report or {}).get("changes", []),
             "sync_checked_at": (d.sync_report or {}).get("checked_at"),
-        } for d, layer, stage_key in rows],
+        }, d) for d, layer, stage_key in rows],
     }
 
 
@@ -1844,7 +1871,7 @@ def move_deal(
     if is_back and not is_master:
         raise HTTPException(status_code=403, detail="Двигать сделку назад может только мастер")
 
-    # МП обязателен со стадии «МП согласование» и далее — двигаем только с привязанным МП
+    # МП обязателен со стадии «МП Отправлено» и далее — двигаем только с привязанным МП
     if getattr(target, "requires_media_plan", False) and not target.is_terminal:
         from app.sales.models import SalesMediaPlan
         has_mp = db.query(SalesMediaPlan.id).filter(SalesMediaPlan.deal_id == deal.id).first()
@@ -1865,6 +1892,18 @@ def move_deal(
     prev = cat.by_id.get(cur_id)
     deal.our_stage_id = target.id
     _reflect_stage_binding(db, deal, target)
+    # История движения: от неё считается «сколько сделка стоит на стадии» (правило 5
+    # срочности) и по ней потом уточняются sla_days. Журнал действий для этого
+    # не годится — там свободный текст, разобрать его обратно в пару стадий нельзя.
+    # Перестановка в ту же стадию историю не пишет: иначе «сколько стоит на стадии»
+    # обнулялось бы от повторного нажатия, и просрочку можно было бы снять,
+    # не сделав ничего.
+    if target.id != cur_id:
+        db.add(SalesDealStageHistory(
+            deal_id=deal.id, from_stage_id=cur_id, to_stage_id=target.id,
+            user_id=current_user.id,
+            reason=(payload.override_reason or payload.comment or "").strip() or None,
+        ))
     db.commit()
 
     label = f"{prev.name if prev else '—'} → {target.name}"

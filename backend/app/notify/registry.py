@@ -153,6 +153,122 @@ register(Event(
     params={"after_days": 3, "repeat_days": 10},
 ))
 
+# ──────────────── АККАУНТИНГ: очередь сделок (сканер, urgency.py) ────────────────
+# Шесть событий одного источника: все считаются функцией app.sales.urgency.evaluate,
+# той же, что строит очередь «Что делать» на дашборде аккаунта. Ключ события приходит
+# в Verdict.kind — сканер не пересчитывает условия заново. Это и есть гарантия, что
+# лента уведомлений не разойдётся с очередью: расхождение между ними было бы багом,
+# а не разными точками зрения.
+#
+# Порогов here нет: их задаёт сама функция срочности (правила 1-8 ТЗ), а не params —
+# иначе порог жил бы в двух местах и очередь с лентой начали бы считать по-разному.
+# repeat_days — единственный параметр, он про частоту напоминания, не про условие.
+#
+# Получатель везде «Аккаунт сделки»: это его рабочая очередь. Сейлз о срыве старта
+# узнаёт из своих событий, дублировать ему документные напоминания незачем.
+
+register(Event(
+    key="deal_mp_missing", direction="account", group="Очередь сделок",
+    title="Нет медиаплана, а старт близко",
+    description=("Старт РК через 5 дней или меньше, а медиаплан к сделке не привязан. "
+                 "Первое правило очереди: без плана дальше ничего не двинется."),
+    tone="danger", action="Собрать МП", widget_group="Сделки", scan=True,
+    recipients=[{"type": "resolver", "value": "account_manager"}],
+    channels={"app": True},
+    params={"repeat_days": 2},
+))
+
+register(Event(
+    key="mp_unapproved", direction="account", group="Очередь сделок",
+    title="МП не завизирован, старт через 3 дня",
+    description=("План есть, визы клиента нет, а РК стартует. В отличие от «МП висит "
+                 "на согласовании» адресовано аккаунту сделки, а не согласующим."),
+    tone="danger", action="Пингануть", widget_group="Сделки", scan=True,
+    recipients=[{"type": "resolver", "value": "account_manager"}],
+    channels={"app": True},
+    params={"repeat_days": 2},
+))
+
+register(Event(
+    key="mp_rework", direction="account", group="Очередь сделок",
+    title="МП отклонён — нужны правки",
+    description=("Клиент ответил отказом, а старт РК близко. Отличается от «МП не "
+                 "завизирован»: там ждут ответа, здесь ответ получен и он отрицательный."),
+    tone="danger", action="Переделать МП", widget_group="Сделки", scan=True,
+    recipients=[{"type": "resolver", "value": "account_manager"}],
+    channels={"app": True},
+    params={"repeat_days": 2},
+))
+
+register(Event(
+    key="mp_verify", direction="account", group="Очередь сделок",
+    title="МП собран конвейером и не проверен",
+    description=("Конвейер годового плана создал сделку вместе с медиапланом. Пока аккаунт "
+                 "не открыл план и не отметил «Проверено», сделка стоит на первой стадии — "
+                 "отправлять клиенту непроверенный автоплан нельзя."),
+    tone="warning", action="Проверить МП", widget_group="Сделки", scan=True,
+    recipients=[{"type": "resolver", "value": "account_manager"}],
+    channels={"app": True},
+    params={"repeat_days": 3},
+))
+
+register(Event(
+    key="booking_confirm", direction="account", group="Очередь сделок",
+    title="Бронь не подтверждена, старт на горизонте",
+    description=("До старта РК 15 дней или меньше, а сделка всё ещё в брони. "
+                 "Дальше — сбор запуска: креативы и площадки нужно успеть согласовать."),
+    tone="warning", action="Подтвердить бронь", widget_group="Сделки", scan=True,
+    recipients=[{"type": "resolver", "value": "account_manager"}],
+    channels={"app": True},
+    params={"repeat_days": 3},
+))
+
+# Событие «ДС не подписано» здесь было и убрано 2026-08-17 вместе с правилом:
+# файлов ДС в системе ноль, правило срабатывало на всех сделках в окне подряд.
+# Вернётся вместе с приложениями к договору (SalesAnnex), когда ДС станут данными.
+
+register(Event(
+    key="act_missing", direction="account", group="Очередь сделок",
+    title="Период закрыт, закрывающих нет",
+    description=("РК закончилась больше 5 дней назад, а УПД/счёт не выставлены. "
+                 "Пока их нет, платить клиенту не за что — это тормоз для денег."),
+    tone="warning", action="Прикрепить документы", widget_group="Документы", scan=True,
+    recipients=[{"type": "resolver", "value": "account_manager"}],
+    channels={"app": True},
+    params={"repeat_days": 5},
+))
+
+register(Event(
+    key="stage_stuck", direction="account", group="Очередь сделок",
+    title="Сделка стоит на стадии дольше нормы",
+    description=("Норма — sla_days: у стадии, иначе у этапа, иначе дефолт слоя. "
+                 "Свыше нормы — «скоро», свыше двойной — «просрочено»."),
+    tone="warning", action="Двинуть", widget_group="Сделки", scan=True,
+    recipients=[{"type": "resolver", "value": "account_manager"}],
+    channels={"app": True},
+    params={"repeat_days": 7},
+))
+
+register(Event(
+    key="stage_unmapped", direction="account", group="Очередь сделок",
+    title="Стадия не отнесена к слою денег",
+    description=("Сделка не попадает ни в один слой, значит отчёты по ней врут. "
+                 "Отключать не стоит: молча посчитанная планом сделка — это тихая "
+                 "ошибка в деньгах, а не мелкое неудобство."),
+    tone="danger", action="Разобрать", widget_group="Сделки", scan=True, locked=True,
+    recipients=[{"type": "resolver", "value": "account_manager"},
+                {"type": "role", "value": "admin"}],
+    channels={"app": True},
+    params={"repeat_days": 7},
+))
+
+# Правило 7 функции срочности (просрочка оплаты) события здесь НЕ имеет намеренно:
+# тема дебиторки принадлежит invoice_overdue, который считает её по операциям — там,
+# где факт оплаты действительно известен. На уровне сделки оплата не читается
+# (связи deal → operation в схеме нет), поэтому в очереди строка появится только
+# когда мост будет доведён, а уведомление так и останется за финмодулем.
+
+
 # ─────────────────────────── СИСТЕМНЫЕ: бэклог отладки ───────────────────────────
 # Каналы по умолчанию — ТОЛЬКО "app". Обработчика дайджеста в системе нет (см. bus.py,
 # LIVE_CHANNELS): событие, отправленное в дайджест, ложится в очередь и человеку

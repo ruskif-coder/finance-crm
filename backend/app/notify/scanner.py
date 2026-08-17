@@ -164,6 +164,76 @@ def rule_mp_stuck(db: Session, ev: registry.Event) -> List[Hit]:
     return hits
 
 
+# ──────────────── очередь сделок: одна функция срочности на шесть событий ────────────────
+
+# Вердикты за прогон считаются ОДИН раз и раздаются шести правилам по Verdict.kind.
+# Без кэша был бы шестикратный проход по всем сделкам с теми же джойнами.
+# Сбрасывается в начале scan(): держать его между прогонами нельзя — данные меняются.
+_verdicts: Optional[list] = None
+
+# Горизонт РАССЫЛКИ (не расчёта): уведомляем только про сделки, чьё размещение
+# закончилось не позже полугода назад. Дальше начинается разбор истории, а он делается
+# разовой чисткой, а не потоком напоминаний. Порог нужен из-за реальных данных: без него
+# первый боевой прогон отправил бы около 400 писем про сделки 2024-2025 годов, и раздел
+# уведомлений выключили бы целиком — ровно то, от чего защищают предохранители сверху.
+#
+# Очередь на дашборде горизонтом НЕ ограничена: там строки фильтруются и никого не будят.
+# Правила при этом одни и те же (Verdict.kind и reason не меняются) — лента просто
+# подмножество очереди, а не другой расчёт.
+SCAN_HORIZON_DAYS = 180
+
+
+def _deal_facts(db: Session):
+    """Сделки в пределах горизонта рассылки → их срочность.
+
+    Сам перевод «база → DealFacts» живёт в app/sales/urgency_db.py и используется
+    ещё и очередью на дашборде: два сборщика фактов разошлись бы молча."""
+    from app.sales.models import SalesDeal
+    from app.sales.urgency_db import facts_for_deals
+
+    today = date.today()
+    horizon = today - timedelta(days=SCAN_HORIZON_DAYS)
+
+    deals = []
+    for d in db.query(SalesDeal).all():
+        last_date = d.period_to or d.period_from
+        if last_date and last_date < horizon:
+            continue                     # за горизонтом рассылки — см. SCAN_HORIZON_DAYS
+        if last_date is None and d.our_stage_id is None:
+            # Ни периода, ни стадии — незаполненная болванка из синка (238 таких).
+            # Уведомлять о ней некого и незачем: в очереди на дашборде она видна
+            # под фильтром «Незаполненные», разбирается пачкой, а не письмами.
+            continue
+        deals.append(d)
+    return facts_for_deals(db, deals, today)
+
+
+def _deal_rule(kind: str):
+    """Правило-обёртка: берёт из общего расчёта только сработки своего вида."""
+    def rule(db: Session, ev: registry.Event) -> List[Hit]:
+        global _verdicts
+        if _verdicts is None:
+            _verdicts = _deal_facts(db)
+        hits = []
+        for d, v in _verdicts:
+            if v.kind != kind:
+                continue
+            where = " · ".join(x for x in (d.title, d.product) if x) or f"#{d.code or d.id}"
+            hits.append(Hit(
+                entity_type="deal", entity_id=d.id,
+                # Ступень = уровень срочности: переход soon → overdue шлётся немедленно,
+                # не дожидаясь конца интервала повтора (см. _should_send).
+                stage=v.urgency, due_date=v.due,
+                title=f"{where}: {v.reason}",
+                link=f"/sales/deals/{d.code or d.id}",
+                ctx={"deal": d},
+                payload={"urgency": v.urgency, "cta": v.cta,
+                         "due": v.due.isoformat() if v.due else None},
+            ))
+        return hits
+    return rule
+
+
 def backlog_overdue_hits(items, today: date, now: datetime, repeat_days: int = 7) -> List[Hit]:
     """Чистая часть правила: из списка записей выбрать те, о просрочке которых
     пора напомнить. Вынесена отдельно, чтобы проверяться без базы.
@@ -214,10 +284,18 @@ def _after_backlog_overdue(db: Session, hit: Hit, now: datetime):
 
 # Правила сканера: ключ события в реестре → функция. Событие без функции здесь
 # в сканер не попадает (и наоборот — функция без записи в реестре не запустится).
+# Шесть событий очереди сделок обслуживает ОДНА функция срочности (app.sales.urgency),
+# та же, что строит очередь на дашборде аккаунта; обёртка лишь разбирает её вердикты
+# по видам. invoice_overdue и mp_stuck на неё не переезжают: они считаются по операциям
+# и по медиапланам, а не по сделкам — у них другая сущность и другой адресат.
+DEAL_QUEUE_EVENTS = ["deal_mp_missing", "mp_verify", "mp_unapproved", "mp_rework", "booking_confirm",
+                     "act_missing", "stage_stuck", "stage_unmapped"]
+
 RULES = {
     "invoice_overdue": rule_invoice_overdue,
     "mp_stuck": rule_mp_stuck,
     "backlog_overdue": rule_backlog_overdue,
+    **{k: _deal_rule(k) for k in DEAL_QUEUE_EVENTS},
 }
 
 # Хуки «после реальной отправки» (в сухом прогоне НЕ вызываются): нужны правилам,
@@ -230,6 +308,8 @@ AFTER_SEND = {
 # ─────────────────────────── прогон ───────────────────────────
 
 def scan(dry_run: bool = False, only: Optional[str] = None) -> Dict[str, int]:
+    global _verdicts
+    _verdicts = None          # расчёт срочности переиспользуется внутри прогона, но не между
     db = SessionLocal()
     now = datetime.utcnow()
     run = NotificationScanRun(dry_run=dry_run)

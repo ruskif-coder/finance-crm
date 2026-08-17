@@ -16,7 +16,10 @@ const layerColor = (l) => l === 'фактические' ? 'var(--success)'
   : l === 'реализуемые' ? 'var(--warning, #d97706)'
   : l === 'планируемые' ? 'var(--muted)' : 'var(--border-card)'
 
-export default function MoveDealDialog({ deal, onClose, onMoved }) {
+// toStageKey — предвыбрать конкретную позицию 2/2/2 (кнопки дашборда «Подтвердить бронь»
+// и «В размещение» ведут в известную стадию). Комментарий всё равно спрашивается: одно
+// нажатие не должно превращать движение сделки в запись без причины.
+export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toLost }) {
   const [phases, setPhases] = useState([])
   const [funnels, setFunnels] = useState([])
   const [sel, setSel] = useState('')          // «id» либо «id:воронка» — только для <select>
@@ -53,7 +56,14 @@ export default function MoveDealDialog({ deal, onClose, onMoved }) {
     .map(s => s.bitrix_pipeline_id))
   const productFunnels = funnels.filter(f => !boundIds.has(f.id))
   const noFunnels = flat.some(s => s.is_realization) && productFunnels.length === 0
+  // Диалог открывают из ДВУХ мест с разной формой строки: реестр сделок отдаёт
+  // our_mps/files, очередь дашборда — mp_id/docs. Проверять только our_mps значило
+  // блокировать переход у сделки, у которой МП есть (кнопка «Двинуть» гасла, хотя
+  // бэкенд тот же переход разрешал).
   const hasMp = (deal.our_mps || []).length > 0
+    || !!deal.mp_id
+    || (deal.docs || []).includes('mp')
+    || (deal.files || []).some(f => f.kind === 'mp')
   const needMp = !!targetStage?.requires_media_plan && !targetStage?.is_terminal && !hasMp
   const cur = deal.our_stage
 
@@ -63,12 +73,17 @@ export default function MoveDealDialog({ deal, onClose, onMoved }) {
   useEffect(() => {
     if (sel || !phases.length) return
     const nx = deal.our_next_stage
-    const st = nx && flat.find(s => s.id === nx.id)
+    // toLost — предвыбрать срыв. Именно по признаку is_lost, а не по имени стадии:
+    // «Сделка сорвалась» переименуют, а признак останется.
+    const st = toLost
+      ? flat.find(s => s.is_lost)
+      : (toStageKey ? flat.find(s => s.stage_key === toStageKey)
+                    : (nx && flat.find(s => s.id === nx.id)))
     if (!st) return
     if (!st.is_realization) setSel(String(st.id))
     else if (deal.realization_pipeline_id && productFunnels.some(f => f.id === deal.realization_pipeline_id))
       setSel(`${st.id}:${deal.realization_pipeline_id}`)
-  }, [phases, funnels])
+  }, [phases, funnels, toStageKey, toLost])
 
   const move = async () => {
     if (!comment.trim()) { setErr('Введите комментарий'); return }

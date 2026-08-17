@@ -67,18 +67,37 @@ export const FILL = { 'планируемые': 2, 'реализуемые': 4, 
 export const HATCH = 'repeating-linear-gradient(135deg,#C3C9D8 0 3px,#FFFFFF 3px 6px)'
 // Красный штрих — «Сделка провалена» (как серый HATCH для неразобранных).
 export const HATCH_RED = 'repeating-linear-gradient(135deg,#E5484D 0 3px,#FFFFFF 3px 6px)'
+// Зелёный штрих — положительный терминальный исход («Архив успешных сделок»).
+// Именно штрих, а не шесть залитых клеток: закрытая сделка — это не «шестая стадия»,
+// а выход из конвейера, и читаться должна так же особо, как провал.
+export const HATCH_GREEN = 'repeating-linear-gradient(135deg,#2FA37C 0 3px,#FFFFFF 3px 6px)'
 
-// Порядок 6 под-этапов светофора 2\2\2 (по 2 на денежный слой) — совпадает с STAGE_CATALOG бэка.
-export const STAGE_ORDER = ['media_plan', 'booking', 'launch_prep', 'launch', 'closing', 'archive']
+// Порядок 6 под-этапов светофора 2\2\2 (по 2 на денежный слой) — совпадает с LIGHT_KEYS
+// бэкенда (app/sales/stages.py). 'archive' в список НЕ входит: это терминальный исход,
+// он красится зелёной штриховкой по всей полосе, а не шестой клеткой.
+export const STAGE_ORDER = ['media_plan', 'booking', 'launch_prep', 'launch', 'closing', 'closing_fact']
 // Индикатор 2\2\2: 6 позиций, закрашено до под-этапа стадии (stage_key). Откат — по слою (2/4/6).
 // Единый для реестра /sales, дашборда и раскрытой сводки — не дублировать в страницах.
 export const StageLayerBar = ({ os, h = 12, w = 7, full }) => {
   const idx = STAGE_ORDER.indexOf(os?.stage_key)
   const n = idx >= 0 ? idx + 1 : (FILL[os?.money_layer] || 0)
+  // Три особых состояния красятся штриховкой по всем шести клеткам: это выходы из
+  // конвейера и «непонятно где», а не позиции на лестнице.
+  //   срыв            → красный штрих
+  //   успешный архив  → зелёный штрих
+  //   стадии нет      → серый штрих («требует разбора»)
+  const hatch = os?.is_lost ? HATCH_RED
+    : (os?.is_terminal ? HATCH_GREEN
+      : (!os || (!os.stage_key && !os.money_layer) ? HATCH : null))
+  const title = os?.is_lost ? 'сделка провалена'
+    : (os?.is_terminal ? 'сделка закрыта успешно'
+      : (hatch ? 'стадия не определена — требует разбора'
+        : `${os?.money_layer || 'слой'} · под-этап ${n}/6`))
   return (
     <span style={{ display: full ? 'flex' : 'inline-flex', gap: 2, flex: full ? '1 1 auto' : '0 0 auto', width: full ? '100%' : undefined }}
-      title={n ? `${os?.money_layer || 'слой'} · под-этап ${n}/6` : 'слой не определён'}>
-      {PIP.map((c, i) => <span key={i} style={{ flex: full ? '1 1 0' : undefined, width: full ? undefined : w, height: h, borderRadius: 2, background: i < n ? c : 'var(--border-inner)' }} />)}
+      title={title}>
+      {PIP.map((c, i) => <span key={i} style={{ flex: full ? '1 1 0' : undefined, width: full ? undefined : w, height: h, borderRadius: 2,
+        background: hatch || (i < n ? c : 'var(--border-inner)') }} />)}
     </span>
   )
 }
@@ -162,10 +181,51 @@ export function ColumnsMenu({ open, setOpen, colOrder, hidden, onToggle, onReord
 //              автоматически и не завизирован. Гаснет, когда аккаунт откроет МП,
 //              отметит обе «Проверено» и сохранит — тогда сделка уходит на
 //              следующую стадию (см. _advance_deal_after_verify на бэкенде).
+// Границы подсветок строк: зелёная «нужен расчёт», жёлтая «не завизирован».
+// Объявлены раньше тонов, потому что тона на них ссылаются.
+const NEEDS_MP_BORDER_HEX = '#CDEBDD'
+const UNVERIFIED_BORDER_HEX = '#F2E0B8'
+
+// ─── Тона строк по срочности и кнопок по виду действия ────────────────
+// Живут в ките, а не на экране: дашборд аккаунта, реестр и будущий кабинет трафика
+// красят одно и то же одинаково. Раньше эти же значения были продублированы хексами
+// в pages/accounts/dashboard.js — так в проекте уже разъехались BANK_COLORS.
+export const ROW_TONE = {
+  overdue: { bg: '#FEF7F7', border: '#F0C9CA', dot: 'var(--danger)' },
+  today:   { bg: '#FFFBF3', border: '#F2DFC0', dot: 'var(--dot-current-dz)' },
+  soon:    { bg: 'var(--bg-card)', border: 'var(--border-row)', dot: 'var(--accent)' },
+  normal:  { bg: 'var(--bg-card)', border: 'var(--border-row)', dot: 'var(--text-faint)' },
+}
+
+// Тон кнопки — по ВИДУ действия (Verdict.kind с бэкенда), а не один синий на всё:
+// «Собрать МП» зелёная, «Проверить» оранжевая, «Пингануть» синяя, «Переделать» красная.
+// [фон, текст, рамка]. Рамки берут те же значения, что NEEDS_MP_BORDER/UNVERIFIED_BORDER
+// ниже — они здесь же, чтобы не расползались по страницам.
+export const CTA_TONE = {
+  deal_mp_missing: ['var(--income-tint)', 'var(--income)', NEEDS_MP_BORDER_HEX],
+  mp_verify:       ['var(--warning-tint)', 'var(--warning-text)', UNVERIFIED_BORDER_HEX],
+  mp_unapproved:   ['var(--accent-tint)', 'var(--accent)', 'var(--accent-border)'],
+  mp_rework:       ['var(--danger-tint)', 'var(--danger)', ROW_TONE.overdue.border],
+  booking_confirm: ['var(--accent-tint)', 'var(--accent)', 'var(--accent-border)'],
+  launch_prep:     ['var(--accent-tint)', 'var(--accent)', 'var(--accent-border)'],
+  launch_ready:    ['var(--income-tint)', 'var(--income)', NEEDS_MP_BORDER_HEX],
+  act_missing:     ['var(--warning-tint)', 'var(--warning-text)', UNVERIFIED_BORDER_HEX],
+  stage_stuck:     ['var(--warning-tint)', 'var(--warning-text)', UNVERIFIED_BORDER_HEX],
+  stage_unmapped:  ['var(--danger-tint)', 'var(--danger)', ROW_TONE.overdue.border],
+  payment_overdue: ['var(--danger-tint)', 'var(--danger)', ROW_TONE.overdue.border],
+}
+
+/** Кнопка действия в строке очереди: пастельный фон, цветной текст, рамка того же тона. */
+export const ctaStyle = (kind) => {
+  const [bg, fg, border] = CTA_TONE[kind || ''] || ['var(--bg-subtle)', 'var(--text-secondary)', 'var(--border-card)']
+  return { background: bg, color: fg, border: `1px solid ${border}`, borderRadius: 9,
+           padding: '5px 10px', fontSize: 12, fontWeight: 700, fontFamily: UI, cursor: 'pointer' }
+}
+
 export const NEEDS_MP_BG = '#EEF9F4'        // мягкая зелёная заливка строки
-export const NEEDS_MP_BORDER = '#CDEBDD'
+export const NEEDS_MP_BORDER = NEEDS_MP_BORDER_HEX
 export const UNVERIFIED_BG = '#FFF8E8'      // мягкая жёлтая заливка строки
-export const UNVERIFIED_BORDER = '#F2E0B8'
+export const UNVERIFIED_BORDER = UNVERIFIED_BORDER_HEX
 
 const onFirstStage = (d) => !!(d && d.our_stage && d.our_stage.is_first)
 const hasAnyMp = (d) => !!((d.our_mps || []).length || (d.files || []).some(f => f.kind === 'mp'))

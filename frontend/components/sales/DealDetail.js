@@ -206,7 +206,11 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
         <div style={{ marginBottom: 18 }}>
           <StageLayerBar os={d.our_stage} full h={16} />
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, display: 'flex', gap: 6 }}>
-            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{d.our_stage?.name || '—'}</span>
+            {/* Прочерк вместо стадии выглядел как «не загрузилось». Пустая стадия —
+                это состояние сделки («требует разбора»), и говорить о нём надо словами. */}
+            <span style={{ fontWeight: 600, color: d.our_stage ? 'var(--text-primary)' : 'var(--danger)' }}>
+              {d.our_stage?.name || 'стадия не определена — требует разбора'}
+            </span>
             {d.our_stage?.money_layer && <span style={{ fontFamily: MONO, color: 'var(--text-faint)' }}>· {d.our_stage.money_layer}</span>}
           </div>
         </div>

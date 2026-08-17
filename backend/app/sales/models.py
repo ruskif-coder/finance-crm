@@ -42,6 +42,9 @@ class SalesService(Base):
     unit_price = Column(Float)          # единая цена/ед (когда separate_price=False)
     unit_price_web = Column(Float)      # цена/ед web (когда separate_price=True)
     unit_price_app = Column(Float)      # цена/ед app (когда separate_price=True)
+    # Цвет-маркер услуги (миграция 2026-08-17_service_color.sql): дашборд аккаунта,
+    # реестр, МП. NULL = авто по имени из палитры (app/sales/colors.py), а не «нет цвета».
+    color = Column(String(7))
     # Базовые константы под форму расчёта (CTR для CPM/CPC, VTR для CPV…): {key: value}.
     # Нужны конструктору МП для производных метрик (показы↔клики и т.п.).
     constants = Column(JSONB)
@@ -420,6 +423,9 @@ class SalesStagePhase(Base):
     # bitrix_status_id), а из выбранной на сделке воронки (deal.realization_pipeline_id).
     # При входе в такой этап диалог движения просит выбрать воронку под продукт.
     is_realization = Column(Boolean, nullable=False, default=False)
+    # Сколько сделка может стоять на стадиях этого этапа (дни). Средний уровень каскада
+    # SLA: стадия ?? этап ?? дефолт по stage_key (app/sales/urgency.py).
+    sla_days = Column(Integer, nullable=True)
     stages = relationship("SalesStage", back_populates="phase",
                           cascade="all, delete-orphan", order_by="SalesStage.sort_order")
 
@@ -437,12 +443,63 @@ class SalesStage(Base):
     # launch/closing/archive). Из него выводится money_layer (слой ДДС). None у терминальных.
     stage_key = Column(String)
     money_layer = Column(String)          # производное от stage_key; хранится для джойнов/отчётов
-    is_terminal = Column(Boolean, nullable=False, default=False)  # «не случилась»/«сорвалась»
-    # Требует привязанный медиаплан для входа (со стадии «МП согласование» и далее).
+    is_terminal = Column(Boolean, nullable=False, default=False)  # дальше не двигаем
+    # Терминальных исходов два, и они разные: положительный («Архив успешных сделок»)
+    # и срыв. У срыва stage_key пуст, поэтому без этого флага он неотличим от
+    # несопоставленной стадии («требует разбора») — светофор красил бы его серой
+    # штриховкой, а очередь звала бы разбирать то, что разбирать не нужно.
+    is_lost = Column(Boolean, nullable=False, default=False)
+    # Верхний уровень каскада SLA (переопределяет этап). 0 — «здесь срока нет»
+    # (терминальные, «В размещении»); NULL — наследовать от этапа.
+    sla_days = Column(Integer, nullable=True)
+    # Требует привязанный медиаплан для входа (со стадии «МП Отправлено» и далее).
     requires_media_plan = Column(Boolean, nullable=False, default=False)
     bitrix_pipeline_id = Column(Integer, ForeignKey("sales_pipelines.id"))  # наша SalesPipeline.id
     bitrix_status_id = Column(String)     # status_id стадии в этой воронке
     phase = relationship("SalesStagePhase", back_populates="stages")
+
+
+class SalesDealStageHistory(Base):
+    """Каждое движение сделки по нашей лестнице. Миграция 2026-08-17_account_dashboard.sql.
+
+    Две задачи: восстановить «кто и когда двинул» (в Битриксе этого нет — там только
+    текущая стадия) и посчитать, сколько сделка реально живёт на каждой стадии, чтобы
+    уточнять sla_days по факту, а не по догадке. Вход в стадию = последняя строка
+    с этим to_stage_id: от её `at` считается просрочка стадии.
+
+    from_stage_id NULL — первая постановка стадии (импорт из Битрикса или сид)."""
+    __tablename__ = "sales_deal_stage_history"
+    id = Column(Integer, primary_key=True)
+    deal_id = Column(Integer, ForeignKey("sales_deals.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    from_stage_id = Column(Integer, ForeignKey("sales_stages.id"))
+    to_stage_id = Column(Integer, ForeignKey("sales_stages.id"), nullable=False)
+    user_id = Column(Integer)
+    at = Column(DateTime(timezone=True), server_default=func.now())
+    reason = Column(Text)
+
+
+class SalesDealSnooze(Base):
+    """Отложенная сделка: заметка и опциональная дата возврата в очередь.
+    Миграция 2026-08-17_account_dashboard.sql.
+
+    Смысл — очередь должна оставаться честной: в ней только то, за что можно взяться
+    сегодня. Пока return_at в будущем, строка уходит в свёрнутую группу «Отложено»
+    и возвращается сама в указанный день, сохраняя свою срочность.
+
+    return_at NULL — заметка без снятия из очереди (показывается скрепкой).
+    Одна запись на сделку (UNIQUE): вторая дата возврата сделала бы неопределённым,
+    когда именно сделка вернётся."""
+    __tablename__ = "sales_deal_snooze"
+    id = Column(Integer, primary_key=True)
+    deal_id = Column(Integer, ForeignKey("sales_deals.id", ondelete="CASCADE"),
+                     nullable=False, unique=True)
+    note = Column(Text)
+    return_at = Column(Date)
+    author_id = Column(Integer)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(),
+                        onupdate=func.now())
 
 
 class SalesDealChecklistState(Base):

@@ -90,11 +90,25 @@ def create_user(
     if not role:
         raise HTTPException(status_code=400, detail="Недопустимая роль")
 
+    # Профиль уведомлений: взят из запроса, иначе выведен из роли по стартовой
+    # раскладке. Без этого новый сотрудник заводился с NULL и не попадал ни в один
+    # профиль — а в настройках уведомлений все профили показывали «0 человек»,
+    # хотя людей в системе полтора десятка.
+    profile_id = data.notification_profile_id or None
+    if not profile_id:
+        from app.notify.seed_profiles import ROLE_TO_PROFILE
+        from app.notify.models import NotificationProfile
+        key = ROLE_TO_PROFILE.get(role.key)
+        if key:
+            prof = db.query(NotificationProfile).filter(NotificationProfile.key == key).first()
+            profile_id = prof.id if prof else None
+
     user = User(
         name=data.name,
         email=data.email,
         hashed_password=get_password_hash(data.password),
         role_id=role.id,
+        notification_profile_id=profile_id,
     )
     db.add(user)
     db.commit()
