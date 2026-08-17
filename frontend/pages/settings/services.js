@@ -3,7 +3,7 @@ import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { firstAllowedHref } from '../../components/Navbar'
 import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsTabs'
-import { MONO, UI, card, inp, sel, ci, cs, th, td, primaryBtn } from '../../components/salesTableKit'
+import { MONO, UI, card, inp, sel, ci, cs, th, td, primaryBtn, PortalPopover } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 
 // ── Справочник услуг (конструктор) — отдельная страница раздела «Настройки» ──
@@ -43,6 +43,7 @@ export default function SettingsServices() {
   const [bxOptions, setBxOptions] = useState([])       // услуги Битрикса (СП 1050) для привязки
   const [bxErr, setBxErr] = useState(false)            // Битрикс недоступен → селект работает по кэшу
   const [formats, setFormats] = useState([])           // справочник форматов размещения
+  const [palette, setPalette] = useState([])           // допустимые цвета маркера услуги
   const [articles, setArticles] = useState([])         // реестр статей (для маппинга услуга→статья выручки)
   const [newFormat, setNewFormat] = useState({ name: '', group: '' })
   const [fmtOpen, setFmtOpen] = useState(null)         // id услуги с открытым пикером форматов
@@ -72,19 +73,20 @@ export default function SettingsServices() {
         api.get('/articles/', auth()),
       ])
       setServices(s.data.items || []); setAddons(a.data.items || []); setFormats(f.data.items || [])
+      setPalette(s.data.palette || [])
       setArticles(Array.isArray(art.data) ? art.data : (art.data.items || []))
     } catch (e) { if (e.response?.status === 401) router.push('/login') }
     finally { setLoading(false) }
   }
 
   // ── услуги ──
-  const svcSeed = (s) => ({ name: s.name, group: s.group || '', placement_type: s.placement_type || '', calc_form: s.calc_form || '', separate_price: !!s.separate_price, unit_price: s.unit_price ?? '', unit_price_web: s.unit_price_web ?? '', unit_price_app: s.unit_price_app ?? '', constants: s.constants || {}, bx_id: s.bx_id || '', bx_title: s.bx_title || '', format_ids: (s.formats || []).map(f => f.id), revenue_article_id: s.revenue_article_id ?? '' })
+  const svcSeed = (s) => ({ name: s.name, group: s.group || '', placement_type: s.placement_type || '', calc_form: s.calc_form || '', separate_price: !!s.separate_price, unit_price: s.unit_price ?? '', unit_price_web: s.unit_price_web ?? '', unit_price_app: s.unit_price_app ?? '', constants: s.constants || {}, bx_id: s.bx_id || '', bx_title: s.bx_title || '', format_ids: (s.formats || []).map(f => f.id), revenue_article_id: s.revenue_article_id ?? '', color: s.color || '' })
   const bxTitleFor = (id) => (id ? (bxOptions.find(o => o.id === id)?.title || null) : null)
   const svcEd = (s) => editingServices[s.id] || svcSeed(s)
   const svcSet = (s, f, v) => setEditingServices(p => ({ ...p, [s.id]: { ...(p[s.id] || svcSeed(s)), [f]: v } }))
   const svcSetConst = (s, k, v) => setEditingServices(p => { const cur = p[s.id] || svcSeed(s); return { ...p, [s.id]: { ...cur, constants: { ...(cur.constants || {}), [k]: v } } } })
   const svcDirty = (id) => !!editingServices[id]
-  const svcPayload = (ed) => ({ name: ed.name, group: ed.group || null, placement_type: ed.placement_type || null, calc_form: ed.calc_form || null, separate_price: !!ed.separate_price, unit_price: ed.separate_price ? null : numOrNull(ed.unit_price), unit_price_web: ed.separate_price ? numOrNull(ed.unit_price_web) : null, unit_price_app: ed.separate_price ? numOrNull(ed.unit_price_app) : null, constants: ed.constants || {}, bx_id: ed.bx_id || null, bx_title: ed.bx_id ? (bxTitleFor(ed.bx_id) || ed.bx_title || null) : null, format_ids: ed.format_ids ?? null, revenue_article_id: ed.revenue_article_id ? Number(ed.revenue_article_id) : null })
+  const svcPayload = (ed) => ({ name: ed.name, group: ed.group || null, placement_type: ed.placement_type || null, calc_form: ed.calc_form || null, separate_price: !!ed.separate_price, unit_price: ed.separate_price ? null : numOrNull(ed.unit_price), unit_price_web: ed.separate_price ? numOrNull(ed.unit_price_web) : null, unit_price_app: ed.separate_price ? numOrNull(ed.unit_price_app) : null, constants: ed.constants || {}, bx_id: ed.bx_id || null, bx_title: ed.bx_id ? (bxTitleFor(ed.bx_id) || ed.bx_title || null) : null, format_ids: ed.format_ids ?? null, revenue_article_id: ed.revenue_article_id ? Number(ed.revenue_article_id) : null, color: ed.color || null })
   const saveService = async (id) => {
     const ed = editingServices[id]; if (!ed) return
     try { await api.put(`/sales/directories/services/${id}`, svcPayload(ed), auth()); setEditingServices(p => { const n = { ...p }; delete n[id]; return n }); await load(); loadBx() }
@@ -242,6 +244,7 @@ export default function SettingsServices() {
                 <th style={{ ...th, textAlign: 'center', width: 56 }}>Разд.</th>
                 <th style={{ ...th, width: 200 }}>Цена / ед</th>
                 <th style={{ ...th, width: 120 }}>Группа</th>
+                <th style={{ ...th, textAlign: 'center', width: 52 }} title="Цвет-маркер услуги на дашборде, в реестре и в МП">Цвет</th>
                 <th style={{ ...th, width: 190 }}>Статья выручки</th>
                 <th style={{ ...th, textAlign: 'center', width: 44 }}>Исп.</th>
                 <th style={{ ...th, width: 84 }}></th>
@@ -295,6 +298,10 @@ export default function SettingsServices() {
                         <input type="number" value={ed.unit_price} onChange={e => svcSet(s, 'unit_price', e.target.value)} style={{ ...ci, textAlign: 'right' }} />
                       )}</td>
                       <td style={td}><input value={ed.group} onChange={e => svcSet(s, 'group', e.target.value)} style={ci} /></td>
+                      <td style={{ ...td, textAlign: 'center' }}>
+                        <ColorPick value={ed.color} auto={s.color_effective} palette={palette}
+                          onPick={v => svcSet(s, 'color', v)} />
+                      </td>
                       <td style={td}><select value={ed.revenue_article_id ?? ''} onChange={e => svcSet(s, 'revenue_article_id', e.target.value)} style={cs} title="Статья выручки для моста сделка→операция">{articleOpts()}</select></td>
                       <td style={{ ...td, textAlign: 'center' }}><input type="checkbox" checked={!!s.is_active} onChange={e => toggleUse(s.id, e.target.checked)} style={{ cursor: 'pointer' }} /></td>
                       <td style={{ ...td, textAlign: 'center', whiteSpace: 'nowrap' }}>
@@ -433,5 +440,44 @@ export default function SettingsServices() {
         )}
       </div>
     </>
+  )
+}
+
+
+// Пикер цвета услуги: выбор из палитры, а не свободный hex — иначе через год
+// в справочнике будет сорок оттенков серого и маркеры перестанут различаться.
+// «Авто» — пустое значение: цвет раздаётся по порядку справочника на бэкенде.
+// Компонент объявлен на модульном уровне: внутри страницы он пересоздавался бы
+// на каждый рендер и закрывался бы при первом же клике.
+function ColorPick({ value, auto, palette, onPick }) {
+  const [open, setOpen] = useState(false)
+  const shown = value || auto || 'var(--text-faint)'
+  // Закрытие по клику мимо: без него открытая палитра висела, пока не выберут цвет,
+  // и можно было открыть сразу несколько. Клик внутри портала гасится самим
+  // PortalPopover, поэтому проверка на data-pop-root здесь не нужна.
+  useEffect(() => {
+    if (!open) return
+    const off = (e) => { if (!e.target.closest('[data-color-pick]')) setOpen(false) }
+    document.addEventListener('mousedown', off)
+    return () => document.removeEventListener('mousedown', off)
+  }, [open])
+  return (
+    // PortalPopover, а не position:absolute: панель в ячейке таблицы с overflow
+    // обрезалась бы краем таблицы (правило кита про дропдауны).
+    <span data-color-pick style={{ position: 'relative', display: 'inline-block' }}>
+      <span onClick={() => setOpen(o => !o)} title={value ? `выбран ${value}` : `авто ${auto || ''}`}
+        style={{ display: 'inline-block', width: 18, height: 18, borderRadius: 5, cursor: 'pointer',
+          background: shown, border: value ? '2px solid var(--text-primary)' : '1px solid var(--border-card)' }} />
+      <PortalPopover open={open} minWidth={168} align="left"
+        style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 20px)', gap: 6, padding: 8 }}>
+        {(palette || []).map(c => (
+          <span key={c} onClick={() => { onPick(c); setOpen(false) }} title={c}
+            style={{ width: 20, height: 20, borderRadius: 5, background: c, cursor: 'pointer',
+              border: value === c ? '2px solid var(--text-primary)' : '1px solid var(--border-inner)' }} />
+        ))}
+        <span onClick={() => { onPick(''); setOpen(false) }} title="Авто по порядку справочника"
+          style={{ gridColumn: '1 / -1', textAlign: 'center', fontSize: 11, color: 'var(--accent)', cursor: 'pointer', paddingTop: 2 }}>авто</span>
+      </PortalPopover>
+    </span>
   )
 }

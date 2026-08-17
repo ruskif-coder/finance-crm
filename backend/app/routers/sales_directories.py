@@ -68,6 +68,7 @@ class ServiceIn(BaseModel):
     bx_title: Optional[str] = None    # кэш имени битрикс-услуги на момент привязки
     format_ids: Optional[List[int]] = None  # привязанные форматы (M2M); None — не трогать
     revenue_article_id: Optional[int] = None  # статья выручки (E0, мост сделка→операция)
+    color: Optional[str] = None       # маркер услуги; пусто = авто по имени из палитры
 
 
 class FormatIn(BaseModel):
@@ -192,7 +193,16 @@ def list_services(only_active: bool = True, db: Session = Depends(get_db),
                      .order_by(SalesFormat.sort_order, SalesFormat.name).all())
         for sid, fid, fname, fgroup in link_rows:
             fmt_map.setdefault(sid, []).append({"id": fid, "name": fname, "group": fgroup})
-    return {"items": [{"id": s.id, "name": s.name, "group": s.group, "is_active": s.is_active,
+    # Цвет — из общей раскладки (порядок справочника), а не пересчитан здесь:
+    # иначе пикер показывал бы один цвет, а маркеры на дашборде другой.
+    from app.sales.colors import service_color_map, PALETTE
+    cmap = service_color_map(db)
+    return {"palette": PALETTE,
+            "items": [{"id": s.id, "name": s.name, "group": s.group, "is_active": s.is_active,
+                       # color — что выбрано руками (может быть null), color_effective —
+                       # что реально показывать. Оба: пикер должен отличать «авто» от
+                       # «выбран зелёный», а рисующий код — не считать цвет сам.
+                       "color": s.color, "color_effective": cmap.get(s.name),
                        "sort_order": s.sort_order, "placement_type": s.placement_type,
                        "default_format": s.placement_type, "formats": fmt_map.get(s.id, []),
                        "calc_form": s.calc_form, "separate_price": bool(s.separate_price),
@@ -204,6 +214,13 @@ def list_services(only_active: bool = True, db: Session = Depends(get_db),
 
 
 def _set_service_fields(svc, data):
+    # Цвет принимаем только из палитры: свободный hex превратил бы справочник
+    # в набор случайных оттенков, а маркеры перестали бы различаться на глаз.
+    from app.sales.colors import PALETTE
+    c = (getattr(data, "color", None) or "").strip()
+    if c and c not in PALETTE:
+        raise HTTPException(status_code=400, detail="Цвет должен быть из палитры")
+    svc.color = c or None
     svc.placement_type = data.placement_type or None
     svc.calc_form = data.calc_form or None
     svc.separate_price = bool(data.separate_price)
@@ -1106,6 +1123,11 @@ def _stage_dict(s):
             "stage_label": cat["label"] if cat else None,
             "money_layer": cat["money_layer"] if cat else s.money_layer,
             "is_terminal": bool(s.is_terminal),
+            # Срыв отличается от положительного исхода: у обоих is_terminal, но вести
+            # сделку «в срыв» — отдельное решение, и интерфейс должен его различать
+            # (кнопка «Подтвердить бронь» предлагает и этот путь).
+            "is_lost": bool(s.is_lost),
+            "sla_days": s.sla_days,
             "requires_media_plan": bool(s.requires_media_plan),
             "bitrix_pipeline_id": s.bitrix_pipeline_id, "bitrix_status_id": s.bitrix_status_id}
 
