@@ -122,7 +122,9 @@ export default function CounterpartyCard() {
   }, [id])
 
   // Все параметры — явно, без зависимости от замыкания
-  const loadOps = useCallback(async (page, status, col, dir) => {
+  // append — «Показать ещё»: дописываем страницу к списку, а не заменяем его.
+  // Без этого кнопка выглядела бы как перелистывание: 50 строк сменялись следующими 50.
+  const loadOps = useCallback(async (page, status, col, dir, append = false) => {
     if (!id) return
     const token = localStorage.getItem('token')
     setOpsLoading(true)
@@ -136,7 +138,8 @@ export default function CounterpartyCard() {
       })
       if (status) params.append('status', status)
       const r = await api(token).get(`/counterparties/${id}/operations?${params}`)
-      setOps(r.data.items || [])
+      const items = r.data.items || []
+      setOps(prev => (append ? [...prev, ...items] : items))
       setOpsTotal(r.data.total || 0)
     } catch {}
     finally { setOpsLoading(false) }
@@ -205,7 +208,7 @@ export default function CounterpartyCard() {
   }
   function handlePage(p) {
     setOpsPage(p)
-    loadOps(p, opsStatus, sortCol, sortDir)
+    loadOps(p, opsStatus, sortCol, sortDir, p > 0)
   }
 
   async function handleSave() {
@@ -399,7 +402,10 @@ export default function CounterpartyCard() {
           onBack={() => router.push('/directory/counterparties')}
           onEdit={() => { setEditMode(true); setSaveErr('') }}
           onCopyRequisites={copyRequisites}
-          onOpenContracts={() => router.push('/directory/contracts')} />
+          onOpenContracts={() => router.push('/directory/contracts')}
+          opsStatus={opsStatus} opsSortCol={sortCol} opsSortDir={sortDir} opsLoading={opsLoading}
+          onOpsStatus={handleStatus} onOpsSortCol={handleSortCol} onOpsSortDir={handleSortDir}
+          onOpsMore={() => handlePage(opsPage + 1)} />
         {editMode && editData && (() => {
           const setF = (k, v) => setEditData(d => ({ ...d, [k]: v }))
           const setBank = (i, k, v) => setEditData(d => ({ ...d, bank_accounts: d.bank_accounts.map((b, j) => j === i ? { ...b, [k]: v } : b) }))

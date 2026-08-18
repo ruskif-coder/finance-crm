@@ -62,7 +62,7 @@ export default function SalesRegistry2() {
   // массовое редактирование + чекбоксы
   const [selDeals, setSelDeals] = useState({})   // { dealId: true }
   const [lastIdx, setLastIdx] = useState(null)   // якорь Shift-выделения
-  const [bulkForm, setBulkForm] = useState({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', bitrix_stage: '', period: '' })
+  const [bulkForm, setBulkForm] = useState({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', our_stage_id: '', period: '' })
   const [saving, setSaving] = useState(false)
   const selDealIds = Object.keys(selDeals).map(Number)
 
@@ -181,19 +181,13 @@ export default function SalesRegistry2() {
     return [...dir, ...orphans]
   })()
 
-  // Опции для МАССОВОЙ смены стадии: плоский список ПРОСТЫХ имён стадий.
-  // В fopts.bitrix_stage value = "воронка\x1fстадия" (составной ключ фильтра, чтобы
-  // одноимённые стадии в разных воронках фильтровались независимо). В bitrix_stage
-  // сделки должно лечь ТОЛЬКО имя стадии — иначе в базу утекает "Песочница\x1fМП…"
-  // и в реестре плодятся стадии-двойники. Дедуп по имени.
-  const stageEditOpts = (() => {
-    const seen = new Set(); const out = []
-    for (const o of (fopts.bitrix_stage || [])) {
-      const name = o.label ?? String(o.value).split('\x1f').pop()
-      if (name && !seen.has(name)) { seen.add(name); out.push({ value: name, label: name }) }
-    }
-    return out
-  })()
+  // Опции для МАССОВОЙ смены стадии — НАША лестница (id + имя, с этапом в подписи).
+  // Раньше тут были имена стадий Битрикса, и в bitrix_stage сделки могло утечь
+  // составное значение фильтра, плодя стадии-двойники. Теперь правится our_stage_id —
+  // числовой ключ каталога, утекать нечему.
+  const stageEditOpts = (fopts.our_stage_id || []).map(o => ({
+    value: o.value, label: o.group ? `${o.group} · ${o.label}` : o.label,
+  }))
 
   const buildBase = () => {
     const b = new URLSearchParams()
@@ -253,18 +247,17 @@ export default function SalesRegistry2() {
   }
   const applyBulk = async () => {
     const body = { deal_ids: selDealIds }; let any = false
-    const STR = ['product', 'period', 'bitrix_stage']
+    const STR = ['product', 'period']
     for (const [k, v] of Object.entries(bulkForm)) {
       if (v === '__clear__') { body[k] = null; any = true }
       else if (v !== '' && v !== null) { body[k] = STR.includes(k) ? v : Number(v); any = true }
     }
     // Стадия — только простое имя: срезаем возможный составной ключ "воронка\x1fстадия".
-    if (typeof body.bitrix_stage === 'string' && body.bitrix_stage.includes('\x1f')) body.bitrix_stage = body.bitrix_stage.split('\x1f').pop()
     if (!any) { setErr('Заполните хотя бы одно поле для изменения'); return }
     setSaving(true); setErr('')
     try {
       const r = await api.post('/sales/deals/bulk-update', body, auth())
-      alert(r.data.message); setSelDeals({}); setBulkForm({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', bitrix_stage: '', period: '' }); load(offset)
+      alert(r.data.message); setSelDeals({}); setBulkForm({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', our_stage_id: '', period: '' }); load(offset)
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось применить') } finally { setSaving(false) }
   }
   const deleteBulk = async () => {
@@ -538,7 +531,13 @@ export default function SalesRegistry2() {
       <style>{`
         @keyframes riseIn { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
         .d2-row:hover { background: var(--bg-subtle) !important; }
-        .d2-cell { cursor:pointer; border-radius:6px; padding:2px 4px; margin:-2px -4px; display:inline-block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; }
+        .d2-cell { cursor:pointer; border-radius:6px; display:block; box-sizing:border-box;
+          /* Кликом должна ловиться ВСЯ ячейка, а не строка текста в ней: по ширине
+             грид-элемент растягивается сам, по высоте — нет (align-items:center),
+             и у пустого поля мишенью оставался только прочерк. Вертикальные отступы
+             с обратными полями добирают высоту строки, не сдвигая содержимое. */
+          padding:8px 4px; margin:-8px -4px; width:calc(100% + 8px);
+          overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .d2-cell:hover { background: var(--accent-tint); color: var(--accent); }
         .d2-gen:hover, .d2-ico:hover { border-color:#C7D0E8 !important; color:var(--accent) !important; }
         @media (prefers-reduced-motion: reduce) { [style*="animation"] { animation:none !important } }
@@ -718,7 +717,7 @@ export default function SalesRegistry2() {
                       const W = { flexShrink: 0, width: 132, maxWidth: 132, textOverflow: 'ellipsis' }
                       const bsel = (k, opt, ph, optsOverride) => <select style={{ ...bulkInp, ...W }} value={bulkForm[k]} onChange={e => setBulkForm({ ...bulkForm, [k]: e.target.value })}><option value="">{ph}</option>{(optsOverride || fopts[opt] || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
                       return <>
-                        {bsel('bitrix_stage', 'bitrix_stage', 'стадия —', stageEditOpts)}
+                        {bsel('our_stage_id', 'our_stage_id', 'стадия —', stageEditOpts)}
                         {bsel('product', 'product', 'услуга —', productOpts)}
                         <input type="month" style={{ ...bulkInp, flexShrink: 0, width: 120 }} value={bulkForm.period} onChange={e => setBulkForm({ ...bulkForm, period: e.target.value })} />
                         {bsel('advertiser_id', 'advertiser_id', 'рекл. —')}

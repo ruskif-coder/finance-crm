@@ -63,6 +63,16 @@ const GearIcon = ({ size = 16 }) => (
   </svg>
 )
 
+// Рубль — ярлык на «Операции». Только для админа: раздел с первичными данными,
+// в контурном меню ему места не нашлось, а заходить туда приходится часто.
+const RubleIcon = ({ size = 16 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9 20V5h4.2a4 4 0 0 1 0 8H9" />
+    <path d="M6.5 15.5h7" />
+    <path d="M6.5 12.5H9" />
+  </svg>
+)
+
 const SearchIcon = () => (
   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" />
@@ -340,6 +350,14 @@ export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGea
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
         {/* Панель у справочников такая же, как у контуров: попасть в нужный справочник
             из любого раздела, а не только в первый по списку. */}
+        {/* Ярлык «Операции» — перед справочниками и только админу (см. RubleIcon). */}
+        {isAdmin && (
+          <button type="button" className="nav-icon" onClick={() => onNavigate?.({ href: '/finance/operations' })}
+            title="Операции" aria-label="Операции"
+            style={{ ...btnReset, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 10, color: T.t3 }}>
+            <RubleIcon />
+          </button>
+        )}
         {hasDirectory && directory && <Section s={directory} variant="ghost" align="right" />}
         {bell}
         {canSettings && (

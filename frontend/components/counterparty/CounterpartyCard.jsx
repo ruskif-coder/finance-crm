@@ -152,9 +152,24 @@ const CONTRACT_COLS = '1.2fr 90px 1fr 90px 90px 130px 80px';
 const OPS_COLS = '88px 118px 90px 108px 108px 96px 84px 1fr 74px 74px 92px';
 
 /* ── страница ───────────────────────────────────────────────────────── */
-export default function CounterpartyCard({ data, onBack, onEdit, onCopyRequisites, onOpenContracts, copied, canEdit = true }) {
+// ops* — управление таблицей операций. Пришло из хендоффа декоративным (чипы и
+// заголовки колонок были простыми span без обработчиков), поэтому сортировка и фильтры
+// не работали, хотя страница уже умела их грузить. Теперь состояние живёт на странице,
+// а компонент только зовёт колбэки.
+export default function CounterpartyCard({ data, onBack, onEdit, onCopyRequisites, onOpenContracts, copied, canEdit = true,
+                                           opsStatus = '', opsSortCol = 'date', opsSortDir = 'desc',
+                                           onOpsStatus, onOpsSortCol, onOpsSortDir, onOpsMore, opsLoading = false }) {
   const { name, state, kind, site, brands, requisites, banks, belonging, terms,
           kpi, turnover, stats, topItems, byStatus, contracts, ops, opsTotal } = data;
+
+  // Клик по заголовку: та же колонка — переворачиваем направление, другая — берём её.
+  const headProps = {
+    sortCol: opsSortCol, sortDir: opsSortDir,
+    onPick: (col) => {
+      if (col === opsSortCol) onOpsSortDir?.(opsSortDir === 'asc' ? 'desc' : 'asc')
+      else onOpsSortCol?.(col)
+    },
+  };
 
   return (
     <div style={{
@@ -339,12 +354,21 @@ export default function CounterpartyCard({ data, onBack, onEdit, onCopyRequisite
           <section style={{ ...card(0.28), padding: '20px 26px 16px', gap: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span style={{ ...h2, paddingRight: 4 }}>Операции</span>
-              {['Все статусы', 'Дата', '↓ По убыванию'].map(f => (
-                <span key={f} className="cc-ghost" style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 7, height: 32, padding: '0 12px',
-                  border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                }}>{f} <span style={{ color: T.t4, fontSize: 10 }}>▾</span></span>
-              ))}
+              {/* Нативный select вместо декоративного чипа: он открывается везде,
+                  не требует портала и не обрежется скроллом таблицы. Внешний вид —
+                  тот же чип из хендоффа. */}
+              <OpsPick value={opsStatus} onChange={onOpsStatus} options={[
+                { value: '', label: 'Все статусы' },
+                { value: 'ОПЛАЧЕНО', label: 'Оплачено' },
+                { value: 'ПЛАН ПОСТУПЛЕНИЙ', label: 'План поступлений' },
+                { value: 'ПЛАН ОПЛАТ', label: 'План оплат' },
+              ]} />
+              <OpsPick value={opsSortCol} onChange={onOpsSortCol} options={OPS_SORTABLE} />
+              <OpsPick value={opsSortDir} onChange={onOpsSortDir} options={[
+                { value: 'desc', label: '↓ По убыванию' },
+                { value: 'asc', label: '↑ По возрастанию' },
+              ]} />
+              {opsLoading && <span style={{ fontSize: 11, color: T.t4 }}>загрузка…</span>}
               <span style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: T.t4 }}>{opsTotal} записей</span>
             </div>
 
@@ -354,9 +378,18 @@ export default function CounterpartyCard({ data, onBack, onEdit, onCopyRequisite
                   display: 'grid', gridTemplateColumns: OPS_COLS, gap: 12, padding: '0 6px 9px',
                   borderBottom: `1px solid ${T.border}`, ...colHead,
                 }}>
-                  <span>Дата</span><span>Статус</span><span style={{ textAlign: 'right' }}>ДЗ</span>
-                  <span style={{ textAlign: 'right' }}>Приход</span><span style={{ textAlign: 'right' }}>Расход</span>
-                  <span>Банк</span><span>Период</span><span>Статья</span><span>№ ДС</span>
+                  {/* Клик по заголовку = смена колонки сортировки, повторный клик —
+                      направления. Сортируются только те колонки, что умеет бэкенд
+                      (sort_map в counterparties.py); остальные — обычный текст. */}
+                  <OpsHead col="date" label="Дата" {...headProps} />
+                  <OpsHead col="status" label="Статус" {...headProps} />
+                  <span style={{ textAlign: 'right' }}>ДЗ</span>
+                  <OpsHead col="income" label="Приход" right {...headProps} />
+                  <OpsHead col="expense" label="Расход" right {...headProps} />
+                  <span>Банк</span>
+                  <OpsHead col="period" label="Период" {...headProps} />
+                  <OpsHead col="article" label="Статья" {...headProps} />
+                  <span>№ ДС</span>
                   <span>№ счёта</span><span>Дата счёта</span>
                 </div>
                 {ops.map((o, i) => (
@@ -387,10 +420,13 @@ export default function CounterpartyCard({ data, onBack, onEdit, onCopyRequisite
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 2px 2px' }}>
-              <span className="cc-ghost" style={{
-                display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px',
-                border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12, fontWeight: 600, color: T.accent, cursor: 'pointer',
-              }}>Показать ещё</span>
+              {ops.length < opsTotal && (
+                <span className="cc-ghost" onClick={() => !opsLoading && onOpsMore?.()} style={{
+                  display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px',
+                  border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12, fontWeight: 600,
+                  color: T.accent, cursor: opsLoading ? 'default' : 'pointer', opacity: opsLoading ? 0.5 : 1,
+                }}>{opsLoading ? 'Загрузка…' : 'Показать ещё'}</span>
+              )}
               <span style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 11, color: T.t4 }}>{ops.length} из {opsTotal}</span>
             </div>
           </section>
@@ -398,5 +434,48 @@ export default function CounterpartyCard({ data, onBack, onEdit, onCopyRequisite
         </div>
       </div>
     </div>
+  );
+}
+
+
+// Колонки, которые умеет сортировать бэкенд (sort_map в routers/counterparties.py).
+// Список общий для чипа сортировки и кликабельных заголовков — чтобы предложить
+// сортировку по колонке, которой сервер не знает, было невозможно.
+const OPS_SORTABLE = [
+  { value: 'date', label: 'Дата' },
+  { value: 'status', label: 'Статус' },
+  { value: 'income', label: 'Приход' },
+  { value: 'expense', label: 'Расход' },
+  { value: 'period', label: 'Период' },
+  { value: 'article', label: 'Статья' },
+];
+
+// Чип-выпадашка: нативный select, обёрнутый в оформление хендоффа.
+function OpsPick({ value, onChange, options }) {
+  return (
+    <span className="cc-ghost" style={{
+      display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 8px 0 12px',
+      border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12, fontWeight: 600,
+      color: T.t1, background: T.card, cursor: 'pointer',
+    }}>
+      <select value={value} onChange={e => onChange?.(e.target.value)}
+        style={{ appearance: 'none', border: 'none', background: 'transparent', outline: 'none',
+          font: 'inherit', color: 'inherit', cursor: 'pointer', paddingRight: 4 }}>
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+      <span style={{ color: T.t4, fontSize: 10 }}>▾</span>
+    </span>
+  );
+}
+
+// Заголовок сортируемой колонки: активная подсвечена и показывает направление.
+function OpsHead({ col, label, right, sortCol, sortDir, onPick }) {
+  const on = sortCol === col;
+  return (
+    <span onClick={() => onPick?.(col)} title="Сортировать"
+      style={{ cursor: 'pointer', textAlign: right ? 'right' : 'left', color: on ? T.accent : undefined,
+        userSelect: 'none' }}>
+      {label}{on ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+    </span>
   );
 }

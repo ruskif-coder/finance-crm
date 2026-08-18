@@ -103,7 +103,10 @@ export const StageLayerBar = ({ os, h = 12, w = 7, full }) => {
 }
 
 export const FILTER_DROPS = [
-  ['pipeline', 'Воронка'], ['product', 'Услуга'], ['bitrix_stage', 'Стадия'], ['stage_key', 'Слой денег'],
+  // «Стадия» — НАША лестница (our_stage_id), а не имена из Битрикса: там стадии
+  // дублируются по воронкам и содержат имена сотрудников («Закрывающие документы |
+  // Мария»), выбирать по ним нельзя. Битриксовая стадия осталась колонкой таблицы.
+  ['pipeline', 'Воронка'], ['product', 'Услуга'], ['our_stage_id', 'Стадия'], ['stage_key', 'Слой денег'],
   ['advertiser_id', 'Рекламодатель'], ['brand_id', 'Бренд'], ['agency_id', 'Агентство'], ['account_manager_id', 'Аккаунт'],
 ]
 export const GAP_FIELDS = [

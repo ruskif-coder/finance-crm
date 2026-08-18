@@ -30,7 +30,7 @@ from app.audit import log_action
 from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
                               SalesRep, SalesBrand, SalesBitrixSyncLog,
                               SalesDealFieldOverride, SalesAgency,
-                              SalesStage, SalesPipeline,
+                              SalesStage, SalesStagePhase, SalesPipeline,
                               SalesDealStageHistory, SalesDealSnooze)
 from app.sales.stages import STAGE_CATALOG
 from app.sales.catalog import Catalog, stage_public
@@ -241,7 +241,7 @@ def _apply_extra_filters(q, db, hide_archive=False, search=None, gaps=None):
 def _base_query(db: Session, date_from, date_to, pipeline, sales_rep_id,
                 account_manager_id, advertiser_id, money_layer,
                 bitrix_stage=None, brand_id=None, agency_id=None,
-                product=None, stage_key=None):
+                product=None, stage_key=None, our_stage_id=None):
     """Сделки, склеенные со слоем денег НАШЕЙ стадии (our_stage — мастер).
     Джойн LEFT по our_stage_id: у сделки без нашей стадии (сид не сматчил —
     «требует разбора») слой NULL → «Без группы», а не исчезает.
@@ -277,6 +277,12 @@ def _base_query(db: Session, date_from, date_to, pipeline, sales_rep_id,
     ):
         if condition is not None:
             q = q.filter(condition)
+
+    # НАША стадия — точный фильтр по id из каталога. Именно он показывается в реестре
+    # как «Стадия»: битриксовые имена дублируются по воронкам и содержат имена
+    # сотрудников («Закрывающие документы | Мария»), выбирать по ним нельзя.
+    if our_stage_id:
+        q = q.filter(SalesDeal.our_stage_id.in_(list(our_stage_id)))
 
     # bitrix_stage: значения — простые имена ИЛИ пары "воронка\x1fстадия" (per-pipeline
     # выбор: одинаковая стадия в разных воронках фильтруется независимо).
@@ -325,6 +331,7 @@ def dashboard(
     date_to: Optional[str] = None,
     pipeline: Annotated[Optional[List[str]], Query()] = None,
     bitrix_stage: Annotated[Optional[List[str]], Query()] = None,
+    our_stage_id: Annotated[Optional[List[int]], Query()] = None,
     sales_rep_id: Annotated[Optional[List[int]], Query()] = None,
     account_manager_id: Annotated[Optional[List[int]], Query()] = None,
     advertiser_id: Annotated[Optional[List[int]], Query()] = None,
@@ -342,7 +349,7 @@ def dashboard(
 ):
     _q = _base_query(db, date_from, date_to, pipeline, sales_rep_id,
                      account_manager_id, advertiser_id, money_layer,
-                     bitrix_stage, brand_id, agency_id, product, stage_key)
+                     bitrix_stage, brand_id, agency_id, product, stage_key, our_stage_id)
     # сводку зовёт и реестр (scope_section=sales_registry), и аналитика (по умолчанию).
     # Секцию от клиента НЕ применяем напрямую — резолвим по реально доступным правам,
     # иначе роль 'own' могла бы подставить чужую секцию и увидеть чужие сделки.
@@ -561,6 +568,7 @@ def deals_registry(
     date_to: Optional[str] = None,
     pipeline: Annotated[Optional[List[str]], Query()] = None,
     bitrix_stage: Annotated[Optional[List[str]], Query()] = None,
+    our_stage_id: Annotated[Optional[List[int]], Query()] = None,
     sales_rep_id: Annotated[Optional[List[int]], Query()] = None,
     account_manager_id: Annotated[Optional[List[int]], Query()] = None,
     advertiser_id: Annotated[Optional[List[int]], Query()] = None,
@@ -591,7 +599,7 @@ def deals_registry(
     не вынесена — см. раздел 13 спецификации."""
     q = _base_query(db, date_from, date_to, pipeline, sales_rep_id,
                     account_manager_id, advertiser_id, money_layer,
-                    bitrix_stage, brand_id, agency_id, product, stage_key)
+                    bitrix_stage, brand_id, agency_id, product, stage_key, our_stage_id)
 
     # Видимость сделок роли: «только свои» ограничивает выборку сразу.
     q = _apply_own_scope(q, _own_rep_ids_or_all(db, current_user))
@@ -863,7 +871,10 @@ class DealPatch(BaseModel):
 # Поля, доступные ручной правке. Расширять осознанно: каждое попадёт
 # в очередь на заливку в Битрикс.
 EDITABLE_INT = ("advertiser_id", "agency_id", "brand_id", "sales_rep_id",
-                "account_manager_id", "payer_counterparty_id")
+                "account_manager_id", "payer_counterparty_id",
+                # our_stage_id — наша стадия: правка ручная и синхронизация её
+                # не перезатирает (иначе следующий синк вернул бы стадию Битрикса).
+                "our_stage_id")
 EDITABLE_DATE = ("period_from", "period_to")
 EDITABLE_STR = ("product", "bitrix_stage", "title")
 
@@ -893,7 +904,12 @@ class BulkUpdate(BaseModel):
     sales_rep_id: Optional[int] = None
     account_manager_id: Optional[int] = None
     product: Optional[str] = None
+    # bitrix_stage оставлен для совместимости, но интерфейс им больше не пользуется:
+    # это поле мастера-Битрикса, и запись в него из реестра однажды уже утащила
+    # в базу составной ключ фильтра («воронка\x1fстадия»), наплодив стадии-двойники.
     bitrix_stage: Optional[str] = None
+    # НАША стадия: массовый перевод по каталогу. Пишет историю, как обычное движение.
+    our_stage_id: Optional[int] = None
     period: Optional[str] = None
 
 
@@ -941,6 +957,28 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
               "product", "bitrix_stage"):
         if f in changes:
             updates[getattr(SalesDeal, f)] = changes[f]
+
+    # Массовый перевод по НАШЕЙ лестнице. Пишем историю на каждую сделку, где стадия
+    # реально меняется: правило простоя и аналитика «сколько живёт на стадии» стоят
+    # на истории, и молчаливый массовый сдвиг сделал бы их слепыми.
+    # Пререквизит МП здесь НЕ проверяется: массовая правка — инструмент разбора
+    # накопленного, а не движение сделки по конвейеру (для него есть /deals/{id}/move
+    # с комментарием и проверками).
+    moved = 0
+    if changes.get("our_stage_id"):
+        from app.sales.models import SalesDealStageHistory
+        target_id = int(changes["our_stage_id"])
+        target = db.query(SalesStage).filter(SalesStage.id == target_id).first()
+        if not target:
+            raise HTTPException(status_code=404, detail="Стадия не найдена")
+        for d in db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).all():
+            if d.our_stage_id == target_id:
+                continue
+            db.add(SalesDealStageHistory(deal_id=d.id, from_stage_id=d.our_stage_id,
+                                         to_stage_id=target_id, user_id=current_user.id,
+                                         reason="массовая правка стадии"))
+            moved += 1
+        updates[SalesDeal.our_stage_id] = target_id
 
     if updates:
         db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).update(
@@ -2164,8 +2202,24 @@ def filter_options(db: Session = Depends(get_db),
                 opt["tone"] = "danger"
             stage_opts.append(opt)
 
+    # НАША лестница: группировка по этапам, счётчик сделок, срыв красится красным.
+    # Стадии без сделок остаются в списке (count=0) — иначе, сняв галочку, вернуть
+    # её было бы нельзя.
+    our_counts = dict(_apply_own_scope(
+        db.query(SalesDeal.our_stage_id, func.count(SalesDeal.id)), own)
+        .group_by(SalesDeal.our_stage_id).all())
+    our_stage_opts = []
+    for ph in (db.query(SalesStagePhase).order_by(SalesStagePhase.sort_order).all()):
+        for st in sorted(ph.stages, key=lambda x: (x.sort_order, x.id)):
+            opt = {"value": st.id, "label": st.name, "group": ph.name,
+                   "count": our_counts.get(st.id, 0)}
+            if st.is_lost:
+                opt["tone"] = "danger"
+            our_stage_opts.append(opt)
+
     return {
         "money_layer": [{"value": l, "label": l} for l in ("планируемые", "реализуемые", "фактические")],
+        "our_stage_id": our_stage_opts,
         "stage_key": [{"value": s["key"], "label": f"{s['label']} · {s['money_layer']}",
                        "count": sk_counts.get(s["key"], 0)} for s in STAGE_CATALOG],
         "pipeline": pipeline_opts,

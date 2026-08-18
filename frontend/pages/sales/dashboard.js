@@ -408,7 +408,13 @@ export default function SalesDashboard2() {
       <style>{`
         @keyframes riseIn { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
         .d2-row:hover { background: var(--bg-subtle) !important; }
-        .d2-cell { cursor:pointer; border-radius:6px; padding:2px 4px; margin:-2px -4px; display:inline-block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; }
+        .d2-cell { cursor:pointer; border-radius:6px; display:block; box-sizing:border-box;
+          /* Кликом должна ловиться ВСЯ ячейка, а не строка текста в ней: по ширине
+             грид-элемент растягивается сам, по высоте — нет (align-items:center),
+             и у пустого поля мишенью оставался только прочерк. Вертикальные отступы
+             с обратными полями добирают высоту строки, не сдвигая содержимое. */
+          padding:8px 4px; margin:-8px -4px; width:calc(100% + 8px);
+          overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .d2-cell:hover { background: var(--accent-tint); color: var(--accent); }
         .d2-gen:hover, .d2-ico:hover { border-color:#C7D0E8 !important; color:var(--accent) !important; }
         @media (prefers-reduced-motion: reduce) { [style*="animation"] { animation:none !important } }

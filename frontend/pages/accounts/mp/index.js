@@ -208,9 +208,15 @@ export default function MpRegistry() {
   const act = { padding: '4px 8px', borderRadius: 7, border: '1px solid var(--border-card)', background: 'var(--bg-card)', cursor: 'pointer', fontSize: 11.5, color: 'var(--text-secondary)' }
   const clip = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
   // Ячейка-грид с клик-редактированием (пикер у места клика), как в реестре сделок.
+  // Кликабельна ВСЯ ячейка, а не строка текста: по ширине грид-элемент растягивается
+  // сам, по высоте нет — вертикальные отступы с обратными полями добирают высоту строки.
+  // Без этого у пустого поля мишенью был один прочерк.
   const EditCell = ({ it, field, mono, children }) => (
     <span onClick={canEdit ? (e) => openPicker(field, it, e) : undefined}
-      style={{ ...clip, cursor: canEdit ? 'pointer' : 'default', fontFamily: mono ? MONO : undefined, fontSize: mono ? 12 : undefined, color: children ? 'var(--text-primary)' : 'var(--text-faint)' }}>
+      style={{ ...clip, display: 'block', boxSizing: 'border-box', borderRadius: 6,
+        padding: '8px 4px', margin: '-8px -4px', width: 'calc(100% + 8px)',
+        cursor: canEdit ? 'pointer' : 'default', fontFamily: mono ? MONO : undefined,
+        fontSize: mono ? 12 : undefined, color: children ? 'var(--text-primary)' : 'var(--text-faint)' }}>
       {children || '—'}</span>
   )
 
