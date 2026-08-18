@@ -73,6 +73,25 @@ def vibecode_post(path: str, body: dict) -> dict:
     return r.json()
 
 
+def vibecode_delete(path: str) -> dict:
+    """Удаление в Битриксе. Единственная необратимая операция транспорта: у Битрикса
+    нет транзакций и нет корзины, откатить нечем. Вызывать только после того, как
+    у объекта отдельно подтверждено отсутствие связей (см. delete_retired)."""
+    key = _api_key()
+    if not key:
+        raise RuntimeError("VIBECODE_API_KEY не настроен")
+    if not path.startswith("/"):
+        path = "/" + path
+    r = httpx.delete(VIBECODE_BASE + path,
+                     headers={"X-Api-Key": key}, timeout=30)
+    r.raise_for_status()
+    # DELETE может ответить пустым телом — это успех, а не сбой разбора.
+    try:
+        return r.json()
+    except ValueError:
+        return {"ok": True}
+
+
 def list_deal_ids_for_company(company_id: str) -> list[str]:
     """Все id сделок, указывающих на компанию (для переброса при склейке)."""
     rows = _get_paged_with_retry("/deals", {"filter[companyId]": str(company_id)})

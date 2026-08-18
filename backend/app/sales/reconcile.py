@@ -76,8 +76,14 @@ def _bx_ids(row: dict) -> list[str]:
 def standard_name(row: dict) -> str:
     """«Наш стандарт» для переименования компании в Битриксе: Short | ENG | Рус | Холдинг.
     Short не пишем, если он совпадает с одним из полных имён (ENG/Рус). Дедуп без регистра."""
-    short = row.get("short_name") or row.get("name")
-    en, ru, holding = row.get("name_en"), row.get("name_ru"), row.get("holding")
+    # strip обязателен: имя уезжает в Битрикс как заголовок компании, а в справочнике
+    # у восьми записей по краям стояли пробелы — в собранном имени они превращались
+    # в «Artox Media Digital Group  | Артокс…» с двойным разделителем.
+    def _s(v):
+        return v.strip() if isinstance(v, str) else v
+
+    short = _s(row.get("short_name")) or _s(row.get("name"))
+    en, ru, holding = _s(row.get("name_en")), _s(row.get("name_ru")), _s(row.get("holding"))
     fulls_lower = {x.lower() for x in (en, ru) if x}
     parts = []
     if short and short.lower() not in fulls_lower:

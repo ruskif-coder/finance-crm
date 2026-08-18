@@ -19,6 +19,8 @@ from app.sales.models import SalesAgency, SalesAdvertiser, SalesBitrixLink, Sale
 from app.sales.reconcile import build_buckets, plan_auto_link, standard_name, TYPE_ID
 from app.bitrix_api import (list_bitrix_companies, vibecode_get, vibecode_patch,
                             list_deal_ids_for_company, all_deal_company_ids)
+# Новый код транспорта импортируем из пакета напрямую (bitrix_api — реэкспорт для старых мест).
+from app.sales.bitrix.transport import vibecode_delete, vibecode_post
 
 router = APIRouter()
 logger = logging.getLogger("finance")
@@ -63,10 +65,12 @@ def _our_deal_counts(db: Session, model) -> dict[int, int]:
     return {k: v for k, v in rows if k is not None}
 
 
-def _bx_deal_count(cid: str) -> int:
+def _bx_deal_count(cid: str, refresh: bool = False) -> int:
+    """refresh=True обязателен перед удалением компании: кэш живёт 5 минут, а решение
+    «сделок ноль, можно удалять» на устаревшем счётчике необратимо."""
     now = time.time()
     hit = _DEAL_COUNT_CACHE.get(cid)
-    if hit and now - hit[0] < _TTL:
+    if hit and not refresh and now - hit[0] < _TTL:
         return hit[1]
     d = vibecode_get("/deals", {"filter[companyId]": cid, "limit": 1})
     total = (d.get("meta") or {}).get("total") or 0
@@ -414,6 +418,169 @@ def consolidate(kind: str, data: ConsolidateIn, db: Session = Depends(get_db),
                        f"ретайр {len(redundant)}; бэкап {backup_path}")
     return {"moved_deals": moved, "primary": data.primary_bx_id, "rename_to": std,
             "retired": len(redundant), "backup": backup_path}
+
+
+# ─── Шаг 2 склейки: удаление ретайрнутых компаний ───────────────────────────
+# Склейка (выше) сделки перебрасывает, но лишние компании не удаляет — переименовывает
+# в «XXX_старое имя». Это намеренная точка остановки: Битрикс без транзакций и без
+# корзины, удаление необратимо, а ошибку в выборе главной компании видно только после
+# того, как посмотришь на результат. Удаление вынесено отдельным шагом, чтобы между
+# «склеили» и «удалили» существовал момент, когда всё ещё можно поправить.
+RETIRED_PREFIX = "XXX_"
+
+
+def _retired_candidates(kind: str, with_counts: bool = True) -> list[dict]:
+    """Компании Битрикса, помеченные к удалению склейкой.
+
+    Отбираем ТОЛЬКО по префиксу: удалять можно лишь то, что мы сами пометили.
+    Компания без префикса — либо не проходила склейку, либо кто-то её переименовал
+    обратно вручную; в обоих случаях это не наш объект для удаления.
+    """
+    out = []
+    for c in _fetch_companies(kind):
+        title = c.get("title") or ""
+        if not title.startswith(RETIRED_PREFIX):
+            continue
+        row = {"bx_id": str(c["id"]), "title": title}
+        if with_counts:
+            # Считаем заново, а не из кэша: между склейкой и удалением сделку могли
+            # привязать руками, и тогда удалять компанию нельзя.
+            try:
+                row["deal_count"] = _bx_deal_count(str(c["id"]), refresh=True)
+            except Exception:
+                row["deal_count"] = None   # неизвестно — значит не удаляем
+        out.append(row)
+    return out
+
+
+@router.get("/{kind}/retired")
+def retired_preview(kind: str, _=Depends(_can_view)):
+    """Что будет удалено. Читает Битрикс, ничего не меняет."""
+    _kind_or_400(kind)
+    items = _retired_candidates(kind)
+    return {
+        "items": items,
+        "deletable": [x for x in items if x.get("deal_count") == 0],
+        "blocked": [x for x in items if x.get("deal_count") != 0],
+    }
+
+
+@router.post("/{kind}/retired/delete")
+def retired_delete(kind: str, db: Session = Depends(get_db), current_user=Depends(_can_edit)):
+    """ЗАПИСЬ В ПРОД-БИТРИКС, НЕОБРАТИМАЯ. Удаляет компании с префиксом XXX_,
+    у которых ноль сделок. Компанию, на которой сделки есть, пропускает и называет —
+    молча пропустить нельзя, иначе оператор решит, что всё удалилось.
+
+    Перед удалением каждой компании счётчик сделок перезапрашивается: между
+    предпросмотром и нажатием кнопки сделку могли привязать заново.
+    """
+    import json
+    _kind_or_400(kind)
+    items = _retired_candidates(kind)
+
+    os.makedirs(CONSOLIDATE_BACKUP_DIR, exist_ok=True)
+    backup = {"ts": time.time(), "kind": kind, "action": "delete_retired", "items": items}
+    backup_path = f"{CONSOLIDATE_BACKUP_DIR}/bx_delete_{int(backup['ts'])}_{kind}.json"
+    with open(backup_path, "w", encoding="utf-8") as f:
+        json.dump(backup, f, ensure_ascii=False, indent=2)
+    # Дубль в лог: имена и id удалённых компаний — единственное, что от них останется.
+    logger.info("delete_retired backup %s: %s", backup_path, json.dumps(backup, ensure_ascii=False))
+
+    deleted, skipped = [], []
+    for it in items:
+        if it.get("deal_count") != 0:
+            skipped.append({**it, "reason": "на компании есть сделки"
+                            if it.get("deal_count") else "не удалось посчитать сделки"})
+            continue
+        try:
+            vibecode_delete(f"/companies/{int(it['bx_id'])}")
+            deleted.append(it)
+        except Exception as e:
+            logger.error("delete_retired: %s «%s» не удалена: %s", it["bx_id"], it["title"], e)
+            skipped.append({**it, "reason": "Битрикс отклонил удаление"})
+
+    for it in deleted:
+        _DEAL_COUNT_CACHE.pop(it["bx_id"], None)
+    _CACHE.pop(kind, None)   # список компаний изменился — кэш недействителен
+
+    log_action(db, current_user, "bx_delete_retired", kind, None,
+               details=f"удалено {len(deleted)}, пропущено {len(skipped)}; бэкап {backup_path}")
+    return {"deleted": deleted, "skipped": skipped, "backup": backup_path}
+
+
+# ─── Создание нашей записи в Битриксе ────────────────────────────────────────
+
+class CreateInBitrixIn(BaseModel):
+    our_id: int
+
+
+@router.post("/{kind}/create-in-bitrix")
+def create_in_bitrix(kind: str, data: CreateInBitrixIn, db: Session = Depends(get_db),
+                     current_user=Depends(_can_edit)):
+    """Заводит компанию в Битриксе по нашей записи и сразу связывает их.
+
+    Имя — тот же стандарт, что и при переименовании (Short | ENG | Рус | Холдинг),
+    иначе созданная запись сразу разойдётся с остальными.
+    """
+    model = _kind_or_400(kind)
+    r, row, links = _record_and_links(db, model, kind, data.our_id)
+    if links:
+        raise HTTPException(status_code=400, detail="Запись уже связана с компанией Битрикса")
+
+    title = standard_name(row)
+    created = vibecode_post("/companies", {"title": title, "companyType": TYPE_ID[kind]})
+    bx_id = str(created.get("id") or created.get("ID") or "")
+    if not bx_id:
+        # Компания, возможно, создалась, но id не вернулся — связать не можем, а
+        # повтор наплодит дубли. Поэтому не «ok», а явная ошибка с просьбой проверить.
+        raise HTTPException(status_code=502,
+                            detail=f"Битрикс не вернул id созданной компании «{title}». "
+                                   f"Проверьте в Битриксе вручную, не создалась ли она, "
+                                   f"прежде чем повторять.")
+
+    db.add(SalesBitrixLink(kind=kind, our_id=data.our_id, bx_id=bx_id))
+    db.flush()
+    _sync_primary(db, model, kind, data.our_id)
+    db.commit()
+    _CACHE.pop(kind, None)
+    log_action(db, current_user, "bx_create_company", kind, data.our_id,
+               details=f"создана компания {bx_id} «{title}»")
+    return {"bx_id": bx_id, "title": title}
+
+
+# ─── Переименование под наш стандарт (без склейки) ───────────────────────────
+
+class RenameIn(BaseModel):
+    our_id: int
+
+
+@router.post("/{kind}/rename-to-standard")
+def rename_to_standard(kind: str, data: RenameIn, db: Session = Depends(get_db),
+                       current_user=Depends(_can_edit)):
+    """Приводит имена связанных компаний Битрикса к нашему стандарту.
+
+    Склейка делает это попутно, но требует ≥2 компаний. Агентству с единственной
+    привязкой переименование было недоступно вовсе — а таких большинство.
+    """
+    model = _kind_or_400(kind)
+    _r, row, links = _record_and_links(db, model, kind, data.our_id)
+    if not links:
+        raise HTTPException(status_code=400, detail="Запись не связана с Битриксом")
+    std = standard_name(row)
+    titles = {c["id"]: c.get("title") or "" for c in _fetch_companies(kind)}
+
+    renamed, unchanged = [], []
+    for bx in links:
+        if titles.get(bx) == std:
+            unchanged.append({"bx_id": bx, "title": std})
+            continue
+        vibecode_patch(f"/companies/{int(bx)}", {"title": std})
+        renamed.append({"bx_id": bx, "was": titles.get(bx, ""), "now": std})
+    if renamed:
+        _CACHE.pop(kind, None)
+        log_action(db, current_user, "bx_rename", kind, data.our_id,
+                   details=f"переименовано {len(renamed)} → «{std}»")
+    return {"renamed": renamed, "unchanged": unchanged, "standard": std}
 
 
 class AutoLinkIn(BaseModel):

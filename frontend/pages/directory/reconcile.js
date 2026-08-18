@@ -127,6 +127,63 @@ export default function Reconcile() {
     finally { setBusy(false) }
   }
 
+  // Привести имена связанных компаний к нашему стандарту. Склейка делает это
+  // попутно, но требует ≥2 компаний — агентству с одной привязкой было недоступно.
+  const renameToStandard = async (l) => {
+    setBusy(true)
+    try {
+      const res = (await api.post(`/sales/reconcile/${kind}/rename-to-standard`, { our_id: l.our_id }, auth())).data
+      if (!res.renamed.length) alert(`Уже по стандарту: ${res.standard}`)
+      else {
+        const lines = res.renamed.map(r => `  • ${r.was} → ${r.now}`)
+        alert(`Переименовано в Битриксе (${res.renamed.length}):
+` + lines.join('\n'))
+      }
+      await load()
+    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    finally { setBusy(false) }
+  }
+
+  // Завести нашу запись компанией в Битриксе. Имя — тот же стандарт, иначе созданная
+  // компания сразу разойдётся с остальными.
+  const createInBitrix = async (c) => {
+    if (!window.confirm(`Создать «${c.our_name}» компанией в Битриксе?
+
+Это запись в боевой Битрикс.`)) return
+    setBusy(true)
+    try {
+      const res = (await api.post(`/sales/reconcile/${kind}/create-in-bitrix`, { our_id: c.our_id }, auth())).data
+      alert(`Создана компания #${res.bx_id}: ${res.title}`)
+      await load(true)
+    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    finally { setBusy(false) }
+  }
+
+  // Шаг 2 склейки: удалить компании, помеченные XXX_. Отдельной кнопкой намеренно —
+  // между склейкой и удалением должен быть момент, когда результат видно и его
+  // ещё можно поправить. Битрикс без корзины, удаление необратимо.
+  const deleteRetired = async () => {
+    setBusy(true)
+    try {
+      const pv = (await api.get(`/sales/reconcile/${kind}/retired`, auth())).data
+      if (!pv.items.length) { alert('Компаний с пометкой XXX_ нет.'); setBusy(false); return }
+      const lines = [
+        `УДАЛЮ БЕЗВОЗВРАТНО (${pv.deletable.length}):`,
+        ...pv.deletable.map(x => `  • ${x.title} (#${x.bx_id})`),
+      ]
+      if (pv.blocked.length) lines.push('', `ПРОПУЩУ — на них есть сделки (${pv.blocked.length}):`,
+        ...pv.blocked.map(x => `  • ${x.title} — ${x.deal_count === null ? 'не удалось посчитать' : x.deal_count + ' сделок'}`))
+      lines.push('', 'В Битриксе нет корзины: удаление не отменить. Продолжить?')
+      if (!pv.deletable.length) { alert(lines.join('\n')); setBusy(false); return }
+      if (!window.confirm(lines.join('\n'))) { setBusy(false); return }
+      const res = (await api.post(`/sales/reconcile/${kind}/retired/delete`, {}, auth())).data
+      alert(`Удалено: ${res.deleted.length}, пропущено: ${res.skipped.length}.
+Бэкап: ${res.backup}`)
+      await load(true)
+    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    finally { setBusy(false) }
+  }
+
   // Свободные (непривязанные) компании Битрикса — для добавления ещё одной привязки.
   const unlinked = useMemo(() => {
     if (!data) return []
@@ -210,6 +267,9 @@ export default function Reconcile() {
             </select>
           </label>
           <button onClick={autoLink} disabled={busy || loading} style={{ ...btn, fontWeight: 600, background: '#eef2ff' }}>Авто-связать всё ≥ порога</button>
+          <button onClick={deleteRetired} disabled={busy || loading}
+            title="Шаг 2 склейки: удалить компании, помеченные XXX_, если на них нет сделок"
+            style={{ ...btn, background: '#fef2f2', borderColor: '#fca5a5', color: '#b91c1c' }}>Удалить ретайрнутые (XXX_)</button>
           <button onClick={() => load(true)} disabled={busy || loading} style={btn}>Обновить из Битрикса</button>
           {countsLoading && <span style={{ color: '#9ca3af', fontSize: 12 }}>считаю сделки Битрикса…</span>}
           <span style={{ color: '#9ca3af', fontSize: 12, marginLeft: 'auto' }}>перетащите карточку из «Только в одной системе» на пару, чтобы связать</span>
@@ -257,6 +317,9 @@ export default function Reconcile() {
                         </select>
                         {multi && <button style={{ ...btn, fontSize: 12, fontWeight: 600, background: '#fef3c7', borderColor: '#fcd34d' }}
                           disabled={busy} onClick={() => consolidate(l)}>⇢ Свести (★ главная)</button>}
+                        <button style={{ ...btn, fontSize: 12 }} disabled={busy}
+                          title="Переименовать связанные компании Битрикса по нашему шаблону"
+                          onClick={() => renameToStandard(l)}>Aa По стандарту</button>
                       </div>
                       <AddCompany options={unlinked} disabled={busy}
                         onPick={bxid => post('link', { our_id: l.our_id, bx_id: bxid, master: l.bx_master || master })} />
@@ -315,6 +378,10 @@ export default function Reconcile() {
                         <input type="checkbox" checked={!!o.pending_create} disabled={busy}
                           onChange={e => post('flag-create', { our_id: o.our_id, on: e.target.checked })} /> завести в Битриксе
                       </label>
+                      {/* Галочка выше — только пометка «надо завести». Кнопка реально
+                          создаёт компанию в Битриксе и сразу связывает её с записью. */}
+                      <button style={{ ...btn, fontSize: 12, marginTop: 4 }} disabled={busy}
+                        onClick={() => createInBitrix(o)}>+ Создать в Битриксе</button>
                     </div>
                   )
                 })}
