@@ -167,13 +167,22 @@ def import_new_deals(db: Session, commit: bool = False, fetch=None) -> dict:
         from app.sales.stage_resolve import OurStageResolver
         # our_stage — мастер слоя денег: проставляем сразу на импорте, иначе новая
         # сделка выпадет в «Без группы» (read-side флип). Не сматчилось → NULL.
+        from app.sales.deal_code import assign_code
         resolver = OurStageResolver(db)
         # date_create = момент попадания сделки в нашу БД (время импорта). Служит
         # и для сортировки «сначала новые», и для подсветки свежих сделок 3 суток.
         imported_at = datetime.datetime.utcnow()
         for d in mapped:
             our_stage_id = resolver.resolve(d["pipeline"], d["bitrix_stage"])
-            db.add(SalesDeal(**d, our_stage_id=our_stage_id, date_create=imported_at))
+            deal = SalesDeal(**d, our_stage_id=our_stage_id, date_create=imported_at)
+            # Метка сделки нужна и импортированным: именно она стоит в UI и в ссылках
+            # вместо bitrix_id. Без неё сделка приезжает из Битрикса с пустым кодом.
+            # flush после каждой — иначе assign_code, проверяющий уникальность
+            # запросом, не увидит коды, назначенные в этом же цикле, и две новые
+            # сделки могли бы получить одинаковый.
+            assign_code(db, deal)
+            db.add(deal)
+            db.flush()
         db.commit()
         report["inserted"] = len(mapped)
     return report

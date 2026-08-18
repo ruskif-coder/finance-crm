@@ -99,3 +99,27 @@ def test_select_existing_takes_precedence_over_tombstone():
     mapped, c = select_new_deals([_raw(100)], {"100"}, {"100"},
                                  PIPELINES, STAGES, AGENCY_LINKS, PRODUCTS)
     assert c["skipped_existing"] == 1 and c["skipped_tombstoned"] == 0
+
+
+def test_every_deal_creation_path_assigns_a_code():
+    """Сделка не может появиться без метки — по какому бы пути её ни создали.
+
+    Метка (SalesDeal.code) стоит в интерфейсе и в ссылках вместо bitrix_id, и
+    путей создания три: ручное из дашборда, генератор годового плана и импорт из
+    Битрикса. Импорт про метку не знал, поэтому каждая приехавшая из Битрикса
+    сделка получалась с пустым кодом — в реестре на её месте прочерк. Проверка
+    статическая нарочно: она ловит именно забытый путь, а не поведение одного из них.
+    """
+    import pathlib
+    import re
+
+    app_dir = pathlib.Path(__file__).resolve().parent.parent / "app"
+    offenders = []
+    for path in app_dir.rglob("*.py"):
+        src = path.read_text(encoding="utf-8")
+        # Конструирование новой сделки, а не объявление класса и не аннотация типа.
+        if not re.search(r"(?<!class )\bSalesDeal\(", src):
+            continue
+        if "assign_code" not in src:
+            offenders.append(path.name)
+    assert offenders == [], f"создают сделку без метки: {offenders}"
