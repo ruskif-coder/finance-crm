@@ -10,10 +10,45 @@ from typing import Optional
 
 router = APIRouter()
 
+# Строки финансового отчёта — закрытый список. Ключ хранится в Article.pl_line и
+# сравнивается в отчётах буквально, поэтому он неизменяем: переименование ключа
+# обнулит разметку всех статей, которым он проставлен. Подпись менять можно.
+# Заведено миграцией 2026-08-18_article_pl_line.sql, там же смысл каждого значения.
+PL_LINES = [
+    {"value": "revenue", "label": "Выручка"},
+    {"value": "cogs", "label": "Себестоимость"},
+    {"value": "opex", "label": "Операционные расходы"},
+    {"value": "marketing", "label": "Маркетинг"},
+    {"value": "finance", "label": "Финансовые расходы"},
+    {"value": "profit_tax", "label": "Налоги — налог на прибыль"},
+    {"value": "tax_other", "label": "Налоги — прочие"},
+    {"value": "other", "label": "Прочие расходы"},
+    {"value": "excluded", "label": "Вне P&L"},
+    {"value": "by_description", "label": "По описанию платежа"},
+]
+PL_LINE_VALUES = {x["value"] for x in PL_LINES}
+
+
 class ArticleCreate(BaseModel):
     name: str
     group: Optional[str] = None
     type: str = "expense"
+    # None — статья не размечена. Это штатное состояние только что заведённой статьи:
+    # деньги по ней попадут в отчёт строкой «Требует разметки», а не пропадут.
+    pl_line: Optional[str] = None
+
+
+def _check_pl_line(value: Optional[str]) -> Optional[str]:
+    """Пустую строку из формы приводим к None, мусор — отклоняем.
+
+    Проверка на сервере обязательна: неизвестное значение в этом поле означает,
+    что суммы статьи молча уходят в «Требует разметки», а пользователь видит в
+    справочнике осмысленную на вид разметку и не понимает, почему отчёт не сходится.
+    """
+    v = (value or "").strip() or None
+    if v is not None and v not in PL_LINE_VALUES:
+        raise HTTPException(status_code=400, detail=f"Неизвестная строка отчёта: {v}")
+    return v
 
 class ArticleMove(BaseModel):
     direction: str  # "up" | "down"
@@ -129,11 +164,15 @@ def get_articles_registry(
                 "name": a.name,
                 "group": a.group,
                 "type": a.type,
+                "pl_line": a.pl_line,
                 "sort_order": a.sort_order,
                 "op_count": op_count,
             }
             for a, op_count in rows
-        ]
+        ],
+        # Список строк отчёта отдаём вместе с реестром: он закрытый и живёт на бэкенде
+        # рядом с отчётами, которые его читают, — чтобы фронт не завёл свою копию.
+        "pl_lines": PL_LINES,
     }
 
 @router.post("/")
@@ -149,7 +188,8 @@ def create_article(
     if existing:
         raise HTTPException(status_code=400, detail="Статья уже существует")
     max_order = db.query(func.max(Article.sort_order)).scalar() or 0
-    article = Article(name=name, group=data.group, type=data.type, sort_order=max_order + 1)
+    article = Article(name=name, group=data.group, type=data.type,
+                      pl_line=_check_pl_line(data.pl_line), sort_order=max_order + 1)
     db.add(article)
     db.commit()
     db.refresh(article)
@@ -175,6 +215,7 @@ def update_article(
     article.name = name
     article.group = data.group
     article.type = data.type
+    article.pl_line = _check_pl_line(data.pl_line)
     db.commit()
     return {"message": "Статья обновлена"}
 

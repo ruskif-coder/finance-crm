@@ -233,7 +233,74 @@ def get_dds_summary(
     }
 
 # Порядок групп в P&L
-PL_GROUPS_ORDER = ['ВЫРУЧКА', 'СЕБЕСТОИМОСТЬ', 'ОПЕРАЦИОННЫЕ', 'МАРКЕТИНГ', 'НАЛОГИ', 'НЕ В P&L']
+UNMAPPED_GROUP = 'ТРЕБУЕТ РАЗМЕТКИ'
+
+# Порядок разделов отчёта. Раньше этот же список решал и что вообще попадёт в P&L:
+# группа статьи сравнивалась с ним напрямую, поэтому группы, которых здесь не было
+# («Сотрудники» и «Офис» — 100,6 млн расходов), молча выпадали из отчёта. Теперь
+# раздел вычисляется из Article.pl_line (см. PL_LINE_TO_GROUP), а список задаёт
+# только порядок вывода, и любая статья гарантированно попадает в один из разделов.
+PL_GROUPS_ORDER = ['ВЫРУЧКА', 'СЕБЕСТОИМОСТЬ', 'ОПЕРАЦИОННЫЕ', 'МАРКЕТИНГ',
+                   UNMAPPED_GROUP, 'НАЛОГИ', 'НЕ В P&L']
+
+# Строка отчёта из справочника → раздел этого (кассового) отчёта. Отображение
+# полное: у него нет варианта «не нашлось», иначе деньги снова начнут исчезать.
+# Финансовые и прочие расходы отдельных разделов здесь не имеют — в этом отчёте
+# они всегда были частью операционных; развёрнутые строки есть в /finreport.
+PL_LINE_TO_GROUP = {
+    'revenue': 'ВЫРУЧКА',
+    'cogs': 'СЕБЕСТОИМОСТЬ',
+    'opex': 'ОПЕРАЦИОННЫЕ',
+    'finance': 'ОПЕРАЦИОННЫЕ',
+    'other': 'ОПЕРАЦИОННЫЕ',
+    'marketing': 'МАРКЕТИНГ',
+    'profit_tax': 'НАЛОГИ',
+    'tax_other': 'НАЛОГИ',
+    'excluded': 'НЕ В P&L',
+}
+
+
+TRANSIT_LABEL = 'ТРАНЗИТ (разница списания и поступления)'
+
+
+def _is_transit(article: Optional[str]) -> bool:
+    return 'транзит' in (article or '').lower()
+
+
+def _collapse_transit(data: dict) -> None:
+    """Сворачивает транзит до разницы «списано − поступило». Меняет data на месте.
+
+    Транзит — деньги, проходящие через компанию насквозь: сам оборот не доход и не
+    расход. Показанный полным оборотом (78,8 млн прихода против 88,1 расхода) он
+    раздувал обе стороны отчёта. Реальный расход здесь — только разница, наценка на
+    проходящих деньгах. Так же считает /finreport, поэтому отчёты не расходятся.
+
+    Разница считается по каждому периоду отдельно и может выйти отрицательной —
+    в месяце, где поступило больше, чем списано. Это не ошибка и не повод обнулять:
+    иначе годовая сумма перестанет быть суммой месяцев.
+    """
+    for group in data.values():
+        for sg_name, subgroup in group.items():
+            for article in [a for a in subgroup if _is_transit(a)]:
+                periods = subgroup.pop(article)
+                dst = subgroup.setdefault(TRANSIT_LABEL, {})
+                for p, v in periods.items():
+                    cell = dst.setdefault(p, {'income': 0, 'expense': 0})
+                    cell['expense'] += v['expense'] - v['income']
+
+
+def _pl_group(pl_line: Optional[str], article_group: Optional[str]) -> str:
+    """Раздел отчёта для статьи.
+
+    `by_description` — статьи, где одна проводка содержит несколько назначений
+    (единый налоговый платёж; кредиты, где вместе тело и проценты). Разложить их
+    здесь нечем: строки сгруппированы по статье и периоду, текст платежа уже
+    потерян. Поэтому для них — и только для них — берём группу из справочника,
+    как было раньше. Разложение по назначению делает /finreport.
+    """
+    if pl_line == 'by_description':
+        return article_group or UNMAPPED_GROUP
+    return PL_LINE_TO_GROUP.get(pl_line or '', UNMAPPED_GROUP)
 
 @router.get("/pl")
 def get_pl(
@@ -250,13 +317,13 @@ def get_pl(
         Article.group.label("group"),
         Article.subgroup.label("subgroup"),
         Article.type.label("type"),
+        Article.pl_line.label("pl_line"),
         func.sum(Operation.income).label("total_income"),
         func.sum(Operation.expense).label("total_expense"),
-    ).join(Article, Operation.article_id == Article.id)\
+    ).outerjoin(Article, Operation.article_id == Article.id)\
      .filter(Operation.status == 'ОПЛАЧЕНО')\
-     .filter(Article.group.isnot(None))\
-     .filter(Article.group != 'НЕ В P&L')\
-     .group_by(Operation.period, Article.name, Article.group, Article.subgroup, Article.type)
+     .group_by(Operation.period, Article.name, Article.group, Article.subgroup,
+               Article.type, Article.pl_line)
 
     rows = query.all()
 
@@ -264,6 +331,10 @@ def get_pl(
     normalized = []
     for r in rows:
         p = r.period or ''
+        # Раздел берём из разметки статьи, а не из её группы: группа отвечает за вид
+        # справочника, разметка — за отчёт (одна группа собирает статьи с разной
+        # судьбой, см. PL_LINE_TO_GROUP).
+        grp = _pl_group(r.pl_line, r.group)
         match = re.match(r'^(Q[1-4])\s+(\d{4})$', p)
         if match:
             q, year = match.group(1), match.group(2)
@@ -271,8 +342,8 @@ def get_pl(
             for m in months:
                 normalized.append({
                     'period': f'{year}-{m}',
-                    'article': r.article,
-                    'group': r.group,
+                    'article': r.article or 'Без статьи',
+                    'group': grp,
                     'subgroup': r.subgroup or '',
                     'type': r.type,
                     'total_income': (r.total_income or 0) / 3,
@@ -281,8 +352,8 @@ def get_pl(
         else:
             normalized.append({
                 'period': p,
-                'article': r.article,
-                'group': r.group,
+                'article': r.article or 'Без статьи',
+                'group': grp,
                 'subgroup': r.subgroup or '',
                 'type': r.type,
                 'total_income': r.total_income or 0,
@@ -315,6 +386,8 @@ def get_pl(
             data[g][sg][a][p] = {'income': 0, 'expense': 0}
         data[g][sg][a][p]['income'] += r['total_income']
         data[g][sg][a][p]['expense'] += r['total_expense']
+
+    _collapse_transit(data)
 
     # Формируем структуру для фронтенда
     result_groups = []
@@ -373,9 +446,12 @@ def get_pl(
         opex     = group_sum('ОПЕРАЦИОННЫЕ',   'expense', p)
         marketing= group_sum('МАРКЕТИНГ',      'expense', p)
         taxes    = group_sum('НАЛОГИ',         'expense', p)
+        # Неразмеченное вычитается наравне с остальным: строка в отчёте — сигнал
+        # «проставьте разметку», а не повод не считать эти деньги расходом.
+        unmapped = group_sum(UNMAPPED_GROUP,   'expense', p)
         gross_profit = revenue - cogs
         ebitda       = gross_profit - opex - marketing
-        net_profit   = ebitda - taxes
+        net_profit   = ebitda - taxes - unmapped
         summary[p] = {
             'revenue':       revenue,
             'cogs':          cogs,
@@ -415,12 +491,12 @@ def get_plan_fact(
         Article.group.label("group"),
         Article.subgroup.label("subgroup"),
         Operation.status,
+        Article.pl_line.label("pl_line"),
         func.sum(Operation.income).label("total_income"),
         func.sum(Operation.expense).label("total_expense"),
-    ).join(Article, Operation.article_id == Article.id)\
-     .filter(Article.group.isnot(None))\
-     .filter(Article.group != 'НЕ В P&L')\
-     .group_by(Operation.period, Article.name, Article.group, Article.subgroup, Operation.status)
+    ).outerjoin(Article, Operation.article_id == Article.id)\
+     .group_by(Operation.period, Article.name, Article.group, Article.subgroup,
+               Article.pl_line, Operation.status)
 
     rows = query.all()
 
@@ -428,6 +504,9 @@ def get_plan_fact(
     normalized = []
     for r in rows:
         p = r.period or ''
+        # Раздел — из разметки статьи, как в /pl: иначе группы, которых нет в
+        # PL_GROUPS_ORDER, снова тихо выпадут из отчёта.
+        grp = _pl_group(r.pl_line, r.group)
         match = re.match(r'^(Q[1-4])\s+(\d{4})$', p)
         if match:
             q, year = match.group(1), match.group(2)
@@ -435,7 +514,7 @@ def get_plan_fact(
             for m in months:
                 normalized.append({
                     'period': f'{year}-{m}',
-                    'article': r.article, 'group': r.group, 'subgroup': r.subgroup or '',
+                    'article': r.article or 'Без статьи', 'group': grp, 'subgroup': r.subgroup or '',
                     'status': r.status,
                     'income': (r.total_income or 0) / 3,
                     'expense': (r.total_expense or 0) / 3,
@@ -443,7 +522,7 @@ def get_plan_fact(
         else:
             normalized.append({
                 'period': p,
-                'article': r.article, 'group': r.group, 'subgroup': r.subgroup or '',
+                'article': r.article or 'Без статьи', 'group': grp, 'subgroup': r.subgroup or '',
                 'status': r.status,
                 'income': r.total_income or 0,
                 'expense': r.total_expense or 0,

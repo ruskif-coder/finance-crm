@@ -69,6 +69,12 @@ class Article(Base):
     subgroup = Column(String)
     type = Column(String)  # income / expense
     sort_order = Column(Integer, default=0)  # порядок вывода в справочнике статей и в выпадающих списках
+    # Строка финансового отчёта — единственный источник отнесения статьи к строке P&L.
+    # Заведена миграцией 2026-08-18_article_pl_line.sql, там же список значений и причина,
+    # почему это отдельное поле, а не group (одна группа законно собирает статьи с разной
+    # судьбой в отчёте — например, НАЛОГИ). NULL — не размечена: суммы не теряются, а
+    # показываются строкой «Требует разметки».
+    pl_line = Column(String, nullable=True)
     operations = relationship("Operation", back_populates="article")
 
 class ArticleGroup(Base):

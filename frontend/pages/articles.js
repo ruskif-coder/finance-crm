@@ -10,12 +10,17 @@ const TYPE_META = {
   income: { label: 'Доход', color: 'var(--success)', tint: 'var(--accent-tint)' },
   expense: { label: 'Расход', color: 'var(--danger)', tint: 'var(--danger-tint)' },
 }
-const EMPTY = { name: '', group: '', type: 'expense' }
+const EMPTY = { name: '', group: '', type: 'expense', pl_line: '' }
+
+// Подпись «нет разметки» намеренно тревожная: статья без строки отчёта не ломается,
+// но её деньги уходят в отчёте в «Требует разметки». Это состояние надо видеть.
+const NO_PL_LINE = 'не размечена'
 
 export default function Articles({ embedded = false } = {}) {
   const router = useRouter()
   const [items, setItems] = useState([])
   const [groups, setGroups] = useState([])
+  const [plLines, setPlLines] = useState([])  // закрытый список строк отчёта, приходит с бэкенда
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [ok, setOk] = useState('')
@@ -39,6 +44,7 @@ export default function Articles({ embedded = false } = {}) {
         api.get('/articles/groups', auth()),
       ])
       setItems(a.data.items)
+      setPlLines(a.data.pl_lines || [])
       setGroups((g.data.items || []).map(x => x.name))
     } catch (e) {
       if (e.response?.status === 401) { router.push('/login'); return }
@@ -58,7 +64,7 @@ export default function Articles({ embedded = false } = {}) {
     setError('')
     if (!form.name.trim()) { setError('Введите название статьи'); return }
     try {
-      await api.post('/articles/', { name: form.name.trim(), group: form.group || null, type: form.type }, auth())
+      await api.post('/articles/', { name: form.name.trim(), group: form.group || null, type: form.type, pl_line: form.pl_line || null }, auth())
       setForm(EMPTY); setShowForm(false); flash('Статья создана'); load()
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось создать') }
   }
@@ -73,12 +79,12 @@ export default function Articles({ embedded = false } = {}) {
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось создать группу') }
   }
 
-  const startEdit = (a) => { setEditId(a.id); setDraft({ name: a.name, group: a.group || '', type: a.type || 'expense' }); setError('') }
+  const startEdit = (a) => { setEditId(a.id); setDraft({ name: a.name, group: a.group || '', type: a.type || 'expense', pl_line: a.pl_line || '' }); setError('') }
 
   const saveEdit = async (id) => {
     setError('')
     try {
-      await api.put(`/articles/${id}`, { name: draft.name, group: draft.group || null, type: draft.type }, auth())
+      await api.put(`/articles/${id}`, { name: draft.name, group: draft.group || null, type: draft.type, pl_line: draft.pl_line || null }, auth())
       setEditId(null); flash('Сохранено'); load()
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось сохранить') }
   }
@@ -113,6 +119,18 @@ export default function Articles({ embedded = false } = {}) {
 
   // стили inp/btn/th/td — общий модуль components/salesTableKit
   const dash = <span style={{ color: 'var(--muted)' }}>—</span>
+  // Неразмеченную статью подсвечиваем: это не поломка, но отчёт по ней считать нечем.
+  const plLabel = (v) => {
+    if (!v) return <span style={{ color: 'var(--danger)', fontSize: 12 }}>{NO_PL_LINE}</span>
+    const m = plLines.find(x => x.value === v)
+    return <span style={{ fontSize: 12 }}>{m ? m.label : v}</span>
+  }
+  const plSelect = (value, onChange, style) => (
+    <select style={style} value={value} onChange={e => onChange(e.target.value)}>
+      <option value="">{NO_PL_LINE}</option>
+      {plLines.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+    </select>
+  )
   const typeBadge = (t) => {
     const m = TYPE_META[t] || TYPE_META.expense
     return <span style={{ background: m.tint, color: m.color, borderRadius: 'var(--radius-badge)',
@@ -157,6 +175,7 @@ export default function Articles({ embedded = false } = {}) {
                 <option value="">— группа —</option>
                 {groups.map(g => <option key={g} value={g}>{g}</option>)}
               </select>
+              {plSelect(form.pl_line, v => setForm({ ...form, pl_line: v }), inp)}
               <select style={inp} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
                 <option value="expense">Расход</option>
                 <option value="income">Доход</option>
@@ -187,6 +206,7 @@ export default function Articles({ embedded = false } = {}) {
                 <th style={th}>Название</th>
                 <th style={th}>Группа</th>
                 <th style={th}>Тип</th>
+                <th style={th}>Строка отчёта</th>
                 <th style={{ ...th, textAlign: 'right' }}>Операций</th>
                 <th style={th}></th>
               </tr></thead>
@@ -220,6 +240,9 @@ export default function Articles({ embedded = false } = {}) {
                             <option value="income">Доход</option>
                           </select>
                         </td>
+                        <td style={td}>
+                          {plSelect(draft.pl_line, v => setDraft({ ...draft, pl_line: v }), { ...inp, padding: '4px 7px' })}
+                        </td>
                         <td style={{ ...td, textAlign: 'right', color: 'var(--muted)' }}>{a.op_count}</td>
                         <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                           <button style={{ ...btn(true), padding: '3px 10px', fontSize: 12, marginRight: 6 }} onClick={() => saveEdit(a.id)}>Сохранить</button>
@@ -231,6 +254,7 @@ export default function Articles({ embedded = false } = {}) {
                         <td style={{ ...td, fontWeight: 500 }}>{a.name}</td>
                         <td style={td}>{a.group || dash}</td>
                         <td style={td}>{typeBadge(a.type)}</td>
+                        <td style={td}>{plLabel(a.pl_line)}</td>
                         <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--muted)' }}>{a.op_count}</td>
                         <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                           {mayEdit && (
@@ -245,7 +269,7 @@ export default function Articles({ embedded = false } = {}) {
                   </tr>
                 ))}
                 {!filtered.length && (
-                  <tr><td colSpan={6} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>Ничего не найдено</td></tr>
+                  <tr><td colSpan={7} style={{ padding: 26, textAlign: 'center', color: 'var(--muted)' }}>Ничего не найдено</td></tr>
                 )}
               </tbody>
             </table>

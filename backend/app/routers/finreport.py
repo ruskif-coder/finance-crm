@@ -67,7 +67,9 @@ LINES = [
     # налог обязан остаться расходом, иначе прибыль надувается на всю разницу.
     # В режиме «без НДС» НДС исключён с обеих сторон и этой строки нет.
     (VAT_PAID,     'НДС уплаченный',             -1),
-    (PROFIT_TAX,   'Налог на прибыль',           -1),
+    # Раздел налогов: внутри две подстроки — «Налог на прибыль» и «Прочие налоги».
+    # Вычитаются после EBITDA, поэтому строка одна, а не две соседние.
+    (PROFIT_TAX,   'Налоги',                     -1),
     (UNCLASSIFIED, 'Требует разметки',           -1),
 ]
 LINE_LABEL = {k: label for k, label, _ in LINES}
@@ -86,53 +88,63 @@ _RE_PROFIT = re.compile(r'прибыл')
 _RE_NDFL = re.compile(r'ндфл')
 _RE_INSURANCE = re.compile(r'взнос|страхов')
 _RE_PAYROLL = re.compile(r'фот|зарплат|оплата труда')
-_RE_PENALTY = re.compile(r'пени|штраф')
 
 PAYROLL_SUBGROUP = 'Сотрудники'
+TAX_PROFIT_SUBGROUP = 'Налог на прибыль'
+TAX_OTHER_SUBGROUP = 'Прочие налоги'
+
+# Значение Article.pl_line → строка отчёта. Заполняется в справочнике Статей,
+# заведено миграцией 2026-08-18_article_pl_line.sql. Раньше это отнесение было
+# рассыпано по регуляркам ниже и по списку PL_GROUPS_ORDER в reports.py, из-за чего
+# отчёт не видел групп, которых не было в коде («Сотрудники», «Офис» — 100,6 млн).
+PL_LINE_MAP = {
+    'revenue': REVENUE,
+    'cogs': COGS,
+    'opex': OPEX,
+    'marketing': MARKETING,
+    'finance': FINANCE,
+    'other': OTHER,
+    'profit_tax': PROFIT_TAX,
+    'tax_other': PROFIT_TAX,   # тот же раздел «Налоги», отдельной подстрокой
+    'excluded': EXCLUDED,
+}
+
+# Статьи, где назначение платежа определяется только его описанием. Разметить их
+# полем нельзя в принципе: в «НАЛОГИ» приходит единый налоговый платёж (внутри сразу
+# НДС, прибыль, НДФЛ и взносы), а в «КРЕДИТЫ» — и тело займа, и проценты по нему.
+# Помечены в справочнике значением pl_line='by_description'.
+BY_DESCRIPTION = 'by_description'
 
 
-def classify(group: Optional[str], article: Optional[str], subgroup: Optional[str],
+def classify(pl_line: Optional[str], article: Optional[str], subgroup: Optional[str],
              description: Optional[str]):
     """Куда отнести операцию. Возвращает (строка_отчёта, подгруппа, метка_строки).
+
+    Отнесение берётся из справочника (Article.pl_line). Единственное исключение —
+    статьи `by_description`, где один платёж содержит несколько назначений сразу.
 
     Метка — то, что увидит пользователь в разворачивании строки. Для единого
     налогового платежа это не название статьи (она у всех одна — «НАЛОГИ»), а
     распознанное назначение: иначе 8.4 млн выглядят одной безымянной суммой.
     """
-    g = (group or '').strip()
     a = (article or '').strip()
     sg = (subgroup or '').strip()
     d = (description or '').lower()
     a_low = a.lower()
 
-    # Транзит — деньги, проходящие через компанию насквозь. Сам оборот в P&L не место,
-    # но списание стабильно больше поступления, и эта разница — реальный расход
-    # (наценка/комиссия на проходящих деньгах). Считаем именно её: строка нетто по
-    # своему знаку даёт ровно «списано − поступило».
-    if 'транзит' in a_low:
-        return OTHER, '', 'Транзит (разница между списанием и поступлением)'
-
-    if g == 'НЕ В P&L':
-        return EXCLUDED, EX_GROUP, a or '—'
-
-    # Статьи самого НДС — транзит, из P&L исключаются целиком.
-    if 'ндс' in a_low:
-        return EXCLUDED, EX_VAT, a
-
-    # Займы и кредиты: проценты — расход, тело — движение по балансу.
-    if 'кредит' in a_low or 'займ' in a_low:
-        if _RE_INTEREST.search(d):
-            return FINANCE, '', 'Проценты по займам и кредитам'
-        if _RE_LOAN_BODY.search(d):
-            return EXCLUDED, EX_LOAN, 'Получение и погашение займов'
-        return UNCLASSIFIED, '', f'{a} — назначение не распознано'
-
-    # Единый налоговый платёж: статья одна, внутри всё сразу — разбираем по назначению.
-    if a_low == 'налоги':
+    if pl_line == BY_DESCRIPTION:
+        # Займы и кредиты: проценты — расход, тело — движение по балансу.
+        if 'кредит' in a_low or 'займ' in a_low:
+            if _RE_INTEREST.search(d):
+                return FINANCE, '', 'Проценты по займам и кредитам'
+            if _RE_LOAN_BODY.search(d):
+                return EXCLUDED, EX_LOAN, 'Получение и погашение займов'
+            return UNCLASSIFIED, '', f'{a} — назначение не распознано'
+        # Единый налоговый платёж: статья одна, внутри всё сразу.
         if _RE_VAT.search(d):
             return EXCLUDED, EX_VAT, 'НДС в составе ЕНП'
         if _RE_PROFIT.search(d):
-            return PROFIT_TAX, '', 'Налог на прибыль в составе ЕНП'
+            return PROFIT_TAX, TAX_PROFIT_SUBGROUP, 'Налог на прибыль в составе ЕНП'
         if _RE_NDFL.search(d):
             return OPEX, PAYROLL_SUBGROUP, 'НДФЛ в составе ЕНП'
         if _RE_INSURANCE.search(d):
@@ -141,26 +153,28 @@ def classify(group: Optional[str], article: Optional[str], subgroup: Optional[st
             return OPEX, PAYROLL_SUBGROUP, 'ФОТ в составе ЕНП'
         return UNCLASSIFIED, '', 'ЕНП — назначение не указано'
 
-    if _RE_PENALTY.search(a_low):
-        return OTHER, '', a
-    if _RE_NDFL.search(a_low) or _RE_INSURANCE.search(a_low):
-        return OPEX, PAYROLL_SUBGROUP, a
-    if _RE_PROFIT.search(a_low) and 'налог' in a_low:
-        return PROFIT_TAX, '', a
-    if a_low.startswith('налоги'):
-        # Прочие налоги — реальный расход, вопрос лишь в строке. Держим в прочих.
-        return OTHER, '', a
+    line = PL_LINE_MAP.get(pl_line or '')
+    if line is None:
+        # Статья без разметки (в том числе операция вообще без статьи). Деньги не
+        # теряются — они видны отдельной строкой, пока разметку не проставят.
+        return UNCLASSIFIED, '', a or 'Без статьи'
 
-    if g == 'ВЫРУЧКА':
-        return REVENUE, sg, a
-    if g == 'СЕБЕСТОИМОСТЬ':
-        return COGS, sg, a
-    if g == 'ОПЕРАЦИОННЫЕ':
-        return OPEX, sg, a
-    if g == 'МАРКЕТИНГ':
-        return MARKETING, sg, a
+    if line == EXCLUDED:
+        return EXCLUDED, (EX_VAT if 'ндс' in a_low else EX_GROUP), a or '—'
 
-    return UNCLASSIFIED, '', a or 'Без статьи'
+    if pl_line == 'profit_tax':
+        return PROFIT_TAX, TAX_PROFIT_SUBGROUP, a
+    if pl_line == 'tax_other':
+        return PROFIT_TAX, TAX_OTHER_SUBGROUP, a
+
+    # Транзит — деньги, проходящие через компанию насквозь. Сам оборот в P&L не место,
+    # но списание стабильно больше поступления, и эта разница — реальный расход
+    # (наценка/комиссия на проходящих деньгах). Считаем именно её: строка нетто по
+    # своему знаку даёт ровно «списано − поступило».
+    if 'транзит' in a_low:
+        return OTHER, '', 'Транзит (разница между списанием и поступлением)'
+
+    return line, sg, a
 
 
 # ---------------------------------------------------------------------------
@@ -187,8 +201,8 @@ def _collect(db: Session, basis: str, vat: str, date_from: Optional[str], date_t
         Operation.bank,
         Operation.description,
         Article.name.label('article'),
-        Article.group.label('group'),
         Article.subgroup.label('subgroup'),
+        Article.pl_line.label('pl_line'),
     ).outerjoin(Article, Operation.article_id == Article.id)
 
     if basis == 'cash':
@@ -241,7 +255,7 @@ def _collect(db: Session, basis: str, vat: str, date_from: Optional[str], date_t
         # границей периода, в отчёт входит одна или две трети.
         share = len(kept) / len(months)
 
-        line, subgroup, label = classify(r.group, r.article, r.subgroup, r.description)
+        line, subgroup, label = classify(r.pl_line, r.article, r.subgroup, r.description)
 
         # Транзит очищается от НДС так же, как всё остальное, — несимметрично, и это
         # правильно. Механика операции: с расчётного счёта уходит сумма с НДС, а в
