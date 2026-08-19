@@ -306,7 +306,11 @@ def export_year_xlsx(year: int, advertiser_id: int, rep_id: Optional[int] = None
     buf.seek(0)
     log_action(db, current_user, "year_plan_export", "year_plan", advertiser_id,
                f"{adv_name} · {year}, брендов: {len(data['brands'])}, месяцев: {len(data['months'])}")
-    name = f"Годовой_МП_{year}_{adv_name}".replace(" ", "_")
+    # Штамп даты-времени в имени — как у выгрузок МП: иначе две выгрузки за день
+    # называются одинаково. Время московское, как и везде в интерфейсе.
+    from datetime import datetime, timedelta, timezone
+    stamp = datetime.now(timezone(timedelta(hours=3))).strftime("%d.%m.%Y %H-%M")
+    name = f"Годовой МП Simb-AD {adv_name} {year} {stamp}"
     return StreamingResponse(
         buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition":

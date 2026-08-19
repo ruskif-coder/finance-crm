@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
+import { downloadName } from '@/lib/salesFormat'
 import Navbar, { can } from '@/components/Navbar'
 import YearPlan from '@/components/plan/YearPlan'
 import dynamic from 'next/dynamic'
@@ -189,7 +190,9 @@ export default function YearPlanPage() {
         { responseType: 'blob', ...auth() })
       const url = window.URL.createObjectURL(new Blob([res.data]))
       const a = document.createElement('a'); a.href = url
-      a.download = `Годовой_МП_${year}_${(advName || 'план').replace(/\s+/g, '_')}.xlsx`
+      // Имя с датой и временем — общим хелпером, как у выгрузок МП: две выгрузки
+      // одного плана за день иначе называются одинаково и затирают друг друга в «Загрузках».
+      a.download = downloadName(`${advName || 'план'} ${year}`, 'xlsx', 'Годовой МП Simb-AD')
       document.body.appendChild(a); a.click(); a.remove()
       window.URL.revokeObjectURL(url)
     } catch (e) {

@@ -1173,7 +1173,10 @@ def _row_ctx(row, full):
         "r.place": "SIMB-AD", "r.position": row.get("position"), "r.geo": full.get("geo") or "—",
         "r.format": row.get("format"), "r.device": _MP_INV.get(row.get("inventory") or "cross", "Кросс-девайс"),
         "r.rotation": "Динамика", "r.model": model, "r.volume": vol,
-        "r.unit_name": _MP_UNIT.get((model or "").strip().upper(), "—"), "r.period": full.get("period"), "r.season": 1,
+        "r.unit_name": _MP_UNIT.get((model or "").strip().upper(), "—"),
+        # Период строки, если он у неё свой: на листе «Годовой МП» строки разных
+        # месяцев лежат вперемешку, и период шапки (год) их бы не различал.
+        "r.period": row.get("period") or full.get("period"), "r.season": 1,
         "r.unit_price": unit, "r.net_nodisc": n_nodisc, "r.disc_pct": round(disc * 100),
         "r.disc_rub": n_nodisc - net, "r.net": net, "r.vat": round(net * VAT), "r.gross": round(net * (1 + VAT)),
         "r.freq": m["freq"], "r.reach": m["reach"], "r.imp": m["imp"], "r.ctr": m["ctr"],
@@ -1290,7 +1293,10 @@ def _row_formula_ctx(row, full, C, R):
         "r.place": "SIMB-AD", "r.position": row.get("position"), "r.geo": full.get("geo") or "—",
         "r.format": row.get("format"), "r.device": _MP_INV.get(row.get("inventory") or "cross", "Кросс-девайс"),
         "r.rotation": "Динамика", "r.model": model, "r.volume": row.get("volume") or 0,
-        "r.unit_name": _MP_UNIT.get((model or "").strip().upper(), "—"), "r.period": full.get("period"), "r.season": 1,
+        "r.unit_name": _MP_UNIT.get((model or "").strip().upper(), "—"),
+        # Период строки, если он у неё свой: на листе «Годовой МП» строки разных
+        # месяцев лежат вперемешку, и период шапки (год) их бы не различал.
+        "r.period": row.get("period") or full.get("period"), "r.season": 1,
         "r.unit_price": row.get("unit_price") or 0, "r.disc_pct": round(disc * 100),
         "r.freq": n(fc.get("freq")), "r.ctr": n(fc.get("ctr")), "r.cr": n(fc.get("cr")),
         "r.price": n(fc.get("price")), "r.sov": n(fc.get("sov")),
@@ -1333,11 +1339,13 @@ def _fill_block(ws, src, prefix, items, ctx_fn, fallback_fn):
     """Клонировать строку-образец src под len(items), заполнить каждую (формулы/значения).
 
     Элемент вида {"_band": "Название"} — не размещение, а полоса-разделитель (годовая
-    выгрузка отбивает ею бренды). Токены такой строки гасятся, а сама строка попадает
-    в возвращаемый список полос для последующего оформления. Числовых значений в ней
-    нет, поэтому =СУММ по диапазону блока полосу просто не замечает.
+    выгрузка отбивает ею бренды). Элемент {"_subtotal": "Название"} — строка подытога,
+    её формулы проставляет вызывающий код (он знает границы своих групп). Токены такой
+    строки гасятся, а сама строка попадает в список служебных для оформления.
 
-    Возвращает (первая_строка, последняя_строка, {field: колонка}, [(строка, текст)])."""
+    Возвращает (первая_строка, последняя_строка, {field: колонка}, [(строка, элемент)]).
+    Служебные строки числовых значений не несут, поэтому =СУММ по диапазону блока их не
+    видит — но подытог, заполненный позже, УЖЕ виден: см. `sum_rows` в render_mp_sheet."""
     maxc = ws.max_column
     cols = _token_cols(ws, src, prefix)
     n = len(items)
@@ -1347,13 +1355,13 @@ def _fill_block(ws, src, prefix, items, ctx_fn, fallback_fn):
         return src, src, cols, []
     if n > 1:
         _clone_below(ws, src, n - 1)
-    bands = []
+    specials = []
     for i, it in enumerate(items):
         R = src + i
-        if isinstance(it, dict) and it.get("_band"):
+        if isinstance(it, dict) and (it.get("_band") or it.get("_subtotal")):
             for c in range(1, maxc + 1):
                 _sub_cell(ws.cell(R, c), {})
-            bands.append((R, it["_band"]))
+            specials.append((R, it))
             continue
         try:
             ctx = ctx_fn(it, cols, R)
@@ -1361,7 +1369,7 @@ def _fill_block(ws, src, prefix, items, ctx_fn, fallback_fn):
             ctx = fallback_fn(it)            # нет нужной колонки в шаблоне → числа
         for c in range(1, maxc + 1):
             _sub_cell(ws.cell(R, c), ctx)
-    return src, src + n - 1, cols, bands
+    return src, src + n - 1, cols, specials
 
 
 # Полоса-разделитель бренда на месячном листе годовой выгрузки: цвета из макета
@@ -1393,13 +1401,35 @@ def _style_bands(ws, bands, cols):
         cell.alignment = Alignment(horizontal="left", vertical="center")
 
 
-def render_mp_sheet(ws, full, rows=None, extras=None):
+def subtotal_formulas(cols, tcol, ranges):
+    """Формулы строки-подытога: {колонка: =СУММ по своим строкам}.
+
+    Пишутся в ячейки НАПРЯМУЮ, а не через _sub_cell: служебная строка приходит из
+    _fill_block с уже погашенными токенами, подставлять в неё нечего.
+
+    `ranges` — список диапазонов (a, b) либо одиночных номеров строк. Одиночные нужны
+    верхним уровням: подытог бренда суммирует строки-подытоги месяцев, а не данные,
+    иначе месяц и его итог сложились бы дважды."""
+    parts = [x if isinstance(x, (tuple, list)) else (x, x) for x in ranges]
+    out = {}
+    for f, tc in tcol.items():
+        col = cols.get(f, tc)
+        out[col] = "=SUM(" + ",".join(
+            f"{col}{a}:{col}{b}" if a != b else f"{col}{a}" for a, b in parts) + ")"
+    return out
+
+
+def render_mp_sheet(ws, full, rows=None, extras=None, row_hook=None):
     """Заполнить ОДИН лист-шаблон МП данными плана.
 
     Вынесено из _render_from_template, чтобы годовая выгрузка могла отрендерить этим же
     кодом двенадцать месячных листов в одной книге: месячный лист годовой выгрузки —
     это тот же МП, только строки собраны по всем брендам и отбиты полосами.
-    rows/extras можно передать явно (полосы = элементы {"_band": ...})."""
+    rows/extras можно передать явно (полосы = элементы {"_band": ...}).
+    row_hook(ws, cols, tcol, first, last, specials) вызывается после заливки блока
+    размещений — им лист «Годовой МП» проставляет свои подытоги. Если хук вернул список
+    строк, ИТОГО суммирует ИХ, а не весь диапазон: иначе подытоги, попавшие внутрь
+    диапазона, удвоили бы годовую сумму."""
     rows = full["rows"] if rows is None else rows
     extras = full["extras"] if extras is None else extras
 
@@ -1411,13 +1441,18 @@ def render_mp_sheet(ws, full, rows=None, extras=None):
     t_map = {}
     if src_r:
         tcol = _token_cols(ws, src_r + 1, "t")   # колонки итоговой строки (до сдвига)
-        first, last, rcol, bands = _fill_block(ws, src_r,
-                                               "r", rows,
-                                               lambda it, C, R: _row_formula_ctx(it, full, C, R),
-                                               lambda it: _row_ctx(it, full))
-        _style_bands(ws, bands, rcol)
+        first, last, rcol, specials = _fill_block(ws, src_r,
+                                                  "r", rows,
+                                                  lambda it, C, R: _row_formula_ctx(it, full, C, R),
+                                                  lambda it: _row_ctx(it, full))
+        _style_bands(ws, [(R, it["_band"]) for R, it in specials if it.get("_band")], rcol)
+        sum_rows = row_hook(ws, rcol, tcol, first, last, specials) if row_hook else None
         tot_row = last + 1
-        tctx = {f"t.{f}": f"=SUM({rcol.get(f, col)}{first}:{rcol.get(f, col)}{last})" for f, col in tcol.items()}
+        if sum_rows:
+            tctx = {f"t.{f}": "=SUM(" + ",".join(f"{rcol.get(f, col)}{r}" for r in sum_rows) + ")"
+                    for f, col in tcol.items()}
+        else:
+            tctx = {f"t.{f}": f"=SUM({rcol.get(f, col)}{first}:{rcol.get(f, col)}{last})" for f, col in tcol.items()}
         for c in range(1, ws.max_column + 1):
             _sub_cell(ws.cell(tot_row, c), tctx)
         t_map = {"net": f'{rcol.get("net", "Q")}{tot_row}', "gross": f'{rcol.get("gross", "S")}{tot_row}'}
@@ -1427,11 +1462,11 @@ def render_mp_sheet(ws, full, rows=None, extras=None):
     te_map = {}
     if src_e:
         tecol = _token_cols(ws, src_e + 1, "te")
-        efirst, elast, ecol, ebands = _fill_block(ws, src_e,
-                                                  "e", extras,
-                                                  lambda it, C, R: _extra_formula_ctx(it, C, R),
-                                                  lambda it: _extra_ctx(it))
-        _style_bands(ws, ebands, ecol)
+        efirst, elast, ecol, especials = _fill_block(ws, src_e,
+                                                     "e", extras,
+                                                     lambda it, C, R: _extra_formula_ctx(it, C, R),
+                                                     lambda it: _extra_ctx(it))
+        _style_bands(ws, [(R, it["_band"]) for R, it in especials if it.get("_band")], ecol)
         etot_row = elast + 1
         tectx = {f"te.{f}": f"=SUM({ecol.get(f, col)}{efirst}:{ecol.get(f, col)}{elast})" for f, col in tecol.items()}
         for c in range(1, ws.max_column + 1):

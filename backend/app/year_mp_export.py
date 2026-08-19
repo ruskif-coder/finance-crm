@@ -517,16 +517,339 @@ def _join(v):
     return str(v)
 
 
+# ── блок «Прогнозные показатели» в шапке ─────────────────────────────────
+# Заменяет левую часть шапки шаблона (агентство/период/бриф): всё это есть на листах
+# «Бриф» и «Сводная», а на листе с закупкой нужнее итоговая маркетинговая картина.
+# Правки владельца сняты с его файла (18.08.2026), оформление воспроизведено оттуда же.
+METRICS_CAPTION = "ПРОГНОЗНЫЕ ПОКАЗАТЕЛИ"
+# ARGB строго с альфой FF: "002060" openpyxl запишет как 00002060 — полностью прозрачный,
+# и тёмно-синяя шапка блока пропадёт.
+METRICS_HEAD_BG, METRICS_HEAD_FG = "FF002060", "FFFFFF"
+# Подложка листа — тема 0 с затемнением. Красится по ВСЕЙ области блока, а не по занятым
+# ячейкам: колонки G и H в пустых слотах оставались белыми проплешинами на общем фоне.
+WASH_THEME, WASH_TINT = 0, -0.05
+METRICS_ROW_H = 26.4
+METRICS_SLOTS = 5          # строк под бренды без сдвига медиаплана
+METRICS_TOP = 9            # строка заголовка блока
+METRICS_FIRST = 12         # первая строка бренда
+METRICS_LAST_COL = 8       # H — правее начинается блок «ИТОГО» шаблона
+# (поле, подпись, формат). Пустая подпись — колонка занята соседней (D объединена с E).
+METRICS_COLS = [("_brand", "Бренд", "@"),
+                ("gross", "Итоговая стоимость с НДС", "#,##0.00"),
+                ("revenue", "Доход руб.", "#,##0"),
+                ("roi", "ROI", "0%"),
+                ("cpo", "CPO", "#,##0"),
+                ("cpm", "CPM", "#,##0")]
+
+
+def metrics_extra_rows(n_brands: int) -> int:
+    """Сколько строк добавить под блок, чтобы отступ до медиаплана не съело.
+
+    Вставлять их надо ДО отрисовки таблицы: openpyxl не правит формулы при вставке
+    строк, и сдвиг после рендера порвал бы все ссылки размещений."""
+    return max(0, n_brands - METRICS_SLOTS)
+
+
+def sheet_metrics(ws, groups, cols):
+    """Нарисовать блок показателей: строка на бренд, значения — формулы по его строкам.
+
+    `groups` — [(имя, первая_строка_данных, последняя)], `cols` — карта поле→колонка
+    отрисованной таблицы. Показы и чеки в подытоге бренда не суммируются, поэтому CPO
+    и CPM считаются прямо по диапазону строк бренда — так блок не зависит от того,
+    какие колонки шаблон кладёт в строку «Итого».
+    """
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.styles.colors import Color
+
+    dash = Side(style="dashed", color="BFBFBF")
+    dot = Side(style="dotted", color="BFBFBF")
+    box = Border(left=dash, right=dash, top=dash, bottom=dash)
+    head_box = Border(left=dot, right=dot, bottom=dot)
+    head_fill = PatternFill("solid", fgColor=METRICS_HEAD_BG)
+    wash = PatternFill("solid", fgColor=Color(theme=WASH_THEME, tint=WASH_TINT))
+
+    last = METRICS_FIRST + max(len(groups), METRICS_SLOTS) - 1
+    # Старая шапка (агентство, период, бриф) вычищается целиком, вместе с её
+    # объединениями: наложить новые поверх пересекающихся Excel считает поломкой файла.
+    for mr in list(ws.merged_cells.ranges):
+        if mr.min_row <= last and mr.max_row >= METRICS_TOP and mr.min_col <= 14:
+            ws.unmerge_cells(str(mr))
+    # Чистится и красится ВСЯ область старой шапки (B..N), а не только колонки блока:
+    # под таргетинги шаблон отводил белые поля до колонки N, и покраска до H оставляла
+    # справа от CPM белый прямоугольник на сером фоне.
+    for r in range(METRICS_TOP, last + 1):
+        for c in range(2, 15):
+            cell = ws.cell(r, c)
+            cell.value = None
+            cell.border = Border()
+            cell.fill = wash
+
+    ws.merge_cells(start_row=METRICS_TOP, end_row=METRICS_TOP + 1,
+                   start_column=2, end_column=METRICS_LAST_COL)
+    cap = ws.cell(METRICS_TOP, 2)
+    cap.value = METRICS_CAPTION
+    cap.font = Font(name="Calibri", size=12, bold=True)
+    cap.alignment = Alignment(horizontal="left", vertical="center")
+    cap.border = Border(bottom=Side(style="medium"))
+
+    hdr = METRICS_TOP + 2
+    ws.row_dimensions[hdr].height = METRICS_ROW_H
+    for i, (_f, label, _fmt) in enumerate(METRICS_COLS):
+        cell = ws.cell(hdr, 2 + i + (1 if i >= 3 else 0))   # D объединена с E → сдвиг
+        cell.value = label
+        cell.font = Font(name="Calibri", size=10, bold=True, color=METRICS_HEAD_FG)
+        cell.fill = head_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = head_box
+    ws.merge_cells(start_row=hdr, end_row=hdr, start_column=4, end_column=5)
+
+    def rng(field, a, b):
+        col = cols.get(field)
+        return f"SUM({col}{a}:{col}{b})" if col else "0"
+
+    for i, (name, a, b) in enumerate(groups):
+        R = METRICS_FIRST + i
+        ws.row_dimensions[R].height = METRICS_ROW_H
+        gross, rev = f"C{R}", f"D{R}"
+        vals = [name.upper(),
+                f"={rng('gross', a, b)}",
+                f"={rng('revenue', a, b)}",
+                # ROI и CPO/CPM повторяют формулы строк таблицы: ROI считается от
+                # стоимости С НДС, CPO и CPM — от стоимости ДО НДС. Иначе шапка и
+                # таблица давали бы по одному бренду два разных числа.
+                f'=IF({gross}>0,({rev}-{gross})/{gross},"")',
+                f'=IF({rng("checks", a, b)}>0,{rng("net", a, b)}/{rng("checks", a, b)},"")',
+                f'=IF({rng("imp", a, b)}>0,{rng("net", a, b)}/{rng("imp", a, b)}*1000,"")']
+        for j, ((_f, _l, fmt), v) in enumerate(zip(METRICS_COLS, vals)):
+            c = 2 + j + (1 if j >= 3 else 0)
+            cell = ws.cell(R, c)
+            cell.value = v
+            cell.font = Font(name="Calibri", size=12)
+            cell.alignment = Alignment(horizontal="left" if j == 0 else "center",
+                                       vertical="center", wrap_text=True)
+            cell.number_format = fmt
+            # Рамки как в правленом файле владельца: денежная часть пунктиром-тире,
+            # ROI без правой грани (её рисует левая грань CPO), CPO и CPM — точками.
+            cell.border = (Border(left=dash, top=dash, bottom=dash) if j == 3
+                           else Border(left=dot, right=dot, top=dot, bottom=dot) if j >= 4
+                           else box)
+            if j == 2:
+                ws.merge_cells(start_row=R, end_row=R, start_column=4, end_column=5)
+
+
+# ── лист «Годовой МП» ────────────────────────────────────────────────────
+# Подытог отбивается заливкой, а не полосой: в нём есть числа, и объединять строку
+# нельзя. Месяц светлее бренда — вложенность видна без отступов.
+SUB_MONTH_FILL, SUB_BRAND_FILL = "EDF0F7", "DFE4F0"
+
+
+def year_rows(lines, svc, add, names) -> tuple:
+    """Строки листа «Годовой МП»: бренд → месяц, с подытогами обоих уровней.
+
+    Порядок бренд→месяц выбран владельцем: лист читается как история каждого бренда за
+    год. Общая картина месяца остаётся на «Сводной» и на месячных вкладках.
+
+    Месяц НЕ отбивается ни полосой, ни подытогом: у строки есть колонка «Период» с
+    `2026-04`, и этого достаточно — поперечные ряды только рвали список. Поэтому же
+    период проставляется в саму строку: в шапке листа стоит год, и без этого все
+    двенадцать месяцев выглядели бы одинаково.
+
+    Возвращает (rows, extras) в формате, который принимает media_plans.render_mp_sheet:
+    служебные элементы — {"_band": …} и {"_subtotal": …, "_kind": "brand"}.
+    """
+    rows, extras = [], []
+    for line in lines:
+        brand = names["brand"].get(line.brand_id) or "Без бренда"
+        chunk, ex_chunk = [], []
+        for m in range(12):
+            items = month_items(line, m)
+            if not items:
+                continue
+            r, e = _parts(line, m, svc, add, items)
+            period = f"{line.year}-{m + 1:02d}"
+            for row in r:
+                row["period"] = period
+            chunk.extend(r)
+            ex_chunk.extend(e)
+        if chunk:
+            rows.append({"_band": brand.upper()})
+            rows.extend(chunk)
+            rows.append({"_subtotal": f"Итого · {brand} за год", "_kind": "brand"})
+        if ex_chunk:
+            extras.append({"_band": brand.upper()})
+            extras.extend(ex_chunk)
+    return rows, extras
+
+
+def brand_groups(specials, first, last) -> list:
+    """[(бренд, первая_строка_данных, последняя)] по полосам-разделителям.
+
+    Границы берутся из тех же служебных строк, что и подытоги: данные бренда идут от
+    его полосы до следующей служебной строки. Работает и на месячном листе, где
+    подытогов нет вовсе, — там полоса просто упирается в следующую полосу."""
+    marks = sorted(specials, key=lambda x: x[0])
+    out = []
+    for i, (R, it) in enumerate(marks):
+        if not it.get("_band"):
+            continue
+        end = marks[i + 1][0] - 1 if i + 1 < len(marks) else last
+        if end >= R + 1:
+            out.append((it["_band"], R + 1, end))
+    return out
+
+
+def collecting_hook(sink):
+    """Хук рендера: запомнить диапазоны брендов и проставить подытоги."""
+    def hook(ws, cols, tcol, first, last, specials):
+        sink.append((cols, brand_groups(specials, first, last)))
+        return year_row_hook(ws, cols, tcol, first, last, specials)
+    return hook
+
+
+def year_row_hook(ws, cols, tcol, first, last, specials):
+    """Проставить формулы подытогов и вернуть строки, по которым считается ИТОГО.
+
+    Границы групп выводятся из самих служебных строк, а не из отдельной разметки:
+    подытог суммирует всё от предыдущей служебной строки до себя. Если внутри уже есть
+    подытоги уровнем ниже, складываются ОНИ, а не данные — иначе месяц вошёл бы в бренд
+    дважды. Сейчас уровень один (бренд), но каскад оставлен: месячные подытоги убирали
+    уже после того, как он был написан, и вернуть их — это снова одна строка.
+
+    ИТОГО суммирует подытоги брендов, а не диапазон блока: подытоги лежат ВНУТРИ него,
+    и `=СУММ(первая:последняя)` удвоил бы годовой бюджет правдоподобным числом.
+    """
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import column_index_from_string
+    from app.routers.media_plans import subtotal_formulas
+
+    month_rows, brand_rows = [], []
+    prev = first - 1                     # конец предыдущей служебной строки
+    pending_months = []                  # подытоги месяцев текущего бренда
+    for R, it in sorted(specials, key=lambda x: x[0]):
+        if it.get("_subtotal"):
+            kind = it.get("_kind")
+            own = [(prev + 1, R - 1)] if R - 1 >= prev + 1 else []
+            if kind == "month":
+                ranges = own
+                pending_months.append(R)
+                month_rows.append(R)
+            else:
+                # Есть подытоги месяцев — складываем их; нет — сами строки бренда.
+                ranges = list(pending_months) or own
+                pending_months = []
+                brand_rows.append(R)
+            if ranges:
+                for col, f in subtotal_formulas(cols, tcol, ranges).items():
+                    ws[f"{col}{R}"] = f
+            # Подпись — в самую левую колонку, которая НЕ суммируется: иначе она
+            # затрёт только что проставленную формулу, и подытог молча станет текстом.
+            summed = set(tcol.values()) | {cols[f] for f in tcol if f in cols}
+            free = [c for c in cols.values() if c not in summed]
+            label_col = min(column_index_from_string(c)
+                            for c in (free or list(cols.values())))
+            ws.cell(R, label_col).value = it["_subtotal"]
+        prev = R
+    # Оформление — после заливки формул, иначе _sub_cell затрёт стиль.
+    idx = [column_index_from_string(c) for c in cols.values()]
+    c1, c2 = min(idx), max(idx)
+    for R in month_rows + brand_rows:
+        fill = PatternFill("solid", fgColor=SUB_BRAND_FILL if R in brand_rows else SUB_MONTH_FILL)
+        for c in range(c1, c2 + 1):
+            cell = ws.cell(R, c)
+            cell.fill = fill
+            cell.font = Font(name="Arial", size=10, bold=True, color=NAVY_700)
+    return brand_rows or month_rows or None
+
+
 # ── сборка книги ─────────────────────────────────────────────────────────
+# Скидка заметна глазом, а не только в цифре: у доп. услуг режимы 50 % и «бонус»
+# дают 50 и 100 — по зелёным клеткам сразу видно, что отдано бесплатно.
+DISCOUNT_HEADER = "Скидка,%"
+DISCOUNT_FILL = "FFE2F4E4"
+
+
+def highlight_discounts(ws) -> int:
+    """Подсветить клетки со скидкой в обеих таблицах листа. Возвращает число клеток."""
+    from openpyxl.styles import PatternFill
+
+    green = PatternFill("solid", fgColor=DISCOUNT_FILL)
+    cols = {c for r in range(1, ws.max_row + 1) for c in range(1, ws.max_column + 1)
+            if ws.cell(r, c).value == DISCOUNT_HEADER}
+    n = 0
+    for c in cols:
+        for r in range(1, ws.max_row + 1):
+            v = ws.cell(r, c).value
+            # Только заполненные ставкой клетки: строки-итоги скидку не несут, а
+            # формулы (строка «Скидка,руб») сюда не попадают — там не число.
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+                ws.cell(r, c).fill = green
+                n += 1
+    return n
+
+
+def _render_with_metrics(ws, full, rows, extras):
+    """Отрисовать лист закупки и заменить левую часть шапки блоком показателей.
+
+    Строки под лишние бренды вставляются ДО рендера: openpyxl не правит формулы при
+    вставке, и сдвиг после отрисовки порвал бы все ссылки таблицы."""
+    from app.routers.media_plans import render_mp_sheet
+
+    n = sum(1 for it in rows if isinstance(it, dict) and it.get("_band"))
+    extra = metrics_extra_rows(n)
+    if extra:
+        ws.insert_rows(METRICS_FIRST + METRICS_SLOTS, extra)
+    sink = []
+    render_mp_sheet(ws, full, rows, extras, row_hook=collecting_hook(sink))
+    if sink:
+        cols, groups = sink[0]
+        sheet_metrics(ws, groups, cols)
+    highlight_discounts(ws)
+    return ws
+
+
 def build_workbook(db, plan, lines, svc, add, names, template_path, vat_rate):
     from openpyxl import load_workbook
-    from app.routers.media_plans import render_mp_sheet
 
     data = collect(db, lines, svc, add, names)
     wb = load_workbook(template_path)
     tpl = wb["МП"] if "МП" in wb.sheetnames else wb.active
 
     adv = names["adv"].get(plan.advertiser_id) or "—"
+    b0 = (lines[0].brief or {}) if lines else {}
+
+    def head(period, subtitle):
+        """Шапка листа годовой выгрузки: общая часть брифа, остальное — на «Брифе»."""
+        return {
+            "period": period, "advertiser": adv,
+            "brand": f"Брендов: {len(data['brands'])}",
+            "agency": names["agency"].get(b0.get("agency_id")) or "—",
+            "geo": names["geo"].get(b0.get("geo_id")) or "—",
+            "title": plan.title or f"Годовой план {plan.year}",
+            # Таргетинги в шапку не идут: у каждого бренда свой бриф, общей строки не
+            # существует. Они на листе «Бриф».
+            "targeting": {}, "created_at": None, "date_from": None, "date_to": None,
+            "head_override": {
+                "mp_title": f"Медиаплан · {adv} · {period}",
+                "mp_subtitle": subtitle,
+                "tg_audience": "см. лист «Бриф»", "tg_buys": "см. лист «Бриф»",
+                "tg_interests": "см. лист «Бриф»", "tg_behavior": "см. лист «Бриф»",
+                "tg_competitors": "см. лист «Бриф»",
+            },
+        }
+
+    # Лист «Годовой МП» — весь год одним списком в макете месячного МП.
+    yrows, yextras = year_rows(lines, svc, add, names)
+    year_ws = None
+    if yrows:
+        year_ws = wb.copy_worksheet(tpl)
+        year_ws.title = "Годовой МП"
+        _render_with_metrics(year_ws,
+                             head(str(plan.year),
+                                  f"SIMB-AD · {plan.year} · брендов: {len(data['brands'])} · "
+                                  f"месяцев с закупкой: {len(data['months'])} · "
+                                  f"таргетинги — на листе «Бриф»"),
+                             yrows, yextras)
+
     for m in data["months"]:
         period = f"{plan.year}-{m + 1:02d}"
         rows, extras = [], []
@@ -546,37 +869,20 @@ def build_workbook(db, plan, lines, svc, add, names, template_path, vat_rate):
                 # одинаково («Sales-Lift» у каждого), и без полосы строки неразличимы.
                 extras.append({"_band": name})
                 extras.extend(e)
-        b0 = (lines[0].brief or {}) if lines else {}
-        full = {
-            "period": period, "advertiser": adv,
-            "brand": f"Брендов: {len(data['brands'])}",
-            "agency": names["agency"].get(b0.get("agency_id")) or "—",
-            "geo": names["geo"].get(b0.get("geo_id")) or "—",
-            "title": plan.title or f"Годовой план {plan.year}",
-            # Таргетинги в шапку месячного листа не идут: у каждого бренда свой бриф,
-            # общей строки не существует. Они на листе «Бриф».
-            "targeting": {}, "created_at": None,
-            "date_from": None, "date_to": None,
-            "head_override": {
-                "mp_title": f"Медиаплан · {adv} · {period}",
-                "mp_subtitle": f"SIMB-AD · {period} · брендов: {len(data['brands'])} · "
-                               f"таргетинги — на листе «Бриф»",
-                "tg_audience": "см. лист «Бриф»", "tg_buys": "см. лист «Бриф»",
-                "tg_interests": "см. лист «Бриф»", "tg_behavior": "см. лист «Бриф»",
-                "tg_competitors": "см. лист «Бриф»",
-            },
-        }
+        full = head(period, f"SIMB-AD · {period} · брендов: {len(data['brands'])} · "
+                            f"таргетинги — на листе «Бриф»")
         ws = wb.copy_worksheet(tpl)
         ws.title = period
-        render_mp_sheet(ws, full, rows, extras)
+        _render_with_metrics(ws, full, rows, extras)
 
     wb.remove(tpl)
     summary = wb.create_sheet("Сводная")
     brief = wb.create_sheet("Бриф")
     sheet_summary(summary, plan, data, names, vat_rate)
     sheet_brief(brief, plan, data, names)
-    # Порядок листов: Сводная → Бриф → месяцы (создавались последними, поэтому переставляем).
-    wb._sheets = [summary, brief] + [s for s in wb._sheets if s not in (summary, brief)]
+    # Порядок: Сводная → Бриф → Годовой МП → месяцы (создавались вразнобой, переставляем).
+    head_sheets = [s for s in (summary, brief, year_ws) if s is not None]
+    wb._sheets = head_sheets + [s for s in wb._sheets if s not in head_sheets]
     try:
         wb.calculation.fullCalcOnLoad = True
     except Exception:
