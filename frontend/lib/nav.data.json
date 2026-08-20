@@ -124,7 +124,7 @@
           "key": "bulk",
           "label": "Заполнение",
           "href": "/publishers/bulk",
-          "perm": "dir_publishers"
+          "perm": "dir_publishers_bulk"
         }
       ]
     },

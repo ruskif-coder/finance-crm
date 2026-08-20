@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/http'
-import Navbar, { can } from '@/components/Navbar'
+import Navbar, { can, firstAllowedHref } from '@/components/Navbar'
 import { MONO, UI, IconBtn, inp, sel, btn, headCell, card, CAP } from '@/components/salesTableKit'
 import { INTEG_TONE_SOLID as INTEG_TONE, STATUS_TONE, nextStatus, Pin }
   from '@/components/publishers/kit'
@@ -77,7 +77,12 @@ export default function PublishersBulk() {
 
   useEffect(() => {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
-    try { setPerms(JSON.parse(localStorage.getItem('permissions') || '{}')) } catch (e) { setPerms({}) }
+    let p = {}
+    try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) { p = {} }
+    setPerms(p)
+    // Экран закрыт своим правом: без него уводим на первый доступный раздел, а не
+    // оставляем пустую таблицу с 403 — по прямой ссылке это выглядело как поломка.
+    if (!can(p, 'dir_publishers_bulk', 'view')) { router.push(firstAllowedHref(p, localStorage.getItem('role'))); return }
     load()
   }, [])
 

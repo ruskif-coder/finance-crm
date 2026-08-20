@@ -18,6 +18,8 @@ EXPECTED_KEYS = {
     "media_plans", "media_plans_editor",
     "operations", "import",
     "counterparties", "contracts", "dir_advertisers", "dir_agencies", "dir_publishers",
+    # Добавлен 2026-08-20: экран «Заполнение» отделён от реестра площадок (только view).
+    "dir_publishers_bulk",
     "bx_reconcile",
     "settings_balances", "settings_articles", "settings_pipelines",
     "settings_services", "settings_field_audit", "settings_audit",
