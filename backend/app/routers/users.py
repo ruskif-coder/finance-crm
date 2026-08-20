@@ -17,6 +17,11 @@ class UserCreate(BaseModel):
     email: str
     password: str
     role: str = "viewer"
+    # Профиль уведомлений: необязателен — если не прислан, выводится из роли ниже.
+    # Поле обязано быть объявлено здесь: create_user читает data.notification_profile_id,
+    # а в pydantic v2 обращение к необъявленному полю — AttributeError, то есть 500
+    # на КАЖДОМ создании пользователя (так и было до 2026-08-20).
+    notification_profile_id: Optional[int] = None
 
 
 class UserUpdate(BaseModel):

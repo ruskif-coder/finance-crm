@@ -26,6 +26,7 @@ export default function SettingsUsers() {
   const [hideInactive, setHideInactive] = useState(false)
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'viewer' })
   const [creatingUser, setCreatingUser] = useState(false)
+  const [showNewPw, setShowNewPw] = useState(false)
   const [userError, setUserError] = useState('')
   // Справочник сотрудников Битрикса (для привязки)
   const [bitrixUsers, setBitrixUsers] = useState([])
@@ -109,6 +110,7 @@ export default function SettingsUsers() {
     try {
       await api.post('/users/', newUser, auth())
       setNewUser({ name: '', email: '', password: '', role: 'viewer' })
+      setShowNewPw(false)
       await loadUsers()
     } catch (e) {
       setUserError(e.response?.data?.detail || 'Ошибка при создании')
@@ -192,7 +194,18 @@ export default function SettingsUsers() {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <input placeholder="Имя" value={newUser.name} onChange={e => setNewUser(p => ({ ...p, name: e.target.value }))} style={{ ...inp, width: 160 }} />
             <input placeholder="Email" value={newUser.email} onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} style={{ ...inp, width: 200 }} />
-            <input placeholder="Пароль" type="password" value={newUser.password} onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))} style={{ ...inp, width: 160 }} />
+            {/* Пароль с тем же генератором, что и в строке таблицы: 16 символов
+                через Web Crypto, сразу видимый и с копированием — иначе пароль,
+                который нужно передать человеку, негде прочитать. */}
+            <input placeholder="Пароль" type={showNewPw ? 'text' : 'password'} value={newUser.password}
+              onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))}
+              style={{ ...inp, width: 200, fontFamily: showNewPw ? MONO : UI }} />
+            <button title="Сгенерировать пароль (16 символов)"
+              onClick={() => { setNewUser(p => ({ ...p, password: genPassword(16) })); setShowNewPw(true) }}
+              style={iconBtn}>🎲</button>
+            {newUser.password && (
+              <button title="Скопировать пароль" onClick={() => copyText(newUser.password)} style={iconBtn}>📋</button>
+            )}
             <select value={newUser.role} onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))} style={sel}>
               {allRoles.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
             </select>
