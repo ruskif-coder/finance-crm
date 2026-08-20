@@ -27,7 +27,7 @@ from typing import Optional, List
 from app.database import get_db
 from app.models import User, Counterparty, Contract, Operation, Article
 from app.routers.auth import get_current_user
-from app.permissions import require_permission
+from app.permissions import require_any_permission
 from app.audit import log_action
 from app.sales.models import (SalesPublisher, SalesPublisherKind, SalesPublisherSurface,
                               SalesPublisherService, SalesPublisherCounterparty,
@@ -47,8 +47,13 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
                       ".jpg", ".jpeg", ".png", ".zip"}
 
-PUB_VIEW = require_permission("dir_publishers", "view")
-PUB_EDIT = require_permission("dir_publishers", "edit")
+# Эндпоинты общие для карточки и экрана «Заполнение», поэтому пропускаем по ЛЮБОМУ
+# из двух прав. Так сотрудника можно посадить на одно «Заполнение»: правит пачкой,
+# а карточка ему открыта только на чтение (это разделение экранов, не защита данных —
+# на уровне API оба права дают одни и те же действия).
+PUB_SECTIONS = ("dir_publishers", "dir_publishers_bulk")
+PUB_VIEW = require_any_permission(PUB_SECTIONS, "view")
+PUB_EDIT = require_any_permission(PUB_SECTIONS, "edit")
 
 
 def _require(db: Session, publisher_id: int) -> SalesPublisher:

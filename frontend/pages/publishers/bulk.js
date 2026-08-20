@@ -61,7 +61,9 @@ export default function PublishersBulk() {
   const [search, setSearch] = useState('')
   const [onlyEmpty, setOnlyEmpty] = useState(false)
 
-  const mayEdit = can(perms, 'dir_publishers', 'edit')
+  // Правит либо тот, кому открыты «Площадки» целиком, либо тот, кого посадили на одно
+  // «Заполнение» (первичное наполнение реестра) — второму карточка доступна на чтение.
+  const mayEdit = can(perms, 'dir_publishers_bulk', 'edit') || can(perms, 'dir_publishers', 'edit')
 
   const load = async () => {
     setLoading(true); setError('')
