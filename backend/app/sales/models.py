@@ -802,3 +802,248 @@ class SalesMatchQueue(Base):
     resolved_at = Column(DateTime)
     resolved_by = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, server_default=func.now())
+
+
+# ============================ ПАБЛИШЕРЫ ============================
+# Таблицы создаются миграцией backend/migrations/2026-08-19_publishers.sql.
+
+PUBLISHER_STATUSES = ["ПЕРЕГОВОРЫ", "СОТРУДНИЧАЕМ", "НА ПАУЗЕ", "ОТКАЗ", "АРХИВ"]
+# Отсутствие строки поверхности значит то же, что «НЕТ»: поверхности нет и разговора
+# о ней не было. Отдельного значения под «не обсуждали» нет намеренно — в исходной
+# таблице оно и «ОТСТУТСТВУЕТ» стояли вперемешку об одном и том же.
+SURFACE_STATUSES = ["НЕТ", "ОТЛОЖЕНО", "ПОДГОТОВКА", "СОГЛАСОВАНИЕ", "ПРАВКИ", "ПОДКЛЮЧЕНО"]
+SURFACE_KINDS = ["web", "app"]
+PLATFORM_KINDS = ["android", "ios"]
+# Ровно четыре строки таблицы трафика в интерфейсе.
+TRAFFIC_SCOPES = ["web", "app_android", "app_ios", "ad_requests"]
+PUBLISHER_DEAL_TYPES = ["прямой", "посредник"]
+SELF_PROMO_VALUES = ["ДА", "НЕТ", "ЗАПРОСИТЬ"]
+PUBLISHER_CONTRACT_ROLES = ["с площадкой", "агентский"]
+
+
+def normalize_domain(value):
+    """Ключ площадки. Регистр и пробелы по краям съедают сравнение: в исходной
+    таблице один сайт писали как «ETABL.RU », «ASNA.ru» и «Farmlend.ru»."""
+    return (value or "").strip().lower().rstrip("/")
+
+
+class SalesPublisherKind(Base):
+    """Вид паблишера. Не раздел меню, а накопитель значений: введённое в карточке имя
+    сохраняется и дальше предлагается в выпадашке — так же, как чипы таргетинга."""
+    __tablename__ = "sales_publisher_kinds"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+
+class SalesPublisher(Base):
+    """Площадка. Веб и приложение вынесены в SalesPublisherSurface: юрлицо, договор,
+    чат и контакты у сайта одни, а фигма, статус интеграции и покрытие мест — свои
+    у каждой поверхности."""
+    __tablename__ = "sales_publishers"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    domain = Column(String, nullable=False, unique=True)  # хранится нормализованным
+    kind = Column(String)      # имя из sales_publisher_kinds, не FK
+    status = Column(String, nullable=False, default="ПЕРЕГОВОРЫ")
+    network = Column(String)   # NULL = независимая, а не сеть с именем «НЕЗАВИСИМЫЕ»
+    deal_type = Column(String)
+    intermediary_counterparty_id = Column(Integer, ForeignKey("counterparties.id"))
+    is_exclusive = Column(Boolean, nullable=False, default=False)
+    has_dsp = Column(Boolean, nullable=False, default=False)
+    # Отметка для справки. НЕ вычисляется из статусов поверхностей: вычисляемая и
+    # проставленная руками правда об одном и том же неизбежно расходятся.
+    our_code = Column(Boolean, nullable=False, default=False)
+    # Делится ли площадка данными — меняет механики Альфарм-Таргета (тег DATA/NO DATA).
+    shares_data = Column(Boolean, nullable=False, default=False)
+    # Смещение от МСК в часах: звонок в 8 утра по Москве во владивостокскую аптеку
+    # приходится на конец их рабочего дня.
+    timezone_offset = Column(Integer, nullable=False, default=0)
+    tech_requirements = Column(Text)
+    media_kit_filename = Column(String)
+    media_kit_path = Column(String)
+    media_kit_uploaded_at = Column(DateTime)
+    # УСТАРЕЛО с 2026-08-19: приоритезация ведётся услугой каталога (sales_services),
+    # а не признаком площадки. Колонка заморожена, код её не читает.
+    is_priority = Column(Boolean, nullable=False, default=False)
+    self_promo = Column(String)
+    self_promo_note = Column(Text)
+    cpm_contract = Column(Float)   # закупочный CPM до НДС по договору
+    basket_note = Column(Text)
+    note = Column(Text)
+    chat_title = Column(String)
+    chat_url = Column(String)      # телеграм; ссылки нет у части чатов — известно только название
+    chat_url_max = Column(String)  # MAX: часть площадок уходит с телеграма, период двух чатов уже идёт
+    messenger_note = Column(Text)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    surfaces = relationship("SalesPublisherSurface", back_populates="publisher",
+                            cascade="all, delete-orphan")
+    services = relationship("SalesPublisherService", back_populates="publisher",
+                            cascade="all, delete-orphan")
+    counterparties = relationship("SalesPublisherCounterparty", back_populates="publisher",
+                                  cascade="all, delete-orphan")
+    contracts = relationship("SalesPublisherContract", back_populates="publisher",
+                             cascade="all, delete-orphan")
+    contacts = relationship("SalesPublisherContact", back_populates="publisher",
+                            cascade="all, delete-orphan")
+    traffic = relationship("SalesPublisherTraffic", cascade="all, delete-orphan")
+    documents = relationship("SalesPublisherDocument", cascade="all, delete-orphan")
+
+
+class SalesPublisherSurface(Base):
+    __tablename__ = "sales_publisher_surfaces"
+    __table_args__ = (UniqueConstraint("publisher_id", "kind", name="uq_publisher_surface"),)
+    id = Column(Integer, primary_key=True)
+    publisher_id = Column(Integer, ForeignKey("sales_publishers.id", ondelete="CASCADE"),
+                          nullable=False)
+    kind = Column(String, nullable=False)   # web | app
+    figma_url = Column(String)
+    integration_status = Column(String, nullable=False, default="НЕТ")
+    # Наличие строки отвечает «поверхность у площадки есть», флаг — «мы с ней работаем».
+    # Раньше это было склеено в статусе, и «приложения нет» не отличалось от
+    # «приложение есть, но мы его не продаём».
+    we_work = Column(Boolean, nullable=False, default=False)
+    coverage_percent = Column(Float)
+    note = Column(Text)
+    publisher = relationship("SalesPublisher", back_populates="surfaces")
+    platforms = relationship("SalesPublisherSurfacePlatform", back_populates="surface",
+                             cascade="all, delete-orphan")
+
+
+class SalesPublisherSurfacePlatform(Base):
+    """Платформа приложения. APP не монолит: Android бывает подключён, когда iOS ещё
+    в подготовке. Услуги отмечаются на поверхности (прайс общий), а трафик считается
+    по платформам отдельно — иначе закупку не спланировать."""
+    __tablename__ = "sales_publisher_surface_platforms"
+    __table_args__ = (UniqueConstraint("surface_id", "kind", name="uq_surface_platform"),)
+    id = Column(Integer, primary_key=True)
+    surface_id = Column(Integer, ForeignKey("sales_publisher_surfaces.id", ondelete="CASCADE"),
+                        nullable=False)
+    kind = Column(String, nullable=False)   # android | ios
+    integration_status = Column(String, nullable=False, default="НЕТ")
+    is_active = Column(Boolean, nullable=False, default=False)
+    note = Column(Text)
+    surface = relationship("SalesPublisherSurface", back_populates="platforms")
+
+
+class SalesPublisherTraffic(Base):
+    """Замер трафика на месяц, а не поле карточки: в исходной таблице цифры записаны
+    текстом вперемешку («900 тыс», «2,05 млн») и относятся к конкретному периоду.
+    Повторный ввод за тот же месяц исправляет замер, а не добавляет вторую точку."""
+    __tablename__ = "sales_publisher_traffic"
+    __table_args__ = (UniqueConstraint("publisher_id", "scope", "measured_at",
+                                       name="uq_publisher_traffic"),)
+    id = Column(Integer, primary_key=True)
+    publisher_id = Column(Integer, ForeignKey("sales_publishers.id", ondelete="CASCADE"),
+                          nullable=False)
+    scope = Column(String, nullable=False)   # web | app_android | app_ios | ad_requests
+    value = Column(Float)
+    depth = Column(Float)   # глубина просмотра; у запросов рекламного кода её нет
+    measured_at = Column(Date, nullable=False)   # первое число месяца
+    source = Column(String, nullable=False, default="manual")
+
+
+class SalesPublisherService(Base):
+    """Услуга, поддерживаемая площадкой, на конкретной поверхности: у услуг с
+    раздельным прайсом web и app — разные тарифы и разная готовность."""
+    __tablename__ = "sales_publisher_services"
+    __table_args__ = (UniqueConstraint("publisher_id", "surface_kind", "service_id",
+                                       name="uq_publisher_service"),)
+    id = Column(Integer, primary_key=True)
+    publisher_id = Column(Integer, ForeignKey("sales_publishers.id", ondelete="CASCADE"),
+                          nullable=False)
+    surface_kind = Column(String, nullable=False)
+    service_id = Column(Integer, ForeignKey("sales_services.id"), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    note = Column(Text)
+    publisher = relationship("SalesPublisher", back_populates="services")
+
+
+class SalesPublisherCounterparty(Base):
+    """Юрлицо площадки. М:М: одно юрлицо (ДПД Медиа) стоит за двумя десятками площадок."""
+    __tablename__ = "sales_publisher_counterparties"
+    __table_args__ = (UniqueConstraint("publisher_id", "counterparty_id",
+                                       name="uq_publisher_counterparty"),)
+    id = Column(Integer, primary_key=True)
+    publisher_id = Column(Integer, ForeignKey("sales_publishers.id", ondelete="CASCADE"),
+                          nullable=False)
+    counterparty_id = Column(Integer, ForeignKey("counterparties.id"), nullable=False)
+    publisher = relationship("SalesPublisher", back_populates="counterparties")
+
+
+class SalesPublisherContract(Base):
+    __tablename__ = "sales_publisher_contracts"
+    __table_args__ = (UniqueConstraint("publisher_id", "contract_id", "role",
+                                       name="uq_publisher_contract"),)
+    id = Column(Integer, primary_key=True)
+    publisher_id = Column(Integer, ForeignKey("sales_publishers.id", ondelete="CASCADE"),
+                          nullable=False)
+    # NULL: договор известен номером, но в реестре «Договора» его пока нет — там лежат
+    # договоры с клиентами, а не с площадками. Ссылка проставится к этому же ряду.
+    contract_id = Column(Integer, ForeignKey("contracts.id"))
+    number_raw = Column(String)
+    role = Column(String, nullable=False, default="с площадкой")
+    # Договор не удаляют: по нему шли деньги. Архив прячет его из карточки, оставляя
+    # запись и связь целыми.
+    is_archived = Column(Boolean, nullable=False, default=False)
+    # Куда ведёт кнопка рядом с номером: файл в системе или ссылка на ЭДО.
+    document_source = Column(String)   # file | edo
+    document_url = Column(String)
+    document_filename = Column(String)
+    document_path = Column(String)
+    publisher = relationship("SalesPublisher", back_populates="contracts")
+
+
+class SalesDocumentType(Base):
+    """Каталог типов документов площадки: «Медиакит», «ТТ на баннеры»,
+    «Доп. инструкции». Пополняется вводом из формы загрузки — так же, как должности
+    контактов и виды паблишеров."""
+    __tablename__ = "sales_document_types"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+
+class SalesPublisherDocument(Base):
+    """Файл площадки. Медиакит — один из типов, а не отдельное поле: иначе каждый
+    новый вид документа требовал бы своей тройки колонок в sales_publishers."""
+    __tablename__ = "sales_publisher_documents"
+    id = Column(Integer, primary_key=True)
+    publisher_id = Column(Integer, ForeignKey("sales_publishers.id", ondelete="CASCADE"),
+                          nullable=False)
+    doc_type = Column(String, nullable=False)   # имя из sales_document_types, не FK
+    filename = Column(String, nullable=False)   # имя на диске, с префиксом id
+    path = Column(String)
+    uploaded_at = Column(DateTime, server_default=func.now())
+    uploaded_by = Column(Integer, ForeignKey("users.id"))
+    note = Column(Text)
+
+
+class SalesContactPosition(Base):
+    """Общий каталог должностей контактных лиц (миграция 2026-08-19_contact_positions.sql).
+    Каталог один на всех: «аккаунт» и «бухгалтерия» повторяются у каждой площадки, а
+    свободный ввод через месяц даёт три написания одной должности. Связь справочная,
+    не FK: переименование должности не должно осиротить контакт."""
+    __tablename__ = "sales_contact_positions"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+
+class SalesPublisherContact(Base):
+    __tablename__ = "sales_publisher_contacts"
+    id = Column(Integer, primary_key=True)
+    publisher_id = Column(Integer, ForeignKey("sales_publishers.id", ondelete="CASCADE"),
+                          nullable=False)
+    name = Column(String)
+    email = Column(String)
+    telegram = Column(String)
+    phone = Column(String)
+    role = Column(String)          # должность
+    is_primary = Column(Boolean, nullable=False, default=False)
+    max_url = Column(String)       # MAX равноправен телеграму: площадки уходят с ТГ
+    note = Column(Text)
+    publisher = relationship("SalesPublisher", back_populates="contacts")

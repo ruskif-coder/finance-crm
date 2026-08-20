@@ -1,70 +1,264 @@
 {
   "sections": [
     {
-      "key": "finance", "title": "Финансы", "accent": "#4F6CE6", "href": "/finance",
+      "key": "finance",
+      "title": "Финансы",
+      "accent": "#4F6CE6",
+      "href": "/finance",
       "items": [
-        { "key": "cashflow",    "label": "ДДС",         "href": "/finance/cashflow",    "perm": "dashboard" },
-        { "key": "pnl",         "label": "P&L",         "href": "/finance/pnl",         "perm": "pl" },
-        { "key": "report",      "label": "Фин. отчёт",  "href": "/finance/report",      "perm": "finreport" },
-        { "key": "balance",     "label": "Баланс",      "href": "/finance/balance",     "perm": "balance" },
-        { "key": "receivables", "label": "Дебиторка",   "href": "/finance/receivables", "perm": "receivables" },
-        { "key": "planfact",    "label": "План / Факт", "href": "/finance/plan-fact",   "perm": "planfact" },
-        { "key": "operations",  "label": "Операции",    "href": "/finance/operations",  "perm": "operations" },
-        { "key": "import",      "label": "Импорт",      "href": "/finance/import",      "perm": "import" }
+        {
+          "key": "cashflow",
+          "label": "ДДС",
+          "href": "/finance/cashflow",
+          "perm": "dashboard"
+        },
+        {
+          "key": "pnl",
+          "label": "P&L",
+          "href": "/finance/pnl",
+          "perm": "pl"
+        },
+        {
+          "key": "report",
+          "label": "Фин. отчёт",
+          "href": "/finance/report",
+          "perm": "finreport"
+        },
+        {
+          "key": "balance",
+          "label": "Баланс",
+          "href": "/finance/balance",
+          "perm": "balance"
+        },
+        {
+          "key": "receivables",
+          "label": "Дебиторка",
+          "href": "/finance/receivables",
+          "perm": "receivables"
+        },
+        {
+          "key": "planfact",
+          "label": "План / Факт",
+          "href": "/finance/plan-fact",
+          "perm": "planfact"
+        },
+        {
+          "key": "operations",
+          "label": "Операции",
+          "href": "/finance/operations",
+          "perm": "operations"
+        },
+        {
+          "key": "import",
+          "label": "Импорт",
+          "href": "/finance/import",
+          "perm": "import"
+        }
       ]
     },
     {
-      "key": "sales", "title": "Продажи", "accent": "#2FA37C", "href": "/sales",
+      "key": "sales",
+      "title": "Продажи",
+      "accent": "#2FA37C",
+      "href": "/sales",
       "items": [
-        { "key": "dashboard", "label": "Дашборд",       "href": "/sales/dashboard", "perm": "sales_dashboard" },
-        { "key": "deals",     "label": "Реестр сделок", "href": "/sales/deals",     "perm": "sales_registry" },
-        { "key": "analytics", "label": "Аналитика",     "href": "/sales/analytics", "perm": "sales_analytics" },
-        { "key": "yearplan",  "label": "Годовой план",  "href": "/sales/year-plan", "perm": "year_plan" }
+        {
+          "key": "dashboard",
+          "label": "Дашборд",
+          "href": "/sales/dashboard",
+          "perm": "sales_dashboard"
+        },
+        {
+          "key": "deals",
+          "label": "Реестр сделок",
+          "href": "/sales/deals",
+          "perm": "sales_registry"
+        },
+        {
+          "key": "analytics",
+          "label": "Аналитика",
+          "href": "/sales/analytics",
+          "perm": "sales_analytics"
+        },
+        {
+          "key": "yearplan",
+          "label": "Годовой план",
+          "href": "/sales/year-plan",
+          "perm": "year_plan"
+        }
       ]
     },
     {
-      "key": "accounts", "title": "Аккаунты", "accent": "#E89020", "href": "/accounts",
+      "key": "accounts",
+      "title": "Аккаунты",
+      "accent": "#E89020",
+      "href": "/accounts",
       "items": [
-        { "key": "dashboard", "label": "Дашборд",    "href": "/accounts/dashboard", "perm": "accounts_dashboard" },
-        { "key": "mp",        "label": "Медиапланы", "href": "/accounts/mp",        "perm": "media_plans" }
+        {
+          "key": "dashboard",
+          "label": "Дашборд",
+          "href": "/accounts/dashboard",
+          "perm": "accounts_dashboard"
+        },
+        {
+          "key": "mp",
+          "label": "Медиапланы",
+          "href": "/accounts/mp",
+          "perm": "media_plans"
+        }
       ]
     },
     {
-      "key": "directory", "title": "Справочники", "accent": "#7B62D6", "href": "/directory",
+      "key": "publishers",
+      "title": "Паблишеры",
+      "accent": "#7B62D6",
+      "href": "/publishers",
       "items": [
-        { "key": "counterparties", "label": "Контрагенты",   "href": "/directory/counterparties", "perm": "counterparties" },
-        { "key": "contracts",      "label": "Договора",      "href": "/directory/contracts",      "perm": "contracts" },
-        { "key": "advertisers",    "label": "Рекламодатели", "href": "/directory/advertisers",    "perm": "dir_advertisers" },
-        { "key": "agencies",       "label": "Агентства",     "href": "/directory/agencies",       "perm": "dir_agencies" },
-        { "key": "reconcile",      "label": "Сверка",        "href": "/directory/reconcile",      "perm": "bx_reconcile" }
+        {
+          "key": "list",
+          "label": "Площадки",
+          "href": "/publishers",
+          "perm": "dir_publishers"
+        },
+        {
+          "key": "bulk",
+          "label": "Заполнение",
+          "href": "/publishers/bulk",
+          "perm": "dir_publishers"
+        }
+      ]
+    },
+    {
+      "key": "directory",
+      "title": "Справочники",
+      "accent": "#7B62D6",
+      "href": "/directory",
+      "items": [
+        {
+          "key": "counterparties",
+          "label": "Контрагенты",
+          "href": "/directory/counterparties",
+          "perm": "counterparties"
+        },
+        {
+          "key": "contracts",
+          "label": "Договора",
+          "href": "/directory/contracts",
+          "perm": "contracts"
+        },
+        {
+          "key": "advertisers",
+          "label": "Рекламодатели",
+          "href": "/directory/advertisers",
+          "perm": "dir_advertisers"
+        },
+        {
+          "key": "agencies",
+          "label": "Агентства",
+          "href": "/directory/agencies",
+          "perm": "dir_agencies"
+        },
+        {
+          "key": "reconcile",
+          "label": "Сверка",
+          "href": "/directory/reconcile",
+          "perm": "bx_reconcile"
+        }
       ]
     }
   ],
   "redirects": [
-    { "from": "/dashboard",   "to": "/finance/cashflow" },
-    { "from": "/pl",          "to": "/finance/pnl" },
-    { "from": "/finreport",   "to": "/finance/report" },
-    { "from": "/balance",     "to": "/finance/balance" },
-    { "from": "/receivables", "to": "/finance/receivables" },
-    { "from": "/planfact",    "to": "/finance/plan-fact" },
-    { "from": "/operations",  "to": "/finance/operations" },
-    { "from": "/import",      "to": "/finance/import" },
-
-    { "from": "/sales-dashboard", "to": "/sales/dashboard" },
-    { "from": "/analytics",       "to": "/sales/analytics" },
-    { "from": "/deals/year-plan", "to": "/sales/year-plan" },
-
-    { "from": "/deals/mp",         "to": "/accounts/mp" },
-    { "from": "/deals/mp/pdf/:id", "to": "/accounts/mp/pdf/:id" },
-    { "from": "/deals/mp/:id",     "to": "/accounts/mp/:id" },
-
-    { "from": "/deals/:id((?!mp$|stage-demo$)[^/]+)", "to": "/sales/deals/:id" },
-
-    { "from": "/counterparties",   "to": "/directory/counterparties" },
-    { "from": "/counterparty/:id", "to": "/directory/counterparties/:id" },
-    { "from": "/contracts",        "to": "/directory/contracts" },
-    { "from": "/advertisers",      "to": "/directory/advertisers" },
-    { "from": "/agencies",         "to": "/directory/agencies" },
-    { "from": "/reconcile",        "to": "/directory/reconcile" }
+    {
+      "from": "/dashboard",
+      "to": "/finance/cashflow"
+    },
+    {
+      "from": "/pl",
+      "to": "/finance/pnl"
+    },
+    {
+      "from": "/finreport",
+      "to": "/finance/report"
+    },
+    {
+      "from": "/balance",
+      "to": "/finance/balance"
+    },
+    {
+      "from": "/receivables",
+      "to": "/finance/receivables"
+    },
+    {
+      "from": "/planfact",
+      "to": "/finance/plan-fact"
+    },
+    {
+      "from": "/operations",
+      "to": "/finance/operations"
+    },
+    {
+      "from": "/import",
+      "to": "/finance/import"
+    },
+    {
+      "from": "/sales-dashboard",
+      "to": "/sales/dashboard"
+    },
+    {
+      "from": "/analytics",
+      "to": "/sales/analytics"
+    },
+    {
+      "from": "/deals/year-plan",
+      "to": "/sales/year-plan"
+    },
+    {
+      "from": "/deals/mp",
+      "to": "/accounts/mp"
+    },
+    {
+      "from": "/deals/mp/pdf/:id",
+      "to": "/accounts/mp/pdf/:id"
+    },
+    {
+      "from": "/deals/mp/:id",
+      "to": "/accounts/mp/:id"
+    },
+    {
+      "from": "/deals/:id((?!mp$|stage-demo$)[^/]+)",
+      "to": "/sales/deals/:id"
+    },
+    {
+      "from": "/counterparties",
+      "to": "/directory/counterparties"
+    },
+    {
+      "from": "/counterparty/:id",
+      "to": "/directory/counterparties/:id"
+    },
+    {
+      "from": "/contracts",
+      "to": "/directory/contracts"
+    },
+    {
+      "from": "/advertisers",
+      "to": "/directory/advertisers"
+    },
+    {
+      "from": "/agencies",
+      "to": "/directory/agencies"
+    },
+    {
+      "from": "/reconcile",
+      "to": "/directory/reconcile"
+    },
+    {
+      "from": "/directory/publishers",
+      "to": "/publishers"
+    },
+    {
+      "from": "/directory/publishers/:id",
+      "to": "/publishers/:id"
+    }
   ]
 }

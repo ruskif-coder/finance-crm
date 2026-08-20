@@ -8,7 +8,8 @@ from app.database import engine, Base, SessionLocal
 from app.routers import (auth, operations, reports, counterparties, articles, settings,
                          users, roles, contracts, sales_directories, sales_dashboard,
                          sales_reconcile, media_plans, notifications, notify_settings,
-                         year_plan, finreport, backlog, account_dashboard)
+                         year_plan, finreport, backlog, account_dashboard,
+                         publishers)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -589,6 +590,7 @@ app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(roles.router, prefix="/api/roles", tags=["roles"])
 app.include_router(contracts.router, prefix="/api/contracts", tags=["contracts"])
 app.include_router(sales_directories.router, prefix="/api/sales/directories", tags=["sales"])
+app.include_router(publishers.router, prefix="/api/publishers", tags=["publishers"])
 app.include_router(media_plans.router, prefix="/api/sales/media-plans", tags=["sales"])
 # Настройки монтируются ПЕРЕД колокольчиком: у notifications есть @router.get(""),
 # и вложенный префикс не должен им перехватываться.

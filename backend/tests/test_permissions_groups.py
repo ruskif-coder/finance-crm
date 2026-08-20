@@ -6,7 +6,7 @@
 """
 from app.permissions import SECTIONS
 
-CONTOURS = {"Финансы", "Продажи", "Аккаунты", "Справочники", "Ядро"}
+CONTOURS = {"Финансы", "Продажи", "Аккаунты", "Паблишеры", "Справочники", "Ядро"}
 
 EXPECTED_KEYS = {
     "dashboard", "pl", "balance", "planfact", "receivables",
@@ -17,7 +17,8 @@ EXPECTED_KEYS = {
     "accounts_dashboard",
     "media_plans", "media_plans_editor",
     "operations", "import",
-    "counterparties", "contracts", "dir_advertisers", "dir_agencies", "bx_reconcile",
+    "counterparties", "contracts", "dir_advertisers", "dir_agencies", "dir_publishers",
+    "bx_reconcile",
     "settings_balances", "settings_articles", "settings_pipelines",
     "settings_services", "settings_field_audit", "settings_audit",
     # Добавлен 2026-08-16 вместе с разделом «Бэклог отладки» (routers/backlog.py).

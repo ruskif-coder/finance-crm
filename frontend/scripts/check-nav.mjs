@@ -35,6 +35,7 @@ const ORPHAN_ALLOWED = new Set([
   '/sales',
   '/accounts',
   '/directory',
+  '/publishers/[id]',  // карточка площадки, открывается из реестра; своего пункта меню нет
 ])
 // settings и settings/* гейтятся отдельным require_admin, в карту не входят намеренно
 const orphanExempt = (route) => ORPHAN_ALLOWED.has(route) || route === '/settings' || route.startsWith('/settings/')
