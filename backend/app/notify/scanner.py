@@ -22,6 +22,7 @@ import sys
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -234,6 +235,116 @@ def _deal_rule(kind: str):
     return rule
 
 
+# ──────────────── сейлзы: годовой план и конструктор МП ────────────────
+
+MONTHS_RU = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль",
+             "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
+
+# Насколько далеко в прошлое напоминаем про пустой месяц плана. Дальше это уже не работа
+# на сегодня, а разбор истории: план прошлого полугодия правят разом, а не по письму
+# на каждую ячейку. Та же логика, что у SCAN_HORIZON_DAYS для сделок.
+PLAN_MONTH_HORIZON_DAYS = 60
+
+
+def plan_month_stage(month_start: date, today: date, before_days: int) -> Optional[str]:
+    """Ступень для ячейки плана или None, если сообщать рано/поздно.
+
+    Вынесено чистой функцией: границы окна — единственное, что здесь легко сломать,
+    и проверяются они без базы."""
+    left = (month_start - today).days
+    if left > before_days:
+        return None                              # ещё рано
+    if left < -PLAN_MONTH_HORIZON_DAYS:
+        return None                              # за горизонтом напоминаний
+    return "soon" if left > 0 else "overdue"
+
+
+def rule_plan_month_empty(db: Session, ev: registry.Event) -> List[Hit]:
+    """Месяц строки годового плана включён и с суммой, а сделок в ячейку не привязано.
+
+    Что считается «запланировано» и «сколько денег в ячейке», решают функции самого
+    годового плана (_planned_months / _intended_amount / _is_locked) — повторять их
+    здесь значило бы завести второе мнение о том же плане.
+    """
+    from app.sales.models import (SalesDeal, SalesYearPlanLine, SalesAdvertiser, SalesBrand)
+    from app.routers.year_plan import _planned_months, _intended_amount, _is_locked
+
+    today = date.today()
+    before_days = _param(ev, "before_days", 14)
+
+    lines = db.query(SalesYearPlanLine).filter(SalesYearPlanLine.sales_rep_id.isnot(None)).all()
+    if not lines:
+        return []
+    adv = dict(db.query(SalesAdvertiser.id,
+                        func.coalesce(SalesAdvertiser.short_name, SalesAdvertiser.name)).all())
+    brands = dict(db.query(SalesBrand.id, SalesBrand.name).all())
+
+    # Одним запросом: какие (строка, месяц) уже наполнены сделками.
+    filled = set(db.query(SalesDeal.year_plan_line_id, SalesDeal.plan_month)
+                 .filter(SalesDeal.year_plan_line_id.isnot(None)).distinct().all())
+
+    hits = []
+    for line in lines:
+        for m in _planned_months(line):
+            if _is_locked(line, m):              # замок — осознанная заморозка месяца
+                continue
+            if (line.id, m) in filled:
+                continue
+            amount = _intended_amount(line, m)
+            if amount <= 0:
+                continue
+            stage = plan_month_stage(date(line.year, m + 1, 1), today, before_days)
+            if stage is None:
+                continue
+            who = " · ".join(x for x in (adv.get(line.advertiser_id),
+                                         brands.get(line.brand_id)) if x) or f"строка #{line.id}"
+            money = f"{amount:,.0f}".replace(",", " ")
+            hits.append(Hit(
+                # entity_id — синтетический ключ ячейки (строка × месяц): состояние алерта
+                # ведётся по ячейке, а не по строке, иначе напоминание про март гасило бы
+                # напоминание про апрель.
+                entity_type="year_plan_month", entity_id=line.id * 12 + m, stage=stage,
+                due_date=date(line.year, m + 1, 1),
+                title=f"{who}: {MONTHS_RU[m]} {line.year} запланирован на {money} ₽, сделок нет",
+                link="/sales/year-plan", ctx={"rep_id": line.sales_rep_id},
+                payload={"line_id": line.id, "month": m, "amount": amount},
+            ))
+    return hits
+
+
+def rule_mp_draft_stale(db: Session, ev: registry.Event) -> List[Hit]:
+    """Черновики МП, брошенные в конструкторе.
+
+    Планы, собранные конвейером годового плана, исключены: про них есть своё событие
+    mp_verify, адресованное аккаунту. Иначе один и тот же непроверенный автоплан
+    порождал бы два разных напоминания двум людям — верный способ, чтобы оба решили,
+    что это дело другого.
+    """
+    from app.sales.models import SalesMediaPlan, SalesDeal
+
+    after_days = _param(ev, "after_days", 7)
+    edge = datetime.utcnow() - timedelta(days=after_days)
+
+    conveyor = {d for (d,) in db.query(SalesDeal.id)
+                .filter(SalesDeal.year_plan_line_id.isnot(None)).all()}
+    plans = (db.query(SalesMediaPlan)
+             .filter(SalesMediaPlan.status == "draft",
+                     SalesMediaPlan.created_by.isnot(None),
+                     SalesMediaPlan.updated_at < edge).all())
+    hits = []
+    for p in plans:
+        if p.deal_id and p.deal_id in conveyor:
+            continue
+        days = (datetime.utcnow() - p.updated_at).days if p.updated_at else after_days
+        hits.append(Hit(
+            entity_type="media_plan", entity_id=p.id, stage="due",
+            title=f"Черновик МП лежит {days} дн.: {p.title or ('#' + str(p.id))}",
+            link=f"/accounts/mp/{p.id}", ctx={"media_plan": p},
+            payload={"days": days},
+        ))
+    return hits
+
+
 def backlog_overdue_hits(items, today: date, now: datetime, repeat_days: int = 7) -> List[Hit]:
     """Чистая часть правила: из списка записей выбрать те, о просрочке которых
     пора напомнить. Вынесена отдельно, чтобы проверяться без базы.
@@ -294,6 +405,8 @@ DEAL_QUEUE_EVENTS = ["deal_mp_missing", "mp_verify", "mp_unapproved", "mp_rework
 RULES = {
     "invoice_overdue": rule_invoice_overdue,
     "mp_stuck": rule_mp_stuck,
+    "plan_month_empty": rule_plan_month_empty,
+    "mp_draft_stale": rule_mp_draft_stale,
     "backlog_overdue": rule_backlog_overdue,
     **{k: _deal_rule(k) for k in DEAL_QUEUE_EVENTS},
 }

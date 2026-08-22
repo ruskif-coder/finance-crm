@@ -191,3 +191,43 @@ def test_parse_ignores_everything_but_start():
     assert code is None and chat == "42"
     assert parse_start_command({}) == (None, None)
     assert parse_start_command({"message": {"text": "/start", "chat": {"id": 7}}}) == (None, "7")
+
+
+# ---- сейлзовые события ----
+
+def test_sales_events_registered():
+    """Шесть событий сейлзового направления. Ключ события — то, что записано в подписках
+    у живых людей: переименование молча отнимет у них настройку."""
+    keys = {"deal_booked", "deal_lost", "deal_done",
+            "plan_deals_generated", "plan_month_empty", "mp_draft_stale"}
+    assert keys <= set(registry.EVENTS)
+    for k in keys:
+        assert registry.get(k).direction == "sales", k
+
+
+def test_move_event_key_lost_wins_over_terminal():
+    """Стадия срыва тоже терминальная — без проверки is_lost первым срыв уехал бы
+    в «сделка доведена», то есть в поздравление."""
+    from app.routers.sales_dashboard import move_event_key
+    assert move_event_key(None, True, True, None) == "deal_lost"
+    assert move_event_key("closing_fact", False, True, "archive") == "deal_done"
+
+
+def test_move_event_key_booking_only_on_entry():
+    from app.routers.sales_dashboard import move_event_key
+    assert move_event_key("media_plan", False, False, "booking") == "deal_booked"
+    # перестановка внутри брони (у неё две стадии) — не «ушла в бронь» второй раз
+    assert move_event_key("booking", False, False, "booking") is None
+    assert move_event_key("booking", False, False, "launch") is None
+
+
+def test_plan_month_stage_window():
+    """Окно напоминания про пустую ячейку плана: рано — молчим, месяц начался —
+    просрочено, слишком давно — снова молчим (это разбор истории, а не работа)."""
+    from app.notify.scanner import plan_month_stage
+    from datetime import date
+    today = date(2026, 8, 22)
+    assert plan_month_stage(date(2026, 10, 1), today, 14) is None      # ещё рано
+    assert plan_month_stage(date(2026, 9, 1), today, 14) == "soon"     # старт близко
+    assert plan_month_stage(date(2026, 8, 1), today, 14) == "overdue"  # месяц идёт
+    assert plan_month_stage(date(2026, 5, 1), today, 14) is None       # за горизонтом

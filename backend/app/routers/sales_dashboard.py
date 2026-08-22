@@ -1871,6 +1871,48 @@ def _reflect_stage_binding(db, deal, target):
         deal.bitrix_stage = st.name
 
 
+MOVE_EVENT_TITLES = {
+    "deal_lost": "Сделка не состоялась",
+    "deal_done": "Сделка доведена",
+    "deal_booked": "Сделка ушла в бронь",
+}
+
+
+def move_event_key(prev_key, is_lost, is_terminal, stage_key):
+    """Какое сейлзовое событие порождает переход. None — никакое.
+
+    Чистая функция: исходы взаимоисключающие и порядок их проверки — единственное, что
+    здесь можно перепутать (терминальная стадия срыва тоже is_terminal, и без проверки
+    is_lost первым срыв уехал бы в «доведена»).
+    """
+    if is_lost:
+        return "deal_lost"
+    if is_terminal:
+        return "deal_done"
+    # Повторный вход в ту же стадию события не порождает: снаружи это выглядело бы как
+    # «сделка ушла в бронь» второй раз, хотя ничего не произошло.
+    if stage_key == "booking" and prev_key != "booking":
+        return "deal_booked"
+    return None
+
+
+def _notify_move(db, deal, prev, target, comment, actor):
+    """Сейлзовые события перехода сделки. Вызывается ТОЛЬКО при реальной смене стадии."""
+    from app.notify.bus import emit
+
+    key = move_event_key(getattr(prev, "stage_key", None), target.is_lost,
+                         target.is_terminal, target.stage_key)
+    if key is None:
+        return
+    where = deal.title or f"#{deal.code or deal.id}"
+    # Комментарий к переходу обязателен на входе, и для срыва он и есть содержание
+    # уведомления: «сделка сорвалась» без причины не говорит ничего.
+    emit(db, key, title=f"{MOVE_EVENT_TITLES[key]}: {where}",
+         body=(comment or "").strip() or None,
+         link=f"/sales/deals/{deal.code or deal.id}",
+         entity_type="sales_deal", entity_id=deal.id, actor=actor, ctx={"deal": deal})
+
+
 @router.post("/deals/{deal_id}/move")
 def move_deal(
     deal_id: int,
@@ -1942,6 +1984,7 @@ def move_deal(
             user_id=current_user.id,
             reason=(payload.override_reason or payload.comment or "").strip() or None,
         ))
+        _notify_move(db, deal, prev, target, payload.comment, current_user)
     db.commit()
 
     label = f"{prev.name if prev else '—'} → {target.name}"

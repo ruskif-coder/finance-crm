@@ -850,6 +850,19 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
                     db.add(deal); db.flush()
                     _build_mp(db, deal, line, m, svc, add, current_user.id, items)
                     created += 1
+    if created or updated:
+        # Владельцу плана, а не запустившему: emit не шлёт актору, поэтому свой же
+        # прогон человек не получает, а прогон мастера за него — получает.
+        from app.notify.bus import emit
+        parts = [f"создано {created}"] if created else []
+        if updated:
+            parts.append(f"обновлено {updated}")
+        emit(db, "plan_deals_generated",
+             title=f"Конвейер плана {payload.year}: " + ", ".join(parts),
+             body=(f"Пропущено: без брифа {blocked}, заморожено замком {frozen}"
+                   if (blocked or frozen) else None),
+             link="/sales/year-plan", entity_type="year_plan", entity_id=payload.year,
+             actor=current_user, ctx={"rep_id": eff_rep})
     db.commit()
     log_action(db, current_user, "year_plan_create_deals", "year_plan", payload.year,
                f"сейлз {eff_rep}: создано {created}, обновлено {updated}, "

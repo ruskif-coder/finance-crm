@@ -239,7 +239,7 @@ export default function NotificationSettings() {
             </button>
             {err && <span style={{ color: 'var(--dot-overdue)', fontSize: 12 }}>{err}</span>}
             <span style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: 12 }}>
-              Telegram, почта и дайджест настраиваются, но пока не доставляются — их отправки копятся в журнале.
+              Telegram доставляется после привязки чата. Почта и дайджест настраиваются, но пока не доставляются — их отправки копятся в журнале.
             </span>
           </div>
         </div>
