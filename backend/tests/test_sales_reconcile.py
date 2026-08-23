@@ -17,7 +17,7 @@ def test_name_tokens_drops_legal_forms_and_case():
 
 
 def test_score_exact_match_is_one():
-    assert score_names(["OMD OM"], "OMD OM") == 1.0
+    assert score_names(["AG AGENCY"], "AG AGENCY") == 1.0
 
 
 def test_score_translit_match_high():
@@ -37,7 +37,7 @@ def test_score_takes_best_variant():
 def test_build_buckets_splits_linked_and_candidates():
     our = [
         # мультипривязка: одна наша запись ← две компании Битрикса (50 и 51)
-        {"id": 1, "name": "OMD", "short_name": "OMD", "name_en": "OMD OM", "name_ru": None,
+        {"id": 1, "name": "AG", "short_name": "AG", "name_en": "AG AGENCY", "name_ru": None,
          "bx_ids": ["50", "51"], "bx_master": "ours"},
         {"id": 2, "name": "Медиапул", "short_name": "Медиапул", "name_en": "Mediapul",
          "name_ru": None, "bx_ids": [], "bx_master": None},
@@ -45,7 +45,7 @@ def test_build_buckets_splits_linked_and_candidates():
          "name_en": None, "name_ru": None, "bx_ids": [], "bx_master": None},
     ]
     bx = [
-        {"id": "50", "title": "OMD OM"},
+        {"id": "50", "title": "AG AGENCY"},
         {"id": "51", "title": "ОМД ОМ Групп"},
         {"id": "77", "title": "Медиапул"},
         {"id": "88", "title": "Только в Битриксе"},
@@ -53,7 +53,7 @@ def test_build_buckets_splits_linked_and_candidates():
     res = build_buckets(our, bx)
     assert [x["our_id"] for x in res["linked"]] == [1]
     assert {c["bx_id"] for c in res["linked"][0]["companies"]} == {"50", "51"}
-    assert res["linked"][0]["our_full"] == "OMD | OMD OM"
+    assert res["linked"][0]["our_full"] == "AG | AG AGENCY"
     cand_ids = {c["our_id"]: c["best"]["bx_id"] for c in res["candidates"]}
     assert cand_ids[2] == "77"
     assert {o["our_id"] for o in res["only_ours"]} == {3}

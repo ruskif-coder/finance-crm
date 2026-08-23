@@ -56,7 +56,7 @@ def test_only_prefixed_companies_are_candidates(bitrix):
     Компания без префикса — либо не проходила склейку, либо её переименовали обратно
     вручную. В обоих случаях это чужой объект, и трогать его нельзя.
     """
-    bitrix["companies"] = [_co(1, "XXX_Старое агентство"), _co(2, "OKKAM | Оккам"), _co(3, "Realweb")]
+    bitrix["companies"] = [_co(1, "XXX_Старое агентство"), _co(2, "AGENCY | Агентство"), _co(3, "AGENCY2")]
     bitrix["counts"] = {"1": 0, "2": 0, "3": 0}
     got = sr._retired_candidates("agencies")
     assert [x["bx_id"] for x in got] == ["1"]

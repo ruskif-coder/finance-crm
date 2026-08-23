@@ -29,10 +29,10 @@ PRODUCTS = {"2": "еФарм", "10": "Клик-аут"}   # карта СП 1050
 
 def test_map_deal_tracked_pipeline():
     raw = {
-        "id": 6760, "title": "Бепантен_Bayer_g4m", "categoryId": 8, "stageId": "C8:WON",
+        "id": 6760, "title": "Бренд_Клиент_g4m", "categoryId": 8, "stageId": "C8:WON",
         "companyId": 1796, "ufCrm_1690138678699": "1500000|RUB",
         "ufCrm_1723639172": "2026-09-01T03:00:00+03:00",
-        "ufCrm_64BD76BC5BC45": "Бепантен",   # это БРЕНД — в услугу попасть НЕ должен
+        "ufCrm_64BD76BC5BC45": "Бренд",   # это БРЕНД — в услугу попасть НЕ должен
         "parentId1050": 2,                    # «Продукты Simb-ad» = еФарм
     }
     d = map_deal(raw, PIPELINES, STAGES, AGENCY_LINKS, PRODUCTS)
@@ -41,7 +41,7 @@ def test_map_deal_tracked_pipeline():
     assert d["bitrix_stage"] == "Архив"        # код резолвится в имя
     assert d["amount"] == 1500000.0
     assert d["agency_id"] == 13                 # companyId → наш id через links
-    assert d["product"] == "еФарм"              # услуга из parentId1050, НЕ бренд «Бепантен»
+    assert d["product"] == "еФарм"              # услуга из parentId1050, НЕ бренд из заголовка
     assert d["period_from"].isoformat() == "2026-09-01"
 
 
