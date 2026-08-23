@@ -66,6 +66,36 @@ def _resolve_rep(db: Session, user: User, rep_id: Optional[int]):
     return (own[0] if own else None), True       # мастер без явного выбора → свой (или None)
 
 
+def _guard_plan_owner(db: Session, plan, user: User):
+    """403, если роль не мастер и план принадлежит другому сейлзу.
+
+    До 2026-08-23 `update_plan` и `delete_plan` брали план по id и владельца не
+    проверяли: сейлз с правом year_plan:edit и областью 'own' мог переименовать,
+    переназначить на себя (`PlanPatch.sales_rep_id`) или удалить чужой план —
+    а удаление ещё и отвязывает все сделки строк (year_plan_line_id → NULL),
+    то есть тихо рвёт связь плана с фактом.
+    """
+    if _is_master(db, user):
+        return
+    if plan.sales_rep_id not in _own_rep_ids(db, user):
+        raise HTTPException(status_code=403, detail="Это план другого сейлза")
+
+
+def _guard_deal_owner(db: Session, deal, user: User):
+    """403, если роль не мастер и сделка не её.
+
+    Привязка сделки к строке плана — это перенос денег между планами: план
+    управляет фактом и бронью, а через них бонусом. Без проверки не-мастер мог
+    затянуть чужую сделку в свой план (`attach`) или выдернуть чужую сделку из
+    чужого плана (`detach`), и оба действия выглядели бы штатной работой.
+    """
+    if _is_master(db, user):
+        return
+    own = set(_own_rep_ids(db, user))
+    if not ({deal.sales_rep_id, deal.account_manager_id} & own):
+        raise HTTPException(status_code=403, detail="Сделка вне вашей зоны видимости")
+
+
 # ── план/пакет: автозаголовок и find-or-create ───────────────────────────
 def _auto_title(db: Session, advertiser_id: Optional[int], year: int) -> str:
     name = None
@@ -248,7 +278,16 @@ def update_plan(plan_id: int, payload: PlanPatch, db: Session = Depends(get_db),
     plan = db.get(SalesYearPlan, plan_id)
     if not plan:
         raise HTTPException(status_code=404, detail="План не найден")
-    for f, v in payload.dict(exclude_unset=True).items():
+    _guard_plan_owner(db, plan, current_user)
+    fields = payload.dict(exclude_unset=True)
+    # Смена ответственных — только мастеру: иначе не-мастер переписывает план на себя
+    # (или сбрасывает с себя чужой). В модели это и заявлено: «мастер может сменить».
+    if not _is_master(db, current_user):
+        for locked in ("sales_rep_id", "account_manager_id"):
+            if locked in fields:
+                raise HTTPException(status_code=403,
+                                    detail="Смена ответственного доступна только мастеру")
+    for f, v in fields.items():
         setattr(plan, f, v)
     db.commit()
     log_action(db, current_user, "year_plan_update", "year_plan", plan.id, plan.title)
@@ -324,6 +363,7 @@ def delete_plan(plan_id: int, db: Session = Depends(get_db),
     plan = db.get(SalesYearPlan, plan_id)
     if not plan:
         raise HTTPException(status_code=404, detail="План не найден")
+    _guard_plan_owner(db, plan, current_user)
     lines = db.query(SalesYearPlanLine).filter(SalesYearPlanLine.plan_id == plan_id).all()
     line_ids = [l.id for l in lines]
     # Открепляем сделки (FK nullable, NO ACTION) прежде чем удалять строки.
@@ -450,9 +490,12 @@ def attach_deal(deal_id: int, payload: AttachIn, db: Session = Depends(get_db),
     deal = db.get(SalesDeal, deal_id)
     if not deal:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _guard_deal_owner(db, deal, current_user)
     line = db.get(SalesYearPlanLine, payload.line_id)
     if not line:
         raise HTTPException(status_code=404, detail="Строка плана не найдена")
+    if line.plan_id:
+        _guard_plan_owner(db, db.get(SalesYearPlan, line.plan_id), current_user)
     if not (0 <= payload.month <= 11):
         raise HTTPException(status_code=400, detail="month вне диапазона 0..11")
     deal.year_plan_line_id = line.id
@@ -469,6 +512,7 @@ def detach_deal(deal_id: int, db: Session = Depends(get_db),
     deal = db.get(SalesDeal, deal_id)
     if not deal:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _guard_deal_owner(db, deal, current_user)
     deal.year_plan_line_id = None
     deal.plan_month = None
     db.commit()

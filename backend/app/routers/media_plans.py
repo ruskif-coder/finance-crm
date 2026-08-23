@@ -20,7 +20,7 @@ from app.routers.auth import get_current_user
 from app.permissions import require_permission, ACTION_FIELDS
 from app.audit import log_action
 from app.notify import emit
-from app.models import User, Counterparty, RolePermission, Role
+from app.models import User, Counterparty, RolePermission
 from app.sales.models import (SalesMediaPlan, SalesMediaPlanRow, SalesMediaPlanExtra,
                               SalesAdvertiser, SalesBrand, SalesAgency, SalesGeo)
 
@@ -436,12 +436,15 @@ def mp_deal_prefill(deal_id: int, db: Session = Depends(get_db),
     """Данные сделки для префилла нового МП (создание МП из карточки сделки): реквизиты
     брифа + free-text бриф. Доступ по праву конструктора МП."""
     from app.sales.models import SalesDeal
-    from app.routers.sales_dashboard import BRIEF_FIELD, _deal_is_local
+    from app.routers.sales_dashboard import BRIEF_FIELD, _deal_is_local, _assert_deal_in_scope
     from datetime import datetime as _dt
     from app.sales.models import SalesRep
     deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
     if not deal:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
+    # Область видимости сделок — та же, что в реестре: право конструктора МП открывает
+    # конструктор, а не чужие сделки. Здесь читается бриф, то есть содержание сделки.
+    _assert_deal_in_scope(db, current_user, deal)
     # Ответственные МП = id ПОЛЬЗОВАТЕЛЕЙ; у сделки — id SalesRep (Битрикс) → user_id
     def _rep_user(rid):
         if not rid:
@@ -907,7 +910,6 @@ def _wb_programmatic(full, p):
     """Фолбэк: собрать книгу с нуля (если шаблон mp_template.xlsx недоступен)."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-    from openpyxl.utils import get_column_letter
 
     wb = Workbook()
     ws = wb.active

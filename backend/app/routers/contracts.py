@@ -69,24 +69,8 @@ def _clean(s: Optional[str]) -> Optional[str]:
     return s or None
 
 
-_ALLOWED_LINK_SCHEMES = ("http://", "https://")
 
-def _validate_link(url: Optional[str], raise_on_bad: bool = True) -> Optional[str]:
-    """Проверяет, что ссылка использует безопасный протокол (http/https).
-    Отклоняет javascript:, data:, file: и прочие схемы (XSS-вектор в атрибуте href).
-    raise_on_bad=False для Excel-импорта: небезопасная ссылка молча отбрасывается,
-    а не роняет весь импорт 400-й ошибкой."""
-    url = _clean(url)
-    if url is None:
-        return None
-    if not any(url.lower().startswith(s) for s in _ALLOWED_LINK_SCHEMES):
-        if raise_on_bad:
-            raise HTTPException(
-                status_code=400,
-                detail="Ссылка на документ должна начинаться с http:// или https://"
-            )
-        return None
-    return url
+from app.links import validate_link as _validate_link  # общая проверка, см. app/links.py
 
 
 def _resolve_counterparty(db: Session, counterparty_id: Optional[int]) -> Optional[Counterparty]:

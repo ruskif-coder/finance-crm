@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from app.passwords import hash_password as _hash_password, verify_password as _verify_password
 from app.database import get_db
 from app.models import User, LoginAttempt
-from passlib.context import CryptContext
 from pydantic import BaseModel
 from sqlalchemy import func
 import jwt
@@ -14,7 +14,6 @@ import threading
 import os
 
 router = APIRouter()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -30,7 +29,7 @@ LOGIN_LOCKOUT_MINUTES = 15
 # приходит за ~9 мс (bcrypt не считается), а на существующий — за ~230 мс, что даёт
 # timing-oracle для перечисления учёток. Прогоняем verify_password против фиктивного
 # хэша, когда юзер не найден, чтобы время ответа не зависело от существования email.
-_DUMMY_BCRYPT_HASH = pwd_context.hash("timing_equalizer_dummy_password")
+_DUMMY_BCRYPT_HASH = _hash_password("timing_equalizer_dummy_password")
 
 # Пентест 2026-07-18, находка #2: локаут только по email не мешает password spraying
 # (один пароль по многим email). Добавляем per-IP троттлинг /login. In-memory (один
@@ -91,11 +90,11 @@ def _clear_login_attempts(db: Session, email: str):
         row.updated_at = datetime.utcnow()
         db.commit()
 
-def verify_password(plain, hashed):
-    return pwd_context.verify(plain, hashed)
-
-def get_password_hash(password):
-    return pwd_context.hash(password)
+# Имена оставлены прежними: их импортируют users.py и counterparties.py.
+# Реализация переехала в app/passwords.py (напрямую bcrypt) — passlib с 2020 года
+# не обновлялся, ломался о bcrypt>=4.1 и тянул модуль crypt, удалённый в Python 3.13.
+verify_password = _verify_password
+get_password_hash = _hash_password
 
 def create_access_token(data: dict):
     to_encode = data.copy()

@@ -3,8 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, text, case
 from app.database import get_db
 from app.models import Operation, Article, User
-from app.routers.auth import get_current_user
-from app.permissions import require_permission
+from app.permissions import require_permission, require_any_permission
 from app.audit import log_action
 from pydantic import BaseModel
 from typing import Optional, List
@@ -86,10 +85,8 @@ def get_dds(
     # Выбираем группировку: по периоду или по дате операции
     if group_by == 'date':
         group_col = func.to_char(Operation.date, 'YYYY-MM')
-        filter_col = func.to_char(Operation.date, 'YYYY-MM')
     else:
         group_col = Operation.period
-        filter_col = Operation.period
 
     query = db.query(
         group_col.label("period"),
@@ -1089,7 +1086,11 @@ def export_receivables(
 @router.get("/periods")
 def get_periods(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    # Фронт этот эндпоинт не зовёт ни с одного экрана (проверено 2026-08-23):
+    # /finance/operations берёт периоды из /operations/periods. Оставлен на случай
+    # внешних потребителей, но закрыт правами отчётов, а не фактом входа.
+    current_user: User = Depends(require_any_permission(
+        ("dashboard", "pl", "planfact", "balance", "finreport"), "view"))
 ):
     results = db.query(Operation.period)\
         .filter(Operation.period.isnot(None))\

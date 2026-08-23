@@ -3,8 +3,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Article, ArticleGroup, Operation, User
-from app.routers.auth import get_current_user
-from app.permissions import require_permission
+from app.permissions import require_permission, require_any_permission
 from pydantic import BaseModel
 from typing import Optional
 
@@ -86,7 +85,10 @@ def reorder_articles(
 @router.get("/groups")
 def get_article_groups(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    # Статьи подставляются в форме операций и в карточке контрагента, поэтому
+    # право не только у реестра статей (набор снят с фронта 2026-08-23).
+    current_user: User = Depends(require_any_permission(
+        ("settings_articles", "operations", "counterparties", "settings_services"), "view"))
 ):
     """Все группы из справочника. Открыт любому авторизованному — используется в выпадающих
     списках. Порядок: sort_order, затем имя."""
@@ -135,7 +137,8 @@ def delete_article_group(
 @router.get("/")
 def get_articles(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_any_permission(
+        ("settings_articles", "operations", "counterparties", "settings_services"), "view"))
 ):
     items = db.query(Article).order_by(Article.sort_order, Article.id).all()
     return [{"id": a.id, "name": a.name, "group": a.group, "type": a.type} for a in items]

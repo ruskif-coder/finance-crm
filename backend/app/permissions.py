@@ -101,18 +101,40 @@ def get_permissions_for_user(db: Session, user: User) -> dict:
 
 
 def require_any_permission(sections, action: str = "view"):
-    """Пропускает, если у роли есть can_<action> хотя бы по одной из секций.
-    Для эндпойнтов, которые обслуживают несколько страниц (напр. /sales/dashboard
-    читают и реестр, и аналитика). Admin всегда проходит."""
+    """Пропускает, если у роли есть право хотя бы по одному из перечисленного.
+
+    Для эндпойнтов, обслуживающих несколько экранов: справочник кормит выпадающие
+    списки на нескольких страницах, и жёсткое require_permission на один раздел
+    сломало бы форму тем, у кого прав на сам справочник нет.
+
+    `sections` принимает две формы:
+
+    * имена разделов — тогда действие одно на всех, из `action`:
+      `require_any_permission(("sales_registry", "sales_analytics"), "view")`
+    * пары (раздел, действие) — когда требования разные:
+      `require_any_permission((("operations", "view"),
+                               ("counterparties", "view_operations")))`
+
+    Вторая форма заведена 2026-08-23: без неё проверку «operations.view ИЛИ
+    counterparties.view_operations» нельзя было выразить зависимостью, и она
+    жила в теле функции — то есть была невидима для инвентаря роутов
+    (tests/test_route_guards.py). Право должно объявляться в зависимости;
+    телу остаётся только вопрос области видимости («чьи это данные»).
+
+    Admin всегда проходит.
+    """
+    pairs = [(s, action) if isinstance(s, str) else (s[0], s[1]) for s in sections]
+
     def checker(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
         if current_user.role.key == "admin":
             return current_user
-        field = ACTION_FIELDS.get(action, "can_view")
-        rows = (db.query(RolePermission)
+        rows = {r.section: r for r in db.query(RolePermission)
                 .filter(RolePermission.role_id == current_user.role_id,
-                        RolePermission.section.in_(list(sections))).all())
-        if any(bool(getattr(r, field)) for r in rows):
-            return current_user
+                        RolePermission.section.in_([p[0] for p in pairs])).all()}
+        for section, act in pairs:
+            row = rows.get(section)
+            if row and bool(getattr(row, ACTION_FIELDS.get(act, "can_view"))):
+                return current_user
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав для этого действия")
     return checker
 

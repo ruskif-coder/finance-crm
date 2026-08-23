@@ -22,7 +22,6 @@ from datetime import date
 
 from app.database import get_db
 from app.models import User, Counterparty, Role
-from app.routers.auth import get_current_user
 from app.permissions import require_permission, require_any_permission
 from app.audit import log_action
 from app.sales.models import (SalesService, SalesAddonService, SalesServiceGroup, SalesAdvertiser,
@@ -49,6 +48,31 @@ AG_EDIT = require_permission("dir_agencies", "edit")
 AG_DELETE = require_permission("dir_agencies", "delete")
 SVC_EDIT = require_permission("settings_services", "edit")
 PIPE_EDIT = require_permission("settings_pipelines", "edit")
+
+# ── чтение справочников: право любого экрана-потребителя ────────────────────
+# Справочники кормят выпадающие списки на многих экранах, поэтому жёсткое
+# require_permission на один раздел сломало бы форму тем, у кого прав на сам
+# справочник нет. Правильный инструмент — require_any_permission по набору
+# разделов, которые этот список реально дёргают (набор снят с фронта 2026-08-23).
+#
+# До этой правки все четырнадцать читались по одному факту входа. Сегодня гейт
+# отсекает немного — но именно то, что нужно: финансовые роли перестают
+# перечислять рекламодателей, агентства и бренды, а продажи — статьи. Это
+# разделение контуров, а не защита секрета.
+SVC_READ = require_any_permission(
+    ("settings_services", "media_plans", "media_plans_editor",
+     "sales_registry", "sales_dashboard", "year_plan"), "view")
+BRIEF_READ = require_any_permission(
+    ("media_plans", "media_plans_editor", "year_plan"), "view")
+STAFF_READ = require_any_permission(
+    ("media_plans", "media_plans_editor", "year_plan",
+     "sales_dashboard", "sales_registry"), "view")
+PARTY_READ = require_any_permission(
+    ("dir_advertisers", "dir_agencies", "media_plans", "media_plans_editor",
+     "sales_dashboard", "sales_registry", "year_plan", "accounts_dashboard"), "view")
+STAGE_READ = require_any_permission(
+    ("settings_pipelines", "sales_dashboard", "sales_registry",
+     "accounts_dashboard", "year_plan"), "view")
 
 
 # ============================== Pydantic ==============================
@@ -178,7 +202,7 @@ def _clean_name(raw: str) -> str:
 
 @router.get("/services")
 def list_services(only_active: bool = True, db: Session = Depends(get_db),
-                  current_user: User = Depends(get_current_user)):
+                  current_user: User = Depends(SVC_READ)):
     """Открыт любому авторизованному — используется в выпадающих списках."""
     q = db.query(SalesService)
     if only_active:
@@ -270,7 +294,7 @@ def _sync_service_formats(db, svc, format_ids):
 
 @router.get("/services/groups")
 def list_service_groups(db: Session = Depends(get_db),
-                        current_user: User = Depends(get_current_user)):
+                        current_user: User = Depends(SVC_READ)):
     rows = db.query(SalesServiceGroup).order_by(SalesServiceGroup.sort_order,
                                                 SalesServiceGroup.name).all()
     return {"items": [{"id": g.id, "name": g.name, "sort_order": g.sort_order} for g in rows]}
@@ -297,7 +321,7 @@ def list_bitrix_service_options(db: Session = Depends(get_db),
 
 @router.get("/services/formats")
 def list_formats(only_active: bool = False, db: Session = Depends(get_db),
-                 current_user: User = Depends(get_current_user)):
+                 current_user: User = Depends(SVC_READ)):
     """Открыт любому авторизованному — нужен в конструкторе МП и настройках услуг."""
     q = db.query(SalesFormat)
     if only_active:
@@ -361,7 +385,7 @@ def delete_format(format_id: int, db: Session = Depends(get_db), current_user: U
 
 @router.get("/targeting")
 def list_targeting(only_active: bool = True, db: Session = Depends(get_db),
-                   current_user: User = Depends(get_current_user)):
+                   current_user: User = Depends(BRIEF_READ)):
     q = db.query(SalesTargetingItem)
     if only_active:
         q = q.filter(SalesTargetingItem.is_active.is_(True))
@@ -406,7 +430,7 @@ def delete_targeting(item_id: int, db: Session = Depends(get_db),
 
 @router.get("/geo")
 def list_geo(only_active: bool = True, db: Session = Depends(get_db),
-             current_user: User = Depends(get_current_user)):
+             current_user: User = Depends(BRIEF_READ)):
     q = db.query(SalesGeo)
     if only_active:
         q = q.filter(SalesGeo.is_active.is_(True))
@@ -434,7 +458,7 @@ def create_geo(data: GeoIn, db: Session = Depends(get_db),
 # для пикеров «Продавец/Аккаунт/Трафик» в МП. Мастера идут первыми и помечаются ★.
 @router.get("/staff")
 def list_staff(group: Optional[str] = None, only_active: bool = True,
-               db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+               db: Session = Depends(get_db), current_user: User = Depends(STAFF_READ)):
     """Пользователи по рабочей группе роли. group=seller|account|traffic."""
     q = db.query(User, Role).join(Role, User.role_id == Role.id)
     if group:
@@ -519,7 +543,7 @@ def update_service(service_id: int, data: ServiceIn, db: Session = Depends(get_d
 
 @router.get("/services/addons")
 def list_addons(only_active: bool = False, db: Session = Depends(get_db),
-                current_user: User = Depends(get_current_user)):
+                current_user: User = Depends(SVC_READ)):
     q = db.query(SalesAddonService)
     if only_active:
         q = q.filter(SalesAddonService.is_active.is_(True))
@@ -667,7 +691,7 @@ def refresh_services(db: Session = Depends(get_db), current_user: User = Depends
 
 @router.get("/producers")
 def list_advertisers(only_active: bool = True, db: Session = Depends(get_db),
-                     current_user: User = Depends(get_current_user)):
+                     current_user: User = Depends(PARTY_READ)):
     q = db.query(SalesAdvertiser)
     if only_active:
         q = q.filter(SalesAdvertiser.is_active.is_(True))
@@ -822,7 +846,7 @@ class PipelineRename(BaseModel):
 
 @router.get("/pipelines")
 def list_pipelines(db: Session = Depends(get_db),
-                   current_user: User = Depends(get_current_user)):
+                   current_user: User = Depends(STAGE_READ)):
     """Воронки с числом сделок. Открыт любому авторизованному —
     используется в фильтрах реестра."""
     counts = dict(db.query(SalesDeal.pipeline, func.count(SalesDeal.id))
@@ -835,7 +859,7 @@ def list_pipelines(db: Session = Depends(get_db),
 
 @router.get("/pipelines/{pipeline_id}/stages")
 def pipeline_stages(pipeline_id: int, db: Session = Depends(get_db),
-                    current_user: User = Depends(get_current_user)):
+                    current_user: User = Depends(STAGE_READ)):
     """Стадии воронки — для раскрывающегося списка в справочнике.
     Число сделок на стадии считается по фактическим данным (bitrix_stage)."""
     p = _require(db, SalesPipeline, pipeline_id, "Воронка")
@@ -1134,7 +1158,7 @@ def _stage_dict(s):
 
 @router.get("/stage-catalog")
 def get_stage_catalog(db: Session = Depends(get_db),
-                      current_user: User = Depends(get_current_user)):
+                      current_user: User = Depends(STAGE_READ)):
     """Наш каталог: этапы со стадиями + справочник под-этапов 2/2/2 (STAGE_CATALOG).
     Открыт любому авторизованному — читается и в UI настроек, и (позже) в движении сделок."""
     phases = (db.query(SalesStagePhase)
@@ -1153,7 +1177,7 @@ def get_stage_catalog(db: Session = Depends(get_db),
 
 @router.get("/stage-catalog/bitrix-options")
 def stage_catalog_bitrix_options(db: Session = Depends(get_db),
-                                 current_user: User = Depends(get_current_user)):
+                                 current_user: User = Depends(STAGE_READ)):
     """Воронки Битрикса со стадиями — для двух выпадающих (воронка → стадия) привязки."""
     pipelines = (db.query(SalesPipeline)
                  .order_by(SalesPipeline.sort_order, SalesPipeline.name).all())
@@ -1251,7 +1275,7 @@ def _agency_name(data: "AgencyIn") -> str:
 
 @router.get("/agencies")
 def list_agencies(only_active: bool = True, db: Session = Depends(get_db),
-                  current_user: User = Depends(get_current_user)):
+                  current_user: User = Depends(PARTY_READ)):
     q = db.query(SalesAgency)
     if only_active:
         q = q.filter(SalesAgency.is_active.is_(True))
@@ -1414,7 +1438,7 @@ def advertiser_duplicates(db: Session = Depends(get_db),
 
     def related(ca, cb):
         """Совпадение ядер: равенство или префикс (одно — начало другого),
-        в пределах одного алфавита. Префикс ловит «биннофарм» ⊂ «биннофармгрупп»."""
+        в пределах одного алфавита. Префикс ловит «имяфирм» ⊂ «имяфирмгрупп»."""
         for alpha, x in ca:
             for beta, y in cb:
                 if alpha != beta:
@@ -1569,7 +1593,7 @@ def merge_agency(target_id: int, data: MergeIn, db: Session = Depends(get_db),
 @router.get("/brands")
 def list_brands(advertiser_id: Optional[int] = None, only_active: bool = True,
                 db: Session = Depends(get_db),
-                current_user: User = Depends(get_current_user)):
+                current_user: User = Depends(PARTY_READ)):
     q = db.query(SalesBrand)
     if advertiser_id is not None:
         q = q.filter(SalesBrand.advertiser_id == advertiser_id)
@@ -1643,7 +1667,7 @@ def move_brands(data: BrandsMove, db: Session = Depends(get_db),
 def merge_brands(data: BrandsMerge, db: Session = Depends(get_db),
                  current_user: User = Depends(ADV_EDIT)):
     """Схлопывает дубли: сделки со всех drop-брендов перецепляет на keep,
-    сами drop-бренды удаляет. Для склейки «вольтарен»/«Вольтарен» и т.п."""
+    сами drop-бренды удаляет. Для склейки «бренд»/«Бренд» и т.п."""
     keep = _require(db, SalesBrand, data.keep_id, "Бренд (остаётся)")
     freed = 0
     for bid in data.drop_ids:
@@ -1662,7 +1686,7 @@ def merge_brands(data: BrandsMerge, db: Session = Depends(get_db),
 @router.get("/brands/duplicates")
 def brand_duplicates(db: Session = Depends(get_db), current_user: User = Depends(ADV_VIEW)):
     """Группы брендов с одинаковым нормализованным именем у одного рекламодателя —
-    кандидаты на схлопывание («вольтарен» + «Вольтарен»)."""
+    кандидаты на схлопывание («бренд» + «Бренд»)."""
     rows = db.query(SalesBrand).all()
     groups = {}
     for b in rows:

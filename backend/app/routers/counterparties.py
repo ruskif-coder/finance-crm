@@ -65,7 +65,12 @@ def get_counterparties(
     limit: int = 200,
     search: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    # Список кормит выпадающие списки нескольких экранов, поэтому право не одно:
+    # набор снят с фронта 2026-08-23. Раньше здесь стоял голый факт входа — запись
+    # рядом (create_counterparty) была закрыта верно, а чтение нет.
+    current_user: User = Depends(require_any_permission(
+        ("counterparties", "contracts", "operations",
+         "dir_advertisers", "dir_agencies", "dir_publishers"), "view"))
 ):
     query = db.query(Counterparty)
     if search:
@@ -790,7 +795,8 @@ def update_counterparty_requisites(
 @router.get("/bic/{bik}")
 def lookup_bic(
     bik: str,
-    current_user: User = Depends(get_current_user)
+    # Справочник БИК открывается только из карточки контрагента.
+    current_user: User = Depends(require_permission("counterparties", "view"))
 ):
     """Запрашивает справочник ЦБ РФ по БИК и возвращает наименование банка,
     город, корреспондентский счёт. Используется для автозаполнения реквизитов."""
@@ -853,14 +859,14 @@ def get_counterparty_operations(
     sort_col: Optional[str] = "date",
     sort_dir: Optional[str] = "desc",
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    # Проверка права переехала из тела в зависимость 2026-08-23: в теле она была
+    # невидима для инвентаря роутов, и эндпоинт числился незакрытым. Выразить её
+    # мешало то, что действия у разделов разные — теперь require_any_permission
+    # принимает пары.
+    current_user: User = Depends(require_any_permission(
+        (("operations", "view"), ("counterparties", "view_operations")))),
 ):
     """Операции контрагента. Доступно при наличии operations.view ИЛИ counterparties.view_operations."""
-    from app.permissions import get_permissions_for_user
-    perms = get_permissions_for_user(db, current_user)
-    if not (perms.get("operations", {}).get("view") or perms.get("counterparties", {}).get("view_operations")):
-        raise HTTPException(status_code=403, detail="Недостаточно прав")
-
     cp = db.query(Counterparty).filter(Counterparty.id == counterparty_id).first()
     if not cp:
         raise HTTPException(status_code=404, detail="Контрагент не найден")
