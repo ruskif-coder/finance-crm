@@ -14,9 +14,10 @@ const btn = { padding: '5px 10px', borderRadius: 8, border: '1px solid #d1d5db',
 // Показываем панелью, а не window.confirm: решение принимается по списку из
 // десятков строк, а системное окно такой список не показывает читаемо.
 const ACT_LABEL = { consolidate: 'свести', rename: 'переименовать', create: 'создать',
-  nothing: 'не требуется', skip: 'пропустить' }
+  nothing: 'не требуется', skip: 'пропустить', link: 'связано' }
 const ACT_COLOR = { consolidate: 'var(--warning-text)', rename: 'var(--text-primary)',
-  create: 'var(--income)', nothing: 'var(--text-faint)', skip: 'var(--text-faint)' }
+  create: 'var(--income)', nothing: 'var(--text-faint)', skip: 'var(--text-faint)',
+  link: 'var(--income)' }
 // Текст ошибки обязан называть себя: раньше окно показывало только detail и глотало
 // код ответа, а detail у 422 — не строка, а список, и alert печатал «[object Object]».
 // По такому окну причину восстановить нельзя, а спрашивать пользователя — дорого.
@@ -149,9 +150,10 @@ export default function Reconcile() {
   const [plan, setPlan] = useState(null)             // предпросмотр пакетного прогона
   const [report, setReport] = useState(null)         // отчёт после прогона
   const [side, setSide] = useState('ours')           // третья колонка: 'ours' | 'bitrix'
+  const [selC, setSelC] = useState({})               // our_id -> true, выбор кандидатов на связку
 
   const load = async (refresh = false) => {
-    setLoading(true); setErr(''); setSel({})
+    setLoading(true); setErr(''); setSel({}); setSelC({})
     try {
       const r = await api.get(`/sales/reconcile/${kind}${refresh ? '?refresh=1' : ''}`, auth())
       setData(r.data)
@@ -315,6 +317,36 @@ export default function Reconcile() {
       setPlan(null)
       setReport(r.data)
       await load(true)
+    } catch (e) { alert(errText(e)) }
+    finally { setBusy(false) }
+  }
+
+  // ── Пакетная привязка кандидатов (вторая колонка) ──────────────────────────
+  // Компания берётся из выпадающего списка карточки, поэтому предпросмотр не нужен:
+  // что связываем — видно прямо в строке. И привязка не трогает Битрикс, её снимают
+  // крестиком. Отдельный набор выбора от первой колонки: там галочка означает
+  // «синхронизировать», а у записи без связей это «завести компанию в Битриксе».
+  const selCIds = useMemo(() => Object.keys(selC).filter(k => selC[k]).map(Number), [selC])
+  const toggleSelC = (id) => setSelC(s => ({ ...s, [id]: !s[id] }))
+  const selectAllCandidates = () => {
+    const next = {}
+    ;(data?.candidates || []).forEach(c => { next[c.our_id] = true })
+    setSelC(next)
+  }
+
+  const linkSelected = async () => {
+    const items = selCIds.map(id => {
+      const c = (data?.candidates || []).find(x => x.our_id === id)
+      return { our_id: id, bx_id: picks[id] ?? c?.best?.bx_id }
+    }).filter(x => x.bx_id)
+    if (!items.length) return
+    if (!window.confirm(`Связать выбранных: ${items.length}.\n\n`
+      + 'Правка только нашей базы — в Битрикс ничего не уходит, связь снимается крестиком.')) return
+    setBusy(true)
+    try {
+      const r = await api.post(`/sales/reconcile/${kind}/link-many`, { items, master }, auth())
+      setReport(r.data)
+      await load()
     } catch (e) { alert(errText(e)) }
     finally { setBusy(false) }
   }
@@ -483,7 +515,16 @@ export default function Reconcile() {
 
             {/* ── Колонка 2: Кандидаты ─────────────────────────────────────── */}
             <div style={colWrap}>
-              <div style={colHead}>Кандидаты на связку <span style={{ color: '#9ca3af', fontWeight: 400 }}>· {data.candidates.length}</span></div>
+              <div style={{ ...colHead, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', padding: '7px 8px' }}>
+                <span>Кандидаты <span style={{ color: '#9ca3af', fontWeight: 400 }}>· {data.candidates.length}</span></span>
+                <button style={{ ...btn, fontSize: 12, marginLeft: 'auto' }} disabled={busy || loading}
+                  onClick={selectAllCandidates}>все</button>
+                <button style={{ ...btn, fontSize: 12 }} disabled={busy || loading || !selCIds.length}
+                  onClick={() => setSelC({})}>снять</button>
+                <button style={{ ...primaryBtn, padding: '5px 11px', fontSize: 12 }}
+                  disabled={busy || loading || !selCIds.length}
+                  onClick={linkSelected}>Связать ({selCIds.length})</button>
+              </div>
               <div style={colBody}>
                 {data.candidates.map(c => {
                   const key = `C${c.our_id}`
@@ -491,7 +532,12 @@ export default function Reconcile() {
                     <div key={c.our_id} style={cardS(dragOver === key)}
                       onDragOver={e => allowDrop(e, key)} onDragLeave={() => setDragOver(null)}
                       onDrop={e => doDrop(e, { our_id: c.our_id })}>
-                      <div style={{ fontWeight: 500 }}>{nameCell(c.our_name, c.our_full, c.our_holding, c.our_deal_count)}</div>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                        <input type="checkbox" checked={!!selC[c.our_id]} disabled={busy}
+                          title="выбрать для пакетной привязки"
+                          onChange={() => toggleSelC(c.our_id)} style={{ marginTop: 4, flexShrink: 0 }} />
+                        <div style={{ fontWeight: 500, flex: 1, minWidth: 0 }}>{nameCell(c.our_name, c.our_full, c.our_holding, c.our_deal_count)}</div>
+                      </div>
                       <div style={{ marginTop: 6, display: 'flex', gap: 6, alignItems: 'center' }}>
                         <select value={picks[c.our_id] ?? c.best.bx_id} style={{ ...btn, flex: 1, minWidth: 0 }}
                           onChange={e => setPicks(p => ({ ...p, [c.our_id]: e.target.value }))}>

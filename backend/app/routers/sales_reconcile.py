@@ -180,7 +180,11 @@ class LinkIn(BaseModel):
 @router.post("/{kind}/link")
 def link(kind: str, data: LinkIn, db: Session = Depends(get_db),
          current_user=Depends(_can_edit)):
-    model = _kind_or_400(kind)
+    return _do_link(db, _kind_or_400(kind), kind, data, current_user)
+
+
+def _do_link(db: Session, model, kind: str, data: LinkIn, current_user):
+    """Тело привязки. Вынесено ради пакетной привязки — см. _do_consolidate."""
     row = db.query(model).filter(model.id == data.our_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Запись не найдена")
@@ -200,6 +204,50 @@ def link(kind: str, data: LinkIn, db: Session = Depends(get_db),
     log_action(db, current_user, "bx_link", kind, data.our_id,
                details=f"{row.name} ↔ bx {data.bx_id} (master={row.bx_master})")
     return {"ok": True}
+
+
+class LinkManyItemIn(BaseModel):
+    our_id: int
+    bx_id: str
+
+
+class LinkManyIn(BaseModel):
+    items: list[LinkManyItemIn]
+    master: str = "ours"
+
+
+@router.post("/{kind}/link-many")
+def link_many(kind: str, data: LinkManyIn, db: Session = Depends(get_db),
+              current_user=Depends(_can_edit)):
+    """Пакетная привязка выбранных кандидатов. Трогает ТОЛЬКО нашу базу — в Битрикс
+    ничего не пишет, любую связь можно снять крестиком.
+
+    Ошибка на одной записи не прекращает проход: чаще всего это «компания уже
+    привязана к другой записи», когда две наши записи предложили одну компанию.
+    Такое должно быть названо поимённо, иначе оператор решит, что связалось всё.
+    """
+    model = _kind_or_400(kind)
+    names = {r.id: (r.short_name or r.name)
+             for r in db.query(model).filter(model.id.in_([i.our_id for i in data.items])).all()
+             } if data.items else {}
+    done, failed = [], []
+    for it in data.items:
+        name = names.get(it.our_id, f"#{it.our_id}")
+        try:
+            _do_link(db, model, kind, LinkIn(our_id=it.our_id, bx_id=it.bx_id,
+                                             master=data.master), current_user)
+            done.append({"our_id": it.our_id, "name": name, "action": "link",
+                         "detail": f"привязана компания #{it.bx_id}"})
+        except HTTPException as e:
+            db.rollback()
+            failed.append({"our_id": it.our_id, "name": name, "error": str(e.detail)[:300]})
+        except Exception as e:
+            db.rollback()
+            logger.error("link_many %s our_id=%s: %s", kind, it.our_id, e)
+            failed.append({"our_id": it.our_id, "name": name, "error": repr(e)[:200]})
+    log_action(db, current_user, "bx_link_many", kind, None,
+               details=f"выбрано {len(data.items)}: связано {len(done)}, ошибок {len(failed)}")
+    return {"done": done, "skipped": [], "failed": failed}
 
 
 class UnlinkIn(BaseModel):
