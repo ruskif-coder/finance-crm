@@ -514,6 +514,22 @@ class CreateInBitrixIn(BaseModel):
     our_id: int
 
 
+def _created_id(res: dict) -> str:
+    """id созданной сущности из ответа VibeCode.
+
+    Ответ обёрнут: {"success": true, "data": {...}} — id на верхнем уровне НЕТ.
+    Читать `res["id"]` напрямую нельзя: компания создастся, id не найдётся, и
+    оператор получит 502 «Битрикс не вернул id» при уже созданной компании.
+    Непустой ответ без обёртки тоже поддерживаем — на случай смены формата.
+    """
+    if not isinstance(res, dict):
+        return ""
+    body = res.get("data") or res
+    if not isinstance(body, dict):
+        return ""
+    return str(body.get("id") or body.get("ID") or "")
+
+
 @router.post("/{kind}/create-in-bitrix")
 def create_in_bitrix(kind: str, data: CreateInBitrixIn, db: Session = Depends(get_db),
                      current_user=Depends(_can_edit)):
@@ -528,8 +544,11 @@ def create_in_bitrix(kind: str, data: CreateInBitrixIn, db: Session = Depends(ge
         raise HTTPException(status_code=400, detail="Запись уже связана с компанией Битрикса")
 
     title = standard_name(row)
-    created = vibecode_post("/companies", {"title": title, "companyType": TYPE_ID[kind]})
-    bx_id = str(created.get("id") or created.get("ID") or "")
+    # Поле типа называется typeId — тем же именем компании и читаются
+    # (filter[typeId] в list_bitrix_companies). При «companyType» Битрикс запрос
+    # принимает, но компания заводится БЕЗ типа и пропадает из экрана сверки.
+    created = vibecode_post("/companies", {"title": title, "typeId": TYPE_ID[kind]})
+    bx_id = _created_id(created)
     if not bx_id:
         # Компания, возможно, создалась, но id не вернулся — связать не можем, а
         # повтор наплодит дубли. Поэтому не «ok», а явная ошибка с просьбой проверить.
