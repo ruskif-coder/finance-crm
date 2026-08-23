@@ -225,7 +225,7 @@
       "to": "/accounts/mp/:id"
     },
     {
-      "from": "/deals/:id((?!mp$|stage-demo$)[^/]+)",
+      "from": "/deals/:id((?!mp$)[^/]+)",
       "to": "/sales/deals/:id"
     },
     {

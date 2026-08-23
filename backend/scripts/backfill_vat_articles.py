@@ -9,7 +9,7 @@
   3 на приходе — им ставится самая частая, спорные печатаются в отчёт для ручной правки).
 - Уже заполненные вручную значения НЕ перезаписываются (idempotent, можно перезапускать).
 
-Запуск: docker exec finance_backend python -m app.backfill_vat_articles
+Запуск: docker exec finance_backend python -m scripts.backfill_vat_articles
 """
 from sqlalchemy import text
 from app.database import SessionLocal
@@ -85,7 +85,7 @@ def main():
         print(f"НДС: заполнено {vat_updated} значений (пропущено уже заполненных: {skipped})")
         print(f"Статьи: заполнено {art_updated} значений")
         if mixed_art:
-            print(f"\nКонтрагенты с несколькими статьями по направлению (поставлена самая частая, проверьте вручную):")
+            print("\nКонтрагенты с несколькими статьями по направлению (поставлена самая частая, проверьте вручную):")
             for name, direction, variants in mixed_art:
                 print(f"  {name} [{direction}]: {variants} вариантов")
     finally:

@@ -26,7 +26,6 @@ from typing import Optional, List
 
 from app.database import get_db
 from app.models import User, Counterparty, Contract, Operation, Article
-from app.routers.auth import get_current_user
 from app.permissions import require_any_permission
 from app.audit import log_action
 from app.sales.models import (SalesPublisher, SalesPublisherKind, SalesPublisherSurface,

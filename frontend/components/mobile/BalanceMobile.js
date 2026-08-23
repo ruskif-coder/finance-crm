@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
-import { grp, mln } from '../../lib/salesFormat'
+import { grp0 as fmt, mln } from '../../lib/salesFormat'
 import { T } from '../../lib/tokens'
 import { monoLbl, Marker, rise } from './kit'
 import ReportShell, { ReportSection } from './ReportShell'
@@ -11,7 +11,6 @@ import ReportShell, { ReportSection } from './ReportShell'
 // собран на общем каркасе ReportShell/ReportSection, тот же класс данных и
 // расчёт (full/receivables/payables), что и на десктопе, приходят готовыми
 // из pages/finance/balance.js — компонент только сводит к списку и рисует.
-const fmt = (n) => grp(n || 0)
 const mlnK = (n) => mln(n || 0, 2)
 
 const AGING_META = {

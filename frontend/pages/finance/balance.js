@@ -4,11 +4,11 @@ import { useRouter } from 'next/router'
 import Head from 'next/head'
 import { makeApi as api } from '@/lib/http'
 import { getPermissions, can } from '@/lib/auth'
+import { grp0 as fmt } from '@/lib/salesFormat'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const BalanceMobile = dynamic(() => import('@/components/mobile/BalanceMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
-const fmt = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0))
 
 const BANK_STYLES = {
   'АльфаБанк':  { color: 'var(--bank-alfa)' },

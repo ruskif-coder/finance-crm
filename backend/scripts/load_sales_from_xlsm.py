@@ -4,8 +4,8 @@
 в таблицы sales_*.
 
 Запуск внутри контейнера:
-    docker exec finance_backend python /app/scripts/load_sales_from_xlsm.py --dry-run
-    docker exec finance_backend python /app/scripts/load_sales_from_xlsm.py
+    docker exec finance_backend python -m scripts.load_sales_from_xlsm --dry-run
+    docker exec finance_backend python -m scripts.load_sales_from_xlsm
 
 Идемпотентен: повторный запуск не создаёт дублей. Сделки сопоставляются
 по bitrix_id, справочные значения — по нормализованному имени, поэтому
@@ -21,7 +21,7 @@ import re
 import sys
 from datetime import datetime
 
-sys.path.insert(0, "/app")
+sys.path.insert(0, "/app")   # запуск через `python -m scripts.<имя>` это уже делает; строка оставлена для прямого вызова
 
 from app.database import SessionLocal  # noqa: E402
 # Импорт основных моделей обязателен: sales_advertisers и sales_deals ссылаются
@@ -221,7 +221,7 @@ class Loader:
         services |= set(data["directory_services"])
         for d in deals:
             services |= set(split_multi(d["products"]))
-        svc_idx = self.seed_named(SalesService, services)
+        self.seed_named(SalesService, services)   # индекс не нужен: услуги ищутся по имени ниже
 
         # Рекламодатели: поле «Рекламодатель = Лид». Имя очищается от префикса [L]
         # и разбирается на английское/русское написание.

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { MONO } from '../salesTableKit'
-import { grp, mln } from '../../lib/salesFormat'
+import { grp0 as fmt, mln } from '../../lib/salesFormat'
 import { monoLbl, rise } from './kit'
 import ReportShell, { ReportSection } from './ReportShell'
 
@@ -11,7 +11,6 @@ import ReportShell, { ReportSection } from './ReportShell'
 // поле группы — g.group, а не g.key, и суммы лежат в totals[p].income/expense).
 // Данные и расчёт (periods/groups/summary) приходят из pages/finance/pnl.js —
 // компонент только сводит их к сумме за диапазон и рисует.
-const fmt = (n) => grp(n || 0)
 const mlnK = (n) => mln(n || 0, 2)
 
 const MONTH_SHORT = { '01':'янв','02':'фев','03':'мар','04':'апр','05':'май','06':'июн','07':'июл','08':'авг','09':'сен','10':'окт','11':'ноя','12':'дек' }

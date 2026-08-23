@@ -17,7 +17,6 @@ export const DEAL_DOCS = [
   { kind: 'report', label: 'Отчёт' },
   { kind: 'act', label: 'Акт' },
 ]
-export const DEAL_DOC_LABEL = Object.fromEntries(DEAL_DOCS.map(d => [d.kind, d.label]))
 
 // Скачивание файла сделки (или любого blob-эндпоинта) с сохранением имени.
 export async function downloadBlob(url, filename) {

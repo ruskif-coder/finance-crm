@@ -9,10 +9,10 @@ import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const CounterpartiesMobile = dynamic(() => import('@/components/mobile/CounterpartiesMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 import { T } from '@/lib/tokens'
+import { grp0 as fmt } from '@/lib/salesFormat'
 import SectionTabs from '@/components/SectionTabs'
 
 
-const fmt = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0))
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
 const DEFAULT_TERM_DAYS = 60
 

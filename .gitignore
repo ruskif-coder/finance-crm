@@ -11,7 +11,6 @@ __pycache__/
 .env
 .env.*
 *.key
-vibecode.key
 
 # DB dumps and backups — real data, local only
 backups/
@@ -24,8 +23,6 @@ backend/logs/
 
 # Internal docs and planning files — local only
 CLAUDE.md
-AUDIT.md
-IMPLEMENTATION_PLAN.md
 docs/
 
 # SQL — дампы и разовые скрипты держим локально, они содержат данные
@@ -37,21 +34,17 @@ docs/
 !backend/migrations/*.sql
 
 # Fallback-страницы — держим локально до перехода на прод
-frontend/pages/OLD_*.js
-frontend/pages/*_bak.js
 
 # Runtime-загрузки файлов сделок (bind-mount, docker создаёт сам)
 uploads/
 
 # Разовый бэкфилл реквизитов из выгрузки Битрикс24 — локальный инструмент,
 # копируется на сервер напрямую (scp), в репозиторий не идёт
-backend/app/backfill_counterparty_requisites.py
 
 # Разовые python/sql-помощники в КОРНЕВОЙ папке scripts/.
 # Ведущий слеш обязателен: без него шаблон матчит папку на любой глубине и утаскивает
 # frontend/scripts/ — из-за этого на сервере не оказалось check-nav.mjs и упал prebuild.
 # Исправлено 2026-08-16 при выкладке v2.4.0.
-make_*.py
 /scripts/
 
 # Stray data exports

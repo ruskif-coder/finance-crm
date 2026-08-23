@@ -4,12 +4,11 @@ import { useRouter } from 'next/router'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, ReferenceLine, CartesianGrid } from 'recharts'
 import Head from 'next/head'
 import { makeApi as api } from '@/lib/http'
+import { grpDash as fmt, pctDot as fmtPct } from '@/lib/salesFormat'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const PlanFactMobile = dynamic(() => import('@/components/mobile/PlanFactMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
-const fmt = (n) => n ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) : '—'
-const fmtPct = (n) => n !== null && n !== undefined ? n.toFixed(1) + '%' : '—'
 
 const MONTH_NAMES = {
   '01':'Янв','02':'Фев','03':'Мар','04':'Апр','05':'Май','06':'Июн',

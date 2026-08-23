@@ -10,7 +10,7 @@
 
 Запуск:
   docker cp "новый шаблон мп.xlsx" finance_backend:/tmp/src.xlsx
-  docker exec finance_backend python /app/app/mp_tokenize_template.py /tmp/src.xlsx /tmp/mp_template.xlsx
+  docker exec finance_backend python -m scripts.mp_tokenize_template /tmp/src.xlsx /tmp/mp_template.xlsx
   docker cp finance_backend:/tmp/mp_template.xlsx backend/app/templates/mp_template.xlsx
 """
 import sys

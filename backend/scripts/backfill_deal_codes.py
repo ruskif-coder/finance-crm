@@ -1,8 +1,8 @@
 """Одноразовый бэкфилл: присвоить code всем сделкам без метки. Идемпотентно (только WHERE code IS NULL).
 
-Запуск: docker exec finance_backend python -m app.sales.backfill_deal_codes
+Запуск: docker exec finance_backend python -m scripts.backfill_deal_codes
 """
-import app.models  # noqa: регистрирует связанные таблицы (counterparties и т.п.)
+import app.models  # noqa: F401 — регистрирует связанные таблицы (counterparties и т.п.)
 from app.database import SessionLocal
 from app.sales.models import SalesDeal
 from app.sales.deal_code import assign_code

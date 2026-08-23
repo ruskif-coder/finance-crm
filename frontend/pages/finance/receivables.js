@@ -7,11 +7,11 @@ import useIsMobile from '@/components/mobile/useIsMobile'
 const ReceivablesMobile = dynamic(() => import('@/components/mobile/ReceivablesMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 import { makeApi as api } from '@/lib/http'
 import { getPermissions } from '@/lib/auth'
+import { grp0 as fmt } from '@/lib/salesFormat'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
 
-const fmt = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0))
 const mln = (n) => (n == null ? '0' : (n / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: 1 }))
 
 const MONTH_NAMES = { '01': 'Янв', '02': 'Фев', '03': 'Мар', '04': 'Апр', '05': 'Май', '06': 'Июн', '07': 'Июл', '08': 'Авг', '09': 'Сен', '10': 'Окт', '11': 'Ноя', '12': 'Дек' }

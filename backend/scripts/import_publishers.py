@@ -3,7 +3,7 @@
 
 Запуск:
     docker cp "Аптеки - Рабочая.xlsx" finance_backend:/tmp/publishers.xlsx
-    docker exec finance_backend python -m app.import_publishers /tmp/publishers.xlsx [--apply]
+    docker exec finance_backend python -m scripts.import_publishers /tmp/publishers.xlsx [--apply]
 
 Без --apply только считает и печатает отчёт, в базу не пишет.
 

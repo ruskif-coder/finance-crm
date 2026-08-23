@@ -5,13 +5,13 @@ import Navbar, { firstAllowedHref } from '../../components/Navbar'
 import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsTabs'
 import { MONO, UI, card, sel, th, td } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
+import { grp0 as fmt } from '../../lib/salesFormat'
 
 // ── Журнал действий — отдельная страница раздела «Настройки» ──
 // Аудит мутаций: фильтры (действие/пользователь/период) + пагинация «показать ещё».
 // Список пользователей грузим для выпадающего фильтра «по пользователю».
 const AUDIT_LIMIT = 50
 
-const fmt = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0))
 const fmtDateTime = (s) => {
   if (!s) return ''
   // DB хранит UTC (func.now()); добавляем 'Z' если нет маркера зоны, чтобы браузер

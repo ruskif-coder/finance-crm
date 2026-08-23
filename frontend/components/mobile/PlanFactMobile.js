@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { MONO } from '../salesTableKit'
-import { grp, mln } from '../../lib/salesFormat'
+import { grp0 as fmt, mln, pctDot as fmtPct } from '../../lib/salesFormat'
 import { monoLbl, rise } from './kit'
 import ReportShell, { ReportSection } from './ReportShell'
 
@@ -10,9 +10,7 @@ import ReportShell, { ReportSection } from './ReportShell'
 // план · факт · отклонение моноширинным (см. бриф задачи 5, шаг 3).
 // Данные (groups/summary) приходят из pages/finance/plan-fact.js — компонент
 // только сводит их и рисует, арифметика (diff/pct) уже посчитана на сервере.
-const fmt = (n) => grp(n || 0)
 const mlnK = (n) => mln(n || 0, 2)
-const fmtPct = (n) => (n === null || n === undefined) ? '—' : n.toFixed(1) + '%'
 
 const MONTH_SHORT = { '01':'янв','02':'фев','03':'мар','04':'апр','05':'май','06':'июн','07':'июл','08':'авг','09':'сен','10':'окт','11':'ноя','12':'дек' }
 const capMonth = (p) => { if (!p) return '—'; const [, m] = String(p).split('-'); const s = MONTH_SHORT[m] || m; return s.charAt(0).toUpperCase() + s.slice(1) }

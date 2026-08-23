@@ -1,7 +1,7 @@
 """
 Разовый перенос: медиакит из полей площадки → таблица документов.
 
-    docker exec finance_backend python -m app.migrate_media_kit_to_documents [--apply]
+    docker exec finance_backend python -m scripts.migrate_media_kit_to_documents [--apply]
 
 Медиакит перестал быть отдельным полем и стал типом документа (миграция
 2026-08-19_publisher_documents.sql). Файлы, загруженные до этого, остались в

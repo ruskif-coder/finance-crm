@@ -8,7 +8,7 @@
 годового плана; net не трогаем.
 
 Запуск (сначала бэкап!):
-    docker exec finance_backend python -m app.sales.fix_deal_gross_2026_08_13 --apply
+    docker exec finance_backend python -m scripts.fix_deal_gross_2026_08_13 --apply
 Без --apply печатает план и ничего не пишет.
 """
 import sys

@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import { makeApi as api } from '@/lib/http'
+import { grpDash as fmt, pctDot as fmtPct } from '@/lib/salesFormat'
 import { UI, MONO, card, th, td, inp, primaryBtn } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
@@ -12,8 +13,6 @@ const FinReportMobile = dynamic(() => import('@/components/mobile/FinReportMobil
 // как есть, пока пользователи не сверят цифры: два отчёта дают разные суммы,
 // и разница объясняется блоком контроля внизу страницы.
 
-const fmt = (n) => n ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) : '—'
-const fmtPct = (n) => (n === null || n === undefined) ? '—' : n.toFixed(1) + '%'
 
 const MONTH_NAMES = {
   '01':'Янв','02':'Фев','03':'Мар','04':'Апр','05':'Май','06':'Июн',

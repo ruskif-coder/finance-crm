@@ -10,8 +10,11 @@ fastapi==0.118.0
 uvicorn==0.29.0
 sqlalchemy==2.0.51
 psycopg2-binary==2.9.12
-alembic==1.13.1
 PyJWT==2.13.0
+# passlib оставлен ТОЛЬКО ради перекрёстных тестов совместимости
+# (tests/test_passwords.py): рабочий код с 2026-08-23 хеширует напрямую
+# через bcrypt (app/passwords.py). Убрать в следующем релизе — тесты
+# тогда сами пропустятся, а формат хеша от этого не меняется.
 passlib==1.7.4
 bcrypt==4.1.3
 python-multipart==0.0.31
@@ -21,3 +24,7 @@ Pillow==12.3.0
 python-dotenv==1.2.2
 pytest==8.2.2
 httpx==0.27.2
+# Инструменты проверки (2026-08-22). alembic отсюда убран: в коде нет ни одного импорта,
+# схема меняется руками через backend/migrations/*.sql.
+pytest-cov==5.0.0
+ruff==0.6.9

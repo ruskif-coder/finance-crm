@@ -1,13 +1,12 @@
 import { useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
-import { grp, mln, fmtDateShort, fmtDateFull } from '../../lib/salesFormat'
+import { grp0 as fmt, mln, fmtDateShort, fmtDateFull } from '../../lib/salesFormat'
 import { T } from '../../lib/tokens'
 import { monoLbl, Marker, rise } from './kit'
 import ReportShell, { ReportSection } from './ReportShell'
 
 // Мобильная дебиторка (< 1024px) по хендоффу design_handoff_receivables_mobile.
 // Получает уже вычисленные данные из pages/receivables.js (единый источник логики).
-const fmt = (n) => grp(n || 0)
 const mlnK = (n) => mln(n || 0, 2)
 const formatDate = fmtDateShort
 const fullDate = fmtDateFull

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """CLI-обёртка над модулем app.sales.bitrix.deal_import.
-Запуск: python import_new_deals.py [commit]  (без 'commit' — dry-run).
+Запуск: python -m scripts.import_new_deals [commit]  (без 'commit' — dry-run).
 Логика/правила — в модуле, здесь только запуск и вывод отчёта."""
 import sys
 from app.database import SessionLocal

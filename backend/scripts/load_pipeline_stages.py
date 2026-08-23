@@ -3,7 +3,7 @@
 Загружает воронки и их стадии из Битрикс24 (VibeCode) в sales_pipelines
 и sales_pipeline_stages.
 
-Запуск: docker exec finance_backend python /app/scripts/load_pipeline_stages.py
+Запуск: docker exec finance_backend python -m scripts.load_pipeline_stages
 
 Читает только те воронки, что уже есть в sales_pipelines (по имени), плюс
 проставляет им bitrix_category_id. Новые воронки из Битрикса НЕ создаёт молча —
@@ -14,7 +14,7 @@ import os
 import sys
 import httpx
 
-sys.path.insert(0, "/app")
+sys.path.insert(0, "/app")   # запуск через `python -m scripts.<имя>` это уже делает; строка оставлена для прямого вызова
 
 from app.database import SessionLocal  # noqa: E402
 from app import models as core_models  # noqa: E402,F401

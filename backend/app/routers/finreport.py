@@ -587,7 +587,7 @@ def export_finreport(
         ctrl_rows.append((f"Необлагаемые суммы, ставка 0 ({ctrl['zero_vat_rows']} операций) — "
                           f"очищать нечего", ctrl['zero_vat_amount']))
     if ctrl.get('no_period_rows'):
-        ctrl_rows.append((f"Операций без периода — не попали в отчёт", ctrl['no_period_rows']))
+        ctrl_rows.append(("Операций без периода — не попали в отчёт", ctrl['no_period_rows']))
     if ctrl_rows:
         ws4 = wb.create_sheet('Контроль')
         ws4.cell(1, 1, 'Что').font = Font(bold=True)

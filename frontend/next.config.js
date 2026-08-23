@@ -1,5 +1,11 @@
 /** @type {import('next').NextConfig} */
 module.exports = {
+  // ESLint подключён (npm run lint), но НЕ блокирует сборку. Next запускает линтер
+  // внутри `next build` сам, как только видит .eslintrc.json — и падение линтера
+  // становится падением сборки. Гейт из линтера заводится осознанно и после разбора
+  // того, что он показывает, а не побочным эффектом установки зависимости.
+  // Сейчас он показывает 5 мест с <a href> вместо <Link> на внутренние адреса.
+  eslint: { ignoreDuringBuilds: true },
   // Версия приложения (из package.json) → в клиент, показывается в меню профиля.
   env: { NEXT_PUBLIC_APP_VERSION: require('./package.json').version },
   // Не даём Next редиректить трейлинг-слэш: иначе /api/operations/ → 308 → /api/operations,

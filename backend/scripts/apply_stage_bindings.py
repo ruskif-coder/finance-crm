@@ -9,8 +9,8 @@
 именам) и воронки (sales_pipelines) с этими именами.
 
 Запуск на сервере (после деплоя кода):
-  docker exec finance_backend python -m app.apply_stage_bindings           # предпросмотр
-  docker exec finance_backend python -m app.apply_stage_bindings --commit   # запись
+  docker exec finance_backend python -m scripts.apply_stage_bindings           # предпросмотр
+  docker exec finance_backend python -m scripts.apply_stage_bindings --commit   # запись
 """
 import sys
 from app.database import SessionLocal

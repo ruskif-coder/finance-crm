@@ -5,11 +5,11 @@ import Navbar, { firstAllowedHref } from '../../components/Navbar'
 import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsTabs'
 import { MONO, UI, card, inp, sel, primaryBtn } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
+import { grp0 as fmt } from '../../lib/salesFormat'
 
 // ── Остатки по банкам — отдельная страница раздела «Настройки» ──
 // Стартовый остаток по счёту + обороты (из /settings/bank-balances), привязка юрлица
 // к счёту и реквизиты компании-плательщика для выгрузки платёжек.
-const fmt = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0))
 
 // Поля реквизитов компании-плательщика (для экспорта платёжек).
 const REQ_FIELDS = [

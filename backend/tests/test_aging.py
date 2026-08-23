@@ -5,7 +5,6 @@ _period_bounds, _term_days_for_counterparty, _due_date, _aging_bucket.
 и поля receivable_status в /operations — ошибка здесь расходится сразу по всем отчётам
 (см. CLAUDE.md: "это реальная связанность между двумя роутерами").
 """
-import pytest
 from datetime import date, timedelta
 from types import SimpleNamespace
 from app.routers.reports import (

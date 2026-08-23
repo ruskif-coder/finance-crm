@@ -2,7 +2,7 @@
 Разовый добор данных паблишеров под миграцию 2026-08-19_publishers_v3.sql.
 
     docker cp "Аптеки - Рабочая.xlsx" finance_backend:/tmp/publishers.xlsx
-    docker exec finance_backend python -m app.backfill_publishers_v3 /tmp/publishers.xlsx [--apply]
+    docker exec finance_backend python -m scripts.backfill_publishers_v3 /tmp/publishers.xlsx [--apply]
 
 Два переноса:
 
@@ -26,8 +26,7 @@ import sys
 from datetime import date
 
 from app.database import SessionLocal
-from app.sales.models import (SalesPublisher, SalesPublisherService, SalesPublisherSurface,
-                              SalesPublisherTraffic, SalesService, normalize_domain)
+from app.sales.models import (SalesPublisher, SalesPublisherService, SalesPublisherTraffic, SalesService, normalize_domain)
 
 MEASURED_AT = date(2025, 12, 1)
 COL_SITE, COL_MAU, COL_VISITS, COL_ADFOX_ORGANIC, COL_ADFOX_COOKIE = 2, 16, 17, 18, 19

@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.database import get_db
-from app.routers.auth import get_current_user
 from app.models import User, Operation
 from app.permissions import require_permission
 from sqlalchemy import func
@@ -154,7 +153,6 @@ def update_bank_own_company(
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail=f"Неизвестный банк: {data.bank}")
     if data.own_company_id is not None:
-        from app.models import Counterparty
         cp = db.execute(text(
             "SELECT id, is_own_company FROM counterparties WHERE id = :id"
         ), {'id': data.own_company_id}).fetchone()

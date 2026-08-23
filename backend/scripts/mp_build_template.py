@@ -6,7 +6,7 @@
 → _render_from_template) грузит этот файл, подставляет значения и клонирует строки-образцы
 под фактическое число позиций.
 
-Запуск:  docker exec finance_backend python /app/app/mp_build_template.py
+Запуск:  docker exec finance_backend python -m scripts.mp_build_template
 Пишет:   backend/app/templates/mp_template.xlsx
 """
 import os

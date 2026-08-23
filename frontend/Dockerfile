@@ -3,7 +3,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 COPY package.json .
-RUN npm install
+RUN npm install --no-audit --no-fund --maxsockets=3
 
 COPY . .
 

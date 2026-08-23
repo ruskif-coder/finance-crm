@@ -3,7 +3,7 @@
 Порядок движения = стадии по (этап.sort_order, стадия.sort_order). Терминальные
 («не случилась»/«сорвалась») не входят в основную цепочку — это ветвящиеся исходы.
 """
-from app.sales.models import SalesStagePhase, SalesStage
+from app.sales.models import SalesStagePhase
 from app.sales.stages import STAGE_BY_KEY
 
 

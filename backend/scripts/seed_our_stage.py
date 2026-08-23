@@ -8,8 +8,8 @@ OurStageResolver (привязка стадии к Битриксу → мост
 Идемпотентно: повторный запуск ничего лишнего не делает. По умолчанию dry-run.
 
 Запуск на сервере (после деплоя кода и применения привязок):
-  docker exec finance_backend python -m app.seed_our_stage          # предпросмотр
-  docker exec finance_backend python -m app.seed_our_stage --commit  # запись
+  docker exec finance_backend python -m scripts.seed_our_stage          # предпросмотр
+  docker exec finance_backend python -m scripts.seed_our_stage --commit  # запись
 """
 import sys
 from app.database import SessionLocal

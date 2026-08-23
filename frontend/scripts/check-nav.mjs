@@ -21,7 +21,7 @@ const RESOLVE_CASES = [
   ['/counterparty/5',     '/directory/counterparties/5'],
   ['/counterparty/5?tab=x', '/directory/counterparties/5?tab=x'], // query переносится
   ['/deals/mp/5#anchor',  '/accounts/mp/5#anchor'],               // хеш переносится
-  ['/deals/stage-demo',   '/deals/stage-demo'],  // исключён негативным lookahead
+  ['/deals/A1B2C3',       '/sales/deals/A1B2C3'], // обычная сделка: lookahead её не ловит
   ['/sales/deals/9',      '/sales/deals/9'],     // уже актуальный адрес
 ]
 

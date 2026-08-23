@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
-import { grp, mln } from '../../lib/salesFormat'
+import { grp0 as fmt, mln, pctDot as fmtPct } from '../../lib/salesFormat'
 import { monoLbl, Marker, rise } from './kit'
 import ReportShell, { ReportSection } from './ReportShell'
 
@@ -10,9 +10,7 @@ import ReportShell, { ReportSection } from './ReportShell'
 // раскрытием в подгруппы/статьи (тот же способ показать те же данные).
 // Данные и расчёт (periods/groups/summary/control) приходят из pages/finance/report.js —
 // компонент только сводит их к сумме за диапазон и рисует.
-const fmt = (n) => grp(n || 0)
 const mlnK = (n) => mln(n || 0, 2)
-const fmtPct = (n) => (n === null || n === undefined) ? '—' : n.toFixed(1) + '%'
 
 const MONTH_SHORT = { '01':'янв','02':'фев','03':'мар','04':'апр','05':'май','06':'июн','07':'июл','08':'авг','09':'сен','10':'окт','11':'ноя','12':'дек' }
 const capMonth = (p) => { if (!p) return '—'; const [, m] = String(p).split('-'); const s = MONTH_SHORT[m] || m; return s.charAt(0).toUpperCase() + s.slice(1) }
