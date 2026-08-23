@@ -29,6 +29,14 @@ function attach401(instance) {
       config.params = { ...config.params, producer_id: config.params.advertiser_id }
       delete config.params.advertiser_id
     }
+    // Сверка справочников адресуется как /sales/reconcile/{kind}/…, и при
+    // kind=advertisers блокировщик резал /advertisers/link, /advertisers/deal-counts
+    // и все прочие операции — запрос не уходил вовсе, в браузере ошибка без ответа.
+    // Адрес, ЗАКАНЧИВАЮЩИЙСЯ на advertisers, проходил, поэтому список грузился, а
+    // действия над ним молча не работали. Бэкенд возвращает имя обратно (main.py).
+    if (typeof config.url === 'string' && config.url.includes('/reconcile/advertisers')) {
+      config.url = config.url.replace('/reconcile/advertisers', '/reconcile/producers')
+    }
     return config
   })
   instance.interceptors.response.use(

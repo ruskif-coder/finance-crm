@@ -571,11 +571,26 @@ app.add_middleware(ExceptionLoggingMiddleware)
 @app.middleware("http")
 async def _neutralize_ad_query(request: Request, call_next):
     """Блокировщики рекламы (uBlock/AdGuard) режут запросы с "advertiser" в URL.
-    Фронт шлёт нейтральный producer_id — здесь возвращаем имя параметра обратно
-    в advertiser_id, чтобы эндпоинты/фильтры не меняли (единая точка на бэке)."""
+    Фронт шлёт нейтральные producer_id и /reconcile/producers — здесь возвращаем
+    исходные имена, чтобы эндпоинты/фильтры не менять (единая точка на бэке).
+
+    Путь понадобился отдельно от параметра: сверка справочников адресуется как
+    /api/sales/reconcile/{kind}/…, и при kind=advertisers блокировщик резал
+    /advertisers/link, /advertisers/deal-counts и остальные операции. Запрос при
+    этом не доходит до сервера вообще: в браузере ошибка без ответа, в логах —
+    ничего. Адрес, ЗАКАНЧИВАЮЩИЙСЯ на advertisers, проходил, поэтому список
+    загружался, а любое действие над ним — нет (проверено на проде 2026-08-23).
+    """
     qs = request.scope.get("query_string", b"")
     if b"producer_id" in qs:
         request.scope["query_string"] = qs.replace(b"producer_id", b"advertiser_id")
+    path = request.scope.get("path", "")
+    if "/reconcile/producers" in path:
+        request.scope["path"] = path.replace("/reconcile/producers", "/reconcile/advertisers")
+        raw = request.scope.get("raw_path")
+        if raw:
+            request.scope["raw_path"] = raw.replace(b"/reconcile/producers",
+                                                    b"/reconcile/advertisers")
     return await call_next(request)
 
 

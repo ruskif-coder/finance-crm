@@ -17,6 +17,21 @@ const ACT_LABEL = { consolidate: 'свести', rename: 'переименова
   nothing: 'не требуется', skip: 'пропустить' }
 const ACT_COLOR = { consolidate: 'var(--warning-text)', rename: 'var(--text-primary)',
   create: 'var(--income)', nothing: 'var(--text-faint)', skip: 'var(--text-faint)' }
+// Текст ошибки обязан называть себя: раньше окно показывало только detail и глотало
+// код ответа, а detail у 422 — не строка, а список, и alert печатал «[object Object]».
+// По такому окну причину восстановить нельзя, а спрашивать пользователя — дорого.
+const errText = (e, fallback = 'Ошибка') => {
+  if (!e?.response) return `Сервер не ответил: ${e?.message || 'нет связи'}`
+  const { status, data } = e.response
+  const d = data?.detail
+  if (Array.isArray(d)) {
+    return `HTTP ${status}: ` + d.map(x => `${(x.loc || []).slice(1).join('.')} — ${x.msg}`).join('; ')
+  }
+  if (typeof d === 'string' && d) return `HTTP ${status}: ${d}`
+  if (status === 401) return 'HTTP 401: сессия истекла, войдите заново'
+  return `HTTP ${status}: ${fallback}`
+}
+
 const planRow = { padding: '8px 0', borderBottom: '1px solid var(--border-row)' }
 const planNote = { fontSize: 12, color: 'var(--text-secondary)', marginTop: 3, lineHeight: 1.5 }
 const dim = { color: 'var(--text-faint)' }
@@ -133,6 +148,7 @@ export default function Reconcile() {
   const [sel, setSel] = useState({})                 // our_id -> true, выбор для пакетного прогона
   const [plan, setPlan] = useState(null)             // предпросмотр пакетного прогона
   const [report, setReport] = useState(null)         // отчёт после прогона
+  const [side, setSide] = useState('ours')           // третья колонка: 'ours' | 'bitrix'
 
   const load = async (refresh = false) => {
     setLoading(true); setErr(''); setSel({})
@@ -144,7 +160,7 @@ export default function Reconcile() {
       setPicks(p)
     } catch (e) {
       if (e.response?.status === 401) return router.push('/login')
-      setErr(e.response?.data?.detail || 'Ошибка загрузки')
+      setErr(errText(e, 'ошибка загрузки'))
     } finally { setLoading(false) }
     loadDealCounts(refresh)   // счётчики сделок — отдельно, не блокируют рендер страницы
   }
@@ -169,7 +185,7 @@ export default function Reconcile() {
   const post = async (path, body) => {
     setBusy(true)
     try { await api.post(`/sales/reconcile/${kind}/${path}`, body, auth()); await load() }
-    catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    catch (e) { alert(errText(e)) }
     finally { setBusy(false) }
   }
 
@@ -179,7 +195,7 @@ export default function Reconcile() {
       const r = await api.post(`/sales/reconcile/${kind}/auto-link`, { threshold, master }, auth())
       alert(`Связано: ${r.data.linked}, пропущено: ${r.data.skipped}`)
       await load()
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    } catch (e) { alert(errText(e)) }
     finally { setBusy(false) }
   }
 
@@ -209,7 +225,7 @@ export default function Reconcile() {
       const res = (await api.post(`/sales/reconcile/${kind}/consolidate`, { our_id: l.our_id, primary_bx_id: pbx }, auth())).data
       alert(`Готово: переброшено ${res.moved_deals} сделок, ретайр ${res.retired}.\nБэкап: ${res.backup}`)
       await load()
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    } catch (e) { alert(errText(e)) }
     finally { setBusy(false) }
   }
 
@@ -226,7 +242,7 @@ export default function Reconcile() {
 ` + lines.join('\n'))
       }
       await load()
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    } catch (e) { alert(errText(e)) }
     finally { setBusy(false) }
   }
 
@@ -241,7 +257,7 @@ export default function Reconcile() {
       const res = (await api.post(`/sales/reconcile/${kind}/create-in-bitrix`, { our_id: c.our_id }, auth())).data
       alert(`Создана компания #${res.bx_id}: ${res.title}`)
       await load(true)
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    } catch (e) { alert(errText(e)) }
     finally { setBusy(false) }
   }
 
@@ -266,7 +282,7 @@ export default function Reconcile() {
       alert(`Удалено: ${res.deleted.length}, пропущено: ${res.skipped.length}.
 Бэкап: ${res.backup}`)
       await load(true)
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    } catch (e) { alert(errText(e)) }
     finally { setBusy(false) }
   }
 
@@ -288,7 +304,7 @@ export default function Reconcile() {
     try {
       const r = await api.post(`/sales/reconcile/${kind}/sync/preview`, { items: syncItems() }, auth())
       setPlan(r.data)
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    } catch (e) { alert(errText(e)) }
     finally { setBusy(false) }
   }
 
@@ -299,7 +315,7 @@ export default function Reconcile() {
       setPlan(null)
       setReport(r.data)
       await load(true)
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    } catch (e) { alert(errText(e)) }
     finally { setBusy(false) }
   }
 
@@ -341,7 +357,7 @@ export default function Reconcile() {
       }
       await api.post(`/sales/reconcile/${kind}/link`, { our_id, bx_id, master }, auth())
       await load()
-    } catch (err) { alert(err.response?.data?.detail || 'Ошибка связывания') }
+    } catch (err) { alert(errText(err, 'не удалось связать')) }
     finally { setBusy(false) }
   }
 
@@ -357,7 +373,6 @@ export default function Reconcile() {
   const colWrap = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', border: '1px solid #e5e7eb', borderRadius: 12, background: '#fafafa', overflow: 'hidden' }
   const colHead = { padding: '10px 12px', borderBottom: '1px solid #e5e7eb', fontSize: 14, fontWeight: 600, background: '#fff', flexShrink: 0 }
   const colBody = { overflowY: 'auto', padding: 10, flex: 1 }
-  const subHead = { fontSize: 12, color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.03em', margin: '4px 2px 6px' }
   const cardS = (hl) => ({ background: '#fff', border: `1px solid ${hl ? '#6366f1' : '#e5e7eb'}`, boxShadow: hl ? '0 0 0 2px #c7d2fe' : 'none', borderRadius: 10, padding: 10, marginBottom: 8, transition: 'box-shadow .1s, border-color .1s' })
   const chip = { display: 'inline-flex', alignItems: 'center', gap: 6, background: '#eef2ff', borderRadius: 14, padding: '3px 8px 3px 8px', fontSize: 13, margin: '2px 4px 2px 0' }
   const handle = { cursor: 'grab', color: '#cbd5e1', fontSize: 15, lineHeight: 1, userSelect: 'none', marginRight: 6 }
@@ -497,9 +512,22 @@ export default function Reconcile() {
 
             {/* ── Колонка 3: Только в одной системе ────────────────────────── */}
             <div style={colWrap}>
-              <div style={colHead}>Только в одной системе <span style={{ color: '#9ca3af', fontWeight: 400 }}>· {data.only_ours.length + data.only_bitrix.length}</span></div>
+              {/* Тумблер вместо двух списков подряд: у рекламодателей «только в
+                  Битриксе» — 220 карточек, и нужный блок иначе не найти. */}
+              <div style={{ ...colHead, display: 'flex', gap: 6, alignItems: 'center', padding: '7px 8px' }}>
+                {[['ours', 'Только у нас', data.only_ours.length],
+                  ['bitrix', 'Только в Битриксе', data.only_bitrix.length]].map(([v, label, n]) => (
+                  <button key={v} onClick={() => setSide(v)} style={{
+                    ...btn, fontSize: 13, flex: 1,
+                    fontWeight: side === v ? 700 : 500,
+                    background: side === v ? 'var(--accent-tint)' : '#fff',
+                    borderColor: side === v ? 'var(--accent-border)' : '#d1d5db',
+                    color: side === v ? 'var(--accent)' : '#374151',
+                  }}>{label} <span style={{ color: '#9ca3af', fontWeight: 400 }}>· {n}</span></button>
+                ))}
+              </div>
               <div style={colBody}>
-                <div style={subHead}>Только у нас · {data.only_ours.length}</div>
+                {side === 'ours' && <>
                 {data.only_ours.map(o => {
                   const key = `O${o.our_id}`
                   return (
@@ -525,8 +553,9 @@ export default function Reconcile() {
                   )
                 })}
                 {data.only_ours.length === 0 && <div style={{ color: '#9ca3af', padding: '4px 8px 8px', fontSize: 13 }}>пусто</div>}
+                </>}
 
-                <div style={{ ...subHead, marginTop: 14 }}>Только в Битриксе · {data.only_bitrix.length}</div>
+                {side === 'bitrix' && <>
                 {data.only_bitrix.map(b => {
                   const key = `B${b.id}`
                   return (
@@ -542,6 +571,7 @@ export default function Reconcile() {
                   )
                 })}
                 {data.only_bitrix.length === 0 && <div style={{ color: '#9ca3af', padding: '4px 8px 8px', fontSize: 13 }}>пусто</div>}
+                </>}
               </div>
             </div>
 
