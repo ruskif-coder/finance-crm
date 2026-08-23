@@ -5,6 +5,8 @@ import Head from 'next/head'
 import { makeApi } from '@/lib/http'
 import { getPermissions, can } from '@/lib/auth'
 import { firstAllowedHref } from '@/lib/nav'
+import DiadocImport from '@/components/DiadocImport'
+import { card, btn, inp, CAP, MONO, UI } from '@/components/salesTableKit'
 
 const FIELD_LABELS = {
   date: 'Дата', status: 'Статус', income: 'Доход', expense: 'Расход', bank: 'Банк',
@@ -71,12 +73,30 @@ function SyncCell({ col, data, highlight }) {
   return <span style={hl}>{v === null || v === undefined || v === '' ? '—' : String(v)}</span>
 }
 
+// Разделы экрана — строками, не колонкой карточек. Компонент объявлен на модульном
+// уровне: внутри тела страницы он пересоздавался бы каждый рендер и вложенные input
+// теряли бы фокус.
+function Section({ title, hint, count, open, onToggle, children }) {
+  return (
+    <div style={{ ...card, borderRadius: 14, marginBottom: 10, overflow: 'hidden' }}>
+      <div onClick={onToggle}
+        style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 18px', cursor: 'pointer' }}>
+        <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, fontFamily: UI, color: 'var(--text-primary)' }}>{title}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{hint}</div>
+        </div>
+        {count != null && <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-faint)' }}>{count}</span>}
+        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{open ? '▲' : '▼'}</span>
+      </div>
+      {open && <div style={{ padding: '0 18px 18px', borderTop: '1px solid var(--border-card)', paddingTop: 16 }}>{children}</div>}
+    </div>
+  )
+}
+
 export default function Import() {
   const router = useRouter()
-  const [file, setFile] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState(null)
-  const [error, setError] = useState(null)
+  const [openSec, setOpenSec] = useState({ ops: false, diadoc: false })
+  const toggle = (k) => setOpenSec(s => ({ ...s, [k]: !s[k] }))
 
   const [syncFile, setSyncFile] = useState(null)
   const [syncLoading, setSyncLoading] = useState(false)
@@ -92,25 +112,9 @@ export default function Import() {
     if (!can(getPermissions(), 'import', 'view')) { router.push(firstAllowedHref(getPermissions(), localStorage.getItem('role') === 'admin')); return }
   }, [])
 
-  const handleImport = async () => {
-    if (!file) { alert('Выберите файл'); return }
-    setLoading(true)
-    setResult(null)
-    setError(null)
-    try {
-      const token = localStorage.getItem('token')
-      const formData = new FormData()
-      formData.append('file', file)
-      const res = await makeApi(token).post('/operations/import', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
-      setResult(res.data.message)
-    } catch (e) {
-      setError(e.response?.data?.detail || 'Ошибка импорта')
-    } finally {
-      setLoading(false)
-    }
-  }
+  // Одноразовый импорт («/operations/import», всегда вставляет и на повторе плодит
+  // дубли) убран из интерфейса 2026-08-20 по решению владельца: рабочий путь один —
+  // синхронизация с проверкой. Эндпоинт на бэкенде намеренно оставлен, не удалён.
 
   const handlePreview = async () => {
     if (!syncFile) { alert('Выберите файл'); return }
@@ -170,114 +174,27 @@ export default function Import() {
       <Navbar active="import" />
       <Head><title>Импорт | Финансовый учёт</title></Head>
 
-      <div style={{padding:'24px 32px', maxWidth:1920, margin:'0 auto'}}>
-        <div style={{maxWidth:'600px'}}>
-        <div style={{background:'var(--card)',borderRadius:'12px',padding:'24px'}}>
-          <div style={{fontWeight:'500',marginBottom:'8px'}}>Импорт из Excel</div>
-          <div style={{fontSize:'15px',color:'var(--muted)',marginBottom:'24px'}}>
-            Загрузи файл Excel с листом "CF BEST". Система автоматически создаст статьи, контрагентов и загрузит все операции.
-          </div>
+      <div style={{ padding: '24px 32px', maxWidth: 1920, margin: '0 auto' }}>
+        <div style={{ ...CAP, marginBottom: 14 }}>Импорт</div>
 
-          <div style={{border:'2px dashed var(--border)',borderRadius:'12px',padding:'32px',textAlign:'center',marginBottom:'16px',background:'var(--bg)'}}>
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={e => setFile(e.target.files[0])}
-              style={{display:'none'}}
-              id="fileInput"
-            />
-            <label htmlFor="fileInput" style={{cursor:'pointer'}}>
-              <div style={{fontSize:'34px',marginBottom:'8px'}}>📂</div>
-              <div style={{fontSize:'16px',fontWeight:'500',marginBottom:'4px'}}>
-                {file ? file.name : 'Нажми чтобы выбрать файл'}
-              </div>
-              <div style={{fontSize:'14px',color:'var(--muted)'}}>xlsx, xls</div>
+        <Section
+          title="Операции из Excel"
+          hint="Сверка по № ДС и № счёта: новые строки добавляются сами, изменения — только те, что подтвердите"
+          open={openSec.ops} onToggle={() => toggle('ops')}>
+
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input type="file" accept=".xlsx,.xls" id="syncFileInput" style={{ display: 'none' }}
+              onChange={e => setSyncFile(e.target.files[0])} />
+            <label htmlFor="syncFileInput"
+              style={{ ...inp, cursor: 'pointer', borderStyle: 'dashed', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {syncFile ? syncFile.name : 'Выбрать xlsx'}
             </label>
-          </div>
-
-          <button
-            onClick={handleImport}
-            disabled={loading || !file}
-            style={{width:'100%',padding:'12px',borderRadius:'8px',border:'none',
-              background: loading || !file ? 'var(--border)' : 'var(--primary)',
-              color: loading || !file ? 'var(--muted)' : 'white',
-              cursor: loading || !file ? 'default' : 'pointer',
-              fontSize:'16px',fontWeight:'500'}}
-          >
-            {loading ? 'Импортируем...' : 'Загрузить'}
-          </button>
-
-          {result && (
-            <div style={{marginTop:'16px',padding:'12px 16px',borderRadius:'8px',background:'#dcfce7',color:'var(--success)',fontSize:'15px'}}>
-              ✓ {result}
-            </div>
-          )}
-          {error && (
-            <div style={{marginTop:'16px',padding:'12px 16px',borderRadius:'8px',background:'#fee2e2',color:'var(--danger)',fontSize:'15px'}}>
-              ✗ {error}
-            </div>
-          )}
-        </div>
-
-        <div style={{background:'var(--card)',borderRadius:'12px',padding:'24px',marginTop:'16px'}}>
-          <div style={{fontWeight:'500',marginBottom:'12px'}}>Что происходит при импорте</div>
-          {[
-            'Читается лист "CF BEST" из твоего файла',
-            'Автоматически создаются все статьи расходов',
-            'Автоматически создаются все контрагенты',
-            'Загружаются все операции с января 2025',
-            'При повторном импорте создаются дубликаты — для повторной загрузки используй блок «Синхронизация» ниже',
-          ].map((s,i) => (
-            <div key={i} style={{display:'flex',gap:'8px',padding:'6px 0',fontSize:'15px',color:'var(--muted)'}}>
-              <span style={{color:'var(--success)'}}>✓</span>{s}
-            </div>
-          ))}
-        </div>
-        </div>
-
-        <div style={{background:'var(--card)',borderRadius:'12px',padding:'24px',marginTop:'16px'}}>
-          <div style={{fontWeight:'500',marginBottom:'8px'}}>Синхронизация (с проверкой)</div>
-          <div style={{maxWidth:'600px'}}>
-          <div style={{fontSize:'15px',color:'var(--muted)',marginBottom:'24px'}}>
-            Временное решение на время, пока система не переехала на сервер: загрузи актуальный файл из Google Таблицы —
-            система сама найдёт совпадения по № ДС + № Счёта, покажет что изменилось, и обновит только то, что ты подтвердишь.
-            Новые строки добавляются автоматически, неизменные пропускаются.
-          </div>
-
-          <div style={{border:'2px dashed var(--border)',borderRadius:'12px',padding:'32px',textAlign:'center',marginBottom:'16px',background:'var(--bg)'}}>
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={e => setSyncFile(e.target.files[0])}
-              style={{display:'none'}}
-              id="syncFileInput"
-            />
-            <label htmlFor="syncFileInput" style={{cursor:'pointer'}}>
-              <div style={{fontSize:'34px',marginBottom:'8px'}}>🔄</div>
-              <div style={{fontSize:'16px',fontWeight:'500',marginBottom:'4px'}}>
-                {syncFile ? syncFile.name : 'Нажми чтобы выбрать файл'}
-              </div>
-              <div style={{fontSize:'14px',color:'var(--muted)'}}>xlsx, xls</div>
-            </label>
-          </div>
-
-          <button
-            onClick={handlePreview}
-            disabled={syncLoading || !syncFile}
-            style={{width:'100%',padding:'12px',borderRadius:'8px',border:'none',
-              background: syncLoading || !syncFile ? 'var(--border)' : 'var(--primary)',
-              color: syncLoading || !syncFile ? 'var(--muted)' : 'white',
-              cursor: syncLoading || !syncFile ? 'default' : 'pointer',
-              fontSize:'16px',fontWeight:'500'}}
-          >
-            {syncLoading ? 'Проверяем...' : 'Проверить'}
-          </button>
-
-          {syncError && (
-            <div style={{marginTop:'16px',padding:'12px 16px',borderRadius:'8px',background:'#fee2e2',color:'var(--danger)',fontSize:'15px'}}>
-              ✗ {syncError}
-            </div>
-          )}
+            <button onClick={handlePreview} disabled={syncLoading || !syncFile}
+              style={{ ...btn(true), opacity: (syncLoading || !syncFile) ? .5 : 1 }}>
+              {syncLoading ? 'Проверяем…' : 'Проверить'}
+            </button>
+            {syncError && <span style={{ fontSize: 12, color: 'var(--danger)' }}>✗ {syncError}</span>}
+            {applyResult && <span style={{ fontSize: 12, color: 'var(--income)' }}>✓ {applyResult.message}</span>}
           </div>
 
           {preview && (
@@ -366,28 +283,20 @@ export default function Import() {
                 </div>
               )}
 
-              <div style={{maxWidth:'600px'}}>
-              <button
-                onClick={handleApply}
-                disabled={applyLoading}
-                style={{width:'100%',padding:'12px',borderRadius:'8px',border:'none',marginTop:'16px',
-                  background: applyLoading ? 'var(--border)' : 'var(--primary)',
-                  color: applyLoading ? 'var(--muted)' : 'white',
-                  cursor: applyLoading ? 'default' : 'pointer',
-                  fontSize:'16px',fontWeight:'500'}}
-              >
-                {applyLoading ? 'Применяем...' : 'Перепровести'}
+              <button onClick={handleApply} disabled={applyLoading}
+                style={{ ...btn(true), marginTop: 16, opacity: applyLoading ? .5 : 1 }}>
+                {applyLoading ? 'Применяем…' : 'Перепровести'}
               </button>
-              </div>
             </div>
           )}
+        </Section>
 
-          {applyResult && (
-            <div style={{marginTop:'16px',padding:'12px 16px',borderRadius:'8px',background:'#dcfce7',color:'var(--success)',fontSize:'15px'}}>
-              ✓ {applyResult.message}
-            </div>
-          )}
-        </div>
+        <Section
+          title="Документы из Диадока"
+          hint="Реестр из Диадока привязывается к операциям по ИНН и номеру счёта; ссылка на документ строится сама"
+          open={openSec.diadoc} onToggle={() => toggle('diadoc')}>
+          <DiadocImport />
+        </Section>
       </div>
     </div>
   )

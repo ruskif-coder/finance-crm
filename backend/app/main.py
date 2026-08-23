@@ -9,7 +9,7 @@ from app.routers import (auth, operations, reports, counterparties, articles, se
                          users, roles, contracts, sales_directories, sales_dashboard,
                          sales_reconcile, media_plans, notifications, notify_settings,
                          year_plan, finreport, backlog, account_dashboard,
-                         publishers)
+                         publishers, diadoc)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -31,6 +31,7 @@ logging.basicConfig(
 logger = logging.getLogger("finance")
 
 from app.sales import models as sales_models  # noqa: F401,E402 — регистрирует таблицы дашборда продаж в Base.metadata
+from app import diadoc_models  # noqa: F401,E402 — реестр документов Диадока (миграция 2026-08-20_diadoc_documents.sql)
 
 Base.metadata.create_all(bind=engine)
 
@@ -427,7 +428,6 @@ def backfill_deal_our_stage():
     (через sales_bitrix_stage_map) → первая наша стадия с этим stage_key. Работает
     со всеми сделками независимо от происхождения; фолбэк — не трогаем (остаётся NULL)."""
     from app.sales.models import SalesDeal, SalesStage, SalesBitrixStageMap
-    from app.sales.stages import build_stage_index
     from app.sales.normalize import normalize_name
     db = SessionLocal()
     try:
@@ -605,6 +605,7 @@ app.include_router(sales_dashboard.router, prefix="/api/sales", tags=["sales"])
 app.include_router(account_dashboard.router, prefix="/api/sales", tags=["sales"])
 app.include_router(year_plan.router, prefix="/api/sales/year-plan", tags=["sales"])
 app.include_router(backlog.router, prefix="/api/backlog", tags=["backlog"])
+app.include_router(diadoc.router, prefix="/api/diadoc", tags=["diadoc"])
 
 @app.get("/")
 def root():

@@ -405,7 +405,7 @@ export function NavMobile({ sections, active, perms, isAdmin, onNavigate, bell, 
   /* Шапка рисуется всегда: пользователь без доступных разделов должен видеть
      профиль и «Выйти». Без разделов просто нет ленты экранов. */
   return (
-    <div ref={rootRef} style={{ position: 'sticky', top: 0, zIndex: 50, background: T.card, borderBottom: `1px solid ${T.inner}`, fontFamily: T.sans, color: T.t1 }}>
+    <div ref={rootRef} data-navbar style={{ position: 'sticky', top: 0, zIndex: 50, background: T.card, borderBottom: `1px solid ${T.inner}`, fontFamily: T.sans, color: T.t1 }}>
       {/* строка 1 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px' }}>
         <button type="button" onClick={() => setMenu(m => !m)} title="Разделы" aria-label="Разделы" style={{

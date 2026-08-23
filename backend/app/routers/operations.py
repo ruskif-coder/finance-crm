@@ -1,14 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, case, text
+from sqlalchemy import func, case, text, or_
 from app.database import get_db
 from app.xlsx_safe import xlsx_safe
 from app.models import Operation, Article, Counterparty, User
-from app.routers.auth import get_current_user
 from app.audit import log_action
 from app.permissions import require_permission
-from app.routers.reports import _due_date, _aging_bucket, _term_days_for_counterparty
+from app.routers.reports import (_due_date, _aging_bucket, _term_days_for_counterparty,
+                                 DEFAULT_TERM_DAYS)
 from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import date, datetime
@@ -24,31 +24,105 @@ import uuid
 
 router = APIRouter()
 
-# Схемы, допустимые в document_link. Всё остальное (javascript:, data:, file: …) —
-# XSS-вектор: ссылка рендерится на фронте как <a href={...}>, и клик по такой схеме
-# исполняет скрипт в сессии открывшего (токен в localStorage → захват аккаунта).
-# В contracts.py уже есть аналогичная проверка; здесь её раньше НЕ было.
-_ALLOWED_LINK_SCHEMES = ("http://", "https://")
-
-def _validate_link(url, raise_on_bad=True):
-    """http/https → возвращает очищенную ссылку; иначе — 400 (API) или None (импорт).
-    raise_on_bad=False для Excel-импорта: одна битая строка не должна ронять весь импорт,
-    вместо этого небезопасная ссылка молча отбрасывается."""
-    if url is None:
-        return None
-    u = str(url).strip()
-    if not u:
-        return None
-    if not any(u.lower().startswith(s) for s in _ALLOWED_LINK_SCHEMES):
-        if raise_on_bad:
-            raise HTTPException(status_code=400, detail="Ссылка на документ должна начинаться с http:// или https://")
-        return None
-    return u
+# Проверка схемы ссылки — общая для договоров, операций и реестра Диадока,
+# живёт в app/links.py (раньше была двумя почти одинаковыми копиями).
+from app.links import validate_link as _validate_link  # noqa: E402
 
 # Временное in-memory хранилище для шага preview→apply при синхронизации импорта.
 # Переживает только до перезапуска backend-контейнера — это сознательно временное решение,
 # пока система не переехала на боевой сервер (см. memory finance-system-status).
 IMPORT_SYNC_CACHE = {}
+
+def _sort_map():
+    """Колонки, по которым можно сортировать список операций и выгрузку.
+
+    Один словарь на два эндпоинта (список и export) — раньше он был скопирован дважды
+    и успел разойтись бы при первой же правке. Все ключи совпадают с именами колонок
+    на фронте, кроме «Действий»: там сортировать нечего.
+
+    Период приводится к сортируемому виду («Q2 2026» → «2026-04»), иначе кварталы
+    встают между месяцами по алфавиту. ДЗ сортируется по СРОКУ ОПЛАТЫ, а не по метке:
+    метка (просрочка/текущая/план) — функция срока и сегодняшней даты, поэтому порядок
+    по сроку и есть порядок по «возрасту долга», и правила старения не приходится
+    повторять в SQL — они остаются в reports.py в одном экземпляре.
+    """
+    period_ym = case(
+        (Operation.period.like('Q1 %'), func.concat(func.substring(Operation.period, 4, 4), '-01')),
+        (Operation.period.like('Q2 %'), func.concat(func.substring(Operation.period, 4, 4), '-04')),
+        (Operation.period.like('Q3 %'), func.concat(func.substring(Operation.period, 4, 4), '-07')),
+        (Operation.period.like('Q4 %'), func.concat(func.substring(Operation.period, 4, 4), '-10')),
+        else_=Operation.period
+    )
+    # Срок оплаты = первый день месяца после периода + отсрочка контрагента.
+    # Квартал длится три месяца — иначе срок по «Q2 2026» считался бы от апреля.
+    months = case((Operation.period.like('Q_ %'), 3), else_=1)
+    term = func.coalesce(Counterparty.term_days, DEFAULT_TERM_DAYS)
+    due = (func.to_date(func.concat(period_ym, '-01'), 'YYYY-MM-DD')
+           + func.make_interval(0, months, 0, term))
+    # ДЗ есть только у плановых поступлений — у остальных строк колонка пустая,
+    # и в сортировке они должны вести себя как пустые, а не как «срок в 1970-м».
+    dz = case(((Operation.status == 'ПЛАН ПОСТУПЛЕНИЙ') & (Operation.income > 0), due), else_=None)
+    return {
+        'date': Operation.date,
+        'status': Operation.status,
+        'income': Operation.income,
+        'expense': Operation.expense,
+        'bank': Operation.bank,
+        'article': Article.name,
+        'counterparty': Counterparty.name,
+        'period': period_ym,
+        'dz': dz,
+        'vat_rate': Operation.vat_rate,
+        'vat_fact': Operation.vat_fact,
+        'ds_num': Operation.ds_num,
+        'invoice': Operation.invoice,
+        'invoice_date': Operation.invoice_date,
+        'doc': Operation.document_link,
+        'description': Operation.description,
+    }
+
+
+def _apply_gaps(query, gaps):
+    """Фильтр «Незаполненные»: строки, где не хватает выбранных полей.
+
+    Условия объединяются по ИЛИ — человек ищет, что дозаполнить, и выбрав «нет статьи»
+    и «нет периода», хочет увидеть обе дыры, а не их пересечение (оно почти всегда
+    пусто). Тот же приём и тот же смысл, что в реестре сделок (_apply_extra_filters).
+
+    Пустая строка считается дырой наравне с NULL: банк и период приходят из импорта
+    и правки формой, где «не заполнено» — это ''. Проверка только на NULL прятала бы
+    ровно те строки, ради которых фильтр и заводился.
+    """
+    if not gaps:
+        return query
+    columns = {'article': Operation.article_id, 'counterparty': Operation.counterparty_id,
+               'period': Operation.period, 'bank': Operation.bank}
+    conds = []
+    for g in gaps:
+        col = columns.get(g)
+        if col is None:
+            continue
+        conds.append(col.is_(None) if g in ('article', 'counterparty') else or_(col.is_(None), col == ''))
+    return query.filter(or_(*conds)) if conds else query
+
+
+def _order_by(sort_col, sort_dir):
+    """Выражение ORDER BY для списка и выгрузки — одно на двоих, чтобы файл всегда
+    совпадал с экраном.
+
+    Пустые значения у ДАТЫ идут первыми в обе стороны — намеренно: операции без даты
+    («план поступлений» из импорта, где заполнен только период) должны быть видны сразу
+    на первой странице, а не похоронены в хвосте из тысяч строк. Так и был найден баг,
+    когда такие строки проваливались на последнюю страницу под sort_dir=desc.
+
+    Для остальных колонок правило обратное: пустые уходят в конец. Иначе сортировка по
+    «№ счёта» или «Описанию» открывалась бы страницей сплошных прочерков — формально
+    отсортированной, практически бесполезной.
+    """
+    column = _sort_map().get(sort_col, Operation.date)
+    ordered = column.asc() if sort_dir == 'asc' else column.desc()
+    return ordered.nulls_first() if sort_col in ('date', None) else ordered.nulls_last()
+
 
 # Статус дебиторки в списке операций — переиспользует ту же логику возраста долга
 # (срок оплаты = период + отсрочка контрагента, редактируемая в реестре + буфер), что и
@@ -140,6 +214,11 @@ def get_operations(
     article_id: Optional[List[int]] = Query(None),
     counterparty_id: Optional[List[int]] = Query(None),
     period: Optional[List[str]] = Query(None),
+    gaps: Optional[List[str]] = Query(None),
+    # Точечный показ конкретных операций по id. Нужен для ссылок «открыть операцию»
+    # из импорта документов Диадока: без него на операцию нельзя сослаться никак,
+    # у реестра нет ни карточки, ни адреса строки.
+    ids: Optional[List[int]] = Query(None),
     sort_col: Optional[str] = 'date',
     sort_dir: Optional[str] = 'desc',
     db: Session = Depends(get_db),
@@ -147,6 +226,8 @@ def get_operations(
 ):
     query = db.query(Operation)
 
+    if ids:
+        query = query.filter(Operation.id.in_(ids))
     if status:
         query = query.filter(Operation.status.in_(status))
     if bank:
@@ -161,39 +242,14 @@ def get_operations(
         query = query.filter(Operation.counterparty_id.in_(counterparty_id))
     if period:
         query = query.filter(Operation.period.in_(period))
+    query = _apply_gaps(query, gaps)
 
     query = query.outerjoin(Article, Operation.article_id == Article.id)\
                  .outerjoin(Counterparty, Operation.counterparty_id == Counterparty.id)
 
     total = query.count()
 
-    sort_map = {
-        'date': Operation.date,
-        'status': Operation.status,
-        'income': Operation.income,
-        'expense': Operation.expense,
-        'bank': Operation.bank,
-        'article': Article.name,
-        'counterparty': Counterparty.name,
-        'period': case(
-            (Operation.period.like('Q1 %'), func.concat(func.substring(Operation.period, 4, 4), '-01')),
-            (Operation.period.like('Q2 %'), func.concat(func.substring(Operation.period, 4, 4), '-04')),
-            (Operation.period.like('Q3 %'), func.concat(func.substring(Operation.period, 4, 4), '-07')),
-            (Operation.period.like('Q4 %'), func.concat(func.substring(Operation.period, 4, 4), '-10')),
-            else_=Operation.period
-        ),
-    }
-    # nulls_first() в обоих направлениях (а не nulls_last() для desc) — намеренно:
-    # операции без даты (например, "план поступлений" из импорта, где заполнен
-    # только период) должны быть видны сразу на первой странице, а не похоронены
-    # в конце списка из тысяч строк, где их никто не найдёт. См. баг: после
-    # импорта плановых строк без даты пользователь не мог их найти, потому что
-    # они проваливались на последнюю страницу под sort_dir=desc.
-    sort_column = sort_map.get(sort_col, Operation.date)
-    if sort_dir == 'asc':
-        query = query.order_by(sort_column.asc().nulls_first())
-    else:
-        query = query.order_by(sort_column.desc().nulls_first())
+    query = query.order_by(_order_by(sort_col, sort_dir))
 
     operations = query.offset(skip).limit(limit).all()
 
@@ -257,6 +313,7 @@ def export_operations(
     article_id: Optional[List[int]] = Query(None),
     counterparty_id: Optional[List[int]] = Query(None),
     period: Optional[List[str]] = Query(None),
+    gaps: Optional[List[str]] = Query(None),
     sort_col: Optional[str] = 'date',
     sort_dir: Optional[str] = 'desc',
     db: Session = Depends(get_db),
@@ -283,33 +340,13 @@ def export_operations(
         query = query.filter(Operation.counterparty_id.in_(counterparty_id))
     if period:
         query = query.filter(Operation.period.in_(period))
+    query = _apply_gaps(query, gaps)
 
     query = query.outerjoin(Article, Operation.article_id == Article.id)\
                  .outerjoin(Counterparty, Operation.counterparty_id == Counterparty.id)
 
-    sort_map = {
-        'date': Operation.date,
-        'status': Operation.status,
-        'income': Operation.income,
-        'expense': Operation.expense,
-        'bank': Operation.bank,
-        'article': Article.name,
-        'counterparty': Counterparty.name,
-        'period': case(
-            (Operation.period.like('Q1 %'), func.concat(func.substring(Operation.period, 4, 4), '-01')),
-            (Operation.period.like('Q2 %'), func.concat(func.substring(Operation.period, 4, 4), '-04')),
-            (Operation.period.like('Q3 %'), func.concat(func.substring(Operation.period, 4, 4), '-07')),
-            (Operation.period.like('Q4 %'), func.concat(func.substring(Operation.period, 4, 4), '-10')),
-            else_=Operation.period
-        ),
-    }
-    # См. тот же фикс и пояснение в GET /operations/ выше — nulls_first() в обоих
-    # направлениях, чтобы выгрузка не теряла операции без даты в хвосте списка.
-    sort_column = sort_map.get(sort_col, Operation.date)
-    if sort_dir == 'asc':
-        query = query.order_by(sort_column.asc().nulls_first())
-    else:
-        query = query.order_by(sort_column.desc().nulls_first())
+    # Порядок общий со списком (см. _order_by): выгрузка обязана совпадать с экраном.
+    query = query.order_by(_order_by(sort_col, sort_dir))
 
     operations = query.all()
 
@@ -874,10 +911,10 @@ async def download_import_template(
         ("Назначение", "Назначение платежа / комментарий."),
         ("Повторный импорт (синхронизация)", "Тот же файл можно загрузить повторно через раздел Импорт → Синхронизация: система найдёт совпадающие операции по № ДС + Счёт (либо по набору полей, если эти номера не указаны) и покажет, что изменилось, перед применением."),
     ]
-    for i, (label, text) in enumerate(rows, start=3):
+    for i, (label, hint) in enumerate(rows, start=3):
         instr.cell(row=i, column=1, value=label).font = Font(bold=True)
         instr.cell(row=i, column=1).alignment = Alignment(vertical="top")
-        c = instr.cell(row=i, column=2, value=text)
+        c = instr.cell(row=i, column=2, value=hint)
         c.alignment = Alignment(wrap_text=True, vertical="top")
         instr.row_dimensions[i].height = 32
 
@@ -1270,7 +1307,6 @@ def export_to_alfa(
     next_num = int(num_row.value if num_row else 0) + 1
 
     # Загружаем операции с контрагентами и их банковскими счетами
-    from app.models import CounterpartyBankAccount
     operations = (
         db.query(Operation)
         .filter(Operation.id.in_(payload.ids))
@@ -1307,7 +1343,7 @@ def export_to_alfa(
             continue
 
         today_str = op.date.strftime('%d.%m.%Y') if op.date else date.today().strftime('%d.%m.%Y')
-        purpose = (op.description or f"Оплата по договору. НДС не облагается.")[:210]
+        purpose = (op.description or "Оплата по договору. НДС не облагается.")[:210]
 
         block = "\n".join([
             "СекцияДокумент=Платежное поручение",

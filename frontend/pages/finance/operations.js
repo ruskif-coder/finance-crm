@@ -16,6 +16,14 @@ const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 
 const BANK_COLOR = { 'АльфаБанк': 'var(--bank-alfa)', 'ОПТ Банк': 'var(--bank-opt)', 'Совкомбанк': 'var(--bank-sovkom)', 'Наличные': 'var(--bank-cash)' }
 const VAT_OPTIONS = [0, 5, 7, 10, 20, 22]
 const PAGE_SIZES = [50, 100, 300, 500]
+// «Незаполненные» — как в реестре сделок: выбранные дыры складываются по ИЛИ,
+// потому что человек ищет, что дозаполнить, а не строку без всего сразу.
+const GAP_FIELDS = [
+  { value: 'article', label: 'нет статьи' },
+  { value: 'counterparty', label: 'нет контрагента' },
+  { value: 'period', label: 'нет периода' },
+  { value: 'bank', label: 'нет банка' },
+]
 // статус-чип: фон / текст / точка
 const STATUS_CHIP = {
   'ОПЛАЧЕНО': ['#E6F5EF', '#1F7D5E', 'var(--income)'],
@@ -160,18 +168,25 @@ function OpFields({ f, set, articles, counterparties, accent, mode = 'edit' }) {
 }
 
 // колонки таблицы (сетка из хендоффа)
+// Четвёртый элемент — ключ сортировки на сервере (см. _sort_map в operations.py).
+// Он есть у каждой колонки, кроме «Действий»: там сортировать нечего. «ДЗ» сортируется
+// по сроку оплаты — метка (просрочка/текущая/план) это и есть возраст долга.
 const COLS = [
-  ['sel', '26px', ''], ['date', '78px', 'Дата', 'date'], ['status', '112px', 'Статус', 'status'], ['dz', '36px', 'ДЗ'],
+  ['sel', '26px', ''], ['date', '78px', 'Дата', 'date'], ['status', '112px', 'Статус', 'status'], ['dz', '36px', 'ДЗ', 'dz'],
   ['income', '98px', 'Поступление', 'income'], ['expense', '98px', 'Списание', 'expense'], ['bank', '96px', 'Банк', 'bank'],
-  ['period', '78px', 'Период', 'period'], ['article', '122px', 'Статья'], ['counterparty', '1.2fr', 'Контрагент'],
-  ['vat', '46px', 'НДС'], ['vat_amount', '84px', 'НДС сумма'], ['ds_num', '62px', '№ ДС'], ['invoice', '112px', '№ счёта'],
-  ['invoice_date', '88px', 'Дата счёта'], ['doc', '32px', 'Док'], ['description', '0.9fr', 'Описание'], ['actions', '72px', 'Действия'],
+  ['period', '78px', 'Период', 'period'], ['article', '122px', 'Статья', 'article'], ['counterparty', '1.2fr', 'Контрагент', 'counterparty'],
+  ['vat', '46px', 'НДС', 'vat_rate'], ['vat_amount', '84px', 'НДС сумма', 'vat_fact'], ['ds_num', '62px', '№ ДС', 'ds_num'], ['invoice', '112px', '№ счёта', 'invoice'],
+  ['invoice_date', '88px', 'Дата счёта', 'invoice_date'], ['doc', '32px', 'Док', 'doc'], ['description', '0.9fr', 'Описание', 'description'], ['actions', '72px', 'Действия'],
 ]
 const GRID = COLS.map(c => c[1]).join(' ')
 const RIGHT = new Set(['income', 'expense', 'vat', 'vat_amount'])
 
 export default function Operations2() {
   const router = useRouter()
+  // Точечная ссылка на операцию — /finance/operations?op=<id>. Приходит из импорта
+  // документов Диадока, где иначе на операцию сослаться нечем: у реестра нет ни
+  // карточки строки, ни собственного адреса у операции.
+  const focusOp = router.query.op ? String(router.query.op) : null
   const [perms, setPerms] = useState({})
   const canEdit = can(perms, 'operations', 'edit')
   const canImport = can(perms, 'import')
@@ -190,7 +205,7 @@ export default function Operations2() {
   const [sortDir, setSortDir] = useState('desc')
 
   const [dateFrom, setDateFrom] = useState(''); const [dateTo, setDateTo] = useState('')
-  const [fStatus, setFStatus] = useState([]); const [fBank, setFBank] = useState([]); const [fArticle, setFArticle] = useState([]); const [fCp, setFCp] = useState([]); const [fPeriod, setFPeriod] = useState([]); const [fOpType, setFOpType] = useState([])
+  const [fStatus, setFStatus] = useState([]); const [fBank, setFBank] = useState([]); const [fArticle, setFArticle] = useState([]); const [fCp, setFCp] = useState([]); const [fPeriod, setFPeriod] = useState([]); const [fOpType, setFOpType] = useState([]); const [fGaps, setFGaps] = useState([])
 
   const [createOpen, setCreateOpen] = useState(false)
   const [createForm, setCreateForm] = useState(emptyForm())
@@ -198,7 +213,10 @@ export default function Operations2() {
   const [sel, setSel] = useState({})                  // { id: true }
   const [bulk, setBulk] = useState({ status: '', date: '', period: '', bank: '', vat_rate: '', article_id: '', counterparty_id: '' })
   const [saving, setSaving] = useState(false)
-  const editAnchor = useRef(null)
+  // Высота шапки меряется, а не задаётся числом: у шапки две строки, и их набор
+  // зависит от прав пользователя — закреплённая панель массовой правки иначе то
+  // наезжала бы на меню, то висела бы с зазором.
+  const [navH, setNavH] = useState(60)
   const lastSelIdx = useRef(null)   // якорь для shift-выбора диапазона
   const [hidden, setHidden] = useState(new Set())   // скрытые колонки
   const [colPicker, setColPicker] = useState(false)
@@ -215,6 +233,10 @@ export default function Operations2() {
     Promise.all([api(tok()).get('/articles/'), api(tok()).get('/counterparties/?limit=1000')])
       .then(([a, c]) => { setArticles(a.data?.items || a.data || []); setCounterparties(c.data?.items || c.data || []) }).catch(() => {})
     api(tok()).get('/operations/periods').then(r => setPeriodOptions(r.data?.periods || [])).catch(() => {})
+    const measure = () => { const el = document.querySelector('[data-navbar]'); if (el) setNavH(el.getBoundingClientRect().height) }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
   }, [])
 
   const loadOps = async () => {
@@ -223,8 +245,11 @@ export default function Operations2() {
       const params = new URLSearchParams({ skip: page * pageSize, limit: pageSize, sort_col: sortCol, sort_dir: sortDir })
       fStatus.forEach(s => params.append('status', s)); fBank.forEach(b => params.append('bank', b))
       fArticle.forEach(id => params.append('article_id', id)); fCp.forEach(id => params.append('counterparty_id', id))
-      fPeriod.forEach(p => params.append('period', p))
+      fPeriod.forEach(p => params.append('period', p)); fGaps.forEach(g => params.append('gaps', g))
       if (dateFrom) params.append('date_from', dateFrom); if (dateTo) params.append('date_to', dateTo)
+      // ?op=<id> — точечная ссылка на операцию (из импорта документов Диадока).
+      // Пока она в адресе, остальные фильтры не важны: показывается ровно эта строка.
+      if (focusOp) params.append('ids', focusOp)
       const res = await api(tok()).get(`/operations/?${params}`)
       setOps(res.data?.items || []); setTotal(res.data?.total || 0)
       // Время последней загрузки данных (обновляется при любом изменении — add/edit/delete
@@ -233,13 +258,13 @@ export default function Operations2() {
     } catch (e) { if (e.response?.status === 401) router.push('/login') }
     finally { setLoading(false) }
   }
-  useEffect(() => { if (tok()) loadOps() }, [page, pageSize, sortCol, sortDir, fStatus, fBank, fArticle, fCp, fPeriod, dateFrom, dateTo])
+  useEffect(() => { if (tok()) loadOps() }, [page, pageSize, sortCol, sortDir, fStatus, fBank, fArticle, fCp, fPeriod, fGaps, dateFrom, dateTo, focusOp])
 
   // op-type фильтр — клиентски по загруженной странице
   const rows = ops.filter(o => !fOpType.length || (fOpType.includes('income') && o.income > 0) || (fOpType.includes('expense') && o.expense > 0))
 
   const onSort = (k) => { if (!k) return; if (sortCol === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortCol(k); setSortDir('desc') }; setPage(0) }
-  const resetFilters = () => { setDateFrom(''); setDateTo(''); setFStatus([]); setFBank([]); setFArticle([]); setFCp([]); setFPeriod([]); setFOpType([]); setPage(0) }
+  const resetFilters = () => { setDateFrom(''); setDateTo(''); setFStatus([]); setFBank([]); setFArticle([]); setFCp([]); setFPeriod([]); setFOpType([]); setFGaps([]); setPage(0) }
 
   // Приведение формы к типам бэкенда: пустые строки в id/датах → null, иначе
   // pydantic (Optional[int]/Optional[date]) отвергает '' → 422 «ошибка сохранения».
@@ -276,7 +301,7 @@ export default function Operations2() {
       const params = new URLSearchParams({ sort_col: sortCol, sort_dir: sortDir })
       fStatus.forEach(s => params.append('status', s)); fBank.forEach(b => params.append('bank', b))
       fArticle.forEach(id => params.append('article_id', id)); fCp.forEach(id => params.append('counterparty_id', id))
-      fPeriod.forEach(p => params.append('period', p))
+      fPeriod.forEach(p => params.append('period', p)); fGaps.forEach(g => params.append('gaps', g))
       if (dateFrom) params.append('date_from', dateFrom); if (dateTo) params.append('date_to', dateTo)
       const res = await api(tok()).get(`/operations/export?${params}`, { responseType: 'blob' })
       const url = URL.createObjectURL(new Blob([res.data]))
@@ -285,9 +310,10 @@ export default function Operations2() {
       a.click(); URL.revokeObjectURL(url)
     } catch (e) { alert('Не удалось выгрузить') }
   }
+  // Форма правки раскрывается прямо под своей строкой, поэтому никуда не скроллим:
+  // строка уже перед глазами, а прыжок к форме наверху таблицы терял место в списке.
   const openEdit = (op) => {
     setEditing({ id: op.id, date: op.date || '', status: op.status || 'ОПЛАЧЕНО', income: op.income || '', expense: op.expense || '', bank: op.bank || '', period: op.period || '', vat_rate: op.vat_rate || 0, article_id: op.article_id || '', counterparty_id: op.counterparty_id || '', ds_num: op.ds_num || '', invoice: op.invoice || '', invoice_date: op.invoice_date || '', description: op.description || '', document_link: op.document_link || '' })
-    requestAnimationFrame(() => { const el = editAnchor.current; if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 24, behavior: 'smooth' }) })
   }
   const saveEdit = async () => {
     setSaving(true)
@@ -464,6 +490,14 @@ export default function Operations2() {
             <MultiDrop label="Контрагент" options={counterparties.map(c => ({ value: c.id, label: c.name }))} selected={fCp} onChange={setFCp} />
             <MultiDrop label="Период" options={periodOptions.map(p => ({ value: p, label: p }))} selected={fPeriod} onChange={setFPeriod} />
             <MultiDrop label="Тип операции" options={[{ value: 'income', label: 'Поступления' }, { value: 'expense', label: 'Списания' }]} selected={fOpType} onChange={setFOpType} />
+            <MultiDrop label="Незаполненные" options={GAP_FIELDS} selected={fGaps} onChange={v => { setFGaps(v); setPage(0) }} />
+            {focusOp && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 11px', borderRadius: 20, background: 'var(--accent-tint)', color: 'var(--accent)', fontSize: 12 }}>
+                Показана одна операция #{focusOp}
+                <span onClick={() => router.push('/finance/operations')}
+                  style={{ cursor: 'pointer', textDecoration: 'underline' }}>показать все</span>
+              </div>
+            )}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, position: 'relative' }}>
               <IconBtn title="Сбросить фильтры" onClick={resetFilters}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v4h-4" /></svg></IconBtn>
               <IconBtn title="Настройка колонок" active={colPicker} onClick={() => setColPicker(o => !o)}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" /></svg></IconBtn>
@@ -481,25 +515,11 @@ export default function Operations2() {
             </div>
           </div>
 
-          {/* слот форм: редактирование / массовое */}
-          <div ref={editAnchor} data-edit-anchor>
-            {editing && canEdit && (
-              <div style={{ background: '#FFFCF7', border: '1px solid #F0D7AE', borderRadius: 14, padding: '18px 20px', margin: '10px 0 4px', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                  <span style={{ width: 28, height: 28, borderRadius: 9, background: 'var(--warning-tint)', color: T.warningText, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></span>
-                  <span style={{ fontSize: 15, fontWeight: 700, flex: 1 }}>Редактирование #{editing.id}</span>
-                  <span onClick={() => setEditing(null)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18 }}>✕</span>
-                </div>
-                <OpFields f={editing} set={p => setEditing(s => ({ ...s, ...p }))} articles={articles} counterparties={counterparties} accent="warn" />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
-                  <span style={{ fontSize: 12, color: 'var(--text-faint)', flex: 1 }}>поля, отмеченные «необяз.», можно оставить пустыми</span>
-                  <button onClick={saveEdit} disabled={saving} style={{ background: 'var(--dot-current-dz)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Сохранить изменения</button>
-                  <button onClick={() => setEditing(null)} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, padding: '9px 16px', fontSize: 13, cursor: 'pointer' }}>Отмена</button>
-                </div>
-              </div>
-            )}
-            {canEdit && selIds.length > 0 && (
-              <div style={{ background: '#F6F8FF', border: '1px solid #D7DEFA', borderRadius: 14, padding: '16px 18px', margin: '10px 0 4px', display: 'flex', alignItems: 'flex-end', gap: 14, flexWrap: 'wrap', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
+          {/* Массовая правка — всплывашкой, закреплённой под шапкой: выделять строки
+              можно в любом месте списка, и панель не уезжает вместе с ним. В потоке
+              страницы она оставалась у начала таблицы, то есть за экраном. */}
+          {canEdit && selIds.length > 0 && (
+              <div style={{ position: 'fixed', top: navH + 10, left: 24, right: 24, zIndex: 45, boxShadow: '0 10px 34px rgba(28,36,51,.16)', background: '#F6F8FF', border: '1px solid #D7DEFA', borderRadius: 14, padding: '16px 18px', display: 'flex', alignItems: 'flex-end', gap: 14, flexWrap: 'wrap', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
                 <div style={{ minWidth: 150, borderRight: '1px solid #DDE3F5', paddingRight: 14 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: '#3A50BE', marginBottom: 6 }}>Выбрано: {selIds.length}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: 'var(--income)' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--income)' }} />+{fmt2(selIncome)} ₽</div>
@@ -528,8 +548,7 @@ export default function Operations2() {
                   <button onClick={() => setSel({})} title="Снять выделение" aria-label="Снять выделение" style={{ width: 38, height: 38, flexShrink: 0, background: 'var(--bg-card)', border: '1px solid var(--border-card)', color: 'var(--text-secondary)', borderRadius: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M18 6L6 18" /><path d="M6 6l12 12" /></svg></button>
                 </div>
               </div>
-            )}
-          </div>
+          )}
 
           {/* показано + пагинация */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
@@ -557,9 +576,28 @@ export default function Operations2() {
               {loading ? <div style={{ padding: 30, color: 'var(--text-muted)', fontSize: 13 }}>Загрузка…</div>
                 : rows.length === 0 ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Нет операций по выбранным фильтрам</div>
                   : rows.map(o => (
-                    <div key={o.id} className="op-row" style={{ display: 'grid', gridTemplateColumns: gridT, gap: 10, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 14.4, color: 'var(--text-primary)', background: sel[o.id] ? 'var(--accent-tint)' : 'transparent' }}>
-                      {visibleCols.map(([k]) => <span key={k} style={{ textAlign: RIGHT.has(k) ? 'right' : 'left', overflow: 'hidden' }}>{cell(o, k)}</span>)}
-                    </div>
+                    <Fragment key={o.id}>
+                      <div className="op-row" style={{ display: 'grid', gridTemplateColumns: gridT, gap: 10, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 14.4, color: 'var(--text-primary)', background: sel[o.id] ? 'var(--accent-tint)' : (editing?.id === o.id ? 'var(--warning-tint)' : 'transparent') }}>
+                        {visibleCols.map(([k]) => <span key={k} style={{ textAlign: RIGHT.has(k) ? 'right' : 'left', overflow: 'hidden' }}>{cell(o, k)}</span>)}
+                      </div>
+                      {/* Правка раскрывается под своей строкой — форма стоит там, где
+                          пользователь только что кликнул, и список не теряет место. */}
+                      {editing?.id === o.id && canEdit && (
+                        <div style={{ background: '#FFFCF7', border: '1px solid #F0D7AE', borderRadius: 14, padding: '18px 20px', margin: '2px 0 10px', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                            <span style={{ width: 28, height: 28, borderRadius: 9, background: 'var(--warning-tint)', color: T.warningText, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></span>
+                            <span style={{ fontSize: 15, fontWeight: 700, flex: 1 }}>Редактирование #{editing.id}</span>
+                            <span onClick={() => setEditing(null)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18 }}>✕</span>
+                          </div>
+                          <OpFields f={editing} set={p => setEditing(s => ({ ...s, ...p }))} articles={articles} counterparties={counterparties} accent="warn" />
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
+                            <span style={{ fontSize: 12, color: 'var(--text-faint)', flex: 1 }}>поля, отмеченные «необяз.», можно оставить пустыми</span>
+                            <button onClick={saveEdit} disabled={saving} style={{ background: 'var(--dot-current-dz)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Сохранить изменения</button>
+                            <button onClick={() => setEditing(null)} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, padding: '9px 16px', fontSize: 13, cursor: 'pointer' }}>Отмена</button>
+                          </div>
+                        </div>
+                      )}
+                    </Fragment>
                   ))}
             </div>
           </div>
