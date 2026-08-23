@@ -20,7 +20,7 @@
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-# Палитра причёсанного макета (эталон — «Годовой_МП_2026_BINNO», сверен 2026-08-16).
+# Палитра причёсанного макета (эталон — согласованный макет владельца, сверен 2026-08-16).
 # HEAD/GREY/WHITE в эталоне заданы тема-цветами книги (theme3 и theme0 с tint −0.05);
 # здесь они разрешены в конкретный RGB, чтобы вид не зависел от темы шаблона.
 HEAD = "1F497D"          # шапки таблиц и подытоги брендов
@@ -110,13 +110,95 @@ def month_items(line, m: int) -> list:
     return [it for it in items if it.get("ref_id") is not None]
 
 
-def _parts(line, m, svc, add, items):
-    from app.routers.year_plan import mp_parts
-    return mp_parts(line, m, svc, add, items)
+def _parts(line, m, svc, add, items, verified=None):
+    """Строки месяца: проверенный медиаплан, если он есть, иначе расчёт из плана.
+
+    Решение владельца 2026-08-22 (вариант A). Смысл: аккаунт при проверке МП правит
+    скидки и объёмы, и книга, которую отправляют клиенту, обязана показывать
+    СОГЛАСОВАННЫЕ цифры, а не намерения плана. Скидка вообще существует только здесь —
+    в годовом плане поля скидки нет, и `mp_parts` ставит 0.
+
+    Плата за это: книга смешанная — месяцы, до которых аккаунт дошёл, идут по МП,
+    остальные по плану, и сумма может не сойтись со страницей годового плана. Это не
+    расхождение, а разница между «планировали» и «согласовали»; в подзаголовке листов
+    об этом сказано прямо, иначе через месяц никто не объяснит, откуда цифры.
+
+    Замена идёт ПОСДЕЛОЧНО, а не по месяцу целиком: месяц, разбитый кнопкой «+ сделка»,
+    может быть проверен наполовину, и подмена всей ячейки одним МП выкинула бы услуги
+    второй сделки из книги — молча и правдоподобно.
+    """
+    from app.routers.year_plan import mp_parts, _month_groups
+    ov = (verified or {}).get((line.id, m))
+    if not ov:
+        return mp_parts(line, m, svc, add, items)
+    rows, extras = [], []
+    for idx, group_items in _month_groups(line, m):
+        got = ov.get(idx)
+        r, e = got if got else mp_parts(line, m, svc, add, group_items)
+        rows.extend(r)
+        extras.extend(e)
+    return rows, extras
+
+
+def verified_parts(db, lines) -> dict:
+    """{(line_id, месяц): {deal_idx: (rows, extras)}} по ПРОВЕРЕННЫМ медиапланам.
+
+    «Проверен» — не колонка, а действие: конструктор пишет в журнал `verify_media_plan`
+    по конкретной версии и двигает сделку со стадии. Поэтому версия ищется по журналу, а
+    не по статусу МП: статусы (draft/review/approved) — это согласование с клиентом,
+    другая ось. Непроверенный черновик конвейера намеренно игнорируется: в нём те же
+    плановые цифры, только лишний источник.
+
+    Ключ второго уровня — plan_deal_idx: ячейка, разбитая кнопкой «+ сделка», может быть
+    проверена частично, и подставлять надо ровно проверенные сделки, а остальные считать
+    из плана (см. _parts).
+    """
+    from app.models import AuditLog
+    from app.sales.models import SalesDeal, SalesMediaPlan
+    from app.routers.media_plans import _plan_full, _names
+
+    line_ids = [l.id for l in lines]
+    if not line_ids:
+        return {}
+    deals = (db.query(SalesDeal)
+             .filter(SalesDeal.year_plan_line_id.in_(line_ids),
+                     SalesDeal.plan_month.isnot(None)).all())
+    if not deals:
+        return {}
+    plans = (db.query(SalesMediaPlan)
+             .filter(SalesMediaPlan.deal_id.in_([d.id for d in deals])).all())
+    if not plans:
+        return {}
+    ok = {x for (x,) in db.query(AuditLog.entity_id)
+          .filter(AuditLog.action == "verify_media_plan",
+                  AuditLog.entity_type == "media_plan",
+                  AuditLog.entity_id.in_([p.id for p in plans])).all()}
+    best: dict = {}                      # deal_id → проверенный МП старшей версии
+    for p in plans:
+        if p.id not in ok:
+            continue
+        cur = best.get(p.deal_id)
+        if cur is None or (p.version or 0) > (cur.version or 0):
+            best[p.deal_id] = p
+    if not best:
+        return {}
+
+    names = _names(db)
+    out: dict = {}
+    for d in deals:
+        p = best.get(d.id)
+        if p is None:
+            continue
+        full = _plan_full(db, p, names)
+        cell = out.setdefault((d.year_plan_line_id, d.plan_month), {})
+        rows, extras = cell.setdefault(int(d.plan_deal_idx or 0), ([], []))
+        rows.extend(full["rows"])
+        extras.extend(full["extras"])
+    return out
 
 
 # ── сбор данных плана ────────────────────────────────────────────────────
-def collect(db, lines, svc, add, names) -> dict:
+def collect(db, lines, svc, add, names, verified=None) -> dict:
     """Разложить строки-бренды плана по месяцам через общий сборщик МП.
 
     Возвращает бренды со списком услуг (сумма/показы по 12 месяцам), разовые услуги
@@ -133,7 +215,7 @@ def collect(db, lines, svc, add, names) -> dict:
             if not items:
                 continue
             months_on.add(m)
-            rows, exs = _parts(line, m, svc, add, items)
+            rows, exs = _parts(line, m, svc, add, items, verified)
             for r in rows:
                 pos = r.get("position") or "—"
                 # У услуги с раздельным прайсом (web/app) это РАЗНЫЕ тарифы — сливать их
@@ -201,7 +283,116 @@ def _caption(ws, r, c1, c2, text, rule_to=None):
     return cap
 
 
-def sheet_summary(ws, plan, data, names, vat_rate):
+# ── сводная таблица показателей (верх листа «Сводная») ───────────────────
+# Заменила три блока (ПЛАН · СВОДКА ПО БРЕНДАМ · ИТОГО ЗА ГОД) по решению владельца
+# 2026-08-22: показатели переехали сюда с листа «Годовой МП», а справочная часть ушла
+# совсем — рекламодатель и период и так стоят в полосе заголовка.
+#
+# Считается ФОРМУЛАМИ по строкам бренда на листе «Годовой МП», а не числами: правка
+# объёма или скидки прямо в книге обязана пересчитать сводную. Числом остаётся только
+# «Объём показов» — он суммирует ТОЛЬКО услуги с моделью CPM (у фикса и пакетов в той
+# же колонке лежат штуки размещений, и сложение дало бы бессмысленное число).
+#
+# (ключ, колонка, заголовок, формат). Ширина колонки «Флайты» — две клетки.
+KPI_HEAD = [("brand", 2, "Бренд", "@"), ("flights", 3, "Флайты", "@"),
+            ("imp", 5, "Объём показов", ACC), ("nodisc", 6, "Стоимость до НДС", ACC),
+            ("disc_pct", 7, "Скидка, %", PCT), ("disc_rub", 8, "Скидка, руб", ACC),
+            ("net", 9, "Итоговая цена до НДС", ACC), ("gross", 10, "Итоговая цена с НДС", ACC),
+            ("cpm", 11, "CPM", MONEY), ("cpc", 12, "CPC", MONEY), ("cpo", 13, "CPO", MONEY),
+            ("revenue", 14, "Доход", ACC), ("roi", 15, "ROI", "0%")]
+
+
+def _kpi_table(ws, r, brands, year_ref, vat_rate):
+    """Таблица показателей по брендам. Возвращает нижнюю строку (ИТОГО)."""
+    sheet, cols, groups = year_ref or (None, {}, [])
+    # Ключ регистронезависимый: полоса бренда на листе закупки пишется капсом
+    # (капсом), а в сводке бренд стоит как в справочнике (обычным регистром).
+    by_brand = {name.casefold(): (a, b) for name, a, b in groups}
+
+    def s(field, name):
+        """SUM по строкам бренда на листе закупки. Нет листа или колонки — None."""
+        col, rng = cols.get(field), by_brand.get((name or "").casefold())
+        if not (sheet and col and rng):
+            return None
+        return f"SUM('{sheet}'!{col}{rng[0]}:{col}{rng[1]})"
+
+    hdr = _f(10, True, WHITE)
+    nt = Border(left=_dash, right=_dash, bottom=_dash)
+    for key, c, label, _fmt in KPI_HEAD:
+        c2 = c + 1 if key == "flights" else c
+        _span(ws, r, c, c2, label, font=hdr, fill=HEAD, align=CTR, border=nt)
+    ws.row_dimensions[r].height = 41.4
+
+    first = r + 1
+    for b in brands:
+        r += 1
+        ws.row_dimensions[r].height = 26
+        name = b["name"]
+        active = sorted({m for sv in b["services"] for m in range(12) if sv["cost"][m]})
+        vol = sum(sum(sv["vol"]) for sv in b["services"] if sv.get("is_cpm"))
+        cost = sum(sum(sv["cost"]) for sv in b["services"])
+        nodisc, disc, net = s("net_nodisc", name), s("disc_rub", name), s("net", name)
+        gross, clicks = s("gross", name), s("clicks", name)
+        checks, revenue = s("checks", name), s("revenue", name)
+        vals = {
+            "brand": name,
+            "flights": flight_label(active),
+            "imp": vol,
+            # Без листа закупки (в плане одни доп. услуги) остаются суммы плана: они
+            # уже итоговые, поэтому скидка нулевая, а не неизвестная.
+            "nodisc": f"={nodisc}" if nodisc else cost,
+            "disc_rub": f"={disc}" if disc else 0,
+            "disc_pct": f'=IF(F{r}>0,H{r}/F{r},0)',
+            "net": f"={net}" if net else cost,
+            "gross": f"={gross}" if gross else round(cost * (1 + vat_rate), 2),
+            # CPM/CPC/CPO — от цены БЕЗ НДС (решение владельца): построчно на листе
+            # «Годовой МП» они считаются так же, и две цифры под одним именем в одной
+            # книге расходиться не должны.
+            "cpm": f'=IF(E{r}>0,I{r}/E{r}*1000,"")',
+            "cpc": f'=IF({clicks}>0,I{r}/{clicks},"")' if clicks else None,
+            "cpo": f'=IF({checks}>0,I{r}/{checks},"")' if checks else None,
+            "revenue": f"={revenue}" if revenue else None,
+            # ROI считается от стоимости С НДС — столько денег реально уходит клиенту.
+            "roi": f'=IF(J{r}>0,(N{r}-J{r})/J{r},"")',
+        }
+        for key, c, _l, fmt in KPI_HEAD:
+            c2 = c + 1 if key == "flights" else c
+            _span(ws, r, c, c2, vals.get(key),
+                  font=_f(9, key in ("brand", "net")), fill=GREY_BG,
+                  align=LEFT if key in ("brand", "flights") else RIGHT, fmt=fmt)
+    last = r
+
+    r += 1
+    ws.row_dimensions[r].height = 30
+    def col_sum(c):
+        return f"=SUM({get_column_letter(c)}{first}:{get_column_letter(c)}{last})"
+
+    def all_rows(field):
+        parts = [s(field, b["name"]) for b in brands]
+        parts = [p for p in parts if p]
+        return "+".join(parts) if parts else None
+
+    clicks_all, checks_all = all_rows("clicks"), all_rows("checks")
+    totals = {
+        "brand": "ИТОГО", "flights": f"{len({m for b in brands for sv in b['services'] for m in range(12) if sv['cost'][m]})} мес.",
+        "imp": col_sum(5), "nodisc": col_sum(6), "disc_rub": col_sum(8),
+        "disc_pct": f'=IF(F{r}>0,H{r}/F{r},0)',
+        "net": col_sum(9), "gross": col_sum(10), "revenue": col_sum(14),
+        # Удельные показатели в итоге считаются ВЗВЕШЕННО, а не суммой по брендам:
+        # сумма трёх CPO дала бы «2700 ₽ за заказ» — правдоподобную чепуху.
+        "cpm": f'=IF(E{r}>0,I{r}/E{r}*1000,"")',
+        "cpc": f'=IF({clicks_all}>0,I{r}/({clicks_all}),"")' if clicks_all else None,
+        "cpo": f'=IF({checks_all}>0,I{r}/({checks_all}),"")' if checks_all else None,
+        "roi": f'=IF(J{r}>0,(N{r}-J{r})/J{r},"")',
+    }
+    for key, c, _l, fmt in KPI_HEAD:
+        c2 = c + 1 if key == "flights" else c
+        _span(ws, r, c, c2, totals.get(key), font=_f(9, True, NAVY_700), fill=WHITE,
+              align=LEFT if key in ("brand", "flights") else RIGHT, fmt=fmt)
+    return r
+
+
+def sheet_summary(ws, plan, data, names, vat_rate, year_ref=None):
     ws.sheet_view.showGridLines = False
     ws.column_dimensions[get_column_letter(C_PAD_L)].width = 2.9
     ws.column_dimensions[get_column_letter(C_NAME)].width = 35.6
@@ -221,40 +412,14 @@ def sheet_summary(ws, plan, data, names, vat_rate):
 
     _header_band(ws, plan, adv, agency, len(brands))
 
-    # ── три блока в один ряд: ПЛАН · СВОДКА ПО БРЕНДАМ · ИТОГО ЗА ГОД.
-    # Раскладка эталона: справочные данные читаются одним взглядом, а матрица
-    # ниже начинается сразу под самым высоким из блоков.
-    _caption(ws, 9, C_NAME, C_NAME + 1, "ПЛАН")
-    _caption(ws, 9, 5, 9, "СВОДКА ПО БРЕНДАМ ЗА ГОД", rule_to=10)
-    _caption(ws, 9, 12, C_TOTAL, "ИТОГО ЗА ГОД")
+    # ── одна широкая таблица показателей по брендам на всю ширину листа.
+    _caption(ws, 9, C_NAME, C_NAME + 1, "ИТОГО", rule_to=C_TOTAL)
     ws.row_dimensions[9].height = 15
 
-    ident = [("Агентство", agency), ("Рекламодатель", adv), ("Брендов", len(brands)),
-             ("Период размещения", f"{plan.year}-01 — {plan.year}-12")]
-    for i, (k, v) in enumerate(ident):
-        _put(ws, 10 + i, C_NAME, k, font=_f(10, True), fill=GREY_BG, align=LEFT)
-        _put(ws, 10 + i, C_NAME + 1, v, font=_f(10), fill=GREY_BG, align=LEFT)
-
-    summary_bottom = _brand_summary(ws, 10, brands, data["months"])
+    summary_bottom = _kpi_table(ws, 10, brands, year_ref, vat_rate)
 
     matrix_top = max(13, summary_bottom) + 2
     total_row = _matrix(ws, matrix_top, brands)
-
-    # ── ИТОГО ЗА ГОД: ссылки на строку портфеля, поэтому блок пишется после
-    # матрицы, хотя стоит выше неё.
-    tl = get_column_letter(C_TOTAL)
-    extras_sum = sum(e["total"] for e in data["extras"])
-    net_ref = f"{tl}{total_row}" + (f"+{_num(extras_sum)}" if extras_sum else "")
-    for i, (k, formula) in enumerate([
-            ("Стоимость до НДС", f"={net_ref}"),
-            (f"НДС {round(vat_rate * 100)}%", f"=({net_ref})*{vat_rate}"),
-            ("Стоимость с НДС", f"=({net_ref})*{1 + vat_rate}")]):
-        r = 11 + i
-        _span(ws, r, 12, 13, k, font=_f(12, True), fill=GREY_BG, align=RIGHT)
-        # Белая плашка под крупной суммой: подложка листа серая, и цифра, ради
-        # которой открывают лист, должна с неё выступать.
-        _span(ws, r, 14, C_TOTAL, formula, font=_f(14, color="000000"), fill=WHITE,
-              align=CTR, fmt=RUB)
 
     if data["extras"]:
         _extras_table(ws, total_row + 3, data["extras"])
@@ -643,7 +808,7 @@ def sheet_metrics(ws, groups, cols):
 SUB_MONTH_FILL, SUB_BRAND_FILL = "EDF0F7", "DFE4F0"
 
 
-def year_rows(lines, svc, add, names) -> tuple:
+def year_rows(lines, svc, add, names, verified=None) -> tuple:
     """Строки листа «Годовой МП»: бренд → месяц, с подытогами обоих уровней.
 
     Порядок бренд→месяц выбран владельцем: лист читается как история каждого бренда за
@@ -665,7 +830,7 @@ def year_rows(lines, svc, add, names) -> tuple:
             items = month_items(line, m)
             if not items:
                 continue
-            r, e = _parts(line, m, svc, add, items)
+            r, e = _parts(line, m, svc, add, items, verified)
             period = f"{line.year}-{m + 1:02d}"
             for row in r:
                 row["period"] = period
@@ -787,6 +952,60 @@ def highlight_discounts(ws) -> int:
     return n
 
 
+# Шапка шаблона на листе «Годовой МП» вырезается целиком (решение владельца 2026-08-22):
+# идентификация плана есть в полосе заголовка, таргетинги — на «Брифе», а показатели
+# переехали на «Сводную». Строки 9–17 шаблона — это блок «БРИФ | Таргетинги» слева,
+# «ИТОГО» справа; строка 18 — «БАЗОВЫЕ УСЛУГИ:», с неё лист и должен начинаться.
+# На МЕСЯЧНЫХ листах шапка остаётся: там она единственное место, где видно бриф.
+TPL_HEAD_FIRST, TPL_HEAD_COUNT = 9, 9
+
+
+def _drop_rows(ws, first: int, count: int):
+    """Удалить строки вместе с их объединениями и высотами.
+
+    `delete_rows` в openpyxl переносит только значения: объединённые диапазоны и высоты
+    строк остаются на прежних номерах, поэтому после удаления шапка «сползает» на чужие
+    строки и файл выглядит битым. Здесь и то и другое пересчитывается вручную.
+    Вызывать ДО рендера: якоря таблицы ищутся по токенам, а не по номерам строк."""
+    last = first + count - 1
+    keep = []
+    for mr in list(ws.merged_cells.ranges):
+        if mr.min_row > last:                       # ниже вырезанного — поднимается
+            keep.append((mr.min_col, mr.min_row - count, mr.max_col, mr.max_row - count))
+        elif mr.max_row < first:                    # выше — остаётся как есть
+            keep.append((mr.min_col, mr.min_row, mr.max_col, mr.max_row))
+        # пересекающие вырезаемый блок исчезают вместе с ним
+    heights = {r: d.height for r, d in ws.row_dimensions.items() if d.height is not None}
+
+    for mr in list(ws.merged_cells.ranges):
+        ws.unmerge_cells(str(mr))
+    ws.delete_rows(first, count)
+    for c1, r1, c2, r2 in keep:
+        ws.merge_cells(start_row=r1, start_column=c1, end_row=r2, end_column=c2)
+    for r in list(ws.row_dimensions):
+        ws.row_dimensions[r].height = None
+    for r, h in heights.items():
+        if r < first:
+            ws.row_dimensions[r].height = h
+        elif r > last:
+            ws.row_dimensions[r - count].height = h
+
+
+def _render_plain(ws, full, rows, extras):
+    """Лист «Годовой МП»: шапка шаблона вырезана, таблица начинается сразу под полосой.
+
+    Возвращает (имя листа, колонки, диапазоны брендов) — по ним «Сводная» строит свои
+    формулы. Отдаём наружу, а не считаем заново: номера строк известны только рендеру."""
+    from app.routers.media_plans import render_mp_sheet
+
+    _drop_rows(ws, TPL_HEAD_FIRST, TPL_HEAD_COUNT)
+    sink = []
+    render_mp_sheet(ws, full, rows, extras, row_hook=collecting_hook(sink))
+    highlight_discounts(ws)
+    cols, groups = sink[0] if sink else ({}, [])
+    return ws.title, cols, groups
+
+
 def _render_with_metrics(ws, full, rows, extras):
     """Отрисовать лист закупки и заменить левую часть шапки блоком показателей.
 
@@ -810,7 +1029,9 @@ def _render_with_metrics(ws, full, rows, extras):
 def build_workbook(db, plan, lines, svc, add, names, template_path, vat_rate):
     from openpyxl import load_workbook
 
-    data = collect(db, lines, svc, add, names)
+    # Источник по каждой ячейке: проверенный МП, если он есть, иначе план.
+    verified = verified_parts(db, lines)
+    data = collect(db, lines, svc, add, names, verified)
     wb = load_workbook(template_path)
     tpl = wb["МП"] if "МП" in wb.sheetnames else wb.active
 
@@ -837,18 +1058,24 @@ def build_workbook(db, plan, lines, svc, add, names, template_path, vat_rate):
             },
         }
 
+    # Книга смешанная, и об этом надо сказать в самой книге: месяцы с проверенным МП
+    # идут по нему, остальные по плану. Без этой строки расхождение с плановой
+    # страницей выглядит как ошибка выгрузки.
+    src_note = (f" · по проверенным МП: {len(verified)} мес., остальные по плану"
+                if verified else "")
+
     # Лист «Годовой МП» — весь год одним списком в макете месячного МП.
-    yrows, yextras = year_rows(lines, svc, add, names)
-    year_ws = None
+    yrows, yextras = year_rows(lines, svc, add, names, verified)
+    year_ws, year_ref = None, None
     if yrows:
         year_ws = wb.copy_worksheet(tpl)
         year_ws.title = "Годовой МП"
-        _render_with_metrics(year_ws,
-                             head(str(plan.year),
-                                  f"SIMB-AD · {plan.year} · брендов: {len(data['brands'])} · "
-                                  f"месяцев с закупкой: {len(data['months'])} · "
-                                  f"таргетинги — на листе «Бриф»"),
-                             yrows, yextras)
+        year_ref = _render_plain(year_ws,
+                                 head(str(plan.year),
+                                      f"SIMB-AD · {plan.year} · брендов: {len(data['brands'])} · "
+                                      f"месяцев с закупкой: {len(data['months'])} · "
+                                      f"таргетинги — на листе «Бриф»{src_note}"),
+                                 yrows, yextras)
 
     for m in data["months"]:
         period = f"{plan.year}-{m + 1:02d}"
@@ -857,7 +1084,7 @@ def build_workbook(db, plan, lines, svc, add, names, template_path, vat_rate):
             items = month_items(line, m)
             if not items:
                 continue
-            r, e = _parts(line, m, svc, add, items)
+            r, e = _parts(line, m, svc, add, items, verified)
             if not (r or e):
                 continue
             name = names["brand"].get(line.brand_id) or "Без бренда"
@@ -878,10 +1105,11 @@ def build_workbook(db, plan, lines, svc, add, names, template_path, vat_rate):
     wb.remove(tpl)
     summary = wb.create_sheet("Сводная")
     brief = wb.create_sheet("Бриф")
-    sheet_summary(summary, plan, data, names, vat_rate)
+    sheet_summary(summary, plan, data, names, vat_rate, year_ref)
     sheet_brief(brief, plan, data, names)
-    # Порядок: Сводная → Бриф → Годовой МП → месяцы (создавались вразнобой, переставляем).
-    head_sheets = [s for s in (summary, brief, year_ws) if s is not None]
+    # Порядок: Сводная → Годовой МП → Бриф → месяцы (создавались вразнобой, переставляем).
+    # Как в утверждённом файле владельца: за сводкой сразу идёт то, из чего она считается.
+    head_sheets = [s for s in (summary, year_ws, brief) if s is not None]
     wb._sheets = head_sheets + [s for s in wb._sheets if s not in head_sheets]
     try:
         wb.calculation.fullCalcOnLoad = True
