@@ -13,6 +13,49 @@ export const UI = "'Manrope', system-ui, sans-serif"
 // иначе слои разъезжаются и «выпадающие списки уходят под элементы».
 export const Z = { base: 1, sticky: 20, dropdown: 3000, overlay: 10000, toast: 20000 }
 
+// ─── Modal — модальная панель ──────────────────────────────────────────
+// Геометрия та же, что у формы создания сделки (радиус 18, та же тень и riseIn):
+// заводить третий визуальный язык для окон незачем. Нужна там, где решение
+// принимается по списку, который в window.confirm не читается.
+// Закрытие — кликом строго по подложке (e.target === e.currentTarget), иначе
+// клик по содержимому закрывал бы окно.
+export function Modal({ title, summary, footer, width = 760, onClose, children }) {
+  return (
+    <div onClick={e => { if (e.target === e.currentTarget) onClose?.() }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(28,36,51,.32)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+        overflow: 'auto', fontFamily: UI,
+      }}>
+      <div style={{
+        width, maxWidth: '100%', maxHeight: '88vh', margin: 'auto', display: 'flex',
+        flexDirection: 'column', background: 'var(--bg-card)', borderRadius: 18,
+        boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)',
+        animation: 'riseIn .28s cubic-bezier(0.22,1,0.36,1) both',
+      }}>
+        <style>{`@keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}`}</style>
+        <div style={{
+          padding: '14px 20px', borderBottom: '1px solid var(--border-card)',
+          fontSize: 16, fontWeight: 700, color: 'var(--text-primary)',
+        }}>{title}</div>
+        {summary != null && (
+          <div style={{
+            padding: '10px 20px', borderBottom: '1px solid var(--border-card)',
+            fontSize: 13, color: 'var(--text-secondary)', background: 'var(--bg-subtle)',
+          }}>{summary}</div>
+        )}
+        <div style={{ padding: '10px 20px', overflowY: 'auto', flex: 1 }}>{children}</div>
+        {footer != null && (
+          <div style={{
+            padding: '12px 20px', borderTop: '1px solid var(--border-card)',
+            display: 'flex', gap: 8, alignItems: 'center',
+          }}>{footer}</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── PortalPopover — выпадашка, которую НИЧТО не обрежет ────────────────
 // Рендерится порталом в document.body с position:fixed от прямоугольника триггера,
 // поэтому никакой родительский overflow / transform / стекинг-контекст её не клипает

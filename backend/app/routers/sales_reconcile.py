@@ -66,14 +66,25 @@ def _our_deal_counts(db: Session, model) -> dict[int, int]:
 
 
 def _bx_deal_count(cid: str, refresh: bool = False) -> int:
-    """refresh=True обязателен перед удалением компании: кэш живёт 5 минут, а решение
-    «сделок ноль, можно удалять» на устаревшем счётчике необратимо."""
+    """Сколько сделок висит на компании Битрикса.
+
+    refresh=True обязателен перед удалением компании: кэш живёт 5 минут, а решение
+    «сделок ноль, можно удалять» на устаревшем счётчике необратимо.
+
+    ГРАБЛЯ (измерено 2026-08-23): `meta.total` приходит ТОЛЬКО когда выборка пуста.
+    Как только сделки есть, вместо него отдаётся `hasMore`/`nextAfterId`, и прежнее
+    `meta.total or 0` возвращало НОЛЬ для любой непустой компании — то есть защита
+    «удаляем только пустые» пропускала вообще всё. Поэтому отсутствие total значит
+    «сделки есть», и считать их надо перебором.
+    """
     now = time.time()
     hit = _DEAL_COUNT_CACHE.get(cid)
     if hit and not refresh and now - hit[0] < _TTL:
         return hit[1]
     d = vibecode_get("/deals", {"filter[companyId]": cid, "limit": 1})
-    total = (d.get("meta") or {}).get("total") or 0
+    total = (d.get("meta") or {}).get("total")
+    if total is None:
+        total = len(list_deal_ids_for_company(cid))
     _DEAL_COUNT_CACHE[cid] = (now, total)
     return total
 
@@ -351,8 +362,13 @@ def consolidate(kind: str, data: ConsolidateIn, db: Session = Depends(get_db),
     переименовывает главную под наш стандарт, редундантные → XXX_старое имя (НЕ удаляет).
     Перед записью пишет бэкап на персистентный том И в лог; при сбое на середине
     сообщает, что уже выполнено (откат по бэкапу вручную — Битрикс без транзакций)."""
+    return _do_consolidate(db, _kind_or_400(kind), kind, data, current_user)
+
+
+def _do_consolidate(db: Session, model, kind: str, data: ConsolidateIn, current_user):
+    """Тело склейки. Вынесено из эндпоинта, чтобы пакетный прогон выполнял ровно
+    ту же последовательность, а не свою копию логики."""
     import json
-    model = _kind_or_400(kind)
     _r, row, links = _record_and_links(db, model, kind, data.our_id)
     primary, redundant = _consolidate_plan(kind, row, links, data.primary_bx_id, with_counts=False)
     std = primary["rename_to"]
@@ -538,7 +554,11 @@ def create_in_bitrix(kind: str, data: CreateInBitrixIn, db: Session = Depends(ge
     Имя — тот же стандарт, что и при переименовании (Short | ENG | Рус | Холдинг),
     иначе созданная запись сразу разойдётся с остальными.
     """
-    model = _kind_or_400(kind)
+    return _do_create(db, _kind_or_400(kind), kind, data, current_user)
+
+
+def _do_create(db: Session, model, kind: str, data: CreateInBitrixIn, current_user):
+    """Тело создания. Вынесено ради пакетного прогона — см. _do_consolidate."""
     r, row, links = _record_and_links(db, model, kind, data.our_id)
     if links:
         raise HTTPException(status_code=400, detail="Запись уже связана с компанией Битрикса")
@@ -581,7 +601,11 @@ def rename_to_standard(kind: str, data: RenameIn, db: Session = Depends(get_db),
     Склейка делает это попутно, но требует ≥2 компаний. Агентству с единственной
     привязкой переименование было недоступно вовсе — а таких большинство.
     """
-    model = _kind_or_400(kind)
+    return _do_rename(db, _kind_or_400(kind), kind, data, current_user)
+
+
+def _do_rename(db: Session, model, kind: str, data: RenameIn, current_user):
+    """Тело переименования. Вынесено ради пакетного прогона — см. _do_consolidate."""
     _r, row, links = _record_and_links(db, model, kind, data.our_id)
     if not links:
         raise HTTPException(status_code=400, detail="Запись не связана с Битриксом")
@@ -600,6 +624,127 @@ def rename_to_standard(kind: str, data: RenameIn, db: Session = Depends(get_db),
         log_action(db, current_user, "bx_rename", kind, data.our_id,
                    details=f"переименовано {len(renamed)} → «{std}»")
     return {"renamed": renamed, "unchanged": unchanged, "standard": std}
+
+
+# ─── Пакетный прогон по выбранным записям ────────────────────────────────────
+# Одна кнопка вместо трёх на каждую запись: 16 склеек + 62 переименования + 6
+# созданий вручную — это 84 нажатия, каждое со своим окном. Удаление в пакет
+# намеренно НЕ входит: оно необратимо и остаётся осознанным отдельным шагом.
+
+class SyncItemIn(BaseModel):
+    our_id: int
+    primary_bx_id: Optional[str] = None
+
+
+class SyncIn(BaseModel):
+    items: list[SyncItemIn]
+
+
+def _sync_plan(db: Session, model, kind: str, items: list[SyncItemIn]) -> list[dict]:
+    """Что произойдёт с каждой выбранной записью. Только читает.
+
+    Главная компания берётся ТОЛЬКО из явного выбора звёздочкой. Порядок привязок
+    в базе не задан (`_links_by_our` читает без order_by), поэтому «первая» — это
+    произвольная: у Roki она указывает на компанию с нулём сделок, и пакетный
+    прогон молча увёз бы туда все сделки. Без выбора запись пропускается.
+    """
+    titles = {c["id"]: c.get("title") or "" for c in _fetch_companies(kind)}
+    plan = []
+    for it in items:
+        r = db.query(model).filter(model.id == it.our_id).first()
+        if r is None:
+            plan.append({"our_id": it.our_id, "name": f"#{it.our_id}",
+                         "action": "skip", "reason": "запись не найдена"})
+            continue
+        _r, row, links = _record_and_links(db, model, kind, it.our_id)
+        name = r.short_name or r.name
+        std = standard_name(row)
+        if not links:
+            plan.append({"our_id": it.our_id, "name": name, "action": "create", "now": std})
+        elif len(links) == 1:
+            cur = titles.get(links[0], "")
+            if cur.strip() == std.strip():
+                plan.append({"our_id": it.our_id, "name": name, "action": "nothing",
+                             "reason": "имя уже по стандарту"})
+            else:
+                plan.append({"our_id": it.our_id, "name": name, "action": "rename",
+                             "bx_id": links[0], "was": cur, "now": std})
+        elif not it.primary_bx_id:
+            plan.append({"our_id": it.our_id, "name": name, "action": "skip",
+                         "reason": f"компаний {len(links)}, главная не выбрана звёздочкой"})
+        elif it.primary_bx_id not in links:
+            plan.append({"our_id": it.our_id, "name": name, "action": "skip",
+                         "reason": "выбранная главная не привязана к этой записи"})
+        else:
+            primary, redundant = _consolidate_plan(kind, row, links, it.primary_bx_id,
+                                                   with_counts=True)
+            plan.append({"our_id": it.our_id, "name": name, "action": "consolidate",
+                         "primary": primary, "redundant": redundant, "now": std,
+                         "deals_to_move": sum((x["deal_count"] or 0) for x in redundant)})
+    return plan
+
+
+@router.post("/{kind}/sync/preview")
+def sync_preview(kind: str, data: SyncIn, db: Session = Depends(get_db), _=Depends(_can_edit)):
+    """Что будет сделано с выбранными записями. Читает Битрикс, ничего не меняет."""
+    model = _kind_or_400(kind)
+    plan = _sync_plan(db, model, kind, data.items)
+    counts: dict[str, int] = {}
+    for p in plan:
+        counts[p["action"]] = counts.get(p["action"], 0) + 1
+    return {"plan": plan, "counts": counts,
+            "deals_to_move": sum(p.get("deals_to_move", 0) for p in plan)}
+
+
+@router.post("/{kind}/sync")
+def sync_run(kind: str, data: SyncIn, db: Session = Depends(get_db),
+             current_user=Depends(_can_edit)):
+    """ЗАПИСЬ В ПРОД-БИТРИКС по всем выбранным записям.
+
+    Сбой на одной записи НЕ останавливает остальные: иначе половина выбранного
+    осталась бы необработанной, а оператор увидел бы только текст ошибки и не знал,
+    докуда дошло. Каждая запись отчитывается отдельно — сделано или почему нет.
+    """
+    model = _kind_or_400(kind)
+    plan = {p["our_id"]: p for p in _sync_plan(db, model, kind, data.items)}
+    done, failed, skipped = [], [], []
+    for it in data.items:
+        p = plan.get(it.our_id)
+        if p is None:
+            continue
+        if p["action"] in ("skip", "nothing"):
+            skipped.append({"our_id": it.our_id, "name": p["name"],
+                            "reason": p.get("reason", "")})
+            continue
+        try:
+            if p["action"] == "consolidate":
+                res = _do_consolidate(db, model, kind,
+                                      ConsolidateIn(our_id=it.our_id,
+                                                    primary_bx_id=it.primary_bx_id),
+                                      current_user)
+                detail = (f"переброшено сделок {res['moved_deals']}, "
+                          f"помечено XXX_ {res['retired']}, имя «{res['rename_to']}»")
+            elif p["action"] == "rename":
+                res = _do_rename(db, model, kind, RenameIn(our_id=it.our_id), current_user)
+                detail = f"переименовано {len(res['renamed'])} → «{res['standard']}»"
+            else:
+                res = _do_create(db, model, kind,
+                                 CreateInBitrixIn(our_id=it.our_id), current_user)
+                detail = f"создана компания {res['bx_id']} «{res['title']}»"
+            done.append({"our_id": it.our_id, "name": p["name"],
+                         "action": p["action"], "detail": detail})
+        except HTTPException as e:
+            db.rollback()
+            failed.append({"our_id": it.our_id, "name": p["name"],
+                           "error": str(e.detail)[:400]})
+        except Exception as e:
+            db.rollback()
+            logger.error("sync_run %s our_id=%s: %s", kind, it.our_id, e)
+            failed.append({"our_id": it.our_id, "name": p["name"], "error": repr(e)[:200]})
+    log_action(db, current_user, "bx_sync_batch", kind, None,
+               details=(f"выбрано {len(data.items)}: сделано {len(done)}, "
+                        f"пропущено {len(skipped)}, ошибок {len(failed)}"))
+    return {"done": done, "skipped": skipped, "failed": failed}
 
 
 class AutoLinkIn(BaseModel):

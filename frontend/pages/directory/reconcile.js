@@ -5,9 +5,88 @@ import Navbar from '@/components/Navbar'
 import api, { auth } from '@/lib/api'
 import { can } from '@/components/Navbar'
 import SectionTabs from '@/components/SectionTabs'
+import { Modal, primaryBtn } from '@/components/salesTableKit'
 const THRESHOLDS = [['Точное', 0.95], ['Высокое', 0.80], ['Среднее', 0.60]]
 
 const btn = { padding: '5px 10px', borderRadius: 8, border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', fontSize: 13 }
+
+// ── Пакетный прогон: план и отчёт ────────────────────────────────────────────
+// Показываем панелью, а не window.confirm: решение принимается по списку из
+// десятков строк, а системное окно такой список не показывает читаемо.
+const ACT_LABEL = { consolidate: 'свести', rename: 'переименовать', create: 'создать',
+  nothing: 'не требуется', skip: 'пропустить' }
+const ACT_COLOR = { consolidate: 'var(--warning-text)', rename: 'var(--text-primary)',
+  create: 'var(--income)', nothing: 'var(--text-faint)', skip: 'var(--text-faint)' }
+const planRow = { padding: '8px 0', borderBottom: '1px solid var(--border-row)' }
+const planNote = { fontSize: 12, color: 'var(--text-secondary)', marginTop: 3, lineHeight: 1.5 }
+const dim = { color: 'var(--text-faint)' }
+
+function SyncPlan({ plan, counts, dealsToMove, busy, onRun, onClose }) {
+  const willWrite = (counts.consolidate || 0) + (counts.rename || 0) + (counts.create || 0)
+  return (
+    <Modal title="Что будет сделано в Битриксе" onClose={busy ? undefined : onClose}
+      summary={<>свести {counts.consolidate || 0} · переименовать {counts.rename || 0} · создать {counts.create || 0}
+        {!!counts.nothing && <> · не требуется {counts.nothing}</>}
+        {!!counts.skip && <> · пропустить {counts.skip}</>}
+        {!!dealsToMove && <> · переедет сделок <b>{dealsToMove}</b></>}</>}
+      footer={<>
+        <span style={{ ...dim, fontSize: 12, flex: 1 }}>
+          Запись в боевой Битрикс. Удаление помеченных XXX_ в пакет не входит.
+        </span>
+        <button style={btn} onClick={onClose} disabled={busy}>Отмена</button>
+        <button style={primaryBtn} onClick={onRun} disabled={busy || !willWrite}>
+          {busy ? 'Выполняю…' : `Выполнить (${willWrite})`}
+        </button>
+      </>}>
+      {plan.map(p => (
+        <div key={p.our_id} style={planRow}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
+            <span style={{ fontWeight: 600, minWidth: 150 }}>{p.name}</span>
+            <span style={{ color: ACT_COLOR[p.action], fontSize: 12, fontWeight: 600 }}>{ACT_LABEL[p.action]}</span>
+          </div>
+          {p.action === 'consolidate' && (
+            <div style={planNote}>
+              <div>главная: {p.primary.title} <span style={dim}>#{p.primary.bx_id} · {p.primary.deal_count} сд.</span></div>
+              <div>→ имя: <b>{p.primary.rename_to}</b>, получит +{p.deals_to_move} сделок</div>
+              {p.redundant.map(r => <div key={r.bx_id} style={dim}>• {r.title} ({r.deal_count} сд.) → {r.rename_to}</div>)}
+            </div>
+          )}
+          {p.action === 'rename' && <div style={planNote}>{p.was} → <b>{p.now}</b></div>}
+          {p.action === 'create' && <div style={planNote}>новая компания: <b>{p.now}</b></div>}
+          {(p.action === 'skip' || p.action === 'nothing') && <div style={planNote}>{p.reason}</div>}
+        </div>
+      ))}
+    </Modal>
+  )
+}
+
+function SyncReport({ report, onClose }) {
+  const { done, skipped, failed } = report
+  return (
+    <Modal title="Синхронизация завершена" onClose={onClose}
+      summary={<>сделано {done.length} · пропущено {skipped.length} · ошибок {failed.length}</>}
+      footer={<><span style={{ flex: 1 }} /><button style={primaryBtn} onClick={onClose}>Закрыть</button></>}>
+      {failed.map(f => (
+        <div key={`f${f.our_id}`} style={planRow}>
+          <b>{f.name}</b> <span style={{ color: 'var(--danger)', fontSize: 12, fontWeight: 600 }}>ошибка</span>
+          <div style={planNote}>{f.error}</div>
+        </div>
+      ))}
+      {done.map(d => (
+        <div key={`d${d.our_id}`} style={planRow}>
+          <b>{d.name}</b> <span style={{ color: 'var(--income)', fontSize: 12, fontWeight: 600 }}>{ACT_LABEL[d.action]}</span>
+          <div style={planNote}>{d.detail}</div>
+        </div>
+      ))}
+      {skipped.map(s => (
+        <div key={`s${s.our_id}`} style={planRow}>
+          <b>{s.name}</b> <span style={{ ...dim, fontSize: 12 }}>пропущено</span>
+          <div style={planNote}>{s.reason}</div>
+        </div>
+      ))}
+    </Modal>
+  )
+}
 
 // Поиск компании Битрикса для добавления ещё одной привязки к записи.
 function AddCompany({ options, onPick, disabled }) {
@@ -51,9 +130,12 @@ export default function Reconcile() {
   const [dealCounts, setDealCounts] = useState({})   // bx_id -> кол-во сделок Битрикса (грузится отдельно)
   const [countsLoading, setCountsLoading] = useState(false)
   const [dragOver, setDragOver] = useState(null)     // ключ карточки под курсором при перетаскивании
+  const [sel, setSel] = useState({})                 // our_id -> true, выбор для пакетного прогона
+  const [plan, setPlan] = useState(null)             // предпросмотр пакетного прогона
+  const [report, setReport] = useState(null)         // отчёт после прогона
 
   const load = async (refresh = false) => {
-    setLoading(true); setErr('')
+    setLoading(true); setErr(''); setSel({})
     try {
       const r = await api.get(`/sales/reconcile/${kind}${refresh ? '?refresh=1' : ''}`, auth())
       setData(r.data)
@@ -101,12 +183,16 @@ export default function Reconcile() {
     finally { setBusy(false) }
   }
 
-  // Главная компания записи: явно выбранная звёздочкой, иначе первая привязанная.
+  // Главная компания записи — ТОЛЬКО явно выбранная звёздочкой.
+  // Раньше сюда падала «первая привязанная», но порядок связей в базе не задан:
+  // у Roki первой оказывается компания с нулём сделок, и склейка увезла бы туда обе
+  // сделки, переименовав пустышку в имя агентства. Без выбора не склеиваем.
   // primary хранится строго по our_id — каждая запись независима.
-  const primaryOf = (l) => primary[l.our_id] ?? l.companies[0]?.bx_id
+  const primaryOf = (l) => primary[l.our_id] || null
 
   const consolidate = async (l) => {
     const pbx = primaryOf(l)
+    if (!pbx) return alert('Сначала отметьте звёздочкой главную компанию — она получит все сделки.')
     setBusy(true)
     try {
       const pv = (await api.post(`/sales/reconcile/${kind}/consolidate/preview`, { our_id: l.our_id, primary_bx_id: pbx }, auth())).data
@@ -179,6 +265,39 @@ export default function Reconcile() {
       const res = (await api.post(`/sales/reconcile/${kind}/retired/delete`, {}, auth())).data
       alert(`Удалено: ${res.deleted.length}, пропущено: ${res.skipped.length}.
 Бэкап: ${res.backup}`)
+      await load(true)
+    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    finally { setBusy(false) }
+  }
+
+  // ── Пакетный прогон по выбранным записям ───────────────────────────────────
+  // Одна кнопка вместо 84 нажатий (16 склеек + 62 переименования + 6 созданий).
+  // Главная для склейки берётся только из явного выбора звёздочкой — записи без
+  // выбора бэкенд пропустит и назовёт в плане причину.
+  const selIds = useMemo(() => Object.keys(sel).filter(k => sel[k]).map(Number), [sel])
+  const toggleSel = (id) => setSel(s => ({ ...s, [id]: !s[id] }))
+  const selectLinked = () => {
+    const next = {}
+    ;(data?.linked || []).forEach(l => { next[l.our_id] = true })
+    setSel(next)
+  }
+  const syncItems = () => selIds.map(id => ({ our_id: id, primary_bx_id: primary[id] || null }))
+
+  const openPlan = async () => {
+    setBusy(true)
+    try {
+      const r = await api.post(`/sales/reconcile/${kind}/sync/preview`, { items: syncItems() }, auth())
+      setPlan(r.data)
+    } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
+    finally { setBusy(false) }
+  }
+
+  const runSync = async () => {
+    setBusy(true)
+    try {
+      const r = await api.post(`/sales/reconcile/${kind}/sync`, { items: syncItems() }, auth())
+      setPlan(null)
+      setReport(r.data)
       await load(true)
     } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
     finally { setBusy(false) }
@@ -275,6 +394,18 @@ export default function Reconcile() {
           <span style={{ color: '#9ca3af', fontSize: 12, marginLeft: 'auto' }}>перетащите карточку из «Только в одной системе» на пару, чтобы связать</span>
         </div>
 
+        {/* Пакетный прогон: выбор галочками в колонках слева, одна кнопка на всё. */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', margin: '0 0 10px', flexShrink: 0 }}>
+          <span style={{ fontSize: 13, color: '#374151' }}>Выбрано: <b>{selIds.length}</b></span>
+          <button style={btn} disabled={busy || loading} onClick={selectLinked}>Выделить связанные</button>
+          <button style={btn} disabled={busy || loading || !selIds.length} onClick={() => setSel({})}>Снять</button>
+          <button style={{ ...primaryBtn, padding: '6px 14px', fontSize: 13 }}
+            disabled={busy || loading || !selIds.length} onClick={openPlan}>Провести синхронизацию</button>
+          <span style={{ color: '#9ca3af', fontSize: 12 }}>
+            свести · переименовать · создать. Удаление помеченных XXX_ — отдельной кнопкой
+          </span>
+        </div>
+
         {err && <div style={{ color: '#dc2626', padding: '8px 0', flexShrink: 0 }}>{err}</div>}
         {loading && <div style={{ color: '#6b7280', padding: 20 }}>Загрузка…</div>}
         {data && !loading && (
@@ -292,7 +423,12 @@ export default function Reconcile() {
                     <div key={l.our_id} style={cardS(dragOver === key)}
                       onDragOver={e => allowDrop(e, key)} onDragLeave={() => setDragOver(null)}
                       onDrop={e => doDrop(e, { our_id: l.our_id })}>
-                      <div style={{ fontWeight: 500 }}>{nameCell(l.our_name, l.our_full, l.our_holding, l.our_deal_count)}</div>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                        <input type="checkbox" checked={!!sel[l.our_id]} disabled={busy}
+                          title="выбрать для пакетной синхронизации"
+                          onChange={() => toggleSel(l.our_id)} style={{ marginTop: 4, flexShrink: 0 }} />
+                        <div style={{ fontWeight: 500, flex: 1, minWidth: 0 }}>{nameCell(l.our_name, l.our_full, l.our_holding, l.our_deal_count)}</div>
+                      </div>
                       <div style={{ marginTop: 6 }}>{l.companies.map(c => (
                         <span key={c.bx_id} style={chip}>
                           <span style={{ cursor: 'grab', color: '#c7c9d1', fontSize: 13, lineHeight: 1, userSelect: 'none' }} draggable
@@ -371,6 +507,9 @@ export default function Reconcile() {
                       onDragOver={e => allowDrop(e, key)} onDragLeave={() => setDragOver(null)}
                       onDrop={e => doDrop(e, { our_id: o.our_id })}>
                       <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+                        <input type="checkbox" checked={!!sel[o.our_id]} disabled={busy}
+                          title="выбрать для пакетной синхронизации (будет создана компания)"
+                          onChange={() => toggleSel(o.our_id)} style={{ marginTop: 4, marginRight: 8, flexShrink: 0 }} />
                         <span style={handle} draggable onDragStart={e => startDrag(e, { our_id: o.our_id })} title="перетащить, чтобы связать">⠿</span>
                         <div style={{ flex: 1, minWidth: 0 }}>{nameCell(o.our_name, o.our_full, o.our_holding, o.our_deal_count)}</div>
                       </div>
@@ -408,6 +547,10 @@ export default function Reconcile() {
 
           </div>
         )}
+
+        {plan && <SyncPlan plan={plan.plan} counts={plan.counts} dealsToMove={plan.deals_to_move}
+          busy={busy} onRun={runSync} onClose={() => setPlan(null)} />}
+        {report && <SyncReport report={report} onClose={() => setReport(null)} />}
       </div>
     </>
   )
