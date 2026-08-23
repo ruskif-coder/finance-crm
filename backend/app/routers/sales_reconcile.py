@@ -301,7 +301,11 @@ class ImportIn(BaseModel):
 @router.post("/{kind}/import")
 def import_company(kind: str, data: ImportIn, db: Session = Depends(get_db),
                    current_user=Depends(_can_edit)):
-    model = _kind_or_400(kind)
+    return _do_import(db, _kind_or_400(kind), kind, data, current_user)
+
+
+def _do_import(db: Session, model, kind: str, data: ImportIn, current_user):
+    """Тело импорта компании к нам. Вынесено ради пакетного импорта."""
     if db.query(SalesBitrixLink).filter(
             SalesBitrixLink.kind == kind, SalesBitrixLink.bx_id == data.bx_id).first():
         raise HTTPException(status_code=409, detail="Эта компания уже привязана")
@@ -323,6 +327,40 @@ def import_company(kind: str, data: ImportIn, db: Session = Depends(get_db),
     db.refresh(row)
     log_action(db, current_user, "bx_import", kind, row.id, details=f"{title} ← bx {data.bx_id}")
     return {"ok": True, "id": row.id}
+
+
+class ImportManyIn(BaseModel):
+    bx_ids: list[str]
+
+
+@router.post("/{kind}/import-many")
+def import_many(kind: str, data: ImportManyIn, db: Session = Depends(get_db),
+                current_user=Depends(_can_edit)):
+    """Пакетный импорт компаний Битрикса к нам. В Битрикс не пишет ничего.
+
+    Отказы здесь — норма, а не сбой: «запись с таким названием уже есть» означает,
+    что компанию надо связать, а не заводить дублем. Поэтому каждая причина
+    называется отдельно, иначе оператор потеряет их среди импортированных.
+    """
+    model = _kind_or_400(kind)
+    titles = {c["id"]: (c.get("title") or "") for c in _fetch_companies(kind)}
+    done, failed = [], []
+    for bx in data.bx_ids:
+        name = titles.get(bx) or f"#{bx}"
+        try:
+            res = _do_import(db, model, kind, ImportIn(bx_id=bx), current_user)
+            done.append({"our_id": res["id"], "name": name, "action": "import",
+                         "detail": f"заведена запись из компании #{bx}"})
+        except HTTPException as e:
+            db.rollback()
+            failed.append({"our_id": bx, "name": name, "error": str(e.detail)[:300]})
+        except Exception as e:
+            db.rollback()
+            logger.error("import_many %s bx=%s: %s", kind, bx, e)
+            failed.append({"our_id": bx, "name": name, "error": repr(e)[:200]})
+    log_action(db, current_user, "bx_import_many", kind, None,
+               details=f"выбрано {len(data.bx_ids)}: заведено {len(done)}, ошибок {len(failed)}")
+    return {"done": done, "skipped": [], "failed": failed}
 
 
 class FlagIn(BaseModel):

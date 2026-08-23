@@ -14,7 +14,7 @@ const btn = { padding: '5px 10px', borderRadius: 8, border: '1px solid #d1d5db',
 // Показываем панелью, а не window.confirm: решение принимается по списку из
 // десятков строк, а системное окно такой список не показывает читаемо.
 const ACT_LABEL = { consolidate: 'свести', rename: 'переименовать', create: 'создать',
-  nothing: 'не требуется', skip: 'пропустить', link: 'связано' }
+  nothing: 'не требуется', skip: 'пропустить', link: 'связано', import: 'заведено' }
 const ACT_COLOR = { consolidate: 'var(--warning-text)', rename: 'var(--text-primary)',
   create: 'var(--income)', nothing: 'var(--text-faint)', skip: 'var(--text-faint)',
   link: 'var(--income)' }
@@ -151,9 +151,11 @@ export default function Reconcile() {
   const [report, setReport] = useState(null)         // отчёт после прогона
   const [side, setSide] = useState('ours')           // третья колонка: 'ours' | 'bitrix'
   const [selC, setSelC] = useState({})               // our_id -> true, выбор кандидатов на связку
+  const [selB, setSelB] = useState({})               // bx_id -> true, выбор компаний «только в Битриксе»
+  const [planItems, setPlanItems] = useState([])     // набор, зафиксированный при открытии плана
 
   const load = async (refresh = false) => {
-    setLoading(true); setErr(''); setSel({}); setSelC({})
+    setLoading(true); setErr(''); setSel({}); setSelC({}); setSelB({})
     try {
       const r = await api.get(`/sales/reconcile/${kind}${refresh ? '?refresh=1' : ''}`, auth())
       setData(r.data)
@@ -299,12 +301,16 @@ export default function Reconcile() {
     ;(data?.linked || []).forEach(l => { next[l.our_id] = true })
     setSel(next)
   }
-  const syncItems = () => selIds.map(id => ({ our_id: id, primary_bx_id: primary[id] || null }))
-
-  const openPlan = async () => {
+  // Набор фиксируется при открытии предпросмотра и переиспользуется при запуске:
+  // иначе показанный план и выполненное действие могли бы разойтись, если выбор
+  // сменился, пока панель открыта.
+  const openPlan = async (ids = selIds) => {
+    const items = ids.map(id => ({ our_id: id, primary_bx_id: primary[id] || null }))
+    if (!items.length) return
     setBusy(true)
     try {
-      const r = await api.post(`/sales/reconcile/${kind}/sync/preview`, { items: syncItems() }, auth())
+      const r = await api.post(`/sales/reconcile/${kind}/sync/preview`, { items }, auth())
+      setPlanItems(items)
       setPlan(r.data)
     } catch (e) { alert(errText(e)) }
     finally { setBusy(false) }
@@ -313,10 +319,48 @@ export default function Reconcile() {
   const runSync = async () => {
     setBusy(true)
     try {
-      const r = await api.post(`/sales/reconcile/${kind}/sync`, { items: syncItems() }, auth())
+      const r = await api.post(`/sales/reconcile/${kind}/sync`, { items: planItems }, auth())
       setPlan(null)
       setReport(r.data)
       await load(true)
+    } catch (e) { alert(errText(e)) }
+    finally { setBusy(false) }
+  }
+
+  // ── Третья колонка ─────────────────────────────────────────────────────────
+  // «Только у нас» использует тот же набор, что и синхронизация: галочка там уже
+  // означает «обработать эту запись», и второй чекбокс на карточке путал бы.
+  // «Только в Битриксе» — свой набор: ключ там bx_id, а не наш id.
+  const ourOnlyIds = useMemo(
+    () => (data?.only_ours || []).map(o => o.our_id).filter(id => sel[id]), [data, sel])
+  const selectAllOurOnly = () => {
+    const next = { ...sel }
+    ;(data?.only_ours || []).forEach(o => { next[o.our_id] = true })
+    setSel(next)
+  }
+  const clearOurOnly = () => {
+    const next = { ...sel }
+    ;(data?.only_ours || []).forEach(o => { delete next[o.our_id] })
+    setSel(next)
+  }
+
+  const selBIds = useMemo(() => Object.keys(selB).filter(k => selB[k]), [selB])
+  const toggleSelB = (bx) => setSelB(s => ({ ...s, [bx]: !s[bx] }))
+  const selectAllBitrix = () => {
+    const next = {}
+    ;(data?.only_bitrix || []).forEach(b => { next[b.id] = true })
+    setSelB(next)
+  }
+
+  const importSelected = async () => {
+    if (!selBIds.length) return
+    if (!window.confirm(`Импортировать к нам: ${selBIds.length}.\n\n`
+      + 'Заводит наши записи и связи. В Битрикс ничего не уходит.')) return
+    setBusy(true)
+    try {
+      const r = await api.post(`/sales/reconcile/${kind}/import-many`, { bx_ids: selBIds }, auth())
+      setReport(r.data)
+      await load()
     } catch (e) { alert(errText(e)) }
     finally { setBusy(false) }
   }
@@ -572,6 +616,29 @@ export default function Reconcile() {
                   }}>{label} <span style={{ color: '#9ca3af', fontWeight: 400 }}>· {n}</span></button>
                 ))}
               </div>
+              {/* Действия — той стороны, что показана. Кнопка «Создать» открывает тот же
+                  предпросмотр, что и синхронизация: план для записи без компаний и есть
+                  «создать», и второй путь к той же записи в Битрикс заводить незачем. */}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '6px 8px',
+                borderBottom: '1px solid #e5e7eb', background: '#fff', flexShrink: 0 }}>
+                {side === 'ours' ? <>
+                  <button style={{ ...btn, fontSize: 12 }} disabled={busy || loading}
+                    onClick={selectAllOurOnly}>все</button>
+                  <button style={{ ...btn, fontSize: 12 }} disabled={busy || loading || !ourOnlyIds.length}
+                    onClick={clearOurOnly}>снять</button>
+                  <button style={{ ...primaryBtn, padding: '5px 11px', fontSize: 12, marginLeft: 'auto' }}
+                    disabled={busy || loading || !ourOnlyIds.length}
+                    onClick={() => openPlan(ourOnlyIds)}>Создать в Битриксе ({ourOnlyIds.length})</button>
+                </> : <>
+                  <button style={{ ...btn, fontSize: 12 }} disabled={busy || loading}
+                    onClick={selectAllBitrix}>все</button>
+                  <button style={{ ...btn, fontSize: 12 }} disabled={busy || loading || !selBIds.length}
+                    onClick={() => setSelB({})}>снять</button>
+                  <button style={{ ...primaryBtn, padding: '5px 11px', fontSize: 12, marginLeft: 'auto' }}
+                    disabled={busy || loading || !selBIds.length}
+                    onClick={importSelected}>Импортировать к нам ({selBIds.length})</button>
+                </>}
+              </div>
               <div style={colBody}>
                 {side === 'ours' && <>
                 {data.only_ours.map(o => {
@@ -609,6 +676,9 @@ export default function Reconcile() {
                       onDragOver={e => allowDrop(e, key)} onDragLeave={() => setDragOver(null)}
                       onDrop={e => doDrop(e, { bx_id: b.id })}>
                       <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+                        <input type="checkbox" checked={!!selB[b.id]} disabled={busy}
+                          title="выбрать для пакетного импорта"
+                          onChange={() => toggleSelB(b.id)} style={{ marginTop: 4, marginRight: 8, flexShrink: 0 }} />
                         <span style={handle} draggable onDragStart={e => startDrag(e, { bx_id: b.id })} title="перетащить, чтобы связать">⠿</span>
                         <div style={{ flex: 1, minWidth: 0, fontSize: 14 }}>{b.title} <span style={{ color: '#9ca3af' }}>#{b.id}{count(dealCounts[b.id])}</span></div>
                       </div>
