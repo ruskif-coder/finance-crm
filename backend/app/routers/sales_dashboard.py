@@ -19,7 +19,7 @@ from sqlalchemy import func, or_, and_, case
 from sqlalchemy.orm import Session, aliased
 from typing import Optional, List, Annotated
 from pydantic import BaseModel
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 import os
 import re
 
@@ -31,7 +31,7 @@ from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
                               SalesRep, SalesBrand, SalesBitrixSyncLog,
                               SalesDealFieldOverride, SalesAgency,
                               SalesStage, SalesStagePhase, SalesPipeline,
-                              SalesDealStageHistory, SalesDealSnooze)
+                              SalesDealStageHistory)
 from app.sales.stages import STAGE_CATALOG
 from app.sales.catalog import Catalog, stage_public
 from app.sales.row_context import load_row_context
