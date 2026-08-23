@@ -1,0 +1,40 @@
+# Переводы строк. Разработка на Windows, выполнение — в Linux-контейнерах, из-за чего
+# часть файлов легла в репозиторий с CRLF, часть с LF. Итог: git показывал по правке
+# 1950/1604 строк там, где реально изменились 631/285 — две трети каждого диффа были
+# переводом строки. Ревью на таком диффе невозможно, `git blame` указывает не на автора.
+#
+# Разбор: в репозитории всё хранится с LF (`text=auto`), в рабочей копии Windows видит
+# привычный CRLF. Исключения ниже — файлы, которым LF нужен именно в рабочей копии,
+# потому что они выполняются в Linux как есть.
+#
+# Применяется однократной нормализацией: `git add --renormalize .` отдельным коммитом,
+# ничего кроме переводов строк не меняющим.
+
+* text=auto
+
+# Выполняются в Linux — CRLF ломает shebang и парсинг конфигов
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+Caddyfile   text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+
+# Выполняются в cmd.exe
+*.bat       text eol=crlf
+*.ps1       text eol=crlf
+
+# Двоичное — не трогать никогда. Шаблоны Excel особенно: нормализация их разрушает.
+*.xlsx      binary
+*.xls       binary
+*.docx      binary
+*.pdf       binary
+*.zip       binary
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.svg       text eol=lf
+*.ttf       binary
+*.woff      binary
+*.woff2     binary
