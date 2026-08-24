@@ -20,6 +20,12 @@ const MONTH_NAMES = {
 }
 const formatPeriod = (p) => {
   if (!p) return '—'
+  // Квартальная свёртка отдаёт периоды вида '2025-Q1' — без этой ветки
+  // в шапке колонки оказался бы сырой ключ.
+  if (String(p).includes('-Q')) {
+    const [year, q] = String(p).split('-Q')
+    return `${q} кв ${year}`
+  }
   const [year, month] = p.split('-')
   return `${MONTH_NAMES[month] || month} ${year}`
 }
@@ -54,6 +60,7 @@ export default function FinReport() {
   const [expanded, setExpanded] = useState({})
   const [basis, setBasis] = useState('accrual')
   const [vat, setVat] = useState('net')
+  const [granularity, setGranularity] = useState('month')
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date(); d.setMonth(d.getMonth() - 11)
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
@@ -68,8 +75,10 @@ export default function FinReport() {
   useEffect(() => {
     const b = localStorage.getItem('finreport_basis')
     const v = localStorage.getItem('finreport_vat')
+    const g = localStorage.getItem('finreport_granularity')
     if (b) setBasis(b)
     if (v) setVat(v)
+    if (g) setGranularity(g)
   }, [])
 
   useEffect(() => {
@@ -77,14 +86,15 @@ export default function FinReport() {
     if (!token) { router.push('/login'); return }
     localStorage.setItem('finreport_basis', basis)
     localStorage.setItem('finreport_vat', vat)
+    localStorage.setItem('finreport_granularity', granularity)
     load(token)
-  }, [dateFrom, dateTo, basis, vat])
+  }, [dateFrom, dateTo, basis, vat, granularity])
 
   const load = async (token) => {
     setLoading(true)
     try {
       const res = await api(token).get(
-        `/finreport?basis=${basis}&vat=${vat}&date_from=${dateFrom}&date_to=${dateTo}`)
+        `/finreport?basis=${basis}&vat=${vat}&granularity=${granularity}&date_from=${dateFrom}&date_to=${dateTo}`)
       setData(res.data)
       const e = {}
       res.data.groups.forEach(g => { e[g.key] = false })
@@ -99,21 +109,26 @@ export default function FinReport() {
   const exportXlsx = async () => {
     const token = localStorage.getItem('token')
     const res = await api(token).get(
-      `/finreport/export?basis=${basis}&vat=${vat}&date_from=${dateFrom}&date_to=${dateTo}`,
+      `/finreport/export?basis=${basis}&vat=${vat}&granularity=${granularity}&date_from=${dateFrom}&date_to=${dateTo}`,
       { responseType: 'blob' })
     const url = URL.createObjectURL(new Blob([res.data]))
     const a = document.createElement('a')
     a.href = url
-    a.download = `Финотчёт_${basis === 'accrual' ? 'начисление' : 'оплата'}_${vat === 'net' ? 'без_НДС' : 'с_НДС'}_${dateFrom}-${dateTo}.xlsx`
+    a.download = `Финотчёт_${granularity === 'quarter' ? 'кварталы' : 'месяцы'}_${basis === 'accrual' ? 'начисление' : 'оплата'}_${vat === 'net' ? 'без_НДС' : 'с_НДС'}_${dateFrom}-${dateTo}.xlsx`
     document.body.appendChild(a); a.click(); a.remove()
     URL.revokeObjectURL(url)
   }
 
-  // Подпись под заголовком: выбранный период и режим — чтобы не гадать, что на экране.
+  // Подпись под заголовком: период и режим — чтобы не гадать, что на экране.
+  // Период берём из ответа, а не из полей: в квартальном режиме сервер расширяет
+  // диапазон до целых кварталов, и подпись обязана показать посчитанное, а не выбранное.
+  const shownFrom = data?.range?.from || dateFrom
+  const shownTo = data?.range?.to || dateTo
   const subtitle = [
-    `${formatPeriod(dateFrom).toLowerCase()} — ${formatPeriod(dateTo).toLowerCase()}`,
+    `${formatPeriod(shownFrom).toLowerCase()} — ${formatPeriod(shownTo).toLowerCase()}`,
     basis === 'accrual' ? 'по начислению' : 'по оплате',
     vat === 'net' ? 'без НДС' : 'с НДС',
+    granularity === 'quarter' ? 'по кварталам' : 'по месяцам',
   ].join(' · ')
 
   // Шапка + строка управления рисуются всегда, даже пока грузится:
@@ -141,6 +156,10 @@ export default function FinReport() {
         { value: 'net', label: 'Без НДС', hint: 'Корректно для P&L: НДС транзитный' },
         { value: 'gross', label: 'С НДС', hint: 'Брутто-суммы, уплаченный НДС — расходом' },
       ]} />
+      <Toggle value={granularity} onChange={setGranularity} options={[
+        { value: 'month', label: 'Только месяцы', hint: 'Колонка на месяц' },
+        { value: 'quarter', label: '+ Итоги кварталов', hint: 'Месяцы остаются, после каждого квартала добавляется колонка с его итогом' },
+      ]} />
       <div style={{ flex: '1 1 auto' }} />
       <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ ...inp, fontFamily: MONO }} />
       <span style={{ color: 'var(--text-muted)', fontFamily: MONO }}>—</span>
@@ -167,8 +186,14 @@ export default function FinReport() {
   }
 
   const { periods, groups, summary, control } = data
-  const colWidth = `${Math.max(100, Math.floor(700 / (periods.length || 1)))}px`
-  const sumAll = (field) => periods.reduce((s, p) => s + (summary[p]?.[field] || 0), 0)
+  // periods в квартальном режиме содержит и месяцы, и итоги кварталов. Суммировать
+  // можно только по месячным (base_periods) — иначе ИТОГО удваивается.
+  const basePeriods = data.base_periods || periods
+  const isQ = (p) => String(p).includes('-Q')
+  const colWidth = `${Math.max(96, Math.floor(760 / (periods.length || 1)))}px`
+  const sumAll = (field) => basePeriods.reduce((s, p) => s + (summary[p]?.[field] || 0), 0)
+  // Колонка итога квартала выделяется фоном: иначе её сложат глазами вместе с месяцами.
+  const qCell = (p) => (isQ(p) ? { background: 'var(--accent-tint)', fontWeight: 700 } : null)
 
   // Шапка таблицы липкая по вертикали; первая колонка — по горизонтали.
   const thBase = {
@@ -191,7 +216,7 @@ export default function FinReport() {
         <tr style={strong ? totalStyle : { background: 'var(--bg-subtle)' }}>
           <td style={{ ...td, ...stick(bg), fontFamily: UI, fontSize: 14, fontWeight: 700 }}>{label}</td>
           {periods.map(p => (
-            <td key={p} style={{ ...num, fontWeight: 700,
+            <td key={p} style={{ ...num, fontWeight: 700, ...qCell(p),
                                  color: (summary[p]?.[field] || 0) >= 0 ? 'var(--income)' : 'var(--expense)' }}>
               {fmt(summary[p]?.[field])} ₽
             </td>
@@ -205,7 +230,7 @@ export default function FinReport() {
           <tr style={{ background: 'var(--bg-subtle)' }}>
             <td style={{ ...td, ...stick('var(--bg-subtle)'), fontFamily: UI, fontSize: 12, color: 'var(--text-muted)', padding: '4px 10px 9px' }}>Маржа</td>
             {periods.map(p => (
-              <td key={p} style={{ ...num, fontSize: 12, color: 'var(--text-muted)', padding: '4px 10px 9px' }}>
+              <td key={p} style={{ ...num, fontSize: 12, color: 'var(--text-muted)', padding: '4px 10px 9px', ...qCell(p) }}>
                 {fmtPct(summary[p]?.[marginField])}
               </td>
             ))}
@@ -246,7 +271,7 @@ export default function FinReport() {
               <thead>
                 <tr>
                   <th style={{ ...thBase, textAlign: 'left', position: 'sticky', left: 0, zIndex: 20, minWidth: 240 }}>Статья</th>
-                  {periods.map(p => <th key={p} style={{ ...thBase, minWidth: colWidth }}>{formatPeriod(p)}</th>)}
+                  {periods.map(p => <th key={p} style={{ ...thBase, minWidth: colWidth, ...(isQ(p) ? { background: 'var(--accent-tint)', color: 'var(--text-primary)' } : null) }}>{formatPeriod(p)}</th>)}
                   <th style={{ ...thBase, ...totalCol, minWidth: 120 }}>ИТОГО</th>
                 </tr>
               </thead>
@@ -263,10 +288,10 @@ export default function FinReport() {
                           {isOpen ? '▼' : '►'} {g.label}
                         </td>
                         {periods.map(p => (
-                          <td key={p} style={{ ...num, fontWeight: 700 }}>{fmt(g.totals[p])} ₽</td>
+                          <td key={p} style={{ ...num, fontWeight: 700, ...qCell(p) }}>{fmt(g.totals[p])} ₽</td>
                         ))}
                         <td style={{ ...num, ...totalCol, fontWeight: 700 }}>
-                          {fmt(periods.reduce((s, p) => s + (g.totals[p] || 0), 0))} ₽
+                          {fmt(basePeriods.reduce((s, p) => s + (g.totals[p] || 0), 0))} ₽
                         </td>
                       </tr>
 
@@ -278,12 +303,12 @@ export default function FinReport() {
                                 {sg.subgroup}
                               </td>
                               {periods.map(p => (
-                                <td key={p} style={{ ...num, fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                                <td key={p} style={{ ...num, fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)', ...qCell(p) }}>
                                   {sg.totals[p] ? fmt(sg.totals[p]) + ' ₽' : '—'}
                                 </td>
                               ))}
                               <td style={{ ...num, ...totalCol, fontSize: 12.5, fontWeight: 600 }}>
-                                {fmt(periods.reduce((s, p) => s + (sg.totals[p] || 0), 0))} ₽
+                                {fmt(basePeriods.reduce((s, p) => s + (sg.totals[p] || 0), 0))} ₽
                               </td>
                             </tr>
                           )}
@@ -293,13 +318,13 @@ export default function FinReport() {
                                 {a.article}
                               </td>
                               {periods.map(p => (
-                                <td key={p} style={{ ...num, fontSize: 12.5,
+                                <td key={p} style={{ ...num, fontSize: 12.5, ...qCell(p),
                                                      color: a.periods[p] ? 'var(--text-secondary)' : 'var(--text-faint)' }}>
                                   {a.periods[p] ? fmt(a.periods[p]) + ' ₽' : '—'}
                                 </td>
                               ))}
                               <td style={{ ...num, ...totalCol, fontSize: 12.5, color: 'var(--text-secondary)' }}>
-                                {fmt(periods.reduce((s, p) => s + (a.periods[p] || 0), 0))} ₽
+                                {fmt(basePeriods.reduce((s, p) => s + (a.periods[p] || 0), 0))} ₽
                               </td>
                             </tr>
                           ))}

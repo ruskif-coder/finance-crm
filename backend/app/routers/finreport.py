@@ -106,6 +106,10 @@ PL_LINE_MAP = {
     'other': OTHER,
     'profit_tax': PROFIT_TAX,
     'tax_other': PROFIT_TAX,   # тот же раздел «Налоги», отдельной подстрокой
+    # Тело займа — движение по балансу, не расход. Отдельное значение, а не общий
+    # 'excluded', потому что по нему считается остаток долга в ДДС: код должен
+    # узнавать займ по разметке, а не по названию статьи (названия переименовывают).
+    'loan_body': EXCLUDED,
     'excluded': EXCLUDED,
 }
 
@@ -158,6 +162,9 @@ def classify(pl_line: Optional[str], article: Optional[str], subgroup: Optional[
         # Статья без разметки (в том числе операция вообще без статьи). Деньги не
         # теряются — они видны отдельной строкой, пока разметку не проставят.
         return UNCLASSIFIED, '', a or 'Без статьи'
+
+    if pl_line == 'loan_body':
+        return EXCLUDED, EX_LOAN, a or 'Тело займа'
 
     if line == EXCLUDED:
         return EXCLUDED, (EX_VAT if 'ндс' in a_low else EX_GROUP), a or '—'
@@ -293,10 +300,65 @@ def _collect(db: Session, basis: str, vat: str, date_from: Optional[str], date_t
     return rows, control
 
 
-def build_report(db: Session, basis: str, vat: str, date_from: Optional[str], date_to: Optional[str]):
+def _to_quarter(period: str) -> str:
+    """'2025-02' → '2025-Q1'. Лексикографический порядок совпадает с хронологическим,
+    поэтому дальше по коду ничего сортировать по-особому не нужно."""
+    year, month = period.split('-')
+    return f'{year}-Q{(int(month) - 1) // 3 + 1}'
+
+
+def _snap_to_quarters(date_from: Optional[str], date_to: Optional[str]):
+    """Расширяет границы диапазона до целых кварталов.
+
+    Без этого выбор «февраль — март» в квартальном режиме даёт колонку с подписью
+    «1 кв», внутри которой лежат две трети квартала. Число выглядит как квартальное
+    и будет сравнено с полными кварталами соседних колонок — а это разные величины.
+    Помесячному режиму расширение не нужно: там февраль и есть февраль.
+    """
+    if date_from and re.match(r'^\d{4}-\d{2}$', date_from):
+        y, m = date_from.split('-')
+        date_from = f'{y}-{(int(m) - 1) // 3 * 3 + 1:02d}'
+    if date_to and re.match(r'^\d{4}-\d{2}$', date_to):
+        y, m = date_to.split('-')
+        date_to = f'{y}-{(int(m) - 1) // 3 * 3 + 3:02d}'
+    return date_from, date_to
+
+
+def _ordered_periods(months, granularity: str):
+    """Порядок колонок: месяцы, и после каждого квартала — колонка с его итогом.
+
+    Обычная сортировка тут не годится: '2026-Q1' лексикографически больше, чем
+    '2026-04', и итог первого квартала уехал бы за апрель. Поэтому список строится
+    явно — квартальная колонка ставится сразу за последним своим месяцем.
+    """
+    months = sorted(months)
+    if granularity != 'quarter':
+        return months
+    out = []
+    for i, p in enumerate(months):
+        out.append(p)
+        nxt = months[i + 1] if i + 1 < len(months) else None
+        if nxt is None or _to_quarter(nxt) != _to_quarter(p):
+            out.append(_to_quarter(p))
+    return out
+
+
+def build_report(db: Session, basis: str, vat: str, date_from: Optional[str], date_to: Optional[str],
+                 granularity: str = 'month'):
+    if granularity == 'quarter':
+        date_from, date_to = _snap_to_quarters(date_from, date_to)
     rows, control = _collect(db, basis, vat, date_from, date_to)
 
-    periods = sorted({r[0] for r in rows})
+    # Месяцы остаются на месте — квартал добавляется отдельной колонкой рядом.
+    # Итог квартала это свёртка уже посчитанных месяцев, а не отдельный расчёт:
+    # операции с квартальным периодом («Q1 2026») _collect делит на три равных
+    # месяца, и обратная свёртка возвращает ровно исходную сумму.
+    base_periods = sorted({r[0] for r in rows})
+    if granularity == 'quarter':
+        rows = rows + [(_to_quarter(p), line, sg, label, val)
+                       for p, line, sg, label, val in rows]
+
+    periods = _ordered_periods(base_periods, granularity)
     # {line: {subgroup: {label: {period: amount}}}}
     tree: dict = {}
     for period, line, subgroup, label, value in rows:
@@ -354,12 +416,21 @@ def build_report(db: Session, basis: str, vat: str, date_from: Optional[str], da
         }
 
     control['excluded'] = [{'reason': k, 'amount': v} for k, v in sorted(control['excluded'].items())]
-    control['unclassified_total'] = sum(line_total(UNCLASSIFIED, p) for p in periods)
+    # Только по месяцам: квартальные колонки — те же деньги ещё раз, и сумма по
+    # всему списку periods удвоила бы итог.
+    control['unclassified_total'] = sum(line_total(UNCLASSIFIED, p) for p in base_periods)
 
     return {
         'basis': basis,
         'vat': vat,
+        'granularity': granularity,
+        # Фактически посчитанный диапазон: в квартальном режиме он шире выбранного,
+        # и подпись на экране обязана показывать его, а не то, что стоит в полях.
+        'range': {'from': date_from, 'to': date_to},
         'periods': periods,
+        # Колонки, по которым можно суммировать. В квартальном режиме periods
+        # содержит ещё и итоги кварталов — сложение по нему даёт двойной счёт.
+        'base_periods': base_periods,
         'groups': groups,
         'summary': summary,
         'control': control,
@@ -368,18 +439,20 @@ def build_report(db: Session, basis: str, vat: str, date_from: Optional[str], da
 
 BASIS_LABEL = {'accrual': 'по начислению', 'cash': 'по оплате'}
 VAT_LABEL = {'net': 'без НДС', 'gross': 'с НДС'}
+GRANULARITY_LABEL = {'month': 'по месяцам', 'quarter': 'по кварталам'}
 
 
 @router.get("")
 def get_finreport(
     basis: str = Query('accrual', pattern='^(accrual|cash)$'),
     vat: str = Query('net', pattern='^(net|gross)$'),
+    granularity: str = Query('month', pattern='^(month|quarter)$'),
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("finreport", "view")),
 ):
-    return build_report(db, basis, vat, date_from, date_to)
+    return build_report(db, basis, vat, date_from, date_to, granularity)
 
 
 # ---------------------------------------------------------------------------
@@ -393,6 +466,11 @@ MONTH_RU = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл'
 
 
 def _period_title(p: str) -> str:
+    # Квартальная свёртка отдаёт периоды вида '2025-Q1' — их формат другой,
+    # и без этой ветки в шапке Excel оказался бы сырой ключ.
+    if '-Q' in p:
+        y, q = p.split('-Q')
+        return f'{q} кв {y}'
     try:
         y, m = p.split('-')
         return f'{MONTH_RU[int(m) - 1]} {y}'
@@ -404,6 +482,7 @@ def _period_title(p: str) -> str:
 def export_finreport(
     basis: str = Query('accrual', pattern='^(accrual|cash)$'),
     vat: str = Query('net', pattern='^(net|gross)$'),
+    granularity: str = Query('month', pattern='^(month|quarter)$'),
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -413,8 +492,9 @@ def export_finreport(
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
 
-    rep = build_report(db, basis, vat, date_from, date_to)
+    rep = build_report(db, basis, vat, date_from, date_to, granularity)
     periods = rep['periods']
+    base_periods = rep['base_periods']
     summary = rep['summary']
 
     NUM = '# ##0;[Red](# ##0);—'
@@ -429,10 +509,20 @@ def export_finreport(
     ws = wb.active
     ws.title = 'Отчёт'
 
-    ws['A1'] = f"Финансовый отчёт — {BASIS_LABEL[basis]}, {VAT_LABEL[vat]}"
+    # Диапазон берём из отчёта, а не из параметров запроса: в квартальном режиме
+    # build_report расширяет границы до целых кварталов, и подпись обязана показывать
+    # посчитанное. Иначе файл с колонкой «1 кв 2026» уверяет, что это февраль—март.
+    eff_from = rep['range']['from']
+    eff_to = rep['range']['to']
+    ws['A1'] = (f"Финансовый отчёт — {BASIS_LABEL[basis]}, {VAT_LABEL[vat]}, "
+                f"{GRANULARITY_LABEL[granularity]}")
     ws['A1'].font = Font(bold=True, size=14)
-    ws['A2'] = f"Период: {date_from or 'с начала'} — {date_to or 'по настоящее время'}"
+    ws['A2'] = f"Период: {eff_from or 'с начала'} — {eff_to or 'по настоящее время'}"
     ws['A2'].font = Font(size=10, color='808080')
+    if granularity == 'quarter' and (eff_from, eff_to) != (date_from, date_to):
+        ws['A3'] = (f"Выбрано было {date_from or '—'} — {date_to or '—'}; "
+                    "в квартальном режиме диапазон расширен до целых кварталов")
+        ws['A3'].font = Font(size=9, italic=True, color='B06000')
 
     header_row = 4
     ws.cell(header_row, 1, 'Статья').font = Font(bold=True, color='FFFFFF')
@@ -449,7 +539,24 @@ def export_finreport(
     c.alignment = Alignment(horizontal='right')
 
     row = header_row + 1
-    first_col, last_col = get_column_letter(2), get_column_letter(1 + len(periods))
+    # ИТОГО складывает ТОЛЬКО месячные колонки. В квартальном режиме между ними стоят
+    # колонки с итогами кварталов — это те же деньги ещё раз, и обычный SUM по всей
+    # полосе удвоил бы строку. Месяцы идут подряд тройками, поэтому выражение
+    # получается вида SUM(B5:D5,F5:H5) — несколько диапазонов через запятую.
+    _sum_cols = [2 + i for i, p in enumerate(periods) if p in set(base_periods)]
+
+    def total_formula(r: int) -> str:
+        parts, start, prev = [], _sum_cols[0], _sum_cols[0]
+        for c in _sum_cols[1:]:
+            if c == prev + 1:
+                prev = c
+                continue
+            parts.append((start, prev))
+            start = prev = c
+        parts.append((start, prev))
+        chunks = [f'{get_column_letter(a)}{r}:{get_column_letter(b)}{r}' if a != b
+                  else f'{get_column_letter(a)}{r}' for a, b in parts]
+        return '=SUM(' + ','.join(chunks) + ')' 
 
     def write_total_row(label, field, margin_field=None):
         nonlocal row
@@ -460,7 +567,7 @@ def export_finreport(
             cell.number_format = NUM
             cell.font = Font(bold=True)
             cell.fill = total_fill
-        cell = ws.cell(row, total_col, f'=SUM({first_col}{row}:{last_col}{row})')
+        cell = ws.cell(row, total_col, total_formula(row))
         cell.number_format = NUM
         cell.font = Font(bold=True)
         cell.fill = total_fill
@@ -479,7 +586,7 @@ def export_finreport(
         for i, p in enumerate(periods):
             ws.cell(row, 2 + i, g['totals'].get(p, 0)).number_format = NUM
             ws.cell(row, 2 + i).font = Font(bold=True)
-        cell = ws.cell(row, total_col, f'=SUM({first_col}{row}:{last_col}{row})')
+        cell = ws.cell(row, total_col, total_formula(row))
         cell.number_format = NUM
         cell.font = Font(bold=True)
         row += 1
@@ -492,7 +599,7 @@ def export_finreport(
                 for i, p in enumerate(periods):
                     ws.cell(row, 2 + i, sg['totals'].get(p, 0)).number_format = NUM
                     ws.cell(row, 2 + i).fill = sub_fill
-                ws.cell(row, total_col, f'=SUM({first_col}{row}:{last_col}{row})').number_format = NUM
+                ws.cell(row, total_col, total_formula(row)).number_format = NUM
                 row += 1
             for a in sg['articles']:
                 ws.cell(row, 1, '    ' + a['article']).font = Font(size=10)
@@ -501,7 +608,7 @@ def export_finreport(
                     cell = ws.cell(row, 2 + i, a['periods'].get(p, 0))
                     cell.number_format = NUM
                     cell.border = border
-                cell = ws.cell(row, total_col, f'=SUM({first_col}{row}:{last_col}{row})')
+                cell = ws.cell(row, total_col, total_formula(row))
                 cell.number_format = NUM
                 cell.border = border
                 row += 1
@@ -551,7 +658,7 @@ def export_finreport(
             cell = ws2.cell(r2, 2 + i, summary[p][field])
             cell.number_format = PCT if is_pct else NUM
         if not is_pct:
-            ws2.cell(r2, total_col, f'=SUM({first_col}{r2}:{last_col}{r2})').number_format = NUM
+            ws2.cell(r2, total_col, total_formula(r2)).number_format = NUM
         r2 += 1
     ws2.column_dimensions['A'].width = 30
     for i in range(len(periods) + 1):
@@ -565,8 +672,12 @@ def export_finreport(
             ' — по месяцу оказания услуги, все операции' if basis == 'accrual'
             else ' — по месяцу платежа, только оплаченные')),
         ('НДС', VAT_LABEL[vat]),
-        ('Период с', date_from or '—'),
-        ('Период по', date_to or '—'),
+        ('Нарезка', GRANULARITY_LABEL[granularity] + (
+            ' — колонка на квартал, свёртка месяцев' if granularity == 'quarter'
+            else ' — колонка на месяц')),
+        ('Период с', rep['range']['from'] or '—'),
+        ('Период по', rep['range']['to'] or '—'),
+        ('Выбрано в фильтре', f"{date_from or '—'} — {date_to or '—'}"),
         ('Выгружено', datetime.now().strftime('%d.%m.%Y %H:%M')),
         ('Пользователь', getattr(current_user, 'name', None) or getattr(current_user, 'email', '—')),
     ]
@@ -604,7 +715,8 @@ def export_finreport(
     # Имя файла кириллицей: заголовок HTTP допускает только latin-1, поэтому
     # обязателен процент-энкодинг по RFC 5987, иначе starlette падает на .encode.
     from urllib.parse import quote
-    name = f"Финотчёт_{BASIS_LABEL[basis].replace(' ', '_')}_{VAT_LABEL[vat].replace(' ', '_')}"
+    name = (f"Финотчёт_{GRANULARITY_LABEL[granularity].replace(' ', '_')}"
+            f"_{BASIS_LABEL[basis].replace(' ', '_')}_{VAT_LABEL[vat].replace(' ', '_')}")
     if date_from or date_to:
         name += f"_{date_from or ''}-{date_to or ''}"
     return StreamingResponse(
