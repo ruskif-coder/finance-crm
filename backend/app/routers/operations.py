@@ -1406,3 +1406,154 @@ def export_to_alfa(
         media_type="text/plain; charset=windows-1251",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
+
+# ---------------------------------------------------------------------------
+# Приложенные файлы операции (сканы)
+# ---------------------------------------------------------------------------
+# Часть первички существует только на бумаге: в реестр Диадока такой документ не
+# попадает, а `document_link` указывает наружу. Файлы лежат в /app/uploads/operations,
+# в базе — относительный ключ от корня хранилища (соглашение от 2026-08-23), таблица
+# заведена миграцией 2026-08-24_operation_files.sql.
+
+UPLOADS_ROOT = "/app/uploads"
+OP_FILES_SUBDIR = "operations"
+OP_FILE_MAX_BYTES = 20 * 1024 * 1024
+OP_FILE_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".jpeg",
+                      ".png", ".tif", ".tiff", ".heic", ".zip"}
+
+
+def _op_file_out(f):
+    return {
+        "id": f.id, "original_name": f.original_name, "size_bytes": f.size_bytes,
+        "uploaded_at": f.uploaded_at.isoformat() if f.uploaded_at else None,
+        "uploaded_by_name": f.uploaded_by_name,
+    }
+
+
+@router.get("/{op_id}/files")
+def list_operation_files(
+    op_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "view")),
+):
+    from app.models import OperationFile
+    rows = (db.query(OperationFile).filter(OperationFile.operation_id == op_id)
+            .order_by(OperationFile.id).all())
+    return [_op_file_out(f) for f in rows]
+
+
+@router.post("/{op_id}/files")
+async def upload_operation_file(
+    op_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "edit")),
+):
+    import os
+    import re as _re
+    import uuid
+    from app.models import OperationFile
+
+    op = db.query(Operation).filter(Operation.id == op_id).first()
+    if not op:
+        raise HTTPException(status_code=404, detail="Операция не найдена")
+
+    original_name = file.filename or "документ"
+    ext = os.path.splitext(original_name)[1].lower()
+    if ext not in OP_FILE_EXTENSIONS:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Недопустимый тип файла. Разрешены: {', '.join(sorted(OP_FILE_EXTENSIONS))}")
+
+    content = await file.read()
+    if len(content) > OP_FILE_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Файл слишком большой (максимум {OP_FILE_MAX_BYTES // 1024 // 1024} МБ)")
+    if not content:
+        raise HTTPException(status_code=400, detail="Файл пустой")
+
+    # Имя на диске несёт вид сущности и случайный суффикс. Вид — потому что каталог
+    # общий и «7_akt.pdf» от разных подсистем затирали бы друг друга (готча реестра
+    # площадок). Суффикс — потому что к одной операции кладут несколько сканов, и
+    # одинаковые имена файлов у них обычное дело.
+    safe = _re.sub(r'[^\w.\-]', '_', original_name)[-80:]
+    stored = f"op{op_id}_{uuid.uuid4().hex[:8]}_{safe}"
+    target_dir = os.path.join(UPLOADS_ROOT, OP_FILES_SUBDIR)
+    os.makedirs(target_dir, exist_ok=True)
+    with open(os.path.join(target_dir, stored), "wb") as fh:
+        fh.write(content)
+
+    row = OperationFile(
+        operation_id=op_id,
+        path=f"{OP_FILES_SUBDIR}/{stored}",
+        original_name=original_name,
+        size_bytes=len(content),
+        uploaded_by=getattr(current_user, "id", None),
+        uploaded_by_name=(getattr(current_user, "name", None)
+                          or getattr(current_user, "email", None)),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    log_action(db, current_user, "upload_operation_file", entity_type="operation",
+               entity_id=op_id, details=f"Приложен файл: {original_name}")
+    return _op_file_out(row)
+
+
+@router.get("/{op_id}/files/{file_id}")
+def download_operation_file(
+    op_id: int,
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "view")),
+):
+    import os
+    from fastapi.responses import FileResponse
+    from app.models import OperationFile
+
+    row = (db.query(OperationFile)
+           .filter(OperationFile.id == file_id, OperationFile.operation_id == op_id)
+           .first())
+    if not row:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+
+    # Ключ из базы — относительный, и склеивать его с корнем можно только после
+    # проверки: подделанный путь с '..' иначе уводит за пределы хранилища.
+    full = os.path.normpath(os.path.join(UPLOADS_ROOT, row.path))
+    if not full.startswith(os.path.join(UPLOADS_ROOT, OP_FILES_SUBDIR) + os.sep):
+        raise HTTPException(status_code=400, detail="Некорректный путь файла")
+    if not os.path.exists(full):
+        raise HTTPException(status_code=404, detail="Файл не найден на сервере")
+
+    return FileResponse(full, filename=row.original_name,
+                        media_type="application/octet-stream")
+
+
+@router.delete("/{op_id}/files/{file_id}")
+def delete_operation_file(
+    op_id: int,
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operations", "edit")),
+):
+    import os
+    from app.models import OperationFile
+
+    row = (db.query(OperationFile)
+           .filter(OperationFile.id == file_id, OperationFile.operation_id == op_id)
+           .first())
+    if not row:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+
+    full = os.path.normpath(os.path.join(UPLOADS_ROOT, row.path))
+    if full.startswith(os.path.join(UPLOADS_ROOT, OP_FILES_SUBDIR) + os.sep) and os.path.exists(full):
+        os.remove(full)
+    name = row.original_name
+    db.delete(row)
+    db.commit()
+
+    log_action(db, current_user, "delete_operation_file", entity_type="operation",
+               entity_id=op_id, details=f"Удалён файл: {name}")
+    return {"ok": True}

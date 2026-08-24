@@ -94,6 +94,10 @@ function SingleSelect({ value, onChange, options, placeholder, emptyLabel }) {
 }
 
 // Единый набор полей формы (создание/редактирование)
+// Обводка иконок. На модульном уровне, а не внутри Operations2: её использует и
+// OpFields, объявленный здесь же снаружи, — из компонента он её не видит.
+const IcoStroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round', strokeLinejoin: 'round' }
+
 // Ячейка формы. ВЫНЕСЕНА из OpFields на модульный уровень: если объявлять её внутри
 // компонента, при каждом рендере (нажатии клавиши в поле) она получает новую
 // идентичность функции → React размонтирует/монтирует <Cell> с input'ом заново →
@@ -102,7 +106,8 @@ const Cell = ({ label, opt, accent, children }) => (
   <div><span style={lbl}>{label}{opt ? <span style={{ color: accent === 'warn' ? T.warningText : 'var(--text-faint)', marginLeft: 6 }}>необяз.</span> : ''}</span>{children}</div>
 )
 
-function OpFields({ f, set, articles, counterparties, accent, mode = 'edit' }) {
+function OpFields({ f, set, articles, counterparties, accent, mode = 'edit',
+                    files = [], onAttach, onRemoveFile, busyFiles }) {
   const artOpts = articles.map(a => ({ value: a.id, label: a.name }))
   const cpOpts = counterparties.map(c => ({ value: c.id, label: c.name }))
   const cpById = Object.fromEntries(counterparties.map(c => [c.id, c]))
@@ -159,13 +164,48 @@ function OpFields({ f, set, articles, counterparties, accent, mode = 'edit' }) {
         <Cell label="№ счёта"><input value={f.invoice} onChange={e => set({ invoice: e.target.value })} placeholder="—" style={{ ...inp, fontFamily: MONO }} /></Cell>
         <Cell label="Дата счёта"><input type="date" value={f.invoice_date} onChange={e => set({ invoice_date: e.target.value })} style={inp} /></Cell>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 14 }}>
-        <Cell label="Ссылка на документ"><input value={f.document_link} onChange={e => set({ document_link: e.target.value })} placeholder="https://…" style={inp} /></Cell>
+      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1.7fr', gap: 14 }}>
+        <Cell label="Документ">
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input value={f.document_link} onChange={e => set({ document_link: e.target.value })} placeholder="https://…"
+              title="Ссылка на документ во внешнем хранилище" style={{ ...inp, flex: 1, minWidth: 0 }} />
+            {/* Сканы кладём к себе: часть первички существует только на бумаге, и
+                ссылке её заменить нечем. Ссылка при этом остаётся — у операции может
+                быть и то, и другое. */}
+            <label title="Приложить скан документа"
+              style={{ ...inp, flex: '0 0 auto', width: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6,
+                       cursor: busyFiles ? 'wait' : 'pointer', whiteSpace: 'nowrap', fontFamily: MONO, fontSize: 12,
+                       fontWeight: 700, color: 'var(--accent)', borderColor: 'var(--accent)', opacity: busyFiles ? .6 : 1 }}>
+              <input type="file" multiple disabled={!!busyFiles} style={{ display: 'none' }}
+                onChange={e => { const list = Array.from(e.target.files || []); e.target.value = ''; if (list.length) onAttach && onAttach(list) }} />
+              <svg width="13" height="13" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 5v14M5 12h14" /></svg>
+              {busyFiles ? 'Загрузка…' : 'Приложить файл'}
+            </label>
+          </div>
+          {files.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 7 }}>
+              {files.map((fl, i) => (
+                <div key={fl.id || ('p' + i)} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, minWidth: 0 }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" style={{ ...IcoStroke, flex: '0 0 auto', color: 'var(--text-faint)' }}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg>
+                  <span title={fl.original_name} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: fl.pending ? 'var(--text-muted)' : 'var(--text-primary)' }}>{fl.original_name}</span>
+                  <span style={{ flex: '0 0 auto', fontFamily: MONO, fontSize: 10.5, color: 'var(--text-faint)' }}>{fl.pending ? 'после сохранения' : fmtSize(fl.size_bytes)}</span>
+                  <span onClick={() => onRemoveFile && onRemoveFile(fl, i)} title="Убрать файл" className="op-ico op-ico-d"
+                    style={{ flex: '0 0 auto', width: 18, height: 18, color: 'var(--text-faint)' }}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" style={IcoStroke}><path d="M6 6l12 12M18 6L6 18" /></svg>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Cell>
         <Cell label="Описание"><input value={f.description} onChange={e => set({ description: e.target.value })} placeholder="комментарий к операции" style={inp} /></Cell>
       </div>
     </div>
   )
 }
+
+const fmtSize = (n) => !n ? '' : n < 1024 ? n + ' Б' : n < 1024 * 1024 ? Math.round(n / 1024) + ' КБ'
+  : (n / 1024 / 1024).toFixed(1).replace('.', ',') + ' МБ'
 
 // колонки таблицы (сетка из хендоффа)
 // Четвёртый элемент — ключ сортировки на сервере (см. _sort_map в operations.py).
@@ -212,6 +252,9 @@ export default function Operations2() {
   const [editing, setEditing] = useState(null)        // { id, ...form }
   const [sel, setSel] = useState({})                  // { id: true }
   const [bulk, setBulk] = useState({ status: '', date: '', period: '', bank: '', vat_rate: '', article_id: '', counterparty_id: '' })
+  const [editFiles, setEditFiles] = useState([])   // сканы открытой на правку операции
+  const [newFiles, setNewFiles] = useState([])     // выбранные в форме создания, ещё не отправленные
+  const [filesBusy, setFilesBusy] = useState(false)
   const [saving, setSaving] = useState(false)
   // Высота шапки меряется, а не задаётся числом: у шапки две строки, и их набор
   // зависит от прав пользователя — закреплённая панель массовой правки иначе то
@@ -286,7 +329,12 @@ export default function Operations2() {
     if (isPaid) { if (!f.date) miss.push('дата'); if (!f.bank) miss.push('банк') }
     if (miss.length) { alert('Заполните обязательные поля: ' + miss.join(', ')); return }
     setSaving(true)
-    try { await api(tok()).post('/operations/', cleanOp(createForm)); setCreateForm(emptyForm()); setCreateOpen(false); loadOps() }
+    try {
+      const res = await api(tok()).post('/operations/', cleanOp(createForm))
+      const newId = res.data?.id
+      if (newId && newFiles.length) await attachToExisting(newId, newFiles)
+      setCreateForm(emptyForm()); setNewFiles([]); setCreateOpen(false); loadOps()
+    }
     catch (e) { alert(e.response?.data?.detail || 'Не удалось создать') } finally { setSaving(false) }
   }
   const downloadTemplate = async () => {
@@ -313,13 +361,44 @@ export default function Operations2() {
   // Форма правки раскрывается прямо под своей строкой, поэтому никуда не скроллим:
   // строка уже перед глазами, а прыжок к форме наверху таблицы терял место в списке.
   const openEdit = (op) => {
+    setEditFiles([]); loadOpFiles(op.id)
     setEditing({ id: op.id, date: op.date || '', status: op.status || 'ОПЛАЧЕНО', income: op.income || '', expense: op.expense || '', bank: op.bank || '', period: op.period || '', vat_rate: op.vat_rate || 0, article_id: op.article_id || '', counterparty_id: op.counterparty_id || '', ds_num: op.ds_num || '', invoice: op.invoice || '', invoice_date: op.invoice_date || '', description: op.description || '', document_link: op.document_link || '' })
   }
   const saveEdit = async () => {
     setSaving(true)
-    try { await api(tok()).put(`/operations/${editing.id}`, cleanOp(editing)); setEditing(null); loadOps() }
+    try { await api(tok()).put(`/operations/${editing.id}`, cleanOp(editing)); setEditing(null); setEditFiles([]); loadOps() }
     catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить') } finally { setSaving(false) }
   }
+
+  // Приложенные сканы. В правке операция уже существует — файл уходит на сервер сразу.
+  // В создании id ещё нет, поэтому выбранные файлы ждут в памяти браузера и уезжают
+  // сразу после того, как POST вернёт номер новой операции. Промежуточное хранилище
+  // на сервере при таком порядке не нужно.
+  const loadOpFiles = async (id) => {
+    try { const r = await api(tok()).get(`/operations/${id}/files`); setEditFiles(r.data || []) }
+    catch (e) { setEditFiles([]) }
+  }
+  const attachToExisting = async (id, list) => {
+    setFilesBusy(true)
+    try {
+      for (const file of list) {
+        const fd = new FormData(); fd.append('file', file)
+        await api(tok()).post(`/operations/${id}/files`, fd)
+      }
+      await loadOpFiles(id)
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Не удалось приложить файл')
+      await loadOpFiles(id)
+    } finally { setFilesBusy(false) }
+  }
+  const removeFromExisting = async (id, fl) => {
+    if (!confirm(`Убрать файл «${fl.original_name}»?`)) return
+    try { await api(tok()).delete(`/operations/${id}/files/${fl.id}`); await loadOpFiles(id) }
+    catch (e) { alert(e.response?.data?.detail || 'Не удалось удалить файл') }
+  }
+  // Список для формы создания: File-объекты браузера приводим к той же форме,
+  // что приходит с сервера, чтобы компонент формы не различал два случая.
+  const pendingAsFiles = newFiles.map(file => ({ original_name: file.name, size_bytes: file.size, pending: true }))
   // Копирование: не создаём дубль сразу, а открываем форму «Новая операция» с данными
   // копируемой — пользователь правит и подтверждает (POST на «Добавить операцию»).
   const dupOp = (op) => {
@@ -374,7 +453,6 @@ export default function Operations2() {
   const someOnPage = rows.some(o => sel[o.id])
 
   const chev = (d) => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d={d} /></svg>
-  const IcoStroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round', strokeLinejoin: 'round' }
 
   const cell = (o, key) => {
     switch (key) {
@@ -387,7 +465,25 @@ export default function Operations2() {
       case 'bank': return o.bank ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)' }}><span style={{ width: 8, height: 8, borderRadius: 2, background: BANK_COLOR[o.bank] || 'var(--text-faint)' }} />{o.bank}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
       case 'period': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.period || '—'}</span>
       case 'article': return <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{artName[o.article_id] || o.article || '—'}</span>
-      case 'counterparty': return <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cpName[o.counterparty_id] || o.counterparty || '—'}</span>
+      case 'counterparty': {
+        // Стрелка ведёт в карточку контрагента и только в новой вкладке: реестр операций
+        // открыт с фильтрами и прокруткой, и уводить с него — терять рабочее место.
+        // stopPropagation обязателен — иначе клик по ссылке заодно откроет строку на правку
+        // (тот же приём, что у иконки документа ниже).
+        const cpn = cpName[o.counterparty_id] || o.counterparty || '—'
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0, fontWeight: 700 }}>
+            {o.counterparty_id ? (
+              <a href={`/directory/counterparties/${o.counterparty_id}`} target="_blank" rel="noreferrer"
+                 onClick={e => e.stopPropagation()} title="Карточка контрагента — в новой вкладке"
+                 className="op-ico" style={{ width: 18, height: 18, flex: '0 0 auto', color: 'var(--text-faint)' }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" style={IcoStroke}><path d="M7 17 17 7" /><path d="M9 7h8v8" /></svg>
+              </a>
+            ) : null}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cpn}</span>
+          </span>
+        )
+      }
       case 'vat': return <span style={{ fontFamily: MONO }}>{o.vat_rate ? o.vat_rate + '%' : <span style={{ color: '#C3C9D8' }}>—</span>}</span>
       case 'vat_amount': return o.vat_fact ? <span title={fmt2(o.vat_fact) + ' ₽'} style={{ fontFamily: MONO }}>{fmt(o.vat_fact)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
       case 'ds_num': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.ds_num || '—'}</span>
@@ -466,7 +562,10 @@ export default function Operations2() {
         {createOpen && canEdit && (
           <div style={{ ...CARD, position: 'relative', zIndex: 30, border: '1px solid #D7DEFA', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 8px 28px rgba(79,108,230,.10)', animation: 'opRise .28s cubic-bezier(0.22,1,0.36,1) both' }}>
             <HeadCard title="Новая операция" iconBg="var(--accent-tint)" iconFg="var(--accent)" iconPath={<><path d="M12 5v14" /><path d="M5 12h14" /></>} onClose={() => setCreateOpen(false)} />
-            <div style={{ padding: '20px 24px' }}><OpFields f={createForm} set={p => setCreateForm(s => ({ ...s, ...p }))} articles={articles} counterparties={counterparties} mode="create" /></div>
+            <div style={{ padding: '20px 24px' }}><OpFields f={createForm} set={p => setCreateForm(s => ({ ...s, ...p }))} articles={articles} counterparties={counterparties} mode="create"
+              files={pendingAsFiles} busyFiles={filesBusy}
+              onAttach={list => setNewFiles(prev => [...prev, ...list])}
+              onRemoveFile={(fl, i) => setNewFiles(prev => prev.filter((_, k) => k !== i))} /></div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', background: '#FBFCFE', borderTop: '1px solid var(--border-inner)' }}>
               <button onClick={saveCreate} disabled={saving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Добавить операцию</button>
               <button onClick={() => setCreateOpen(false)} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, padding: '9px 16px', fontSize: 13, cursor: 'pointer' }}>Отмена</button>
@@ -589,7 +688,10 @@ export default function Operations2() {
                             <span style={{ fontSize: 15, fontWeight: 700, flex: 1 }}>Редактирование #{editing.id}</span>
                             <span onClick={() => setEditing(null)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18 }}>✕</span>
                           </div>
-                          <OpFields f={editing} set={p => setEditing(s => ({ ...s, ...p }))} articles={articles} counterparties={counterparties} accent="warn" />
+                          <OpFields f={editing} set={p => setEditing(s => ({ ...s, ...p }))} articles={articles} counterparties={counterparties} accent="warn"
+                            files={editFiles} busyFiles={filesBusy}
+                            onAttach={list => attachToExisting(editing.id, list)}
+                            onRemoveFile={fl => removeFromExisting(editing.id, fl)} />
                           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
                             <span style={{ fontSize: 12, color: 'var(--text-faint)', flex: 1 }}>поля, отмеченные «необяз.», можно оставить пустыми</span>
                             <button onClick={saveEdit} disabled={saving} style={{ background: 'var(--dot-current-dz)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Сохранить изменения</button>

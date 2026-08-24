@@ -205,6 +205,34 @@ class Operation(Base):
     counterparty = relationship("Counterparty", back_populates="operations",
                                 foreign_keys="Operation.counterparty_id")
     own_company  = relationship("Counterparty", foreign_keys="Operation.own_company_id")
+    files = relationship("OperationFile", back_populates="operation",
+                         cascade="all, delete-orphan", order_by="OperationFile.id")
+
+
+class OperationFile(Base):
+    """Скан документа, приложенный к операции. Создаётся миграцией
+    2026-08-24_operation_files.sql, там же причина отдельной таблицы.
+
+    Часть первички живёт только на бумаге: в реестр Диадока она не попадает, а
+    `document_link` указывает наружу. Файлов на операцию бывает несколько — счёт,
+    акт, УПД, — поэтому таблица, а не колонки.
+    """
+    __tablename__ = "operation_files"
+    id = Column(Integer, primary_key=True)
+    operation_id = Column(Integer, ForeignKey("operations.id", ondelete="CASCADE"),
+                          nullable=False, index=True)
+    # Относительный ключ от корня хранилища ('operations/op12_ab34_akt.pdf'), а не
+    # абсолютный путь и не голое имя: только он переживает и смену тома, и переезд
+    # в S3. Соглашение — docs/TASK_единый_стандарт_хранения_документов.md.
+    path = Column(String, nullable=False)
+    original_name = Column(String, nullable=False)
+    size_bytes = Column(Integer)
+    uploaded_at = Column(DateTime, server_default=func.now())
+    uploaded_by = Column(Integer, ForeignKey("users.id"))
+    # Снимок имени, как в audit_log: кто приложил, видно и после отключения учётки.
+    uploaded_by_name = Column(String)
+    operation = relationship("Operation", back_populates="files")
+
 
 class LoginAttempt(Base):
     """Хранит счётчик неудачных попыток входа и время разблокировки для каждого email.
