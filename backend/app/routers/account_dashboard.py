@@ -125,7 +125,12 @@ def account_queue(
                .filter(SalesDealSnooze.deal_id.in_(queue_ids)).all()} if queue_ids else {}
     advertisers = {a.id: a.short_name or a.name for a in db.query(SalesAdvertiser).all()}
     brands = {b.id: b.name for b in db.query(SalesBrand).all()}
-    agencies = {a.id: a.name for a in db.query(SalesAgency).all()}
+    # short_name, а не name: в справочнике `name` — длинная историческая форма
+    # («OKKAM / оккам», «Media instinct (Медиа инстинкт)»), и на экране она читается
+    # как непочищенное старое имя. Везде в дашбордах продаж берётся именно короткое
+    # (sales_dashboard.py: 655, 688, 1444, 1797) — здесь это единственное место,
+    # где оно было пропущено; строкой выше у рекламодателей всё верно.
+    agencies = {a.id: (a.short_name or a.name) for a in db.query(SalesAgency).all()}
     repnames = {r.id: r.name for r in db.query(SalesRep).all()}
     def row_public(d, v, sn):
         return row_ctx.apply({
