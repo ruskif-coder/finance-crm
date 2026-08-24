@@ -96,7 +96,12 @@ export default function FinReportMobile({
 }) {
   const [expanded, setExpanded] = useState({})
   const [periodOpen, setPeriodOpen] = useState(false)
-  const { periods, groups, summary, control } = data
+  const { groups, summary, control } = data
+  // Оболочка только суммирует, колонок периодов не рисует. Считать обязана по
+  // месячным периодам: в квартальном режиме data.periods содержит ещё и итоги
+  // кварталов — те же деньги ещё раз, и каждая цифра удвоилась бы. Выбор нарезки
+  // живёт в localStorage, поэтому на телефон он приезжает с десктопа сам.
+  const periods = data.base_periods || data.periods
 
   const seg = (active) => ({ flex: 1, border: 'none', borderRadius: 8, padding: '7px 0', fontFamily: UI, fontSize: 12.5, fontWeight: active ? 700 : 600, cursor: 'pointer', background: active ? 'var(--accent-tint)' : 'transparent', color: active ? 'var(--accent)' : 'var(--text-secondary)' })
 
