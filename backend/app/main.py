@@ -37,6 +37,14 @@ Base.metadata.create_all(bind=engine)
 
 # Лёгкая миграция колонок: create_all не добавляет колонки в уже существующие
 # таблицы. Идемпотентно (Postgres ADD COLUMN IF NOT EXISTS).
+#
+# ТОЛЬКО ДОБАВЛЯЮЩИЕ операции: ADD COLUMN IF NOT EXISTS и CREATE INDEX IF NOT EXISTS.
+# DROP, RENAME и любые UPDATE/INSERT/DELETE здесь запрещены и вынесены в migrations/
+# (2026-08-23_startup_ddl_to_migrations.sql). Причина: блок выполняется при каждом
+# запуске контейнера, а снаружи, в кабинете паблишера, живут представления pub.*_v1 —
+# view над удалённой колонкой падает, и падает у внешнего пользователя. Добавляющая
+# операция сломать представление не может, разрушающая может.
+# Запрет закреплён тестом tests/test_startup_ddl.py.
 with engine.begin() as _conn:
     from sqlalchemy import text
     _conn.execute(text("ALTER TABLE role_permissions "
@@ -68,39 +76,20 @@ with engine.begin() as _conn:
     _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_deals_year_plan_line ON sales_deals (year_plan_line_id)"))
     _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_deals_plan_link "
                        "ON sales_deals (year_plan_line_id, plan_month, plan_deal_idx)"))
-    _conn.execute(text("UPDATE sales_deals SET plan_deal_idx = 0 "
-                       "WHERE year_plan_line_id IS NOT NULL AND plan_deal_idx IS NULL"))
+    # Бэкфилл plan_deal_idx — в migrations/2026-08-23_startup_ddl_to_migrations.sql.
     # Годовой план как пакет: строка принадлежит плану, бриф и прогноз живут на строке.
     _conn.execute(text("ALTER TABLE sales_year_plan_lines ADD COLUMN IF NOT EXISTS plan_id INTEGER"))
     _conn.execute(text("ALTER TABLE sales_year_plan_lines ADD COLUMN IF NOT EXISTS brief JSONB NOT NULL DEFAULT '{}'::jsonb"))
     _conn.execute(text("ALTER TABLE sales_year_plan_lines ADD COLUMN IF NOT EXISTS service_forecast JSONB NOT NULL DEFAULT '{}'::jsonb"))
     _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_year_plan_lines_plan ON sales_year_plan_lines (plan_id)"))
-    # Легаси-строки без плана: под каждую уникальную (рекламодатель, год, сейлз) заводим
-    # план с автозаголовком и привязываем. Идемпотентно — работает только по plan_id IS NULL.
-    _conn.execute(text("""
-        INSERT INTO sales_year_plans (advertiser_id, year, sales_rep_id, title, created_at)
-        SELECT DISTINCT l.advertiser_id, l.year, l.sales_rep_id,
-               COALESCE(a.short_name, a.name, 'Без рекламодателя') || ' · ' || l.year::text, now()
-          FROM sales_year_plan_lines l
-          LEFT JOIN sales_advertisers a ON a.id = l.advertiser_id
-         WHERE l.plan_id IS NULL
-    """))
-    _conn.execute(text("""
-        UPDATE sales_year_plan_lines l SET plan_id = p.id
-          FROM sales_year_plans p
-         WHERE l.plan_id IS NULL
-           AND p.advertiser_id IS NOT DISTINCT FROM l.advertiser_id
-           AND p.year = l.year
-           AND p.sales_rep_id IS NOT DISTINCT FROM l.sales_rep_id
-    """))
+    # Легаси-строки без плана-родителя (INSERT плана + привязка строк) — вынесено в
+    # migrations/2026-08-23_startup_ddl_to_migrations.sql.
     _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS realization_pipeline_id INTEGER"))
     _conn.execute(text("ALTER TABLE sales_stage_phases ADD COLUMN IF NOT EXISTS is_realization BOOLEAN NOT NULL DEFAULT FALSE"))
     _conn.execute(text("ALTER TABLE sales_stages ADD COLUMN IF NOT EXISTS requires_media_plan BOOLEAN NOT NULL DEFAULT FALSE"))
     # Справочник услуг: параметры для конструктора МП. sales_addon_services создаётся
-    # через create_all. Промежуточная таблица вариантов больше не нужна.
-    _conn.execute(text("DROP TABLE IF EXISTS sales_service_variants"))
-    _conn.execute(text("ALTER TABLE sales_services DROP COLUMN IF EXISTS platform"))
-    _conn.execute(text("ALTER TABLE sales_services DROP COLUMN IF EXISTS currency"))
+    # через create_all. Промежуточная таблица вариантов и колонки platform/currency
+    # выброшены — DROP'ы вынесены в migrations/2026-08-23_startup_ddl_to_migrations.sql.
     for _col, _type in [("placement_type", "VARCHAR"), ("calc_form", "VARCHAR"),
                         ("unit_price", "DOUBLE PRECISION"), ("unit_price_web", "DOUBLE PRECISION"),
                         ("unit_price_app", "DOUBLE PRECISION")]:
