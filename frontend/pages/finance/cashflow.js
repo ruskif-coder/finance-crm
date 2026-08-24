@@ -395,6 +395,11 @@ export default function DashboardV2() {
   const planNet = (summary?.plan_income || 0) - (summary?.plan_expense || 0)
   const forecastBalance = actualBalance + planNet
   const forecastDelta = forecastBalance - actualBalance
+  // Непокрытый долг по займам: сколько заёмных денег держит прогнозный баланс,
+  // возврат которых ещё не заведён в план. Считает сервер по разметке статей
+  // «Займ — тело»; как только возврат запланирован, цифра обнуляется и плашка уходит.
+  const loanDebt = summary?.loan_debt || 0
+  const loanOverpaid = summary?.loan_overpaid || 0
 
   const accounts = (summary?.by_bank || [])
 
@@ -473,7 +478,23 @@ export default function DashboardV2() {
                   { label: 'Актуальный баланс', val: <CountUp value={actualBalance} format={RUB} color={actualBalance >= 0 ? INCOME : DANGER_TXT} />, unit: '₽', unitColor: actualBalance >= 0 ? INCOME : DANGER_TXT, sub: <span>на счетах сегодня · {accounts.length} источника</span> },
                   {
                     label: 'Прогнозный баланс', val: <CountUp value={forecastBalance} format={RUB} color={FACT} />, unit: '₽', unitColor: FACT,
-                    sub: <span style={{ display: 'inline-block', background: 'var(--warning-tint)', color: WARN_TXT, borderRadius: 8, padding: '4px 8px', fontFamily: MONO, fontSize: 12, fontWeight: 700 }}>{signRub(forecastDelta)} к текущему</span>
+                    sub: (
+                      <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        <span style={{ display: 'inline-block', background: 'var(--warning-tint)', color: WARN_TXT, borderRadius: 8, padding: '4px 8px', fontFamily: MONO, fontSize: 12, fontWeight: 700 }}>{signRub(forecastDelta)} к текущему</span>
+                        {loanDebt > 0 && (
+                          <span title="Заёмные деньги, возврат которых ещё не заведён в план оплат"
+                                style={{ display: 'inline-block', background: 'var(--danger-tint)', color: DANGER_TXT, borderRadius: 8, padding: '4px 8px', fontFamily: MONO, fontSize: 12, fontWeight: 700 }}>
+                            из них {RUB(loanDebt)} ₽ заёмных
+                          </span>
+                        )}
+                        {loanOverpaid > 0 && (
+                          <span title="По статьям займа возвращено больше, чем получено — похоже на ошибку разметки"
+                                style={{ display: 'inline-block', background: 'var(--warning-tint)', color: WARN_TXT, borderRadius: 8, padding: '4px 8px', fontFamily: MONO, fontSize: 12, fontWeight: 700 }}>
+                            по займам возврат превышает получение на {RUB(loanOverpaid)} ₽
+                          </span>
+                        )}
+                      </span>
+                    )
                   },
                   { label: 'План поступлений', val: <CountUp value={summary.plan_income || 0} format={mln2} color="var(--text-primary)" />, unit: 'млн ₽', sub: <span>{summary.income_count ?? 0} операций · {RUB(summary.plan_income || 0)} ₽</span> },
                   { label: 'План расходов', val: <CountUp value={summary.plan_expense || 0} format={mln2} color="var(--text-primary)" />, unit: 'млн ₽', sub: <span>{summary.expense_count ?? 0} операций · {RUB(summary.plan_expense || 0)} ₽</span> },

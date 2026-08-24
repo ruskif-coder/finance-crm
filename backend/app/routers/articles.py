@@ -22,6 +22,7 @@ PL_LINES = [
     {"value": "profit_tax", "label": "Налоги — налог на прибыль"},
     {"value": "tax_other", "label": "Налоги — прочие"},
     {"value": "other", "label": "Прочие расходы"},
+    {"value": "loan_body", "label": "Займ — тело (вне P&L)"},
     {"value": "excluded", "label": "Вне P&L"},
     {"value": "by_description", "label": "По описанию платежа"},
 ]

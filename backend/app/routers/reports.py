@@ -217,10 +217,25 @@ def get_dds_summary(
             'balance': balance,
         })
 
+    # Остаток долга по займам: получено минус возвращено по статьям с разметкой
+    # «Займ — тело». Считается по ВСЕМ статусам сразу — и по факту, и по планам.
+    # Смысл именно такой: плашка показывает долг, закрытие которого ещё не заведено
+    # в план. Как только возврат запланирован, цифра обнуляется и плашка исчезает —
+    # то есть она предупреждает ровно о том, о чём должна: прогнозный баланс держит
+    # заёмные деньги, а их возврата в планах нет.
+    # Период не фильтруется: долг — величина на момент, а не за отрезок. Заём,
+    # взятый до выбранного периода и не возвращённый, обязан быть виден.
+    loan_row = db.query(func.sum(Operation.income), func.sum(Operation.expense))        .join(Article, Article.id == Operation.article_id)        .filter(Article.pl_line == 'loan_body').first()
+    loan_debt = (loan_row[0] or 0) - (loan_row[1] or 0)
+
     return {
         'total_income': total_income,
         'total_expense': total_expense,
         'net': total_income - total_expense,
+        # Отрицательное значение означало бы, что вернули больше, чем брали, —
+        # это ошибка разметки, а не отрицательный долг. Наружу отдаём только долг.
+        'loan_debt': loan_debt if loan_debt > 0 else 0,
+        'loan_overpaid': -loan_debt if loan_debt < 0 else 0,
         'plan_income': plan_income,
         'plan_expense': plan_expense,
         'income_count': income_count,
