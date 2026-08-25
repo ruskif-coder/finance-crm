@@ -193,6 +193,80 @@ def test_parse_ignores_everything_but_start():
     assert parse_start_command({"message": {"text": "/start", "chat": {"id": 7}}}) == (None, "7")
 
 
+# ---- кнопка «перейти в бота» ----
+
+def test_bot_name_is_normalised_from_any_spelling():
+    """@name, name и целая ссылка должны давать один и тот же юзернейм.
+
+    Имя вписывают в .env руками, и три написания встречаются вперемешку. Без
+    нормализации получается адрес t.me/@name — кнопка ведёт в никуда, а выглядит
+    рабочей.
+    """
+    from app.notify.telegram import _clean_name
+    for raw in ('SimbAD_alert_bot', '@SimbAD_alert_bot', 'https://t.me/SimbAD_alert_bot',
+                'https://t.me/SimbAD_alert_bot/', '  @SimbAD_alert_bot  ',
+                'https://t.me/SimbAD_alert_bot?start=X'):
+        assert _clean_name(raw) == 'SimbAD_alert_bot', raw
+    assert _clean_name('') is None and _clean_name('@') is None
+
+
+def test_link_code_fits_telegram_deeplink_payload():
+    """Код уезжает в ?start=<код>, а Telegram принимает там только A-Z a-z 0-9 _ -.
+
+    Гейт стоит на генераторе кода: если его когда-нибудь заменят на base64 или
+    добавят разделитель, ручная отправка «/start КОД» продолжит работать, а кнопка
+    молча перестанет — ровно тот отказ, который никто не связывает с генератором.
+    """
+    import re
+    from app.notify.telegram import new_link_code
+    for _ in range(50):
+        code, _exp = new_link_code()
+        assert re.fullmatch(r'[A-Za-z0-9_-]{1,64}', code), code
+
+
+def test_username_comes_from_telegram_not_from_env(monkeypatch):
+    """getMe важнее .env: юзернейм — свойство токена, а не строки, набранной руками."""
+    import app.notify.telegram as T
+    T._USERNAME_CACHE.clear()
+    monkeypatch.setenv('TELEGRAM_BOT_TOKEN', 'tok-1')
+    monkeypatch.setenv('TELEGRAM_BOT_NAME', 'старое_имя')
+
+    class _R:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {'ok': True, 'result': {'username': 'SimbAD_alert_bot'}}
+
+    monkeypatch.setattr(T.httpx, 'get', lambda *a, **k: _R())
+    assert T.bot_username() == 'SimbAD_alert_bot'
+    assert T.link_url('A1B2C3') == 'https://t.me/SimbAD_alert_bot?start=A1B2C3'
+
+
+def test_username_falls_back_to_env_when_telegram_unreachable(monkeypatch):
+    """Сеть недоступна — привязка не ломается, просто берём то, что записано."""
+    import app.notify.telegram as T
+    T._USERNAME_CACHE.clear()
+    monkeypatch.setenv('TELEGRAM_BOT_TOKEN', 'tok-2')
+    monkeypatch.setenv('TELEGRAM_BOT_NAME', '@SimbAD_alert_bot')
+
+    def _boom(*a, **k):
+        raise RuntimeError('нет сети')
+
+    monkeypatch.setattr(T.httpx, 'get', _boom)
+    assert T.bot_username() == 'SimbAD_alert_bot'
+
+
+def test_no_bot_name_means_no_button_not_a_broken_one(monkeypatch):
+    """Имя неизвестно — ссылки нет вовсе. Экран покажет код, а не мёртвую кнопку."""
+    import app.notify.telegram as T
+    T._USERNAME_CACHE.clear()
+    monkeypatch.delenv('TELEGRAM_BOT_TOKEN', raising=False)
+    monkeypatch.delenv('TELEGRAM_BOT_NAME', raising=False)
+    assert T.bot_username() is None
+    assert T.link_url('A1B2C3') is None
+
+
 # ---- сейлзовые события ----
 
 def test_sales_events_registered():

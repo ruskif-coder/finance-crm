@@ -352,7 +352,11 @@ def tg_link(db: Session = Depends(get_db), current_user: User = Depends(get_curr
     ch.tg_link_code, ch.tg_link_expires = code, expires
     ch.tg_chat_id, ch.tg_verified_at = None, None      # перепривязка сбрасывает старый чат
     db.commit()
-    return {"code": code, "expires_at": expires, "bot": os.getenv("TELEGRAM_BOT_NAME") or None}
+    # Кроме кода отдаём диплинк: по нему Telegram сам подставит «/start <код>»,
+    # человеку остаётся нажать «Начать». Раньше на экране было только имя бота из
+    # .env — где именно вводить код, приходилось догадываться.
+    return {"code": code, "expires_at": expires,
+            "bot": telegram.bot_username(), "link": telegram.link_url(code)}
 
 
 @router.delete("/me/telegram")

@@ -11,7 +11,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Head from 'next/head'
 import Navbar from '../../components/Navbar'
 import SettingsTabs from '../../components/SettingsTabs'
-import { UI, MONO, card, inp, sel, primaryBtn, th } from '../../components/salesTableKit'
+import { UI, MONO, card, inp, sel, primaryBtn, btnSm, th } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 
 const CH_LABELS = { app: 'В приложении', tg: 'Telegram', mail: 'Почта', digest: 'Дайджест' }
@@ -297,11 +297,24 @@ function MyChannels({ me, tgCode, setTgCode, reload, onErr }) {
             </>}
       </span>
       {tgCode && (
-        <span style={{ color: 'var(--text-secondary)' }}>
-          Отправьте боту{tgCode.bot ? ` @${tgCode.bot}` : ''} сообщение:{' '}
-          <code style={{ fontFamily: MONO, background: 'var(--bg-subtle)', padding: '2px 6px', borderRadius: 6 }}>
-            /start {tgCode.code}
-          </code>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          color: 'var(--text-secondary)' }}>
+          {/* Кнопка ведёт в чат с ботом и несёт код в себе: Telegram подставит его в
+              «Начать», вводить руками не нужно. Код рядом оставлен намеренно — если
+              чат с ботом уже открывали, кнопки «Начать» в нём нет. */}
+          {tgCode.link
+            ? <a href={tgCode.link} target="_blank" rel="noopener noreferrer"
+                 style={{ ...btnSm(true), textDecoration: 'none', display: 'inline-flex',
+                   alignItems: 'center', gap: 6 }}>
+                Перейти в бота{tgCode.bot ? ` @${tgCode.bot}` : ''} →
+              </a>
+            : <span>Откройте бота{tgCode.bot ? ` @${tgCode.bot}` : ' в Telegram'} и отправьте:</span>}
+          <span>
+            код{' '}
+            <code style={{ fontFamily: MONO, background: 'var(--bg-subtle)', padding: '2px 6px', borderRadius: 6 }}>
+              /start {tgCode.code}
+            </code>
+          </span>
         </span>
       )}
       <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

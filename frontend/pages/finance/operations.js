@@ -111,9 +111,12 @@ function OpFields({ f, set, articles, counterparties, accent, mode = 'edit',
   const artOpts = articles.map(a => ({ value: a.id, label: a.name }))
   const cpOpts = counterparties.map(c => ({ value: c.id, label: c.name }))
   const cpById = Object.fromEntries(counterparties.map(c => [c.id, c]))
-  const toNum = (v) => Number(String(v ?? '').replace(/[^0-9.]/g, '')) || 0
-  const amt = toNum(f.income) || toNum(f.expense)
-  const vatAmount = f.vat_rate > 0 && amt > 0 ? Math.round(amt * f.vat_rate / (100 + f.vat_rate)) : 0
+  // Разбор суммы — общим moneyNum, тем же, что уходит на сервер. Здесь стоял свой
+  // разбор, вырезавший всё кроме цифр и точки: запятая пропадала, и «100714,71»
+  // превращалось в 10 071 471 — превью НДС врало ровно в 100 раз, а в базу уходило
+  // правильное значение. Расхождение двух разборов одной строки не видно глазами.
+  const amt = moneyNum(f.income) || moneyNum(f.expense)
+  const vatAmount = f.vat_rate > 0 && amt > 0 ? amt * f.vat_rate / (100 + f.vat_rate) : 0
   // Смена статуса (только при создании): «оплачено» — дата сегодня + банк по умолчанию;
   // «план оплат/поступлений» — дата и банк пустые (даже при переключении).
   const onStatus = (v) => {
@@ -127,7 +130,7 @@ function OpFields({ f, set, articles, counterparties, accent, mode = 'edit',
     const patch = { counterparty_id: v }
     const cp = cpById[+v] || cpById[v]
     if (cp) {
-      const inc = toNum(f.income) > 0, exp = toNum(f.expense) > 0
+      const inc = moneyNum(f.income) > 0, exp = moneyNum(f.expense) > 0
       const art = inc ? cp.default_article_income_id : exp ? cp.default_article_expense_id : null
       if (art) patch.article_id = art
       const vr = inc ? cp.vat_rate_income : exp ? cp.vat_rate_expense : null
@@ -154,7 +157,7 @@ function OpFields({ f, set, articles, counterparties, accent, mode = 'edit',
             <select value={f.vat_rate} onChange={e => set({ vat_rate: +e.target.value })} style={{ ...inp, flex: '0 0 44%', fontFamily: MONO }}>
               {VAT_OPTIONS.map(v => <option key={v} value={v}>{v}%</option>)}
             </select>
-            <input readOnly value={vatAmount ? fmt(vatAmount) + ' ₽' : '—'} title="Сумма НДС по ставке (не редактируется)"
+            <input readOnly value={vatAmount ? fmt2(vatAmount) + ' ₽' : '—'} title="Сумма НДС по ставке (не редактируется)"
               style={{ ...inp, flex: 1, minWidth: 0, fontFamily: MONO, textAlign: 'right', background: 'var(--bg-subtle)', color: 'var(--text-muted)' }} />
           </div>
         </Cell>

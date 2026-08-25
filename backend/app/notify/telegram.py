@@ -29,6 +29,63 @@ def configured() -> bool:
     return bot_token() is not None
 
 
+_USERNAME_CACHE: dict = {}
+
+
+def _clean_name(raw: str) -> Optional[str]:
+    """Из того, что написали в .env, достать голый юзернейм.
+
+    Пишут по-разному: `@SimbAD_alert_bot`, `SimbAD_alert_bot`, целиком ссылкой
+    `https://t.me/SimbAD_alert_bot`. Все три должны давать одно и то же, иначе адрес
+    кнопки получится вида t.me/@SimbAD_alert_bot и никуда не ведёт.
+    """
+    v = (raw or "").strip().split("?")[0].rstrip("/")
+    v = v.rsplit("/", 1)[-1].lstrip("@")
+    return v or None
+
+
+def bot_username() -> Optional[str]:
+    """Юзернейм бота — то, что стоит после @ и работает в адресе t.me/<имя>.
+
+    Источник истины — сам Telegram (getMe по токену), а НЕ переменная окружения:
+    имя в .env вписывают руками, оно молча устаревает при смене бота, и ошибка
+    вылезает не сообщением, а кнопкой, ведущей в несуществующий чат. Юзернейм —
+    свойство токена, поэтому и спрашиваем его у владельца токена.
+
+    Ответ кэшируется на процесс (ключ — токен, смена токена требует перезапуска и
+    так). Сеть недоступна или бот не настроен — откатываемся на .env, привязку это
+    не ломает: без имени просто не будет кнопки.
+    """
+    token = bot_token()
+    env = _clean_name(os.getenv("TELEGRAM_BOT_NAME") or "")
+    if not token:
+        return env
+    if token not in _USERNAME_CACHE:
+        name = None
+        try:
+            r = httpx.get(API.format(token=token, method="getMe"), timeout=5)
+            if r.status_code == 200:
+                name = ((r.json() or {}).get("result") or {}).get("username") or None
+        except Exception:
+            name = None
+        _USERNAME_CACHE[token] = name
+    return _USERNAME_CACHE[token] or env
+
+
+def link_url(code: str) -> Optional[str]:
+    """Диплинк «открыть бота и отдать ему код».
+
+    t.me/<бот>?start=<код> — Telegram сам подставляет «/start <код>» в кнопку
+    «Начать», то есть вводить код руками не нужно вовсе. Код — hex в верхнем
+    регистре, он укладывается в разрешённый payload (A-Z a-z 0-9 _ -).
+
+    Кнопка не заменяет код на экране: если чат с ботом уже открывали, кнопки
+    «Начать» в нём нет, и код отправляют сообщением.
+    """
+    name = bot_username()
+    return f"https://t.me/{name}?start={code}" if name and code else None
+
+
 def new_link_code() -> Tuple[str, datetime]:
     """Код привязки: короткий, одноразовый, живёт полчаса."""
     return secrets.token_hex(3).upper(), datetime.utcnow() + timedelta(minutes=LINK_CODE_TTL_MIN)

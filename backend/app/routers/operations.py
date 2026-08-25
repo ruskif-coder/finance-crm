@@ -354,10 +354,21 @@ def export_operations(
     ws = wb.active
     ws.title = "Операции"
 
+    # Колонки выгрузки читаются обратно импортом (_CF_BEST_COLUMN_MAP), поэтому
+    # переименование любой из них ломает круг «выгрузил → поправил → загрузил».
+    # ИНН добавлен 2026-08-25 именно ради этого круга: без него импорт сопоставляет
+    # контрагента по имени, а имя в справочнике живёт в разных формах
+    # («ООО "Ромашка"» / «РОМАШКА ООО») — и вместо совпадения заводится дубль.
+    #
+    # ID — внутренний номер операции, чтобы видеть пересечения точно, а не по
+    # совпадению полей. Импорт его НЕ читает и ключом не считает: id уникален
+    # внутри одного стенда, а между стендами (локалка ↔ прод) номера принадлежат
+    # разным операциям. Колонка сейчас — для глаза и для сверки, не для записи.
     export_columns = [
+        ('ID', 9),
         ('Дата', 14), ('Статус', 18), ('Поступления', 14), ('Списания', 14),
         ('Банк', 14), ('Период', 14), ('Статья', 22), ('Контрагент', 28),
-        ('НДС %', 8), ('НДС сумма', 14), ('№ ДС', 14), ('Счет', 14),
+        ('ИНН', 14), ('НДС %', 8), ('НДС сумма', 14), ('№ ДС', 14), ('Счет', 14),
         ('Счет от дата', 14), ('Документ', 32), ('Назначение', 35),
         ('Статус ДЗ', 14),
     ]
@@ -373,13 +384,19 @@ def export_operations(
     ws.row_dimensions[1].height = 26
     ws.freeze_panes = "A2"
 
-    date_col_idx = 1
-    invoice_date_col_idx = 13
+    # Номера колонок с датами считаются из состава, а не проставлены числом:
+    # вставка колонки посередине сдвигает их, и формат даты молча уехал бы
+    # на соседнюю колонку.
+    titles = [t for t, _w in export_columns]
+    date_col_idx = titles.index('Дата') + 1
+    invoice_date_col_idx = titles.index('Счет от дата') + 1
     for row_idx, op in enumerate(operations, start=2):
         values = [
+            op.id,
             op.date, op.status, op.income or None, op.expense or None,
             op.bank, op.period, op.article.name if op.article else None,
             op.counterparty.name if op.counterparty else None,
+            op.counterparty.inn if op.counterparty else None,
             op.vat_rate or None, op.vat_fact or None, op.ds_num, op.invoice,
             op.invoice_date, op.document_link, op.description,
             RECEIVABLE_STATUS_LABELS.get(_receivable_status(op)),
@@ -610,6 +627,12 @@ _CF_BEST_COLUMN_MAP = {
     'просрочка дней': 'overdue_days',
     'назначение': 'description',
     'ссылка на документ': 'document_link',
+    # Синонимы из выгрузки (/operations/export). Она пишет те же поля под другими
+    # заголовками, и без этих трёх строк система не читает собственную выгрузку:
+    # vat_rate обязателен, а "Документ" молча терял бы все ссылки на первичку.
+    'ндс %': 'vat_rate',
+    'ндс сумма': 'vat_fact',
+    'документ': 'document_link',
 }
 # Поля без которых парсинг не имеет смысла. overdue_days нигде не используется ниже;
 # inn и document_link — новые опциональные поля (см. шаблон массового импорта),
@@ -675,39 +698,77 @@ def _clean_inn(value) -> Optional[str]:
     return s or None
 
 
-def _parse_cf_best_rows(contents: bytes) -> List[dict]:
-    """Парсит Excel-файл с листом CF BEST в список словарей (без обращения к БД).
-    Логика идентична исходному /import — вынесена в helper, чтобы её могли
-    использовать и блайнд-импорт, и preview/apply синхронизация.
+def _map_header_row(header) -> dict:
+    """Сопоставление ячеек одной строки с полями операции: {индекс колонки: поле}.
 
-    Заголовок ищется динамически (строка, где есть ячейка "статус"), а колонки
-    сопоставляются по названию, а не по фиксированной позиции. Это позволяет
-    обрабатывать разные варианты выгрузки: со служебной шапкой-дашбордом сверху
-    или без неё, с лишними колонками (например, "Кредит"/"Дебет") — такие
-    нераспознанные колонки просто игнорируются."""
-    raw = pd.read_excel(io.BytesIO(contents), sheet_name="CF BEST", header=None)
-
-    header_row_idx = None
-    for idx in range(len(raw)):
-        cells = [str(v).strip().lower() for v in raw.iloc[idx].tolist() if pd.notna(v)]
-        if 'статус' in cells:
-            header_row_idx = idx
-            break
-    if header_row_idx is None:
-        raise ValueError('Не найдена строка заголовка (колонка "статус") на листе CF BEST')
-
-    header = raw.iloc[header_row_idx]
+    Первое вхождение поля выигрывает: файл может нести и "НДС", и "НДС %" —
+    оба ведут в vat_rate, и без этого правила в выборку попали бы две колонки
+    с одинаковым именем, на чём pandas и ломается."""
     col_map = {}
     for col_idx, value in header.items():
         if pd.isna(value):
             continue
         field = _CF_BEST_COLUMN_MAP.get(str(value).strip().lower())
-        if field:
+        if field and field not in col_map.values():
             col_map[col_idx] = field
+    return col_map
 
-    missing = _CF_BEST_REQUIRED_FIELDS - set(col_map.values())
-    if missing:
-        raise ValueError(f"В файле не найдены обязательные колонки: {sorted(missing)}")
+
+def _find_import_sheet(contents: bytes):
+    """Лист и строка заголовка, которые парсер способен разобрать.
+
+    Имя листа НЕ фиксировано. Раньше здесь стояло pd.read_excel(sheet_name="CF BEST"),
+    и система не читала собственную выгрузку: /operations/export пишет лист
+    "Операции". Файл при этом содержал ровно те же данные.
+
+    Лист выбирается не по имени, а по тому, все ли обязательные колонки в нём
+    нашлись. Имя "CF BEST" (лист шаблона) проверяется первым — не как требование,
+    а чтобы на файле шаблона не тратить время на остальные листы.
+
+    Угадывать по одной ячейке "статус" нельзя: на листе "Инструкция" того же
+    шаблона есть строка с таким текстом (описание колонки), и такой поиск выбрал
+    бы её. Поэтому признак листа — полный набор обязательных колонок.
+
+    Если ни один лист не подошёл, в ошибку идёт ближайший промах: имя листа,
+    номер строки и чего именно не хватило. "Не найден лист CF BEST" на файле,
+    где не хватает одной колонки, отправляет искать не там."""
+    xls = pd.ExcelFile(io.BytesIO(contents))
+    names = xls.sheet_names
+    order = ([n for n in names if n == "CF BEST"] + [n for n in names if n != "CF BEST"])
+
+    best = None                      # (сколько не хватило, лист, строка, чего нет)
+    for name in order:
+        raw = pd.read_excel(xls, sheet_name=name, header=None)
+        for idx in range(min(len(raw), 30)):
+            col_map = _map_header_row(raw.iloc[idx])
+            if not col_map:
+                continue
+            missing = _CF_BEST_REQUIRED_FIELDS - set(col_map.values())
+            if not missing:
+                return raw, idx, col_map
+            if best is None or len(missing) < best[0]:
+                best = (len(missing), name, idx + 1, sorted(missing))
+
+    if best:
+        _, name, row, missing = best
+        raise ValueError(
+            f'На листе "{name}" (строка заголовка {row}) не найдены обязательные '
+            f'колонки: {missing}')
+    raise ValueError('Не найдена строка заголовка ни на одном листе файла. '
+                     'Скачайте шаблон импорта и заполните его.')
+
+
+def _parse_cf_best_rows(contents: bytes) -> List[dict]:
+    """Парсит Excel-файл с листом CF BEST в список словарей (без обращения к БД).
+    Логика идентична исходному /import — вынесена в helper, чтобы её могли
+    использовать и блайнд-импорт, и preview/apply синхронизация.
+
+    Заголовок ищется динамически, а колонки сопоставляются по названию, а не по
+    фиксированной позиции. Это позволяет обрабатывать разные варианты выгрузки:
+    со служебной шапкой-дашбордом сверху или без неё, с лишними колонками
+    (например, "Кредит"/"Дебет") — такие нераспознанные колонки просто
+    игнорируются. Имя листа тоже не фиксировано, см. _find_import_sheet."""
+    raw, header_row_idx, col_map = _find_import_sheet(contents)
 
     df = raw.iloc[header_row_idx + 1:].rename(columns=col_map)
     df = df[list(col_map.values())]
