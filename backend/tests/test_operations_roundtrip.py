@@ -30,6 +30,7 @@ from openpyxl import Workbook                                    # noqa: E402
 from app.routers.operations import (                             # noqa: E402
     _CF_BEST_COLUMN_MAP,
     _CF_BEST_REQUIRED_FIELDS,
+    _SYNC_COMPARE_FIELDS,
     _find_import_sheet,
     _map_header_row,
     _parse_cf_best_rows,
@@ -87,25 +88,35 @@ def test_every_export_column_is_understood_by_the_importer():
     known = set(_CF_BEST_COLUMN_MAP)
     unknown = [c for c in _export_columns()
                if c.strip().lower() not in known
-               and c not in ('ID', 'Статус ДЗ')]     # см. следующий тест
+               and c != 'Статус ДЗ']                 # см. следующий тест
     assert not unknown, (
         'колонки выгрузки, которые импорт не распознаёт (данные из них потеряются): '
         f'{unknown}')
 
 
-def test_columns_deliberately_not_imported_are_derived_ones():
-    """Две колонки импорт не читает намеренно, и это не забывчивость.
+def test_receivable_status_is_never_imported():
+    """«Статус ДЗ» вычисляется из даты и отсрочки.
 
-    «Статус ДЗ» вычисляется из даты и отсрочки — принимать его извне значит
-    позволить файлу переписать расчёт. «ID» уникален внутри одного стенда:
-    между локалкой и продом один и тот же номер принадлежит разным операциям,
-    поэтому ключом он быть не может.
+    Принять его из файла значит позволить файлу переписать расчёт — колонка
+    выгружается только для чтения человеком.
     """
-    known = set(_CF_BEST_COLUMN_MAP)
-    for col in ('ID', 'Статус ДЗ'):
-        assert col in _export_columns(), f'колонка {col} пропала из выгрузки'
-        assert col.strip().lower() not in known, (
-            f'{col} стал читаться импортом — это решение, а не правка формата')
+    assert 'Статус ДЗ' in _export_columns()
+    assert 'статус дз' not in set(_CF_BEST_COLUMN_MAP), (
+        'Статус ДЗ стал читаться импортом — это решение, а не правка формата')
+
+
+def test_id_is_a_hint_not_a_stored_field():
+    """ID читается импортом, но подсказкой, а не данными.
+
+    Он не входит ни в обязательные поля (в шаблоне колонки ID нет вовсе), ни в
+    сравниваемые — иначе номер из чужого стенда показывался бы «изменением»
+    и, что хуже, мог бы попытаться уехать в базу. Правило выбора по нему —
+    в tests/test_import_matching.py.
+    """
+    assert 'ID' in _export_columns()
+    assert _CF_BEST_COLUMN_MAP.get('id') == 'op_id'
+    assert 'op_id' not in _CF_BEST_REQUIRED_FIELDS
+    assert 'op_id' not in _SYNC_COMPARE_FIELDS
 
 
 def test_export_covers_all_required_import_fields():

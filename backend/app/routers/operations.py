@@ -360,10 +360,10 @@ def export_operations(
     # контрагента по имени, а имя в справочнике живёт в разных формах
     # («ООО "Ромашка"» / «РОМАШКА ООО») — и вместо совпадения заводится дубль.
     #
-    # ID — внутренний номер операции, чтобы видеть пересечения точно, а не по
-    # совпадению полей. Импорт его НЕ читает и ключом не считает: id уникален
-    # внутри одного стенда, а между стендами (локалка ↔ прод) номера принадлежат
-    # разным операциям. Колонка сейчас — для глаза и для сверки, не для записи.
+    # ID — внутренний номер операции. Импорт читает его как НЕСТРОГУЮ подсказку:
+    # сам по себе он ничего не сопоставляет (между стендами один номер
+    # принадлежит разным операциям), но помогает выбрать нужную из нескольких,
+    # уже совпавших по всем содержательным полям. См. _take_from_pool.
     export_columns = [
         ('ID', 9),
         ('Дата', 14), ('Статус', 18), ('Поступления', 14), ('Списания', 14),
@@ -633,6 +633,11 @@ _CF_BEST_COLUMN_MAP = {
     'ндс %': 'vat_rate',
     'ндс сумма': 'vat_fact',
     'документ': 'document_link',
+    # Внутренний номер операции. Ключом НЕ является и сам по себе ничего не
+    # сопоставляет: id уникален внутри стенда, между локалкой и продом один
+    # номер принадлежит разным операциям. Используется только как подсказка при
+    # выборе из уже совпавших по всем содержательным полям — см. _take_from_pool.
+    'id': 'op_id',
 }
 # Поля без которых парсинг не имеет смысла. overdue_days нигде не используется ниже;
 # inn и document_link — новые опциональные поля (см. шаблон массового импорта),
@@ -640,7 +645,8 @@ _CF_BEST_COLUMN_MAP = {
 # vat_fact тоже сделан опциональным: если колонки нет (как в новом шаблоне), сумма
 # НДС вычисляется автоматически из дохода/расхода и ставки — так же, как при
 # ручном добавлении операции через форму (см. create_operation/update_operation).
-_CF_BEST_REQUIRED_FIELDS = set(_CF_BEST_COLUMN_MAP.values()) - {'overdue_days', 'inn', 'document_link', 'vat_fact'}
+_CF_BEST_REQUIRED_FIELDS = set(_CF_BEST_COLUMN_MAP.values()) - {
+    'overdue_days', 'inn', 'document_link', 'vat_fact', 'op_id'}
 
 _PERIOD_MONTHS = {
     'январь': 1, 'февраль': 2, 'март': 3, 'апрель': 4,
@@ -786,7 +792,12 @@ def _parse_cf_best_rows(contents: bytes) -> List[dict]:
             parsed_vat_fact = float(row['vat_fact'])
         else:
             parsed_vat_fact = compute_vat_fact(parsed_income, parsed_expense, parsed_vat_rate)
+        try:
+            parsed_op_id = int(float(row['op_id'])) if pd.notna(row.get('op_id')) else None
+        except (TypeError, ValueError):
+            parsed_op_id = None          # в колонке текст — подсказки просто не будет
         rows.append({
+            'op_id': parsed_op_id,
             'date': parsed_date,
             'status': str(row['status']).strip().upper() if pd.notna(row.get('status')) else 'ОПЛАЧЕНО',
             'income': parsed_income,
@@ -991,13 +1002,23 @@ async def download_import_template(
 
 
 def _values_equal(a, b) -> bool:
-    """Сравнение значений для диффа: float сравниваются с округлением до 2 знаков,
-    чтобы погрешности округления в Excel не создавали ложные конфликты."""
+    """Сравнение значений для диффа.
+
+    float сравниваются с округлением до 2 знаков, чтобы погрешности округления
+    в Excel не создавали ложных конфликтов.
+
+    Пустота имеет два написания: None и пустая строка. Форма операции шлёт
+    description: f.description || '' (пустую строку), импорт кладёт None — и
+    сравнение «как есть» помечало конфликтом КАЖДУЮ строку с незаполненным
+    назначением, хотя менять там нечего. Очистка непустого значения при этом
+    остаётся изменением: пусто сходится только с пустым."""
     if isinstance(a, float) or isinstance(b, float):
         try:
             return round(float(a or 0), 2) == round(float(b or 0), 2)
         except (TypeError, ValueError):
             return a == b
+    if a in (None, '') and b in (None, ''):
+        return True
     return a == b
 
 
@@ -1080,6 +1101,58 @@ def _field_equal(field: str, existing_val, incoming_val) -> bool:
     return _values_equal(existing_val, incoming_val)
 
 
+def _is_blank(col):
+    """«Пусто» в SQL — это и NULL, и ПУСТАЯ СТРОКА.
+
+    Пустота записана в базе двумя способами: форма операции шлёт
+    ds_num: f.ds_num || '' (пустую строку), импорт кладёт None. Проверка только
+    на NULL выбрасывала из пула сопоставления всё, что заведено руками и имеет
+    номер счёта, но не имеет № ДС, — 222 операции на стенде и 246 на проде.
+
+    Для таких строк не работал ни составной ключ (в файле № ДС пуст, значит путь
+    не тот), ни естественный (записи попросту нет в пуле). Повторная загрузка
+    того же файла показывала их «новыми» — и создавала дубли.
+    """
+    return or_(col.is_(None), col == '')
+
+
+def _take_from_pool(pool, invoice, op_id=None):
+    """Из пула одинаковых по естественному ключу берём наиболее вероятного.
+
+    Естественный ключ намеренно не включает номер счёта: он рассчитан на
+    операции, где счёта нет вовсе (зарплата, налоги, банк). Но в пул попадают и
+    строки, у которых пуст только № ДС, а счёт есть. У повторяющихся платежей
+    одного контрагента на одну сумму (ежемесячный счёт) ключ совпадает сразу у
+    нескольких записей, и без уточнения бралась просто самая старая — правка
+    уезжала не в ту операцию, а расхождение показывалось конфликтом периода и
+    ссылки, будто данные поменялись.
+
+    Вторая подсказка — ID из выгрузки, нестрогая. Она смотрится только после
+    счёта и только внутри пула, то есть среди записей, УЖЕ совпавших по дате,
+    статусу, банку, суммам, статье и контрагенту. Поэтому даже случайное
+    совпадение номера между стендами способно выбрать лишь одну из операций,
+    неотличимых по всем содержательным полям. Сам по себе ID не сопоставляет
+    ничего и несовпадение ID не отменяет совпадения.
+
+    Если ни счёт, ни ID не помогли, поведение прежнее: берётся самая ранняя
+    запись. Так остаётся рабочим случай «файл дописывает номер счёта операции,
+    у которой его ещё не было»."""
+    if not pool:
+        return None
+    want = (invoice or '').strip()
+    if want:
+        for i, op in enumerate(pool):
+            if (op.invoice or '').strip() == want:
+                del pool[i]
+                return op
+    if op_id:
+        for i, op in enumerate(pool):
+            if op.id == op_id:
+                del pool[i]
+                return op
+    return pool.popleft()
+
+
 @router.post("/import/preview")
 async def import_preview(
     file: UploadFile = File(...),
@@ -1122,7 +1195,7 @@ async def import_preview(
     counterparties_by_id = {c.id: c.name for c in db.query(Counterparty).all()}
 
     unkeyed_existing = db.query(Operation).filter(
-        (Operation.ds_num.is_(None)) | (Operation.invoice.is_(None))
+        or_(_is_blank(Operation.ds_num), _is_blank(Operation.invoice))
     ).order_by(Operation.id).all()
 
     def _natural_key(d, status, bank, income, expense, article, counterparty):
@@ -1149,8 +1222,7 @@ async def import_preview(
         else:
             nk = _natural_key(r['date'], r['status'], r['bank'], r['income'], r['expense'],
                                r['article'], r['counterparty'])
-            pool = natural_pool.get(nk)
-            existing = pool.popleft() if pool else None
+            existing = _take_from_pool(natural_pool.get(nk), r.get('invoice'), r.get('op_id'))
             key = f"nk:{existing.id}" if existing else None
 
         if not existing:
