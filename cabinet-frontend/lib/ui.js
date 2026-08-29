@@ -27,6 +27,7 @@ export const C = {
   muted: 'var(--text-muted)',
   faint: 'var(--text-faint)',
   ghost: 'var(--text-ghost)',
+  onFill: 'var(--fg-on-fill)',   // текст поверх насыщенной заливки
   accent: 'var(--accent)',
   accentHover: 'var(--accent-hover)',
   accentTint: 'var(--accent-tint)',
@@ -58,7 +59,7 @@ export const btn = (primary) => ({
   fontWeight: primary ? 700 : 600, fontFamily: UI,
   border: primary ? '1px solid transparent' : `1px solid ${C.border}`,
   background: primary ? C.accent : C.card,
-  color: primary ? '#FFFFFF' : C.secondary,
+  color: primary ? C.onFill : C.secondary,
   transition: 'background 150ms ease, border-color 150ms ease',
 })
 

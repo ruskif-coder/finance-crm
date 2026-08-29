@@ -288,7 +288,7 @@
   --border-card:#E3E7F1; --border-inner:#EDF0F7; --border-row:#F2F4FA; --border-hover:#C7D0E8;
   --text-primary:#1C2433; --text-secondary:#525C70; --text-muted:#79839A; --text-faint:#A3ABBD;
   --text-ghost:#C3C9D8;
-  --accent:#4F6CE6; --accent-hover:#3A50BE; --accent-tint:#ECEFFD; --accent-border:#D7DEFA;
+  --accent:#4F6CE6; --fg-on-fill:#FFFFFF; --accent-hover:#3A50BE; --accent-tint:#ECEFFD; --accent-border:#D7DEFA;
   --accent-soft:#A9B6F2;
   --income:#2FA37C; --income-fg:#1F7D5E; --income-tint:#E6F5EF; --income-border:#CDE9DE;
   --warning:#E89020; --warning-fg:#B26A0C; --warning-tint:#FBF0DE; --warning-border:#F2DFC0;
@@ -305,7 +305,7 @@
   --border-card:#262E3D; --border-inner:#222A38; --border-row:#1F2634; --border-hover:#3A465C;
   --text-primary:#E8ECF5; --text-secondary:#A8B2C4; --text-muted:#8792A6; --text-faint:#6B7488;
   --text-ghost:#4E5768;
-  --accent:#6E86F0; --accent-hover:#8298F5; --accent-tint:#232C4A; --accent-border:#38446B;
+  --accent:#6E86F0; --fg-on-fill:#FFFFFF; --accent-hover:#8298F5; --accent-tint:#232C4A; --accent-border:#38446B;
   --accent-soft:#5C6FB5;
   --income:#3FBE93; --income-fg:#3FBE93; --income-tint:#16362C; --income-border:#1E5142;
   --warning:#F0A947; --warning-fg:#F0B265; --warning-tint:#3A2B12; --warning-border:#5A431C;

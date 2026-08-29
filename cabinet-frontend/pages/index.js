@@ -270,7 +270,7 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
                 приглушённый — весомым. */}
             <button style={{ ...btnSm(true),
               background: urlPending ? C.subtle : C.incomeFg,
-              color: urlPending ? C.faint : '#FFFFFF',
+              color: urlPending ? C.faint : C.onFill,
               border: `1px solid ${urlPending ? C.border : 'transparent'}`,
               cursor: urlPending ? 'not-allowed' : 'pointer',
               display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 13px' }}
@@ -375,7 +375,7 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
                   <span key={r} onClick={() => setReason(r)}
                     style={{ cursor: 'pointer', fontSize: 12, padding: '5px 10px',
                       borderRadius: 100, background: reason === r ? C.accent : C.card,
-                      color: reason === r ? '#FFFFFF' : C.secondary,
+                      color: reason === r ? C.onFill : C.secondary,
                       border: `1px solid ${reason === r ? C.accent : C.border}` }}>{r}</span>
                 ))}
               </div>

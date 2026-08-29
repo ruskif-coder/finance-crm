@@ -63,7 +63,7 @@ export default function Preview({ file }) {
                 padding: '5px 12px', borderRadius: 100,
                 border: `1px solid ${on ? C.accent : C.border}`,
                 background: on ? C.accent : C.subtle,
-                color: on ? '#fff' : C.secondary }}>
+                color: on ? C.onFill : C.secondary }}>
               {w}×{h}
             </span>
           )
@@ -84,6 +84,10 @@ export default function Preview({ file }) {
         <div style={{ width: wh ? Math.round(wh[0] * k) : '100%',
           height: wh ? Math.round(wh[1] * k) : 420, overflow: 'hidden' }}>
           <iframe src={file.preview_url} title={`Баннер ${wh ? wh.join('×') : ''}`}
+            /* Белый ЖЁСТКО, а не из темы: это полотно чужой страницы, а не наш
+               интерфейс. Баннер рисуют для белого сайта, и тёмный фон под ним показал
+               бы не то размещение, которое будет на самом деле. Единственное
+               исключение, разрешённое `scripts/check-tokens.mjs` поимённо. */
             style={{ border: 0, display: 'block', background: '#fff',
               width: wh ? wh[0] : '100%', height: wh ? wh[1] : 420,
               transform: `scale(${k})`, transformOrigin: 'top left' }} />

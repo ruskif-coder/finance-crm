@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
+    "check-tokens": "node scripts/check-tokens.mjs",
+    "prebuild": "npm run check-tokens",
     "build": "next build",
     "start": "next start -p 3000"
   },
