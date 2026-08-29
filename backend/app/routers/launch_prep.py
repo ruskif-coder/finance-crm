@@ -1260,6 +1260,15 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
              link=f"/sales/deals/{deal.code or deal.id}",
              entity_type="sales_deal", entity_id=deal.id, actor=current_user,
              ctx={"deal_id": deal.id})
+        # Второе событие тем же действием, но ДРУГОМУ адресату. `creative_set_sent`
+        # уходит аккаунту — то есть тому, кто отправил; трафику до 30.08.2026 не уходило
+        # ничего, и о появлении работы он узнавал, только зайдя в очередь.
+        emit(db, "traffic_new_work",
+             title=f"Креатив №{s.no} на проверку · {deal.code}",
+             body=f"Площадок в комплекте: {created}. После вашего «ок» уйдёт им.",
+             link="/traffic/queue",
+             entity_type="sales_deal", entity_id=deal.id, actor=current_user,
+             ctx={"deal_id": deal.id})
         db.commit()
     return {"sent": created}
 
