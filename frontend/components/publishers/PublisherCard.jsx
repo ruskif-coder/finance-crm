@@ -188,7 +188,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
     ['Код наш', 'our_code', 'var(--accent-tint)', 'var(--accent)', 'var(--accent-border)'],
     ['Эксклюзив', 'is_exclusive', 'var(--accent-tint)', 'var(--accent)', 'var(--accent-border)'],
     ['DSP', 'has_dsp', 'var(--income-tint)', 'var(--income)', '#CDE9DE'],
-    ['Самореклама', 'self_promo_on', 'var(--warning-tint)', 'var(--warning-text)', '#F2DFC0'],
+    ['Самореклама', 'self_promo_on', 'var(--warning-tint)', 'var(--warning-text)', 'var(--warning-border)'],
   ]
   const flagValue = (key) => (key === 'self_promo_on' ? (p.self_promo === 'ДА') : !!p[key])
 
@@ -260,7 +260,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
 
       {editing && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-          padding: '11px 16px', background: '#F6F8FF', border: '1px solid var(--accent-border)', borderRadius: 14 }}>
+          padding: '11px 16px', background: 'var(--bg-tint)', border: '1px solid var(--accent-border)', borderRadius: 14 }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--accent)' }} />
           <span style={{ ...cap, color: 'var(--accent)', fontWeight: 700 }}>Режим правки</span>
           <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -297,8 +297,8 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 26, flexWrap: 'wrap' }}>
           <Kpi first label="CPM до НДС" value={p.cpm_contract ?? '—'} unit="₽" color="var(--text-primary)" size="32px" />
           <Kpi label="Трафик WEB / мес" value={fmtCompact(tr('web'))} unit={fmtUnit(tr('web'))} color="var(--accent)" size="26px" />
-          <Kpi label="APP Android / мес" value={fmtCompact(tr('app_android'))} unit={fmtUnit(tr('app_android'))} color="#7B62D6" size="26px" />
-          <Kpi label="APP iOS / мес" value={fmtCompact(tr('app_ios'))} unit={fmtUnit(tr('app_ios'))} color="#7B62D6" size="26px" />
+          <Kpi label="APP Android / мес" value={fmtCompact(tr('app_android'))} unit={fmtUnit(tr('app_android'))} color="var(--mixed)" size="26px" />
+          <Kpi label="APP iOS / мес" value={fmtCompact(tr('app_ios'))} unit={fmtUnit(tr('app_ios'))} color="var(--mixed)" size="26px" />
           <Kpi label="Запросы рекл. кода" value={fmtCompact(tr('ad_requests'))} unit={fmtUnit(tr('ad_requests'))} color="var(--income)" size="26px" />
           {/* Считаем то, что реально продаём: услуга на поверхности «не работаем» в
               числитель не идёт, иначе счётчик обещает больше, чем есть. */}
@@ -312,7 +312,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
           {flags.filter(([, key]) => flagValue(key)).map(([label, key, bg, fg, bd]) => (
             <Badge key={key} label={label} bg={bg} fg={fg} border={bd} title={`${label} — да`} />
           ))}
-          {!!svcTotal && <span style={{ fontSize: 13, color: '#C7D0E8', padding: '0 2px' }}>|</span>}
+          {!!svcTotal && <span style={{ fontSize: 13, color: 'var(--border-hover)', padding: '0 2px' }}>|</span>}
           {services.map(svc => {
             const parts = ['web', 'app'].filter(k => svcOn(svc.id, k))
               .map(k => ({ label: SURFACE_LABEL[k], working: !!surfacesView[k]?.we_work }))
@@ -322,7 +322,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
           })}
           {editing && (
             <span style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
-              padding: '8px 12px', background: '#F6F8FF', borderRadius: 10 }}>
+              padding: '8px 12px', background: 'var(--bg-tint)', borderRadius: 10 }}>
               <span style={cap}>переключить</span>
               {flags.map(([label, key]) => (
                 <Check key={key} label={label} checked={flagValue(key)}
@@ -433,7 +433,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
                 отмечена, а поверхность не в работе — продать её нельзя. */}
             {!!svcIdle && (
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '9px 13px',
-                background: 'var(--warning-tint)', border: '1px solid #F2DFC0', borderRadius: 12,
+                background: 'var(--warning-tint)', border: '1px solid var(--warning-border)', borderRadius: 12,
                 marginBottom: 12, fontSize: 13.5, color: 'var(--warning-text)' }}>
                 ⚠ Услуг отмечено {svcTotal}, из них {svcIdle} — на поверхностях со снятым
                 флагом «работаем». В продаже они не участвуют.
@@ -450,7 +450,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
                     // «работаем» намеренно разные вещи: подключённая, но не продаваемая
                     // поверхность не должна выглядеть боевой.
                     border: `1px solid ${s ? (s.we_work ? 'var(--accent-border)' : 'var(--border-card)') : 'var(--border-inner)'}`,
-                    background: s ? (s.we_work ? '#F6F8FF' : 'var(--bg-card)') : 'var(--bg-subtle)',
+                    background: s ? (s.we_work ? 'var(--bg-tint)' : 'var(--bg-card)') : 'var(--bg-subtle)',
                     opacity: s ? 1 : .75 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
                       <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700 }}>{SURFACE_LABEL[kind]}</span>
@@ -1005,7 +1005,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
               <button style={linkBtn} onClick={() => setContactDraft(null)}>Отмена</button>
-              <button style={{ ...linkBtn, background: 'var(--accent)', color: '#fff',
+              <button style={{ ...linkBtn, background: 'var(--accent)', color: 'var(--bg-card)',
                 borderColor: 'var(--accent)' }}
                 onClick={async () => {
                   const saved = await api.saveContact({ ...contactDraft })
@@ -1075,7 +1075,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
           {/* Честность цифры: операция привязана к юрлицу, а не к площадке. */}
           {!!(finance.shared_entities || []).length && (
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '9px 13px',
-              background: 'var(--warning-tint)', border: '1px solid #F2DFC0', borderRadius: 12,
+              background: 'var(--warning-tint)', border: '1px solid var(--warning-border)', borderRadius: 12,
               marginBottom: 14, fontSize: 14.5, color: 'var(--warning-text)' }}>
               ⚠ Суммы общие по юрлицу, а не по этой площадке:{' '}
               {finance.shared_entities.map(e => `${e.name} обслуживает ${e.publishers} площадок`).join('; ')}.

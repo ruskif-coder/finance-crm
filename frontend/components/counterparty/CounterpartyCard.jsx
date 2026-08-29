@@ -8,13 +8,13 @@ import React, { useState } from 'react';
 
 /* ── токены ─────────────────────────────────────────────────────────── */
 export const T = {
-  canvas: '#EBEEF6', card: '#FFFFFF', subtle: '#F6F7FB', pick: '#F0F3FF', tipBg: '#F6F8FF',
-  border: '#E3E7F1', inner: '#EDF0F7', row: '#F2F4FA', hoverBorder: '#C7D0E8',
-  t1: '#1C2433', t2: '#525C70', t3: '#79839A', t4: '#A3ABBD',
-  accent: '#4F6CE6', accentHover: '#3A50BE', accentTint: '#ECEFFD',
-  income: '#2FA37C', incomeTint: '#E6F5EF', expense: '#8B93A6',
-  warning: '#E89020', warningTint: '#FBF0DE', warningText: '#B26A0C',
-  danger: '#C93A3E', dangerTint: '#FBEAEA', mixed: '#7B62D6', mixedTint: '#F1EDFC',
+  canvas: 'var(--bg-canvas)', card: 'var(--bg-card)', subtle: 'var(--bg-subtle)', pick: '#F0F3FF', tipBg: 'var(--bg-tint)',
+  border: 'var(--border-card)', inner: 'var(--border-inner)', row: 'var(--border-row)', hoverBorder: 'var(--border-hover)',
+  t1: 'var(--text-primary)', t2: 'var(--text-secondary)', t3: 'var(--text-muted)', t4: 'var(--text-faint)',
+  accent: 'var(--accent)', accentHover: 'var(--accent-hover)', accentTint: 'var(--accent-tint)',
+  income: 'var(--income)', incomeTint: 'var(--income-tint)', expense: 'var(--bank-sovkom)',
+  warning: 'var(--warning)', warningTint: 'var(--warning-tint)', warningText: 'var(--warning-text)',
+  danger: 'var(--danger-fg)', dangerTint: '#FBEAEA', mixed: 'var(--mixed)', mixedTint: 'var(--mixed-tint)',
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
   ease: 'cubic-bezier(0.22,1,0.36,1)',

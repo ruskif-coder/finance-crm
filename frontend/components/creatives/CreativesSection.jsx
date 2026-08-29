@@ -10,13 +10,13 @@ import React, { useState } from 'react';
 
 /* ── токены ─────────────────────────────────────────────────────────── */
 export const T = {
-  card: '#FFFFFF', subtle: '#F6F7FB', tint: '#F6F8FF',
-  border: '#E3E7F1', inner: '#EDF0F7', row: '#F2F4FA', hoverBorder: '#C7D0E8',
-  t1: '#1C2433', t2: '#525C70', t3: '#79839A', t4: '#A3ABBD', t5: '#C3C9D8',
-  accent: '#4F6CE6', accentHover: '#3A50BE', accentTint: '#ECEFFD', accentBorder: '#D7DEFA',
-  income: '#2FA37C', incomeFg: '#1F7D5E', incomeTint: '#E6F5EF', incomeBorder: '#CDE9DE', incomeSoft: '#9BCFBB',
-  warning: '#E89020', warningFg: '#B26A0C', warningTint: '#FBF0DE', warningBorder: '#F2DFC0',
-  danger: '#C93A3E', dangerSoft: '#E2585C', dangerTint: '#FBEAEA', dangerBorder: '#F0C9CA',
+  card: 'var(--bg-card)', subtle: 'var(--bg-subtle)', tint: 'var(--bg-tint)',
+  border: 'var(--border-card)', inner: 'var(--border-inner)', row: 'var(--border-row)', hoverBorder: 'var(--border-hover)',
+  t1: 'var(--text-primary)', t2: 'var(--text-secondary)', t3: 'var(--text-muted)', t4: 'var(--text-faint)', t5: 'var(--text-disabled)',
+  accent: 'var(--accent)', accentHover: 'var(--accent-hover)', accentTint: 'var(--accent-tint)', accentBorder: 'var(--accent-border)',
+  income: 'var(--income)', incomeFg: 'var(--income-fg)', incomeTint: 'var(--income-tint)', incomeBorder: '#CDE9DE', incomeSoft: '#9BCFBB',
+  warning: 'var(--warning)', warningFg: 'var(--warning-text)', warningTint: 'var(--warning-tint)', warningBorder: 'var(--warning-border)',
+  danger: 'var(--danger-fg)', dangerSoft: '#E2585C', dangerTint: '#FBEAEA', dangerBorder: 'var(--danger-border)',
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
   ease: 'cubic-bezier(0.22,1,0.36,1)',
@@ -292,7 +292,7 @@ export default function CreativesSection({
                   <span className="cs-ghost" onClick={() => onAddSites?.(c)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 30, padding: '0 12px', background: T.card, border: `1px solid ${T.accentBorder}`, color: T.accent, borderRadius: 9, fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}><PlusIcon />Площадки</span>
                   <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
                     <span className="cs-warn" onClick={() => onRemoveCreative?.(c)} style={{ display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 13px', background: T.card, border: `1px solid ${T.warningBorder}`, color: T.warningFg, borderRadius: 9, fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>Удалить креатив</span>
-                    <span className="cs-primary" onClick={() => onCheckCreative?.(c)} style={{ display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 14px', background: T.accent, color: '#FFF', borderRadius: 9, fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>Проверить креатив</span>
+                    <span className="cs-primary" onClick={() => onCheckCreative?.(c)} style={{ display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 14px', background: T.accent, color: 'var(--bg-card)', borderRadius: 9, fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>Проверить креатив</span>
                   </span>
                 </div>
               </div>

@@ -23,11 +23,11 @@ const btnReset = {
 
 /* ── токены ─────────────────────────────────────────────────────────── */
 export const T = {
-  canvas: '#EBEEF6', card: '#FFFFFF', subtle: '#F6F7FB', tint: '#F6F8FF',
-  border: '#E3E7F1', inner: '#EDF0F7', hoverBorder: '#C7D0E8',
-  t1: '#1C2433', t2: '#525C70', t3: '#79839A', t4: '#A3ABBD',
-  accent: '#4F6CE6', accentTint: '#ECEFFD', accentBorder: '#D7DEFA', accentSoft: '#8F9BE8',
-  danger: '#C93A3E', dangerTint: '#FBEAEA',
+  canvas: 'var(--bg-canvas)', card: 'var(--bg-card)', subtle: 'var(--bg-subtle)', tint: 'var(--bg-tint)',
+  border: 'var(--border-card)', inner: 'var(--border-inner)', hoverBorder: 'var(--border-hover)',
+  t1: 'var(--text-primary)', t2: 'var(--text-secondary)', t3: 'var(--text-muted)', t4: 'var(--text-faint)',
+  accent: 'var(--accent)', accentTint: 'var(--accent-tint)', accentBorder: 'var(--accent-border)', accentSoft: '#8F9BE8',
+  danger: 'var(--danger-fg)', dangerTint: '#FBEAEA',
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
   pop: '0 8px 28px rgba(28,36,51,.14)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
@@ -134,7 +134,7 @@ function Bell({ onGoto, size = 32 }) {
         {unread > 0 && (
           <span style={{
             position: 'absolute', top: -4, right: -4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            minWidth: 17, height: 17, padding: '0 4px', borderRadius: 6, background: T.danger, color: '#FFF',
+            minWidth: 17, height: 17, padding: '0 4px', borderRadius: 6, background: T.danger, color: 'var(--bg-card)',
             fontFamily: T.mono, fontSize: 9, fontWeight: 700,
           }}>{unread > 9 ? '9+' : unread}</span>
         )}
@@ -200,7 +200,7 @@ function Profile({ onGoto, canSettings, compact = false }) {
       }}>
         <span style={{
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: size, height: size,
-          borderRadius: 10, background: T.t1, color: '#FFF', fontSize: 13, fontWeight: 700, flex: `0 0 ${size}px`,
+          borderRadius: 10, background: T.t1, color: 'var(--bg-card)', fontSize: 13, fontWeight: 700, flex: `0 0 ${size}px`,
         }}>{initial}</span>
         {!compact && (
           <>

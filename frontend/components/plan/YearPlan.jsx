@@ -19,19 +19,19 @@ import { overlayClose } from '@/lib/overlay'
 
 /* ── токены ─────────────────────────────────────────────────────────── */
 export const T = {
-  canvas: '#EBEEF6', card: '#FFFFFF', nested: '#F6F8FF', subtle: '#F6F7FB',
+  canvas: 'var(--bg-canvas)', card: 'var(--bg-card)', nested: 'var(--bg-tint)', subtle: 'var(--bg-subtle)',
   planTileBg: '#F0F7F4', planTileBorder: '#D9EDE5',
-  onBg: '#E6F5EF', onBorder: '#C9E8DC', lockBg: '#EAF0FF', lockBorder: '#C9D6F7',
-  emptyBg: '#FFFBF3', emptyBorder: '#F2DFC0',
-  border: '#E3E7F1', inner: '#EDF0F7', row: '#F2F4FA', nestedRow: '#E7EBF7', hoverBorder: '#C7D0E8',
-  t1: '#1C2433', t2: '#525C70', t3: '#79839A', t4: '#A3ABBD', t5: '#C3C9D8',
-  accent: '#4F6CE6', accentHover: '#3A50BE', accentTint: '#ECEFFD', accentBorder: '#D7DEFA',
-  planBar: '#A9B6F2', fact: '#2FA37C', factText: '#1F7D5E',
+  onBg: 'var(--income-tint)', onBorder: '#C9E8DC', lockBg: '#EAF0FF', lockBorder: '#C9D6F7',
+  emptyBg: 'var(--warning-bg)', emptyBorder: 'var(--warning-border)',
+  border: 'var(--border-card)', inner: 'var(--border-inner)', row: 'var(--border-row)', nestedRow: '#E7EBF7', hoverBorder: 'var(--border-hover)',
+  t1: 'var(--text-primary)', t2: 'var(--text-secondary)', t3: 'var(--text-muted)', t4: 'var(--text-faint)', t5: 'var(--text-disabled)',
+  accent: 'var(--accent)', accentHover: 'var(--accent-hover)', accentTint: 'var(--accent-tint)', accentBorder: 'var(--accent-border)',
+  planBar: 'var(--accent-soft)', fact: 'var(--income)', factText: 'var(--income-fg)',
   addon: '#8A5CD1', addonTint: '#F1EAFB', addonBorder: '#E0D2F5',
-  booked: '#C3CCEA', bookedText: '#8E9AC0', bookedGrey: '#8B93A6',
-  warning: '#E89020', danger: '#C93A3E',
+  booked: '#C3CCEA', bookedText: '#8E9AC0', bookedGrey: 'var(--bank-sovkom)',
+  warning: 'var(--warning)', danger: 'var(--danger-fg)',
   // Подложка предупреждения: пара к warning, как lockBg к lockBorder.
-  warningTint: '#FBF0DE', warningFg: '#B26A0C',
+  warningTint: 'var(--warning-tint)', warningFg: 'var(--warning-text)',
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
   pop: '0 8px 28px rgba(28,36,51,.14)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
@@ -406,7 +406,7 @@ export default function YearPlan({
                   Готово: создано <b style={{ color: T.fact }}>{conv.done.created}</b>, обновлено <b style={{ color: T.warning }}>{conv.done.updated}</b>{conv.done.blocked ? <>, без брифа пропущено <b style={{ color: T.danger }}>{conv.done.blocked}</b></> : null}{conv.done.frozen ? <>, под замком пропущено <b style={{ color: T.accent }}>{conv.done.frozen}</b></> : null}{conv.done.in_work?.length ? <>, в работе пропущено <b style={{ color: T.warning }}>{conv.done.in_work.length}</b></> : null}.
                 </span>
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <span onClick={() => setConv(null)} style={{ padding: '9px 18px', borderRadius: 10, background: T.accent, color: '#FFF', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Готово</span>
+                  <span onClick={() => setConv(null)} style={{ padding: '9px 18px', borderRadius: 10, background: T.accent, color: 'var(--bg-card)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Готово</span>
                 </div>
               </>
             )}
@@ -482,7 +482,7 @@ export default function YearPlan({
                     : (
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                         <span onClick={() => setConv(null)} style={{ padding: '9px 16px', borderRadius: 10, border: `1px solid ${T.border}`, background: T.card, color: T.t2, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Отмена</span>
-                        <span onClick={applyConveyor} style={{ padding: '9px 18px', borderRadius: 10, background: T.fact, color: '#FFF', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Создать</span>
+                        <span onClick={applyConveyor} style={{ padding: '9px 18px', borderRadius: 10, background: T.fact, color: 'var(--bg-card)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Создать</span>
                       </div>
                     )}
                 </>
@@ -509,7 +509,7 @@ export default function YearPlan({
               <span className="yp-ghost" onClick={() => !pwBusy && setPendingDel(null)}
                 style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 15px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 13, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>Отмена</span>
               <span onClick={pwBusy || !pwd ? undefined : confirmDelete}
-                style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 16px', background: T.danger, color: '#FFF', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: pwBusy || !pwd ? 'default' : 'pointer', opacity: pwBusy || !pwd ? 0.55 : 1 }}>
+                style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 16px', background: T.danger, color: 'var(--bg-card)', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: pwBusy || !pwd ? 'default' : 'pointer', opacity: pwBusy || !pwd ? 0.55 : 1 }}>
                 {pwBusy ? 'Проверка…' : 'Удалить'}
               </span>
             </div>
@@ -580,14 +580,14 @@ export default function YearPlan({
                   </span>
                 )}
                 <span className="yp-primary" onClick={(saving || !dirty) ? undefined : save}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 32, padding: '0 16px', background: dirty ? T.warning : T.accent, color: '#FFF', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: (saving || !dirty) ? 'default' : 'pointer', opacity: (saving || !dirty) ? 0.5 : 1 }}>
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 32, padding: '0 16px', background: dirty ? T.warning : T.accent, color: 'var(--bg-card)', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: (saving || !dirty) ? 'default' : 'pointer', opacity: (saving || !dirty) ? 0.5 : 1 }}>
                   {saving ? 'Сохраняю…' : 'Сохранить'}
                 </span>
               </span>
             )}
             {!readOnly && (
               <span className="yp-primary" onClick={addGroup}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 32, padding: '0 14px', background: T.accent, color: '#FFF', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 32, padding: '0 14px', background: T.accent, color: 'var(--bg-card)', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
                 <Plus />Рекламодатель
               </span>
             )}
@@ -938,7 +938,7 @@ export default function YearPlan({
                                   style={{ width: '100%', minWidth: 0, border: 'none', background: 'transparent', outline: 'none', fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, textAlign: 'right', color: overLocked ? T.danger : T.t1 }} />
                                 {!readOnly && overLocked && (
                                   <span title={`Подставить сумму услуг в план (${num(committed)} ₽)`} onClick={() => patchBrand(g.id, b.id, { plan: Math.round(committed) })}
-                                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', height: 20, padding: '0 6px', borderRadius: 6, background: T.warning, color: '#FFF', fontFamily: T.mono, fontSize: 9, fontWeight: 700, cursor: 'pointer', flex: '0 0 auto', whiteSpace: 'nowrap' }}>= {kk(committed)}</span>
+                                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', height: 20, padding: '0 6px', borderRadius: 6, background: T.warning, color: 'var(--bg-card)', fontFamily: T.mono, fontSize: 9, fontWeight: 700, cursor: 'pointer', flex: '0 0 auto', whiteSpace: 'nowrap' }}>= {kk(committed)}</span>
                                 )}
                                 {!readOnly && (
                                   <span className="yp-ghost" title="Распределить остаток плана по незакреплённым месяцам" onClick={() => distribute(g.id, b)}
@@ -1013,7 +1013,7 @@ export default function YearPlan({
                                             else { l[i] = 1; if (!items.length && s[i] == null) s[i] = value; }
                                             patchBrand(g.id, b.id, { locks: l, sums: s });
                                           }}
-                                          style={{ position: 'absolute', top: 3, left: 3, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 15, height: 15, borderRadius: 4, background: locked ? T.accent : 'rgba(255,255,255,.4)', color: locked ? '#FFF' : '#4F9C82' }}><Lock locked={locked} /></span>
+                                          style={{ position: 'absolute', top: 3, left: 3, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 15, height: 15, borderRadius: 4, background: locked ? T.accent : 'rgba(255,255,255,.4)', color: locked ? 'var(--bg-card)' : '#4F9C82' }}><Lock locked={locked} /></span>
                                       )}
                                       {/* счётчик услуг — справа от суммы (сверху), открывает редактор */}
                                       {on && !readOnly && (
@@ -1087,7 +1087,7 @@ export default function YearPlan({
                                                         const act = (it.inventory || 'web') === inv;
                                                         return (
                                                           <span key={inv} title={`Прайс: ${lbl}`} onClick={e => { stop(e); setMonthProducts(g.id, b.id, i, items.map((x, j) => (j === idx ? { ...x, inventory: inv } : x))); }}
-                                                            style={{ padding: '3px 6px', fontSize: 9, fontWeight: 700, cursor: 'pointer', background: act ? T.accent : 'transparent', color: act ? '#FFF' : T.t3 }}>{lbl}</span>
+                                                            style={{ padding: '3px 6px', fontSize: 9, fontWeight: 700, cursor: 'pointer', background: act ? T.accent : 'transparent', color: act ? 'var(--bg-card)' : T.t3 }}>{lbl}</span>
                                                         );
                                                       })}
                                                     </span>
@@ -1099,7 +1099,7 @@ export default function YearPlan({
                                                         const base = (addonById[it.ref_id] && addonById[it.ref_id].unit_price) || 0;
                                                         return (
                                                           <span key={m} title={`Режим цены: ${lbl}`} onClick={e => { stop(e); setMonthProducts(g.id, b.id, i, items.map((x, j) => (j === idx ? { ...x, mode: m, amount: Math.round(base * rate) } : x))); }}
-                                                            style={{ padding: '3px 6px', fontSize: 9, fontWeight: 700, cursor: 'pointer', background: act ? T.addon : 'transparent', color: act ? '#FFF' : T.t3 }}>{lbl}</span>
+                                                            style={{ padding: '3px 6px', fontSize: 9, fontWeight: 700, cursor: 'pointer', background: act ? T.addon : 'transparent', color: act ? 'var(--bg-card)' : T.t3 }}>{lbl}</span>
                                                         );
                                                       })}
                                                     </span>

@@ -52,7 +52,7 @@ export default function DirectoryMobile({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap', overflowX: 'auto' }}>
           {filterChips}
           {canEdit && onAdd && (
-            <button onClick={onAdd} aria-label="Добавить" style={{ marginLeft: 'auto', flex: '0 0 auto', width: 38, height: 38, borderRadius: 10, background: 'var(--accent)', color: '#fff', border: 'none', fontSize: 22, lineHeight: 1, cursor: 'pointer' }}>+</button>
+            <button onClick={onAdd} aria-label="Добавить" style={{ marginLeft: 'auto', flex: '0 0 auto', width: 38, height: 38, borderRadius: 10, background: 'var(--accent)', color: 'var(--bg-card)', border: 'none', fontSize: 22, lineHeight: 1, cursor: 'pointer' }}>+</button>
           )}
         </div>
       )}

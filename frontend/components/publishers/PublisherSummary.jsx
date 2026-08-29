@@ -19,7 +19,7 @@ const FLAGS = [
   ['our_code', 'Код наш', 'var(--accent)', 'var(--accent-tint)', 'var(--accent-border)'],
   ['is_exclusive', 'Эксклюзив', 'var(--accent)', 'var(--accent-tint)', 'var(--accent-border)'],
   ['has_dsp', 'DSP', 'var(--income)', 'var(--income-tint)', '#CDE9DE'],
-  ['self_promo_on', 'Самореклама', 'var(--warning-text)', 'var(--warning-tint)', '#F2DFC0'],
+  ['self_promo_on', 'Самореклама', 'var(--warning-text)', 'var(--warning-tint)', 'var(--warning-border)'],
 ]
 
 const cap = { ...CAP, marginBottom: 8 }
@@ -286,7 +286,7 @@ export default function PublisherSummary({ data, meta, canEdit, api }) {
             </svg>
           </button>
         )}
-        <button style={{ ...iconBtn, background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' }}
+        <button style={{ ...iconBtn, background: 'var(--accent)', borderColor: 'var(--accent)', color: 'var(--bg-card)' }}
           title="Открыть карточку" onClick={api.openCard}>→</button>
       </div>
     </div>

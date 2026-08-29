@@ -16,12 +16,12 @@ import { resolveLegacy } from '@/lib/nav'
  */
 
 const T = {
-  card: '#FFFFFF', unreadBg: '#F6F8FF', hoverBg: '#F6F7FB', tabBg: '#F6F7FB',
-  border: '#E3E7F1', row: '#F2F4FA', dotSep: '#C7D0E8',
-  t1: '#1C2433', t2: '#525C70', t4: '#A3ABBD',
-  accent: '#4F6CE6', accentTint: '#ECEFFD', accentBorder: '#D7DEFA', accentSoft: '#8F9BE8',
-  income: '#2FA37C', warning: '#E89020',
-  danger: '#C93A3E', dangerTint: '#FBEAEA', dangerBorder: '#F0C9CA',
+  card: 'var(--bg-card)', unreadBg: 'var(--bg-tint)', hoverBg: 'var(--bg-subtle)', tabBg: 'var(--bg-subtle)',
+  border: 'var(--border-card)', row: 'var(--border-row)', dotSep: 'var(--border-hover)',
+  t1: 'var(--text-primary)', t2: 'var(--text-secondary)', t4: 'var(--text-faint)',
+  accent: 'var(--accent)', accentTint: 'var(--accent-tint)', accentBorder: 'var(--accent-border)', accentSoft: '#8F9BE8',
+  income: 'var(--income)', warning: 'var(--warning)',
+  danger: 'var(--danger-fg)', dangerTint: '#FBEAEA', dangerBorder: 'var(--danger-border)',
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
   mono: MONO, sans: UI, ease: 'cubic-bezier(0.22,1,0.36,1)',
 }

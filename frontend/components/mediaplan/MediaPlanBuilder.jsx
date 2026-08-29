@@ -168,7 +168,7 @@ function BriefField({ label, open, onToggle, value, options, onPick, placeholder
         {onAddNew && (
           <div style={{ display: 'flex', gap: 5, padding: '5px 2px 2px', borderTop: `1px solid ${T.row}`, marginTop: 4 }}>
             <input value={nv} onChange={e => setNv(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); }} placeholder={addPlaceholder || '+ новое'} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '6px 8px', borderRadius: 8, border: `1px solid ${T.border}`, fontSize: 12, outline: 'none', fontFamily: T.sans }} />
-            <span onClick={add} style={{ display: 'inline-flex', alignItems: 'center', padding: '0 10px', background: T.accent, color: '#FFF', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>+</span>
+            <span onClick={add} style={{ display: 'inline-flex', alignItems: 'center', padding: '0 10px', background: T.accent, color: 'var(--bg-card)', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>+</span>
           </div>
         )}
       </Popover>
@@ -227,8 +227,8 @@ const VerifyBtn = ({ on, onClick, title, big }) => (
       display: 'inline-flex', alignItems: 'center', gap: big ? 8 : 5,
       height: big ? 38 : 22, padding: big ? '0 16px' : '0 9px', borderRadius: big ? 10 : 7,
       cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap',
-      background: on ? '#E6F5EF' : T.card, border: `1px solid ${on ? '#9FD9C3' : T.border}`,
-      color: on ? '#1F7D5E' : T.t3, fontSize: big ? 12.5 : 10, fontWeight: 800,
+      background: on ? 'var(--income-tint)' : T.card, border: `1px solid ${on ? '#9FD9C3' : T.border}`,
+      color: on ? 'var(--income-fg)' : T.t3, fontSize: big ? 12.5 : 10, fontWeight: 800,
       letterSpacing: '.04em', textTransform: 'uppercase',
       boxShadow: on && big ? '0 1px 0 rgba(31,125,94,.08)' : 'none',
     }}>
@@ -472,7 +472,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
               <textarea autoFocus value={rejectText} onChange={e => setRejectText(e.target.value)} rows={4} placeholder="Причина отклонения…" style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 10, border: `1px solid ${T.border}`, fontSize: 13, fontFamily: T.sans, outline: 'none', resize: 'vertical' }} />
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <span onClick={() => setRejectOpen(false)} style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 14px', border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>Отмена</span>
-                <span onClick={() => { const r = rejectText.trim(); if (!r) return; setRejectOpen(false); onTransition?.('rejected', r); }} style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 14px', background: rejectText.trim() ? (T.danger || '#D64545') : '#B9A0A0', color: '#FFF', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: rejectText.trim() ? 'pointer' : 'default' }}>Отклонить</span>
+                <span onClick={() => { const r = rejectText.trim(); if (!r) return; setRejectOpen(false); onTransition?.('rejected', r); }} style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 14px', background: rejectText.trim() ? (T.danger || '#D64545') : '#B9A0A0', color: 'var(--bg-card)', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: rejectText.trim() ? 'pointer' : 'default' }}>Отклонить</span>
               </div>
             </div>
           </div>
@@ -489,7 +489,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <span onClick={() => setNoteOpen(false)} style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 14px', border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>Отмена</span>
                 <span onClick={() => { const n = noteText.trim(); setNoteOpen(false); doSaveRef.current && doSaveRef.current('submit', n); }}
-                  style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 16px', background: T.accent, color: '#FFF', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>ОК, отправить</span>
+                  style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 16px', background: T.accent, color: 'var(--bg-card)', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>ОК, отправить</span>
               </div>
             </div>
           </div>
@@ -561,12 +561,12 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                     <span className={submitOk ? 'mp-primary' : undefined}
                       onClick={() => { if (submitOk) { setNoteText(''); setNoteOpen(true); } }}
                       title={submitOk ? undefined : (!verified ? notVerifiedHint : (calc.filled.length ? 'Заполните все строки' : 'Добавьте хотя бы одну строку размещения'))}
-                      style={{ ...btn(submitOk ? T.accent : '#8792A6', '#FFF'), cursor: submitOk ? 'pointer' : 'default' }}>
+                      style={{ ...btn(submitOk ? T.accent : '#8792A6', 'var(--bg-card)'), cursor: submitOk ? 'pointer' : 'default' }}>
                       {st === 'draft' ? 'На согласование' : 'Новая версия на согласование'}
                     </span>)}
                   {st === 'review' && <span onClick={() => onTransition?.('draft')} style={btn(T.card, T.t2, `1px solid ${T.border}`)}>Вернуть в черновик</span>}
-                  {st === 'review' && canApprove && <span onClick={() => onTransition?.('approved')} style={btn(T.income || '#1E9E6A', '#FFF')}>Согласовать</span>}
-                  {st === 'review' && canApprove && <span onClick={() => { setRejectText(''); setRejectOpen(true); }} style={btn(T.danger || '#D64545', '#FFF')}>Отклонить</span>}
+                  {st === 'review' && canApprove && <span onClick={() => onTransition?.('approved')} style={btn(T.income || '#1E9E6A', 'var(--bg-card)')}>Согласовать</span>}
+                  {st === 'review' && canApprove && <span onClick={() => { setRejectText(''); setRejectOpen(true); }} style={btn(T.danger || '#D64545', 'var(--bg-card)')}>Отклонить</span>}
                   {(st === 'approved' || st === 'rejected') && canApprove && <span onClick={() => onTransition?.('archived')} style={btn(T.card, T.t3, `1px solid ${T.border}`)}>В архив</span>}
                 </>);
               })()}
@@ -673,12 +673,12 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                                   {!cs.length && <div style={{ padding: '6px 8px', fontSize: 12, color: T.t4 }}>{cat.length ? 'ничего не найдено' : 'каталог пуст'}</div>}
                                   <div style={{ display: 'flex', gap: 5, padding: '6px 2px 2px', borderTop: `1px solid ${T.row}`, marginTop: 4 }}>
                                     <input value={tgCat[g] || ''} onChange={e => setTgCat(d => ({ ...d, [g]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') addTgToCatalog(g); }} placeholder="+ в каталог" style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '6px 8px', borderRadius: 8, border: `1px solid ${T.border}`, fontSize: 12, outline: 'none', fontFamily: T.sans }} />
-                                    <span onClick={() => addTgToCatalog(g)} title="Добавить в каталог" style={{ display: 'inline-flex', alignItems: 'center', padding: '0 10px', background: T.accent, color: '#FFF', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>+</span>
+                                    <span onClick={() => addTgToCatalog(g)} title="Добавить в каталог" style={{ display: 'inline-flex', alignItems: 'center', padding: '0 10px', background: T.accent, color: 'var(--bg-card)', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>+</span>
                                   </div>
                                 </Popover>
                               </span>
                               <input value={tgDraft[g] || ''} onChange={e => setTgDraft(d => ({ ...d, [g]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') addTg(g); }} placeholder="+ текст (разово, не в каталог)" style={{ ...selSt, flex: '1 1 110px', minWidth: 80, width: 'auto', height: 26, fontSize: 11, padding: '0 8px' }} />
-                              {(tgDraft[g] || '').trim() && <span onClick={() => addTg(g)} title="Добавить текст" style={{ display: 'inline-flex', alignItems: 'center', height: 26, padding: '0 9px', background: T.accent, color: '#FFF', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>+</span>}
+                              {(tgDraft[g] || '').trim() && <span onClick={() => addTg(g)} title="Добавить текст" style={{ display: 'inline-flex', alignItems: 'center', height: 26, padding: '0 9px', background: T.accent, color: 'var(--bg-card)', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>+</span>}
                             </div>
                           </div>
                         );
@@ -697,7 +697,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                 ) : (<>
                   <span style={{ display: 'flex', gap: 8 }}>
                     <span className="mp-outline" onClick={onLinkDeal} style={{ flex: '1 1 0', minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '7px 6px', background: T.card, color: T.accent, border: `1px solid ${T.accentBorder}`, borderRadius: 10, fontSize: 11.5, fontWeight: 700, lineHeight: 1.3, cursor: 'pointer' }}>Привязать к сделке</span>
-                    <span className="mp-primary" onClick={onCreateDeal} style={{ flex: '1 1 0', minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '7px 6px', background: T.accent, color: '#FFF', borderRadius: 10, fontSize: 11.5, fontWeight: 700, lineHeight: 1.3, cursor: 'pointer' }}>Создать сделку</span>
+                    <span className="mp-primary" onClick={onCreateDeal} style={{ flex: '1 1 0', minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '7px 6px', background: T.accent, color: 'var(--bg-card)', borderRadius: 10, fontSize: 11.5, fontWeight: 700, lineHeight: 1.3, cursor: 'pointer' }}>Создать сделку</span>
                   </span>
                   <span style={{ fontSize: 10, color: T.t4, lineHeight: 1.4 }}>Без привязки суммы не попадают в ДДС и дебиторку.</span>
                 </>)}
@@ -780,7 +780,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                   </button>
                   <button type="button" disabled={!briefHasDeal || briefBusy}
                     onClick={async () => { setBriefBusy(true); try { await onDealBriefSave?.(briefText); } finally { setBriefBusy(false); } }}
-                    style={{ padding: '7px 14px', borderRadius: 9, border: 'none', background: T.accent, color: '#FFF', fontSize: 12, fontWeight: 700, cursor: (!briefHasDeal || briefBusy) ? 'default' : 'pointer', opacity: (!briefHasDeal || briefBusy) ? 0.5 : 1 }}>
+                    style={{ padding: '7px 14px', borderRadius: 9, border: 'none', background: T.accent, color: 'var(--bg-card)', fontSize: 12, fontWeight: 700, cursor: (!briefHasDeal || briefBusy) ? 'default' : 'pointer', opacity: (!briefHasDeal || briefBusy) ? 0.5 : 1 }}>
                     {briefBusy ? 'Сохранение…' : 'Сохранить'}
                   </button>
                 </span>
@@ -1154,7 +1154,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
             <div style={{ fontSize: 13, color: T.t2, lineHeight: 1.5, marginBottom: 20 }}>Со сменой периода изменятся даты старта и конца РК по умолчанию. Продолжить?</div>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <span onClick={() => { setBf(s => ({ ...s, period: periodConfirm })); setPeriodConfirm(null); }} style={{ padding: '8px 16px', borderRadius: 9, border: `1px solid ${T.border}`, background: T.card, color: T.t1, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Нет, оставить даты</span>
-              <span onClick={() => { applyPeriod(periodConfirm, true); setPeriodConfirm(null); }} style={{ padding: '8px 16px', borderRadius: 9, border: 'none', background: T.accent, color: '#FFF', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Да, обновить</span>
+              <span onClick={() => { applyPeriod(periodConfirm, true); setPeriodConfirm(null); }} style={{ padding: '8px 16px', borderRadius: 9, border: 'none', background: T.accent, color: 'var(--bg-card)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Да, обновить</span>
             </div>
           </div>
         </div>

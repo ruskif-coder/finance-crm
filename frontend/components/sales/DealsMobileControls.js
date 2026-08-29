@@ -54,7 +54,7 @@ export default function DealsMobileControls({
       {/* шторка фильтров */}
       <BottomSheet open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Фильтры"
         footer={<div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => setFiltersOpen(false)} style={{ flex: 1, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>Показать {dealsTotal} {plur(dealsTotal)}</button>
+          <button onClick={() => setFiltersOpen(false)} style={{ flex: 1, background: 'var(--accent)', color: 'var(--bg-card)', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>Показать {dealsTotal} {plur(dealsTotal)}</button>
           <button onClick={exportCsv} aria-label="Скачать CSV" style={{ flexShrink: 0, width: 52, borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
             <svg width="18" height="18" viewBox="0 0 24 24" style={stroke}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg>
           </button>
@@ -81,7 +81,7 @@ export default function DealsMobileControls({
         <div onClick={() => setHideArchive(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, padding: '12px 14px', border: '1px solid var(--border-card)', borderRadius: 12, cursor: 'pointer' }}>
           <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Показывать архивные</span>
           <span style={{ width: 42, height: 24, borderRadius: 999, background: !hideArchive ? 'var(--accent)' : 'var(--border-inner)', position: 'relative', transition: 'background .18s', flexShrink: 0 }}>
-            <span style={{ position: 'absolute', top: 2, left: !hideArchive ? 20 : 2, width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left .18s', boxShadow: '0 1px 3px rgba(0,0,0,.25)' }} />
+            <span style={{ position: 'absolute', top: 2, left: !hideArchive ? 20 : 2, width: 20, height: 20, borderRadius: '50%', background: 'var(--bg-card)', transition: 'left .18s', boxShadow: '0 1px 3px rgba(0,0,0,.25)' }} />
           </span>
         </div>
       </BottomSheet>

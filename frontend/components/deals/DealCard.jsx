@@ -206,7 +206,7 @@ export default function DealCard({ deal = DEMO, onChangeStage, onOpenPlan, onPic
                 <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T.t4 }}>в стадии {head.daysInStage} дней · следующая: {stages[current + 1]}</span>
               </span>
             </span>
-            <span className="dc-primary" onClick={onChangeStage} style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px', background: T.accent, color: '#FFF', borderRadius: 10, fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>Изменить стадию</span>
+            <span className="dc-primary" onClick={onChangeStage} style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px', background: T.accent, color: 'var(--bg-card)', borderRadius: 10, fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>Изменить стадию</span>
           </div>
         </Card>
 
@@ -267,7 +267,7 @@ export default function DealCard({ deal = DEMO, onChangeStage, onOpenPlan, onPic
               <SecHead title="Сверка" note="план медиаплана против факта площадок" open={open.rec} onToggle={() => toggle('rec')}
                 right={<span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   <span className="dc-ghost" style={{ display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 12px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 9, fontSize: 11.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>Обновить факт</span>
-                  <span className="dc-primary" style={{ display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 12px', background: T.accent, color: '#FFF', borderRadius: 9, fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>Свести сверку</span>
+                  <span className="dc-primary" style={{ display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 12px', background: T.accent, color: 'var(--bg-card)', borderRadius: 9, fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>Свести сверку</span>
                 </span>} />
               {open.rec ? <RecBody rec={rec} /> : <StatusBrief items={brief([
                 ['Выполнение', rec.totalPct.toFixed(0) + ' %', rec.totalPct >= 97 ? 'ok' : 'todo'],
@@ -424,7 +424,7 @@ function OrdBody({ ord, onPickContract, onAddContract }) {
               <span style={{ fontSize: 11, color: o.state === 'lock' ? T.t4 : T.t2, lineHeight: 1.4, textWrap: 'pretty' }}>{o.hint}</span>
             </span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flex: '0 0 auto' }}>
-              {o.action && <span className="dc-primary" onClick={onPickContract} style={{ display: 'inline-flex', alignItems: 'center', height: 28, padding: '0 13px', background: T.accent, color: '#FFF', borderRadius: 9, fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>{o.action}</span>}
+              {o.action && <span className="dc-primary" onClick={onPickContract} style={{ display: 'inline-flex', alignItems: 'center', height: 28, padding: '0 13px', background: T.accent, color: 'var(--bg-card)', borderRadius: 9, fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>{o.action}</span>}
               {o.canAdd && <IconBtn title="Добавить договор в реестр" onClick={onAddContract}><PlusIcon /></IconBtn>}
               {o.canOpen && <IconBtn title={o.openTitle}><OpenIcon /></IconBtn>}
             </span>
@@ -482,7 +482,7 @@ function CreativesBody({ creatives }) {
                 <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: bg, color: fg, border: `1px solid ${border}`, borderRadius: 7, padding: '3px 0', fontSize: 10.5, fontWeight: 700 }}>{c.status}</span>
                 <span style={{ fontFamily: T.mono, fontSize: 11, color: c.erid ? T.accent : T.t5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.erid || '—'}</span>
                 <span style={{ display: 'inline-flex', justifyContent: 'flex-end' }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', height: 26, padding: '0 10px', background: empty ? T.accent : T.card, border: `1px solid ${empty ? T.accent : T.border}`, color: empty ? '#FFF' : T.t2, borderRadius: 8, fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>{action}</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', height: 26, padding: '0 10px', background: empty ? T.accent : T.card, border: `1px solid ${empty ? T.accent : T.border}`, color: empty ? 'var(--bg-card)' : T.t2, borderRadius: 8, fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>{action}</span>
                 </span>
               </div>
             );
@@ -588,24 +588,24 @@ export const DEMO = {
     deadline: '28.04.2026', files: 6, accepted: 1, erid: 1,
     blockNote: 'ЕРИД выпускается только после сборки цепочки ОРД — сейчас не выбран изначальный договор. Дедлайн подачи креативов 28.04, за 3 рабочих дня до старта.',
     rows: [
-      { site: 'еФарм · главная', format: '1080×607, 2 макета', files: 2, status: 'принято', erid: 'ERID-2Vf n1x8Bq', dot: '#4F6CE6' },
-      { site: 'еФарм · каталог', format: '640×360, 1 макет', files: 1, status: 'на проверке', erid: '', dot: '#4F6CE6' },
-      { site: 'Аптечество · APP', format: '1080×1080, 3 макета', files: 3, status: 'правки', erid: '', dot: '#E89020' },
-      { site: '366.ru · главная', format: 'не загружено', files: 0, status: 'нет файлов', erid: '', dot: '#2FA37C' },
+      { site: 'еФарм · главная', format: '1080×607, 2 макета', files: 2, status: 'принято', erid: 'ERID-2Vf n1x8Bq', dot: 'var(--accent)' },
+      { site: 'еФарм · каталог', format: '640×360, 1 макет', files: 1, status: 'на проверке', erid: '', dot: 'var(--accent)' },
+      { site: 'Аптечество · APP', format: '1080×1080, 3 макета', files: 3, status: 'правки', erid: '', dot: 'var(--warning)' },
+      { site: '366.ru · главная', format: 'не загружено', files: 0, status: 'нет файлов', erid: '', dot: 'var(--income)' },
     ],
   },
   rec: {
     totalFact: 1079600, totalPct: 98.1, totalSum: 478905,
     rows: [
-      { site: 'еФарм · главная', plan: 720000, fact: 706400, cpm: 450, dot: '#4F6CE6' },
-      { site: 'еФарм · каталог', plan: 291111, fact: 268900, cpm: 450, dot: '#4F6CE6' },
-      { site: 'Аптечество · APP', plan: 100000, fact: 104300, cpm: 380, dot: '#E89020' },
+      { site: 'еФарм · главная', plan: 720000, fact: 706400, cpm: 450, dot: 'var(--accent)' },
+      { site: 'еФарм · каталог', plan: 291111, fact: 268900, cpm: 450, dot: 'var(--accent)' },
+      { site: 'Аптечество · APP', plan: 100000, fact: 104300, cpm: 380, dot: 'var(--warning)' },
     ],
     kpi: [
-      { label: 'Выполнение плана', value: '98', unit: '%', hint: 'по показам', color: '#2FA37C' },
-      { label: 'К оплате по факту', value: '0,48', unit: 'млн ₽', hint: 'до НДС', color: '#1C2433' },
-      { label: 'Отклонение от МП', value: '−21', unit: 'тыс ₽', hint: 'план 500 000 ₽', color: '#C93A3E' },
-      { label: 'Недокрут', value: '2', unit: '%', hint: '1 площадка ниже 95 %', color: '#E89020' },
+      { label: 'Выполнение плана', value: '98', unit: '%', hint: 'по показам', color: 'var(--income)' },
+      { label: 'К оплате по факту', value: '0,48', unit: 'млн ₽', hint: 'до НДС', color: 'var(--text-primary)' },
+      { label: 'Отклонение от МП', value: '−21', unit: 'тыс ₽', hint: 'план 500 000 ₽', color: 'var(--danger-fg)' },
+      { label: 'Недокрут', value: '2', unit: '%', hint: '1 площадка ниже 95 %', color: 'var(--warning)' },
     ],
   },
   docs: [
@@ -620,8 +620,8 @@ export const DEMO = {
     { label: 'Акт', note: 'не загружен', ready: false, action: 'Загрузить' },
   ],
   owners: [
-    { name: 'Лидген S.', role: 'продавец', initials: 'ЛS', bg: '#ECEFFD', fg: '#4F6CE6' },
-    { name: 'Ксения Ж.', role: 'аккаунт', initials: 'КЖ', bg: '#E6F5EF', fg: '#1F7D5E' },
-    { name: 'не назначен', role: 'трафик', initials: '—', bg: '#F6F7FB', fg: '#C3C9D8' },
+    { name: 'Лидген S.', role: 'продавец', initials: 'ЛS', bg: 'var(--accent-tint)', fg: 'var(--accent)' },
+    { name: 'Ксения Ж.', role: 'аккаунт', initials: 'КЖ', bg: 'var(--income-tint)', fg: 'var(--income-fg)' },
+    { name: 'не назначен', role: 'трафик', initials: '—', bg: 'var(--bg-subtle)', fg: 'var(--text-disabled)' },
   ],
 };

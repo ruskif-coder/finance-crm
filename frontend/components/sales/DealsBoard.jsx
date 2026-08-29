@@ -18,15 +18,15 @@ import { dm } from '@/lib/salesFormat'
  */
 
 const T = {
-  card: '#FFFFFF', subtle: '#F6F7FB', tint: '#F6F8FF', special: '#F8F9FC',
-  border: '#E3E7F1', inner: '#EDF0F7', row: '#F2F4FA', hoverBorder: '#C7D0E8',
-  nowBorder: '#D7DEFA', nowHead: '#E1E7F7', specialBorder: '#E7EBF7',
-  t1: '#1C2433', t2: '#525C70', t3: '#79839A', t4: '#A3ABBD', t5: '#C3C9D8',
-  accent: '#4F6CE6', accentHover: '#3A50BE', accentTint: '#ECEFFD',
-  income: '#2FA37C', incomeTint: '#E6F5EF', incomeFg: '#1F7D5E',
-  warning: '#E89020', warningTint: '#FBF0DE', warningFg: '#B26A0C',
-  gray: '#8B93A6',
-  danger: '#C93A3E', dangerTint: '#FBEAEA', dangerBorder: '#F0C9CA',
+  card: 'var(--bg-card)', subtle: 'var(--bg-subtle)', tint: 'var(--bg-tint)', special: '#F8F9FC',
+  border: 'var(--border-card)', inner: 'var(--border-inner)', row: 'var(--border-row)', hoverBorder: 'var(--border-hover)',
+  nowBorder: 'var(--accent-border)', nowHead: '#E1E7F7', specialBorder: '#E7EBF7',
+  t1: 'var(--text-primary)', t2: 'var(--text-secondary)', t3: 'var(--text-muted)', t4: 'var(--text-faint)', t5: 'var(--text-disabled)',
+  accent: 'var(--accent)', accentHover: 'var(--accent-hover)', accentTint: 'var(--accent-tint)',
+  income: 'var(--income)', incomeTint: 'var(--income-tint)', incomeFg: 'var(--income-fg)',
+  warning: 'var(--warning)', warningTint: 'var(--warning-tint)', warningFg: 'var(--warning-text)',
+  gray: 'var(--bank-sovkom)',
+  danger: 'var(--danger-fg)', dangerTint: '#FBEAEA', dangerBorder: 'var(--danger-border)',
   pop: '0 10px 30px rgba(28,36,51,.16)',
   mono: MONO, sans: UI, ease: 'cubic-bezier(0.22,1,0.36,1)',
 }
@@ -47,7 +47,7 @@ const money = v => (Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2).replace('.', ',') 
 const mln = v => (v / 1e6).toFixed(1).replace('.', ',')
 
 // Цвет маркера услуги — стабильный хеш имени: справочник услуг растёт, руками не ведём.
-const SERVICE_PALETTE = ['#4F6CE6', '#2FB8A8', '#8B7BE8', '#E89020', '#2FA37C', '#8B93A6', '#D96A9A', '#5AA9E6']
+const SERVICE_PALETTE = ['var(--accent)', 'var(--bank-opt)', 'var(--bank-cash)', 'var(--warning)', 'var(--income)', 'var(--bank-sovkom)', '#D96A9A', '#5AA9E6']
 const serviceDot = (name) => {
   const s = String(name || '')
   let h = 0
@@ -266,7 +266,7 @@ function DealCard({ c, open, onToggle, canEdit, onAdvance, onOpenCard, onBrief, 
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 2 }}>
             {canEdit && (
               <span className="db-primary" onClick={onAdvance} title="Двинуть сделку по каталогу стадий"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 28, padding: '0 12px', background: T.accent, color: '#FFF', borderRadius: 9, fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 28, padding: '0 12px', background: T.accent, color: 'var(--bg-card)', borderRadius: 9, fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>
                 <PlayIcon />Двинуть
               </span>
             )}

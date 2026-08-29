@@ -405,7 +405,7 @@ export default function Publishers() {
 
           {/* Как читать: тона поверхностей и буквы светофора иначе приходится угадывать. */}
           <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap',
-            padding: '8px 12px', background: '#F6F8FF', border: '1px solid var(--accent-border)',
+            padding: '8px 12px', background: 'var(--bg-tint)', border: '1px solid var(--accent-border)',
             borderRadius: 12, marginBottom: 12 }}>
             <span style={{ ...CAP, marginBottom: 0, color: 'var(--accent)' }}>как читать</span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -565,7 +565,7 @@ export default function Publishers() {
 
                         <div style={cell}>
                           {p.is_exclusive
-                            ? <Pin text="эксклюзив" tone={['var(--accent)', '#fff']} title="Работаем эксклюзивно" />
+                            ? <Pin text="эксклюзив" tone={['var(--accent)', 'var(--bg-card)']} title="Работаем эксклюзивно" />
                             : <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>нет</span>}
                         </div>
 
@@ -607,7 +607,7 @@ export default function Publishers() {
                       </div>
 
                       {open && (
-                        <div style={{ padding: '12px 14px 16px', background: '#F6F8FF',
+                        <div style={{ padding: '12px 14px 16px', background: 'var(--bg-tint)',
                           border: '1px solid var(--accent-border)', borderRadius: 14, marginBottom: 10 }}>
                           {!detail && <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Загрузка…</div>}
                           {detail && detail.id === p.id && (

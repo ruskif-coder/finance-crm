@@ -156,7 +156,7 @@ function BriefDialog({ dealId, canEdit, onClose }) {
         {canEdit && !state.loading && (
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '0 24px 20px' }}>
             <button type="button" onClick={onClose} style={{ height: 36, padding: '0 16px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 13, cursor: 'pointer', fontFamily: UI }}>Отмена</button>
-            <button type="button" onClick={save} disabled={state.saving} style={{ height: 36, padding: '0 18px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: state.saving ? 'default' : 'pointer', opacity: state.saving ? 0.6 : 1, fontFamily: UI }}>
+            <button type="button" onClick={save} disabled={state.saving} style={{ height: 36, padding: '0 18px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: 'var(--bg-card)', fontSize: 13, fontWeight: 700, cursor: state.saving ? 'default' : 'pointer', opacity: state.saving ? 0.6 : 1, fontFamily: UI }}>
               {state.saving ? 'Сохраняю…' : 'Сохранить'}
             </button>
           </div>
@@ -274,9 +274,9 @@ const fmtWhen = (str) => {
 }
 // Светофор слоёв денег — как в реестре/диалоге движения (единая трактовка цвета).
 const LAYER_COLOR = {
-  'планируемые': 'var(--text-faint, #A3ABBD)',
+  'планируемые': 'var(--text-faint, var(--text-faint))',
   'реализуемые': 'var(--dot-current-dz, #d97706)',
-  'фактические': 'var(--income, #1F7D5E)',
+  'фактические': 'var(--income, var(--income-fg))',
 }
 const EVENT_COLOR = {
   create_deal: 'var(--text-faint)', patch_sales_deal: 'var(--dot-current-dz)',
@@ -291,8 +291,8 @@ const DOC_ACT = { display: 'inline-flex', alignItems: 'center', height: 22, padd
 // Строка документа
 function DocRow({ ok, title, meta, right }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 9, background: ok ? 'var(--bg-card)' : '#FBFCFE', border: `1px solid ${ok ? 'var(--border-card)' : 'var(--border-inner)'}`, borderRadius: 11, padding: '9px 10px', minWidth: 0 }}>
-      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 7, background: ok ? 'var(--accent-tint)' : 'var(--bg-subtle)', color: ok ? 'var(--accent)' : '#C3C9D8', flex: '0 0 22px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 9, background: ok ? 'var(--bg-card)' : 'var(--bg-dim)', border: `1px solid ${ok ? 'var(--border-card)' : 'var(--border-inner)'}`, borderRadius: 11, padding: '9px 10px', minWidth: 0 }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 7, background: ok ? 'var(--accent-tint)' : 'var(--bg-subtle)', color: ok ? 'var(--accent)' : 'var(--text-disabled)', flex: '0 0 22px' }}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg>
       </span>
       <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
@@ -556,13 +556,13 @@ export default function DealCard() {
   ]
   const team = [
     { name: d.sales_rep, role: 'Продавец', bg: 'var(--accent-tint)', fg: 'var(--accent)' },
-    { name: d.account_manager, role: 'Аккаунт', bg: '#E6F5EF', fg: 'var(--income)' },
-    { name: null, role: 'Трафик', bg: '#F1EDFC', fg: '#7B62D6' },
+    { name: d.account_manager, role: 'Аккаунт', bg: 'var(--income-tint)', fg: 'var(--income)' },
+    { name: null, role: 'Трафик', bg: 'var(--mixed-tint)', fg: 'var(--mixed)' },
   ]
   const links = [
     { name: `Контрагент ${d.payer || ''}`.trim(), href: d.counterparty_id ? `/directory/counterparties/${d.counterparty_id}` : null, dot: 'var(--accent)' },
     { name: 'Медиаплан', href: null, dot: 'var(--income)' },
-    { name: 'Сделка в Битриксе', href: (d.bitrix_id && !String(d.bitrix_id).startsWith('local-')) ? BITRIX_DEAL_URL(d.bitrix_id) : null, dot: '#8B7BE8' },
+    { name: 'Сделка в Битриксе', href: (d.bitrix_id && !String(d.bitrix_id).startsWith('local-')) ? BITRIX_DEAL_URL(d.bitrix_id) : null, dot: 'var(--bank-cash)' },
     { name: `Дебиторка ${rub(d.amount)}`, href: '/finance/receivables', dot: 'var(--dot-current-dz)' },
   ]
 
@@ -691,7 +691,7 @@ export default function DealCard() {
             </div>
               {/* Материнский годовой план — правая зона шапки */}
               {d.year_plan && (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto', maxWidth: 420, minWidth: 0, background: 'var(--bg-subtle, #F6F8FF)', border: '1px solid var(--border-card)', borderRadius: 12, padding: '8px 12px' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto', maxWidth: 420, minWidth: 0, background: 'var(--bg-subtle, var(--bg-tint))', border: '1px solid var(--border-card)', borderRadius: 12, padding: '8px 12px' }}>
                   <span style={{ minWidth: 0 }}>
                     <span style={{ display: 'block', fontFamily: MONO, fontSize: 9, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Годовой план</span>
                     <span style={{ display: 'block', fontSize: 12.5, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
@@ -759,7 +759,7 @@ export default function DealCard() {
 
               {canEdit && (
                 <button onClick={() => setMoveOpen(true)} title="Двинуть сделку по каталогу стадий"
-                  style={{ display: 'inline-flex', alignItems: 'center', height: 38, padding: '0 18px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flex: '0 0 auto', fontFamily: UI }}>
+                  style={{ display: 'inline-flex', alignItems: 'center', height: 38, padding: '0 18px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: 'var(--bg-card)', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flex: '0 0 auto', fontFamily: UI }}>
                   Изменить стадию
                 </button>
               )}
@@ -788,7 +788,7 @@ export default function DealCard() {
                   <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     <span style={SUBCAPS}>Старт — стоп РК</span>
                     <input type="date" defaultValue={dateVal(d.period_from)} readOnly style={{ height: 30, boxSizing: 'border-box', padding: '0 9px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 9, fontFamily: MONO, fontSize: 11.5, fontWeight: 600, color: 'var(--text-primary)', outline: 'none' }} />
-                    <span style={{ color: '#C7D0E8' }}>→</span>
+                    <span style={{ color: 'var(--border-hover)' }}>→</span>
                     <input type="date" defaultValue={dateVal(d.period_to)} readOnly style={{ height: 30, boxSizing: 'border-box', padding: '0 9px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 9, fontFamily: MONO, fontSize: 11.5, fontWeight: 600, color: 'var(--text-primary)', outline: 'none' }} />
                   </span>
                 </div>
@@ -816,7 +816,7 @@ export default function DealCard() {
                     display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6,
                     minHeight: 150, padding: '28px 20px', marginTop: 14, borderRadius: 14,
                     background: canEdit ? 'var(--accent)' : 'var(--bg-subtle)',
-                    color: canEdit ? '#fff' : 'var(--text-faint)',
+                    color: canEdit ? 'var(--bg-card)' : 'var(--text-faint)',
                     border: canEdit ? 'none' : '1px dashed var(--border-card)',
                     cursor: canEdit ? 'pointer' : 'default', textAlign: 'center',
                   }}>
@@ -1099,7 +1099,7 @@ export default function DealCard() {
                 ) : <div style={{ fontSize: 11, color: 'var(--text-faint)', padding: '4px 0' }}>Событий в журнале пока нет.</div>}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 7, paddingTop: 8, borderTop: '1px solid var(--border-row)' }}>
                   <input placeholder="Комментарий…" disabled style={{ flex: 1, minWidth: 0, height: 30, boxSizing: 'border-box', padding: '0 10px', background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 9, fontFamily: UI, fontSize: 11.5, outline: 'none' }} />
-                  <span title="скоро" style={{ display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 11px', background: 'var(--accent)', color: '#fff', borderRadius: 9, fontSize: 11, fontWeight: 700, opacity: 0.6 }}>→</span>
+                  <span title="скоро" style={{ display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 11px', background: 'var(--accent)', color: 'var(--bg-card)', borderRadius: 9, fontSize: 11, fontWeight: 700, opacity: 0.6 }}>→</span>
                 </div>
               </div>
             </div>

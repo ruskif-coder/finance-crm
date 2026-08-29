@@ -591,7 +591,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
                   padding: '5px 12px', borderRadius: 100,
                   border: `1px solid ${on ? 'var(--accent)' : 'var(--border-card)'}`,
                   background: on ? 'var(--accent)' : 'var(--bg-subtle)',
-                  color: on ? '#fff' : 'var(--text-secondary)' }}>
+                  color: on ? 'var(--bg-card)' : 'var(--text-secondary)' }}>
                 {w}×{h}
               </span>
             )
@@ -625,7 +625,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
             <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>загрузка…</span>
           )}
           {!err && isImg && !!blob && (
-            <img src={blob} alt={cur.name} style={{ maxWidth: '100%', display: 'block', background: '#fff' }} />
+            <img src={blob} alt={cur.name} style={{ maxWidth: '100%', display: 'block', background: 'var(--bg-card)' }} />
           )}
 
           {!err && isHtml && html === null && (
@@ -637,7 +637,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
               {/* Чужой исполняемый код — только в изолированной рамке и без
                   allow-same-origin: тогда у неё свой origin, и до нашей сессии не дотянуться. */}
               <iframe srcDoc={html} sandbox="allow-scripts" title={'Креатив ' + (cur.ratio || '')}
-                style={{ border: 0, display: 'block', background: '#fff',
+                style={{ border: 0, display: 'block', background: 'var(--bg-card)',
                   width: wh ? wh[0] : '100%', height: wh ? wh[1] : 420,
                   transform: `scale(${k})`, transformOrigin: 'top left' }} />
             </div>
@@ -650,7 +650,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
             <div style={{ width: wh ? Math.round(wh[0] * k) : '100%',
               height: wh ? Math.round(wh[1] * k) : 420, overflow: 'hidden' }}>
               <iframe src={cur.sandbox_url} title={'Креатив ' + (cur.ratio || '')}
-                style={{ border: 0, display: 'block', background: '#fff',
+                style={{ border: 0, display: 'block', background: 'var(--bg-card)',
                   width: wh ? wh[0] : '100%', height: wh ? wh[1] : 420,
                   transform: `scale(${k})`, transformOrigin: 'top left' }} />
             </div>

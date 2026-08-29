@@ -13,9 +13,9 @@ const fullDate = fmtDateFull
 
 // Цвета типов (из хендоффа)
 const C = {
-  plan: '#5B7CF0', planTxt: T.accent, planTint: T.accentTint,
+  plan: 'var(--dot-expense)', planTxt: T.accent, planTint: T.accentTint,
   cur: T.warning, curTxt: '#C27510', curTint2: T.warningText, curTint: T.warningTint,
-  over: '#E5484D', overTxt: T.danger, overTint: '#FBE4E6',
+  over: 'var(--danger)', overTxt: T.danger, overTint: 'var(--danger-tint)',
   accent: T.accent,
 }
 const TYPE = {
@@ -73,7 +73,7 @@ function DebtorRow({ r, open, onToggle, notes, setNotes, savedNotes, saveNote, c
   const key = r.counterparty_id
   return (
     <div style={{ borderBottom: '1px solid var(--border-row)' }}>
-      <div onClick={onToggle} style={{ padding: '10px 8px', borderRadius: 10, cursor: 'pointer', background: open ? '#F6F8FF' : 'transparent' }}>
+      <div onClick={onToggle} style={{ padding: '10px 8px', borderRadius: 10, cursor: 'pointer', background: open ? 'var(--bg-tint)' : 'transparent' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.counterparty}</span>
           <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: t.amt, whiteSpace: 'nowrap' }}>{fmt(r.amount)} ₽</span>
@@ -170,7 +170,7 @@ export default function ReceivablesMobile({
       {/* Структура по срокам */}
       <ReportSection title="Структура по срокам" aside={<span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>дни от срока</span>}>
         {/* сводка */}
-        <div style={{ background: '#F6F8FF', borderRadius: 12, padding: '10px 12px', minHeight: 44, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ background: 'var(--bg-tint)', borderRadius: 12, padding: '10px 12px', minHeight: 44, display: 'flex', alignItems: 'center', gap: 10 }}>
           {sel ? (<>
             <Marker c={TYPE[sel.type].bar} />
             <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{sel.label}</span>

@@ -19,7 +19,7 @@ const capMonth = (p) => { const s = shortMonth(p); return s.charAt(0).toUpperCas
 const formatPeriod = (p) => { if (!p) return '—'; const [y, m] = String(p).split('-'); return `${MONTH_SHORT[m] || m} ${y}` }
 const rangeShort = (from, to) => { const one = (p) => { if (!p) return ''; const [y] = String(p).split('-'); return `${capMonth(p)} ${y.slice(2)}` }; return `${one(from)} — ${one(to)}` }
 
-const INCOME = T.income, OUTFLOW = '#8B93A6', EMPTY = 'var(--border-inner)', FACT = T.accent, FORECAST = '#A9B6F2'
+const INCOME = T.income, OUTFLOW = 'var(--bank-sovkom)', EMPTY = 'var(--border-inner)', FACT = T.accent, FORECAST = 'var(--accent-soft)'
 const WARN_TXT = T.warningText, DANGER_TXT = T.danger
 
 function Kpi({ label, val, unit, color, badge, sub }) {
@@ -122,7 +122,7 @@ export default function CashflowMobile({
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Marker c={OUTFLOW} />расход</span>
         </span>
       }>
-        <div style={{ background: '#F6F8FF', borderRadius: 12, padding: '10px 12px', minHeight: 44, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ background: 'var(--bg-tint)', borderRadius: 12, padding: '10px 12px', minHeight: 44, display: 'flex', alignItems: 'center', gap: 10 }}>
           {sel ? (<>
             <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>{sel.monthLabel} · неделя {sel.week}</span>
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 12, fontFamily: MONO, fontSize: 12, fontWeight: 700 }}>
@@ -178,7 +178,7 @@ export default function CashflowMobile({
           const open = expanded === m.period
           return (
             <div key={m.period} style={{ borderBottom: '1px solid var(--border-row)' }}>
-              <div onClick={() => setExpanded(open ? null : m.period)} style={{ display: 'grid', gridTemplateColumns: '1fr auto 14px', gap: 10, alignItems: 'center', padding: '10px 8px', borderRadius: 10, cursor: 'pointer', background: open ? '#F6F8FF' : 'transparent' }}>
+              <div onClick={() => setExpanded(open ? null : m.period)} style={{ display: 'grid', gridTemplateColumns: '1fr auto 14px', gap: 10, alignItems: 'center', padding: '10px 8px', borderRadius: 10, cursor: 'pointer', background: open ? 'var(--bg-tint)' : 'transparent' }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{formatPeriod(m.period)}</div>
                   <div style={{ fontFamily: MONO, fontSize: 10, marginTop: 2 }}>

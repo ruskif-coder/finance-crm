@@ -10,13 +10,13 @@ import { overlayClose } from '@/lib/overlay'
 
 // Локальные токены (не импортируем из YearPlan — иначе циклический импорт рушит сборку).
 const T = {
-  card: '#FFFFFF', subtle: '#F6F7FB', border: '#E3E7F1', row: '#F2F4FA',
-  t1: '#1C2433', t2: '#525C70', t3: '#79839A', t4: '#A3ABBD',
-  accent: '#4F6CE6', accentTint: '#ECEFFD', accentBorder: '#D7DEFA',
-  fact: '#2FA37C', income: '#1F7D5E', warning: '#E89020', danger: '#C93A3E',
-  onBg: '#E6F5EF', onBorder: '#C9E8DC',   // «месяц с услугами» — как зелёная ячейка плана
+  card: 'var(--bg-card)', subtle: 'var(--bg-subtle)', border: 'var(--border-card)', row: 'var(--border-row)',
+  t1: 'var(--text-primary)', t2: 'var(--text-secondary)', t3: 'var(--text-muted)', t4: 'var(--text-faint)',
+  accent: 'var(--accent)', accentTint: 'var(--accent-tint)', accentBorder: 'var(--accent-border)',
+  fact: 'var(--income)', income: 'var(--income-fg)', warning: 'var(--warning)', danger: 'var(--danger-fg)',
+  onBg: 'var(--income-tint)', onBorder: '#C9E8DC',   // «месяц с услугами» — как зелёная ячейка плана
   addon: '#8A5CD1', addonTint: '#F1EAFB', addonBorder: '#E0D2F5',
-  emptyBg: '#FFFBF3', emptyBorder: '#F2DFC0', emptyText: '#B7853A', emptyNum: '#C9CFDC',
+  emptyBg: 'var(--warning-bg)', emptyBorder: 'var(--warning-border)', emptyText: '#B7853A', emptyNum: '#C9CFDC',
   pop: '0 8px 28px rgba(28,36,51,.14)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
   ease: 'cubic-bezier(0.22,1,0.36,1)',
@@ -36,7 +36,7 @@ const FC_COLS = 'minmax(140px,1.3fr) repeat(15, minmax(58px,1fr))';
 
 const lbl = { fontFamily: T.mono, fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: T.t4, marginBottom: 4 };
 const colHead = { fontFamily: T.mono, fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: T.t4 };
-const field = { width: '100%', boxSizing: 'border-box', height: 34, padding: '0 10px', border: `1px solid ${T.border}`, borderRadius: 9, fontSize: 12.5, fontWeight: 600, color: T.t1, background: '#FFF', outline: 'none' };
+const field = { width: '100%', boxSizing: 'border-box', height: 34, padding: '0 10px', border: `1px solid ${T.border}`, borderRadius: 9, fontSize: 12.5, fontWeight: 600, color: T.t1, background: 'var(--bg-card)', outline: 'none' };
 const chip = { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 7, background: T.accentTint, color: T.accent, fontSize: 11, fontWeight: 600 };
 
 function Select({ value, onChange, options, placeholder = '—', disabled }) {
@@ -192,7 +192,7 @@ export default function BrandBrief({ open, onClose, brandLabel, advertiserId, br
                                       onKeyDown={e => { if (e.key === 'Enter') { const v = (tgCat[g] || '').trim(); if (v) { onAddTargeting(g, v); if (!selv.includes(v)) setTg(g, [...selv, v]); setTgCat(d => ({ ...d, [g]: '' })); } } }}
                                       placeholder="+ в каталог" style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '6px 8px', borderRadius: 8, border: `1px solid ${T.border}`, fontSize: 12, outline: 'none' }} />
                                     <span onClick={() => { const v = (tgCat[g] || '').trim(); if (v) { onAddTargeting(g, v); if (!selv.includes(v)) setTg(g, [...selv, v]); setTgCat(d => ({ ...d, [g]: '' })); } }}
-                                      style={{ display: 'inline-flex', alignItems: 'center', padding: '0 10px', background: T.accent, color: '#FFF', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>+</span>
+                                      style={{ display: 'inline-flex', alignItems: 'center', padding: '0 10px', background: T.accent, color: 'var(--bg-card)', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>+</span>
                                   </div>
                                 )}
                               </div>
@@ -339,7 +339,7 @@ export default function BrandBrief({ open, onClose, brandLabel, advertiserId, br
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '14px 24px', borderTop: `1px solid ${T.border}` }}>
-          <span onClick={onClose} style={{ padding: '9px 18px', borderRadius: 10, background: T.accent, color: '#FFF', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>Готово</span>
+          <span onClick={onClose} style={{ padding: '9px 18px', borderRadius: 10, background: T.accent, color: 'var(--bg-card)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>Готово</span>
         </div>
       </div>
     </div>

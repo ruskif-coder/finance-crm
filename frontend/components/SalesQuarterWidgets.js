@@ -106,7 +106,7 @@ export default function SalesQuarterWidgets({
               <option value="all">Все</option>
             </select>
             {(onCreate || onCreateAgency || onCreateAdvertiser) && (
-              <button onClick={() => setCreateMenuOpen(true)} aria-label="Создать" style={{ flex: '0 0 auto', width: 44, height: 44, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: C.accent, color: '#fff', border: 'none', borderRadius: 12, fontSize: 26, fontWeight: 400, lineHeight: 1, cursor: 'pointer' }}>+</button>
+              <button onClick={() => setCreateMenuOpen(true)} aria-label="Создать" style={{ flex: '0 0 auto', width: 44, height: 44, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: C.accent, color: 'var(--bg-card)', border: 'none', borderRadius: 12, fontSize: 26, fontWeight: 400, lineHeight: 1, cursor: 'pointer' }}>+</button>
             )}
           </div>
           {/* модалка создания */}
@@ -114,7 +114,7 @@ export default function SalesQuarterWidgets({
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {onCreateAgency && <button onClick={() => { setCreateMenuOpen(false); onCreateAgency() }} style={{ width: '100%', background: 'transparent', color: C.accent, border: `1px solid ${C.accent}`, borderRadius: 12, padding: '14px', fontFamily: UI, fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>+ Агентство</button>}
               {onCreateAdvertiser && <button onClick={() => { setCreateMenuOpen(false); onCreateAdvertiser() }} style={{ width: '100%', background: 'transparent', color: C.accent, border: `1px solid ${C.accent}`, borderRadius: 12, padding: '14px', fontFamily: UI, fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>+ Рекламодатель</button>}
-              {onCreate && <button onClick={() => { setCreateMenuOpen(false); onCreate() }} style={{ width: '100%', background: C.accent, color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontFamily: UI, fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>+ Сделка</button>}
+              {onCreate && <button onClick={() => { setCreateMenuOpen(false); onCreate() }} style={{ width: '100%', background: C.accent, color: 'var(--bg-card)', border: 'none', borderRadius: 12, padding: '14px', fontFamily: UI, fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>+ Сделка</button>}
             </div>
           </BottomSheet>
           {/* KPI 2×2 */}
@@ -215,7 +215,7 @@ export default function SalesQuarterWidgets({
             )}
             {onCreate && (
               <button className="qw-btn" onClick={onCreate}
-                style={{ background: C.accent, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 16px',
+                style={{ background: C.accent, color: 'var(--bg-card)', border: 'none', borderRadius: 10, padding: '10px 16px',
                   fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>+ Сделка</button>
             )}
           </div>
