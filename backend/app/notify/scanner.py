@@ -488,6 +488,54 @@ def rule_creative_erid_failed(db: Session, ev: registry.Event) -> List[Hit]:
     return hits
 
 
+def rule_traffic_silence(db: Session, ev: registry.Event) -> List[Hit]:
+    """Трафик молчит третий день после отправки комплекта.
+
+    Близнец `rule_creative_silence`, и отличается ровно одной строкой — видом проверки.
+    Слить их в одну функцию с параметром соблазнительно и неверно: у ступеней разные
+    получатели, разные формулировки и в будущем разные сроки (свой сотрудник и чужая
+    площадка — не одно и то же ожидание). Общим здесь должен остаться СПОСОБ счёта,
+    а не текст, и способ этот — пустая строка `launch_prep_review`.
+
+    Сработка одна на ПАРУ: молчат конкретные площадки в конкретном креативе, и «по
+    сделке нет ответов» не подсказывает, что открывать.
+    """
+    from app.launch_prep.models import LaunchPrepPair, LaunchPrepReview, LaunchPrepTarget
+    from app.sales.models import SalesDeal, SalesPublisher
+
+    days = _param(ev, "days", 3)
+    edge = datetime.utcnow() - timedelta(days=days)
+    rows = (db.query(LaunchPrepReview, LaunchPrepPair, LaunchPrepTarget)
+            .join(LaunchPrepPair, LaunchPrepPair.id == LaunchPrepReview.pair_id)
+            .join(LaunchPrepTarget, LaunchPrepTarget.id == LaunchPrepPair.target_id)
+            .filter(LaunchPrepReview.kind == "трафики",
+                    LaunchPrepReview.verdict.is_(None),
+                    LaunchPrepReview.asked_at < edge).all())
+    if not rows:
+        return []
+
+    deals = {d.id: d for d in db.query(SalesDeal).filter(
+        SalesDeal.id.in_({t.deal_id for _, _, t in rows}))}
+    pubs = {p.id: p for p in db.query(SalesPublisher).filter(
+        SalesPublisher.id.in_({t.publisher_id for _, _, t in rows}))}
+
+    hits = []
+    for review, pair, target in rows:
+        deal = deals.get(target.deal_id)
+        pub = pubs.get(target.publisher_id)
+        if deal is None:
+            continue
+        waited = (datetime.utcnow() - review.asked_at).days if review.asked_at else days
+        hits.append(Hit(
+            key=f"traffic_silence:{pair.id}",
+            deal_id=deal.id,
+            title=f"{deal.title or deal.code}: трафик не проверил "
+                  f"{pub.name if pub else 'площадку'} — {waited} дн.",
+            link="/traffic/queue",
+        ))
+    return hits
+
+
 RULES = {
     "invoice_overdue": rule_invoice_overdue,
     "mp_stuck": rule_mp_stuck,
@@ -495,6 +543,7 @@ RULES = {
     "mp_draft_stale": rule_mp_draft_stale,
     "backlog_overdue": rule_backlog_overdue,
     "creative_silence": rule_creative_silence,
+    "traffic_silence": rule_traffic_silence,
     "creative_erid_failed": rule_creative_erid_failed,
     **{k: _deal_rule(k) for k in DEAL_QUEUE_EVENTS},
 }

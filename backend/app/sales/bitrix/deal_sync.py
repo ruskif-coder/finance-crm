@@ -179,6 +179,18 @@ def _download_file(db, deal, field_val, kind):
         f.write(r.content)
     rel = os.path.relpath(abspath, UPLOADS_ROOT)
     if existing:
+        # ПРЕЖНИЙ ФАЙЛ СТИРАЕМ (30.08.2026). Строка одна на пару «сделка × вид», а имя
+        # файла входит в путь: заменили медиаплан в Битриксе — путь стал другим, строка
+        # переписалась, а старый файл остался на диске навсегда. Так набралось 126
+        # файлов на 256 МБ против 37 строк — 82% папки.
+        # Условие узкое: стираем ТОЛЬКО прежний путь этой же строки и только если он
+        # отличается от нового. Совпал — файл уже перезаписан по тому же адресу.
+        old = existing.path
+        if old and old != rel and old.replace("\\", "/").startswith(FILES_SUBDIR + "/"):
+            try:
+                os.remove(os.path.join(UPLOADS_ROOT, old))
+            except OSError:
+                pass          # файла может не быть — синк не должен падать из-за уборки
         existing.bitrix_file_id = fid
         existing.filename = fname
         existing.path = rel

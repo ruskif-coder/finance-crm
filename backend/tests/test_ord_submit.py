@@ -7,7 +7,9 @@
   · обрыв связи НЕ закрывает попытку — «неизвестно» это не «не создалось»;
   · незавершённая попытка блокирует повтор;
   · проверки идут до журнала и до сети — отказ на входе не оставляет следов;
-  · боевая запись требует отдельного разрешения, а не одного лишь ORD_ENV=prod.
+  · боевая запись требует отдельного разрешения, а не одного лишь ORD_ENV=prod;
+  · из зависшей попытки ЕСТЬ выход, и он не симметричен: «записи нет» открывает повтор,
+    «запись есть» оставляет его закрытым.
 
 Тесты идут на живой базе с фиктивными записями (тот же приём, что в соседних
 test_ord_*.py), транспорт подменяется — до настоящего ОРД ни один тест не доходит.
@@ -227,3 +229,98 @@ def test_prod_write_needs_its_own_permission(db, user, monkeypatch):
     submit.register_final_contract(db, contract, user)
     db.refresh(contract)
     assert contract.ord_env == 'prod'
+
+
+# ── выход из тупика ──────────────────────────────────────────────────────────
+#
+# Незавершённая попытка блокирует повтор намеренно, но до 30.08.2026 у этого состояния
+# не было выхода: сообщение советовало сходить в кабинет ОРД, а записать результат было
+# негде. Одна такая попытка провисела в журнале трое суток.
+
+def _stuck(session, contract_id):
+    """Попытка, оборвавшаяся без ответа: `finished_at` пуст, повтор закрыт."""
+    row = OrdSubmission(kind='final_contract', local_id=contract_id, env='demo',
+                        request={}, error='связь оборвалась')
+    session.add(row)
+    session.commit()
+    return row
+
+
+def test_resolve_without_record_reopens_retry(db, user):
+    """«Записи в кабинете нет» — попытка закрыта, повтор разрешён.
+
+    Дубля быть не может: дублировать нечего.
+    """
+    from app.routers.ord import OrdResolveIn, ord_resolve_submission
+
+    _cp, contract = _setup(db)
+    row = _stuck(db, contract.id)
+    assert submit.pending(db, 'final_contract', contract.id, 'demo') is not None
+
+    out = ord_resolve_submission(row.id, OrdResolveIn(found=False), db, user)
+    assert out["retry_allowed"] is True
+    assert submit.pending(db, 'final_contract', contract.id, 'demo') is None, (
+        "после отметки «записи нет» повтор обязан открыться — иначе выхода по-прежнему нет"
+    )
+
+
+def test_resolve_with_record_keeps_retry_closed(db, user):
+    """«Запись есть» — попытка закрыта, но повтор ОСТАЁТСЯ закрытым.
+
+    Иначе отправка второй раз завела бы в ЕРИР второй объект, а он не отзывается.
+    """
+    from app.routers.ord import OrdResolveIn, ord_resolve_submission
+
+    _cp, contract = _setup(db)
+    row = _stuck(db, contract.id)
+
+    out = ord_resolve_submission(row.id, OrdResolveIn(found=True, ord_id='CT-999'), db, user)
+    assert out["retry_allowed"] is False
+    db.refresh(row)
+    assert row.ord_id == 'CT-999'
+    # Повтор закрыт уже не «неизвестностью», а зарегистрированной записью — это проверяет
+    # другая ветка (`test_already_registered_contract_is_refused_without_touching_ord`),
+    # здесь важно, что сама попытка перестала числиться зависшей.
+    assert row.finished_at is not None
+
+
+def test_resolve_demands_the_identifier_when_record_was_found(db, user):
+    """«Нашёл, но какой» — не ответ: без идентификатора запись останется несвязанной."""
+    from fastapi import HTTPException
+
+    from app.routers.ord import OrdResolveIn, ord_resolve_submission
+
+    _cp, contract = _setup(db)
+    row = _stuck(db, contract.id)
+    with pytest.raises(HTTPException) as e:
+        ord_resolve_submission(row.id, OrdResolveIn(found=True), db, user)
+    assert 'идентификатор' in e.value.detail.lower()
+
+
+def test_resolved_attempt_cannot_be_resolved_twice(db, user):
+    """Закрытая попытка закрыта окончательно: второй след затёр бы первый."""
+    from fastapi import HTTPException
+
+    from app.routers.ord import OrdResolveIn, ord_resolve_submission
+
+    _cp, contract = _setup(db)
+    row = _stuck(db, contract.id)
+    ord_resolve_submission(row.id, OrdResolveIn(found=False), db, user)
+    with pytest.raises(HTTPException):
+        ord_resolve_submission(row.id, OrdResolveIn(found=False), db, user)
+
+
+def test_manual_mark_survives_in_the_journal(db, user):
+    """След ручного закрытия остаётся навсегда.
+
+    Через год «почему у этой записи не тот путь» — вопрос без ответа, если стереть след.
+    """
+    from app.routers.ord import OrdResolveIn, ord_resolve_submission
+
+    _cp, contract = _setup(db)
+    row = _stuck(db, contract.id)
+    ord_resolve_submission(row.id, OrdResolveIn(found=False, note='смотрел вместе с ОРД'),
+                           db, user)
+    db.refresh(row)
+    assert 'связь оборвалась' in row.error, "исходная причина не должна затираться"
+    assert 'проверил' in row.error and 'смотрел вместе с ОРД' in row.error

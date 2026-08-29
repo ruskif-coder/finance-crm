@@ -130,6 +130,82 @@ def _bound_initial_reason(bound: OrdInitialContract, proposal) -> str:
            f'{bound.contractor_name or "исполнитель не указан"}.')
 
 
+# ── зависшие отправки ────────────────────────────────────────────────────────
+#
+# Обрыв связи оставляет строку журнала незакрытой, и это НАМЕРЕННО: неизвестно,
+# создалась запись в ЕРИР или нет, а повтор вслепую даёт дубль, который не отозвать.
+# Но до 30.08.2026 у этого состояния не было выхода: `_assert_no_pending` советовал
+# «проверьте договор в кабинете», а записать результат проверки было негде — ни ручки,
+# ни экрана, только SQL. Состояние, в которое можно войти и нельзя выйти, — это не
+# осторожность, а тупик.
+
+class OrdResolveIn(BaseModel):
+    found: bool                      # нашлась ли запись в кабинете ОРД
+    ord_id: Optional[str] = None     # её идентификатор, если нашлась
+    note: Optional[str] = None
+
+
+@router.get("/submissions/pending")
+def ord_pending_submissions(db: Session = Depends(get_db),
+                            current_user: User = Depends(require_permission("ord", "view"))):
+    """Отправки без ответа. Пока такая висит, повтор по этой записи закрыт."""
+    from app.ord.models import OrdSubmission
+    rows = (db.query(OrdSubmission)
+            .filter(OrdSubmission.finished_at.is_(None))
+            .order_by(OrdSubmission.started_at.desc()).all())
+    return {"rows": [{"id": r.id, "kind": r.kind, "local_id": r.local_id, "env": r.env,
+                      "started_at": r.started_at, "error": r.error} for r in rows]}
+
+
+@router.post("/submissions/{sub_id}/resolve")
+def ord_resolve_submission(sub_id: int, payload: OrdResolveIn,
+                           db: Session = Depends(get_db),
+                           current_user: User = Depends(require_permission("ord", "edit"))):
+    """Закрыть зависшую попытку СО СЛОВ ЧЕЛОВЕКА, сходившего в кабинет ОРД.
+
+    Два исхода, и они не симметричны:
+
+    · **записи нет** — попытка закрывается как неудачная, повтор разрешён. Это безопасно:
+      дубля не будет, потому что дублировать нечего;
+    · **запись есть** — попытка закрывается с найденным идентификатором, но повтор
+      ОСТАЁТСЯ закрытым: отправить ещё раз означало бы завести второй объект в ЕРИР.
+      Привязка идентификатора к нашей записи делается обычной сверкой, а не отсюда: она
+      умеет сопоставлять по ИНН и номеру и не полагается на то, что человек не ошибся
+      строкой при наборе.
+
+    Отметка о ручном закрытии остаётся в `error` навсегда — через год «почему у этой
+    записи не тот путь» будет вопросом без ответа, если стереть след.
+    """
+    from datetime import datetime
+    from app.ord.models import OrdSubmission
+
+    row = db.query(OrdSubmission).filter(OrdSubmission.id == sub_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Отправка не найдена")
+    if row.finished_at is not None:
+        raise HTTPException(status_code=400, detail="Эта попытка уже закрыта")
+
+    who = current_user.name or f"user {current_user.id}"
+    note = (payload.note or "").strip()
+    if payload.found:
+        ord_id = (payload.ord_id or "").strip()
+        if not ord_id:
+            raise HTTPException(status_code=400,
+                                detail="Укажите идентификатор записи, найденной в кабинете")
+        row.ord_id = ord_id
+        row.ord_status = "подтверждено вручную"
+        mark = f"запись НАЙДЕНА в кабинете ({ord_id})"
+    else:
+        # `finished_at` снимает блокировку: `pending()` ищет ровно по нему.
+        mark = "записи в кабинете НЕТ — повтор разрешён"
+
+    row.finished_at = datetime.utcnow()
+    row.error = " · ".join(filter(None, [row.error, f"проверил {who}: {mark}", note]))
+    db.commit()
+    log_action(db, current_user, "ord_resolve_submission", "ord_submission", row.id, mark)
+    return {"id": row.id, "retry_allowed": not payload.found, "mark": mark}
+
+
 @router.get("/connection")
 def ord_connection(current_user: User = Depends(require_permission("ord", "view"))):
     """Состояние подключения к ОРД — чтобы экран не предлагал кнопку в пустоту."""
