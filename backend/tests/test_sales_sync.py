@@ -8,7 +8,7 @@
 """
 from app.sales.sync import (should_store_version, plan_counterparty_match,
                             plan_directory_match, should_import_deal,
-                            diff_bitrix_pipelines)
+                            diff_bitrix_pipelines, payload_hash)
 
 
 def test_deleted_deal_is_not_reimported():
@@ -120,3 +120,14 @@ def test_missing_pipeline_and_stage_detected():
     assert {"bitrix_category_id": 9, "name": "Удалённая"} in r["missing_pipelines"]
     assert {"pipeline": "Общая", "status_id": "C1:OLD",
             "name": "Старая стадия"} in r["missing_stages"]
+
+
+# Переехали 30.08.2026 вместе с самой функцией из test_sales_bitrix_client.py.
+# Остальные семь тестов того файла проверяли клиент Битрикса, которого больше нет.
+def test_payload_hash_is_stable_regardless_of_key_order():
+    """Иначе каждая синхронизация плодила бы версии на ровном месте."""
+    assert payload_hash({"a": 1, "b": 2}) == payload_hash({"b": 2, "a": 1})
+
+
+def test_payload_hash_changes_when_value_changes():
+    assert payload_hash({"amount": "100"}) != payload_hash({"amount": "101"})

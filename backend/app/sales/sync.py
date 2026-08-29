@@ -13,6 +13,8 @@
 Здесь только чистые правила, без обращений к БД и сети: они тестируются
 без инфраструктуры, как остальные модули app/sales.
 """
+import hashlib
+import json
 
 # Причины, по которым сущность уходит в очередь ручного сопоставления.
 # Различаются намеренно: «не найдено» и «несколько кандидатов» требуют
@@ -134,3 +136,20 @@ def plan_directory_match(raw_value, normalized_index: dict) -> tuple:
     if found is None:
         return None, MATCH_NOT_FOUND
     return found, MATCH_MATCHED
+
+
+def payload_hash(payload: dict) -> str:
+    """Стабильный хеш полезной нагрузки.
+
+    На нём держится append-only слой сырья: новая версия пишется, только когда
+    хеш изменился. Порядок ключей на результат не влияет — иначе каждая
+    синхронизация плодила бы версии на ровном месте.
+
+    Переехал сюда 30.08.2026 из `app/sales/bitrix_client.py`, удалённого целиком:
+    тот модуль был вторым, ни разу не подключённым клиентом Битрикса (классический
+    вебхук портала), тогда как приложение ходит через VibeCode API в
+    `app/sales/bitrix/transport.py`. Хеш к транспорту отношения не имеет — он про
+    правило хранения, а правила хранения живут здесь.
+    """
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

@@ -32,7 +32,7 @@ from app.sales.models import (SalesPipeline, SalesBitrixStageMap, SalesService, 
                               SalesAdvertiser, SalesBrand, SalesRep, SalesDeal,
                               SalesBitrixRaw, SalesDealFieldOverride, SalesAgency)
 from app.sales.normalize import normalize_name  # noqa: E402
-from app.sales.bitrix_client import payload_hash  # noqa: E402
+from app.sales.sync import payload_hash  # noqa: E402
 
 JSON_PATH = "/app/scripts/sales_import.json"
 
