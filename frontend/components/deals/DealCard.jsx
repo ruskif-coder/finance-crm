@@ -30,7 +30,7 @@ export const T = {
   income: 'var(--income)', incomeFg: 'var(--income-fg)', incomeBg: 'var(--income-bg)', incomeBorder: 'var(--income-border)',
   warning: 'var(--warning)', warningFg: 'var(--warning-text)', warningBg: 'var(--warning-bg)', warningTint: 'var(--warning-tint)', warningBorder: 'var(--warning-border)',
   danger: 'var(--danger-fg)', dangerTint: 'var(--danger-tint)', dangerBorder: 'var(--danger-border)',
-  violet: 'var(--mixed)',
+  violet: 'var(--violet-fg)',
   dotWait: 'var(--dot-wait)',
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",

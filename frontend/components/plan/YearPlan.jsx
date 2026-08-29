@@ -27,7 +27,7 @@ export const T = {
   t1: 'var(--text-primary)', t2: 'var(--text-secondary)', t3: 'var(--text-muted)', t4: 'var(--text-faint)', t5: 'var(--text-disabled)',
   accent: 'var(--accent)', accentHover: 'var(--accent-hover)', accentTint: 'var(--accent-tint)', accentBorder: 'var(--accent-border)',
   planBar: 'var(--accent-soft)', fact: 'var(--income)', factText: 'var(--income-fg)',
-  addon: 'var(--mixed)', addonTint: 'var(--mixed-tint)', addonBorder: 'var(--accent-border)',
+  addon: 'var(--violet-fg)', addonTint: 'var(--violet-tint)', addonBorder: 'var(--violet-border)',
   booked: 'var(--border-hover)', bookedText: 'var(--bank-sovkom)', bookedGrey: 'var(--bank-sovkom)',
   warning: 'var(--warning)', danger: 'var(--danger-fg)',
   // Подложка предупреждения: пара к warning, как lockBg к lockBorder.

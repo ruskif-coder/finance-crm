@@ -15,7 +15,7 @@ const T = {
   accent: 'var(--accent)', accentTint: 'var(--accent-tint)', accentBorder: 'var(--accent-border)',
   fact: 'var(--income)', income: 'var(--income-fg)', warning: 'var(--warning)', danger: 'var(--danger-fg)',
   onBg: 'var(--income-tint)', onBorder: 'var(--income-border)',   // «месяц с услугами» — как зелёная ячейка плана
-  addon: 'var(--mixed)', addonTint: 'var(--mixed-tint)', addonBorder: 'var(--accent-border)',
+  addon: 'var(--violet-fg)', addonTint: 'var(--violet-tint)', addonBorder: 'var(--violet-border)',
   emptyBg: 'var(--warning-bg)', emptyBorder: 'var(--warning-border)', emptyText: 'var(--warning-text)', emptyNum: 'var(--text-disabled)',
   pop: '0 8px 28px rgba(28,36,51,.14)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
