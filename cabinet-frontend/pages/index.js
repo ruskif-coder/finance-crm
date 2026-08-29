@@ -696,6 +696,69 @@ function Campaigns({ period: initial }) {
   )
 }
 
+/** Что присылать. Профиль рассылки задан нами, площадка только выключает лишнее.
+ *
+ * Переключатель, а не набор галочек с кнопкой «сохранить»: пунктов четыре, каждый
+ * независим, и промежуточное состояние «выбрал, но не сохранил» здесь нечему служить.
+ * Отправляем сразу, при отказе возвращаем как было — иначе экран покажет решение,
+ * которого в системе нет.
+ */
+function NotifySwitches({ onErr }) {
+  const [kinds, setKinds] = useState(null)
+  const [busy, setBusy] = useState(null)
+
+  useEffect(() => {
+    api.get('/notify-settings', auth())
+      .then(r => setKinds(r.data.kinds || [])).catch(() => setKinds([]))
+  }, [])
+
+  const toggle = async (k) => {
+    if (!k.can_mute || busy) return
+    const next = !k.muted
+    setBusy(k.key)
+    setKinds(list => list.map(x => (x.key === k.key ? { ...x, muted: next } : x)))
+    try {
+      await api.put('/notify-settings', { kind: k.key, muted: next }, auth())
+    } catch (e) {
+      // Возвращаем как было: экран не должен показывать решение, которого нет в системе.
+      setKinds(list => list.map(x => (x.key === k.key ? { ...x, muted: !next } : x)))
+      onErr?.(e.response?.data?.detail || 'Не удалось сохранить')
+    }
+    setBusy(null)
+  }
+
+  if (!kinds) return <div style={{ fontSize: 12, color: C.faint }}>загрузка…</div>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+      {kinds.map(k => (
+        <div key={k.key} onClick={() => toggle(k)} title={k.hint}
+          style={{ display: 'flex', alignItems: 'flex-start', gap: 9,
+            cursor: k.can_mute ? 'pointer' : 'default', opacity: busy === k.key ? .5 : 1 }}>
+          {/* Рубильник, а не галочка: галочка отвечает на вопрос «выбрано ли», а здесь
+              вопрос «включено ли» — состояние, а не выбор. */}
+          <span style={{ width: 30, height: 17, borderRadius: 999, flex: '0 0 30px',
+            marginTop: 1, position: 'relative',
+            background: k.muted ? C.subtle : (k.can_mute ? C.income : C.incomeTint),
+            border: `1px solid ${k.muted ? C.border : (k.can_mute ? C.income : C.incomeBorder)}`,
+            transition: 'background 140ms ease' }}>
+            <span style={{ position: 'absolute', top: 2, left: k.muted ? 2 : 14,
+              width: 11, height: 11, borderRadius: 999,
+              background: k.muted ? C.faint : (k.can_mute ? C.onFill : C.income),
+              transition: 'left 140ms ease' }} />
+          </span>
+          <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600,
+              color: k.muted ? C.muted : C.text }}>{k.label}</span>
+            {!k.can_mute && (
+              <span style={{ ...CAP, marginBottom: 0 }}>выключить нельзя</span>
+            )}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /* ─────────────────────────── страница ─────────────────────────── */
 
 /* Тон значения несёт смысл, а не украшает: деньги в пути жёлтые, работа зелёная,
@@ -1001,6 +1064,16 @@ export default function Cabinet() {
             <button style={btn(false)} disabled
               title="Отдельный бот кабинета ещё не поднят">Подключить бота</button>
             <Demo what="Бота площадки в системе пока нет — это отдельный бот, не наш внутренний" />
+          </Side>
+
+          {/* Настройка стоит ПОД ботом, а не в профиле: выключатели относятся к тому,
+              что присылает бот, и решение принимают, глядя на него. */}
+          <Side title="что присылать">
+            <NotifySwitches onErr={setErr} />
+            <span style={{ fontSize: 11, color: C.faint, lineHeight: 1.45 }}>
+              Набор задаём мы — площадка выключает лишнее. Выключенное не придёт ни в
+              бот, ни на почту.
+            </span>
           </Side>
 
           <Side title="ваша команда">

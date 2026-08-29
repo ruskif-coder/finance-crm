@@ -114,6 +114,77 @@ def cabinet_target_url(target_id: int, payload: CabinetUrlIn,
     return {"target_id": target.id, "url_state": url_state(target)}
 
 
+@router.get("/notify-kinds", dependencies=[Depends(require_cabinet_service)])
+def cabinet_notify_kinds():
+    """Каталог видов уведомлений — ОДИН на оба контура.
+
+    Кабинет мог бы держать свой список меток, и это была бы третья копия словаря после
+    `url_state` и списка типовых размеров баннера. Здесь копии не нужно: список
+    статический, запрашивается редко, и один сетевой вызов дешевле расхождения, которое
+    видно только площадке.
+    """
+    from app.cabinet.notify_kinds import KINDS
+    return {"kinds": [{"key": k.key, "label": k.label, "hint": k.hint,
+                       "can_mute": k.can_mute} for k in KINDS]}
+
+
+class CabinetMuteIn(BaseModel):
+    publisher_id: int              # чью площадку представляет вызывающий
+    kind: str
+    muted: bool
+    author_name: Optional[str] = None
+
+
+@router.put("/account/{account_id}/mute", dependencies=[Depends(require_cabinet_service)])
+def cabinet_mute(account_id: int, payload: CabinetMuteIn, db: Session = Depends(get_db)):
+    """Выключить или вернуть вид уведомления. Пишет ЯДРО, а не кабинет.
+
+    Тот же порядок, что у вердикта и посадочной ссылки: у таблицы один писатель, и
+    внешний процесс к нему обращается, а не пишет сам. Здесь это не формальность —
+    `cabinet_account_mute` ссылается на учётку каскадом, и право на запись означало бы
+    право удалить чужую строку подбором номера.
+
+    Принадлежность площадки учётке проверяется ЗДЕСЬ, а не только в кабинете: проверка,
+    оставленная на вызывающей стороне, — это отсутствие проверки.
+    """
+    from app.cabinet.models import CabinetAccount, CabinetAccountPublisher
+    from app.cabinet.notify_kinds import KINDS, MUTABLE_KEYS
+
+    acc = db.query(CabinetAccount).filter(CabinetAccount.id == account_id).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Учётка не найдена")
+
+    mine = (db.query(CabinetAccountPublisher)
+            .filter(CabinetAccountPublisher.account_id == account_id,
+                    CabinetAccountPublisher.publisher_id == payload.publisher_id).first())
+    if not mine:
+        # 404, а не 403: 403 подтвердил бы, что такая связка существует.
+        raise HTTPException(status_code=404, detail="Учётка не найдена")
+
+    known = {k.key for k in KINDS}
+    if payload.kind not in known:
+        raise HTTPException(status_code=400, detail="Неизвестный вид уведомления")
+    if payload.muted and payload.kind not in MUTABLE_KEYS:
+        raise HTTPException(
+            status_code=400,
+            detail="Это уведомление выключить нельзя: пропущенное здесь означает "
+                   "сорванный запуск")
+
+    from sqlalchemy import text as sa_text
+    if payload.muted:
+        db.execute(sa_text(
+            "INSERT INTO cabinet_account_mute (account_id, kind, muted_by) "
+            "VALUES (:a, :k, :w) ON CONFLICT (account_id, kind) DO NOTHING"),
+            {"a": account_id, "k": payload.kind,
+             "w": (payload.author_name or "").strip() or "кабинет"})
+    else:
+        db.execute(sa_text(
+            "DELETE FROM cabinet_account_mute WHERE account_id = :a AND kind = :k"),
+            {"a": account_id, "k": payload.kind})
+    db.commit()
+    return {"kind": payload.kind, "muted": payload.muted}
+
+
 # Медиакит — презентация площадки. Только PDF и PPTX (владелец 28.08.2026): это документ
 # для чтения, а не архив и не картинка, и открытый список расширений во внешнем контуре
 # означал бы приём чего угодно от того, кто нам не сотрудник.

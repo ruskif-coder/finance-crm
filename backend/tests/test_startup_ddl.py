@@ -42,6 +42,19 @@ DESTRUCTIVE = (
 
 # Изменение данных. Само по себе не разрушает схему, но выполняться на каждом
 # старте не должно: бэкфилл — разовая операция, его место в миграции.
+# Поимённые исключения к списку выше. Каждое — с причиной, и каждое проверяется на
+# нужность соседним прибором: разрешение, которому нечего разрешать, притупляет стража.
+#
+# Обходить стража молча нельзя даже там, где обход безобиден: `db.query(...).delete()`
+# через ORM этот тест не заметил бы вовсе — и именно поэтому так делать не следует.
+# Исключение должно быть видно в ревью, а не спрятано сменой способа записи.
+ALLOWED_DESTRUCTIVE = (
+    # Возврат умолчания, а не разрушение: в `cabinet_account_mute` строка ОЗНАЧАЕТ
+    # «выключено», её отсутствие — «включено». Включить вид уведомления обратно можно
+    # только удалив строку, и удаляется ровно одна, по первичному ключу.
+    "DELETE FROM cabinet_account_mute WHERE account_id = :a AND kind = :k",
+)
+
 DATA_MUTATING = (
     r"\bUPDATE\s+\w+\s+SET\b",
     r"\bINSERT\s+INTO\b",
@@ -139,7 +152,23 @@ def test_no_destructive_sql_anywhere_in_app():
     found = []
     for path in sorted(APP.rglob("*.py")):
         for sql in _sql_literals(path):
+            one = " ".join(sql.split())
+            if any(frag in one for frag in ALLOWED_DESTRUCTIVE):
+                continue
             for pat in DESTRUCTIVE:
                 if re.search(pat, sql, re.I):
                     found.append(f"{path.relative_to(APP)}: {' '.join(sql.split())[:80]}")
     assert not found, "разрушающий SQL в app/:\n" + "\n".join("  " + s for s in found)
+
+
+
+def test_every_exception_is_still_needed():
+    """Разрешение, которому нечего разрешать, — мусор, притупляющий стража.
+
+    Исключение живёт ровно до тех пор, пока в коде есть то, ради чего оно заведено.
+    Без этой проверки список растёт и однажды прикроет настоящую находку.
+    """
+    body = " | ".join(" ".join(sql.split())
+                      for path in APP.rglob("*.py") for sql in _sql_literals(path))
+    unused = [frag for frag in ALLOWED_DESTRUCTIVE if frag not in body]
+    assert not unused, f"разрешения ни к чему не относятся, уберите: {unused}"

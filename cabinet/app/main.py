@@ -56,6 +56,7 @@ def call_core(method: str, path: str, body: dict) -> dict:
         raise HTTPException(status_code=503,
                             detail="Кабинет не настроен на связь с системой")
     try:
+        # `json=None` у httpx означает «без тела» — GET проходит так же, как PUT с телом.
         r = httpx.request(method, f"{CORE_API_URL}{path}", json=body, timeout=15.0,
                           headers={"X-Cabinet-Token": SERVICE_TOKEN})
     except httpx.RequestError:
@@ -252,6 +253,49 @@ def tasks(acc=Depends(current_account)):
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+class MuteIn(BaseModel):
+    kind: str
+    muted: bool
+
+
+@app.get("/api/notify-settings")
+def notify_settings(acc=Depends(current_account)):
+    """Что площадке приходит и что она отключила.
+
+    Каталог видов берётся у ЯДРА, а не хранится здесь: второй список меток разошёлся бы
+    с первым, и разошёлся бы молча — площадка увидела бы переключатель, который ничего
+    не выключает. Выключенное читается напрямую из `pub.mute_v1`: это чтение, для него
+    ходить в ядро незачем.
+    """
+    cat = call_core("GET", "/api/cabinet-gw/notify-kinds", None).get("kinds", [])
+    db = plain_session()
+    try:
+        muted = {k for (k,) in db.execute(
+            text("SELECT kind FROM pub.mute_v1 WHERE account_id = :a"),
+            {"a": acc.id}).all()}
+    finally:
+        db.close()
+    return {"kinds": [{**k, "muted": k["key"] in muted} for k in cat]}
+
+
+@app.put("/api/notify-settings")
+def set_notify_setting(payload: MuteIn, acc=Depends(current_account)):
+    """Переключить вид. Пишет ядро — кабинет в базу не пишет по построению.
+
+    `publisher_id` берётся из ПЕРВОЙ площадки учётки: ядру он нужен, чтобы независимо
+    проверить, что учётка и площадка связаны. Настройка при этом одна на учётку, а не
+    на площадку: человек один, и «по этому сайту пишите, по тому нет» — это про сайты,
+    а не про то, что он читает.
+    """
+    pubs = account_publishers(acc.id)
+    if not pubs:
+        raise HTTPException(status_code=404, detail="У учётки нет площадок")
+    out = call_core("PUT", f"/api/cabinet-gw/account/{acc.id}/mute",
+                    {"publisher_id": pubs[0].publisher_id, "kind": payload.kind,
+                     "muted": payload.muted, "author_name": acc.name})
+    return out
 
 
 @app.get("/api/reasons")
