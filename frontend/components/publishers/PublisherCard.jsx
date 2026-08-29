@@ -187,7 +187,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
   const flags = [
     ['Код наш', 'our_code', 'var(--accent-tint)', 'var(--accent)', 'var(--accent-border)'],
     ['Эксклюзив', 'is_exclusive', 'var(--accent-tint)', 'var(--accent)', 'var(--accent-border)'],
-    ['DSP', 'has_dsp', 'var(--income-tint)', 'var(--income)', '#CDE9DE'],
+    ['DSP', 'has_dsp', 'var(--income-tint)', 'var(--income)', 'var(--income-border)'],
     ['Самореклама', 'self_promo_on', 'var(--warning-tint)', 'var(--warning-text)', 'var(--warning-border)'],
   ]
   const flagValue = (key) => (key === 'self_promo_on' ? (p.self_promo === 'ДА') : !!p[key])

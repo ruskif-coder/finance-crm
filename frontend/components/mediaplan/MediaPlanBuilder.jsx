@@ -227,7 +227,7 @@ const VerifyBtn = ({ on, onClick, title, big }) => (
       display: 'inline-flex', alignItems: 'center', gap: big ? 8 : 5,
       height: big ? 38 : 22, padding: big ? '0 16px' : '0 9px', borderRadius: big ? 10 : 7,
       cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap',
-      background: on ? 'var(--income-tint)' : T.card, border: `1px solid ${on ? '#9FD9C3' : T.border}`,
+      background: on ? 'var(--income-tint)' : T.card, border: `1px solid ${on ? 'var(--income-border)' : T.border}`,
       color: on ? 'var(--income-fg)' : T.t3, fontSize: big ? 12.5 : 10, fontWeight: 800,
       letterSpacing: '.04em', textTransform: 'uppercase',
       boxShadow: on && big ? '0 1px 0 rgba(31,125,94,.08)' : 'none',
@@ -472,7 +472,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
               <textarea autoFocus value={rejectText} onChange={e => setRejectText(e.target.value)} rows={4} placeholder="Причина отклонения…" style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 10, border: `1px solid ${T.border}`, fontSize: 13, fontFamily: T.sans, outline: 'none', resize: 'vertical' }} />
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <span onClick={() => setRejectOpen(false)} style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 14px', border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>Отмена</span>
-                <span onClick={() => { const r = rejectText.trim(); if (!r) return; setRejectOpen(false); onTransition?.('rejected', r); }} style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 14px', background: rejectText.trim() ? (T.danger || '#D64545') : '#B9A0A0', color: 'var(--bg-card)', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: rejectText.trim() ? 'pointer' : 'default' }}>Отклонить</span>
+                <span onClick={() => { const r = rejectText.trim(); if (!r) return; setRejectOpen(false); onTransition?.('rejected', r); }} style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 14px', background: rejectText.trim() ? (T.danger || 'var(--danger-fg)') : 'var(--text-faint)', color: 'var(--bg-card)', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: rejectText.trim() ? 'pointer' : 'default' }}>Отклонить</span>
               </div>
             </div>
           </div>
@@ -496,14 +496,14 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
         )}
         <div style={{ width: '100%', maxWidth: 1760, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {init.status === 'rejected' && init.reject_reason && (
-            <div style={{ background: 'rgba(214,69,69,.10)', border: `1px solid ${(T.danger || '#D64545')}44`, borderRadius: 12, padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'baseline' }}>
-              <span style={{ fontSize: 12, fontWeight: 800, color: T.danger || '#D64545', whiteSpace: 'nowrap' }}>Отклонён</span>
+            <div style={{ background: 'rgba(214,69,69,.10)', border: `1px solid ${(T.danger || 'var(--danger-fg)')}44`, borderRadius: 12, padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'baseline' }}>
+              <span style={{ fontSize: 12, fontWeight: 800, color: T.danger || 'var(--danger-fg)', whiteSpace: 'nowrap' }}>Отклонён</span>
               <span style={{ fontSize: 13, color: T.t2 }}>{init.reject_reason}{init.decided_by_name ? ` — ${init.decided_by_name}` : ''}</span>
             </div>
           )}
           {init.status === 'approved' && init.decided_by_name && (
-            <div style={{ background: 'rgba(30,158,106,.10)', border: `1px solid ${(T.income || '#1E9E6A')}44`, borderRadius: 12, padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'baseline' }}>
-              <span style={{ fontSize: 12, fontWeight: 800, color: T.income || '#1E9E6A', whiteSpace: 'nowrap' }}>Согласован</span>
+            <div style={{ background: 'rgba(30,158,106,.10)', border: `1px solid ${(T.income || 'var(--income)')}44`, borderRadius: 12, padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'baseline' }}>
+              <span style={{ fontSize: 12, fontWeight: 800, color: T.income || 'var(--income)', whiteSpace: 'nowrap' }}>Согласован</span>
               <span style={{ fontSize: 13, color: T.t2 }}>{init.decided_by_name}</span>
             </div>
           )}
@@ -554,19 +554,19 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                   {(st === 'draft' || !init.id) && (
                     <span className={verified ? 'mp-outline' : undefined} onClick={() => { if (verified) save('draft'); }}
                       title={verified ? undefined : notVerifiedHint}
-                      style={{ ...btn(T.card, verified ? T.accent : '#8792A6', `1px solid ${verified ? T.accentBorder : T.border}`), cursor: verified ? 'pointer' : 'default' }}>
+                      style={{ ...btn(T.card, verified ? T.accent : 'var(--bank-sovkom)', `1px solid ${verified ? T.accentBorder : T.border}`), cursor: verified ? 'pointer' : 'default' }}>
                       Сохранить черновик
                     </span>)}
                   {(st === 'draft' || st === 'rejected' || st === 'approved') && (
                     <span className={submitOk ? 'mp-primary' : undefined}
                       onClick={() => { if (submitOk) { setNoteText(''); setNoteOpen(true); } }}
                       title={submitOk ? undefined : (!verified ? notVerifiedHint : (calc.filled.length ? 'Заполните все строки' : 'Добавьте хотя бы одну строку размещения'))}
-                      style={{ ...btn(submitOk ? T.accent : '#8792A6', 'var(--bg-card)'), cursor: submitOk ? 'pointer' : 'default' }}>
+                      style={{ ...btn(submitOk ? T.accent : 'var(--bank-sovkom)', 'var(--bg-card)'), cursor: submitOk ? 'pointer' : 'default' }}>
                       {st === 'draft' ? 'На согласование' : 'Новая версия на согласование'}
                     </span>)}
                   {st === 'review' && <span onClick={() => onTransition?.('draft')} style={btn(T.card, T.t2, `1px solid ${T.border}`)}>Вернуть в черновик</span>}
-                  {st === 'review' && canApprove && <span onClick={() => onTransition?.('approved')} style={btn(T.income || '#1E9E6A', 'var(--bg-card)')}>Согласовать</span>}
-                  {st === 'review' && canApprove && <span onClick={() => { setRejectText(''); setRejectOpen(true); }} style={btn(T.danger || '#D64545', 'var(--bg-card)')}>Отклонить</span>}
+                  {st === 'review' && canApprove && <span onClick={() => onTransition?.('approved')} style={btn(T.income || 'var(--income)', 'var(--bg-card)')}>Согласовать</span>}
+                  {st === 'review' && canApprove && <span onClick={() => { setRejectText(''); setRejectOpen(true); }} style={btn(T.danger || 'var(--danger-fg)', 'var(--bg-card)')}>Отклонить</span>}
                   {(st === 'approved' || st === 'rejected') && canApprove && <span onClick={() => onTransition?.('archived')} style={btn(T.card, T.t3, `1px solid ${T.border}`)}>В архив</span>}
                 </>);
               })()}

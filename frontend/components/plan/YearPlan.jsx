@@ -20,15 +20,15 @@ import { overlayClose } from '@/lib/overlay'
 /* ── токены ─────────────────────────────────────────────────────────── */
 export const T = {
   canvas: 'var(--bg-canvas)', card: 'var(--bg-card)', nested: 'var(--bg-tint)', subtle: 'var(--bg-subtle)',
-  planTileBg: '#F0F7F4', planTileBorder: '#D9EDE5',
-  onBg: 'var(--income-tint)', onBorder: '#C9E8DC', lockBg: '#EAF0FF', lockBorder: '#C9D6F7',
+  planTileBg: 'var(--income-bg)', planTileBorder: 'var(--income-tint)',
+  onBg: 'var(--income-tint)', onBorder: 'var(--income-border)', lockBg: 'var(--accent-tint)', lockBorder: 'var(--accent-border)',
   emptyBg: 'var(--warning-bg)', emptyBorder: 'var(--warning-border)',
-  border: 'var(--border-card)', inner: 'var(--border-inner)', row: 'var(--border-row)', nestedRow: '#E7EBF7', hoverBorder: 'var(--border-hover)',
+  border: 'var(--border-card)', inner: 'var(--border-inner)', row: 'var(--border-row)', nestedRow: 'var(--border-card)', hoverBorder: 'var(--border-hover)',
   t1: 'var(--text-primary)', t2: 'var(--text-secondary)', t3: 'var(--text-muted)', t4: 'var(--text-faint)', t5: 'var(--text-disabled)',
   accent: 'var(--accent)', accentHover: 'var(--accent-hover)', accentTint: 'var(--accent-tint)', accentBorder: 'var(--accent-border)',
   planBar: 'var(--accent-soft)', fact: 'var(--income)', factText: 'var(--income-fg)',
-  addon: '#8A5CD1', addonTint: '#F1EAFB', addonBorder: '#E0D2F5',
-  booked: '#C3CCEA', bookedText: '#8E9AC0', bookedGrey: 'var(--bank-sovkom)',
+  addon: 'var(--mixed)', addonTint: 'var(--mixed-tint)', addonBorder: 'var(--accent-border)',
+  booked: 'var(--border-hover)', bookedText: 'var(--bank-sovkom)', bookedGrey: 'var(--bank-sovkom)',
   warning: 'var(--warning)', danger: 'var(--danger-fg)',
   // Подложка предупреждения: пара к warning, как lockBg к lockBorder.
   warningTint: 'var(--warning-tint)', warningFg: 'var(--warning-text)',
@@ -454,7 +454,7 @@ export default function YearPlan({
                     </div>
                   )}
                   {blocked.length > 0 && (
-                    <div style={{ border: `1px solid ${T.danger}`, background: '#FCEBEC', borderRadius: 10, padding: '10px 12px', maxHeight: 180, overflowY: 'auto' }}>
+                    <div style={{ border: `1px solid ${T.danger}`, background: 'var(--danger-tint)', borderRadius: 10, padding: '10px 12px', maxHeight: 180, overflowY: 'auto' }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: T.danger }}>Бриф не заполнен — сделки не создаются:</span>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
                         {blocked.map((c, k) => (
@@ -466,7 +466,7 @@ export default function YearPlan({
                     </div>
                   )}
                   {changed.length > 0 && (
-                    <div style={{ border: `1px solid ${T.warning}`, background: '#FFF9F0', borderRadius: 10, padding: '10px 12px', maxHeight: 220, overflowY: 'auto' }}>
+                    <div style={{ border: `1px solid ${T.warning}`, background: 'var(--warning-bg)', borderRadius: 10, padding: '10px 12px', maxHeight: 220, overflowY: 'auto' }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: T.warning }}>Будут изменены ранее созданные сделки:</span>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
                         {changed.map((c, k) => (
@@ -786,7 +786,7 @@ export default function YearPlan({
                         {!readOnly && (
                           <span title={dirty ? 'Есть несохранённые правки — сохранить план' : (saving ? 'Сохраняю…' : 'Всё сохранено')}
                             onClick={(!dirty || saving) ? undefined : e => { stop(e); onSave && onSave(groups); }}
-                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 8, cursor: (!dirty || saving) ? 'default' : 'pointer', background: dirty ? '#FFF9F0' : T.card, border: `1px solid ${dirty ? T.warning : T.border}`, color: dirty ? T.warning : T.t4, opacity: saving ? 0.5 : 1 }}>
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 8, cursor: (!dirty || saving) ? 'default' : 'pointer', background: dirty ? 'var(--warning-bg)' : T.card, border: `1px solid ${dirty ? T.warning : T.border}`, color: dirty ? T.warning : T.t4, opacity: saving ? 0.5 : 1 }}>
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><path d="M17 21v-8H7v8" /><path d="M7 3v5h8" /></svg>
                           </span>
                         )}
@@ -820,7 +820,7 @@ export default function YearPlan({
                           const brandLocked = !!b.brand_id;   // после выбора бренд фиксируется (копия — для нового)
                           return (
                             <div key={b.id} title={overLocked ? `Услуги/суммы за год: ${num(committed)} ₽ — больше годового плана ${num(b.plan || 0)} ₽` : undefined}
-                              style={{ display: 'grid', gridTemplateColumns: PLAN_COLS, gap: 6, alignItems: 'center', padding: '7px 0', borderTop: `1px solid ${T.nestedRow}`, background: overLocked ? '#FCEBEC' : undefined, borderRadius: overLocked ? 8 : undefined }}>
+                              style={{ display: 'grid', gridTemplateColumns: PLAN_COLS, gap: 6, alignItems: 'center', padding: '7px 0', borderTop: `1px solid ${T.nestedRow}`, background: overLocked ? 'var(--danger-tint)' : undefined, borderRadius: overLocked ? 8 : undefined }}>
                               <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, paddingLeft: 27 }}>
                                 <span data-pop-root style={{ position: 'relative', minWidth: 0, flex: '0 1 auto' }}>
                                   <span className={readOnly || brandLocked ? undefined : 'yp-field'} title={brandLocked ? 'Бренд зафиксирован. Для нового — кнопка «копировать» в конце строки' : undefined}
@@ -856,7 +856,7 @@ export default function YearPlan({
                                       ? `Не заполнен прогноз по услугам: ${gapNames.join(', ')}. Без частоты / CTR / CR / цены медиаплан соберётся неполным.`
                                       : 'Бриф бренда (агентство, юрлицо, гео, таргетинг, прогноз)'}
                                       onClick={() => openBrief(g.id, b.id)}
-                                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, height: 24, padding: '0 9px', borderRadius: 8, cursor: 'pointer', flex: '0 0 auto', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap', background: bad ? '#FCEBEC' : (bh ? T.accentTint : T.subtle), color: bad ? T.danger : (bh ? T.accent : T.t3), border: `1px solid ${bad ? T.danger : (bh ? T.accentBorder : T.border)}` }}>
+                                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, height: 24, padding: '0 9px', borderRadius: 8, cursor: 'pointer', flex: '0 0 auto', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap', background: bad ? 'var(--danger-tint)' : (bh ? T.accentTint : T.subtle), color: bad ? T.danger : (bh ? T.accent : T.t3), border: `1px solid ${bad ? T.danger : (bh ? T.accentBorder : T.border)}` }}>
                                       ✦ Бриф{bad ? ` · ${gaps.length}` : ''}
                                     </span>
                                   );
@@ -905,7 +905,7 @@ export default function YearPlan({
                                       return (
                                         <span data-pop-root style={{ position: 'relative' }}>
                                           <span title="Детализация сделок" onClick={e => { stop(e); toggleSel(dKey); }}
-                                            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 7, background: dBooked > 0 ? '#F0F2F7' : T.onBg, color: dBooked > 0 ? T.t3 : T.factText, fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                                            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 7, background: dBooked > 0 ? 'var(--border-row)' : T.onBg, color: dBooked > 0 ? T.t3 : T.factText, fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer' }}>
                                             <Dot color={dFact > 0 ? T.fact : T.bookedGrey} size={6} />{dCount} сд · {kk(dFact + dBooked)} <span style={{ fontSize: 8, opacity: 0.7 }}>▾</span>
                                           </span>
                                           {sel === dKey && (
@@ -962,7 +962,7 @@ export default function YearPlan({
                                         {deals.map(d => (
                                           <a key={d[0]} href={`/sales/deals/${encodeURIComponent(d[0])}`} target="_blank" rel="noreferrer" onClick={stop}
                                             title={`Сделка ${d[0]} · ${num(d[1])} ₽ · ${d[3] ? 'не случилась' : d[2] ? 'закрыта' : 'бронь'} — открыть`}
-                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '1px 4px', borderRadius: 5, background: d[3] ? '#FCEBEC' : d[2] ? T.onBg : '#F0F2F7', color: d[3] ? T.danger : d[2] ? T.factText : T.t3, fontFamily: T.mono, fontSize: 8.5, fontWeight: 700, textDecoration: 'none' }}>
+                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '1px 4px', borderRadius: 5, background: d[3] ? 'var(--danger-tint)' : d[2] ? T.onBg : 'var(--border-row)', color: d[3] ? T.danger : d[2] ? T.factText : T.t3, fontFamily: T.mono, fontSize: 8.5, fontWeight: 700, textDecoration: 'none' }}>
                                             {d[0]} · {kk(d[1])}
                                           </a>
                                         ))}
@@ -1013,13 +1013,13 @@ export default function YearPlan({
                                             else { l[i] = 1; if (!items.length && s[i] == null) s[i] = value; }
                                             patchBrand(g.id, b.id, { locks: l, sums: s });
                                           }}
-                                          style={{ position: 'absolute', top: 3, left: 3, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 15, height: 15, borderRadius: 4, background: locked ? T.accent : 'rgba(255,255,255,.4)', color: locked ? 'var(--bg-card)' : '#4F9C82' }}><Lock locked={locked} /></span>
+                                          style={{ position: 'absolute', top: 3, left: 3, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 15, height: 15, borderRadius: 4, background: locked ? T.accent : 'rgba(255,255,255,.4)', color: locked ? 'var(--bg-card)' : 'var(--income)' }}><Lock locked={locked} /></span>
                                       )}
                                       {/* счётчик услуг — справа от суммы (сверху), открывает редактор */}
                                       {on && !readOnly && (
                                         <span data-pop-root style={{ position: 'absolute', top: 3, right: 3 }}>
                                           <span title="Услуги месяца (сумма = Σ услуг)" onClick={e => { stop(e); toggleSel(popKey); }}
-                                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 15, height: 15, padding: '0 3px', borderRadius: 4, background: items.length ? 'rgba(255,255,255,.8)' : 'rgba(255,255,255,.4)', color: items.length ? T.factText : '#4F9C82', fontFamily: T.mono, fontSize: 8.5, fontWeight: 700 }}>
+                                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 15, height: 15, padding: '0 3px', borderRadius: 4, background: items.length ? 'rgba(255,255,255,.8)' : 'rgba(255,255,255,.4)', color: items.length ? T.factText : 'var(--income)', fontFamily: T.mono, fontSize: 8.5, fontWeight: 700 }}>
                                             {items.length || '+'}
                                           </span>
                                           {sel === popKey && (
@@ -1068,7 +1068,7 @@ export default function YearPlan({
                                                       </div>
                                                     )}
                                                     {mainCount(gr.rows) > 1 && (
-                                                      <div style={{ margin: '0 8px 3px', padding: '3px 7px', borderRadius: 6, background: '#FFF9F0', border: `1px solid ${T.warning}`, color: T.warning, fontSize: 9.5, fontWeight: 700, lineHeight: 1.3 }}>
+                                                      <div style={{ margin: '0 8px 3px', padding: '3px 7px', borderRadius: 6, background: 'var(--warning-bg)', border: `1px solid ${T.warning}`, color: T.warning, fontSize: 9.5, fontWeight: 700, lineHeight: 1.3 }}>
                                                         Сделка будет создана по 1 услуге из списка. Разделите кнопкой «+ сделка».
                                                       </div>
                                                     )}
@@ -1292,7 +1292,7 @@ export default function YearPlan({
                           <span style={{ fontFamily: T.mono, fontSize: 11.5, textAlign: 'right' }}>{kk(b.plan)} ₽</span>
                           <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: T.fact, textAlign: 'right' }}>{kk(bf)} ₽</span>
                           <span style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
-                            <ProgressBar plan={b.plan} fact={bf} booked={bb} height={6} bg="#E1E7F7" />
+                            <ProgressBar plan={b.plan} fact={bf} booked={bb} height={6} bg="var(--border-card)" />
                             <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: pctColor(bp), flex: '0 0 42px', textAlign: 'right' }}>{bp.toFixed(0)} %</span>
                           </span>
                           <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.t3, textAlign: 'right' }}>{bb ? kk(bb) + ' ₽' : '—'}</span>
@@ -1448,7 +1448,7 @@ function AllSummary({ year, data = [], onOpenRep, canEdit = false }) {
                         <span style={{ fontFamily: T.mono, fontSize: 11.5, textAlign: 'right' }}>{kk(a.plan)} ₽</span>
                         <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: T.fact, textAlign: 'right' }}>{kk(a.fact)} ₽</span>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
-                          <ProgressBar plan={a.plan} fact={a.fact} booked={a.booked} height={6} bg="#E1E7F7" />
+                          <ProgressBar plan={a.plan} fact={a.fact} booked={a.booked} height={6} bg="var(--border-card)" />
                           <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: pctColor(ap), flex: '0 0 42px', textAlign: 'right' }}>{ap.toFixed(0)} %</span>
                         </span>
                         <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.t3, textAlign: 'right' }}>{a.booked ? kk(a.booked) + ' ₽' : '—'}</span>
@@ -1486,7 +1486,7 @@ function AllSummary({ year, data = [], onOpenRep, canEdit = false }) {
                                 </span>
                                 <span style={{ fontFamily: T.mono, fontSize: 11, textAlign: 'right' }}>{kk(br.plan)} ₽</span>
                                 <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.fact, textAlign: 'right' }}>{br.fact ? kk(br.fact) + ' ₽' : '—'}</span>
-                                <ProgressBar plan={br.plan} fact={br.fact} booked={br.booked} height={5} bg="#E1E7F7" />
+                                <ProgressBar plan={br.plan} fact={br.fact} booked={br.booked} height={5} bg="var(--border-card)" />
                               </div>
                             );
                           })}

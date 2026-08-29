@@ -19,9 +19,9 @@ const T = {
   card: 'var(--bg-card)', unreadBg: 'var(--bg-tint)', hoverBg: 'var(--bg-subtle)', tabBg: 'var(--bg-subtle)',
   border: 'var(--border-card)', row: 'var(--border-row)', dotSep: 'var(--border-hover)',
   t1: 'var(--text-primary)', t2: 'var(--text-secondary)', t4: 'var(--text-faint)',
-  accent: 'var(--accent)', accentTint: 'var(--accent-tint)', accentBorder: 'var(--accent-border)', accentSoft: '#8F9BE8',
+  accent: 'var(--accent)', accentTint: 'var(--accent-tint)', accentBorder: 'var(--accent-border)', accentSoft: 'var(--accent-soft)',
   income: 'var(--income)', warning: 'var(--warning)',
-  danger: 'var(--danger-fg)', dangerTint: '#FBEAEA', dangerBorder: 'var(--danger-border)',
+  danger: 'var(--danger-fg)', dangerTint: 'var(--danger-tint)', dangerBorder: 'var(--danger-border)',
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
   mono: MONO, sans: UI, ease: 'cubic-bezier(0.22,1,0.36,1)',
 }

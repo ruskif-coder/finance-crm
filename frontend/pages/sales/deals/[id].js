@@ -275,7 +275,7 @@ const fmtWhen = (str) => {
 // Светофор слоёв денег — как в реестре/диалоге движения (единая трактовка цвета).
 const LAYER_COLOR = {
   'планируемые': 'var(--text-faint, var(--text-faint))',
-  'реализуемые': 'var(--dot-current-dz, #d97706)',
+  'реализуемые': 'var(--dot-current-dz, var(--warning))',
   'фактические': 'var(--income, var(--income-fg))',
 }
 const EVENT_COLOR = {

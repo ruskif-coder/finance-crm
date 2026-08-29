@@ -14,7 +14,7 @@ const fullDate = fmtDateFull
 // Цвета типов (из хендоффа)
 const C = {
   plan: 'var(--dot-expense)', planTxt: T.accent, planTint: T.accentTint,
-  cur: T.warning, curTxt: '#C27510', curTint2: T.warningText, curTint: T.warningTint,
+  cur: T.warning, curTxt: 'var(--warning-text)', curTint2: T.warningText, curTint: T.warningTint,
   over: 'var(--danger)', overTxt: T.danger, overTint: 'var(--danger-tint)',
   accent: T.accent,
 }
@@ -55,7 +55,7 @@ function Bar({ amount, max, color, selected, onClick, axis }) {
   const filled = amount > 0 ? Math.max(1, Math.round(amount / max * 14)) : 0
   return (
     <div onClick={onClick} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer',
-      background: selected ? '#F0F3FF' : 'transparent', borderRadius: 6, padding: '3px 2px', transition: 'background .15s' }}>
+      background: selected ? 'var(--accent-tint)' : 'transparent', borderRadius: 6, padding: '3px 2px', transition: 'background .15s' }}>
       <div style={{ display: 'flex', flexDirection: 'column-reverse', gap: 1, height: 112, width: '100%' }}>
         {Array.from({ length: 14 }, (_, i) => (
           <div key={i} style={{ flex: 1, borderRadius: 2, background: i < filled ? color : 'var(--border-inner)' }} />

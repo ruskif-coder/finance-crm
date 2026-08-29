@@ -14,9 +14,9 @@ import BottomSheet from './mobile/BottomSheet'
 const C = {
   text: 'var(--text-primary)', sec: 'var(--text-muted)', accent: 'var(--accent)', accentHover: 'var(--accent-hover)',
   border: 'var(--border-card)', ctrl: 'var(--border-card)', ctrlBg: 'var(--bg-card)', blockBg: 'var(--bg-card)',
-  warnBg: 'var(--warning-tint)', warnText: '#8A5A12', ok: 'var(--success)', okText: 'var(--success)',
-  errDot: 'var(--danger)', errText: 'var(--danger)', plan: '#CBD2E0',
-  hatch: 'repeating-linear-gradient(135deg,#AFB7CA 0 3px,var(--bg-card) 3px 6px)',
+  warnBg: 'var(--warning-tint)', warnText: 'var(--warning-text)', ok: 'var(--success)', okText: 'var(--success)',
+  errDot: 'var(--danger)', errText: 'var(--danger)', plan: 'var(--dot-wait)',
+  hatch: 'repeating-linear-gradient(135deg,var(--text-faint) 0 3px,var(--bg-card) 3px 6px)',
 }
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"

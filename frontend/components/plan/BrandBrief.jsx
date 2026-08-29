@@ -14,9 +14,9 @@ const T = {
   t1: 'var(--text-primary)', t2: 'var(--text-secondary)', t3: 'var(--text-muted)', t4: 'var(--text-faint)',
   accent: 'var(--accent)', accentTint: 'var(--accent-tint)', accentBorder: 'var(--accent-border)',
   fact: 'var(--income)', income: 'var(--income-fg)', warning: 'var(--warning)', danger: 'var(--danger-fg)',
-  onBg: 'var(--income-tint)', onBorder: '#C9E8DC',   // «месяц с услугами» — как зелёная ячейка плана
-  addon: '#8A5CD1', addonTint: '#F1EAFB', addonBorder: '#E0D2F5',
-  emptyBg: 'var(--warning-bg)', emptyBorder: 'var(--warning-border)', emptyText: '#B7853A', emptyNum: '#C9CFDC',
+  onBg: 'var(--income-tint)', onBorder: 'var(--income-border)',   // «месяц с услугами» — как зелёная ячейка плана
+  addon: 'var(--mixed)', addonTint: 'var(--mixed-tint)', addonBorder: 'var(--accent-border)',
+  emptyBg: 'var(--warning-bg)', emptyBorder: 'var(--warning-border)', emptyText: 'var(--warning-text)', emptyNum: 'var(--text-disabled)',
   pop: '0 8px 28px rgba(28,36,51,.14)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
   ease: 'cubic-bezier(0.22,1,0.36,1)',

@@ -26,8 +26,8 @@ export const T = {
   canvas: 'var(--bg-canvas)', card: 'var(--bg-card)', subtle: 'var(--bg-subtle)', tint: 'var(--bg-tint)',
   border: 'var(--border-card)', inner: 'var(--border-inner)', hoverBorder: 'var(--border-hover)',
   t1: 'var(--text-primary)', t2: 'var(--text-secondary)', t3: 'var(--text-muted)', t4: 'var(--text-faint)',
-  accent: 'var(--accent)', accentTint: 'var(--accent-tint)', accentBorder: 'var(--accent-border)', accentSoft: '#8F9BE8',
-  danger: 'var(--danger-fg)', dangerTint: '#FBEAEA',
+  accent: 'var(--accent)', accentTint: 'var(--accent-tint)', accentBorder: 'var(--accent-border)', accentSoft: 'var(--accent-soft)',
+  danger: 'var(--danger-fg)', dangerTint: 'var(--danger-tint)',
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
   pop: '0 8px 28px rgba(28,36,51,.14)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
@@ -460,6 +460,8 @@ export function NavMobile({ sections, active, perms, isAdmin, onNavigate, bell, 
       {cur && <div style={{
         display: 'flex', alignItems: 'center', gap: 6, padding: '0 14px 10px',
         overflowX: 'auto', scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch',
+        /* `#000` здесь — АЛЬФА-КАНАЛ маски, а не цвет: непрозрачное слева, прозрачное
+           справа. Переменная темы тут не нужна и вредна — маску красить нечем. */
         maskImage: 'linear-gradient(to right, #000 calc(100% - 24px), transparent)',
         WebkitMaskImage: 'linear-gradient(to right, #000 calc(100% - 24px), transparent)',
       }}>

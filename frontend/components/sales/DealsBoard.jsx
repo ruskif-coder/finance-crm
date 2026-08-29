@@ -18,15 +18,15 @@ import { dm } from '@/lib/salesFormat'
  */
 
 const T = {
-  card: 'var(--bg-card)', subtle: 'var(--bg-subtle)', tint: 'var(--bg-tint)', special: '#F8F9FC',
+  card: 'var(--bg-card)', subtle: 'var(--bg-subtle)', tint: 'var(--bg-tint)', special: 'var(--bg-subtle)',
   border: 'var(--border-card)', inner: 'var(--border-inner)', row: 'var(--border-row)', hoverBorder: 'var(--border-hover)',
-  nowBorder: 'var(--accent-border)', nowHead: '#E1E7F7', specialBorder: '#E7EBF7',
+  nowBorder: 'var(--accent-border)', nowHead: 'var(--border-card)', specialBorder: 'var(--border-card)',
   t1: 'var(--text-primary)', t2: 'var(--text-secondary)', t3: 'var(--text-muted)', t4: 'var(--text-faint)', t5: 'var(--text-disabled)',
   accent: 'var(--accent)', accentHover: 'var(--accent-hover)', accentTint: 'var(--accent-tint)',
   income: 'var(--income)', incomeTint: 'var(--income-tint)', incomeFg: 'var(--income-fg)',
   warning: 'var(--warning)', warningTint: 'var(--warning-tint)', warningFg: 'var(--warning-text)',
   gray: 'var(--bank-sovkom)',
-  danger: 'var(--danger-fg)', dangerTint: '#FBEAEA', dangerBorder: 'var(--danger-border)',
+  danger: 'var(--danger-fg)', dangerTint: 'var(--danger-tint)', dangerBorder: 'var(--danger-border)',
   pop: '0 10px 30px rgba(28,36,51,.16)',
   mono: MONO, sans: UI, ease: 'cubic-bezier(0.22,1,0.36,1)',
 }
@@ -47,7 +47,7 @@ const money = v => (Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2).replace('.', ',') 
 const mln = v => (v / 1e6).toFixed(1).replace('.', ',')
 
 // Цвет маркера услуги — стабильный хеш имени: справочник услуг растёт, руками не ведём.
-const SERVICE_PALETTE = ['var(--accent)', 'var(--bank-opt)', 'var(--bank-cash)', 'var(--warning)', 'var(--income)', 'var(--bank-sovkom)', '#D96A9A', '#5AA9E6']
+const SERVICE_PALETTE = ['var(--accent)', 'var(--bank-opt)', 'var(--bank-cash)', 'var(--warning)', 'var(--income)', 'var(--bank-sovkom)', 'var(--series-pink)', 'var(--series-sky)']
 const serviceDot = (name) => {
   const s = String(name || '')
   let h = 0

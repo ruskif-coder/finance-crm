@@ -91,9 +91,9 @@ const BriefRow = ({ items }) => (
 
 /** Сводка со статусами (ОРД, креативы, сверка): плашка + галочка/!/точка. */
 const TONE = {
-  ok:   { bg: T.incomeBg, border: T.incomeBorder, labelFg: '#5C9E86', valueFg: T.incomeFg, mark: '✓', markBg: '#DCF1E8', markFg: T.income },
-  todo: { bg: T.warningBg, border: T.warningBorder, labelFg: '#B99358', valueFg: T.warningFg, mark: '!', markBg: T.warningTint, markFg: T.warning },
-  wait: { bg: '#F8F9FC', border: '#E7EBF7', labelFg: T.t4, valueFg: T.t3, mark: '·', markBg: T.inner, markFg: T.t4 },
+  ok:   { bg: T.incomeBg, border: T.incomeBorder, labelFg: 'var(--income)', valueFg: T.incomeFg, mark: '✓', markBg: 'var(--income-tint)', markFg: T.income },
+  todo: { bg: T.warningBg, border: T.warningBorder, labelFg: 'var(--empty-num)', valueFg: T.warningFg, mark: '!', markBg: T.warningTint, markFg: T.warning },
+  wait: { bg: 'var(--bg-subtle)', border: 'var(--border-card)', labelFg: T.t4, valueFg: T.t3, mark: '·', markBg: T.inner, markFg: T.t4 },
 };
 export const brief = rows => rows.map(([label, value, tone]) => ({ ...TONE[tone], label, value }));
 
@@ -175,11 +175,11 @@ export default function DealCard({ deal = DEMO, onChangeStage, onOpenPlan, onPic
             ))}
             <span style={{
               marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 9, whiteSpace: 'nowrap',
-              background: plan.linked ? T.tint : '#F8F9FC', border: `1px solid ${plan.linked ? T.accentBorder : '#E7EBF7'}`,
+              background: plan.linked ? T.tint : 'var(--bg-subtle)', border: `1px solid ${plan.linked ? T.accentBorder : 'var(--border-card)'}`,
               borderRadius: 10, padding: '7px 10px 7px 12px',
             }}>
               <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 8.5, letterSpacing: '.06em', textTransform: 'uppercase', color: plan.linked ? '#8F9BE8' : T.t4 }}>Годовой план</span>
+                <span style={{ fontFamily: T.mono, fontSize: 8.5, letterSpacing: '.06em', textTransform: 'uppercase', color: plan.linked ? 'var(--accent-soft)' : T.t4 }}>Годовой план</span>
                 <span style={{ fontSize: 12, fontWeight: 700, color: plan.linked ? T.t1 : T.t3 }}>
                   {plan.linked ? `${plan.name} · ${plan.note}` : 'не привязан'}
                 </span>
