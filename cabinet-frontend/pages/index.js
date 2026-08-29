@@ -26,6 +26,7 @@ import { Header, Side, Demo, WRAP } from '../components/Shell'
 import { C, CAP, MONO, UI, arrowBtn, btn, btnSm, card, chip, dm, inp, num, periodLabel,
   rub, soft }
   from '../lib/ui'
+import { daysTo, startNote, urgency } from '../lib/urgency'
 import { CAMPS, GROUP_PAY, NEED, NOW_MONTH, PAY_STATE, RK_STATE, SERVICE_DOT,
   billBlocked, camp, inBill, inPace, isClosed, sum } from '../lib/demo'
 
@@ -92,10 +93,8 @@ function Login({ onDone }) {
    разбора она выбирает по тому, что стартует раньше. Считается от даты, переданной
    снаружи: `Date` внутри компонента дал бы расхождение сервера и клиента на границе
    суток и ошибку гидрации. */
-const daysTo = (iso, today) => {
-  if (!iso) return null
-  return Math.round((new Date(iso + 'T00:00:00') - today) / 86400000)
-}
+// `daysTo`, `urgency`, `startNote` — в lib/urgency.js: правило было в двух местах
+// и разошлось (см. шапку модуля).
 
 function Task({ t, reasons, canApprove, today, onDone, onErr }) {
   const [busy, setBusy] = useState(false)
@@ -142,8 +141,9 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
        иначе                 → ждёт решения (нейтральный)
 
      Сколько именно висит, видно отдельной подписью — это ориентир, а не приговор. */
-  const late = toStart !== null && toStart < 0
-  const soon = !late && toStart !== null && toStart <= 3
+  const level = urgency(t.period_from, today)
+  const late = level === 'overdue'
+  const soon = level === 'soon'
   const [stChipBg, stChipFg, stChipBd] = late
     ? [C.dangerTint, C.danger, C.dangerBorder]
     : soon ? [C.warningTint, C.warningFg, C.warningBorder]
@@ -208,7 +208,7 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
           <b>{dm(t.period_from)}</b>
           {toStart !== null && (
             <span style={{ borderLeft: `1px solid ${stChipBd}`, paddingLeft: 8 }}>
-              {toStart < 0 ? `${-toStart} дн. назад` : toStart === 0 ? 'сегодня' : `через ${toStart} дн.`}
+              {startNote(t.period_from, today)}
             </span>
           )}
         </span>
@@ -813,7 +813,10 @@ export default function Cabinet() {
   const activeCount = money.filter(c => c.state === 'в размещении').length
 
   const services = new Set(money.map(c => c.service)).size
-  const late = allTasks.filter(t => (t.waiting_days || 0) >= 3).length
+  /* Тем же правилом, что и карточки. Здесь стоял `waiting_days >= 3` — счёт от времени
+     ожидания, от которого карточки увели ещё 29.08, а сводку забыли: экран сообщал
+     «2 просрочено» над списком, где ни одно задание просроченным не значилось. */
+  const late = allTasks.filter(t => urgency(t.period_from, today) === 'overdue').length
 
   /* Значения по формулам эталона (README, 1.8). «Ожидает оплаты» считается по ВСЕМ
      периодам, а не по выбранному: иначе кабинет заявляет «оплачено 0 ₽» при подписанных

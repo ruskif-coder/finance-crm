@@ -9,6 +9,7 @@ import DealDetail from '@/components/sales/DealDetail'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
 import { SnoozeDialog, BookingConfirm, LaunchPrepDialog } from '@/components/accounts/QueueDialogs'
 import api, { auth } from '@/lib/api'
+import { dm } from '@/lib/salesFormat'
 
 // Дашборд аккаунта — рабочий экран, а не витрина цифр: очередь действий.
 // ТЗ и референс — docs/«кабинет аккаунта v1» (README + dc.html). Срочность, причина и
@@ -24,7 +25,6 @@ const mln = (n) => {
   if (n >= 1e6) return `${(n / 1e6).toFixed(2).replace('.', ',')} млн`
   return `${Math.round(n / 1e3)} тыс`
 }
-const dm = (s) => (s ? s.slice(8, 10) + '.' + s.slice(5, 7) : '—')
 const WD = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб']
 
 // Короткие подписи стадий ТОЛЬКО для виджета «В работе»: там узкая колонка и важен

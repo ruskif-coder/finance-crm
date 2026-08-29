@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { MONO, UI, card, CAP, btnSm, ctaStyle } from '../salesTableKit'
 import { overlayClose } from '@/lib/overlay'
+import { dm } from '@/lib/salesFormat'
 
 // Диалоги очереди аккаунта: отложить · подтвердить бронь · сбор запуска.
 // Вынесены из pages/accounts/dashboard.js: страница разрослась до тысячи строк, а эти
 // три модалки — самостоятельные куски со своим состоянием. Объявлены на модульном
 // уровне (внутри страницы они пересоздавались бы на каждый рендер, и поля теряли фокус).
 
-const dm = (s) => (s ? s.slice(8, 10) + '.' + s.slice(5, 7) : '—')
 
 const Overlay = ({ onClose, width, children }) => (
   <div {...overlayClose(onClose)} style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

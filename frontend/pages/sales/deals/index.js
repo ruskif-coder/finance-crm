@@ -11,7 +11,7 @@ import api, { auth } from '@/lib/api'
 import { DownloadOverlay } from '@/components/LogoLoader'
 import { fmtMoney, fmtDate, mln } from '@/lib/salesFormat'
 import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
-import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, needsMp, needsMpCheck, NEEDS_MP_BG, NEEDS_MP_BORDER, UNVERIFIED_BG, UNVERIFIED_BORDER } from '@/components/salesTableKit'
+import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, tagSm as chip, needsMp, needsMpCheck, NEEDS_MP_BG, NEEDS_MP_BORDER, UNVERIFIED_BG, UNVERIFIED_BORDER } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import { overlayClose } from '@/lib/overlay'
@@ -489,7 +489,6 @@ export default function SalesRegistry2() {
       case 'files': {
         const fs = d.files || []; const ours = d.our_mps || []
         if (!fs.length && !ours.length) return <span style={{ color: 'var(--text-faint)' }}>—</span>
-        const chip = (extra) => ({ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 6px', borderRadius: 6, fontSize: 10.5, cursor: 'pointer', whiteSpace: 'nowrap', ...extra })
         return <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start' }}>
           {fs.map(f => (
             <span key={f.kind} onClick={e => { e.stopPropagation(); downloadDealFile(d.id, f.kind, f.filename) }}

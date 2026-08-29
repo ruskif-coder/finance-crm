@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { makeApi } from '@/lib/http'
 import { card, btn, inp, sel, th, td, MONO, UI } from '@/components/salesTableKit'
+import { fmtDateFull } from '@/lib/salesFormat'
 
 // Импорт реестра документов Диадока (ручная выгрузка CSV из веб-интерфейса).
 // Бэкенд: app/routers/diadoc.py — матч по ИНН + номеру счёта, слабое правило по сумме
@@ -8,7 +9,6 @@ import { card, btn, inp, sel, th, td, MONO, UI } from '@/components/salesTableKi
 // Внешнюю карточку и заголовок рисует страница /finance/import, здесь только содержимое.
 
 const money = (n) => n == null ? '—' : new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
-const dmy = (s) => s ? s.split('-').reverse().join('.') : '—'
 
 const STATE_META = {
   auto:      { label: 'Привяжутся сами',      tone: 'var(--income)',       hint: 'ИНН, номер счёта и сумма совпали' },
@@ -272,7 +272,7 @@ function Group({ state, rows, open, onToggle, picked, setPicked }) {
                       )}
                     </td>
                     <td style={{ ...td, fontFamily: MONO }}>№ {r.number}</td>
-                    <td style={{ ...td, fontFamily: MONO, color: 'var(--text-secondary)' }}>{dmy(r.doc_date)}</td>
+                    <td style={{ ...td, fontFamily: MONO, color: 'var(--text-secondary)' }}>{fmtDateFull(r.doc_date)}</td>
                     <td style={{ ...td, fontFamily: MONO, textAlign: 'right' }}>{money(r.total)}</td>
                     <td style={{ ...td, maxWidth: 240, whiteSpace: 'normal' }}>
                       {r.counterparty_name}
@@ -305,7 +305,7 @@ function Group({ state, rows, open, onToggle, picked, setPicked }) {
                           <option value="">— привязать к операции —</option>
                           {r.near.map(c => (
                             <option key={c.id} value={c.id}>
-                              #{c.id} · {c.date ? dmy(c.date) : c.status} · {money(c.income > 0 ? c.income : c.expense)}
+                              #{c.id} · {c.date ? fmtDateFull(c.date) : c.status} · {money(c.income > 0 ? c.income : c.expense)}
                               {c.invoice ? ` · счёт ${c.invoice}` : ''}
                             </option>
                           ))}
@@ -347,7 +347,7 @@ function OpLine({ c }) {
       <a href={`/finance/operations?op=${c.id}`} target="_blank" rel="noreferrer" onClick={stop}
         title="Открыть операцию в реестре"
         style={{ fontFamily: MONO, color: 'var(--accent)', textDecoration: 'none' }}>#{c.id} ↗</a>{' '}
-      <span style={{ fontFamily: MONO }}>{c.date ? dmy(c.date) : c.status}</span>
+      <span style={{ fontFamily: MONO }}>{c.date ? fmtDateFull(c.date) : c.status}</span>
       <span style={{ color: 'var(--text-faint)' }}> · </span>
       <span style={{ fontFamily: MONO }}>{money(sum)}</span>
       {c.invoice ? <span style={{ color: 'var(--text-faint)' }}> · счёт {c.invoice}</span> : null}

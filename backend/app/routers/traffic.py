@@ -36,6 +36,7 @@ from sqlalchemy.sql import func as sa_func
 from app.audit import log_action
 from app.database import get_db
 from app.launch_prep import sandbox
+from app.routers.launch_prep import url_state
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepCreativeSet,
                                     LaunchPrepPair, LaunchPrepPairFile, LaunchPrepReview,
                                     LaunchPrepTarget)
@@ -207,8 +208,10 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
             # только увидеть дыру, но и закрыть её — той же ручкой, что аккаунт.
             "target_id": target.id,
             "advertiser_url": target.advertiser_url,
-            "url_state": ("есть" if target.advertiser_url
-                          else "запрошена" if target.url_requested_at else "нужна"),
+            # Состояние ссылки — ОДНОЙ функцией на весь бэкенд. Здесь стояла своя копия
+            # тех же трёх ответов; копия дешевле импорта ровно до первого изменения
+            # правила, после которого один экран начинает врать.
+            "url_state": url_state(target),
             "url_request_text": target.url_request_text,
             "period_from": target.period_from or deal.period_from,
             "period_to": target.period_to or deal.period_to,

@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react'
 import { MONO, UI, HATCH, HATCH_RED, HATCH_GREEN } from '../salesTableKit'
 import { DEAL_DOCS, docState } from '../../lib/dealDocs'
+import { dm } from '@/lib/salesFormat'
 
 /**
  * Канбан-доска сделок для дашборда: виды «По месяцам» и «По стадиям».
@@ -44,7 +45,6 @@ const VAT = 0.22
 const kk = v => Math.round(v / 1000).toLocaleString('ru-RU') + ' тыс'
 const money = v => (Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2).replace('.', ',') + ' млн' : kk(v))
 const mln = v => (v / 1e6).toFixed(1).replace('.', ',')
-const dm = s => (s ? String(s).slice(0, 10).split('-').reverse().slice(0, 2).join('.') : '')
 
 // Цвет маркера услуги — стабильный хеш имени: справочник услуг растёт, руками не ведём.
 const SERVICE_PALETTE = ['#4F6CE6', '#2FB8A8', '#8B7BE8', '#E89020', '#2FA37C', '#8B93A6', '#D96A9A', '#5AA9E6']
@@ -107,7 +107,7 @@ function toCard(d) {
     rows: [
       ['Продавец', d.sales_rep || '—'], ['Аккаунт', d.account_manager || '—'],
       ['Агентство', d.agency || '—'], ['Услуга', d.product || '—'],
-      ['Период РК', (d.period_from || d.period_to) ? `${dm(d.period_from) || '…'} — ${dm(d.period_to) || '…'}` : '—'],
+      ['Период РК', (d.period_from || d.period_to) ? `${dm(d.period_from, '') || '…'} — ${dm(d.period_to, '') || '…'}` : '—'],
       ['Сумма с НДС', money(gross) + ' ₽'],
     ],
     docs: docs.map(x => ({ ...x, bg: DOC_BG[x.state] })),

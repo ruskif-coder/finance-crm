@@ -19,7 +19,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Head from 'next/head'
 import Navbar, { can } from '@/components/Navbar'
-import { MONO, UI, card, CAP, btn, btnSm, inp, ROW_TONE, Modal }
+import { MONO, UI, card, CAP, btn, btnSm, chip as pill, inp, ROW_TONE, Modal }
   from '@/components/salesTableKit'
 // Предпросмотр — ТОТ ЖЕ компонент, что на карточке сделки: сетка типовых размеров,
 // песочница для архива, изолированная рамка для html. Своя, «простая» версия у трафика
@@ -27,6 +27,7 @@ import { MONO, UI, card, CAP, btn, btnSm, inp, ROW_TONE, Modal }
 // они должны одно и то же.
 import { CreativePreview } from '@/components/creatives/AssemblyCreatives'
 import api, { auth } from '@/lib/api'
+import { dm } from '@/lib/salesFormat'
 
 const TABS = [
   { key: 'waiting', label: 'Ждут проверки' },
@@ -34,7 +35,6 @@ const TABS = [
   { key: 'all', label: 'Все' },
 ]
 
-const dm = (s) => (s ? String(s).slice(8, 10) + '.' + String(s).slice(5, 7) : '—')
 
 /* Повторяют app/traffic/files.py. Проверка на клиенте не заменяет серверную — она
    отвечает быстрее: перетащив папку с двадцатью файлами, человек должен узнать об этом
@@ -42,14 +42,6 @@ const dm = (s) => (s ? String(s).slice(8, 10) + '.' + String(s).slice(5, 7) : '�
 const SHOT_LIMIT = 10
 const SHOT_EXT = ['.png', '.jpg', '.jpeg', '.webp', '.pdf']
 const shotOk = (name) => SHOT_EXT.some(e => String(name || '').toLowerCase().endsWith(e))
-
-/** Плашка состояния: мягкая заливка, цветной текст, рамка того же тона.
- *  Тройка `tint / fg / border` заведена у каждого смысла именно под это. */
-const pill = (bg, fg, bd) => ({
-  display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px',
-  borderRadius: 8, fontSize: 11, fontWeight: 700, fontFamily: UI, whiteSpace: 'nowrap',
-  background: bg, color: fg, border: `1px solid ${bd}`,
-})
 
 const TONE = {
   ok:      ['var(--income-tint)',  'var(--income)',       'var(--income-border)'],

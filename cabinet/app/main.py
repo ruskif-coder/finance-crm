@@ -186,6 +186,10 @@ def tasks(acc=Depends(current_account)):
             # выведено в ядре (`url_state`), здесь только пересказ фактов — вторая копия
             # в SQL разошлась бы с первой.
             "url_state": ('есть' if r.advertiser_url
+                          # Копия `url_state` из ядра (app/routers/launch_prep.py) —
+                          # структурная, а не забытая: кабинет отдельный процесс под
+                          # отдельной ролью БД и `app.*` не импортирует по построению.
+                          # Три ответа менять ОДНОВРЕМЕННО в обоих местах.
                           else 'запрошена' if r.url_requested_at else 'нужна'),
             "url_request_text": r.url_request_text,
             "asked_at": r.asked_at,

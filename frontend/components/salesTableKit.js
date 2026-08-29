@@ -376,6 +376,27 @@ export const headCell = (label, right) => <div style={{ padding: '0 8px 10px', f
 // Раскрытая сводка сделки (DealDetail): заголовок колонки, карточка документа,
 // кнопки и иконки. По ТЗ «форма сделки» + ds.jsx. Единый источник — не плодить копии.
 // Подпись-капс над колонкой блока: Mono 10px uppercase.
+/** Плашка состояния: мягкая заливка, цветной текст, рамка того же тона.
+ *
+ *  Кит не экспортировал ни одной, и к 30.08.2026 в проекте набралось ШЕСТЬ локальных
+ *  `chip`/`pill`, из них две — байт в байт одинаковые (реестр сделок и дашборд продаж).
+ *  Три оставшихся не сводятся и не должны: у них разные задачи (одна возвращает JSX,
+ *  другая раскрашивает по тону, третья — статический объект на своих токенах).
+ *  Свести стоило именно повторяющуюся форму, а не совпадение имени.
+ */
+export const chip = (bg, fg, bd) => ({
+  display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px',
+  borderRadius: 8, fontSize: 11, fontWeight: 700, fontFamily: UI, whiteSpace: 'nowrap',
+  background: bg, color: fg, border: `1px solid ${bd}`,
+})
+
+/** Мелкая кликабельная метка в ячейке таблицы — фильтр по значению.
+ *  Цвета приходят спредом: они зависят от того, что метка означает в этой колонке. */
+export const tagSm = (extra) => ({
+  display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 6px',
+  borderRadius: 6, fontSize: 10.5, cursor: 'pointer', whiteSpace: 'nowrap', ...extra,
+})
+
 export const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.09em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)', marginBottom: 13 }
 // Белая карточка документа: две строки текста слева + действия справа.
 export const docCard = { display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, padding: '7px 8px 7px 10px' }

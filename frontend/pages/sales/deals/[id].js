@@ -4,7 +4,7 @@ import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import { MONO, UI, HATCH_RED } from '@/components/salesTableKit'
 import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
-import { grp0 } from '@/lib/salesFormat'
+import { dm, grp0 } from '@/lib/salesFormat'
 import { overlayClose } from '@/lib/overlay'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
 import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc } from '@/lib/dealDocs'
@@ -189,8 +189,7 @@ function mpSummary(rowCount, net, mp) {
 /** Ключевые значения МП для свёрнутого вида. Нейтральные: это цифры, а не состояния. */
 function mpFacts({ d, lines, net, gross, tVol, mp }) {
   const svc = [...new Set(lines.map(l => l.position).filter(Boolean))]
-  const dm = (x) => (x ? String(x).slice(0, 10).split('-').reverse().slice(0, 2).join('.') : '')
-  const period = d.period_from ? `${dm(d.period_from)} — ${dm(d.period_to)}` : (d.period || '—')
+  const period = d.period_from ? `${dm(d.period_from, '')} — ${dm(d.period_to, '')}` : (d.period || '—')
   return [
     { label: 'Услуга',
       value: svc.length === 1 ? svc[0] : svc.length ? `${svc.length} услуги` : '—',
