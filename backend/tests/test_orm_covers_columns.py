@@ -18,10 +18,17 @@ from app.database import SessionLocal
 from app.launch_prep.models import (LaunchPrepCreativeSet, LaunchPrepPair,
                                     LaunchPrepPairFile, LaunchPrepReview,
                                     LaunchPrepTarget)
-from app.cabinet.models import CabinetAccount
+from app.cabinet.models import (Cabinet, CabinetAccount, CabinetAccountPublisher,
+                                CabinetPublisher)
+from app.publisher_requests import PublisherRecon, PublisherRequest
 
+# Расширено 30.08.2026 на остальные таблицы внешнего контура и тикетов. Причина та же,
+# что была у `decided_email`: в эти таблицы пишет не только ядро, а часть полей несёт
+# снимок стороннего лица — потеря там не видна ни в логах, ни на экране.
 WATCHED = [LaunchPrepReview, LaunchPrepPair, LaunchPrepPairFile, LaunchPrepTarget,
-           LaunchPrepCreativeSet, CabinetAccount]
+           LaunchPrepCreativeSet,
+           Cabinet, CabinetPublisher, CabinetAccount, CabinetAccountPublisher,
+           PublisherRequest, PublisherRecon]
 
 
 @pytest.mark.parametrize("model", WATCHED, ids=[m.__tablename__ for m in WATCHED])

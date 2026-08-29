@@ -60,3 +60,50 @@ def test_permission_keys_unchanged():
 def test_every_section_has_view():
     for s in SECTIONS:
         assert "view" in s["actions"], f"У раздела {s['key']} нет действия view"
+
+
+def test_registry_and_usage_match():
+    """Реестр секций и то, чем реально закрыты ручки, — одно и то же множество.
+
+    Две молчаливые ошибки ловятся здесь и больше нигде:
+
+    · **опечатка в имени секции.** `require_permission("creativs", …)` не падает: секция
+      просто не находится в `role_permissions`, и ручка отказывает ВСЕМ, кроме админа.
+      Со стороны это выглядит как «у меня нет прав», а не как ошибка в коде — и чинят
+      это раздачей прав на несуществующую секцию;
+
+    · **осиротевшая секция.** Ключ остался в реестре, а последняя ручка, которой он
+      закрывал, переименована или удалена. В конструкторе ролей появляется галочка,
+      которая ничего не открывает, — и однажды кто-то на неё положится.
+
+    Читается через метку `_perm_sections` на замыкании: снаружи зависимость неотличима
+    от любой другой, и обойти ручки было бы нечем.
+    """
+    from fastapi.routing import APIRoute
+
+    import app.main as main_module
+
+    def walk(dep, acc):
+        for sub in dep.dependencies:
+            if sub.call is not None:
+                acc.append(sub.call)
+            walk(sub, acc)
+
+    used = set()
+    for route in main_module.app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        found = []
+        walk(route.dependant, found)
+        for call in found:
+            used.update(getattr(call, '_perm_sections', ()) or ())
+
+    registered = {s['key'] for s in SECTIONS}
+    assert not (used - registered), (
+        f"ручки закрыты несуществующими секциями: {sorted(used - registered)} — "
+        "такая ручка отказывает всем, кроме админа, и выглядит как нехватка прав"
+    )
+    assert not (registered - used), (
+        f"секции есть в реестре, но ничего не закрывают: {sorted(registered - used)} — "
+        "в конструкторе ролей появляется галочка, которая ничего не открывает"
+    )

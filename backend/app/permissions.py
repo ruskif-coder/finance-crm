@@ -171,6 +171,11 @@ def require_any_permission(sections, action: str = "view"):
             if row and bool(getattr(row, ACTION_FIELDS.get(act, "can_view"))):
                 return current_user
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав для этого действия")
+    # Метка для приборов: снаружи замыкание неотличимо от любой другой зависимости,
+    # и обойти все ручки, проверяя, что каждая закрыта, было бы нечем. Ставится ЗДЕСЬ,
+    # а не в тесте: тест не должен знать внутренностей фабрики.
+    checker._perm_sections = tuple(x if isinstance(x, str) else x[0] for x in sections)
+    checker._perm_action = action
     return checker
 
 
@@ -189,4 +194,6 @@ def require_permission(section: str, action: str = "view"):
         if not allowed:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав для этого действия")
         return current_user
+    checker._perm_sections = (section,)
+    checker._perm_action = action
     return checker
