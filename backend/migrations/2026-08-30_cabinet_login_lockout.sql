@@ -46,14 +46,28 @@ DECLARE
     lock_minutes constant int := 15;
     cur int;
 BEGIN
+    -- Вставляем НОЛЬ, а не единицу: увеличивает всегда следующий UPDATE. Первая версия
+    -- вставляла 1 и тут же прибавляла ещё 1 — одна неудачная попытка считалась за две,
+    -- и блокировка наступала на третьей вместо пятой. Поймал прибор
+    -- `test_counter_is_shared_with_the_core`, а не глаза: 429 приходил вовремя, просто
+    -- не с той попытки.
+    --
+    -- `ON CONFLICT` не годится: уникальность в `login_attempts` стоит на `email` КАК
+    -- ЕСТЬ, а мы сравниваем по нижнему регистру — конфликт не сработал бы, и каждая
+    -- попытка добавляла бы новую строку.
     INSERT INTO login_attempts (email, failed_count, updated_at)
-    VALUES (lower(p_email), 1, now())
-    ON CONFLICT DO NOTHING;
+    SELECT lower(p_email), 0, now()
+     WHERE NOT EXISTS (SELECT 1 FROM login_attempts WHERE lower(email) = lower(p_email));
 
     UPDATE login_attempts
        SET failed_count = failed_count + 1, updated_at = now()
-     WHERE lower(email) = lower(p_email)
-     RETURNING failed_count INTO cur;
+     WHERE lower(email) = lower(p_email);
+
+    -- max(), а не одна строка: в таблице уже есть адреса, различающиеся регистром
+    -- (уникальность их не ловит). Любая из них, дошедшая до порога, закрывает вход по
+    -- всем написаниям — иначе перебор идёт по `Ivan@`, `IVAN@`, `iVaN@` и блокировки
+    -- фактически нет.
+    SELECT max(failed_count) INTO cur FROM login_attempts WHERE lower(email) = lower(p_email);
 
     IF cur IS NOT NULL AND cur >= max_attempts THEN
         UPDATE login_attempts
