@@ -101,6 +101,39 @@ class LoginIn(BaseModel):
     password: str
 
 
+def _lock_minutes(email: str) -> int:
+    """Сколько минут осталось до снятия блокировки. Ошибка счётчика вход НЕ открывает.
+
+    Счётчик общий с ядром (`login_attempts`), и кабинет достаёт его через `pub.*`:
+    своей таблицы попыток нет намеренно — вторая реализация того же правила однажды
+    разошлась бы с первой, и разошлась бы молча.
+    """
+    db = plain_session()
+    try:
+        return int(db.execute(text("SELECT pub.login_lock_minutes(:e)"),
+                              {"e": email}).scalar() or 0)
+    except Exception:
+        # Счётчик недоступен — считаем заблокированным. Отказ защиты не должен
+        # выглядеть как её отсутствие: это ровно тот случай, ради которого пустой
+        # CABINET_SERVICE_TOKEN закрывает вход, а не открывает.
+        return 1
+    finally:
+        db.close()
+
+
+def _note_login(email: str, ok: bool) -> None:
+    """Отметить попытку. Успех обнуляет счётчик, неудача приближает блокировку."""
+    db = plain_session()
+    try:
+        fn = "pub.clear_login_attempts" if ok else "pub.register_failed_login"
+        db.execute(text(f"SELECT {fn}(:e)"), {"e": email})
+        db.commit()
+    except Exception:
+        db.rollback()      # учёт попытки не стоит того, чтобы ронять сам вход
+    finally:
+        db.close()
+
+
 @app.post("/api/login")
 def login(payload: LoginIn):
     """Вход. Одинаковый ответ на «нет такой учётки» и «неверный пароль».
@@ -108,11 +141,26 @@ def login(payload: LoginIn):
     Проверка пароля прогоняется даже для несуществующего адреса: иначе разница во
     времени ответа отвечает на вопрос «а заведён ли у вас такой человек» — а это
     перечисление учёток внешнего контура.
+
+    Блокировка после серии неудач (30.08.2026) — от ПЕРЕБОРА, тогда как всё выше от
+    ПЕРЕЧИСЛЕНИЯ. Для внешнего контура перебор опаснее: туда ходят не наши сотрудники,
+    адрес входа известен площадке, и учётка у кабинета обычно одна.
     """
-    row = find_account(payload.email)
+    email = (payload.email or "").strip()
+    left = _lock_minutes(email)
+    if left:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Слишком много неудачных попыток входа. Попробуйте через {left} мин.")
+
+    row = find_account(email)
     ok = verify_password(payload.password, row.hashed_password if row else "")
     if not row or not ok or not row.is_active:
+        # Счётчик ведётся и для несуществующего адреса — иначе «этот заблокировали, а
+        # этот нет» снова отвечает на вопрос о существовании учётки.
+        _note_login(email, ok=False)
         raise HTTPException(status_code=401, detail="Неверная почта или пароль")
+    _note_login(email, ok=True)
 
     db = plain_session()
     try:

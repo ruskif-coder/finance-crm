@@ -24,6 +24,8 @@ export default function SettingsUsers() {
   const [savingUsers, setSavingUsers] = useState({})
   const [savingAllUsers, setSavingAllUsers] = useState(false)
   const [hideInactive, setHideInactive] = useState(false)
+  const [access, setAccess] = useState(null)     // сводка доступа по обоим контурам
+  const [accessOpen, setAccessOpen] = useState(false)
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'viewer' })
   const [creatingUser, setCreatingUser] = useState(false)
   const [showNewPw, setShowNewPw] = useState(false)
@@ -181,6 +183,15 @@ export default function SettingsUsers() {
   const rowBtn = { padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13, background: 'var(--accent)', color: '#fff', fontFamily: UI }
   const iconBtn = { padding: '5px 8px', borderRadius: 8, border: '1px solid var(--border-card)', background: 'var(--bg-card)', cursor: 'pointer', fontSize: 14, color: 'var(--text-secondary)' }
 
+  /* Грузится по раскрытию, а не при входе: сводка нужна изредка — когда отвечают на
+     вопрос «у кого вообще есть доступ», — и тянуть её каждому админу при каждом заходе
+     значило бы платить за неё всегда. */
+  useEffect(() => {
+    if (!accessOpen || access) return
+    api.get('/users/access-overview', auth())
+      .then(r => setAccess(r.data)).catch(() => setAccess({ rows: [], error: true }))
+  }, [accessOpen, access])
+
   return (
     <>
       <Head><title>Пользователи | Настройки</title></Head>
@@ -189,6 +200,80 @@ export default function SettingsUsers() {
         <SettingsTabs active="users" />
 
         {/* Форма создания */}
+        {/* Кто имеет доступ — ОБА контура одним списком.
+            Учётки паблишеров хранятся отдельно и объединены быть не могут: сервис
+            кабинета работает под ролью БД без прав на `public`, и перенос его учёток в
+            `users` означал бы выдать этой роли доступ к таблице ядра — распустить ту
+            самую изоляцию, ради которой контур и делался. Здесь сведена ВИДИМОСТЬ, а не
+            хранение: правки идут каждая в свой раздел, этот блок только читает. */}
+        <div style={{ ...card, padding: '14px 18px', marginBottom: 16 }}>
+          <div onClick={() => setAccessOpen(o => !o)}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+              Кто имеет доступ
+            </span>
+            <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-faint)' }}>
+              ядро и внешний контур · только чтение
+            </span>
+            <span style={{ flex: 1 }} />
+            {!!access && (
+              <span style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-muted)' }}>
+                {access.core} + {access.outer}
+              </span>
+            )}
+            <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>
+              {accessOpen ? '▾' : '▸'}
+            </span>
+          </div>
+
+          {accessOpen && (
+            <div style={{ marginTop: 12 }}>
+              {!access && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>загрузка…</div>}
+              {!!access?.shared_emails?.length && (
+                <div style={{ marginBottom: 10, padding: '8px 12px', borderRadius: 9,
+                  background: 'var(--danger-tint)', border: '1px solid var(--danger-border)',
+                  fontSize: 12.5, color: 'var(--danger-fg)' }}>
+                  Одна и та же почта заведена в обоих контурах:
+                  {' '}{access.shared_emails.join(', ')}. Это либо ошибка, либо решение,
+                  которое принимают осознанно.
+                </div>
+              )}
+              {!!access?.rows?.length && (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 700 }}>
+                    <thead><tr>
+                      <th style={th}>Контур</th><th style={th}>Имя</th><th style={th}>Почта</th>
+                      <th style={th}>Доступ</th><th style={th}>Объём</th><th style={th}>Вход</th>
+                    </tr></thead>
+                    <tbody>
+                      {access.rows.map((r, i) => (
+                        <tr key={i} style={{ opacity: r.is_active ? 1 : .45 }}>
+                          <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                            <span style={{ fontFamily: MONO, fontSize: 10.5, padding: '2px 7px',
+                              borderRadius: 6,
+                              background: r.contour === 'кабинет' ? 'var(--warning-tint)' : 'var(--bg-subtle)',
+                              color: r.contour === 'кабинет' ? 'var(--warning-text)' : 'var(--text-muted)',
+                              border: `1px solid ${r.contour === 'кабинет' ? 'var(--warning-border)' : 'var(--border-card)'}` }}>
+                              {r.contour}
+                            </span>
+                          </td>
+                          <td style={td}>{r.name}{r.is_active ? '' : ' · выключен'}</td>
+                          <td style={{ ...td, fontFamily: MONO, fontSize: 12 }}>{r.email}</td>
+                          <td style={td}>{r.access}</td>
+                          <td style={{ ...td, color: 'var(--text-muted)', fontSize: 12.5 }}>{r.scope}</td>
+                          <td style={{ ...td, fontFamily: MONO, fontSize: 11.5, color: 'var(--text-faint)' }}>
+                            {r.last_login_at ? String(r.last_login_at).slice(0, 10) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         <div style={{ ...card, padding: '16px 18px', marginBottom: 16 }}>
           <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: 'var(--text-primary)' }}>Новый пользователь</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>

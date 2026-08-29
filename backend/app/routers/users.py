@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import User, Role, AuditLog
+from app.models import RolePermission, User, Role, AuditLog
 from app.audit import log_action, require_admin
 from app.permissions import require_permission
 from app.routers.auth import get_password_hash
@@ -56,6 +57,69 @@ def list_users(
         }
         for u in users
     ]
+
+
+@router.get("/access-overview")
+def access_overview(db: Session = Depends(get_db),
+                    current_user: User = Depends(require_admin)):
+    """Кто вообще имеет доступ — оба контура одним ответом, только на чтение.
+
+    Учётки паблишеров ЖИВУТ ОТДЕЛЬНО и жить вместе не могут: сервис кабинета работает
+    под ролью БД без прав на `public`, и перенос его учёток в `users` потребовал бы
+    выдать этой роли доступ к таблице ядра — то есть распустить изоляцию, на которой
+    весь внешний контур и стоит. Плюс несовместимые модели прав: у пользователя ядра
+    роль на 34 секции, у паблишера — `can_approve` и список площадок; в общей таблице
+    каждая проверка прав должна была бы помнить «а это не паблишер ли», и дыра появится
+    там, где однажды забудут. И `admin` обходит проверки безусловно — неверно
+    проставленная роль у внешнего лица открыла бы ему всё.
+
+    Но у раздельного хранения была одна честная цена: на вопрос «у кого есть доступ»
+    стало два ответа в двух местах. Эта ручка её и закрывает — сводит ВИДИМОСТЬ, не
+    трогая хранение. Ничего не изменяет: правки идут каждая в свой раздел.
+    """
+    from app.cabinet.models import Cabinet, CabinetAccount
+
+    core = []
+    for u in db.query(User).order_by(User.created_at).all():
+        core.append({
+            "contour": "ядро",
+            "name": u.name,
+            "email": u.email,
+            "access": u.role.label,
+            "is_active": bool(u.is_active),
+            "last_login_at": None,
+            # Сколько секций реально открыто. У админа проверок нет вообще — это не
+            # «много прав», это другой режим, и число здесь солгало бы.
+            "scope": ("все разделы (проверки не проходит)" if u.role.key == "admin"
+                      else f"{db.query(RolePermission).filter(RolePermission.role_id == u.role_id, RolePermission.can_view == 1).count()} разделов"),
+        })
+
+    outer = []
+    for a in (db.query(CabinetAccount, Cabinet)
+              .outerjoin(Cabinet, Cabinet.id == CabinetAccount.cabinet_id)
+              .order_by(CabinetAccount.id).all()):
+        acc, cab = a
+        seen = db.execute(sa_text(
+            "SELECT count(*) FROM cabinet_account_publisher WHERE account_id = :i"),
+            {"i": acc.id}).scalar() or 0
+        outer.append({
+            "contour": "кабинет",
+            "name": acc.name,
+            "email": acc.email,
+            "access": (cab.name if cab else "— без кабинета —"),
+            "is_active": bool(acc.is_active),
+            "last_login_at": acc.last_login_at,
+            "scope": (f"{seen} площадок"
+                      + ("" if acc.can_approve else ", только просмотр")),
+        })
+
+    return {"rows": core + outer,
+            "core": len(core), "outer": len(outer),
+            # Пересечение почт между контурами — его быть не должно. Один и тот же адрес
+            # в обоих означает, что человек заведён и внутрь, и наружу: это либо ошибка,
+            # либо решение, которое надо принимать осознанно.
+            "shared_emails": [r["email"] for r in outer
+                              if r["email"].lower() in {c["email"].lower() for c in core}]}
 
 
 @router.get("/notification-profiles")
