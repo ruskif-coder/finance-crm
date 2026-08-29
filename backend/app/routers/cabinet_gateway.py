@@ -1,0 +1,232 @@
+"""Вход для СЕРВИСА кабинета. Два действия, и больше здесь ничего не появится.
+
+Кабинет не пишет в базу — он зовёт ядро. Разбор решения целиком в шапке миграции
+`2026-08-28_publisher_cabinet_verdict.sql`; коротко: правила вердикта нетривиальны, и
+вторая их реализация на стороне кабинета разошлась бы с первой.
+
+**Это не пользовательский эндпоинт.** Права роли здесь не при чём: снаружи стоит не
+человек, а наш же процесс во внешнем контуре. Пропуск — общий секрет из окружения, и он
+свой, отдельный и от `SECRET_KEY` ядра, и от `CABINET_SECRET_KEY`: тот подписывает
+сессии паблишеров, этот пускает процесс к процессу.
+
+Чего секрет НЕ даёт: он не удостоверяет, кто именно нажал кнопку. Имя и почта автора
+приходят в теле, и ядро кладёт их СНИМКОМ. Доверие здесь ровно то же, что у любого
+сервисного вызова: скомпрометированный кабинет может записать вердикт от чужого имени —
+но он и так стоит между площадкой и нами. Важно, что читать финансовые данные он при
+этом не может: роль `cabinet` в базе прав на `public` не имеет.
+"""
+import hmac
+import os
+import re
+from datetime import datetime
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.launch_prep.models import LaunchPrepPair, LaunchPrepPairFile, LaunchPrepTarget
+from app.routers.launch_prep import apply_platform_verdict, url_state
+from app.sales.models import SalesPublisher
+
+router = APIRouter()
+
+SERVICE_TOKEN = os.getenv("CABINET_SERVICE_TOKEN", "")
+
+
+def require_cabinet_service(x_cabinet_token: Optional[str] = Header(default=None)):
+    """Пропуск сервиса кабинета. Сравнение постоянным временем — секрет длинный, но
+    побитовое сравнение всё равно рассказывает о нём по времени ответа.
+
+    Пустой секрет в окружении закрывает вход НАСОВСЕМ, а не открывает всем: забытая
+    переменная должна ломать функцию, а не защиту.
+    """
+    if not SERVICE_TOKEN or not x_cabinet_token or not hmac.compare_digest(
+            x_cabinet_token, SERVICE_TOKEN):
+        raise HTTPException(status_code=403, detail="Сервисный доступ закрыт")
+    return True
+
+
+class CabinetVerdictIn(BaseModel):
+    publisher_id: int          # чью площадку представляет вызывающий
+    verdict: str
+    reason: Optional[str] = None
+    author_name: str
+    author_email: Optional[str] = None
+
+
+@router.post("/pair/{pair_id}/verdict", dependencies=[Depends(require_cabinet_service)])
+def cabinet_verdict(pair_id: int, payload: CabinetVerdictIn,
+                    db: Session = Depends(get_db)):
+    """Вердикт, поставленный САМОЙ площадкой в кабинете.
+
+    Пара сверяется с заявленной площадкой ЗДЕСЬ, а не только в кабинете: проверка,
+    оставленная на вызывающей стороне, — это отсутствие проверки.
+    """
+    pair = db.query(LaunchPrepPair).filter(LaunchPrepPair.id == pair_id).first()
+    if not pair:
+        raise HTTPException(status_code=404, detail="Задание не найдено")
+    target = db.query(LaunchPrepTarget).filter(
+        LaunchPrepTarget.id == pair.target_id).first()
+    if not target or target.publisher_id != payload.publisher_id:
+        raise HTTPException(status_code=404, detail="Задание не найдено")
+
+    out = apply_platform_verdict(db, pair_id, payload.verdict, payload.reason,
+                                 payload.author_name, payload.author_email,
+                                 "кабинет", actor=None)
+    return {"verdict": out["verdict"], "code": out["code"]}
+
+
+class CabinetUrlIn(BaseModel):
+    publisher_id: int
+    url: str
+    author_name: str
+
+
+@router.put("/target/{target_id}/url", dependencies=[Depends(require_cabinet_service)])
+def cabinet_target_url(target_id: int, payload: CabinetUrlIn,
+                       db: Session = Depends(get_db)):
+    """Посадочная страница, присланная площадкой в ответ на наш запрос.
+
+    Ссылка живёт на ПОЛУЧАТЕЛЕ (сделка × площадка), а не на креативе: страница одна на
+    всю кампанию у этого сайта, и у второго креатива она та же.
+
+    Схема проверяется, как у ссылки на документ договора: `javascript:` и `data:` в
+    кликаемом поле — известный вектор, и то, что поле заполняет внешнее лицо, делает
+    проверку не формальностью, а условием.
+    """
+    target = db.query(LaunchPrepTarget).filter(LaunchPrepTarget.id == target_id).first()
+    if not target or target.publisher_id != payload.publisher_id:
+        raise HTTPException(status_code=404, detail="Размещение не найдено")
+
+    url = (payload.url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Укажите ссылку")
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=400,
+                            detail="Ссылка должна начинаться с http:// или https://")
+    if len(url) > 512:
+        raise HTTPException(status_code=400, detail="Ссылка длиннее 512 знаков")
+
+    target.advertiser_url = url
+    db.commit()
+    return {"target_id": target.id, "url_state": url_state(target)}
+
+
+# Медиакит — презентация площадки. Только PDF и PPTX (владелец 28.08.2026): это документ
+# для чтения, а не архив и не картинка, и открытый список расширений во внешнем контуре
+# означал бы приём чего угодно от того, кто нам не сотрудник.
+MEDIA_KIT_EXT = {".pdf", ".pptx"}
+MEDIA_KIT_MAX = 30 * 1024 * 1024
+MEDIA_KIT_DIR = "mediakit"
+
+
+@router.post("/publisher/{publisher_id}/media-kit",
+             dependencies=[Depends(require_cabinet_service)])
+async def cabinet_media_kit(publisher_id: int, file: UploadFile = File(...),
+                            db: Session = Depends(get_db)):
+    """Медиакит, присланный самой площадкой.
+
+    Колонки под него в реестре были с самого начала, но ручки загрузки не существовало —
+    поле стояло пустым у всех 41 площадки (замер 28.08.2026). Теперь его заполняет тот,
+    кому оно принадлежит.
+
+    Файл пишет ЯДРО, а не кабинет: том с загрузками смонтирован сюда, и давать внешнему
+    процессу право писать в общее хранилище значило бы отдать ему то, ради чего он и
+    вынесен отдельно.
+
+    Новый файл ЗАМЕЩАЕТ старый — версий у медиакита нет: у площадки он один, и «версия
+    от 03.07» это дата загрузки, а не отдельная запись.
+    """
+    # Принадлежность площадки учётке проверяет КАБИНЕТ: здесь её не из чего вывести —
+    # номер площадки и есть весь запрос. У вердикта иначе: там пара сама указывает на
+    # площадку, и ядро сверяет независимо. Разница честная, и делать вид, что проверка
+    # есть, добавив в тело то же число, было бы хуже её отсутствия.
+    p = db.query(SalesPublisher).filter(SalesPublisher.id == publisher_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Площадка не найдена")
+
+    original = file.filename or "mediakit"
+    ext = os.path.splitext(original)[1].lower()
+    if ext not in MEDIA_KIT_EXT:
+        raise HTTPException(status_code=415,
+                            detail="Медиакит принимается в PDF или PPTX")
+    content = await file.read()
+    if len(content) > MEDIA_KIT_MAX:
+        raise HTTPException(status_code=413,
+                            detail=f"Файл больше {MEDIA_KIT_MAX // 1024 // 1024} МБ")
+
+    safe = re.sub(r"[^\w.\-]", "_", original)
+    # Имя несёт вид сущности: медиакит площадки №7 и файл комплекта №7 в общем каталоге
+    # иначе затрут друг друга — это уже случалось с документами площадок.
+    stored = f"pub{publisher_id}_{safe}"
+    root = os.path.join("/app/uploads", MEDIA_KIT_DIR)
+    os.makedirs(root, exist_ok=True)
+    with open(os.path.join(root, stored), "wb") as fh:
+        fh.write(content)
+
+    p.media_kit_filename = original
+    p.media_kit_path = f"{MEDIA_KIT_DIR}/{stored}"
+    p.media_kit_uploaded_at = datetime.utcnow()
+    db.commit()
+    return {"name": original, "uploaded_at": p.media_kit_uploaded_at}
+
+
+# Картинка к доработке. Форматы те же, что у скриншотов размещения: это тоже снимок
+# экрана, просто снятый с другой стороны и с другой целью.
+REWORK_EXT = {".png", ".jpg", ".jpeg", ".webp", ".pdf"}
+REWORK_MAX = 10 * 1024 * 1024
+REWORK_MAX_FILES = 5
+REWORK_DIR = "rework"
+
+
+@router.post("/pair/{pair_id}/rework-file",
+             dependencies=[Depends(require_cabinet_service)])
+async def cabinet_rework_file(pair_id: int, file: UploadFile = File(...),
+                              db: Session = Depends(get_db)):
+    """Приложение площадки к объяснению, что не так с креативом.
+
+    Кладётся в ту же таблицу, что скриншоты размещения, но ВИДОМ `доработка`. Без вида
+    очередь трафика посчитала бы чужие картинки своими доказательствами, а уборка по
+    срокам стёрла бы их вместе: у доказательства и у приложенной к правкам картинки
+    разная судьба.
+
+    Имя НЕ переименовывается по цепочке, в отличие от скриншотов размещения: те уходят
+    клиенту архивом и должны говорить, где стояли, а это — вложение к переписке, и
+    исходное имя в нём осмысленно («меню_перекрыто.png»).
+    """
+    pair = db.query(LaunchPrepPair).filter(LaunchPrepPair.id == pair_id).first()
+    if not pair:
+        raise HTTPException(status_code=404, detail="Задание не найдено")
+
+    n = (db.query(LaunchPrepPairFile)
+         .filter(LaunchPrepPairFile.pair_id == pair_id,
+                 LaunchPrepPairFile.kind == "доработка").count())
+    if n >= REWORK_MAX_FILES:
+        raise HTTPException(status_code=400,
+                            detail=f"К одной доработке можно приложить {REWORK_MAX_FILES} файлов")
+
+    original = file.filename or "file"
+    ext = os.path.splitext(original)[1].lower()
+    if ext not in REWORK_EXT:
+        raise HTTPException(status_code=415,
+                            detail=f"Разрешены: {', '.join(sorted(REWORK_EXT))}")
+    content = await file.read()
+    if len(content) > REWORK_MAX:
+        raise HTTPException(status_code=413,
+                            detail=f"Файл больше {REWORK_MAX // 1024 // 1024} МБ")
+
+    safe = re.sub(r"[^\w.\-]", "_", original)
+    stored = f"rw{pair_id}_{n + 1}_{safe}"
+    root = os.path.join("/app/uploads", REWORK_DIR)
+    os.makedirs(root, exist_ok=True)
+    with open(os.path.join(root, stored), "wb") as fh:
+        fh.write(content)
+
+    rec = LaunchPrepPairFile(pair_id=pair_id, path=f"{REWORK_DIR}/{stored}",
+                             original_name=original, content_type=file.content_type,
+                             size_bytes=len(content), kind="доработка")
+    db.add(rec)
+    db.commit()
+    return {"id": rec.id, "name": original, "size_bytes": len(content)}
