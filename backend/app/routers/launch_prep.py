@@ -146,12 +146,31 @@ def _surfaces_from_plan(db: Session, deal: SalesDeal) -> List[str]:
     return sorted(set(out))
 
 
+# Статусы площадки в подборе (владелец, 30.08.2026). До этого фильтра не было ВООБЩЕ:
+# замер показал, что stoletov.ru числится «НА ПАУЗЕ», а на ней шесть пар прошли всю
+# цепочку и получен ЕРИД.
+#
+# Архив из подбора убираем совсем: с такой площадкой не работают, и предлагать её —
+# приглашать к ошибке. Паузу ОСТАВЛЯЕМ помеченной: она временная, кампания могла
+# начаться до неё, и запрет здесь заблокировал бы законный случай.
+#
+# Уже заведённых получателей это не касается ни при каком статусе: фильтр работает на
+# выборе новых, а не на существующих строках. Снять площадку из плана из-за смены её
+# статуса значило бы задним числом переписать согласованный медиаплан.
+PICKER_HIDDEN_STATUSES = ('АРХИВ',)
+PICKER_WARN_STATUSES = ('НА ПАУЗЕ', 'ПЕРЕГОВОРЫ')
+
+
 def _candidates(db: Session, service_id: int, surfaces: List[str]) -> List[dict]:
     """Площадки, у которых эта услуга отмечена на рабочей поверхности.
 
     Оба условия обязательны. Наличие строки поверхности значит «поверхность у площадки
     есть», а `we_work` — «мы с ней работаем»: в Excel это было склеено, и предлагать
     площадку, приложение которой мы не продаём, значит вернуть ту же путаницу.
+
+    Третье условие с 30.08.2026 — статус самой площадки: архивные не предлагаются,
+    паузовые и переговорные приезжают с пометкой (`status_warn`), чтобы выбор был
+    осознанным, а не молчаливым.
     """
     q = (db.query(SalesPublisherService, SalesPublisher)
          .join(SalesPublisher, SalesPublisher.id == SalesPublisherService.publisher_id)
@@ -160,7 +179,8 @@ def _candidates(db: Session, service_id: int, surfaces: List[str]) -> List[dict]
                & (SalesPublisherSurface.kind == SalesPublisherService.surface_kind))
          .filter(SalesPublisherService.service_id == service_id,
                  SalesPublisherService.is_active.is_(True),
-                 SalesPublisherSurface.we_work.is_(True)))
+                 SalesPublisherSurface.we_work.is_(True),
+                 SalesPublisher.status.notin_(PICKER_HIDDEN_STATUSES)))
     if surfaces:
         q = q.filter(SalesPublisherService.surface_kind.in_(surfaces))
     rows = q.all()
@@ -168,7 +188,11 @@ def _candidates(db: Session, service_id: int, surfaces: List[str]) -> List[dict]
              "code": p.code, "surface_kind": ps.surface_kind,
              # ТТ отдаются вместе с площадкой: кнопка рядом со списком открывает их
              # прямо на экране отправки, без похода в справочник.
-             "tech_requirements": p.tech_requirements}
+             "tech_requirements": p.tech_requirements,
+             # Статус отдаётся ВСЕГДА, пометка — только когда есть о чём предупредить.
+             # Так экран не гадает по названию статуса, а красит по флагу.
+             "status": p.status,
+             "status_warn": p.status in PICKER_WARN_STATUSES}
             for ps, p in sorted(rows, key=lambda r: r[1].name.lower())]
 
 
@@ -402,8 +426,12 @@ def target_options(deal_id: int, set_id: Optional[int] = None,
     taken = {t.publisher_id for t in q.all()}
 
     proposed = _candidates(db, service.id, surfaces) if service else []
+    # Полный список — на случай, когда услуга у площадки не отмечена, а разместить надо.
+    # Архив прячется и здесь: тут он прятался с самого начала, а в подборе по услуге —
+    # только с 30.08.2026. Расхождение и приводило к тому, что архивная площадка
+    # приезжала одним списком и не приезжала другим.
     all_pubs = (db.query(SalesPublisher)
-                .filter(SalesPublisher.status != "АРХИВ")
+                .filter(SalesPublisher.status.notin_(PICKER_HIDDEN_STATUSES))
                 .order_by(SalesPublisher.name).all())
     return {
         "service": ({"id": service.id, "name": service.name} if service else None),
@@ -411,6 +439,7 @@ def target_options(deal_id: int, set_id: Optional[int] = None,
         "surfaces": surfaces,
         "proposed": [c for c in proposed if c["publisher_id"] not in taken],
         "all": [{"publisher_id": p.id, "name": p.name, "domain": p.domain, "code": p.code,
+                 "status": p.status, "status_warn": p.status in PICKER_WARN_STATUSES,
                  "already": p.id in taken} for p in all_pubs],
     }
 

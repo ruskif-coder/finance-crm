@@ -286,6 +286,7 @@ function PickTargets({ dealId, setId, onDone, onClose }) {
               {opts.proposed.map(c => (
                 <PubChip key={`${c.publisher_id}-${c.surface_kind}`} name={c.name} code={c.code}
                   surface={c.surface_kind} on={picked[c.publisher_id] === c.surface_kind}
+                  status={c.status} warn={c.status_warn}
                   onClick={() => toggle(c.publisher_id, c.surface_kind)} />
               ))}
             </div>
@@ -295,7 +296,7 @@ function PickTargets({ dealId, setId, onDone, onClose }) {
               {opts.all.filter(p => !p.already).map(p => (
                 <PubChip key={p.publisher_id} name={p.name} code={p.code}
                   surface={picked[p.publisher_id] || defaultSurface}
-                  on={!!picked[p.publisher_id]}
+                  on={!!picked[p.publisher_id]} status={p.status} warn={p.status_warn}
                   onClick={() => toggle(p.publisher_id, picked[p.publisher_id] === 'web' ? 'app' : 'web')}
                   hint="клик переключает веб / приложение" />
               ))}
@@ -316,14 +317,25 @@ function PickTargets({ dealId, setId, onDone, onClose }) {
   )
 }
 
-function PubChip({ name, code, surface, on, onClick, hint }) {
+function PubChip({ name, code, surface, on, onClick, hint, status, warn }) {
+  /* Статус площадки виден ПРИ ВЫБОРЕ, а не после (владелец 30.08.2026). Архивные сюда
+     не приезжают вовсе — их отсеивает бэкенд; паузовые и переговорные приезжают
+     помеченными: пауза временная, кампания могла начаться до неё, и запрет заблокировал
+     бы законный случай. До этого фильтра не было никакого, и площадка «НА ПАУЗЕ» тихо
+     прошла всю цепочку до выпуска ЕРИД. */
   return (
-    <span onClick={onClick} title={hint || name}
+    <span onClick={onClick} title={warn ? `${name} · статус: ${status}` : (hint || name)}
       style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
         padding: '5px 10px', borderRadius: 9, fontSize: 12.5,
-        border: on ? '1px solid var(--accent)' : '1px solid var(--border-card)',
-        background: on ? 'var(--accent-tint)' : 'var(--bg-subtle)' }}>
+        border: on ? '1px solid var(--accent)'
+          : warn ? '1px solid var(--warning-border)' : '1px solid var(--border-card)',
+        background: on ? 'var(--accent-tint)'
+          : warn ? 'var(--warning-tint)' : 'var(--bg-subtle)' }}>
       {name}
+      {!!warn && (
+        <span style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '.05em',
+          color: 'var(--warning-text)', whiteSpace: 'nowrap' }}>{status}</span>
+      )}
       {!!code && <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-muted)' }}>{code}</span>}
       <span style={{ fontFamily: MONO, fontSize: 10, color: on ? 'var(--accent)' : 'var(--text-faint)' }}>
         {surface === 'app' ? 'APP' : 'WEB'}

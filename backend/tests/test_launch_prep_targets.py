@@ -196,3 +196,76 @@ def test_primary_review_requires_reason_for_rework():
         assert 'причин' in e.value.detail.lower()
     finally:
         s.close()
+
+
+# ── статус площадки в подборе (владелец 30.08.2026) ──────────────────────────
+#
+# Фильтра не было НИКАКОГО: замер показал, что stoletov.ru числится «НА ПАУЗЕ», а на ней
+# шесть пар прошли всю цепочку и получен ЕРИД. Архив теперь не предлагается, пауза
+# приезжает помеченной — она временная, и запрет заблокировал бы законный случай.
+
+def test_archived_publisher_is_not_offered(db):
+    """Архивная площадка не приезжает в подборе — доказательно.
+
+    Первая версия этого прибора была ЗЕЛЕНА ВХОЛОСТУЮ: она проверяла, что в выдаче нет
+    архивных, а их там не было и без фильтра — у архивных площадок нет активных услуг с
+    рабочей поверхностью, и джойн отсекал их сам. Снятие фильтра теста не роняло.
+
+    Поэтому здесь берётся площадка, которая В ВЫДАЧЕ ЕСТЬ, переводится в архив, и
+    проверяется, что она из неё пропала. Изменение откатывается в любом случае.
+    """
+    from app.routers.launch_prep import _candidates
+    from app.sales.models import SalesPublisher, SalesPublisherService
+
+    sid = db.query(SalesPublisherService.service_id).first()
+    if sid is None:
+        pytest.skip('на стенде нет услуг у площадок')
+    before = _candidates(db, sid[0], [])
+    if not before:
+        pytest.skip('у услуги нет ни одной площадки')
+
+    victim_id = before[0]['publisher_id']
+    row = db.query(SalesPublisher).filter(SalesPublisher.id == victim_id).first()
+    was = row.status
+    try:
+        row.status = 'АРХИВ'
+        db.commit()
+        after = _candidates(db, sid[0], [])
+        assert victim_id not in {c['publisher_id'] for c in after}, (
+            'площадка в архиве всё ещё предлагается в подборе'
+        )
+        assert len(after) == len(before) - 1
+    finally:
+        row.status = was
+        db.commit()
+
+
+def test_paused_publisher_is_offered_but_marked(db):
+    """Пауза остаётся в подборе и несёт пометку — тоже доказательно.
+
+    Площадка переводится в паузу и обязана остаться в списке, но уже с `status_warn`.
+    Проверка «пометка совпадает со статусом» без этого зелена на любых данных.
+    """
+    from app.routers.launch_prep import PICKER_WARN_STATUSES, _candidates
+    from app.sales.models import SalesPublisher, SalesPublisherService
+
+    sid = db.query(SalesPublisherService.service_id).first()
+    if sid is None:
+        pytest.skip('на стенде нет услуг у площадок')
+    before = _candidates(db, sid[0], [])
+    if not before:
+        pytest.skip('у услуги нет ни одной площадки')
+
+    victim_id = before[0]['publisher_id']
+    row = db.query(SalesPublisher).filter(SalesPublisher.id == victim_id).first()
+    was = row.status
+    try:
+        row.status = PICKER_WARN_STATUSES[0]
+        db.commit()
+        after = {c['publisher_id']: c for c in _candidates(db, sid[0], [])}
+        assert victim_id in after, 'паузовая площадка исчезла из подбора — запрет вместо пометки'
+        assert after[victim_id]['status_warn'] is True
+        assert after[victim_id]['status'] == PICKER_WARN_STATUSES[0]
+    finally:
+        row.status = was
+        db.commit()
