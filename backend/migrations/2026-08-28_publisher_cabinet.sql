@@ -114,17 +114,45 @@ REVOKE ALL ON FUNCTION pub.touch_login(integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION pub.touch_login(integer) TO cabinet;
 
 -- 3.1. Учётка — для входа. Хеш пароля кабинету нужен: он его и проверяет.
-CREATE OR REPLACE VIEW pub.account_v1 AS
+DO $mig$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_views WHERE schemaname='pub' AND viewname='account_v1') THEN
+        EXECUTE $ddl$
+CREATE VIEW pub.account_v1 AS
 SELECT a.id, a.email, a.name, a.hashed_password, a.is_active
-FROM cabinet_account a;
+FROM cabinet_account a
+        $ddl$;
+    END IF;
+END $mig$;
+
 
 -- 3.1а. Площадки учётки. НЕ фильтруется по `app.publisher_ids` — иначе получилась бы
 -- петля: кабинет читает этот список ЗАТЕМ, чтобы список установить. Фильтр здесь по
 -- учётке, а её номер кабинет берёт из своего токена, а не из данных.
-CREATE OR REPLACE VIEW pub.account_publisher_v1 AS
+-- ПОВТОРНЫЙ НАКАТ (проверено 30.08.2026). Эти два view позже РАСШИРЯЮТСЯ соседними
+-- миграциями: `..._verdict.sql` добавляет заданию `target_id` и состояние запроса
+-- ссылки, `..._cabinet_org.sql` — владение через кабинет. Поэтому здесь они создаются
+-- ТОЛЬКО ЕСЛИ ИХ ЕЩЁ НЕТ.
+--
+-- Без этой оговорки повторный прогон всего набора пытался вернуть узкую версию, и
+-- спасал нас запрет самого Postgres («cannot drop columns from view») — то есть
+-- сохранность контракта кабинета держалась на ограничении СУБД, а не на нашей
+-- конструкции. Стоит ему однажды ослабнуть или кому-то дописать `DROP VIEW` «чтобы
+-- накатывалось» — и кабинет молча потеряет половину полей.
+--
+-- Текущая форма этих двух view живёт в поздних миграциях. Правя её, правь ТАМ.
+DO $mig$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_views WHERE schemaname='pub' AND viewname='account_publisher_v1') THEN
+        EXECUTE $ddl$
+CREATE VIEW pub.account_publisher_v1 AS
 SELECT ap.account_id, ap.publisher_id, p.name, p.domain, p.code
 FROM cabinet_account_publisher ap
-JOIN sales_publishers p ON p.id = ap.publisher_id;
+JOIN sales_publishers p ON p.id = ap.publisher_id
+        $ddl$;
+    END IF;
+END $mig$;
+
 
 -- 3.2. Задания на согласование: пары, где площадку СПРОСИЛИ и ответа нет.
 --
@@ -135,7 +163,11 @@ JOIN sales_publishers p ON p.id = ap.publisher_id;
 -- Что видно (владелец, 28.08.2026): бренд, рекламодатель, срок старта, услуга.
 -- Чего НЕТ и не появится: сумма сделки, план показов, агентство, сейлз, бриф, наш
 -- закупочный CPM, другие площадки той же сделки.
-CREATE OR REPLACE VIEW pub.task_v1 WITH (security_barrier) AS
+DO $mig$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_views WHERE schemaname='pub' AND viewname='task_v1') THEN
+        EXECUTE $ddl$
+CREATE VIEW pub.task_v1 WITH (security_barrier) AS
 SELECT
     p.id                                    AS task_id,
     t.publisher_id,
@@ -163,7 +195,11 @@ LEFT JOIN sales_advertisers adv ON adv.id = d.advertiser_id
 LEFT JOIN sales_brands      br  ON br.id = d.brand_id
 WHERE r.kind = 'площадка'
   AND r.verdict IS NULL
-  AND t.publisher_id = ANY (pub.allowed_publisher_ids());
+  AND t.publisher_id = ANY (pub.allowed_publisher_ids())
+        $ddl$;
+    END IF;
+END $mig$;
+
 
 -- 3.3. Файлы креатива — для предпросмотра и скачивания.
 --
