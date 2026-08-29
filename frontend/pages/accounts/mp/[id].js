@@ -8,6 +8,7 @@ import { downloadName } from '@/lib/salesFormat'
 import { DownloadOverlay } from '@/components/LogoLoader'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
+import { overlayClose } from '@/lib/overlay'
 const NotOnMobile = dynamic(() => import('@/components/mobile/NotOnMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // Редактор/генератор медиаплана. id === 'new' — новый; число — правка сохранённого.
@@ -38,6 +39,7 @@ export default function MpEditor() {
   const [agencyCps, setAgencyCps] = useState({})
   const [geoList, setGeoList] = useState([])
   const [targetingCatalog, setTargetingCatalog] = useState({})
+  const [ownCompany, setOwnCompany] = useState(null)
   const [staff, setStaff] = useState(null)   // { 'Продавец': [...], 'Аккаунт': [...] }
   const [linkOpen, setLinkOpen] = useState(false)   // модалка привязки к сделке
   const [dealQ, setDealQ] = useState('')
@@ -96,6 +98,8 @@ export default function MpEditor() {
       if (traffic.length) s['Трафик'] = traffic   // группа появляется, только когда есть кого показать
       setStaff(s)
     })
+    // Юрлицо, от которого оказываем услуги: оно задаёт ставку НДС по нашим услугам.
+    api.get('/sales/own-company', auth()).then(r => setOwnCompany(r.data)).catch(() => {})
     if (!isNew) {
       setSavedId(+id)
       api.get(`/sales/media-plans/${id}`, auth()).then(r => { setLoaded(r.data); loadDealBrief() }).catch(() => router.replace('/accounts/mp'))
@@ -240,6 +244,7 @@ export default function MpEditor() {
           } catch (e) { alert('Ошибка генерации PDF') } finally { setDownloading(false) }
         }}
         onLinkDeal={openLink} onCreateDeal={() => alert('Создание сделки — позже')}
+        ownCompany={ownCompany || undefined}
         dealBrief={dealBrief} onDealBriefSave={onDealBriefSave} onDealBriefSync={onDealBriefSync}
       />
       {linkOpen && (() => {
@@ -249,7 +254,7 @@ export default function MpEditor() {
         const arrow = (k) => dealSort === k ? (dealDir === 'asc' ? ' ▲' : ' ▼') : ''
         const money = (v) => v == null ? '—' : new Intl.NumberFormat('ru-RU').format(v)
         return (
-        <div onClick={() => setLinkOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        <div {...overlayClose(() => setLinkOpen(false))} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, width: 'min(1040px, 97vw)', padding: '20px 22px', boxShadow: '0 24px 64px rgba(28,36,51,.22)', display: 'flex', flexDirection: 'column', maxHeight: '88vh' }}>
             <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>Привязать к сделке</div>
             <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 12 }}>

@@ -50,7 +50,8 @@ export default function PublisherCardPage() {
 
   const startEdit = (d) => {
     setForm({
-      name: d.name || '', domain: d.domain || '', kind: d.kind || '', status: d.status || '',
+      name: d.name || '', domain: d.domain || '', code: d.code || '',
+      kind: d.kind || '', status: d.status || '',
       network: d.network || '', deal_type: d.deal_type || '', cpm_contract: d.cpm_contract ?? '',
       timezone_offset: d.timezone_offset ?? 0, our_code: d.our_code, is_exclusive: d.is_exclusive,
       has_dsp: d.has_dsp, shares_data: d.shares_data, self_promo: d.self_promo || 'НЕТ',

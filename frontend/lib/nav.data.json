@@ -105,6 +105,12 @@
           "label": "Медиапланы",
           "href": "/accounts/mp",
           "perm": "media_plans"
+        },
+        {
+          "key": "ord",
+          "label": "ОРД",
+          "href": "/accounts/ord",
+          "perm": "ord"
         }
       ]
     },
@@ -125,6 +131,26 @@
           "label": "Заполнение",
           "href": "/publishers/bulk",
           "perm": "dir_publishers_bulk"
+        },
+        {
+          "key": "cabinets",
+          "label": "Кабинеты",
+          "href": "/publishers/cabinets",
+          "perm": "dir_publishers_cabinets"
+        }
+      ]
+    },
+    {
+      "key": "traffic",
+      "title": "Траффики",
+      "accent": "#2FA3A0",
+      "href": "/traffic",
+      "items": [
+        {
+          "key": "queue",
+          "label": "Очередь",
+          "href": "/traffic/queue",
+          "perm": "traffic_queue"
         }
       ]
     },

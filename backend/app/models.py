@@ -124,6 +124,16 @@ class Counterparty(Base):
     note = Column(Text, nullable=True)  # примечание (например, по дебиторке) — свободный текст
     term_days = Column(Integer, nullable=True)  # отсрочка платежа в днях; NULL = берётся DEFAULT_TERM_DAYS (см. reports.py)
     is_own_company = Column(Boolean, default=False, nullable=False)  # наше юрлицо — используется как плательщик/получатель
+    ord_client_id = Column(String, nullable=True)  # id юрлица в зеркале ОРД (backend/migrations/2026-08-25_ord_mirror_v2.sql).
+    # Контур, выдавший ord_client_id (demo|prod), и когда сверялись. Правило то же,
+    # что у договоров: идентификатор без контура неотличим от боевого.
+    ord_env = Column(String(8))
+    ord_synced_at = Column(DateTime)
+    # Настоящий id приходит только из API ОРД (этап 2, ещё не реализован) — в выгрузке кабинета его нет вовсе,
+    # только ИНН и название. До этапа 2 колонка остаётся пустой: до 2026-08-25 сюда писался суррогат
+    # 'xlsx:<ИНН>' под условием «если пусто», из-за чего настоящий id уже никогда не смог бы сюда попасть
+    # (находка ревью I2). app/ord/importer.py факт «контрагент встретился в выгрузке ОРД» теперь только
+    # СЧИТАЕТ (stat['clients']), не пишет — контрагент этим импортом не заводится и не помечается.
     operations = relationship("Operation", back_populates="counterparty",
                              foreign_keys="Operation.counterparty_id")
     contracts = relationship("Contract", back_populates="counterparty",
@@ -178,6 +188,14 @@ class Contract(Base):
     note = Column(Text, nullable=True)
     document_link = Column(String, nullable=True)   # URL на документ в ЭДО или другой системе — открывается по кнопке 🔗
     attached_filename = Column(String, nullable=True)  # имя файла, сохранённого на сервере в /app/uploads/contracts/; NULL = файл не прикреплён
+    # Пометка ОРД (backend/migrations/2026-08-25_ord_mirror_v2.sql, app/ord/importer.py) — договор не заводится
+    # импортом, только помечается, когда находится по номеру (со сведением кириллицы/латиницы) или по ИНН контрагента.
+    ord_contract_id = Column(String, nullable=True)  # id договора/ДС в ОРД; уникален среди непустых (ux_contracts_ord_contract)
+    # Контур, выдавший ord_contract_id (demo|prod). Пусто — идентификатора ещё нет.
+    ord_env = Column(String(8))
+    ord_kind = Column(String, nullable=True)  # 'final' доходный (заказчик платит нам) | 'outer' расходный (платим мы площадке)
+    ord_status = Column(String, nullable=True)  # статус регистрации в ЕРИР на момент последней сверки
+    ord_synced_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
 class Operation(Base):

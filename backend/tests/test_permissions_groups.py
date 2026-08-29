@@ -6,7 +6,8 @@
 """
 from app.permissions import SECTIONS
 
-CONTOURS = {"Финансы", "Продажи", "Аккаунты", "Паблишеры", "Справочники", "Ядро"}
+CONTOURS = {"Финансы", "Продажи", "Аккаунты", "Паблишеры", "Траффики",
+            "Справочники", "Ядро"}
 
 EXPECTED_KEYS = {
     "dashboard", "pl", "balance", "planfact", "receivables",
@@ -15,12 +16,23 @@ EXPECTED_KEYS = {
     "sales_dashboard", "sales_registry", "sales_analytics", "year_plan",
     # Добавлен 2026-08-17 вместе с дашбордом аккаунта (очередь «Что делать»).
     "accounts_dashboard",
+    # Добавлены 2026-08-25 вместе с обвязкой ОРД. `ord` — зеркало справочников,
+    # `ord_submit` отделён потому, что запись в ЕРИР необратима: маркер, ушедший
+    # в реестр, не отменяется нажатием «отмена».
+    "ord", "ord_submit",
+    # Добавлен 2026-08-26 вместе с модулем креативов (сбор запуска). Выпуск ЕРИД остался
+    # под `ord_submit`: за одним правом — одна необратимость.
+    "creatives",
     "media_plans", "media_plans_editor",
     "operations", "import",
     "counterparties", "contracts", "dir_advertisers", "dir_agencies", "dir_publishers",
     # Добавлен 2026-08-20: экран «Заполнение» отделён от реестра площадок (только view).
     "dir_publishers_bulk",
+    # Добавлен 2026-08-28 вместе с контуром кабинета паблишера: учётки внешних лиц.
+    "dir_publishers_cabinets",
     "bx_reconcile",
+    # Добавлен 2026-08-28 вместе с контуром «Траффики»: очередь проверки материала.
+    "traffic_queue",
     "settings_balances", "settings_articles", "settings_pipelines",
     "settings_services", "settings_field_audit", "settings_audit",
     # Добавлен 2026-08-16 вместе с разделом «Бэклог отладки» (routers/backlog.py).

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useLayoutEffect, Fragment } from 'react'
 import { createPortal } from 'react-dom'
+import { overlayClose } from '@/lib/overlay'
 
 // Общий набор для v2-таблиц реестра (/sales/deals) и дашборда (/sales/dashboard):
 // шрифты, цвета слоёв, конфиг фильтров, компактный мультиселект и иконка-кнопка.
@@ -21,7 +22,7 @@ export const Z = { base: 1, sticky: 20, dropdown: 3000, overlay: 10000, toast: 2
 // клик по содержимому закрывал бы окно.
 export function Modal({ title, summary, footer, width = 760, onClose, children }) {
   return (
-    <div onClick={e => { if (e.target === e.currentTarget) onClose?.() }}
+    <div {...overlayClose(onClose)}
       style={{
         position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(28,36,51,.32)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
@@ -386,3 +387,17 @@ const sk = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinec
 export const DocIcon = () => <svg width="17" height="17" viewBox="0 0 24 24" style={{ ...sk, stroke: 'var(--text-faint)', flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
 export const DownloadIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" style={sk}><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M4 21h16" /></svg>
 export const EditIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" style={sk}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
+
+// Значение, открывающее ValuePopover: выглядит как ЗНАЧЕНИЕ, а не как поле ввода —
+// текст плюс пунктирная рамка. Так в проекте сделан выбор из накопительных списков
+// (бренд в реестре сделок, вид паблишера, должность контакта).
+// Локальная копия осталась в components/publishers/PublisherCard.jsx — это долг на
+// миграцию, а не второй канон.
+export const PickValue = ({ value, placeholder, onOpen, size = 16 }) => (
+  <span onClick={onOpen} title="Выбрать из списка"
+    style={{ fontSize: size, cursor: 'pointer', padding: '5px 8px', borderRadius: 8,
+      border: '1px dashed var(--border-card)', display: 'inline-block',
+      color: value ? 'var(--text-primary)' : 'var(--text-faint)' }}>
+    {value || placeholder}
+  </span>
+)

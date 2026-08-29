@@ -550,11 +550,18 @@ def refresh_deals(payload: RefreshIn, db: Session = Depends(get_db),
 
     by_line: Dict[int, Dict[str, list]] = {}
     total = 0
+    stages = _stage_index(db)
     for deal, layer in rows:
         m = str(deal.plan_month)
         closed = 1 if layer == FACT_LAYER else 0
+        # Четвёртый элемент — срыв. Отдельно от `closed`, а не третьим его значением:
+        # экран читает `closed` как булево, и «−1» или «2» посчиталось бы фактом, раздув
+        # выручку. Провалённая сделка обязана быть ВИДНА (иначе пустая ячейка приглашает
+        # пересобрать её заново и потерять причину), но не считаться ни фактом, ни бронью.
+        st = stages.get(deal.our_stage_id) if deal.our_stage_id else None
+        lost = 1 if (st is not None and getattr(st, "is_lost", False)) else 0
         by_line.setdefault(deal.year_plan_line_id, {}).setdefault(m, []).append(
-            [deal.code or deal.bitrix_id, round(deal.amount or 0, 2), closed])
+            [deal.code or deal.bitrix_id, round(deal.amount or 0, 2), closed, lost])
         total += 1
 
     matched = []
@@ -612,6 +619,40 @@ def _is_locked(line: SalesYearPlanLine, m: int) -> bool:
     """Замок месяца = полная заморозка: конвейер не создаёт и не пересобирает сделки
     этого месяца, а /match-deals не перетирает его пины. Правки в обе стороны стоят."""
     return bool((line.locks or {}).get(str(m)))
+
+
+def _stage_index(db: Session) -> dict:
+    return {st.id: st for st in db.query(SalesStage).all()}
+
+
+def _deal_frozen(deal, stages: dict) -> Optional[str]:
+    """Дошедшая сделка — безусловный мастер: причина заморозки или None.
+
+    Правило владельца 27.08.2026. Как только сделка ушла со стадии планирования, план
+    перестаёт быть её источником: реквизиты, суммы и медиаплан правились уже под живое
+    размещение, и повторный прогон конвейера затёр бы эту работу молча — вместе с
+    медиапланом, который он удаляет и пересобирает.
+
+    Заморозка ВЫЧИСЛЯЕТСЯ из стадии, а не хранится в `locks`. Причин две, обе замерены:
+      · замок висит на паре «строка × месяц», а в пяти ячейках из тринадцати лежит по ДВЕ
+        сделки — заморозив месяц, остановили бы и ту, что ещё плановая;
+      · `locks` — ручной переключатель владельца. Проставленный автоматом, он выглядит
+        как чужое действие, а снятый снова открывает сделку в работе под перезапись,
+        то есть защита оказалась бы выключаемой кнопкой, которая значит другое.
+
+    Провал — тоже заморозка: пустая ячейка приглашает пересобрать её заново и потерять
+    факт срыва вместе с причиной.
+    """
+    st = stages.get(deal.our_stage_id) if deal.our_stage_id else None
+    if st is None:
+        return None
+    if getattr(st, "is_lost", False):
+        return "сделка не случилась"
+    if st.money_layer in ("реализуемые", "фактические"):
+        return "в работе"
+    if getattr(st, "is_terminal", False):
+        return "сделка закрыта"
+    return None
 
 
 def _season_k(line: SalesYearPlanLine, m: int) -> float:
@@ -774,10 +815,12 @@ def create_deals_preview(payload: ConveyorIn, db: Session = Depends(get_db),
     """Диф перед созданием: что будет создано (new) и что изменится у ранее созданных (changed)."""
     eff_rep, _ = _resolve_rep(db, current_user, payload.rep_id)
     if eff_rep is None or eff_rep < 0:
-        return {"new": [], "changed": [], "unchanged": 0}
+        return {"new": [], "changed": [], "unchanged": 0, "in_work": []}
     lines = _target_lines(db, eff_rep, payload.year, payload.advertiser_id, payload.line_id)
     brand_names = {b.id: b.name for b in db.query(SalesBrand).all()}
     new_items, changed, unchanged, blocked, locked = [], [], 0, [], []
+    in_work = []                      # дошедшие сделки: их конвейер не трогает
+    stages = _stage_index(db)
     for line in lines:
         if not line.brand_id:
             continue
@@ -803,10 +846,18 @@ def create_deals_preview(payload: ConveyorIn, db: Session = Depends(get_db),
                                     func.coalesce(SalesDeal.plan_deal_idx, 0) == idx).first())
                 if not existing:
                     new_items.append(base)
-                else:   # уже создана — перегенерируем (название/метка/МП) при повторном запуске
-                    changed.append({**base, "deal_id": existing.id, "old_amount": round(existing.amount or 0, 2)})
+                else:
+                    # Дошедшая сделка — безусловный мастер: показываем отдельно, а не в
+                    # «изменится». Иначе человек жмёт «создать», ожидая пересборки.
+                    why = _deal_frozen(existing, stages)
+                    if why:
+                        in_work.append({**base, "deal_id": existing.id,
+                                        "code": existing.code, "reason": why})
+                    else:   # перегенерируем (название/метка/МП) при повторном запуске
+                        changed.append({**base, "deal_id": existing.id,
+                                        "old_amount": round(existing.amount or 0, 2)})
     return {"new": new_items, "changed": changed, "unchanged": unchanged,
-            "blocked": blocked, "locked": locked}
+            "blocked": blocked, "locked": locked, "in_work": in_work}
 
 
 @router.post("/create-deals")
@@ -835,6 +886,8 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
     stage_id = first.id if first else None
 
     created = updated = blocked = frozen = 0
+    in_work = []                      # дошедшие сделки, пропущенные конвейером
+    stages = _stage_index(db)
     for line in lines:
         if not line.brand_id:
             continue
@@ -866,9 +919,26 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
                                     SalesDeal.plan_month == m,
                                     func.coalesce(SalesDeal.plan_deal_idx, 0) == idx).first())
                 if existing:
+                    # Дошедшая сделка — безусловный мастер (владелец, 27.08.2026): её
+                    # реквизиты и медиаплан правились уже под живое размещение, а ветка
+                    # ниже переписывает всё и УДАЛЯЕТ медиапланы. Пропускаем и называем.
+                    why = _deal_frozen(existing, stages)
+                    if why:
+                        in_work.append({"deal_id": existing.id, "code": existing.code,
+                                        "brand": brand_names.get(line.brand_id),
+                                        "month": m, "reason": why})
+                        continue
                     # повторный запуск всегда пересобирает сделку и МП под текущий план/бриф
                     existing.amount = net; existing.amount_with_vat = gross
                     existing.title = title; existing.product = product
+                    # Рекламодатель и бренд обязаны переписываться вместе с названием.
+                    # Их тут не было, и это дало сделку, которая называется одним, а
+                    # ссылается на другое: строку плана переназначили с BEIERSDORF на
+                    # BINNO, повторный прогон переписал заголовок на «BINNO · Аккерслим»,
+                    # а advertiser_id/brand_id остались от BEIERSDORF. В карточке и
+                    # реестре видно имя из ссылки — то есть чужого рекламодателя.
+                    existing.advertiser_id = line.advertiser_id
+                    existing.brand_id = line.brand_id
                     existing.agency_id = b.get("agency_id"); existing.payer_counterparty_id = b.get("payer_counterparty_id")
                     _sr = _rep(b.get("sales_rep_id"))
                     if _sr:
@@ -911,7 +981,8 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
     log_action(db, current_user, "year_plan_create_deals", "year_plan", payload.year,
                f"сейлз {eff_rep}: создано {created}, обновлено {updated}, "
                f"без брифа {blocked}, заморожено замком {frozen}")
-    return {"created": created, "updated": updated, "blocked": blocked, "frozen": frozen}
+    return {"created": created, "updated": updated, "blocked": blocked,
+            "frozen": frozen, "in_work": in_work}
 
 
 # ── сводка по всем сейлзам (только мастер) ───────────────────────────────

@@ -6,7 +6,10 @@
  * списка экранов: добавление раздела делается правкой nav.data.json и ничего больше.
  */
 import React, { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useRouter } from 'next/router'
+// Уровень выпадашек из общей шкалы `Z` кита: одна лестница на весь проект.
+const Z_DROPDOWN = 3000
 import axios from 'axios'
 import { getPermissions, can } from '@/lib/auth'
 import { allowedSections, allowedItems, findByPath, entryHref, firstAllowedHref, resolveLegacy } from '@/lib/nav'
@@ -254,6 +257,18 @@ export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGea
      align: 'right' — панель прижимается к правому краю, иначе уезжает за окно. */
   const Section = ({ s, variant = 'tab', align = 'left' }) => {
     const isOpen = hover === s.key
+    /* Панель уходит В ПОРТАЛ, к body. Внутри шапки она жила в её стопке (`zIndex: 40`)
+       и оказывалась ПОД модалками карточки сделки (60 и 300): курсор попадал на
+       перекрывающий слой, наведение с раздела слетало, и меню мигало. Портал ставит её
+       поверх содержимого страницы и по-прежнему ниже модальных подложек (10000) —
+       окно должно накрывать меню, а карточка нет.
+       Координаты замеряются при открытии: `position: fixed` считает от окна. */
+    const wrapRef = useRef(null)
+    const [rect, setRect] = useState(null)
+    useEffect(() => {
+      if (isOpen && wrapRef.current) setRect(wrapRef.current.getBoundingClientRect())
+      else setRect(null)
+    }, [isOpen])
     /* Активность — по ключу. Индексы сравнивать нельзя: строка контуров отфильтрована,
        а если экран вне карты (active === null) — не активен никто. */
     const isCurrent = s.key === active?.section?.key
@@ -264,6 +279,7 @@ export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGea
          фокус открывает панель, Escape закрывает и возвращает фокус на триггер,
          уход фокуса за пределы раздела тоже закрывает. */
       <span
+        ref={wrapRef}
         onMouseEnter={() => open(s.key)} onMouseLeave={close}
         onFocus={() => open(s.key)}
         onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) closeNow() }}
@@ -291,11 +307,18 @@ export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGea
           <span style={{ fontSize: 9, color: isCurrent ? T.accentSoft : T.t4 }}>▾</span>
         </button>
 
-        {isOpen && (
-          <span style={{
-            position: 'absolute', top: '100%', [align]: 0, zIndex: 40, minWidth: 212, paddingTop: 6,
-            display: 'flex', flexDirection: 'column', animation: `popIn .18s ${T.ease} both`,
-          }}>
+        {isOpen && rect && createPortal(
+          <span
+            /* События портала всплывают по РЕАКТ-дереву, а не по DOM: панель остаётся
+               ребёнком того же span, и наведение на неё не считается уходом с раздела. */
+            onMouseEnter={() => open(s.key)} onMouseLeave={close}
+            style={{
+              position: 'fixed', top: rect.bottom, minWidth: 212, paddingTop: 6,
+              ...(align === 'right' ? { right: Math.max(8, window.innerWidth - rect.right) }
+                : { left: rect.left }),
+              zIndex: Z_DROPDOWN,
+              display: 'flex', flexDirection: 'column', animation: `popIn .18s ${T.ease} both`,
+            }}>
             <span style={{
               background: T.card, border: `1px solid ${T.border}`, boxShadow: T.pop, borderRadius: 14,
               padding: 7, display: 'flex', flexDirection: 'column',
@@ -315,8 +338,8 @@ export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGea
                 )
               })}
             </span>
-          </span>
-        )}
+          </span>,
+          document.body)}
       </span>
     )
   }

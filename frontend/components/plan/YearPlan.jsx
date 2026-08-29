@@ -5,13 +5,17 @@
  *
  * Хранит id (advertiser_id/brand_id/service_id), имена только для отображения.
  * Карты sums/locks/products/deals ключуются индексом месяца (0..11).
- * Факт/бронь — статика из поля deals: [[bx_id, amount, closed(0|1)], ...] по месяцу,
+ * Факт/бронь — статика из поля deals: [[код, сумма, closed(0|1), lost(0|1)], ...]
+ * по месяцу. Четвёртый элемент появился 27.08.2026: провалённая сделка остаётся
+ * видимой в ячейке, но не считается ни фактом, ни бронью. У старых пинов его нет —
+ * undefined читается как «не провалена», поэтому доливка данных не нужна.
  * заполняется по кнопке «Обновить данные о сделках» (проп onMatch).
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { PortalPopover } from '../salesTableKit';
 import BrandBrief from './BrandBrief';
 import { DownloadOverlay } from '../LogoLoader';
+import { overlayClose } from '@/lib/overlay'
 
 /* ── токены ─────────────────────────────────────────────────────────── */
 export const T = {
@@ -26,6 +30,8 @@ export const T = {
   addon: '#8A5CD1', addonTint: '#F1EAFB', addonBorder: '#E0D2F5',
   booked: '#C3CCEA', bookedText: '#8E9AC0', bookedGrey: '#8B93A6',
   warning: '#E89020', danger: '#C93A3E',
+  // Подложка предупреждения: пара к warning, как lockBg к lockBorder.
+  warningTint: '#FBF0DE', warningFg: '#B26A0C',
   shadow: '0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04)',
   pop: '0 8px 28px rgba(28,36,51,.14)',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
@@ -94,8 +100,8 @@ export const monthValue = (b, i) => {
   const free = b.on.reduce((a, v, k) => a + (v && fixedVal(b, k) == null ? 1 : 0), 0);
   return free > 0 ? Math.max(0, b.plan - fixedSum) / free : 0;
 };
-export const factOf = (b, i) => (b.deals[i] || []).reduce((a, d) => a + (d[2] ? d[1] : 0), 0);
-export const bookedOf = (b, i) => (b.deals[i] || []).reduce((a, d) => a + (d[2] ? 0 : d[1]), 0);
+export const factOf = (b, i) => (b.deals[i] || []).reduce((a, d) => a + (d[2] && !d[3] ? d[1] : 0), 0);
+export const bookedOf = (b, i) => (b.deals[i] || []).reduce((a, d) => a + (d[2] || d[3] ? 0 : d[1]), 0);
 const sumMonths = (b, fn) => MONTHS.reduce((a, _, i) => a + fn(b, i), 0);
 
 /* ── сетки ──────────────────────────────────────────────────────────── */
@@ -389,7 +395,7 @@ export default function YearPlan({
 
       {/* конвейер: модалка подтверждения / результата */}
       {conv && !conv.busy && (
-        <div onClick={() => setConv(null)} style={{ position: 'fixed', inset: 0, zIndex: 9500, background: 'rgba(28,36,51,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+        <div {...overlayClose(() => setConv(null))} style={{ position: 'fixed', inset: 0, zIndex: 9500, background: 'rgba(28,36,51,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
           <div onClick={stop} style={{ width: 460, maxWidth: '100%', maxHeight: '80vh', overflowY: 'auto', background: T.card, borderRadius: 16, boxShadow: T.pop, padding: '22px 22px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
             <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.01em' }}>Создать сделки · {conv.label}</span>
             {conv.loading && <span style={{ fontSize: 13, color: T.t3 }}>Готовим предпросмотр…</span>}
@@ -397,7 +403,7 @@ export default function YearPlan({
             {conv.done && (
               <>
                 <span style={{ fontSize: 13.5, color: T.t2, lineHeight: 1.5 }}>
-                  Готово: создано <b style={{ color: T.fact }}>{conv.done.created}</b>, обновлено <b style={{ color: T.warning }}>{conv.done.updated}</b>{conv.done.blocked ? <>, без брифа пропущено <b style={{ color: T.danger }}>{conv.done.blocked}</b></> : null}{conv.done.frozen ? <>, под замком пропущено <b style={{ color: T.accent }}>{conv.done.frozen}</b></> : null}.
+                  Готово: создано <b style={{ color: T.fact }}>{conv.done.created}</b>, обновлено <b style={{ color: T.warning }}>{conv.done.updated}</b>{conv.done.blocked ? <>, без брифа пропущено <b style={{ color: T.danger }}>{conv.done.blocked}</b></> : null}{conv.done.frozen ? <>, под замком пропущено <b style={{ color: T.accent }}>{conv.done.frozen}</b></> : null}{conv.done.in_work?.length ? <>, в работе пропущено <b style={{ color: T.warning }}>{conv.done.in_work.length}</b></> : null}.
                 </span>
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <span onClick={() => setConv(null)} style={{ padding: '9px 18px', borderRadius: 10, background: T.accent, color: '#FFF', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Готово</span>
@@ -405,7 +411,7 @@ export default function YearPlan({
               </>
             )}
             {conv.preview && !conv.done && !conv.error && (() => {
-              const { new: neu = [], changed = [], unchanged = 0, blocked = [], locked: frozen = [] } = conv.preview;
+              const { new: neu = [], changed = [], unchanged = 0, blocked = [], locked: frozen = [], in_work: inWork = [] } = conv.preview;
               const nothing = neu.length === 0 && changed.length === 0;
               return (
                 <>
@@ -416,7 +422,25 @@ export default function YearPlan({
                     <span>без изменений: <b style={{ color: T.t2 }}>{unchanged}</b></span>
                     {blocked.length > 0 && <span>без брифа: <b style={{ color: T.danger }}>{blocked.length}</b></span>}
                     {frozen.length > 0 && <span>заморожено замком: <b style={{ color: T.accent }}>{frozen.length}</b></span>}
+                    {inWork.length > 0 && <span>в работе: <b style={{ color: T.warning }}>{inWork.length}</b></span>}
                   </div>
+                  {/* Дошедшая сделка — безусловный мастер: план ей больше не хозяин.
+                      Список именной: «есть сделки в работе» без имён не подсказывает,
+                      какие ячейки останутся прежними и почему. */}
+                  {inWork.length > 0 && (
+                    <div style={{ border: `1px solid ${T.warning}`, background: T.warningTint, borderRadius: 10, padding: '10px 12px', maxHeight: 160, overflowY: 'auto' }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: T.warningFg || T.warning }}>
+                        Есть сделки в работе — по ним изменения невозможны:
+                      </span>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                        {inWork.map((c, k) => (
+                          <span key={k} style={{ fontFamily: T.mono, fontSize: 11, color: T.t2, background: T.card, border: `1px solid ${T.warning}`, borderRadius: 6, padding: '2px 7px' }}>
+                            {c.code ? `${c.code} · ` : ''}{c.brand} · {MONTHS[c.month]} · {c.reason}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {frozen.length > 0 && (
                     <div style={{ border: `1px solid ${T.lockBorder}`, background: T.lockBg, borderRadius: 10, padding: '10px 12px', maxHeight: 140, overflowY: 'auto' }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: T.accentHover }}>Месяцы под замком — не трогаем (ни создания, ни обновления):</span>
@@ -469,7 +493,7 @@ export default function YearPlan({
       )}
 
       {pendingDel && (
-        <div onClick={() => !pwBusy && setPendingDel(null)}
+        <div {...overlayClose(() => !pwBusy && setPendingDel(null))}
           style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(28,36,51,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
           <div onClick={stop} style={{ width: 400, maxWidth: '100%', background: T.card, borderRadius: 16, boxShadow: T.pop, padding: '22px 22px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
             <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.01em' }}>Удалить из плана</span>
@@ -791,8 +815,8 @@ export default function YearPlan({
                           // сводка по сметченным сделкам бренда (все месяцы)
                           const allDeals = Object.values(b.deals || {}).reduce((a, arr) => a.concat(arr), []);
                           const dCount = allDeals.length;
-                          const dFact = allDeals.reduce((a, d) => a + (d[2] ? d[1] : 0), 0);
-                          const dBooked = allDeals.reduce((a, d) => a + (d[2] ? 0 : d[1]), 0);
+                          const dFact = allDeals.reduce((a, d) => a + (d[2] && !d[3] ? d[1] : 0), 0);
+                          const dBooked = allDeals.reduce((a, d) => a + (d[2] || d[3] ? 0 : d[1]), 0);
                           const brandLocked = !!b.brand_id;   // после выбора бренд фиксируется (копия — для нового)
                           return (
                             <div key={b.id} title={overLocked ? `Услуги/суммы за год: ${num(committed)} ₽ — больше годового плана ${num(b.plan || 0)} ₽` : undefined}
@@ -876,7 +900,7 @@ export default function YearPlan({
                                     {dCount > 0 && (() => {
                                       const dKey = `dl${b.id}`;
                                       const dr = [];
-                                      Object.keys(b.deals || {}).forEach(mo => (b.deals[mo] || []).forEach(d => dr.push({ code: d[0], amount: d[1], closed: d[2], month: +mo })));
+                                      Object.keys(b.deals || {}).forEach(mo => (b.deals[mo] || []).forEach(d => dr.push({ code: d[0], amount: d[1], closed: d[2], lost: d[3], month: +mo })));
                                       dr.sort((a, z) => a.month - z.month);
                                       return (
                                         <span data-pop-root style={{ position: 'relative' }}>
@@ -891,8 +915,8 @@ export default function YearPlan({
                                                 <div key={k} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '3px 10px' }}>
                                                   <a href={`/sales/deals/${encodeURIComponent(d.code)}`} target="_blank" rel="noreferrer" onClick={stop}
                                                     style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent, textDecoration: 'none', flex: '0 0 auto' }}>{d.code}</a>
-                                                  <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T.t4, flex: '1 1 auto' }}>{MONTHS[d.month]} · {d.closed ? 'факт' : 'бронь'}</span>
-                                                  <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: d.closed ? T.factText : T.t3, flex: '0 0 auto' }}>{num(d.amount)} ₽</span>
+                                                  <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T.t4, flex: '1 1 auto' }}>{MONTHS[d.month]} · {d.lost ? 'не случилась' : d.closed ? 'факт' : 'бронь'}</span>
+                                                  <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: d.lost ? T.danger : d.closed ? T.factText : T.t3, flex: '0 0 auto' }}>{num(d.amount)} ₽</span>
                                                 </div>
                                               ))}
                                               <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px 4px', borderTop: `1px solid ${T.inner}`, marginTop: 3 }}>
@@ -937,8 +961,8 @@ export default function YearPlan({
                                       <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                                         {deals.map(d => (
                                           <a key={d[0]} href={`/sales/deals/${encodeURIComponent(d[0])}`} target="_blank" rel="noreferrer" onClick={stop}
-                                            title={`Сделка ${d[0]} · ${num(d[1])} ₽ · ${d[2] ? 'закрыта' : 'бронь'} — открыть`}
-                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '1px 4px', borderRadius: 5, background: d[2] ? T.onBg : '#F0F2F7', color: d[2] ? T.factText : T.t3, fontFamily: T.mono, fontSize: 8.5, fontWeight: 700, textDecoration: 'none' }}>
+                                            title={`Сделка ${d[0]} · ${num(d[1])} ₽ · ${d[3] ? 'не случилась' : d[2] ? 'закрыта' : 'бронь'} — открыть`}
+                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '1px 4px', borderRadius: 5, background: d[3] ? '#FCEBEC' : d[2] ? T.onBg : '#F0F2F7', color: d[3] ? T.danger : d[2] ? T.factText : T.t3, fontFamily: T.mono, fontSize: 8.5, fontWeight: 700, textDecoration: 'none' }}>
                                             {d[0]} · {kk(d[1])}
                                           </a>
                                         ))}

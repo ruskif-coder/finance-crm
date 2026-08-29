@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import api, { auth } from '../lib/api'
 import useIsMobile from './mobile/useIsMobile'
+import { overlayClose } from '@/lib/overlay'
 
 const VAT = 1.22
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
@@ -242,7 +243,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
 
   // ── Десктоп: центрированная модалка ──
   return (
-    <div onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    <div {...overlayClose(onClose)}
       style={{ position: 'fixed', inset: 0, zIndex: 55, background: 'rgba(28,36,51,.32)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40, overflow: 'auto', fontFamily: UI }}>
       <div style={{ width: 1080, maxWidth: '100%', margin: 'auto', background: 'var(--bg-card)', borderRadius: 18, overflow: 'visible', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)', animation: 'riseIn .28s cubic-bezier(0.22,1,0.36,1) both' }}>
         <style>{`@keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}`}</style>

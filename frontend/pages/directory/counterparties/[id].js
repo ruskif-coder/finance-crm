@@ -9,6 +9,7 @@ const CounterpartyCardMobile = dynamic(() => import('@/components/mobile/Counter
 import CounterpartyCardDesktop, { T as CT } from '@/components/counterparty/CounterpartyCard'
 import { makeApi as api } from '@/lib/http'
 import { bankColor } from '@/lib/salesFormat'
+import { overlayClose } from '@/lib/overlay'
 
 const fmt = (n) => {
   if (!n && n !== 0) return '—'
@@ -401,11 +402,71 @@ export default function CounterpartyCard() {
         <CounterpartyCardDesktop data={data} canEdit={canEdit} copied={copied}
           onBack={() => router.push('/directory/counterparties')}
           onEdit={() => { setEditMode(true); setSaveErr('') }}
+          onEditTerms={startDefEdit}
           onCopyRequisites={copyRequisites}
           onOpenContracts={() => router.push('/directory/contracts')}
           opsStatus={opsStatus} opsSortCol={sortCol} opsSortDir={sortDir} opsLoading={opsLoading}
           onOpsStatus={handleStatus} onOpsSortCol={handleSortCol} onOpsSortDir={handleSortDir}
           onOpsMore={() => handlePage(opsPage + 1)} />
+        {/* Условия по умолчанию. startDefEdit/saveDefaults были написаны, а формы к
+            ним не существовало: состояние defEdit не рисовалось нигде, и карандаш в
+            карточке вёл в никуда. Ставку НДС задать было негде. */}
+        {defEdit && defData && (() => {
+          const setD = (k, v) => setDefData(x => ({ ...x, [k]: v }))
+          const inp = { width: '100%', boxSizing: 'border-box', border: `1px solid ${CT.border}`, borderRadius: 10, padding: '9px 11px', fontSize: 13, fontFamily: CT.sans, background: CT.card, color: CT.t1, outline: 'none' }
+          const lbl = { fontSize: 11, color: CT.t3, marginBottom: 3 }
+          const opts = (type) => (articles || []).filter(a => a.type === type)
+          return (
+            <div {...overlayClose(() => setDefEdit(false))} style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(28,36,51,.4)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '40px 20px', fontFamily: CT.sans }}>
+              <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 520, background: CT.card, borderRadius: 18, boxShadow: CT.shadow }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 24px', borderBottom: `1px solid ${CT.border}` }}>
+                  <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.02em', color: CT.t1 }}>Условия по умолчанию</span>
+                  <button onClick={() => setDefEdit(false)} style={{ marginLeft: 'auto', width: 32, height: 32, borderRadius: 9, border: `1px solid ${CT.border}`, background: CT.card, color: CT.t2, cursor: 'pointer', fontSize: 16 }}>✕</button>
+                </div>
+                <div style={{ padding: '18px 24px' }}>
+                  {/* Ставки подставляются в форму операций при вводе суммы; у нашего
+                      юрлица «НДС приход» задаёт вдобавок ставку по нашим услугам в
+                      карточке сделки. Пусто — не задана; ноль означал бы «без НДС». */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={lbl}>НДС приход, %</div>
+                      <input value={defData.vat_rate_income} inputMode="decimal" placeholder="не задана"
+                        onChange={e => setD('vat_rate_income', e.target.value.replace(',', '.'))} style={inp} />
+                    </div>
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={lbl}>НДС расход, %</div>
+                      <input value={defData.vat_rate_expense} inputMode="decimal" placeholder="не задана"
+                        onChange={e => setD('vat_rate_expense', e.target.value.replace(',', '.'))} style={inp} />
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={lbl}>Статья по умолчанию — приход</div>
+                    <select value={defData.default_article_income_id} style={inp}
+                      onChange={e => setD('default_article_income_id', e.target.value)}>
+                      <option value="">— не выбрана —</option>
+                      {opts('income').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={lbl}>Статья по умолчанию — расход</div>
+                    <select value={defData.default_article_expense_id} style={inp}
+                      onChange={e => setD('default_article_expense_id', e.target.value)}>
+                      <option value="">— не выбрана —</option>
+                      {opts('expense').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '0 24px 20px' }}>
+                  <button onClick={() => setDefEdit(false)} style={{ height: 36, padding: '0 16px', borderRadius: 10, border: `1px solid ${CT.border}`, background: CT.card, color: CT.t2, cursor: 'pointer', fontSize: 13 }}>Отмена</button>
+                  <button onClick={saveDefaults} disabled={defSaving} style={{ height: 36, padding: '0 18px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontWeight: 700, cursor: defSaving ? 'default' : 'pointer', fontSize: 13, opacity: defSaving ? 0.6 : 1 }}>
+                    {defSaving ? 'Сохраняю…' : 'Сохранить'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
+
         {editMode && editData && (() => {
           const setF = (k, v) => setEditData(d => ({ ...d, [k]: v }))
           const setBank = (i, k, v) => setEditData(d => ({ ...d, bank_accounts: d.bank_accounts.map((b, j) => j === i ? { ...b, [k]: v } : b) }))
@@ -420,7 +481,7 @@ export default function CounterpartyCard() {
             </div>
           )
           return (
-            <div onClick={() => { setEditMode(false); setSaveErr('') }} style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(28,36,51,.4)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '40px 20px', fontFamily: CT.sans }}>
+            <div {...overlayClose(() => { setEditMode(false); setSaveErr('') })} style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(28,36,51,.4)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '40px 20px', fontFamily: CT.sans }}>
               <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 620, background: CT.card, borderRadius: 18, boxShadow: CT.shadow }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 24px', borderBottom: `1px solid ${CT.border}` }}>
                   <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.02em', color: CT.t1 }}>Редактирование реквизитов</span>

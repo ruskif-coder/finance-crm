@@ -13,6 +13,8 @@
 Маршруты без параметра объявлены ДО маршрутов с {id} — иначе, например,
 /services/registry перехватывается как service_id.
 """
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -702,7 +704,11 @@ def list_advertisers(only_active: bool = True, db: Session = Depends(get_db),
     brands = db.query(SalesBrand).filter(SalesBrand.is_active.is_(True)).order_by(SalesBrand.name).all()
     by_adv = {}
     for b in brands:
-        by_adv.setdefault(b.advertiser_id, []).append({"id": b.id, "name": b.name})
+        by_adv.setdefault(b.advertiser_id, []).append(
+            # Код ККТУ отдаётся вместе с именем: экран показывает его прямо на плашке
+            # бренда — это состояние готовности к выпуску ЕРИД, а не спрятанная настройка.
+            {"id": b.id, "name": b.name, "kktu_code": b.kktu_code,
+             "ad_object_description": b.ad_object_description})
 
     # Число сделок на рекламодателя — одним GROUP BY, не запросом на каждого
     deal_counts = dict(db.query(SalesDeal.advertiser_id, func.count(SalesDeal.id))
@@ -1601,7 +1607,11 @@ def list_brands(advertiser_id: Optional[int] = None, only_active: bool = True,
         q = q.filter(SalesBrand.is_active.is_(True))
     rows = q.order_by(SalesBrand.name).all()
     return {"items": [{"id": b.id, "name": b.name, "advertiser_id": b.advertiser_id,
-                       "is_active": b.is_active} for b in rows]}
+                       "is_active": b.is_active,
+                       # Поля маркировки: подставляются в комплект креативов при выпуске
+                       # ЕРИД, поэтому видны там же, где выбирается бренд.
+                       "kktu_code": b.kktu_code,
+                       "ad_object_description": b.ad_object_description} for b in rows]}
 
 
 @router.post("/brands")
@@ -1621,6 +1631,101 @@ def create_brand(data: BrandIn, db: Session = Depends(get_db),
     db.refresh(brand)
     log_action(db, current_user, "create_sales_brand", "sales_brand", brand.id, name)
     return {"id": brand.id, "message": "Бренд создан"}
+
+
+class BrandMarkingIn(BaseModel):
+    """Поля маркировки бренда. Оба необязательны: заполняются по мере надобности."""
+    kktu_code: Optional[str] = None
+    ad_object_description: Optional[str] = None
+
+
+# Формат кода ККТУ: ровно третий уровень, три группы цифр через точку. Вынесен в
+# константу, чтобы проверка бренда и прибор, сверяющий её с реальным справочником ОРД,
+# читали ОДНУ строку: две копии разошлись бы молча, и разошлись бы в пользу отказа
+# реестра на этапе выпуска маркера.
+KKTU_CODE_RE = r"\d{1,3}(\.\d{1,3}){2}"
+
+
+@router.get("/kktu")
+def list_kktu(q: Optional[str] = None, db: Session = Depends(get_db),
+              current_user: User = Depends(
+                  require_any_permission(("sales_registry", "dir_advertisers"), "view"))):
+    """Справочник ККТУ для выбора кода на карточке бренда.
+
+    Живёт здесь, а не в роутере ОРД, потому что гейт должен совпадать с гейтом того
+    экрана, который справочник спрашивает: заполнение маркировки бренда — работа
+    справочников, и требовать ради неё право на обвязку ОРД значило бы выдавать доступ
+    к необратимому ради безобидного.
+
+    Отдаём ТОЛЬКО третий уровень: креативу нужен ровно он, а первые два в списке выбора
+    выглядели бы допустимыми вариантами, каковыми не являются. Верхние уровни приходят
+    отдельным полем `path` — как подпись, откуда код, а не как то, что можно выбрать.
+
+    `synced=false` — не ошибка, а «справочник ещё не заливали»: экран в этом случае
+    оставляет ручной ввод, иначе незалитое зеркало отняло бы единственный рабочий путь.
+    """
+    from app.ord.models import OrdKktu
+
+    names = {code: name for code, name in db.query(OrdKktu.code, OrdKktu.name).all()}
+    rows = (db.query(OrdKktu).filter(OrdKktu.level == 3)
+              .order_by(OrdKktu.code).all())
+    if not names:
+        return {"synced": False, "total": 0, "shown": 0, "items": []}
+
+    text = (q or "").strip().lower()
+    if text:
+        rows = [r for r in rows
+                if text in r.code.lower() or text in (r.name or "").lower()
+                or text in (names.get(r.parent_code or "") or "").lower()]
+
+    LIMIT = 60
+    items = [{"code": r.code, "name": r.name,
+              # Путь — подпись под кодом: «12.2 Лекарства» рядом с «12.2.2 Лекарственные
+              # препараты». Без него пять похожих названий фармы неразличимы.
+              "path": names.get(r.parent_code or "") or ""}
+             for r in rows[:LIMIT]]
+    return {"synced": True, "total": len(rows), "shown": len(items), "items": items}
+
+
+@router.put("/brands/{brand_id}/marking")
+def set_brand_marking(brand_id: int, data: BrandMarkingIn, db: Session = Depends(get_db),
+                      current_user: User = Depends(require_any_permission(("sales_registry", "dir_advertisers"), "edit"))):
+    """Код ККТУ и описание объекта рекламирования — на бренде, а не на комплекте.
+
+    Это свойства товара, а не размещения: у одного бренда не меняются от кампании к
+    кампании. Заполняются один раз и подставляются в каждый комплект креативов, где их
+    можно переопределить.
+
+    Проверки здесь, а не «пусть ОРД скажет»: отказ реестра приходит на этапе выпуска
+    маркера, когда человек уже собрал комплект и ждёт ЕРИД, — а причина в поле, которое
+    заполняли неделю назад в другом экране.
+    """
+    brand = db.query(SalesBrand).filter(SalesBrand.id == brand_id).first()
+    if not brand:
+        raise HTTPException(status_code=404, detail="Бренд не найден")
+    fields = data.dict(exclude_unset=True)
+
+    if "kktu_code" in fields:
+        code = (fields["kktu_code"] or "").strip()
+        # Реестр принимает только коды третьего уровня вида «X.X.X»; для обычных
+        # креативов ровно один (несколько допускаются лишь для кобрендинга).
+        if code and not re.fullmatch(KKTU_CODE_RE, code):
+            raise HTTPException(status_code=400,
+                                detail="Код ККТУ: только третий уровень, вида «12.34.56»")
+        brand.kktu_code = code or None
+
+    if "ad_object_description" in fields:
+        text = (fields["ad_object_description"] or "").strip()
+        # 1–1000 знаков, без пробелов и переносов по краям — требование схемы ОРД.
+        if len(text) > 1000:
+            raise HTTPException(status_code=400,
+                                detail="Описание объекта рекламирования: не длиннее 1000 знаков")
+        brand.ad_object_description = text or None
+
+    db.commit()
+    log_action(db, current_user, "set_brand_marking", "sales_brand", brand.id, brand.name)
+    return {"id": brand.id, "kktu_code": brand.kktu_code,
+            "ad_object_description": brand.ad_object_description}
 
 
 class BrandsMove(BaseModel):

@@ -25,6 +25,7 @@ import re
 
 from app.database import get_db
 from app.models import User, Counterparty, AuditLog
+from app import own_company
 from app.permissions import require_permission, require_any_permission
 from app.audit import log_action
 from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
@@ -866,6 +867,7 @@ class DealPatch(BaseModel):
     title: Optional[str] = None
     product: Optional[str] = None
     bitrix_stage: Optional[str] = None
+    is_self_promo: Optional[bool] = None
 
 
 # Поля, доступные ручной правке. Расширять осознанно: каждое попадёт
@@ -877,6 +879,32 @@ EDITABLE_INT = ("advertiser_id", "agency_id", "brand_id", "sales_rep_id",
                 "our_stage_id")
 EDITABLE_DATE = ("period_from", "period_to")
 EDITABLE_STR = ("product", "bitrix_stage", "title")
+# Наши собственные признаки: в Битрикс не заливаются и в очередь заливки не попадают,
+# поэтому обрабатываются отдельно от EDITABLE_* и без записи в overrides.
+EDITABLE_OURS = ("is_self_promo",)
+# Наши строковые поля. Список пуст, но заведён намеренно: EDITABLE_OURS приводит значение
+# к bool, и первое же строковое поле, попавшее туда по невнимательности, молча стало бы
+# True. Посадочная страница жила здесь один день и уехала на получателя — грань оказалась
+# «сделка × площадка» (миграция 2026-08-27_target_landing_urls.sql).
+EDITABLE_OURS_STR = ()
+
+
+def _can_unset_self_promo(user) -> bool:
+    """Снять статус «самореклама» может админ и мастер АККАУНТОВ — не мастер вообще.
+
+    Правило владельца 26.08.2026, и оно уже раз было понято шире. `Role.is_master` —
+    один флаг на две рабочие группы: мастер стоит и у «Мастер Сейлз», и у «Мастер
+    аккаунт». Проверять только его — значит отдать снятие ещё и продажам, а признак
+    отвечает за маркировку, то есть за зону аккаунтов. Отсюда пара is_master +
+    staff_group, а не один флаг, как у движения сделки назад.
+    """
+    role = getattr(user, "role", None)
+    if role is None:
+        return False
+    if role.key == "admin":
+        return True
+    return (bool(getattr(role, "is_master", False))
+            and getattr(role, "staff_group", None) == "account")
 
 
 def _upsert_override(db, deal_id, field, value_int, value_text, user):
@@ -1692,6 +1720,10 @@ _DEAL_EVENT_LABELS = {
     "create_deal": "Сделка создана",
     "patch_sales_deal": "Изменение полей",
     "save_deal_brief": "Бриф обновлён",
+    "self_promo_on": "Присвоена самореклама",
+    "self_promo_off": "Снята самореклама",
+    "ord_bind_initial": "Привязан изначальный договор",
+    "ord_bind_initial_forced": "Изначальный привязан вне связей ОРД",
     "push_deal_to_bitrix": "Отправлена в Битрикс",
     "sync_deal_from_bitrix": "Синхронизирована из Битрикса",
 }
@@ -1729,6 +1761,23 @@ def deal_history(deal_id: str, db: Session = Depends(get_db),
         "at": r.created_at,          # UTC; фронт показывает в Europe/Moscow
         "details": _detail(r),
     } for r in rows]}
+
+
+def _own_company_out(db) -> Optional[dict]:
+    """Наше юрлицо для карточки сделки. Правило — общее, см. app/own_company.py."""
+    return own_company.public(db)
+
+
+@router.get("/own-company")
+def get_own_company(db: Session = Depends(get_db),
+                    current_user: User = Depends(require_permission("sales_registry", "view"))):
+    """Юрлицо, от которого оказываем услуги, и его ставка НДС.
+
+    Отдельной точкой, потому что читателей уже двое: карточка сделки получает
+    юрлицо вместе со сделкой, а конструктор медиаплана сделки может не иметь
+    вовсе — новый МП заводится и без привязки.
+    """
+    return _own_company_out(db)
 
 
 def _year_plan_of_deal(db, deal):
@@ -1772,6 +1821,7 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
     brand = db.query(SalesBrand).filter(SalesBrand.id == deal.brand_id).first() if deal.brand_id else None
     rep = db.query(SalesRep).filter(SalesRep.id == deal.sales_rep_id).first() if deal.sales_rep_id else None
     acc = db.query(SalesRep).filter(SalesRep.id == deal.account_manager_id).first() if deal.account_manager_id else None
+    traf = db.query(SalesRep).filter(SalesRep.id == deal.traffic_manager_id).first() if deal.traffic_manager_id else None
     payer = None
     if deal.payer_counterparty_id:
         cp = db.query(Counterparty).filter(Counterparty.id == deal.payer_counterparty_id).first()
@@ -1803,6 +1853,13 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         "bitrix_stage": deal.bitrix_stage,
         "sales_rep": _short_fio(rep.name) if rep else None,
         "account_manager": _short_fio(acc.name) if acc else None,
+        "traffic_manager": _short_fio(traf.name) if traf else None,
+        # Признак саморекламы: меняет правила маркировки в ОРД, поэтому виден на карточке
+        # рядом со стадией, а не спрятан в форме правки.
+        "is_self_promo": bool(deal.is_self_promo),
+        # Снять признак может только мастер аккаунт: отдаём это карточке, чтобы она
+        # рисовала замок сразу, а не узнавала о запрете из 403 после клика.
+        "can_unset_self_promo": _can_unset_self_promo(current_user),
         "amount": deal.amount,
         # amount — до НДС; gross берём сохранённый, а если его нет (старые записи) —
         # считаем по ставке, чтобы карточка не показывала пусто
@@ -1812,6 +1869,8 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         "currency": deal.currency, "files": files, "date_create": deal.date_create,
         "plan_month": deal.plan_month, "year_plan_line_id": deal.year_plan_line_id,
         "year_plan": _year_plan_of_deal(db, deal),
+        # Ставка НДС по нашим услугам — от нашего юрлица, не из константы во фронте.
+        "own_company": _own_company_out(db),
         # для бара стадий и диалога движения — тот же контракт, что в реестре
         "our_stage": stage_public(cat.by_id.get(deal.our_stage_id), cat),
         "our_next_stage": stage_public(cat.next_of(deal.our_stage_id)),
@@ -2070,6 +2129,44 @@ def patch_deal(
                 .filter(SalesDealFieldOverride.deal_id == deal_id).all()}
 
     for field, value in changes.items():
+        # Наша строка: посадочная страница уезжает в ОРД как advertiserUrls. Схема
+        # реестра принимает только http/https — проверка та же, что у ссылки на документ
+        # договора, и по той же причине: «javascript:» в поле, которое где-то отрисуется
+        # ссылкой, это XSS, а не опечатка.
+        if field in EDITABLE_OURS_STR:
+            text = (value or "").strip()
+            if text and not text.startswith(("http://", "https://")):
+                raise HTTPException(status_code=400,
+                                    detail="Ссылка должна начинаться с http:// или https://")
+            setattr(deal, field, text or None)
+            continue
+
+        # Наш собственный признак: ставим и идём дальше, в очередь на Битрикс он
+        # не попадает и синхронизацией не перезаписывается — его там просто нет.
+        if field in EDITABLE_OURS:
+            new_val = bool(value)
+            if field == "is_self_promo" and new_val != bool(deal.is_self_promo):
+                # Односторонний признак (решение владельца 26.08.2026): пометить
+                # саморекламой может любой, у кого есть право правки, а снять —
+                # только мастер. Самореклама меняет цепочку маркировки: свой тип
+                # договора в ОРД и обязательный isSelfPromotion у креатива, — то
+                # есть последствия уходят наружу, и «передумал» стоит дороже, чем
+                # «поставил». Правило и его формулировка те же, что у движения
+                # сделки назад (см. move_deal ниже) — второго правила не заводим.
+                if not new_val and not _can_unset_self_promo(current_user):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Снять статус «самореклама» может только мастер аккаунт или админ")
+                setattr(deal, field, new_val)
+                log_action(db, current_user,
+                           "self_promo_on" if new_val else "self_promo_off",
+                           entity_type="sales_deal", entity_id=deal.id,
+                           details=("Присвоен статус «самореклама»" if new_val
+                                    else "Снят статус «самореклама»"))
+                continue
+            setattr(deal, field, new_val)
+            continue
+
         if field not in EDITABLE_INT + EDITABLE_DATE + EDITABLE_STR:
             raise HTTPException(status_code=400, detail=f"Поле «{field}» не редактируется")
 

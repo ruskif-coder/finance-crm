@@ -4,6 +4,7 @@ import { CARD, Marker, rise } from './kit'
 import { T } from '../../lib/tokens'
 import BottomSheet from './BottomSheet'
 import DirectoryMobile, { FilterChip } from './DirectoryMobile'
+import { PAYMENT_TERM_CONDITIONS } from '@/lib/contractTerms'
 
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
 const fmtEndDate = (s) => {
@@ -14,7 +15,6 @@ const fmtEndDate = (s) => {
 
 const COOPERATION_FORMATS = ['Агентство КЛ', 'Агентство ПД', 'Клиент', 'Подрядчик', 'Аптека', 'Паблишер', 'Рекламная система']
 const PROLONGATION_OPTIONS = ['АВТО на год', 'По соглашению', 'Нет']
-const PAYMENT_TERM_CONDITIONS = ['С даты УПД', 'С даты АКТ', 'По периоду']
 
 // формат сотрудничества → цвет чипа
 const FMT_META = {

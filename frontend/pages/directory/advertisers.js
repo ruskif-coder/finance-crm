@@ -4,10 +4,12 @@ import api, { auth } from '@/lib/http'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '@/components/Navbar'
 import { MONO, UI, IconBtn, inp, btn, cell, headCell } from '@/components/salesTableKit'
+import { overlayClose } from '@/lib/overlay'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const AdvertisersMobile = dynamic(() => import('@/components/mobile/AdvertisersMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 import SectionTabs from '@/components/SectionTabs'
+import BrandMarkingDialog, { saveBrandMarking } from '@/components/ord/BrandMarking'
 
 
 const EMPTY = { short_name: '', name_en: '', name_ru: '', website: '', inn: '' }
@@ -75,6 +77,7 @@ export default function Advertisers() {
 
   const [editBrand, setEditBrand] = useState(null)   // { id, name } — правка имени
   const [moveBrand, setMoveBrand] = useState(null)   // { id, name } — одиночный перенос
+  const [markBrand, setMarkBrand] = useState(null)   // бренд, у которого правим маркировку
   const [moveQuery, setMoveQuery] = useState('')
   const [sel, setSel] = useState({})                 // { brandId: name } — мультивыбор
   const [bulkMove, setBulkMove] = useState(false)    // открыт поиск для пакетного переноса
@@ -508,6 +511,16 @@ export default function Advertisers() {
                               {mayEdit && <span style={{ cursor: 'pointer', color: 'var(--accent)', fontWeight: 700 }}
                                 onClick={() => { setMoveBrand({ id: b.id, name: b.name }); setMoveQuery('') }}
                                 title="Перенести к другому рекламодателю">⇄</span>}
+                              {/* Код ККТУ виден на плашке: это состояние готовности бренда
+                                  к выпуску ЕРИД, а не спрятанная настройка. */}
+                              {mayEdit && <span onClick={() => setMarkBrand(b)}
+                                title={b.kktu_code ? `ККТУ ${b.kktu_code} — маркировка бренда` : 'Маркировка не заполнена — ЕРИД не выпустить'}
+                                style={{ cursor: 'pointer', fontFamily: MONO, fontSize: 10.5,
+                                  padding: '1px 5px', borderRadius: 6,
+                                  border: b.kktu_code ? '1px solid transparent' : '1px dashed var(--border-card)',
+                                  background: b.kktu_code ? 'var(--bg-card)' : 'transparent',
+                                  color: b.kktu_code ? 'var(--text-secondary)' : 'var(--text-faint)' }}>
+                                {b.kktu_code || 'ККТУ'}</span>}
                               {mayEdit && <span style={{ cursor: 'pointer', color: 'var(--danger)', fontWeight: 700 }}
                                 onClick={() => deleteBrand(b.id, b.name)} title="Удалить бренд">×</span>}
                             </span>
@@ -693,6 +706,20 @@ export default function Advertisers() {
           </div>
         )}
       </div>
+
+      {markBrand && (
+        <BrandMarkingDialog brand={markBrand} onClose={() => setMarkBrand(null)}
+          onSave={async (payload) => {
+            const r = { data: await saveBrandMarking(markBrand.id, payload) }
+            // Обновляем бренд на месте: перезагрузка списка сбросила бы раскрытые
+            // карточки и выбранные галочки, а изменилось ровно два поля.
+            setItems(list => list.map(a => ({
+              ...a,
+              brands: (a.brands || []).map(b => b.id === markBrand.id ? { ...b, ...r.data } : b),
+            })))
+            setMarkBrand(null)
+          }} />
+      )}
     </>
   )
 }

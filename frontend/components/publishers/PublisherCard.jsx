@@ -4,6 +4,7 @@ import { MONO, UI, INTEG_TONE, STATUS_TONE, TRAFFIC_ROWS, SURFACE_CYCLE, SURFACE
   PLATFORM_LABEL, ChatBtn, ServiceChip, tgHref, fmtMoney, fmtCompact, fmtUnit,
   tzLabel, localTime } from '@/components/publishers/kit'
 import ValuePopover from '@/components/ValuePopover'
+import { overlayClose } from '@/lib/overlay'
 
 /**
  * Карточка площадки. Порт экрана «Карточка паблишера» из дизайн-хендоффа
@@ -349,6 +350,17 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
               <Param divider label="Домен · ключ записи">
                 {editing ? <input style={{ ...inp, fontFamily: MONO }} value={p.domain || ''} onChange={e => set('domain', e.target.value)} />
                   : <span style={{ fontFamily: MONO, fontSize: 15.5 }}>{p.domain}</span>}
+              </Param>
+              {/* Постоянный код площадки: средняя часть кода пары «креатив × площадка»
+                  (HCLA6E-MKS-01), по которому размещение ведётся в DSP. Уехавший код
+                  не переименовывается, поэтому подпись говорит «постоянный», а не
+                  «короткий»: это не сокращение для удобства, а идентификатор. */}
+              <Param divider label="Код · постоянный">
+                {editing ? <input style={{ ...inp, fontFamily: MONO, textTransform: 'uppercase' }}
+                  placeholder="MKS" maxLength={8} value={p.code || ''}
+                  onChange={e => set('code', e.target.value.toUpperCase())} />
+                  : <span style={{ fontFamily: MONO, fontSize: 15.5, color: p.code ? 'var(--text-primary)' : 'var(--text-faint)' }}>
+                    {p.code || 'не задан'}</span>}
               </Param>
               <Param divider label="Вид паблишера">
                 {editing ? (
@@ -929,7 +941,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
       {/* Модалка контакта: все поля разом. По одному полю через prompt контакт
           заводится в четыре захода, и половина остаётся незаполненной. */}
       {contactDraft && (
-        <div onClick={() => setContactDraft(null)}
+        <div {...overlayClose(() => setContactDraft(null))}
           style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: 10000,
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
           <div onClick={e => e.stopPropagation()}
@@ -1006,7 +1018,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
 
       {/* Форма загрузки документа: тип из общего каталога, новый тип заводится тут же. */}
       {docDraft && (
-        <div onClick={() => setDocDraft(null)}
+        <div {...overlayClose(() => setDocDraft(null))}
           style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: 10000,
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
           <div onClick={e => e.stopPropagation()}

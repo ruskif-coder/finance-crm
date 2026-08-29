@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { UI } from '../salesTableKit'
+import { overlayClose } from '@/lib/overlay'
 
 // Bottom sheet (§6 хендоффа): формы/списки открываются снизу на всю ширину.
 // Ручка-полоска, подложка, свайп-вниз для закрытия, Esc, блокировка скролла body.
@@ -31,7 +32,7 @@ export default function BottomSheet({ open, onClose, title, children, footer, ma
   }
 
   return (
-    <div onClick={onClose} role="dialog" aria-modal="true"
+    <div {...overlayClose(onClose)} role="dialog" aria-modal="true"
       style={{ position: 'fixed', inset: 0, zIndex: 400, background: 'rgba(28,36,51,.35)',
         display: 'flex', alignItems: 'flex-end', justifyContent: 'center', animation: 'sheetFade .18s ease both' }}>
       <div onClick={(e) => e.stopPropagation()}

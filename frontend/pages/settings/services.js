@@ -5,6 +5,7 @@ import Navbar, { firstAllowedHref } from '../../components/Navbar'
 import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsTabs'
 import { MONO, UI, card, inp, sel, ci, cs, th, td, primaryBtn, PortalPopover } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
+import { overlayClose } from '@/lib/overlay'
 
 // ── Справочник услуг (конструктор) — отдельная страница раздела «Настройки» ──
 // Услуга: тип размещения + форма расчёта + единая/раздельная (web/app) цена + базовые
@@ -396,7 +397,7 @@ export default function SettingsServices() {
           const s = services.find(x => x.id === fmtOpen); if (!s) return null
           const ed = svcEd(s)
           return (
-            <div onClick={() => setFmtOpen(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+            <div {...overlayClose(() => setFmtOpen(null))} style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
               <div onClick={e => e.stopPropagation()} style={{ ...card, padding: '20px 22px', maxWidth: 460, width: '100%', maxHeight: '80vh', overflowY: 'auto' }}>
                 <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: 'var(--text-primary)' }}>Форматы услуги</div>
                 <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>«{s.name}»</div>
@@ -427,7 +428,7 @@ export default function SettingsServices() {
         })()}
 
         {confirmDel && (
-          <div onClick={() => setConfirmDel(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div {...overlayClose(() => setConfirmDel(null))} style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
             <div onClick={e => e.stopPropagation()} style={{ ...card, padding: '24px 26px', maxWidth: 420, width: '100%' }}>
               <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 8, color: 'var(--text-primary)' }}>Точно удалить?</div>
               <div style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 20 }}>Удалить {confirmDel.kind === 'addon' ? 'доп. услугу' : 'услугу'} «<b>{confirmDel.name}</b>»? Действие необратимо — точно надо?</div>

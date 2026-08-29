@@ -30,11 +30,13 @@
 		# Permissions-Policy: явно отключаем API, которые приложению не нужны.
 		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
 
-		# CSP: разрешаем только собственные ресурсы; unsafe-inline обязателен для
+		# CSP: разрешаем только собственные ресурсы, плюс ОДНО исключение — frame-src
+		# с домена песочницы: там крутится баннер, и без этой директивы рамка падает
+		# в default-src 'self' и молча не грузится. unsafe-inline обязателен для
 		# Next.js (встроенные стили и hydration-скрипты), unsafe-eval — для Next.js
 		# production runtime. frame-ancestors 'none' дублирует X-Frame-Options для
 		# современных браузеров. object-src 'none' блокирует Flash/плагины.
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self';"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-src {$SANDBOX_BASE_URL:https://sb.localhost}; frame-ancestors 'none'; object-src 'none'; base-uri 'self';"
 
 		# Убираем заголовок Server (не светим версию Caddy).
 		-Server
@@ -50,5 +52,76 @@
 	# Всё остальное — фронтенд (Next.js, production-сборка, см. CLAUDE.md).
 	handle {
 		reverse_proxy frontend:3000
+	}
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# КАБИНЕТ ПАБЛИШЕРА — внешний контур.
+#
+# Отдельный домен, отдельный фронт, отдельный бэкенд под своей ролью в базе. Общего с
+# финмодулем здесь только Caddy и сама база; ни сессия, ни ключ подписи, ни набор
+# видимых таблиц не пересекаются.
+#
+# `frame-src` домена песочницы обязателен: в кабинете крутится предпросмотр баннера, и
+# без этой директивы рамка падает в `default-src 'self'` и молча не грузится. Ровно эта
+# ошибка уже ловилась на карточке сделки.
+{$CABINET_SITE:lk.localhost} {
+	encode gzip
+
+	header {
+		X-Frame-Options DENY
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-src {$SANDBOX_BASE_URL:https://sb.localhost}; frame-ancestors 'none'; object-src 'none'; base-uri 'self';"
+		-Server
+	}
+
+	handle /api/* {
+		reverse_proxy cabinet_backend:8001
+	}
+
+	handle {
+		reverse_proxy cabinet_frontend:3000
+	}
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ПЕСОЧНИЦА для HTML5-баннеров.
+#
+# ОТДЕЛЬНЫЙ ДОМЕН — это и есть вся защита. Баннер в архиве — чужой исполняемый код;
+# отданный с основного домена, он получает наши куки и localStorage. Здесь у него нет
+# ни нашей сессии, ни нашего API: только статика из распакованного каталога.
+#
+# Каталог называется случайным токеном (см. app/launch_prep/sandbox.py): раздача без
+# авторизации обязательна — иначе баннер не откроется в кабинете паблишера, — и
+# единственная защита в том, что адрес нельзя подобрать.
+#
+# Локально `sb.localhost` работает без правки hosts: *.localhost браузеры резолвят сами.
+# На проде — `sb.simbad.pro` (решение владельца 27.08.2026); кабинет паблишеров отдельно,
+# на `lk.simb-ad.com`. Общий корневой домен с `timon.simbad.pro` безопасен: токен сессии
+# приложения живёт в localStorage, а он у каждого origin свой. ЕДИНСТВЕННОЕ, чего делать
+# нельзя, — ставить куку на `.simbad.pro` целиком: она уедет и в песочницу.
+# Адрес БЕЗ схемы — значит автоматический HTTPS, и это обязательно: приложение живёт на
+# https, а рамка с http-адресом внутри https-страницы блокируется браузером как смешанное
+# содержимое. Локально сертификат выписывает внутренний CA Caddy — тот же, которым уже
+# подписан `localhost`, поэтому отдельного доверия не требуется. На проде — обычный
+# Let's Encrypt для `sb.simbad.pro`.
+{$SANDBOX_SITE:sb.localhost} {
+	encode gzip
+	root * /srv/sandbox
+	file_server
+
+	header {
+		X-Content-Type-Options nosniff
+
+		# `sandbox` в CSP даёт баннеру УНИКАЛЬНЫЙ origin, даже в пределах этого домена:
+		# два баннера не видят друг друга, и ни один не видит хранилище домена.
+		# allow-scripts обязателен — без него баннер не крутится вовсе.
+		Content-Security-Policy "sandbox allow-scripts; frame-ancestors {$SANDBOX_FRAME_ANCESTORS:https://localhost http://localhost}"
+
+		Referrer-Policy no-referrer
+		-Server
 	}
 }

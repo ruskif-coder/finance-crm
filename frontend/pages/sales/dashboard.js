@@ -18,6 +18,7 @@ const DealCardList = dynamic(() => import('@/components/mobile/DealCardList'), {
 import DealsBoard, { BoardTabs } from '@/components/sales/DealsBoard'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
 import NotificationsWidget, { NotificationsSlot, toItem } from '@/components/dashboard/NotificationsWidget'
+import { overlayClose } from '@/lib/overlay'
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 // Светофор вероятности сделки (наша ручная разметка): цвет лампы по вероятности.
@@ -445,7 +446,7 @@ export default function SalesDashboard2() {
         </div>
       </>)}
       {entityModal && (
-        <div onClick={() => setEntityModal(null)} style={{ position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        <div {...overlayClose(() => setEntityModal(null))} style={{ position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, width: 'min(440px, 96vw)', padding: '20px 22px', boxShadow: 'var(--shadow-card, 0 24px 64px rgba(28,36,51,0.22))', fontFamily: UI }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>{entityModal === 'agency' ? 'Новое агентство' : 'Новый рекламодатель'}</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -470,7 +471,7 @@ export default function SalesDashboard2() {
         </div>
       )}
       {advConfirm && (
-        <div onClick={() => setAdvConfirm(null)} style={{ position: 'fixed', inset: 0, zIndex: 72, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        <div {...overlayClose(() => setAdvConfirm(null))} style={{ position: 'fixed', inset: 0, zIndex: 72, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, width: 'min(440px, 94vw)', padding: '20px 22px', boxShadow: 'var(--shadow-card, 0 24px 64px rgba(28,36,51,0.22))', fontFamily: UI }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>Сменить рекламодателя?</div>
             <div style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 18 }}>

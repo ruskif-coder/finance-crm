@@ -107,6 +107,43 @@ def test_invoice_picks_the_right_twin():
     assert len(pool) == 1, 'выбранная запись обязана уйти из пула'
 
 
+def test_different_invoice_numbers_mean_different_operations():
+    """Найдено на боевых данных при выкладке 2026-08-25.
+
+    В файле счёт 1778 за июль, в пуле — операция со счётом 1345 за июнь, суммы
+    и контрагент те же. Откат «на самую раннюю» объявлял их одной операцией, и
+    подтверждение такого конфликта переписало бы июньскую запись июльскими
+    данными: не дубль, а потеря строки.
+    """
+    pool = deque([_Op(2872, '1345')])
+    assert _take_from_pool(pool, '1778') is None
+    assert len(pool) == 1, 'запись не должна быть израсходована впустую'
+
+
+def test_row_with_invoice_still_matches_a_row_without_one():
+    """Обратная сторона правила: файл дописывает номер счёта.
+
+    Операция в базе без счёта — законный кандидат для строки со счётом, иначе
+    обогащение реестра номерами превращалось бы в дубли.
+    """
+    assert _take_from_pool(deque([_Op(500, None)]), '189').id == 500
+    assert _take_from_pool(deque([_Op(500, '')]), '189').id == 500
+
+
+def test_foreign_invoice_does_not_block_a_blank_candidate():
+    """В пуле и чужой счёт, и запись без счёта — берётся вторая."""
+    assert _take_from_pool(deque([_Op(2872, '1345'), _Op(500, None)]), '189').id == 500
+
+
+def test_id_chooses_only_among_eligible_candidates():
+    """Подсказка по ID не должна протаскивать запись с чужим счётом."""
+    pool = deque([_Op(2872, '1345'), _Op(500, None), _Op(600, None)])
+    assert _take_from_pool(pool, '189', 600).id == 600
+    # ID указывает на запись с чужим счётом — она всё равно не годится
+    pool = deque([_Op(2872, '1345'), _Op(500, None)])
+    assert _take_from_pool(pool, '189', 2872).id == 500
+
+
 def test_id_is_used_when_the_invoice_does_not_help():
     pool = deque([_Op(2800, None), _Op(3017, None)])
     assert _take_from_pool(pool, None, 3017).id == 3017

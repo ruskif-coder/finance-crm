@@ -6,6 +6,7 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { MONO, UI } from '../salesTableKit';
+import { overlayClose } from '@/lib/overlay'
 
 /* ── токены ─────────────────────────────────────────────────────────────
    Значения берём из нашей дизайн-системы (globals.css), НЕ вводим третью
@@ -296,7 +297,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
   bound = false, initial, backLabel = 'Реестр медиапланов', onBack, versions = [], onOpenVersion,
   canApprove = false, onTransition,
   onAddTargeting, onAddGeo, onCreateBrand, onSave, onExportXlsx, onPreviewPdf, onEditBrief, onLinkDeal, onCreateDeal,
-  dealBrief, onDealBriefSave, onDealBriefSync }) {
+  dealBrief, onDealBriefSave, onDealBriefSync, ownCompany }) {
   const init = initial || {};
   const [verOpen, setVerOpen] = useState(false);   // дропдаун истории версий
   const [rejectOpen, setRejectOpen] = useState(false);   // модалка причины отклонения
@@ -464,7 +465,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
 
       <div id="mp-desktop" style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '26px 32px 40px', display: 'flex', justifyContent: 'center' }}>
         {rejectOpen && (
-          <div onClick={() => setRejectOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(20,22,28,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div {...overlayClose(() => setRejectOpen(false))} style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(20,22,28,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div onClick={e => e.stopPropagation()} style={{ width: 430, maxWidth: '92vw', background: T.card, borderRadius: 16, padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 12, boxShadow: '0 16px 48px rgba(20,22,28,.3)' }}>
               <span style={{ fontSize: 16, fontWeight: 700 }}>Отклонить медиаплан</span>
               <span style={{ fontSize: 12.5, color: T.t3 }}>Укажите причину — она сохранится и уйдёт автору в уведомлении.</span>
@@ -479,7 +480,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
         {/* Комментарий о причинах изменений перед отправкой на согласование.
             Поле необязательное: «Отправить» работает и с пустым — попадёт в журнал. */}
         {noteOpen && (
-          <div onClick={() => setNoteOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(20,22,28,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div {...overlayClose(() => setNoteOpen(false))} style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(20,22,28,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div onClick={e => e.stopPropagation()} style={{ width: 460, maxWidth: '92vw', background: T.card, borderRadius: 16, padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 12, boxShadow: '0 16px 48px rgba(20,22,28,.3)' }}>
               <span style={{ fontSize: 16, fontWeight: 700 }}>Отправить на согласование</span>
               <span style={{ fontSize: 12.5, color: T.t3 }}>Оставьте комментарий о причинах изменений — он попадёт в историю. Поле необязательное.</span>
@@ -743,6 +744,23 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                     </span>
                   );
                 })}
+              </span>
+
+              {/* От какого юрлица оказываем услуги. Сегодня оно одно и приходит из
+                  справочника, выбора нет — но названо явно, потому что оно задаёт
+                  ставку НДС по нашим услугам, и здесь появится выбор, когда юрлиц
+                  станет несколько. */}
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 8, borderTop: `1px solid ${T.border}` }}>
+                <span style={{ ...capTitle, fontSize: 10 }}>Услуги от</span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.t1, lineHeight: 1.3 }}>
+                  {ownCompany?.name || 'юрлицо не определено'}
+                </span>
+                <span style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase',
+                  color: ownCompany?.vat_rate_income ? T.t4 : T.warningText }}>
+                  {ownCompany?.vat_rate_income
+                    ? `НДС ${ownCompany.vat_rate_income} %`
+                    : 'ставка НДС не задана'}
+                </span>
               </span>
             </Card>
           </div>
@@ -1130,7 +1148,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
       </div>
 
       {periodConfirm && (
-        <div onClick={() => setPeriodConfirm(null)} style={{ position: 'fixed', inset: 0, background: T.overlay || 'rgba(28,36,51,.45)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+        <div {...overlayClose(() => setPeriodConfirm(null))} style={{ position: 'fixed', inset: 0, background: T.overlay || 'rgba(28,36,51,.45)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: T.card, border: `1px solid ${T.border}`, boxShadow: T.shadow, borderRadius: 16, padding: '22px 24px', maxWidth: 420, width: '100%', fontFamily: T.sans }}>
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: T.t1 }}>Сменить период?</div>
             <div style={{ fontSize: 13, color: T.t2, lineHeight: 1.5, marginBottom: 20 }}>Со сменой периода изменятся даты старта и конца РК по умолчанию. Продолжить?</div>

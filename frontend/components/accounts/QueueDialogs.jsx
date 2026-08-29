@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { MONO, UI, card, CAP, btnSm, ctaStyle } from '../salesTableKit'
+import { overlayClose } from '@/lib/overlay'
 
 // Диалоги очереди аккаунта: отложить · подтвердить бронь · сбор запуска.
 // Вынесены из pages/accounts/dashboard.js: страница разрослась до тысячи строк, а эти
@@ -9,7 +10,7 @@ import { MONO, UI, card, CAP, btnSm, ctaStyle } from '../salesTableKit'
 const dm = (s) => (s ? s.slice(8, 10) + '.' + s.slice(5, 7) : '—')
 
 const Overlay = ({ onClose, width, children }) => (
-  <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+  <div {...overlayClose(onClose)} style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
     <div onClick={e => e.stopPropagation()} style={{ ...card, padding: 22, width, fontFamily: UI }}>{children}</div>
   </div>
 )
@@ -22,7 +23,7 @@ export function SnoozeDialog({ row, onClose, onSave }) {
   const [note, setNote] = useState(row.note || '')
   const [until, setUntil] = useState(row.return_at || '')
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div {...overlayClose(onClose)} style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div onClick={e => e.stopPropagation()} style={{ ...card, padding: 22, width: 420, fontFamily: UI }}>
         <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4, color: 'var(--text-primary)' }}>Отложить сделку</div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
@@ -53,7 +54,7 @@ export function SnoozeDialog({ row, onClose, onSave }) {
 // остались бы висеть в очереди навсегда.
 export function BookingConfirm({ row, onClose, onPick }) {
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div {...overlayClose(onClose)} style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div onClick={e => e.stopPropagation()} style={{ ...card, padding: 22, width: 460, fontFamily: UI }}>
         <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Бронь</div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, marginBottom: 16 }}>
@@ -92,7 +93,7 @@ const PREP_CHECKLIST = [
 
 export function LaunchPrepDialog({ row, onClose, onToLaunch }) {
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div {...overlayClose(onClose)} style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div onClick={e => e.stopPropagation()} style={{ ...card, padding: 22, width: 520, fontFamily: UI }}>
         <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Сбор запуска</div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, marginBottom: 14 }}>

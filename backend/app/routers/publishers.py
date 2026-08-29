@@ -50,7 +50,11 @@ ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
 # из двух прав. Так сотрудника можно посадить на одно «Заполнение»: правит пачкой,
 # а карточка ему открыта только на чтение (это разделение экранов, не защита данных —
 # на уровне API оба права дают одни и те же действия).
-PUB_SECTIONS = ("dir_publishers", "dir_publishers_bulk")
+# Экраны, работающие с одними и теми же эндпоинтами площадки: карточка, «Заполнение» и
+# — с 28.08.2026 — настройка кабинетов. Контактные лица заводятся и там: доступ выдаётся
+# КОНТАКТУ, и человек, настраивающий кабинет, обязан иметь возможность его завести, не
+# уходя на другой экран и не прося чужого права.
+PUB_SECTIONS = ("dir_publishers", "dir_publishers_bulk", "dir_publishers_cabinets")
 PUB_VIEW = require_any_permission(PUB_SECTIONS, "view")
 PUB_EDIT = require_any_permission(PUB_SECTIONS, "edit")
 
@@ -98,6 +102,35 @@ async def _save_upload(file: UploadFile, owner_id: int, kind: str = "") -> str:
     return stored
 
 
+def _clean_code(db: Session, value, current_id: int = None):
+    """Постоянный код площадки: верхний регистр, латиница и цифры, до 8 знаков.
+
+    Из него собирается код пары «креатив × площадка» (`HCLA6E-MKS-01`), который уезжает
+    в DSP и обратно уже не переименовывается. Отсюда три ограничения:
+
+      · **дефис запрещён** — он разделитель в коде пары, и `MK-S` разъехал бы разбор;
+      · **только латиница** — код читают в чужих системах, кириллица там ломается;
+      · **уникальность проверяется здесь**, а не только индексом: иначе пользователь
+        получит 500 вместо внятного «код занят такой-то площадкой».
+    """
+    if value is None:
+        return None
+    code = str(value).strip().upper()
+    if not code:
+        return None
+    if not re.fullmatch(r"[A-Z0-9]{2,8}", code):
+        raise HTTPException(status_code=400,
+                            detail="Код площадки: 2–8 знаков, латиница и цифры, без дефисов")
+    q = db.query(SalesPublisher).filter(SalesPublisher.code == code)
+    if current_id is not None:
+        q = q.filter(SalesPublisher.id != current_id)
+    twin = q.first()
+    if twin:
+        raise HTTPException(status_code=400,
+                            detail=f"Код «{code}» уже занят площадкой «{twin.name}»")
+    return code
+
+
 def _check(value, allowed, label):
     """Значения перечислений сравниваются буквально, поэтому опечатка должна падать
     здесь, а не всплывать позже пустым фильтром в реестре."""
@@ -111,6 +144,7 @@ def _check(value, allowed, label):
 class PublisherIn(BaseModel):
     name: Optional[str] = None
     domain: str
+    code: Optional[str] = None
     kind: Optional[str] = None
     status: Optional[str] = None
     network: Optional[str] = None
@@ -350,7 +384,8 @@ def list_publishers(status: Optional[str] = None,
                                  or (cp_names.get(c.counterparty_id) if c else None),
                  "linked": bool(c)})
 
-    return {"items": [{"id": p.id, "name": p.name, "domain": p.domain, "kind": p.kind,
+    return {"items": [{"id": p.id, "name": p.name, "domain": p.domain, "code": p.code,
+                       "kind": p.kind,
                        "status": p.status, "network": p.network, "deal_type": p.deal_type,
                        "is_exclusive": p.is_exclusive, "has_dsp": p.has_dsp,
                        "our_code": p.our_code, "timezone_offset": p.timezone_offset,
@@ -377,6 +412,7 @@ def create_publisher(data: PublisherIn, db: Session = Depends(get_db),
         raise HTTPException(status_code=400, detail=f"Площадка «{domain}» уже есть в справочнике")
     p = SalesPublisher(
         name=(data.name or "").strip() or domain, domain=domain,
+        code=_clean_code(db, data.code),
         kind=(data.kind or "").strip() or None,
         status=_check(data.status, PUBLISHER_STATUSES, "Статус") or "ПЕРЕГОВОРЫ",
         network=(data.network or "").strip() or None,
@@ -449,7 +485,8 @@ def get_publisher(publisher_id: int, db: Session = Depends(get_db),
         traffic[t.scope] = {"value": t.value, "depth": t.depth,
                             "measured_at": t.measured_at.isoformat(), "source": t.source}
 
-    return {"id": p.id, "name": p.name, "domain": p.domain, "kind": p.kind,
+    return {"id": p.id, "name": p.name, "domain": p.domain, "code": p.code,
+            "kind": p.kind,
             "status": p.status, "network": p.network, "deal_type": p.deal_type,
             "intermediary_counterparty_id": p.intermediary_counterparty_id,
             "intermediary_name": cp_names.get(p.intermediary_counterparty_id),
@@ -485,6 +522,7 @@ class PublisherPatch(BaseModel):
     корзину и мессенджер, которых в реестре нет. Полный PUT из реестра их бы обнулил."""
     name: Optional[str] = None
     domain: Optional[str] = None
+    code: Optional[str] = None
     kind: Optional[str] = None
     status: Optional[str] = None
     network: Optional[str] = None
@@ -636,6 +674,8 @@ def patch_publisher(publisher_id: int, data: PublisherPatch, db: Session = Depen
                 SalesPublisher.domain == domain, SalesPublisher.id != p.id).first():
             raise HTTPException(status_code=400, detail=f"Площадка «{domain}» уже есть в справочнике")
         fields["domain"] = domain
+    if "code" in fields:
+        fields["code"] = _clean_code(db, fields["code"], current_id=p.id)
     if "status" in fields:
         _check(fields["status"], PUBLISHER_STATUSES, "Статус")
     if "deal_type" in fields and fields["deal_type"]:

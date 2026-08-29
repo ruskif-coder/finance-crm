@@ -208,6 +208,16 @@ class SalesBrand(Base):
     name = Column(String, nullable=False)
     advertiser_id = Column(Integer, ForeignKey("sales_advertisers.id"), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
+    # Поля маркировки живут на бренде, а не на комплекте креативов: это свойства товара,
+    # а не размещения — у одного бренда они не меняются от кампании к кампании.
+    # Заполняются один раз и подставляются в каждый комплект, где их можно переопределить.
+    # Миграция backend/migrations/2026-08-26_launch_prep_creatives.sql.
+    #
+    # ККТУ: ровно ОДИН код 3-го уровня вида X.X.X из словаря ОРД (несколько допускаются
+    # только для кобрендинга). Без него ЕРИД не выпустить.
+    kktu_code = Column(String(16))
+    # Общее описание объекта рекламирования, 1–1000 знаков; в ОРД условно-обязательно.
+    ad_object_description = Column(Text)
     advertiser = relationship("SalesAdvertiser", back_populates="brands")
 
 
@@ -588,7 +598,31 @@ class SalesDeal(Base):
     # со «Сбора запуска» и далее (колонка BI «Ответственный КС»).
     sales_rep_id = Column(Integer, ForeignKey("sales_reps.id"))
     account_manager_id = Column(Integer, ForeignKey("sales_reps.id"))
+    # Третий ответственный — трафик-менеджер (backend/migrations/2026-08-26_deal_traffic_manager.sql).
+    # Тот же ростер, что у sales_rep_id/account_manager_id (sales_reps, не users) — резолвится
+    # в routers/sales_dashboard.py тем же способом, что и account_manager_id.
+    traffic_manager_id = Column(Integer, ForeignKey("sales_reps.id"))
+    # Продление: какую кампанию скопировали (2026-08-28_publisher_requests.sql).
+    # Без родословной «эта РК — продление той» знает только человек. Исходная сделка при
+    # этом живёт своей жизнью в рамках стадий — копия это экономия времени, а не перевод
+    # старой кампании в особое состояние.
+    prolonged_from_id = Column(Integer, ForeignKey("sales_deals.id"))
+    # Самореклама: у неё в ОРД свой тип договора и обязательный флаг isSelfPromotion
+    # при выпуске креатива. На 26.08.2026 признак только помечает сделку — отдельная
+    # цепочка под саморекламу будет расписана позже.
+    is_self_promo = Column(Boolean, nullable=False, server_default='false')
     annex_id = Column(Integer, ForeignKey("sales_annexes.id"))
+    # Изначальный договор ОРД, которым закрывали сборку по этой сделке — единственная
+    # память о прошлом выборе для пары агентство×рекламодатель (app/ord/matching.py,
+    # _last_used_initial). Колонка добавлена в БД миграцией
+    # backend/migrations/2026-08-25_ord_mirror.sql (ALTER TABLE sales_deals ...) —
+    # здесь только маппинг, ALTER в этом файле не выполняется.
+    ord_initial_contract_id = Column(Integer, ForeignKey("ord_initial_contracts.id"))
+    # Доходный договор, выбранный человеком на ступени сборки. Пусто — работает
+    # вычисление от плательщика (app/ord/matching.py, resolve_final), и экран показывает
+    # его как подсказку; заполнено — выбор побеждает. Тот же узор, что строкой выше.
+    # Миграция backend/migrations/2026-08-26_deal_ord_final_contract.sql.
+    ord_final_contract_id = Column(Integer, ForeignKey("contracts.id"))
     date_create = Column(DateTime)
     date_modify = Column(DateTime)
     # Период размещения — «Старт РК» / «Конец РК». Основная ось витрины:
@@ -844,6 +878,11 @@ class SalesPublisher(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     domain = Column(String, nullable=False, unique=True)  # хранится нормализованным
+    # Постоянный короткий код площадки (MKS, DPD) — средняя часть кода пары
+    # «креатив × площадка» вида HCLA6E-MKS-01, по которому пара учитывается в DSP.
+    # Не меняется никогда: код уже уехавшего размещения переименовать нельзя.
+    # Миграция backend/migrations/2026-08-26_launch_prep_creatives.sql.
+    code = Column(String(8), unique=True)
     kind = Column(String)      # имя из sales_publisher_kinds, не FK
     status = Column(String, nullable=False, default="ПЕРЕГОВОРЫ")
     network = Column(String)   # NULL = независимая, а не сеть с именем «НЕЗАВИСИМЫЕ»

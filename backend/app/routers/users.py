@@ -247,6 +247,13 @@ def delete_user(
 
 ACTION_LABELS = {
     "verify_media_plan": "МП проверен",
+    "ord_sync_clients": "Сверка юрлиц с ОРД",
+    "ord_sync_contracts": "Сверка договоров с ОРД",
+    "ord_register_final": "Договор зарегистрирован в ОРД",
+    "ord_register_initial": "Изначальный договор заведён в ОРД",
+    "ord_attach_initial": "Изначальный прикреплён к доходному",
+    "self_promo_on": "Присвоен статус «самореклама»",
+    "self_promo_off": "Снят статус «самореклама»",
     "media_plan_change_note": "Причина изменений МП",
     "login_success": "Вход выполнен",
     "login_failed": "Неудачный вход",

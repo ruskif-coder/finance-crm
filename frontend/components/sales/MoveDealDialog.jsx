@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import api, { auth } from '../../lib/http'
+import { overlayClose } from '@/lib/overlay'
 
 // Диалог движения сделки по нашему каталогу (E2). Одна кнопка → адаптивный диалог:
 // дефолт «следующая стадия», перепрыгнуть или уйти в терминал — из того же списка.
@@ -108,7 +109,7 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
   const inp = { width: '100%', boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 10, padding: '10px 11px', fontSize: 14, background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none' }
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+    <div {...overlayClose(onClose)} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, width: 'min(460px, 96vw)', padding: '22px 24px', boxShadow: '0 24px 64px rgba(28,36,51,.22)' }}>
         <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>Двинуть сделку</div>
         <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 16 }}>Сейчас: {chip(cur)}</div>

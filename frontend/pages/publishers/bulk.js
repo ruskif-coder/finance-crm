@@ -176,7 +176,7 @@ export default function PublishersBulk() {
     return [p.name, p.domain, p.network].some(v => (v || '').toLowerCase().includes(q))
   })
 
-  const GRID = `260px 150px 190px 190px 130px ${services.map(() => '76px').join(' ')} 190px 84px 104px`
+  const GRID = `260px 78px 150px 190px 190px 130px ${services.map(() => '76px').join(' ')} 190px 84px 104px`
 
   return (
     <>
@@ -228,6 +228,7 @@ export default function PublishersBulk() {
                   <div style={{ position: 'sticky', left: 0, background: 'var(--bg-card)', zIndex: 2 }}>
                     {headCell('Площадка')}
                   </div>
+                  {headCell('Код')}
                   {headCell('Статус')}
                   {headCell('WEB · есть · работаем')}
                   {headCell('APP · есть · работаем')}
@@ -254,6 +255,20 @@ export default function PublishersBulk() {
                         <a href={`/publishers/${p.id}`} style={{ fontSize: 13, fontWeight: 700,
                           color: 'var(--text-primary)', textDecoration: 'none' }}>{p.name}</a>
                         <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-muted)' }}>{p.domain}</span>
+                      </div>
+
+                      {/* Постоянный код площадки: средняя часть кода пары
+                          HCLA6E-MKS-01, по которому размещение ведётся в DSP. Здесь он
+                          затем, что 41 код проставляют за один проход, а не по карточкам. */}
+                      <div style={cellBox}>
+                        <input style={{ ...inp, padding: '3px 6px', fontSize: 11.5, width: '100%',
+                          fontFamily: MONO, textTransform: 'uppercase' }}
+                          disabled={!mayEdit} defaultValue={p.code || ''} placeholder="—" maxLength={8}
+                          title="Постоянный код: латиница и цифры, без дефисов"
+                          onBlur={e => {
+                            const v = e.target.value.trim().toUpperCase()
+                            if (v !== (p.code || '')) patchField(p, 'code', v)
+                          }} />
                       </div>
 
                       <div style={cellBox}>

@@ -1,13 +1,20 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import { MONO, UI, HATCH_RED } from '@/components/salesTableKit'
 import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
+import { grp0 } from '@/lib/salesFormat'
+import { overlayClose } from '@/lib/overlay'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
 import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc } from '@/lib/dealDocs'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
+import Navbar from '@/components/Navbar'
+import Section from '@/components/deal/Section'
+import CreativesSummary, { creativesSummary } from '@/components/creatives/CreativesSummary'
+import AssemblyOrd, { OrdPips } from '@/components/ord/AssemblyOrd'
+import AssemblyCreatives from '@/components/creatives/AssemblyCreatives'
 const DealCardMobile = dynamic(() => import('@/components/mobile/DealCardMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // ── Карточка сделки /sales/deals/[id] ──
@@ -18,8 +25,244 @@ const DealCardMobile = dynamic(() => import('@/components/mobile/DealCardMobile'
 // бар стадий — каталог стадий + движение через MoveDealDialog (как в реестре).
 // Заглушка осталась одна: оплачено/остаток/срок оплаты — привязки платежей к сделке ещё нет.
 
-const VAT = 0.22
 const rub = (v) => (v == null ? '—' : v.toLocaleString('ru-RU') + ' ₽')
+
+/** Чип саморекламы в шапке. Объявлен на модульном уровне: компонент, созданный внутри
+ *  рендера, пересоздаётся на каждом кадре и теряет фокус.
+ *
+ *  Признак односторонний: поставить может любой с правом правки, снять — только мастер
+ *  или админ. Поэтому у выключенного чипа два разных неактивных состояния, и замок
+ *  показывается ДО клика: узнавать о запрете из ошибки после подтверждения — худший из
+ *  возможных способов об этом сообщить. */
+function SelfPromoChip({ on, canEdit, canUnset, onToggle }) {
+  const locked = on && !canUnset
+  const clickable = canEdit && (!on || canUnset)
+  return (
+    <button type="button" disabled={!clickable} onClick={onToggle}
+      title={locked ? 'Статус «самореклама» присвоен — снять может только мастер аккаунт или админ'
+        : on ? 'Снять статус «самореклама»'
+          : 'Пометить размещение саморекламой — после подтверждения снять сможет только мастер аккаунт'}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 9, borderRadius: 999,
+        padding: '5px 12px 5px 6px', whiteSpace: 'nowrap', fontFamily: UI,
+        border: `1px solid ${on ? 'var(--warning-border)' : 'var(--border-card)'}`,
+        background: on ? 'var(--warning-tint)' : 'var(--bg-subtle)',
+        cursor: clickable ? 'pointer' : 'default',
+      }}>
+      {/* Тумблер, а не галочка: признак включают один раз и он остаётся видимым
+          состоянием блока, а не действием, которое ищут в меню. */}
+      <span style={{ position: 'relative', width: 28, height: 16, borderRadius: 999, flex: '0 0 28px',
+        background: on ? 'var(--warning)' : 'var(--border-hover)', transition: 'background .18s' }}>
+        <span style={{ position: 'absolute', top: 2, left: on ? 14 : 2, width: 12, height: 12,
+          borderRadius: '50%', background: 'var(--bg-card)', transition: 'left .18s' }} />
+      </span>
+      <span style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '.08em', fontWeight: 700,
+        textTransform: 'uppercase', color: on ? 'var(--warning-text)' : 'var(--text-muted)' }}>
+        Самореклама
+      </span>
+      {locked && <span style={{ fontSize: 10, opacity: 0.7 }}>🔒</span>}
+    </button>
+  )
+}
+
+/** «В стадии N дней» — из журнала сделки, а не из выдуманного поля: берём дату
+ *  последней смены стадии. Записи нет (сделка не двигалась у нас) — фразы нет. */
+function daysInStage(history) {
+  const mv = (history || []).find(h => h.action === 'move_deal' && h.at)
+  if (!mv) return null
+  const d = Math.floor((Date.now() - new Date(mv.at).getTime()) / 86400000)
+  return d >= 0 ? d : null
+}
+
+/** «6 дней» / «1 день» / «5 дней» — падежи руками, Intl.PluralRules для ru даёт
+ *  категории, но не слова. */
+function plDays(n) {
+  const t = n % 100
+  if (t >= 11 && t <= 14) return `${n} дней`
+  const o = n % 10
+  return `${n} ${o === 1 ? 'день' : o >= 2 && o <= 4 ? 'дня' : 'дней'}`
+}
+
+const OVERLAY = {
+  position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(28,36,51,.4)',
+  display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+  overflowY: 'auto', padding: '60px 20px', fontFamily: UI,
+}
+const SHEET = {
+  width: '100%', background: 'var(--bg-card)', borderRadius: 18,
+  boxShadow: 'var(--shadow-card)', display: 'flex', flexDirection: 'column',
+}
+
+/** Да/нет на необратимое действие. Текст вопроса называет последствие, а не действие:
+ *  «уверены?» без последствия не помогает решить. */
+function Ask({ title, text, onYes, onNo }) {
+  return (
+    <div {...overlayClose(onNo)} style={OVERLAY}>
+      <div onClick={e => e.stopPropagation()} style={{ ...SHEET, maxWidth: 460, padding: '22px 24px 20px', gap: 12 }}>
+        <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: '-.02em' }}>{title}</span>
+        <span style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{text}</span>
+        <span style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 4 }}>
+          <button type="button" onClick={onNo} style={{ height: 36, padding: '0 16px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 13, cursor: 'pointer', fontFamily: UI }}>Нет</button>
+          <button type="button" onClick={onYes} style={{ height: 36, padding: '0 18px', borderRadius: 10, border: 'none', background: 'var(--warning)', color: 'var(--bg-card)', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>Да</button>
+        </span>
+      </div>
+    </div>
+  )
+}
+
+/** Бриф сделки. Тянется лениво — поле живёт в Битриксе и кэшируется у нас при первом
+ *  открытии, поэтому грузим по клику, а не вместе с карточкой. */
+function BriefDialog({ dealId, canEdit, onClose }) {
+  const [state, setState] = useState({ loading: true, text: '', err: '', local: false, saving: false })
+  const load = (refresh) => {
+    setState(s => ({ ...s, loading: true, err: '' }))
+    api.get(`/sales/deals/${dealId}/brief${refresh ? '?refresh=1' : ''}`, auth())
+      .then(r => setState({ loading: false, text: r.data.brief || '', err: '', local: !!r.data.is_local, saving: false }))
+      .catch(e => setState(s => ({ ...s, loading: false, err: e.response?.data?.detail || 'Не удалось загрузить бриф' })))
+  }
+  useEffect(() => { load(false) }, [dealId])
+
+  const save = () => {
+    setState(s => ({ ...s, saving: true, err: '' }))
+    api.put(`/sales/deals/${dealId}/brief`, { brief: state.text }, auth())
+      .then(() => { setState(s => ({ ...s, saving: false })); onClose() })
+      .catch(e => setState(s => ({ ...s, saving: false, err: e.response?.data?.detail || 'Не удалось сохранить' })))
+  }
+
+  return (
+    <div {...overlayClose(onClose)} style={OVERLAY}>
+      <div onClick={e => e.stopPropagation()} style={{ ...SHEET, maxWidth: 620 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 24px', borderBottom: '1px solid var(--border-card)' }}>
+          <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.02em' }}>Бриф сделки</span>
+          {!state.local && (
+            <button type="button" onClick={() => load(true)} title="Перечитать поле из Битрикса"
+              style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: 0, cursor: 'pointer', fontFamily: UI }}>
+              обновить из Битрикса
+            </button>
+          )}
+          <button type="button" onClick={onClose} style={{ marginLeft: 'auto', width: 32, height: 32, borderRadius: 9, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 16 }}>✕</button>
+        </div>
+        <div style={{ padding: '18px 24px' }}>
+          {state.loading
+            ? <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Загрузка…</span>
+            : (
+              <textarea value={state.text} readOnly={!canEdit} rows={12}
+                onChange={e => setState(s => ({ ...s, text: e.target.value }))}
+                placeholder={canEdit ? 'Бриф пуст — напишите, что заказчик хочет получить' : 'Бриф пуст'}
+                style={{ width: '100%', boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 10, padding: '11px 12px', fontSize: 13, lineHeight: 1.5, fontFamily: UI, background: canEdit ? 'var(--bg-card)' : 'var(--bg-subtle)', color: 'var(--text-primary)', outline: 'none', resize: 'vertical' }} />
+            )}
+          {!!state.err && <div style={{ marginTop: 8, fontSize: 12.5, color: 'var(--danger)' }}>{state.err}</div>}
+        </div>
+        {canEdit && !state.loading && (
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '0 24px 20px' }}>
+            <button type="button" onClick={onClose} style={{ height: 36, padding: '0 16px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 13, cursor: 'pointer', fontFamily: UI }}>Отмена</button>
+            <button type="button" onClick={save} disabled={state.saving} style={{ height: 36, padding: '0 18px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: state.saving ? 'default' : 'pointer', opacity: state.saving ? 0.6 : 1, fontFamily: UI }}>
+              {state.saving ? 'Сохраняю…' : 'Сохранить'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+const DocIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" />
+  </svg>
+)
+
+/** дд.мм.гггг из ISO: весь раздел продаж пишет даты так. */
+const ru = (x) => (x ? String(x).slice(0, 10).split('-').reverse().join('.') : '—')
+
+/** Сводка медиаплана в заголовке свёрнутой секции — то, ради чего в неё заглядывают. */
+function mpSummary(rowCount, net, mp) {
+  if (!mp) return 'медиаплан не создан'
+  const parts = []
+  if (rowCount) parts.push(rowCount + (rowCount === 1 ? ' строка' : rowCount < 5 ? ' строки' : ' строк'))
+  if (net != null) parts.push(rub(net))
+  parts.push(`${MP_STATUS[mp.status] || mp.status} ${mp.version ? 'v' + mp.version : ''}`.trim())
+  return parts.join(' · ')
+}
+
+/** Ключевые значения МП для свёрнутого вида. Нейтральные: это цифры, а не состояния. */
+function mpFacts({ d, lines, net, gross, tVol, mp }) {
+  const svc = [...new Set(lines.map(l => l.position).filter(Boolean))]
+  const dm = (x) => (x ? String(x).slice(0, 10).split('-').reverse().slice(0, 2).join('.') : '')
+  const period = d.period_from ? `${dm(d.period_from)} — ${dm(d.period_to)}` : (d.period || '—')
+  return [
+    { label: 'Услуга',
+      value: svc.length === 1 ? svc[0] : svc.length ? `${svc.length} услуги` : '—',
+      color: svc.length ? null : 'var(--text-faint)' },
+    { label: 'Сумма до НДС', value: rub(net) },
+    // Прочерк на месте суммы с НДС читается как «нет данных по сделке», хотя причина
+    // в другом и она чинится в один клик — поэтому свёрнутый вид называет её сам.
+    { label: 'С НДС',
+      value: (gross == null && net != null) ? 'ставка НДС не задана' : rub(gross),
+      color: gross == null ? 'var(--warning-text)' : 'var(--accent)' },
+    { label: 'Показы по прогнозу', value: tVol ? grp0(tVol) : '—',
+      color: tVol ? 'var(--income)' : 'var(--text-faint)' },
+    { label: 'Период РК', value: period },
+    { label: 'Версия', value: mp ? `v${mp.version}` : 'нет',
+      color: mp ? 'var(--warning-text)' : 'var(--text-faint)',
+      pill: mp ? (MP_STATUS[mp.status] || mp.status) : null },
+  ]
+}
+
+/** Короткая сводка обвязки ОРД: сошлось или где встало. */
+function ordSummaryText(a) {
+  if (!a) return { text: 'не проверено', tone: null }
+  if (!a.payer.ok) return { text: 'плательщик не определён', tone: 'warn' }
+  if (!a.final.ok) return { text: 'нет доходного договора', tone: 'warn' }
+  if (!a.initial.ok) {
+    const k = a.initial.candidates?.length || 0
+    return { text: k ? `выберите изначальный из ${k}` : 'нет изначальных договоров', tone: 'warn' }
+  }
+  // Договорная цепочка сошлась — но секция называется «Цепочка договоров и ЕРИД», и
+  // ступень маркера теперь рабочая. Оставить «сошлась» на трёх из четырёх значило бы
+  // объявить готовым то, по чему ещё не выпущен ни один маркер.
+  const c = a.creatives || {}
+  if (!c.total) return { text: 'цепочка сошлась · креативов нет', tone: null }
+  if (!c.marked) return { text: 'цепочка сошлась · маркер не выпущен', tone: 'warn' }
+  if (!c.ok) return { text: `маркировано ${c.marked} из ${c.total}`, tone: 'warn' }
+  return { text: 'цепочка сошлась, все маркированы', tone: 'ok' }
+}
+
+/** Ключевые значения обвязки для свёрнутого вида — со статусами, у каждого есть состояние. */
+/* Одна ступень — одна плашка. Значение выбирается так же, как в развёрнутой строке:
+   один креатив — сам маркер, несколько — счёт; «песочница» приписывается к демовскому,
+   потому что снаружи он неотличим от боевого, а в размещение годится только настоящий. */
+function ordEridFact(c) {
+  if (!c || !c.total) return { label: 'ЕРИД', value: 'не выпущен', tone: 'off' }
+  const sandbox = (c.erids || []).some(e => e.env && e.env !== 'prod')
+  const one = c.total === 1 && c.erids && c.erids[0]
+  return {
+    label: sandbox ? 'ЕРИД · песочница' : 'ЕРИД',
+    value: c.marked ? (one ? c.erids[0].erid : `${c.marked} из ${c.total}`) : 'не выпущен',
+    tone: c.ok ? 'ok' : (c.marked ? 'warn' : 'off'),
+  }
+}
+
+
+function ordFacts(a) {
+  if (!a) return [{ label: 'Состояние', value: 'не проверено', tone: 'off' }]
+  const ini = a.initial.bound || a.initial.proposal
+  return [
+    { label: 'Плательщик', value: a.payer.ok ? (a.payer.name || 'без названия') : 'не определён',
+      tone: a.payer.ok ? 'ok' : 'warn' },
+    { label: 'Доходный договор', value: a.final.ok ? (a.final.contract.number || 'без номера') : 'не найден',
+      tone: a.final.ok ? 'ok' : 'warn' },
+    { label: 'Изначальный',
+      value: a.initial.ok ? (ini && ini.number ? ini.number : 'привязан')
+        : (a.initial.candidates?.length ? `выбрать из ${a.initial.candidates.length}` : 'нет'),
+      tone: a.initial.ok ? 'ok' : 'warn' },
+    // Плашка ЕРИД читает ту же ступень, что и развёрнутый вид. Раньше здесь стояла
+    // константа «не выпущен» — она была честна, пока выпуска не существовало, а теперь
+    // врала бы про маркированную сделку прямо в свёрнутом виде.
+    ordEridFact(a.creatives),
+  ]
+}
 const num = (v) => (v == null ? '—' : v.toLocaleString('ru-RU'))
 const dec = (v) => v.toFixed(2).replace('.', ',')
 const initials = (name) => (name ? name.trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() : '—')
@@ -64,11 +307,35 @@ function DocRow({ ok, title, meta, right }) {
 
 // стилевые примитивы карточки (из эталона)
 const CARD = { background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18 }
+
 const CAPS = { fontFamily: MONO, fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }
 const SUBCAPS = { fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }
 const MONEY_LBL = { fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
-const PL_GRID = '1.8fr 0.9fr 0.6fr 1fr 0.9fr 0.7fr 1.2fr 1.2fr'
-const FC_GRID = '2.4fr repeat(8,1fr)'
+/* Подписи инвентаря — дословно из конструктора медиаплана (INV_LABEL там же): одно
+   значение, названное на двух экранах по-разному, читается как два разных. */
+const INV_LABEL = { web: 'Web', app: 'IN-App', cross: 'Кросс-девайс' }
+
+/* Инвентарь стоит третьим, как в конструкторе. Он не украшение: у еФарма веб и
+   приложение идут ПО РАЗНОЙ ЦЕНЕ, и по нему же подставляются площадки на сборке
+   креативов — строка без него не проверяема. */
+const PL_GRID = '1.6fr 0.8fr 0.75fr 0.55fr 0.95fr 0.85fr 0.6fr 1.15fr 1.15fr'
+/* Пятнадцать колонок прогноза — ровно те же, что в конструкторе медиаплана.
+   Первая колонка ФИКСИРОВАННАЯ, а не долевая: при долевой имя строки забирало тем
+   больше места, чем шире экран, и цифрам его переставало хватать первыми. Ширина
+   посчитана под доступные ~1174 px левой колонки карточки (1520 − 280 правая − 14
+   зазор − 52 поля карточки): 130 + 15×62 + 15 зазоров по 7 = 1165. */
+const FC_GRID = '130px repeat(15, minmax(0, 1fr))'
+const FC_GAP = 7
+/* Единица измерения — в ЗАГОЛОВКЕ, а не в каждой ячейке. Повторённые в пятнадцати
+   строках «₽» и «%» съедали по два знака в колонке (≈13 px), из-за чего таблица не
+   помещалась и уезжала под прокрутку. В заголовке единица названа один раз и читается
+   так же однозначно. */
+const FC_HEADS = ['Частота', 'Охват', 'Показы', 'CTR %', 'Клики', 'CPM ₽', 'CPC ₽',
+                  'CPU ₽', 'CR %', 'Чеки', 'CPO ₽', 'Цена ₽', 'Доход ₽', 'ROI %', 'SOV %']
+/* Цифра не переносится: при нехватке места строка «1 234 567» ломалась пополам и
+   таблица начинала «дышать» по высоте. Лучше горизонтальная прокрутка на узком
+   экране, чем два яруса в каждой ячейке. */
+const FC_NUM = { fontFamily: MONO, fontSize: 11, textAlign: 'right', whiteSpace: 'nowrap' }
 
 export default function DealCard() {
   const router = useRouter()
@@ -83,11 +350,77 @@ export default function DealCard() {
   const [moveOpen, setMoveOpen] = useState(false)
   const [docBusy, setDocBusy] = useState('')    // kind документа в процессе загрузки/удаления
   const [canEdit, setCanEdit] = useState(false)
+  const [canApprove, setCanApprove] = useState(false)
+  // Состояние обвязки тянем на уровне карточки, а не внутри секции: свёрнутый вид
+  // показывает данные, и до первого разворачивания их иначе взять неоткуда.
+  const [ordSummary, setOrdSummary] = useState(null)
+  // Сводка креативов грузится ЗДЕСЬ, а не внутри блока: тело секции — функция, и пока
+  // секция свёрнута, оно не монтируется. Запрос, живущий внутри, до свёрнутого вида
+  // не доходит — на этой же карточке так уже случилось с обвязкой ОРД.
+  const [creatives, setCreatives] = useState(null)
+  const [ordErr, setOrdErr] = useState('')
+
+  // Постановку признака подтверждают, снятие — нет: подтверждают необратимое, а снять
+  // может только мастер, для которого это как раз исправление ошибки. Спрашивать
+  // «вы уверены?» на каждом шаге — верный способ научить не читать вопрос.
+  const [briefOpen, setBriefOpen] = useState(false)
+  const [promoAsk, setPromoAsk] = useState(false)
+  const [promoErr, setPromoErr] = useState('')
+
+  const applySelfPromo = async (next) => {
+    setPromoAsk(false)
+    setPromoErr('')
+    const prev = !!deal.is_self_promo
+    setDeal(x => ({ ...x, is_self_promo: next }))          // отзывчиво, до ответа
+    try {
+      await api.patch(`/sales/deals/${deal.id}`, { is_self_promo: next }, auth())
+      reload()                                             // история пополнилась записью
+    } catch (e) {
+      setDeal(x => ({ ...x, is_self_promo: prev }))        // не сохранилось — вернуть как было
+      setPromoErr(e.response?.data?.detail || 'Не удалось изменить статус')
+    }
+  }
+
+  const toggleSelfPromo = () => {
+    if (!canEdit || !deal) return
+    if (deal.is_self_promo) applySelfPromo(false)
+    else setPromoAsk(true)
+  }
 
   const reload = () => {
     api.get(`/sales/deals/${id}`, auth()).then(r => setDeal(r.data)).catch(() => {})
     api.get(`/sales/deals/${id}/history`, auth()).then(r => setHistory(r.data.items || [])).catch(() => {})
   }
+
+  // Состояние обвязки грузит карточка, а не сама секция: секция ленивая, свёрнутый блок
+  // не монтируется, и запрос из него не уходил бы вовсе — свёрнутый вид показывал
+  // «не проверено» до первого разворачивания.
+  /* ЗАЧЕМ useCallback. Обе загрузки уходят в пропсы блока креативов, а он зовёт их после
+     каждой своей перезагрузки. Обычная функция получает новую личность на каждом рендере
+     страницы — блок видит «проп изменился», перезагружается, дёргает загрузку, страница
+     рендерится снова, и так по кругу. 27.08.2026 это дало 1353 запроса `/assembly` за
+     сеанс, и часть из них падала — со стороны выглядело как «иногда не загружается
+     состояние». Личность функции здесь — не оптимизация, а условие остановки. */
+  const dealId = deal && deal.id
+
+  const loadOrd = useCallback(() => {
+    if (!dealId) return
+    api.get(`/ord/deal/${dealId}/assembly`, auth())
+      .then(r => { setOrdSummary(r.data); setOrdErr('') })
+      .catch(e => setOrdErr(e.response?.data?.detail || 'Не удалось загрузить состояние'))
+  }, [dealId])
+
+  const loadCreatives = useCallback(() => {
+    if (!dealId) return
+    api.get(`/launch-prep/deal/${dealId}`, auth())
+      .then(r => setCreatives(r.data)).catch(() => {})
+  }, [dealId])
+
+  const onCreativesChanged = useCallback(() => {
+    loadCreatives(); loadOrd()
+  }, [loadCreatives, loadOrd])
+
+  useEffect(() => { loadOrd(); loadCreatives() }, [loadOrd, loadCreatives])
 
   useEffect(() => {
     if (typeof window === 'undefined' || !id) return
@@ -95,7 +428,10 @@ export default function DealCard() {
     try {
       const p = JSON.parse(localStorage.getItem('permissions') || '{}')
       setCanEdit(localStorage.getItem('is_admin') === 'true' || !!(p.sales_registry || {}).edit)
-    } catch { setCanEdit(false) }
+      // Вердикт первичной проверки — отдельное действие: его можно развести с
+      // ведением комплектов, чтобы подписывался не тот, кто грузил материал.
+      setCanApprove(localStorage.getItem('is_admin') === 'true' || !!(p.creatives || {}).approve)
+    } catch { setCanEdit(false); setCanApprove(false) }
     setLoading(true)
     api.get(`/sales/deals/${id}`, auth())
       .then(r => setDeal(r.data))
@@ -118,6 +454,17 @@ export default function DealCard() {
 
   // Данные размещения/прогноза/доп/таргетинга — из ПОСЛЕДНЕГО медиаплана сделки.
   // Формула строки повторяет бэкенд (_row_net): CPM — за 1000, иначе объём × цена.
+  // Ставку НДС по нашим услугам задаёт юрлицо, от которого работаем (правило
+  // владельца), а не константа в коде: зашитые 22 % пережили бы правку справочника
+  // молча. Ноль и пусто здесь значат одно — «не задана»: своё юрлицо продаёт с НДС,
+  // и ноль означает незаполненную карточку, а не ставку 0 %. Не задана — сумму с НДС
+  // не выдумываем: прочерк и подсказка, где её задать. См. _own_company_out.
+  const vatPct = (deal && deal.own_company && deal.own_company.vat_rate_income) || null
+  const VAT = vatPct != null ? vatPct / 100 : null
+  const withVat = (x) => (x == null || VAT == null ? null : Math.round(x * (1 + VAT)))
+  const vatHint = VAT != null ? '' :
+    `Ставка НДС не задана в карточке «${(deal && deal.own_company && deal.own_company.name) || 'нашего юрлица'}» — Справочники → Контрагенты, поле «НДС приход». Пока не задана, суммы с НДС не считаются.`
+
   const mpRows = (mp && mp.rows) || []
   const hasMp = mpRows.length > 0
   const lines = mpRows.map(r => {
@@ -131,10 +478,24 @@ export default function DealCard() {
     const clicks = imp * (nn(fc.ctr) / 100)
     return {
       position: r.position, format: r.format, model: r.model, volume: imp,
+      inventory: r.inventory,
       unit: r.unit_price || 0, discount: r.discount || 0,
-      net, gross: Math.round(net * (1 + VAT)), freq, reach, clicks,
+      net, gross: withVat(net), freq, reach, clicks,
+      // Вторая половина прогноза — та, что раньше на карточку не доезжала. Формулы
+      // повторяют конструктор МП дословно (components/mediaplan/MediaPlanBuilder.jsx,
+      // блок «Прогнозные показатели»): расхождение в них означало бы, что карточка и
+      // медиаплан показывают разный прогноз по одним и тем же данным.
+      cr: nn(fc.cr) / 100,
+      checks: imp * (nn(fc.ctr) / 100) * (nn(fc.cr) / 100),
+      price: nn(fc.price),
+      sov: nn(fc.sov),
     }
   })
+  const withRoi = (r) => {
+    const revenue = r.checks * r.price
+    const gross = r.gross
+    return { revenue, roi: gross > 0 ? (revenue - gross) / gross : NaN }
+  }
   const tVol = lines.reduce((a, r) => a + r.volume, 0)
   const tNet = lines.reduce((a, r) => a + r.net, 0)
   const mpExtras = (mp && mp.extras) || []
@@ -146,7 +507,7 @@ export default function DealCard() {
     .map(([g, arr]) => ({ group: TG_TITLES[g] || g, value: (arr || []).map(v => (typeof v === 'string' ? v : v && v.value)).filter(Boolean).join(' · ') }))
     .filter(x => x.value)
 
-  const wrap = { minHeight: '100vh', boxSizing: 'border-box', padding: '26px 32px 40px', background: 'var(--bg-canvas)', display: 'flex', justifyContent: 'center', fontFamily: UI, color: 'var(--text-primary)' }
+  const wrap = { minHeight: 'calc(100vh - 56px)', boxSizing: 'border-box', padding: '26px 32px 40px', background: 'var(--bg-canvas)', display: 'flex', justifyContent: 'flex-start', fontFamily: UI, color: 'var(--text-primary)' }
 
   if (loading) return <div style={wrap}><div style={{ color: 'var(--text-muted)', marginTop: 40 }}>Загрузка…</div></div>
   if (err) return <div style={wrap}><div style={{ marginTop: 40 }}><div style={{ color: 'var(--danger)', marginBottom: 12 }}>{err}</div><a href="/sales/deals" style={{ color: 'var(--accent)' }}>← к реестру сделок</a></div></div>
@@ -154,6 +515,8 @@ export default function DealCard() {
   const d = deal
   const title = [d.advertiser, d.brand].filter(Boolean).join(' · ') || d.title || '—'
   const meta = [d.agency, d.product, d.period, d.account_manager && `аккаунт ${d.account_manager}`, d.sales_rep && `продавец ${d.sales_rep}`].filter(Boolean).join(' · ')
+  const metaShort = [d.agency, d.product, d.period].filter(Boolean).join(' · ')
+  const stageDays = daysInStage(history)
   const dateVal = (x) => (x ? String(x).slice(0, 10) : '')
 
   // Цепочка стадий = все нетерминальные стадии каталога по порядку этапов.
@@ -171,9 +534,9 @@ export default function DealCard() {
   const netFromMp = hasMp ? tNet + extrasTotal : null
   const net = netFromMp != null ? netFromMp : (d.amount != null ? Math.round(d.amount) : null)
   const gross = netFromMp != null
-    ? Math.round(netFromMp * (1 + VAT))
+    ? withVat(netFromMp)
     : (d.amount_with_vat != null ? Math.round(d.amount_with_vat)
-      : (d.amount != null ? Math.round(d.amount * (1 + VAT)) : null))
+      : (d.amount != null ? withVat(d.amount) : null))
 
   // Документы: карта по виду + счётчик готовых (МП считаем отдельной позицией)
   const fileBy = Object.fromEntries((d.files || []).map(f => [f.kind, f]))
@@ -184,9 +547,13 @@ export default function DealCard() {
   const pickAndUpload = (kind) => pickAndUploadDoc(d.id, kind, reload, setDocBusy)
   const removeDoc = (kind) => deleteDoc(d.id, kind, reload, setDocBusy)
 
+  // Порядок = колонки свёрнутой сетки (3×2, заполнение по столбцам): кто рекламируется,
+  // через кого продано, когда и где. Пара в столбце — связанные вопросы, а не соседи
+  // по алфавиту.
   const params = [
-    ['Агентство', d.agency], ['Рекламодатель', d.advertiser], ['Бренд', d.brand],
-    ['Контрагент', d.payer], ['Период размещения', d.period ? `месяц · ${d.period}` : '—'], ['Гео', '—'],
+    ['Рекламодатель', d.advertiser], ['Бренд', d.brand],
+    ['Агентство', d.agency], ['Контрагент', d.payer],
+    ['Период размещения', d.period ? `месяц · ${d.period}` : '—'], ['Гео', '—'],
   ]
   const team = [
     { name: d.sales_rep, role: 'Продавец', bg: 'var(--accent-tint)', fg: 'var(--accent)' },
@@ -205,6 +572,7 @@ export default function DealCard() {
     return (
       <>
         <Head><title>{title} · сделка {d.code || d.bitrix_id || d.id}</title></Head>
+        <Navbar />
         {moveOpen && (
           <MoveDealDialog deal={d} onClose={() => setMoveOpen(false)}
             onMoved={(patch) => { setMoveOpen(false); setDeal(x => ({ ...x, ...patch })); reload() }} />
@@ -214,7 +582,7 @@ export default function DealCard() {
           net={net} gross={gross} vat={VAT}
           lines={lines} tVol={tVol} tNet={tNet}
           mpExtras={mpExtras} extrasTotal={extrasTotal}
-          mp={mp} hasMp={hasMp} canEdit={canEdit}
+          mp={mp} hasMp={hasMp} canEdit={canEdit} canApprove={canApprove}
           onBack={() => router.push('/sales/deals')}
           onMove={() => setMoveOpen(true)} />
       </>
@@ -224,30 +592,70 @@ export default function DealCard() {
   return (
     <>
       <Head><title>{title} · сделка {d.code || d.bitrix_id || d.id}</title></Head>
+      {/* Стандартная шапка приложения: на карточке сделки её не было, из-за чего
+          со страницы нельзя было уйти иначе как ссылкой «к реестру». */}
+      <Navbar />
       {moveOpen && (
         <MoveDealDialog deal={d} onClose={() => setMoveOpen(false)}
           onMoved={(patch) => { setMoveOpen(false); setDeal(x => ({ ...x, ...patch })); reload() }} />
       )}
+      {promoAsk && (
+        <Ask title="Перевести размещение в «саморекламу»?"
+          text="После подтверждения снять статус сможет только мастер или админ. Признак меняет цепочку маркировки: в ОРД у саморекламы свой тип договора, а креатив выпускается с обязательной отметкой."
+          onYes={() => applySelfPromo(true)} onNo={() => setPromoAsk(false)} />
+      )}
+      {briefOpen && <BriefDialog dealId={d.id} canEdit={canEdit} onClose={() => setBriefOpen(false)} />}
       <div style={wrap}>
-        <div style={{ width: '100%', maxWidth: 1120, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Ширина под монитор 1600: 1520 = 1600 − поля обёртки (32+32) − запас под полосу
+            прокрутки. Под 1920 (1840) оказалось широковато — строки текста в секциях
+            растягивались до нечитаемых. На меньших экранах контейнер просто сжимается:
+            это потолок, а не жёсткий размер. */}
+        <div style={{ width: '100%', maxWidth: 1520, display: 'flex', flexDirection: 'column', gap: 14 }}>
 
           {/* назад */}
-          <a href="/sales/deals" style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>← к реестру сделок</a>
+          {/* `alignSelf` и `width: fit-content` обязательны: колонка — флекс, и ссылка
+              без них растягивается во ВСЮ ширину страницы. Кликабельной становится вся
+              полоса, и она перехватывает клики по выпадающему меню в шапке — со стороны
+              это выглядит как «меню не работает». */}
+          <a href="/sales/deals" style={{ alignSelf: 'flex-start', width: 'fit-content',
+            fontSize: 12.5, color: 'var(--text-muted)' }}>← к реестру сделок</a>
 
           {/* ── Шапка ── */}
           <div style={{ ...CARD, padding: '22px 26px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
-              <span style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
-                <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 9 }}>
-                  <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>{d.code || d.bitrix_id || d.id}</span>
-                  <span style={{ fontSize: 21, fontWeight: 700, letterSpacing: '-0.02em' }}>{title}</span>
+              {/* Код, название и мета — одна базовая линия. Мета MONO капсом: это
+                  адресная строка сделки, а не текст. Люди из неё убраны намеренно —
+                  они и так стоят в «Ответственных» справа. */}
+              <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 10, minWidth: 0, flexWrap: 'wrap' }}>
+                <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>{d.code || d.bitrix_id || d.id}</span>
+                <span style={{ fontSize: 21, fontWeight: 700, letterSpacing: '-0.02em' }}>{title}</span>
+                <span style={{ ...SUBCAPS, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {metaShort || '—'}
                 </span>
-                <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{meta || '—'}</span>
               </span>
-              {d.bitrix_stage && (
-                <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, background: 'var(--warning-tint)', color: '#B26A0C', borderRadius: 10, padding: '7px 13px', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--warning)' }} />{d.bitrix_stage}
-                </span>
+              <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <button type="button" onClick={() => setBriefOpen(true)} title="Бриф сделки"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'var(--bg-card)',
+                    border: '1px solid var(--border-card)', color: 'var(--text-secondary)', borderRadius: 10,
+                    padding: '7px 13px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>
+                  <DocIcon />Бриф
+                </button>
+                {/* Самореклама — в шапке, рядом со стадией: признак управляет движением
+                    сделки (в ОРД у неё свой тип договора, у креатива обязательная
+                    отметка), поэтому читается всегда, а не только когда развёрнут
+                    медиаплан. Решение владельца — унести её из блока МП. */}
+                <SelfPromoChip on={!!d.is_self_promo} canEdit={canEdit}
+                  canUnset={!!d.can_unset_self_promo} onToggle={toggleSelfPromo} />
+                {!!d.bitrix_stage && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'var(--warning-tint)', color: 'var(--warning-text)', borderRadius: 10, padding: '7px 13px', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--warning)' }} />{d.bitrix_stage}
+                  </span>
+                )}
+              </span>
+              {/* Отказ бэкенда показываем в шапке, а не alert-ом: он относится к чипу
+                  рядом, и его должно быть видно вместе с тем, что не изменилось. */}
+              {!!promoErr && (
+                <span style={{ flex: '1 1 100%', fontSize: 12.5, color: 'var(--danger)' }}>{promoErr}</span>
               )}
             </div>
 
@@ -260,19 +668,26 @@ export default function DealCard() {
                 <span style={MONEY_LBL}>Сумма сделки · с НДС · {hasMp ? 'по медиаплану' : 'при создании сделки'}</span>
                 <span style={{ fontFamily: MONO, fontSize: 30, fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1, whiteSpace: 'nowrap' }}>{rub(gross)}</span>
               </span>
-              <span style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 26, borderLeft: '1px solid var(--border-inner)' }}>
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <span style={MONEY_LBL}>Клиентская цена до НДС</span>
-                <span style={{ fontFamily: MONO, fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>{rub(net)}</span>
+                <span style={{ fontFamily: MONO, fontSize: 21, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>{rub(net)}</span>
               </span>
               <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <span style={MONEY_LBL}>НДС {Math.round(VAT * 100)} %</span>
-                <span style={{ fontFamily: MONO, fontSize: 18, fontWeight: 700, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                <span style={MONEY_LBL} title={vatHint}>
+                  {VAT != null ? `НДС ${Math.round(VAT * 100)} %` : 'НДС — ставка не задана'}
+                </span>
+                <span style={{ fontFamily: MONO, fontSize: 21, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                   {gross != null && net != null ? rub(Math.round(gross - net)) : '—'}
                 </span>
               </span>
+              {/* Период размещения вместо срока оплаты: срок брать неоткуда — привязки
+                  платежей к сделке ещё нет, и прочерк на видном месте место занимал,
+                  а не сообщал. Период — то, что действительно известно. */}
               <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <span style={MONEY_LBL}>Срок оплаты</span>
-                <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: 'var(--text-faint)' }}>—</span>
+                <span style={MONEY_LBL}>Период размещения</span>
+                <span style={{ fontFamily: MONO, fontSize: 21, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+                  {d.period || (d.period_from ? `${ru(d.period_from)} — ${ru(d.period_to)}` : '—')}
+                </span>
               </span>
             </div>
               {/* Материнский годовой план — правая зона шапки */}
@@ -299,41 +714,53 @@ export default function DealCard() {
             {/* ── Бар стадий: вся цепочка каталога, цвет ячейки — по слою денег стадии.
                    Текущая подписана полным названием и растянута; прошедшие — в цвете,
                    будущие — приглушённые. Терминал (не случилась / сорвалась) — красный штрих. */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
               {isLost ? (
                 <span title={d.our_stage?.name || 'Сделка провалена'}
-                  style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', height: 30, borderRadius: 8, background: HATCH_RED, border: '1px solid var(--danger)' }}>
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 22, borderRadius: 6, background: HATCH_RED, border: '1px solid var(--danger)' }}>
                   <span style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--danger)', letterSpacing: '.02em', background: 'var(--bg-card)', padding: '1px 10px', borderRadius: 6 }}>
                     {d.our_stage?.name || 'Сделка провалена'}
                   </span>
                 </span>
               ) : (
-                <span style={{ flex: 1, minWidth: 0, display: 'flex', gap: 3, alignItems: 'stretch' }}>
-                  {chain.length === 0 && <span style={{ flex: 1, height: 30, borderRadius: 8, background: 'var(--border-inner)' }} />}
+                /* Тонкая полоса без подписей внутри: название текущей стадии стоит в
+                   строке под ней, и дублировать его в ячейке значило бы отдать высоту
+                   тексту, который уже прочитан. Цвет один — путь важнее слоя денег;
+                   слой остаётся в подсказке при наведении. */
+                <span style={{ display: 'flex', gap: 4, alignItems: 'stretch' }}>
+                  {chain.length === 0 && <span style={{ flex: 1, height: 8, borderRadius: 4, background: 'var(--border-inner)' }} />}
                   {chain.map((s, i) => {
                     const cur = curIdx >= 0 && i === curIdx
                     const past = curIdx >= 0 && i < curIdx
-                    const col = LAYER_COLOR[s.money_layer] || 'var(--border-inner)'
                     return (
                       <span key={s.id} title={`${s.name}${s.phaseName ? ' · ' + s.phaseName : ''}`}
                         style={{
-                          flex: cur ? '1 1 auto' : '0 1 26px', minWidth: cur ? 0 : 10, height: 30,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: cur ? '0 12px' : 0,
-                          borderRadius: 8, background: (cur || past) ? col : 'var(--border-inner)',
-                          opacity: (cur || past) ? 1 : 0.5,
+                          flex: cur ? '2 1 0' : '1 1 0', minWidth: 6, height: 8, borderRadius: 4,
+                          background: cur ? 'var(--accent)' : past ? 'var(--accent-border)' : 'var(--border-inner)',
                           transition: 'flex .25s cubic-bezier(0.22,1,0.36,1)',
-                        }}>
-                        {cur && (
-                          <span style={{ fontSize: 11.5, fontWeight: 800, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</span>
-                        )}
-                      </span>
+                        }} />
                     )
                   })}
                 </span>
               )}
+
+              {/* Подпись под полосой: где сделка, сколько тут стоит и что дальше. */}
+              {!isLost && curIdx >= 0 && (
+              <div style={{ fontSize: 11.5, color: 'var(--text-faint)', display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                  стадия {curIdx + 1} из {chain.length}
+                </span>
+                <b style={{ fontSize: 13, color: 'var(--text-primary)' }}>{d.our_stage?.name}</b>
+                {stageDays != null && <span>в стадии {plDays(stageDays)}</span>}
+                {!!d.our_next_stage?.name && <span>· следующая: {d.our_next_stage.name}</span>}
+              </div>
+              )}
+              </div>
+
               {canEdit && (
                 <button onClick={() => setMoveOpen(true)} title="Двинуть сделку по каталогу стадий"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 30, padding: '0 13px', borderRadius: 9, border: 'none', background: 'var(--income, #1F7D5E)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flex: '0 0 auto', fontFamily: UI }}>
+                  style={{ display: 'inline-flex', alignItems: 'center', height: 38, padding: '0 18px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flex: '0 0 auto', fontFamily: UI }}>
                   Изменить стадию
                 </button>
               )}
@@ -343,8 +770,17 @@ export default function DealCard() {
           {/* ── Две колонки ── */}
           <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
 
-            {/* левая: медиаплан */}
-            <div style={{ flex: 1, minWidth: 320, ...CARD, padding: '22px 26px 20px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+            {/* Левая (центральная) колонка — три виджета. Решение владельца 2026-08-25:
+                отдельного экрана сборки нет, разделы живут секциями на карточке и
+                сворачиваются; свёрнутый вид несёт данные, а не подпись. */}
+            <div style={{ flex: 1, minWidth: 320, display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+              <div style={{ ...CARD, padding: '20px 26px 18px' }}>
+              <Section id="mp" dealId={id} title="Медиаплан сделки" defaultOpen={false}
+                facts={mpFacts({ d, lines, net, gross, tVol, mp })}
+                right={<span style={SUBCAPS}>{mpSummary(mpRows.length, net, mp)}</span>}>
+                {() => (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
 
               {/* параметры кампании */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -357,9 +793,14 @@ export default function DealCard() {
                     <input type="date" defaultValue={dateVal(d.period_to)} readOnly style={{ height: 30, boxSizing: 'border-box', padding: '0 9px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 9, fontFamily: MONO, fontSize: 11.5, fontWeight: 600, color: 'var(--text-primary)', outline: 'none' }} />
                   </span>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: 'repeat(3,auto)', gridAutoFlow: 'column', gap: '0 28px' }}>
+                {/* Сводка сделки — плашкой, как «Услуги от» справа: те же подложка,
+                    рамка и скругление. Это реквизиты, а не сам медиаплан, и без визуальной
+                    границы они читались как первые строки размещения. */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gridTemplateRows: 'repeat(2,auto)', gridAutoFlow: 'column', gap: '0 28px',
+                  background: 'var(--bg-subtle)', border: '1px solid var(--border-card)',
+                  borderRadius: 12, padding: '4px 14px 8px' }}>
                   {params.map(([label, value], i) => (
-                    <span key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '6px 0', borderTop: '1px solid var(--border-row)' }}>
+                    <span key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '6px 0', borderTop: i % 2 ? '1px solid var(--border-row)' : 'none' }}>
                       <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{label}</span>
                       <span style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 600, textAlign: 'right', color: value ? 'var(--text-primary)' : 'var(--text-faint)' }}>{value || '—'}</span>
                     </span>
@@ -395,11 +836,10 @@ export default function DealCard() {
               ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 7, padding: '14px 0', borderTop: '1px solid var(--border-card)', borderBottom: '1px solid var(--border-card)' }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+                  {/* Только заголовок: реквизиты, версия, статус, гео и период уже стоят
+                      выше — в шапке блока и в плашке параметров. Дубль читался как
+                      отдельная информация, хотя ничего не добавлял. */}
                   <span style={CAPS}>Размещение</span>
-                  <span style={SUBCAPS}>
-                    {mp.title || 'медиаплан'} · v{mp.version} · {MP_STATUS[mp.status] || mp.status}
-                    {mp.geo ? ` · ${mp.geo}` : ''}{mp.period ? ` · ${mp.period}` : ''}
-                  </span>
                   <a href={`/accounts/mp/${mp.id}`} style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none', whiteSpace: 'nowrap' }}>Открыть МП →</a>
                 </div>
                 {!hasMp && <div style={{ fontSize: 12, color: 'var(--text-faint)', padding: '6px 0' }}>В медиаплане пока нет строк размещения.</div>}
@@ -407,12 +847,17 @@ export default function DealCard() {
                 <div style={{ overflowX: 'auto' }}>
                   <div style={{ minWidth: 640 }}>
                     <div style={{ display: 'grid', gridTemplateColumns: PL_GRID, gap: 9, paddingBottom: 7, borderBottom: '1px solid var(--border-card)', ...SUBCAPS }}>
-                      <span>Позиция</span><span>Формат</span><span>Модель</span><span style={{ textAlign: 'right' }}>Объём</span><span style={{ textAlign: 'right' }}>Цена/ед.</span><span style={{ textAlign: 'right' }}>Скидка</span><span style={{ textAlign: 'right' }}>До НДС</span><span style={{ textAlign: 'right' }}>С НДС</span>
+                      <span>Позиция</span><span>Формат</span><span>Инвентарь</span><span>Модель</span><span style={{ textAlign: 'right' }}>Объём</span><span style={{ textAlign: 'right' }}>Цена/ед.</span><span style={{ textAlign: 'right' }}>Скидка</span><span style={{ textAlign: 'right' }}>До НДС</span><span style={{ textAlign: 'right' }}>С НДС</span>
                     </div>
                     {lines.map((l, i) => (
                       <div key={i} style={{ display: 'grid', gridTemplateColumns: PL_GRID, gap: 9, alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--border-row)' }}>
                         <span style={{ fontSize: 11.5, fontWeight: 600, lineHeight: 1.25 }}>{l.position}</span>
                         <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{l.format}</span>
+                        <span style={{ fontFamily: MONO, fontSize: 10.5,
+                          color: l.inventory ? 'var(--text-secondary)' : 'var(--text-faint)',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {INV_LABEL[l.inventory] || '—'}
+                        </span>
                         <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--accent)' }}>{l.model}</span>
                         <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right' }}>{num(l.volume)}</span>
                         <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', textAlign: 'right' }}>{dec(l.unit)} ₽</span>
@@ -423,11 +868,11 @@ export default function DealCard() {
                     ))}
                     <div style={{ display: 'grid', gridTemplateColumns: PL_GRID, gap: 9, alignItems: 'center', paddingTop: 7 }}>
                       <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Итого</span>
-                      <span /><span />
+                      <span /><span /><span />
                       <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, textAlign: 'right' }}>{num(tVol)}</span>
                       <span /><span />
                       <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, textAlign: 'right' }}>{rub(tNet)}</span>
-                      <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--accent)', textAlign: 'right' }}>{rub(Math.round(tNet * (1 + VAT)))}</span>
+                      <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--accent)', textAlign: 'right' }}>{rub(withVat(tNet))}</span>
                     </div>
                   </div>
                 </div>
@@ -442,22 +887,39 @@ export default function DealCard() {
                   <span style={CAPS}>Прогнозные показатели</span>
                   <span style={SUBCAPS}>гарантируются показы и CPM</span>
                 </div>
+                {/* Прокрутка осталась страховкой для узких экранов, но минимум опущен
+                    до реально нужного: на мониторе, под который свёрстана карточка,
+                    таблица помещается целиком и полоса не появляется. */}
                 <div style={{ overflowX: 'auto' }}>
-                  <div style={{ minWidth: 640 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: FC_GRID, gap: 9, paddingBottom: 7, borderBottom: '1px solid var(--border-card)', ...SUBCAPS }}>
-                      <span>Строка</span><span style={{ textAlign: 'right' }}>Частота</span><span style={{ textAlign: 'right' }}>Охват</span><span style={{ textAlign: 'right' }}>Показы</span><span style={{ textAlign: 'right' }}>CTR</span><span style={{ textAlign: 'right' }}>Клики</span><span style={{ textAlign: 'right' }}>CPM</span><span style={{ textAlign: 'right' }}>CPC</span><span style={{ textAlign: 'right' }}>CPU</span>
+                  <div style={{ minWidth: 1165 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: FC_GRID, gap: FC_GAP, paddingBottom: 7, borderBottom: '1px solid var(--border-card)', ...SUBCAPS }}>
+                      <span>Строка</span>
+                      {FC_HEADS.map(h => (
+                        <span key={h} style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{h}</span>
+                      ))}
                     </div>
                     {lines.map((r, i) => (
-                      <div key={i} style={{ display: 'grid', gridTemplateColumns: FC_GRID, gap: 9, alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--border-row)' }}>
-                        <span style={{ fontSize: 11.5, fontWeight: 600, lineHeight: 1.25 }}>{r.position}</span>
-                        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', textAlign: 'right' }}>{r.freq ? num(r.freq) : '—'}</span>
-                        <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right' }}>{r.reach ? num(Math.round(r.reach)) : '—'}</span>
-                        <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--income)', textAlign: 'right' }}>{num(r.volume)}</span>
-                        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', textAlign: 'right' }}>{r.volume && r.clicks ? dec(r.clicks / r.volume * 100) + ' %' : '—'}</span>
-                        <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--income)', textAlign: 'right' }}>{r.clicks ? num(Math.round(r.clicks)) : '—'}</span>
-                        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--accent)', textAlign: 'right' }}>{r.volume ? dec(r.net / r.volume * 1000) + ' ₽' : '—'}</span>
-                        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--accent)', textAlign: 'right' }}>{r.clicks ? dec(r.net / r.clicks) + ' ₽' : '—'}</span>
-                        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--accent)', textAlign: 'right' }}>{r.reach ? dec(r.net / r.reach) + ' ₽' : '—'}</span>
+                      <div key={i} style={{ display: 'grid', gridTemplateColumns: FC_GRID, gap: FC_GAP, alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--border-row)' }}>
+                        <span title={r.position} style={{ fontSize: 11.5, fontWeight: 600, lineHeight: 1.25, overflow: 'hidden' }}>{r.position}</span>
+                        <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.freq ? num(r.freq) : '—'}</span>
+                        <span style={FC_NUM}>{r.reach ? num(Math.round(r.reach)) : '—'}</span>
+                        <span style={{ ...FC_NUM, fontWeight: 700, color: 'var(--income)' }}>{num(r.volume)}</span>
+                        <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.volume && r.clicks ? dec(r.clicks / r.volume * 100) : '—'}</span>
+                        <span style={{ ...FC_NUM, fontWeight: 700, color: 'var(--income)' }}>{r.clicks ? num(Math.round(r.clicks)) : '—'}</span>
+                        <span style={{ ...FC_NUM, color: 'var(--accent)' }}>{r.volume ? dec(r.net / r.volume * 1000) : '—'}</span>
+                        <span style={{ ...FC_NUM, color: 'var(--accent)' }}>{r.clicks ? dec(r.net / r.clicks) : '—'}</span>
+                        <span style={{ ...FC_NUM, color: 'var(--accent)' }}>{r.reach ? dec(r.net / r.reach) : '—'}</span>
+                        <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.cr ? dec(r.cr * 100) : '—'}</span>
+                        <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.checks ? num(Math.round(r.checks)) : '—'}</span>
+                        <span style={{ ...FC_NUM, color: 'var(--accent)' }}>{r.checks ? dec(r.net / r.checks) : '—'}</span>
+                        <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.price ? dec(r.price) : '—'}</span>
+                        <span style={{ ...FC_NUM, fontWeight: 700, color: 'var(--income)' }}>{withRoi(r).revenue ? dec(withRoi(r).revenue) : '—'}</span>
+                        <span style={{ ...FC_NUM, fontWeight: 700,
+                          color: withRoi(r).roi >= 0 ? 'var(--income)' : 'var(--dot-overdue)' }}>
+                          {Number.isFinite(withRoi(r).roi)
+                            ? `${withRoi(r).roi >= 0 ? '+' : '−'}${Math.abs(withRoi(r).roi * 100).toFixed(0)}` : '—'}
+                        </span>
+                        <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.sov ? dec(r.sov) : '—'}</span>
                       </div>
                     ))}
                   </div>
@@ -476,13 +938,13 @@ export default function DealCard() {
                     <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11, color: 'var(--text-faint)', textDecoration: (e.total || 0) < (e.price || 0) ? 'line-through' : 'none' }}>{rub(e.price || 0)}</span>
                     <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--income)', minWidth: 96, textAlign: 'right' }}>{rub(e.total || 0)}</span>
                     {/* цена с НДС — от «итого» (что в счёте), а не от прайса */}
-                    <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', minWidth: 104, textAlign: 'right' }}>{rub(Math.round((e.total || 0) * (1 + VAT)))}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', minWidth: 104, textAlign: 'right' }}>{rub(withVat(e.total || 0))}</span>
                   </span>
                 ))}
                 <span style={{ display: 'flex', alignItems: 'baseline', gap: 12, paddingTop: 7 }}>
                   <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Итого доп. услуги · входят в сумму сделки</span>
                   <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: 'var(--income)' }}>{rub(extrasTotal)}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: 'var(--accent)', minWidth: 104, textAlign: 'right' }}>{rub(Math.round(extrasTotal * (1 + VAT)))}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: 'var(--accent)', minWidth: 104, textAlign: 'right' }}>{rub(withVat(extrasTotal))}</span>
                 </span>
               </div>
               )}
@@ -504,10 +966,64 @@ export default function DealCard() {
                 </div>
               </div>
               )}
+                </div>
+                )}
+              </Section>
+              </div>
+
+              <div style={{ ...CARD, padding: '20px 26px 18px' }}>
+              <Section id="ord" dealId={id} title="ОРД" subtitle="цепочка договоров и ЕРИД"
+                defaultOpen summary={ordSummaryText(ordSummary).text}
+                tone={ordSummaryText(ordSummary).tone} facts={ordFacts(ordSummary)}
+                factsAs="chips" right={<OrdPips assembly={ordSummary} />}>
+                {() => <AssemblyOrd dealId={d.id} data={ordSummary} err={ordErr}
+                  canEdit={canEdit} onReload={loadOrd} />}
+              </Section>
+              </div>
+
+              <div style={{ ...CARD, padding: '20px 26px 18px' }}>
+              <Section id="creatives" dealId={id} title="Креативы" defaultOpen={false}
+                summary={creativesSummary(creatives).text}
+                tone={creativesSummary(creatives).tone}
+                right={creatives && creatives.sets && creatives.sets.length ? (
+                  <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700,
+                    color: 'var(--text-secondary)' }}>{creatives.sets.length} в работе</span>
+                ) : null}
+                collapsed={<CreativesSummary data={creatives} canApprove={canApprove}
+                  onReviewed={onCreativesChanged} />}>
+                {() => (
+                  <AssemblyCreatives dealId={d.id} canEdit={canEdit} canApprove={canApprove}
+                    onChanged={onCreativesChanged} />
+                )}
+              </Section>
+              </div>
             </div>
 
             {/* правая: документы / ответственные / история */}
-            <div style={{ width: '25%', flex: '0 0 25%', minWidth: 260, ...CARD, padding: '20px 22px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {/* Правая колонка — ФИКСИРОВАННЫЕ 280 px, а не 25 %. Доля растянула бы её
+                вместе со страницей до 460, а там документы, ответственные и история:
+                им ширина не нужна, нужна центральной. 280 — ровно то, чем колонка была
+                при прежних 1120, так что на глаз она не изменилась. */}
+            <div style={{ width: 280, flex: '0 0 280px', ...CARD, padding: '20px 22px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {/* От какого юрлица оказываем услуги. Сегодня оно одно и берётся из
+                  справочника (см. _own_company_out), выбора на сделке нет — но стоит
+                  отдельно и явно: оно задаёт ставку НДС по нашим услугам, и здесь же
+                  появится выбор, когда юрлиц станет несколько. */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6,
+                background: 'var(--bg-subtle)', border: '1px solid var(--border-card)',
+                borderRadius: 12, padding: '10px 12px' }}>
+                <span style={SUBCAPS}>Услуги от</span>
+                <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700,
+                  color: 'var(--text-primary)', lineHeight: 1.3 }}>
+                  {(deal && deal.own_company && deal.own_company.name) || 'юрлицо не определено'}
+                </span>
+                <span title={vatHint} style={{ fontFamily: MONO, fontSize: 9,
+                  letterSpacing: '.08em', textTransform: 'uppercase',
+                  color: VAT != null ? 'var(--text-muted)' : 'var(--warning-text)' }}>
+                  {VAT != null ? `НДС ${Math.round(VAT * 100)} %` : 'ставка НДС не задана'}
+                </span>
+              </div>
+
               {/* документы — реальные: файлы сделки + наш МП. Загрузка/замена/удаление. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={CAPS}>Документы</span>
@@ -564,11 +1080,13 @@ export default function DealCard() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 12, borderTop: '1px solid var(--border-card)' }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                   <span style={CAPS}>История</span>
-                  {history.length > 3 && <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 9, color: 'var(--text-faint)' }}>{history.length} событий</span>}
+                  {history.length > 6 && <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 9, color: 'var(--text-faint)' }}>{history.length} событий</span>}
                 </div>
-                {/* Первые 3 события видны сразу, остальные — в скролле (высота ≈ 3 строк). */}
+                {/* Первые 6 событий видны сразу, остальные — в скролле. Высота считается
+                    из строки события (≈56 px вместе с разделителем), а не подобрана на глаз:
+                    поменяется вёрстка строки — поменять и здесь. */}
                 {history.length ? (
-                  <div style={history.length > 3 ? { maxHeight: 168, overflowY: 'auto', paddingRight: 4 } : undefined}>
+                  <div style={history.length > 6 ? { maxHeight: 336, overflowY: 'auto', paddingRight: 4 } : undefined}>
                     {history.map((h, i) => (
                       <div key={i} style={{ display: 'flex', gap: 9, padding: '6px 0', borderTop: '1px solid var(--border-row)' }}>
                         <span style={{ width: 7, height: 7, borderRadius: 2, background: EVENT_COLOR[h.action] || 'var(--text-faint)', flex: '0 0 7px', marginTop: 5 }} />

@@ -64,3 +64,9 @@ graphify-out/
 
 # DB dumps — local only
 *.dump
+
+# Браузерный компаньон брейнштормов — макеты, не код
+.superpowers/
+
+# Локальный корневой сертификат Caddy — свой на каждой машине, в истории не нужен
+caddy-local-root.crt

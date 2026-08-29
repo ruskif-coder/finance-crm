@@ -9,6 +9,7 @@ import useIsMobile from '@/components/mobile/useIsMobile'
 const ContractsMobile = dynamic(() => import('@/components/mobile/ContractsMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 import { T } from '@/lib/tokens'
 import SectionTabs from '@/components/SectionTabs'
+import { PAYMENT_TERM_CONDITIONS } from '@/lib/contractTerms'
 
 
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
@@ -26,7 +27,6 @@ const EMPTY = {
 }
 const COOPERATION_FORMATS = ['Агентство КЛ', 'Агентство ПД', 'Клиент', 'Подрядчик', 'Аптека', 'Паблишер', 'Рекламная система']
 const PROLONGATION_OPTIONS = ['АВТО на год', 'По соглашению', 'Нет']
-const PAYMENT_TERM_CONDITIONS = ['С даты УПД', 'С даты АКТ', 'По периоду']
 
 // формат сотрудничества → цвет чипа
 const FMT_META = {

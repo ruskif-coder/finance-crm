@@ -43,6 +43,17 @@ services:
       # внутрь ЖИВОГО контейнера через docker cp — он терялся при каждом
       # up --force-recreate / пересборке. Через env переживает пересоздание.
       VIBECODE_API_KEY: ${VIBECODE_API_KEY:-}
+      # Доступ к API ОРД МедиаСкаут. Значения — в .env (gitignored), сюда только ссылки.
+      # Контур ПО УМОЛЧАНИЮ demo: забытая переменная должна отправлять в песочницу, а не
+      # в ЕРИР — регистрация маркера необратима. prod ставится осознанно.
+      ORD_ENV: ${ORD_ENV:-demo}
+      # Домен песочницы: бэкенд отдаёт готовый адрес баннера, а знает его окружение.
+      SANDBOX_BASE_URL: ${SANDBOX_BASE_URL:-https://sb.localhost}
+      ORD_LOGIN: ${ORD_LOGIN:-}
+      ORD_PASSWORD: ${ORD_PASSWORD:-}
+      # Пропуск процесса кабинета в ядро. ПУСТОЙ секрет закрывает вход насовсем —
+      # забытая переменная должна ломать функцию, а не защиту.
+      CABINET_SERVICE_TOKEN: ${CABINET_SERVICE_TOKEN:-}
     volumes:
       - ./backend/logs:/app/logs
       - ./uploads:/app/uploads   # персистентное хранилище прикреплённых файлов договоров
@@ -61,6 +72,45 @@ services:
     # См. комментарий у db.ports.
     ports:
       - "127.0.0.1:3000:3000"
+    mem_limit: 512m
+
+  # ── Кабинет паблишера: ОТДЕЛЬНЫЙ контур ────────────────────────────────────────
+  #
+  # Отдельные процессы, а не второй роутер внутри финансового бэкенда, и причина одна:
+  # ОДИН ПРОЦЕСС ДЕРЖИТ ОДИН ПУЛ СОЕДИНЕНИЙ ПОД ОДНОЙ РОЛЬЮ. Роутер внутри ядра ходил бы
+  # под `finance_user`, который видит все 78 таблиц, — и схема `pub` с view вместо
+  # таблиц не давала бы ничего. Вся изоляция держится на том, под какой ролью открыто
+  # соединение (миграция 2026-08-28_publisher_cabinet.sql).
+  cabinet_backend:
+    build: ./cabinet
+    container_name: cabinet_backend
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Роль `cabinet` без USAGE на схему `public`: таблица, которую заведёт create_all
+      # ядра, для этого процесса физически невидима.
+      CABINET_DATABASE_URL: postgresql://cabinet:${CABINET_DB_PASSWORD}@db:5432/finance
+      # СВОЙ ключ подписи. С общим ключом токен, выписанный кабинетом внешнему лицу,
+      # был бы валиден и для финмодуля.
+      CABINET_SECRET_KEY: ${CABINET_SECRET_KEY}
+      SANDBOX_BASE_URL: ${SANDBOX_BASE_URL:-https://sb.localhost}
+      # Кабинет не пишет в базу — он зовёт ядро по внутренней сети этим секретом.
+      CABINET_SERVICE_TOKEN: ${CABINET_SERVICE_TOKEN:-}
+      CORE_API_URL: http://backend:8000
+    ports:
+      - "127.0.0.1:8001:8001"
+    mem_limit: 512m
+
+  cabinet_frontend:
+    build: ./cabinet-frontend
+    container_name: cabinet_frontend
+    restart: always
+    depends_on:
+      - cabinet_backend
+    ports:
+      - "127.0.0.1:3001:3000"
     mem_limit: 512m
 
   # PDF-сайдкар: headless Chromium (Playwright) рендерит страницу медиаплана в нативный
@@ -91,13 +141,26 @@ services:
     depends_on:
       - backend
       - frontend
+      - cabinet_backend
+      - cabinet_frontend
     environment:
       DOMAIN: ${DOMAIN:-localhost}
+      # Кабинет паблишера — свой поддомен. Локально `lk.localhost` работает без правки
+      # hosts: *.localhost браузеры резолвят сами. На проде — `lk.simb-ad.com`.
+      CABINET_SITE: ${CABINET_SITE:-lk.localhost}
+      # Песочница: свой домен и список тех, кому позволено её встраивать. По умолчанию
+      # локальные значения — на проде оба задаются в .env вместе с DNS-записью.
+      SANDBOX_SITE: ${SANDBOX_SITE:-sb.localhost}
+      SANDBOX_FRAME_ANCESTORS: ${SANDBOX_FRAME_ANCESTORS:-http://localhost https://localhost}
+      SANDBOX_BASE_URL: ${SANDBOX_BASE_URL:-https://sb.localhost}
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
+      # Распакованные баннеры — только на чтение: Caddy их раздаёт, писать туда
+      # имеет право лишь бэкенд при загрузке.
+      - ./uploads/sandbox:/srv/sandbox:ro
       - caddy_data:/data
       - caddy_config:/config
 

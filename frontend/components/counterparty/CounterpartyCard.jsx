@@ -156,7 +156,7 @@ const OPS_COLS = '88px 118px 90px 108px 108px 96px 84px 1fr 74px 74px 92px';
 // заголовки колонок были простыми span без обработчиков), поэтому сортировка и фильтры
 // не работали, хотя страница уже умела их грузить. Теперь состояние живёт на странице,
 // а компонент только зовёт колбэки.
-export default function CounterpartyCard({ data, onBack, onEdit, onCopyRequisites, onOpenContracts, copied, canEdit = true,
+export default function CounterpartyCard({ data, onBack, onEdit, onEditTerms, onCopyRequisites, onOpenContracts, copied, canEdit = true,
                                            opsStatus = '', opsSortCol = 'date', opsSortDir = 'desc',
                                            onOpsStatus, onOpsSortCol, onOpsSortDir, onOpsMore, opsLoading = false }) {
   const { name, state, kind, site, brands, requisites, banks, belonging, terms,
@@ -239,10 +239,16 @@ export default function CounterpartyCard({ data, onBack, onEdit, onCopyRequisite
           <section style={{ ...card(0.21), padding: '20px 22px 16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 8 }}>
               <span style={capTitle}>Условия по умолчанию</span>
-              <span className="cc-ghost" title="Редактировать" style={{
-                marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                width: 28, height: 28, border: `1px solid ${T.border}`, borderRadius: 9, color: T.t2, cursor: 'pointer',
-              }}><PencilIcon /></span>
+              {/* Был нарисованный, но мёртвый span: cursor:pointer без onClick. Здесь
+                  задаётся ставка НДС, и «кнопка не нажимается» читалось как поломка
+                  страницы, а не как ненайденная проводка. */}
+              {canEdit && (
+                <span style={{ marginLeft: 'auto', display: 'inline-flex' }}>
+                  <IconBtn onClick={onEditTerms} title="Редактировать условия по умолчанию">
+                    <PencilIcon />
+                  </IconBtn>
+                </span>
+              )}
             </div>
             {terms.map(r => <KeyRow key={r.label} label={r.label} value={r.value} mono={r.mono} />)}
           </section>

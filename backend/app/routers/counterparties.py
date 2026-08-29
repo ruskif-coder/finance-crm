@@ -3,6 +3,7 @@ from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Counterparty, CounterpartyBankAccount, Operation, Article, Contract, User
+from app import own_company
 from app.sales.models import SalesAgency, SalesAgencyCounterparty
 from app.routers.auth import get_current_user
 from app.permissions import require_permission, require_any_permission
@@ -206,12 +207,7 @@ def get_own_companies(
     """Список своих юрлиц (is_own_company=True) с банковскими счетами.
     Используется в дропдаунах: остатки по банку, платёжные поручения, договоры.
     Доступен всем аутентифицированным пользователям (не только admin)."""
-    cps = (
-        db.query(Counterparty)
-        .filter(Counterparty.is_own_company == True)
-        .order_by(Counterparty.name)
-        .all()
-    )
+    cps = own_company.all_own(db)   # общее правило, см. app/own_company.py
     return [
         {
             "id": cp.id,

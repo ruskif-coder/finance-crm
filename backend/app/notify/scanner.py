@@ -402,12 +402,100 @@ def _after_backlog_overdue(db: Session, hit: Hit, now: datetime):
 DEAL_QUEUE_EVENTS = ["deal_mp_missing", "mp_verify", "mp_unapproved", "mp_rework", "booking_confirm",
                      "act_missing", "stage_stuck", "stage_unmapped"]
 
+def rule_creative_silence(db: Session, ev: registry.Event) -> List[Hit]:
+    """Площадка молчит третий день после отправки комплекта.
+
+    Считается по ПУСТЫМ строкам ожидания. Они заводятся в момент отправки именно затем,
+    чтобы молчание было вычислимым: по факту вердикта сравнивать было бы не с чем —
+    отсутствие строки и «ещё не спросили» неразличимы.
+
+    Сработка одна на ПАРУ, а не на сделку: молчат конкретные площадки, и «по сделке нет
+    ответов» не подсказывает, кому написать.
+    """
+    from app.launch_prep.models import LaunchPrepPair, LaunchPrepReview, LaunchPrepTarget
+    from app.sales.models import SalesDeal, SalesPublisher
+
+    days = _param(ev, "days", 3)
+    edge = datetime.utcnow() - timedelta(days=days)
+
+    rows = (db.query(LaunchPrepReview, LaunchPrepPair, LaunchPrepTarget)
+            .join(LaunchPrepPair, LaunchPrepPair.id == LaunchPrepReview.pair_id)
+            .join(LaunchPrepTarget, LaunchPrepTarget.id == LaunchPrepPair.target_id)
+            .filter(LaunchPrepReview.kind == "площадка",
+                    LaunchPrepReview.verdict.is_(None),
+                    LaunchPrepReview.asked_at < edge).all())
+    if not rows:
+        return []
+
+    deals = {d.id: d for d in db.query(SalesDeal).filter(
+        SalesDeal.id.in_({t.deal_id for _, _, t in rows}))}
+    pubs = {p.id: p for p in db.query(SalesPublisher).filter(
+        SalesPublisher.id.in_({t.publisher_id for _, _, t in rows}))}
+
+    hits = []
+    for review, pair, target in rows:
+        deal = deals.get(target.deal_id)
+        pub = pubs.get(target.publisher_id)
+        if not deal:
+            continue
+        waited = (datetime.utcnow() - review.asked_at).days
+        hits.append(Hit(
+            entity_type="creative_pair", entity_id=pair.id, stage="silence",
+            title=f"{pub.name if pub else 'Площадка'} молчит {waited} дн. · {deal.code}",
+            body="Комплект отправлен, вердикта нет. Напомнить или снять получателя.",
+            link=f"/sales/deals/{deal.code or deal.id}",
+            ctx={"deal_id": deal.id},
+        ))
+    return hits
+
+
+def rule_creative_erid_failed(db: Session, ev: registry.Event) -> List[Hit]:
+    """Регистрация креатива в реестре упала.
+
+    Единственное состояние модуля, которое НЕ проявляет себя само: маркер приходит в
+    ответе сразу, а регистрация в ЕРИР идёт асинхронно. Снаружи всё выглядит рабочим —
+    ЕРИД есть, комплект «маркирован», — пока не спросят с нас.
+
+    Две ветки отказа разводятся текстом: ошибка регистрации чинится материалом или
+    полями, ошибка скачивания — перезаливкой файла.
+    """
+    from app.launch_prep.models import LaunchPrepCreativeSet
+    from app.sales.models import SalesDeal
+
+    sets = (db.query(LaunchPrepCreativeSet)
+            .filter(LaunchPrepCreativeSet.ord_status.in_(
+                ("RegistrationError", "MediaDownloadError", "DeletionError"))).all())
+    if not sets:
+        return []
+    deals = {d.id: d for d in db.query(SalesDeal).filter(
+        SalesDeal.id.in_({s.deal_id for s in sets}))}
+
+    hits = []
+    for s in sets:
+        deal = deals.get(s.deal_id)
+        if not deal:
+            continue
+        what = ("файл не скачался — перезалить материал"
+                if s.ord_status == "MediaDownloadError"
+                else "реестр отклонил регистрацию — проверить поля и материал")
+        hits.append(Hit(
+            entity_type="creative_set", entity_id=s.id, stage=s.ord_status,
+            title=f"Креатив не зарегистрирован · {deal.code}",
+            body=f"Комплект №{s.no}: {what}. {s.ord_error or ''}".strip(),
+            link=f"/sales/deals/{deal.code or deal.id}",
+            ctx={"deal_id": deal.id},
+        ))
+    return hits
+
+
 RULES = {
     "invoice_overdue": rule_invoice_overdue,
     "mp_stuck": rule_mp_stuck,
     "plan_month_empty": rule_plan_month_empty,
     "mp_draft_stale": rule_mp_draft_stale,
     "backlog_overdue": rule_backlog_overdue,
+    "creative_silence": rule_creative_silence,
+    "creative_erid_failed": rule_creative_erid_failed,
     **{k: _deal_rule(k) for k in DEAL_QUEUE_EVENTS},
 }
 

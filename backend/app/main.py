@@ -9,7 +9,8 @@ from app.routers import (auth, operations, reports, counterparties, articles, se
                          users, roles, contracts, sales_directories, sales_dashboard,
                          sales_reconcile, media_plans, notifications, notify_settings,
                          year_plan, finreport, backlog, account_dashboard,
-                         publishers, diadoc)
+                         publishers, diadoc, ord, launch_prep, traffic, cabinets,
+                         cabinet_gateway)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -32,6 +33,9 @@ logger = logging.getLogger("finance")
 
 from app.sales import models as sales_models  # noqa: F401,E402 — регистрирует таблицы дашборда продаж в Base.metadata
 from app import diadoc_models  # noqa: F401,E402 — реестр документов Диадока (миграция 2026-08-20_diadoc_documents.sql)
+from app.ord import models as ord_models          # noqa: F401,E402 — регистрирует таблицы в create_all
+from app.launch_prep import models as launch_prep_models  # noqa: F401,E402 — модуль креативов (миграция 2026-08-26_launch_prep_creatives.sql)
+from app.cabinet import models as cabinet_models  # noqa: F401,E402 — учётки кабинета (миграция 2026-08-28_publisher_cabinet.sql)
 
 Base.metadata.create_all(bind=engine)
 
@@ -610,6 +614,19 @@ app.include_router(account_dashboard.router, prefix="/api/sales", tags=["sales"]
 app.include_router(year_plan.router, prefix="/api/sales/year-plan", tags=["sales"])
 app.include_router(backlog.router, prefix="/api/backlog", tags=["backlog"])
 app.include_router(diadoc.router, prefix="/api/diadoc", tags=["diadoc"])
+app.include_router(ord.router, prefix="/api/ord", tags=["ord"])
+# Модуль креативов: сбор запуска. Живёт на карточке сделки, отдельного экрана
+# не имеет, поэтому записи в карте навигации у него нет — только право.
+app.include_router(launch_prep.router, prefix="/api/launch-prep", tags=["creatives"])
+# Контур «Траффики»: очередь проверки материала перед отправкой площадкам.
+# У него, в отличие от модуля креативов, СВОЙ экран — и запись в карте навигации.
+app.include_router(traffic.router, prefix="/api/traffic", tags=["traffic"])
+# Учётки внешнего кабинета — администрирование со стороны ядра. Сам кабинет живёт
+# отдельным сервисом (`cabinet/`) и ходит в базу под своей ролью.
+app.include_router(cabinets.router, prefix="/api/cabinets", tags=["cabinets"])
+# Вход для СЕРВИСА кабинета: два действия под общим секретом, не под правом роли.
+# Снаружи здесь стоит не человек, а наш же процесс во внешнем контуре.
+app.include_router(cabinet_gateway.router, prefix="/api/cabinet-gw", tags=["cabinet-gw"])
 
 @app.get("/")
 def root():

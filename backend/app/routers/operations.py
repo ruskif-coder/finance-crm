@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, case, text, or_
+from sqlalchemy import func, case, or_
 from app.database import get_db
 from app.xlsx_safe import xlsx_safe
 from app.models import Operation, Article, Counterparty, User
+from app import own_company
 from app.audit import log_action
 from app.permissions import require_permission
 from app.routers.reports import (_due_date, _aging_bucket, _term_days_for_counterparty,
@@ -139,16 +140,6 @@ def _receivable_status(op):
     due_date = _due_date(op.period, term_days)
     bucket = _aging_bucket(due_date, date.today())
     return bucket if bucket in RECEIVABLE_STATUS_LABELS else None
-
-def _get_own_company_id(db) -> Optional[int]:
-    """Возвращает id первого контрагента с is_own_company=True, или None если нет.
-    Используется при создании/импорте операций для автоматической простановки
-    own_company_id (пока юрлицо одно — всегда будет первым и единственным)."""
-    row = db.execute(
-        text("SELECT id FROM counterparties WHERE is_own_company = TRUE ORDER BY id LIMIT 1")
-    ).fetchone()
-    return row.id if row else None
-
 
 def compute_vat_fact(income: float, expense: float, vat_rate: float) -> float:
     """Сумма НДС, выделенная из дохода/расхода по ставке vat_rate (НДС "в том числе",
@@ -441,7 +432,7 @@ def create_operation(
         invoice_date=op.invoice_date,
         description=op.description,
         document_link=_validate_link(op.document_link),
-        own_company_id=_get_own_company_id(db),
+        own_company_id=own_company.sole_id(db),
         created_by=current_user.id
     )
     db.add(operation)
@@ -1134,9 +1125,18 @@ def _take_from_pool(pool, invoice, op_id=None):
     неотличимых по всем содержательным полям. Сам по себе ID не сопоставляет
     ничего и несовпадение ID не отменяет совпадения.
 
-    Если ни счёт, ни ID не помогли, поведение прежнее: берётся самая ранняя
-    запись. Так остаётся рабочим случай «файл дописывает номер счёта операции,
-    у которой его ещё не было»."""
+    РАЗНЫЕ номера счетов — это разные операции, а не одна изменившаяся. Если в
+    строке счёт есть, а в пуле лежат записи с ДРУГИМИ номерами, совпадения нет
+    вовсе: строка новая. Без этого правила счёт 1778 за июль «совпадал» со
+    счётом 1345 за июнь, и подтверждение такого конфликта переписало бы июньскую
+    операцию июльскими данными — то есть стёрло бы запись, а не завело новую.
+
+    Кандидатами при непустом счёте остаются только записи БЕЗ счёта: это случай
+    «файл дописывает номер операции, у которой его ещё не было», и он должен
+    остаться рабочим.
+
+    Если счёта в строке нет, поведение прежнее: подсказка по ID, иначе самая
+    ранняя запись."""
     if not pool:
         return None
     want = (invoice or '').strip()
@@ -1145,12 +1145,22 @@ def _take_from_pool(pool, invoice, op_id=None):
             if (op.invoice or '').strip() == want:
                 del pool[i]
                 return op
+        candidates = [i for i, op in enumerate(pool) if not (op.invoice or '').strip()]
+        if not candidates:
+            return None
+    else:
+        candidates = list(range(len(pool)))
+
     if op_id:
-        for i, op in enumerate(pool):
-            if op.id == op_id:
+        for i in candidates:
+            if pool[i].id == op_id:
+                op = pool[i]
                 del pool[i]
                 return op
-    return pool.popleft()
+    i = candidates[0]
+    op = pool[i]
+    del pool[i]
+    return op
 
 
 @router.post("/import/preview")
@@ -1329,7 +1339,7 @@ async def import_apply(
                 invoice_date=data['invoice_date'],
                 description=data['description'],
                 document_link=_validate_link(data.get('document_link'), raise_on_bad=False),
-                own_company_id=_get_own_company_id(db),
+                own_company_id=own_company.sole_id(db),
                 created_by=current_user.id,
             )
             db.add(op)

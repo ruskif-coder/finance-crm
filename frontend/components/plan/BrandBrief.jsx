@@ -6,6 +6,7 @@
  * Данные брифа — одни на строку-бренд; пишутся в brief/service_forecast строки плана.
  */
 import React, { useMemo, useState } from 'react';
+import { overlayClose } from '@/lib/overlay'
 
 // Локальные токены (не импортируем из YearPlan — иначе циклический импорт рушит сборку).
 const T = {
@@ -120,7 +121,7 @@ export default function BrandBrief({ open, onClose, brandLabel, advertiserId, br
   if (!open) return null;
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(20,26,38,.45)', zIndex: 200, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '32px 16px', overflowY: 'auto' }}>
+    <div {...overlayClose(onClose)} style={{ position: 'fixed', inset: 0, background: 'rgba(20,26,38,.45)', zIndex: 200, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '32px 16px', overflowY: 'auto' }}>
       <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 'min(1800px, 96vw)', background: T.card, borderRadius: 18, boxShadow: T.pop, display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '18px 24px', borderBottom: `1px solid ${T.border}` }}>
           <span style={{ fontSize: 18, fontWeight: 700, letterSpacing: '-0.02em', color: T.t1 }}>Бриф · {brandLabel || 'бренд'}</span>

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
 import { CARD, monoLbl, Marker } from './kit'
 import CardShell from './CardShell'
+import AssemblyCreatives from '../creatives/AssemblyCreatives'
 
 // Мобильная карточка сделки /sales/deals/[id]. Контракт как у всех мобильных
 // компонентов проекта: страница считает (деньги/цепочка стадий/медиаплан),
@@ -31,7 +32,7 @@ function Row({ label, value }) {
 }
 
 export default function DealCardMobile({
-  deal, chain, curIdx, isLost, net, gross, vat, lines, tVol, tNet, mpExtras, extrasTotal, mp, hasMp, canEdit, onBack, onMove,
+  deal, chain, curIdx, isLost, net, gross, vat, lines, tVol, tNet, mpExtras, extrasTotal, mp, hasMp, canEdit, canApprove, onBack, onMove,
 }) {
   const d = deal
   const title = [d.advertiser, d.brand].filter(Boolean).join(' · ') || d.title || '—'
@@ -50,6 +51,7 @@ export default function DealCardMobile({
     { key: 'summary', label: 'Сводка' },
     { key: 'services', label: 'Услуги' },
     { key: 'mp', label: 'Медиапланы' },
+    { key: 'creatives', label: 'Креативы' },
   ]
 
   return (
@@ -75,7 +77,7 @@ export default function DealCardMobile({
               <div style={monoLbl}>Сумма сделки · с НДС</div>
               <div style={{ fontFamily: MONO, fontSize: 26, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text-primary)', margin: '4px 0 10px' }}>{rub(gross)}</div>
               <Row label="До НДС" value={rub(net)} />
-              <Row label={`НДС ${Math.round((vat || 0.22) * 100)} %`} value={gross != null && net != null ? rub(Math.round(gross - net)) : null} />
+              <Row label={vat != null ? `НДС ${Math.round(vat * 100)} %` : 'НДС — ставка не задана'} value={gross != null && net != null ? rub(Math.round(gross - net)) : null} />
             </div>
             <div style={{ ...CARD, padding: '14px 16px' }}>
               <div style={{ ...monoLbl, marginBottom: 10 }}>Параметры</div>
@@ -107,6 +109,15 @@ export default function DealCardMobile({
           </>
         )}
 
+        {/* Блок креативов переиспользуется десктопный, а не пишется вторым.
+            Он собран из плашек и полей во всю ширину — на узком экране раскладка та же,
+            а две реализации одного согласования разъехались бы на первой же правке. */}
+        {tab === 'creatives' && (
+          <div style={{ ...CARD, padding: '14px 16px' }}>
+            <AssemblyCreatives dealId={d.id} canEdit={canEdit} canApprove={canApprove} />
+          </div>
+        )}
+
         {tab === 'services' && (
           <>
             {!hasMp ? (
@@ -129,7 +140,7 @@ export default function DealCardMobile({
                 ))}
                 <div style={{ ...CARD, padding: '12px 14px', display: 'flex', justifyContent: 'space-between' }}>
                   <span style={monoLbl}>Итого</span>
-                  <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: 'var(--accent)' }}>{rub(Math.round(tNet * (1 + (vat || 0.22))))}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color: 'var(--accent)' }}>{rub(vat != null ? Math.round(tNet * (1 + vat)) : null)}</span>
                 </div>
               </>
             )}
