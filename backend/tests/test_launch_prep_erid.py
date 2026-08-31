@@ -20,7 +20,7 @@ import pytest
 from app.ord import client as ord_client
 from app.ord import submit as ord_submit
 from app.ord.payloads import OrdPayloadError, creative
-from app.routers.launch_prep import threshold_state
+from app.routers.launch_prep import threshold_numbers
 
 SPEC = os.path.join(os.path.dirname(__file__), 'fixtures', 'mediascout_v3_schemas.json')
 
@@ -101,11 +101,26 @@ def test_kktu_is_taken_from_brand_and_must_be_third_level():
     assert 'ККТУ' in str(e.value)
 
 
-def test_set_overrides_brand_marking():
-    """Переопределение на комплекте — ради него поля и заведены в двух местах."""
-    body = creative(_set(kktu_code='11.22.33', description='своё описание'),
-                    _files(), _deal(), _brand(), 'CT-final-1')
-    assert body['kktuCodes'] == ['11.22.33']
+def test_kktu_comes_only_from_the_brand():
+    """Код ККТУ берётся у БРЕНДА, даже если у комплекта проставлен свой.
+
+    Переопределение на комплект заморожено 31.08.2026 (владелец): ККТУ описывает
+    рекламируемый товар, а не материал, и задаётся один раз на сделку в блоке сборки ОРД.
+    Замер в день заморозки: колонка использована 0 раз из 24 комплектов. Прибор смотрит
+    именно на «даже если проставлен» — колонка осталась в базе и может быть непустой у
+    строк, заведённых раньше.
+    """
+    body = creative(_set(kktu_code='11.22.33'), _files(), _deal(), _brand(), 'CT-final-1')
+    assert body['kktuCodes'] == ['58.13.12'], 'в реестр ушёл код комплекта вместо кода бренда'
+
+
+def test_description_is_still_overridable():
+    """А вот описание объекта рекламирования переопределяется — оно про МАТЕРИАЛ.
+
+    Разница осознанная: у двух баннеров одного бренда описание может отличаться, код
+    товара — нет.
+    """
+    body = creative(_set(description='своё описание'), _files(), _deal(), _brand(), 'CT-final-1')
     assert body['description'] == 'своё описание'
 
 
@@ -149,34 +164,36 @@ class _FakeQuery:
     def all(self): return self._rows
 
 
-class _FakeDb:
-    def __init__(self, rows): self._rows = rows
-    def query(self, *a, **k): return _FakeQuery(self._rows)
-
-
 def _pairs(sent, agreed):
     return [SimpleNamespace(agreed_at=(1 if i < agreed else None)) for i in range(sent)]
 
 
-def test_threshold_denominator_includes_refusals():
-    """Отказ остаётся в знаменателе: иначе четверть считается от одних довольных."""
-    st = threshold_state(_FakeDb(_pairs(4, 1)), 1, 0.25)
-    assert st == {"sent": 4, "agreed": 1, "need": 1, "ready": True}
+def test_the_share_no_longer_gates_the_marker():
+    """Порог согласовавших снят 31.08.2026 (владелец: «от него отказались»).
 
-    # Один согласовал, один отказал, двое молчат — знаменатель по-прежнему четыре.
-    st2 = threshold_state(_FakeDb(_pairs(8, 1)), 1, 0.25)
-    assert st2["need"] == 2 and st2["ready"] is False
+    Раньше маркер не выпускался, пока не набрана доля ответивших: четверть от четырёх —
+    один, от восьми — двое. Теперь число ответов ни на что не влияет, и прибор держит
+    именно это: сколько бы ни молчало, выпуск не заперт.
+    """
+    for sent, agreed in ((4, 1), (8, 1), (3, 0), (1, 0), (5, 0)):
+        st = threshold_numbers(_pairs(sent, agreed))
+        assert st["ready"] is True, (sent, agreed)
+        assert st["need"] == 0, st
 
 
-def test_threshold_rounds_up_and_needs_at_least_one():
-    """Четверть от трёх — это один, а не ноль."""
-    assert threshold_state(_FakeDb(_pairs(3, 0)), 1, 0.25)["need"] == 1
-    assert threshold_state(_FakeDb(_pairs(1, 0)), 1, 0.25)["need"] == 1
-    assert threshold_state(_FakeDb(_pairs(5, 0)), 1, 0.25)["need"] == 2
+def test_the_counter_still_answers_how_many_replied():
+    """Числа остались справкой: «согласовали N из M» показывается на экране.
+
+    Знаменатель — те, КОМУ отправили, а не те, кто ответил. Отказ из него не выпадает:
+    строка «1 из 4» описывает состояние опроса, и потеряй она отказавшихся, читалась бы
+    как «спросили одного».
+    """
+    st = threshold_numbers(_pairs(4, 1))
+    assert (st["sent"], st["agreed"]) == (4, 1)
 
 
 def test_no_recipients_means_not_ready():
-    st = threshold_state(_FakeDb([]), 1, 0.25)
+    st = threshold_numbers([], 0.25)
     assert st["ready"] is False and st["need"] == 0
 
 

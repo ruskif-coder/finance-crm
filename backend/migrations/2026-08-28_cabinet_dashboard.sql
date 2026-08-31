@@ -13,7 +13,12 @@
 -- фильтруется областью; эта — «кто я», и её читают по конкретному номеру площадки,
 -- который кабинет уже получил из области. Смешать их значило бы отдать профиль чужой
 -- площадки тому, кто угадал номер.
-CREATE OR REPLACE VIEW pub.profile_v1 WITH (security_barrier) AS
+-- ПОВТОРНЫЙ НАКАТ (правка 31.08.2026). Представление ниже позже расширяется другой
+-- миграцией, а `CREATE OR REPLACE VIEW` не умеет менять состав колонок — на втором
+-- проходе он падал с `cannot drop columns from view`. Поэтому пересоздаём: зависимостей
+-- между представлениями `pub` нет, DROP ничего не тянет за собой, грант выдаётся тут же.
+DROP VIEW IF EXISTS pub.profile_v1;
+CREATE VIEW pub.profile_v1 WITH (security_barrier) AS
 SELECT p.id            AS publisher_id,
        p.name,
        p.domain,
@@ -40,7 +45,12 @@ WHERE p.id = ANY (pub.allowed_publisher_ids());
 -- Роль «документы и оплаты» в системе отсутствует: у сделки два ответственных, не три.
 -- Придумывать третьего из имеющихся значило бы отправить площадку с вопросом по акту к
 -- человеку, который его не видел.
-CREATE OR REPLACE VIEW pub.team_v1 WITH (security_barrier) AS
+-- ПОВТОРНЫЙ НАКАТ (правка 31.08.2026). Представление ниже позже расширяется другой
+-- миграцией, а `CREATE OR REPLACE VIEW` не умеет менять состав колонок — на втором
+-- проходе он падал с `cannot drop columns from view`. Поэтому пересоздаём: зависимостей
+-- между представлениями `pub` нет, DROP ничего не тянет за собой, грант выдаётся тут же.
+DROP VIEW IF EXISTS pub.team_v1;
+CREATE VIEW pub.team_v1 WITH (security_barrier) AS
 SELECT DISTINCT
        t.publisher_id,
        r.id                        AS rep_id,
@@ -98,3 +108,5 @@ FROM sales_publisher_documents dd
 WHERE dd.publisher_id = ANY (pub.allowed_publisher_ids());
 
 GRANT SELECT ON pub.profile_v1, pub.team_v1, pub.done_v1, pub.document_v1 TO cabinet;
+GRANT SELECT ON pub.profile_v1 TO cabinet;
+GRANT SELECT ON pub.team_v1 TO cabinet;

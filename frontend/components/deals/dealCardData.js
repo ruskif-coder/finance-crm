@@ -17,7 +17,6 @@ import { DEMO } from './DealCard'
 import { DEAL_DOCS } from '../../lib/dealDocs'
 
 const VAT = 0.22
-const MP_STATUS = { draft: 'черновик', review: 'на согласовании', approved: 'согласован', rejected: 'отклонён', archived: 'архив' }
 
 const dec = (v) => v.toFixed(2).replace('.', ',')
 const initials = (name) => (name ? name.trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() : '—')
@@ -99,7 +98,7 @@ function mapDocs(d, mp, canEdit) {
   const fileBy = Object.fromEntries((d.files || []).map(f => [f.kind, f]))
   const mpDoc = {
     label: 'Медиаплан',
-    note: mp ? `v${mp.version} · ${MP_STATUS[mp.status] || mp.status}` : 'не создан',
+    note: mp ? `v${mp.version}` : 'не создан',
     ready: !!mp,
     tags: mp ? ['PDF', 'XLS'] : undefined,
   }

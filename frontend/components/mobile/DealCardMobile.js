@@ -16,7 +16,6 @@ const LAYER_COLOR = {
   'реализуемые': 'var(--dot-current-dz, #d97706)',
   'фактические': 'var(--income, #1F7D5E)',
 }
-const MP_STATUS = { draft: 'черновик', review: 'на согласовании', approved: 'согласован', rejected: 'отклонён', archived: 'архив' }
 
 function Chip({ label, bg, fg }) {
   return <span style={{ display: 'inline-flex', alignItems: 'center', padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600, background: bg, color: fg, whiteSpace: 'nowrap', flexShrink: 0 }}>{label}</span>
@@ -173,7 +172,6 @@ export default function DealCardMobile({
                   <a href={`/accounts/mp/${mp.id}`} style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>Открыть →</a>
                 </div>
                 <Row label="Версия" value={`v${mp.version}`} />
-                <Row label="Статус" value={MP_STATUS[mp.status] || mp.status} />
                 {mp.geo && <Row label="Гео" value={mp.geo} />}
                 {mp.period && <Row label="Период" value={mp.period} />}
               </div>

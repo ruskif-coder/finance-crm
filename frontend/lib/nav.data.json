@@ -148,7 +148,7 @@
       "items": [
         {
           "key": "queue",
-          "label": "Очередь",
+          "label": "Креативы на проверку",
           "href": "/traffic/queue",
           "perm": "traffic_queue"
         }

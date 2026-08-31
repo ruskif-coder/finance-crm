@@ -175,6 +175,7 @@ def login(payload: LoginIn):
         db.close()
 
     pubs = account_publishers(row.id)
+
     return {"token": make_token(row.id, row.email),
             "name": row.name, "email": row.email,
             "publishers": [{"id": p.publisher_id, "name": p.name, "domain": p.domain}
@@ -226,6 +227,9 @@ def tasks(acc=Depends(current_account)):
             "creative_no": r.creative_no, "creative_title": r.creative_title,
             "form": r.form,
             "advertiser": r.advertiser, "brand": r.brand, "service": r.service,
+            # Веб или приложение. Карточка печатала это поле с самого начала, но витрина
+            # его не отдавала — и строка молча схлопывалась в одну услугу.
+            "surface": r.surface_kind,
             "period_from": r.period_from, "period_to": r.period_to,
             "advertiser_url": r.advertiser_url,
             # ТТ площадки — её собственные требования к материалу. Лежат на строке
@@ -343,6 +347,9 @@ def set_verdict(task_id: int, payload: VerdictIn, acc=Depends(current_account)):
     t = my_task(acc, task_id)
     out = call_core("POST", f"/api/cabinet-gw/pair/{task_id}/verdict", {
         "publisher_id": t.publisher_id,
+        # Номер учётки — не «для журнала»: ядро по нему само проверяет право говорить за
+        # эту площадку. До 30.08.2026 такой проверки не было ни в одной из ручек.
+        "account_id": acc.id,
         "verdict": payload.verdict,
         "reason": payload.reason,
         # Снимок автора: людей за одной площадкой несколько, и через год «Иванов»
@@ -367,6 +374,7 @@ def set_url(task_id: int, payload: UrlIn, acc=Depends(current_account)):
     t = my_task(acc, task_id)
     return call_core("PUT", f"/api/cabinet-gw/target/{t.target_id}/url", {
         "publisher_id": t.publisher_id,
+        "account_id": acc.id,
         "url": payload.url,
         "author_name": acc.name,
     })
@@ -391,11 +399,46 @@ def dashboard(acc=Depends(current_account)):
 
     with scoped_session(ids) as db:
         profiles = db.execute(text("SELECT * FROM pub.profile_v1 ORDER BY name")).all()
-        team = db.execute(text("SELECT * FROM pub.team_v1 ORDER BY role, name")).all()
+        # Порядок — из настройки, а не по алфавиту: первым площадка видит того, к кому
+        # идти сначала (`cabinet_our_contact.sort_order`).
+        team = db.execute(text(
+            "SELECT * FROM pub.team_v1 ORDER BY sort_order, name")).all()
         done = db.execute(text(
             "SELECT * FROM pub.done_v1 WHERE decided_at > now() - interval '7 days' "
             "ORDER BY decided_at DESC")).all()
         docs = db.execute(text("SELECT * FROM pub.document_v1 ORDER BY uploaded_at DESC")).all()
+        svc = db.execute(text(
+            "SELECT * FROM pub.publisher_service_v1 ORDER BY sort_order, service")).all()
+        legals = db.execute(text(
+            "SELECT * FROM pub.counterparty_v1 ORDER BY name")).all()
+        contracts = db.execute(text(
+            "SELECT * FROM pub.contract_v1 "
+            " ORDER BY is_archived, signed_at DESC NULLS LAST, number")).all()
+
+    by_id = {r.publisher_id: r.name for r in profiles}
+
+    # Поверхности сворачиваются ЗДЕСЬ, а не в представлении: «еФарм WEB · APP» одной
+    # строкой — решение экрана, и второе такое решение в SQL разошлось бы с первым.
+    folded: dict = {}
+    for r in svc:
+        folded.setdefault((r.publisher_id, r.service), []).append(r.surface_kind)
+
+    # ── к какому юрлицу относится договор ─────────────────────────────────────
+    #
+    # У договора с карточкой юрлицо известно (`contracts.counterparty_id`). У 26 из 47
+    # карточки нет — они заведены голым номером. Раньше такие висели отдельным списком,
+    # и у служебной учётки это были два десятка строк с одинаковым номером: договор
+    # заведён на КАЖДОЙ площадке отдельно, а список показывал их без площадки.
+    #
+    # Правило: договор без карточки относится к юрлицу СВОЕЙ площадки — не к
+    # произвольному. Это однозначно, пока у площадки юрлицо одно (замер 30.08.2026:
+    # одно у всех 38). Где их ноль или больше одного, договор остаётся неразложенным и
+    # попадает в счётчик, а не приписывается наугад.
+    def contract(r):
+        return {"number": r.number, "signed_at": r.signed_at,
+                "valid_until": r.valid_until, "role": r.role,
+                "is_archived": bool(r.is_archived), "has_file": bool(r.has_file),
+                "publisher_id": r.publisher_id, "counterparty_id": r.counterparty_id}
 
     def prof(r):
         return {"publisher_id": r.publisher_id, "name": r.name, "domain": r.domain,
@@ -403,24 +446,66 @@ def dashboard(acc=Depends(current_account)):
                 "chat_title": r.chat_title, "chat_url": r.chat_url,
                 "chat_url_max": r.chat_url_max,
                 "media_kit": r.media_kit_filename,
-                "tech_requirements": r.tech_requirements}
+                "tech_requirements": r.tech_requirements,
+                # Доп. каналы связи: запасной чат на случай блокировок основного.
+                "messenger_note": r.messenger_note}
+
+    by_pub_legals: dict = {}
+    for r in legals:
+        by_pub_legals.setdefault(r.publisher_id, []).append(r)
+
+    legal_cards = []
+    for r in legals:
+        own = [c for c in contracts
+               if c.publisher_id == r.publisher_id
+               and (c.counterparty_id == r.counterparty_id
+                    or (c.counterparty_id is None
+                        and len(by_pub_legals.get(r.publisher_id, [])) == 1))]
+        legal_cards.append({
+            "counterparty_id": r.counterparty_id, "publisher_id": r.publisher_id,
+            "publisher": by_id.get(r.publisher_id),
+            "name": r.name, "inn": r.inn, "vat_rate": r.vat_rate,
+            "contracts": [contract(c) for c in own]})
+
+    unassigned = [c for c in contracts
+                  if c.counterparty_id is None
+                  and len(by_pub_legals.get(c.publisher_id, [])) != 1]
 
     return {
         # Первая площадка — «своя» для шапки. У учётки их может быть несколько: тогда
         # шапка показывает первую, а переключение между ними — задача следующего слоя.
         "profile": prof(profiles[0]) if profiles else None,
         "publishers": [prof(r) for r in profiles],
+        # Юрлица площадки — по одной плашке на юрлицо, договоры внутри. Разложены ЗДЕСЬ,
+        # а не на экране: «к какому юрлицу относится договор» — правило, а не вёрстка, и
+        # оно должно быть в одном месте. Договор без карточки юрлица не приписывается
+        # никому: он идёт отдельной группой, иначе площадка увидела бы его под чужими
+        # реквизитами.
+        "legals": legal_cards,
+        # Не список, а ЧИСЛО: развесить эти договоры не по чему, и перечислять их
+        # площадке нечем помочь — она увидит десяток одинаковых номеров и придёт
+        # спрашивать. Число говорит ровно то, что известно: столько-то не разложено.
+        "contracts_unassigned": len(unassigned),
+        # Услуги, закреплённые за площадками: площадка проверяет, верно ли мы её завели.
+        "services": [{"publisher_id": pid, "service": name,
+                      "surfaces": sorted(set(surfaces))}
+                     for (pid, name), surfaces in folded.items()],
         # Один человек на роль, а не строка на каждую площадку: витрина отдаёт команду
         # ПО ПЛОЩАДКЕ, и у учётки с сорока одной площадкой один и тот же аккаунт
         # приходил бы сорок один раз. Сводим здесь, а не в SQL: там `DISTINCT` не
         # помогает — строки различаются номером площадки, который экрану не нужен.
         "team": list({(r.name, r.role): {"name": r.name, "role": r.role, "email": r.email}
                       for r in team}.values()),
+        # Имя площадки подставляется ЗДЕСЬ, а не добавляется в `pub.done_v1`: профили
+        # уже загружены тем же запросом выше, и лишняя колонка во внешней витрине — это
+        # расширение контракта ради того, что и так под рукой.
         "done": [{"task_id": r.task_id, "creative_no": r.creative_no,
                   "creative_title": r.creative_title, "advertiser": r.advertiser,
                   "brand": r.brand, "service": r.service, "verdict": r.verdict,
                   "reason": r.reason, "decided_at": r.decided_at,
-                  "decided_by": r.decided_by} for r in done],
+                  "decided_by": r.decided_by,
+                  "publisher_id": r.publisher_id,
+                  "publisher": by_id.get(r.publisher_id)} for r in done],
         "documents": [{"id": r.id, "type": r.doc_type, "name": r.filename,
                        "note": r.note, "uploaded_at": r.uploaded_at} for r in docs],
     }
@@ -449,6 +534,7 @@ async def media_kit(file: UploadFile = File(...), acc=Depends(current_account)):
     try:
         r = httpx.post(
             f"{CORE_API_URL}/api/cabinet-gw/publisher/{pubs[0].publisher_id}/media-kit",
+            params={"account_id": acc.id},
             files={"file": (file.filename, data,
                             file.content_type or "application/octet-stream")},
             headers={"X-Cabinet-Token": SERVICE_TOKEN}, timeout=60.0)
@@ -476,6 +562,7 @@ async def rework_file(task_id: int, file: UploadFile = File(...),
     data = await file.read()
     try:
         r = httpx.post(f"{CORE_API_URL}/api/cabinet-gw/pair/{t.task_id}/rework-file",
+                       params={"account_id": acc.id},
                        files={"file": (file.filename, data,
                                        file.content_type or "application/octet-stream")},
                        headers={"X-Cabinet-Token": SERVICE_TOKEN}, timeout=60.0)

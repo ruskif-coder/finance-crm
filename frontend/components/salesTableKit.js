@@ -224,8 +224,9 @@ export function ColumnsMenu({ open, setOpen, colOrder, hidden, onToggle, onReord
 // не по названию (его переименуют) и не по числовому id (зависит от засева).
 //
 //   ЗЕЛЁНЫЙ  — МП нет вообще (ни нашего, ни из Битрикса): сделку надо посчитать.
-//   ЖЁЛТЫЙ   — МП есть, но сделка всё ещё на первой стадии: он собран конвейером
-//              автоматически и не завизирован. Гаснет, когда аккаунт откроет МП,
+//   ЖЁЛТЫЙ   — МП есть, но сделка всё ещё на первой стадии: план не завизирован.
+//              Откуда он — из конвейера годового плана или собран руками — не важно,
+//              признак один: сделка не сошла с первой стадии. Гаснет, когда аккаунт откроет МП,
 //              отметит обе «Проверено» и сохранит — тогда сделка уходит на
 //              следующую стадию (см. _advance_deal_after_verify на бэкенде).
 // Границы подсветок строк: зелёная «нужен расчёт», жёлтая «не завизирован».
@@ -412,7 +413,7 @@ export const EditIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" st
 // Значение, открывающее ValuePopover: выглядит как ЗНАЧЕНИЕ, а не как поле ввода —
 // текст плюс пунктирная рамка. Так в проекте сделан выбор из накопительных списков
 // (бренд в реестре сделок, вид паблишера, должность контакта).
-// Локальная копия осталась в components/publishers/PublisherCard.jsx — это долг на
+// Локальная копия осталась в components/publishers/PublisherCard.jsxx — это долг на
 // миграцию, а не второй канон.
 export const PickValue = ({ value, placeholder, onOpen, size = 16 }) => (
   <span onClick={onOpen} title="Выбрать из списка"
@@ -421,4 +422,33 @@ export const PickValue = ({ value, placeholder, onOpen, size = 16 }) => (
       color: value ? 'var(--text-primary)' : 'var(--text-faint)' }}>
     {value || placeholder}
   </span>
+)
+
+// Полоса показателей: одна карточка, значения через вертикальные разделители.
+// Заведена в ките, а не на странице: такая же полоса нужна ещё на двух экранах, и
+// тринадцать локальных форматтеров денег этот проект уже проходил.
+//
+// `value` приходит готовой строкой — сюда не встраивается форматирование чисел, иначе
+// полоса начнёт решать, что такое «ноль»: в реестре это значащий ноль, а в отчёте —
+// пустая клетка (`grp0` против `grpDash` в lib/salesFormat).
+export const KpiStrip = ({ items }) => (
+  <div style={{ ...card, display: 'grid', padding: 0,
+    gridTemplateColumns: `repeat(${items.length}, 1fr)` }}>
+    {items.map((k, i) => (
+      <div key={k.label} style={{ padding: '16px 20px', display: 'flex',
+        flexDirection: 'column', gap: 7, minWidth: 0,
+        borderLeft: i ? '1px solid var(--border-inner)' : 'none' }}>
+        <span style={{ ...CAP, marginBottom: 0 }}>{k.label}</span>
+        <span style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+          <span style={{ fontFamily: MONO, fontSize: 28, fontWeight: 700,
+            lineHeight: 1, color: k.color || 'var(--text-primary)' }}>{k.value}</span>
+          {!!k.unit && <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>{k.unit}</span>}
+        </span>
+        {/* Подсказка объясняет СОСТАВ числа, а не повторяет подпись: «2 активных ·
+            1 черновик» отвечает на вопрос, который возникает следом за цифрой. */}
+        {!!k.hint && <span style={{ fontSize: 11.5, color: 'var(--text-faint)',
+          lineHeight: 1.35 }}>{k.hint}</span>}
+      </div>
+    ))}
+  </div>
 )

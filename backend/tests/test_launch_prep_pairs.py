@@ -31,7 +31,7 @@ from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepCreativeSe
                                     LaunchPrepSetTarget, LaunchPrepTarget)
 from app.routers import launch_prep as lp
 from app.routers import traffic
-from app.sales.models import SalesDeal, SalesPublisher, SalesService
+from app.sales.models import SalesRep, SalesDeal, SalesPublisher, SalesService
 
 NO_BASE = 9700
 CODES = ('ZZTA', 'ZZTB')
@@ -85,6 +85,20 @@ def env():
     saved = [(p.id, p.code) for p in pubs]
     for p, code in zip(pubs, CODES):
         p.code = code
+    # Ответственный трафик обязателен для отправки на согласование (31.08.2026): очередь
+    # проверки распределяется по нему, и без него материал уходил бы в раздел, которого
+    # никто не видит. Ставим любого — прибору важно наличие, а не личность.
+    #
+    # ИСХОДНОЕ значение сохраняем и возвращаем как есть, а не обнуляем: сделка боевая, и
+    # «вернуть в NULL» однажды уже означало снять настоящее назначение (см. план выкладки,
+    # раздел про опасные на боевой базе приборы).
+    saved_traffic = deal.traffic_manager_id
+    if not deal.traffic_manager_id:
+        any_rep = db.query(SalesRep.id).order_by(SalesRep.id).first()
+        if not any_rep:
+            db.close()
+            pytest.skip('в справочнике ответственных пусто — некого назначить трафиком')
+        deal.traffic_manager_id = any_rep[0]
     db.commit()
 
     targets = []
@@ -115,6 +129,8 @@ def env():
     _purge(db, deal.id)
     for pid, code in saved:
         db.query(SalesPublisher).filter(SalesPublisher.id == pid).update({"code": code})
+    db.query(SalesDeal).filter(SalesDeal.id == deal.id).update(
+        {"traffic_manager_id": saved_traffic})
     db.commit()
     db.close()
 

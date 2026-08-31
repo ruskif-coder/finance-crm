@@ -33,7 +33,7 @@ class PermissionInput(BaseModel):
     can_edit: Optional[bool] = None
     can_delete: Optional[bool] = None
     can_view_operations: Optional[bool] = None
-    can_approve: Optional[bool] = None   # media_plans: согласование/отклонение/архив
+    can_approve: Optional[bool] = None   # согласование: креативы и очередь трафика
     deals_scope: Optional[str] = None   # all | own — для секции sales_dashboard
 
 
@@ -44,7 +44,7 @@ class RoleCreate(BaseModel):
 class RoleUpdate(BaseModel):
     label: Optional[str] = None
     permissions: Optional[List[PermissionInput]] = None
-    staff_group: Optional[str] = None   # 'seller' / 'account' / 'traffic' / '' (снять)
+    staff_group: Optional[str] = None   # 'seller'/'account'/'traffic'/'publishers'/'' (снять)
     is_master: Optional[bool] = None
 
 
@@ -126,7 +126,9 @@ def update_role(role_id: int, data: RoleUpdate, db: Session = Depends(get_db), c
 
     # Рабочая группа + мастер (классификация роли для конструктора МП).
     if data.staff_group is not None:
-        role.staff_group = data.staff_group if data.staff_group in ("seller", "account", "traffic") else None
+        role.staff_group = (data.staff_group
+                            if data.staff_group in ("seller", "account", "traffic", "publishers")
+                            else None)
         changes.append(f"рабочая группа: {role.staff_group or '—'}")
     if data.is_master is not None:
         role.is_master = bool(data.is_master)

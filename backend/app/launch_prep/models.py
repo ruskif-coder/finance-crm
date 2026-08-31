@@ -167,7 +167,11 @@ class LaunchPrepCreativeSet(Base):
                              ForeignKey("launch_prep_creative_set.id", ondelete="SET NULL"))
     sent_at = Column(DateTime)
     form = Column(String(32))            # Banner | BannerHtml5 | Video — выводится из файлов
-    kktu_code = Column(String(16))       # переопределение кода бренда
+    # ЗАМОРОЖЕНО 31.08.2026: код ККТУ живёт у бренда и задаётся один раз на сделку в
+    # блоке сборки ОРД. Переопределение на отдельный креатив противоречило этому и не
+    # было использовано ни разу (0 из 24). Колонка оставлена (правило проекта: поле
+    # замораживается, а не дропается), но код её не читает и не пишет.
+    kktu_code = Column(String(16))
     description = Column(Text)           # переопределение описания объекта рекламирования
     erid = Column(String(64))
     # У саморекламы маркер выпускает площадка. Без признака код не отличит «ещё не

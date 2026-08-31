@@ -498,7 +498,7 @@ export default function SalesRegistry2() {
           ))}
           {ours.map(m => (
             <span key={'mp' + m.id} onClick={e => { e.stopPropagation(); router.push(`/accounts/mp/${m.id}`) }}
-              title={(m.title || 'Медиаплан') + ' · ' + (m.status || '')} style={chip({ border: '1px solid var(--income)', color: 'var(--income)', background: 'var(--income-tint)' })}>
+              title={m.title || 'Медиаплан'} style={chip({ border: '1px solid var(--income)', color: 'var(--income)', background: 'var(--income-tint)' })}>
               ↗ наш МП v{m.version}
             </span>
           ))}

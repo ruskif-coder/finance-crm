@@ -28,7 +28,6 @@ import os
 import re
 import shutil
 from datetime import date, datetime
-from math import ceil
 from types import SimpleNamespace
 from typing import List, Optional
 
@@ -59,7 +58,7 @@ from app.ord.payloads import OrdPayloadError
 from app.permissions import require_any_permission, require_permission
 from app.routers.sales_dashboard import _assert_deal_in_scope
 from app.sales.models import (SalesBrand, SalesDeal, SalesMediaPlan, SalesMediaPlanRow,
-                              SalesStage,
+                              SalesRep, SalesStage,
                               SalesPublisher, SalesPublisherService,
                               SalesPublisherSurface, SalesService)
 
@@ -197,7 +196,7 @@ def _candidates(db: Session, service_id: int, surfaces: List[str]) -> List[dict]
 
 
 def _recipient_out(target, pub, pair=None, review=None, traffic=None,
-                   files_count=0) -> dict:
+                   files_count=0, moved_to_no=None) -> dict:
     """Строка получателя внутри комплекта.
 
     До отправки это кандидат, после — пара с вердиктом и кодом. Одна форма на оба случая
@@ -234,11 +233,38 @@ def _recipient_out(target, pub, pair=None, review=None, traffic=None,
         "traffic_decided_by": traffic.decided_by if traffic else None,
         # «Есть скриншоты» в свёрнутой сводке и кнопка скачивания архива у аккаунта.
         "files_count": files_count,
+        # Номер комплекта, в который площадка ушла по доработке. Не None — значит в этом
+        # комплекте она больше не работает: строка гасится и выпадает из знаменателя ЕРИД.
+        "moved_to_no": moved_to_no,
     }
 
 
+def moved_to_rework(db: Session, set_ids) -> dict:
+    """Площадки, ушедшие из комплекта в доработку: {(set_id, publisher_id): № нового}.
+
+    Доработка заводит НОВЫЙ комплект на одну площадку и ссылается на заменяемый
+    (`replaces_set_id`). С этого момента площадка работает там, и в прежнем комплекте её
+    держать незачем: она не «молчит» и не «отказала» — она переехала.
+
+    Признак ВЫЧИСЛЯЕТСЯ по этой ссылке, а не хранится колонкой. Хранить пришлось бы
+    синхронизировать: удалили новый комплект — старая пара обязана вернуться в строй, и
+    забытая синхронизация дала бы пару, ушедшую в никуда.
+
+    Пара при этом остаётся: в ней вердикт «на доработку» с причиной и автором, то есть
+    ответ на вопрос «почему креатив переделывали трижды». Удалить её значило бы стереть
+    историю ради чистоты списка.
+    """
+    if not set_ids:
+        return {}
+    rows = (db.query(LaunchPrepCreativeSet.replaces_set_id,
+                     LaunchPrepCreativeSet.publisher_id, LaunchPrepCreativeSet.no)
+            .filter(LaunchPrepCreativeSet.replaces_set_id.in_(list(set_ids)),
+                    LaunchPrepCreativeSet.publisher_id.isnot(None)).all())
+    return {(old_id, pub_id): no for old_id, pub_id, no in rows}
+
+
 def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
-             pubs=None, candidates=(), file_counts=None) -> dict:
+             pubs=None, candidates=(), file_counts=None, moved=None) -> dict:
     """Комплект для экрана. Состояние ВЫЧИСЛЯЕТСЯ, а не читается из колонки.
 
     Площадки живут ВНУТРИ комплекта, а не отдельным списком сверху (решение владельца
@@ -251,6 +277,7 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
     targets = targets or {}
     pubs = pubs or {}
     file_counts = file_counts or {}
+    moved = moved or {}
 
     if pairs:
         recipients = []
@@ -258,8 +285,9 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
             t = targets.get(p.target_id)
             if t is None:
                 continue          # получателя сняли — пара ушла каскадом, строки нет
-            recipients.append(_recipient_out(t, pubs.get(t.publisher_id), p, by_pair.get(p.id),
-                                             by_traffic.get(p.id), file_counts.get(p.id, 0)))
+            recipients.append(_recipient_out(
+                t, pubs.get(t.publisher_id), p, by_pair.get(p.id), by_traffic.get(p.id),
+                file_counts.get(p.id, 0), (moved or {}).get((s.id, t.publisher_id))))
     else:
         recipients = [_recipient_out(t, pubs.get(t.publisher_id)) for t in candidates]
 
@@ -268,7 +296,7 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
         "replaces_set_id": s.replaces_set_id,
         "publisher_id": s.publisher_id,
         "scope": "персональный" if s.publisher_id else "общий",
-        "form": s.form, "kktu_code": s.kktu_code, "description": s.description,
+        "form": s.form, "description": s.description,
         "erid": s.erid, "erid_source": s.erid_source,
         "ord_status": s.ord_status, "ord_error": s.ord_error,
         "sent_at": s.sent_at,
@@ -335,6 +363,60 @@ def _derive_form(files) -> Optional[str]:
 
 # ============================== чтение ==============================
 
+def _rep_name(db: Session, rep_id):
+    if not rep_id:
+        return None
+    row = db.query(SalesRep.name).filter(SalesRep.id == rep_id).first()
+    return row[0] if row else None
+
+
+@router.get("/traffic-managers")
+def traffic_managers(db: Session = Depends(get_db), current_user: User = Depends(VIEW)):
+    """Кого можно назначить трафиком: сотрудники с рабочей группой «трафик».
+
+    Список объявлен ЗДЕСЬ, а не в разделе трафика: назначает аккаунт на сборке, и
+    ходить за списком в чужой раздел ему нечем — прав на очередь у него нет.
+    """
+    from app.models import Role
+    rows = (db.query(SalesRep.id, SalesRep.name)
+            .join(User, User.id == SalesRep.user_id)
+            .join(Role, Role.id == User.role_id)
+            .filter(Role.staff_group == "traffic", User.is_active == 1,
+                    SalesRep.is_active.is_(True))
+            .order_by(SalesRep.name).all())
+    return {"items": [{"id": i, "name": n} for i, n in rows]}
+
+
+class TrafficManagerIn(BaseModel):
+    traffic_manager_id: Optional[int] = None      # None — снять назначение
+
+
+@router.put("/deal/{deal_id}/traffic-manager")
+def set_traffic_manager(deal_id: int, payload: TrafficManagerIn,
+                        db: Session = Depends(get_db), current_user: User = Depends(EDIT)):
+    """Назначить сделке ответственного за проверку материала.
+
+    Право — сборки (`creatives:edit`), а не реестра сделок: назначение происходит на
+    сборке запуска и им же вызвано. Момент выбран не нами: трафик выделяется по текущей
+    нагрузке, и до сборки его попросту не существует.
+    """
+    deal = _deal(db, deal_id, current_user)
+    if payload.traffic_manager_id is not None:
+        rep = (db.query(SalesRep)
+               .filter(SalesRep.id == payload.traffic_manager_id).first())
+        if not rep:
+            raise HTTPException(status_code=400, detail="Ответственный не найден")
+        deal.traffic_manager_id = rep.id
+        who = rep.name
+    else:
+        deal.traffic_manager_id = None
+        who = "снят"
+    db.commit()
+    log_action(db, current_user, "set_traffic_manager", "sales_deal", deal.id,
+               f"ответственный трафик: {who}")
+    return {"traffic_manager_id": deal.traffic_manager_id, "name": who}
+
+
 @router.get("/deal/{deal_id}")
 def deal_creatives(deal_id: int, db: Session = Depends(get_db),
                    current_user: User = Depends(VIEW)):
@@ -362,6 +444,7 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
         pairs = db.query(LaunchPrepPair).filter(
             LaunchPrepPair.set_id.in_(set_ids)).order_by(LaunchPrepPair.id).all()
     by_target = {t.id: t for t in targets}
+    moved = moved_to_rework(db, set_ids)
     # Сколько скриншотов приложено к каждой паре — одним GROUP BY, а не запросом на строку.
     file_counts = {}
     if pairs:
@@ -374,7 +457,11 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
 
     return {
         "deal": {"id": deal.id, "code": deal.code, "title": deal.title,
-                 "is_self_promo": bool(deal.is_self_promo)},
+                 "is_self_promo": bool(deal.is_self_promo),
+                 # Ответственный трафик показывается здесь же: без него материал не
+                 # уходит на проверку, и узнавать об этом в момент отправки поздно.
+                 "traffic_manager_id": deal.traffic_manager_id,
+                 "traffic_manager": _rep_name(db, deal.traffic_manager_id)},
         "service": ({"id": service.id, "name": service.name} if service else None),
         "service_reason": service_reason,
         "surfaces": _surfaces_from_plan(db, deal),
@@ -397,7 +484,7 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
                           # отправленного список уже зафиксирован парами.
                           () if any(p.set_id == s.id for p in pairs)
                           else _targets_for_set(db, s),
-                          file_counts)
+                          file_counts, moved)
                  for s in sets],
     }
 
@@ -766,7 +853,7 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
         ns = LaunchPrepCreativeSet(
             deal_id=new.id, publisher_id=s0.publisher_id, no=s0.no,
             title=s0.title, origin="продление",
-            form=s0.form, kktu_code=s0.kktu_code, description=s0.description,
+            form=s0.form, description=s0.description,
             test_targeting_url=s0.test_targeting_url,
             # erid / ord_* НЕ переносятся — см. шапку.
             erid_source=s0.erid_source)
@@ -1194,6 +1281,18 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
         raise HTTPException(status_code=400,
                             detail="Сначала первичная проверка материала по ТТ")
 
+    # Ответственный трафик — ДО отправки, а не после (владелец, 31.08.2026). Материал
+    # уходит в очередь проверки, а очередь распределяется по `traffic_manager_id`: без
+    # него пара оседает в разделе, которого никто не видит — рядовой трафик смотрит
+    # только своё, и «отправлено» означало бы «отправлено никому».
+    #
+    # Проверка стоит рядом с проверкой кода площадки и по той же причине: отправить то,
+    # что дальше не поедет, — тупик, и обнаруживается он не там, где чинится.
+    if not deal.traffic_manager_id:
+        raise HTTPException(
+            status_code=400,
+            detail="У сделки не указан ответственный трафик — материал некому проверять")
+
     targets = _targets_for_set(db, s)
     if payload.target_ids:
         targets = [t for t in targets if t.id in set(payload.target_ids)]
@@ -1259,7 +1358,7 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
              body=f"Пар в очереди: {created}. Площадкам уйдёт после проверки.",
              link=f"/sales/deals/{deal.code or deal.id}",
              entity_type="sales_deal", entity_id=deal.id, actor=current_user,
-             ctx={"deal_id": deal.id})
+             ctx={"deal": deal})
         # Второе событие тем же действием, но ДРУГОМУ адресату. `creative_set_sent`
         # уходит аккаунту — то есть тому, кто отправил; трафику до 30.08.2026 не уходило
         # ничего, и о появлении работы он узнавал, только зайдя в очередь.
@@ -1268,7 +1367,7 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
              body=f"Площадок в комплекте: {created}. После вашего «ок» уйдёт им.",
              link="/traffic/queue",
              entity_type="sales_deal", entity_id=deal.id, actor=current_user,
-             ctx={"deal_id": deal.id})
+             ctx={"deal": deal})
         db.commit()
     return {"sent": created}
 
@@ -1390,7 +1489,7 @@ def apply_platform_verdict(db: Session, pair_id: int, verdict: str,
          body=(rec.reason or f"Комплект №{s.no}" + (f", код {code}" if code else "")),
          link=f"/sales/deals/{deal.code or deal.id}",
          entity_type="sales_deal", entity_id=deal.id, actor=actor,
-         ctx={"deal_id": deal.id})
+         ctx={"deal": deal})
     db.commit()
     return {"verdict": rec.verdict, "code": code, "deal_id": deal.id}
 
@@ -1506,6 +1605,9 @@ ERID_THRESHOLD_DEFAULT = 0.25
 
 
 def erid_threshold(db: Session) -> float:
+    """НЕ ИСПОЛЬЗУЕТСЯ с 31.08.2026: порог снят. Функция и строка настройки оставлены —
+    настройка это данные, их не удаляют вместе с кодом (то же правило, что у замороженных
+    колонок). Вернуть порог = вернуть проверку в `threshold_numbers`."""
     row = db.execute(sa_text("SELECT value FROM company_settings WHERE key = :k"),
                      {"k": ERID_THRESHOLD_KEY}).first()
     try:
@@ -1514,7 +1616,10 @@ def erid_threshold(db: Session) -> float:
         return ERID_THRESHOLD_DEFAULT
 
 
-def threshold_state(db: Session, set_id: int, share: float) -> dict:
+def threshold_state(db: Session, set_id: int, share: float = 0) -> dict:
+    # `share` не читается с 31.08.2026 (порог снят) — параметр оставлен со значением
+    # по умолчанию, чтобы вызовы не пришлось править и чтобы возврат порога был
+    # правкой одной функции.
     """Знаменатель — те, КОМУ КОМПЛЕКТ АДРЕСОВАН, а не те, кто согласовал.
 
     Отказ остаётся в знаменателе намеренно: иначе четверть считалась бы от одних
@@ -1527,12 +1632,42 @@ def threshold_state(db: Session, set_id: int, share: float) -> dict:
     двух «ок» — значит порог стал строже сам собой, без правки правила. Проверять здесь
     ещё и вердикт трафика было бы вторым местом, где записан один и тот же порядок.
     """
+    return threshold_numbers(active_pairs(db, set_id), share)
+
+
+def active_pairs(db: Session, set_id: int):
+    """Пары комплекта, по которым ещё есть чего ждать.
+
+    Ушедшие в доработку исключаются (31.08.2026). Отказ остаётся — он ОТВЕТ, и от него
+    порог не должен смягчаться; доработка ответом не является: площадка теперь работает
+    по другому комплекту, и ждать её здесь значит ждать вечно. До этой правки счётчик
+    показывал «согласовали 0 из 3» там, где спрашивать осталось двоих.
+    """
     pairs = db.query(LaunchPrepPair).filter(LaunchPrepPair.set_id == set_id).all()
+    gone = moved_to_rework(db, [set_id])
+    if not gone or not pairs:
+        return pairs
+    targets = {t.id: t for t in db.query(LaunchPrepTarget).filter(
+        LaunchPrepTarget.id.in_([p.target_id for p in pairs]))}
+    return [p for p in pairs
+            if (set_id, getattr(targets.get(p.target_id), "publisher_id", None)) not in gone]
+
+
+def threshold_numbers(pairs, share: float = 0) -> dict:
+    """Сколько площадок спросили и сколько ответили согласием. Без базы — чтобы
+    проверялось комбинациями, а не фикстурами.
+
+    ПОРОГ СНЯТ 31.08.2026 (владелец: «от него отказались»). Раньше здесь считалась доля
+    согласовавших, и маркер не выпускался, пока она не набрана. Теперь числа остаются
+    справкой — «согласовали 1 из 3» отвечает на вопрос «сколько уже ответили», — но ничего
+    не запирают. `need` и `ready` сохранены в ответе ради совместимости с экраном и
+    приборами: `need` всегда 0, `ready` всегда True при непустом списке.
+
+    Параметр `share` не читается. Оставлен, чтобы вызовы не пришлось править по всему
+    коду, и чтобы возврат порога был правкой одной функции, а не раскопками."""
     sent = len(pairs)
     agreed = len([p for p in pairs if p.agreed_at])
-    need = max(1, ceil(sent * share)) if sent else 0
-    return {"sent": sent, "agreed": agreed, "need": need,
-            "ready": bool(sent) and agreed >= need}
+    return {"sent": sent, "agreed": agreed, "need": 0, "ready": bool(sent)}
 
 
 def _files_with_content(db: Session, set_id: int):
@@ -1664,13 +1799,14 @@ def erid_readiness(set_id: int, db: Session = Depends(get_db),
     # нажать и починить не уходя. Разбирать русскую фразу на фронте значило бы
     # привязать поведение кнопки к формулировке, которую однажды перепишут.
     blockers = []
-    if not st["ready"]:
-        blockers.append({"code": "threshold",
-                         "text": f"согласовали {st['agreed']} из {st['sent']}, "
-                                 f"нужно {st['need']}"})
+    # Блокера «порог не взят» больше нет: порог снят 31.08.2026. Оставшиеся два — не наши
+    # правила, а требования реестра: без договорной цепочки и кода ККТУ он креатив не
+    # примет, и узнать об этом лучше здесь, чем отказом в ответе.
+    if not st["sent"]:
+        blockers.append({"code": "empty", "text": "в комплекте нет ни одной площадки"})
     if not final_ord_id:
         blockers.append({"code": "chain", "text": "не собрана договорная цепочка ОРД"})
-    if not (s.kktu_code or (brand.kktu_code if brand else None)):
+    if not (brand.kktu_code if brand else None):
         blockers.append({"code": "kktu", "text": "не заполнен код ККТУ у бренда"})
     return {**st, "threshold": erid_threshold(db), "blockers": blockers,
             # Бренд отдаётся всегда, а не только когда он мешает: тем же ответом
@@ -1692,12 +1828,14 @@ def issue_erid(set_id: int, db: Session = Depends(get_db),
         raise HTTPException(status_code=404, detail="Комплект не найден")
     deal = _deal(db, s.deal_id, current_user)
 
-    st = threshold_state(db, set_id, erid_threshold(db))
-    if not st["ready"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Порог не взят: согласовали {st['agreed']} из {st['sent']}, "
-                   f"нужно {st['need']}")
+    # Порог согласовавших снят 31.08.2026: выпуск больше не ждёт доли ответов. Но дно
+    # осталось: маркер выпускается НА МАТЕРИАЛ, показанный хоть кому-то. Комплект без
+    # живых адресатов — это либо ещё не собранный, либо целиком ушедший в доработку;
+    # регистрировать его в ЕРИР нечем и незачем, а запись оттуда не отзывается.
+    if not active_pairs(db, set_id):
+        raise HTTPException(status_code=400,
+                            detail="В комплекте нет ни одной площадки — маркер выпускать не на что")
+
 
     final_ord_id, initial_ord_id = _ord_chain(db, deal)
     brand = (db.query(SalesBrand).filter(SalesBrand.id == deal.brand_id).first()
@@ -1723,7 +1861,7 @@ def issue_erid(set_id: int, db: Session = Depends(get_db),
          body=f"Комплект №{s.no}: {out.get('erid')}. Статус регистрации: {out.get('status')}",
          link=f"/sales/deals/{deal.code or deal.id}",
          entity_type="sales_deal", entity_id=deal.id, actor=current_user,
-         ctx={"deal_id": deal.id})
+         ctx={"deal": deal})
     db.commit()
     return out
 

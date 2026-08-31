@@ -42,23 +42,15 @@ def facts_for_deals(db: Session, deals, today: date = None):
              for c in db.query(Counterparty.id, Counterparty.term_days).all()}
 
     # Медиаплан сделки бывает двух происхождений, и оба считаются наличием плана:
-    # наш (sales_media_plans, у него есть статус согласования) и приехавший файлом
-    # из Битрикса (sales_deal_files.kind='mp', статуса у него нет).
+    # наш (sales_media_plans) и приехавший файлом из Битрикса (sales_deal_files.kind='mp').
     # Учитывать только наши было бы неверно: на живых данных наших МП две штуки
     # на полторы тысячи сделок, и «МП не готов» выпало бы почти на всё.
-    # Статус берём у ПОСЛЕДНЕЙ версии плана (max id внутри сделки), а не объединением
-    # статусов всех версий. Объединение врало на реальном сценарии: v1 согласован,
-    # v2 отправлен и отклонён — «есть согласованная версия» гасило отказ, и строка
-    # не попадала в «Переделать МП», хотя переделывать надо именно v2.
-    latest_mp = {}
-    for did, _mid, status in (db.query(SalesMediaPlan.deal_id, SalesMediaPlan.id,
-                                       SalesMediaPlan.status)
-                              .filter(SalesMediaPlan.deal_id.in_(ids))
-                              .order_by(SalesMediaPlan.id).all()):
-        latest_mp[did] = status          # порядок по возрастанию id → побеждает последний
-    mp_ours = set(latest_mp)
-    mp_ok = {d for d, st in latest_mp.items() if st == "approved"}
-    mp_bad = {d for d, st in latest_mp.items() if st == "rejected"}
+    #
+    # Статус плана здесь больше не читается (30.08.2026): своего состояния у плана нет,
+    # где он — говорит стадия сделки. Прежний разбор «побеждает последняя версия» вместе
+    # со статусом и уехал.
+    mp_ours = {did for (did,) in db.query(SalesMediaPlan.deal_id)
+               .filter(SalesMediaPlan.deal_id.in_(ids)).distinct().all()}
 
     docs = {}
     for did, kind in (db.query(SalesDealFile.deal_id, SalesDealFile.kind)
@@ -93,11 +85,6 @@ def facts_for_deals(db: Session, deals, today: date = None):
             stage_is_first=(d.our_stage_id is not None and d.our_stage_id == first_id),
             period_from=d.period_from, period_to=d.period_to,
             has_mp=(d.id in mp_ours) or ("mp" in kinds),
-            # Виза известна только по НАШЕМУ плану. Битрикс-файл без статуса даёт None
-            # («неизвестно»), а не False — иначе каждый скачанный МП выглядел бы
-            # незавизированным (та же ошибка, что была бы с оплатой).
-            mp_approved=(d.id in mp_ok) if d.id in mp_ours else None,
-            mp_rejected=d.id in mp_bad,
             has_ds="ds" in kinds,
             has_closing_docs=bool({"upd", "invoice", "act"} & kinds),
             # is_paid не заполняем: на уровне сделки факт оплаты не читается (см. urgency.py).

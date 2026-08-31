@@ -60,7 +60,7 @@ def is_expired(closed: Optional[datetime], days: int, today: date) -> bool:
 
     Это не дыра, а безопасное поведение по умолчанию: отказ уборки должен выглядеть как
     «файлы копятся», а не как «файлы исчезли». Что накопилось — покажет отчёт сверки
-    диска с базой (scripts/orphan_report.py).
+    диска с базой (`python -m scripts.2026-08-30_retention_sweep` без `--apply` — сухой прогон).
     """
     if closed is None:
         return False

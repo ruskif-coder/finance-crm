@@ -112,6 +112,26 @@ function useNotifications() {
   return { notifs, unread, markRead }
 }
 
+// Число креативов, ждущих проверки трафика, — для значка на пункте меню. Отдельная
+// лёгкая ручка (`/traffic/queue/count`), обновление раз в минуту, молчит без токена.
+function useTrafficWaiting(enabled) {
+  const [waiting, setWaiting] = useState(0)
+  useEffect(() => {
+    if (!enabled) { setWaiting(0); return }
+    let alive = true
+    const load = () => {
+      if (typeof window === 'undefined' || !localStorage.getItem('token')) return
+      axios.get('/api/traffic/queue/count', authHdr())
+        .then(r => { if (alive) setWaiting(r.data.waiting || 0) })
+        .catch(() => {})
+    }
+    load()
+    const t = setInterval(load, 60000)
+    return () => { alive = false; clearInterval(t) }
+  }, [enabled])
+  return waiting
+}
+
 function Bell({ onGoto, size = 32 }) {
   const { notifs, unread, markRead } = useNotifications()
   const [open, setOpen] = useState(false)
@@ -238,6 +258,102 @@ function Profile({ onGoto, canSettings, compact = false }) {
   )
 }
 
+/* Раздел с выпадающей панелью. Используется и строкой контуров, и кнопкой
+   «Справочники»: у справочников экранов пять, и без панели попасть с контрагентов
+   на договоры было бы некуда — раньше это делали табы внутри страницы.
+   variant: 'tab' — пункт строки, 'ghost' — контурная кнопка справа.
+   align: 'right' — панель прижимается к правому краю, иначе уезжает за окно. */
+function Section({ s, variant = 'tab', align = 'left', hover, open, close, closeNow,
+                perms, isAdmin, active, onNavigate }) {
+  const isOpen = hover === s.key
+  /* Панель уходит В ПОРТАЛ, к body. Внутри шапки она жила в её стопке (`zIndex: 40`)
+     и оказывалась ПОД модалками карточки сделки (60 и 300): курсор попадал на
+     перекрывающий слой, наведение с раздела слетало, и меню мигало. Портал ставит её
+     поверх содержимого страницы и по-прежнему ниже модальных подложек (10000) —
+     окно должно накрывать меню, а карточка нет.
+     Координаты замеряются при открытии: `position: fixed` считает от окна. */
+  const wrapRef = useRef(null)
+  const [rect, setRect] = useState(null)
+  useEffect(() => {
+    if (isOpen && wrapRef.current) setRect(wrapRef.current.getBoundingClientRect())
+    else setRect(null)
+  }, [isOpen])
+  /* Активность — по ключу. Индексы сравнивать нельзя: строка контуров отфильтрована,
+     а если экран вне карты (active === null) — не активен никто. */
+  const isCurrent = s.key === active?.section?.key
+  const total = sumBadges(s.items)
+  const ghost = variant === 'ghost'
+  return (
+    /* Мышь — открытие по наведению, закрытие с задержкой 120 мс. Клавиатура —
+       фокус открывает панель, Escape закрывает и возвращает фокус на триггер,
+       уход фокуса за пределы раздела тоже закрывает. */
+    <span
+      ref={wrapRef}
+      onMouseEnter={() => open(s.key)} onMouseLeave={close}
+      onFocus={() => open(s.key)}
+      onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) closeNow() }}
+      onKeyDown={e => {
+        if (e.key === 'Escape' && isOpen) {
+          e.stopPropagation()
+          e.currentTarget.querySelector('button')?.focus()
+          closeNow()
+        }
+      }}
+      style={{ position: 'relative', display: ghost ? 'inline-flex' : undefined }}>
+      <button type="button" aria-haspopup="true" aria-expanded={isOpen}
+        className={ghost ? 'nav-ghost' : undefined}
+        onClick={() => { const h = entryHref(s.key, perms, isAdmin); if (h) onNavigate?.({ href: h }) }} style={{
+        ...btnReset,
+        display: 'inline-flex', alignItems: 'center', gap: 7,
+        ...(ghost
+          ? { height: 32, padding: '0 13px', border: `1px solid ${isCurrent ? T.accentBorder : T.border}`, borderRadius: 10, fontSize: 13, background: isCurrent ? T.accentTint : T.card }
+          : { padding: '8px 12px', borderRadius: 10, fontSize: 13.5, background: isCurrent ? T.accentTint : isOpen ? T.subtle : 'transparent' }),
+        color: isCurrent ? T.accent : T.t2, fontWeight: isCurrent ? 700 : 600,
+        whiteSpace: 'nowrap', cursor: 'pointer', transition: 'background-color 150ms ease, color 150ms ease',
+      }}>
+        {s.title}
+        {total > 0 && <Badge>{hasPlus(s.items) ? total + '+' : total}</Badge>}
+        <span style={{ fontSize: 9, color: isCurrent ? T.accentSoft : T.t4 }}>▾</span>
+      </button>
+
+      {isOpen && rect && createPortal(
+        <span
+          /* События портала всплывают по РЕАКТ-дереву, а не по DOM: панель остаётся
+             ребёнком того же span, и наведение на неё не считается уходом с раздела. */
+          onMouseEnter={() => open(s.key)} onMouseLeave={close}
+          style={{
+            position: 'fixed', top: rect.bottom, minWidth: 212, paddingTop: 6,
+            ...(align === 'right' ? { right: Math.max(8, window.innerWidth - rect.right) }
+              : { left: rect.left }),
+            zIndex: Z_DROPDOWN,
+            display: 'flex', flexDirection: 'column', animation: `popIn .18s ${T.ease} both`,
+          }}>
+          <span style={{
+            background: T.card, border: `1px solid ${T.border}`, boxShadow: T.pop, borderRadius: 14,
+            padding: 7, display: 'flex', flexDirection: 'column',
+          }}>
+            {allowedItems(s, perms, isAdmin).map(it => {
+              const isActiveItem = active && active.item.href === it.href
+              return (
+                <button type="button" key={it.key} className="nav-item" onClick={() => onNavigate?.(it)} style={{
+                  ...btnReset,
+                  display: 'flex', alignItems: 'center', gap: 9, padding: '8px 11px', borderRadius: 10,
+                  background: isActiveItem ? T.accentTint : 'transparent',
+                }}>
+                  <span style={{ width: 7, height: 7, borderRadius: 2, background: isActiveItem ? T.accent : T.hoverBorder }} />
+                  <span style={{ fontSize: 13, fontWeight: isActiveItem ? 700 : 600, color: isActiveItem ? T.accent : T.t1, whiteSpace: 'nowrap' }}>{it.label}</span>
+                  {it.badge && <span style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, color: T.danger }}>{it.badge}</span>}
+                </button>
+              )
+            })}
+          </span>
+        </span>,
+        document.body)}
+    </span>
+  )
+}
+
+
 /* ══════════════════════════════════════════════════════════════════════
    ДЕСКТОП (≥ 1024px)
    ══════════════════════════════════════════════════════════════════════ */
@@ -250,99 +366,14 @@ export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGea
   const closeNow = () => { clearTimeout(timer.current); setHover(null) }
   useEffect(() => () => clearTimeout(timer.current), [])
 
-  /* Раздел с выпадающей панелью. Используется и строкой контуров, и кнопкой
-     «Справочники»: у справочников экранов пять, и без панели попасть с контрагентов
-     на договоры было бы некуда — раньше это делали табы внутри страницы.
-     variant: 'tab' — пункт строки, 'ghost' — контурная кнопка справа.
-     align: 'right' — панель прижимается к правому краю, иначе уезжает за окно. */
-  const Section = ({ s, variant = 'tab', align = 'left' }) => {
-    const isOpen = hover === s.key
-    /* Панель уходит В ПОРТАЛ, к body. Внутри шапки она жила в её стопке (`zIndex: 40`)
-       и оказывалась ПОД модалками карточки сделки (60 и 300): курсор попадал на
-       перекрывающий слой, наведение с раздела слетало, и меню мигало. Портал ставит её
-       поверх содержимого страницы и по-прежнему ниже модальных подложек (10000) —
-       окно должно накрывать меню, а карточка нет.
-       Координаты замеряются при открытии: `position: fixed` считает от окна. */
-    const wrapRef = useRef(null)
-    const [rect, setRect] = useState(null)
-    useEffect(() => {
-      if (isOpen && wrapRef.current) setRect(wrapRef.current.getBoundingClientRect())
-      else setRect(null)
-    }, [isOpen])
-    /* Активность — по ключу. Индексы сравнивать нельзя: строка контуров отфильтрована,
-       а если экран вне карты (active === null) — не активен никто. */
-    const isCurrent = s.key === active?.section?.key
-    const total = sumBadges(s.items)
-    const ghost = variant === 'ghost'
-    return (
-      /* Мышь — открытие по наведению, закрытие с задержкой 120 мс. Клавиатура —
-         фокус открывает панель, Escape закрывает и возвращает фокус на триггер,
-         уход фокуса за пределы раздела тоже закрывает. */
-      <span
-        ref={wrapRef}
-        onMouseEnter={() => open(s.key)} onMouseLeave={close}
-        onFocus={() => open(s.key)}
-        onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) closeNow() }}
-        onKeyDown={e => {
-          if (e.key === 'Escape' && isOpen) {
-            e.stopPropagation()
-            e.currentTarget.querySelector('button')?.focus()
-            closeNow()
-          }
-        }}
-        style={{ position: 'relative', display: ghost ? 'inline-flex' : undefined }}>
-        <button type="button" aria-haspopup="true" aria-expanded={isOpen}
-          className={ghost ? 'nav-ghost' : undefined}
-          onClick={() => { const h = entryHref(s.key, perms, isAdmin); if (h) onNavigate?.({ href: h }) }} style={{
-          ...btnReset,
-          display: 'inline-flex', alignItems: 'center', gap: 7,
-          ...(ghost
-            ? { height: 32, padding: '0 13px', border: `1px solid ${isCurrent ? T.accentBorder : T.border}`, borderRadius: 10, fontSize: 13, background: isCurrent ? T.accentTint : T.card }
-            : { padding: '8px 12px', borderRadius: 10, fontSize: 13.5, background: isCurrent ? T.accentTint : isOpen ? T.subtle : 'transparent' }),
-          color: isCurrent ? T.accent : T.t2, fontWeight: isCurrent ? 700 : 600,
-          whiteSpace: 'nowrap', cursor: 'pointer', transition: 'background-color 150ms ease, color 150ms ease',
-        }}>
-          {s.title}
-          {total > 0 && <Badge>{hasPlus(s.items) ? total + '+' : total}</Badge>}
-          <span style={{ fontSize: 9, color: isCurrent ? T.accentSoft : T.t4 }}>▾</span>
-        </button>
+  /* `Section` живёт на уровне модуля (ниже по файлу) — НЕ здесь.
 
-        {isOpen && rect && createPortal(
-          <span
-            /* События портала всплывают по РЕАКТ-дереву, а не по DOM: панель остаётся
-               ребёнком того же span, и наведение на неё не считается уходом с раздела. */
-            onMouseEnter={() => open(s.key)} onMouseLeave={close}
-            style={{
-              position: 'fixed', top: rect.bottom, minWidth: 212, paddingTop: 6,
-              ...(align === 'right' ? { right: Math.max(8, window.innerWidth - rect.right) }
-                : { left: rect.left }),
-              zIndex: Z_DROPDOWN,
-              display: 'flex', flexDirection: 'column', animation: `popIn .18s ${T.ease} both`,
-            }}>
-            <span style={{
-              background: T.card, border: `1px solid ${T.border}`, boxShadow: T.pop, borderRadius: 14,
-              padding: 7, display: 'flex', flexDirection: 'column',
-            }}>
-              {allowedItems(s, perms, isAdmin).map(it => {
-                const isActiveItem = active && active.item.href === it.href
-                return (
-                  <button type="button" key={it.key} className="nav-item" onClick={() => onNavigate?.(it)} style={{
-                    ...btnReset,
-                    display: 'flex', alignItems: 'center', gap: 9, padding: '8px 11px', borderRadius: 10,
-                    background: isActiveItem ? T.accentTint : 'transparent',
-                  }}>
-                    <span style={{ width: 7, height: 7, borderRadius: 2, background: isActiveItem ? T.accent : T.hoverBorder }} />
-                    <span style={{ fontSize: 13, fontWeight: isActiveItem ? 700 : 600, color: isActiveItem ? T.accent : T.t1, whiteSpace: 'nowrap' }}>{it.label}</span>
-                    {it.badge && <span style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, color: T.danger }}>{it.badge}</span>}
-                  </button>
-                )
-              })}
-            </span>
-          </span>,
-          document.body)}
-      </span>
-    )
-  }
+     Объявленный внутри рендера, он пересоздавался как новый тип компонента на каждый
+     рендер `NavDesktop`, то есть на каждое движение мыши между разделами: React
+     размонтировал панель и монтировал заново, `mouseleave` от удаляемого узла запускал
+     закрытие, а `mouseenter` на новый без движения мыши не приходил. Панель открывалась
+     и тут же гасла — заметно было при наведении снизу, когда курсор останавливается
+     на пункте. Ловушка №2 из навыка `styling-new-page`. */
 
   const directory = sections.find(s => s.key === 'directory')
 
@@ -367,7 +398,10 @@ export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGea
 
       <span style={{ display: 'flex', gap: 2, flex: '1 1 auto', minWidth: 0, flexWrap: 'wrap' }}>
         {/* «Справочники» — не пункт строки контуров, а контурная кнопка справа (как в макете). */}
-        {sections.filter(s => s.key !== 'directory').map(s => <Section key={s.key} s={s} />)}
+        {sections.filter(s => s.key !== 'directory').map(s => (
+          <Section key={s.key} s={s} hover={hover} open={open} close={close} closeNow={closeNow}
+            perms={perms} isAdmin={isAdmin} active={active} onNavigate={onNavigate} />
+        ))}
       </span>
 
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
@@ -381,7 +415,11 @@ export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGea
             <RubleIcon />
           </button>
         )}
-        {hasDirectory && directory && <Section s={directory} variant="ghost" align="right" />}
+        {hasDirectory && directory && (
+          <Section s={directory} variant="ghost" align="right"
+            hover={hover} open={open} close={close} closeNow={closeNow}
+            perms={perms} isAdmin={isAdmin} active={active} onNavigate={onNavigate} />
+        )}
         {bell}
         {canSettings && (
           <button type="button" className="nav-icon" onClick={onGear} title="Настройки" aria-label="Настройки" style={{ ...btnReset, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 10, color: T.t3 }}>
@@ -569,7 +607,19 @@ export default function Nav({ children, onSearch }) {
   }, [])
   const { perms, isAdmin } = session
 
-  const sections = mounted ? allowedSections(perms, isAdmin) : []
+  const rawSections = mounted ? allowedSections(perms, isAdmin) : []
+  // Значок ставим только если пункт вообще виден — иначе и запрос лишний.
+  const hasQueue = rawSections.some(s => s.items?.some(i => i.href === '/traffic/queue'))
+  const trafficWaiting = useTrafficWaiting(hasQueue)
+  // Клонируем ветку с пунктом очереди и вешаем `badge`: механика карты дальше сама
+  // покажет число и на пункте, и в значке раздела (sumBadges). Мутировать nav.data.json
+  // нельзя — он общий и кэшируется между рендерами.
+  const sections = trafficWaiting > 0
+    ? rawSections.map(sec => (sec.items?.some(i => i.href === '/traffic/queue')
+        ? { ...sec, items: sec.items.map(i => (i.href === '/traffic/queue'
+            ? { ...i, badge: String(trafficWaiting) } : i)) }
+        : sec))
+    : rawSections
   const active = findByPath(router.pathname)
 
   const go = href => router.push(href)

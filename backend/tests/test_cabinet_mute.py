@@ -20,14 +20,31 @@ from app.routers import cabinet_gateway as gw
 
 @pytest.fixture
 def acc():
-    """Учётка с площадкой. Отметки снимаются до и после — тест не оставляет следов."""
+    """Учётка с видимой ей площадкой. Отметки снимаются до и после — следов не остаётся.
+
+    Площадка берётся ОТ КАБИНЕТА, а не из `cabinet_account_publisher`: личный список
+    заморожен 30.08.2026, и стенд, построенный на нём, проверял бы правило, которого
+    больше нет.
+    """
+    from app.cabinet.models import CabinetAccount
+    from app.cabinet.scope import visible_publisher_ids
+
     db = SessionLocal()
-    row = db.execute(text(
-        "SELECT a.id, ap.publisher_id FROM cabinet_account a "
-        "JOIN cabinet_account_publisher ap ON ap.account_id = a.id LIMIT 1")).first()
+    row = None
+    for a in (db.query(CabinetAccount).order_by(CabinetAccount.id).all()):
+        cab = db.execute(text("SELECT id, kind, state FROM cabinet WHERE id = :c"),
+                         {"c": a.cabinet_id}).first() if a.cabinet_id else None
+        if cab is None or cab.state != 'активен':
+            continue
+        ids = visible_publisher_ids(db, type('C', (), dict(id=cab.id, kind=cab.kind)))
+        pub = (db.execute(text("SELECT id FROM sales_publishers ORDER BY id LIMIT 1")).scalar()
+               if ids is None else (min(ids) if ids else None))
+        if pub:
+            row = type('R', (), dict(id=a.id, publisher_id=pub))
+            break
     if row is None:
         db.close()
-        pytest.skip('на стенде нет учётки с площадкой')
+        pytest.skip('на стенде нет учётки с видимой площадкой')
     db.execute(text("DELETE FROM cabinet_account_mute WHERE account_id = :a"),
                {"a": row.id})
     db.commit()
@@ -97,25 +114,99 @@ def test_mandatory_kind_cannot_be_muted(acc):
     assert e.value.status_code == 400
 
 
-def test_unlinked_publisher_is_404(acc):
-    """Площадка, не связанная с учёткой, отвечает 404, а не 403.
+def test_publisher_of_another_cabinet_is_404():
+    """Чужая площадка отвечает 404, а не 403.
 
     403 подтвердил бы, что связка существует, — и перебор номеров превратился бы в
     способ узнать, кто с кем работает.
 
-    Берётся площадка ВНЕ списка учётки, а если таких нет — заведомо несуществующий
-    номер. Первая версия теста брала «любую другую» и не падала: тестовая учётка связана
-    со всеми 41 площадкой стенда, то есть чужой для неё просто не бывает.
+    Стенд строится СВОЙ, а не берётся готовый, и это не прихоть: единственная учётка
+    стенда сидит в служебном кабинете, а он видит все площадки — чужой для неё не бывает
+    вовсе, и прибор был бы зелёным всегда. Прежняя редакция как раз этим и болела: она
+    искала площадку вне личного списка, а после заморозки списка правило стало другим.
     """
-    other = acc.db.execute(text(
+    from app.cabinet.models import Cabinet, CabinetAccount, CabinetPublisher
+
+    db = SessionLocal()
+    free = [i for (i,) in db.execute(text(
         "SELECT p.id FROM sales_publishers p WHERE NOT EXISTS ("
-        "  SELECT 1 FROM cabinet_account_publisher ap"
-        "   WHERE ap.account_id = :a AND ap.publisher_id = p.id) ORDER BY p.id LIMIT 1"),
-        {"a": acc.id}).scalar() or 10 ** 9
-    with pytest.raises(HTTPException) as e:
-        gw.cabinet_mute(acc.id, gw.CabinetMuteIn(publisher_id=other, kind='сверка',
-                                                 muted=True), acc.db)
-    assert e.value.status_code == 404
+        "  SELECT 1 FROM cabinet_publisher cp WHERE cp.publisher_id = p.id)"
+        " ORDER BY p.id LIMIT 2")).all()]
+    if len(free) < 2:
+        db.close()
+        pytest.skip('нужны две площадки вне кабинетов')
+
+    cab = Cabinet(name='__тест области__', kind='площадка', state='активен')
+    db.add(cab)
+    db.flush()
+    a = CabinetAccount(email='scope-probe@lk.local', name='Проба области',
+                       cabinet_id=cab.id)
+    db.add(a)
+    db.add(CabinetPublisher(cabinet_id=cab.id, publisher_id=free[0]))
+    db.commit()
+    try:
+        # Своя — проходит.
+        gw.cabinet_mute(a.id, gw.CabinetMuteIn(publisher_id=free[0], kind='сверка',
+                                               muted=True), db)
+        # Чужая и несуществующая — одинаково 404, чтобы по коду ответа нельзя было
+        # отличить «есть, но не твоя» от «нет такой».
+        for pid in (free[1], 10 ** 9):
+            with pytest.raises(HTTPException) as e:
+                gw.cabinet_mute(a.id, gw.CabinetMuteIn(publisher_id=pid, kind='сверка',
+                                                       muted=True), db)
+            assert e.value.status_code == 404
+    finally:
+        db.rollback()
+        db.execute(text("DELETE FROM cabinet_account_mute WHERE account_id = :a"),
+                   {"a": a.id})
+        db.execute(text("DELETE FROM cabinet_account WHERE id = :a"), {"a": a.id})
+        db.execute(text("DELETE FROM cabinet_publisher WHERE cabinet_id = :c"),
+                   {"c": cab.id})
+        db.execute(text("DELETE FROM cabinet WHERE id = :c"), {"c": cab.id})
+        db.commit()
+        db.close()
+
+
+def test_suspended_cabinet_cannot_write():
+    """Приостановленный кабинет не может и писать, а не только смотреть.
+
+    Приостановка означает «люди кабинета сразу перестают видеть задания». Проверка
+    записи, не знающая о состоянии, оставила бы им возможность отвечать по тому, что уже
+    не показывается, — и вердикт пришёл бы из кабинета, который для нас выключен.
+    """
+    from app.cabinet.models import Cabinet, CabinetAccount, CabinetPublisher
+
+    db = SessionLocal()
+    free = db.execute(text(
+        "SELECT p.id FROM sales_publishers p WHERE NOT EXISTS ("
+        "  SELECT 1 FROM cabinet_publisher cp WHERE cp.publisher_id = p.id)"
+        " ORDER BY p.id LIMIT 1")).scalar()
+    if not free:
+        db.close()
+        pytest.skip('нужна площадка вне кабинетов')
+
+    cab = Cabinet(name='__тест паузы__', kind='площадка', state='приостановлен')
+    db.add(cab)
+    db.flush()
+    a = CabinetAccount(email='pause-probe@lk.local', name='Проба паузы', cabinet_id=cab.id)
+    db.add(a)
+    db.add(CabinetPublisher(cabinet_id=cab.id, publisher_id=free))
+    db.commit()
+    try:
+        with pytest.raises(HTTPException) as e:
+            gw.cabinet_mute(a.id, gw.CabinetMuteIn(publisher_id=free, kind='сверка',
+                                                   muted=True), db)
+        assert e.value.status_code == 404
+    finally:
+        db.rollback()
+        db.execute(text("DELETE FROM cabinet_account_mute WHERE account_id = :a"),
+                   {"a": a.id})
+        db.execute(text("DELETE FROM cabinet_account WHERE id = :a"), {"a": a.id})
+        db.execute(text("DELETE FROM cabinet_publisher WHERE cabinet_id = :c"),
+                   {"c": cab.id})
+        db.execute(text("DELETE FROM cabinet WHERE id = :c"), {"c": cab.id})
+        db.commit()
+        db.close()
 
 
 def test_vocabulary_is_coherent():

@@ -6,7 +6,7 @@ import { monoLbl, Marker, rise } from './kit'
 import ReportShell, { ReportSection } from './ReportShell'
 
 // Мобильная дебиторка (< 1024px) по хендоффу design_handoff_receivables_mobile.
-// Получает уже вычисленные данные из pages/receivables.js (единый источник логики).
+// Получает уже вычисленные данные из pages/finance/receivables.js (единый источник логики).
 const mlnK = (n) => mln(n || 0, 2)
 const formatDate = fmtDateShort
 const fullDate = fmtDateFull

@@ -13,8 +13,8 @@
 
 Видимость считается от кабинета: добавили площадку — её увидели все его люди сразу.
 
-Таблицы созданы миграциями 2026-08-28_publisher_cabinet.sql и
-2026-08-28_cabinet_org.sql.
+Таблицы созданы миграциями 2026-08-28_publisher_cabinet.sql,
+2026-08-28_cabinet_org.sql и 2026-08-30_cabinet_log_and_our_contacts.sql.
 """
 from sqlalchemy import (Boolean, Column, DateTime, ForeignKey, Integer, Text,
                         UniqueConstraint)
@@ -107,3 +107,60 @@ class CabinetAccountPublisher(Base):
     publisher_id = Column(Integer, ForeignKey("sales_publishers.id", ondelete="RESTRICT"),
                           primary_key=True)
     added_at = Column(DateTime, server_default=func.now())
+
+
+# Тон строки журнала — он же цвет квадратного маркера в ленте. Словарь в КОДЕ, как
+# `CABINET_STATES` рядом и как виды уведомлений: набор меняется вместе с экранами.
+LOG_TONES = ('info', 'ok', 'warn', 'bad')
+# Чья сторона совершила действие. Лента одна на оба контура, и площадка должна отличать
+# своё («согласован креатив») от нашего («выдан пароль»).
+LOG_SIDES = ('площадка', 'мы')
+
+
+class CabinetLog(Base):
+    """Журнал действий кабинета. Два читателя, и от этого всё остальное.
+
+    Смотрят его администратор на экране «Кабинеты паблишеров» и САМА ПЛОЩАДКА у себя в
+    кабинете. Поэтому скрытых строк здесь нет: флаг видимости однажды забудут проставить,
+    и внутреннее уедет наружу. Вместо флага правило — в `subject` не попадает ничего,
+    чего площадке видеть нельзя.
+
+    Отдельная таблица, а не `audit_log`: внешние действия не смешиваются с внутренними, и
+    лента для площадки не собирается фильтром по чужому журналу. До 30.08.2026 кабинет не
+    писал вообще никуда — ни одного вызова `log_action` в шлюзе.
+    """
+    __tablename__ = "cabinet_log"
+    id = Column(Integer, primary_key=True)
+    cabinet_id = Column(Integer, ForeignKey("cabinet.id", ondelete="CASCADE"),
+                        nullable=False)
+    publisher_id = Column(Integer, ForeignKey("sales_publishers.id", ondelete="SET NULL"))
+    account_id = Column(Integer, ForeignKey("cabinet_account.id", ondelete="SET NULL"))
+    # Имя строкой, а не только ссылкой: учётку отключают, человек уходит — журнал обязан
+    # остаться читаемым.
+    actor_name = Column(Text, nullable=False)
+    actor_side = Column(Text, nullable=False)
+    action = Column(Text, nullable=False)
+    tone = Column(Text, nullable=False)
+    subject = Column(Text)
+    entity_type = Column(Text)
+    entity_id = Column(Integer)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class CabinetOurContact(Base):
+    """Кого из НАШИХ видит площадка. Общие для всех кабинетов.
+
+    `cabinet_id` здесь нет намеренно — это и есть «показываются всем» (владелец,
+    30.08.2026). Ссылка на `sales_reps`, а не строка в `company_settings`: контакт видит
+    внешняя сторона, и повисший id показался бы ей пустой строкой вместо человека.
+
+    Почта берётся через `sales_reps.user_id → users.email`, поэтому сотрудник без учётки
+    в системе показывается без способа связаться — в выборе такие помечаются.
+    """
+    __tablename__ = "cabinet_our_contact"
+    id = Column(Integer, primary_key=True)
+    role = Column(Text, nullable=False)
+    rep_id = Column(Integer, ForeignKey("sales_reps.id"), nullable=False, unique=True)
+    sort_order = Column(Integer, nullable=False, default=0, server_default='0')
+    # Скрыть, не удаляя: роль временно не показываем, связь при этом не теряется.
+    is_shown = Column(Boolean, nullable=False, default=True, server_default='true')

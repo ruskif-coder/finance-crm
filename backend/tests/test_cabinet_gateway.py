@@ -13,6 +13,7 @@ import io
 import os
 
 import pytest
+from sqlalchemy import text
 from fastapi import HTTPException, UploadFile
 
 from app.database import SessionLocal
@@ -86,7 +87,17 @@ def env():
     if other is None:
         db.close()
         pytest.skip('нужна вторая площадка')
-    yield type('E', (), {'db': db, 'pair': pair, 'target': target,
+    # С 30.08.2026 шлюз требует назвать действующего: раньше он проверял только, что
+    # пара принадлежит НАЗВАННОЙ площадке, а имеет ли право вызывающий говорить за неё —
+    # оставалось на кабинете. Берём живую учётку: она в служебном кабинете и видит всё,
+    # поэтому проверка личности не подменяет собой то, ради чего написан каждый тест.
+    acc = db.execute(text(
+        "SELECT a.id FROM cabinet_account a JOIN cabinet c ON c.id = a.cabinet_id "
+        " WHERE c.state = 'активен' ORDER BY a.id LIMIT 1")).scalar()
+    if acc is None:
+        db.close()
+        pytest.skip('нужна учётка в активном кабинете')
+    yield type('E', (), {'db': db, 'pair': pair, 'target': target, 'acc': acc,
                          'own': target.publisher_id, 'other': other.id})
     db.rollback()
     db.close()
@@ -99,7 +110,7 @@ def test_verdict_for_someone_elses_pair_is_404(env):
     опись чужих кампаний. Проверка стоит В ЯДРЕ, а не только в кабинете: проверка,
     оставленная на вызывающей стороне, — это отсутствие проверки.
     """
-    payload = gw.CabinetVerdictIn(publisher_id=env.other, verdict='ок',
+    payload = gw.CabinetVerdictIn(publisher_id=env.other, account_id=env.acc, verdict='ок',
                                   author_name='чужой')
     with pytest.raises(HTTPException) as e:
         gw.cabinet_verdict(env.pair.id, payload, env.db)
@@ -107,7 +118,8 @@ def test_verdict_for_someone_elses_pair_is_404(env):
 
 
 def test_verdict_for_a_missing_pair_is_404(env):
-    payload = gw.CabinetVerdictIn(publisher_id=env.own, verdict='ок', author_name='кто-то')
+    payload = gw.CabinetVerdictIn(publisher_id=env.own, account_id=env.acc, verdict='ок',
+                                  author_name='кто-то')
     with pytest.raises(HTTPException) as e:
         gw.cabinet_verdict(10 ** 9, payload, env.db)
     assert e.value.status_code == 404
@@ -115,7 +127,8 @@ def test_verdict_for_a_missing_pair_is_404(env):
 
 def test_url_for_someone_elses_target_is_404(env):
     """Посадочную можно прислать только на своё размещение."""
-    payload = gw.CabinetUrlIn(publisher_id=env.other, url='https://example.test/x',
+    payload = gw.CabinetUrlIn(publisher_id=env.other, account_id=env.acc,
+                              url='https://example.test/x',
                               author_name='чужой')
     with pytest.raises(HTTPException) as e:
         gw.cabinet_target_url(env.target.id, payload, env.db)
@@ -128,14 +141,16 @@ def test_url_scheme_is_checked(env):
     Поле заполняет ВНЕШНЕЕ лицо, поэтому проверка здесь не формальность.
     """
     for bad in ('javascript:alert(1)', 'data:text/html,<script>', 'file:///etc/passwd'):
-        payload = gw.CabinetUrlIn(publisher_id=env.own, url=bad, author_name='площадка')
+        payload = gw.CabinetUrlIn(publisher_id=env.own, account_id=env.acc, url=bad,
+                                  author_name='площадка')
         with pytest.raises(HTTPException) as e:
             gw.cabinet_target_url(env.target.id, payload, env.db)
         assert e.value.status_code == 400, f'схема {bad} прошла'
 
 
 def test_empty_url_is_refused(env):
-    payload = gw.CabinetUrlIn(publisher_id=env.own, url='   ', author_name='площадка')
+    payload = gw.CabinetUrlIn(publisher_id=env.own, account_id=env.acc, url='   ',
+                              author_name='площадка')
     with pytest.raises(HTTPException) as e:
         gw.cabinet_target_url(env.target.id, payload, env.db)
     assert e.value.status_code == 400
@@ -153,7 +168,7 @@ def test_media_kit_rejects_foreign_extensions(env):
     import asyncio
     for name in ('kit.zip', 'kit.exe', 'kit.html', 'kit.svg', 'kit'):
         with pytest.raises(HTTPException) as e:
-            asyncio.run(gw.cabinet_media_kit(env.own, _upload(name), env.db))
+            asyncio.run(gw.cabinet_media_kit(env.own, env.acc, _upload(name), env.db))
         assert e.value.status_code == 415, f'{name} прошёл'
 
 

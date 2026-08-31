@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import RolePermission, User, Role, AuditLog
@@ -78,6 +77,7 @@ def access_overview(db: Session = Depends(get_db),
     трогая хранение. Ничего не изменяет: правки идут каждая в свой раздел.
     """
     from app.cabinet.models import Cabinet, CabinetAccount
+    from app.cabinet.scope import visible_publisher_ids
 
     core = []
     for u in db.query(User).order_by(User.created_at).all():
@@ -99,9 +99,12 @@ def access_overview(db: Session = Depends(get_db),
               .outerjoin(Cabinet, Cabinet.id == CabinetAccount.cabinet_id)
               .order_by(CabinetAccount.id).all()):
         acc, cab = a
-        seen = db.execute(sa_text(
-            "SELECT count(*) FROM cabinet_account_publisher WHERE account_id = :i"),
-            {"i": acc.id}).scalar() or 0
+        # Считаем от КАБИНЕТА, а не по личному списку: он заморожен, и сводка доступа,
+        # построенная на нём, показывала бы не то, что человек на самом деле видит.
+        # `None` от `visible_publisher_ids` — служебный кабинет: он связей не хранит, и
+        # «0 площадок» здесь означало бы ровно обратное правде.
+        ids = visible_publisher_ids(db, cab)
+        scope_text = "все площадки" if ids is None else f"{len(ids)} площадок"
         outer.append({
             "contour": "кабинет",
             "name": acc.name,
@@ -109,8 +112,7 @@ def access_overview(db: Session = Depends(get_db),
             "access": (cab.name if cab else "— без кабинета —"),
             "is_active": bool(acc.is_active),
             "last_login_at": acc.last_login_at,
-            "scope": (f"{seen} площадок"
-                      + ("" if acc.can_approve else ", только просмотр")),
+            "scope": scope_text + ("" if acc.can_approve else ", только просмотр"),
         })
 
     return {"rows": core + outer,

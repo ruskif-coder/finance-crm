@@ -27,6 +27,9 @@ TASK_COLUMNS = {
     # ссылки нужен целиком, вместе с текстом: без него площадка видит поле, но не
     # понимает, чего от неё хотят.
     'target_id', 'url_requested_at', 'url_request_text',
+    # Добавлено 30.08.2026: поверхность размещения. Карточка кабинета печатала её с
+    # самого начала, витрина не отдавала — площадка не видела, веб это или приложение.
+    'surface_kind',
 }
 
 # Поля, которых в контракте кабинета быть не может. Проверяются по именам колонок всех
@@ -76,13 +79,43 @@ def test_cabinet_has_zero_privileges_in_public(cab):
 
 def test_cabinet_cannot_read_core_tables(cab):
     """Функциональная проверка поверх структурной: мало не иметь гранта — надо, чтобы
-    запрос действительно не проходил. Схема `public` закрыта на уровне USAGE."""
+    запрос действительно не проходил. Схема `public` закрыта
+    на уровне USAGE — с 31.08.2026 это правда. До того здесь стояла та же фраза, но
+    она была неверной: замер показал `has_schema_privilege('cabinet','public',
+    'USAGE') = true`, потому что USAGE и CREATE выданы псевдороли `PUBLIC`, а
+    `REVOKE … FROM cabinet` такое не снимает. Изоляция держалась на отсутствии
+    табличных грантов — то есть на сегодняшнем списке таблиц, при том что ядро
+    заводит новые при каждом старте. Закрыто миграцией
+    `2026-08-31_close_public_schema.sql`."""
     for table in ('sales_deals', 'sales_publishers', 'cabinet_account', 'operations'):
         with pytest.raises(Exception) as e:
             cab.execute(text(f"SELECT 1 FROM public.{table} LIMIT 1"))
         assert 'permission denied' in str(e.value).lower(), table
         cab.rollback()
         cab.execute(text("SET LOCAL ROLE cabinet"))
+
+
+def test_every_pub_view_is_a_security_barrier(cab):
+    """Каждое представление внешнего контура — барьер безопасности.
+
+    `security_barrier` запрещает планировщику протаскивать пользовательское условие ПОД
+    фильтр `allowed_publisher_ids()`. Без него чужая строка сперва проверяется условием
+    внешней стороны и только потом отсекается: наружу она не попадёт, но по времени
+    ответа или по тексту ошибки её существование подтверждается.
+
+    Прибор нужен потому, что опция теряется МОЛЧА — `CREATE OR REPLACE VIEW` сбрасывает
+    `reloptions`, представление продолжает работать, состав колонок прежний. Именно так
+    30.08.2026 она слетела с `task_v1` и `profile_v1`; заметили при подготовке выкладки
+    замером, а не приборами.
+    """
+    rows = cab.execute(text(
+        "SELECT c.relname, coalesce(c.reloptions, '{}') FROM pg_class c "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = 'pub' AND c.relkind = 'v'")).all()
+    assert rows, 'в схеме pub нет ни одного представления — контур не накатан'
+    naked = sorted(name for name, opts in rows
+                   if 'security_barrier=true' not in (opts or []))
+    assert not naked, f'без security_barrier: {naked}'
 
 
 def test_task_contract_columns_are_pinned(cab):
@@ -137,11 +170,45 @@ def test_scope_does_not_leak_between_queries(cab):
 
 
 def test_empty_scope_shows_nothing(cab):
-    """Забытая установка области — самый вероятный сбой, и он обязан быть безопасным."""
+    """Забытая установка области — самый вероятный сбой, и он обязан быть безопасным.
+
+    Список витрин НЕ перечисляется руками, а спрашивается у базы: перечисленный однажды
+    он устаревает молча — новая витрина просто не попадёт в проверку, и узнать об этом
+    можно будет только от того, кому она показала лишнее. За 30.08.2026 таких добавилось
+    четыре (услуги, юрлица, договоры, команда).
+
+    Исключения — витрины, которые по смыслу НЕ зависят от площадки: список видов
+    уведомлений и общие контакты с нашей стороны одинаковы для всех.
+
+    ОТДЕЛЬНО и НЕ как «так и надо» — две витрины, через которые область только
+    ВЫЧИСЛЯЕТСЯ, и потому сами ею ограничены быть не могут:
+
+      · `account_v1` читается на входе, когда область ещё неизвестна. Сегодня она
+        отдаёт ВСЕ учётки вместе с хешами паролей, а кабинет фильтрует их запросом по
+        адресу. Роли `cabinet` этого больше, чем нужно: проверить пароль можно и не имея
+        доступа к чужим хешам. Чинится тем же приёмом, что счётчик блокировок, —
+        функцией `pub.find_account(email)` с SECURITY DEFINER, отдающей одну строку;
+      · `account_publisher_v1` отвечает на вопрос «какие площадки у этой учётки», то есть
+        и есть источник области. Ограничить её областью — замкнуть круг.
+
+    Записано здесь, а не в задачнике: список исключений — единственное место, где это
+    видно тому, кто придёт следующим.
+    """
+    GLOBAL = {'mute_v1', 'reason_v1', 'account_v1', 'account_publisher_v1'}
+    views = [v for (v,) in cab.execute(text(
+        "SELECT viewname FROM pg_views WHERE schemaname = 'pub' ORDER BY viewname"))]
+    assert len(views) >= 10, f'витрин подозрительно мало: {views}'
+
     cab.execute(text("SELECT set_config('app.publisher_ids', '', true)"))
-    for view in ('task_v1', 'task_file_v1'):
+    leaked = []
+    for view in views:
+        if view in GLOBAL:
+            continue
         n = cab.execute(text(f"SELECT count(*) FROM pub.{view}")).scalar()
-        assert n == 0, f"{view} отдал {n} строк без установленной области"
+        if n:
+            leaked.append(f'{view}: {n}')
+    assert not leaked, ('витрина отдаёт строки без установленной области: '
+                        + ', '.join(leaked))
 
 
 # ── блокировка входа (30.08.2026) ────────────────────────────────────────────
@@ -215,11 +282,18 @@ def test_cabinet_may_call_the_counter_but_not_read_it(cab):
                        {"e": PROBE}).scalar() == 0
     with pytest.raises(Exception) as e:
         cab.execute(text("SELECT count(*) FROM login_attempts"))
-    assert 'permission denied' in str(e.value).lower() or 'denied' in str(e.value).lower()
+    # До 31.08.2026 отказ звучал как «permission denied for table»: гранта на
+    # таблицу не было, но схема `public` оставалась видна роли через права
+    # PUBLIC. После `2026-08-31_close_public_schema.sql` схема закрыта, и
+    # неквалифицированное имя не разрешается вовсе — «relation does not exist».
+    # Это СИЛЬНЕЕ прежнего: снаружи не подтверждается даже существование
+    # таблицы. Принимаем оба ответа, чтобы прибор пережил и откат миграции.
+    why = str(e.value).lower()
+    assert 'permission denied' in why or 'does not exist' in why, why
 
 
-def test_counter_is_shared_with_the_core(probe):
-    """Счётчик ОДИН на оба контура — таблица ядра, а не копия.
+def test_the_counter_lives_in_the_core_table(probe):
+    """Счётчик ведётся в таблице ядра, а не в своей копии.
 
     Если однажды кабинету заведут свою таблицу, этот прибор упадёт: значение, записанное
     через `pub.*`, перестанет быть видно в `login_attempts`. Две реализации одного
@@ -227,9 +301,44 @@ def test_counter_is_shared_with_the_core(probe):
     """
     probe.execute(text("SELECT pub.register_failed_login(:e)"), {"e": PROBE})
     probe.commit()
-    n = probe.execute(text("SELECT failed_count FROM login_attempts WHERE lower(email)=:e"),
-                      {"e": PROBE}).scalar()
+    n = probe.execute(text("SELECT failed_count FROM login_attempts WHERE email=:k"),
+                      {"k": 'cabinet:' + PROBE}).scalar()
     assert n == 1, "запись через pub.* не попала в login_attempts ядра"
+
+
+def test_the_outside_cannot_lock_an_inside_account(probe):
+    """Перебор на кабинете НЕ закрывает вход сотруднику с той же почтой.
+
+    До 31.08.2026 закрывал. Кабинет считает попытки по ЛЮБОМУ введённому адресу — так
+    задумано, иначе «этот заблокирован, а этот нет» отвечает на вопрос о существовании
+    учётки. Но строка счётчика была общей с ядром, и получалось следующее: человек из
+    интернета берёт рабочую почту нашего сотрудника, пять раз ошибается паролем на
+    `lk.simb-ad.com`, и сотрудник на 15 минут не входит в основную систему. Без всякой
+    авторизации и сколько угодно раз подряд.
+
+    Проверяем на почте ЖИВОГО пользователя ядра — на выдуманной дыры не видно.
+    """
+    email = probe.execute(text("SELECT email FROM users WHERE is_active = 1 "
+                               "ORDER BY id LIMIT 1")).scalar()
+    if not email:
+        pytest.skip('в базе нет активного пользователя ядра')
+
+    q = text("SELECT locked_until FROM login_attempts WHERE lower(email) = lower(:e)")
+    before = probe.execute(q, {"e": email}).scalar()
+    try:
+        for _ in range(6):
+            probe.execute(text("SELECT pub.register_failed_login(:e)"), {"e": email})
+        probe.commit()
+
+        # Строка ядра не изменилась. Сравниваем именно `locked_until`: закрывает вход
+        # она, а не счётчик — счётчик лишь ведёт к ней.
+        assert probe.execute(q, {"e": email}).scalar() == before, (
+            f'перебор на кабинете закрыл вход сотруднику {email} в ядро')
+        assert probe.execute(text("SELECT pub.login_lock_minutes(:e)"),
+                             {"e": email}).scalar() > 0, 'кабинет при этом не заблокировался'
+    finally:
+        probe.execute(text("SELECT pub.clear_login_attempts(:e)"), {"e": email})
+        probe.commit()
 
 
 def test_lock_is_case_insensitive(probe):
@@ -301,3 +410,38 @@ def test_admin_scope_is_not_a_number():
         assert admins and 'проверки не проходит' in admins[0]['scope']
     finally:
         db.close()
+
+
+# ── «ваша команда» ──────────────────────────────────────────────────────────
+def test_team_comes_from_the_setting_not_from_deals(cab):
+    """Команду площадка видит ту, что назначили мы, а не участников её сделок.
+
+    Было наоборот: `pub.team_v1` собирал `account_manager_id` и `traffic_manager_id`
+    сделок, касающихся площадки. Владелец 30.08.2026: «у тебя сделки разных аккаунтов, а
+    ты показываешь общие контакты без привязки к сделке» — то есть площадка видела
+    произвольного из нескольких, и по строке нельзя было понять, по какой он сделке.
+    Теперь состав задаётся явно, `cabinet_our_contact`.
+
+    Прибор — на ИСТОЧНИК, а не на содержимое: он читает определение представления. Иначе
+    на пустом справочнике (контакты ещё не назначены) он был бы зелёным при любой
+    реализации, включая прежнюю.
+    """
+    src = cab.execute(text(
+        "SELECT pg_get_viewdef('pub.team_v1'::regclass, true)")).scalar()
+    assert 'cabinet_our_contact' in src, 'команда снова собирается не из настройки'
+    for gone in ('account_manager_id', 'traffic_manager_id', 'launch_prep_target'):
+        assert gone not in src, (
+            f'в составе команды вернулся участник сделки ({gone}); '
+            f'показывать их — отдельное решение владельца, оно не принято')
+
+
+def test_profile_carries_the_extra_channels(cab):
+    """Доп. каналы связи доезжают до площадки.
+
+    Поле заполняется в карточке паблишера и до 30.08.2026 наружу не отдавалось: площадка
+    не видела то, о чём мы с ней сами договорились — запасной чат на случай блокировок.
+    """
+    cols = {c for (c,) in cab.execute(text(
+        "SELECT column_name FROM information_schema.columns "
+        " WHERE table_schema = 'pub' AND table_name = 'profile_v1'"))}
+    assert 'messenger_note' in cols

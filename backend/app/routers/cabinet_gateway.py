@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.launch_prep.models import LaunchPrepPair, LaunchPrepPairFile, LaunchPrepTarget
 from app.routers.launch_prep import apply_platform_verdict, url_state
+from app.cabinet import journal
 from app.sales.models import SalesPublisher
 
 router = APIRouter()
@@ -48,8 +49,48 @@ def require_cabinet_service(x_cabinet_token: Optional[str] = Header(default=None
     return True
 
 
+def _actor(db: Session, account_id: int, publisher_id: int):
+    """Кто действует и в чьей ленте это окажется.
+
+    До 30.08.2026 шлюз не знал действующего вовсе: у вердикта проверялось только, что
+    пара принадлежит НАЗВАННОЙ площадке, а имеет ли право вызывающий говорить за неё —
+    оставалось на кабинете. Ровно то, что в шапке соседней ручки названо «отсутствием
+    проверки». Журналу всё равно понадобилась учётка, и вместе с ней проверка стала
+    возможной — поэтому поле обязательное, а не «по возможности».
+    """
+    from app.cabinet.models import CabinetAccount
+    from app.cabinet.scope import account_sees_publisher
+
+    acc = db.query(CabinetAccount).filter(CabinetAccount.id == account_id).first()
+    if acc is None or not account_sees_publisher(db, acc, publisher_id):
+        # 404 везде: 403 отвечал бы на вопрос «а есть ли такая связка».
+        raise HTTPException(status_code=404, detail="Задание не найдено")
+    return acc
+
+
+def _creative_subject(db: Session, pair) -> Optional[str]:
+    """«№4 · Мильгамма» — то, что видно в ленте рядом с действием.
+
+    Бренд, а не название сделки: сделка — наша внутренняя единица, а лента у площадки
+    на виду. Правило «в subject не попадает лишнее» начинается здесь.
+    """
+    from app.launch_prep.models import LaunchPrepCreativeSet
+    from app.sales.models import SalesBrand, SalesDeal
+
+    s = db.query(LaunchPrepCreativeSet).filter(
+        LaunchPrepCreativeSet.id == pair.set_id).first()
+    if s is None:
+        return None
+    brand = None
+    deal = db.query(SalesDeal).filter(SalesDeal.id == s.deal_id).first()
+    if deal is not None and deal.brand_id:
+        brand = db.query(SalesBrand).filter(SalesBrand.id == deal.brand_id).first()
+    return f"№{s.no}" + (f" · {brand.name}" if brand and brand.name else "")
+
+
 class CabinetVerdictIn(BaseModel):
     publisher_id: int          # чью площадку представляет вызывающий
+    account_id: int            # кто именно — им же подписана строка журнала
     verdict: str
     reason: Optional[str] = None
     author_name: str
@@ -72,14 +113,23 @@ def cabinet_verdict(pair_id: int, payload: CabinetVerdictIn,
     if not target or target.publisher_id != payload.publisher_id:
         raise HTTPException(status_code=404, detail="Задание не найдено")
 
+    acc = _actor(db, payload.account_id, payload.publisher_id)
     out = apply_platform_verdict(db, pair_id, payload.verdict, payload.reason,
                                  payload.author_name, payload.author_email,
                                  "кабинет", actor=None)
+    journal.write(db, {'ок': 'креатив_ок', 'на доработку': 'креатив_доработка',
+                       'отказ': 'креатив_отказ'}[payload.verdict],
+                  cabinet_id=acc.cabinet_id, account_id=acc.id,
+                  publisher_id=payload.publisher_id, actor_name=payload.author_name,
+                  subject=_creative_subject(db, pair),
+                  entity_type='launch_prep_pair', entity_id=pair_id)
+    db.commit()
     return {"verdict": out["verdict"], "code": out["code"]}
 
 
 class CabinetUrlIn(BaseModel):
     publisher_id: int
+    account_id: int
     url: str
     author_name: str
 
@@ -109,7 +159,11 @@ def cabinet_target_url(target_id: int, payload: CabinetUrlIn,
     if len(url) > 512:
         raise HTTPException(status_code=400, detail="Ссылка длиннее 512 знаков")
 
+    acc = _actor(db, payload.account_id, payload.publisher_id)
     target.advertiser_url = url
+    journal.write(db, 'посадочная', cabinet_id=acc.cabinet_id, account_id=acc.id,
+                  publisher_id=payload.publisher_id, actor_name=payload.author_name,
+                  entity_type='launch_prep_target', entity_id=target.id)
     db.commit()
     return {"target_id": target.id, "url_state": url_state(target)}
 
@@ -147,17 +201,18 @@ def cabinet_mute(account_id: int, payload: CabinetMuteIn, db: Session = Depends(
     Принадлежность площадки учётке проверяется ЗДЕСЬ, а не только в кабинете: проверка,
     оставленная на вызывающей стороне, — это отсутствие проверки.
     """
-    from app.cabinet.models import CabinetAccount, CabinetAccountPublisher
+    from app.cabinet.models import CabinetAccount
     from app.cabinet.notify_kinds import KINDS, MUTABLE_KEYS
+    from app.cabinet.scope import account_sees_publisher
 
     acc = db.query(CabinetAccount).filter(CabinetAccount.id == account_id).first()
     if not acc:
         raise HTTPException(status_code=404, detail="Учётка не найдена")
 
-    mine = (db.query(CabinetAccountPublisher)
-            .filter(CabinetAccountPublisher.account_id == account_id,
-                    CabinetAccountPublisher.publisher_id == payload.publisher_id).first())
-    if not mine:
+    # Правило берётся из `scope`, а не пишется здесь: до 30.08.2026 запись проверялась по
+    # личному списку `cabinet_account_publisher`, а чтение шло от кабинета — два ответа на
+    # один вопрос, которые разошлись бы при первой же раздаче площадок.
+    if not account_sees_publisher(db, acc, payload.publisher_id):
         # 404, а не 403: 403 подтвердил бы, что такая связка существует.
         raise HTTPException(status_code=404, detail="Учётка не найдена")
 
@@ -195,7 +250,8 @@ MEDIA_KIT_DIR = "mediakit"
 
 @router.post("/publisher/{publisher_id}/media-kit",
              dependencies=[Depends(require_cabinet_service)])
-async def cabinet_media_kit(publisher_id: int, file: UploadFile = File(...),
+async def cabinet_media_kit(publisher_id: int, account_id: int,
+                            file: UploadFile = File(...),
                             db: Session = Depends(get_db)):
     """Медиакит, присланный самой площадкой.
 
@@ -210,13 +266,16 @@ async def cabinet_media_kit(publisher_id: int, file: UploadFile = File(...),
     Новый файл ЗАМЕЩАЕТ старый — версий у медиакита нет: у площадки он один, и «версия
     от 03.07» это дата загрузки, а не отдельная запись.
     """
-    # Принадлежность площадки учётке проверяет КАБИНЕТ: здесь её не из чего вывести —
-    # номер площадки и есть весь запрос. У вердикта иначе: там пара сама указывает на
+    # ИСПРАВЛЕНО 30.08.2026: раньше принадлежность здесь не проверялась вовсе — «её не
+    # из чего вывести, номер площадки и есть весь запрос». Теперь запрос несёт ещё и
+    # учётку, и проверка стала возможной. Прежний текст оставлен ниже как история того,
+    # почему дыра выглядела неизбежной. У вердикта иначе: там пара сама указывает на
     # площадку, и ядро сверяет независимо. Разница честная, и делать вид, что проверка
     # есть, добавив в тело то же число, было бы хуже её отсутствия.
     p = db.query(SalesPublisher).filter(SalesPublisher.id == publisher_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Площадка не найдена")
+    acc = _actor(db, account_id, publisher_id)
 
     original = file.filename or "mediakit"
     ext = os.path.splitext(original)[1].lower()
@@ -240,6 +299,9 @@ async def cabinet_media_kit(publisher_id: int, file: UploadFile = File(...),
     p.media_kit_filename = original
     p.media_kit_path = f"{MEDIA_KIT_DIR}/{stored}"
     p.media_kit_uploaded_at = datetime.utcnow()
+    journal.write(db, 'медиакит', cabinet_id=acc.cabinet_id, account_id=acc.id,
+                  publisher_id=publisher_id, actor_name=acc.name, subject=original,
+                  entity_type='sales_publisher', entity_id=publisher_id)
     db.commit()
     return {"name": original, "uploaded_at": p.media_kit_uploaded_at}
 
@@ -254,7 +316,8 @@ REWORK_DIR = "rework"
 
 @router.post("/pair/{pair_id}/rework-file",
              dependencies=[Depends(require_cabinet_service)])
-async def cabinet_rework_file(pair_id: int, file: UploadFile = File(...),
+async def cabinet_rework_file(pair_id: int, account_id: int,
+                              file: UploadFile = File(...),
                               db: Session = Depends(get_db)):
     """Приложение площадки к объяснению, что не так с креативом.
 
@@ -270,6 +333,13 @@ async def cabinet_rework_file(pair_id: int, file: UploadFile = File(...),
     pair = db.query(LaunchPrepPair).filter(LaunchPrepPair.id == pair_id).first()
     if not pair:
         raise HTTPException(status_code=404, detail="Задание не найдено")
+    # Площадка здесь не приходит запросом, а берётся у получателя пары: подставить её
+    # снаружи означало бы разрешить прикладывать файл к чужому заданию.
+    target = db.query(LaunchPrepTarget).filter(
+        LaunchPrepTarget.id == pair.target_id).first()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Задание не найдено")
+    acc = _actor(db, account_id, target.publisher_id)
 
     n = (db.query(LaunchPrepPairFile)
          .filter(LaunchPrepPairFile.pair_id == pair_id,
@@ -299,5 +369,9 @@ async def cabinet_rework_file(pair_id: int, file: UploadFile = File(...),
                              original_name=original, content_type=file.content_type,
                              size_bytes=len(content), kind="доработка")
     db.add(rec)
+    journal.write(db, 'файл_доработки', cabinet_id=acc.cabinet_id, account_id=acc.id,
+                  publisher_id=target.publisher_id, actor_name=acc.name,
+                  subject=_creative_subject(db, pair),
+                  entity_type='launch_prep_pair', entity_id=pair_id)
     db.commit()
     return {"id": rec.id, "name": original, "size_bytes": len(content)}

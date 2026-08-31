@@ -1,0 +1,98 @@
+# -*- coding: utf-8 -*-
+"""Журнал действий кабинета: словарь событий и одна точка записи.
+
+**У ленты два читателя** — администратор на экране «Кабинеты паблишеров» и сама площадка
+у себя в кабинете. Отсюда правило, которое не выражено типом и потому написано здесь:
+в `subject` не попадает ничего, чего площадке видеть нельзя. Скрытых строк в журнале нет
+намеренно — флаг видимости однажды забыли бы проставить, и внутреннее уехало бы наружу.
+
+**Словарь в коде, а не в базе** — как виды уведомлений и состояния кабинета: набор
+меняется вместе с экранами, а не с данными. `side` и `tone` заданы событием, а не
+вызывающим: иначе одно и то же действие однажды придёт в ленту двумя разными цветами.
+
+**Чего здесь пока нет и почему.** Сверка (`publisher_request` с `kind='сверка'`) и
+скачивание документов в макете перечислены, но ручек под них в шлюзе ещё нет — площадка
+эти действия сегодня не совершает. Заводить ключ раньше производителя нельзя: получится
+пункт словаря, которого никто не пишет, и по нему невозможно отличить «не было» от
+«не записали». Прибор `tests/test_cabinet_journal.py` следит, чтобы у каждого ключа был
+вызывающий.
+"""
+from dataclasses import dataclass
+from typing import Optional, Tuple
+
+from sqlalchemy.orm import Session
+
+from app.cabinet.models import CabinetLog
+
+# ── стороны и тона (дублируют словари моделей осознанно: там значения, здесь смысл) ──
+SIDE_PUB = 'площадка'
+SIDE_US = 'мы'
+
+
+@dataclass(frozen=True)
+class LogAction:
+    key: str
+    label: str            # постоянная часть строки: «Согласован креатив»
+    tone: str             # info | ok | warn | bad
+    side: str
+
+
+ACTIONS: Tuple[LogAction, ...] = (
+    # ── что делает площадка ──
+    LogAction('вход', 'Вход в кабинет', 'info', SIDE_PUB),
+    LogAction('креатив_ок', 'Согласован креатив', 'ok', SIDE_PUB),
+    LogAction('креатив_доработка', 'Креатив отправлен на правки', 'warn', SIDE_PUB),
+    LogAction('креатив_отказ', 'Отказ по креативу', 'bad', SIDE_PUB),
+    LogAction('посадочная', 'Указана посадочная страница', 'ok', SIDE_PUB),
+    LogAction('медиакит', 'Загружен медиакит', 'info', SIDE_PUB),
+    LogAction('файл_доработки', 'Приложен файл к правкам', 'info', SIDE_PUB),
+    # ── что делаем мы, и площадка это видит ──
+    LogAction('пароль', 'Выдан пароль', 'info', SIDE_US),
+    LogAction('учётка_создана', 'Создана учётка', 'info', SIDE_US),
+    LogAction('учётка_отключена', 'Отключена учётка', 'warn', SIDE_US),
+    LogAction('уровень', 'Изменён уровень доступа', 'info', SIDE_US),
+    LogAction('кабинет_пауза', 'Кабинет приостановлен', 'warn', SIDE_US),
+    LogAction('кабинет_возобновлён', 'Кабинет возобновлён', 'ok', SIDE_US),
+    LogAction('площадка_добавлена', 'Площадка подключена', 'info', SIDE_US),
+    LogAction('площадка_убрана', 'Площадка отвязана', 'warn', SIDE_US),
+)
+
+BY_KEY = {a.key: a for a in ACTIONS}
+
+
+def write(db: Session, action: str, *, cabinet_id: Optional[int], actor_name: str,
+          publisher_id: Optional[int] = None, account_id: Optional[int] = None,
+          subject: Optional[str] = None, entity_type: Optional[str] = None,
+          entity_id: Optional[int] = None) -> Optional[CabinetLog]:
+    """Записать строку. Коммитит ВЫЗЫВАЮЩИЙ — строка едет той же транзакцией, что и само
+    действие: журнал, разошедшийся с фактом, хуже отсутствующего.
+
+    `cabinet_id` может быть пустым — у площадки, ещё не привязанной к кабинету, писать
+    некуда. Тогда строка не заводится вовсе, и это не ошибка: событие произошло вне
+    ленты, которую кто-то читает. Молча пропускать нельзя было бы, будь `cabinet_id`
+    обязателен по смыслу, — здесь он обязателен только по схеме.
+    """
+    a = BY_KEY.get(action)
+    if a is None:
+        raise ValueError(f"Неизвестное действие журнала: {action!r}")
+    if not cabinet_id:
+        return None
+    row = CabinetLog(
+        cabinet_id=cabinet_id, publisher_id=publisher_id, account_id=account_id,
+        actor_name=(actor_name or '—').strip()[:200],
+        actor_side=a.side, action=a.key, tone=a.tone,
+        subject=(subject or None), entity_type=entity_type, entity_id=entity_id)
+    db.add(row)
+    return row
+
+
+def cabinet_of_publisher(db: Session, publisher_id: int) -> Optional[int]:
+    """Кабинет, которому принадлежит площадка. Служебный сюда НЕ попадает.
+
+    Он связей не хранит, поэтому действие по площадке, ни к кому не привязанной, ленты
+    не имеет — и это верно: у такой площадки нет кабинета, где её кто-то прочтёт.
+    """
+    from sqlalchemy import text
+    return db.execute(text(
+        "SELECT cabinet_id FROM cabinet_publisher WHERE publisher_id = :p"),
+        {"p": publisher_id}).scalar()

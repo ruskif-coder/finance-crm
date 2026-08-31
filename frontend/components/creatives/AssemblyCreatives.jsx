@@ -781,8 +781,11 @@ function EridBlock({ set, onChanged }) {
             {set.ord_status}
           </span>
         )}
+        {/* Справка, а не условие: порог согласовавших снят 31.08.2026, и «нужно N»
+            отсюда ушло вместе с ним. Само число ответов осталось — оно отвечает на
+            «сколько площадок уже высказалось», и это по-прежнему спрашивают. */}
         <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10.5, color: 'var(--text-muted)' }}>
-          согласовали {st.agreed} из {st.sent} · нужно {st.need}
+          согласовали {st.agreed} из {st.sent}
         </span>
       </div>
 
@@ -814,20 +817,14 @@ function EridBlock({ set, onChanged }) {
         </div>
       )}
 
-      {/* Что проставлено — видно и когда всё в порядке: код уходит в каждый креатив,
-          и «какой именно» спрашивают чаще, чем «почему не выпускается». */}
-      {!!st.brand?.kktu_code && (
-        <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--text-muted)' }}>
-          <span style={CAP}>ккту</span>{' '}
-          <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>
-            {st.brand.kktu_code}
-          </span>
-          {!!st.brand.kktu_name && ` · ${st.brand.kktu_name}`}
-          {' · '}
-          <span onClick={() => setMarking(st.brand)}
-            style={{ cursor: 'pointer', color: 'var(--accent)' }}>изменить</span>
-        </div>
-      )}
+      {/* Строки «ккту … · изменить» здесь больше нет (31.08.2026). Код принадлежит
+          БРЕНДУ, а не комплекту, и задаётся один раз в блоке сборки ОРД на карточке
+          сделки — там же, где видно, маркирован ли каждый креатив. Здесь она рисовалась
+          в каждом комплекте (у сделки их бывает десяток), повторяла одно и то же и
+          выглядела настройкой креатива, хотя правила бренд целиком.
+
+          Причина нехватки осталась выше блокером: он появляется только когда кода нет,
+          то есть это не шум, а объяснение, почему маркер не выпускается. */}
 
       {!!marking && (
         <BrandMarkingDialog brand={marking} onClose={() => setMarking(null)}
@@ -939,9 +936,28 @@ function TargetingUrl({ set, canEdit, onSave }) {
 }
 
 
-function RecipientRow({ r, set, canEdit, canApprove, sent, onDrop, onTt, onUrl, onRequest, onVerdict, onRework, onMove, onShots }) {
+// Иконка «есть текст»: три строки. Рисуем сами, а не берём эмодзи — она встаёт в ряд с
+// моноширинными плашками и не прыгает по высоте между платформами.
+const NoteIcon = () => (
+  <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor"
+    strokeWidth="1.4" strokeLinecap="round">
+    <path d="M2.5 3.5h7M2.5 6h7M2.5 8.5h4" />
+  </svg>
+)
+
+
+function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt, onUrl, onRequest, onVerdict, onRework, onMove, onShots }) {
   const [url, setUrl] = useState(r.advertiser_url || '')
   const [editing, setEditing] = useState(false)
+  // Причина правок раскрывается КЛИКОМ, а не подсказкой при наведении: это единственная
+  // фраза, которая говорит, что именно чинить, и в hover её никто не находит (31.08.2026).
+  const [noteOpen, setNoteOpen] = useState(false)
+  // Площадка ушла в доработку — работает она теперь в другом комплекте, здесь остаётся
+  // только следом. Гасим строку и убираем действия: иначе список показывает работу,
+  // которой тут больше нет. Пара при этом жива, в ней вердикт с причиной.
+  const gone = r.moved_to_no || null
+  const note = r.reason || r.traffic_reason || ''
+  const noteWho = r.reason ? (r.decided_by || 'площадка') : (r.traffic_reason ? 'трафик' : '')
   useEffect(() => { setUrl(r.advertiser_url || '') }, [r.advertiser_url])
   const status = rowStatus(r, set)
   const tone = ROW_STATUS[status] || 'var(--text-muted)'
@@ -954,8 +970,10 @@ function RecipientRow({ r, set, canEdit, canApprove, sent, onDrop, onTt, onUrl, 
   }
 
   return (
+    <>
     <div style={{ display: 'grid', gridTemplateColumns: R_COLS, gap: 9, alignItems: 'center',
-      padding: '7px 8px', borderBottom: '1px solid var(--border-row)' }}>
+      padding: '7px 8px', borderBottom: noteOpen ? 'none' : '1px solid var(--border-row)',
+      opacity: gone ? 0.5 : 1 }}>
 
       {sent || !canEdit ? (
         <span title={status} style={{ width: 7, height: 7, borderRadius: 2, background: tone, justifySelf: 'center' }} />
@@ -1040,15 +1058,28 @@ function RecipientRow({ r, set, canEdit, canApprove, sent, onDrop, onTt, onUrl, 
       {/* Остальные колонки при раскрытом вводе не рисуются: их место занял ввод. */}
       {!editing && (<>
 
-      <span title={r.reason || r.traffic_reason
-                   || (status === 'у трафика'
+      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        gap: 5, minWidth: 0 }}>
+        <span title={status === 'у трафика'
                        ? 'Материал на проверке у трафика — площадке он ещё не уходил'
-                       : status === 'у площадки' ? 'Трафик проверил, ждём ответа площадки' : '')}
-        style={{ display: 'inline-flex', alignItems: 'center',
-        justifyContent: 'center', fontFamily: MONO, fontSize: 10, fontWeight: 700,
-        padding: '3px 0', borderRadius: 7, color: tone,
-        border: `1px solid ${tone}`, whiteSpace: 'nowrap' }}>
-        {status}
+                       : status === 'у площадки' ? 'Трафик проверил, ждём ответа площадки' : ''}
+          style={{ display: 'inline-flex', alignItems: 'center', flex: '1 1 auto',
+          justifyContent: 'center', fontFamily: MONO, fontSize: 10, fontWeight: 700,
+          padding: '3px 0', borderRadius: 7, minWidth: 0,
+          color: gone ? 'var(--text-faint)' : tone,
+          border: `1px solid ${gone ? 'var(--border-card)' : tone}`, whiteSpace: 'nowrap' }}>
+          {gone ? `ушла в №${gone}` : status}
+        </span>
+        {/* Текст ответа — по клику. Иконка появляется только когда есть что показать. */}
+        {!!note && (
+          <span onClick={() => setNoteOpen(o => !o)}
+            title={noteOpen ? 'Свернуть' : 'Показать текст ответа'}
+            style={{ cursor: 'pointer', flex: '0 0 auto', display: 'inline-flex',
+              alignItems: 'center', padding: 2, borderRadius: 5,
+              color: noteOpen ? 'var(--accent)' : 'var(--text-muted)' }}>
+            <NoteIcon />
+          </span>
+        )}
       </span>
 
       {/* Маркер выпускается на КОМПЛЕКТ, а показывается у той площадки, до которой он
@@ -1072,7 +1103,11 @@ function RecipientRow({ r, set, canEdit, canApprove, sent, onDrop, onTt, onUrl, 
         {/* Ответ площадки записывается только после отмашки трафика: до неё материал ей
             не уходил, и сервер такой вердикт отклоняет. Кнопка не «спрятана» — она
             появляется тогда же, когда появляется предмет разговора. */}
-        {canApprove && sent && !r.verdict && r.traffic_verdict === 'ок' && (
+        {/* Ответ за площадку и отметка «в эфир» доступны ТОЛЬКО администратору
+            (решение владельца 31.08.2026): обе подменяют чужую зону ответственности —
+            площадка отвечает в своём кабинете, факт запуска знает трафик. Оставлены как
+            аварийный ход для площадок без кабинета, а не как обычный путь. */}
+        {isAdmin && canApprove && sent && !r.verdict && r.traffic_verdict === 'ок' && !gone && (
           <span onClick={() => onVerdict(r)}
             style={{ cursor: 'pointer', fontSize: 10.5, padding: '3px 8px', borderRadius: 7,
               border: '1px solid var(--border-card)', color: 'var(--accent)' }}>Ответ</span>
@@ -1088,7 +1123,8 @@ function RecipientRow({ r, set, canEdit, canApprove, sent, onDrop, onTt, onUrl, 
         {/* Новую версию собирают и после правок площадки, и после переделки от трафика:
             для аккаунта это одно и то же действие. Разница только в том, кто попросил, —
             она в подсказке. */}
-        {canEdit && (r.verdict === 'на доработку' || r.traffic_verdict === 'на переделку')
+        {canEdit && !gone
+          && (r.verdict === 'на доработку' || r.traffic_verdict === 'на переделку')
           && r.state !== 'отказ площадки' && (
           <span onClick={() => onRework(r)}
             title={r.reason || (r.traffic_reason ? `Трафик: ${r.traffic_reason}` : null)
@@ -1098,7 +1134,21 @@ function RecipientRow({ r, set, canEdit, canApprove, sent, onDrop, onTt, onUrl, 
             Доработка
           </span>
         )}
-        {canEdit && r.state === 'ерид получен' && (
+        {/* Отказ — тоже ответ, и у него тоже есть формулировка. Кнопка та же по месту и
+            размеру, что «Доработка», но не зовёт к действию: делать с отказом нечего,
+            читать — есть что. Без неё строка отказа выглядела пустой, а причина
+            («Товара нет в наличии») была доступна только наведением на иконку.
+            Раскрывает ту же строку с текстом, что и иконка примечания. */}
+        {r.state === 'отказ площадки' && !!note && (
+          <span onClick={() => setNoteOpen(o => !o)}
+            title={noteOpen ? 'Свернуть причину' : 'Показать причину отказа'}
+            style={{ cursor: 'pointer', fontSize: 10.5, padding: '3px 8px', borderRadius: 7,
+              border: `1px solid ${noteOpen ? 'var(--danger-fg)' : 'var(--border-card)'}`,
+              color: 'var(--danger-fg)', whiteSpace: 'nowrap' }}>
+            Причина отказа
+          </span>
+        )}
+        {isAdmin && canEdit && r.state === 'ерид получен' && !gone && (
           <span onClick={() => onMove(r.target_id, 'в размещении')} title="Кампания заведена и запущена"
             style={{ cursor: 'pointer', fontSize: 10.5, padding: '3px 8px', borderRadius: 7,
               border: '1px solid var(--income)', color: 'var(--income)' }}>в эфир</span>
@@ -1106,11 +1156,22 @@ function RecipientRow({ r, set, canEdit, canApprove, sent, onDrop, onTt, onUrl, 
       </span>
       </>)}
     </div>
+    {noteOpen && !!note && (
+      <div style={{ padding: '2px 8px 9px 26px', borderBottom: '1px solid var(--border-row)',
+        display: 'flex', gap: 8, alignItems: 'baseline' }}>
+        <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)',
+          whiteSpace: 'nowrap' }}>{noteWho}</span>
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+          {note}
+        </span>
+      </div>
+    )}
+    </>
   )
 }
 
 /* ── креатив ────────────────────────────────────────────────────────────── */
-function CreativeSet({ set, canEdit, canApprove, autoUpload, onUploaded, handlers }) {
+function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded, handlers }) {
   const fileRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -1206,7 +1267,24 @@ function CreativeSet({ set, canEdit, canApprove, autoUpload, onUploaded, handler
         )}
         <span style={CAP}>{set.scope}{set.origin !== 'первичный' ? ` · ${set.origin}` : ''}</span>
         {!!set.form && <span style={CAP}>{FORM_LABEL[set.form] || set.form}</span>}
-        <span style={{ marginLeft: 'auto' }}>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 9 }}>
+          {/* Удаление оранжевым, а не красным: это не «сорвалось», а «переделываю с нуля».
+              Отправленный креатив не удаляется — у него уже есть вердикты площадок, а у
+              маркированного и запись в реестре, которую не отозвать; кнопка тогда гаснет
+              и объясняет причину, а не исчезает. */}
+          {canEdit && (
+            <button
+              style={{ ...btn(false), padding: '3px 9px', fontSize: 11,
+                borderColor: sent ? 'var(--border-card)' : 'var(--dot-current-dz)',
+                color: sent ? 'var(--text-faint)' : 'var(--dot-current-dz)',
+                cursor: sent ? 'not-allowed' : 'pointer' }}
+              disabled={sent}
+              title={sent ? 'Отправленный креатив не удаляется — доработка это новая версия'
+                : 'Удалить креатив вместе с файлами и выбором площадок'}
+              onClick={() => handlers.confirmDelete(set)}>
+              Удалить
+            </button>
+          )}
           <SetStateBadge state={set.state} erid={set.state === 'маркирован' ? set.erid : null} />
         </span>
       </div>
@@ -1280,7 +1358,7 @@ function CreativeSet({ set, canEdit, canApprove, autoUpload, onUploaded, handler
               </div>
               {set.recipients.map(r => (
                 <RecipientRow key={r.target_id} r={r} set={set} canEdit={canEdit} canApprove={canApprove}
-                  sent={sent} onDrop={dropTarget}
+                  isAdmin={isAdmin} sent={sent} onDrop={dropTarget}
                   onTt={handlers.tt} onUrl={handlers.url} onRequest={handlers.request}
                   onVerdict={handlers.verdict}
                   onRework={(rec) => handlers.rework(set, rec)} onMove={handlers.move}
@@ -1309,23 +1387,11 @@ function CreativeSet({ set, canEdit, canApprove, autoUpload, onUploaded, handler
             одном месте, у правого края: сегодня это «Проверить креатив», завтра, после
             проверки, — «Отправить трафику», и глаз не должен искать его заново. */}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
-          {/* Удаление оранжевым, а не красным: это не «сорвалось», а «переделываю с нуля».
-              Отправленный креатив не удаляется — у него уже есть вердикты площадок, а у
-              маркированного и запись в реестре, которую не отозвать; кнопка тогда гаснет
-              и объясняет причину, а не исчезает. */}
-          {canEdit && (
-            <button
-              style={{ ...btn(false), padding: '5px 11px', fontSize: 11.5,
-                borderColor: sent ? 'var(--border-card)' : 'var(--dot-current-dz)',
-                color: sent ? 'var(--text-faint)' : 'var(--dot-current-dz)',
-                cursor: sent ? 'not-allowed' : 'pointer' }}
-              disabled={sent}
-              title={sent ? 'Отправленный креатив не удаляется — доработка это новая версия'
-                : 'Удалить креатив вместе с файлами и выбором площадок'}
-              onClick={() => handlers.confirmDelete(set)}>
-              Удалить креатив
-            </button>
-          )}
+          {/* «Удалить креатив» уехала в ШАПКУ, перед статусом (31.08.2026). Внизу
+              она стояла в одном ряду с основным действием — «Проверить креатив»,
+              «Отправить трафику», — то есть разрушение и продвижение оказывались
+              соседями и по раскладке, и по размеру. В шапке она рядом с именем
+              креатива, которое и удаляют, и подальше от кнопки, нажимаемой каждый день. */}
           {canApprove && !set.primary_review && !!set.files.length && (
             <button style={btn(true)} onClick={() => setPreviewId(set.files[0].id)}>
               Проверить креатив
@@ -1362,7 +1428,7 @@ function CreativeSet({ set, canEdit, canApprove, autoUpload, onUploaded, handler
 }
 
 /* ── экран ──────────────────────────────────────────────────────────────── */
-export default function AssemblyCreatives({ dealId, canEdit, canApprove, onChanged }) {
+export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin = false, onChanged }) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
   const [picking, setPicking] = useState(false)
@@ -1441,6 +1507,27 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, onChang
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось собрать новую версию') }
   }
 
+  // Кандидаты в трафики тянем один раз и лениво — только когда открыли выбор: список
+  // короткий, но и он не нужен, пока никто не назначает.
+  const [tmOpen, setTmOpen] = useState(false)
+  const [tmList, setTmList] = useState(null)
+  const openTm = async () => {
+    setTmOpen(true)
+    if (tmList) return
+    try {
+      const r = await api.get('/launch-prep/traffic-managers', auth())
+      setTmList(r.data.items || [])
+    } catch { setTmList([]) }
+  }
+  const setTrafficManager = async (id) => {
+    setErr(''); setTmOpen(false)
+    try {
+      await api.put(`/launch-prep/deal/${dealId}/traffic-manager`,
+        { traffic_manager_id: id ? Number(id) : null }, auth())
+      load()
+    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось назначить трафика') }
+  }
+
   const handlers = {
     reload: load,
     tt: setTtFor,
@@ -1489,8 +1576,43 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, onChang
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={CAP}>
-        услуга: {data.service?.name || 'не определена'} · {data.service_reason}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+        <span style={{ ...CAP, marginBottom: 0 }}>
+          услуга: {data.service?.name || 'не определена'} · {data.service_reason}
+        </span>
+
+        {/* Ответственный трафик — здесь, а не в карточке сделки и не в медиаплане.
+            От плана до активной фазы проходят месяцы, а трафик выделяется В МОМЕНТЕ по
+            текущей нагрузке (владелец, 31.08.2026): раньше сборки его не существует.
+            Стоит рядом с материалом ещё и потому, что без него материал не отправить —
+            узнавать об этом в момент нажатия «Отправить» поздно. */}
+        <span style={{ ...CAP, marginBottom: 0, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          трафик:
+          {tmOpen ? (
+            <select autoFocus defaultValue={data.deal?.traffic_manager_id || ''}
+              onChange={e => setTrafficManager(e.target.value)}
+              onBlur={() => setTmOpen(false)}
+              style={{ fontFamily: UI, fontSize: 11.5, padding: '2px 6px', borderRadius: 7,
+                border: '1px solid var(--border-card)', background: 'var(--bg-card)',
+                color: 'var(--text-primary)' }}>
+              <option value="">— не назначен —</option>
+              {(tmList || []).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          ) : (
+            <span onClick={canEdit ? openTm : undefined}
+              title={canEdit ? 'Назначить ответственного за проверку материала' : ''}
+              style={{ cursor: canEdit ? 'pointer' : 'default',
+                color: data.deal?.traffic_manager ? 'var(--text-secondary)' : 'var(--dot-current-dz)',
+                borderBottom: canEdit ? '1px dashed var(--border-card)' : 'none' }}>
+              {data.deal?.traffic_manager || 'не назначен'}
+            </span>
+          )}
+          {/* Пустой список — не молчание: без сотрудников с рабочей группой «трафик»
+              назначать некого, и это чинится в настройках пользователей, а не здесь. */}
+          {tmOpen && tmList && !tmList.length && (
+            <span style={{ color: 'var(--dot-overdue)' }}>нет сотрудников с ролью трафика</span>
+          )}
+        </span>
       </div>
 
       {!data.sets.length && (
@@ -1505,7 +1627,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, onChang
       )}
 
       {data.sets.map(s => (
-        <CreativeSet key={s.id} set={s} canEdit={canEdit} canApprove={canApprove}
+        <CreativeSet key={s.id} set={s} canEdit={canEdit} canApprove={canApprove} isAdmin={isAdmin}
           autoUpload={autoUploadFor === s.id} onUploaded={() => setAutoUploadFor(null)}
           handlers={handlers} />
       ))}

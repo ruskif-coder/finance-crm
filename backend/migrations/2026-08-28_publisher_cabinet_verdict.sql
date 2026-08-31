@@ -27,7 +27,12 @@
 -- Состояние ссылки НЕ вычисляется здесь. Три ответа на «где ссылка» («не спрашивали» /
 -- «ждём» / «есть») уже выведены в ядре (`url_state`), и вторая копия правила в SQL
 -- разошлась бы с первой. Отдаём факты, вывод делает тот, кто рисует.
-CREATE OR REPLACE VIEW pub.task_v1 WITH (security_barrier) AS
+-- ПОВТОРНЫЙ НАКАТ (правка 31.08.2026). Представление ниже позже расширяется другой
+-- миграцией, а `CREATE OR REPLACE VIEW` не умеет менять состав колонок — на втором
+-- проходе он падал с `cannot drop columns from view`. Поэтому пересоздаём: зависимостей
+-- между представлениями `pub` нет, DROP ничего не тянет за собой, грант выдаётся тут же.
+DROP VIEW IF EXISTS pub.task_v1;
+CREATE VIEW pub.task_v1 WITH (security_barrier) AS
 SELECT
     p.id                                    AS task_id,
     t.publisher_id,
@@ -77,3 +82,4 @@ SELECT 'на доработку'::text, id, name, sort_order
 FROM sales_rework_reasons WHERE is_active;
 
 GRANT SELECT ON pub.reason_v1 TO cabinet;
+GRANT SELECT ON pub.task_v1 TO cabinet;

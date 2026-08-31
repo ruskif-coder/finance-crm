@@ -36,6 +36,7 @@ from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
 from app.sales.stages import STAGE_CATALOG
 from app.sales.catalog import Catalog, stage_public
 from app.sales.row_context import load_row_context
+from app.sales.mp_amounts import mp_amounts_by_deal, eff_net, eff_gross
 import logging
 
 router = APIRouter()
@@ -303,16 +304,17 @@ def _base_query(db: Session, date_from, date_to, pipeline, sales_rep_id,
     return q
 
 
-def _group(rows, key_fn, excluded_adv=frozenset()):
+def _group(rows, key_fn, excluded_adv=frozenset(), mp=None):
     """Сворачивает выборку по ключу с разбивкой суммы по слоям денег.
     fact — реализованная выручка (фактический слой), исключая рекламодателей
     с флагом «не в выручке» (МП). real/plan — реализуемые/планируемые."""
+    mp = mp or {}
     acc = {}
     for deal, layer, _stage_key in rows:
         key = key_fn(deal, layer) or NO_GROUP
         b = acc.setdefault(key, {"name": key, "deals": 0, "amount": 0.0,
                                  "fact": 0.0, "real": 0.0, "plan": 0.0})
-        amt = float(deal.amount or 0)
+        amt = eff_net(deal, mp)
         b["deals"] += 1
         b["amount"] += amt
         if layer == "фактические":
@@ -369,9 +371,10 @@ def dashboard(
     excluded_adv = frozenset(x[0] for x in db.query(SalesAdvertiser.id)
                              .filter(SalesAdvertiser.exclude_from_revenue.is_(True)).all())
 
-    total_amount = sum(float(d.amount or 0) for d, _, _ in rows)
+    mp = mp_amounts_by_deal(db, [d.id for d, _, _ in rows])
+    total_amount = sum(eff_net(d, mp) for d, _, _ in rows)
 
-    by_layer = _group(rows, lambda d, layer: layer, excluded_adv)
+    by_layer = _group(rows, lambda d, layer: layer, excluded_adv, mp)
     # Сверка: сумма по слоям обязана совпасть с общим итогом.
     # Расхождение означает потерянные строки — показываем его, а не прячем.
     layers_sum = sum(b["amount"] for b in by_layer)
@@ -399,14 +402,14 @@ def dashboard(
             "reconciles": round(layers_sum, 2) == round(total_amount, 2),
         },
         "by_layer": by_layer,
-        "by_pipeline": _group(rows, lambda d, layer: d.pipeline, excluded_adv),
-        "by_sales_rep": _group(rows, lambda d, layer: rep_names.get(d.sales_rep_id), excluded_adv),
-        "by_account_manager": _group(rows, lambda d, layer: rep_names.get(d.account_manager_id), excluded_adv),
-        "by_agency": _group(rows, lambda d, layer: agency_names.get(d.agency_id), excluded_adv)[:50],
-        "by_advertiser": _group(rows, lambda d, layer: adv_names.get(d.advertiser_id), excluded_adv)[:50],
-        "by_product": _group(rows, lambda d, layer: d.product, excluded_adv)[:50],
+        "by_pipeline": _group(rows, lambda d, layer: d.pipeline, excluded_adv, mp),
+        "by_sales_rep": _group(rows, lambda d, layer: rep_names.get(d.sales_rep_id), excluded_adv, mp),
+        "by_account_manager": _group(rows, lambda d, layer: rep_names.get(d.account_manager_id), excluded_adv, mp),
+        "by_agency": _group(rows, lambda d, layer: agency_names.get(d.agency_id), excluded_adv, mp)[:50],
+        "by_advertiser": _group(rows, lambda d, layer: adv_names.get(d.advertiser_id), excluded_adv, mp)[:50],
+        "by_product": _group(rows, lambda d, layer: d.product, excluded_adv, mp)[:50],
         "by_month": sorted(
-            _group(rows, lambda d, layer: d.period_from.strftime("%Y-%m") if d.period_from else None, excluded_adv),
+            _group(rows, lambda d, layer: d.period_from.strftime("%Y-%m") if d.period_from else None, excluded_adv, mp),
             key=lambda b: b["name"],
         ),
         # Витрина всегда сообщает возраст данных: молча устаревшие цифры —
@@ -503,8 +506,9 @@ def dashboard_bonus(
     sandbox_sum = booking_sum = closed_sum = 0.0
     closed_our = booking_our = 0.0
     booking_stages = {}
+    mp = mp_amounts_by_deal(db, [d.id for d in deals])
     for d in deals:
-        amt = float(d.amount or 0)
+        amt = eff_net(d, mp)
         if d.pipeline == _CLOSED_FUNNEL:
             closed_sum += amt
             closed_our += net_of(amt, d.agency_id)
@@ -731,6 +735,7 @@ def deals_registry(
     # Какие поля на этой странице заполнены вручную — чтобы интерфейс их пометил
     # и было видно, что синхронизация их не тронет.
     page_ids = [d.id for d, _, _ in rows]
+    mp_amt = mp_amounts_by_deal(db, page_ids)
     manual = {}
     files_map = {}
     our_mp_map = {}
@@ -748,7 +753,10 @@ def deals_registry(
                   .order_by(SalesMediaPlan.group_id, SalesMediaPlan.version.desc()).all()):
             g = our_mp_map.setdefault(p.deal_id, {})
             if p.group_id not in g:
-                g[p.group_id] = {"id": p.id, "title": p.title, "version": p.version, "status": p.status}
+                # Без `status`: колонка заморожена вместе со стейт-машиной МП
+                # (30.08.2026) и застыла на `draft` у всех. Карточка сделки его уже не
+                # отдаёт — здесь контракт с ней сходится.
+                g[p.group_id] = {"id": p.id, "title": p.title, "version": p.version}
 
     # Материнский годовой план сделки (для блока «Годовой план» в раскрытии строки).
     # deal → year_plan_line_id → строка → plan_id → SalesYearPlan.
@@ -816,8 +824,8 @@ def deals_registry(
             "payer": resolve_payer(d),
             "payer_counterparty_id": d.payer_counterparty_id,
             "agency_legals": payer_options(d),
-            "amount": d.amount,
-            "our_sum": round(float(d.amount or 0) * (1 - ((sk_by_agency.get(d.agency_id, default_sk_pct) if d.agency_id else 0) or 0) / 100)),
+            "amount": eff_net(d, mp_amt),
+            "our_sum": round(eff_net(d, mp_amt) * (1 - ((sk_by_agency.get(d.agency_id, default_sk_pct) if d.agency_id else 0) or 0) / 100)),
             "currency": d.currency,
             "advertiser": adv.get(d.advertiser_id),
             "advertiser_full": adv_full.get(d.advertiser_id),
@@ -861,6 +869,9 @@ class DealPatch(BaseModel):
     brand_id: Optional[int] = None
     sales_rep_id: Optional[int] = None
     account_manager_id: Optional[int] = None
+    # Наш ответственный за материал. В Битриксе его нет — поэтому он в EDITABLE_OURS_INT,
+    # а не в EDITABLE_INT: последний питает очередь заливки, и поле уехало бы в никуда.
+    traffic_manager_id: Optional[int] = None
     payer_counterparty_id: Optional[int] = None
     period_from: Optional[date] = None
     period_to: Optional[date] = None
@@ -882,6 +893,10 @@ EDITABLE_STR = ("product", "bitrix_stage", "title")
 # Наши собственные признаки: в Битрикс не заливаются и в очередь заливки не попадают,
 # поэтому обрабатываются отдельно от EDITABLE_* и без записи в overrides.
 EDITABLE_OURS = ("is_self_promo",)
+# Наши числовые поля. Отдельно от EDITABLE_INT: те уезжают в Битрикс, эти — наши и
+# остаются здесь. `traffic_manager_id` — ссылка на sales_reps, ответственный за проверку
+# материала; по нему распределяется очередь трафика (app/routers/traffic.py).
+EDITABLE_OURS_INT = ("traffic_manager_id",)
 # Наши строковые поля. Список пуст, но заведён намеренно: EDITABLE_OURS приводит значение
 # к bool, и первое же строковое поле, попавшее туда по невнимательности, молча стало бы
 # True. Посадочная страница жила здесь один день и уехала на получателя — грань оказалась
@@ -931,6 +946,9 @@ class BulkUpdate(BaseModel):
     agency_id: Optional[int] = None
     sales_rep_id: Optional[int] = None
     account_manager_id: Optional[int] = None
+    # Пока распределения по трафикам нет, его роль исполняет массовая правка: выбрали
+    # сделки — назначили ответственного.
+    traffic_manager_id: Optional[int] = None
     product: Optional[str] = None
     # bitrix_stage оставлен для совместимости, но интерфейс им больше не пользуется:
     # это поле мастера-Битрикса, и запись в него из реестра однажды уже утащила
@@ -982,7 +1000,7 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
             updates[SalesDeal.period_from] = date(int(pv[:4]), int(pv[5:7]), 1)
             changes["period_from"] = updates[SalesDeal.period_from]
     for f in ("advertiser_id", "agency_id", "sales_rep_id", "account_manager_id",
-              "product", "bitrix_stage"):
+              "traffic_manager_id", "product", "bitrix_stage"):
         if f in changes:
             updates[getattr(SalesDeal, f)] = changes[f]
 
@@ -1837,9 +1855,12 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
     for mp in (db.query(SalesMediaPlan).filter(SalesMediaPlan.deal_id == deal.id)
                .order_by(SalesMediaPlan.group_id, SalesMediaPlan.version.desc()).all()):
         if mp.group_id not in our_mps:
+            # Статуса у плана нет с 30.08.2026 — его состояние это стадия сделки,
+            # которая тут же, в этой же карточке.
             our_mps[mp.group_id] = {"id": mp.id, "title": mp.title, "version": mp.version,
-                                    "status": mp.status, "updated_at": mp.updated_at}
+                                    "updated_at": mp.updated_at}
     cat = Catalog(db)
+    _mp_amt = mp_amounts_by_deal(db, [deal.id])
     return {
         "id": deal.id, "code": deal.code, "bitrix_id": deal.bitrix_id, "title": deal.title,
         "advertiser": (adv.short_name or adv.name) if adv else None, "advertiser_id": deal.advertiser_id,
@@ -1860,12 +1881,13 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         # Снять признак может только мастер аккаунт: отдаём это карточке, чтобы она
         # рисовала замок сразу, а не узнавала о запрете из 403 после клика.
         "can_unset_self_promo": _can_unset_self_promo(current_user),
-        "amount": deal.amount,
-        # amount — до НДС; gross берём сохранённый, а если его нет (старые записи) —
-        # считаем по ставке, чтобы карточка не показывала пусто
-        "amount_with_vat": deal.amount_with_vat if deal.amount_with_vat is not None
-        else (round(float(deal.amount) * (1 + SALES_VAT_RATE), 2) if deal.amount is not None else None),
-        "our_sum": round(float(deal.amount or 0) * (1 - (sk_pct or 0) / 100)),
+        # Суммы из нашего МП, если он привязан и посчитан (иначе — из сделки).
+        "amount": eff_net(deal, _mp_amt),
+        "amount_with_vat": (eff_gross(deal, _mp_amt) if deal.id in _mp_amt
+                            else (deal.amount_with_vat if deal.amount_with_vat is not None
+                                  else (round(float(deal.amount) * (1 + SALES_VAT_RATE), 2)
+                                        if deal.amount is not None else None))),
+        "our_sum": round(eff_net(deal, _mp_amt) * (1 - (sk_pct or 0) / 100)),
         "currency": deal.currency, "files": files, "date_create": deal.date_create,
         "plan_month": deal.plan_month, "year_plan_line_id": deal.year_plan_line_id,
         "year_plan": _year_plan_of_deal(db, deal),
@@ -2165,6 +2187,18 @@ def patch_deal(
                                     else "Снят статус «самореклама»"))
                 continue
             setattr(deal, field, new_val)
+            continue
+
+        # Наше числовое поле: ставим и выходим, не попадая в очередь на Битрикс — там
+        # такого поля нет. Значение проверяем: ссылка на несуществующего ответственного
+        # тихо оставила бы сделку без трафика при заполненном на вид поле.
+        if field in EDITABLE_OURS_INT:
+            if value is not None:
+                if not db.query(SalesRep.id).filter(SalesRep.id == int(value)).first():
+                    raise HTTPException(status_code=400, detail="Ответственный не найден")
+                setattr(deal, field, int(value))
+            else:
+                setattr(deal, field, None)
             continue
 
         if field not in EDITABLE_INT + EDITABLE_DATE + EDITABLE_STR:

@@ -48,10 +48,20 @@ export function ThemeToggle() {
 
 export function Header({ profile, name, nav, active, onNav, onExit, count = 1 }) {
   return (
-    <div style={{ background: C.card, borderBottom: `1px solid ${C.border}`,
-      position: 'sticky', top: 0, zIndex: 30 }}>
-      <div style={{ ...WRAP, display: 'flex', alignItems: 'center', gap: 18,
-        height: 60 }}>
+    /* Плавающая карточка, а не полоса во всю ширину: кабинет — гостевой экран, и
+       шапка на нём читается как панель приложения, а не как рамка сайта. Не липкая —
+       уезжает вместе со страницей: экран один, скроллить по нему нечего, а
+       закреплённая панель на такой странице только съедала бы высоту. */
+    <div style={{ padding: '14px 0 0', background: C.canvas }}>
+      {/* Обёртка во всю ширину нужна ради фона под верхним отступом; `WRAP` задаёт ту
+          же колонку и те же боковые отступы, что у страницы; карточка — уже внутри
+          неё. Повесить `WRAP` на саму карточку нельзя: его `padding: 0 20px` уходит
+          ВНУТРЬ, и карточка выходит на 40 px шире, чем карточки контента, — ровно
+          этим шапка и торчала. */}
+      <div style={WRAP}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 18,
+          height: 60, background: C.card, border: `1px solid ${C.border}`,
+          borderRadius: 16, boxShadow: 'var(--shadow-card)', padding: '0 20px' }}>
         {/* Два литеральных <img> и переключение ПРАВИЛОМ: подстановка адреса в `src`
             стартует до первого рендера, и браузер запросил бы файл с именем шаблона. */}
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 14,
@@ -75,7 +85,7 @@ export function Header({ profile, name, nav, active, onNav, onExit, count = 1 })
                 color: active === n.key ? C.accent : C.secondary }}>
               {n.label}
               {!!n.badge && (
-                <span style={{ ...chip(C.warningTint, C.warningFg, C.warningBorder),
+                <span style={{ ...chip(C.dangerTint, C.danger, C.dangerBorder),
                   padding: '1px 6px', fontSize: 10, fontFamily: MONO }}>{n.badge}</span>
               )}
             </button>
@@ -105,6 +115,7 @@ export function Header({ profile, name, nav, active, onNav, onExit, count = 1 })
         </span>
 
         <button style={btnSm(false)} onClick={onExit}>Выйти</button>
+        </div>
       </div>
     </div>
   )

@@ -53,17 +53,37 @@ CREATE INDEX IF NOT EXISTS ix_lp_pair_file_pair ON launch_prep_pair_file (pair_i
 --
 -- Ключ вида role_<id> — та же форма, что выдаёт экран ролей: роль, заведённая миграцией,
 -- не должна отличаться на вид от заведённой руками. Значение staff_group='traffic' уже
--- принимается roles.py, заводить его не нужно. is_master — «видит всю очередь».
+-- принимается roles.py. is_master — «видит всю очередь».
+--
+-- СРАВНЕНИЕ МЕТКИ — БЕЗ РЕГИСТРА И БЕЗ КРАЁВ, и это не придирка. Репетиция на боевой базе
+-- 31.08.2026 показала: на проде роли уже заведены руками — «Мастер траффик» и «траффик»
+-- с маленькой буквы. Точное сравнение вторую не нашло, миграция завела ТРЕТЬЮ роль
+-- «Траффик», выдала права ЕЙ — а два живых трафик-менеджера остались на роли без прав и
+-- увидели бы пустой раздел.
+--
+-- И ДОПРАВЛЯЕМ найденную, а не пропускаем: у заведённой руками роли `staff_group` пуст, а
+-- у мастера `is_master = false` — то есть переключателя между трафиками у него нет. Роль
+-- существует, но не умеет того, ради чего заводилась; «уже есть» тут не значит «готова».
 DO $$
 DECLARE new_id integer;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM roles WHERE label = 'Траффик') THEN
+    -- Рядовой трафик
+    IF EXISTS (SELECT 1 FROM roles WHERE lower(btrim(label)) = 'траффик') THEN
+        UPDATE roles SET staff_group = 'traffic'
+         WHERE lower(btrim(label)) = 'траффик' AND staff_group IS DISTINCT FROM 'traffic';
+    ELSE
         INSERT INTO roles (key, label, staff_group, is_master, is_system)
         VALUES ('__tmp_traffic', 'Траффик', 'traffic', false, 0)
         RETURNING id INTO new_id;
         UPDATE roles SET key = 'role_' || new_id WHERE id = new_id;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM roles WHERE label = 'Мастер траффик') THEN
+
+    -- Мастер: ему `is_master` обязателен, иначе он не мастер, а просто роль с таким именем
+    IF EXISTS (SELECT 1 FROM roles WHERE lower(btrim(label)) = 'мастер траффик') THEN
+        UPDATE roles SET staff_group = 'traffic', is_master = true
+         WHERE lower(btrim(label)) = 'мастер траффик'
+           AND (staff_group IS DISTINCT FROM 'traffic' OR is_master IS DISTINCT FROM true);
+    ELSE
         INSERT INTO roles (key, label, staff_group, is_master, is_system)
         VALUES ('__tmp_traffic_master', 'Мастер траффик', 'traffic', true, 0)
         RETURNING id INTO new_id;
@@ -74,9 +94,12 @@ END $$;
 -- Предварительный доступ — очередь целиком. Остальные разделы у этих ролей строк не
 -- получают, и это уже «запрещено»: get_permissions_for_user читает отсутствие строки
 -- как false. Экран ролей дорисует недостающие строки, когда их там тронут.
+--
+-- Отбор по `staff_group`, а не по метке: выше он только что проставлен, и второй раз
+-- перечислять названия значило бы завести второе место, где они могут разойтись.
 INSERT INTO role_permissions (role_id, section, can_view, can_edit, can_approve)
 SELECT r.id, 'traffic_queue', 1, 1, 1
 FROM roles r
-WHERE r.label IN ('Траффик', 'Мастер траффик')
+WHERE r.staff_group = 'traffic'
   AND NOT EXISTS (SELECT 1 FROM role_permissions p
                   WHERE p.role_id = r.id AND p.section = 'traffic_queue');

@@ -16,8 +16,7 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 
 from app.database import get_db
-from app.routers.auth import get_current_user
-from app.permissions import require_permission, ACTION_FIELDS
+from app.permissions import require_permission
 from app.audit import log_action
 from app.notify import emit
 from app.models import User, Counterparty, RolePermission
@@ -76,8 +75,7 @@ class MpExtraIn(BaseModel):
 
 
 class MpIn(BaseModel):
-    group_id: Optional[int] = None      # если задан — добавляем версию к существующему МП
-    status: Optional[str] = "draft"     # draft/review/approved/rejected/archived
+    group_id: Optional[int] = None      # если задан — правим этот МП (версию решает сервер)
     title: Optional[str] = None
     advertiser_id: Optional[int] = None
     brand_id: Optional[int] = None
@@ -96,9 +94,10 @@ class MpIn(BaseModel):
     rows: List[MpRowIn] = []
     extras: List[MpExtraIn] = []
     # Отметки конструктора: «проверено» по блокам (размещения + прогноз) и
-    # необязательный комментарий о причинах изменений при отправке на согласование.
-    # Оба — только для журнала: в самой версии МП не хранятся, проставляются заново
-    # при каждом сохранении (это чек-лист перед сохранением, а не свойство плана).
+    # необязательный комментарий о причинах изменений. Оба — только для журнала: в самой
+    # версии МП не хранятся, проставляются заново при каждом сохранении (это чек-лист
+    # перед сохранением, а не свойство плана). «Проверено» — единственный гейт плана:
+    # своего состояния у него нет, состояние плана = стадия его сделки.
     verified: Optional[bool] = None
     change_note: Optional[str] = None
 
@@ -166,9 +165,16 @@ def _amounts(rows, extras):
 
 
 def _apply_fields(p, data: MpIn):
-    for f in ("status", "title", "advertiser_id", "brand_id", "agency_id", "payer_counterparty_id",
+    """Поля шапки из формы. `deal_id` СЮДА НЕ ВХОДИТ намеренно.
+
+    Привязка к сделке — свойство ГРУППЫ версий, а не отдельной версии: `link-deal`
+    пишет её сразу во все версии, и новая версия наследует её у предыдущей. Пока
+    `deal_id` копировался отсюда, сохранение без этого поля в payload молча отвязывало
+    план от сделки — а с 30.08.2026 на этой связи держится всё состояние плана.
+    Фронт поле шлёт, но «фронт не забывает» — не гарантия, а надежда."""
+    for f in ("title", "advertiser_id", "brand_id", "agency_id", "payer_counterparty_id",
               "period", "geo_id", "date_from", "date_to", "targeting", "goals",
-              "sales_rep_id", "account_manager_id", "traffic_manager_id", "deal_id"):
+              "sales_rep_id", "account_manager_id", "traffic_manager_id"):
         setattr(p, f, getattr(data, f))
     net, gross = _amounts(data.rows, data.extras)
     p.amount_net, p.amount_gross = net, gross
@@ -332,6 +338,93 @@ def link_deal(plan_id: int, data: LinkDealIn, db: Session = Depends(get_db),
     return {"message": "Сделка привязана" if data.deal_id else "Привязка снята", "deal_id": data.deal_id}
 
 
+class CreateDealIn(BaseModel):
+    title: Optional[str] = None      # пусто → собираем по шаблону
+
+
+@router.post("/{plan_id}/create-deal")
+def create_deal_from_plan(plan_id: int, data: CreateDealIn, db: Session = Depends(get_db),
+                          current_user: User = Depends(MP_EDIT)):
+    """Сделка из медиаплана — ВТОРОЙ путь рождения сделки, наравне с конвейером годового
+    плана, а не вместо него. Годовой план собирает сделки пачкой из плана-пакета; малые
+    медиапланы аккаунт собирает руками, и сделка появляется уже из плана.
+
+    Право — конструктора МП (`media_plans_editor:edit`), не реестра сделок: сделку тут
+    рождает тот, кто построил план. Тот же расклад у конвейера — он создаёт сделки под
+    правом `year_plan`.
+
+    Название собирается ТЕМ ЖЕ шаблоном, что у конвейера — «Рекламодатель · Агентство ·
+    Бренд · Услуга · Период»: сделка, рождённая из плана, не должна отличаться на вид от
+    сделки, рождённой из годового плана. (Генератор ⟳ на карточке сделки собирает своё,
+    через «|» и в другом порядке — это расхождение старше и живёт отдельно.)
+
+    Сделка встаёт на ПЕРВУЮ стадию каталога: план ещё не проверен. Проверка и сохранение
+    двинут её дальше сами (`_advance_deal_after_verify`) — второй раз то же самое здесь
+    делать нельзя, иначе «Проверено» перестанет быть единственным гейтом."""
+    from datetime import datetime as _dt
+    import uuid as _uuid
+    from app.routers.sales_dashboard import _period_bounds
+    from app.sales.catalog import Catalog
+    from app.sales.deal_code import assign_code
+    from app.sales.models import SalesDeal, SalesRep
+
+    p = db.query(SalesMediaPlan).filter(SalesMediaPlan.id == plan_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Медиаплан не найден")
+    _guard_owned(db, p, current_user, "media_plans_editor")
+    if p.deal_id:
+        raise HTTPException(status_code=409, detail="У этого медиаплана уже есть сделка")
+
+    bounds = _period_bounds(p.period or "")
+    if not bounds:
+        raise HTTPException(status_code=400, detail="У плана не заполнен период (ГГГГ-ММ)")
+    if not (p.advertiser_id or p.agency_id):
+        raise HTTPException(status_code=400, detail="Нужен рекламодатель или агентство")
+    if not p.amount_net:
+        raise HTTPException(status_code=400, detail="В плане нет ни одной строки размещения")
+
+    n = _names(db)
+    first_row = (db.query(SalesMediaPlanRow).filter(SalesMediaPlanRow.plan_id == p.id)
+                 .order_by(SalesMediaPlanRow.sort_order).first())
+    product = first_row.position if first_row else None
+    title = (data.title or "").strip() or " · ".join([x for x in [
+        n["adv"].get(p.advertiser_id), n["agency"].get(p.agency_id),
+        n["brand"].get(p.brand_id), product, p.period] if x])
+
+    def _rep(user_id):
+        """Ответственные плана — id ПОЛЬЗОВАТЕЛЕЙ, у сделки — id SalesRep."""
+        if not user_id:
+            return None
+        row = db.query(SalesRep.id).filter(SalesRep.user_id == user_id).first()
+        return row[0] if row else None
+
+    stage = Catalog(db).first()
+    deal = SalesDeal(
+        bitrix_id="local-" + _uuid.uuid4().hex, title=title, pipeline="", bitrix_stage="",
+        amount=p.amount_net, amount_with_vat=p.amount_gross, currency="RUB",
+        advertiser_id=p.advertiser_id, brand_id=p.brand_id, agency_id=p.agency_id,
+        payer_counterparty_id=p.payer_counterparty_id, product=product,
+        sales_rep_id=_rep(p.sales_rep_id), account_manager_id=_rep(p.account_manager_id),
+        our_stage_id=stage.id if stage else None,
+        # Даты РК из плана, если он их знает: месяц периода — грубее, а по period_from
+        # считается вся срочность очереди.
+        period_from=p.date_from or bounds[0], period_to=p.date_to or bounds[1],
+        date_create=_dt.utcnow())
+    assign_code(db, deal)
+    db.add(deal)
+    db.flush()
+
+    # Привязка — свойство ГРУППЫ версий (как в link-deal): иначе связь не пережила бы
+    # рождение следующей версии.
+    for pl in db.query(SalesMediaPlan).filter(SalesMediaPlan.group_id == p.group_id).all():
+        pl.deal_id = deal.id
+    db.commit()
+    log_action(db, current_user, "create_deal_from_media_plan", "sales_deal", deal.id,
+               f"из МП #{p.id}: {title}")
+    return {"deal_id": deal.id, "code": deal.code, "title": title,
+            "stage": stage.name if stage else None}
+
+
 class DealBriefIn(BaseModel):
     brief: Optional[str] = None
 
@@ -475,15 +568,54 @@ def mp_deal_prefill(deal_id: int, db: Session = Depends(get_db),
     }
 
 
+def _mp_sent_stage(cat):
+    """Стадия, на которую встаёт сделка с готовым планом: ПЕРВАЯ в цепочке, где план
+    обязателен (`requires_media_plan`). Сегодня это «МП Отправлено».
+
+    Здесь стояло «следующая за первой», и это было верно ровно до 17.08.2026: между
+    «МП Подготовка» и «МП Отправлено» жила стадия «МП согласование». Её убрали из
+    каталога (`2026-08-17_drop_mp_approval_stage.sql`), а медиаплан от неё не отвязали —
+    код продолжил двигать сделку «куда-нибудь дальше», и с тех пор означал не то, что
+    в нём написано: проверка плана стала молча объявлять его отправленным.
+
+    Признак выбран не по порядку и не по имени: требование плана и ЕСТЬ та граница,
+    которую проверенный план открывает. Вернут промежуточную стадию — сделка встанет
+    туда же, где без плана нельзя, а не на первую попавшуюся."""
+    for sid in cat.flow:
+        if cat.by_id[sid].requires_media_plan:
+            return cat.by_id[sid]
+    return None
+
+
+def _notify_mp_ready(db, actor, p, deal, stage):
+    """Сейлзу — что план посчитан и сделка встала на его стадию.
+
+    Событие на ПЕРЕХОД, а не на сохранение: пересохранение уже проверенного плана
+    сделку не двигает и второго уведомления не порождает. Сам себе актор не пишет
+    (см. emit) — аккаунт, совмещающий роль сейлза, письма о своей же работе не получит."""
+    money = ""
+    if p.amount_net:
+        money = " · " + f"{p.amount_net:,.0f}".replace(",", " ") + " ₽ без НДС"
+    emit(db, "mp_ready",
+         title=f"МП посчитан: {p.title or ('#' + str(p.id))}",
+         body=f"Сделка {deal.code or deal.id}{money} · стадия «{stage.name}»",
+         link=f"/accounts/mp/{p.id}", entity_type="media_plan", entity_id=p.id,
+         actor=actor, ctx={"deal": deal, "media_plan": p})
+
+
 def _advance_deal_after_verify(db, current_user, p):
-    """Сделка, рождённая конвейером годового плана, приходит на ПЕРВУЮ стадию
-    («МП Подготовка») — её МП собран автоматом и ещё никем не смотрен. В интерфейсе
-    такая сделка светится жёлтым: «есть МП, но он не завизирован».
+    """Сделка приходит на ПЕРВУЮ стадию («МП Подготовка») — план к ней есть, но его
+    ещё никто не смотрел. Так и у сделки из конвейера годового плана, и у сделки,
+    рождённой из малого МП кнопкой «Создать сделку»: путей два и они равноправные.
+    В интерфейсе такая сделка светится жёлтым: «есть МП, но он не завизирован».
 
     Аккаунт открывает МП, жмёт обе отметки «Проверено» и сохраняет — вот здесь
-    сделка и уходит на следующую стадию, а жёлтый гаснет. Двигаем только с первой
-    стадии: если сделка уже дальше, повторное сохранение МП её не откатывает и не
-    перепрыгивает вперёд."""
+    сделка и уходит на стадию, где план уже обязателен, а жёлтый гаснет. Двигаем
+    только с первой стадии: если сделка уже дальше, повторное сохранение МП её не
+    откатывает и не перепрыгивает вперёд.
+
+    Переход больше не молчит: сейлзу уходит «МП посчитан» — отправляет клиенту он, и
+    до 30.08.2026 узнать об этом он мог только зайдя в реестр и увидев смену стадии."""
     if not p.deal_id:
         return
     from app.sales.models import SalesDeal
@@ -495,8 +627,9 @@ def _advance_deal_after_verify(db, current_user, p):
     first = cat.first()
     if not first or deal.our_stage_id != first.id:
         return
-    nxt = cat.next_of(first.id)
-    if not nxt:
+    nxt = _mp_sent_stage(cat)
+    # Только вперёд: если план обязателен уже на первой стадии, двигать некуда.
+    if not nxt or not cat.is_before(first.id, nxt.id):
         return
     from app.sales.models import SalesDealStageHistory
     deal.our_stage_id = nxt.id
@@ -509,6 +642,7 @@ def _advance_deal_after_verify(db, current_user, p):
     db.flush()
     log_action(db, current_user, "move_deal", "sales_deal", deal.id,
                f"{first.name} → {nxt.name} (медиаплан проверен и сохранён)")
+    _notify_mp_ready(db, current_user, p, deal, nxt)
 
 
 def _log_verify_note(db, current_user, p, data):
@@ -524,38 +658,80 @@ def _log_verify_note(db, current_user, p, data):
                    f"причина изменений: {note[:500]}")
 
 
+def _plan_is_sealed(db, plan) -> bool:
+    """Версия зафиксирована — правки в неё больше не ложатся, нужна новая.
+
+    Признак один и он же виден человеку: сделка плана ушла с первой стадии, то есть
+    план уже отдан клиенту («МП Отправлено»). До этого момента аккаунт собирает план и
+    правит его на месте; после — предыдущая редакция это то, что клиент видел, и
+    затирать её нельзя.
+
+    Раньше границу ставила кнопка «На согласование» и статус `review`: клиент выбирал,
+    когда версия становится неизменной. Кнопкой не пользовались ни разу (все планы в
+    базе — `draft`), а состояние плана при этом жило параллельно стадии сделки и с ней
+    расходилось. Здесь источник один — стадия."""
+    if not plan or not plan.deal_id:
+        return False
+    from app.sales.models import SalesDeal
+    from app.sales.catalog import Catalog
+    deal = db.query(SalesDeal).filter(SalesDeal.id == plan.deal_id).first()
+    if not deal or not deal.our_stage_id:
+        return False
+    first = Catalog(db).first()
+    return bool(first and deal.our_stage_id != first.id)
+
+
 @router.post("")
-def create_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: User = Depends(MP_EDIT)):
-    """Новый МП или новая версия существующего (если задан group_id). Держим 3 версии."""
+def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: User = Depends(MP_EDIT)):
+    """ЕДИНСТВЕННАЯ точка записи медиаплана: и создание, и правка, и новая версия.
+
+    Версию решает сервер, а не клиент кнопкой:
+
+      · содержимое не изменилось     → ничего не пишем (но отметку «Проверено» отрабатываем);
+      · план ещё не отдан клиенту    → правки ложатся В ТУ ЖЕ версию;
+      · план уже отдан (`_plan_is_sealed`) → рождается СЛЕДУЮЩАЯ версия.
+
+    До 30.08.2026 путей записи было два: PUT перетирал текущую версию, POST с group_id
+    заводил новую, и выбирал между ними фронт по нажатой кнопке. Две ветки означали два
+    ответа на вопрос «что считается новой редакцией», и правильный зависел от того, какую
+    кнопку человек нажал."""
+    existing = None
     if data.group_id:
-        # Добавляем версию к существующей группе — проверяем own-scope против неё (F1),
-        # иначе own-роль могла бы дописать версию в чужой МП и выбить чужие версии по cap.
+        # Правим существующий МП — own-scope проверяем против него (F1), иначе own-роль
+        # могла бы дописать версию в чужой МП и выбить чужие версии по cap.
         existing = (db.query(SalesMediaPlan).filter(SalesMediaPlan.group_id == data.group_id)
                     .order_by(SalesMediaPlan.version.desc()).first())
         if not existing:
             raise HTTPException(status_code=404, detail="Группа медиаплана не найдена")
         _guard_owned(db, existing, current_user, "media_plans_editor")
-        # Новую версию создаём ТОЛЬКО при изменении содержимого. Если контент совпал с
-        # последней версией — версию не плодим, лишь при необходимости меняем статус
-        # (напр. черновик → «на согласование»).
-        if (existing.status in ("draft", "review")
-                and _content_sig(data, data.rows, data.extras) == _plan_content_sig(db, existing)):
-            if data.status and existing.status != data.status:
-                existing.status = data.status
-                db.flush()
-                log_action(db, current_user, "submit_media_plan", "media_plan", existing.id,
-                           f"{existing.title} v{existing.version} → {existing.status} (без изменений содержимого)")
-                _log_verify_note(db, current_user, existing, data)
-                if existing.status == "review":
-                    _notify_submit(db, existing, current_user)
-                db.commit()
+
+    if existing is not None:
+        same = _content_sig(data, data.rows, data.extras) == _plan_content_sig(db, existing)
+        if same or not _plan_is_sealed(db, existing):
+            if not same:
+                _apply_fields(existing, data)
+                _write_children(db, existing.id, data)
+                log_action(db, current_user, "update_media_plan", "media_plan", existing.id,
+                           f"{existing.title} v{existing.version}")
+            # Отметка «Проверено» отрабатывается и на сохранении БЕЗ правок: аккаунт,
+            # открывший собранный конвейером план и просто подтвердивший его, не менял
+            # ни строки — а сделку двинуть надо. Ранняя ветка «содержимое совпало» этого
+            # не делала, и жёлтая сделка оставалась жёлтой.
+            _log_verify_note(db, current_user, existing, data)
+            db.commit()
+            db.refresh(existing)
             return {"id": existing.id, "group_id": existing.group_id, "version": existing.version,
-                    "status": existing.status, "unchanged": True}
+                    "unchanged": same}
         version = (existing.version or 0) + 1
     else:
         version = 1
-    p = SalesMediaPlan(group_id=data.group_id, version=version, created_by=current_user.id if current_user else None)
+
+    p = SalesMediaPlan(group_id=data.group_id, version=version,
+                       created_by=current_user.id if current_user else None)
     _apply_fields(p, data)
+    # Сделка: у новой версии — от предыдущей, у самой первой — из payload (так работает
+    # «+ МП» с карточки сделки, `deal-prefill`). Дальше её меняет только `link-deal`.
+    p.deal_id = existing.deal_id if existing is not None else data.deal_id
     db.add(p)
     db.flush()
     if not p.group_id:
@@ -565,29 +741,9 @@ def create_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: U
     db.flush()
     log_action(db, current_user, "create_media_plan", "media_plan", p.id, f"{p.title} v{p.version}")
     _log_verify_note(db, current_user, p, data)
-    if p.status == "review":
-        _notify_submit(db, p, current_user)
     db.commit()
     db.refresh(p)
-    return {"id": p.id, "group_id": p.group_id, "version": p.version, "status": p.status}
-
-
-@router.put("/{plan_id}")
-def update_media_plan(plan_id: int, data: MpIn, db: Session = Depends(get_db), current_user: User = Depends(MP_EDIT)):
-    p = db.query(SalesMediaPlan).filter(SalesMediaPlan.id == plan_id).first()
-    if not p:
-        raise HTTPException(status_code=404, detail="Медиаплан не найден")
-    _guard_owned(db, p, current_user, "media_plans_editor")
-    # Отправленную/согласованную версию нельзя перетирать черновиком (иначе теряется
-    # «версия неизменна»): правки идут только новой версией «на согласование».
-    if p.status in ("review", "approved", "rejected", "archived"):
-        raise HTTPException(status_code=409, detail="Нельзя править отправленную/согласованную/отклонённую версию — создайте новую версию «на согласование»")
-    _apply_fields(p, data)
-    _write_children(db, p.id, data)
-    log_action(db, current_user, "update_media_plan", "media_plan", p.id, f"{p.title} v{p.version}")
-    _log_verify_note(db, current_user, p, data)
-    db.commit()
-    return {"id": p.id, "group_id": p.group_id, "version": p.version, "status": p.status}
+    return {"id": p.id, "group_id": p.group_id, "version": p.version, "unchanged": False}
 
 
 class MpPatch(BaseModel):
@@ -618,85 +774,18 @@ def patch_media_plan(plan_id: int, data: MpPatch, db: Session = Depends(get_db),
     return {"ok": True}
 
 
-# ── Статус-воркфлоу ──────────────────────────────────────────────────────────
-# draft→review (submit, через create); review→approved/rejected/draft(recall);
-# approved/rejected→archived. approve/reject/archive — право media_plans:approve.
-_MP_TRANSITIONS = {
-    "review": {"approved", "rejected", "draft"},
-    "approved": {"archived"},
-    "rejected": {"archived"},
-}
-
-
-def _has_perm(db, user, section, action):
-    if user.role and user.role.key == "admin":
-        return True
-    row = db.query(RolePermission).filter(RolePermission.role_id == user.role_id,
-                                          RolePermission.section == section).first()
-    return bool(row) and bool(getattr(row, ACTION_FIELDS.get(action, "can_view"), 0))
-
-
-def _notify_submit(db, p, actor):
-    emit(db, "mp_submit", entity_type="media_plan", entity_id=p.id,
-         link=f"/accounts/mp/{p.id}", actor=actor, ctx={"media_plan": p},
-         title=f"Новый МП на согласование: {p.title or ('#' + str(p.id))}")
-
-
-def _notify_status(db, p, frm, to, actor):
-    name = p.title or ("#" + str(p.id))
-    titles = {"approved": f"МП согласован: {name}", "rejected": f"МП отклонён: {name}",
-              "archived": f"МП в архиве: {name}", "draft": f"МП отозван из согласования: {name}"}
-    title = titles.get(to)
-    if not title:
-        return
-    # вид события — свой на каждый переход: от него зависят получатели, тон и кнопка.
-    # Кому слать, объявлено в реестре (app/notify/registry.py): recall → согласующим,
-    # остальные переходы → автору и ответственным по плану.
-    event_key = {"approved": "mp_approved", "rejected": "mp_rejected",
-                 "archived": "mp_archived", "draft": "mp_recalled"}.get(to)
-    if not event_key:
-        return
-    body = p.reject_reason if to == "rejected" else None
-    emit(db, event_key, title=title, body=body, link=f"/accounts/mp/{p.id}",
-         entity_type="media_plan", entity_id=p.id, actor=actor, ctx={"media_plan": p})
-
-
-class MpStatusIn(BaseModel):
-    to: str
-    comment: Optional[str] = None
-
-
-@router.post("/{plan_id}/status")
-def change_status(plan_id: int, data: MpStatusIn, db: Session = Depends(get_db),
-                  current_user: User = Depends(get_current_user)):
-    """Переход по стейт-машине. approve/reject/archive — право media_plans:approve
-    (само-согласование разрешено); recall review→draft — автор (media_plans_editor)."""
-    p = db.query(SalesMediaPlan).filter(SalesMediaPlan.id == plan_id).first()
-    if not p:
-        raise HTTPException(status_code=404, detail="Медиаплан не найден")
-    frm, to = p.status, data.to
-    if to not in _MP_TRANSITIONS.get(frm, set()):
-        raise HTTPException(status_code=409, detail=f"Недопустимый переход: {frm} → {to}")
-    if frm == "review" and to == "draft":            # recall — автор отзывает свою заявку
-        _guard_owned(db, p, current_user, "media_plans_editor")
-    elif not _has_perm(db, current_user, "media_plans", "approve"):
-        raise HTTPException(status_code=403, detail="Недостаточно прав для согласования")
-    if to == "rejected":
-        reason = (data.comment or "").strip()
-        if not reason:
-            raise HTTPException(status_code=400, detail="Укажите причину отклонения")
-        p.reject_reason = reason
-    p.status = to
-    if to in ("approved", "rejected"):
-        p.decided_by = current_user.id
-        p.decided_at = func.now()
-    db.flush()
-    log_action(db, current_user, f"mp_status_{to}", "media_plan", p.id,
-               f"{frm}→{to}" + (f": {p.reject_reason}" if to == "rejected" else ""))
-    _notify_status(db, p, frm, to, current_user)
-    db.commit()
-    return {"id": p.id, "status": p.status, "reject_reason": p.reject_reason}
-
+# ── Своего состояния у медиаплана нет ────────────────────────────────────────
+# Здесь жила стейт-машина draft→review→approved/rejected→archived с правом
+# `media_plans:approve` и пятью уведомлениями вокруг неё. Убрана 30.08.2026 вместе со
+# стадией «МП согласование», которую она дублировала: стадию убрали 17.08 как
+# бюрократию, а план от неё не отвязали, и два ответа на вопрос «где сейчас план»
+# жили рядом. Замер на день удаления: 24 плана в базе, ВСЕ в `draft`; ни у одного
+# `decided_by`/`reject_reason` не заполнены — воркфлоу не пользовались ни разу.
+#
+# Единый контур: состояние плана = стадия его сделки. «МП Подготовка» — собирается,
+# «МП Отправлено» — у клиента, «Бронь» — принят. Гейт один — отметка «Проверено»
+# (см. `_advance_deal_after_verify`). Колонки `status`/`reject_reason`/`decided_by`/
+# `decided_at` заморожены по правилу проекта (не дропаем), но больше не читаются.
 
 def _names(db):
     adv = dict(db.query(SalesAdvertiser.id, SalesAdvertiser.short_name).all())
@@ -723,9 +812,18 @@ def list_media_plans(db: Session = Depends(get_db), current_user: User = Depends
     if own_only:
         latest = {gid: p for gid, p in latest.items() if _plan_owned(p, current_user)}
     n = _names(db)
+    # Сделки — одним запросом на весь реестр, не по строке: строк тут столько же,
+    # сколько групп планов, и N+1 здесь вырастет вместе с ними.
+    deal_ids = {p.deal_id for p in latest.values() if p.deal_id}
+    deals = {}
+    if deal_ids:
+        from app.sales.models import SalesDeal, SalesStage
+        for did, code, stage in (db.query(SalesDeal.id, SalesDeal.code, SalesStage.name)
+                                 .outerjoin(SalesStage, SalesStage.id == SalesDeal.our_stage_id)
+                                 .filter(SalesDeal.id.in_(deal_ids)).all()):
+            deals[did] = (code, stage)
     items = [{
-        "id": p.id, "group_id": p.group_id, "version": p.version, "status": p.status,
-        "title": p.title,
+        "id": p.id, "group_id": p.group_id, "version": p.version, "title": p.title,
         "advertiser_id": p.advertiser_id, "advertiser": n["adv"].get(p.advertiser_id),
         "brand_id": p.brand_id, "brand": n["brand"].get(p.brand_id),
         "agency_id": p.agency_id, "agency": n["agency"].get(p.agency_id),
@@ -735,6 +833,11 @@ def list_media_plans(db: Session = Depends(get_db), current_user: User = Depends
         "account_manager_id": p.account_manager_id, "account_manager": n["user"].get(p.account_manager_id),
         "payer_counterparty_id": p.payer_counterparty_id, "payer": n["cp"].get(p.payer_counterparty_id),
         "updated_at": p.updated_at, "deal_id": p.deal_id,
+        # Колонка «Сделка» вместо снятого «Статуса»: состояние плана это и есть его
+        # сделка, и из реестра до неё теперь один клик. Без сделки — план ни к чему
+        # не привязан, и это как раз то, что стоит видеть.
+        "deal_code": deals.get(p.deal_id, (None, None))[0],
+        "deal_stage": deals.get(p.deal_id, (None, None))[1],
     } for p in sorted(latest.values(), key=lambda x: (x.updated_at or x.created_at or 0), reverse=True)]
     return {"items": items}
 
@@ -787,7 +890,11 @@ def _plan_full(db, p, n):
     extras = db.query(SalesMediaPlanExtra).filter(SalesMediaPlanExtra.plan_id == p.id).order_by(SalesMediaPlanExtra.sort_order).all()
     return {
         "year_plan": _year_plan_of_deal(db, p.deal_id),
-        "id": p.id, "group_id": p.group_id, "version": p.version, "status": p.status, "title": p.title,
+        "id": p.id, "group_id": p.group_id, "version": p.version, "title": p.title,
+        # «Отдан клиенту»: правки в эту версию больше не ложатся, сохранение родит новую.
+        # Признак производный (от стадии сделки), в базе не хранится — конструктору он
+        # нужен, чтобы называть кнопку тем, что она сделает.
+        "sealed": _plan_is_sealed(db, p),
         "advertiser_id": p.advertiser_id, "brand_id": p.brand_id, "agency_id": p.agency_id,
         "payer_counterparty_id": p.payer_counterparty_id, "period": p.period, "geo_id": p.geo_id,
         "date_from": p.date_from, "date_to": p.date_to, "targeting": p.targeting or {}, "goals": p.goals or {},
@@ -797,8 +904,6 @@ def _plan_full(db, p, n):
         # id в интерфейсе не показываем, см. deal-code)
         "deal_code": _deal_code(db, p.deal_id),
         "created_at": p.created_at, "updated_at": p.updated_at,
-        "reject_reason": p.reject_reason, "decided_by": p.decided_by, "decided_at": p.decided_at,
-        "decided_by_name": n["user"].get(p.decided_by),
         "advertiser": n["adv"].get(p.advertiser_id), "brand": n["brand"].get(p.brand_id), "agency": n["agency"].get(p.agency_id),
         "payer": n["cp"].get(p.payer_counterparty_id), "geo": n["geo"].get(p.geo_id),
         "rows": [{"position": r.position, "format": r.format, "model": r.model, "inventory": r.inventory,
@@ -857,7 +962,7 @@ def plan_versions(plan_id: int, db: Session = Depends(get_db), current_user: Use
     _guard_owned(db, p, current_user, "media_plans_editor")
     vs = (db.query(SalesMediaPlan).filter(SalesMediaPlan.group_id == p.group_id)
           .order_by(SalesMediaPlan.version.desc()).all())
-    return {"items": [{"id": v.id, "version": v.version, "status": v.status,
+    return {"items": [{"id": v.id, "version": v.version,
                        "amount_gross": v.amount_gross, "updated_at": v.updated_at} for v in vs]}
 
 

@@ -108,7 +108,7 @@ export default function CounterpartyCard() {
       setCard(r.data)
       const d = r.data
       setEditData({
-        kpp: d.kpp || '', ogrn: d.ogrn || '', okpo: d.okpo || '',
+        inn: d.inn || '', kpp: d.kpp || '', ogrn: d.ogrn || '', okpo: d.okpo || '',
         address: d.address || '', address_fact: d.address_fact || '',
         phone: d.phone || '', email: d.email || '',
         website: d.website || '', edo_id: d.edo_id || '',
@@ -489,7 +489,8 @@ export default function CounterpartyCard() {
                 </div>
                 <div style={{ padding: '18px 24px' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
-                    {fld('КПП', 'kpp')}{fld('ОГРН', 'ogrn')}{fld('ОКПО', 'okpo')}{fld('Телефон', 'phone')}
+                    {fld('ИНН', 'inn')}{fld('КПП', 'kpp')}{fld('ОГРН', 'ogrn')}{fld('ОКПО', 'okpo')}
+                    {fld('Телефон', 'phone')}
                   </div>
                   {fld('Юр. адрес', 'address', true)}{fld('Факт. адрес', 'address_fact', true)}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>

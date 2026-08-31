@@ -32,18 +32,35 @@ MAX_BCRYPT_BYTES = 72
 bearer = HTTPBearer(auto_error=False)
 
 
+# Болванка для выравнивания времени. Настоящий bcrypt-хеш: проверка по нему стоит те же
+# ~200 мс, что и по любому другому, и внешняя сторона не отличает «нет такой учётки» от
+# «пароль не подошёл». Тот же приём, что в ядре (`_DUMMY_BCRYPT_HASH`, находка пентеста
+# 18.07.2026).
+_DUMMY_HASH = bcrypt.hashpw(b"timing_equalizer_dummy_password", bcrypt.gensalt()).decode()
+
+
 def verify_password(plain: str, hashed: str) -> bool:
     """Тихий False на битом или пустом хеше.
 
     Проверка прогоняется и для несуществующей учётки — иначе время ответа выдаёт, заведён
     такой адрес или нет. Исключение здесь вернуло бы этот timing-оракул обратно.
+
+    До 31.08.2026 фраза выше была неправдой: на пустом хеше стоял ранний выход, и замер
+    показал 0 мс против 212 мс. Теперь пустой хеш прогоняется по болванке — время то же,
+    ответ тот же False.
     """
     if not hashed:
+        bcrypt.checkpw((plain or "").encode("utf-8")[:MAX_BCRYPT_BYTES],
+                       _DUMMY_HASH.encode("utf-8"))
         return False
     try:
         return bcrypt.checkpw((plain or "").encode("utf-8")[:MAX_BCRYPT_BYTES],
                               hashed.encode("utf-8"))
     except (ValueError, TypeError):
+        # Битый хеш в базе — тоже «нет доступа», и отвечать на него быстрее, чем на
+        # настоящий, незачем: разница во времени сама по себе сообщает о состоянии учётки.
+        bcrypt.checkpw((plain or "").encode("utf-8")[:MAX_BCRYPT_BYTES],
+                       _DUMMY_HASH.encode("utf-8"))
         return False
 
 

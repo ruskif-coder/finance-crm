@@ -6,7 +6,7 @@ import { monoLbl, Marker, rise } from './kit'
 import ReportShell, { ReportSection } from './ReportShell'
 
 // Мобильный ДДС (< 1024px) по хендоффу design_handoff_cashflow_mobile.
-// Данные считаются в pages/dashboard.js — компонент только рисует.
+// Данные считаются в pages/finance/cashflow.js — компонент только рисует.
 const RUB = (n) => grp(n || 0)
 const mln2 = (n) => mln(n || 0, 2)
 // mln1 — «max 1 знак, без обязательного дробного» (для осей/подписей ДДС); отличается от общего mln(,1).

@@ -57,13 +57,16 @@ export async function deleteDoc(dealId, kind, onDone, onBusy) {
 }
 
 // Статус документа для индикатора на карточке доски: 0 готово · 1 в работе · 2 нет.
-// «В работе» есть только у медиаплана — по статусу версии (черновик/на согласовании).
+// «В работе» есть только у медиаплана: план собран, но ещё не проверен — сделка стоит
+// на первой стадии. Раньше признаком был статус версии плана (черновик/согласован); с
+// 30.08.2026 своего состояния у плана нет, состояние плана — стадия его сделки, и
+// «проверен» читается ровно как «сделка ушла с первой стадии».
 export function docState(deal, kind) {
   const files = deal.files || []
   if (kind === 'brief') return (deal.brief_state === 'filled') ? 0 : 2
   if (kind === 'mp') {
     const ours = (deal.our_mps || [])[0]
-    if (ours) return ours.status === 'approved' ? 0 : 1
+    if (ours) return (deal.our_stage && deal.our_stage.is_first) ? 1 : 0
     return files.some(f => f.kind === 'mp') ? 0 : 2
   }
   return files.some(f => f.kind === kind) ? 0 : 2

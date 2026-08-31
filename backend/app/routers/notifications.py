@@ -39,13 +39,10 @@ def notify_many(db: Session, user_ids, **kw):
 #   tone:  danger | warning | success | info
 #   group: Сделки | Документы | Оплаты | Брифы (вкладки виджета на дашборде)
 KIND_META = {
-    "mp_submit":   {"tone": "info", "group": "Документы", "action": "Открыть МП"},
-    "mp_approved": {"tone": "success", "group": "Документы", "action": ""},
-    "mp_rejected": {"tone": "danger", "group": "Документы", "action": "Открыть МП"},
-    "mp_archived": {"tone": "info", "group": "Документы", "action": ""},
-    "mp_recalled": {"tone": "warning", "group": "Документы", "action": "Открыть МП"},
-    # легаси: до разделения на конкретные виды все статусы МП писались одним kind
-    "mp_status":   {"tone": "info", "group": "Документы", "action": "Открыть МП"},
+    # Пять видов согласования МП (mp_submit / mp_approved / mp_rejected / mp_archived /
+    # mp_recalled) и легаси-вид mp_status убраны отсюда 30.08.2026 вместе со стейт-машиной.
+    # Оформлять нечего: строк с этими видами в notifications не было ни одной — замер в
+    # день удаления, не предположение.
     "deal_stage":  {"tone": "success", "group": "Сделки", "action": "Открыть сделку"},
     "deal_brief":  {"tone": "info", "group": "Брифы", "action": "Открыть сделку"},
     "payment":     {"tone": "success", "group": "Оплаты", "action": ""},

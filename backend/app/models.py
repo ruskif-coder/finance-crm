@@ -28,7 +28,7 @@ class RolePermission(Base):
     can_edit = Column(Integer, default=0)
     can_delete = Column(Integer, default=0)
     can_view_operations = Column(Integer, default=0)  # counterparties: показывать операции в карточке
-    can_approve = Column(Integer, default=0)          # media_plans: согласование/отклонение/архив
+    can_approve = Column(Integer, default=0)          # согласование: креативы и очередь трафика (не МП — стейт-машина снята 30.08.2026)
     # Видимость сделок: 'all' — все, 'own' — только свои (где пользователь сейлз/аккаунт
     # через SalesRep.user_id). Осмысленно для секции sales_dashboard.
     deals_scope = Column(String, default="all")

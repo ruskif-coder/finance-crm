@@ -28,7 +28,6 @@ export default function MpEditor() {
   const [savedId, setSavedId] = useState(null)
   const [downloading, setDownloading] = useState(false)   // оверлей 1c на время выгрузки
   const [versions, setVersions] = useState([])            // история версий (для дропдауна)
-  const [canApprove, setCanApprove] = useState(false)     // право media_plans:approve
 
   const [catalog, setCatalog] = useState(null)
   const [extraCatalog, setExtraCatalog] = useState(null)
@@ -60,8 +59,6 @@ export default function MpEditor() {
     if (typeof window === 'undefined' || !id) return
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     const _isAdm = localStorage.getItem('role') === 'admin'
-    { let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}
-      setCanApprove(_isAdm || can(p, 'media_plans', 'approve')) }
     if (!_isAdm) {
       let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}
       if (!can(p, 'media_plans_editor', 'view')) { router.replace('/accounts/mp'); return }
@@ -129,7 +126,6 @@ export default function MpEditor() {
       date_from: b.date_from || null, date_to: b.date_to || null, targeting: b.targeting || {}, goals: o.goals || {},
       sales_rep_id: num(ow['Продавец']), account_manager_id: num(ow['Аккаунт']), traffic_manager_id: num(ow['Трафик']),
       deal_id: loaded?.deal_id ?? (dealParam ? +dealParam : null),   // привязка к сделке (сохранённая или из префилла)
-      status: o.action === 'submit' ? 'review' : 'draft',
       // отметка «проверено» (обе галочки в конструкторе) и комментарий о причинах
       // изменений — идут только в журнал, в самой версии МП не хранятся
       verified: !!o.verified, change_note: o.change_note || '',
@@ -138,27 +134,37 @@ export default function MpEditor() {
     }
   }
 
+  // Одно сохранение на все случаи: создание, правка и новая версия. Что именно
+  // произошло, решает сервер (см. save_media_plan) — фронт больше не выбирает это
+  // кнопкой, поэтому и кнопка одна.
   const onSave = async (o) => {
     const payload = toPayload(o)
     try {
-      if (o.action === 'submit') {
-        const r = await api.post('/sales/media-plans', { ...payload, group_id: loaded?.group_id || undefined }, auth())
-        alert(r.data.unchanged ? `Без изменений — версия ${r.data.version} осталась` : `Отправлено на согласование (версия ${r.data.version})`)
+      const r = await api.post('/sales/media-plans',
+        { ...payload, group_id: loaded?.group_id || undefined }, auth())
+      if (!savedId || String(r.data.id) !== String(savedId)) {
         router.replace(`/accounts/mp/${r.data.id}`)
-      } else if (savedId) {
-        await api.put(`/sales/media-plans/${savedId}`, payload, auth()); alert('Черновик сохранён'); loadVersions()
-      } else {
-        const r = await api.post('/sales/media-plans', payload, auth()); router.replace(`/accounts/mp/${r.data.id}`)
+        return
       }
+      alert(r.data.unchanged ? 'Изменений нет — сохранена только отметка «проверено»'
+        : `Сохранено, версия ${r.data.version}`)
+      await reloadPlan(); loadVersions()
     } catch (e) { alert(e.response?.data?.detail || 'Ошибка сохранения') }
   }
 
-  const onTransition = async (to, comment) => {
+  // Сделка из плана — второй путь её рождения, наравне с конвейером годового плана.
+  // Название и реквизиты собирает сервер по тем же правилам, что конвейер, поэтому
+  // здесь только подтверждение и показ результата.
+  const onCreateDeal = async () => {
     if (!savedId) return
+    if (!window.confirm('Создать сделку по этому медиаплану?\n\n'
+      + 'Реквизиты, сумма и период возьмутся из плана, название соберётся по шаблону.\n'
+      + 'Сделка встанет на первую стадию — дальше её двинет отметка «Проверено».')) return
     try {
-      await api.post(`/sales/media-plans/${savedId}/status`, { to, comment }, auth())
-      const r = await api.get(`/sales/media-plans/${savedId}`, auth()); setLoaded(r.data); loadVersions()
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка смены статуса') }
+      const r = await api.post(`/sales/media-plans/${savedId}/create-deal`, {}, auth())
+      await reloadPlan(); loadDealBrief(); loadVersions()
+      alert(`Сделка ${r.data.code} создана: ${r.data.title}\nСтадия: ${r.data.stage || '—'}`)
+    } catch (e) { alert(e.response?.data?.detail || 'Не удалось создать сделку') }
   }
 
   // ── Привязка МП к сделке ──
@@ -228,8 +234,6 @@ export default function MpEditor() {
         onBack={() => router.push(backTo)}
         versions={versions}
         onOpenVersion={(vid) => router.push(`/accounts/mp/${vid}`)}
-        canApprove={canApprove}
-        onTransition={onTransition}
         catalog={catalog || undefined} extraCatalog={extraCatalog || undefined}
         advertisers={advertisers} agencies={agencies} brandsByAdv={brandsByAdv} advCps={advCps} agencyCps={agencyCps}
         geoList={geoList} targetingCatalog={targetingCatalog} staff={staff || { 'Продавец': [], 'Аккаунт': [] }}
@@ -243,7 +247,7 @@ export default function MpEditor() {
             const url = URL.createObjectURL(r.data); const a = document.createElement('a'); a.href = url; a.download = downloadName(loaded?.title, 'pdf', 'MP Simb-AD'); a.click(); URL.revokeObjectURL(url)
           } catch (e) { alert('Ошибка генерации PDF') } finally { setDownloading(false) }
         }}
-        onLinkDeal={openLink} onCreateDeal={() => alert('Создание сделки — позже')}
+        onLinkDeal={openLink} onCreateDeal={onCreateDeal}
         ownCompany={ownCompany || undefined}
         dealBrief={dealBrief} onDealBriefSave={onDealBriefSave} onDealBriefSync={onDealBriefSync}
       />

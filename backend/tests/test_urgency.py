@@ -17,13 +17,14 @@ TODAY_D = date(2026, 8, 17)
 
 
 def facts(**kw) -> DealFacts:
-    """Сделка «всё в порядке»: МП есть и завизирован, ДС есть, документы есть, оплачено.
+    """Сделка «всё в порядке»: МП есть, ДС есть, документы есть, оплачено.
     Тест портит ровно одно поле — так видно, что именно вызвало срочность."""
     # Нейтральная стадия — media_plan: она предзапусковая (правила 1-2 применимы, что
-    # тестам и нужно) и при заполненном МП спокойна. booking больше не годится: у него
-    # своё правило (подтверждение брони), closing — не предзапусковая вовсе.
+    # тестам и нужно) и при заполненном МП спокойна, пока старт не подошёл вплотную.
+    # booking больше не годится: у него своё правило (подтверждение брони), closing —
+    # не предзапусковая вовсе.
     base = dict(stage_key="media_plan", money_layer="планируемые", has_mp=True,
-                mp_approved=True, has_ds=True, has_closing_docs=True, is_paid=True)
+                has_ds=True, has_closing_docs=True, is_paid=True)
     base.update(kw)
     return DealFacts(**base)
 
@@ -87,7 +88,7 @@ def test_terminal_and_lost_never_urgent(kw):
 # ─────────────────────── правила по порядку ───────────────────────
 
 def test_rule1_no_mp_before_start():
-    v = evaluate(facts(has_mp=False, mp_approved=False, period_from=d(3)), TODAY_D)
+    v = evaluate(facts(has_mp=False, period_from=d(3)), TODAY_D)
     assert v.urgency == OVERDUE
     assert v.cta == "Собрать МП"
     assert "МП не готов" in v.reason
@@ -95,31 +96,32 @@ def test_rule1_no_mp_before_start():
 
 
 def test_rule1_not_triggered_when_start_far():
-    assert evaluate(facts(has_mp=False, mp_approved=False, period_from=d(30)),
+    assert evaluate(facts(has_mp=False, period_from=d(30)),
                     TODAY_D).urgency == NORMAL
 
 
-def test_rule2_mp_unapproved_before_start():
-    v = evaluate(facts(mp_approved=False, period_from=d(2)), TODAY_D)
-    assert (v.urgency, v.cta) == (OVERDUE, "Пингануть")
+def test_rule2_mp_at_client_before_start():
+    """Сделка на «МП Отправлено» (вторая стадия песочницы), старт через 2 дня."""
+    v = evaluate(facts(period_from=d(2)), TODAY_D)
+    assert (v.urgency, v.cta, v.kind) == (OVERDUE, "Пингануть", "mp_unapproved")
 
 
 def test_rule1_beats_rule2():
     """Нет МП вообще — важнее, чем «не завизирован»: разные кнопки, нужна первая."""
-    v = evaluate(facts(has_mp=False, mp_approved=False, period_from=d(2)), TODAY_D)
+    v = evaluate(facts(has_mp=False, period_from=d(2)), TODAY_D)
     assert v.cta == "Собрать МП"
 
 
 def test_rule1_says_start_passed_not_negative_days():
     """«Старт через -442 дн.» — так выглядит забытая нижняя граница окна."""
-    v = evaluate(facts(has_mp=False, mp_approved=False, period_from=d(-10)), TODAY_D)
+    v = evaluate(facts(has_mp=False, period_from=d(-10)), TODAY_D)
     assert v.reason == "Старт прошёл 10 дн. назад, МП не готов"
 
 
 def test_rule1_ignores_long_forgotten_start():
     """Старт год назад, сделка так и висит в проработке — это мусор в данных,
     а не работа на сегодня; вечно занимать очередь он не должен."""
-    assert evaluate(facts(has_mp=False, mp_approved=False, period_from=d(-400)),
+    assert evaluate(facts(has_mp=False, period_from=d(-400)),
                     TODAY_D).urgency == NORMAL
 
 
@@ -127,45 +129,29 @@ def test_rule1_ignores_long_forgotten_start():
 def test_rules_1_to_3_silent_after_launch(stage_key):
     """У сделки в эфире или на закрытии спрашивать «собери МП» поздно и незачем:
     там работают правила закрывающих документов и оплаты."""
-    v = evaluate(facts(stage_key=stage_key, has_mp=False, mp_approved=False,
+    v = evaluate(facts(stage_key=stage_key, has_mp=False,
                        has_ds=False, period_from=d(2)), TODAY_D)
-    assert v.kind not in ("deal_mp_missing", "mp_unapproved", "mp_rework")
+    assert v.kind not in ("deal_mp_missing", "mp_unapproved")
 
 
-def test_rule2_silent_when_approval_unknown():
-    """МП приехал файлом из Битрикса: статуса согласования у него нет. None — «не знаю»,
-    и считать такой план незавизированным нельзя."""
-    assert evaluate(facts(mp_approved=None, period_from=d(2)),
-                    TODAY_D).kind != "mp_unapproved"
+def test_rule2_silent_while_the_plan_is_still_ours():
+    """На ПЕРВОЙ стадии план ещё не у клиента — пинговать некого.
+
+    Раньше это различие держал статус плана (None = «виза неизвестна»), теперь —
+    позиция сделки: «МП Подготовка» против «МП Отправлено»."""
+    v = evaluate(facts(stage_is_first=True, period_from=d(2)), TODAY_D)
+    assert v.kind == "mp_verify"
 
 
-def test_rework_after_reject_beats_waiting_for_visa():
-    """МП отклонён — ответ уже получен, и он отрицательный: ждать нечего, надо
-    переделывать. Поэтому раньше правила «не завизирован» и с другой кнопкой."""
-    v = evaluate(facts(mp_approved=False, mp_rejected=True, period_from=d(4)), TODAY_D)
-    assert (v.urgency, v.cta, v.kind) == (OVERDUE, "Переделать МП", "mp_rework")
+def test_a_returned_deal_is_picked_up_as_unchecked():
+    """Клиент забраковал план — сделку возвращают на первую стадию, и она снова
+    поднимается как непроверенная, с мячом у аккаунта.
 
-
-def test_rework_yields_to_missing_mp():
-    """Плана нет вообще — переделывать нечего."""
-    v = evaluate(facts(has_mp=False, mp_rejected=True, period_from=d(3)), TODAY_D)
-    assert v.cta == "Собрать МП"
-
-
-def test_reject_beats_conveyor_check_on_first_stage():
-    """План уже показали клиенту и он его забраковал — советовать «посмотрите план»
-    бессмысленно. Отказ проверяется раньше непроверенности."""
-    v = evaluate(facts(stage_is_first=True, mp_rejected=True, mp_approved=False,
-                       period_from=d(30)), TODAY_D)
-    assert (v.cta, v.kind) == ("Переделать МП", "mp_rework")
-
-
-def test_reject_without_dates_still_reported():
-    """У сделки может не быть периода вовсе — правило об отказе не должно от этого
-    падать (start_phrase() на None бросал бы TypeError)."""
-    v = evaluate(facts(stage_is_first=True, mp_rejected=True, mp_approved=False,
-                       period_from=None, period_to=None), TODAY_D)
-    assert v.reason == "МП отклонён — нужны правки"
+    Правило «МП отклонён — нужны правки» (kind mp_rework) снято 30.08.2026 вместе с
+    флагом отказа: он читался со статуса плана, а своего состояния у плана больше нет.
+    Отказ виден там же, где всё остальное про сделку, — в её движении назад."""
+    v = evaluate(facts(stage_is_first=True, period_from=d(4)), TODAY_D)
+    assert (v.cta, v.kind) == ("Проверить", "mp_verify")
 
 
 def test_conveyor_mp_needs_manual_check():
@@ -283,9 +269,8 @@ def test_every_kind_is_registered_except_payment():
     from app.notify import registry
 
     kinds = {v.kind for v in [
-        evaluate(facts(has_mp=False, mp_approved=False, period_from=d(3)), TODAY_D),
-        evaluate(facts(mp_approved=False, period_from=d(2)), TODAY_D),
-        evaluate(facts(mp_approved=False, mp_rejected=True, period_from=d(4)), TODAY_D),
+        evaluate(facts(has_mp=False, period_from=d(3)), TODAY_D),
+        evaluate(facts(period_from=d(2)), TODAY_D),
         evaluate(facts(stage_key="closing", money_layer="фактические",
                        period_to=d(-10), has_closing_docs=False), TODAY_D),
         evaluate(facts(stage_is_first=True, period_from=d(40)), TODAY_D),
@@ -293,7 +278,7 @@ def test_every_kind_is_registered_except_payment():
         evaluate(facts(stage_key="closing", stage_since=d(-11)), TODAY_D),
         evaluate(facts(stage_key=None, money_layer=None), TODAY_D),
     ]}
-    assert kinds == {"deal_mp_missing", "mp_verify", "mp_unapproved", "mp_rework", "booking_confirm",
+    assert kinds == {"deal_mp_missing", "mp_verify", "mp_unapproved", "booking_confirm",
                      "act_missing", "stage_stuck", "stage_unmapped"}
     for k in kinds:
         assert registry.get(k) is not None, f"событие {k} не зарегистрировано"
@@ -337,17 +322,23 @@ def test_unmapped_stage_wins_over_document_rules():
                         has_closing_docs=False), TODAY_D)
     assert (v6.cta, v6.kind) == ("Разобрать", "stage_unmapped")
     v = evaluate(facts(stage_key=None, money_layer=None, has_mp=False,
-                       mp_approved=False, period_from=d(2)), TODAY_D)
+                       period_from=d(2)), TODAY_D)
     assert (v.cta, v.kind) == ("Разобрать", "stage_unmapped")
 
 
+# Стадия здесь «Готовятся к старту», а не «МП Отправлено» из базы: сделка, у которой
+# план лежит у клиента, в трёх днях от старта уже НЕ «всё готово» — она горит правилом 2.
+# Дедлайн-срочность проверяется на стадии, где никто никому не должен ответа.
+
 def test_deadline_today():
-    assert evaluate(facts(period_from=d(0), period_to=d(30)), TODAY_D).urgency == TODAY
+    assert evaluate(facts(stage_key="launch_prep", period_from=d(0),
+                          period_to=d(30)), TODAY_D).urgency == TODAY
 
 
 def test_deadline_soon_within_three_days():
     """Старт через 3 дня, но всё готово — просто «скоро», без просрочки."""
-    assert evaluate(facts(period_from=d(3), period_to=d(30)), TODAY_D).urgency == SOON
+    assert evaluate(facts(stage_key="launch_prep", period_from=d(3),
+                          period_to=d(30)), TODAY_D).urgency == SOON
 
 
 def test_all_clear_is_normal():

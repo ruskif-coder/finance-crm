@@ -4,13 +4,18 @@
 объявляет только факт события, а адресатов считает этот модуль — политику можно менять
 в одном месте, не трогая бизнес-логику.
 
-Спецификация получателя: {"type": "resolver"|"role"|"user", "value": ...}
+Спецификация получателя: {"type": "resolver"|"role"|"staff_group"|"user", "value": ...}
+
+`staff_group` появился 31.08.2026 и нужен там, где адресат — КОНТУР, а не конкретная роль:
+ролей в контуре бывает несколько (рядовой и мастер), и главное — ключ роли вида
+`role_<id>` у каждой установки свой. Событие, адресованное `role_121`, на проде не нашло
+бы никого и не сказало бы об этом ни слова.
 """
 from typing import Iterable, List, Optional, Set
 
 from sqlalchemy.orm import Session
 
-from app.models import User, Role, RolePermission
+from app.models import User, Role
 
 # Глубина подъёма по дереву мастеров: страховка от кривой настройки master_id.
 MAX_MASTER_DEPTH = 5
@@ -25,6 +30,19 @@ def _active(db: Session, user_ids: Iterable[int]) -> List[int]:
     return [u.id for u in db.query(User).filter(User.id.in_(ids), User.is_active == 1).all()]
 
 
+def by_staff_group(db: Session, group: str) -> List[int]:
+    """Все активные люди контура: и рядовые, и мастера.
+
+    Признак стабилен между установками, в отличие от `roles.key`: `staff_group`
+    проставляется миграцией по смыслу роли, а не по номеру строки.
+    """
+    ids = [r.id for r in db.query(Role).filter(Role.staff_group == group).all()]
+    if not ids:
+        return []
+    return [u.id for u in db.query(User).filter(User.role_id.in_(ids),
+                                                User.is_active == 1).all()]
+
+
 def by_role(db: Session, role_key: str) -> List[int]:
     role = db.query(Role).filter(Role.key == role_key).first()
     if not role:
@@ -32,27 +50,10 @@ def by_role(db: Session, role_key: str) -> List[int]:
     return [u.id for u in db.query(User).filter(User.role_id == role.id, User.is_active == 1).all()]
 
 
-def mp_approvers(db: Session, ctx: dict) -> List[int]:
-    """Кто может согласовывать медиапланы: право media_plans:approve + админы.
-    Перенесено из media_plans._approver_user_ids без изменений в логике."""
-    role_ids = [r.role_id for r in db.query(RolePermission)
-                .filter(RolePermission.section == "media_plans",
-                        RolePermission.can_approve == 1).all()]
-    admin = db.query(Role).filter(Role.key == "admin").first()
-    if admin:
-        role_ids.append(admin.id)
-    if not role_ids:
-        return []
-    return [u.id for u in db.query(User).filter(User.role_id.in_(role_ids),
-                                                User.is_active == 1).all()]
-
-
-def mp_stakeholders(db: Session, ctx: dict) -> List[int]:
-    """Автор медиаплана и назначенные по нему ответственные (сейлз, аккаунт, трафик)."""
-    p = ctx.get("media_plan")
-    if p is None:
-        return []
-    return _active(db, [p.created_by, p.sales_rep_id, p.account_manager_id, p.traffic_manager_id])
+# Резолверы `mp_approvers` (роли с правом media_plans:approve) и `mp_stakeholders`
+# (автор + ответственные) удалены 30.08.2026 вместе со стейт-машиной согласования МП:
+# согласующих больше нет как роли в процессе. Автор плана по-прежнему адресуем —
+# `mp_author` ниже.
 
 
 def responsible(db: Session, ctx: dict) -> List[int]:
@@ -149,8 +150,6 @@ def master_of_responsible(db: Session, ctx: dict) -> List[int]:
 
 
 RESOLVERS = {
-    "mp_approvers": mp_approvers,
-    "mp_stakeholders": mp_stakeholders,
     "mp_author": mp_author,
     "responsible": responsible,
     "account_manager": account_manager,
@@ -160,9 +159,31 @@ RESOLVERS = {
     "master_of_responsible": master_of_responsible,
 }
 
+# Что резолвер ждёт в `ctx`. Объявлено списком, а не только в теле функции, потому что
+# ошибка здесь МОЛЧАЛИВАЯ: резолвер не находит своего ключа, возвращает пустой список,
+# адресатов нет, событие уходит в никуда — ни исключения, ни строки в журнале отправок.
+#
+# Так и случилось: шесть событий контура креативов и трафика адресованы аккаунту сделки,
+# а вызовы передавали `ctx={"deal_id": deal.id}` вместо `ctx={"deal": deal}`. Площадка
+# нажимала «на доработку», вердикт ложился в базу и в журнал кабинета, а аккаунт не
+# узнавал об этом никогда. Нашлось 31.08.2026 не приборами, а тем, что владелец нажал
+# кнопку и спросил, где теперь искать результат.
+#
+# Значение — ОБЪЕКТ, а не идентификатор: резолверу нужны поля (`deal.account_manager_id`),
+# и лишний поход в базу за уже загруженной строкой здесь ни к чему.
+#
+# Прибор, который держит соответствие: `backend/tests/test_notify_ctx.py`.
+RESOLVER_CTX = {
+    "mp_author": "media_plan",          # SalesMediaPlan
+    "responsible": "deal",              # SalesDeal
+    "account_manager": "deal",          # SalesDeal
+    "sales_rep_of_deal": "deal",        # SalesDeal
+    "year_plan_owner": "rep_id",        # int — id SalesRep владельца плана
+    "master_of_responsible": "deal",    # SalesDeal
+    # "sales_head" и роль/пользователь в получателях контекста не читают вовсе.
+}
+
 RESOLVER_LABELS = {
-    "mp_approvers": "Согласующие МП",
-    "mp_stakeholders": "Автор и ответственные по МП",
     "mp_author": "Автор МП",
     "responsible": "Ответственный",
     "account_manager": "Аккаунт сделки",
@@ -184,6 +205,8 @@ def resolve(db: Session, specs: Iterable[dict], ctx: Optional[dict] = None) -> L
             ids = RESOLVERS[v](db, ctx) if v in RESOLVERS else []
         elif t == "role":
             ids = by_role(db, v)
+        elif t == "staff_group":
+            ids = by_staff_group(db, v)
         elif t == "user":
             ids = _active(db, [v])
         else:

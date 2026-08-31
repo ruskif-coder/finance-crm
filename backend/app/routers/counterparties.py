@@ -47,6 +47,11 @@ class BankAccountData(BaseModel):
     bik: Optional[str] = None
 
 class CounterpartyRequisitesUpdate(BaseModel):
+    # ИНН здесь, а не только в реестре: карточка — то место, где реквизиты и правят,
+    # а ходить за одним полем в строку списка человек не догадывается (владелец,
+    # 31.08.2026). Поле опознавательное, поэтому смена пишется в журнал отдельной
+    # строкой — как и в реестре.
+    inn: Optional[str] = None
     kpp: Optional[str] = None
     ogrn: Optional[str] = None
     okpo: Optional[str] = None
@@ -752,6 +757,12 @@ def update_counterparty_requisites(
 
     def _s(v): return (v or '').strip() or None
 
+    # По ИНН сходятся операции при импорте, договоры ОРД и переопределения отсрочки —
+    # его смену видно в журнале отдельной строкой, а не «обновлены реквизиты».
+    new_inn = _s(data.inn)
+    inn_change = (f"; ИНН: {cp.inn or '—'} → {new_inn or '—'}"
+                  if new_inn != cp.inn else "")
+    cp.inn           = new_inn
     cp.kpp           = _s(data.kpp)
     cp.ogrn          = _s(data.ogrn)
     cp.okpo          = _s(data.okpo)
@@ -782,7 +793,7 @@ def update_counterparty_requisites(
     db.commit()
     log_action(db, current_user, "update_counterparty_requisites",
                entity_type="counterparty", entity_id=cp.id,
-               details=f"Обновлены реквизиты: «{cp.name}»")
+               details=f"Обновлены реквизиты: «{cp.name}»{inn_change}")
     return {"message": "Реквизиты обновлены"}
 
 

@@ -193,6 +193,12 @@ export default function TrafficQueue() {
   const [phrases, setPhrases] = useState([])
   const [dragOver, setDragOver] = useState(false)
 
+  // Переключатель между трафиками. По умолчанию пусто — «мои»: человек открывает свою
+  // работу, а не чужую. Мастеру показываем список, рядовому — ничего: у него один срез.
+  const [repId, setRepId] = useState('')
+  const [reps, setReps] = useState([])
+  const [myRepId, setMyRepId] = useState(null)
+  const [canViewOthers, setCanViewOthers] = useState(false)
   const mayApprove = can('traffic_queue', 'approve')
   const mayEdit = can('traffic_queue', 'edit')
 
@@ -204,13 +210,19 @@ export default function TrafficQueue() {
   const load = useCallback(async () => {
     setLoading(true); setErr('')
     try {
-      const r = await api.get('/traffic/queue?status=all', auth())
+      // Кого показываем: пусто — свои (умолчание), 'all' — весь раздел, id — конкретного.
+      // Рядовому трафику параметр не читается сервером, поэтому подмешивать его безопасно.
+      const who = repId === 'all' ? '&all_reps=true' : (repId ? `&rep_id=${repId}` : '')
+      const r = await api.get(`/traffic/queue?status=all${who}`, auth())
       setRows(r.data.rows || [])
+      setReps(r.data.reps || [])
+      setMyRepId(r.data.my_rep_id ?? null)
+      setCanViewOthers(!!r.data.can_view_others)
     } catch (e) {
       setErr(e.response?.data?.detail || 'Не удалось загрузить очередь')
     }
     setLoading(false)
-  }, [])
+  }, [repId])
 
   useEffect(() => { load() }, [load])
 
@@ -378,7 +390,7 @@ export default function TrafficQueue() {
 
   return (
     <>
-      <Head><title>Очередь трафика</title></Head>
+      <Head><title>Креативы на проверку</title></Head>
       <Navbar />
       <div style={{ maxWidth: 1600, margin: '0 auto', padding: '22px 20px 60px', fontFamily: UI }}>
 
@@ -388,7 +400,7 @@ export default function TrafficQueue() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16,
           flexWrap: 'wrap' }}>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: 'var(--text-primary)' }}>
-            Очередь трафика
+            Креативы на проверку
           </h1>
           <span style={{ ...CAP, marginBottom: 0 }}>
             {loading ? 'загрузка…'
@@ -410,6 +422,24 @@ export default function TrafficQueue() {
                   color: 'var(--text-faint)', fontSize: 15, lineHeight: 1 }}>×</button>
             )}
           </span>
+
+          {/* Переключатель между трафиками — сразу после поиска, как в дашбордах
+              аккаунта и сейлза. Рядовому трафику он не показывается вовсе: у него один
+              срез, и селектор с единственным пунктом объяснял бы несуществующий выбор. */}
+          {canViewOthers && (
+            <select value={repId} onChange={e => setRepId(e.target.value)}
+              style={{ height: 34, padding: '0 10px', borderRadius: 10,
+                background: 'var(--bg-card)', border: '1px solid var(--border-card)',
+                fontFamily: UI, fontSize: 12.5, color: 'var(--text-primary)',
+                cursor: 'pointer', minWidth: 170 }}>
+              {/* Своя строка помечена звёздочкой: по имени её не угадать. */}
+              {!!myRepId && <option value="">★ Мои</option>}
+              <option value="all">Все трафики</option>
+              {reps.filter(r => r.id !== myRepId).map(r => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
+          )}
 
           {/* Сегмент, а не отдельные кнопки: три взаимоисключающих среза одного списка —
               это один переключатель, и щель между кнопками читалась бы как «три разных
@@ -454,9 +484,11 @@ export default function TrafficQueue() {
 
         {groups.map(g => {
           const pending = g.rows.filter(r => !r.verdict)
-          const sizes = [...new Set(g.rows.flatMap(r => r.sizes || []))]
-          const subtitle = [g.deal.advertiser, g.deal.brand, g.deal.account,
-            `размер ${sizes.length ? sizes.join(', ') : 'адаптивный'}`].filter(Boolean).join(' · ')
+          // Размер из подписи убран (владелец, 31.08.2026): он есть в самом баннере и в
+          // предпросмотре, а в шапке занимал место, отведённое под ответ на «чей это
+          // материал». Подпись отвечает ровно на этот вопрос.
+          const subtitle = [g.deal.advertiser, g.deal.brand, g.deal.account]
+            .filter(Boolean).join(' · ')
           return (
             <div key={g.set.id} style={{ ...card, padding: '14px 16px', marginBottom: 14 }}>
 
@@ -483,9 +515,7 @@ export default function TrafficQueue() {
                       Креатив №{g.set.no}{g.set.title ? ` · ${g.set.title}` : ''}
                     </span>
                     {/* Чей это материал. Трафик сделок не ведёт: без этих трёх имён он не
-                        понимает, что смотрит, и не знает, к кому идти с вопросом.
-                        Размер здесь же, а не плашкой в сводке: он один на весь комплект,
-                        а сводка отвечает за то, что у площадок РАЗНОЕ. */}
+                        понимает, что смотрит, и не знает, к кому идти с вопросом. */}
                     <span title={subtitle}
                       style={{ ...CAP, marginBottom: 0, whiteSpace: 'nowrap',
                       overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>

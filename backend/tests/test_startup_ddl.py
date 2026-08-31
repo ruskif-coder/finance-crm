@@ -53,6 +53,12 @@ ALLOWED_DESTRUCTIVE = (
     # «выключено», её отсутствие — «включено». Включить вид уведомления обратно можно
     # только удалив строку, и удаляется ровно одна, по первичному ключу.
     "DELETE FROM cabinet_account_mute WHERE account_id = :a AND kind = :k",
+    # Список наших контактов у площадок переписывается целиком: их единицы, и ПОРЯДОК
+    # в списке — часть смысла (первым площадка видит того, к кому идти сначала).
+    # Собирать порядок правками по строке значило бы получать его наполовину
+    # применённым при обрыве. Таблица — настройка, а не учётные данные: терять здесь
+    # нечего, кроме самой настройки, которую тем же запросом и восстанавливают.
+    "DELETE FROM cabinet_our_contact",
 )
 
 DATA_MUTATING = (
@@ -172,3 +178,47 @@ def test_every_exception_is_still_needed():
                       for path in APP.rglob("*.py") for sql in _sql_literals(path))
     unused = [frag for frag in ALLOWED_DESTRUCTIVE if frag not in body]
     assert not unused, f"разрешения ни к чему не относятся, уберите: {unused}"
+
+def test_startup_runs_no_schema_ddl():
+    """На старте не осталось НИ ОДНОЙ схемной операции — только create_all.
+
+    31.08.2026 весь ALTER/CREATE INDEX/ADD CONSTRAINT вынесен в
+    migrations/2026-08-31_startup_ddl_extracted.sql. Причина не «чище», а конкретная:
+    эти операции берут AccessExclusiveLock, и на первом старте нового кода против свежей
+    базы они деадлочили с логинами (RowShareLock), а зависшие bcrypt-воркеры исчерпывали
+    пул — вход виснул. Схема правится миграцией ДО старта; сюда её возвращать нельзя.
+
+    Проверяем строковые литералы (AST), поэтому комментарии, объясняющие запрет, под него
+    не попадают. `create_all` — не литерал, его этот тест не трогает.
+    """
+    offenders = []
+    for sql in _sql_literals(MAIN):
+        flat = " ".join(sql.split())
+        if re.search(r"\bALTER\s+TABLE\b|\bCREATE\s+(UNIQUE\s+)?INDEX\b|\bADD\s+CONSTRAINT\b",
+                     flat, re.I):
+            offenders.append(flat[:90])
+    assert not offenders, (
+        "схемный DDL вернулся в стартовый код main.py — его место в migrations/ "
+        "(2026-08-31_startup_ddl_extracted.sql), иначе снова деадлок при первом старте:\n"
+        + "\n".join("  " + o for o in offenders)
+    )
+
+
+def test_extracted_ddl_migration_exists_and_is_additive():
+    """Перенос стартового DDL — это перенос, а не удаление, и он только добавляет.
+
+    Держит запись о том, что делал стартовый блок, и запрещает протащить в этот файл
+    разрушающую операцию под видом «переноса».
+    """
+    f = MIGRATIONS / "2026-08-31_startup_ddl_extracted.sql"
+    assert f.exists(), "миграция выноса стартового DDL пропала"
+    body = io.open(f, encoding="utf-8").read()
+    up = body.upper()
+    # ключевые вещи, ради которых миграция и заведена
+    for needed in ("AMOUNT_WITH_VAT", "STAFF_GROUP", "CAN_APPROVE",
+                   "IX_SALES_DEALS_CODE", "SALES_DEALS_OUR_STAGE_ID_FKEY"):
+        assert needed in up, f"в миграции выноса нет «{needed}»"
+    # ничего разрушающего/меняющего данные (DO-блок с NOTICE — не в счёт)
+    for pat in (r"\bDROP\s+TABLE\b", r"\bDROP\s+COLUMN\b", r"\bTRUNCATE\b",
+                r"\bDELETE\s+FROM\b", r"\bUPDATE\s+\w+\s+SET\b", r"\bINSERT\s+INTO\b"):
+        assert not re.search(pat, up), f"в миграции выноса разрушающая/меняющая операция: {pat}"

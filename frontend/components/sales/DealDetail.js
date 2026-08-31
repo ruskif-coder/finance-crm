@@ -149,12 +149,12 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
             : <button style={{ ...addBtn, opacity: (checking || local) ? 0.6 : 1, cursor: (checking || local) ? 'default' : 'pointer' }} onClick={checkBitrix} disabled={checking || local}
                 title={local ? 'Локальная сделка — нет в Битриксе' : 'Проверить наличие МП в Битриксе'}>{checking ? 'Проверка…' : 'Проверить'}</button>} />
         {/* МП наш: PDF · XLS · конструктор */}
-        <DocLine title="МП наш" meta={mpOur ? `v${mpOur.version}${mpOur.status ? ' · ' + mpOur.status : ''}` : ''} empty={!mpOur}
+        <DocLine title="МП наш" meta={mpOur ? `v${mpOur.version}` : ''} empty={!mpOur}
           onAdd={canEdit ? addMp : undefined}
           right={mpOur ? (
             <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}>
-              <button style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }} title="Скачать PDF" onClick={() => blobGet(`/media-plans/${mpOur.id}/pdf`, `MP_${mpOur.id}_v${mpOur.version}.pdf`)}>PDF</button>
-              <button style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }} title="Скачать XLSX" onClick={() => blobGet(`/media-plans/${mpOur.id}/export.xlsx`, `MP_${mpOur.id}_v${mpOur.version}.xlsx`)}>XLS</button>
+              <button style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }} title="Скачать PDF" onClick={() => blobGet(`/sales/media-plans/${mpOur.id}/pdf`, `MP_${mpOur.id}_v${mpOur.version}.pdf`)}>PDF</button>
+              <button style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }} title="Скачать XLSX" onClick={() => blobGet(`/sales/media-plans/${mpOur.id}/export.xlsx`, `MP_${mpOur.id}_v${mpOur.version}.xlsx`)}>XLS</button>
               <button style={iconSq(true)} title="Открыть конструктор" onClick={() => router.push(`/accounts/mp/${mpOur.id}`)}><EditIcon /></button>
             </span>
           ) : undefined} />

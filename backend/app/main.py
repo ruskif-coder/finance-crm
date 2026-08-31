@@ -39,102 +39,18 @@ from app.cabinet import models as cabinet_models  # noqa: F401,E402 — учёт
 
 Base.metadata.create_all(bind=engine)
 
-# Лёгкая миграция колонок: create_all не добавляет колонки в уже существующие
-# таблицы. Идемпотентно (Postgres ADD COLUMN IF NOT EXISTS).
+# Схемные ALTER/CREATE INDEX ВЫНЕСЕНЫ В МИГРАЦИЮ 31.08.2026
+# (migrations/2026-08-31_startup_ddl_extracted.sql). Раньше здесь жил блок
+# `with engine.begin()`, гонявший ~50 `ALTER TABLE … ADD COLUMN IF NOT EXISTS` при КАЖДОМ
+# старте. На свежей базе первый старт заводил колонки под AccessExclusiveLock, а
+# параллельные логины — под RowShareLock: Postgres ловил deadlock, зависшие bcrypt-воркеры
+# исчерпывали пул, вход виснул. Схема теперь правится миграцией ДО старта кода (порядок
+# «миграции до кода», навык deploying-to-prod), один раз и без конкуренции.
 #
-# ТОЛЬКО ДОБАВЛЯЮЩИЕ операции: ADD COLUMN IF NOT EXISTS и CREATE INDEX IF NOT EXISTS.
-# DROP, RENAME и любые UPDATE/INSERT/DELETE здесь запрещены и вынесены в migrations/
-# (2026-08-23_startup_ddl_to_migrations.sql). Причина: блок выполняется при каждом
-# запуске контейнера, а снаружи, в кабинете паблишера, живут представления pub.*_v1 —
-# view над удалённой колонкой падает, и падает у внешнего пользователя. Добавляющая
-# операция сломать представление не может, разрушающая может.
-# Запрет закреплён тестом tests/test_startup_ddl.py.
-with engine.begin() as _conn:
-    from sqlalchemy import text
-    _conn.execute(text("ALTER TABLE role_permissions "
-                       "ADD COLUMN IF NOT EXISTS deals_scope VARCHAR DEFAULT 'all'"))
-    _conn.execute(text("ALTER TABLE sales_agencies ADD COLUMN IF NOT EXISTS bx_id VARCHAR"))
-    _conn.execute(text("ALTER TABLE sales_advertisers ADD COLUMN IF NOT EXISTS bx_id VARCHAR"))
-    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS bitrix_user_id VARCHAR"))
-    _conn.execute(text("ALTER TABLE sales_agencies ADD COLUMN IF NOT EXISTS bx_master VARCHAR"))
-    _conn.execute(text("ALTER TABLE sales_advertisers ADD COLUMN IF NOT EXISTS bx_master VARCHAR"))
-    _conn.execute(text("ALTER TABLE sales_reps ADD COLUMN IF NOT EXISTS is_sales_head BOOLEAN NOT NULL DEFAULT FALSE"))
-    _conn.execute(text("ALTER TABLE sales_agencies ADD COLUMN IF NOT EXISTS sk_percent DOUBLE PRECISION NOT NULL DEFAULT 30"))
-    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS amount_with_vat DOUBLE PRECISION"))
-    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS brief TEXT"))
-    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS brief_synced_at TIMESTAMP"))
-    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS sync_status VARCHAR"))
-    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS sync_checked_at TIMESTAMP"))
-    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS sync_report JSONB"))
-    # T3: светофор вероятности (наша ручная разметка): grey|orange|green
-    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS probability_color VARCHAR"))
-    # E1/E2: движение сделки по нашему каталогу
-    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS our_stage_id INTEGER"))
-    # Метка сделки (наш 6-значный код) — на неё завязаны интерфейс и ссылки.
-    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS code VARCHAR(6)"))
-    _conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_sales_deals_code ON sales_deals (code)"))
-    # Жёсткий линк сделки на ячейку годового плана: строка × месяц × номер сделки в месяце.
-    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS year_plan_line_id INTEGER"))
-    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS plan_month INTEGER"))
-    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS plan_deal_idx INTEGER DEFAULT 0"))
-    _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_deals_year_plan_line ON sales_deals (year_plan_line_id)"))
-    _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_deals_plan_link "
-                       "ON sales_deals (year_plan_line_id, plan_month, plan_deal_idx)"))
-    # Бэкфилл plan_deal_idx — в migrations/2026-08-23_startup_ddl_to_migrations.sql.
-    # Годовой план как пакет: строка принадлежит плану, бриф и прогноз живут на строке.
-    _conn.execute(text("ALTER TABLE sales_year_plan_lines ADD COLUMN IF NOT EXISTS plan_id INTEGER"))
-    _conn.execute(text("ALTER TABLE sales_year_plan_lines ADD COLUMN IF NOT EXISTS brief JSONB NOT NULL DEFAULT '{}'::jsonb"))
-    _conn.execute(text("ALTER TABLE sales_year_plan_lines ADD COLUMN IF NOT EXISTS service_forecast JSONB NOT NULL DEFAULT '{}'::jsonb"))
-    _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_year_plan_lines_plan ON sales_year_plan_lines (plan_id)"))
-    # Легаси-строки без плана-родителя (INSERT плана + привязка строк) — вынесено в
-    # migrations/2026-08-23_startup_ddl_to_migrations.sql.
-    _conn.execute(text("ALTER TABLE sales_deals ADD COLUMN IF NOT EXISTS realization_pipeline_id INTEGER"))
-    _conn.execute(text("ALTER TABLE sales_stage_phases ADD COLUMN IF NOT EXISTS is_realization BOOLEAN NOT NULL DEFAULT FALSE"))
-    _conn.execute(text("ALTER TABLE sales_stages ADD COLUMN IF NOT EXISTS requires_media_plan BOOLEAN NOT NULL DEFAULT FALSE"))
-    # Справочник услуг: параметры для конструктора МП. sales_addon_services создаётся
-    # через create_all. Промежуточная таблица вариантов и колонки platform/currency
-    # выброшены — DROP'ы вынесены в migrations/2026-08-23_startup_ddl_to_migrations.sql.
-    for _col, _type in [("placement_type", "VARCHAR"), ("calc_form", "VARCHAR"),
-                        ("unit_price", "DOUBLE PRECISION"), ("unit_price_web", "DOUBLE PRECISION"),
-                        ("unit_price_app", "DOUBLE PRECISION")]:
-        _conn.execute(text(f"ALTER TABLE sales_services ADD COLUMN IF NOT EXISTS {_col} {_type}"))
-    _conn.execute(text("ALTER TABLE sales_services ADD COLUMN IF NOT EXISTS separate_price BOOLEAN NOT NULL DEFAULT FALSE"))
-    _conn.execute(text("ALTER TABLE sales_services ADD COLUMN IF NOT EXISTS constants JSONB"))
-    # Привязка услуги к элементу СП 1050 Битрикса (синк по bx_id, не по имени).
-    _conn.execute(text("ALTER TABLE sales_services ADD COLUMN IF NOT EXISTS bx_id VARCHAR"))
-    _conn.execute(text("ALTER TABLE sales_services ADD COLUMN IF NOT EXISTS bx_title VARCHAR"))
-    # E0: маппинг услуга → статья выручки (мост «сделка → операция»)
-    _conn.execute(text("ALTER TABLE sales_services ADD COLUMN IF NOT EXISTS revenue_article_id INTEGER"))
-    # E1: под-этап 2/2/2 у наших стадий (STAGE_CATALOG key); money_layer выводится из него
-    _conn.execute(text("ALTER TABLE sales_stages ADD COLUMN IF NOT EXISTS stage_key VARCHAR"))
-    _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_services_bx_id ON sales_services (bx_id)"))
-    _conn.execute(text("ALTER TABLE sales_addon_services ADD COLUMN IF NOT EXISTS period VARCHAR"))
-    # Рабочая группа + мастер — на РОЛИ (классификация продавец/аккаунт/трафик для
-    # пикеров ответственных в конструкторе МП; наследуется пользователем через роль).
-    _conn.execute(text("ALTER TABLE roles ADD COLUMN IF NOT EXISTS staff_group VARCHAR"))
-    _conn.execute(text("ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_master BOOLEAN NOT NULL DEFAULT FALSE"))
-    # Инвентарь строки МП (web/app/cross) — выбор при раздельном прайсе услуги.
-    _conn.execute(text("ALTER TABLE sales_media_plan_rows ADD COLUMN IF NOT EXISTS inventory VARCHAR"))
-    # Статус-воркфлоу МП: причина отклонения + кто/когда принял решение (approve/reject/archive).
-    _conn.execute(text("ALTER TABLE sales_media_plans ADD COLUMN IF NOT EXISTS reject_reason TEXT"))
-    _conn.execute(text("ALTER TABLE sales_media_plans ADD COLUMN IF NOT EXISTS decided_by INTEGER"))
-    _conn.execute(text("ALTER TABLE sales_media_plans ADD COLUMN IF NOT EXISTS decided_at TIMESTAMPTZ"))
-    # Право согласования МП (approve/reject/archive) — новое действие RBAC.
-    _conn.execute(text("ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_approve INTEGER DEFAULT 0"))
-    # Индекс под выборку непрочитанных уведомлений пользователя.
-    _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notifications_user_unread ON notifications (user_id, is_read, created_at DESC)"))
-    # Индексы под запросы витрины продаж (money-layer JOIN по (pipeline,bitrix_stage),
-    # own-scope и GROUP BY по FK, срез по периоду). На проде уже есть — IF NOT EXISTS
-    # делает это no-op; на чистой БД воссоздаёт (раньше индексы жили вне репозитория).
-    for _ix, _cols in [
-        ("idx_sales_deals_stage", "pipeline, bitrix_stage"),
-        ("idx_sales_deals_rep", "sales_rep_id"),
-        ("idx_sales_deals_acct", "account_manager_id"),
-        ("idx_sales_deals_advertiser", "advertiser_id"),
-        ("idx_sales_deals_agency", "agency_id"),
-        ("idx_sales_deals_period", "period_from, period_to"),
-    ]:
-        _conn.execute(text(f"CREATE INDEX IF NOT EXISTS {_ix} ON sales_deals ({_cols})"))
+# На старте остаётся только `create_all` выше: он создаёт недостающие ОРМ-таблицы (CREATE
+# TABLE IF NOT EXISTS — проверка каталога, не ALTER, эксклюзивных блокировок на
+# существующие таблицы не берёт) и на свежей базе делает таблицы сразу полными. Добавлять
+# сюда ALTER/CREATE INDEX нельзя — это запрещено тестом tests/test_startup_ddl.py.
 
 
 def seed_article_groups():
@@ -486,35 +402,10 @@ def backfill_sales_scope():
 backfill_sales_scope()
 
 
-def add_missing_foreign_keys():
-    """Внешние ключи — ОТДЕЛЬНО от блока колонок и каждый в своей транзакции.
-
-    ADD CONSTRAINT падает, если в данных есть висячие ссылки. Внутри общего
-    `with engine.begin()` такая ошибка отравила бы транзакцию и уронила импорт модуля,
-    то есть контейнер не поднялся бы вовсе — цена за недостающий ключ несоразмерна.
-    Здесь неудача только пишется в лог: приложение стартует, ключ просто не создан,
-    а расчистить висячие ссылки можно спокойно и потом.
-    """
-    from sqlalchemy import text as _t
-    fks = [
-        ("sales_deals_our_stage_id_fkey", "sales_deals", "our_stage_id", "sales_stages(id)"),
-        ("sales_deals_year_plan_line_id_fkey", "sales_deals", "year_plan_line_id", "sales_year_plan_lines(id)"),
-        ("sales_year_plan_lines_plan_id_fkey", "sales_year_plan_lines", "plan_id", "sales_year_plans(id)"),
-    ]
-    for name, table, col, ref in fks:
-        try:
-            with engine.begin() as c:
-                if c.execute(_t("SELECT 1 FROM pg_constraint WHERE conname = :n"), {"n": name}).first():
-                    continue
-                c.execute(_t(f"ALTER TABLE {table} ADD CONSTRAINT {name} "
-                             f"FOREIGN KEY ({col}) REFERENCES {ref}"))
-                logger.info(f"add_missing_foreign_keys: {name} создан")
-        except Exception:
-            logger.exception(f"add_missing_foreign_keys: {name} не создан — "
-                             "вероятно, есть висячие ссылки; старт продолжается")
-
-
-add_missing_foreign_keys()
+# Внешние ключи ВЫНЕСЕНЫ В МИГРАЦИЮ 31.08.2026 вместе с остальным стартовым DDL
+# (migrations/2026-08-31_startup_ddl_extracted.sql). `add_missing_foreign_keys()`
+# добавлял их при каждом старте через ADD CONSTRAINT FOREIGN KEY — тот же класс блокировок,
+# что деадлочил вход. Теперь это часть миграции, которая идёт до старта кода.
 
 # В DEBUG=true (локальная разработка) Swagger UI доступен на /docs.
 # В production (DEBUG не задан или false) документация закрыта — /docs, /redoc, /openapi.json

@@ -1,13 +1,13 @@
 """
 SQLAlchemy-модели дашборда продаж.
 
-Соответствуют scripts/sales_dashboard_schema.sql один в один. Схема применяется
+Соответствуют scripts/2026-07-23_sales_dashboard_schema.sql один в один. Схема применяется
 вручную через psql (Alembic в проекте не используется); create_all при старте
 только досоздаёт отсутствующее и никогда не изменяет существующие таблицы.
 
 Деньги — Float (double precision), однородно с Operation.income/expense.
 Точная арифметика разнесения и округления ведётся в Decimal на стороне Python
-(см. app/sales/periods.py, app/sales/allocation.py): плавающие копейки рождаются
+(см. app/sales/periods.py, app/sales/periods.py): плавающие копейки рождаются
 в вычислениях, а не в хранении.
 """
 from sqlalchemy import (Column, Integer, String, Float, Date, DateTime, Boolean,
@@ -123,7 +123,8 @@ class SalesMediaPlan(Base):
     id = Column(Integer, primary_key=True)
     group_id = Column(Integer, index=True)
     version = Column(Integer, nullable=False, default=1)
-    status = Column(String, nullable=False, default="draft")   # draft/review/approved/rejected/archived
+    status = Column(String, nullable=False, default="draft")   # ЗАМОРОЖЕНО 30.08.2026: у всех строк `draft`. Стейт-машины МП нет,
+    #                                        состояние плана — стадия его сделки
     title = Column(String)
     advertiser_id = Column(Integer)
     brand_id = Column(Integer)
@@ -144,8 +145,8 @@ class SalesMediaPlan(Base):
     created_by = Column(Integer)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
-    reject_reason = Column(Text)                       # причина отклонения (rejected — терминальный)
-    decided_by = Column(Integer)                       # кто принял решение (approve/reject/archive)
+    reject_reason = Column(Text)                       # ЗАМОРОЖЕНО 30.08.2026 вместе со статусом
+    decided_by = Column(Integer)                       # ЗАМОРОЖЕНО 30.08.2026 вместе со статусом
     decided_at = Column(DateTime(timezone=True))       # когда принято решение
 
 

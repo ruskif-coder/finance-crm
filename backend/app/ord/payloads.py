@@ -148,7 +148,10 @@ def creative(cset, files, deal, brand, final_ord_id, initial_ord_id=None,
     """
     who = f"комплект №{cset.no}"
 
-    kktu = (cset.kktu_code or (brand.kktu_code if brand else None) or '').strip()
+    # Только бренд: переопределение на комплект заморожено 31.08.2026 (использовано
+    # 0 раз из 24). ККТУ описывает рекламируемый товар, а не конкретный материал, и
+    # задаётся один раз на сделку в блоке сборки ОРД.
+    kktu = ((brand.kktu_code if brand else None) or '').strip()
     if not kktu:
         raise OrdPayloadError(
             f"{who}: не заполнен код ККТУ. Он живёт на бренде и подставляется сюда — "

@@ -19,7 +19,7 @@ from app.launch_prep.models import (LaunchPrepCreativeSet, LaunchPrepPair,
                                     LaunchPrepPairFile, LaunchPrepReview,
                                     LaunchPrepTarget)
 from app.cabinet.models import (Cabinet, CabinetAccount, CabinetAccountPublisher,
-                                CabinetPublisher)
+                                CabinetLog, CabinetOurContact, CabinetPublisher)
 from app.publisher_requests import PublisherRecon, PublisherRequest
 
 # Расширено 30.08.2026 на остальные таблицы внешнего контура и тикетов. Причина та же,
@@ -28,6 +28,10 @@ from app.publisher_requests import PublisherRecon, PublisherRequest
 WATCHED = [LaunchPrepReview, LaunchPrepPair, LaunchPrepPairFile, LaunchPrepTarget,
            LaunchPrepCreativeSet,
            Cabinet, CabinetPublisher, CabinetAccount, CabinetAccountPublisher,
+           # Журнал кабинета попадает сюда по той же причине, что и остальные: в него
+           # пишут обе стороны, и его читает ВНЕШНИЙ контур — потерянное поле означает
+           # не пустую ячейку, а строку, которую площадка увидит без автора или без тона.
+           CabinetLog, CabinetOurContact,
            PublisherRequest, PublisherRecon]
 
 

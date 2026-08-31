@@ -29,7 +29,6 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func as sa_func
 
@@ -40,7 +39,7 @@ from app.routers.launch_prep import url_state
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepCreativeSet,
                                     LaunchPrepPair, LaunchPrepPairFile, LaunchPrepReview,
                                     LaunchPrepTarget)
-from app.models import User
+from app.models import Role, User
 from app.notify import emit
 from app.permissions import require_any_permission, require_permission
 from app.sales.models import (SalesAdvertiser, SalesBrand, SalesDeal, SalesPublisher,
@@ -69,29 +68,60 @@ def _my_rep_ids(db: Session, user: User) -> List[int]:
     return [r.id for r in db.query(SalesRep.id).filter(SalesRep.user_id == user.id).all()]
 
 
-def _apply_scope(q, db: Session, user: User):
-    """Мастер видит всю очередь, остальные — свои и НИЧЬИ.
+def _is_master(user: User) -> bool:
+    return user.role.key == "admin" or bool(getattr(user.role, "is_master", False))
 
-    «Ничьи» здесь не послабление, а описание сегодняшнего дня: `traffic_manager_id` пуст
-    у всех 915 сделок (замер 28.08.2026), назначения ещё нет, и очередь стартует общей.
-    Правило написано так, чтобы в день, когда назначения появятся, менять его не
-    пришлось: неназначенное остаётся общим, назначенное видит адресат и мастер.
+
+def traffic_reps(db: Session) -> List[dict]:
+    """Кого можно выбрать в переключателе: трафики с живой учёткой.
+
+    Рабочая группа берётся у РОЛИ (`Role.staff_group == 'traffic'`), как и в остальных
+    списках сотрудников: у `SalesRep` своей группы нет, он общий справочник ответственных.
+    """
+    rows = (db.query(SalesRep.id, SalesRep.name)
+            .join(User, User.id == SalesRep.user_id)
+            .join(Role, Role.id == User.role_id)
+            .filter(Role.staff_group == "traffic", User.is_active == 1,
+                    SalesRep.is_active.is_(True))
+            .order_by(SalesRep.name).all())
+    return [{"id": r_id, "name": name} for r_id, name in rows]
+
+
+def _apply_scope(q, db: Session, user: User, rep_id=None, all_reps: bool = False):
+    """Мастер видит всю очередь и может смотреть чужую; трафик — ТОЛЬКО свою.
+
+    Правило владельца 31.08.2026. До него неназначенное («ничьи») видели все, и это
+    описывало день, когда назначений не было вовсе. Теперь очередь распределяется, и
+    «ничьё» перестало быть общим: пара без ответственного не показывается рядовому
+    трафику, иначе распределение ничего не распределяет.
+
+    По умолчанию — СВОИ, у мастера тоже: он работает так же, как остальные, и лишь может
+    переключиться. Мастер без профиля в `sales_reps` («свои» для него понятие пустое)
+    получает раздел целиком — иначе экран у него всегда пустой.
 
     Своей оси видимости у трафика нет в `deals_scope` намеренно: «свои» для него — это
     `traffic_manager_id`, а не «сейлз или аккаунт», и пятиуровневый контроль матрицы
     ответил бы на другой вопрос.
     """
-    if user.role.key == "admin" or bool(getattr(user.role, "is_master", False)):
-        return q
     mine = _my_rep_ids(db, user)
-    if not mine:
-        return q.filter(SalesDeal.traffic_manager_id.is_(None))
-    return q.filter(or_(SalesDeal.traffic_manager_id.is_(None),
-                        SalesDeal.traffic_manager_id.in_(mine)))
+    if not _is_master(user):
+        # Выбор чужого не обманывает: параметры рядового трафика просто не читаются.
+        return q.filter(SalesDeal.traffic_manager_id.in_(mine or [0]))
+    if rep_id:
+        return q.filter(SalesDeal.traffic_manager_id == int(rep_id))
+    if all_reps or not mine:
+        return q
+    return q.filter(SalesDeal.traffic_manager_id.in_(mine))
 
 
 def _pair_in_scope(db: Session, pair_id: int, user: User):
-    """Пара + её окружение, с проверкой видимости. 404 вместо 403, если не наша."""
+    """Пара + её окружение, с проверкой видимости. 404 вместо 403, если не наша.
+
+    Мастеру область действий равна области ВИДИМОСТИ, а не его собственным сделкам:
+    «мои» у него — умолчание экрана, а не граница прав. Иначе переключение на другого
+    трафика давало бы строки, по которым нельзя нажать ничего (404 на каждое действие).
+    Рядовому трафику `_apply_scope` по-прежнему оставляет только его пары.
+    """
     row = (db.query(LaunchPrepPair, LaunchPrepCreativeSet, LaunchPrepTarget,
                     SalesPublisher, SalesDeal)
            .join(LaunchPrepCreativeSet, LaunchPrepCreativeSet.id == LaunchPrepPair.set_id)
@@ -99,7 +129,7 @@ def _pair_in_scope(db: Session, pair_id: int, user: User):
            .join(SalesDeal, SalesDeal.id == LaunchPrepCreativeSet.deal_id)
            .outerjoin(SalesPublisher, SalesPublisher.id == LaunchPrepTarget.publisher_id)
            .filter(LaunchPrepPair.id == pair_id))
-    row = _apply_scope(row, db, user).first()
+    row = _apply_scope(row, db, user, all_reps=_is_master(user)).first()
     if not row:
         raise HTTPException(status_code=404, detail="Пара не найдена")
     return row
@@ -121,8 +151,17 @@ def _facts(traffic: LaunchPrepReview, target: LaunchPrepTarget,
 
 @router.get("/queue")
 def queue(status: str = "waiting", db: Session = Depends(get_db),
-          current_user: User = Depends(VIEW)):
+          current_user: User = Depends(VIEW),
+          # Новые параметры ПОСЛЕ зависимостей: порядок аргументов у этой ручки —
+          # публичный контракт для приборов, которые зовут её напрямую
+          # (tests/test_traffic_queue.py: `traffic.queue('all', db, user)`). FastAPI
+          # разбирает query-параметры по именам, ему порядок безразличен.
+          rep_id: Optional[int] = None, all_reps: bool = False):
     """Очередь проверки. `status`: waiting (по умолчанию) | done | all.
+
+    `rep_id` / `all_reps` — переключатель между трафиками, как в дашбордах аккаунта и
+    сейлза. Читаются только у мастера: рядовому трафику показывается своё, и селектора
+    у него на экране нет.
 
     Один запрос на весь экран — тем же приёмом, что сборка креативов: несколько запросов
     на один список дают мигание и рассинхрон, когда часть уже обновилась, а часть нет.
@@ -139,7 +178,8 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
         q = q.filter(LaunchPrepReview.verdict.is_(None))
     elif status == "done":
         q = q.filter(LaunchPrepReview.verdict.isnot(None))
-    rows = _apply_scope(q, db, current_user).order_by(LaunchPrepReview.id).all()
+    rows = (_apply_scope(q, db, current_user, rep_id, all_reps)
+            .order_by(LaunchPrepReview.id).all())
 
     set_ids = {s.id for _r, _p, s, _t, _pub, _d in rows}
     files = []
@@ -232,9 +272,35 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
         })
     out.sort(key=lambda r: (urgency.URGENCY_ORDER.get(r["urgency"], 9),
                             r["due"] or date.max, r["pair_id"]))
-    return {"rows": out, "status": status,
-            "is_master": bool(getattr(current_user.role, "is_master", False))
-                         or current_user.role.key == "admin"}
+    my = _my_rep_ids(db, current_user)
+    master = _is_master(current_user)
+    return {"rows": out, "status": status, "is_master": master,
+            # Кого показали на самом деле: None — раздел целиком.
+            "rep_id": (int(rep_id) if rep_id else
+                       (None if (all_reps or not my) else my[0])) if master else (my[0] if my else None),
+            "my_rep_id": my[0] if my else None,
+            "can_view_others": master,
+            "reps": traffic_reps(db) if master else []}
+
+
+@router.get("/queue/count")
+def queue_count(db: Session = Depends(get_db), current_user: User = Depends(VIEW)):
+    """Сколько креативов ждут проверки — только число, для счётчика в меню.
+
+    Отдельной ручкой, а не полем в `/queue`: бейдж в шапке считается на КАЖДОЙ странице,
+    а `/queue` тянет пять таблиц, файлы и три выборки имён. Здесь — один COUNT в своей
+    области видимости (у рядового трафика его сделки, у мастера по умолчанию тоже «мои» —
+    переключатель живёт на самом экране, а не в счётчике).
+    """
+    q = (db.query(LaunchPrepReview.id)
+         .join(LaunchPrepPair, LaunchPrepPair.id == LaunchPrepReview.pair_id)
+         .join(LaunchPrepCreativeSet, LaunchPrepCreativeSet.id == LaunchPrepPair.set_id)
+         .join(LaunchPrepTarget, LaunchPrepTarget.id == LaunchPrepPair.target_id)
+         .join(SalesDeal, SalesDeal.id == LaunchPrepCreativeSet.deal_id)
+         .filter(LaunchPrepReview.kind == "трафики",
+                 LaunchPrepReview.verdict.is_(None)))
+    n = _apply_scope(q, db, current_user).count()
+    return {"waiting": n}
 
 
 # ============================== вердикт ==============================
@@ -310,7 +376,7 @@ def pair_verdict(pair_id: int, payload: VerdictIn, db: Session = Depends(get_db)
              body=(payload.reason or "").strip() or "Без комментария",
              link=f"/sales/deals/{deal.code or deal.id}",
              entity_type="sales_deal", entity_id=deal.id, actor=current_user,
-             ctx={"deal_id": deal.id})
+             ctx={"deal": deal})
     db.commit()
     return {"verdict": payload.verdict}
 
@@ -358,7 +424,7 @@ def bulk_verdict(payload: BulkVerdictIn, db: Session = Depends(get_db),
                  body=(payload.reason or "").strip() or "Без комментария",
                  link=f"/sales/deals/{deal.code or deal.id}",
                  entity_type="sales_deal", entity_id=deal_id, actor=current_user,
-                 ctx={"deal_id": deal_id})
+                 ctx={"deal": deal})
     db.commit()
     return {"done": done, "skipped": skipped}
 

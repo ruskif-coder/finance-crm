@@ -911,10 +911,21 @@ def update_contact(publisher_id: int, contact_id: int, data: ContactIn,
                  SalesPublisherContact.publisher_id == publisher_id).first())
     if not c:
         raise HTTPException(status_code=404, detail="Контакт не найден")
-    c.name, c.email, c.telegram = data.name, data.email, data.telegram
-    c.max_url = data.max_url
-    c.phone, c.role, c.note = data.phone, data.role, data.note
-    c.is_primary = bool(data.is_primary)
+    # ЧАСТИЧНАЯ правка: присваиваются только присланные поля. Прежняя редакция писала
+    # все восемь, поэтому вызов с двумя полями стирал телеграм, телефон и заметку —
+    # экран кабинетов правит именно так, по одному-двум полям.
+    fields = data.dict(exclude_unset=True)
+    for k, v in fields.items():
+        setattr(c, k, v)
+
+    # «Главный» у площадки ОДИН: зелёный квадрат на трёх строках ничего не значит.
+    # Поэтому назначение снимает пометку с остальных — тем же запросом, а не отдельным
+    # действием, иначе между ними существует состояние с двумя главными.
+    if fields.get("is_primary"):
+        db.query(SalesPublisherContact).filter(
+            SalesPublisherContact.publisher_id == publisher_id,
+            SalesPublisherContact.id != contact_id).update(
+            {"is_primary": False}, synchronize_session=False)
     db.commit()
     log_action(db, current_user, "update_publisher_contact", "sales_publisher", publisher_id,
                data.name or "")
@@ -929,6 +940,17 @@ def delete_contact(publisher_id: int, contact_id: int, db: Session = Depends(get
                  SalesPublisherContact.publisher_id == publisher_id).first())
     if not c:
         raise HTTPException(status_code=404, detail="Контакт не найден")
+    # У `cabinet_account.contact_id` стоит ON DELETE SET NULL: удалив контакт с учёткой,
+    # мы бы не сломали ничего видимого — учётка осталась бы жить, но с пустым контактом,
+    # то есть стала бы неотличима от учётки СЛУЖЕБНОГО кабинета, которую заводят руками.
+    # Человек при этом продолжал бы входить. Поэтому порядок обратный: сперва учётка.
+    from app.cabinet.models import CabinetAccount
+    acc = db.query(CabinetAccount).filter(CabinetAccount.contact_id == c.id).first()
+    if acc is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"У «{c.name or c.email}» есть учётка в кабинете — "
+                   f"сначала уберите доступ, потом контакт")
     db.delete(c)
     db.commit()
     log_action(db, current_user, "delete_publisher_contact", "sales_publisher", publisher_id,

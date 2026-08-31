@@ -273,7 +273,24 @@ export default function Counterparties() {
                       <div style={{ padding: '0 8px', overflow: 'hidden' }}>
                         {isEdit
                           ? <input autoFocus value={editDraft.name} onClick={e => e.stopPropagation()} onChange={e => setEditDraft(d => ({ ...d, name: e.target.value }))} style={{ width: 220, border: '1px solid var(--border-card)', borderRadius: 8, padding: '5px 8px', fontSize: 13, fontFamily: UI }} />
-                          : <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>{c.is_own_company && <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-tint)', borderRadius: 6, padding: '1px 5px', whiteSpace: 'nowrap' }}>НАША</span>}</span>}
+                          : <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                              {/* Стрелка — карточка в НОВОЙ вкладке, как в реестре
+                                  операций. Клик по самой строке открывает карточку в этой
+                                  же, и обе дороги нужны: из реестра ходят и «посмотреть,
+                                  вернуться», и «оставить открытым рядом».
+                                  stopPropagation обязателен — иначе клик по ссылке заодно
+                                  сработает как клик по строке. */}
+                              <a href={`/directory/counterparties/${c.id}`} target="_blank" rel="noreferrer"
+                                 onClick={e => e.stopPropagation()} title="Карточка юрлица — в новой вкладке"
+                                 style={{ display: 'inline-flex', flex: '0 0 auto', color: 'var(--text-faint)' }}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                  strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M7 17 17 7" /><path d="M9 7h8v8" />
+                                </svg>
+                              </a>
+                              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+                              {c.is_own_company && <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-tint)', borderRadius: 6, padding: '1px 5px', whiteSpace: 'nowrap' }}>НАША</span>}
+                            </span>}
                       </div>
                       <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px' }}>{isEdit ? <input value={editDraft.inn} onClick={e => e.stopPropagation()} onChange={e => setEditDraft(d => ({ ...d, inn: e.target.value }))} style={{ width: 96, border: '1px solid var(--border-card)', borderRadius: 8, padding: '5px 8px', fontSize: 12, fontFamily: MONO }} /> : (c.inn || <span style={{ color: 'var(--text-faint)' }}>—</span>)}</div>
                       <div style={{ fontFamily: MONO, fontSize: 12, color: c.contracts_count ? 'var(--text-primary)' : 'var(--text-faint)', textAlign: 'center' }}>{c.contracts_count || 0}</div>

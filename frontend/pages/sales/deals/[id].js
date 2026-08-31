@@ -182,7 +182,7 @@ function mpSummary(rowCount, net, mp) {
   const parts = []
   if (rowCount) parts.push(rowCount + (rowCount === 1 ? ' строка' : rowCount < 5 ? ' строки' : ' строк'))
   if (net != null) parts.push(rub(net))
-  parts.push(`${MP_STATUS[mp.status] || mp.status} ${mp.version ? 'v' + mp.version : ''}`.trim())
+  if (mp.version) parts.push(`v${mp.version}`)
   return parts.join(' · ')
 }
 
@@ -204,8 +204,7 @@ function mpFacts({ d, lines, net, gross, tVol, mp }) {
       color: tVol ? 'var(--income)' : 'var(--text-faint)' },
     { label: 'Период РК', value: period },
     { label: 'Версия', value: mp ? `v${mp.version}` : 'нет',
-      color: mp ? 'var(--warning-text)' : 'var(--text-faint)',
-      pill: mp ? (MP_STATUS[mp.status] || mp.status) : null },
+      color: mp ? 'var(--warning-text)' : 'var(--text-faint)' },
   ]
 }
 
@@ -283,7 +282,6 @@ const EVENT_COLOR = {
   save_deal_brief: 'var(--income)', push_deal_to_bitrix: 'var(--accent)', sync_deal_from_bitrix: 'var(--accent)',
 }
 
-const MP_STATUS = { draft: 'черновик', review: 'на согласовании', approved: 'согласован', rejected: 'отклонён', archived: 'архив' }
 // Список видов документов — общий для карточки, раскрывашки и доски (lib/dealDocs).
 const DOC_KINDS = DEAL_DOCS.map(d => [d.kind, d.label, !!d.bx])
 const DOC_ACT = { display: 'inline-flex', alignItems: 'center', height: 22, padding: '0 7px', border: '1px solid var(--border-card)', borderRadius: 7, background: 'var(--bg-card)', color: 'var(--accent)', fontSize: 10, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }
@@ -349,6 +347,9 @@ export default function DealCard() {
   const [moveOpen, setMoveOpen] = useState(false)
   const [docBusy, setDocBusy] = useState('')    // kind документа в процессе загрузки/удаления
   const [canEdit, setCanEdit] = useState(false)
+  // Роль администратора нужна отдельным признаком: за ней спрятаны действия,
+  // подменяющие чужую зону ответственности (ответ за площадку, отметка «в эфир»).
+  const [isAdmin, setIsAdmin] = useState(false)
   const [canApprove, setCanApprove] = useState(false)
   // Состояние обвязки тянем на уровне карточки, а не внутри секции: свёрнутый вид
   // показывает данные, и до первого разворачивания их иначе взять неоткуда.
@@ -426,6 +427,7 @@ export default function DealCard() {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     try {
       const p = JSON.parse(localStorage.getItem('permissions') || '{}')
+      setIsAdmin(localStorage.getItem('role') === 'admin')
       setCanEdit(localStorage.getItem('is_admin') === 'true' || !!(p.sales_registry || {}).edit)
       // Вердикт первичной проверки — отдельное действие: его можно развести с
       // ведением комплектов, чтобы подписывался не тот, кто грузил материал.
@@ -481,7 +483,7 @@ export default function DealCard() {
       unit: r.unit_price || 0, discount: r.discount || 0,
       net, gross: withVat(net), freq, reach, clicks,
       // Вторая половина прогноза — та, что раньше на карточку не доезжала. Формулы
-      // повторяют конструктор МП дословно (components/mediaplan/MediaPlanBuilder.jsx,
+      // повторяют конструктор МП дословно (components/mediaplan/MediaPlanBuilder.jsxx,
       // блок «Прогнозные показатели»): расхождение в них означало бы, что карточка и
       // медиаплан показывают разный прогноз по одним и тем же данным.
       cr: nn(fc.cr) / 100,
@@ -992,7 +994,7 @@ export default function DealCard() {
                   onReviewed={onCreativesChanged} />}>
                 {() => (
                   <AssemblyCreatives dealId={d.id} canEdit={canEdit} canApprove={canApprove}
-                    onChanged={onCreativesChanged} />
+                    isAdmin={isAdmin} onChanged={onCreativesChanged} />
                 )}
               </Section>
               </div>
@@ -1031,11 +1033,11 @@ export default function DealCard() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {/* наш медиаплан — отдельной строкой: скачать PDF/XLSX или открыть конструктор */}
                 <DocRow ok={!!mp} title="Медиаплан"
-                  meta={mp ? `v${mp.version} · ${MP_STATUS[mp.status] || mp.status}` : 'не создан'}
+                  meta={mp ? `v${mp.version}${mp.updated_at ? ' · ' + dm(mp.updated_at, '') : ''}` : 'не создан'}
                   right={mp ? (
                     <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}>
-                      <span onClick={() => blobGet(`/media-plans/${mp.id}/pdf`, `MP_${mp.id}_v${mp.version}.pdf`)} style={DOC_ACT}>PDF</span>
-                      <span onClick={() => blobGet(`/media-plans/${mp.id}/export.xlsx`, `MP_${mp.id}_v${mp.version}.xlsx`)} style={DOC_ACT}>XLS</span>
+                      <span onClick={() => blobGet(`/sales/media-plans/${mp.id}/pdf`, `MP_${mp.id}_v${mp.version}.pdf`)} style={DOC_ACT}>PDF</span>
+                      <span onClick={() => blobGet(`/sales/media-plans/${mp.id}/export.xlsx`, `MP_${mp.id}_v${mp.version}.xlsx`)} style={DOC_ACT}>XLS</span>
                       <a href={`/accounts/mp/${mp.id}`} style={{ ...DOC_ACT, textDecoration: 'none' }}>↗</a>
                     </span>
                   ) : (canEdit ? <a href={`/accounts/mp/new?deal=${d.id}`} style={{ ...DOC_ACT, textDecoration: 'none' }}>Создать</a> : null)} />

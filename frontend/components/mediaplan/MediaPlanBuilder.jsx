@@ -295,13 +295,10 @@ function useDismiss(setSel) {
 export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalog = EXTRA_CATALOG, staff = STAFF, models = MODELS, modes = MODES,
   advertisers = [], agencies = [], brandsByAdv = {}, advCps = {}, agencyCps = {}, geoList = [], targetingCatalog = {},
   bound = false, initial, backLabel = 'Реестр медиапланов', onBack, versions = [], onOpenVersion,
-  canApprove = false, onTransition,
   onAddTargeting, onAddGeo, onCreateBrand, onSave, onExportXlsx, onPreviewPdf, onEditBrief, onLinkDeal, onCreateDeal,
   dealBrief, onDealBriefSave, onDealBriefSync, ownCompany }) {
   const init = initial || {};
   const [verOpen, setVerOpen] = useState(false);   // дропдаун истории версий
-  const [rejectOpen, setRejectOpen] = useState(false);   // модалка причины отклонения
-  const [rejectText, setRejectText] = useState('');
   // Чек-лист перед сохранением: обе отметки «проверено» (размещения + прогноз).
   // Не свойство плана, а подтверждение конкретного сохранения — сбрасывается после него.
   const [okMain, setOkMain] = useState(false);
@@ -464,50 +461,25 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
       </div>
 
       <div id="mp-desktop" style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '26px 32px 40px', display: 'flex', justifyContent: 'center' }}>
-        {rejectOpen && (
-          <div {...overlayClose(() => setRejectOpen(false))} style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(20,22,28,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div onClick={e => e.stopPropagation()} style={{ width: 430, maxWidth: '92vw', background: T.card, borderRadius: 16, padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 12, boxShadow: '0 16px 48px rgba(20,22,28,.3)' }}>
-              <span style={{ fontSize: 16, fontWeight: 700 }}>Отклонить медиаплан</span>
-              <span style={{ fontSize: 12.5, color: T.t3 }}>Укажите причину — она сохранится и уйдёт автору в уведомлении.</span>
-              <textarea autoFocus value={rejectText} onChange={e => setRejectText(e.target.value)} rows={4} placeholder="Причина отклонения…" style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 10, border: `1px solid ${T.border}`, fontSize: 13, fontFamily: T.sans, outline: 'none', resize: 'vertical' }} />
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                <span onClick={() => setRejectOpen(false)} style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 14px', border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>Отмена</span>
-                <span onClick={() => { const r = rejectText.trim(); if (!r) return; setRejectOpen(false); onTransition?.('rejected', r); }} style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 14px', background: rejectText.trim() ? (T.danger || 'var(--danger-fg)') : 'var(--text-faint)', color: 'var(--bg-card)', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: rejectText.trim() ? 'pointer' : 'default' }}>Отклонить</span>
-              </div>
-            </div>
-          </div>
-        )}
-        {/* Комментарий о причинах изменений перед отправкой на согласование.
-            Поле необязательное: «Отправить» работает и с пустым — попадёт в журнал. */}
+        {/* Комментарий о причинах изменений. Спрашивается ТОЛЬКО когда план уже отдан
+            клиенту (init.sealed) и сохранение родит новую версию: там объяснение нужно,
+            а на правках черновика оно было бы лишним кликом. Поле необязательное. */}
         {noteOpen && (
           <div {...overlayClose(() => setNoteOpen(false))} style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(20,22,28,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div onClick={e => e.stopPropagation()} style={{ width: 460, maxWidth: '92vw', background: T.card, borderRadius: 16, padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 12, boxShadow: '0 16px 48px rgba(20,22,28,.3)' }}>
-              <span style={{ fontSize: 16, fontWeight: 700 }}>Отправить на согласование</span>
-              <span style={{ fontSize: 12.5, color: T.t3 }}>Оставьте комментарий о причинах изменений — он попадёт в историю. Поле необязательное.</span>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>Новая версия медиаплана</span>
+              <span style={{ fontSize: 12.5, color: T.t3 }}>Предыдущую версию клиент уже видел, поэтому она сохраняется как есть. Оставьте комментарий о причинах изменений — он попадёт в историю. Поле необязательное.</span>
               <textarea autoFocus value={noteText} onChange={e => setNoteText(e.target.value)} rows={4} placeholder="Причины изменений…"
                 style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 10, border: `1px solid ${T.border}`, fontSize: 13, fontFamily: T.sans, outline: 'none', resize: 'vertical' }} />
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <span onClick={() => setNoteOpen(false)} style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 14px', border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>Отмена</span>
-                <span onClick={() => { const n = noteText.trim(); setNoteOpen(false); doSaveRef.current && doSaveRef.current('submit', n); }}
-                  style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 16px', background: T.accent, color: 'var(--bg-card)', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>ОК, отправить</span>
+                <span onClick={() => { const n = noteText.trim(); setNoteOpen(false); doSaveRef.current && doSaveRef.current(n); }}
+                  style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 16px', background: T.accent, color: 'var(--bg-card)', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>ОК, сохранить</span>
               </div>
             </div>
           </div>
         )}
         <div style={{ width: '100%', maxWidth: 1760, display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {init.status === 'rejected' && init.reject_reason && (
-            <div style={{ background: 'rgba(214,69,69,.10)', border: `1px solid ${(T.danger || 'var(--danger-fg)')}44`, borderRadius: 12, padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'baseline' }}>
-              <span style={{ fontSize: 12, fontWeight: 800, color: T.danger || 'var(--danger-fg)', whiteSpace: 'nowrap' }}>Отклонён</span>
-              <span style={{ fontSize: 13, color: T.t2 }}>{init.reject_reason}{init.decided_by_name ? ` — ${init.decided_by_name}` : ''}</span>
-            </div>
-          )}
-          {init.status === 'approved' && init.decided_by_name && (
-            <div style={{ background: 'rgba(30,158,106,.10)', border: `1px solid ${(T.income || 'var(--income)')}44`, borderRadius: 12, padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'baseline' }}>
-              <span style={{ fontSize: 12, fontWeight: 800, color: T.income || 'var(--income)', whiteSpace: 'nowrap' }}>Согласован</span>
-              <span style={{ fontSize: 13, color: T.t2 }}>{init.decided_by_name}</span>
-            </div>
-          )}
-
           {/* хлебные крошки + действия */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', animation: `riseIn .4s ${T.ease} both`, position: 'relative', zIndex: verOpen ? 5000 : undefined }}>
             <span onClick={onBack} style={{ fontSize: 13, fontWeight: 600, color: T.t3, cursor: onBack ? 'pointer' : 'default' }}>← {backLabel}</span>
@@ -515,7 +487,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
             <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.02em' }}>Конструктор медиаплана</span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: T.warningTint, color: T.warningText, borderRadius: 9, padding: '5px 11px', fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
               <span style={{ width: 7, height: 7, borderRadius: 2, background: T.warning }} />
-              {({ draft: 'Черновик', review: 'На согласовании', approved: 'Согласован', rejected: 'Отклонён', archived: 'Архив' }[init.status] || 'Черновик')}{init.version ? ` v${init.version}` : ''}
+              {init.sealed ? 'Отдан клиенту' : 'Черновик'}{init.version ? ` v${init.version}` : ''}
             </span>
             {versions.length > 1 && (
               <span style={{ position: 'relative' }}>
@@ -524,12 +496,11 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                   <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 1000, minWidth: 250, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: '0 12px 32px rgba(20,22,28,.16)', padding: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
                     {versions.map(v => {
                       const cur = v.id === init.id;
-                      const st = ({ draft: 'Черновик', review: 'На согласовании', approved: 'Согласован', rejected: 'Отклонён', archived: 'Архив' }[v.status] || v.status);
                       return (
                         <span key={v.id} onClick={() => { if (!cur && onOpenVersion) onOpenVersion(v.id); setVerOpen(false); }}
                           style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '7px 9px', borderRadius: 8, cursor: cur ? 'default' : 'pointer', background: cur ? T.accentTint : 'transparent' }}>
                           <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: cur ? T.accent : T.t1 }}>v{v.version}</span>
-                          <span style={{ fontSize: 11.5, color: T.t3 }}>{st}</span>
+                          <span style={{ fontSize: 11.5, color: T.t3 }}>{v.updated_at ? new Date(v.updated_at).toLocaleDateString('ru-RU') : ''}</span>
                           <span style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 11, color: T.t2 }}>{v.amount_gross ? Math.round(v.amount_gross).toLocaleString('ru-RU') + ' ₽' : '—'}</span>
                           {cur && <span style={{ fontSize: 10, color: T.accent, fontWeight: 700 }}>• текущая</span>}
                         </span>
@@ -543,32 +514,26 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
               <span className="mp-outline" onClick={onPreviewPdf} style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 13px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>PDF</span>
               {onExportXlsx && <span className="mp-outline" onClick={onExportXlsx} style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 13px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, cursor: 'pointer' }}>Excel</span>}
               {(() => {
-                const st = init.status || 'draft';
-                // Сохранять можно только с обеими отметками «проверено» (чек-лист над блоками).
-                const submitOk = !emptyMain && calc.filled.length > 0 && verified;
-                const notVerifiedHint = 'Завизируйте правки';
+                // Кнопка ОДНА. Что произойдёт — правка текущей версии или рождение
+                // новой — решает сервер по тому, отдан ли план клиенту; фронт лишь
+                // называет это вслух и у отданного плана спрашивает причину изменений.
+                // Раньше кнопок было пять («Сохранить черновик», «На согласование»,
+                // «Согласовать», «Отклонить», «В архив»), и человек выбирал ими не
+                // действие, а состояние плана — параллельное стадии его сделки.
+                const okToSave = !emptyMain && calc.filled.length > 0 && verified;
+                const hint = !verified ? 'Завизируйте правки'
+                  : (calc.filled.length ? 'Заполните все строки' : 'Добавьте хотя бы одну строку размещения');
                 const btn = (bg, color, bd) => ({ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px', background: bg, border: bd || 'none', color, borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' });
-                const save = (action, note) => onSave?.({ brief: { ...bf, title: effectiveTitle, targeting: mergeTgDrafts() }, main: main.rows, extras: extras.rows, fc, goals, owners, action, verified: true, change_note: note || '' });
+                const save = (note) => onSave?.({ brief: { ...bf, title: effectiveTitle, targeting: mergeTgDrafts() }, main: main.rows, extras: extras.rows, fc, goals, owners, verified: true, change_note: note || '' });
                 doSaveRef.current = save;   // чтобы модалка комментария могла отправить
-                return (<>
-                  {(st === 'draft' || !init.id) && (
-                    <span className={verified ? 'mp-outline' : undefined} onClick={() => { if (verified) save('draft'); }}
-                      title={verified ? undefined : notVerifiedHint}
-                      style={{ ...btn(T.card, verified ? T.accent : 'var(--bank-sovkom)', `1px solid ${verified ? T.accentBorder : T.border}`), cursor: verified ? 'pointer' : 'default' }}>
-                      Сохранить черновик
-                    </span>)}
-                  {(st === 'draft' || st === 'rejected' || st === 'approved') && (
-                    <span className={submitOk ? 'mp-primary' : undefined}
-                      onClick={() => { if (submitOk) { setNoteText(''); setNoteOpen(true); } }}
-                      title={submitOk ? undefined : (!verified ? notVerifiedHint : (calc.filled.length ? 'Заполните все строки' : 'Добавьте хотя бы одну строку размещения'))}
-                      style={{ ...btn(submitOk ? T.accent : 'var(--bank-sovkom)', 'var(--bg-card)'), cursor: submitOk ? 'pointer' : 'default' }}>
-                      {st === 'draft' ? 'На согласование' : 'Новая версия на согласование'}
-                    </span>)}
-                  {st === 'review' && <span onClick={() => onTransition?.('draft')} style={btn(T.card, T.t2, `1px solid ${T.border}`)}>Вернуть в черновик</span>}
-                  {st === 'review' && canApprove && <span onClick={() => onTransition?.('approved')} style={btn(T.income || 'var(--income)', 'var(--bg-card)')}>Согласовать</span>}
-                  {st === 'review' && canApprove && <span onClick={() => { setRejectText(''); setRejectOpen(true); }} style={btn(T.danger || 'var(--danger-fg)', 'var(--bg-card)')}>Отклонить</span>}
-                  {(st === 'approved' || st === 'rejected') && canApprove && <span onClick={() => onTransition?.('archived')} style={btn(T.card, T.t3, `1px solid ${T.border}`)}>В архив</span>}
-                </>);
+                return (
+                  <span className={okToSave ? 'mp-primary' : undefined}
+                    onClick={() => { if (!okToSave) return; if (init.sealed) { setNoteText(''); setNoteOpen(true); } else save(); }}
+                    title={okToSave ? undefined : hint}
+                    style={{ ...btn(okToSave ? T.accent : 'var(--bank-sovkom)', 'var(--bg-card)'), cursor: okToSave ? 'pointer' : 'default' }}>
+                    {init.sealed ? 'Сохранить новой версией' : 'Сохранить'}
+                  </span>
+                );
               })()}
             </span>
           </div>

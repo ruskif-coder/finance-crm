@@ -24,17 +24,22 @@ from app.notify.models import NotificationProfile, NotificationSubscription
 # событий в дайджест — сознательное решение пользователя в интерфейсе, а не побочный
 # эффект переезда на реестр.
 #
-# Кому уходит событие, здесь НЕ задаётся: получатели объявлены в реестре
-# (mp_approvers / mp_stakeholders), профиль управляет только каналами.
+# Кому уходит событие, здесь НЕ задаётся: получатели объявлены в реестре резолверами
+# (`sales_rep_of_deal`, `account_manager`, `mp_author`), профиль управляет только каналами.
 PLAN = {
-    "account":        {k: ["app"] for k in ("mp_submit", "mp_approved", "mp_rejected",
-                                            "mp_archived", "mp_recalled")},
-    "account_master": {k: ["app"] for k in ("mp_submit", "mp_approved", "mp_rejected",
-                                            "mp_archived", "mp_recalled")},
-    "sales":          {k: ["app"] for k in ("mp_approved", "mp_rejected", "mp_archived")},
-    "fin":            {k: ["app"] for k in ("mp_approved", "mp_rejected")},
-    "admin":          {k: ["app"] for k in ("mp_submit", "mp_approved", "mp_rejected",
-                                            "mp_archived", "mp_recalled")},
+    # 30.08.2026 отсюда ушли пять событий согласования МП (mp_submit / mp_approved /
+    # mp_rejected / mp_archived / mp_recalled): стейт-машины больше нет, состояние плана
+    # это стадия его сделки. Заменять их подписками на правила очереди аккаунта я не
+    # стал: кому адресовать сканерные правила — решение владельца (см. KNOWN_SILENT в
+    # tests/test_notify_wiring.py), а не побочный эффект уборки.
+    "account":        {},
+    # «ЕРИД не выпустился» — решение владельца 31.08.2026: адресуем админу и мастеру
+    # аккаунта. Маркер не выпустился = сделка не может стартовать в размещении, и знать
+    # об этом должны те, кто за это отвечает сверху, а не только исполнитель.
+    "account_master": {k: ["app"] for k in ("creative_erid_failed",)},
+    "sales":          {k: ["app"] for k in ("mp_ready",)},
+    "fin":            {},
+    "admin":          {k: ["app"] for k in ("mp_ready", "creative_erid_failed")},
 
     # Трафик (30.08.2026). Два события и ровно два: пришла работа и кто-то из своих
     # молчит. Всё остальное в реестре — про медиапланы и сделки, к материалу отношения
@@ -63,9 +68,16 @@ ROLE_TO_PROFILE = {
     "admin": "admin",
     # Заведены 30.08.2026 — до этого три роли не были сопоставлены ни с чем, и скрипт
     # честно писал «пропуск», а люди оставались в профиле по умолчанию.
-    "role_120": "traffic",        # Траффик
-    "role_121": "traffic",        # Мастер траффик
     "role_10": "publishers",      # Менеджер паблишеров
+}
+
+# Раскладка по КОНТУРУ — для тех, у кого ключ роли между установками разъезжается.
+# Здесь стояли `role_120`/`role_121` (id ролей стенда); на проде трафик живёт на 12/13,
+# и оба ключа не нашли бы никого. Контур читается из `roles.staff_group`, его проставляет
+# миграция 2026-08-28_traffic_queue.sql по смыслу роли, а не по номеру строки.
+STAFF_GROUP_TO_PROFILE = {
+    "traffic": "traffic",
+    "publishers": "publishers",
 }
 
 
@@ -81,10 +93,13 @@ def assign_profiles(dry_run: bool = False) -> int:
     changed = 0
     try:
         profiles = {p.key: p.id for p in db.query(NotificationProfile).all()}
-        roles = {r.id: r.key for r in db.query(Role).all()}
+        all_roles = db.query(Role).all()
+        roles = {r.id: r.key for r in all_roles}
+        groups = {r.id: r.staff_group for r in all_roles}
         for u in db.query(User).filter(User.is_active == 1,
                                        User.notification_profile_id.is_(None)).all():
-            prof_key = ROLE_TO_PROFILE.get(roles.get(u.role_id))
+            prof_key = (ROLE_TO_PROFILE.get(roles.get(u.role_id))
+                        or STAFF_GROUP_TO_PROFILE.get(groups.get(u.role_id)))
             pid = profiles.get(prof_key) if prof_key else None
             if not pid:
                 print(f"  ? {u.email}: роль {roles.get(u.role_id)} не сопоставлена — пропуск")

@@ -79,16 +79,19 @@ export function BookingConfirm({ row, onClose, onPick }) {
   )
 }
 
-// Сбор запуска. Чек-лист сборки — отдельный модуль, его ещё нет, и здесь стоит
-// честная заглушка вместо имитации: показываем состав будущих пунктов и оставляем
-// ручной переход в размещение. Когда чек-лист появится, «В размещение» станет
-// доступной только по его выполнению, а кнопка строки сменится на неё.
-const PREP_CHECKLIST = [
-  'Креативы получены от агентства',
-  'Набор пропорций собран',
-  'Список площадок подтверждён',
-  'Креативы согласованы паблишерами',
-  'Таргетинги и сроки переданы в трафик',
+// Сбор запуска. До 31.08.2026 здесь стояли пять галочек, которые никогда не отмечались,
+// и подпись «модуль ещё не готов». Модуль готов с 26.08.2026 — комплекты, площадки,
+// проверка трафика, кабинет паблишера, ЕРИД. Заглушка пережила его появление и
+// продолжала звать пользователя вести сделку в размещение вручную, мимо всей цепочки.
+//
+// Состояние сборки живёт НА КАРТОЧКЕ СДЕЛКИ и рисуется там же. Повторять его здесь значило
+// бы завести второе место, где одно и то же состояние показывается по-разному, — поэтому
+// диалог не показывает сборку, а ведёт в неё.
+const PREP_STEPS = [
+  'Комплект креативов собран и адресован площадкам',
+  'Трафик проверил материал',
+  'Площадки ответили в своих кабинетах',
+  'Выпущен ЕРИД',
 ]
 
 export function LaunchPrepDialog({ row, onClose, onToLaunch }) {
@@ -101,22 +104,23 @@ export function LaunchPrepDialog({ row, onClose, onToLaunch }) {
           {row.period_from ? ` · старт ${dm(row.period_from)}` : ''}
         </div>
 
-        <span style={CAP}>Чек-лист сборки</span>
+        <span style={CAP}>Что проходит сделка в сборке</span>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
-          {PREP_CHECKLIST.map(item => (
-            <span key={item} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 12.5, color: 'var(--text-faint)' }}>
-              <span style={{ width: 14, height: 14, borderRadius: 4, border: '1px solid var(--border-card)', background: 'var(--bg-subtle)', flex: '0 0 14px' }} />
+          {PREP_STEPS.map((item, i) => (
+            <span key={item} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 12.5, color: 'var(--text-muted)' }}>
+              <span style={{ width: 16, fontFamily: MONO, fontSize: 10.5, color: 'var(--text-faint)', flex: '0 0 16px' }}>{i + 1}</span>
               {item}
             </span>
           ))}
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.45, marginBottom: 16 }}>
-          Пункты пока не отмечаются: сбор запуска — отдельный модуль (согласование креативов
-          в кабинетах паблишеров). До него переход в размещение делается вручную.
+          Состояние по каждой площадке — на карточке сделки, в блоке «Сборка запуска».
+          Переход в размещение остаётся ручным: сборка не запирает стадию, она её готовит.
         </div>
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button onClick={onClose} style={btnSm(false)}>Закрыть</button>
+          <a href={`/sales/deals/${row.code || row.id}`} style={{ ...btnSm(false), textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>Открыть сборку</a>
           <button onClick={onToLaunch} style={{ ...ctaStyle('launch_ready'), padding: '7px 14px' }}>В размещение</button>
         </div>
       </div>

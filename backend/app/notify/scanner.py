@@ -142,27 +142,10 @@ def rule_invoice_overdue(db: Session, ev: registry.Event) -> List[Hit]:
     return hits
 
 
-def rule_mp_stuck(db: Session, ev: registry.Event) -> List[Hit]:
-    """Медиапланы, застрявшие на согласовании. Возраст считаем по updated_at —
-    статус меняется через ORM, поэтому отметка обновляется при отправке на согласование."""
-    from app.sales.models import SalesMediaPlan
-
-    after_days = _param(ev, "after_days", 3)
-    edge = datetime.utcnow() - timedelta(days=after_days)
-
-    plans = (db.query(SalesMediaPlan)
-             .filter(SalesMediaPlan.status == "review",
-                     SalesMediaPlan.updated_at < edge).all())
-    hits = []
-    for p in plans:
-        days = (datetime.utcnow() - p.updated_at).days if p.updated_at else after_days
-        hits.append(Hit(
-            entity_type="media_plan", entity_id=p.id, stage="due",
-            title=f"МП ждёт согласования {days} дн.: {p.title or ('#' + str(p.id))}",
-            link=f"/accounts/mp/{p.id}", ctx={"media_plan": p},
-            payload={"days": days},
-        ))
-    return hits
+# `rule_mp_stuck` («МП висит на согласовании») удалено 30.08.2026 вместе со статусами
+# медиаплана: правило читало `status == "review"`, а такого состояния больше нет.
+# Его смысл — «план у клиента, ответа нет» — держит правило очереди `mp_unapproved`,
+# которое смотрит на СТАДИЮ сделки.
 
 
 # ──────────────── очередь сделок: одна функция срочности на шесть событий ────────────────
@@ -313,32 +296,30 @@ def rule_plan_month_empty(db: Session, ev: registry.Event) -> List[Hit]:
 
 
 def rule_mp_draft_stale(db: Session, ev: registry.Event) -> List[Hit]:
-    """Черновики МП, брошенные в конструкторе.
+    """Планы, не привязанные ни к одной сделке.
 
-    Планы, собранные конвейером годового плана, исключены: про них есть своё событие
-    mp_verify, адресованное аккаунту. Иначе один и тот же непроверенный автоплан
-    порождал бы два разных напоминания двум людям — верный способ, чтобы оба решили,
-    что это дело другого.
+    До 30.08.2026 правило читало `status == "draft"` и означало «на согласование не
+    уходил». Статусов больше нет, и все планы в базе — черновики по определению, так что
+    прежнее условие подняло бы разом весь реестр. Осталась та часть смысла, которая
+    проверяема: план построен, а сделки у него нет — значит он никуда не ведёт и, скорее
+    всего, забыт. План, привязанный к сделке, ведёт себя по стадии сделки, и о нём
+    говорят правила очереди (`mp_verify`, `mp_unapproved`).
     """
-    from app.sales.models import SalesMediaPlan, SalesDeal
+    from app.sales.models import SalesMediaPlan
 
     after_days = _param(ev, "after_days", 7)
     edge = datetime.utcnow() - timedelta(days=after_days)
 
-    conveyor = {d for (d,) in db.query(SalesDeal.id)
-                .filter(SalesDeal.year_plan_line_id.isnot(None)).all()}
     plans = (db.query(SalesMediaPlan)
-             .filter(SalesMediaPlan.status == "draft",
+             .filter(SalesMediaPlan.deal_id.is_(None),
                      SalesMediaPlan.created_by.isnot(None),
                      SalesMediaPlan.updated_at < edge).all())
     hits = []
     for p in plans:
-        if p.deal_id and p.deal_id in conveyor:
-            continue
         days = (datetime.utcnow() - p.updated_at).days if p.updated_at else after_days
         hits.append(Hit(
             entity_type="media_plan", entity_id=p.id, stage="due",
-            title=f"Черновик МП лежит {days} дн.: {p.title or ('#' + str(p.id))}",
+            title=f"МП без сделки лежит {days} дн.: {p.title or ('#' + str(p.id))}",
             link=f"/accounts/mp/{p.id}", ctx={"media_plan": p},
             payload={"days": days},
         ))
@@ -397,9 +378,9 @@ def _after_backlog_overdue(db: Session, hit: Hit, now: datetime):
 # в сканер не попадает (и наоборот — функция без записи в реестре не запустится).
 # Шесть событий очереди сделок обслуживает ОДНА функция срочности (app.sales.urgency),
 # та же, что строит очередь на дашборде аккаунта; обёртка лишь разбирает её вердикты
-# по видам. invoice_overdue и mp_stuck на неё не переезжают: они считаются по операциям
-# и по медиапланам, а не по сделкам — у них другая сущность и другой адресат.
-DEAL_QUEUE_EVENTS = ["deal_mp_missing", "mp_verify", "mp_unapproved", "mp_rework", "booking_confirm",
+# по видам. invoice_overdue на неё не переезжает: он считается по операциям, а не по
+# сделкам — у него другая сущность и другой адресат.
+DEAL_QUEUE_EVENTS = ["deal_mp_missing", "mp_verify", "mp_unapproved", "booking_confirm",
                      "act_missing", "stage_stuck", "stage_unmapped"]
 
 def rule_creative_silence(db: Session, ev: registry.Event) -> List[Hit]:
@@ -444,7 +425,7 @@ def rule_creative_silence(db: Session, ev: registry.Event) -> List[Hit]:
             title=f"{pub.name if pub else 'Площадка'} молчит {waited} дн. · {deal.code}",
             body="Комплект отправлен, вердикта нет. Напомнить или снять получателя.",
             link=f"/sales/deals/{deal.code or deal.id}",
-            ctx={"deal_id": deal.id},
+            ctx={"deal": deal},
         ))
     return hits
 
@@ -483,7 +464,7 @@ def rule_creative_erid_failed(db: Session, ev: registry.Event) -> List[Hit]:
             title=f"Креатив не зарегистрирован · {deal.code}",
             body=f"Комплект №{s.no}: {what}. {s.ord_error or ''}".strip(),
             link=f"/sales/deals/{deal.code or deal.id}",
-            ctx={"deal_id": deal.id},
+            ctx={"deal": deal},
         ))
     return hits
 
@@ -527,18 +508,22 @@ def rule_traffic_silence(db: Session, ev: registry.Event) -> List[Hit]:
             continue
         waited = (datetime.utcnow() - review.asked_at).days if review.asked_at else days
         hits.append(Hit(
-            key=f"traffic_silence:{pair.id}",
-            deal_id=deal.id,
+            entity_type="creative_pair", entity_id=pair.id, stage="silence",
             title=f"{deal.title or deal.code}: трафик не проверил "
                   f"{pub.name if pub else 'площадку'} — {waited} дн.",
+            body="Материал ждёт проверки трафика — площадке он ещё не уходил.",
             link="/traffic/queue",
+            # Событие адресовано и роли трафика, и АККАУНТУ СДЕЛКИ (`account_manager`),
+            # а тот резолвер читает `ctx["deal"]`. Без контекста аккаунт не узнавал бы,
+            # что его сделка стоит из-за молчащего трафика.
+            ctx={"deal": deal},
+            payload={"days": waited},
         ))
     return hits
 
 
 RULES = {
     "invoice_overdue": rule_invoice_overdue,
-    "mp_stuck": rule_mp_stuck,
     "plan_month_empty": rule_plan_month_empty,
     "mp_draft_stale": rule_mp_draft_stale,
     "backlog_overdue": rule_backlog_overdue,
@@ -575,7 +560,17 @@ def scan(dry_run: bool = False, only: Optional[str] = None) -> Dict[str, int]:
                 print(f"  ! {event_key}: нет в реестре — пропуск")
                 continue
             stats["rules"] += 1
-            hits = fn(db, ev)
+            try:
+                hits = fn(db, ev)
+            except Exception as e:                  # noqa: BLE001 — намеренно широко
+                # Изоляция правила. До 31.08.2026 её не было, и одна опечатка в одном
+                # правиле обрывала ВЕСЬ прогон: внешний обработчик делает rollback и
+                # откатывает отправки правил, успевших отработать раньше. Правило —
+                # независимая единица работы, и падать оно должно в одиночку.
+                db.rollback()
+                stats["failed"] = stats.get("failed", 0) + 1
+                print(f"  ! {event_key}: {type(e).__name__}: {e}")
+                continue
             stats["matches"] += len(hits)
             repeat_days = _param(ev, "repeat_days", 10)
             print(f"[{event_key}] сработок: {len(hits)}")

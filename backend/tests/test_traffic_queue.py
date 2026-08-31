@@ -19,8 +19,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from app.launch_prep.models import (LaunchPrepPair, LaunchPrepPairFile,
-                                    LaunchPrepReview)
+from app.launch_prep.models import (LaunchPrepCreativeSet, LaunchPrepPair,
+                                    LaunchPrepPairFile, LaunchPrepReview)
 from app.sales.models import SalesRep
 from app.routers import launch_prep as lp
 from app.routers import traffic
@@ -61,9 +61,12 @@ def _user(key, is_master, uid=None):
                            role=SimpleNamespace(key=key, is_master=is_master))
 
 
-def _sees(db, user, deal_id):
-    """Видит ли пользователь в очереди хоть одну пару этой сделки."""
-    rows = traffic.queue('all', db, user)['rows']
+def _sees(db, user, deal_id, rep_id=None, all_reps=False):
+    """Видит ли пользователь в очереди хоть одну пару этой сделки.
+
+    `rep_id`/`all_reps` — переключатель между трафиками; у рядового он не читается.
+    """
+    rows = traffic.queue('all', db, user, rep_id=rep_id, all_reps=all_reps)['rows']
     return any(r['deal']['id'] == deal_id for r in rows)
 
 
@@ -89,14 +92,28 @@ def scope(env):  # noqa: F811
     db.commit()
 
 
-def test_unassigned_deal_is_visible_to_everyone(scope):
-    """Неназначенное — общее. На этом сегодня стоит вся очередь: назначений нет."""
-    assert scope.deal.traffic_manager_id is None
-    assert _sees(scope.db, _user('role_120', False, scope.uid_mine), scope.deal.id)
-    assert _sees(scope.db, _user('role_120', False, scope.uid_other), scope.deal.id)
-    assert _sees(scope.db, _user('role_120', False, _UID_NOBODY), scope.deal.id), (
-        'у трафика без своей строки в справочнике очередь не должна быть пустой'
-    )
+def test_unassigned_work_belongs_to_nobody(scope):
+    """Неназначенное рядовому трафику НЕ показывается.
+
+    До 31.08.2026 «ничьё» было общим, и это описывало день, когда назначений не было
+    вовсе. Владелец: трафик видит только своё. Иначе распределение ничего не
+    распределяет — каждый по-прежнему видит всё.
+
+    Практическое следствие, которое надо знать: пока `traffic_manager_id` пуст, у
+    рядового трафика очередь пустая. Работа появляется у него в момент назначения, а не
+    в момент отправки материала.
+    """
+    # Снимаем назначение явно: общая фикстура сборки его теперь ставит — без трафика
+    # материал не отправить (проверка перед отправкой, 31.08.2026). Исходное значение
+    # вернёт teardown фикстуры.
+    scope.deal.traffic_manager_id = None
+    scope.db.commit()
+    assert not _sees(scope.db, _user('role_120', False, scope.uid_mine), scope.deal.id)
+    assert not _sees(scope.db, _user('role_120', False, scope.uid_other), scope.deal.id)
+    assert not _sees(scope.db, _user('role_120', False, _UID_NOBODY), scope.deal.id)
+    # Мастер добирается до неназначенного через «все» — иначе оно потерялось бы совсем.
+    assert _sees(scope.db, _user('role_121', True, scope.uid_mine), scope.deal.id,
+                 all_reps=True)
 
 
 def test_assigned_deal_is_hidden_from_others(scope):
@@ -110,17 +127,61 @@ def test_assigned_deal_is_hidden_from_others(scope):
     )
 
 
-def test_master_and_admin_see_assigned_work(scope):
-    """Мастер видит чужое назначение — иначе он не мастер.
+def test_master_reaches_other_work_but_starts_with_his_own(scope):
+    """Мастер начинает со СВОЕЙ очереди и переключается на чужую.
 
-    Признак берётся из `roles.is_master`, а не из имени роли: «Мастер траффик» — это
+    Признак мастера берётся из `roles.is_master`, а не из имени роли: «Мастер траффик» —
     подпись в интерфейсе, и переименование роли не должно отбирать полномочие.
+
+    По умолчанию мастер работает как все — иначе он каждый день открывает чужую работу
+    вместо своей. Чужую он видит выбором в переключателе (31.08.2026).
     """
     scope.deal.traffic_manager_id = scope.other.id
     scope.db.commit()
-    assert _sees(scope.db, _user('role_121', True, scope.uid_mine), scope.deal.id)
+    master = _user('role_121', True, scope.uid_mine)
+
+    assert not _sees(scope.db, master, scope.deal.id), 'по умолчанию мастеру показали чужое'
+    assert _sees(scope.db, master, scope.deal.id, rep_id=scope.other.id)
+    assert _sees(scope.db, master, scope.deal.id, all_reps=True)
+    # Админ без своей строки в справочнике «своих» не имеет — получает раздел целиком.
     assert _sees(scope.db, _user('admin', False, None), scope.deal.id)
     assert not _sees(scope.db, _user('role_120', False, scope.uid_mine), scope.deal.id)
+
+
+def test_master_can_act_on_what_he_can_see(scope):
+    """Переключился на чужую очередь — значит может по ней и нажать.
+
+    Переключатель (31.08.2026) расширил ТОЛЬКО чтение: действия ходят через
+    `_pair_in_scope`, а он звал `_apply_scope` без параметров и оставлял мастеру его
+    собственные сделки. Со стороны это выглядит хуже, чем запрет: строки видны, а каждое
+    нажатие отвечает «пара не найдена».
+
+    Область действий мастера равна области ВИДИМОСТИ: «мои» у него — умолчание экрана,
+    а не граница прав.
+    """
+    scope.deal.traffic_manager_id = scope.other.id
+    scope.db.commit()
+    pair = (scope.db.query(LaunchPrepPair)
+            .join(LaunchPrepCreativeSet,
+                  LaunchPrepCreativeSet.id == LaunchPrepPair.set_id)
+            .filter(LaunchPrepCreativeSet.deal_id == scope.deal.id).first())
+    assert pair, 'у сделки нет пары — проверять нечего'
+
+    master = _user('role_121', True, scope.uid_mine)
+    assert traffic._pair_in_scope(scope.db, pair.id, master), 'мастеру ответили 404 на своё же'
+
+    stranger = _user('role_120', False, scope.uid_mine)
+    with pytest.raises(HTTPException):
+        traffic._pair_in_scope(scope.db, pair.id, stranger)
+
+
+def test_a_rank_and_file_traffic_cannot_pick_somebody_else(scope):
+    """Переключатель рядовому не подчиняется: параметры просто не читаются."""
+    scope.deal.traffic_manager_id = scope.other.id
+    scope.db.commit()
+    mine = _user('role_120', False, scope.uid_mine)
+    assert not _sees(scope.db, mine, scope.deal.id, rep_id=scope.other.id)
+    assert not _sees(scope.db, mine, scope.deal.id, all_reps=True)
 
 
 # ── порядок ступеней ─────────────────────────────────────────────────────────
@@ -230,6 +291,31 @@ def test_queue_shows_waiting_pairs_with_prefix(env):  # noqa: F811
     left = traffic.queue('waiting', env.db, _ADMIN)["rows"]
     assert pairs[0].id not in {r["pair_id"] for r in left}, (
         "отвеченная пара обязана уходить из очереди, иначе она не пустеет")
+
+
+def test_queue_count_matches_waiting_and_drops_on_verdict(env):  # noqa: F811
+    """Счётчик для меню считает ровно неразобранное и убывает с каждым вердиктом.
+
+    Отдельная лёгкая ручка (`/queue/count`), но число обязано совпадать с длиной очереди
+    ожидания: иначе значок в шапке заявит одно, а экран покажет другое.
+    """
+    pairs = _sent(env)
+    mine = {p.id for p in pairs}
+
+    def waiting_here():
+        rows = traffic.queue('waiting', env.db, _ADMIN)["rows"]
+        return len([r for r in rows if r["pair_id"] in mine])
+
+    # Счётчик = длина очереди ожидания в той же области. Админ видит всё, поэтому
+    # сравниваем именно с полным waiting, а не только со своими парами.
+    all_waiting = len(traffic.queue('waiting', env.db, _ADMIN)["rows"])
+    assert traffic.queue_count(env.db, _ADMIN)["waiting"] == all_waiting
+    assert waiting_here() == len(pairs)
+
+    before = traffic.queue_count(env.db, _ADMIN)["waiting"]
+    traffic.pair_verdict(pairs[0].id, traffic.VerdictIn(verdict='ок'), env.db, _ADMIN)
+    after = traffic.queue_count(env.db, _ADMIN)["waiting"]
+    assert after == before - 1, "вердикт не уменьшил счётчик неразобранного"
 
 
 # ── файлы ────────────────────────────────────────────────────────────────────

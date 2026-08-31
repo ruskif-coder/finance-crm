@@ -18,9 +18,14 @@ from app.notify.recipients import RESOLVERS
 def test_every_recipient_spec_is_resolvable():
     for ev in registry.EVENTS.values():
         for spec in ev.recipients:
-            assert spec["type"] in ("resolver", "role", "user"), (ev.key, spec)
+            assert spec["type"] in ("resolver", "role", "staff_group", "user"), (ev.key, spec)
             if spec["type"] == "resolver":
                 assert spec["value"] in RESOLVERS, f"{ev.key}: нет резолвера {spec['value']}"
+            if spec["type"] == "staff_group":
+                # Значения те же, что принимает экран ролей (`roles.py`). Опечатка здесь
+                # не ошибка, а тишина: адресат просто не находится.
+                assert spec["value"] in ("seller", "account", "traffic", "publishers"), (
+                    f"{ev.key}: рабочей группы {spec['value']} не существует")
 
 
 def test_directions_and_channels_are_known():
@@ -32,11 +37,28 @@ def test_directions_and_channels_are_known():
             assert ch in registry.CHANNELS, (ev.key, ch)
 
 
-def test_mp_events_registered():
-    """Четыре живых события МП должны существовать под теми же ключами, что и раньше —
-    иначе строки в notifications, созданные до переезда, потеряют оформление."""
-    for key in ("mp_submit", "mp_approved", "mp_rejected", "mp_archived", "mp_recalled"):
-        assert registry.get(key) is not None, key
+RETIRED_MP_EVENTS = ("mp_submit", "mp_approved", "mp_rejected", "mp_archived",
+                     "mp_recalled", "mp_status", "mp_stuck", "mp_rework")
+
+
+def test_mp_approval_events_did_not_come_back():
+    """У медиаплана нет своего состояния — значит нет и событий о его смене.
+
+    Восемь ключей ниже обслуживали стейт-машину согласования, снятую 30.08.2026 вместе
+    со стадией «МП согласование». Прибор стоит здесь не ради уборки: параллельное
+    состояние плана рядом со стадией сделки — ровно та развилка, из-за которой проверка
+    плана и его «согласование» начали означать разное. Событие с таким ключом,
+    появившееся снова, — признак, что развилку восстановили.
+    """
+    back = [k for k in RETIRED_MP_EVENTS if registry.get(k) is not None]
+    assert not back, f'вернулись события снятого воркфлоу МП: {back}'
+
+
+def test_the_single_mp_event_is_readiness():
+    """Живое событие про план ровно одно, и оно про готовность, а не про визу."""
+    ev = registry.get("mp_ready")
+    assert ev is not None and ev.direction == "sales"
+    assert ev.recipients == [{"type": "resolver", "value": "sales_rep_of_deal"}]
 
 
 # ---- emit ----
@@ -68,7 +90,7 @@ def test_unknown_event_raises():
 def test_actor_does_not_notify_himself(monkeypatch):
     monkeypatch.setattr("app.notify.bus._channels_for", lambda db, uid, ev: ["app"])
     db = FakeSession()
-    got = emit(db, "mp_approved", title="МП согласован", user_ids=[7, 9], actor=Actor(7))
+    got = emit(db, "mp_ready", title="МП посчитан", user_ids=[7, 9], actor=Actor(7))
     assert got == [9]
 
 
@@ -77,7 +99,7 @@ def test_disabled_subscription_is_logged_not_silent(monkeypatch):
     «мне не приходило» неразрешим."""
     monkeypatch.setattr("app.notify.bus._channels_for", lambda db, uid, ev: [])
     db = FakeSession()
-    got = emit(db, "mp_archived", title="МП в архиве", user_ids=[5])
+    got = emit(db, "mp_ready", title="МП посчитан", user_ids=[5])
     assert got == []
     row = db.added[-1]
     assert row.status == "suppressed" and row.suppress_reason == "disabled"
@@ -89,7 +111,7 @@ def test_pending_channels_are_queued(monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.setattr("app.notify.bus._channels_for", lambda db, uid, ev: ["app", "tg"])
     db = FakeSession()
-    emit(db, "mp_submit", title="Новый МП", user_ids=[3])
+    emit(db, "mp_ready", title="МП посчитан", user_ids=[3])
     statuses = {(r.channel, r.status) for r in db.added if hasattr(r, "status")}
     assert ("app", "sent") in statuses
     assert ("tg", "queued") in statuses
@@ -155,13 +177,13 @@ class Ch:
 
 
 def test_quiet_hours_none_means_always_allowed():
-    assert _quiet_now(Ch(), registry.get("mp_submit")) is False
-    assert _quiet_now(None, registry.get("mp_submit")) is False
+    assert _quiet_now(Ch(), registry.get("mp_ready")) is False
+    assert _quiet_now(None, registry.get("mp_ready")) is False
 
 
 def test_locked_event_ignores_quiet_hours():
     """Отказ по МП и просрочка не ждут утра — на то они и «нельзя отключить»."""
-    ev = registry.get("mp_rejected")
+    ev = registry.get("invoice_overdue")   # locked=True
     assert ev.locked is True
     assert _quiet_now(Ch(0, 23), ev) is False
 
@@ -169,9 +191,9 @@ def test_locked_event_ignores_quiet_hours():
 def test_mute_until_blocks(monkeypatch):
     from datetime import date, timedelta
     assert _quiet_now(Ch(mute_until=date.today() + timedelta(days=1)),
-                      registry.get("mp_submit")) is True
+                      registry.get("mp_ready")) is True
     assert _quiet_now(Ch(mute_until=date.today() - timedelta(days=1)),
-                      registry.get("mp_submit")) is False
+                      registry.get("mp_ready")) is False
 
 
 # ---- разбор апдейта вебхука (недоверенный вход) ----

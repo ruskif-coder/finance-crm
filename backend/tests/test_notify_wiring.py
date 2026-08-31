@@ -33,18 +33,26 @@ def test_every_active_role_has_a_profile():
 
     Профиль по умолчанию — «Аккаунт»; трафик, попавший в него, читал бы про медиапланы
     и не читал бы про свою очередь.
+
+    Сопоставлений ДВА, и оба считаются: по ключу роли и по её рабочей группе. Второе
+    появилось 31.08.2026, когда выяснилось, что ключ вида `role_<id>` у каждой установки
+    свой: раскладка трафика по ключам стенда на проде не сработала бы.
     """
     from app.models import Role, User
 
+    from app.notify.seed_profiles import STAFF_GROUP_TO_PROFILE
+
     db = SessionLocal()
     try:
-        used = {k for (k,) in db.query(Role.key).join(User, User.role_id == Role.id)
+        used = {(k, g) for (k, g) in db.query(Role.key, Role.staff_group)
+                .join(User, User.role_id == Role.id)
                 .filter(User.is_active == 1).distinct().all()}
     finally:
         db.close()
-    missing = used - set(ROLE_TO_PROFILE)
+    missing = sorted(k for k, g in used
+                     if k not in ROLE_TO_PROFILE and g not in STAFF_GROUP_TO_PROFILE)
     assert not missing, (
-        f'роли есть у живых людей, но не сопоставлены с профилем: {sorted(missing)}'
+        f'роли есть у живых людей, но не сопоставлены с профилем: {missing}'
     )
 
 
@@ -78,11 +86,32 @@ def test_every_planned_event_exists_in_the_registry():
 # уведомления это про то, чья это работа, и угадывать здесь дороже, чем спросить.
 # Прибор ниже не требует закрыть их сегодня; он требует, чтобы НОВОЕ правило не
 # пополнило список молча.
-KNOWN_SILENT = {
-    'act_missing', 'backlog_overdue', 'booking_confirm', 'creative_erid_failed',
-    'deal_mp_missing', 'invoice_overdue', 'mp_draft_stale', 'mp_rework', 'mp_stuck',
-    'mp_unapproved', 'mp_verify', 'plan_month_empty', 'stage_stuck', 'stage_unmapped',
-}
+#
+# 31.08.2026 из списка убраны `mp_rework` и `mp_stuck`: правил с такими ключами больше
+# нет (удалены 30.08 вместе со стейт-машиной МП, `test_notify.RETIRED_MP_EVENTS`). Список
+# с призраками не мера — по нему не видно, сокращается он или нет.
+# 31.08.2026 список ОПУСТЕЛ, и это не уборка кода, а событие в данных: владелец сам
+# раздал профилю «Аккаунт» подписку на все 26 событий через интерфейс (audit_log,
+# `save_notification_profile_subs`, 12:39). Долг, ради которого список заводился, закрыт
+# по существу — сканерным правилам назначен адресат.
+#
+# ВАЖНО ПРО ПРОД: это НАСТРОЙКА, то есть строки в `notification_subscriptions`, а не код
+# и не миграция. На боевой базе её нет и она туда не переедет ни с `git pull`, ни с
+# накатом миграций. Пока раскладку там не повторят, сканер на проде снова работает в
+# пустоту — с той разницей, что теперь об этом известно.
+KNOWN_SILENT = set()
+
+
+def test_the_silent_list_has_no_ghosts():
+    """В замороженном списке нет ключей, которых уже нет в коде.
+
+    Призрак в списке безобиден на вид и вреден по сути: список объявлен «только
+    сокращающимся», и два снятых ключа читаются как два незакрытых долга. Ровно так
+    31.08.2026 он и разошёлся с соседним прибором, который те же ключи числил снятыми.
+    """
+    scanned = {e.key for e in _events() if getattr(e, 'scan', False)}
+    ghosts = KNOWN_SILENT - scanned
+    assert not ghosts, f'в KNOWN_SILENT ключи, которых нет среди правил: {sorted(ghosts)}'
 
 
 def test_no_new_rule_joins_the_silent_ones():
@@ -128,8 +157,43 @@ def test_traffic_contour_is_addressed_at_all():
     До 30.08.2026 — ни одного события: очередь была, уведомления не было. Прибор
     формулирован широко нарочно, чтобы не ломаться при переименовании конкретного
     события, но падать, если адресация исчезнет целиком.
+
+    31.08.2026 сам прибор переехал с ключей ролей на рабочую группу: ключи `role_120` и
+    `role_121` — id ролей ЭТОГО стенда, и на проде их нет (репетиция на боевой базе).
     """
     to_traffic = [e.key for e in _events()
-                  if any(r.get('value') in ('role_120', 'role_121')
+                  if any(r.get('type') == 'staff_group' and r.get('value') == 'traffic'
                          for r in (e.recipients or []))]
-    assert to_traffic, 'ни одно событие не адресовано ролям трафика'
+    assert to_traffic, 'ни одно событие не адресовано контуру трафика'
+
+
+def test_no_event_is_addressed_to_a_generated_role_key():
+    """Адресат-роль может быть только СИСТЕМНОЙ ролью.
+
+    Ключ вида `role_<id>` — это номер строки в таблице ролей той установки, где роль
+    завели. На другой установке та же по смыслу роль получит другой id и другой ключ.
+    Событие, адресованное `role_121`, на проде не находит никого — и молчит об этом:
+    пустой список получателей ошибкой не считается, `emit` просто выходит.
+
+    Найдено репетицией на боевой базе 31.08.2026: два события контура трафика были
+    адресованы `role_120`/`role_121` (id моего стенда), а на проде трафик живёт на
+    ролях 12 и 13. Ушли бы в пустоту оба.
+
+    Системные ключи (`admin`, `manager`, `viewer`) заводятся при создании базы и
+    одинаковы везде — их можно. Всё остальное адресуется контуром (`staff_group`)
+    или резолвером.
+    """
+    import re
+
+    SYSTEM = {'admin', 'manager', 'viewer'}
+    bad = []
+    for ev in _events():
+        for spec in ev.recipients or []:
+            if spec.get('type') != 'role':
+                continue
+            v = spec.get('value') or ''
+            if re.fullmatch(r'role_\d+', v) or v not in SYSTEM:
+                bad.append(f'{ev.key} → «{v}»')
+    assert not bad, (
+        'события адресованы ролью, ключ которой у каждой установки свой '
+        '(адресуйте staff_group или резолвером):\n  ' + '\n  '.join(bad))

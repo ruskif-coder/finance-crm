@@ -12,13 +12,6 @@ import ValuePopover from '@/components/ValuePopover'
 // клик-редактирование ячеек — как в реестре сделок. Данные приходят пачкой (последние
 // версии), поэтому фильтрация/сортировка — клиентские.
 const rub = (n) => (n == null ? '—' : `${new Intl.NumberFormat('ru-RU').format(Math.round(n))} ₽`)
-const STATUS = {
-  draft: ['Черновик', 'var(--bg-subtle)', 'var(--text-secondary)'],
-  review: ['На согласовании', 'var(--warning-tint)', 'var(--warning-text)'],
-  approved: ['Согласован', 'var(--income-tint)', 'var(--income)'],
-  rejected: ['Отклонён', 'var(--danger-tint)', 'var(--danger)'],
-  archived: ['Архив', 'var(--bg-subtle)', 'var(--text-faint)'],
-}
 // Колонки CSS-grid — ширины/раскладка как в реестре сделок (sales.js). edit — поле пикера.
 const COLS = [
   { key: 'id', w: '52px', label: 'ID' },
@@ -31,7 +24,7 @@ const COLS = [
   { key: 'sales_rep', w: '100px', label: 'Продавец', edit: 'seller' },
   { key: 'account_manager', w: '96px', label: 'Аккаунт', edit: 'account' },
   { key: 'payer', w: '1.15fr', label: 'Плательщик', edit: 'payer' },
-  { key: 'status', w: '116px', label: 'Статус' },
+  { key: 'deal_code', w: '132px', label: 'Сделка' },
   { key: 'actions', w: '162px', label: '', right: true },
 ]
 const GRID = COLS.map(c => c.w).join(' ')
@@ -59,7 +52,7 @@ export default function MpRegistry() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [periodOpen, setPeriodOpen] = useState(false)
-  const [sel, setSel] = useState({ status: [], agency_id: [], advertiser_id: [], brand_id: [], sales_rep_id: [], account_manager_id: [] })
+  const [sel, setSel] = useState({ deal_stage: [], agency_id: [], advertiser_id: [], brand_id: [], sales_rep_id: [], account_manager_id: [] })
   const [sortKey, setSortKey] = useState('id')
   const [sortDir, setSortDir] = useState('desc')
 
@@ -104,9 +97,12 @@ export default function MpRegistry() {
     items.forEach(it => { if (it[idKey] != null) m.set(it[idKey], it[labelKey] || '—') })
     return [...m].map(([value, label]) => ({ value, label })).sort((a, b) => String(a.label).localeCompare(String(b.label), 'ru'))
   }
-  const statusOpts = useMemo(() => [...new Set(items.map(i => i.status))].filter(Boolean).map(s => ({ value: s, label: (STATUS[s] || [s])[0] })), [items])
+  // Фильтр по стадии сделки: состояние плана это состояние его сделки, и фильтровать
+  // реестр планов имеет смысл именно по ней. План без сделки — своя строка списка.
+  const stageOpts = useMemo(() => [...new Set(items.map(i => i.deal_stage || '— без сделки'))]
+    .map(v => ({ value: v, label: v })), [items])
   const DROPS = [
-    ['status', 'Статус', statusOpts],
+    ['deal_stage', 'Стадия сделки', stageOpts],
     ['agency_id', 'Агентство', distinct('agency_id', 'agency')],
     ['advertiser_id', 'Рекламодатель', distinct('advertiser_id', 'advertiser')],
     ['brand_id', 'Бренд', distinct('brand_id', 'brand')],
@@ -124,12 +120,15 @@ export default function MpRegistry() {
       }
       if (dateFrom && String(it.period || '') < dateFrom) return false
       if (dateTo && String(it.period || '') > dateTo) return false
-      for (const [k] of DROPS) { const key = k === 'status' ? 'status' : k; if (sel[k].length && !sel[k].some(v => String(v) === String(it[key]))) return false }
+      for (const [k] of DROPS) {
+        const v = k === 'deal_stage' ? (it.deal_stage || '— без сделки') : it[k]
+        if (sel[k].length && !sel[k].some(x => String(x) === String(v))) return false
+      }
       return true
     })
     const val = (it) => {
       if (sortKey === 'amount_gross' || sortKey === 'id') return it[sortKey] || 0
-      if (sortKey === 'status') return (STATUS[it.status] || [it.status])[0] || ''
+      if (sortKey === 'deal_code') return it.deal_code || ''
       return String(it[sortKey] ?? '')
     }
     out = [...out].sort((a, b) => {
@@ -141,7 +140,7 @@ export default function MpRegistry() {
   }, [items, search, dateFrom, dateTo, sel, sortKey, sortDir])
 
   const onSort = (k) => { if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(k); setSortDir('desc') } }
-  const resetFilters = () => { setSel({ status: [], agency_id: [], advertiser_id: [], brand_id: [], sales_rep_id: [], account_manager_id: [] }); setDateFrom(''); setDateTo(''); setSearch('') }
+  const resetFilters = () => { setSel({ deal_stage: [], agency_id: [], advertiser_id: [], brand_id: [], sales_rep_id: [], account_manager_id: [] }); setDateFrom(''); setDateTo(''); setSearch('') }
 
   const patchCell = async (id, patch, localApply) => {
     try { await api.patch(`/sales/media-plans/${id}`, patch, auth()); setItems(prev => prev.map(x => x.id === id ? { ...x, ...localApply } : x)); return true }
@@ -277,7 +276,6 @@ export default function MpRegistry() {
               </div>
               {/* строки */}
               {view.map(it => {
-                const [sl, sbg, sfg] = STATUS[it.status] || [it.status, 'var(--bg-subtle)', 'var(--text-secondary)']
                 return (
                   <div key={it.id} className="d2-row" style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: '1px solid var(--border-row)', fontSize: 12, color: 'var(--text-primary)' }}>
                     <span style={{ ...clip, fontFamily: MONO, color: 'var(--text-muted)' }}>{it.id}<span style={{ fontSize: 10, color: 'var(--text-faint)' }}> v{it.version}</span></span>
@@ -296,7 +294,11 @@ export default function MpRegistry() {
                     <EditCell it={it} field="seller">{it.sales_rep}</EditCell>
                     <EditCell it={it} field="account">{it.account_manager}</EditCell>
                     <EditCell it={it} field="payer">{it.payer}</EditCell>
-                    <span style={clip}><span style={{ display: 'inline-flex', alignItems: 'center', background: sbg, color: sfg, borderRadius: 8, padding: '2px 8px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>{sl}</span></span>
+                    <span style={clip}>{it.deal_code
+                      ? <a href={`/sales/deals/${it.deal_code}`} onClick={e => e.stopPropagation()}
+                          title={it.deal_stage || ''}
+                          style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>{it.deal_code}</a>
+                      : <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>без сделки</span>}</span>
                     <span style={{ display: 'inline-flex', gap: 4, justifyContent: 'flex-end' }}>
                       <button onClick={() => router.push(`/accounts/mp/${it.id}`)} style={act}>Открыть</button>
                       <button onClick={() => exportXlsx(it)} style={act}>Excel</button>
