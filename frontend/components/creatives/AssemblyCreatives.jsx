@@ -528,7 +528,15 @@ const RATIO_PX = (ratio) => {
   return m ? [Number(m[1]), Number(m[2])] : null
 }
 
-export function CreativePreview({ files, startId, set, canApprove, onReviewed, onClose }) {
+/** `htmlSource` — готовая разметка вместо файла из хранилища.
+ *
+ *  Понадобилось демо-стенду DSP (06.09.2026): там баннер ещё не файл в нашей базе, а
+ *  строка, только что вернувшаяся от загрузчика DSP. Компонент один на все
+ *  места: вторая реализация предпросмотра означала бы, что проверяющий и трафик смотрят
+ *  на баннер по-разному, а спор «у меня всё ровно» разрешить нечем. Отличается только
+ *  источник разметки — не показ. */
+export function CreativePreview({ files, startId, set, canApprove, onReviewed, onClose,
+                                  htmlSource = null, title = 'Предпросмотр креатива' }) {
   const [curId, setCurId] = useState(startId)
   const [blob, setBlob] = useState(null)
   const [html, setHtml] = useState(null)
@@ -548,15 +556,17 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
     } catch (e) { setReviewErr(e.response?.data?.detail || 'Не удалось сохранить'); setReviewBusy(false) }
   }
 
-  const cur = files.find(f => f.id === curId) || files[0]
+  const cur = (files || []).find(f => f.id === curId) || (files || [])[0]
   const ext = (cur?.name || '').toLowerCase().split('.').pop()
-  const isImg = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
-  const isHtml = ext === 'html'
+  const isImg = !htmlSource && ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
+  const isHtml = !!htmlSource || ext === 'html'
 
   useEffect(() => {
     let alive = true
     let url = null
     setBlob(null); setHtml(null); setErr('')
+    // Разметку передали прямо — тянуть нечего.
+    if (htmlSource) { setHtml(htmlSource); return }
     if (!cur || (!isImg && !isHtml)) return
     api.get(`/launch-prep/file/${cur.id}`, { ...auth(), responseType: 'blob' })
       .then(async r => {
@@ -566,7 +576,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
       })
       .catch(() => { if (alive) setErr('Не удалось загрузить файл') })
     return () => { alive = false; if (url) URL.revokeObjectURL(url) }
-  }, [cur, isImg, isHtml])
+  }, [cur, isImg, isHtml, htmlSource])
 
   useEffect(() => {
     const el = stageRef.current
@@ -587,7 +597,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
     <div style={OVERLAY} {...overlayClose(onClose)}>
       <div style={{ ...SHEET, width: 'min(1000px, 96vw)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 17, fontWeight: 700 }}>Предпросмотр креатива</span>
+          <span style={{ fontSize: 17, fontWeight: 700 }}>{title}</span>
           <button style={{ ...btn(false), marginLeft: 'auto' }} onClick={onClose}>Закрыть</button>
         </div>
 
@@ -637,7 +647,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
             <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>загрузка…</span>
           )}
           {!err && isImg && !!blob && (
-            <img src={blob} alt={cur.name} style={{ maxWidth: '100%', display: 'block', background: 'var(--bg-card)' }} />
+            <img src={blob} alt={cur?.name || 'креатив'} style={{ maxWidth: '100%', display: 'block', background: 'var(--bg-card)' }} />
           )}
 
           {!err && isHtml && html === null && (
@@ -648,7 +658,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
               height: wh ? Math.round(wh[1] * k) : 420, overflow: 'hidden' }}>
               {/* Чужой исполняемый код — только в изолированной рамке и без
                   allow-same-origin: тогда у неё свой origin, и до нашей сессии не дотянуться. */}
-              <iframe srcDoc={html} sandbox="allow-scripts" title={'Креатив ' + (cur.ratio || '')}
+              <iframe srcDoc={html} sandbox="allow-scripts" title={'Креатив ' + (cur?.ratio || '')}
                 style={{ border: 0, display: 'block', background: 'var(--bg-card)',
                   width: wh ? wh[0] : '100%', height: wh ? wh[1] : 420,
                   transform: `scale(${k})`, transformOrigin: 'top left' }} />
@@ -661,7 +671,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
           {!err && !isImg && !isHtml && !!cur?.sandbox_url && (
             <div style={{ width: wh ? Math.round(wh[0] * k) : '100%',
               height: wh ? Math.round(wh[1] * k) : 420, overflow: 'hidden' }}>
-              <iframe src={cur.sandbox_url} title={'Креатив ' + (cur.ratio || '')}
+              <iframe src={cur.sandbox_url} title={'Креатив ' + (cur?.ratio || '')}
                 style={{ border: 0, display: 'block', background: 'var(--bg-card)',
                   width: wh ? wh[0] : '100%', height: wh ? wh[1] : 420,
                   transform: `scale(${k})`, transformOrigin: 'top left' }} />
@@ -949,6 +959,7 @@ const NoteIcon = () => (
 function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt, onUrl, onRequest, onVerdict, onRework, onMove, onShots }) {
   const [url, setUrl] = useState(r.advertiser_url || '')
   const [editing, setEditing] = useState(false)
+  const [urlErr, setUrlErr] = useState('')
   // Причина правок раскрывается КЛИКОМ, а не подсказкой при наведении: это единственная
   // фраза, которая говорит, что именно чинить, и в hover её никто не находит (31.08.2026).
   const [noteOpen, setNoteOpen] = useState(false)
@@ -964,9 +975,27 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
   // Маркер у строки есть, когда она прошла его ступень, — а не когда он есть у комплекта.
   const hasErid = !!set.erid && ['ерид получен', 'ожидает старта', 'в размещении'].includes(status)
 
-  const commit = () => {
-    const next = url.trim()
-    if (next !== (r.advertiser_url || '')) onUrl(r, next)
+  /* Ссылку почти всегда КОПИРУЮТ, и копируют по-разному: из адресной строки — со
+     схемой, из письма или таблицы — без неё («apteka.ru/product/1»). Сервер схему
+     требует (это защита от «javascript:», а не придирка), поэтому дописываем её здесь,
+     до отправки. Иначе обычная вставка отвечала отказом, поле сбрасывалось перезагрузкой,
+     а причина оставалась внизу карточки — со стороны это ровно «ссылка не сохраняется».
+     Строку со схемой не трогаем: подставлять https поверх http значило бы менять адрес. */
+  const normalize = (v) => {
+    const t = v.trim()
+    if (!t || /^https?:\/\//i.test(t)) return t
+    if (/^[a-z][a-z0-9+.-]*:/i.test(t)) return t      // иная схема — пусть откажет сервер
+    return `https://${t}`
+  }
+
+  const commit = async () => {
+    const next = normalize(url)
+    if (next === (r.advertiser_url || '')) { setEditing(false); return }
+    setUrl(next)
+    // Ввод закрываем ТОЛЬКО после успеха: отказ с закрытым полем стирает набранное, и
+    // человек не понимает, что произошло — надо переписывать заново вслепую.
+    const ok = await onUrl(r, next)
+    if (ok) { setUrlErr(''); setEditing(false) } else setUrlErr('не сохранилось')
   }
 
   return (
@@ -1022,14 +1051,21 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
             style={{ ...inp, flex: 1, minWidth: 0, padding: '4px 8px', fontSize: 11.5, fontFamily: MONO }}
             placeholder={r.url_state === 'запрошена' ? 'ждём ответа площадки' : 'https://…'}
             value={url}
-            onChange={e => setUrl(e.target.value)}
-            onBlur={() => { commit(); setEditing(false) }}
+            onChange={e => { setUrl(e.target.value); if (urlErr) setUrlErr('') }}
+            onBlur={commit}
             onKeyDown={e => {
               if (e.key === 'Enter') e.currentTarget.blur()
               // Escape возвращает прежнее значение: набранное сохраняется по выходу из
               // поля, и без отмены опечатка уезжала бы в базу вместе с кликом мимо.
-              if (e.key === 'Escape') { setUrl(r.advertiser_url || ''); setEditing(false) }
+              if (e.key === 'Escape') { setUrl(r.advertiser_url || ''); setUrlErr(''); setEditing(false) }
             }} />
+          {/* Отказ — рядом с полем, а не внизу карточки: там его не видно, и отказ
+              читается как «нажатие не сработало». */}
+          {!!urlErr && (
+            <span style={{ fontSize: 10.5, color: 'var(--dot-overdue)', whiteSpace: 'nowrap' }}>
+              {urlErr}
+            </span>
+          )}
         </span>
       ) : (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0 }}
@@ -1522,8 +1558,11 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
   const setTrafficManager = async (id) => {
     setErr(''); setTmOpen(false)
     try {
+      // Шлём УЧЁТКУ: профиль ответственного под ней заводится на сервере
+      // (app/sales/reps.py). До 03.09.2026 сюда уходил id из справочника, а его у
+      // трафиков нет ни у кого — список кандидатов приходил пустым.
       await api.put(`/launch-prep/deal/${dealId}/traffic-manager`,
-        { traffic_manager_id: id ? Number(id) : null }, auth())
+        { user_id: id ? Number(id) : null }, auth())
       load()
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось назначить трафика') }
   }
@@ -1542,10 +1581,18 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
       try { await api.put(`/launch-prep/target/${id}/state`, { state }, auth()); load() }
       catch (e) { setErr(e.response?.data?.detail || 'Не удалось сменить состояние') }
     },
+    /* Возвращает УСПЕХ: строка держит ввод открытым, пока ссылка не легла. И при отказе
+       НЕ перезагружаем — перезагрузка стирала набранное вместе с ошибкой. */
     url: async (rec, url) => {
       setErr('')
-      try { await api.put(`/launch-prep/target/${rec.target_id}/url`, { url }, auth()); load() }
-      catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить ссылку'); load() }
+      try {
+        await api.put(`/launch-prep/target/${rec.target_id}/url`, { url }, auth())
+        load()
+        return true
+      } catch (e) {
+        setErr(e.response?.data?.detail || 'Не удалось сохранить ссылку')
+        return false
+      }
     },
     /* Скриншоты размещения снимает трафик, а нужны они аккаунту — как доказательство
        клиенту. Поэтому кнопка стоит здесь, а не только в очереди трафика; ручка одна
@@ -1581,22 +1628,23 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
           услуга: {data.service?.name || 'не определена'} · {data.service_reason}
         </span>
 
-        {/* Ответственный трафик — здесь, а не в карточке сделки и не в медиаплане.
-            От плана до активной фазы проходят месяцы, а трафик выделяется В МОМЕНТЕ по
-            текущей нагрузке (владелец, 31.08.2026): раньше сборки его не существует.
-            Стоит рядом с материалом ещё и потому, что без него материал не отправить —
-            узнавать об этом в момент нажатия «Отправить» поздно. */}
+        {/* Ответственный трафик. Отправку он больше НЕ блокирует (владелец 03.09.2026):
+            очередь согласования общая, разбирают по наличию времени. Отметка осталась —
+            её ставят и меняют вручную до старта, — и тот же контрол стоит на карточке
+            сделки: назначают и оттуда тоже. */}
         <span style={{ ...CAP, marginBottom: 0, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           трафик:
           {tmOpen ? (
-            <select autoFocus defaultValue={data.deal?.traffic_manager_id || ''}
+            <select autoFocus defaultValue={data.deal?.traffic_manager_user_id || ''}
               onChange={e => setTrafficManager(e.target.value)}
               onBlur={() => setTmOpen(false)}
               style={{ fontFamily: UI, fontSize: 11.5, padding: '2px 6px', borderRadius: 7,
                 border: '1px solid var(--border-card)', background: 'var(--bg-card)',
                 color: 'var(--text-primary)' }}>
               <option value="">— не назначен —</option>
-              {(tmList || []).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              {(tmList || []).map(t => (
+                <option key={t.user_id} value={t.user_id}>{t.name}</option>
+              ))}
             </select>
           ) : (
             <span onClick={canEdit ? openTm : undefined}

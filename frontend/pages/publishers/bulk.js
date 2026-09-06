@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import Head from 'next/head'
+import Link from 'next/link'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/http'
 import Navbar, { can, firstAllowedHref } from '@/components/Navbar'
@@ -201,12 +202,12 @@ export default function PublishersBulk() {
               <IconBtn title="Перечитать с сервера" onClick={load}>
                 <svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v4h-4" /></svg>
               </IconBtn>
-              <a href="/publishers" style={{ ...btn(false), textDecoration: 'none' }}>К реестру</a>
+              <Link href="/publishers" style={{ ...btn(false), textDecoration: 'none' }}>К реестру</Link>
             </span>
           </div>
 
           <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap',
-            padding: '8px 12px', background: '#F6F8FF', border: '1px solid var(--accent-border)',
+            padding: '8px 12px', background: 'var(--accent-tint)', border: '1px solid var(--accent-border)',
             borderRadius: 12, marginBottom: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
             <span style={{ ...CAP, marginBottom: 0, color: 'var(--accent)' }}>как заполнять</span>
             <span>клетка услуги листает: пусто → WEB → APP → оба</span>

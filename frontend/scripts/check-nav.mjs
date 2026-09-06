@@ -37,8 +37,15 @@ const ORPHAN_ALLOWED = new Set([
   '/directory',
   '/publishers/[id]',  // карточка площадки, открывается из реестра; своего пункта меню нет
 ])
-// settings и settings/* гейтятся отдельным require_admin, в карту не входят намеренно
-const orphanExempt = (route) => ORPHAN_ALLOWED.has(route) || route === '/settings' || route.startsWith('/settings/')
+// settings и settings/* гейтятся отдельным require_admin, в карту не входят намеренно.
+//
+// Печатные формы (сегмент `/pdf/`) — тоже не экраны меню: их открывает кнопка «скачать»
+// с рабочего экрана и headless-Chromium сайдкара, который печатает их в PDF. Пункт меню
+// «печатная форма приложения» без выбранного документа не имеет смысла. До 05.09.2026
+// правило держалось случайностью: единственная такая страница у медиаплана молчала не
+// потому, что она печатная, а потому что на неё указывал легаси-редирект.
+const orphanExempt = (route) => ORPHAN_ALLOWED.has(route) || route === '/settings'
+  || route.startsWith('/settings/') || route.includes('/pdf/')
 
 // 1. Адреса экранов уникальны
 const seen = new Map()
@@ -105,6 +112,13 @@ if (existsSync('pages')) {
     const asIndex = asParam.replace(/\/index$/, '') || '/'
     if (orphanExempt(route) || orphanExempt(asIndex)) continue
     if (known.has(asParam) || known.has(asIndex)) continue
+    // Карточка внутри зарегистрированного экрана (`/accounts/annex/:id` при экране
+    // `/accounts/annex`) — не сирота: на неё ведёт строка реестра. До 05.09.2026
+    // единственная такая страница (`/accounts/mp/:id`) молчала лишь потому, что на неё
+    // указывал легаси-редирект, — то есть правило держалось случайностью.
+    const parts = asParam.split('/')
+    if (parts.length > 2 && parts[parts.length - 1].startsWith(':')
+        && known.has(parts.slice(0, -1).join('/'))) continue
     warnings.push(`Страница ${f} не значится ни в карте, ни среди целей редиректов`)
   }
 }

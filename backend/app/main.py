@@ -10,7 +10,8 @@ from app.routers import (auth, operations, reports, counterparties, articles, se
                          sales_reconcile, media_plans, notifications, notify_settings,
                          year_plan, finreport, backlog, account_dashboard,
                          publishers, diadoc, ord, launch_prep, traffic, cabinets,
-                         cabinet_gateway)
+                         cabinet_gateway, traffic_catalog, traffic_balancer,
+                         dsp_demo, traffic_dashboard, annexes, directory_add)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -36,6 +37,7 @@ from app import diadoc_models  # noqa: F401,E402 — реестр докумен
 from app.ord import models as ord_models          # noqa: F401,E402 — регистрирует таблицы в create_all
 from app.launch_prep import models as launch_prep_models  # noqa: F401,E402 — модуль креативов (миграция 2026-08-26_launch_prep_creatives.sql)
 from app.cabinet import models as cabinet_models  # noqa: F401,E402 — учётки кабинета (миграция 2026-08-28_publisher_cabinet.sql)
+from app.ad import models as ad_models  # noqa: F401,E402 — дашборд трафика/РК (миграция 2026-09-01_ad_campaigns.sql)
 
 Base.metadata.create_all(bind=engine)
 
@@ -512,6 +514,15 @@ app.include_router(launch_prep.router, prefix="/api/launch-prep", tags=["creativ
 # Контур «Траффики»: очередь проверки материала перед отправкой площадкам.
 # У него, в отличие от модуля креативов, СВОЙ экран — и запись в карте навигации.
 app.include_router(traffic.router, prefix="/api/traffic", tags=["traffic"])
+app.include_router(traffic_catalog.router, prefix="/api/traffic-catalog", tags=["traffic_catalog"])
+app.include_router(traffic_balancer.router, prefix="/api/traffic-catalog", tags=["traffic_balancer"])
+app.include_router(traffic_dashboard.router, prefix="/api/traffic-dashboard", tags=["traffic_dashboard"])
+app.include_router(dsp_demo.router, prefix="/api/dsp-demo", tags=["dsp_demo"])
+# Приложения к договору (ДС): сборка, подтверждение номера, шаблоны формулировок.
+app.include_router(annexes.router, prefix="/api/annexes", tags=["annexes"])
+# «Добавить данные» — вход на экран и набор доступных блоков. Писателей у него нет:
+# сохраняет он существующими ручками справочников.
+app.include_router(directory_add.router, prefix="/api/directory-add", tags=["directory_add"])
 # Учётки внешнего кабинета — администрирование со стороны ядра. Сам кабинет живёт
 # отдельным сервисом (`cabinet/`) и ходит в базу под своей ролью.
 app.include_router(cabinets.router, prefix="/api/cabinets", tags=["cabinets"])

@@ -307,7 +307,11 @@ def test_blockers_carry_a_code_not_only_a_russian_phrase():
     assert isinstance(answer['blockers'], list)
     for b in answer['blockers']:
         assert set(b) == {'code', 'text'}, f"блокер потерял форму: {b}"
-        assert b['code'] in ('threshold', 'chain', 'kktu'), (
+        # Список сверен с `launch_prep.erid_readiness` 04.09.2026 и был устаревшим В ОБЕ
+        # СТОРОНЫ: `threshold` снят вместе с порогом ЕРИД 31.08.2026, а `empty` («в
+        # комплекте нет ни одной площадки») добавлен и в список не попал. Задело это не
+        # прогон, а демо-данные: до них комплектов без площадок в базе просто не бывало.
+        assert b['code'] in ('empty', 'chain', 'kktu'), (
             f"неизвестный код блокера {b['code']} — экран не будет знать, что с ним делать")
     assert 'brand' in answer, (
         "маркировка бренда обязана приходить всегда, а не только когда она мешает: "

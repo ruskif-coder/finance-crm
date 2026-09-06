@@ -159,7 +159,11 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
           {fld('КПП', 'kpp')}{fld('ОГРН', 'ogrn')}{fld('ОКПО', 'okpo')}
           {fld('Юр. адрес', 'address', true)}{fld('Факт. адрес', 'address_fact', true)}
           {fld('Телефон', 'phone')}{fld('Email', 'email')}{fld('Сайт', 'website')}
-          {fld('Ген. директор', 'director_name')}{fld('ЭДО', 'edo_id')}{fld('Примечание', 'note', true)}
+          {fld('ЭДО', 'edo_id')}{fld('Примечание', 'note', true)}
+          {/* Те же три поля, что и на десктопе: они печатаются в приложении к договору. */}
+          <div style={{ ...sectionLbl, marginTop: 14 }}>Подписант документов</div>
+          {fld('ФИО подписанта', 'director_name')}
+          {fld('Должность', 'signer_position')}{fld('Основание полномочий', 'signer_basis')}
           <div style={{ ...sectionLbl, marginTop: 14 }}>Банковские счета</div>
           {(editData.bank_accounts || []).map((b, i) => (
             <div key={i} style={{ background: 'var(--bg-subtle)', borderRadius: 12, padding: '12px 12px 4px', marginBottom: 10 }}>
@@ -298,8 +302,10 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
               <ReqRow label="Телефон" value={card.phone} mono />
               <ReqRow label="Email" value={card.email} />
               <ReqRow label="Сайт" value={card.website} link />
-              <ReqRow label="Ген. директор" value={card.director_name} />
               <ReqRow label="ЭДО" value={card.edo_id} mono />
+              <ReqRow label="ФИО подписанта" value={card.director_name} />
+              <ReqRow label="Должность подписанта" value={card.signer_position} />
+              <ReqRow label="Основание полномочий" value={card.signer_basis} />
               {card.note && <ReqRow label="Примечание" value={card.note} />}
             </div>
             {(card.bank_accounts || []).filter(b => b.bank_name || b.rs).map((b, i) => (

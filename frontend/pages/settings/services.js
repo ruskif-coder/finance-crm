@@ -81,13 +81,13 @@ export default function SettingsServices() {
   }
 
   // ── услуги ──
-  const svcSeed = (s) => ({ name: s.name, group: s.group || '', placement_type: s.placement_type || '', calc_form: s.calc_form || '', separate_price: !!s.separate_price, unit_price: s.unit_price ?? '', unit_price_web: s.unit_price_web ?? '', unit_price_app: s.unit_price_app ?? '', constants: s.constants || {}, bx_id: s.bx_id || '', bx_title: s.bx_title || '', format_ids: (s.formats || []).map(f => f.id), revenue_article_id: s.revenue_article_id ?? '', color: s.color || '' })
+  const svcSeed = (s) => ({ name: s.name, group: s.group || '', placement_type: s.placement_type || '', calc_form: s.calc_form || '', separate_price: !!s.separate_price, unit_price: s.unit_price ?? '', unit_price_web: s.unit_price_web ?? '', unit_price_app: s.unit_price_app ?? '', constants: s.constants || {}, bx_id: s.bx_id || '', bx_title: s.bx_title || '', format_ids: (s.formats || []).map(f => f.id), revenue_article_id: s.revenue_article_id ?? '', color: s.color || '', doc_position: s.doc_position || '', rotation_type: s.rotation_type || '' })
   const bxTitleFor = (id) => (id ? (bxOptions.find(o => o.id === id)?.title || null) : null)
   const svcEd = (s) => editingServices[s.id] || svcSeed(s)
   const svcSet = (s, f, v) => setEditingServices(p => ({ ...p, [s.id]: { ...(p[s.id] || svcSeed(s)), [f]: v } }))
   const svcSetConst = (s, k, v) => setEditingServices(p => { const cur = p[s.id] || svcSeed(s); return { ...p, [s.id]: { ...cur, constants: { ...(cur.constants || {}), [k]: v } } } })
   const svcDirty = (id) => !!editingServices[id]
-  const svcPayload = (ed) => ({ name: ed.name, group: ed.group || null, placement_type: ed.placement_type || null, calc_form: ed.calc_form || null, separate_price: !!ed.separate_price, unit_price: ed.separate_price ? null : numOrNull(ed.unit_price), unit_price_web: ed.separate_price ? numOrNull(ed.unit_price_web) : null, unit_price_app: ed.separate_price ? numOrNull(ed.unit_price_app) : null, constants: ed.constants || {}, bx_id: ed.bx_id || null, bx_title: ed.bx_id ? (bxTitleFor(ed.bx_id) || ed.bx_title || null) : null, format_ids: ed.format_ids ?? null, revenue_article_id: ed.revenue_article_id ? Number(ed.revenue_article_id) : null, color: ed.color || null })
+  const svcPayload = (ed) => ({ name: ed.name, group: ed.group || null, placement_type: ed.placement_type || null, calc_form: ed.calc_form || null, separate_price: !!ed.separate_price, unit_price: ed.separate_price ? null : numOrNull(ed.unit_price), unit_price_web: ed.separate_price ? numOrNull(ed.unit_price_web) : null, unit_price_app: ed.separate_price ? numOrNull(ed.unit_price_app) : null, constants: ed.constants || {}, bx_id: ed.bx_id || null, bx_title: ed.bx_id ? (bxTitleFor(ed.bx_id) || ed.bx_title || null) : null, format_ids: ed.format_ids ?? null, revenue_article_id: ed.revenue_article_id ? Number(ed.revenue_article_id) : null, color: ed.color || null, doc_position: ed.doc_position || null, rotation_type: ed.rotation_type || null })
   const saveService = async (id) => {
     const ed = editingServices[id]; if (!ed) return
     try { await api.put(`/sales/directories/services/${id}`, svcPayload(ed), auth()); setEditingServices(p => { const n = { ...p }; delete n[id]; return n }); await load(); loadBx() }
@@ -247,6 +247,10 @@ export default function SettingsServices() {
                 <th style={{ ...th, width: 120 }}>Группа</th>
                 <th style={{ ...th, textAlign: 'center', width: 52 }} title="Цвет-маркер услуги на дашборде, в реестре и в МП">Цвет</th>
                 <th style={{ ...th, width: 190 }}>Статья выручки</th>
+                {/* Печатается в приложении к договору, в интерфейсе больше нигде не
+                    показывается — отсюда и подписи «в ДС». */}
+                <th style={{ ...th, width: 110 }} title="Тип ротации для медийных форматов — колонка документа">Ротация</th>
+                <th style={{ ...th, width: 220 }} title="Текст колонки «Позиция» в приложении к договору">Позиция в ДС</th>
                 <th style={{ ...th, textAlign: 'center', width: 44 }}>Исп.</th>
                 <th style={{ ...th, width: 84 }}></th>
               </tr></thead>
@@ -304,6 +308,8 @@ export default function SettingsServices() {
                           onPick={v => svcSet(s, 'color', v)} />
                       </td>
                       <td style={td}><select value={ed.revenue_article_id ?? ''} onChange={e => svcSet(s, 'revenue_article_id', e.target.value)} style={cs} title="Статья выручки для моста сделка→операция">{articleOpts()}</select></td>
+                      <td style={td}><select value={ed.rotation_type ?? ''} onChange={e => svcSet(s, 'rotation_type', e.target.value)} style={cs}><option value="">—</option><option value="Динамика">Динамика</option><option value="Статика">Статика</option></select></td>
+                      <td style={td}><input value={ed.doc_position ?? ''} onChange={e => svcSet(s, 'doc_position', e.target.value)} title={ed.doc_position || 'Описание услуги для колонки «Позиция» документа'} placeholder="описание для документа" style={ci} /></td>
                       <td style={{ ...td, textAlign: 'center' }}><input type="checkbox" checked={!!s.is_active} onChange={e => toggleUse(s.id, e.target.checked)} style={{ cursor: 'pointer' }} /></td>
                       <td style={{ ...td, textAlign: 'center', whiteSpace: 'nowrap' }}>
                         {svcDirty(s.id) && <button onClick={() => saveService(s.id)} style={{ padding: '6px 10px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: 'var(--accent)', color: '#fff', marginRight: 6 }}>✓</button>}
@@ -312,7 +318,7 @@ export default function SettingsServices() {
                     </tr>
                   )
                 })}
-                {!services.length && <tr><td colSpan={12} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Услуг нет — добавьте или нажмите «Обновить из Битрикса»</td></tr>}
+                {!services.length && <tr><td colSpan={15} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Услуг нет — добавьте или нажмите «Обновить из Битрикса»</td></tr>}
               </tbody>
             </table>
             </div>

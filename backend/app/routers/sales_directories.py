@@ -83,6 +83,10 @@ class ServiceIn(BaseModel):
     name: str
     group: Optional[str] = None
     note: Optional[str] = None
+    # Печатается в ДС: описание позиции и тип ротации (миграция
+    # 2026-09-05_service_doc_fields.sql). `note` остаётся внутренним комментарием.
+    doc_position: Optional[str] = None
+    rotation_type: Optional[str] = None
     placement_type: Optional[str] = None
     calc_form: Optional[str] = None
     separate_price: Optional[bool] = False
@@ -235,8 +239,14 @@ def list_services(only_active: bool = True, db: Session = Depends(get_db),
                        "unit_price": s.unit_price, "unit_price_web": s.unit_price_web,
                        "unit_price_app": s.unit_price_app, "constants": s.constants or {},
                        "bx_id": s.bx_id, "bx_title": s.bx_title,
-                       "revenue_article_id": s.revenue_article_id}
+                       "revenue_article_id": s.revenue_article_id,
+                       # Печатается в приложении к договору, а не показывается в интерфейсе.
+                       "doc_position": s.doc_position, "rotation_type": s.rotation_type}
                       for s in rows]}
+
+
+# Тип ротации для медийных форматов — закрытый список из двух значений, как в документе.
+ROTATION_TYPES = ("Динамика", "Статика")
 
 
 def _set_service_fields(svc, data):
@@ -255,6 +265,14 @@ def _set_service_fields(svc, data):
     svc.unit_price_app = data.unit_price_app
     svc.constants = data.constants or {}
     svc.revenue_article_id = data.revenue_article_id
+    svc.doc_position = (data.doc_position or "").strip() or None
+    # Тип ротации — один из двух вариантов или пусто. Свободный текст здесь означал бы
+    # «Динамика», «динамика» и «динамическая» в одной колонке документа.
+    rot = (data.rotation_type or "").strip() or None
+    if rot and rot not in ROTATION_TYPES:
+        raise HTTPException(status_code=400,
+                            detail="Тип ротации: " + " или ".join(ROTATION_TYPES))
+    svc.rotation_type = rot
 
 
 def _apply_bx_link(db, svc, bx_id, bx_title, exclude_id=None):

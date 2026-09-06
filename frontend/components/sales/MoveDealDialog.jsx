@@ -14,7 +14,7 @@ import { overlayClose } from '@/lib/overlay'
 // разбирается на два числа. Наружу уходят строго id — прошлый баг с утечкой составного
 // value фильтра в bitrix_stage повторять незачем.
 const layerColor = (l) => l === 'фактические' ? 'var(--success)'
-  : l === 'реализуемые' ? 'var(--warning, #d97706)'
+  : l === 'реализуемые' ? 'var(--warning)'
   : l === 'планируемые' ? 'var(--muted)' : 'var(--border-card)'
 
 // toStageKey — предвыбрать конкретную позицию 2/2/2 (кнопки дашборда «Подтвердить бронь»
@@ -162,7 +162,7 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button onClick={onClose} style={{ padding: '9px 18px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Отмена</button>
-          <button onClick={move} disabled={busy || !selStageId || needMp} style={{ padding: '9px 20px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', cursor: (busy || !selStageId || needMp) ? 'default' : 'pointer', fontSize: 14, fontWeight: 700, opacity: (busy || !selStageId || needMp) ? 0.5 : 1 }}>{busy ? 'Двигаю…' : 'Двинуть'}</button>
+          <button onClick={move} disabled={busy || !selStageId || needMp} style={{ padding: '9px 20px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', cursor: (busy || !selStageId || needMp) ? 'default' : 'pointer', fontSize: 14, fontWeight: 700, opacity: (busy || !selStageId || needMp) ? 0.5 : 1 }}>{busy ? 'Двигаю…' : 'Двинуть'}</button>
         </div>
       </div>
     </div>

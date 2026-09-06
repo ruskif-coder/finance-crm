@@ -32,6 +32,7 @@ from app.models import User
 from app.passwords import hash_password
 from app.permissions import require_permission
 from app.sales.models import SalesPublisher, SalesRep
+from app.sales.reps import ensure_rep, staff_users
 
 router = APIRouter()
 
@@ -84,6 +85,7 @@ def list_cabinets(db: Session = Depends(get_db), current_user: User = Depends(VI
     pubs = {p.id: p for p in db.query(SalesPublisher).order_by(SalesPublisher.name).all()}
     accounts = db.query(CabinetAccount).order_by(CabinetAccount.name).all()
     reps = {r.id: r.name for r in db.query(SalesRep).all()}
+    rep_users = {r.id: r.user_id for r in db.query(SalesRep).all()}
 
     by_cab = {}
     for lnk in links:
@@ -121,6 +123,7 @@ def list_cabinets(db: Session = Depends(get_db), current_user: User = Depends(VI
         out.append({
             "id": c.id, "name": c.name, "kind": c.kind, "state": c.state,
             "manager_id": c.manager_id, "manager": reps.get(c.manager_id),
+            "manager_user_id": rep_users.get(c.manager_id),
             "note": c.note,
             "publishers": [_publisher_out(p) for p in sorted(mine, key=lambda x: x.name)],
             "accounts": [_account_out(a) for a in accounts],
@@ -154,9 +157,13 @@ def list_cabinets(db: Session = Depends(get_db), current_user: User = Depends(VI
         # список выбора не может показывать занятые: это была бы ошибка при сохранении
         # вместо запрета при выборе.
         "free_publishers": [_publisher_out(p) for p in pubs.values() if p.id not in taken],
-        "managers": [{"id": r.id, "name": r.name} for r in
-                     db.query(SalesRep).filter(SalesRep.is_active.is_(True))
-                     .order_by(SalesRep.name).all()],
+        # Сотрудники — по УЧЁТКАМ, а не по справочнику ответственных. До 03.09.2026
+        # список читал `sales_reps` и показывал 11 человек из 20: без профиля там нет
+        # ни одного трафика и ни одного менеджера паблишеров — то есть тех, кого чаще
+        # всего и надо показать площадке. Отключённые учётки в выбор не попадают.
+        # `any_role=True`: контактом может быть и юрист, и финансист — рабочая группа
+        # у них не проставлена, а к площадке они выходят.
+        "managers": staff_users(db, any_role=True),
         # Должности — тем же ответом: контактное лицо заводится прямо здесь, и отдельный
         # запрос за справочником дал бы паузу ровно в момент открытия формы.
         "positions": [{"id": r.id, "name": r.name} for r in db.execute(text(
@@ -164,9 +171,22 @@ def list_cabinets(db: Session = Depends(get_db), current_user: User = Depends(VI
     }
 
 
+def _manager_rep_id(db: Session, user_id: Optional[int]) -> Optional[int]:
+    """Учётка → профиль ответственного. 0 и None одинаково означают «снять»."""
+    if not user_id:
+        return None
+    try:
+        return ensure_rep(db, user_id).id
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 class CabinetIn(BaseModel):
     name: str
-    manager_id: Optional[int] = None
+    # Ответственный выбирается УЧЁТКОЙ: кабинеты ведут менеджеры паблишеров, а их в
+    # справочнике ответственных нет ни одного (app/sales/reps.py). Профиль заводится
+    # при выборе.
+    manager_user_id: Optional[int] = None
     note: Optional[str] = None
 
 
@@ -178,7 +198,7 @@ def create_cabinet(payload: CabinetIn, db: Session = Depends(get_db),
     name = (payload.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Укажите название кабинета")
-    c = Cabinet(name=name, manager_id=payload.manager_id,
+    c = Cabinet(name=name, manager_id=_manager_rep_id(db, payload.manager_user_id),
                 note=(payload.note or "").strip() or None)
     db.add(c)
     db.commit()
@@ -189,7 +209,7 @@ def create_cabinet(payload: CabinetIn, db: Session = Depends(get_db),
 class CabinetPatch(BaseModel):
     name: Optional[str] = None
     state: Optional[str] = None
-    manager_id: Optional[int] = None
+    manager_user_id: Optional[int] = None
     note: Optional[str] = None
 
 
@@ -202,7 +222,9 @@ class CabinetPatch(BaseModel):
 
 class OurContactIn(BaseModel):
     role: str
-    rep_id: int
+    # Учётка сотрудника. Профиль ответственного (`sales_reps`) заводится под ней сам —
+    # см. `app/sales/reps.py`: выбирают человека, а не строку справочника.
+    user_id: int
     is_shown: bool = True
 
 
@@ -222,19 +244,27 @@ def set_our_contacts(payload: OurContactsIn, db: Session = Depends(get_db),
     """Кого из наших видит площадка. Общие на все кабинеты (владелец, 30.08.2026)."""
     seen = set()
     for it in payload.items:
-        if it.rep_id in seen:
+        if it.user_id in seen:
             raise HTTPException(status_code=400,
                                 detail="Один сотрудник не может стоять дважды")
-        seen.add(it.rep_id)
+        seen.add(it.user_id)
         if not (it.role or "").strip():
             raise HTTPException(status_code=400, detail="У контакта должна быть роль")
 
+    # Профили заводим ДО удаления старых строк: `ensure_rep` откажет на отключённой
+    # учётке, и список контактов должен в этом случае остаться прежним, а не опустеть.
+    try:
+        rep_ids = [ensure_rep(db, it.user_id).id for it in payload.items]
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
     db.execute(text("DELETE FROM cabinet_our_contact"))
-    for i, it in enumerate(payload.items):
+    for i, (it, rep_id) in enumerate(zip(payload.items, rep_ids)):
         db.execute(text(
             "INSERT INTO cabinet_our_contact (role, rep_id, sort_order, is_shown) "
             "VALUES (:r, :p, :o, :s)"),
-            {"r": it.role.strip(), "p": it.rep_id, "o": i, "s": it.is_shown})
+            {"r": it.role.strip(), "p": rep_id, "o": i, "s": it.is_shown})
     db.commit()
     log_action(db, current_user, "cabinet_our_contacts", "cabinet", 0,
                f"контактов: {len(payload.items)}")
@@ -267,8 +297,9 @@ def update_cabinet(cabinet_id: int, payload: CabinetPatch, db: Session = Depends
                           cabinet_id=c.id, actor_name=current_user.name,
                           entity_type='cabinet', entity_id=c.id)
         c.state = payload.state; changes.append(f"состояние: {c.state}")
-    if payload.manager_id is not None:
-        c.manager_id = payload.manager_id or None; changes.append("ответственный")
+    if payload.manager_user_id is not None:
+        c.manager_id = _manager_rep_id(db, payload.manager_user_id)
+        changes.append("ответственный")
     if payload.note is not None:
         c.note = payload.note.strip() or None; changes.append("заметка")
     db.commit()
@@ -554,6 +585,9 @@ def set_chats(publisher_id: int, payload: ChatsIn, db: Session = Depends(get_db)
 def publisher_contacts(publisher_id: int, db: Session = Depends(get_db),
                        current_user: User = Depends(VIEW)):
     """Контакты площадки — из них выдаётся доступ. Уже выданные помечены."""
+    # Несуществующая площадка — 404, а не пустой список контактов.
+    if not db.query(SalesPublisher.id).filter(SalesPublisher.id == publisher_id).first():
+        raise HTTPException(status_code=404, detail="Площадка не найдена")
     rows = db.execute(text(
         "SELECT c.id, c.name, c.email, c.role, c.is_primary, a.id AS account_id, "
         "       a.is_active, a.can_approve "
@@ -574,6 +608,9 @@ def cabinet_log(cabinet_id: int, days: int = 90, limit: int = 300,
     Окно по умолчанию шире карточки (90 дней против 30): в карточке лента отвечает на
     «что происходит», здесь — на «что было», и это разные вопросы.
     """
+    # Несуществующий кабинет — 404: пустой журнал читается как «ничего не делали».
+    if not db.query(Cabinet.id).filter(Cabinet.id == cabinet_id).first():
+        raise HTTPException(status_code=404, detail="Кабинет не найден")
     from datetime import datetime, timedelta
 
     from app.cabinet.journal import BY_KEY

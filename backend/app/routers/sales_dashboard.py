@@ -739,6 +739,7 @@ def deals_registry(
     manual = {}
     files_map = {}
     our_mp_map = {}
+    annex_map = {}
     if page_ids:
         for o in (db.query(SalesDealFieldOverride)
                   .filter(SalesDealFieldOverride.deal_id.in_(page_ids)).all()):
@@ -757,6 +758,17 @@ def deals_registry(
                 # (30.08.2026) и застыла на `draft` у всех. Карточка сделки его уже не
                 # отдаёт — здесь контракт с ней сходится.
                 g[p.group_id] = {"id": p.id, "title": p.title, "version": p.version}
+        # Приложения к договору — одним запросом на страницу, а не по строке: реестр и
+        # карточка обязаны показывать ОДНО состояние ДС, иначе на доске «нет документа»,
+        # а в карточке номер, и оба утверждения выглядят правдой.
+        from app.sales.models import SalesAnnex, SalesDealAnnexAllocation as _Alloc
+        for a, did in (db.query(SalesAnnex, _Alloc.deal_id)
+                       .join(_Alloc, _Alloc.annex_id == SalesAnnex.id)
+                       .filter(_Alloc.deal_id.in_(page_ids))
+                       .order_by(SalesAnnex.no.is_(None).desc(), SalesAnnex.id.desc()).all()):
+            annex_map.setdefault(did, []).append(
+                {"id": a.id, "no": a.no, "number": a.number, "date": a.date,
+                 "is_draft": a.no is None})
 
     # Материнский годовой план сделки (для блока «Годовой план» в раскрытии строки).
     # deal → year_plan_line_id → строка → plan_id → SalesYearPlan.
@@ -849,6 +861,7 @@ def deals_registry(
             "manual_fields": manual.get(d.id, []),
             "files": files_map.get(d.id, []),
             "our_mps": list(our_mp_map.get(d.id, {}).values()),
+            "annexes": annex_map.get(d.id, []),
             # состояние брифа для иконки: none — ещё не подгружали, empty — пусто,
             # filled — есть текст. Текст брифа тут НЕ отдаём (ленивая подгрузка по клику).
             "brief_state": ("none" if d.brief is None
@@ -1417,6 +1430,227 @@ def save_deal_brief(deal_id: int, payload: BriefIn, db: Session = Depends(get_db
             "synced_at": deal.brief_synced_at.isoformat()}
 
 
+class TrafficBriefIn(BaseModel):
+    traffic_brief: str
+
+
+@router.put("/deals/{deal_id}/traffic-brief")
+def save_deal_traffic_brief(deal_id: int, payload: TrafficBriefIn, db: Session = Depends(get_db),
+                            current_user: User = Depends(require_permission("sales_registry", "edit"))):
+    """«Цели и особенности РК»: аккаунт пишет, трафик читает (владелец 05.09.2026).
+
+    В Битрикс НЕ уходит, в отличие от соседнего брифа: это передача задачи внутри
+    команды, и клиентская карточка о ней знать не должна. Отсюда и отдельная ручка —
+    у `save_deal_brief` половина тела про Битрикс, и общий код означал бы риск однажды
+    отправить туда внутренний текст.
+
+    Длину ограничиваем: поле свободное, и без потолка сюда однажды вставят весь бриф
+    целиком вместе с медиапланом.
+    """
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+    text_val = (payload.traffic_brief or "").strip()
+    if len(text_val) > 8000:
+        raise HTTPException(status_code=400, detail="Слишком длинный текст: максимум 8000 символов")
+    was = len(deal.traffic_brief or "")
+    deal.traffic_brief = text_val
+    db.commit()
+    log_action(db, current_user, "save_deal_traffic_brief", "sales_deal", deal.id,
+               f"цели и особенности РК: {was} → {len(text_val)} симв.")
+    return {"traffic_brief": deal.traffic_brief}
+
+
+@router.get("/deals/{deal_id}/campaign")
+def deal_campaign(deal_id: str, db: Session = Depends(get_db),
+                  current_user: User = Depends(require_permission("sales_registry", "view"))):
+    """Сводка рекламной кампании сделки — для блока «Рекламная кампания» на карточке и,
+    тем же ответом, для предварительной сверки (владелец 05.09.2026).
+
+    Ничего не считает сама: и флайт, и распределение по площадкам, и цели берутся у тех
+    же функций, что рисуют дашборд трафика. Второй расчёт того же недокрута разошёлся бы
+    с первым при первой правке порогов — как уже было со статусом площадки.
+
+    Право — реестра сделок, а не дашборда трафика: смотрит АККАУНТ на своей карточке.
+    Область видимости сделки проверяется, как во всех ручках, трогающих сделку.
+
+    `has` = false означает «показывать блок нечего»: РК ещё не собрана или по ней нет ни
+    одного замера. Блок появляется, когда пошла статистика, — раньше в нём одни прочерки.
+    """
+    from app.ad import build as ad_build
+    from app.ad.flight import (PLACEMENT_RUNNING, best_chain_status, distribute,
+                               effective_campaign_status, flight_of, progress)
+    from app.ad.models import AdCampaign
+    from app.routers import traffic_dashboard as td
+
+    deal = _deal_by_ref(db, deal_id)
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+
+    c = db.query(AdCampaign).filter(AdCampaign.deal_id == deal.id).first()
+    if not c:
+        return {"has": False, "reason": "РК ещё не собрана"}
+
+    facts = td._facts(db, [c.id]).get(c.id, {})
+    fact_shows = facts.get("shows")
+    if fact_shows is None:
+        return {"has": False, "reason": "Статистика ещё не пришла"}
+
+    today = date.today()
+    fl = flight_of(c.date_start, c.date_end, today)
+    pls = td._placements_of(db, [c.id]).get(c.id, [])
+    by_pl = td._creatives_all(db, [c.id]).get(c.id, {})
+    for p_ in pls:
+        p_["status"] = td.effective_status(p_["status"], best_chain_status(
+            td._as_placement_scale(x) for x in by_pl.get(p_["id"], [])))
+    rows = distribute(c.plan_show, fact_shows, fl, pls)["rows"]
+    fc = progress(c.plan_show, fact_shows, c.date_start, c.date_end, today)
+
+    by_day = td._stat_by_day(db, [c.id]).get(c.id, {})
+    all_clicks = sum(v[1] or 0 for v in by_day.values())
+
+    return {
+        "has": True,
+        "campaign_id": c.id,
+        "status": effective_campaign_status(c.status, None) if c.status else None,
+        "date_start": c.date_start, "date_end": c.date_end,
+        "plan_show": c.plan_show, "fact_shows": fact_shows, "fact_clicks": all_clicks,
+        "ctr": round(all_clicks / fact_shows * 100, 2) if fact_shows else None,
+        # Деньги — аккаунту они нужнее показов (владелец 05.09.2026). План берём из
+        # медиаплана, факт СЧИТАЕМ ПО ТОЙ ЖЕ ЦЕНЕ: открученные показы по CPM плана.
+        # Это оценка, а не выставленная сумма: настоящая цена закрытия определится на
+        # сверке, и подменять её здесь нельзя. Экран так и подписывает — «по цене плана».
+        "plan_budget": c.plan_budget,
+        "fact_budget": (round(fact_shows / c.plan_show * c.plan_budget)
+                        if (c.plan_budget and c.plan_show) else None),
+        "placements": len(pls),
+        "placements_on": sum(1 for p_ in pls if p_["status"] in PLACEMENT_RUNNING),
+        # Цели приёмки — из ТОГО ЖЕ медиаплана, что дал план показов.
+        "goals": ad_build.deal_goals(db, deal.id),
+        # Строки площадок — для отчёта в модалке: доля, план, факт, недокрут.
+        "rows": [{k: r.get(k) for k in ("id", "domain", "code", "status", "weight",
+                                        "share", "plan_show", "fact_shows", "under",
+                                        "done_pct")}
+                 for r in rows],
+        **fc,
+    }
+
+
+@router.get("/deals/{deal_id}/campaign/stat")
+def deal_campaign_stat(deal_id: str, grain: str = "day",
+                       db: Session = Depends(get_db),
+                       current_user: User = Depends(require_permission("sales_registry", "view"))):
+    """Динамика показов РК сделки — та же, что в кабинете трафика, тем же ядром.
+
+    Отдельной ручкой от сводки, как и в дашборде: гранулярность переключают часто, и
+    тянуть ради этого площадки с долями заново незачем.
+    """
+    from app.ad.flight import GRAIN_DAYS, daily_buckets, flight_of
+    from app.ad.models import AdCampaign
+    from app.routers import traffic_dashboard as td
+
+    if grain not in GRAIN_DAYS:
+        raise HTTPException(status_code=400, detail=f"Гранулярность бывает {tuple(GRAIN_DAYS)}")
+    deal = _deal_by_ref(db, deal_id)
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+    c = db.query(AdCampaign).filter(AdCampaign.deal_id == deal.id).first()
+    if not c:
+        return {"buckets": [], "grain": grain, "totals": None}
+
+    by_day = td._stat_by_day(db, [c.id]).get(c.id, {})
+    fact = td._facts(db, [c.id]).get(c.id, {}).get("shows")
+    out = daily_buckets(c.plan_show, fact, flight_of(c.date_start, c.date_end), by_day,
+                        grain=grain)
+    if out is None:
+        return {"buckets": [], "grain": grain, "totals": None}
+    today = date.today()
+    t_shows, t_clicks = by_day.get(today, (0, 0))
+    all_shows = sum(v[0] or 0 for v in by_day.values())
+    all_clicks = sum(v[1] or 0 for v in by_day.values())
+    out["totals"] = {
+        "today": {"shows": t_shows, "clicks": t_clicks,
+                  "ctr": round(t_clicks / t_shows * 100, 2) if t_shows else None},
+        "period": {"shows": all_shows, "clicks": all_clicks,
+                   "ctr": round(all_clicks / all_shows * 100, 2) if all_shows else None},
+    }
+    return out
+
+
+class CommentIn(BaseModel):
+    text: str
+
+
+def _comment_out(row, who: dict) -> dict:
+    return {"id": row.id, "text": row.text, "user_id": row.user_id,
+            "author": who.get(row.user_id) or "—",
+            "at": row.created_at.isoformat() if row.created_at else None}
+
+
+@router.get("/deals/{deal_id}/comments")
+def list_deal_comments(deal_id: str, db: Session = Depends(get_db),
+                       current_user: User = Depends(require_permission("sales_registry", "view"))):
+    """Лента комментариев сделки, свежие сверху.
+
+    Отдельно от истории (владелец 05.09.2026): история — системные события из журнала,
+    комментарий — то, что человек сказал сам. В одном потоке фильтр «только
+    комментарии» становится обязательным, а нужен он всегда.
+
+    Имена авторов подтягиваются ОДНИМ запросом: лента на сотню записей иначе даёт сотню
+    обращений к `users` — та же готча, что с площадками в дашборде трафика.
+    """
+    from app.sales.models import SalesDealComment
+
+    deal = _deal_by_ref(db, deal_id)
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+    rows = (db.query(SalesDealComment)
+            .filter(SalesDealComment.deal_id == deal.id)
+            .order_by(SalesDealComment.created_at.desc(), SalesDealComment.id.desc())
+            .limit(200).all())
+    who = {}
+    if rows:
+        uids = {r.user_id for r in rows}
+        who = {u.id: _short_fio(u.name or u.email)
+               for u in db.query(User).filter(User.id.in_(uids)).all()}
+    return {"items": [_comment_out(r, who) for r in rows]}
+
+
+@router.post("/deals/{deal_id}/comments")
+def add_deal_comment(deal_id: str, payload: CommentIn, db: Session = Depends(get_db),
+                     current_user: User = Depends(require_permission("sales_registry", "edit"))):
+    """Добавить комментарий. Права — общие правила сделки, без своей секции: пишет тот,
+    кто и так правит эту сделку (владелец 05.09.2026). Трафик карточку читает, а пишет
+    только если право у него есть.
+
+    Пустой комментарий не заводим: строка без текста в ленте — мусор, который потом
+    нельзя удалить.
+    """
+    from app.sales.models import SalesDealComment
+
+    deal = _deal_by_ref(db, deal_id)
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+    text_val = (payload.text or "").strip()
+    if not text_val:
+        raise HTTPException(status_code=400, detail="Пустой комментарий")
+    if len(text_val) > 4000:
+        raise HTTPException(status_code=400, detail="Слишком длинный комментарий: максимум 4000 символов")
+    row = SalesDealComment(deal_id=deal.id, user_id=current_user.id, text=text_val)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    log_action(db, current_user, "add_deal_comment", "sales_deal", deal.id,
+               text_val[:80] + ("…" if len(text_val) > 80 else ""))
+    who = {current_user.id: _short_fio(current_user.name or current_user.email)}
+    return _comment_out(row, who)
+
+
 # ── Сверка полей: наша карточка ↔ живой Битрикс ──────────────────────
 BX_PORTAL = "https://simb-ad.bitrix24.ru"
 
@@ -1824,6 +2058,18 @@ def _year_plan_of_deal(db, deal):
     }
 
 
+def _deal_annexes(db: Session, deal_id: int) -> list:
+    """Приложения сделки — через таблицу разнесения сумм: одно приложение может закрывать
+    несколько сделок, поэтому связь идёт не полем, а строкой разнесения."""
+    from app.sales.models import SalesAnnex, SalesDealAnnexAllocation as Alloc
+    rows = (db.query(SalesAnnex, Alloc.amount)
+            .join(Alloc, Alloc.annex_id == SalesAnnex.id)
+            .filter(Alloc.deal_id == deal_id)
+            .order_by(SalesAnnex.no.is_(None).desc(), SalesAnnex.id.desc()).all())
+    return [{"id": a.id, "no": a.no, "number": a.number, "date": a.date,
+             "amount": amt, "is_draft": a.no is None} for a, amt in rows]
+
+
 @router.get("/deals/{deal_id}")
 def get_deal(deal_id: str, db: Session = Depends(get_db),
              current_user: User = Depends(require_permission("sales_registry", "view"))):
@@ -1867,6 +2113,9 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         "brand": brand.name if brand else None,
         "agency": (agc.short_name or agc.name) if agc else None, "agency_id": deal.agency_id,
         "product": deal.product,
+        # Поверхность услуги (web/app) — тем же контекстом, что в реестре и очереди:
+        # второе выражение здесь разъехалось бы с ними при первой же правке правила.
+        "inventory": load_row_context(db, [deal.id]).inventory(deal.id, deal.product),
         "payer": payer, "payer_counterparty_id": deal.payer_counterparty_id,
         "counterparty_id": deal.payer_counterparty_id or deal.counterparty_id,
         "period": deal.period_from.strftime("%Y-%m") if deal.period_from else None,
@@ -1875,6 +2124,13 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         "sales_rep": _short_fio(rep.name) if rep else None,
         "account_manager": _short_fio(acc.name) if acc else None,
         "traffic_manager": _short_fio(traf.name) if traf else None,
+        # Учётка за профилем — карточка назначает трафика по НЕЙ (app/sales/reps.py),
+        # а не по строке справочника: у трафиков её может ещё не быть.
+        "traffic_manager_user_id": traf.user_id if traf else None,
+        # «Цели и особенности РК» едут вместе с карточкой, а не отдельным запросом:
+        # это не ленивый бриф из Битрикса, а наше поле, и второй заход за строчкой
+        # текста добавил бы экрану состояние загрузки на пустом месте.
+        "traffic_brief": deal.traffic_brief or "",
         # Признак саморекламы: меняет правила маркировки в ОРД, поэтому виден на карточке
         # рядом со стадией, а не спрятан в форме правки.
         "is_self_promo": bool(deal.is_self_promo),
@@ -1898,6 +2154,10 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         "our_next_stage": stage_public(cat.next_of(deal.our_stage_id)),
         "realization_pipeline_id": deal.realization_pipeline_id,
         "our_mps": list(our_mps.values()),
+        # Приложения к договору, которые закрывают эту сделку. В карточке строка «Доп.
+        # соглашение» показывает номер и дату, а не «не загружен»: ДС у нас теперь не
+        # приносят файлом, а собирают — и строка обязана говорить о собранном документе.
+        "annexes": _deal_annexes(db, deal.id),
     }
 
 

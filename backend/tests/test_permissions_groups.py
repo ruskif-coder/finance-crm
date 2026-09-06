@@ -6,7 +6,7 @@
 """
 from app.permissions import SECTIONS
 
-CONTOURS = {"Финансы", "Продажи", "Аккаунты", "Паблишеры", "Траффики",
+CONTOURS = {"Финансы", "Продажи", "Аккаунты", "Паблишеры", "Трафики",
             "Справочники", "Ядро"}
 
 EXPECTED_KEYS = {
@@ -25,14 +25,20 @@ EXPECTED_KEYS = {
     "creatives",
     "media_plans", "media_plans_editor",
     "operations", "import",
-    "counterparties", "contracts", "dir_advertisers", "dir_agencies", "dir_publishers",
+    "counterparties", "contracts", "annexes", "dir_advertisers", "dir_agencies", "dir_publishers",
     # Добавлен 2026-08-20: экран «Заполнение» отделён от реестра площадок (только view).
     "dir_publishers_bulk",
     # Добавлен 2026-08-28 вместе с контуром кабинета паблишера: учётки внешних лиц.
     "dir_publishers_cabinets",
     "bx_reconcile",
-    # Добавлен 2026-08-28 вместе с контуром «Траффики»: очередь проверки материала.
+    # Добавлен 2026-09-06: экран «Добавить данные». Только view — см. комментарий в SECTIONS.
+    "directory_add",
+    # Добавлен 2026-08-28 вместе с контуром «Трафики»: очередь проверки материала.
     "traffic_queue",
+    # Добавлен 2026-09-01 вместе с экраном «Каталог площадок»: МС-реквизиты + блоки.
+    "traffic_catalog",
+    # Добавлен 2026-09-02 вместе с дашбордом открутки РК (этап 3b).
+    "traffic_dashboard", "dsp_demo",
     "settings_balances", "settings_articles", "settings_pipelines",
     "settings_services", "settings_field_audit", "settings_audit",
     # Добавлен 2026-08-16 вместе с разделом «Бэклог отладки» (routers/backlog.py).

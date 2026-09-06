@@ -61,6 +61,7 @@ from app.sales.models import (SalesBrand, SalesDeal, SalesMediaPlan, SalesMediaP
                               SalesRep, SalesStage,
                               SalesPublisher, SalesPublisherService,
                               SalesPublisherSurface, SalesService)
+from app.sales.reps import ensure_rep, staff_users
 
 router = APIRouter()
 
@@ -370,25 +371,32 @@ def _rep_name(db: Session, rep_id):
     return row[0] if row else None
 
 
+def _rep_user_id(db: Session, rep_id):
+    """Учётка за профилем ответственного: выбирают человека, храним профиль."""
+    if not rep_id:
+        return None
+    row = db.query(SalesRep.user_id).filter(SalesRep.id == rep_id).first()
+    return row[0] if row else None
+
+
 @router.get("/traffic-managers")
 def traffic_managers(db: Session = Depends(get_db), current_user: User = Depends(VIEW)):
     """Кого можно назначить трафиком: сотрудники с рабочей группой «трафик».
 
     Список объявлен ЗДЕСЬ, а не в разделе трафика: назначает аккаунт на сборке, и
     ходить за списком в чужой раздел ему нечем — прав на очередь у него нет.
+
+    Читается по УЧЁТКАМ, а не по справочнику ответственных: до 03.09.2026 запрос
+    требовал строку в `sales_reps`, которой у трафиков нет ни у одного, и список
+    приходил пустым — см. `app/sales/reps.py`. Профиль заводится при назначении.
     """
-    from app.models import Role
-    rows = (db.query(SalesRep.id, SalesRep.name)
-            .join(User, User.id == SalesRep.user_id)
-            .join(Role, Role.id == User.role_id)
-            .filter(Role.staff_group == "traffic", User.is_active == 1,
-                    SalesRep.is_active.is_(True))
-            .order_by(SalesRep.name).all())
-    return {"items": [{"id": i, "name": n} for i, n in rows]}
+    return {"items": staff_users(db, "traffic")}
 
 
 class TrafficManagerIn(BaseModel):
-    traffic_manager_id: Optional[int] = None      # None — снять назначение
+    # Учётка, а не строка справочника: выбирают человека, а профиль ответственного
+    # под ним заводится сам (`ensure_rep`).
+    user_id: Optional[int] = None                 # None — снять назначение
 
 
 @router.put("/deal/{deal_id}/traffic-manager")
@@ -399,13 +407,16 @@ def set_traffic_manager(deal_id: int, payload: TrafficManagerIn,
     Право — сборки (`creatives:edit`), а не реестра сделок: назначение происходит на
     сборке запуска и им же вызвано. Момент выбран не нами: трафик выделяется по текущей
     нагрузке, и до сборки его попросту не существует.
+
+    Назначение НЕ обязательно и на отправку материала не влияет (03.09.2026): очередь
+    общая, ответственного ставят и меняют вручную до старта.
     """
     deal = _deal(db, deal_id, current_user)
-    if payload.traffic_manager_id is not None:
-        rep = (db.query(SalesRep)
-               .filter(SalesRep.id == payload.traffic_manager_id).first())
-        if not rep:
-            raise HTTPException(status_code=400, detail="Ответственный не найден")
+    if payload.user_id is not None:
+        try:
+            rep = ensure_rep(db, payload.user_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         deal.traffic_manager_id = rep.id
         who = rep.name
     else:
@@ -414,7 +425,8 @@ def set_traffic_manager(deal_id: int, payload: TrafficManagerIn,
     db.commit()
     log_action(db, current_user, "set_traffic_manager", "sales_deal", deal.id,
                f"ответственный трафик: {who}")
-    return {"traffic_manager_id": deal.traffic_manager_id, "name": who}
+    return {"traffic_manager_id": deal.traffic_manager_id,
+            "traffic_manager_user_id": payload.user_id, "name": who}
 
 
 @router.get("/deal/{deal_id}")
@@ -461,6 +473,7 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
                  # Ответственный трафик показывается здесь же: без него материал не
                  # уходит на проверку, и узнавать об этом в момент отправки поздно.
                  "traffic_manager_id": deal.traffic_manager_id,
+                 "traffic_manager_user_id": _rep_user_id(db, deal.traffic_manager_id),
                  "traffic_manager": _rep_name(db, deal.traffic_manager_id)},
         "service": ({"id": service.id, "name": service.name} if service else None),
         "service_reason": service_reason,
@@ -1281,17 +1294,14 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
         raise HTTPException(status_code=400,
                             detail="Сначала первичная проверка материала по ТТ")
 
-    # Ответственный трафик — ДО отправки, а не после (владелец, 31.08.2026). Материал
-    # уходит в очередь проверки, а очередь распределяется по `traffic_manager_id`: без
-    # него пара оседает в разделе, которого никто не видит — рядовой трафик смотрит
-    # только своё, и «отправлено» означало бы «отправлено никому».
+    # Ответственного трафика здесь НЕ ТРЕБУЕМ (владелец 03.09.2026). Проверка стояла
+    # тут с 31.08, пока очередь распределялась: без назначения пара оседала в разделе,
+    # которого никто не видит. Очередь стала общей, и проверка превратилась в стену —
+    # тем более глухую, что назначать было НЕКОГО: у трафиков нет профиля в справочнике
+    # ответственных, и список кандидатов возвращал пустоту. Отправка молча упиралась в
+    # 400 там, где с материалом всё было в порядке.
     #
-    # Проверка стоит рядом с проверкой кода площадки и по той же причине: отправить то,
-    # что дальше не поедет, — тупик, и обнаруживается он не там, где чинится.
-    if not deal.traffic_manager_id:
-        raise HTTPException(
-            status_code=400,
-            detail="У сделки не указан ответственный трафик — материал некому проверять")
+    # Назначение осталось, но живёт своей жизнью: его ставят и меняют вручную до старта.
 
     targets = _targets_for_set(db, s)
     if payload.target_ids:

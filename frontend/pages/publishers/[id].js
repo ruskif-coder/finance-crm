@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import Head from 'next/head'
+import Link from 'next/link'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/http'
 import Navbar, { can } from '@/components/Navbar'
@@ -307,8 +308,8 @@ export default function PublisherCardPage() {
         <div style={{ width: '100%', maxWidth: 1500 }}>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-          <a href="/publishers" style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', textDecoration: 'none' }}>← Паблишеры</a>
-          <span style={{ color: '#C7D0E8' }}>/</span>
+          <Link href="/publishers" style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', textDecoration: 'none' }}>← Паблишеры</Link>
+          <span style={{ color: 'var(--border-inner)' }}>/</span>
           <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>{data?.domain}</span>
           <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}>
             {data?.domain && (

@@ -107,6 +107,11 @@ def _serialize(c: Contract) -> dict:
         "note": c.note,
         "document_link": c.document_link,
         "attached_filename": c.attached_filename,
+        # Стартовый номер приложений — последний, выданный ВНЕ системы. Отсюда только
+        # ЧИТАЕТСЯ: пишет его ручка приложений (`PUT /annexes/contract/{id}/start-no`) под
+        # правом `annexes:edit`. Второй писатель на то же поле — способ развести значения
+        # и потом не понять, какое верно.
+        "annex_start_no": c.annex_start_no,
     }
 
 

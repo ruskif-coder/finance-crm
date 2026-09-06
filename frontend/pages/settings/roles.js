@@ -24,7 +24,7 @@ const SCOPED_KEYS = Object.keys(SCOPE_GROUP)
 
 // Рабочая группа роли (для конструктора МП) — классификация «кто продавец/аккаунт/трафик».
 // Пользователь наследует её через свою роль; «мастер» помечается ★ в пикерах МП.
-const STAFF_GROUPS = [{ v: '', l: '— не в группе' }, { v: 'seller', l: 'Продавцы' }, { v: 'account', l: 'Аккаунты' }, { v: 'traffic', l: 'Траффики' }]
+const STAFF_GROUPS = [{ v: '', l: '— не в группе' }, { v: 'seller', l: 'Продавцы' }, { v: 'account', l: 'Аккаунты' }, { v: 'traffic', l: 'Трафики' }]
 
 // Одна строка на страницу, в ячейке — уровень доступа. Уровни маппятся на булевы
 // поля бэкенда (can_view/edit/…) + deals_scope. Три вида страниц:
@@ -302,11 +302,22 @@ export default function SettingsRoles() {
                     if (row.type === 'group') {
                       return (
                         <tr key={`g${ri}`}>
-                          <td colSpan={allRoles.length + 1} style={{ position: 'sticky', left: 0,
-                            background: 'var(--accent-tint)', padding: '7px 12px', fontSize: 12, fontWeight: 700,
-                            color: 'var(--text-secondary)', borderTop: '1px solid var(--border-row)',
-                            fontFamily: MONO, letterSpacing: '.06em', textTransform: 'uppercase' }}>
-                            {row.label}
+                          {/* Липнет ЯРЛЫК ВНУТРИ ячейки, а не сама ячейка.
+                              `position: sticky` на ячейке с colSpan не делает ничего:
+                              она и так шириной во всю таблицу, смещать её некуда — и
+                              название контура («Финансы», «Справочники») уезжало влево
+                              вместе с колонками ролей. Ячейка остаётся растянутой ради
+                              заливки на весь ряд, липкость переехала на внутренний блок,
+                              которому есть куда смещаться внутри неё. */}
+                          <td colSpan={allRoles.length + 1} style={{
+                            background: 'var(--accent-tint)', padding: 0,
+                            borderTop: '1px solid var(--border-row)' }}>
+                            <div style={{ position: 'sticky', left: 0, display: 'inline-block',
+                              padding: '7px 12px', fontSize: 12, fontWeight: 700,
+                              color: 'var(--text-secondary)',
+                              fontFamily: MONO, letterSpacing: '.06em', textTransform: 'uppercase' }}>
+                              {row.label}
+                            </div>
                           </td>
                         </tr>
                       )

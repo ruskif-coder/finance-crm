@@ -12,7 +12,9 @@ const NO_GROUP = 'Без группы'
 // Цвета слоёв денег (v2): факт зелёный, реализуемые жёлтые, планируемые серые, сорванные красные.
 const LC = { fact: 'var(--income)', real: 'var(--dot-current-dz)', plan: 'var(--text-faint)', lost: 'var(--dot-overdue)' }
 const EMPTY = 'var(--border-inner)'
-const HATCH = 'repeating-linear-gradient(135deg,#C3C9D8 0 3px,#FFFFFF 3px 6px)'
+// Штриховка «неразобранного» — та же, что в ките (`salesTableKit.HATCH`); цвета
+// через токены, иначе она поедет отдельно от палитры.
+const HATCH = 'repeating-linear-gradient(135deg,var(--text-disabled) 0 3px,var(--on-accent) 3px 6px)'
 const C = { text: 'var(--text-primary)', sec: 'var(--text-muted)', faint: 'var(--text-faint)', accent: 'var(--accent)', card: 'var(--bg-card)', border: 'var(--border-card)', inner: 'var(--border-inner)', row: 'var(--border-row)' }
 
 const DIMS = [
@@ -158,7 +160,7 @@ export default function Analytics2() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)' }}>
                 {[
                   { mk: 'var(--income)', lbl: 'Реализованная выручка', node: <span style={{ color: 'var(--income)' }}><Num v={t.fact} /></span>, unit: 'млн ₽', cap: <>закрытые и архивные, без «МП»</> },
-                  { lbl: 'В работе', node: <Num v={t.work} />, unit: 'млн ₽', cap: <>реализуемые <b style={{ ...bMono, color: '#C27510' }}>{mln(layerAmt('реализуемые'))}</b> + планируемые <b style={bMono}>{mln(layerAmt('планируемые'))}</b></> },
+                  { lbl: 'В работе', node: <Num v={t.work} />, unit: 'млн ₽', cap: <>реализуемые <b style={{ ...bMono, color: 'var(--warning-text)' }}>{mln(layerAmt('реализуемые'))}</b> + планируемые <b style={bMono}>{mln(layerAmt('планируемые'))}</b></> },
                   { lbl: 'Сделок в периоде', node: <span style={{ fontFamily: MONO, fontWeight: 700 }}>{grp(t.deals)}</span>, unit: 'шт', cap: <>средний чек <b style={bMono}>{t.deals ? mln(t.amount / t.deals, 2) : '—'} млн ₽</b></> },
                   { lbl: 'Сверка', recon: t.reconciles, cap: t.reconciles ? 'слои дают сумму витрины' : 'слои не сходятся с суммой витрины' },
                 ].map((k, i) => (
@@ -167,7 +169,7 @@ export default function Analytics2() {
                     {k.recon !== undefined ? (
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
                         <span style={{ width: 10, height: 10, borderRadius: 2, background: k.recon ? 'var(--income)' : 'var(--dot-overdue)' }} />
-                        <span style={{ fontSize: 30, fontWeight: 700, color: k.recon ? 'var(--income)' : '#C93A3E' }}>{k.recon ? 'сходится' : 'расхождение'}</span>
+                        <span style={{ fontSize: 30, fontWeight: 700, color: k.recon ? 'var(--income)' : 'var(--danger-fg)' }}>{k.recon ? 'сходится' : 'расхождение'}</span>
                       </span>
                     ) : (
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
@@ -205,7 +207,7 @@ export default function Analytics2() {
                         {[1, 0.75, 0.5, 0.25].map(fr => <span key={fr} style={{ position: 'absolute', right: 0, top: `calc(${(1 - fr) * 100}% - 5px)` }}>{Math.round(monthMax * fr / 1e6)}</span>)}
                         <span style={{ position: 'absolute', right: 0, bottom: -5, color: C.sec, fontWeight: 700 }}>0</span>
                       </div>
-                      <div style={{ flex: DOWN, position: 'relative' }}><span style={{ position: 'absolute', right: 0, bottom: 2, color: '#C93A3E' }}>{Math.round(lostMax / 1e6)} млн</span></div>
+                      <div style={{ flex: DOWN, position: 'relative' }}><span style={{ position: 'absolute', right: 0, bottom: 2, color: 'var(--danger-fg)' }}>{Math.round(lostMax / 1e6)} млн</span></div>
                       <div style={{ height: 22 }} />
                     </div>
                     {/* Плот */}
@@ -222,7 +224,7 @@ export default function Analytics2() {
                             style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}>
                             {hov && <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 22, borderLeft: '1px dashed var(--text-faint)', pointerEvents: 'none' }} />}
                             {/* верх */}
-                            <div style={{ flex: UP, display: 'flex', alignItems: 'flex-end', borderBottom: `1px solid #C3C9D8`,
+                            <div style={{ flex: UP, display: 'flex', alignItems: 'flex-end', borderBottom: '1px solid var(--text-disabled)',
                               backgroundImage: `repeating-linear-gradient(to top, ${C.row} 0 1px, transparent 1px 25%)` }}>
                               <div style={{ width: '58%', height: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column-reverse', gap: 2, animation: 'a2up .55s cubic-bezier(0.22,1,0.36,1) both', animationDelay: `${i * 0.04}s`, transformOrigin: 'bottom' }}>
                                 {upCells.map((c, j) => <div key={j} style={{ flex: 1, borderRadius: 2, background: c }} />)}
@@ -253,7 +255,7 @@ export default function Analytics2() {
                                   <span>итог месяца</span><span style={{ fontFamily: MONO, color: C.text, fontWeight: 700 }}>{mln(m.total)} млн</span>
                                 </div>
                                 {m.lostAmount > 0 && (
-                                  <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${C.row}`, display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#C93A3E' }}>
+                                  <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${C.row}`, display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--danger-fg)' }}>
                                     <span>сорвано · {nDeals(m.lostCount)}</span><span style={{ fontFamily: MONO, fontWeight: 700 }}>{mln(m.lostAmount)}</span>
                                   </div>
                                 )}
@@ -283,7 +285,7 @@ export default function Analytics2() {
                           </span>
                           <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8 }}>
                             <span style={{ fontFamily: MONO, fontSize: 11, color: C.sec }}>{layerScale ? pct(r.amount / (factTotal || layerScale) * 100) : ''}</span>
-                            <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: r.key === 'lost' ? '#C93A3E' : C.text }}>{mln(r.amount)}</span>
+                            <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: r.key === 'lost' ? 'var(--danger-fg)' : C.text }}>{mln(r.amount)}</span>
                           </span>
                         </div>
                         <div style={{ display: 'flex', gap: 2, height: 12, animation: 'a2up .55s both', animationDelay: `${ri * 0.05}s`, transformOrigin: 'left' }}>
@@ -333,7 +335,7 @@ export default function Analytics2() {
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   {DIMS.map(d => { const on = dim === d.key; return (
-                    <button key={d.key} onClick={() => setDim(d.key)} style={{ borderRadius: 999, padding: '7px 13px', fontSize: 13, cursor: 'pointer', fontWeight: on ? 700 : 600, background: on ? 'var(--accent-tint)' : C.card, color: on ? C.accent : C.sec, border: on ? '1px solid #D7DEFA' : `1px solid ${C.border}` }}>{d.label}</button>
+                    <button key={d.key} onClick={() => setDim(d.key)} style={{ borderRadius: 999, padding: '7px 13px', fontSize: 13, cursor: 'pointer', fontWeight: on ? 700 : 600, background: on ? 'var(--accent-tint)' : C.card, color: on ? C.accent : C.sec, border: on ? '1px solid var(--accent-border)' : `1px solid ${C.border}` }}>{d.label}</button>
                   ) })}
                 </div>
               </div>
@@ -350,12 +352,12 @@ export default function Analytics2() {
                     else cells = [...Array(cellsOf(r.fact, dimScale, nCells)).fill(LC.fact), ...Array(cellsOf(r.real, dimScale, nCells)).fill(LC.real), ...Array(cellsOf(r.plan, dimScale, nCells)).fill(LC.plan)].slice(0, nCells)
                     const full = [...cells, ...Array(Math.max(0, nCells - cells.length)).fill(EMPTY)]
                     return (
-                      <div key={r.name + i} style={{ display: 'flex', alignItems: 'center', gap: 16, padding: mine ? 8 : '11px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: `1px solid ${C.row}`, background: mine ? '#F6F8FF' : 'transparent' }}>
-                        <span style={{ width: 24, textAlign: 'right', fontFamily: MONO, fontSize: 11, color: mine ? '#8F9BE8' : C.faint }}>{r.rest ? '' : i + 1}</span>
-                        <span style={{ width: 176, fontSize: 13, fontWeight: mine ? 700 : 600, color: mine ? '#3A50BE' : (r.rest ? C.sec : C.text), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{none ? 'без группы' : r.name}</span>
+                      <div key={r.name + i} style={{ display: 'flex', alignItems: 'center', gap: 16, padding: mine ? 8 : '11px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: `1px solid ${C.row}`, background: mine ? 'var(--accent-wash)' : 'transparent' }}>
+                        <span style={{ width: 24, textAlign: 'right', fontFamily: MONO, fontSize: 11, color: mine ? 'var(--accent-pale)' : C.faint }}>{r.rest ? '' : i + 1}</span>
+                        <span style={{ width: 176, fontSize: 13, fontWeight: mine ? 700 : 600, color: mine ? 'var(--accent-hover)' : (r.rest ? C.sec : C.text), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{none ? 'без группы' : r.name}</span>
                         <div style={{ flex: 1, display: 'flex', gap: 2, height: 16 }}>{full.map((c, j) => <div key={j} style={{ flex: 1, borderRadius: 2, background: c }} />)}</div>
-                        <span style={{ width: 78, textAlign: 'right', fontFamily: MONO, fontSize: 13, fontWeight: 700, color: mine ? '#3A50BE' : C.text }}>{mln(r.fact)}</span>
-                        <span style={{ width: 52, textAlign: 'right', fontFamily: MONO, fontSize: 11, color: mine ? '#6E7BD8' : C.sec }}>{r.rest ? '' : pct(share)}</span>
+                        <span style={{ width: 78, textAlign: 'right', fontFamily: MONO, fontSize: 13, fontWeight: 700, color: mine ? 'var(--accent-hover)' : C.text }}>{mln(r.fact)}</span>
+                        <span style={{ width: 52, textAlign: 'right', fontFamily: MONO, fontSize: 11, color: mine ? 'var(--accent-mid)' : C.sec }}>{r.rest ? '' : pct(share)}</span>
                       </div>
                     )
                   })}

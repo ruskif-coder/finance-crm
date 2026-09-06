@@ -23,6 +23,8 @@ from app.models import User, Counterparty, RolePermission
 from app.sales.models import (SalesMediaPlan, SalesMediaPlanRow, SalesMediaPlanExtra,
                               SalesAdvertiser, SalesBrand, SalesAgency, SalesGeo)
 
+from app.sales.row_context import merge_inventory
+
 router = APIRouter()
 VAT = 0.22
 KEEP_VERSIONS = 3
@@ -681,6 +683,40 @@ def _plan_is_sealed(db, plan) -> bool:
     return bool(first and deal.our_stage_id != first.id)
 
 
+def _sync_deal_title(db: Session, plan, current_user) -> None:
+    """Имя плана → имя сделки.
+
+    Владелец 03.09.2026: переименовал медиаплан — сделка должна называться так же.
+    До этого поля жили независимо, и на сделке ZCBPLS это выглядело как «переименование
+    не сработало»: имя плана менялось, имя сделки оставалось прежним до ручной
+    перегенерации в реестре. Источник имени — ПЛАН: он описывает размещение, а имя
+    сделки собирается по той же маске тем же модулем (frontend/lib/dealTitle.js).
+
+    Только когда у сделки РОВНО ОДНА группа медиапланов: при двух названий-кандидатов
+    столько же, и молча взять одно значило бы переименовывать сделку тем планом, который
+    сохранили последним. Измерено 03.09.2026: у всех 35 сделок с планами группа одна —
+    ветка «несколько» сегодня не срабатывает и стоит как защита на будущее.
+
+    Идемпотентна: совпало — молчим, поэтому её можно звать на каждом сохранении.
+    """
+    from app.sales.models import SalesDeal
+
+    title = (plan.title or "").strip()
+    if not (plan.deal_id and title):
+        return
+    groups = {g for (g,) in db.query(SalesMediaPlan.group_id)
+              .filter(SalesMediaPlan.deal_id == plan.deal_id).distinct().all()}
+    if len(groups) != 1:
+        return
+    deal = db.query(SalesDeal).filter(SalesDeal.id == plan.deal_id).first()
+    if deal is None or (deal.title or "").strip() == title:
+        return
+    old = deal.title
+    deal.title = title
+    log_action(db, current_user, "deal_title_from_mp", "sales_deal", deal.id,
+               f"название из медиаплана: {old or '—'} → {title}")
+
+
 @router.post("")
 def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: User = Depends(MP_EDIT)):
     """ЕДИНСТВЕННАЯ точка записи медиаплана: и создание, и правка, и новая версия.
@@ -718,6 +754,7 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
             # ни строки — а сделку двинуть надо. Ранняя ветка «содержимое совпало» этого
             # не делала, и жёлтая сделка оставалась жёлтой.
             _log_verify_note(db, current_user, existing, data)
+            _sync_deal_title(db, existing, current_user)
             db.commit()
             db.refresh(existing)
             return {"id": existing.id, "group_id": existing.group_id, "version": existing.version,
@@ -741,6 +778,7 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
     db.flush()
     log_action(db, current_user, "create_media_plan", "media_plan", p.id, f"{p.title} v{p.version}")
     _log_verify_note(db, current_user, p, data)
+    _sync_deal_title(db, p, current_user)
     db.commit()
     db.refresh(p)
     return {"id": p.id, "group_id": p.group_id, "version": p.version, "unchanged": False}
@@ -822,8 +860,34 @@ def list_media_plans(db: Session = Depends(get_db), current_user: User = Depends
                                  .outerjoin(SalesStage, SalesStage.id == SalesDeal.our_stage_id)
                                  .filter(SalesDeal.id.in_(deal_ids)).all()):
             deals[did] = (code, stage)
+    # Услуга и поверхность плана — из его же строк: своего поля под них у плана нет.
+    # Нужны реестру, чтобы кнопка «собрать название» давала то же имя, что конструктор
+    # и сделка (общий модуль frontend/lib/dealTitle.js). Одним запросом на страницу.
+    # `text` берём локально: на модульном уровне имя уже занято переменной цикла ниже
+    # (F402), а переименовывать её ради одного запроса — трогать чужой код без нужды.
+    from sqlalchemy import text as sa_text
+
+    svc = {}
+    plan_ids = [p.id for p in latest.values()]
+    if plan_ids:
+        raw = {}
+        for r in db.execute(sa_text(
+            "SELECT plan_id, position, inventory FROM sales_media_plan_rows "
+            "WHERE plan_id = ANY(:i)"), {"i": plan_ids}).mappings():
+            name = (r["position"] or "").strip()
+            if name:
+                raw.setdefault(r["plan_id"], {}).setdefault(name, set()).add(r["inventory"])
+        for pid, by_name in raw.items():
+            # Услугу подставляем, только когда она в плане ОДНА: две услуги в имени —
+            # это уже не имя, а перечисление, и что из них главное, знает человек.
+            if len(by_name) == 1:
+                name, vals = next(iter(by_name.items()))
+                svc[pid] = (name, merge_inventory(vals))
+
     items = [{
         "id": p.id, "group_id": p.group_id, "version": p.version, "title": p.title,
+        "product": svc.get(p.id, (None, None))[0],
+        "inventory": svc.get(p.id, (None, None))[1],
         "advertiser_id": p.advertiser_id, "advertiser": n["adv"].get(p.advertiser_id),
         "brand_id": p.brand_id, "brand": n["brand"].get(p.brand_id),
         "agency_id": p.agency_id, "agency": n["agency"].get(p.agency_id),

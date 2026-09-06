@@ -3,7 +3,8 @@ import Head from 'next/head'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/http'
 import Navbar, { can } from '@/components/Navbar'
-import { MONO, UI, IconBtn, inp, sel, btn, cell, headCell, card, CAP } from '@/components/salesTableKit'
+import { MONO, UI, IconBtn, inp, sel, btn, cell, headCell, card, CAP,
+         PortalPopover, Z } from '@/components/salesTableKit'
 import ValuePopover from '@/components/ValuePopover'
 import { INTEG_TONE_SOLID as INTEG_TONE, STATUS_TONE, NEUTRAL_TONE, EMPTY_TONE,
   nextStatus, tzLabel, localTime, Pin, ChatBtn } from '@/components/publishers/kit'
@@ -81,13 +82,11 @@ const MultiFilter = ({ label, options, selected, onChange, open, setOpen, width 
     : picked.length === 1 ? picked[0].label
       : `${label}: ${picked.length}`
   return (
-    <span style={{ position: 'relative' }}>
+    <span data-pop-root style={{ position: 'relative', display: 'inline-block' }}>
       <button style={{ ...btn(!!picked.length), minWidth: width, textAlign: 'left' }}
         onClick={() => setOpen(open ? null : label)}>{title}</button>
-      {open && (
-        <span style={{ position: 'absolute', top: 38, left: 0, zIndex: 3000, width: Math.max(width, 210),
-          background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12,
-          boxShadow: 'var(--shadow-card)', padding: 8, display: 'block', maxHeight: 320, overflowY: 'auto' }}>
+      <PortalPopover open={!!open} minWidth={Math.max(width, 210)} maxHeight={320}
+        offset={6} style={{ padding: 8, zIndex: Z.dropdown }}>
           {options.map(o => (
             <label key={String(o.value)} style={{ display: 'flex', alignItems: 'center', gap: 8,
               padding: '5px 6px', fontSize: 13, cursor: 'pointer' }}>
@@ -104,8 +103,7 @@ const MultiFilter = ({ label, options, selected, onChange, open, setOpen, width 
           {!options.length && <span style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>нет значений</span>}
           <button style={{ ...btn(false), width: '100%', marginTop: 6 }}
             onClick={() => { onChange([]); setOpen(null) }}>Сбросить</button>
-        </span>
-      )}
+      </PortalPopover>
     </span>
   )
 }
@@ -126,6 +124,17 @@ export default function Publishers() {
   const [fFlag, setFFlag] = useState([])
   const [fServices, setFServices] = useState([])   // id услуг
   const [openFilter, setOpenFilter] = useState(null)   // какой фильтр раскрыт
+
+  // Закрытие по клику ВНЕ панели. До 05.09.2026 фильтр закрывался только повторным
+  // кликом по своей же кнопке: открыл, ушёл мышью в таблицу — панель осталась висеть.
+  // `closest('[data-pop-root]')` — канон проекта: клик внутри триггера или самой панели
+  // (она рендерится порталом и тоже помечена) закрытием не считается.
+  useEffect(() => {
+    if (!openFilter) return undefined
+    const off = (e) => { if (!e.target.closest('[data-pop-root]')) setOpenFilter(null) }
+    document.addEventListener('mousedown', off)
+    return () => document.removeEventListener('mousedown', off)
+  }, [openFilter])
   const [showArchive, setShowArchive] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(EMPTY)

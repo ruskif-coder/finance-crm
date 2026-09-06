@@ -1,4 +1,5 @@
 import { MONO, UI } from '@/components/salesTableKit'
+import { grp } from '@/lib/salesFormat'
 
 /**
  * Общие детали экранов паблишеров: тона статусов, метки, иконки мессенджеров,
@@ -57,7 +58,10 @@ export const localTime = (off) => {
   return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
 }
 
-export const fmtMoney = (v) => (v == null ? '—' : new Intl.NumberFormat('ru-RU').format(Math.round(v)))
+// Деньги форматирует ОБЩИЙ `grp` из lib/salesFormat: своя копия `Intl.NumberFormat`
+// была четырнадцатой в проекте, а копии расходятся в округлении и в том, что
+// печатают для нуля. Имя оставлено — на него завязано два десятка мест карточки.
+export const fmtMoney = grp
 export const fmtCompact = (v) => {
   if (v == null) return '—'
   if (v >= 1e6) return (v / 1e6).toFixed(2).replace('.', ',')

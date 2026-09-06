@@ -2,16 +2,19 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can, firstAllowedHref } from '@/components/Navbar'
-import { MONO, UI, card, primaryBtn, MultiDrop } from '@/components/salesTableKit'
+import { MONO, UI, card, primaryBtn, GenTitleBtn, MultiDrop } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
-import { downloadName, fmtFull, fmtMoney } from '@/lib/salesFormat'
+import { downloadName, fmtFull, fmtMoney, grp } from '@/lib/salesFormat'
 import { DownloadOverlay } from '@/components/LogoLoader'
 import ValuePopover from '@/components/ValuePopover'
+import { buildTitle, separatePriceSet, surfaceTag, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
 
 // Реестр медиапланов (контур аккаунта). Тулбар (поиск/период/фильтры/сортировка) и
 // клик-редактирование ячеек — как в реестре сделок. Данные приходят пачкой (последние
 // версии), поэтому фильтрация/сортировка — клиентские.
-const rub = (n) => (n == null ? '—' : `${new Intl.NumberFormat('ru-RU').format(Math.round(n))} ₽`)
+// Деньги — общим `grp`: см. lib/salesFormat, там же `grp0`/`grpDash` на случай,
+// когда ноль значащий, а когда пустой.
+const rub = (n) => (n == null ? '—' : `${grp(n)} ₽`)
 // Колонки CSS-grid — ширины/раскладка как в реестре сделок (sales.js). edit — поле пикера.
 const COLS = [
   { key: 'id', w: '52px', label: 'ID' },
@@ -185,6 +188,21 @@ export default function MpRegistry() {
     if (t && t !== (items.find(x => x.id === id)?.title || '')) await patchCell(id, { title: t }, { title: t })
   }
 
+  /* Название медиаплана собирается ТЕМ ЖЕ модулем, что имя сделки (lib/dealTitle.js), и
+     той же кнопкой. Раньше имя плана собирал только конструктор, по своей маске — без
+     услуги и через « · », — а в реестре его можно было лишь править руками.
+     Услуга и поверхность приходят строкой плана (их считает сервер из его же строк). */
+  const [serviceDir, setServiceDir] = useState([])
+  useEffect(() => { api.get('/sales/directories/services?only_active=true', auth())
+    .then(r => setServiceDir(r.data.items || [])).catch(() => {}) }, [])
+  const separate = useMemo(() => separatePriceSet(serviceDir), [serviceDir])
+  const genTitle = async (it) => {
+    const t = buildTitle({ ...it, separate })
+    if (!t) { alert(TITLE_EMPTY_HINT); return }
+    if (t === (it.title || '')) return
+    await patchCell(it.id, { title: t }, { title: t })
+  }
+
   const del = async (it) => {
     if (!confirm(`Удалить медиаплан «${it.title || it.id}» со всеми версиями?`)) return
     try { await api.delete(`/sales/media-plans/${it.id}?whole_group=true`, auth()); load() } catch (e) { alert('Ошибка удаления') }
@@ -283,8 +301,14 @@ export default function MpRegistry() {
                       ? <input autoFocus value={titleDraft} onChange={e => setTitleDraft(e.target.value)}
                         onBlur={() => saveTitle(it.id)} onKeyDown={e => { if (e.key === 'Enter') saveTitle(it.id); if (e.key === 'Escape') setEditTitleId(null) }}
                         style={{ minWidth: 0, padding: '3px 6px', border: '1px solid var(--accent)', borderRadius: 6, fontSize: 12.5, fontFamily: UI, background: 'var(--bg-card)', color: 'inherit' }} />
-                      : <span onClick={canEdit ? () => { setEditTitleId(it.id); setTitleDraft(it.title || '') } : undefined}
-                        style={{ ...clip, fontWeight: 600, cursor: canEdit ? 'text' : 'default', color: it.title ? 'var(--text-primary)' : 'var(--text-faint)' }}>{it.title || 'без названия'}</span>}
+                      : <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                        <span onClick={canEdit ? () => { setEditTitleId(it.id); setTitleDraft(it.title || '') } : undefined}
+                          style={{ ...clip, flex: 1, fontWeight: 600, cursor: canEdit ? 'text' : 'default', color: it.title ? 'var(--text-primary)' : 'var(--text-faint)' }}>{it.title || 'без названия'}</span>
+                        {!!surfaceTag(it.inventory) && (
+                          <span style={{ fontFamily: MONO, fontSize: 8.5, letterSpacing: '.08em', color: 'var(--text-faint)', flexShrink: 0 }}>{surfaceTag(it.inventory)}</span>
+                        )}
+                        {canEdit && <GenTitleBtn onClick={() => genTitle(it)} size={22} />}
+                      </span>}
                     <EditCell it={it} field="agency">{it.agency}</EditCell>
                     <EditCell it={it} field="advertiser">{it.advertiser}</EditCell>
                     <EditCell it={it} field="brand">{it.brand}</EditCell>

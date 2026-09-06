@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import api, { auth } from '../lib/api'
 import useIsMobile from './mobile/useIsMobile'
 import { overlayClose } from '@/lib/overlay'
+import { buildTitle, separatePriceSet, SURFACE_TAG } from '@/lib/dealTitle'
+import { GenTitleBtn } from './salesTableKit'
 
 const VAT = 1.22
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
@@ -73,7 +75,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
   const [pipelines, setPipelines] = useState([])
   const [stages, setStages] = useState([])
   const [brands, setBrands] = useState([])
-  const [f, setF] = useState({ agency_id: '', advertiser_id: '', brand_id: '', product: '', pipeline: '', bitrix_stage: '', period: '', amount: '', amount_with_vat: '', sales_rep_id: '', account_manager_id: '', title: '' })
+  const [f, setF] = useState({ agency_id: '', advertiser_id: '', brand_id: '', product: '', inventory: '', pipeline: '', bitrix_stage: '', period: '', amount: '', amount_with_vat: '', sales_rep_id: '', account_manager_id: '', title: '' })
   const [brief, setBrief] = useState('')
   const [briefOpen, setBriefOpen] = useState(true)   // бриф открыт по умолчанию
   const [busy, setBusy] = useState(false)
@@ -128,12 +130,18 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
     else setF(p => ({ ...p, amount: v, amount_with_vat: isNaN(n) ? '' : (n * VAT).toFixed(2) }))
   }
 
+  /* Имя собирает общий модуль (lib/dealTitle.js): та же логика в реестрах, на карточке
+     и в конструкторе медиаплана. Поверхность здесь берётся из выбора рядом с услугой —
+     медиаплана у новой сделки ещё нет, и вывести её неоткуда. */
+  const separate = useMemo(() => separatePriceSet(services), [services])
   const genTitle = () => {
-    const short = o => (o ? String(o.label).split(' | ')[0].trim() : '')
-    const adv = (opts.advertiser_id || []).find(o => String(o.value) === String(f.advertiser_id))
-    const ag = (opts.agency_id || []).find(o => String(o.value) === String(f.agency_id))
-    const br = brands.find(o => String(o.value) === String(f.brand_id))
-    set('title', [short(adv), short(br), short(ag), f.product, f.period].filter(x => x && String(x).trim()).join(' | '))
+    const lbl = (list, v) => (list || []).find(o => String(o.value) === String(v))?.label
+    set('title', buildTitle({
+      advertiser: lbl(opts.advertiser_id, f.advertiser_id),
+      brand: lbl(brands, f.brand_id),
+      agency: lbl(opts.agency_id, f.agency_id),
+      product: f.product, inventory: f.inventory, period: f.period, separate,
+    }))
   }
 
   const pipeName = (pipelines.find(p => String(p.id) === String(f.pipeline)) || {}).name || ''
@@ -150,7 +158,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
         account_manager_id: f.account_manager_id ? +f.account_manager_id : null, title: f.title || null,
       }, auth())
       if (brief.trim() && r.data?.id) { try { await api.put(`/sales/deals/${r.data.id}/brief`, { brief }, auth()) } catch (e) {} }
-      setF({ agency_id: '', advertiser_id: '', brand_id: '', product: '', pipeline: f.pipeline, bitrix_stage: f.bitrix_stage, period: '', amount: '', amount_with_vat: '', sales_rep_id: '', account_manager_id: '', title: '' })
+      setF({ agency_id: '', advertiser_id: '', brand_id: '', product: '', inventory: '', pipeline: f.pipeline, bitrix_stage: f.bitrix_stage, period: '', amount: '', amount_with_vat: '', sales_rep_id: '', account_manager_id: '', title: '' })
       setBrief(''); setBriefOpen(true)
       onCreated && onCreated(); onClose()
     } catch (e) { alert(e.response?.data?.detail || 'Не удалось создать сделку') }
@@ -169,7 +177,23 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
         <div><span style={LBL}>Агентство</span><Search placeholder="не выбрано" options={opts.agency_id} value={f.agency_id} onChange={v => set('agency_id', v)} /></div>
         <div><span style={LBL}>Рекламодатель</span><Search placeholder="не выбран" options={opts.advertiser_id} value={f.advertiser_id} onChange={v => { set('advertiser_id', v); set('brand_id', '') }} hl={reqColor(!!f.advertiser_id)} /></div>
         <div><span style={LBL}>Бренд</span><Search placeholder={f.advertiser_id ? 'не выбран' : 'сначала рекламодатель'} options={brands} value={f.brand_id} onChange={v => set('brand_id', v)} disabled={!f.advertiser_id} /></div>
-        <div><span style={LBL}>Услуга</span><Search placeholder="не выбрана" options={services.map(s => ({ value: s.name, label: s.name }))} value={f.product} onChange={v => set('product', v)} hl={reqColor(!!f.product)} /></div>
+        <div><span style={LBL}>Услуга</span><Search placeholder="не выбрана" options={services.map(s => ({ value: s.name, label: s.name }))} value={f.product} onChange={v => { set('product', v); set('inventory', '') }} hl={reqColor(!!f.product)} />
+          {/* Поверхность спрашиваем ТОЛЬКО у услуг с раздельным прайсом: у остальных
+              web и app — один продукт, и выбор был бы вопросом ни о чём. Значение
+              уходит в НАЗВАНИЕ, а не в поля сделки: своего места под поверхность у
+              сделки нет, она живёт в строках медиаплана. */}
+          {separate.has(f.product) && (
+            <span style={{ display: 'inline-flex', gap: 6, marginTop: 6 }}>
+              {Object.entries(SURFACE_TAG).map(([k, tag]) => (
+                <span key={k} onClick={() => set('inventory', f.inventory === k ? '' : k)}
+                  style={{ cursor: 'pointer', fontFamily: MONO, fontSize: 9.5, padding: '3px 7px',
+                    borderRadius: 7, border: '1px solid var(--border-card)',
+                    background: f.inventory === k ? 'var(--accent-tint)' : 'transparent',
+                    color: f.inventory === k ? 'var(--accent)' : 'var(--text-faint)' }}>{tag}</span>
+              ))}
+            </span>
+          )}
+        </div>
         <div><span style={LBL}>Планируется в период</span><input type="month" style={{ ...INP, fontFamily: MONO, borderColor: reqColor(!!f.period) }} value={f.period} onChange={e => set('period', e.target.value)} /></div>
 
         <div><span style={LBL}>Воронка</span><select style={INP} value={f.pipeline} onChange={e => set('pipeline', e.target.value)}>{pipelines.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
@@ -190,9 +214,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
             <span style={LBL}>Название сделки</span>
             <div style={{ display: 'flex', gap: 8 }}>
               <input style={{ ...INP, flex: 1, minWidth: 0 }} placeholder="Рекл. | Бренд | Агентство | Услуга | Период" value={f.title} onChange={e => set('title', e.target.value)} />
-              <IcoBtn title="Сгенерировать название" onClick={genTitle}>
-                <svg width="16" height="16" viewBox="0 0 24 24" style={st}><path d="M5 3v4" /><path d="M3 5h4" /><path d="M17 15v4" /><path d="M15 17h4" /><path d="M12.5 4.5l1.9 4.6 4.6 1.9-4.6 1.9-1.9 4.6-1.9-4.6L6 11l4.6-1.9z" /></svg>
-              </IcoBtn>
+              <GenTitleBtn onClick={genTitle} size={34} />
               <IcoBtn title={brief.trim() ? 'Бриф добавлен' : 'Добавить бриф'} active={!!brief.trim() || briefOpen} onClick={() => setBriefOpen(o => !o)}>
                 <svg width="16" height="16" viewBox="0 0 24 24" style={st}><path d="M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" /><path d="M9 12h6" /><path d="M9 16h4" /></svg>
               </IcoBtn>
@@ -200,9 +222,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
           </div>
         ) : (<>
           <div><span style={LBL}>Название сделки</span><input style={INP} placeholder="Рекламодатель | Бренд | Агентство | Услуга | Период" value={f.title} onChange={e => set('title', e.target.value)} /></div>
-          <IcoBtn title="Сгенерировать название" onClick={genTitle}>
-            <svg width="16" height="16" viewBox="0 0 24 24" style={st}><path d="M5 3v4" /><path d="M3 5h4" /><path d="M17 15v4" /><path d="M15 17h4" /><path d="M12.5 4.5l1.9 4.6 4.6 1.9-4.6 1.9-1.9 4.6-1.9-4.6L6 11l4.6-1.9z" /></svg>
-          </IcoBtn>
+          <GenTitleBtn onClick={genTitle} size={34} />
           <IcoBtn title={brief.trim() ? 'Бриф добавлен' : 'Добавить бриф'} active={!!brief.trim() || briefOpen} onClick={() => setBriefOpen(o => !o)}>
             <svg width="16" height="16" viewBox="0 0 24 24" style={st}><path d="M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" /><path d="M9 12h6" /><path d="M9 16h4" /></svg>
           </IcoBtn>

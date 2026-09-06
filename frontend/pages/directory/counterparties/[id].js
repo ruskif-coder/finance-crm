@@ -113,6 +113,7 @@ export default function CounterpartyCard() {
         phone: d.phone || '', email: d.email || '',
         website: d.website || '', edo_id: d.edo_id || '',
         director_name: d.director_name || '', note: d.note || '',
+        signer_position: d.signer_position || '', signer_basis: d.signer_basis || '',
         bank_accounts: d.bank_accounts.length
           ? d.bank_accounts
           : [{ bank_name: '', bank_city: '', rs: '', ks: '', bik: '' }],
@@ -281,7 +282,9 @@ export default function CounterpartyCard() {
     if (card.phone)           lines.push(`Тел.: ${card.phone}`)
     if (card.email)           lines.push(`Email: ${card.email}`)
     if (card.website)         lines.push(`Сайт: ${card.website}`)
-    if (card.director_name)   lines.push(`Ген. директор: ${card.director_name}`)
+    if (card.director_name)   lines.push(`Подписант: ${card.director_name}`)
+    if (card.signer_position) lines.push(`Должность подписанта: ${card.signer_position}`)
+    if (card.signer_basis)    lines.push(`Основание полномочий: ${card.signer_basis}`)
     if (card.edo_id)          lines.push(`ЭДО: ${card.edo_id}`)
     card.bank_accounts.forEach(b => {
       if (b.bank_name || b.rs) {
@@ -356,8 +359,11 @@ export default function CounterpartyCard() {
         { label: 'ОГРН', value: card.ogrn || '—', mono: true }, { label: 'ОКПО', value: card.okpo || '—', mono: true },
         { label: 'Юр. адрес', value: card.address || '—' }, { label: 'Факт. адрес', value: card.address_fact || '—' },
         { label: 'Телефон', value: card.phone || '—', mono: true }, { label: 'Email', value: card.email || '—' },
-        { label: 'Сайт', value: card.website || '—' }, { label: 'Ген. директор', value: card.director_name || '—' },
-        { label: 'ЭДО', value: card.edo_id || '—', mono: true }, { label: 'Примечание', value: card.note || '—' },
+        { label: 'Сайт', value: card.website || '—' }, { label: 'ЭДО', value: card.edo_id || '—', mono: true },
+        { label: 'ФИО подписанта', value: card.director_name || '—' },
+        { label: 'Должность подписанта', value: card.signer_position || '—' },
+        { label: 'Основание полномочий', value: card.signer_basis || '—' },
+        { label: 'Примечание', value: card.note || '—' },
       ],
       banks: (card.bank_accounts || []).filter(b => b.bank_name || b.rs).map(b => ({
         name: b.bank_name || 'Банк', rows: [{ label: 'Р/С', value: b.rs || '—' }, { label: 'К/С', value: b.ks || '—' }, { label: 'БИК', value: b.bik || '—' }],
@@ -496,7 +502,21 @@ export default function CounterpartyCard() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
                     {fld('Email', 'email')}{fld('Сайт', 'website')}
                   </div>
-                  {fld('Ген. директор', 'director_name')}{fld('ЭДО', 'edo_id')}{fld('Примечание', 'note', true)}
+                  {fld('ЭДО', 'edo_id')}{fld('Примечание', 'note', true)}
+                  {/* Подписант отдельным блоком: эти три поля печатаются в приложении к
+                      договору («в лице Генерального директора Иванова И.И., действующего
+                      на основании Устава»), и пустое из них означает прочерк в документе,
+                      который уходит клиенту. */}
+                  <div style={{ fontFamily: CT.mono, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: CT.t3, fontWeight: 700, margin: '10px 0 8px' }}>Подписант документов</div>
+                  {fld('ФИО подписанта', 'director_name')}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
+                    {fld('Должность', 'signer_position')}{fld('Основание полномочий', 'signer_basis')}
+                  </div>
+                  <div style={{ fontSize: 11, color: CT.t3, margin: '-4px 0 10px' }}>
+                    Должность и основание — как в договоре: «Генеральный директор», «Устава»
+                    или «Доверенности № 5 от 01.01.2026». Без них приложение к договору
+                    не выгрузится.
+                  </div>
                   <div style={{ fontFamily: CT.mono, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: CT.t3, fontWeight: 700, margin: '10px 0 8px' }}>Банковские счета</div>
                   {(editData.bank_accounts || []).map((b, i) => (
                     <div key={i} style={{ background: CT.subtle, borderRadius: 12, padding: '12px 12px 2px', marginBottom: 10 }}>

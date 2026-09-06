@@ -182,12 +182,18 @@ def our_contacts(db: Session) -> List[dict]:
     Почта — через `sales_reps.user_id → users.email`. Сотрудник без учётки в системе
     показывается без способа связаться, и это видно в ответе (`email: null`), чтобы
     экран мог его пометить, а не молча показать площадке контакт без почты.
+
+    `user_id` отдаётся рядом с `rep_id`: выбирают учётку (см. `app/sales/reps.py`), а
+    хранится профиль ответственного. `is_disabled` — учётку отключили уже ПОСЛЕ того,
+    как человека поставили контактом; строка при этом не исчезает (иначе площадка
+    молча теряет контакт), но экран обязан её пометить.
     """
-    return [{"id": r.id, "role": r.role, "rep_id": r.rep_id, "name": r.name,
-             "email": r.email, "is_shown": bool(r.is_shown), "sort_order": r.sort_order}
+    return [{"id": r.id, "role": r.role, "rep_id": r.rep_id, "user_id": r.user_id,
+             "name": r.name, "email": r.email, "is_shown": bool(r.is_shown),
+             "is_disabled": not bool(r.user_active), "sort_order": r.sort_order}
             for r in db.execute(text(
                 "SELECT oc.id, oc.role, oc.rep_id, oc.is_shown, oc.sort_order, "
-                "       rp.name, u.email "
+                "       rp.name, rp.user_id, u.email, u.is_active AS user_active "
                 "  FROM cabinet_our_contact oc "
                 "  JOIN sales_reps rp ON rp.id = oc.rep_id "
                 "  LEFT JOIN users u ON u.id = rp.user_id "

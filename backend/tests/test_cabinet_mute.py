@@ -51,6 +51,12 @@ def acc():
     yield type('A', (), {'db': db, 'id': row.id, 'pub': row.publisher_id})
     db.execute(text("DELETE FROM cabinet_account_mute WHERE account_id = :a"),
                {"a": row.id})
+    # С 05.09.2026 выключатель пишет строку в ленту кабинета. Без уборки каждый прогон
+    # тестов оставлял бы площадке пару строк «уведомление выключено/возвращено» — ленту
+    # читает внешний человек, и наш прогон в ней выглядел бы её собственным действием.
+    db.execute(text("DELETE FROM cabinet_log WHERE account_id = :a "
+                    "AND action IN ('уведомление_выкл', 'уведомление_вкл')"),
+               {"a": row.id})
     db.commit()
     db.close()
 
@@ -216,3 +222,39 @@ def test_vocabulary_is_coherent():
     assert len(MUTABLE_KEYS) < len(KIND_KEYS), (
         'выключить можно всё — обязательный вид потерялся'
     )
+
+
+def test_switch_leaves_a_trace_in_the_cabinet_feed(acc):
+    """Выключатель пишет в ленту кабинета — обе стороны видят, когда состояние сменили.
+
+    Сама строка `cabinet_account_mute` помнит ТЕКУЩЕЕ состояние и не помнит, когда его
+    сменили и кто. Разговор «мы вам писали» / «нам не приходило» упирался в то, что
+    записи нет ни у кого. Событий два, а не одно с флагом: в ленте читают глаголы, и
+    «выключено» обязано отличаться тоном от «возвращено».
+    """
+    from app.cabinet.notify_kinds import KINDS, MUTABLE_KEYS
+    from app.routers import cabinet_gateway as gw
+
+    kind = sorted(MUTABLE_KEYS)[0]
+    label = next(k.label for k in KINDS if k.key == kind)
+    before = _feed(acc.db, acc.id)
+
+    gw.cabinet_mute(acc.id, gw.CabinetMuteIn(publisher_id=acc.pub, kind=kind,
+                                             muted=True, author_name='Прибор'), acc.db)
+    gw.cabinet_mute(acc.id, gw.CabinetMuteIn(publisher_id=acc.pub, kind=kind,
+                                             muted=False, author_name='Прибор'), acc.db)
+
+    rows = _feed(acc.db, acc.id)[len(before):]
+    assert [r.action for r in rows] == ['уведомление_выкл', 'уведомление_вкл']
+    # В ленту едет ЧЕЛОВЕЧЕСКОЕ имя вида, а не ключ: её читает и площадка тоже.
+    assert all(r.subject == label for r in rows), [r.subject for r in rows]
+    assert all(r.actor_side == 'площадка' for r in rows)
+    assert [r.tone for r in rows] == ['warn', 'ok']
+
+
+def _feed(db, account_id):
+    from app.cabinet.models import CabinetLog
+    return (db.query(CabinetLog)
+            .filter(CabinetLog.account_id == account_id,
+                    CabinetLog.action.in_(['уведомление_выкл', 'уведомление_вкл']))
+            .order_by(CabinetLog.id).all())

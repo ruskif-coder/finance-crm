@@ -23,6 +23,28 @@ services:
       retries: 5
     mem_limit: 512m
 
+  # Аналитическая база DSP (контур «DSP-коннектор», этап 2a, 02.09.2026): TimescaleDB на pg16.
+  # Своя база — сырьё stat-API DSP, журнал отправок, курсоры; в основную (db) уходит
+  # только суточный срез (ad_campaign_stat). Порт только на 127.0.0.1. Схема —
+  # backend/migrations/dsp/2026-09-02_dsp_analytics.sql (накат: docker exec -i finance_dsp_db psql).
+  dsp_analytics_db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: finance_dsp_db
+    environment:
+      POSTGRES_DB: dsp_analytics
+      POSTGRES_USER: dsp
+      POSTGRES_PASSWORD: ${DSP_DB_PASSWORD}
+    volumes:
+      - dsp_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dsp -d dsp_analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 512m
+
   backend:
     build: ./backend
     container_name: finance_backend
@@ -32,6 +54,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://finance_user:${POSTGRES_PASSWORD}@db:5432/finance
+      DSP_DATABASE_URL: postgresql://dsp:${DSP_DB_PASSWORD}@dsp_analytics_db:5432/dsp_analytics
       SECRET_KEY: ${SECRET_KEY}
       # Используется в main.py для CORS allow_origins — см. комментарий там.
       # Пока не открыли систему наружу, оставляйте "localhost".
@@ -43,6 +66,14 @@ services:
       # внутрь ЖИВОГО контейнера через docker cp — он терялся при каждом
       # up --force-recreate / пересборке. Через env переживает пересоздание.
       VIBECODE_API_KEY: ${VIBECODE_API_KEY:-}
+      # Прямой вебхук Битрикса — второй путь к тому же порталу, мимо VibeCode.
+      BITRIX_WEBHOOK_URL: ${BITRIX_WEBHOOK_URL:-}
+      # Телеграм-бот уведомлений. Пустой токен = доставки нет: отправки ложатся в журнал
+      # статусом queued и человеку не показываются. Молча — поэтому переменные и должны
+      # быть перечислены здесь, а не только в .env.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_NAME: ${TELEGRAM_BOT_NAME:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
       # Доступ к API ОРД МедиаСкаут. Значения — в .env (gitignored), сюда только ссылки.
       # Контур ПО УМОЛЧАНИЮ demo: забытая переменная должна отправлять в песочницу, а не
       # в ЕРИР — регистрация маркера необратима. prod ставится осознанно.
@@ -54,6 +85,25 @@ services:
       # Пропуск процесса кабинета в ядро. ПУСТОЙ секрет закрывает вход насовсем —
       # забытая переменная должна ломать функцию, а не защиту.
       CABINET_SERVICE_TOKEN: ${CABINET_SERVICE_TOKEN:-}
+      # Доступ к DSP. Значения — в .env (gitignored), сюда только ссылки.
+      #
+      # Проброс обязателен ИМЕННО ЗДЕСЬ: `app/dsp/client.py` читает их из окружения
+      # процесса, а `.env` наполняет не контейнер, а сам compose. Без этих строк токен,
+      # положенный в `.env` на сервере, до бэкенда не доходит вовсе — и коннектор
+      # отвечает «не заданы в окружении», что со стороны неотличимо от неверного токена.
+      DSP_API_URL: ${DSP_API_URL:-}
+      DSP_ACCESS_TOKEN: ${DSP_ACCESS_TOKEN:-}
+      DSP_PARTNER_XXHASH: ${DSP_PARTNER_XXHASH:-}
+      # Демо-контур того же DSP — отдельный кабинет и отдельный токен. Разделены, чтобы
+      # прогон на демо-стенде не попадал в дедуп боевых отправок (контур пишется в журнал).
+      DSP_DEMO_API_URL: ${DSP_DEMO_API_URL:-}
+      DSP_DEMO_TOKEN: ${DSP_DEMO_TOKEN:-}
+      DSP_DEMO_PARTNER_XXHASH: ${DSP_DEMO_PARTNER_XXHASH:-}
+      #
+      # ORD_ALLOW_PROD_WRITE, DEBUG и LOG_DIR код читает, а здесь их НЕТ — намеренно, и
+      # у каждой своя причина. Они записаны рядом с именем в
+      # backend/tests/test_env_passthrough.py, который и следит, чтобы этот список не
+      # разошёлся с тем, что читает код: та же дыра уже трижды тихо ломала функции.
     volumes:
       - ./backend/logs:/app/logs
       - ./uploads:/app/uploads   # персистентное хранилище прикреплённых файлов договоров
@@ -156,6 +206,10 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    # ПРОД: caddy ДОПОЛНИТЕЛЬНО присоединяется к внешней сети `caddy_proxy` (общая с
+    # TruckCRM) — иначе pm.simbad.pro отдаёт 502. Здесь этого НЕТ намеренно: локально сети
+    # нет, объявление `external` сломало бы `up`. При слиянии прод-compose добавить
+    # `networks: [default, caddy_proxy]` сюда и top-level `networks: {caddy_proxy: external}`.
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       # Распакованные баннеры — только на чтение: Caddy их раздаёт, писать туда
@@ -166,5 +220,6 @@ services:
 
 volumes:
   postgres_data:
+  dsp_data:
   caddy_data:
   caddy_config:

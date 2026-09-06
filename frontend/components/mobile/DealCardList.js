@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { productWithSurface } from '@/lib/dealTitle'
 import { MONO, UI, PIP, FILL, shortLabel } from '../salesTableKit'
 import { grp } from '../../lib/salesFormat'
 import { T } from '../../lib/tokens'
@@ -199,7 +200,7 @@ function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
           <div style={{ ...CARD, padding: '4px 16px 8px', animation: 'sheetFade .24s ease both' }}>
             <Row k="Сумма с НДС" v={`${rub(withVat)} ₽`} strong />
             <Row k="Без НДС" v={`${rub(d.amount)} ₽`} strong />
-            <Row k="Услуга" v={d.product} />
+            <Row k="Услуга" v={productWithSurface(d.product, d.inventory) || d.product} />
             <Row k="Период" v={d.period} last />
           </div>
         )}

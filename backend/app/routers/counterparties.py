@@ -62,6 +62,12 @@ class CounterpartyRequisitesUpdate(BaseModel):
     website: Optional[str] = None
     edo_id: Optional[str] = None
     director_name: Optional[str] = None
+    # Подписант для документов (миграция 2026-09-05_annex_generator.sql). Должность и
+    # основание полномочий до 05.09.2026 не имели ни писателя, ни экрана: приложение к
+    # договору печатало на их месте прочерк, и документ уходил клиенту с пустым местом
+    # там, где стоит подпись.
+    signer_position: Optional[str] = None
+    signer_basis: Optional[str] = None
     note: Optional[str] = None
     bank_accounts: List[BankAccountData] = []
 
@@ -563,6 +569,8 @@ def get_counterparty_card(
         "email": cp.email,
         "edo_id": cp.edo_id,
         "director_name": cp.director_name,
+        "signer_position": cp.signer_position,
+        "signer_basis": cp.signer_basis,
         "website": cp.website,
         "note": cp.note,
         "status": cp.status,
@@ -772,6 +780,8 @@ def update_counterparty_requisites(
     cp.email         = _s(data.email)
     cp.edo_id        = _s(data.edo_id)
     cp.director_name = _s(data.director_name)
+    cp.signer_position = _s(data.signer_position)
+    cp.signer_basis  = _s(data.signer_basis)
     cp.website       = _s(data.website)
     cp.note          = _s(data.note)
 

@@ -222,16 +222,16 @@ export default function YearPlanPage() {
   if (isMobile) return (<><Navbar /><NotOnMobile title="Годовой план" backHref="/sales" backLabel="К продажам" /></>)
 
   if (perms && !can(perms, 'year_plan', 'view') && localStorage.getItem('is_admin') !== 'true') {
-    return (<><Navbar /><div style={{ padding: 40, fontFamily: 'Manrope, sans-serif', color: '#79839A' }}>Нет доступа к разделу «Годовой план».</div></>)
+    return (<><Navbar /><div style={{ padding: 40, fontFamily: 'Manrope, sans-serif', color: 'var(--text-muted)' }}>Нет доступа к разделу «Годовой план».</div></>)
   }
 
   return (
     <>
       <Head><title>Годовой план · {year}</title></Head>
       <Navbar />
-      <div style={{ background: '#EBEEF6', minHeight: 'calc(100vh - 56px)' }}>
+      <div style={{ background: 'var(--bg-canvas)', minHeight: 'calc(100vh - 56px)' }}>
         {loading
-          ? <div style={{ padding: 40, fontFamily: 'Manrope, sans-serif', color: '#79839A' }}>Загрузка…</div>
+          ? <div style={{ padding: 40, fontFamily: 'Manrope, sans-serif', color: 'var(--text-muted)' }}>Загрузка…</div>
           : <YearPlan
               year={year} years={years} onYear={setYear}
               groups={groups} advertisers={advertisers} services={services} addons={addons} briefCatalogs={briefCatalogs}

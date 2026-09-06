@@ -42,16 +42,17 @@ def _sent(env):  # noqa: F811
 
 # ── область видимости ────────────────────────────────────────────────────────
 #
-# Единственное правило модуля, которое до 29.08.2026 не держал ни один прибор. Проверять
-# его на живых людях дорого вдвойне: `traffic_manager_id` пуст у всех 916 сделок, а
-# пользователей с ролями трафика ноль — то есть первый же назначенный человек обнаружил
-# бы ошибку собой, и обнаружил бы её как «мне не видно моей работы».
+# Правило менялось дважды за четыре дня, и оба раза молча: лишняя видимость ничего не
+# роняет, недостача выглядит как пустая очередь. 31.08.2026 очередь распределялась —
+# рядовой трафик видел только назначенное ему. 03.09.2026 владелец развернул обратно:
+# разбирают по наличию времени, а не по назначению, значит очередь ОБЩАЯ.
 #
-# Назначение тест ставит сам и убирает за собой. Утверждений три, и каждое ломается
-# молча: лишняя видимость не падает, недостача выглядит как пустая очередь.
+# Приборы стоят на новом правиле целиком, а не «ослаблены»: разница между «видно всем»
+# и «видно назначенному» — это разница между работающим конвейером и очередью, в
+# которую никто не смотрит.
 
-# Пользователь, которого нет в справочнике представителей: проверяем ветку «своих строк
-# нет» — сегодня это состояние любого нового трафик-менеджера до заведения карточки.
+# Пользователь, которого нет в справочнике представителей: сегодня это состояние любого
+# трафик-менеджера — профиль заводится только при первом назначении (app/sales/reps.py).
 _UID_NOBODY = 10 ** 9
 
 
@@ -62,10 +63,7 @@ def _user(key, is_master, uid=None):
 
 
 def _sees(db, user, deal_id, rep_id=None, all_reps=False):
-    """Видит ли пользователь в очереди хоть одну пару этой сделки.
-
-    `rep_id`/`all_reps` — переключатель между трафиками; у рядового он не читается.
-    """
+    """Видит ли пользователь в очереди хоть одну пару этой сделки."""
     rows = traffic.queue('all', db, user, rep_id=rep_id, all_reps=all_reps)['rows']
     return any(r['deal']['id'] == deal_id for r in rows)
 
@@ -92,72 +90,60 @@ def scope(env):  # noqa: F811
     db.commit()
 
 
-def test_unassigned_work_belongs_to_nobody(scope):
-    """Неназначенное рядовому трафику НЕ показывается.
+def test_unassigned_work_is_visible_to_everyone(scope):
+    """Неназначенное видит КАЖДЫЙ — на этом стоит общая очередь.
 
-    До 31.08.2026 «ничьё» было общим, и это описывало день, когда назначений не было
-    вовсе. Владелец: трафик видит только своё. Иначе распределение ничего не
-    распределяет — каждый по-прежнему видит всё.
-
-    Практическое следствие, которое надо знать: пока `traffic_manager_id` пуст, у
-    рядового трафика очередь пустая. Работа появляется у него в момент назначения, а не
-    в момент отправки материала.
+    Прежнее правило (31.08.2026) прятало «ничьё» от всех, кроме мастера с включённым
+    «все». Практическое следствие было такое: пока `traffic_manager_id` пуст — а он пуст
+    у всех сделок на стенде, — очередь у рядового трафика пустая, и отправленный
+    материал выглядит потерянным.
     """
-    # Снимаем назначение явно: общая фикстура сборки его теперь ставит — без трафика
-    # материал не отправить (проверка перед отправкой, 31.08.2026). Исходное значение
-    # вернёт teardown фикстуры.
     scope.deal.traffic_manager_id = None
     scope.db.commit()
-    assert not _sees(scope.db, _user('role_120', False, scope.uid_mine), scope.deal.id)
-    assert not _sees(scope.db, _user('role_120', False, scope.uid_other), scope.deal.id)
-    assert not _sees(scope.db, _user('role_120', False, _UID_NOBODY), scope.deal.id)
-    # Мастер добирается до неназначенного через «все» — иначе оно потерялось бы совсем.
-    assert _sees(scope.db, _user('role_121', True, scope.uid_mine), scope.deal.id,
-                 all_reps=True)
-
-
-def test_assigned_deal_is_hidden_from_others(scope):
-    """Назначенное видит адресат — и не видит сосед."""
-    scope.deal.traffic_manager_id = scope.mine.id
-    scope.db.commit()
     assert _sees(scope.db, _user('role_120', False, scope.uid_mine), scope.deal.id)
-    assert not _sees(scope.db, _user('role_120', False, scope.uid_other), scope.deal.id)
-    assert not _sees(scope.db, _user('role_120', False, _UID_NOBODY), scope.deal.id), (
-        'без своей строки видно только ничьё — иначе назначение ничего не значит'
+    assert _sees(scope.db, _user('role_120', False, scope.uid_other), scope.deal.id)
+    assert _sees(scope.db, _user('role_120', False, _UID_NOBODY), scope.deal.id), (
+        'трафик без профиля в справочнике не видит ничего — а профиля нет ни у кого'
     )
+    assert _sees(scope.db, _user('role_121', True, scope.uid_mine), scope.deal.id)
 
 
-def test_master_reaches_other_work_but_starts_with_his_own(scope):
-    """Мастер начинает со СВОЕЙ очереди и переключается на чужую.
+def test_assignment_does_not_hide_work_from_others(scope):
+    """Назначение — ОТМЕТКА, а не граница видимости.
 
-    Признак мастера берётся из `roles.is_master`, а не из имени роли: «Мастер траффик» —
-    подпись в интерфейсе, и переименование роли не должно отбирать полномочие.
-
-    По умолчанию мастер работает как все — иначе он каждый день открывает чужую работу
-    вместо своей. Чужую он видит выбором в переключателе (31.08.2026).
+    Именно этим новое правило отличается от старого: ответственный у кампании остаётся
+    и меняется вручную до старта, но чужую работу он ни от кого не закрывает.
     """
     scope.deal.traffic_manager_id = scope.other.id
     scope.db.commit()
-    master = _user('role_121', True, scope.uid_mine)
-
-    assert not _sees(scope.db, master, scope.deal.id), 'по умолчанию мастеру показали чужое'
-    assert _sees(scope.db, master, scope.deal.id, rep_id=scope.other.id)
-    assert _sees(scope.db, master, scope.deal.id, all_reps=True)
-    # Админ без своей строки в справочнике «своих» не имеет — получает раздел целиком.
+    assert _sees(scope.db, _user('role_120', False, scope.uid_other), scope.deal.id)
+    assert _sees(scope.db, _user('role_120', False, scope.uid_mine), scope.deal.id)
+    assert _sees(scope.db, _user('role_120', False, _UID_NOBODY), scope.deal.id)
     assert _sees(scope.db, _user('admin', False, None), scope.deal.id)
-    assert not _sees(scope.db, _user('role_120', False, scope.uid_mine), scope.deal.id)
 
 
-def test_master_can_act_on_what_he_can_see(scope):
-    """Переключился на чужую очередь — значит может по ней и нажать.
+def test_rep_filter_narrows_the_queue_for_anyone(scope):
+    """Фильтр «чья кампания» доступен всем и именно СУЖАЕТ список.
 
-    Переключатель (31.08.2026) расширил ТОЛЬКО чтение: действия ходят через
-    `_pair_in_scope`, а он звал `_apply_scope` без параметров и оставлял мастеру его
-    собственные сделки. Со стороны это выглядит хуже, чем запрет: строки видны, а каждое
-    нажатие отвечает «пара не найдена».
+    Он остался от переключателя мастера, но сменил смысл: раньше расширял доступ, теперь
+    только режет уже видимое. Поэтому проверяем обе стороны — и что выбранного видно, и
+    что невыбранного не видно.
+    """
+    scope.deal.traffic_manager_id = scope.other.id
+    scope.db.commit()
+    rank = _user('role_120', False, scope.uid_mine)
+    assert _sees(scope.db, rank, scope.deal.id, rep_id=scope.other.id)
+    assert not _sees(scope.db, rank, scope.deal.id, rep_id=scope.mine.id)
+    # `all_reps` остался в контракте ручки и ничего не меняет: очередь и так полная.
+    assert _sees(scope.db, rank, scope.deal.id, all_reps=True)
 
-    Область действий мастера равна области ВИДИМОСТИ: «мои» у него — умолчание экрана,
-    а не граница прав.
+
+def test_anyone_can_act_on_what_he_can_see(scope):
+    """Область ДЕЙСТВИЙ равна области видимости.
+
+    Прибор пережил разворот правила и остался прежним по смыслу: строки видно — значит
+    по ним можно нажать. Обратное со стороны выглядит хуже запрета: список есть, а
+    каждое нажатие отвечает «пара не найдена».
     """
     scope.deal.traffic_manager_id = scope.other.id
     scope.db.commit()
@@ -167,21 +153,24 @@ def test_master_can_act_on_what_he_can_see(scope):
             .filter(LaunchPrepCreativeSet.deal_id == scope.deal.id).first())
     assert pair, 'у сделки нет пары — проверять нечего'
 
-    master = _user('role_121', True, scope.uid_mine)
-    assert traffic._pair_in_scope(scope.db, pair.id, master), 'мастеру ответили 404 на своё же'
-
-    stranger = _user('role_120', False, scope.uid_mine)
-    with pytest.raises(HTTPException):
-        traffic._pair_in_scope(scope.db, pair.id, stranger)
+    for who in (_user('role_121', True, scope.uid_mine),
+                _user('role_120', False, scope.uid_mine),
+                _user('role_120', False, _UID_NOBODY)):
+        assert traffic._pair_in_scope(scope.db, pair.id, who), 'ответили 404 на видимое'
 
 
-def test_a_rank_and_file_traffic_cannot_pick_somebody_else(scope):
-    """Переключатель рядовому не подчиняется: параметры просто не читаются."""
-    scope.deal.traffic_manager_id = scope.other.id
-    scope.db.commit()
-    mine = _user('role_120', False, scope.uid_mine)
-    assert not _sees(scope.db, mine, scope.deal.id, rep_id=scope.other.id)
-    assert not _sees(scope.db, mine, scope.deal.id, all_reps=True)
+def test_sending_no_longer_requires_a_traffic_manager(env):  # noqa: F811
+    """Отправка без назначенного трафика проходит (владелец 03.09.2026).
+
+    Проверка стояла в `send_set` с 31.08 и была тупиком вдвойне: очередь стала общей, а
+    назначать было НЕКОГО — у трафиков нет профиля в справочнике ответственных, и список
+    кандидатов возвращал пустоту. Прибор держит именно «проходит», а не «список не пуст»:
+    справочник наполнится, а правило должно остаться.
+    """
+    env.deal.traffic_manager_id = None
+    env.db.commit()
+    pairs = _sent(env)
+    assert pairs, 'без ответственного материал не ушёл — проверка вернулась'
 
 
 # ── порядок ступеней ─────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { docCard } from '@/components/salesTableKit'
+import { card, inp as kitInp, docCard } from '@/components/salesTableKit'
 import { MONO, UI, INTEG_TONE, STATUS_TONE, TRAFFIC_ROWS, SURFACE_CYCLE, SURFACE_LABEL,
   PLATFORM_LABEL, ChatBtn, ServiceChip, tgHref, fmtMoney, fmtCompact, fmtUnit,
   tzLabel, localTime } from '@/components/publishers/kit'
@@ -15,13 +15,12 @@ import { overlayClose } from '@/lib/overlay'
  * идёт через колбэки: карточка ничего не знает про axios и роуты.
  */
 
-const card = { background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-  boxShadow: 'var(--shadow-card)', borderRadius: 18 }
+// Примитивы — из общего кита, отличия спредом. Локальные копии расходятся: у `inp`
+// здесь свой размер шрифта и ширина во всю ячейку, и это единственное, что отличает
+// его от китового — а не повод объявлять поле заново.
 const cap = { fontFamily: MONO, fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase',
   color: 'var(--text-muted)' }
-const inp = { padding: '7px 9px', border: '1px solid var(--border-card)', borderRadius: 9,
-  fontSize: 15, background: 'var(--bg-card)', color: 'var(--text-primary)', fontFamily: UI,
-  outline: 'none', boxSizing: 'border-box', width: '100%' }
+const inp = { ...kitInp, padding: '7px 9px', borderRadius: 9, fontSize: 15, width: '100%' }
 
 // Компоненты объявлены на модульном уровне: объявленный внутри рендера теряет фокус
 // после каждого набранного символа.

@@ -88,39 +88,33 @@ def traffic_reps(db: Session) -> List[dict]:
 
 
 def _apply_scope(q, db: Session, user: User, rep_id=None, all_reps: bool = False):
-    """Мастер видит всю очередь и может смотреть чужую; трафик — ТОЛЬКО свою.
+    """Очередь ОБЩАЯ: её целиком видит каждый, у кого есть право (владелец 03.09.2026).
 
-    Правило владельца 31.08.2026. До него неназначенное («ничьи») видели все, и это
-    описывало день, когда назначений не было вовсе. Теперь очередь распределяется, и
-    «ничьё» перестало быть общим: пара без ответственного не показывается рядовому
-    трафику, иначе распределение ничего не распределяет.
+    Правило менялось дважды, и оба раза по тому, как работают люди, а не по коду.
+    31.08.2026 очередь распределялась: рядовой трафик видел только назначенное ему,
+    «ничьё» не показывалось никому. Прогон с сотрудниками показал, что материал
+    разбирают не по назначению, а по наличию времени, — распределение только мешало,
+    а необходимость назначить трафика ДО отправки упиралась в стену там, где её никто
+    не ждал (см. `launch_prep.send_set`).
 
-    По умолчанию — СВОИ, у мастера тоже: он работает так же, как остальные, и лишь может
-    переключиться. Мастер без профиля в `sales_reps` («свои» для него понятие пустое)
-    получает раздел целиком — иначе экран у него всегда пустой.
-
-    Своей оси видимости у трафика нет в `deals_scope` намеренно: «свои» для него — это
-    `traffic_manager_id`, а не «сейлз или аккаунт», и пятиуровневый контроль матрицы
-    ответил бы на другой вопрос.
+    `traffic_manager_id` остаётся ОТМЕТКОЙ ответственного за кампанию — её ставят и
+    меняют вручную до старта, — но области видимости больше не задаёт. `rep_id`
+    остаётся фильтром экрана и работает у всех: «покажи, что за таким-то». `all_reps`
+    сохранён в подписи как часть контракта ручки (её зовут напрямую приборы и фронт) и
+    теперь ничего не меняет: без фильтра очередь и так полная.
     """
-    mine = _my_rep_ids(db, user)
-    if not _is_master(user):
-        # Выбор чужого не обманывает: параметры рядового трафика просто не читаются.
-        return q.filter(SalesDeal.traffic_manager_id.in_(mine or [0]))
     if rep_id:
         return q.filter(SalesDeal.traffic_manager_id == int(rep_id))
-    if all_reps or not mine:
-        return q
-    return q.filter(SalesDeal.traffic_manager_id.in_(mine))
+    return q
 
 
 def _pair_in_scope(db: Session, pair_id: int, user: User):
-    """Пара + её окружение, с проверкой видимости. 404 вместо 403, если не наша.
+    """Пара + её окружение. 404, если пары нет вовсе.
 
-    Мастеру область действий равна области ВИДИМОСТИ, а не его собственным сделкам:
-    «мои» у него — умолчание экрана, а не граница прав. Иначе переключение на другого
-    трафика давало бы строки, по которым нельзя нажать ничего (404 на каждое действие).
-    Рядовому трафику `_apply_scope` по-прежнему оставляет только его пары.
+    Область ДЕЙСТВИЙ равна области ВИДИМОСТИ, а очередь общая (03.09.2026) — значит
+    нажать можно по любой строке, которую видно. Функция остаётся: она собирает
+    окружение пары одним запросом, и через неё же пойдёт ограничение, если оно
+    когда-нибудь вернётся.
     """
     row = (db.query(LaunchPrepPair, LaunchPrepCreativeSet, LaunchPrepTarget,
                     SalesPublisher, SalesDeal)
@@ -159,9 +153,9 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
           rep_id: Optional[int] = None, all_reps: bool = False):
     """Очередь проверки. `status`: waiting (по умолчанию) | done | all.
 
-    `rep_id` / `all_reps` — переключатель между трафиками, как в дашбордах аккаунта и
-    сейлза. Читаются только у мастера: рядовому трафику показывается своё, и селектора
-    у него на экране нет.
+    `rep_id` — фильтр «чья кампания», доступен всем: очередь общая (03.09.2026), и
+    переключатель здесь сужает список, а не выдаёт доступ. `all_reps` остался в
+    подписи ради контракта ручки и ничего не меняет.
 
     Один запрос на весь экран — тем же приёмом, что сборка креативов: несколько запросов
     на один список дают мигание и рассинхрон, когда часть уже обновилась, а часть нет.
@@ -273,14 +267,14 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
     out.sort(key=lambda r: (urgency.URGENCY_ORDER.get(r["urgency"], 9),
                             r["due"] or date.max, r["pair_id"]))
     my = _my_rep_ids(db, current_user)
-    master = _is_master(current_user)
-    return {"rows": out, "status": status, "is_master": master,
-            # Кого показали на самом деле: None — раздел целиком.
-            "rep_id": (int(rep_id) if rep_id else
-                       (None if (all_reps or not my) else my[0])) if master else (my[0] if my else None),
+    return {"rows": out, "status": status, "is_master": _is_master(current_user),
+            # Кого показали на самом деле: None — очередь целиком (умолчание).
+            "rep_id": int(rep_id) if rep_id else None,
             "my_rep_id": my[0] if my else None,
-            "can_view_others": master,
-            "reps": traffic_reps(db) if master else []}
+            # Фильтр по ответственному видят все — очередь общая, и прятать сужение
+            # списка не от чего.
+            "can_view_others": True,
+            "reps": traffic_reps(db)}
 
 
 @router.get("/queue/count")
@@ -288,9 +282,8 @@ def queue_count(db: Session = Depends(get_db), current_user: User = Depends(VIEW
     """Сколько креативов ждут проверки — только число, для счётчика в меню.
 
     Отдельной ручкой, а не полем в `/queue`: бейдж в шапке считается на КАЖДОЙ странице,
-    а `/queue` тянет пять таблиц, файлы и три выборки имён. Здесь — один COUNT в своей
-    области видимости (у рядового трафика его сделки, у мастера по умолчанию тоже «мои» —
-    переключатель живёт на самом экране, а не в счётчике).
+    а `/queue` тянет пять таблиц, файлы и три выборки имён. Здесь — один COUNT по всей
+    очереди: она общая, и число у всех одинаковое.
     """
     q = (db.query(LaunchPrepReview.id)
          .join(LaunchPrepPair, LaunchPrepPair.id == LaunchPrepReview.pair_id)
@@ -489,6 +482,10 @@ def _shot_out(f: LaunchPrepPairFile) -> dict:
 @router.get("/pair/{pair_id}/files")
 def list_files(pair_id: int, db: Session = Depends(get_db),
                current_user: User = Depends(FILES_VIEW)):
+    # Несуществующая пара — это 404, а не пустой список: «файлов нет» и «нет такой пары»
+    # разные ответы, и второй означает опечатку в ссылке или удалённую сущность.
+    if not db.query(LaunchPrepPair.id).filter(LaunchPrepPair.id == pair_id).first():
+        raise HTTPException(status_code=404, detail="Пара не найдена")
     rows = (db.query(LaunchPrepPairFile)
             .filter(LaunchPrepPairFile.pair_id == pair_id,
                     LaunchPrepPairFile.kind == 'размещение')
@@ -567,12 +564,19 @@ def drop_shot(file_id: int, db: Session = Depends(get_db),
     if not rec:
         raise HTTPException(status_code=404, detail="Файл не найден")
     full = os.path.join(UPLOADS_ROOT, rec.path)
+    # Что удалили — запоминаем ДО удаления: после `db.delete` объект уже не читается,
+    # а в журнале нужно имя файла, а не голый id.
+    what, pair_id = rec.filename or rec.path, rec.pair_id
     db.delete(rec)
     db.commit()
     try:
         os.remove(full)
     except OSError:
         pass          # строки уже нет — файл на диске станет сиротой, а не ошибкой
+    # Удаление разрушительно и необратимо, а до 05.09.2026 не попадало в журнал вовсе:
+    # скриншот размещения исчезал, и восстановить, кто его снял, было неоткуда.
+    log_action(db, current_user, "delete_pair_file", "launch_prep_pair", pair_id,
+               f"удалён файл «{what}»")
     return {"deleted": file_id}
 
 

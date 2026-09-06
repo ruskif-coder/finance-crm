@@ -421,6 +421,12 @@ const OurContactsCard = ({ items, mayEdit, onOpen }) => (
                   title={x.email}>{x.email}</span>
               : <span style={chip('var(--warning-bg)', 'var(--warning-text)', 'var(--warning-border)')}>
                   нет почты</span>}
+            {/* Учётку отключили после назначения: контакт остался в списке у площадки,
+                и это надо видеть здесь, а не узнавать от неё. */}
+            {x.is_disabled && (
+              <span style={chip('var(--danger-tint)', 'var(--danger)', 'var(--danger)')}>
+                учётка отключена</span>
+            )}
             {!x.is_shown && <Chip text="скрыт" tone="черновик" />}
           </div>
         ))}
@@ -609,7 +615,7 @@ export default function CabinetsPage() {
           <button style={btnSm(fNoAcc)} onClick={() => setFNoAcc(v => !v)}
             title="Только кабинеты, в которые никто не может войти">Без учёток</button>
           {mayEdit && (
-            <button style={btn(true)} onClick={() => setNewCab({ name: '', manager_id: '', note: '' })}>
+            <button style={btn(true)} onClick={() => setNewCab({ name: '', manager_user_id: '', note: '' })}>
               + Кабинет
             </button>
           )}
@@ -866,7 +872,7 @@ export default function CabinetsPage() {
             <button style={btn(true)} disabled={busy || !newCab.name.trim()}
               onClick={() => run(async () => {
                 await api.post('/cabinets/', { name: newCab.name.trim(),
-                  manager_id: newCab.manager_id || null,
+                  manager_user_id: newCab.manager_user_id || null,
                   note: newCab.note || null }, auth())
                 setNewCab(null)
               })}>Создать</button>
@@ -875,10 +881,14 @@ export default function CabinetsPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <input style={inp} placeholder="Название" value={newCab.name}
               onChange={e => setNewCab(v => ({ ...v, name: e.target.value }))} />
-            <select style={sel} value={newCab.manager_id}
-              onChange={e => setNewCab(v => ({ ...v, manager_id: e.target.value }))}>
+            <select style={sel} value={newCab.manager_user_id}
+              onChange={e => setNewCab(v => ({ ...v, manager_user_id: e.target.value }))}>
               <option value="">Ответственный — не выбран</option>
-              {(data?.managers || []).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              {(data?.managers || []).map(m => (
+                <option key={m.user_id} value={m.user_id}>
+                  {m.name}{m.role_label ? ` · ${m.role_label}` : ''}
+                </option>
+              ))}
             </select>
             <input style={inp} placeholder="Заметка" value={newCab.note}
               onChange={e => setNewCab(v => ({ ...v, note: e.target.value }))} />
@@ -961,9 +971,12 @@ export default function CabinetsPage() {
 /** Модалка общих контактов. Список целиком, порядок — часть смысла. */
 function OurContacts({ data, busy, onClose, onSave }) {
   const [items, setItems] = useState(
-    (data?.our_contacts || []).map(x => ({ role: x.role, rep_id: x.rep_id, is_shown: x.is_shown })))
+    (data?.our_contacts || []).map(x => ({
+      role: x.role, user_id: x.user_id, is_shown: x.is_shown, is_disabled: x.is_disabled })))
+  // Сотрудники — по УЧЁТКАМ. До 03.09.2026 список читал справочник ответственных и
+  // показывал 11 человек из 20: трафиков и менеджеров паблишеров там нет вовсе.
   const managers = data?.managers || []
-  const nameOf = (id) => managers.find(m => m.id === id)?.name || '—'
+  const nameOf = (id) => managers.find(m => m.user_id === id)?.name || '—'
   const set = (i, k, v) => setItems(s => s.map((x, j) => (j === i ? { ...x, [k]: v } : x)))
   return (
     <Modal title="Наши контакты у площадок" width={620} onClose={onClose}
@@ -976,9 +989,20 @@ function OurContacts({ data, busy, onClose, onSave }) {
             gridTemplateColumns: '1.2fr 1.4fr 90px 34px' }}>
             <input style={inp} placeholder="Роль" value={it.role}
               onChange={e => set(i, 'role', e.target.value)} />
-            <select style={sel} value={it.rep_id}
-              onChange={e => set(i, 'rep_id', Number(e.target.value))}>
-              {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            <select style={{ ...sel, ...(it.is_disabled ? { borderColor: 'var(--danger)' } : null) }}
+              value={it.user_id || ''}
+              onChange={e => set(i, 'user_id', Number(e.target.value))}>
+              {/* Учётку отключили уже после того, как человека поставили контактом:
+                  строку не прячем (площадка молча потеряла бы контакт), но выбор
+                  такого сотрудника заново сервер не примет. */}
+              {it.is_disabled && (
+                <option value={it.user_id}>{nameOf(it.user_id)} — учётка отключена</option>
+              )}
+              {managers.map(m => (
+                <option key={m.user_id} value={m.user_id}>
+                  {m.name}{m.role_label ? ` · ${m.role_label}` : ''}
+                </option>
+              ))}
             </select>
             <button style={btnSm(it.is_shown)} onClick={() => set(i, 'is_shown', !it.is_shown)}>
               {it.is_shown ? 'виден' : 'скрыт'}
@@ -994,12 +1018,12 @@ function OurContacts({ data, busy, onClose, onSave }) {
         )}
         <button style={{ ...btnSm(false), width: 'max-content' }}
           disabled={!managers.length}
-          onClick={() => setItems(s => [...s, { role: '', rep_id: managers[0]?.id, is_shown: true }])}>
+          onClick={() => setItems(s => [...s, { role: '', user_id: managers[0]?.user_id, is_shown: true }])}>
           + Контакт
         </button>
         <span style={{ fontSize: 11.5, color: 'var(--text-faint)', lineHeight: 1.45 }}>
           Почта берётся из учётки сотрудника. У кого её нет — площадка увидит имя без
-          способа связаться: {nameOf(items[0]?.rep_id)} и остальные проверяются при сохранении.
+          способа связаться: {nameOf(items[0]?.user_id)} и остальные проверяются при сохранении.
         </span>
       </div>
     </Modal>

@@ -67,8 +67,14 @@ export function Modal({ title, summary, footer, width = 760, onClose, children }
 //     <PortalPopover open={isOpen} minWidth={220}>…опции…</PortalPopover>
 //   </span>
 // data-pop-root на панели — чтобы клик внутри не считался «кликом вне» (dismiss по closest).
+// Зазор до края окна, когда выпадашку приходится прижимать. Восьми пикселей мало:
+// панель садится на край и читается как обрезанная — глаз не отличает «прижата» от
+// «уехала». Одно значение на оба прохода, чтобы они не разошлись.
+const EDGE_GAP = 16
+
 export function PortalPopover({ open, minWidth = 220, maxHeight = 320, offset = 4, align = 'left', style, children }) {
   const anchor = useRef(null)   // скрытый маркер на месте вызова: его parentElement — триггер
+  const panel = useRef(null)    // сама панель: нужна, чтобы прижать её по ФАКТИЧЕСКОЙ ширине
   const [pos, setPos] = useState(null)
   useLayoutEffect(() => {
     if (!open) { setPos(null); return }
@@ -77,8 +83,8 @@ export function PortalPopover({ open, minWidth = 220, maxHeight = 320, offset = 
     const place = () => {
       const r = trigger.getBoundingClientRect()
       const left = align === 'right'
-        ? Math.max(8, Math.min(r.right - minWidth, window.innerWidth - minWidth - 8))
-        : Math.max(8, Math.min(r.left, window.innerWidth - minWidth - 8))
+        ? Math.max(EDGE_GAP, Math.min(r.right - minWidth, window.innerWidth - minWidth - EDGE_GAP))
+        : Math.max(EDGE_GAP, Math.min(r.left, window.innerWidth - minWidth - EDGE_GAP))
       setPos({ top: r.bottom + offset, left })
     }
     place()
@@ -86,6 +92,18 @@ export function PortalPopover({ open, minWidth = 220, maxHeight = 320, offset = 
     window.addEventListener('resize', place)
     return () => { window.removeEventListener('scroll', place, true); window.removeEventListener('resize', place) }
   }, [open, minWidth, offset, align])
+
+  // Второй проход — по ФАКТИЧЕСКОЙ ширине панели. Первый прижимает по `minWidth`, а это
+  // всего лишь минимум: панель с двумя полями даты шире его на сотню пикселей, и у
+  // триггера возле правого края она уезжала за экран вместе с кнопкой «показать».
+  // Мерить можно только после отрисовки, поэтому проход отдельный; повторно он не
+  // срабатывает — на втором вызове `left` уже равен пределу.
+  useLayoutEffect(() => {
+    if (!open || !pos || !panel.current) return
+    const w = panel.current.offsetWidth
+    const limit = Math.max(EDGE_GAP, window.innerWidth - w - EDGE_GAP)
+    if (pos.left > limit) setPos(p => ({ ...p, left: limit }))
+  }, [open, pos])
   if (!open || !pos || typeof document === 'undefined') return <span ref={anchor} style={{ display: 'none' }} />
   return (
     <>
@@ -93,7 +111,7 @@ export function PortalPopover({ open, minWidth = 220, maxHeight = 320, offset = 
       {createPortal(
         // stopPropagation: события портала всплывают по РЕАКТ-дереву (не DOM), иначе клик по
         // опции доходит до onClick родителя-триггера (напр. тумблера ячейки) и переключает его.
-        <div data-pop-root onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{
+        <div ref={panel} data-pop-root onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{
           position: 'fixed', top: pos.top, left: pos.left, zIndex: Z.dropdown, minWidth, maxHeight,
           overflowY: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border-card)',
           borderRadius: 12, boxShadow: 'var(--shadow-card, 0 8px 28px rgba(28,36,51,.14))',
@@ -451,4 +469,23 @@ export const KpiStrip = ({ items }) => (
       </div>
     ))}
   </div>
+)
+
+/* ── кнопка «Собрать название» ────────────────────────────────────────────────
+   Одна на все экраны, где имя собирается по шаблону: реестр сделок, дашборд продаж,
+   карточка сделки, форма создания, конструктор и реестр медиапланов. До 03.09.2026
+   кнопок было три разных — квадрат с искрой, круглая стрелка и иконка в форме, — и
+   по виду нельзя было понять, что действие одно и то же. Логика имени живёт отдельно,
+   в `lib/dealTitle.js`: кнопка только вызывает. */
+export const GenTitleBtn = ({ onClick, title = 'Собрать название по шаблону', size = 24 }) => (
+  <span className="d2-gen" title={title} onClick={onClick}
+    style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      width: size, height: size, border: '1px solid var(--border-card)',
+      background: 'var(--bg-card)', borderRadius: 8, color: 'var(--text-muted)', cursor: 'pointer' }}>
+    <svg width={Math.round(size * 0.54)} height={Math.round(size * 0.54)} viewBox="0 0 24 24"
+      style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+      <path d="M5 3v4" /><path d="M3 5h4" /><path d="M17 15v4" /><path d="M15 17h4" />
+      <path d="M12.5 4.5l1.9 4.6 4.6 1.9-4.6 1.9-1.9 4.6-1.9-4.6L6 11l4.6-1.9z" />
+    </svg>
+  </span>
 )

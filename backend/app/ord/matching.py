@@ -190,12 +190,20 @@ def _last_used_initial(db: Session, deal) -> Optional[int]:
     почти всегда не последняя по факту. id остаётся вторым ключом — чтобы при
     совпавшей дате порядок был детерминированным (тот же приём, что у resolve_final
     для Contract.contract_date).
+
+    ПРЯМОЙ РЕКЛАМОДАТЕЛЬ (без агентства) до 03.09.2026 не разбирался вовсе: условие
+    требовало обоих идентификаторов, и у 123 прямых сделок стенда память не срабатывала
+    НИКОГДА — подстановка каждый раз падала на догадку по имени или на «выберите нужный».
+    Со стороны это выглядит не как отсутствие памяти, а как «система не помнит того, что
+    я выбирал вчера». Теперь пара сравнивается как есть: у прямой сделки агентства нет
+    у обеих сторон, и это такое же совпадение, как одинаковый id агентства.
     """
     from app.sales.models import SalesDeal
-    if not (deal.agency_id and deal.advertiser_id):
+    if not deal.advertiser_id:
         return None
     prev = (db.query(SalesDeal)
-              .filter(SalesDeal.agency_id == deal.agency_id,
+              .filter(SalesDeal.agency_id.is_(None) if deal.agency_id is None
+                      else SalesDeal.agency_id == deal.agency_id,
                       SalesDeal.advertiser_id == deal.advertiser_id,
                       SalesDeal.ord_initial_contract_id.isnot(None),
                       SalesDeal.id != deal.id)

@@ -9,6 +9,7 @@ import DealDetail from '@/components/sales/DealDetail'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
 import { SnoozeDialog, BookingConfirm, LaunchPrepDialog } from '@/components/accounts/QueueDialogs'
 import api, { auth } from '@/lib/api'
+import { surfaceTag } from '@/lib/dealTitle'
 import { dm } from '@/lib/salesFormat'
 
 // Дашборд аккаунта — рабочий экран, а не витрина цифр: очередь действий.
@@ -118,7 +119,7 @@ const groupOf = (r) => {
 const EVENT_KIND = {
   start: ['Старт РК', 'var(--income)'],
   // фиолетовый закрытия периода токена не имеет — он локальный для этой легенды
-  closing: ['Закрытие периода', 'var(--violet, #7B62D6)'],
+  closing: ['Закрытие периода', 'var(--violet-fg)'],
   docs: ['Дедлайн документов', 'var(--dot-current-dz)'],
 }
 
@@ -761,8 +762,19 @@ export default function AccountDashboard() {
                                     значило бы потерять единственное место, где видно услугу. */}
                                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
                                   <span style={{ width: 7, height: 7, borderRadius: 2, background: r.product_color || 'var(--text-faint)', flex: '0 0 7px' }} />
-                                  <span style={{ fontSize: 11.5, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    {r.product || '—'}
+                                  <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, lineHeight: 1.15 }}>
+                                    <span style={{ fontSize: 11.5, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {r.product || '—'}
+                                    </span>
+                                    {/* Поверхность — подписью под услугой, как в реестре сделок и в
+                                        дашборде трафика. Считает сервер (row_context.inventory) и
+                                        только у услуг с раздельным прайсом: у остальных web и app —
+                                        один продукт, и метка была бы шумом. */}
+                                    {!!surfaceTag(r.inventory) && (
+                                      <span style={{ fontFamily: MONO, fontSize: 8.5, letterSpacing: '.08em', color: 'var(--text-faint)' }}>
+                                        {surfaceTag(r.inventory)}
+                                      </span>
+                                    )}
                                   </span>
                                 </span>
 

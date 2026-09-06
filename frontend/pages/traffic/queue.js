@@ -193,8 +193,9 @@ export default function TrafficQueue() {
   const [phrases, setPhrases] = useState([])
   const [dragOver, setDragOver] = useState(false)
 
-  // Переключатель между трафиками. По умолчанию пусто — «мои»: человек открывает свою
-  // работу, а не чужую. Мастеру показываем список, рядовому — ничего: у него один срез.
+  // Фильтр «чья кампания». По умолчанию пусто — ВСЯ очередь: она общая (03.09.2026),
+  // и разбирают её по наличию времени, а не по назначению. Фильтр доступен всем: он
+  // сужает уже видимое, а не выдаёт доступ.
   const [repId, setRepId] = useState('')
   const [reps, setReps] = useState([])
   const [myRepId, setMyRepId] = useState(null)
@@ -210,9 +211,8 @@ export default function TrafficQueue() {
   const load = useCallback(async () => {
     setLoading(true); setErr('')
     try {
-      // Кого показываем: пусто — свои (умолчание), 'all' — весь раздел, id — конкретного.
-      // Рядовому трафику параметр не читается сервером, поэтому подмешивать его безопасно.
-      const who = repId === 'all' ? '&all_reps=true' : (repId ? `&rep_id=${repId}` : '')
+      // Кого показываем: пусто — вся очередь (умолчание), id — конкретного трафика.
+      const who = repId ? `&rep_id=${repId}` : ''
       const r = await api.get(`/traffic/queue?status=all${who}`, auth())
       setRows(r.data.rows || [])
       setReps(r.data.reps || [])
@@ -423,18 +423,18 @@ export default function TrafficQueue() {
             )}
           </span>
 
-          {/* Переключатель между трафиками — сразу после поиска, как в дашбордах
-              аккаунта и сейлза. Рядовому трафику он не показывается вовсе: у него один
-              срез, и селектор с единственным пунктом объяснял бы несуществующий выбор. */}
-          {canViewOthers && (
+          {/* Фильтр по ответственному — сразу после поиска, как в дашбордах аккаунта и
+              сейлза. Умолчание — вся очередь; список показываем, только если кого-то
+              вообще назначали, иначе селектор объяснял бы несуществующий выбор. */}
+          {canViewOthers && !!reps.length && (
             <select value={repId} onChange={e => setRepId(e.target.value)}
               style={{ height: 34, padding: '0 10px', borderRadius: 10,
                 background: 'var(--bg-card)', border: '1px solid var(--border-card)',
                 fontFamily: UI, fontSize: 12.5, color: 'var(--text-primary)',
                 cursor: 'pointer', minWidth: 170 }}>
+              <option value="">Вся очередь</option>
               {/* Своя строка помечена звёздочкой: по имени её не угадать. */}
-              {!!myRepId && <option value="">★ Мои</option>}
-              <option value="all">Все трафики</option>
+              {!!myRepId && <option value={myRepId}>★ Мои</option>}
               {reps.filter(r => r.id !== myRepId).map(r => (
                 <option key={r.id} value={r.id}>{r.name}</option>
               ))}
@@ -752,7 +752,7 @@ export default function TrafficQueue() {
                         </>
                       )}
                       {r.verdict === 'ок' && (
-                        <span style={{ ...pill('var(--income)', '#FFFFFF', 'var(--income)'),
+                        <span style={{ ...pill('var(--income)', 'var(--on-accent)', 'var(--income)'),
                           padding: '5px 12px', fontSize: 11.5 }}
                           title={r.decided_by ? `Проверил ${r.decided_by}` : ''}>
                           Проверено

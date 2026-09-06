@@ -142,15 +142,33 @@
     },
     {
       "key": "traffic",
-      "title": "Траффики",
+      "title": "Трафики",
       "accent": "#2FA3A0",
       "href": "/traffic",
       "items": [
+        {
+          "key": "dashboard",
+          "label": "Дашборд",
+          "href": "/traffic/dashboard",
+          "perm": "traffic_dashboard"
+        },
         {
           "key": "queue",
           "label": "Креативы на проверку",
           "href": "/traffic/queue",
           "perm": "traffic_queue"
+        },
+        {
+          "key": "catalog",
+          "label": "Админка",
+          "href": "/traffic/catalog",
+          "perm": "traffic_catalog"
+        },
+        {
+          "key": "dsp-demo",
+          "label": "DSP демо",
+          "href": "/traffic/dsp-demo",
+          "perm": "dsp_demo"
         }
       ]
     },
@@ -173,6 +191,12 @@
           "perm": "contracts"
         },
         {
+          "key": "annexes",
+          "label": "Приложения",
+          "href": "/directory/annexes",
+          "perm": "annexes"
+        },
+        {
           "key": "advertisers",
           "label": "Рекламодатели",
           "href": "/directory/advertisers",
@@ -183,6 +207,12 @@
           "label": "Агентства",
           "href": "/directory/agencies",
           "perm": "dir_agencies"
+        },
+        {
+          "key": "add",
+          "label": "Добавить данные",
+          "href": "/directory/add",
+          "perm": "directory_add"
         },
         {
           "key": "reconcile",

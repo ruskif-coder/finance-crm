@@ -236,6 +236,50 @@ def test_last_used_initial_prefers_date_over_id(db):
     )
 
 
+def test_last_used_initial_works_for_a_direct_advertiser(db):
+    """Прямой рекламодатель: память о прошлом выборе обязана работать и без агентства.
+
+    До 03.09.2026 условие требовало ОБА идентификатора, и у прямых сделок (123 из 920 на
+    стенде) память не срабатывала никогда: подстановка каждый раз падала на догадку по
+    имени или на «выберите нужный». Со стороны это читается не как «памяти нет», а как
+    «система забыла то, что я выбирал вчера».
+
+    Заодно проверяем, что прямая сделка НЕ подхватывает выбор агентской по тому же
+    рекламодателю: цепочка у них разная, и чужой изначальный здесь хуже, чем никакой.
+    """
+    advertiser = SalesAdvertiser(name=f'{TEST_ORD_PREFIX} Рекламодатель Прямой')
+    agency = SalesAgency(name=f'{TEST_ORD_PREFIX} Агентство Постороннее')
+    db.add_all([advertiser, agency])
+    db.flush()
+
+    direct_init = OrdInitialContract(ord_id=f'{TEST_ORD_PREFIX}-init-direct',
+                                     date=date(2024, 1, 1))
+    agency_init = OrdInitialContract(ord_id=f'{TEST_ORD_PREFIX}-init-via-agency',
+                                     date=date(2024, 1, 1))
+    db.add_all([direct_init, agency_init])
+    db.flush()
+
+    db.add(SalesDeal(bitrix_id=f'{TEST_ORD_PREFIX}-direct-prev', agency_id=None,
+                     advertiser_id=advertiser.id,
+                     ord_initial_contract_id=direct_init.id,
+                     date_create=datetime(2026, 6, 1)))
+    db.add(SalesDeal(bitrix_id=f'{TEST_ORD_PREFIX}-agency-prev', agency_id=agency.id,
+                     advertiser_id=advertiser.id,
+                     ord_initial_contract_id=agency_init.id,
+                     date_create=datetime(2026, 7, 1)))
+    db.flush()
+
+    direct_now = SimpleNamespace(id=-1, agency_id=None, advertiser_id=advertiser.id)
+    assert _last_used_initial(db, direct_now) == direct_init.id, (
+        "у прямой сделки память не сработала — вернулось не то, что выбирали в прошлый раз"
+    )
+
+    agency_now = SimpleNamespace(id=-2, agency_id=agency.id, advertiser_id=advertiser.id)
+    assert _last_used_initial(db, agency_now) == agency_init.id, (
+        "агентская сделка подхватила выбор прямой — цепочки перепутаны"
+    )
+
+
 def test_resolve_final_two_marked_contracts_is_ambiguous_not_a_guess(db):
     """Два договора с отметкой ОРД у одного плательщика — вопрос человеку, а не
     выбор наугад. Подставить первый попавшийся значит отправить в ЕРИР не тот

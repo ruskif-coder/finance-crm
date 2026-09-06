@@ -1,4 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react'
+import { productWithSurface } from '@/lib/dealTitle';
 import { MONO, UI, HATCH, HATCH_RED, HATCH_GREEN } from '../salesTableKit'
 import { DEAL_DOCS, docState } from '../../lib/dealDocs'
 import { dm } from '@/lib/salesFormat'
@@ -92,7 +93,9 @@ function toCard(d) {
     stageId: st ? st.id : null,
     layer: lost ? null : (st ? st.money_layer : null),
     period: d.period || null,
-    service: d.product || '—',
+    // Поверхность у услуг с раздельным прайсом считает сервер (row_context):
+    // пустая — значит метки быть не должно, а не «не узнали».
+    service: productWithSurface(d.product, d.inventory) || '—',
     stageLabel: st ? st.name : 'Без группы',
     stageBg: lost ? T.dangerTint : (L ? L.tint : T.subtle),
     stageFg: lost ? T.danger : (L ? L.fg : T.t3),
@@ -103,10 +106,10 @@ function toCard(d) {
     layerTitle: lost ? 'Провалена' : (L ? L.label : 'Без группы — требует разбора'),
     borderColor: lost ? T.dangerBorder : T.border,
     head: [d.advertiser, d.brand].filter(Boolean).join(' · ') || (d.title || '—'),
-    sub: [d.agency, d.product].filter(Boolean).join(' · ') || '—',
+    sub: [d.agency, productWithSurface(d.product, d.inventory)].filter(Boolean).join(' · ') || '—',
     rows: [
       ['Продавец', d.sales_rep || '—'], ['Аккаунт', d.account_manager || '—'],
-      ['Агентство', d.agency || '—'], ['Услуга', d.product || '—'],
+      ['Агентство', d.agency || '—'], ['Услуга', productWithSurface(d.product, d.inventory) || '—'],
       ['Период РК', (d.period_from || d.period_to) ? `${dm(d.period_from, '') || '…'} — ${dm(d.period_to, '') || '…'}` : '—'],
       ['Сумма с НДС', money(gross) + ' ₽'],
     ],

@@ -312,6 +312,28 @@ def delete_user(
 
 
 ACTION_LABELS = {
+    # Приложения к договору (05–06.09.2026) и демо-стенд DSP. Без подписи журнал
+    # показывает сырой ключ вида `annex_confirm` — строка есть, а прочесть её нельзя.
+    "annex_create": "Черновик приложения к договору",
+    "annex_edit": "Черновик приложения изменён",
+    "annex_confirm": "Приложение к договору выпущено",
+    "annex_start_no": "Стартовый номер приложений по договору",
+    "annex_template_create": "Формулировка услуги заведена",
+    "annex_template_edit": "Формулировка услуги изменена",
+    # Админка трафика (каталог блоков) — тоже без подписей до 06.09.2026.
+    "traffic_catalog_code_edit": "Код площадки изменён",
+    "traffic_catalog_surface_add": "Поверхность площадки добавлена",
+    "traffic_catalog_surface_edit": "Поверхность площадки изменена",
+    "traffic_catalog_block_add": "Рекламный блок добавлен",
+    "traffic_catalog_block_edit": "Рекламный блок изменён",
+    "traffic_catalog_block_delete": "Рекламный блок удалён",
+    "counterparty_signer": "Подписант контрагента",
+    "traffic_creative_script": "Скрипт, вшиваемый в креатив",
+    "dsp_demo_campaign": "DSP демо: кампания заведена",
+    "dsp_demo_creative": "DSP демо: креатив заведён",
+    "dsp_demo_status": "DSP демо: статус кампании",
+    "dsp_demo_plan": "DSP демо: план кампании",
+    "dsp_demo_targeting": "DSP демо: таргетинг",
     "verify_media_plan": "МП проверен",
     "ord_sync_clients": "Сверка юрлиц с ОРД",
     "ord_sync_contracts": "Сверка договоров с ОРД",
@@ -321,6 +343,7 @@ ACTION_LABELS = {
     "self_promo_on": "Присвоен статус «самореклама»",
     "self_promo_off": "Снят статус «самореклама»",
     "media_plan_change_note": "Причина изменений МП",
+    "deal_title_from_mp": "Название сделки из медиаплана",
     "login_success": "Вход выполнен",
     "login_failed": "Неудачный вход",
     "create_user": "Создание пользователя",

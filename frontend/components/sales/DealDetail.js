@@ -1,16 +1,20 @@
 import { useState, useEffect } from 'react'
+import { buildTitle, productWithSurface, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
 import { useRouter } from 'next/router'
 import api, { auth } from '../../lib/api'
 import { BITRIX_DEAL_URL } from '../../lib/salesLayers'
-import { MONO, UI, CAP, docCard, addBtn, iconSq, DocIcon, DownloadIcon, EditIcon, StageLayerBar } from '../salesTableKit'
+import { MONO, UI, CAP, docCard, addBtn, iconSq, DocIcon, DownloadIcon, EditIcon, GenTitleBtn, StageLayerBar } from '../salesTableKit'
 import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc } from '../../lib/dealDocs'
+import { grp } from '@/lib/salesFormat'
 
 // ── Раскрытая сводка сделки (раскрытие строки реестра /sales и дашборда) ──
 // Четыре колонки: Данные сделки → Медиаплан и документы → История → Оплаты.
 // ТЗ «форма сделки» + ds.jsx. Стили/примитивы — из salesTableKit (единый справочник).
 // Данные — из строки реестра; история — из audit_log; файлы/синк — реальные эндпоинты.
 
-const rub = (n) => (n == null ? '—' : `${new Intl.NumberFormat('ru-RU').format(Math.round(n))} ₽`)
+// Деньги — общим `grp` из lib/salesFormat. Своя копия `Intl.NumberFormat` отличалась бы
+// округлением и тем, что печатает для нуля, — так в проекте уже разъезжались тринадцать штук.
+const rub = (n) => (n == null ? '—' : `${grp(n)} ₽`)
 // audit_log хранит UTC; добавляем 'Z' если нет зоны и показываем в UTC+3 (как в Журнале).
 const fmtWhen = (str) => {
   if (!str) return ''
@@ -73,8 +77,12 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
     return () => { alive = false; clearTimeout(t) }
   }, [d.id, d.title])
 
-  // Маска названия: Рекламодатель | Бренд | Агентство | Услуга | Период (как в реестре).
-  const templateTitle = () => [d.advertiser, d.brand, d.agency, d.product, d.period].filter(v => v != null && String(v).trim() !== '').join(' | ')
+  /* Маска названия: Рекламодатель | Бренд | Агентство | Услуга | Период. Собирает общий
+     модуль (lib/dealTitle.js) — тот же, что в реестрах, форме создания и конструкторе МП.
+     Признак раздельного прайса приходит вместе со строкой сделки (`inventory` считает
+     сервер), поэтому справочник услуг здесь не нужен. */
+  const separate = new Set(d.inventory ? [d.product] : [])
+  const templateTitle = () => buildTitle({ ...d, separate })
   const saveTitle = async (val) => {
     const t = (val || '').trim()
     setEditing(false)
@@ -88,7 +96,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   const [docBusy, setDocBusy] = useState('')   // вид документа в процессе загрузки/удаления
   const genTitle = () => {
     const t = templateTitle()
-    if (!t) { alert('Нечего собрать: нет рекламодателя / бренда / агентства / услуги / периода.'); return }
+    if (!t) { alert(TITLE_EMPTY_HINT); return }
     setDraft(t); setEditing(true)
   }
 
@@ -110,7 +118,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
 
   return (
     <div onClick={stop} style={{
-      margin: '2px 0 10px', padding: '18px 20px', background: '#F6F8FF',
+      margin: '2px 0 10px', padding: '18px 20px', background: 'var(--accent-wash)',
       border: '1px solid var(--border-card)', borderRadius: 14, fontFamily: UI,
       display: 'grid', gridTemplateColumns: '1.3fr 1.1fr 1.1fr 1fr', gap: 24,
       animation: 'riseIn .26s cubic-bezier(0.22,1,0.36,1) both',
@@ -128,12 +136,12 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
             <div onClick={startEdit} title={canEdit ? 'Изменить название' : title}
               style={{ flex: 1, minWidth: 0, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, padding: '6px 7px 6px 11px', fontSize: 12, fontWeight: 600, color: title ? 'var(--text-primary)' : 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: canEdit ? 'text' : 'default' }}>{title || 'без названия'}</div>
           )}
-          {canEdit && <button title="Сгенерировать название по шаблону" onClick={genTitle} style={iconSq(true)}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v4h-4" /></svg></button>}
+          {canEdit && <GenTitleBtn onClick={genTitle} />}
         </div>
         <Row label="Рекламодатель / бренд">{[d.advertiser, d.brand].filter(Boolean).join(' · ') || '—'}</Row>
         <Row label="Агентство">{d.agency || '—'}</Row>
         <Row label="Контрагент">{d.payer || '—'}</Row>
-        <Row label="Услуга">{d.product || '—'}</Row>
+        <Row label="Услуга">{productWithSurface(d.product, d.inventory) || '—'}</Row>
         <Row label="Период / стадия" mono>{[d.period, d.our_stage?.name].filter(Boolean).join(' · ') || '—'}</Row>
         <Row label="Продавец">{d.sales_rep || '—'}</Row>
         <Row label="Аккаунт">{d.account_manager || '—'}</Row>
@@ -254,7 +262,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 'auto', paddingTop: 14 }}>
           <button onClick={() => router.push(`/sales/deals/${d.code || d.id}`)} title="Открыть карточку сделки"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 14px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 14px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>
             <DocIcon /> Карточка
           </button>
           {d.bitrix_id && !local && (

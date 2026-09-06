@@ -4,7 +4,7 @@ import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import Navbar, { can } from '@/components/Navbar'
 import MediaPlanBuilder from '@/components/mediaplan/MediaPlanBuilder'
-import { downloadName } from '@/lib/salesFormat'
+import { downloadName, grp } from '@/lib/salesFormat'
 import { DownloadOverlay } from '@/components/LogoLoader'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
@@ -256,7 +256,7 @@ export default function MpEditor() {
         const th = { padding: '7px 9px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', borderBottom: '1px solid var(--border-card)', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', position: 'sticky', top: 0, background: 'var(--bg-card)' }
         const td = { padding: '7px 9px', fontSize: 12.5, borderBottom: '1px solid var(--border-row)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 200 }
         const arrow = (k) => dealSort === k ? (dealDir === 'asc' ? ' ▲' : ' ▼') : ''
-        const money = (v) => v == null ? '—' : new Intl.NumberFormat('ru-RU').format(v)
+        const money = grp   // общий форматтер, не своя копия
         return (
         <div {...overlayClose(() => setLinkOpen(false))} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, width: 'min(1040px, 97vw)', padding: '20px 22px', boxShadow: '0 24px 64px rgba(28,36,51,.22)', display: 'flex', flexDirection: 'column', maxHeight: '88vh' }}>

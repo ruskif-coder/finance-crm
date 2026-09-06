@@ -112,6 +112,14 @@ class Counterparty(Base):
     email = Column(String, nullable=True)
     edo_id = Column(String, nullable=True)
     director_name = Column(String, nullable=True)
+    # Как сторона представляется в шапке приложения: «в лице Генерального директора
+    # Кинчикова Павла Сергеевича, действующего на основании Устава». ФИО было и раньше,
+    # должности и основания полномочий не было ни одного (миграция 2026-09-05).
+    signer_position = Column(String(200), nullable=True)   # «Генеральный директор»
+    signer_basis = Column(String(300), nullable=True)      # «Устава», «Доверенности № … от …»
+    # Место подписания. На контрагенте, а не константой в коде: у нашего юрлица это
+    # «г. Москва», и когда юрлиц станет несколько, город поедет вместе с ними.
+    signed_place = Column(String(200), nullable=True)
     website = Column(String, nullable=True)
     address_fact = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="действующий")  # действующий / виртуальный — скрытый параметр, пока без отображения в UI
@@ -172,6 +180,12 @@ class Contract(Base):
     # сопоставленная с реестром (см. link_contracts_to_counterparties.py); обязателен при создании НОВОГО договора
     # (проверяется в create_contract, не на уровне Pydantic-модели, т.к. она общая с update_contract).
     own_company_id = Column(Integer, ForeignKey("counterparties.id"), nullable=True)  # наше юрлицо — сторона договора
+    # Последний номер приложения, выданный ВНЕ системы. Нумерация ведётся внутри договора
+    # (владелец 05.09.2026), и почти у всех договоров приложения уже есть: у «Уайт Бокс
+    # Медиа» дошли до 73. Взять максимум автоматически из `operations.ds_num` нельзя —
+    # там встречается мусор вроде 590425, поэтому число ставит человек, один раз.
+    # Следующий номер = max(annex_start_no, максимум наших) + 1.
+    annex_start_no = Column(Integer, nullable=True)
     counterparty = relationship("Counterparty", back_populates="contracts",
                                 foreign_keys=[counterparty_id])
     own_company   = relationship("Counterparty", back_populates="own_contracts",

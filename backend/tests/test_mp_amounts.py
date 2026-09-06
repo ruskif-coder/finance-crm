@@ -37,10 +37,22 @@ def test_eff_prefers_mp_over_deal():
 def env():
     db = SessionLocal()
     made = []
-    deal = db.query(SalesDeal).filter(SalesDeal.amount.isnot(None)).first()
+    # Сделка берётся ДЕТЕРМИНИРОВАННО и обязательно БЕЗ своих медиапланов.
+    #
+    # Без `order_by` `.first()` отдаёт строку в физическом порядке кучи, а он меняется от
+    # любого UPDATE в таблице: правка ответственного на СОСЕДНЕЙ сделке 04.09.2026
+    # переставила порядок, тест взял другую сделку — с настоящим МП на 25 000, — и все
+    # четыре проверки упали с ровным смещением. Выглядело как поломка расчёта суммы,
+    # хотя расчёт был цел. Условие «без медиапланов» закрывает вторую половину: чужой МП
+    # складывается с тестовым, и сумма перестаёт быть предсказуемой.
+    has_mp = (db.query(SalesMediaPlan.id)
+              .filter(SalesMediaPlan.deal_id == SalesDeal.id).exists())
+    deal = (db.query(SalesDeal)
+            .filter(SalesDeal.amount.isnot(None), ~has_mp)
+            .order_by(SalesDeal.id).first())
     if not deal:
         db.close()
-        pytest.skip('нужна хоть одна сделка с суммой')
+        pytest.skip('нужна сделка с суммой и без медиапланов')
     # чистим свои артефакты и до теста (мусор от упавшего прогона)
     db.query(SalesMediaPlan).filter(SalesMediaPlan.group_id >= NO).delete()
     db.commit()

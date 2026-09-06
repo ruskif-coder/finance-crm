@@ -9,7 +9,7 @@ import useIsMobile from '@/components/mobile/useIsMobile'
 const ContractsMobile = dynamic(() => import('@/components/mobile/ContractsMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 import { T } from '@/lib/tokens'
 import SectionTabs from '@/components/SectionTabs'
-import { PAYMENT_TERM_CONDITIONS } from '@/lib/contractTerms'
+import { COOPERATION_FORMATS, PAYMENT_TERM_CONDITIONS, PROLONGATION_OPTIONS } from '@/lib/contractTerms'
 
 
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
@@ -25,8 +25,6 @@ const EMPTY = {
   end_date_text: '', prolongation: '', payment_form: '',
   payment_term_days: '', payment_term_condition: '', note: '', document_link: '',
 }
-const COOPERATION_FORMATS = ['Агентство КЛ', 'Агентство ПД', 'Клиент', 'Подрядчик', 'Аптека', 'Паблишер', 'Рекламная система']
-const PROLONGATION_OPTIONS = ['АВТО на год', 'По соглашению', 'Нет']
 
 // формат сотрудничества → цвет чипа
 const FMT_META = {
@@ -161,6 +159,13 @@ export default function Contracts() {
   const [ok, setOk] = useState('')
 
   const [search, setSearch] = useState('')
+  // `?q=` подставляет номер в поиск: с экрана приложения сюда приходят дозаполнить
+  // ссылку в ЭДО или приложить файл, и искать договор руками в реестре на 173 строки —
+  // потерянное время. Читается один раз, дальше поле обычное.
+  useEffect(() => {
+    const q = router.query.q
+    if (typeof q === 'string' && q) setSearch(q)
+  }, [router.query.q])
   const [formatFilter, setFormatFilter] = useState('')
   const [prolongFilter, setProlongFilter] = useState('')
   const [sortCol, setSortCol] = useState('contract_date')
@@ -277,6 +282,19 @@ export default function Contracts() {
     setEditError('')
   }
   const cancelEdit = () => { setEditId(null); setEditError('') }
+
+  // Стартовый номер приложений правится ОТДЕЛЬНО от остальных полей договора: у него
+  // своя ручка и своё право (`annexes:edit`), потому что это нумерация документов, а не
+  // реквизит договора. Пустая строка — «сбросить», номер снова пойдёт с 1.
+  const [startEditId, setStartEditId] = useState(null)
+  const [startVal, setStartVal] = useState('')
+  const saveStartNo = async (id) => {
+    try {
+      await api.put(`/annexes/contract/${id}/start-no`,
+        { annex_start_no: startVal === '' ? null : Number(startVal) }, auth())
+      setStartEditId(null); loadAll()
+    } catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить стартовый номер') }
+  }
 
   const handleSave = async (id) => {
     setSaving(true); setEditError('')
@@ -679,9 +697,10 @@ export default function Contracts() {
             ['mkt', 'minmax(130px,1fr)', 'Назв. маркет.', 'marketing_name'], ['fmt', '132px', 'Формат', 'cooperation_format'],
             ['end', '104px', 'Окончание', 'end_date_text'], ['prol', '118px', 'Пролонгация', 'prolongation'],
             ['days', '52px', 'Дни', 'payment_term_days'], ['cond', '122px', 'Условие', 'payment_term_condition'],
+            ['annex', '86px', 'ДС с', 'annex_start_no'],
             ['act', '92px', ''],
           ]
-          const CRIGHT = new Set(['days'])
+          const CRIGHT = new Set(['days', 'annex'])
           const CGRID = CCOLS.map(c => c[1]).join(' ')
           const icoBtn = { width: 26, height: 26, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }
           const w = (px) => ({ ...inp, width: px, padding: '6px 9px' })
@@ -690,7 +709,7 @@ export default function Contracts() {
           )
           return (
           <div style={{ overflowX: 'auto', maxWidth: '100%', margin: '4px -4px 0' }}>
-            <div style={{ minWidth: 1420 }}>
+            <div style={{ minWidth: 1506 }}>
               <div style={{ display: 'grid', gridTemplateColumns: CGRID, gap: 12, borderBottom: '1px solid var(--border-card)' }}>
                 {CCOLS.map(([k, wd, label, sortKey]) => k === 'sel'
                   ? <div key={k} style={{ padding: '0 0 10px' }}>{mayEdit && <input type="checkbox" checked={allSelected} onChange={toggleAll} />}</div>
@@ -735,6 +754,29 @@ export default function Contracts() {
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.prolongation || ''}>{c.prolongation || dash}</div>
                     <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', textAlign: 'right', padding: '0 8px' }}>{c.payment_term_days != null ? c.payment_term_days : dash}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.payment_term_condition || ''}>{c.payment_term_condition || dash}</div>
+                    {/* Стартовый номер приложений: последний, выданный ВНЕ системы.
+                        Правится на месте и уходит РУЧКОЙ ПРИЛОЖЕНИЙ, а не общим
+                        сохранением договора: писатель у поля один, иначе два пути
+                        разведут значение, и потом не понять, какое верно. */}
+                    <div style={{ padding: '0 8px', textAlign: 'right', fontFamily: MONO, fontSize: 12 }}>
+                      {startEditId === c.id ? (
+                        <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                          <input autoFocus value={startVal} onChange={e => setStartVal(e.target.value.replace(/[^0-9]/g, ''))}
+                            onKeyDown={e => { if (e.key === 'Enter') saveStartNo(c.id); if (e.key === 'Escape') setStartEditId(null) }}
+                            placeholder="—" style={{ ...inp, width: 52, padding: '3px 6px', fontFamily: MONO, textAlign: 'right' }} />
+                          <span title="Сохранить" onClick={() => saveStartNo(c.id)} style={{ cursor: 'pointer', fontWeight: 800, color: 'var(--income)' }}>✓</span>
+                          <span title="Отмена" onClick={() => setStartEditId(null)} style={{ cursor: 'pointer', color: 'var(--text-faint)', fontWeight: 800 }}>✕</span>
+                        </span>
+                      ) : (
+                        <span onClick={() => { if (!mayEdit) return; setStartVal(c.annex_start_no != null ? String(c.annex_start_no) : ''); setStartEditId(c.id) }}
+                          title={c.annex_start_no != null
+                            ? `Приложения по ${c.annex_start_no} выданы вне системы, наши пойдут с ${c.annex_start_no + 1}`
+                            : 'Стартовый номер не задан — нумерация приложений начнётся с 1'}
+                          style={{ cursor: mayEdit ? 'pointer' : 'default', color: c.annex_start_no != null ? 'var(--text-secondary)' : 'var(--text-faint)', borderBottom: mayEdit ? '1px dashed var(--border-card)' : 'none' }}>
+                          {c.annex_start_no != null ? c.annex_start_no : dash}
+                        </span>
+                      )}
+                    </div>
                     <div style={{ display: 'inline-flex', gap: 2, justifyContent: 'flex-end' }}>
                       {c.document_link && <a href={/^https?:\/\//i.test(c.document_link) ? c.document_link : undefined} target="_blank" rel="noopener noreferrer" title="Ссылка на документ" style={icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg></a>}
                       {c.attached_filename && <button onClick={() => handleDownload(c.id, c.attached_filename)} title="Скачать документ" style={icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg></button>}

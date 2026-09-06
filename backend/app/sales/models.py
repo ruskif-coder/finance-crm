@@ -35,6 +35,13 @@ class SalesService(Base):
     sort_order = Column(Integer, nullable=False, default=0)  # порядок в списках (drag-n-drop в настройках)
     is_active = Column(Boolean, nullable=False, default=True)
     note = Column(Text)
+    # Поля для приложения к договору (миграция 2026-09-05_service_doc_fields.sql).
+    # Заводятся в конструкторе услуг: одна услуга продаётся одинаково, и держать этот
+    # текст в каждой строке медиаплана значило бы переписывать его при каждой сборке.
+    # `note` для этого не годится: в соседних справочниках он означает ВНУТРЕННИЙ
+    # комментарий, а здесь текст уходит в подписанный клиентом документ.
+    doc_position = Column(Text)          # колонка «Позиция» в ДС
+    rotation_type = Column(String(20))   # «Динамика» / «Статика»; пусто — формат не медийный
     # Параметры для конструктора МП (см. docs/bridge_deals_operations.md):
     placement_type = Column(String)     # тип размещения: OLV / Banners / Native / … (список на фронте)
     calc_form = Column(String)          # форма расчёта: CPM / CPC / CPV / CPD / Фикс / Пакет (общая)
@@ -528,17 +535,66 @@ class SalesDealChecklistState(Base):
 
 # ========================= СДЕЛКИ И ПРИЛОЖЕНИЯ =========================
 
+class AnnexTemplate(Base):
+    """Шаблон формулировки услуги в приложении.
+
+    Миграция `backend/migrations/2026-09-05_annex_generator.sql`.
+
+    Привязка к ПЛАТЕЛЬЩИКУ, а не к рекламодателю: подписывает и платит он, у него же свои
+    требования к тексту. Бренд приходит подстановкой — в образце «Приложение № 68» это
+    «Мезим», а сторона договора — агентство.
+
+    `payer_id = NULL` — типовой шаблон, годный для любого плательщика.
+    """
+    __tablename__ = "annex_templates"
+    id = Column(Integer, primary_key=True)
+    payer_id = Column(Integer, ForeignKey("counterparties.id", ondelete="CASCADE"), index=True)
+    name = Column(String(200), nullable=False)
+    # Подстановки: {бренд} {период_с} {период_по} {сумма} {сумма_прописью}
+    # {ндс_ставка} {ндс_сумма} {ндс_сумма_прописью}.
+    body = Column(Text, nullable=False)
+    is_default = Column(Boolean, nullable=False, default=False)
+    created_by = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
 class SalesAnnex(Base):
-    """Приложение к договору — рождается при переходе сделки в стадию «Запуск».
-    Наше юрлицо не дублируется: выводится из contracts.own_company_id."""
+    """Приложение к договору. Наше юрлицо не дублируется: выводится из
+    `contracts.own_company_id`.
+
+    Поля генератора добавлены миграцией `2026-09-05_annex_generator.sql`.
+
+    **Номер разделён на два поля, и это не дублирование.** `no` — целое, по нему считается
+    следующий и держится уникальность внутри договора; `number` — строка, которая
+    печатается в документе («Приложение № 68»). Считать по строке нельзя: в живых данных
+    номера лежат в шести форматах («1», «доп.1», «прилож. 9»), а печатать надо ровно то,
+    что видит клиент.
+
+    Нумерация ведётся ВНУТРИ ДОГОВОРА (владелец 05.09.2026), стартовая точка —
+    `Contract.annex_start_no`: почти у всех договоров приложения уже выданы вне системы.
+    """
     __tablename__ = "sales_annexes"
     id = Column(Integer, primary_key=True)
     contract_id = Column(Integer, ForeignKey("contracts.id"), nullable=False)
-    number = Column(String)
-    date = Column(Date)
+    no = Column(Integer)                 # порядковый внутри договора — для счёта
+    number = Column(String)              # как печатается: «Приложение № 68»
+    date = Column(Date)                  # последний день предыдущего месяца
+    period_from = Column(Date)
+    period_to = Column(Date)
     total_amount = Column(Float)
+    # Ставка НА МОМЕНТ ПОДПИСАНИЯ: была 20, сейчас 22, однажды поменяется снова.
+    # Пересчитывать старое приложение по новой ставке нельзя.
+    vat_rate = Column(Float)
     currency = Column(String, nullable=False, default="RUB")
     status = Column(String)
+    template_id = Column(Integer, ForeignKey("annex_templates.id"))
+    signed_place = Column(String(200))
+    created_by = Column(Integer, ForeignKey("users.id"))
+    confirmed_by = Column(Integer, ForeignKey("users.id"))
+    confirmed_at = Column(DateTime)
+    # Документ, ушедший клиенту, остаётся у нас: шаблон поправят, реквизиты сменятся,
+    # а подписан был именно этот файл.
+    file_path = Column(String(500))
     created_at = Column(DateTime, server_default=func.now())
     items = relationship("SalesAnnexItem", back_populates="annex",
                          cascade="all, delete-orphan")
@@ -638,6 +694,12 @@ class SalesDeal(Base):
     # последней синхронизации с Битриксом (подтяжки или записи).
     brief = Column(Text, nullable=True)
     brief_synced_at = Column(DateTime, nullable=True)
+    # «Цели и особенности РК» — передача задачи от аккаунта трафику
+    # (backend/migrations/2026-09-05_deal_traffic_brief.sql). Отдельно от `brief`
+    # СОЗНАТЕЛЬНО: бриф ездит в Битрикс в обе стороны, а это внутренний текст, снаружи
+    # его быть не должно. Кто и когда правил — в журнале действий, своих колонок
+    # «кем/когда» нет намеренно: вторая память о том же событии разойдётся с первой.
+    traffic_brief = Column(Text, nullable=True)
     # Светофор синхронизации (считается при sync_deal_from_bitrix):
     # green — совпадает с Битриксом; blue — у нас данные полнее (не выгружено);
     # red — расхождение (Битрикс не матчится с нашими справочниками). NULL — не проверялось.
@@ -744,6 +806,27 @@ class SalesBitrixSyncLog(Base):
     rejected = Column(Integer, nullable=False, default=0)
     error_text = Column(Text)
     triggered_by = Column(Integer, ForeignKey("users.id"))
+
+
+class SalesDealComment(Base):
+    """Комментарий на карточке сделки — лента, а не поле.
+
+    Таблица создаётся миграцией backend/migrations/2026-09-05_deal_comments.sql.
+
+    Правок и удалений нет намеренно (владелец 05.09.2026): «каждый новый отдельной
+    записью» — это свидетельство о том, кто что и когда сказал, а редактируемая лента
+    свидетельством быть перестаёт.
+
+    Автор — УЧЁТКА, а не профиль ответственного: профиля нет у половины сотрудников, он
+    заводится только при назначении (app/sales/reps.py), и комментарий человека без
+    профиля остался бы без автора.
+    """
+    __tablename__ = "sales_deal_comments"
+    id = Column(Integer, primary_key=True)
+    deal_id = Column(Integer, ForeignKey("sales_deals.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
 class SalesDealFile(Base):
@@ -871,6 +954,12 @@ class SalesPublisherKind(Base):
     sort_order = Column(Integer, nullable=False, default=0)
 
 
+# Статус архива площадки. `is_active` для этого НЕ годится: у архивных он тоже true —
+# признак живёт в `status`. Архивные игнорируются в админке трафика (решение владельца
+# 02.09.2026): ни в балансировщике, ни в каталоге блоков, ни при импорте блоков.
+PUBLISHER_ARCHIVE_STATUS = "АРХИВ"
+
+
 class SalesPublisher(Base):
     """Площадка. Веб и приложение вынесены в SalesPublisherSurface: юрлицо, договор,
     чат и контакты у сайта одни, а фигма, статус интеграции и покрытие мест — свои
@@ -941,6 +1030,11 @@ class SalesPublisherSurface(Base):
                           nullable=False)
     kind = Column(String, nullable=False)   # web | app
     figma_url = Column(String)
+    # МС-реквизиты DSP на поверхность (миграция 2026-09-01_traffic_catalog.sql): id паблишера
+    # в DSP и блок по умолчанию «кукуха2» (авто-цепляется к креативу, скрыт из
+    # статистики кабинета). На каждую web/app — свои; ios/android (платформы) — на будущее.
+    ms_publisher_id = Column(String)
+    default_ms_block_id = Column(String)
     integration_status = Column(String, nullable=False, default="НЕТ")
     # Наличие строки отвечает «поверхность у площадки есть», флаг — «мы с ней работаем».
     # Раньше это было склеено в статусе, и «приложения нет» не отличалось от

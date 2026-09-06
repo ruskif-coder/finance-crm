@@ -5,8 +5,9 @@
  */
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { MONO, UI } from '../salesTableKit';
+import { GenTitleBtn, MONO, UI } from '../salesTableKit';
 import { overlayClose } from '@/lib/overlay'
+import { buildTitle, separatePriceSet } from '@/lib/dealTitle'
 
 /* ── токены ─────────────────────────────────────────────────────────────
    Значения берём из нашей дизайн-системы (globals.css), НЕ вводим третью
@@ -292,12 +293,28 @@ function useDismiss(setSel) {
 /* ══════════════════════════════════════════════════════════════════════
    СТРАНИЦА
    ══════════════════════════════════════════════════════════════════════ */
+/* Свод поверхностей строк в одно значение. Правило то же, что на сервере
+   (app/sales/row_context.merge_inventory): 'cross' уже означает обе, и он же результат
+   при встрече web с app. */
+function mergeInventory(values) {
+  const vals = new Set((values || []).map(v => String(v || '').trim().toLowerCase()).filter(Boolean));
+  if (!vals.size) return '';
+  if (vals.has('cross') || (vals.has('web') && vals.has('app'))) return 'cross';
+  return [...vals][0];
+}
+
 export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalog = EXTRA_CATALOG, staff = STAFF, models = MODELS, modes = MODES,
   advertisers = [], agencies = [], brandsByAdv = {}, advCps = {}, agencyCps = {}, geoList = [], targetingCatalog = {},
   bound = false, initial, backLabel = 'Реестр медиапланов', onBack, versions = [], onOpenVersion,
   onAddTargeting, onAddGeo, onCreateBrand, onSave, onExportXlsx, onPreviewPdf, onEditBrief, onLinkDeal, onCreateDeal,
   dealBrief, onDealBriefSave, onDealBriefSync, ownCompany }) {
   const init = initial || {};
+  /* Раздельный прайс приходит в каталоге услуг (`separate`) — тем же признаком, по
+     которому конструктор показывает две цены. Для имени он решает, дописывать ли
+     WEB/APP к услуге. */
+  const separateSvc = useMemo(
+    () => separatePriceSet((catalog || []).map(c => ({ name: c.position, separate_price: c.separate }))),
+    [catalog]);
   const [verOpen, setVerOpen] = useState(false);   // дропдаун истории версий
   // Чек-лист перед сохранением: обе отметки «проверено» (размещения + прогноз).
   // Не свойство плана, а подтверждение конкретного сохранения — сбрасывается после него.
@@ -345,11 +362,32 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
   const applyPeriod = (ym, withDates) => { const [f, t] = monthBounds(ym); setBf(s => ({ ...s, period: ym, ...(withDates ? { date_from: f, date_to: t } : {}) })); };
   // выбор периода в шапке → авто-даты месяца; если даты уже стоят — спросить (поп-ап)
   const onPeriodChange = (ym) => { if (ym && ym !== bf.period && (bf.date_from || bf.date_to)) setPeriodConfirm(ym); else applyPeriod(ym, true); };
-  // Эффективное название (ручное перекрывает авто) — для сохранения и отображения.
-  const _shortT = (s) => (s ? String(s).split(' | ')[0].trim() : '');
+  /* Авто-название и эффективное (ручное перекрывает авто) — ОДНО выражение на весь
+     конструктор, и общий модуль внутри (lib/dealTitle.js).
+
+     До 03.09.2026 здесь было ДВЕ сборки: эта — та, что уходит на СОХРАНЕНИЕ, — и
+     вторая в шапке брифа, для показа. Первый заход свёл к общему модулю только
+     вторую, и получилось хуже, чем было: шапка показывала новое имя, а в базу
+     уезжало старое, собранное здесь (« · », без услуги). Владелец поймал это на
+     сделке ZCBPLS: план назывался по-новому, а сохранилось по-старому.
+
+     Услуга и поверхность — из строк размещения: своего поля под них у плана нет. */
   const _lblT = (opts, v) => (opts.find(o => String(o.value) === String(v)) || {}).label;
-  const effectiveTitle = (bf.title || '').trim() ? bf.title
-    : ([...new Set([_shortT(_lblT(advertisers, bf.advertiser_id)), _shortT(_lblT(brandsByAdv[bf.advertiser_id] || [], bf.brand_id)), _shortT(_lblT(agencies, bf.agency_id)), bf.period].filter(Boolean))].join(' · ') || 'Новый медиаплан');
+  const autoTitle = useMemo(() => {
+    const svcRows = main.rows.filter(r => (r.position || '').trim());
+    const names = [...new Set(svcRows.map(r => r.position.trim()))];
+    const svcName = names.length === 1 ? names[0] : '';
+    return buildTitle({
+      advertiser: _lblT(advertisers, bf.advertiser_id),
+      brand: _lblT(brandsByAdv[bf.advertiser_id] || [], bf.brand_id),
+      agency: _lblT(agencies, bf.agency_id),
+      product: svcName,
+      inventory: mergeInventory(svcRows.filter(r => r.position.trim() === svcName).map(r => r.inventory)),
+      period: bf.period, separate: separateSvc,
+    }) || 'Новый медиаплан';
+  }, [main.rows, advertisers, agencies, brandsByAdv, bf.advertiser_id, bf.brand_id,
+      bf.agency_id, bf.period, separateSvc]);
+  const effectiveTitle = (bf.title || '').trim() ? bf.title : autoTitle;
   const [tgDraft, setTgDraft] = useState({});   // «+ текст» — разовое значение (не в каталог)
   const [tgCat, setTgCat] = useState({});       // «+ в каталог» — новое значение в общий каталог
   const [tgSearch, setTgSearch] = useState({}); // поиск по каталогу группы
@@ -545,10 +583,10 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                 const brOpts = brandsByAdv[bf.advertiser_id] || [];
                 const payerOpts = bf.agency_id ? (agencyCps[bf.agency_id] || []) : (advCps[bf.advertiser_id] || []);
                 const L = (opts, v) => (opts.find(o => String(o.value) === String(v)) || {}).label;
-                const shortOf = (s) => (s ? String(s).split(' | ')[0].trim() : '');   // короткое имя (до « | »)
-                const titleParts = [shortOf(L(advertisers, bf.advertiser_id)), shortOf(L(brOpts, bf.brand_id)), shortOf(L(agencies, bf.agency_id)), bf.period].filter(Boolean);
-                const autoTitle = [...new Set(titleParts)].join(' · ') || 'Новый медиаплан';   // дедуп совпавших частей
-                const displayTitle = (bf.title || '').trim() ? bf.title : autoTitle;   // ручное имя перекрывает авто
+                /* Имя НЕ собирается здесь заново: и показ, и сохранение берут одно
+                   выражение `autoTitle` / `effectiveTitle` (объявлено выше). Вторая
+                   сборка ровно здесь и разъехалась с той, что пишется в базу. */
+                const displayTitle = effectiveTitle;   // ручное имя перекрывает авто
                 const selSt = { width: '100%', boxSizing: 'border-box', height: 32, padding: '0 8px', background: T.subtle, border: `1px solid ${T.border}`, borderRadius: 9, fontFamily: T.sans, fontSize: 12, color: T.t1, outline: 'none', cursor: 'pointer' };
                 const lbl = { fontFamily: T.mono, fontSize: 8.5, letterSpacing: '.06em', textTransform: 'uppercase', color: T.t3, marginBottom: 3, display: 'block' };
                 const chip = { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '2px 7px', borderRadius: 6, background: T.accentTint, color: T.accent };
@@ -563,7 +601,13 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                       <span className="mp-cell" onClick={() => { setTitleDraft(bf.title || autoTitle); setTitleEdit(true); }} title="Клик — редактировать (можно дописать своё)" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em', cursor: 'pointer' }}>{displayTitle}</span>
                     )}
                     <span style={meta}>бриф · черновик</span>
-                    {(bf.title || '').trim() && !titleEdit && <span onClick={() => setBf(s => ({ ...s, title: '' }))} title="Собрать название автоматически" style={{ fontSize: 11, color: T.accent, cursor: 'pointer' }}>↻ авто</span>}
+                    {/* Та же кнопка, что в реестрах и на карточке (salesTableKit.GenTitleBtn):
+                        действие одно — собрать имя по шаблону, — и выглядеть должно
+                        одинаково. Здесь она снимает ручное имя, и авто-сборка берёт своё. */}
+                    {(bf.title || '').trim() && !titleEdit && (
+                      <GenTitleBtn size={22} title="Собрать название по шаблону"
+                        onClick={() => setBf(s => ({ ...s, title: '' }))} />
+                    )}
                     <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 12, fontWeight: 600, color: briefHas ? T.accent : T.t3 }}>{briefHas ? 'бриф есть' : 'брифа нет'}</span>
                       <button type="button" onClick={() => setBriefPanel(o => !o)} title="Бриф сделки"

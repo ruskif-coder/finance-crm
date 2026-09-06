@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import Head from 'next/head'
+import Link from 'next/link'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import { MONO, UI, HATCH_RED } from '@/components/salesTableKit'
@@ -15,6 +16,9 @@ import Section from '@/components/deal/Section'
 import CreativesSummary, { creativesSummary } from '@/components/creatives/CreativesSummary'
 import AssemblyOrd, { OrdPips } from '@/components/ord/AssemblyOrd'
 import AssemblyCreatives from '@/components/creatives/AssemblyCreatives'
+import CampaignSummary from '@/components/campaign/CampaignSummary'
+import ValuePopover from '@/components/ValuePopover'
+import { productWithSurface } from '@/lib/dealTitle'
 const DealCardMobile = dynamic(() => import('@/components/mobile/DealCardMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // ── Карточка сделки /sales/deals/[id] ──
@@ -162,6 +166,142 @@ function BriefDialog({ dealId, canEdit, onClose }) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * «Цели и особенности РК» — что аккаунт передаёт трафику вместе с кампанией.
+ *
+ * Поле НАШЕ и в Битрикс не уходит, в отличие от соседнего брифа: это передача задачи
+ * внутри команды. Поэтому и виджет не диалог, а блок на карточке — его читают, а не
+ * открывают: трафик увидит тот же текст у себя, и он должен быть на виду у обоих.
+ *
+ * Значение приезжает вместе с карточкой (`deal.traffic_brief`), локальное состояние
+ * нужно только на время правки — иначе каждый символ уезжал бы на сервер.
+ */
+function TrafficBrief({ dealId, value, canEdit, onSaved }) {
+  const [text, setText] = useState(value || '')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  useEffect(() => { setText(value || '') }, [value])
+
+  const dirty = (text || '') !== (value || '')
+  const save = () => {
+    setBusy(true); setErr('')
+    api.put(`/sales/deals/${dealId}/traffic-brief`, { traffic_brief: text }, auth())
+      .then(r => { setBusy(false); onSaved(r.data.traffic_brief) })
+      .catch(e => { setBusy(false); setErr(e.response?.data?.detail || 'Не удалось сохранить') })
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+      <textarea value={text} readOnly={!canEdit} rows={6}
+        onChange={e => setText(e.target.value)}
+        placeholder={canEdit
+          ? 'Что важно знать трафику: цель кампании, ограничения площадок, пожелания клиента, на что смотреть в открутке'
+          : 'Пока не заполнено'}
+        style={{ width: '100%', boxSizing: 'border-box', border: '1px solid var(--border-card)',
+          borderRadius: 10, padding: '11px 12px', fontSize: 13, lineHeight: 1.5, fontFamily: UI,
+          background: canEdit ? 'var(--bg-card)' : 'var(--bg-subtle)', color: 'var(--text-primary)',
+          outline: 'none', resize: 'vertical' }} />
+      {!!err && <span style={{ fontSize: 12.5, color: 'var(--danger)' }}>{err}</span>}
+      {canEdit && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+            Видно трафику в его кабинете. В Битрикс не уходит.
+          </span>
+          <button type="button" onClick={save} disabled={busy || !dirty}
+            style={{ marginLeft: 'auto', height: 34, padding: '0 16px', borderRadius: 10,
+              border: 'none', background: 'var(--accent)', color: 'var(--bg-card)', fontSize: 13,
+              fontWeight: 700, fontFamily: UI, cursor: (busy || !dirty) ? 'default' : 'pointer',
+              opacity: (busy || !dirty) ? 0.5 : 1 }}>
+            {busy ? 'Сохраняю…' : 'Сохранить'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Комментарии сделки — подраздел рядом с историей, но ОТДЕЛЬНОЙ лентой (владелец
+ * 05.09.2026): история это системные события из журнала, комментарий — то, что человек
+ * сказал сам. В одном потоке пришлось бы всегда держать фильтр «только комментарии».
+ *
+ * До этого здесь стоял отключённый инпут с подписью «скоро». Правок и удалений нет:
+ * каждая запись отдельная и остаётся как есть.
+ */
+function DealComments({ dealId, canEdit }) {
+  const [items, setItems] = useState(null)
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    api.get(`/sales/deals/${dealId}/comments`, auth())
+      .then(r => { if (alive) setItems(r.data.items || []) })
+      .catch(() => { if (alive) setItems([]) })
+    return () => { alive = false }
+  }, [dealId])
+
+  const send = () => {
+    const t = text.trim()
+    if (!t || busy) return
+    setBusy(true); setErr('')
+    api.post(`/sales/deals/${dealId}/comments`, { text: t }, auth())
+      .then(r => { setItems(x => [r.data, ...(x || [])]); setText(''); setBusy(false) })
+      .catch(e => { setBusy(false); setErr(e.response?.data?.detail || 'Не удалось отправить') })
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 12,
+      borderTop: '1px solid var(--border-card)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={CAPS}>Комментарии</span>
+        {!!(items && items.length > 4) && (
+          <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 9,
+            color: 'var(--text-faint)' }}>{items.length}</span>
+        )}
+      </div>
+      {items === null
+        ? <div style={{ fontSize: 11, color: 'var(--text-faint)', padding: '4px 0' }}>Загрузка…</div>
+        : items.length ? (
+          // Высота считается из строки комментария, как у истории рядом: четыре записи
+          // видны сразу, дальше прокрутка.
+          <div style={items.length > 4 ? { maxHeight: 232, overflowY: 'auto', paddingRight: 4 } : undefined}>
+            {items.map(c => (
+              <div key={c.id} style={{ display: 'flex', flexDirection: 'column', gap: 2,
+                padding: '7px 0', borderTop: '1px solid var(--border-row)' }}>
+                <span style={{ fontSize: 11.5, lineHeight: 1.4, whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word' }}>{c.text}</span>
+                <span style={{ fontFamily: MONO, fontSize: 9, color: 'var(--text-faint)' }}>
+                  {fmtWhen(c.at)}{c.author ? ` · ${c.author}` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : <div style={{ fontSize: 11, color: 'var(--text-faint)', padding: '4px 0' }}>Комментариев пока нет.</div>}
+      {canEdit && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, paddingTop: 8,
+          borderTop: '1px solid var(--border-row)' }}>
+          <input value={text} onChange={e => setText(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') send() }}
+            placeholder="Комментарий…"
+            style={{ flex: 1, minWidth: 0, height: 30, boxSizing: 'border-box', padding: '0 10px',
+              background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 9,
+              fontFamily: UI, fontSize: 11.5, outline: 'none' }} />
+          <button type="button" onClick={send} disabled={busy || !text.trim()}
+            title="Отправить (Enter)"
+            style={{ display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 11px',
+              background: 'var(--accent)', color: 'var(--bg-card)', border: 'none', borderRadius: 9,
+              fontSize: 11, fontWeight: 700, fontFamily: UI,
+              cursor: (busy || !text.trim()) ? 'default' : 'pointer',
+              opacity: (busy || !text.trim()) ? 0.5 : 1 }}>→</button>
+        </div>
+      )}
+      {!!err && <span style={{ fontSize: 11, color: 'var(--danger)' }}>{err}</span>}
     </div>
   )
 }
@@ -392,6 +532,33 @@ export default function DealCard() {
     api.get(`/sales/deals/${id}/history`, auth()).then(r => setHistory(r.data.items || [])).catch(() => {})
   }
 
+  /* Назначение трафика — здесь И на сборке (владелец 03.09.2026). До этого контрол жил
+     только на сборке, а карточка показывала прочерк даже у назначенной сделки: строка
+     «Трафик» была захардкожена пустой. Ответственного ставят и меняют вручную до старта,
+     на отправку материала он больше не влияет.
+
+     Кандидатов тянем лениво — список короткий, но и он не нужен, пока никто не
+     назначает. Ручка та же, что на сборке (`/launch-prep/traffic-managers`): второй
+     список кандидатов разъехался бы с первым. */
+  const [tmPop, setTmPop] = useState(null)      // { rect } — поповер выбора
+  const [tmList, setTmList] = useState(null)
+  const openTraffic = async (e) => {
+    setTmPop({ rect: e.currentTarget.getBoundingClientRect() })
+    if (tmList) return
+    try {
+      const r = await api.get('/launch-prep/traffic-managers', auth())
+      setTmList(r.data.items || [])
+    } catch { setTmList([]) }
+  }
+  const pickTraffic = async (userId) => {
+    setTmPop(null)
+    try {
+      await api.put(`/launch-prep/deal/${id}/traffic-manager`,
+        { user_id: userId ? Number(userId) : null }, auth())
+      reload()
+    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось назначить трафика') }
+  }
+
   // Состояние обвязки грузит карточка, а не сама секция: секция ленивая, свёрнутый блок
   // не монтируется, и запрос из него не уходил бы вовсе — свёрнутый вид показывал
   // «не проверено» до первого разворачивания.
@@ -511,12 +678,15 @@ export default function DealCard() {
   const wrap = { minHeight: 'calc(100vh - 56px)', boxSizing: 'border-box', padding: '26px 32px 40px', background: 'var(--bg-canvas)', display: 'flex', justifyContent: 'flex-start', fontFamily: UI, color: 'var(--text-primary)' }
 
   if (loading) return <div style={wrap}><div style={{ color: 'var(--text-muted)', marginTop: 40 }}>Загрузка…</div></div>
-  if (err) return <div style={wrap}><div style={{ marginTop: 40 }}><div style={{ color: 'var(--danger)', marginBottom: 12 }}>{err}</div><a href="/sales/deals" style={{ color: 'var(--accent)' }}>← к реестру сделок</a></div></div>
+  if (err) return <div style={wrap}><div style={{ marginTop: 40 }}><div style={{ color: 'var(--danger)', marginBottom: 12 }}>{err}</div><Link href="/sales/deals" style={{ color: 'var(--accent)' }}>← к реестру сделок</Link></div></div>
 
   const d = deal
   const title = [d.advertiser, d.brand].filter(Boolean).join(' · ') || d.title || '—'
-  const meta = [d.agency, d.product, d.period, d.account_manager && `аккаунт ${d.account_manager}`, d.sales_rep && `продавец ${d.sales_rep}`].filter(Boolean).join(' · ')
-  const metaShort = [d.agency, d.product, d.period].filter(Boolean).join(' · ')
+  // Услуга с поверхностью (WEB/APP у услуг с раздельным прайсом) — тем же помощником,
+  // что в реестрах и на доске: сервер отдаёт `inventory` только там, где метка нужна.
+  const svc = productWithSurface(d.product, d.inventory)
+  const meta = [d.agency, svc, d.period, d.account_manager && `аккаунт ${d.account_manager}`, d.sales_rep && `продавец ${d.sales_rep}`].filter(Boolean).join(' · ')
+  const metaShort = [d.agency, svc, d.period].filter(Boolean).join(' · ')
   const stageDays = daysInStage(history)
   const dateVal = (x) => (x ? String(x).slice(0, 10) : '')
 
@@ -541,11 +711,28 @@ export default function DealCard() {
 
   // Документы: карта по виду + счётчик готовых (МП считаем отдельной позицией)
   const fileBy = Object.fromEntries((d.files || []).map(f => [f.kind, f]))
-  const docsReady = DOC_KINDS.filter(([k]) => fileBy[k]).length + (mp ? 1 : 0)
+  // ДС считается готовым по ВЫПУЩЕННОМУ приложению, а не по файлу: файла у него больше
+  // нет вовсе. Черновик не в счёт — номер не занят, документ клиенту не уходил.
+  const annex = (d.annexes || [])[0]
+  const docsReady = DOC_KINDS.filter(([k]) => (k === 'ds' ? annex && !annex.is_draft : fileBy[k])).length
+    + (mp ? 1 : 0)
 
   // скачивание/загрузка/удаление документов — общие хелперы (lib/dealDocs)
   const blobGet = downloadBlob
   const pickAndUpload = (kind) => pickAndUploadDoc(d.id, kind, reload, setDocBusy)
+
+  // Кнопка «Создать» у доп. соглашения: черновик собирается из самой сделки (плательщик
+  // даёт договор, медиаплан — период, сделка — сумму), и человек сразу оказывается на
+  // экране сборки. Спрашивать это формой значило бы просить ввести то, что уже известно.
+  const createAnnex = async () => {
+    setDocBusy('ds')
+    try {
+      const r = await api.post(`/annexes/from-deal/${d.id}`, {}, auth())
+      router.push(`/directory/annexes/${r.data.id}`)
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Не удалось создать доп. соглашение')
+    } finally { setDocBusy('') }
+  }
   const removeDoc = (kind) => deleteDoc(d.id, kind, reload, setDocBusy)
 
   // Порядок = колонки свёрнутой сетки (3×2, заполнение по столбцам): кто рекламируется,
@@ -559,7 +746,8 @@ export default function DealCard() {
   const team = [
     { name: d.sales_rep, role: 'Продавец', bg: 'var(--accent-tint)', fg: 'var(--accent)' },
     { name: d.account_manager, role: 'Аккаунт', bg: 'var(--income-tint)', fg: 'var(--income)' },
-    { name: null, role: 'Трафик', bg: 'var(--mixed-tint)', fg: 'var(--mixed)' },
+    { name: d.traffic_manager, role: 'Трафик', bg: 'var(--mixed-tint)', fg: 'var(--mixed)',
+      onPick: canEdit ? openTraffic : null },
   ]
   const links = [
     { name: `Контрагент ${d.payer || ''}`.trim(), href: d.counterparty_id ? `/directory/counterparties/${d.counterparty_id}` : null, dot: 'var(--accent)' },
@@ -606,6 +794,13 @@ export default function DealCard() {
           onYes={() => applySelfPromo(true)} onNo={() => setPromoAsk(false)} />
       )}
       {briefOpen && <BriefDialog dealId={d.id} canEdit={canEdit} onClose={() => setBriefOpen(false)} />}
+      {tmPop && (
+        <ValuePopover anchor={tmPop.rect} title="Ответственный трафик"
+          dealLabel={d.code || null} value={d.traffic_manager_user_id}
+          clearLabel="— не назначен —"
+          options={(tmList || []).map(t => ({ value: t.user_id, label: t.name }))}
+          onPick={pickTraffic} onClose={() => setTmPop(null)} />
+      )}
       <div style={wrap}>
         {/* Ширина под монитор 1600: 1520 = 1600 − поля обёртки (32+32) − запас под полосу
             прокрутки. Под 1920 (1840) оказалось широковато — строки текста в секциях
@@ -618,8 +813,8 @@ export default function DealCard() {
               без них растягивается во ВСЮ ширину страницы. Кликабельной становится вся
               полоса, и она перехватывает клики по выпадающему меню в шапке — со стороны
               это выглядит как «меню не работает». */}
-          <a href="/sales/deals" style={{ alignSelf: 'flex-start', width: 'fit-content',
-            fontSize: 12.5, color: 'var(--text-muted)' }}>← к реестру сделок</a>
+          <Link href="/sales/deals" style={{ alignSelf: 'flex-start', width: 'fit-content',
+            fontSize: 12.5, color: 'var(--text-muted)' }}>← к реестру сделок</Link>
 
           {/* ── Шапка ── */}
           <div style={{ ...CARD, padding: '22px 26px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -982,6 +1177,23 @@ export default function DealCard() {
               </Section>
               </div>
 
+              {/* Передача РК аккаунт → трафик. Стоит ПЕРЕД креативами: сначала «что и
+                  зачем крутим», потом «чем крутим». */}
+              <div style={{ ...CARD, padding: '20px 26px 18px' }}>
+              <Section id="traffic-brief" dealId={id} title="Цели и особенности РК"
+                subtitle="что аккаунт передаёт трафику" defaultOpen={false}
+                summary={(deal.traffic_brief || '').trim()
+                  ? (deal.traffic_brief.trim().length > 90
+                    ? deal.traffic_brief.trim().slice(0, 90) + '…' : deal.traffic_brief.trim())
+                  : 'не заполнено'}
+                tone={(deal.traffic_brief || '').trim() ? 'ok' : 'warn'}>
+                {() => (
+                  <TrafficBrief dealId={d.id} value={deal.traffic_brief} canEdit={canEdit}
+                    onSaved={v => setDeal(x => ({ ...x, traffic_brief: v }))} />
+                )}
+              </Section>
+              </div>
+
               <div style={{ ...CARD, padding: '20px 26px 18px' }}>
               <Section id="creatives" dealId={id} title="Креативы" defaultOpen={false}
                 summary={creativesSummary(creatives).text}
@@ -997,7 +1209,15 @@ export default function DealCard() {
                     isAdmin={isAdmin} onChanged={onCreativesChanged} />
                 )}
               </Section>
+
               </div>
+
+              {/* Ход открутки — СВОЯ карточка после креативов, а не хвост внутри них:
+                  собрали материал, отправили, дальше живёт кампания, и это отдельная
+                  сущность. Карточка появляется сама, когда пошла статистика, и до
+                  этого не рисует ни рамки (см. CampaignSummary). Тот же компонент
+                  поедет на предварительную сверку. */}
+              <CampaignSummary dealId={d.id} cardStyle={{ ...CARD, padding: '20px 26px 18px' }} />
             </div>
 
             {/* правая: документы / ответственные / история */}
@@ -1045,6 +1265,31 @@ export default function DealCard() {
                 {DOC_KINDS.map(([kind, label, fromBitrix]) => {
                   const f = fileBy[kind]
                   const busy = docBusy === kind
+                  // ДС у нас не приносят файлом, а СОБИРАЮТ — поэтому строка ведёт себя
+                  // как медиаплан: номер с датой и кнопки, а пока документа нет —
+                  // «Создать», проваливающее в сборку. Загрузку файла для неё оставлять
+                  // нельзя: два источника одного документа разъедутся, и какой из них
+                  // ушёл клиенту, будет не установить.
+                  if (kind === 'ds') {
+                    const ann = annex
+                    return (
+                      <DocRow key={kind} ok={!!ann && !ann.is_draft} title={label}
+                        meta={ann
+                          ? `${ann.number || 'черновик'}${ann.date ? ' · ' + dm(ann.date, '') : ''}`
+                          : 'не создано'}
+                        right={ann ? (
+                          <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}>
+                            <span onClick={() => blobGet(`/annexes/${ann.id}/pdf`, `${ann.number || 'ДС'}.pdf`)} style={DOC_ACT}>PDF</span>
+                            <span onClick={() => blobGet(`/annexes/${ann.id}/docx`, `${ann.number || 'ДС'}.docx`)} style={DOC_ACT}>DOC</span>
+                            <a href={`/directory/annexes/${ann.id}`} style={{ ...DOC_ACT, textDecoration: 'none' }}>↗</a>
+                          </span>
+                        ) : (canEdit ? (
+                          <span onClick={createAnnex} style={DOC_ACT}>
+                            {docBusy === 'ds' ? 'Создаю…' : 'Создать'}
+                          </span>
+                        ) : null)} />
+                    )
+                  }
                   return (
                     <DocRow key={kind} ok={!!f} title={label}
                       meta={busy ? 'загрузка…' : (f ? `${f.filename}${f.size ? ' · ' + Math.max(1, Math.round(f.size / 1024)) + ' КБ' : ''}` : (fromBitrix ? 'из Битрикса — нет' : 'не загружен'))}
@@ -1073,6 +1318,16 @@ export default function DealCard() {
                       <span style={{ fontSize: 12, fontWeight: 600, color: t.name ? 'var(--text-primary)' : 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name || '—'}</span>
                       <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>{t.role}</span>
                     </span>
+                    {/* Назначаемая роль выглядит значением с пунктиром, а не полем ввода —
+                        как остальные редактируемые значения в разделе продаж. */}
+                    {t.onPick && (
+                      <span onClick={t.onPick} title="Назначить ответственного за проверку материала"
+                        style={{ marginLeft: 'auto', flex: '0 0 auto', cursor: 'pointer',
+                          fontSize: 11, fontWeight: 700, color: 'var(--accent)',
+                          borderBottom: '1px dashed var(--border-card)' }}>
+                        {t.name ? 'сменить' : 'назначить'}
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1099,11 +1354,9 @@ export default function DealCard() {
                     ))}
                   </div>
                 ) : <div style={{ fontSize: 11, color: 'var(--text-faint)', padding: '4px 0' }}>Событий в журнале пока нет.</div>}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 7, paddingTop: 8, borderTop: '1px solid var(--border-row)' }}>
-                  <input placeholder="Комментарий…" disabled style={{ flex: 1, minWidth: 0, height: 30, boxSizing: 'border-box', padding: '0 10px', background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 9, fontFamily: UI, fontSize: 11.5, outline: 'none' }} />
-                  <span title="скоро" style={{ display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 11px', background: 'var(--accent)', color: 'var(--bg-card)', borderRadius: 9, fontSize: 11, fontWeight: 700, opacity: 0.6 }}>→</span>
-                </div>
               </div>
+
+              <DealComments dealId={d.id} canEdit={canEdit} />
             </div>
           </div>
 

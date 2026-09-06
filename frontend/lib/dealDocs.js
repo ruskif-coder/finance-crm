@@ -26,7 +26,15 @@ export async function downloadBlob(url, filename) {
     const a = document.createElement('a'); a.href = href; a.download = filename || 'file'; a.click()
     URL.revokeObjectURL(href)
     return true
-  } catch { alert('Не удалось скачать файл'); return false }
+  } catch (e) {
+    // Отказ приходит блобом, а не JSON, потому что запрос просил blob. Без чтения тела
+    // на экране оказывается общее «не удалось», хотя сервер прислал, ЧЕГО не хватает —
+    // так выгрузка ДС молчала бы о незаполненных реквизитах подписанта.
+    let msg = 'Не удалось скачать файл'
+    try { msg = JSON.parse(await e.response.data.text()).detail || msg } catch (_) { /* тело не JSON */ }
+    alert(msg)
+    return false
+  }
 }
 
 // Выбор файла и загрузка. onDone вызывается только при успехе.
@@ -68,6 +76,13 @@ export function docState(deal, kind) {
     const ours = (deal.our_mps || [])[0]
     if (ours) return (deal.our_stage && deal.our_stage.is_first) ? 1 : 0
     return files.some(f => f.kind === 'mp') ? 0 : 2
+  }
+  // ДС читается по ВЫПУЩЕННОМУ приложению, а не по файлу: файла у него больше нет —
+  // документ собирается у нас. Черновик — «в работе»: номер ещё не занят.
+  if (kind === 'ds') {
+    const a = (deal.annexes || [])[0]
+    if (!a) return 2
+    return a.is_draft ? 1 : 0
   }
   return files.some(f => f.kind === kind) ? 0 : 2
 }

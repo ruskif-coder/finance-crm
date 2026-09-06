@@ -236,6 +236,16 @@ def cabinet_mute(account_id: int, payload: CabinetMuteIn, db: Session = Depends(
         db.execute(sa_text(
             "DELETE FROM cabinet_account_mute WHERE account_id = :a AND kind = :k"),
             {"a": account_id, "k": payload.kind})
+
+    # Строка журнала едет ТОЙ ЖЕ транзакцией, что и сам выключатель (правило `journal`):
+    # разошедшийся с фактом журнал хуже отсутствующего. `subject` — человеческое имя вида
+    # из словаря, а не ключ: ленту читает и площадка тоже.
+    label = next((k.label for k in KINDS if k.key == payload.kind), payload.kind)
+    journal.write(db, 'уведомление_выкл' if payload.muted else 'уведомление_вкл',
+                  cabinet_id=acc.cabinet_id, account_id=acc.id,
+                  publisher_id=payload.publisher_id,
+                  actor_name=(payload.author_name or "").strip() or acc.name or "кабинет",
+                  subject=label, entity_type="cabinet_account_mute", entity_id=acc.id)
     db.commit()
     return {"kind": payload.kind, "muted": payload.muted}
 
