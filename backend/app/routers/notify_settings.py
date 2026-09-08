@@ -430,6 +430,56 @@ def tg_webhook(secret: str, update: Dict[str, Any], bg: BackgroundTasks,
     return {"ok": True}
 
 
+@router.post("/events/{event_key}/test")
+def event_test(event_key: str, db: Session = Depends(get_db),
+               current_user: User = Depends(require_admin)):
+    """Прислать себе в бот ОДНО конкретное событие — как оно будет выглядеть вживую.
+
+    Владелец 08.09.2026. Общая «проверка связи» отвечает на вопрос «канал жив?», но не на
+    вопрос «что я увижу, когда это сработает». А увидеть надо заранее: половина событий
+    состояниевые, их запускает сканер по расписанию, и дождаться настоящего — значит
+    ждать сутки и чужую просрочку.
+
+    Шлём ТОЛЬКО себе и только админу: это проверка, а не рассылка. Текст собирается той
+    же склейкой «заголовок + тело», что и в `bus._deliver_tg`, — иначе проверка показывала
+    бы не то, что придёт.
+
+    В журнал отправок не пишем: там живут настоящие доставки, и тест исказил бы счётчики.
+    Результат виден сразу — в боте либо в тексте ошибки.
+    """
+    from app.notify import registry, telegram
+
+    ev = registry.get(event_key)
+    if ev is None:
+        raise HTTPException(status_code=404, detail="Событие не найдено в реестре")
+    ch = (db.query(UserNotificationChannels)
+          .filter(UserNotificationChannels.user_id == current_user.id).first())
+    if not telegram.configured():
+        raise HTTPException(status_code=400,
+                            detail="Бот не настроен: на сервере нет TELEGRAM_BOT_TOKEN")
+    if not ch or not ch.tg_chat_id or not ch.tg_verified_at:
+        raise HTTPException(status_code=400,
+                            detail="Ваш Telegram не привязан: «Мои настройки» → «Привязать»")
+
+    # Тело — описание события из реестра плюс честная оговорка. Подставлять выдуманные
+    # номера сделок нельзя: тест, неотличимый от настоящего алерта, заставит человека
+    # искать несуществующую просрочку.
+    body = (ev.description or "").strip()
+    parts = [ev.title]
+    if body:
+        parts.append(body)
+    tail = "⚙ Это проверка вида уведомления. Настоящее придёт с данными объекта"
+    tail += (" и кнопкой «%s»." % ev.action) if ev.action else "."
+    parts.append(tail)
+    text = "\n\n".join(parts)
+    try:
+        telegram.send_message(ch.tg_chat_id, text)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Не отправилось: {e}")
+    log_action(db, current_user, "notify_event_test", "notification", None, event_key)
+    return {"ok": True, "text": text}
+
+
 @router.post("/me/telegram/test")
 def tg_test(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Тестовое сообщение себе. Без него настройка канала — гадание."""

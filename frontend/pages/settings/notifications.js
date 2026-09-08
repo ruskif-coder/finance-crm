@@ -33,6 +33,21 @@ export default function NotificationSettings() {
   const [log, setLog] = useState(null)
   const [me, setMe] = useState(null)             // личные каналы: Telegram, тихие часы
   const [tgCode, setTgCode] = useState(null)
+  const [testing, setTesting] = useState(null)   // ключ события, которое сейчас шлём себе
+  const [testMsg, setTestMsg] = useState({})     // ключ → {ok, text}: ответ под строкой
+
+  // Проверка одного вида уведомления: приходит ТОЛЬКО себе и только админу. Ответ
+  // показываем прямо под строкой — «отправлено» без подтверждения ничего не значит,
+  // а причина отказа («бот не настроен», «чат не привязан») сама говорит, что чинить.
+  const testEvent = async (key) => {
+    setTesting(key); setTestMsg(m => ({ ...m, [key]: null }))
+    try {
+      await api.post(`/notifications/settings/events/${key}/test`, {}, auth())
+      setTestMsg(m => ({ ...m, [key]: { ok: true, text: 'Отправлено вам в Telegram' } }))
+    } catch (e) {
+      setTestMsg(m => ({ ...m, [key]: { ok: false, text: msg(e) } }))
+    } finally { setTesting(null) }
+  }
 
   useEffect(() => {
     const admin = localStorage.getItem('role') === 'admin'
@@ -137,6 +152,11 @@ export default function NotificationSettings() {
             )}
             {mode === 'profiles' ? (
               <>
+                {/* Подпись обязательна: рядом стоят ДВА независимых выбора — слева
+                    направления (какие события показать), здесь профиль (для кого правим
+                    политику). Без неё выпадашка читается как фильтр списка слева
+                    (вопрос владельца 08.09.2026). */}
+                <span style={{ ...hint, whiteSpace: 'nowrap' }}>Настраиваю для профиля:</span>
                 <select value={profileId || ''} onChange={e => setProfileId(Number(e.target.value))} style={sel}>
                   {profiles.map(p => <option key={p.id} value={p.id}>{p.label} · {p.users} чел.</option>)}
                 </select>
@@ -197,7 +217,23 @@ export default function NotificationSettings() {
                           {i.locked && <span style={badge('#FDECEE', '#F6CDD2', '#B23540')}>нельзя отключить</span>}
                           {mode === 'me' && i.source === 'personal' &&
                             <span style={badge('var(--accent-tint)', '#D9E0FB', 'var(--accent)')}>переопределено</span>}
+                          {/* Проверка ОДНОГО вида уведомления себе в бот (владелец
+                              08.09.2026). Половина событий состояниевые: дождаться
+                              настоящего — значит ждать сутки и чужую просрочку. */}
+                          {isAdmin && (
+                            <button onClick={() => testEvent(i.event_key)} disabled={testing === i.event_key}
+                              title="Прислать этот вид уведомления мне в Telegram"
+                              style={{ ...btnSm(false), marginLeft: 'auto', cursor: 'pointer', opacity: testing === i.event_key ? .5 : 1 }}>
+                              {testing === i.event_key ? '…' : 'тест в бот'}
+                            </button>
+                          )}
                         </div>
+                        {testMsg[i.event_key] && (
+                          <div style={{ marginTop: 4, fontSize: 12,
+                            color: testMsg[i.event_key].ok ? 'var(--income)' : 'var(--danger)' }}>
+                            {testMsg[i.event_key].text}
+                          </div>
+                        )}
                         <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 3, lineHeight: 1.45 }}>{i.description}</div>
                         {Object.keys(i.params || {}).length > 0 && (
                           <div style={{ marginTop: 7, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 }}>

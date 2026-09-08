@@ -131,7 +131,12 @@ class LaunchPrepTarget(Base):
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime)
 
-    pairs = relationship("LaunchPrepPair", back_populates="target")
+    # Та же готча, что у комплекта (см. LaunchPrepCreativeSet.files): `launch_prep_pair
+    # .target_id` NOT NULL, в базе ON DELETE CASCADE. Сегодня не стреляет только потому,
+    # что единственное удаление получателя огорожено проверкой `not row.pairs` — то есть
+    # держится на дисциплине вызывающего, а не на модели.
+    pairs = relationship("LaunchPrepPair", back_populates="target",
+                         cascade="all, delete-orphan", passive_deletes=True)
 
 
 class LaunchPrepCreativeSet(Base):
@@ -266,7 +271,11 @@ class LaunchPrepPair(Base):
     creative_set = relationship("LaunchPrepCreativeSet", back_populates="pairs")
     target = relationship("LaunchPrepTarget", back_populates="pairs")
     reviews = relationship("LaunchPrepReview", back_populates="pair")
-    screenshots = relationship("LaunchPrepPairFile", back_populates="pair")
+    # `launch_prep_pair_file.pair_id` NOT NULL + ON DELETE CASCADE — тот же узор.
+    # Прямого удаления пары в коде сегодня нет, поломка латентная: она дождётся
+    # первого `db.delete(pair)` и будет выглядеть как «не удаляется» без причины.
+    screenshots = relationship("LaunchPrepPairFile", back_populates="pair",
+                               cascade="all, delete-orphan", passive_deletes=True)
 
 
 class LaunchPrepPairFile(Base):
