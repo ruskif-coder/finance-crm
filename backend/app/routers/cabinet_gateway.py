@@ -22,12 +22,13 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.launch_prep.models import LaunchPrepPair, LaunchPrepPairFile, LaunchPrepTarget
-from app.routers.launch_prep import apply_platform_verdict, url_state
+from app.routers.launch_prep import UPLOADS_ROOT, apply_platform_verdict, url_state
 from app.cabinet import journal
 from app.sales.models import SalesPublisher
 
@@ -256,6 +257,38 @@ def cabinet_mute(account_id: int, payload: CabinetMuteIn, db: Session = Depends(
 MEDIA_KIT_EXT = {".pdf", ".pptx"}
 MEDIA_KIT_MAX = 30 * 1024 * 1024
 MEDIA_KIT_DIR = "mediakit"
+
+
+@router.get("/task/{pair_id}/rights-letter",
+            dependencies=[Depends(require_cabinet_service)])
+def cabinet_rights_letter(pair_id: int, account_id: int, publisher_id: int,
+                          db: Session = Depends(get_db)):
+    """Письмо о правах — площадке, по её заданию.
+
+    Отдаёт ЯДРО, а не кабинет: тома `uploads` у контейнера кабинета нет вовсе, он видит
+    только `pub.*`. Через песочницу тоже нельзя — она раздаётся БЕЗ авторизации (иначе
+    баннер не откроется в рамке), и документ о правах туда класть незачем.
+
+    Право проверяется дважды и по-разному: `_actor` — что учётка вправе говорить за эту
+    площадку, а запрос ниже — что задание действительно её. Первое без второго пустило бы
+    к чужому креативу по подобранному номеру пары.
+    """
+    from app.launch_prep.models import LaunchPrepCreativeSet
+    _actor(db, account_id, publisher_id)
+    row = (db.query(LaunchPrepCreativeSet)
+           .join(LaunchPrepPair, LaunchPrepPair.set_id == LaunchPrepCreativeSet.id)
+           .join(LaunchPrepTarget, LaunchPrepTarget.id == LaunchPrepPair.target_id)
+           .filter(LaunchPrepPair.id == pair_id,
+                   LaunchPrepTarget.publisher_id == publisher_id).first())
+    # 404 и на «нет задания», и на «нет письма»: разные коды отвечали бы на вопрос,
+    # существует ли пара с таким номером.
+    if row is None or not row.rights_letter_path:
+        raise HTTPException(status_code=404, detail="Письмо не найдено")
+    full = os.path.join(UPLOADS_ROOT, row.rights_letter_path)
+    if not os.path.exists(full):
+        raise HTTPException(status_code=404, detail="Письмо не найдено")
+    return FileResponse(full, filename=row.rights_letter_name or "rights-letter",
+                        media_type="application/octet-stream")
 
 
 @router.post("/publisher/{publisher_id}/media-kit",

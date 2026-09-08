@@ -93,7 +93,10 @@ export default function MediaPlanPdf({ data = SAMPLE }) {
 
   /* расчёты — единая точка правды документа (формулы совпадают с конструктором) */
   const tNet = placements.reduce((a, r) => a + r.cost, 0);
-  const tVol = placements.reduce((a, r) => a + r.volume, 0);
+  // Итог по показам — из ПОКАЗОВ строк, не из объёмов: сложение штук Фикса с показами
+  // CPM дало бы число, которое ничего не значит (та же причина, по которой годовая
+  // выгрузка суммирует показы только по CPM).
+  const tImp = placements.reduce((a, r) => a + (r.imp || 0), 0);
   const tClicks = placements.reduce((a, r) => a + r.clicks, 0);
   const tReach = placements.reduce((a, r) => a + r.reach, 0);
   const tChecks = placements.reduce((a, r) => a + (r.checks || 0), 0);
@@ -109,7 +112,7 @@ export default function MediaPlanPdf({ data = SAMPLE }) {
     { label: 'Стоимость до НДС', value: rub(grandNet), hint: `${placements.length} строки размещения + доп. услуги`, color: T.t1 },
     { label: 'НДС 22 %', value: rub(grandNet * VAT), hint: 'ставка 22 %', color: T.t3 },
     { label: 'Стоимость с НДС', value: rub(grandNet * (1 + VAT)), hint: 'к оплате', color: T.accent },
-    { label: 'Показы', value: num(tVol), hint: `CPM ${dec(sd(tNet, tVol) * 1000)} ₽`, color: T.income },
+    { label: 'Показы', value: num(tImp), hint: `CPM ${dec(sd(tNet, tImp) * 1000)} ₽`, color: T.income },
   ];
 
   return (
@@ -176,7 +179,9 @@ export default function MediaPlanPdf({ data = SAMPLE }) {
             ))}
             <div style={{ display: 'grid', gridTemplateColumns: PLACEMENT_COLS, gap: 8, alignItems: 'center', paddingTop: 5 }}>
               <span style={totalLabel}>Итого</span><span /><span /><span />
-              <N size={9} bold>{num(tVol)}</N><span /><span />
+              {/* Здесь колонка «Объём» — сумма ОБЪЁМОВ строк (у CPM показы, у Фикса
+                  штуки). Итог по показам живёт в блоке прогноза и считается отдельно. */}
+              <N size={9} bold>{num(placements.reduce((a, r) => a + (r.volume || 0), 0))}</N><span /><span />
               <N size={10} bold>{rub(tNet)}</N>
               <N size={10} bold color={T.accent}>{rub(tNet * (1 + VAT))}</N>
             </div>
@@ -195,10 +200,13 @@ export default function MediaPlanPdf({ data = SAMPLE }) {
                   <span style={{ fontSize: 6, fontWeight: 600, lineHeight: 1.15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.position}</span>
                   <N size={6}>{fi(r.freq)}</N>
                   <N size={6}>{fi(r.reach)}</N>
-                  <N size={6} bold>{fi(r.volume)}</N>
-                  <N size={6}>{fp(sd(r.clicks, r.volume) * 100)}</N>
+                  {/* ПОКАЗЫ, а не объём строки: у Фикса и Пакета в объёме штуки
+                      закупки, и печатать их как показы значило бы показать клиенту
+                      «1 показ» и CPM в 80 миллионов (владелец 08.09.2026). */}
+                  <N size={6} bold>{fi(r.imp)}</N>
+                  <N size={6}>{fp(sd(r.clicks, r.imp) * 100)}</N>
                   <N size={6} bold>{fi(r.clicks)}</N>
-                  <N size={6} color={T.accent}>{fi(sd(r.cost, r.volume) * 1000)}</N>
+                  <N size={6} color={T.accent}>{fi(sd(r.cost, r.imp) * 1000)}</N>
                   <N size={6} color={T.accent}>{fi(sd(r.cost, r.clicks))}</N>
                   <N size={6} color={T.accent}>{fm(sd(r.cost, r.reach))}</N>
                   <N size={6}>{fp(sd(r.checks, r.clicks) * 100)}</N>
@@ -215,10 +223,10 @@ export default function MediaPlanPdf({ data = SAMPLE }) {
               <span style={totalLabel}>Итого по МП</span>
               <N size={6} bold>{fi(maxFreq)}</N>
               <N size={6} bold>{fi(tReach)}</N>
-              <N size={6} bold>{fi(tVol)}</N>
-              <N size={6} bold>{fp(sd(tClicks, tVol) * 100)}</N>
+              <N size={6} bold>{fi(tImp)}</N>
+              <N size={6} bold>{fp(sd(tClicks, tImp) * 100)}</N>
               <N size={6} bold>{fi(tClicks)}</N>
-              <N size={6} bold color={T.accent}>{fi(sd(tNet, tVol) * 1000)}</N>
+              <N size={6} bold color={T.accent}>{fi(sd(tNet, tImp) * 1000)}</N>
               <N size={6} bold color={T.accent}>{fi(sd(tNet, tClicks))}</N>
               <N size={6} bold color={T.accent}>{fm(sd(tNet, tReach))}</N>
               <N size={6} bold>{fp(sd(tChecks, tClicks) * 100)}</N>

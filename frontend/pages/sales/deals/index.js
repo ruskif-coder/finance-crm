@@ -417,7 +417,6 @@ export default function SalesRegistry2() {
     blue: ['var(--accent)', 'У нас данные полнее — ещё не выгружено в Битрикс'],
     red: ['var(--dot-overdue)', 'Расхождение с Битриксом (разные справочники) — проверьте'],
   }
-  const ATTN_COLS = new Set(['advertiser', 'brand', 'sales_rep', 'account_manager'])
   const renderSyncDot = (d) => {
     const status = d.sync_status
     const m = SYNC_DOT[status]
@@ -841,12 +840,11 @@ export default function SalesRegistry2() {
                           : (needsMpCheck(d) ? 'Медиаплан не завизирован: откройте МП, отметьте «Проверено» и сохраните' : undefined)}
                           onClick={e => { if (e.target.closest('.d2-cell, .d2-gen, .d2-brief, input, select, button, a, textarea')) return; setExpandedId(x => x === d.id ? null : d.id) }}
                           style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: `1px solid ${needsMp(d) ? NEEDS_MP_BORDER : (needsMpCheck(d) ? UNVERIFIED_BORDER : 'var(--border-row)')}`, fontSize: 12, color: 'var(--text-primary)', cursor: 'pointer', background: (expandedId === d.id || selDeals[d.id]) ? 'var(--accent-tint)' : (needsMp(d) ? NEEDS_MP_BG : (needsMpCheck(d) ? UNVERIFIED_BG : undefined)) }}>
-                          {visibleCols.map(c => {
-                            const attn = ATTN_COLS.has(c.key) && (d.sync_issues || []).some(i => i.field === c.key)
-                            return <Fragment key={c.key}>{attn
-                              ? <span title="Расхождение с Битриксом — клик по светофору покажет детали" style={{ display: 'block', minWidth: 0, background: 'var(--danger-tint)', borderRadius: 5, boxShadow: 'inset 0 0 0 1px var(--danger-border)', padding: '2px 4px' }}>{cellFor(c.key, d)}</span>
-                              : cellFor(c.key, d)}</Fragment>
-                          })}
+                          {/* Красной заливки «расхождение с Битриксом» здесь больше нет
+                              (владелец 08.09.2026): Битрикс не источник, и подсветка
+                              звала чинить то, что чинить не надо. Отчёт о расхождениях
+                              остался за светофором — он нужен владельцу, а не всем. */}
+                          {visibleCols.map(c => <Fragment key={c.key}>{cellFor(c.key, d)}</Fragment>)}
                         </div>
                         {expandedId === d.id && <DealDetail deal={d} canEdit={canEdit} onOpen={openDeal} onEdit={editDeal} onAddMp={addMp} onChanged={() => load(offset)} />}
                         </Fragment>

@@ -1209,6 +1209,7 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
 /* ── креатив ────────────────────────────────────────────────────────────── */
 function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded, handlers }) {
   const fileRef = useRef(null)
+  const letterRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [previewId, setPreviewId] = useState(null)
@@ -1232,6 +1233,39 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
   useEffect(() => {
     if (autoUpload && !set.files.length) { fileRef.current?.click(); onUploaded() }
   }, [autoUpload, set.files.length, onUploaded])
+
+  /** Письмо о правах на изображения — ОДНО на креатив.
+   *
+   *  Отдельная ручка, а не общий список файлов: там лежит материал, из состава которого
+   *  выводится форма креатива для ОРД, и документ бы её испортил.
+   *
+   *  Прикрепить можно и после отправки (площадка спрашивает письмо как раз в ходе
+   *  проверки), заменить и снять — нельзя: иначе не докажешь, при каком письме
+   *  согласовали. Отказ приходит с сервера. */
+  const uploadLetter = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setBusy(true); setErr('')
+    const form = new FormData()
+    form.append('file', file)
+    try {
+      await api.post(`/launch-prep/set/${set.id}/rights-letter`, form,
+        { ...auth(), headers: { ...auth().headers, 'Content-Type': 'multipart/form-data' } })
+      handlers.reload()
+    } catch (e2) { setErr(e2.response?.data?.detail || 'Не удалось загрузить письмо') }
+    setBusy(false)
+  }
+
+  const dropLetter = async () => {
+    if (!window.confirm('Снять письмо о правах?')) return
+    setBusy(true); setErr('')
+    try {
+      await api.delete(`/launch-prep/set/${set.id}/rights-letter`, auth())
+      handlers.reload()
+    } catch (e2) { setErr(e2.response?.data?.detail || 'Не удалось снять письмо') }
+    setBusy(false)
+  }
 
   const upload = async (e) => {
     const file = e.target.files?.[0]
@@ -1422,7 +1456,28 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
             площадок, справа «Удалить креатив» и ОСНОВНОЕ действие. Основное всегда в
             одном месте, у правого края: сегодня это «Проверить креатив», завтра, после
             проверки, — «Отправить трафику», и глаз не должен искать его заново. */}
-        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* Письмо о правах на изображения — слева от основного действия (место указано
+              владельцем 07.09.2026). Прикреплённое показывается ссылкой на скачивание:
+              кнопка «загрузить» на месте документа заставляла бы гадать, есть он или нет. */}
+          <input ref={letterRef} type="file" style={{ display: 'none' }}
+                 accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={uploadLetter} />
+          {set.rights_letter ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <a href={`/api/launch-prep/set/${set.id}/rights-letter`}
+                 style={{ fontSize: 12.5, color: 'var(--accent)', textDecoration: 'none' }}
+                 title={set.rights_letter.name}>📎 Письмо о правах</a>
+              {canEdit && !sent && (
+                <button onClick={dropLetter} disabled={busy} title="Снять письмо"
+                        style={{ border: 'none', background: 'none', cursor: 'pointer',
+                                 color: 'var(--text-faint)', fontSize: 15, lineHeight: 1 }}>×</button>
+              )}
+            </span>
+          ) : canEdit && (
+            <button style={btn(false)} disabled={busy} onClick={() => letterRef.current?.click()}>
+              📎 Письмо о правах
+            </button>
+          )}
           {/* «Удалить креатив» уехала в ШАПКУ, перед статусом (31.08.2026). Внизу
               она стояла в одном ряду с основным действием — «Проверить креатив»,
               «Отправить трафику», — то есть разрушение и продвижение оказывались

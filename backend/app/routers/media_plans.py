@@ -18,6 +18,7 @@ from typing import Optional, List
 from app.database import get_db
 from app.permissions import require_permission
 from app.audit import log_action
+from app.sales import mp_row
 from app.notify import emit
 from app.models import User, Counterparty, RolePermission
 from app.sales.models import (SalesMediaPlan, SalesMediaPlanRow, SalesMediaPlanExtra,
@@ -104,34 +105,33 @@ class MpIn(BaseModel):
     change_note: Optional[str] = None
 
 
+# Арифметика строки живёт в app/sales/mp_row.py — её едят ещё приложение к договору и
+# сборка РК, а три копии одной формулы в этом проекте уже расходились.
 def _is_cpm(model) -> bool:
-    """Модель закупки — CPM? Сравнение регистронезависимое и с обрезкой пробелов:
-    справочник услуг заполняется руками, и «cpm» вместо «CPM» дало бы объём×цену
-    вместо объём/1000×цены — ошибку в тысячу раз, причём молча."""
-    return (model or "").strip().upper() == "CPM"
+    return mp_row.is_cpm(model)
 
 
 def _row_net(r):
     if not (r.position and r.volume and r.unit_price):
         return 0
-    # Формула зависит от модели: CPM — за 1000, иначе кол-во×цена (Fix/CPC).
-    div = 1000 if _is_cpm(getattr(r, "model", None)) else 1
-    return round((r.volume or 0) * (r.unit_price or 0) * (1 - (r.discount or 0)) / div)
+    return mp_row.row_net(getattr(r, "model", None), r.volume, r.unit_price, r.discount)
 
 
 def _fc_metrics(row, net):
     """Прогнозные показатели строки — та же формула, что в конструкторе/PDF (чтобы Excel бился).
-    Вход в forecast: freq, ctr(%), cr(%), price, sov(%). Остальное — производное от net/объёма."""
+    Вход в forecast: imp (показы), freq, ctr(%), cr(%), price, sov(%). Остальное —
+    производное от net и показов.
+
+    `imp` добавлен 08.09.2026: до этого показы брались из `volume`, и у Фикса/Пакета, где
+    в объёме лежат штуки закупки, вся таблица прогноза превращалась в бессмыслицу
+    (Polza: 1 показ, охват 0,25, CPM 80 000 000 ₽)."""
     f = row.get("forecast") or {}
-    def pn(x):
-        try:
-            return float(x)
-        except (TypeError, ValueError):
-            return 0.0
+    pn = mp_row.num          # понимает десятичную запятую, см. mp_row.num
     freq = pn(f.get("freq"))
     ctr_pct, cr_pct, sov_pct = pn(f.get("ctr")), pn(f.get("cr")), pn(f.get("sov"))
     price = pn(f.get("price"))
-    imp = row.get("volume") or 0
+    # Показы — ручной ввод аккаунта; объём годится за них только у CPM. См. mp_row.
+    imp = mp_row.row_imp(row.get("model"), row.get("volume"), f)
     reach = imp / freq if freq > 0 else 0
     clicks = imp * ctr_pct / 100
     checks = clicks * cr_pct / 100
@@ -253,10 +253,23 @@ class LinkDealIn(BaseModel):
 
 @router.get("/deals-lookup")
 def deals_lookup(q: str = "", sort: str = "id", direction: str = "desc",
+                 page: int = 1, per_page: int = 50,
                  db: Session = Depends(get_db), current_user: User = Depends(MP_ED_VIEW)):
     """Табличный поиск сделок для привязки МП: поиск по всем полям, сортировка, статус
-    «есть ли МП». Только сделки ДО «Брони» включительно (МП привязывают до реализации).
-    Доступ по праву конструктора МП (без прав продаж). Объявлен ДО /{plan_id}."""
+    «есть ли МП». Доступ по праву конструктора МП (без прав продаж). Объявлен ДО /{plan_id}.
+
+    ОТДАЁМ НАШ КОД СДЕЛКИ, а не идентификатор Битрикса (владелец 08.09.2026). `code` —
+    метка сделки в нашем контуре, она и стоит везде в интерфейсе и ссылках; битриксовый
+    номер остаётся в ПОИСКЕ, потому что в переписке иногда называют именно его.
+
+    СТАДИИ. Обычному аккаунту показываем сделки до «Брони» включительно: планы привязывают
+    до реализации. МАСТЕР-АККАУНТУ — ВСЕ (владелец 08.09.2026): ему нужно править старые
+    сделки, а они давно ушли дальше по цепочке, и фильтр прятал ровно то, ради чего он сюда
+    заходит.
+
+    СТРАНИЦЫ. Раньше запрос обрезался на 300 строках молча: список выглядел полным, а
+    старые сделки в него просто не попадали. Теперь отдаём страницу и ОБЩЕЕ число —
+    экран показывает «X из N», и видно, что дальше ещё есть."""
     from app.sales.models import (SalesDeal, SalesAdvertiser, SalesBrand, SalesAgency,
                                   SalesRep, SalesStage, SalesMediaPlan)
     from app.sales.catalog import Catalog
@@ -264,11 +277,19 @@ def deals_lookup(q: str = "", sort: str = "id", direction: str = "desc",
     from sqlalchemy.orm import aliased
 
     cat = Catalog(db)
-    # стадии до «Бронь» включительно (по основной цепочке)
+    # Мастер-аккаунт видит всю цепочку. Правило то же, что на карточке сделки: `is_master`
+    # И рабочая группа `account`, а не один `is_master` — последний стоит и у «Мастер
+    # Сейлз», а речь про зону аккаунтов. Админ проходит всегда.
+    role = current_user.role
+    is_master_account = (role.key == "admin"
+                         or (bool(getattr(role, "is_master", False))
+                             and (getattr(role, "staff_group", None) or "") == "account"))
     allowed_ids = None
-    bron = next((s for s in cat.stages if s.name.strip().lower() == "бронь"), None)
-    if bron and bron.id in cat.flow:
-        allowed_ids = set(cat.flow[:cat.flow.index(bron.id) + 1])
+    if not is_master_account:
+        # стадии до «Бронь» включительно (по основной цепочке)
+        bron = next((s for s in cat.stages if s.name.strip().lower() == "бронь"), None)
+        if bron and bron.id in cat.flow:
+            allowed_ids = set(cat.flow[:cat.flow.index(bron.id) + 1])
 
     adv = aliased(SalesAdvertiser); br = aliased(SalesBrand); ag = aliased(SalesAgency)
     rep = aliased(SalesRep); acc = aliased(SalesRep); st = aliased(SalesStage)
@@ -287,16 +308,26 @@ def deals_lookup(q: str = "", sort: str = "id", direction: str = "desc",
         like = f"%{qs}%"
         qy = qy.filter(or_(
             SalesDeal.title.ilike(like), SalesDeal.bitrix_id.ilike(like),
+            SalesDeal.code.ilike(like),
             adv.name.ilike(like), adv.short_name.ilike(like), br.name.ilike(like),
             ag.name.ilike(like), ag.short_name.ilike(like), rep.name.ilike(like), acc.name.ilike(like)))
 
-    sortmap = {"id": SalesDeal.id, "bitrix_id": SalesDeal.bitrix_id, "title": SalesDeal.title,
+    sortmap = {"id": SalesDeal.id, "code": SalesDeal.code,
+               "bitrix_id": SalesDeal.bitrix_id, "title": SalesDeal.title,
                "advertiser": adv.name, "brand": br.name, "agency": ag.short_name,
                "sales_rep": rep.name, "account_manager": acc.name,
                "period": SalesDeal.period_from, "amount": SalesDeal.amount, "our_stage": st.sort_order}
     col = sortmap.get(sort, SalesDeal.id)
+    # Общее число считаем ДО пагинации — иначе счётчик покажет размер страницы.
+    total = qy.order_by(None).count()
+    per_page = max(10, min(int(per_page or 50), 200))
+    pages = max(1, -(-total // per_page))
+    page = max(1, min(int(page or 1), pages))
     qy = qy.order_by(col.desc() if direction == "desc" else col.asc())
-    rows = qy.limit(300).all()
+    # Вторичный ключ: без него строки с равным значением сортировки (пустой бренд,
+    # одинаковый период) перетасовываются между страницами и одна и та же сделка
+    # видна дважды либо не видна вовсе.
+    rows = qy.order_by(SalesDeal.id.desc()).offset((page - 1) * per_page).limit(per_page).all()
 
     deal_ids = [r[0].id for r in rows]
     mp_deals = set()
@@ -306,7 +337,7 @@ def deals_lookup(q: str = "", sort: str = "id", direction: str = "desc",
             mp_deals.add(did)
 
     items = [{
-        "id": d.id, "bitrix_id": d.bitrix_id, "title": d.title,
+        "id": d.id, "code": d.code, "bitrix_id": d.bitrix_id, "title": d.title,
         "advertiser": (adv_r.short_name or adv_r.name) if adv_r else None,
         "brand": br_r.name if br_r else None,
         "agency": (ag_r.short_name or ag_r.name) if ag_r else None,
@@ -317,7 +348,10 @@ def deals_lookup(q: str = "", sort: str = "id", direction: str = "desc",
         "our_stage": st_r.name if st_r else None,
         "has_mp": d.id in mp_deals,
     } for d, adv_r, br_r, ag_r, rep_r, acc_r, st_r in rows]
-    return {"items": items}
+    # Экран говорит, ПОЧЕМУ список такой: без этого «вижу все» и «вижу до брони»
+    # неотличимы, и человек не понимает, полон ли перед ним список.
+    return {"items": items, "all_stages": is_master_account,
+            "total": total, "page": page, "pages": pages, "per_page": per_page}
 
 
 @router.post("/{plan_id}/link-deal")
@@ -335,6 +369,11 @@ def link_deal(plan_id: int, data: LinkDealIn, db: Session = Depends(get_db),
             raise HTTPException(status_code=400, detail="Сделка не найдена")
     for pl in db.query(SalesMediaPlan).filter(SalesMediaPlan.group_id == p.group_id).all():
         pl.deal_id = data.deal_id
+    # Привязали — сделка сразу берёт шапку и суммы плана. Это главный путь для СТАРЫХ
+    # сделок (владелец 08.09.2026): им собирают корректный план и привязывают, а не
+    # правят сделку руками. Отвязка (deal_id=None) ничего не переносит и ничего не чистит.
+    if data.deal_id is not None:
+        _sync_deal_from_plan(db, p, current_user)
     db.commit()
     log_action(db, current_user, "link_deal_media_plan", "media_plan", p.id, f"deal_id={data.deal_id}")
     return {"message": "Сделка привязана" if data.deal_id else "Привязка снята", "deal_id": data.deal_id}
@@ -683,38 +722,118 @@ def _plan_is_sealed(db, plan) -> bool:
     return bool(first and deal.our_stage_id != first.id)
 
 
-def _sync_deal_title(db: Session, plan, current_user) -> None:
-    """Имя плана → имя сделки.
+# Поля сделки, которые ведёт медиаплан: слева атрибут плана, справа — сделки.
+# Ответственные идут отдельно (_PLAN_REPS): у плана это id ПОЛЬЗОВАТЕЛЕЙ, у сделки —
+# id из справочника sales_reps, и путать их нельзя.
+_PLAN_TO_DEAL = (("advertiser_id", "advertiser_id"), ("brand_id", "brand_id"),
+                 ("agency_id", "agency_id"),
+                 ("payer_counterparty_id", "payer_counterparty_id"))
+_PLAN_REPS = (("sales_rep_id", "sales_rep_id"),
+              ("account_manager_id", "account_manager_id"),
+              ("traffic_manager_id", "traffic_manager_id"))
+# Поля, которые трогает кнопка «⟳ Обновить из Битрикса» (app/sales/bitrix/deal_sync.py,
+# setf). Только их и нужно закрывать строкой override: остальные она и так не трогает,
+# а лишняя строка попала бы в очередь заливки НАШИХ правок обратно в Битрикс.
+_SYNC_TOUCHES = {"advertiser_id", "brand_id", "sales_rep_id", "account_manager_id",
+                 "amount", "amount_with_vat", "period_from"}
 
-    Владелец 03.09.2026: переименовал медиаплан — сделка должна называться так же.
-    До этого поля жили независимо, и на сделке ZCBPLS это выглядело как «переименование
-    не сработало»: имя плана менялось, имя сделки оставалось прежним до ручной
-    перегенерации в реестре. Источник имени — ПЛАН: он описывает размещение, а имя
-    сделки собирается по той же маске тем же модулем (frontend/lib/dealTitle.js).
 
-    Только когда у сделки РОВНО ОДНА группа медиапланов: при двух названий-кандидатов
-    столько же, и молча взять одно значило бы переименовывать сделку тем планом, который
-    сохранили последним. Измерено 03.09.2026: у всех 35 сделок с планами группа одна —
-    ветка «несколько» сегодня не срабатывает и стоит как защита на будущее.
+def _sync_deal_from_plan(db: Session, plan, current_user) -> None:
+    """Шапка и суммы медиаплана → сделка.
 
-    Идемпотентна: совпало — молчим, поэтому её можно звать на каждом сохранении.
+    Владелец 08.09.2026: Битрикс больше НЕ источник, источник — наша система, и сделка
+    обязана повторять то, что стоит в плане. До этого из плана в сделку ехало ровно одно
+    поле — имя (03.09.2026), а рекламодатель, агентство, бренд, плательщик, период и
+    сумма не ехали никогда. Замер на проде: из 39 пар план↔сделка сумма расходилась во
+    ВСЕХ 39, бренд в 9, рекламодатель в 3, агентство в 1.
+
+    Что переносим и по каким правилам:
+
+    · **справочные поля** (рекламодатель, бренд, агентство, плательщик) — когда в плане
+      значение ЕСТЬ. Пустое поле плана сделку не чистит: «стёр в плане» и «убери из
+      сделки» — разные намерения, а второе необратимо руками;
+    · **период** — `date_from/date_to` плана, иначе границы месяца из `period`. Той же
+      формулой, что и рождение сделки из плана (`create_deal_from_plan`), а не своей —
+      два расчёта одного периода разъехались бы при первой правке;
+    · **суммы** — `amount_net` → `amount` (без НДС), `amount_gross` → `amount_with_vat`.
+      Слой денег в реестре и так предпочитал МП (`eff_net`), но сводка руководителя,
+      выгрузка годового плана и конструктор ДС читают сырой `deal.amount` — там
+      расхождение и было видно;
+    · **ответственные** — только ЗАПОЛНЕНИЕ пустого поля сделки, без перезаписи. От
+      `account_manager_id` зависит область видимости «свои»: молчаливая перезапись
+      выдернула бы сделку из чужого списка, и человек решил бы, что она пропала.
+
+    Каждое записанное поле помечается строкой `SalesDealFieldOverride` — она объявляет
+    поле нашим, и ручная кнопка «⟳ Обновить из Битрикса» (осталась за владельцем) его
+    больше не вернёт.
+
+    Идемпотентна: совпало — не пишем и в журнал не сорим, поэтому зовётся на каждом
+    сохранении плана.
     """
-    from app.sales.models import SalesDeal
+    from app.routers.sales_dashboard import _period_bounds, _upsert_override
+    from app.sales.models import SalesDeal, SalesRep
 
-    title = (plan.title or "").strip()
-    if not (plan.deal_id and title):
+    if not plan or not plan.deal_id:
         return
+    # Та же защита, что была у имени: при ДВУХ группах планов на сделке кандидатов
+    # столько же, и молча взять один значит переписать сделку тем планом, который
+    # сохранили последним. Замер 03.09.2026: у всех сделок с планами группа одна.
     groups = {g for (g,) in db.query(SalesMediaPlan.group_id)
               .filter(SalesMediaPlan.deal_id == plan.deal_id).distinct().all()}
     if len(groups) != 1:
         return
     deal = db.query(SalesDeal).filter(SalesDeal.id == plan.deal_id).first()
-    if deal is None or (deal.title or "").strip() == title:
+    if deal is None:
         return
-    old = deal.title
-    deal.title = title
-    log_action(db, current_user, "deal_title_from_mp", "sales_deal", deal.id,
-               f"название из медиаплана: {old or '—'} → {title}")
+
+    changes = []          # человекочитаемо в журнал
+    written = {}          # field -> value, для строк override
+
+    def put(field, value, label):
+        if value is None or getattr(deal, field) == value:
+            return
+        setattr(deal, field, value)
+        written[field] = value
+        changes.append(label)
+
+    title = (plan.title or "").strip()
+    if title:
+        put("title", title, "название")
+
+    for pf, df in _PLAN_TO_DEAL:
+        put(df, getattr(plan, pf, None), df)
+
+    bounds = _period_bounds(plan.period or "")
+    put("period_from", plan.date_from or (bounds[0] if bounds else None), "старт РК")
+    put("period_to", plan.date_to or (bounds[1] if bounds else None), "конец РК")
+
+    if plan.amount_net:
+        put("amount", float(plan.amount_net), "сумма без НДС")
+        if plan.amount_gross:
+            put("amount_with_vat", float(plan.amount_gross), "сумма с НДС")
+
+    for pf, df in _PLAN_REPS:
+        if getattr(deal, df, None):
+            continue                      # занято — не трогаем, см. про область видимости
+        uid = getattr(plan, pf, None)
+        if not uid:
+            continue
+        row = db.query(SalesRep.id).filter(SalesRep.user_id == uid).first()
+        put(df, row[0] if row else None, df)
+
+    if not changes:
+        return
+    for field, value in written.items():
+        if field not in _SYNC_TOUCHES:
+            continue
+        is_ref = field.endswith("_id")
+        _upsert_override(db, deal.id, field,
+                         int(value) if is_ref else None,
+                         None if is_ref else (value.isoformat() if hasattr(value, "isoformat")
+                                              else str(value)),
+                         current_user)
+    log_action(db, current_user, "deal_from_mp", "sales_deal", deal.id,
+               "из медиаплана: " + ", ".join(changes))
 
 
 @router.post("")
@@ -754,7 +873,7 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
             # ни строки — а сделку двинуть надо. Ранняя ветка «содержимое совпало» этого
             # не делала, и жёлтая сделка оставалась жёлтой.
             _log_verify_note(db, current_user, existing, data)
-            _sync_deal_title(db, existing, current_user)
+            _sync_deal_from_plan(db, existing, current_user)
             db.commit()
             db.refresh(existing)
             return {"id": existing.id, "group_id": existing.group_id, "version": existing.version,
@@ -778,7 +897,7 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
     db.flush()
     log_action(db, current_user, "create_media_plan", "media_plan", p.id, f"{p.title} v{p.version}")
     _log_verify_note(db, current_user, p, data)
-    _sync_deal_title(db, p, current_user)
+    _sync_deal_from_plan(db, p, current_user)
     db.commit()
     db.refresh(p)
     return {"id": p.id, "group_id": p.group_id, "version": p.version, "unchanged": False}
@@ -1452,10 +1571,8 @@ def _row_formula_ctx(row, full, C, R):
     """Значения строки размещения: входные — числами (редактируемые), производные — Excel-формулами
     (НДС/итоги/прогноз пересчитываются в файле). Формулы ссылаются на колонки C[field] строки R."""
     def n(x):
-        try:
-            return float(x)
-        except (TypeError, ValueError):
-            return None
+        # Пусто остаётся пустым, «0,8» становится числом (mp_row.num, десятичная запятая).
+        return None if x in (None, "") else mp_row.num(x, default=None)
     model = row.get("model") or ""
     disc = row.get("discount") or 0
     fc = row.get("forecast") or {}
@@ -1477,7 +1594,11 @@ def _row_formula_ctx(row, full, C, R):
         "r.net": f'={C["net_nodisc"]}{R}-{C["disc_rub"]}{R}',
         "r.vat": f'={C["net"]}{R}*{v}',
         "r.gross": f'={C["net"]}{R}+{C["vat"]}{R}',
-        "r.imp": f'={C["volume"]}{R}',
+        # Показы: у CPM это тот же объём (живая формула — правка объёма в книге
+        # пересчитает прогноз), у остальных моделей объём это штуки или клики, и
+        # показы приходят числом из ручного ввода аккаунта.
+        "r.imp": (f'={C["volume"]}{R}' if _is_cpm(model)
+                  else (mp_row.row_imp(model, row.get("volume"), fc) or "")),
         "r.reach": f'=IF({C["freq"]}{R}>0,{C["imp"]}{R}/{C["freq"]}{R},"")',
         "r.clicks": f'={C["imp"]}{R}*{C["ctr"]}{R}/100',
         "r.cpm": f'=IF({C["imp"]}{R}>0,{C["net"]}{R}/{C["imp"]}{R}*1000,"")',

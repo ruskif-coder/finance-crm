@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { GenTitleBtn, MONO, UI } from '../salesTableKit';
 import { overlayClose } from '@/lib/overlay'
 import { buildTitle, separatePriceSet } from '@/lib/dealTitle'
+import { isCpm, rowImp } from '@/lib/mpRow'
 
 /* ── токены ─────────────────────────────────────────────────────────────
    Значения берём из нашей дизайн-системы (globals.css), НЕ вводим третью
@@ -38,6 +39,13 @@ export const CATALOG = [
   { position: 'Simb-ad Кросс-сеть — Охват', formats: ['Banners', 'Video'], unit: 195 },
 ];
 export const MODELS = ['CPM', 'CPC', 'Fix'];
+/* Объём по умолчанию зависит от МОДЕЛИ, потому что колонка «Объём» означает разное:
+   у CPM это показы (500 000 — обычный старт разговора), у Фикса и Пакета — ШТУКИ
+   закупки. Один дефолт на всех давал 500 000 штук Polza по 80 000 ₽, то есть медиаплан
+   на 40 миллиардов (владелец 08.09.2026). */
+const VOL_CPM = 500000;
+const VOL_UNIT = 1;
+const defaultVolume = (model) => (isCpm(model) ? VOL_CPM : VOL_UNIT);
 export const EXTRA_CATALOG = [
   { name: 'Sales lift отчёт', period: 'первый месяц', price: 150000 },
   { name: 'Brand lift исследование', period: 'по итогам РК', price: 180000 },
@@ -422,7 +430,8 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
       const f = fc[r.id] || {};
       if (!(r.position && r.volume && r.unit)) return;
       const freq = parseN(f.freq), ctr = parseN(f.ctr) / 100, cr = parseN(f.cr) / 100, price = parseN(f.price);
-      const imp = r.volume, clicks = imp * ctr, checks = clicks * cr;
+      // Показы, а не объём: у Фикса и Пакета в объёме штуки закупки (см. lib/mpRow).
+      const imp = rowImp(r.model, r.volume, f), clicks = imp * ctr, checks = clicks * cr;
       agg.reach += freq > 0 ? imp / freq : 0;
       agg.imp += imp; agg.clicks += clicks; agg.checks += checks;
       agg.revenue += checks * price; agg.gross += Math.round(net(r) * (1 + VAT));
@@ -853,7 +862,11 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                               {catalog.map(c => (
                                 <Option key={c.position} active={c.position === r.position} label={c.position}
                                   hint={c.separate ? `Web ${(c.unitWeb || 0).toLocaleString('ru-RU')} / IN-App ${(c.unitApp || 0).toLocaleString('ru-RU')} ₽` : `${c.unit.toLocaleString('ru-RU')} ₽ / ${c.formats[0]}`}
-                                  onPick={() => { main.patch(r.id, { position: c.position, format: r.format && c.formats.includes(r.format) ? r.format : c.formats[0], model: c.model || r.model || 'CPM', inventory: c.separate ? 'web' : 'cross', unit: c.separate ? (c.unitWeb || 0) : c.unit, volume: r.volume || 500000 }); setSel(null); }} />
+                                  onPick={() => {
+                                    const model = c.model || r.model || 'CPM';
+                                    main.patch(r.id, { position: c.position, format: r.format && c.formats.includes(r.format) ? r.format : c.formats[0], model, inventory: c.separate ? 'web' : 'cross', unit: c.separate ? (c.unitWeb || 0) : c.unit, volume: r.volume || defaultVolume(model) });
+                                    setSel(null);
+                                  }} />
                               ))}
                             </Popover>
                           </span>
@@ -896,7 +909,15 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                               fontFamily: T.mono, fontSize: 11, fontWeight: 700, cursor: 'pointer',
                             }}>{r.model}</span>
                             <Popover open={isOpen('main', r.id, 'model')} minWidth={120}>
-                              {models.map(m => <Option key={m} active={m === r.model} label={m} onPick={() => { main.patch(r.id, { model: m }); setSel(null); }} />)}
+                              {/* Смена модели меняет СМЫСЛ объёма (показы ↔ штуки ↔ клики).
+                                  Введённое человеком не трогаем, но НЕТРОНУТЫЙ дефолт
+                                  переводим — иначе 500 000 показов молча становятся
+                                  500 000 штук по 80 000 ₽. */}
+                              {models.map(m => <Option key={m} active={m === r.model} label={m} onPick={() => {
+                                const untouched = r.volume === defaultVolume(r.model);
+                                main.patch(r.id, untouched ? { model: m, volume: defaultVolume(m) } : { model: m });
+                                setSel(null);
+                              }} />)}
                             </Popover>
                           </span>
 
@@ -1084,7 +1105,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                   const f = fc[r.id] || {};
                   const ok = !!(r.position && r.volume && r.unit);
                   const freq = parseN(f.freq), ctr = parseN(f.ctr) / 100, cr = parseN(f.cr) / 100, price = parseN(f.price);
-                  const imp = r.volume || 0, net = calc.net(r), gross = Math.round(net * (1 + VAT));
+                  const imp = rowImp(r.model, r.volume, f), net = calc.net(r), gross = Math.round(net * (1 + VAT));
                   const reach = freq > 0 ? imp / freq : 0, clicks = imp * ctr, checks = clicks * cr, revenue = checks * price;
                   const roi = gross > 0 ? (revenue - gross) / gross : NaN;
                   const dim = ok ? undefined : T.emptyNum;
@@ -1098,7 +1119,13 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                       </span>
                       <NumInput yellow value={f.freq || ''} onChange={v => setFcField(r.id, 'freq', v)} />
                       {cell(int(reach), T.t2)}
-                      {cell(int(imp), T.t1, true)}
+                      {/* У CPM показы = объём и гарантированы договором, править их
+                          отдельно значило бы разрешить им разойтись с суммой. У Фикса и
+                          Пакета объём это штуки, а предоплаченный объём показов знает
+                          только аккаунт — поле жёлтое (владелец 08.09.2026). */}
+                      {isCpm(r.model)
+                        ? cell(int(imp), T.t1, true)
+                        : <NumInput yellow value={f.imp || ''} onChange={v => setFcField(r.id, 'imp', v)} />}
                       <NumInput yellow value={f.ctr || ''} onChange={v => setFcField(r.id, 'ctr', v)} />
                       {cell(int(clicks), T.t1, true)}
                       {cell(money(imp > 0 ? net / imp * 1000 : 0), T.accent)}

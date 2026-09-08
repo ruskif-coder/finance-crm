@@ -15,6 +15,8 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.sales import mp_row
+
 from app.models import Contract, Counterparty
 from app import own_company
 from app.sales.models import AnnexTemplate, SalesAnnex
@@ -244,7 +246,10 @@ def plan_rows(db: Session, deal_ids) -> list:
         vol = float(r["volume"] or 0)
         price = float(r["unit_price"] or 0)
         disc = float(r["discount"] or 0)
-        net = round(vol * price / 1000.0 * (1 - disc), 2) if (vol and price) else None
+        # Формула ОДНА на весь проект (app/sales/mp_row.py). Здесь стояла своя копия
+        # с безусловным /1000, и строка «Фикс · 1 ед × 80 000» печаталась в подписываемом
+        # документе как 80 ₽. Владелец 08.09.2026: чинить.
+        net = round(mp_row.row_net(r["model"], vol, price, disc), 2) if (vol and price) else None
         fmt = (r["format"] or "").strip()
         out.append({
             "network": PLACEMENT_NETWORK,

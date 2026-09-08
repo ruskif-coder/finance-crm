@@ -43,8 +43,15 @@ export default function MpEditor() {
   const [linkOpen, setLinkOpen] = useState(false)   // модалка привязки к сделке
   const [dealQ, setDealQ] = useState('')
   const [dealHits, setDealHits] = useState([])
+  // Показываем ли ВСЕ стадии — решает сервер по роли (мастер-аккаунт видит всё).
+  const [allStages, setAllStages] = useState(false)
   const [dealSort, setDealSort] = useState('id')
   const [dealDir, setDealDir] = useState('desc')
+  // Постранично: список сделок длиннее одного экрана, и раньше хвост просто не приезжал.
+  const [dealPage, setDealPage] = useState(1)
+  const [dealPages, setDealPages] = useState(1)
+  const [dealTotal, setDealTotal] = useState(0)
+  const [dealPer, setDealPer] = useState(50)   // размер страницы задаёт сервер
   const [dealBrief, setDealBrief] = useState(null)   // free-text бриф связанной сделки
 
   const loadTargeting = useCallback(() => api.get('/sales/directories/targeting', auth()).then(r => setTargetingCatalog(r.data.groups || {})).catch(() => {}), [])
@@ -168,15 +175,22 @@ export default function MpEditor() {
   }
 
   // ── Привязка МП к сделке ──
-  const searchDeals = async (q, sort = dealSort, dir = dealDir) => {
-    try { const r = await api.get(`/sales/media-plans/deals-lookup?q=${encodeURIComponent(q || '')}&sort=${sort}&direction=${dir}`, auth()); setDealHits(r.data.items || []) }
-    catch (e) { setDealHits([]) }
+  // Страница приходит от сервера (он же её и ограничивает) — не режем список на экране.
+  const searchDeals = async (q, sort = dealSort, dir = dealDir, page = 1) => {
+    try {
+      const r = await api.get(`/sales/media-plans/deals-lookup?q=${encodeURIComponent(q || '')}&sort=${sort}&direction=${dir}&page=${page}`, auth())
+      setDealHits(r.data.items || []); setAllStages(!!r.data.all_stages)
+      setDealPage(r.data.page || 1); setDealPages(r.data.pages || 1); setDealTotal(r.data.total || 0); setDealPer(r.data.per_page || 50)
+    }
+    catch (e) { setDealHits([]); setDealPage(1); setDealPages(1); setDealTotal(0) }
   }
   const sortDeals = (key) => {
     const dir = dealSort === key && dealDir === 'asc' ? 'desc' : 'asc'
-    setDealSort(key); setDealDir(dir); searchDeals(dealQ, key, dir)
+    // Сортировка меняет порядок целиком — возвращаемся на первую страницу, иначе
+    // человек остаётся на «странице 4» уже другого списка.
+    setDealSort(key); setDealDir(dir); searchDeals(dealQ, key, dir, 1)
   }
-  const openLink = () => { if (!savedId) { alert('Сначала сохраните медиаплан'); return } setLinkOpen(true); setDealQ(''); searchDeals('') }
+  const openLink = () => { if (!savedId) { alert('Сначала сохраните медиаплан'); return } setLinkOpen(true); setDealQ(''); searchDeals('', dealSort, dealDir, 1) }
   const reloadPlan = () => api.get(`/sales/media-plans/${savedId}`, auth()).then(r => setLoaded(r.data)).catch(() => {})
   const doLink = async (dealId) => {
     try { await api.post(`/sales/media-plans/${savedId}/link-deal`, { deal_id: dealId }, auth()); await reloadPlan(); loadDealBrief(); setLinkOpen(false) }
@@ -252,20 +266,23 @@ export default function MpEditor() {
         dealBrief={dealBrief} onDealBriefSave={onDealBriefSave} onDealBriefSync={onDealBriefSync}
       />
       {linkOpen && (() => {
-        const COLS = [['bitrix_id', 'BX_ID'], ['advertiser', 'Рекламодатель'], ['brand', 'Бренд'], ['agency', 'Агентство'], ['sales_rep', 'Продавец'], ['account_manager', 'Аккаунт'], ['period', 'Период'], ['amount', 'Сумма'], ['our_stage', 'Наш этап'], ['has_mp', 'МП']]
+        const COLS = [['code', 'ID сделки'], ['advertiser', 'Рекламодатель'], ['brand', 'Бренд'], ['agency', 'Агентство'], ['sales_rep', 'Продавец'], ['account_manager', 'Аккаунт'], ['period', 'Период'], ['amount', 'Сумма'], ['our_stage', 'Наш этап'], ['has_mp', 'МП']]
         const th = { padding: '7px 9px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', borderBottom: '1px solid var(--border-card)', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', position: 'sticky', top: 0, background: 'var(--bg-card)' }
         const td = { padding: '7px 9px', fontSize: 12.5, borderBottom: '1px solid var(--border-row)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 200 }
         const arrow = (k) => dealSort === k ? (dealDir === 'asc' ? ' ▲' : ' ▼') : ''
         const money = grp   // общий форматтер, не своя копия
+        const pgBtn = (off) => ({ padding: '5px 11px', borderRadius: 8, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: off ? 'var(--text-faint)' : 'var(--text-primary)', cursor: off ? 'default' : 'pointer', fontSize: 14, fontWeight: 700, lineHeight: 1 })
         return (
         <div {...overlayClose(() => setLinkOpen(false))} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, width: 'min(1040px, 97vw)', padding: '20px 22px', boxShadow: '0 24px 64px rgba(28,36,51,.22)', display: 'flex', flexDirection: 'column', maxHeight: '88vh' }}>
             <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>Привязать к сделке</div>
             <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 12 }}>
-              Сделки до стадии «Бронь» включительно.{' '}
-              {loaded?.deal_id ? <>Сейчас привязан к сделке #{loaded.deal_id}. <span onClick={() => doLink(null)} style={{ color: 'var(--danger)', cursor: 'pointer', fontWeight: 600 }}>Отвязать</span></> : 'Найдите сделку и нажмите на строку.'}
+              {allStages
+                ? 'Все сделки — вам как мастер-аккаунту видны и поздние стадии. '
+                : 'Сделки до стадии «Бронь» включительно. '}
+              {loaded?.deal_id ? <>Сейчас привязан к сделке {dealHits.find(x => x.id === loaded.deal_id)?.code || `#${loaded.deal_id}`}. <span onClick={() => doLink(null)} style={{ color: 'var(--danger)', cursor: 'pointer', fontWeight: 600 }}>Отвязать</span></> : 'Найдите сделку и нажмите на строку.'}
             </div>
-            <input autoFocus value={dealQ} onChange={e => { setDealQ(e.target.value); searchDeals(e.target.value) }} placeholder="поиск по рекламодателю, бренду, агентству, продавцу, BX_ID…"
+            <input autoFocus value={dealQ} onChange={e => { setDealQ(e.target.value); searchDeals(e.target.value, dealSort, dealDir, 1) }} placeholder="поиск по коду сделки, рекламодателю, бренду, агентству, продавцу, номеру в Битриксе…"
               style={{ width: '100%', boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 10, padding: '10px 11px', fontSize: 14, marginBottom: 12, outline: 'none' }} />
             <div style={{ overflow: 'auto', flex: 1, border: '1px solid var(--border-card)', borderRadius: 10 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -277,7 +294,11 @@ export default function MpEditor() {
                   {dealHits.map(d => (
                     <tr key={d.id} onClick={() => doLink(d.id)} className="mp-linkrow"
                       style={{ cursor: 'pointer', background: d.id === loaded?.deal_id ? 'var(--accent-tint)' : undefined }}>
-                      <td style={{ ...td, fontFamily: 'monospace', color: 'var(--accent)', fontWeight: 700 }}>{d.bitrix_id}</td>
+                      {/* НАШ код сделки, а не битриксовый (владелец 08.09.2026): он
+                          стоит везде в интерфейсе и ссылках. Битриксовый номер остаётся
+                          в поиске — в переписке иногда называют именно его. */}
+                      <td style={{ ...td, fontFamily: 'monospace', color: 'var(--accent)', fontWeight: 700 }}
+                          title={d.bitrix_id ? `в Битриксе: ${d.bitrix_id}` : ''}>{d.code || '—'}</td>
                       <td style={{ ...td, fontWeight: 600, color: 'var(--text-primary)' }} title={d.advertiser || ''}>{d.advertiser || '—'}</td>
                       <td style={td} title={d.brand || ''}>{d.brand || '—'}</td>
                       <td style={td} title={d.agency || ''}>{d.agency || '—'}</td>
@@ -296,8 +317,19 @@ export default function MpEditor() {
                 </tbody>
               </table>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
-              <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>{dealHits.length} сделок</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, gap: 12 }}>
+              {/* Счётчик показывает ОБЩЕЕ число, а не длину страницы: иначе «50 сделок»
+                  читается как «столько их и есть». */}
+              <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>
+                {dealTotal ? `${(dealPage - 1) * dealPer + 1}–${(dealPage - 1) * dealPer + dealHits.length} из ${dealTotal}` : '0 сделок'}
+              </span>
+              {dealPages > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button onClick={() => searchDeals(dealQ, dealSort, dealDir, dealPage - 1)} disabled={dealPage <= 1} style={pgBtn(dealPage <= 1)}>‹</button>
+                  <span style={{ fontSize: 12.5, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{dealPage} / {dealPages}</span>
+                  <button onClick={() => searchDeals(dealQ, dealSort, dealDir, dealPage + 1)} disabled={dealPage >= dealPages} style={pgBtn(dealPage >= dealPages)}>›</button>
+                </div>
+              )}
               <button onClick={() => setLinkOpen(false)} style={{ padding: '9px 18px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Закрыть</button>
             </div>
           </div>

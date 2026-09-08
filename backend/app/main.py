@@ -11,7 +11,8 @@ from app.routers import (auth, operations, reports, counterparties, articles, se
                          year_plan, finreport, backlog, account_dashboard,
                          publishers, diadoc, ord, launch_prep, traffic, cabinets,
                          cabinet_gateway, traffic_catalog, traffic_balancer,
-                         dsp_demo, traffic_dashboard, annexes, directory_add)
+                         dsp_demo, traffic_dashboard, annexes, directory_add,
+                         exec_dashboard, system_status)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -523,6 +524,11 @@ app.include_router(annexes.router, prefix="/api/annexes", tags=["annexes"])
 # «Добавить данные» — вход на экран и набор доступных блоков. Писателей у него нет:
 # сохраняет он существующими ручками справочников.
 app.include_router(directory_add.router, prefix="/api/directory-add", tags=["directory_add"])
+# Дашборд руководителя. Закрыт require_admin, а не правом: экран сквозной и для одного
+# человека, а секция в конструкторе ролей могла бы быть выдана по неосторожности.
+app.include_router(exec_dashboard.router, prefix="/api/exec", tags=["exec_dashboard"])
+# Состояние системы. Тоже require_admin: показывает инфраструктуру, а не бизнес-данные.
+app.include_router(system_status.router, prefix="/api/system", tags=["system_status"])
 # Учётки внешнего кабинета — администрирование со стороны ядра. Сам кабинет живёт
 # отдельным сервисом (`cabinet/`) и ходит в базу под своей ролью.
 app.include_router(cabinets.router, prefix="/api/cabinets", tags=["cabinets"])

@@ -133,14 +133,15 @@ function mapOwners(d) {
  * @param mp             — последний медиаплан сделки (полные данные) либо null
  * @param lines           — строки размещения, уже посчитанные на странице (position/format/
  *                          model/volume/unit/discount/net/freq/reach/clicks)
- * @param tVol            — суммарный объём (показы) по строкам — для «Показы по прогнозу»
+ * @param tImp            — суммарные ПОКАЗЫ по строкам — для «Показы по прогнозу».
+ *                        Не объём: у Фикса и Пакета в объёме лежат штуки закупки.
  * @param net             — сумма сделки до НДС (deal-level, с доп.услугами) — уже посчитана
  * @param chain           — цепочка стадий нашего каталога (phases.flatMap(...) на странице)
  * @param curIdx          — индекс текущей стадии сделки в chain (-1 — не нашлась/сорвалась)
  * @param ordAssembly     — ответ GET /ord/deal/{id}/assembly либо null (ещё грузится)
  * @param canEdit         — есть ли право sales_registry.edit у текущего пользователя
  */
-export function toDealCardData({ deal: d, mp, lines, tVol, net, chain, curIdx, ordAssembly, canEdit }) {
+export function toDealCardData({ deal: d, mp, lines, tImp, net, chain, curIdx, ordAssembly, canEdit }) {
   const title = [d.advertiser, d.brand].filter(Boolean).join(' · ') || d.title || '—'
   // Мета шапки — ровно «агентство · услуга · период» (README раздел 2), уже без
   // продавца/аккаунта: у них теперь своя строка «Ответственные» в правой колонке.
@@ -150,18 +151,22 @@ export function toDealCardData({ deal: d, mp, lines, tVol, net, chain, curIdx, o
   const end = d.period_to ? String(d.period_to).slice(0, 10) : ''
   const flight = (start && end) ? `${ddmm(start)} — ${ddmm(end)}` : '—'
 
+  // Прогноз считается от ПОКАЗОВ (`l.imp`), а не от объёма строки: у Фикса и Пакета
+  // объём это штуки закупки, и CPM от них получался в миллионы рублей. Показы приходят
+  // из ручного ввода аккаунта, у CPM совпадают с объёмом (lib/mpRow).
   const forecast = (lines || []).map(l => {
-    const reach = l.freq > 0 ? Math.round(l.volume / l.freq) : 0
+    const imp = l.imp || 0
+    const reach = l.freq > 0 ? Math.round(imp / l.freq) : 0
     const clicks = Math.round(l.clicks || 0)
-    const cpm = l.volume ? (l.net / l.volume * 1000) : 0
+    const cpm = imp ? (l.net / imp * 1000) : 0
     const cpc = l.clicks ? (l.net / l.clicks) : 0
     const cpu = reach ? (l.net / reach) : 0
     return {
       name: l.position,
       freq: l.freq ? String(l.freq) : '—',
-      reach, imp: l.volume, clicks,
-      ctr: (l.volume && l.clicks) ? dec(l.clicks / l.volume * 100) + ' %' : '—',
-      cpm: l.volume ? dec(cpm) + ' ₽' : '—',
+      reach, imp, clicks,
+      ctr: (imp && l.clicks) ? dec(l.clicks / imp * 100) + ' %' : '—',
+      cpm: imp ? dec(cpm) + ' ₽' : '—',
       cpc: l.clicks ? dec(cpc) + ' ₽' : '—',
       cpu: reach ? dec(cpu) + ' ₽' : '—',
     }
@@ -199,7 +204,7 @@ export function toDealCardData({ deal: d, mp, lines, tVol, net, chain, curIdx, o
       service: d.product || '—',
       period: d.period || '—',
       flight, start, end,
-      impressions: tVol || 0,
+      impressions: tImp || 0,
       params: [
         ['Агентство', d.agency || '—'], ['Рекламодатель', d.advertiser || '—'], ['Бренд', d.brand || '—'],
         ['Контрагент', d.payer || '—'], ['Период размещения', d.period ? `месяц · ${d.period}` : '—'], ['Гео', '—'],

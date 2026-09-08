@@ -11,7 +11,9 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -25,6 +27,7 @@ from app.notify.recipients import RESOLVER_LABELS
 from app.routers.auth import get_current_user
 
 router = APIRouter()
+logger = logging.getLogger("finance")
 
 CH_FIELDS = {"app": "ch_app", "tg": "ch_tg", "mail": "ch_mail", "digest": "ch_digest"}
 
@@ -369,13 +372,34 @@ def tg_unlink(db: Session = Depends(get_db), current_user: User = Depends(get_cu
     return {"ok": True}
 
 
+def _reply_later(chat_id: str, text: str):
+    """Ответ пользователю ПОСЛЕ того, как мы уже ответили Телеграму.
+
+    Ошибку глушим намеренно: фоновая задача выполняется, когда ответ на запрос уже ушёл,
+    и поднять её наверх некуда. В журнал она попадает через логгер вызова.
+    """
+    from app.notify import telegram
+    try:
+        telegram.send_message(chat_id, text)
+    except Exception:
+        logger.warning("tg_webhook: ответ пользователю не ушёл", exc_info=True)
+
+
 @router.post("/telegram/webhook/{secret}")
-def tg_webhook(secret: str, update: Dict[str, Any], db: Session = Depends(get_db)):
+def tg_webhook(secret: str, update: Dict[str, Any], bg: BackgroundTasks,
+               db: Session = Depends(get_db)):
     """Апдейты от Telegram. Эндпоинт публичный (иначе бот не достучится), поэтому:
       * закрыт секретом в пути — он же ставится в setWebhook;
       * из тела берём ТОЛЬКО код и chat_id, всё остальное игнорируем;
       * тело апдейта — данные, а не команда: никакой логики по его содержимому нет.
     Всегда отвечаем 200, иначе Telegram будет ретраить один и тот же апдейт.
+
+    ОТВЕТ ПОЛЬЗОВАТЕЛЮ УХОДИТ ФОНОВОЙ ЗАДАЧЕЙ, а не внутри запроса (08.09.2026).
+    Раньше он слался здесь же, с таймаутом 10 с. Связь с Телеграмом у нас рваная —
+    закреплённый адрес отвечает пять раз из шести, — и на неудачной попытке обработчик
+    висел, Телеграм не дожидался ответа и считал доставку неуспешной. Копилось это тихо:
+    исходящие уведомления шли нормально, а привязка по коду просто молчала, и у Телеграма
+    накопилось 13 неотданных обновлений.
     """
     from app.notify import telegram
     expected = os.getenv("TELEGRAM_WEBHOOK_SECRET") or ""
@@ -389,23 +413,20 @@ def tg_webhook(secret: str, update: Dict[str, Any], db: Session = Depends(get_db
     row = (db.query(UserNotificationChannels)
            .filter(UserNotificationChannels.tg_link_code == code).first())
     if row is None or (row.tg_link_expires and row.tg_link_expires < datetime.utcnow()):
-        try:
-            telegram.send_message(chat_id, "Код не найден или просрочен. "
-                                           "Получите новый в разделе «Мои уведомления».")
-        except Exception:
-            pass
+        bg.add_task(_reply_later, chat_id,
+                    "Код не найден или просрочен. "
+                    "Получите новый в разделе «Мои уведомления».")
         return {"ok": True}
 
+    # Привязка записывается СРАЗУ и синхронно: она и есть результат запроса. В фон уходит
+    # только ответное сообщение — если оно не дойдёт, человек всё равно уже привязан.
     row.tg_chat_id = chat_id
     row.tg_verified_at = datetime.utcnow()
     row.tg_link_code = row.tg_link_expires = None
     db.commit()
     user = db.query(User).filter(User.id == row.user_id).first()
-    try:
-        telegram.send_message(chat_id, f"Готово, {user.name if user else ''}. "
-                                       f"Уведомления будут приходить сюда.")
-    except Exception:
-        pass
+    bg.add_task(_reply_later, chat_id,
+                f"Готово, {user.name if user else ''}. Уведомления будут приходить сюда.")
     return {"ok": True}
 
 

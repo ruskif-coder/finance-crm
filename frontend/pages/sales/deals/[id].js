@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { num as mpNum, rowImp, rowNet } from '@/lib/mpRow'
 import Head from 'next/head'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
@@ -327,7 +328,7 @@ function mpSummary(rowCount, net, mp) {
 }
 
 /** Ключевые значения МП для свёрнутого вида. Нейтральные: это цифры, а не состояния. */
-function mpFacts({ d, lines, net, gross, tVol, mp }) {
+function mpFacts({ d, lines, net, gross, tImp, mp }) {
   const svc = [...new Set(lines.map(l => l.position).filter(Boolean))]
   const period = d.period_from ? `${dm(d.period_from, '')} — ${dm(d.period_to, '')}` : (d.period || '—')
   return [
@@ -340,8 +341,10 @@ function mpFacts({ d, lines, net, gross, tVol, mp }) {
     { label: 'С НДС',
       value: (gross == null && net != null) ? 'ставка НДС не задана' : rub(gross),
       color: gross == null ? 'var(--warning-text)' : 'var(--accent)' },
-    { label: 'Показы по прогнозу', value: tVol ? grp0(tVol) : '—',
-      color: tVol ? 'var(--income)' : 'var(--text-faint)' },
+    // Показы, а не объём: у Фикса и Пакета объём это штуки закупки, и складывать их
+    // с показами CPM бессмысленно (так же считает годовая выгрузка).
+    { label: 'Показы по прогнозу', value: tImp ? grp0(tImp) : '—',
+      color: tImp ? 'var(--income)' : 'var(--text-faint)' },
     { label: 'Период РК', value: period },
     { label: 'Версия', value: mp ? `v${mp.version}` : 'нет',
       color: mp ? 'var(--warning-text)' : 'var(--text-faint)' },
@@ -636,16 +639,18 @@ export default function DealCard() {
   const mpRows = (mp && mp.rows) || []
   const hasMp = mpRows.length > 0
   const lines = mpRows.map(r => {
-    const div = (r.model || '') === 'CPM' ? 1000 : 1
-    const net = Math.round((r.volume || 0) * (r.unit_price || 0) * (1 - (r.discount || 0)) / div)
+    // Сумма и показы — общей арифметикой строки (lib/mpRow), не своей копией: у Фикса
+    // и Пакета в объёме лежат штуки закупки, и показы туда не годятся.
+    const net = rowNet(r.model, r.volume, r.unit_price, r.discount)
     const fc = r.forecast || {}
-    const nn = (x) => { const v = parseFloat(String(x ?? '').replace(',', '.')); return Number.isFinite(v) ? v : 0 }
-    const imp = r.volume || 0
+    const nn = mpNum          // понимает десятичную запятую: аккаунт вводит «0,8»
+    const imp = rowImp(r.model, r.volume, fc)
     const freq = nn(fc.freq)
     const reach = freq > 0 ? imp / freq : 0
     const clicks = imp * (nn(fc.ctr) / 100)
     return {
-      position: r.position, format: r.format, model: r.model, volume: imp,
+      position: r.position, format: r.format, model: r.model,
+      volume: r.volume || 0, imp,
       inventory: r.inventory,
       unit: r.unit_price || 0, discount: r.discount || 0,
       net, gross: withVat(net), freq, reach, clicks,
@@ -664,7 +669,8 @@ export default function DealCard() {
     const gross = r.gross
     return { revenue, roi: gross > 0 ? (revenue - gross) / gross : NaN }
   }
-  const tVol = lines.reduce((a, r) => a + r.volume, 0)
+  const tVol = lines.reduce((a, r) => a + r.volume, 0)      // объём: показы, штуки, клики
+  const tImp = lines.reduce((a, r) => a + (r.imp || 0), 0)  // только показы
   const tNet = lines.reduce((a, r) => a + r.net, 0)
   const mpExtras = (mp && mp.extras) || []
   const extrasTotal = mpExtras.reduce((a, e) => a + (e.total || 0), 0)
@@ -769,7 +775,7 @@ export default function DealCard() {
         <DealCardMobile
           deal={d} chain={chain} curIdx={curIdx} isLost={isLost}
           net={net} gross={gross} vat={VAT}
-          lines={lines} tVol={tVol} tNet={tNet}
+          lines={lines} tVol={tVol} tImp={tImp} tNet={tNet}
           mpExtras={mpExtras} extrasTotal={extrasTotal}
           mp={mp} hasMp={hasMp} canEdit={canEdit} canApprove={canApprove}
           onBack={() => router.push('/sales/deals')}
@@ -973,7 +979,7 @@ export default function DealCard() {
 
               <div style={{ ...CARD, padding: '20px 26px 18px' }}>
               <Section id="mp" dealId={id} title="Медиаплан сделки" defaultOpen={false}
-                facts={mpFacts({ d, lines, net, gross, tVol, mp })}
+                facts={mpFacts({ d, lines, net, gross, tImp, mp })}
                 right={<span style={SUBCAPS}>{mpSummary(mpRows.length, net, mp)}</span>}>
                 {() => (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -1099,10 +1105,12 @@ export default function DealCard() {
                         <span title={r.position} style={{ fontSize: 11.5, fontWeight: 600, lineHeight: 1.25, overflow: 'hidden' }}>{r.position}</span>
                         <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.freq ? num(r.freq) : '—'}</span>
                         <span style={FC_NUM}>{r.reach ? num(Math.round(r.reach)) : '—'}</span>
-                        <span style={{ ...FC_NUM, fontWeight: 700, color: 'var(--income)' }}>{num(r.volume)}</span>
-                        <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.volume && r.clicks ? dec(r.clicks / r.volume * 100) : '—'}</span>
+                        {/* ПОКАЗЫ (r.imp), а не объём строки: у Фикса и Пакета объём это
+                            штуки закупки — CPM от них выходил в миллионы рублей. */}
+                        <span style={{ ...FC_NUM, fontWeight: 700, color: 'var(--income)' }}>{r.imp ? num(r.imp) : '—'}</span>
+                        <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.imp && r.clicks ? dec(r.clicks / r.imp * 100) : '—'}</span>
                         <span style={{ ...FC_NUM, fontWeight: 700, color: 'var(--income)' }}>{r.clicks ? num(Math.round(r.clicks)) : '—'}</span>
-                        <span style={{ ...FC_NUM, color: 'var(--accent)' }}>{r.volume ? dec(r.net / r.volume * 1000) : '—'}</span>
+                        <span style={{ ...FC_NUM, color: 'var(--accent)' }}>{r.imp ? dec(r.net / r.imp * 1000) : '—'}</span>
                         <span style={{ ...FC_NUM, color: 'var(--accent)' }}>{r.clicks ? dec(r.net / r.clicks) : '—'}</span>
                         <span style={{ ...FC_NUM, color: 'var(--accent)' }}>{r.reach ? dec(r.net / r.reach) : '—'}</span>
                         <span style={{ ...FC_NUM, color: 'var(--text-secondary)' }}>{r.cr ? dec(r.cr * 100) : '—'}</span>

@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -244,6 +244,11 @@ def tasks(acc=Depends(current_account)):
                           # отдельной ролью БД и `app.*` не импортирует по построению.
                           # Три ответа менять ОДНОВРЕМЕННО в обоих местах.
                           else 'запрошена' if r.url_requested_at else 'нужна'),
+            # Письмо о правах на изображения — приходит вместе с креативом, не
+            # отдельным запросом: оно лежит на том же комплекте и появляется у площадки
+            # ровно в момент, когда креатив поступил на согласование.
+            "rights_letter": ({"name": r.rights_letter_name, "size": r.rights_letter_size}
+                              if r.rights_letter_name else None),
             "url_request_text": r.url_request_text,
             "asked_at": r.asked_at,
             "waiting_days": (datetime.now(timezone.utc).date() - r.asked_at.date()).days
@@ -549,6 +554,33 @@ async def media_kit(file: UploadFile = File(...), acc=Depends(current_account)):
         raise HTTPException(status_code=r.status_code if r.status_code < 500 else 502,
                             detail=detail)
     return r.json()
+
+
+@app.get("/api/tasks/{task_id}/rights-letter")
+def rights_letter(task_id: int, acc=Depends(current_account)):
+    """Скачать письмо о правах. Файл отдаёт ЯДРО — том с загрузками смонтирован только
+    туда, кабинет видит лишь `pub.*`.
+
+    Через песочницу нельзя: она раздаётся БЕЗ авторизации (иначе баннер не откроется в
+    рамке), а документ о правах не должен лежать по угадываемой ссылке.
+    """
+    t = my_task(acc, task_id)
+    if not SERVICE_TOKEN:
+        raise HTTPException(status_code=503,
+                            detail="Кабинет не настроен на связь с системой")
+    try:
+        r = httpx.get(f"{CORE_API_URL}/api/cabinet-gw/task/{t.task_id}/rights-letter",
+                      params={"account_id": acc.id, "publisher_id": t.publisher_id},
+                      headers={"X-Cabinet-Token": SERVICE_TOKEN}, timeout=60.0)
+    except httpx.RequestError:
+        raise HTTPException(status_code=503,
+                            detail="Система временно недоступна — попробуйте позже")
+    if r.status_code >= 400:
+        raise HTTPException(status_code=404, detail="Письмо не найдено")
+    return Response(content=r.content,
+                    media_type=r.headers.get("content-type", "application/octet-stream"),
+                    headers={"Content-Disposition":
+                             r.headers.get("content-disposition", "attachment")})
 
 
 @app.post("/api/tasks/{task_id}/rework-file")

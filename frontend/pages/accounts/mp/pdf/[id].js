@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import Head from 'next/head'
+import { num, rowImp, rowNet } from '@/lib/mpRow'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import { can } from '@/components/Navbar'
@@ -20,20 +21,23 @@ function toPdf(plan) {
   // строки размещения = заполненные (позиция + объём + цена), как «filled» в конструкторе
   const placements = (plan.rows || []).filter(r => r.position && r.volume && r.unit_price).map(r => {
     const vol = +r.volume || 0, unit = +r.unit_price || 0, disc = +r.discount || 0
-    // CPM — за 1000, иначе кол-во×цена (как в конструкторе)
-    const cost = Math.round(vol * unit * (1 - disc) / (r.model === 'CPM' ? 1000 : 1))
+    // Сумма и показы — общей арифметикой строки (lib/mpRow), не своей копией: здесь
+    // стояло `+f.ctr`, а человек вводит «0,8» — получался NaN → 0, и в PDF у клиента
+    // CTR, клики и CPC были пустыми при заполненном экране конструктора.
+    const cost = rowNet(r.model, vol, unit, disc)
     const f = r.forecast || {}
-    const freq = +f.freq || 0
-    const ctr = (+f.ctr || 0) / 100
-    const cr = (+f.cr || 0) / 100
-    const price = +f.price || 0
-    const sov = +f.sov || 0
-    const clicks = vol * ctr
+    const imp = rowImp(r.model, vol, f)
+    const freq = num(f.freq)
+    const ctr = num(f.ctr) / 100
+    const cr = num(f.cr) / 100
+    const price = num(f.price)
+    const sov = num(f.sov)
+    const clicks = imp * ctr
     const checks = clicks * cr
     return {
       position: r.position, format: r.format || '', inventory: r.inventory || 'cross', model: r.model || 'CPM',
       volume: vol, unit, discount: disc, cost,
-      freq, reach: freq > 0 ? vol / freq : 0, clicks, checks, price, revenue: checks * price, sov,
+      imp, freq, reach: freq > 0 ? imp / freq : 0, clicks, checks, price, revenue: checks * price, sov,
     }
   })
   const extras = (plan.extras || []).map(e => ({ name: e.name || '', period: e.period || '', price: +e.price || 0, total: +e.total || 0 }))

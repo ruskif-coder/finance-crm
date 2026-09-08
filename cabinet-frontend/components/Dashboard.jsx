@@ -206,6 +206,21 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
             посадочная
           </a>
         )}
+        {/* Письмо о правах на изображения — рядом с креативом, а не в отдельном разделе:
+            смотрят его, отвечая по этому же материалу. Показываем только когда оно
+            есть — пустая кнопка «письма нет» заставляла бы гадать, спросить его или так
+            и задумано. */}
+        {!!t.rights_letter && (
+          <a href={`/api/tasks/${t.task_id}/rights-letter`}
+            style={{ ...btnSm(false), textDecoration: 'none', display: 'inline-flex',
+              alignItems: 'center', gap: 6 }} title={t.rights_letter.name}>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21.4 11.05 12.25 20.2a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 1 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </svg>
+            письмо о правах
+          </a>
+        )}
         <button style={btnSm(false)} disabled={!preview?.preview_url}
           onClick={() => setShow(true)}>предпросмотр</button>
         {/* Три исхода, слева направо от мягкого к необратимому. Смысл несёт текст, а
@@ -213,6 +228,12 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
             превращают строку в светофор. */}
         {canApprove && !ask && (
           <>
+            {/* Разделитель между «посмотреть» и «решить» (владелец 07.09.2026). Слева
+                кнопки, которые ничего не меняют, справа — вердикт, который необратим.
+                Стоит ВНУТРИ этого условия, а не перед ним: у учётки без права ответа
+                кнопок справа нет, и полоса висела бы в воздухе, отделяя пустоту. */}
+            <span style={{ width: 1, height: 18, background: C.inner, flex: '0 0 1px',
+                           margin: '0 2px' }} />
             <button style={soft(C.warningFg, C.warningBorder)} disabled={busy}
               onClick={() => setAsk('на доработку')}>Доработать</button>
             <button style={soft(C.danger, C.dangerBorder)}

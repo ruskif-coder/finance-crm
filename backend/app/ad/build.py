@@ -31,6 +31,8 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.sales import mp_row
+
 from app.ad.balance import SCOPES, SCOPE_SURFACE
 from app.ad.flight import (PLACEMENT_NEW, PLACEMENT_READY, chain_status, distribute,
                            effective_status_creative)
@@ -80,7 +82,8 @@ LATEST_PLAN_SQL = ("SELECT id FROM sales_media_plans "
 def deal_plan(db: Session, deal_id: int) -> dict:
     """Услуги, поверхности и план показов сделки — из строк последнего медиаплана."""
     rows = db.execute(text(f"""
-        SELECT r.position, r.inventory, r.volume, r.unit_price
+        SELECT r.position, r.inventory, r.volume, r.unit_price, r.model,
+               r.discount, r.forecast
         FROM sales_media_plan_rows r
         JOIN sales_media_plans mp ON mp.id = r.plan_id
         WHERE mp.deal_id = :d AND mp.id = ({LATEST_PLAN_SQL})
@@ -92,8 +95,11 @@ def deal_plan(db: Session, deal_id: int) -> dict:
             services.add(r["position"].strip())
         for s in INVENTORY_SURFACES.get((r["inventory"] or "").strip().lower(), ()):
             surfaces.add(s)
-        shows += float(r["volume"] or 0)
-        budget += float(r["volume"] or 0) * float(r["unit_price"] or 0) / 1000.0  # CPM
+        # Показы и деньги — по общей арифметике строки (app/sales/mp_row.py). Здесь
+        # стояло безусловное «объём = показы» и «/1000», то есть строка Фикса давала
+        # РК лимит в 1 показ и бюджет 80 ₽ вместо 80 000.
+        shows += mp_row.row_imp(r["model"], r["volume"], r["forecast"])
+        budget += mp_row.row_net(r["model"], r["volume"], r["unit_price"], r["discount"])
     return {"services": sorted(services), "surfaces": sorted(surfaces),
             "plan_show": shows or None, "plan_budget": budget or None,
             "has_plan": bool(rows)}

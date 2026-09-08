@@ -27,7 +27,13 @@ def db():
     yield s
     # Убираем за собой И до, и после: упавший прогон иначе оставит мусор, на котором
     # следующий прогон посчитает не то.
+    from app.models import AuditLog
     for d in s.query(SalesDeal).filter(SalesDeal.bitrix_id.like(f'{PREFIX}%')).all():
+        # Журнал действий чистим тоже: перенос из плана пишет строку `deal_from_mp`, и без
+        # этого каждый прогон оставлял бы в «Журнале действий» запись о несуществующей
+        # сделке. Прогон 08.09.2026 нашёл здесь 8 таких сирот.
+        s.query(AuditLog).filter(AuditLog.entity_type == 'sales_deal',
+                                 AuditLog.entity_id == d.id).delete(synchronize_session=False)
         s.query(SalesMediaPlan).filter(SalesMediaPlan.deal_id == d.id).delete(
             synchronize_session=False)
         s.delete(d)
@@ -62,7 +68,7 @@ def test_plan_title_becomes_the_deal_title(db):
     plan = _plan(db, deal, 'Dr. Reddy’s | Хелинорм | G4M | еФарм WEB | 2026-09')
     db.commit()
 
-    mp._sync_deal_title(db, plan, _USER)
+    mp._sync_deal_from_plan(db, plan, _USER)
     db.commit()
     db.refresh(deal)
     assert deal.title == plan.title, (
@@ -81,7 +87,7 @@ def test_second_plan_group_stops_the_rename(db):
     _plan(db, deal, 'план два')
     db.commit()
 
-    mp._sync_deal_title(db, first, _USER)
+    mp._sync_deal_from_plan(db, first, _USER)
     db.commit()
     db.refresh(deal)
     assert deal.title == 'имя сделки', 'сделку переименовали при двух группах планов'
@@ -93,15 +99,15 @@ def test_sync_is_idempotent_and_ignores_empty_title(db):
     plan = _plan(db, deal, '   ')
     db.commit()
 
-    mp._sync_deal_title(db, plan, _USER)
+    mp._sync_deal_from_plan(db, plan, _USER)
     db.commit()
     db.refresh(deal)
     assert deal.title == 'имя сделки', 'пустое имя плана затёрло имя сделки'
 
     plan.title = 'новое имя'
     db.commit()
-    mp._sync_deal_title(db, plan, _USER)
-    mp._sync_deal_title(db, plan, _USER)
+    mp._sync_deal_from_plan(db, plan, _USER)
+    mp._sync_deal_from_plan(db, plan, _USER)
     db.commit()
     db.refresh(deal)
     assert deal.title == 'новое имя'

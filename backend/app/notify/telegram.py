@@ -108,10 +108,28 @@ def send_message(chat_id: str, text: str, link: Optional[str] = None,
             domain = f"https://{domain}"
         if domain:
             body = f"{text}\n{domain.rstrip('/')}{link}"
-    r = httpx.post(API.format(token=token, method="sendMessage"),
-                   json={"chat_id": chat_id, "text": body,
-                         "disable_web_page_preview": True},
-                   timeout=10)
+    # ОДНА ПОВТОРНАЯ ПОПЫТКА при обрыве соединения (08.09.2026).
+    #
+    # Связь с Телеграмом у нас рваная по независящей от кода причине: адрес, который
+    # отдаёт DNS, с сервера недостижим вовсе, рабочий закреплён через `extra_hosts`, и
+    # он сам отвечает не всегда — замер показал 5 успехов из 6. Повтор снижает вероятность
+    # неудачи примерно с одной шестой до одной тридцать шестой.
+    #
+    # Повторяем ТОЛЬКО обрыв соединения. Ответ Телеграма с кодом ошибки не повторяем: 403
+    # («бот не запущен пользователем») и 400 («чат не найден») от повтора не изменятся, а
+    # 429 требует выдержать паузу, которую Телеграм называет сам, — это другой разговор.
+    last = None
+    for attempt in (1, 2):
+        try:
+            r = httpx.post(API.format(token=token, method="sendMessage"),
+                           json={"chat_id": chat_id, "text": body,
+                                 "disable_web_page_preview": True},
+                           timeout=10)
+            break
+        except httpx.TransportError as e:      # таймаут, обрыв, отказ в соединении
+            last = e
+            if attempt == 2:
+                raise RuntimeError(f"Telegram недоступен: {type(e).__name__}") from last
     if r.status_code != 200:
         raise RuntimeError(f"Telegram {r.status_code}: {r.text[:200]}")
 

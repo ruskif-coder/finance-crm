@@ -188,6 +188,18 @@ class LaunchPrepCreativeSet(Base):
     # и кликается: с посадочной не склеивается, проверку не блокирует, видна и трафику,
     # и аккаунтам. Боевая ссылка запуска — другая сущность, и поле у неё будет своё.
     test_targeting_url = Column(Text)
+    # Письмо о правах на изображения (миграция 2026-09-07_rights_letter.sql) — ОДНО на
+    # креатив (владелец), поэтому колонками, а не таблицей. Намеренно НЕ в
+    # `launch_prep_creative_file`: оттуда `_derive_form` выводит форму креатива для ОРД,
+    # и PDF изменил бы то, что уезжает в ЕРИР, а `pub.task_file_v1` нарисовал бы письмо
+    # сломанным баннером в предпросмотре кабинета. В ОРД письмо не идёт вовсе.
+    rights_letter_path = Column(String(512))     # относительный ключ, не абсолютный путь
+    rights_letter_name = Column(String(255))
+    rights_letter_type = Column(String(128))
+    rights_letter_size = Column(Integer)
+    # Кто и когда прикрепил — вместе отвечают на «при каком письме площадка согласовала».
+    rights_letter_at = Column(DateTime)
+    rights_letter_by = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime)
 

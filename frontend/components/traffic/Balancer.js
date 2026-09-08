@@ -223,7 +223,17 @@ export default function Balancer({ mayEdit }) {
               const [sbg, sfg] = SRC_TONE[r.source] || ['var(--bg-soft, #f1f4f9)', 'var(--text-faint)']
               return (
                 <tr key={key(r)}>
-                  <td style={{ ...td, fontWeight: 600 }}>{r.name}</td>
+                  {/* Ссылка на карточку площадки — в НОВОЙ вкладке: балансировщик это
+                      рабочая таблица на 76 строк, и уход из неё стоит потерянного места
+                      в списке. Правка полей от этого не теряется: они сохраняются по
+                      уходу из клетки, а не по кнопке. */}
+                  <td style={{ ...td, fontWeight: 600 }}>
+                    {r.name}
+                    <a href={`/publishers/${r.publisher_id}`} target="_blank" rel="noreferrer"
+                       title={`Карточка площадки «${r.name}»`}
+                       style={{ marginLeft: 6, color: 'var(--accent)', textDecoration: 'none',
+                                fontWeight: 400 }}>↗</a>
+                  </td>
                   <td style={{ ...td, fontFamily: MONO, fontSize: 12, color: 'var(--text-faint)' }}>{r.domain}</td>
                   <td style={{ ...td, fontFamily: MONO, fontSize: 12, fontWeight: 700,
                     color: r.code ? 'var(--accent)' : 'var(--danger)' }}>{r.code || '—'}</td>

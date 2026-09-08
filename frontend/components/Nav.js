@@ -76,6 +76,16 @@ const RubleIcon = ({ size = 16 }) => (
   </svg>
 )
 
+// Отчёт — ярлык на сводку руководителя. Только админу, как и рубль: экран показывает
+// маржу и всю воронку денег. Столбики, а не документ: при 16 px документ неотличим от
+// шестерёнки соседним глазом, а столбики читаются сразу.
+const ReportIcon = ({ size = 16 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 20h16" />
+    <path d="M7 20v-6M12 20V8M17 20v-9" />
+  </svg>
+)
+
 const SearchIcon = () => (
   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" />
@@ -408,6 +418,13 @@ export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGea
         {/* Панель у справочников такая же, как у контуров: попасть в нужный справочник
             из любого раздела, а не только в первый по списку. */}
         {/* Ярлык «Операции» — перед справочниками и только админу (см. RubleIcon). */}
+        {isAdmin && (
+          <button type="button" className="nav-icon" onClick={() => onNavigate?.({ href: '/exec' })}
+            title="Сводка руководителя" aria-label="Сводка руководителя"
+            style={{ ...btnReset, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 10, color: T.t3 }}>
+            <ReportIcon />
+          </button>
+        )}
         {isAdmin && (
           <button type="button" className="nav-icon" onClick={() => onNavigate?.({ href: '/finance/operations' })}
             title="Операции" aria-label="Операции"

@@ -30,6 +30,10 @@ services:
   dsp_analytics_db:
     image: timescale/timescaledb:latest-pg16
     container_name: finance_dsp_db
+    # Без этой строки сервис не переживает перезапуск докера — и был единственным таким
+    # из восьми (найдено 07.09.2026: контейнер лежал три часа, а соседние поднялись сами).
+    # Коннектор при этом молчит, а не падает, поэтому пропажу видно не сразу.
+    restart: always
     environment:
       POSTGRES_DB: dsp_analytics
       POSTGRES_USER: dsp

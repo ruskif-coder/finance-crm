@@ -76,6 +76,10 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg",
                       ".mp4", ".webm", ".mov", ".mp3", ".zip", ".html"}
 ARCHIVE_EXTENSIONS = {".zip"}
+# Письмо о правах на изображения — сопроводительный ДОКУМЕНТ, и список у него СВОЙ, уже
+# креативного. Ни .zip, ни .html: у материала архивы разрешены ради песочницы, а песочница
+# заводилась ровно под чужой исполняемый код. Пускать туда документ незачем и опасно.
+RIGHTS_LETTER_EXTENSIONS = {".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png"}
 
 VIEW = require_permission("creatives", "view")
 EDIT = require_permission("creatives", "edit")
@@ -302,6 +306,10 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
         "ord_status": s.ord_status, "ord_error": s.ord_error,
         "sent_at": s.sent_at,
         "test_targeting_url": s.test_targeting_url,
+        # Письмо о правах — отдельно от `files` намеренно: список файлов кормит
+        # предпросмотр и вывод формы креатива для ОРД, и документу там не место.
+        "rights_letter": ({"name": s.rights_letter_name, "size": s.rights_letter_size,
+                           "at": s.rights_letter_at} if s.rights_letter_path else None),
         "files": [{"id": f.id, "ratio": f.ratio, "name": f.original_name,
                    "size_bytes": f.size_bytes, "is_archive": f.is_archive,
                    "content_type": f.content_type,
@@ -1168,6 +1176,108 @@ def get_file(file_id: int, db: Session = Depends(get_db),
     # Всё остальное уезжает вложением: браузер сохранит, а не отрисует.
     return FileResponse(full, filename=rec.original_name or "creative",
                         media_type="application/octet-stream")
+
+
+@router.post("/set/{set_id}/rights-letter")
+async def upload_rights_letter(set_id: int, file: UploadFile = File(...),
+                               db: Session = Depends(get_db),
+                               current_user: User = Depends(EDIT)):
+    """Прикрепить письмо о правах на изображения.
+
+    Одно на креатив (решение владельца 07.09.2026), поэтому колонки, а не таблица.
+
+    **Прикрепить можно и после отправки, заменить — нельзя.** Материал после отправки
+    заперт («согласовали ровно этот файл»), и письмо на первый взгляд просится под то же
+    правило. Но отсутствующее письмо площадка спрашивает как раз в ходе проверки, и
+    гонять из-за документа новую итерацию материала абсурдно. А вот подмена уже
+    показанного письма делает недоказуемым, при каком именно письме площадка согласовала,
+    — поэтому замена и удаление после отправки закрыты.
+    """
+    row = db.query(LaunchPrepCreativeSet).filter(LaunchPrepCreativeSet.id == set_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Комплект не найден")
+    _deal(db, row.deal_id, current_user)
+    if row.sent_at and row.rights_letter_path:
+        raise HTTPException(status_code=400,
+                            detail="Комплект отправлен — показанное площадке письмо не заменяется")
+
+    original = file.filename or "letter"
+    ext = os.path.splitext(original)[1].lower()
+    if ext not in RIGHTS_LETTER_EXTENSIONS:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Недопустимый тип. Разрешены: {', '.join(sorted(RIGHTS_LETTER_EXTENSIONS))}")
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413,
+                            detail=f"Файл слишком большой (максимум {MAX_UPLOAD_BYTES // 1024 // 1024} МБ)")
+
+    safe = re.sub(r"[^\w.\-]", "_", original)
+    # Префикс несёт вид сущности: `rl` против `cre` у материала. В общем каталоге файлы
+    # разных подсистем иначе затирают друг друга — это уже случалось у площадок.
+    stored = f"rl{set_id}_{safe}"
+    os.makedirs(os.path.join(UPLOADS_ROOT, CREATIVES_DIR), exist_ok=True)
+    with open(os.path.join(UPLOADS_ROOT, CREATIVES_DIR, stored), "wb") as fh:
+        fh.write(content)
+
+    old_path = row.rights_letter_path
+    row.rights_letter_path = f"{CREATIVES_DIR}/{stored}"   # относительный ключ
+    row.rights_letter_name = original
+    row.rights_letter_type = file.content_type
+    row.rights_letter_size = len(content)
+    row.rights_letter_at = datetime.utcnow()
+    row.rights_letter_by = current_user.id
+    if old_path and old_path != row.rights_letter_path:
+        try:
+            os.remove(os.path.join(UPLOADS_ROOT, old_path))
+        except OSError:
+            pass       # файла нет — запись всё равно обновляем, иначе она зависнет
+    log_action(db, current_user, "rights_letter_upload", "sales_deal", row.deal_id,
+               f"креатив №{row.no}: {original}")
+    db.commit()
+    return {"name": original, "size": len(content), "at": row.rights_letter_at}
+
+
+@router.get("/set/{set_id}/rights-letter")
+def get_rights_letter(set_id: int, db: Session = Depends(get_db),
+                      current_user: User = Depends(FILE_VIEW)):
+    """Скачать письмо. ВСЕГДА вложением: это документ, отрисовывать его на нашем домене
+    не надо, а .pdf в inline — лишняя поверхность."""
+    row = db.query(LaunchPrepCreativeSet).filter(LaunchPrepCreativeSet.id == set_id).first()
+    if not row or not row.rights_letter_path:
+        raise HTTPException(status_code=404, detail="Письмо не прикреплено")
+    _deal(db, row.deal_id, current_user)
+    full = os.path.join(UPLOADS_ROOT, row.rights_letter_path)
+    if not os.path.exists(full):
+        raise HTTPException(status_code=404, detail="Файл не найден в хранилище")
+    return FileResponse(full, filename=row.rights_letter_name or "rights-letter",
+                        media_type="application/octet-stream")
+
+
+@router.delete("/set/{set_id}/rights-letter")
+def drop_rights_letter(set_id: int, db: Session = Depends(get_db),
+                       current_user: User = Depends(EDIT)):
+    row = db.query(LaunchPrepCreativeSet).filter(LaunchPrepCreativeSet.id == set_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Комплект не найден")
+    _deal(db, row.deal_id, current_user)
+    if row.sent_at:
+        raise HTTPException(status_code=400,
+                            detail="Комплект отправлен — показанное площадке письмо не снимается")
+    if row.rights_letter_path:
+        try:
+            os.remove(os.path.join(UPLOADS_ROOT, row.rights_letter_path))
+        except OSError:
+            pass
+    name = row.rights_letter_name
+    row.rights_letter_path = row.rights_letter_name = None
+    row.rights_letter_type = None
+    row.rights_letter_size = row.rights_letter_by = None
+    row.rights_letter_at = None
+    log_action(db, current_user, "rights_letter_delete", "sales_deal", row.deal_id,
+               f"креатив №{row.no}: {name or ''}")
+    db.commit()
+    return {"ok": True}
 
 
 @router.delete("/file/{file_id}")
