@@ -1051,11 +1051,16 @@ def drop_set(set_id: int, db: Session = Depends(get_db),
     if row.sent_at or row.erid:
         raise HTTPException(status_code=400,
                             detail="Комплект уже отправлен или маркирован — удалить нельзя")
-    for f in db.query(LaunchPrepCreativeFile).filter(
-            LaunchPrepCreativeFile.set_id == set_id).all():
-        _remove_file(f.path, f.sandbox_token)
+    # ПОРЯДОК ВАЖЕН: сперва запись, потом диск. Раньше файлы стирались ДО удаления
+    # строки — и когда удаление падало (см. passive_deletes в моделях), база
+    # откатывалась, а материал с диска уже исчезал: комплект оставался на экране,
+    # но ссылки на файлы вели в пустоту. Диск отката не имеет, база имеет.
+    doomed = [(f.path, f.sandbox_token) for f in db.query(LaunchPrepCreativeFile)
+              .filter(LaunchPrepCreativeFile.set_id == set_id).all()]
     db.delete(row)
     db.commit()
+    for path, token in doomed:
+        _remove_file(path, token)
     return {"ok": True}
 
 

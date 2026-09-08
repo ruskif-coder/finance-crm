@@ -203,8 +203,15 @@ class LaunchPrepCreativeSet(Base):
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime)
 
-    files = relationship("LaunchPrepCreativeFile", back_populates="creative_set")
-    pairs = relationship("LaunchPrepPair", back_populates="creative_set")
+    # `passive_deletes=True` — удаление комплекта отдаём КАСКАДУ БАЗЫ: у всех детей
+    # (файлы, пары, проверки, площадки комплекта) стоит ON DELETE CASCADE. Без него
+    # SQLAlchemy грузит детей сам и проставляет им `set_id = NULL`, а колонка NOT NULL —
+    # удаление падало с IntegrityError, и человек видел «Не удалось удалить» без причины
+    # (прод, 08.09.2026). База умеет это лучше и одним запросом.
+    files = relationship("LaunchPrepCreativeFile", back_populates="creative_set",
+                         cascade="all, delete-orphan", passive_deletes=True)
+    pairs = relationship("LaunchPrepPair", back_populates="creative_set",
+                         cascade="all, delete-orphan", passive_deletes=True)
 
 
 class LaunchPrepCreativeFile(Base):
