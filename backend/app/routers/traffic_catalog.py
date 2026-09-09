@@ -250,6 +250,14 @@ def delete_block(block_id: int, db: Session = Depends(get_db), user: User = Depe
 SCRIPT_OUR_CODE = "traffic_creative_script_our_code"     # площадка с нашим кодом
 SCRIPT_NO_CODE = "traffic_creative_script_no_code"       # площадка без нашего кода
 
+# Скрипт видимости (viewability) — третье, что вшивается в тот же `<head>`. Его требует
+# сам DSP, поэтому счётчиком колонок он не делится: адрес один на все креативы.
+#
+# В коде адреса НЕТ намеренно (09.09.2026): в имени хоста узнаётся поставщик, а
+# репозиторий уходит на GitHub и история гита не переписывается. Пусто — обёртка идёт без
+# скрипта, и демо-экран говорит об этом вслух, а не молчит.
+SCRIPT_VIEWABILITY = "dsp_viewability_src"
+
 # Строка, которую владелец назвал 06.09.2026. К какой колонке она относится — решает он
 # сам на экране: подставить её в обе значило бы вшить один счётчик всем, а это ровно то
 # разделение, ради которого вкладка и заводилась.
@@ -265,6 +273,11 @@ def _setting(db: Session, key: str) -> str:
 def creative_script(db: Session, our_code: bool) -> str:
     """Какой скрипт вшивать в креатив для этой площадки. ЕДИНСТВЕННАЯ точка выбора."""
     return _setting(db, SCRIPT_OUR_CODE if our_code else SCRIPT_NO_CODE).strip()
+
+
+def viewability_src(db: Session) -> str:
+    """Адрес скрипта видимости. ЕДИНСТВЕННАЯ точка чтения — как и у счётчика колонок."""
+    return _setting(db, SCRIPT_VIEWABILITY).strip()
 
 
 @router.get("/site-script")
@@ -284,6 +297,7 @@ def get_site_script(db: Session = Depends(get_db), user: User = Depends(VIEW)):
                       "publishers": [out(p) for p in rows if p.our_code]},
         "without_code": {"script": _setting(db, SCRIPT_NO_CODE),
                          "publishers": [out(p) for p in rows if not p.our_code]},
+        "viewability": _setting(db, SCRIPT_VIEWABILITY),
         "suggested": SUGGESTED_SCRIPT,
         "where": "<head> креатива, перед отправкой в DSP",
     }
@@ -293,6 +307,9 @@ class SiteScriptIn(BaseModel):
     """Пусто — законное значение: «в эту колонку ничего не вшиваем»."""
     with_code: Optional[str] = None
     without_code: Optional[str] = None
+    # Адрес, а не тег: тег собирает `wrap_html`, и хранить его дважды значило бы
+    # позволить им разойтись.
+    viewability: Optional[str] = None
 
 
 @router.put("/site-script")
@@ -314,7 +331,20 @@ def set_site_script(payload: SiteScriptIn, db: Session = Depends(get_db),
         db.execute(sa_text(
             "INSERT INTO company_settings (key, value) VALUES (:k, :v) "
             "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"), {"k": key, "v": v})
+    if payload.viewability is not None:
+        v = payload.viewability.strip()
+        # Здесь ждём АДРЕС. Присланный тег попал бы в `src="<script …>"` — обёртка
+        # соберётся, а скрипт не подгрузится, и увидим мы это по отсутствию данных.
+        if v and not v.startswith("https://"):
+            raise HTTPException(400, "Ожидается адрес скрипта, начинающийся с https://")
+        if "<" in v:
+            raise HTTPException(400, "Это адрес, а не тег: без <script …>")
+        db.execute(sa_text(
+            "INSERT INTO company_settings (key, value) VALUES (:k, :v) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
+            {"k": SCRIPT_VIEWABILITY, "v": v})
     db.commit()
     log_action(db, user, "traffic_creative_script", "settings", None,
-               f"с кодом: {(payload.with_code or '')[:80]} | без: {(payload.without_code or '')[:80]}")
+               f"с кодом: {(payload.with_code or '')[:80]} | без: {(payload.without_code or '')[:80]}"
+               f" | видимость: {(payload.viewability or '')[:80]}")
     return get_site_script(db, user)

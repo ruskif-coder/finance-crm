@@ -1,9 +1,13 @@
 /**
  * Демо-стенд DSP — отработка цепочки креатива на ДЕМО-клиенте DSP.
  *
- * Зачем (владелец 06.09.2026): коннектор собран, но живьём не проверен, а проверять его
- * впервые на боевой РК значит платить за ошибку деньгами. У демо свои токен и партнёр,
- * каждый вызов уходит в журнал с пометкой контура.
+ * Зачем: коннектор собран, но живьём не проверен, а проверять его впервые на боевой РК
+ * значит платить за ошибку деньгами.
+ *
+ * Отдельного демо-клиента у нас НЕТ (09.09.2026), поэтому экран ходит в БОЕВОЙ кабинет и
+ * говорит об этом красной плашкой. Тренировочные кампании отличает приставка в названии,
+ * статус STOPPED и запрет трогать заведённые не отсюда. Каждый вызов уходит в журнал с
+ * пометкой контура `demo` — при любых ключах.
  *
  * Шаги отдельные и НЕ автоматические: смысл стенда в том, чтобы видеть ответ каждого
  * шага. Обёртка (шаг 3) вообще не ходит в сеть — её видно до отправки.
@@ -11,7 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Head from 'next/head'
 import Navbar from '@/components/Navbar'
-import { MONO, UI, card, inp, btn, primaryBtn, th, td } from '@/components/salesTableKit'
+import { MONO, UI, Modal, card, inp, btn, primaryBtn, th, td } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/http'
 // Предпросмотр — ТОТ ЖЕ компонент, что на карточке сделки и в очереди трафика.
 // Вторая реализация означала бы, что проверяющий и трафик смотрят на баннер
@@ -38,6 +42,76 @@ function F({ label, value, onChange, placeholder, width, type = 'text' }) {
   )
 }
 
+/** «Важная информация» — правила стенда для тех, кто открыл его впервые.
+ *
+ *  Экраном пользуется не только владелец, а половина правил здесь неочевидна и стоит
+ *  денег: вызовы уходят в БОЕВОЙ кабинет. Поэтому текст лежит на самом экране, а не в
+ *  документе, который надо знать где искать.
+ *
+ *  Объявлена на уровне модуля — компонент внутри компонента пересоздаётся на каждый
+ *  рендер (гейт check-inline).
+ */
+function ImportantInfo({ live, prefix, onClose }) {
+  const P = { fontSize: 13.5, lineHeight: 1.65, margin: '0 0 12px' }
+  const H = { fontSize: 13.5, fontWeight: 700, margin: '18px 0 6px', color: 'var(--text-primary)' }
+  return (
+    <Modal title="Важная информация о стенде" width={720} onClose={onClose}
+           summary={live
+             ? 'Отдельного демо-клиента у нас нет. Всё, что вы здесь делаете, уходит в боевой кабинет DSP.'
+             : 'Работает демо-клиент: вызовы уходят в его кабинет, боевые кампании не затрагиваются.'}
+           footer={<button onClick={onClose} style={primaryBtn}>Понятно</button>}>
+      {live && (
+        <p style={{ ...P, color: 'var(--danger)', fontWeight: 600 }}>
+          Кампании и креативы создаются настоящие. Не «как будто» — их видно в кабинете,
+          и убрать их оттуда после тренировки нужно руками.
+        </p>
+      )}
+
+      <div style={H}>Что вас защищает</div>
+      <p style={P}>
+        <b>Приставка «{prefix || 'ТЕСТ · '}» в названии.</b> Её ставит сервер, а не человек:
+        «допишу сам» забывают на второй раз. По ней тренировочные кампании видно в кабинете
+        — и по ней же система пропускает их, когда ищет, не заведена ли РК сделки раньше.
+        Без приставки тренировка с тем же названием была бы принята за боевую кампанию, и
+        сделка привязалась бы к ней молча и «успешно».
+      </p>
+      <p style={P}>
+        <b>Статус STOPPED у всего, что заводится.</b> Тренировка не крутит и денег не тратит.
+      </p>
+      <p style={P}>
+        <b>Замок на чужое.</b> Остановить, заархивировать или изменить план можно только у
+        кампаний, заведённых с этого экрана — принадлежность сверяется по журналу. Чужой
+        хеш, вставленный из буфера, получит отказ, а не остановленную кампанию. Если журнал
+        недоступен, экран тоже откажет: без него проверить нечем.
+      </p>
+      <p style={P}>
+        <b>Журнал.</b> Каждый вызов пишется с пометкой «demo» — при любых ключах. Благодаря
+        этому боевое заведение РК никогда не примет тренировочные вызовы за свои. Токен в
+        журнал не попадает.
+      </p>
+
+      <div style={H}>Про ключи</div>
+      <p style={P}>
+        Сначала берутся ключи демо-клиента, и только если их нет — боевые. Появятся
+        демо-ключи в <code style={{ fontFamily: MONO }}>.env</code> — экран переключится
+        сам, ничего править не нужно.
+      </p>
+
+      <div style={H}>Что нужно помнить перед отправкой</div>
+      <p style={P}>
+        Лимит <code style={{ fontFamily: MONO }}>total</code> — это объём за ВЕСЬ срок, а не
+        остаток. Если прислать остаток, DSP засчитает уже открученное и остановит кампанию
+        раньше срока. Поэтому в шаге с планом вводится остаток, а полный объём считает
+        сервер — и показывает его до отправки.
+      </p>
+      <p style={{ ...P, marginBottom: 4 }}>
+        Обёртку креатива видно ДО отправки, сети она не касается. Прочитайте её глазами:
+        в ней должны быть наш счётчик, скрипт видимости, ЕРИД и целые макросы.
+      </p>
+    </Modal>
+  )
+}
+
 /** Шаг цепочки: заголовок, тело, результат. */
 function Step({ n, title, note, children, result }) {
   return (
@@ -59,7 +133,7 @@ export default function DspDemo() {
   const [busy, setBusy] = useState('')
 
   // Шаг 1 — кампания
-  const [camp, setCamp] = useState({ title: 'DEMO · стенд · ' + new Date().toISOString().slice(0, 7), date_start: '', date_end: '', total_shows: '', total_budget: '' })
+  const [camp, setCamp] = useState({ title: 'стенд · ' + new Date().toISOString().slice(0, 7), date_start: '', date_end: '', total_shows: '', total_budget: '' })
   const [campOut, setCampOut] = useState(null)
   // Шаг 2 — архив
   const fileRef = useRef(null)
@@ -78,11 +152,12 @@ export default function DspDemo() {
   const [bid, setBid] = useState('50')
   const [tgtOut, setTgtOut] = useState(null)
   // Шаг 6 — управление кампанией. Остаток, а не полный объём: человек думает «сколько
-  // ещё открутить до конца», а полный total считает сервер (ловушка МС).
+  // ещё открутить до конца», а полный total считает сервер (ловушка DSP).
   const [plan, setPlan] = useState({ delivered_show: '', remaining_show: '', date_end: '' })
   const [planOut, setPlanOut] = useState(null)
   const [info, setInfo] = useState(null)
   const [preview, setPreview] = useState(null)   // разметка, открытая в предпросмотре
+  const [showInfo, setShowInfo] = useState(false)
 
   // Зависимостей нет намеренно: `srcKey` в них давал бы `load` новую идентичность после
   // первой же загрузки, а `useEffect([load])` — второй запрос состояния при каждом
@@ -175,6 +250,9 @@ export default function DspDemo() {
   })
 
   const ready = state?.configured
+  // Ключей демо-клиента нет — экран ходит в БОЕВОЙ кабинет. Это первое, что должно быть
+  // видно на странице: дальше каждая кнопка создаёт или меняет настоящие объекты.
+  const live = state?.cabinet === 'prod'
   const log = state?.log || []
 
   return (
@@ -195,8 +273,8 @@ export default function DspDemo() {
         <div style={{ ...SECTION, display: 'flex', gap: 26, flexWrap: 'wrap', alignItems: 'center' }}>
           <div>
             <div style={LBL}>Контур</div>
-            <div style={{ ...HASH, color: ready ? 'var(--income-fg)' : 'var(--warning-text)' }}>
-              {ready ? 'ДЕМО · настроен' : 'ДЕМО · не настроен'}
+            <div style={{ ...HASH, color: !ready ? 'var(--warning-text)' : (live ? 'var(--danger)' : 'var(--income-fg)') }}>
+              {!ready ? 'не настроен' : (live ? 'БОЕВОЙ КАБИНЕТ' : 'ДЕМО · настроен')}
             </div>
           </div>
           <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-card)' }} />
@@ -216,17 +294,45 @@ export default function DspDemo() {
               web {state?.source_keys?.web || '—'} · app {state?.source_keys?.app || '—'}
             </div>
           </div>
+          {/* Экраном пользуется не только владелец: правила должны открываться отсюда,
+              а не находиться в документе, о котором надо знать. */}
+          <button onClick={() => setShowInfo(true)}
+                  style={{ ...btn(false), marginLeft: 'auto',
+                           borderColor: live ? 'var(--danger)' : 'var(--border-card)',
+                           color: live ? 'var(--danger)' : 'var(--text-secondary)' }}>
+            Важная информация
+          </button>
         </div>
+
+        {live && (
+          <div style={{ ...SECTION, borderColor: 'var(--danger)', background: 'var(--danger-tint)' }}>
+            <div style={{ ...LBL, marginBottom: 8, color: 'var(--danger)' }}>
+              Отдельного демо-клиента нет — всё уходит в боевой кабинет
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+              Кампании создаются <b>настоящие</b>: в статусе STOPPED, с приставкой{' '}
+              <code style={{ fontFamily: MONO }}>{state?.title_prefix}</code> в названии —
+              по ней их видно в кабинете и по ней же боевое заведение РК их пропускает.
+              После тренировки уберите их в кабинете руками.
+              Трогать можно только те кампании, что заведены с этого экрана.
+            </div>
+            <button onClick={() => setShowInfo(true)}
+                    style={{ ...btn(false), marginTop: 10, borderColor: 'var(--danger)', color: 'var(--danger)' }}>
+              Читать целиком
+            </button>
+          </div>
+        )}
 
         {!ready && (
           <div style={{ ...SECTION, background: 'var(--bg-subtle)' }}>
             <div style={{ ...LBL, marginBottom: 8 }}>Стенд ещё не включён</div>
             <div style={{ fontSize: 13, lineHeight: 1.6 }}>
-              В <code style={{ fontFamily: MONO }}>.env</code> нужны две переменные демо-клиента:{' '}
-              <code style={{ fontFamily: MONO }}>{state?.env?.token}</code> и{' '}
-              <code style={{ fontFamily: MONO }}>{state?.env?.partner}</code>
-              {' '}(необязательно <code style={{ fontFamily: MONO }}>{state?.env?.url}</code>, если адрес тот же).
-              Значения кладёт владелец — из переписки они не переносятся.
+              Нет ни боевых ключей (<code style={{ fontFamily: MONO }}>DSP_ACCESS_TOKEN</code>,{' '}
+              <code style={{ fontFamily: MONO }}>DSP_PARTNER_XXHASH</code>), ни демо-ключей
+              (<code style={{ fontFamily: MONO }}>{state?.env?.token}</code>,{' '}
+              <code style={{ fontFamily: MONO }}>{state?.env?.partner}</code>).
+              Демо-ключи, если они появятся, имеют приоритет. Значения кладёт владелец
+              в <code style={{ fontFamily: MONO }}>.env</code> — из переписки они не переносятся.
             </div>
           </div>
         )}
@@ -282,6 +388,12 @@ export default function DspDemo() {
                     <div style={{ fontSize: 12, color: 'var(--warning-text)', marginBottom: 8 }}>
                       Для этой колонки скрипт не задан — креатив уйдёт без счётчика.
                       Задаётся в Админке → «Скрипт».
+                    </div>
+                  )}
+                  {wrapOut.viewability_missing && (
+                    <div style={{ fontSize: 12, color: 'var(--warning-text)', marginBottom: 8 }}>
+                      Адрес скрипта видимости не задан — креатив уйдёт без него.
+                      Задаётся там же, в Админке → «Скрипт».
                     </div>
                   )}
                   <div style={CODE}>{wrapOut.html}</div>
@@ -341,7 +453,7 @@ export default function DspDemo() {
         </Step>
 
         <Step n="5" title="Таргетинг на источник"
-              note="У источника в МС есть только включённость и ставка — лимита нет. Поэтому суточный лимит на площадку у нас ОРИЕНТИР по определению, а рычаги — ставка и вкл/выкл."
+              note="У источника в DSP есть только включённость и ставка — лимита нет. Поэтому суточный лимит на площадку у нас ОРИЕНТИР по определению, а рычаги — ставка и вкл/выкл."
               result={tgtOut && <div style={CODE}>{JSON.stringify(tgtOut.result, null, 2)}</div>}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'end' }}>
             <F label="Ключ источника" value={srcKey} onChange={setSrcKey} width={220} />
@@ -385,7 +497,7 @@ export default function DspDemo() {
             </button>
           </div>
 
-          {/* Ловушка МС: total — за весь срок, а не остаток. Человек вводит остаток,
+          {/* Ловушка DSP: total — за весь срок, а не остаток. Человек вводит остаток,
               полный total считает сервер, и обе величины показаны до отправки. */}
           <div style={{ ...LBL, marginBottom: 6 }}>План до конца кампании</div>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10, lineHeight: 1.5 }}>
@@ -447,6 +559,11 @@ export default function DspDemo() {
       {!!preview && (
         <CreativePreview htmlSource={preview} title="Предпросмотр креатива для DSP"
                          onClose={() => setPreview(null)} />
+      )}
+
+      {showInfo && (
+        <ImportantInfo live={live} prefix={state?.title_prefix}
+                       onClose={() => setShowInfo(false)} />
       )}
     </>
   )

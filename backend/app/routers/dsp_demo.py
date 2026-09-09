@@ -1,11 +1,16 @@
 """Демо-стенд DSP: отработка цепочки креатива на ДЕМО-клиенте DSP.
 
-Зачем (владелец 06.09.2026): внутри DSP есть демо-клиент, на котором можно тренироваться
-вне боевых кампаний. Коннектор собран, но живьём не проверен — а проверять его впервые на
-боевой РК значит платить за ошибку деньгами.
+Зачем: коннектор собран, но живьём не проверен, а проверять его впервые на боевой РК
+значит платить за ошибку деньгами.
 
-**Контур `demo` — не косметика.** У демо свои токен и `partner_xxhash`, и каждый вызов
-пишется в журнал с `contour='demo'` (миграция `dsp/2026-09-06_send_log_contour.sql`).
+**Отдельного демо-клиента у нас НЕТ** (выяснено 09.09.2026; 06.09 это была возможность,
+которую я записал как факт). Решение владельца: экран ходит в БОЕВОЙ кабинет, а от беды
+его держат три вещи — приставка «ТЕСТ · » в названии, статус STOPPED и запрет трогать
+кампании, заведённые не отсюда (`_assert_ours`). Появятся демо-ключи — экран сам
+переключится на них, менять ничего не нужно.
+
+**Контур `demo` — не косметика.** Каждый вызов пишется в журнал с `contour='demo'`
+(миграция `dsp/2026-09-06_send_log_contour.sql`) — при любых ключах.
 Защита от дублей ищет прошлый хеш ВНУТРИ своего контура: иначе демо-прогон по той же
 сделке заставил бы боевое заведение решить, что кампания уже создана, — и боевая РК не
 завелась бы, молча и «успешно».
@@ -36,11 +41,35 @@ router = APIRouter()
 VIEW = require_permission("dsp_demo", "view")
 EDIT = require_permission("dsp_demo", "edit")
 
-# Демо-контур настраивается ОТДЕЛЬНЫМИ переменными. Не «переключателем» у боевых: один
-# забытый флаг — и тренировка уходит в боевой кабинет.
+# Демо-контур настраивается ОТДЕЛЬНЫМИ переменными — если они есть.
+#
+# 09.09.2026 выяснилось, что отдельного демо-клиента у нас НЕТ и токена под него тоже:
+# в решении 06.09 это была возможность, а не факт, и я записал её как факт. Владелец
+# выбрал работать тренировкой в БОЕВОМ кабинете. Отдельные переменные остались первыми
+# по очереди: появится демо-клиент — достаточно вписать их в .env, код не трогаем.
 ENV_URL = "DSP_DEMO_API_URL"
 ENV_TOKEN = "DSP_DEMO_TOKEN"
 ENV_PARTNER = "DSP_DEMO_PARTNER_XXHASH"
+
+# Кабинет, в который фактически уходят вызовы экрана.
+CAB_DEMO = "demo"     # свой демо-клиент
+CAB_PROD = "prod"     # боевой кабинет, ключей демо нет
+
+
+def _creds() -> Optional[dict]:
+    """Чем и куда ходит демо-экран. Демо-ключи вперёд, боевые — только если демо нет.
+
+    Порядок именно такой и обратным быть не может: пока демо-ключи заданы, боевые тут не
+    участвуют вовсе.
+    """
+    if os.getenv(ENV_TOKEN) and os.getenv(ENV_PARTNER):
+        return {"url": os.getenv(ENV_URL) or os.getenv("DSP_API_URL"),
+                "token": os.getenv(ENV_TOKEN), "partner": os.getenv(ENV_PARTNER),
+                "cabinet": CAB_DEMO}
+    if os.getenv("DSP_ACCESS_TOKEN") and os.getenv("DSP_PARTNER_XXHASH"):
+        return {"url": os.getenv("DSP_API_URL"), "token": os.getenv("DSP_ACCESS_TOKEN"),
+                "partner": os.getenv("DSP_PARTNER_XXHASH"), "cabinet": CAB_PROD}
+    return None
 
 
 def _mask(v: Optional[str]) -> Optional[str]:
@@ -52,15 +81,40 @@ def _mask(v: Optional[str]) -> Optional[str]:
 
 
 def demo_client() -> MsClient:
-    missing = [k for k in (ENV_TOKEN, ENV_PARTNER) if not os.getenv(k)]
-    if missing:
+    creds = _creds()
+    if not creds:
         raise HTTPException(
-            400, "Демо-контур не настроен: нет " + ", ".join(missing)
-                 + ". Владелец кладёт значения в .env — из переписки они не переносятся")
-    return MsClient(url=os.getenv(ENV_URL) or os.getenv("DSP_API_URL"),
-                    token=os.getenv(ENV_TOKEN),
-                    partner_xxhash=os.getenv(ENV_PARTNER),
-                    contour=DEMO)
+            400, "DSP не настроен: нет ни демо-ключей, ни боевых. Владелец кладёт "
+                 "значения в .env — из переписки они не переносятся")
+    # Контур журнала — ВСЕГДА demo, даже когда ключи боевые. От него зависит, увидит ли
+    # боевое заведение РК эти вызовы своими: не должно ни при каких ключах.
+    return MsClient(url=creds["url"], token=creds["token"],
+                    partner_xxhash=creds["partner"], contour=DEMO)
+
+
+def _assert_ours(xxhash: str) -> None:
+    """В боевом кабинете экран трогает ТОЛЬКО то, что сам же завёл.
+
+    Иначе одна вставленная из буфера строка останавливает настоящую кампанию или меняет
+    ей план — «стоп» и «правка лимита» здесь такие же настоящие, как в кабинете.
+    Со своим демо-клиентом ограничения нет: там портить нечего.
+    """
+    creds = _creds()
+    if not creds or creds["cabinet"] != CAB_PROD:
+        return
+    from app.dsp.db import dsp_engine
+    try:
+        with dsp_engine().connect() as c:
+            found = c.execute(text(
+                "SELECT 1 FROM dsp_send_log WHERE contour = 'demo' "
+                "AND upper(ms_xxhash) = upper(:h) LIMIT 1"), {"h": xxhash}).first()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(503, f"Журнал недоступен, а без него в боевом кабинете "
+                                 f"проверить принадлежность кампании нечем: {e!r}")
+    if not found:
+        raise HTTPException(
+            403, "Эта кампания заведена не отсюда. Ключей демо-контура нет, экран ходит "
+                 "в боевой кабинет — и трогает только то, что создал сам")
 
 
 def _log_rows(limit: int = 30) -> List[dict]:
@@ -79,11 +133,15 @@ def _log_rows(limit: int = 30) -> List[dict]:
 
 @router.get("/state")
 def state(db: Session = Depends(get_db), user: User = Depends(VIEW)):
-    """Готов ли стенд и что уже отправляли."""
+    """Готов ли стенд, в ЧЕЙ кабинет он ходит и что уже отправляли."""
+    creds = _creds()
     return {
-        "configured": bool(os.getenv(ENV_TOKEN) and os.getenv(ENV_PARTNER)),
-        "url": os.getenv(ENV_URL) or os.getenv("DSP_API_URL"),
-        "partner": _mask(os.getenv(ENV_PARTNER)),
+        "configured": bool(creds),
+        # Экран обязан сказать это первым: в боевом кабинете кампании создаются настоящие.
+        "cabinet": creds["cabinet"] if creds else None,
+        "title_prefix": dsp_campaigns.DEMO_TITLE_PREFIX,
+        "url": creds["url"] if creds else None,
+        "partner": _mask(creds["partner"] if creds else None),
         "env": {"token": ENV_TOKEN, "partner": ENV_PARTNER, "url": ENV_URL},
         "source_keys": {"web": source_key(db, "web"), "app": source_key(db, "app")},
         "log": _log_rows(),
@@ -105,14 +163,19 @@ def create_campaign(payload: CampaignIn, db: Session = Depends(get_db),
     """Шаг 1 — мастер-кампания. Возвращает её xxhash.
 
     `uniform_pro` шлём ЯВНО: умолчание у API — `accelerated`, а не то, что стоит в
-    кабинете. Лимиты — `total` за весь срок, не остаток: МС засчитает уже открученное.
+    кабинете. Лимиты — `total` за весь срок, не остаток: DSP засчитает уже открученное.
     """
     limits: Dict[str, Any] = {}
     if payload.total_shows:
         limits["show"] = {"total": int(payload.total_shows), "day": 0, "hour": 0}
     if payload.total_budget:
         limits["budget"] = {"total": float(payload.total_budget), "day": 0, "hour": 0}
-    params = {"title": payload.title.strip()[:255],
+    # Приставка ставится ЗДЕСЬ, а не подсказкой на экране: тренировочная кампания лежит в
+    # одном кабинете с боевыми, и «человек допишет сам» — это забудут на второй раз.
+    title = payload.title.strip()
+    if not title.startswith(dsp_campaigns.DEMO_TITLE_PREFIX):
+        title = dsp_campaigns.DEMO_TITLE_PREFIX + title
+    params = {"title": title[:255],
               "date_start": payload.date_start, "date_end": payload.date_end,
               "status": "STOPPED",            # демо не должно ничего крутить
               "traffic_distribution": "uniform_pro",
@@ -122,7 +185,7 @@ def create_campaign(payload: CampaignIn, db: Session = Depends(get_db),
         xxhash = c.campaign_add(params, local_ref=payload.local_ref)
     except MsError as e:
         raise HTTPException(502, f"DSP отказал: {e}")
-    log_action(db, user, "dsp_demo_campaign", "dsp", None, f"{payload.title} → {xxhash}")
+    log_action(db, user, "dsp_demo_campaign", "dsp", None, f"{params['title']} → {xxhash}")
     return {"xxhash": xxhash, "request": params}
 
 
@@ -165,16 +228,20 @@ class WrapIn(BaseModel):
 @router.post("/wrap")
 def wrap(payload: WrapIn, db: Session = Depends(get_db), user: User = Depends(VIEW)):
     """Шаг 3 — обёртка. БЕЗ сети: результат видно до отправки, в этом её проверка."""
-    from app.routers.traffic_catalog import creative_script
+    from app.routers.traffic_catalog import creative_script, viewability_src
     script = (creative_script(db, payload.our_code)
               if payload.our_code is not None else None)
+    vsrc = viewability_src(db) if payload.viewability else ""
     try:
         out = cr.wrap_html(payload.html, erid=payload.erid,
-                           viewability=payload.viewability, extra_script=script)
+                           viewability_src=vsrc, extra_script=script)
     except cr.CreativeError as e:
         raise HTTPException(400, str(e))
     return {"html": out, "macros": cr.macros_found(out),
-            "viewability": cr.VIEWABILITY_SRC in out,
+            "viewability": bool(vsrc) and vsrc in out,
+            # Адрес скрипта видимости не задан на вкладке «Скрипт» админки трафика.
+            # Тот же принцип, что у счётчика ниже: молчать нельзя, креатив уедет без него.
+            "viewability_missing": payload.viewability and not vsrc,
             # Пусто — настройка колонки не заполнена. Молчать об этом нельзя: креатив
             # уедет без счётчика, и выяснится это только по отсутствию данных.
             "script": script, "script_missing": payload.our_code is not None and not script}
@@ -262,6 +329,7 @@ STATUS_ACTIONS = {"start": "LAUNCHED", "pause": "STOPPED", "stop": "ARCHIVE"}
 def campaign_info(xxhash: str, user: User = Depends(VIEW)):
     """Что сейчас у кампании в DSP: статус, лимиты, даты. Ответ отдаём как есть —
     смысл стенда в том, чтобы видеть настоящий ответ, а не наш пересказ."""
+    _assert_ours(xxhash)
     c = demo_client()
     try:
         return {"info": c.campaign_get_info(xxhash)}
@@ -279,6 +347,7 @@ def campaign_status(xxhash: str, payload: StatusIn, db: Session = Depends(get_db
     status = STATUS_ACTIONS.get(payload.action)
     if not status:
         raise HTTPException(400, f"Неизвестное действие «{payload.action}»")
+    _assert_ours(xxhash)
     c = demo_client()
     try:
         out = c.campaign_set_status(xxhash, status, local_ref=xxhash)
@@ -312,6 +381,8 @@ def campaign_plan(xxhash: str, payload: PlanIn, db: Session = Depends(get_db),
     """
     if payload.remaining_show is None and payload.remaining_budget is None:
         raise HTTPException(400, "Не задан остаток — нечего менять")
+    if not payload.dry_run:
+        _assert_ours(xxhash)
     show_total = (dsp_campaigns.plan_total(payload.delivered_show, payload.remaining_show)
                   if payload.remaining_show is not None else None)
     budget_total = (dsp_campaigns.plan_total(payload.delivered_budget, payload.remaining_budget)

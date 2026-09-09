@@ -82,6 +82,7 @@ export default function SiteScript({ mayEdit }) {
   const [data, setData] = useState(null)
   const [withCode, setWithCode] = useState('')
   const [noCode, setNoCode] = useState('')
+  const [vsrc, setVsrc] = useState('')
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -91,6 +92,7 @@ export default function SiteScript({ mayEdit }) {
       setData(r.data)
       setWithCode(r.data.with_code.script || '')
       setNoCode(r.data.without_code.script || '')
+      setVsrc(r.data.viewability || '')
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось загрузить настройку') }
   }, [])
 
@@ -100,7 +102,7 @@ export default function SiteScript({ mayEdit }) {
     setSaving(true); setErr('')
     try {
       await api.put('/traffic-catalog/site-script',
-        { with_code: withCode, without_code: noCode }, auth())
+        { with_code: withCode, without_code: noCode, viewability: vsrc }, auth())
       await load()
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить') }
     finally { setSaving(false) }
@@ -111,6 +113,8 @@ export default function SiteScript({ mayEdit }) {
   }
   const dirtyWith = withCode !== (data.with_code.script || '')
   const dirtyNo = noCode !== (data.without_code.script || '')
+  const dirtyV = vsrc !== (data.viewability || '')
+  const vEmpty = !String(vsrc || '').trim()
 
   return (
     <div style={{ fontFamily: UI }}>
@@ -128,6 +132,33 @@ export default function SiteScript({ mayEdit }) {
           Внутрь <code style={{ fontFamily: MONO }}>&lt;head&gt;</code> самого креатива,
           перед отправкой в DSP — не на сайт площадки. Какой из двух скриптов возьмётся,
           решает признак «наш код стоит» у площадки; он меняется в её карточке.
+        </div>
+      </div>
+
+      {/* Скрипт видимости — третье, что попадает в тот же <head>. Он один на все
+          креативы, поэтому стоит НАД колонками, а не внутри одной из них. */}
+      <div style={{ ...BOX, marginBottom: 14 }}>
+        <div style={{ ...LBL, marginBottom: 4, color: vEmpty ? 'var(--warning-text)' : 'var(--text-faint)' }}>
+          Скрипт видимости (viewability){vEmpty ? ' · не задан' : ''}
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 8 }}>
+          Требование DSP, один на все креативы. Здесь адрес файла, а не тег — тег соберём сами.
+          Пока пусто, креативы уходят без него.
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input value={vsrc || ''} onChange={e => setVsrc(e.target.value)} readOnly={!mayEdit}
+            placeholder="https://…/viewability.js"
+            style={{ ...inp, flex: '1 1 320px', fontFamily: MONO, fontSize: 12.5,
+              borderColor: vEmpty ? 'var(--warning)' : 'var(--border-card)',
+              background: vEmpty ? 'var(--warning-tint)' : 'var(--bg-card)' }} />
+          {mayEdit && dirtyV && (
+            <button onClick={save} disabled={saving} style={primaryBtn}>
+              {saving ? 'Сохраняю…' : 'Сохранить'}
+            </button>
+          )}
+          {mayEdit && !vEmpty && !dirtyV && (
+            <button onClick={() => setVsrc('')} style={btn(false)}>Очистить</button>
+          )}
         </div>
       </div>
 

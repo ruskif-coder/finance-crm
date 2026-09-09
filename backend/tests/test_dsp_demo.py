@@ -61,14 +61,24 @@ def test_not_a_zip_is_refused_before_the_network():
 def test_wrapper_adds_viewability_and_keeps_the_macros():
     """Макросы раскрывает сам DSP при выдаче. Развернуть их у себя значило бы прибить
     креатив к одной площадке; потерять — лишить его отслеживания и клика."""
+    vsrc = "https://example.test/viewability.js"
     src = "<html><head><title>b</title></head><body>{RID} {LINK_UNESC} {PUBLISHER}</body></html>"
-    out = cr.wrap_html(src, erid="ABC123")
-    assert cr.VIEWABILITY_SRC in out
+    out = cr.wrap_html(src, erid="ABC123", viewability_src=vsrc)
+    assert vsrc in out
     assert "ABC123" in out
     assert set(cr.macros_found(out)) == {"{RID}", "{LINK_UNESC}", "{PUBLISHER}"}
     # Разметка без <head> тоже должна получить обёртку, а не остаться голой.
-    bare = cr.wrap_html("<div>{RID}</div>")
-    assert cr.VIEWABILITY_SRC in bare and "{RID}" in bare
+    bare = cr.wrap_html("<div>{RID}</div>", viewability_src=vsrc)
+    assert vsrc in bare and "{RID}" in bare
+
+
+def test_wrapper_without_the_setting_carries_no_viewability_and_no_hardcoded_address():
+    """Адрес скрипта видимости живёт в настройке, а не в коде: в репозитории имя
+    поставщика не хранится (09.09.2026). Пусто — обёртка идёт без него, молча подставить
+    нечего, и потребитель обязан сказать об этом вслух."""
+    out = cr.wrap_html("<div>{RID}</div>")
+    assert "<script src=" not in out
+    assert not hasattr(cr, "VIEWABILITY_SRC")
 
 
 def test_creative_limits_are_total_only():
@@ -91,16 +101,20 @@ def test_creative_without_link_is_refused():
 # ── ручки стенда ─────────────────────────────────────────────────────────────
 
 def test_stand_says_it_is_not_configured_instead_of_failing_later():
-    """Без демо-токена любой шаг ответит отказом. Сказать это сразу — не то же самое,
-    что уронить первую же кнопку пятисоткой."""
+    """Без ЛЮБЫХ ключей шаг отвечает отказом сразу, а не роняет первую кнопку пятисоткой.
+
+    До 09.09.2026 здесь требовались именно демо-ключи. Теперь их отсутствие — не отказ, а
+    работа боевыми (демо-клиента у нас нет), поэтому снимаем и те и другие.
+    """
     from fastapi import HTTPException
     from app.routers import dsp_demo as D
-    saved = {k: os.environ.pop(k, None) for k in (D.ENV_TOKEN, D.ENV_PARTNER)}
+    keys = (D.ENV_TOKEN, D.ENV_PARTNER, "DSP_ACCESS_TOKEN", "DSP_PARTNER_XXHASH")
+    saved = {k: os.environ.pop(k, None) for k in keys}
     try:
         with pytest.raises(HTTPException) as e:
             D.demo_client()
         assert e.value.status_code == 400
-        assert D.ENV_TOKEN in str(e.value.detail)
+        assert "не настроен" in str(e.value.detail)
     finally:
         for k, v in saved.items():
             if v is not None:
@@ -196,3 +210,91 @@ def test_oversized_archive_is_refused_before_it_fills_memory():
         D.upload(file=big, local_ref="demo", user=None)
     assert e.value.status_code == 413
     assert str(cr.MAX_ZIP_BYTES // (1024 * 1024)) in str(e.value.detail)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Работа в БОЕВОМ кабинете (решение владельца 09.09.2026)
+#
+# Отдельного демо-клиента у нас нет, и экран ходит боевыми ключами. От беды его держат
+# три вещи, и каждая проверяется отдельно: приставка в названии, контур журнала и запрет
+# трогать чужие кампании. Сломается любая — тренировка начнёт задевать настоящие деньги.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_demo_keys_win_over_live_ones(monkeypatch):
+    """Пока демо-ключи заданы, боевые в этом экране не участвуют вовсе."""
+    from app.routers import dsp_demo as D
+    monkeypatch.setenv(D.ENV_TOKEN, "demo-token")
+    monkeypatch.setenv(D.ENV_PARTNER, "DEMOPARTNER00001")
+    monkeypatch.setenv("DSP_ACCESS_TOKEN", "live-token")
+    monkeypatch.setenv("DSP_PARTNER_XXHASH", "0123456789ABCDEF")   # выдуманный
+    creds = D._creds()
+    assert creds["cabinet"] == D.CAB_DEMO
+    assert creds["token"] == "demo-token" and creds["partner"] == "DEMOPARTNER00001"
+
+
+def test_without_demo_keys_the_screen_says_it_is_the_live_cabinet(monkeypatch):
+    """Молчаливая подстановка боевого токена была бы худшим исходом: человек тренируется,
+    а объекты создаются настоящие. Кабинет назван в ответе, экран рисует по нему плашку."""
+    from fastapi import HTTPException
+    from app.routers import dsp_demo as D
+    monkeypatch.delenv(D.ENV_TOKEN, raising=False)
+    monkeypatch.delenv(D.ENV_PARTNER, raising=False)
+    monkeypatch.setenv("DSP_ACCESS_TOKEN", "live-token")
+    monkeypatch.setenv("DSP_PARTNER_XXHASH", "0123456789ABCDEF")   # выдуманный
+    creds = D._creds()
+    assert creds["cabinet"] == D.CAB_PROD
+    assert creds["token"] == "live-token"
+
+    # А без единого ключа — отказ, а не попытка сходить в никуда.
+    monkeypatch.delenv("DSP_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("DSP_PARTNER_XXHASH", raising=False)
+    assert D._creds() is None
+    with pytest.raises(HTTPException) as e:
+        D.demo_client()
+    assert e.value.status_code == 400
+
+
+def test_the_journal_contour_stays_demo_even_on_live_keys(monkeypatch):
+    """Контур журнала не зависит от того, чьи ключи. Иначе боевое заведение РК приняло бы
+    тренировочные вызовы за свои и решило, что кампания уже создана."""
+    from app.dsp.client import DEMO
+    from app.routers import dsp_demo as D
+    monkeypatch.delenv(D.ENV_TOKEN, raising=False)
+    monkeypatch.delenv(D.ENV_PARTNER, raising=False)
+    monkeypatch.setenv("DSP_API_URL", "https://example.test/api/v2/")
+    monkeypatch.setenv("DSP_ACCESS_TOKEN", "live-token")
+    monkeypatch.setenv("DSP_PARTNER_XXHASH", "0123456789ABCDEF")   # выдуманный
+    assert D.demo_client().contour == DEMO
+
+
+def test_live_dedup_skips_training_campaigns():
+    """Третья ступень защиты от дублей сверяет название по ВСЕМУ кабинету партнёра. С
+    тренировочными в том же кабинете она обязана их пропускать, иначе боевая сделка
+    привязалась бы к тренировке — молча и «успешно»."""
+    from app.dsp import campaigns as C
+    rows = [{"title": C.DEMO_TITLE_PREFIX + "ABC123 · Сделка · 2026-09", "xxhash": "DEAD" * 4},
+            {"title": "ABC123 · Сделка · 2026-09", "xxhash": "BEEF" * 4}]
+    hits = [r["xxhash"] for r in rows
+            if not r["title"].startswith(C.DEMO_TITLE_PREFIX)
+            and r["title"] == "ABC123 · Сделка · 2026-09"]
+    assert hits == ["BEEF" * 4], 'тренировочная строка не должна совпадать с боевой'
+    # И приставка не может родиться у настоящего имени: оно начинается с кода сделки.
+    assert not C.campaign_title.__doc__.startswith(C.DEMO_TITLE_PREFIX)
+
+
+def test_in_the_live_cabinet_the_screen_touches_only_its_own(monkeypatch):
+    """Одна вставленная из буфера строка не должна останавливать чужую кампанию.
+    Со своим демо-клиентом ограничение снимается само — там портить нечего."""
+    from fastapi import HTTPException
+    from app.routers import dsp_demo as D
+    monkeypatch.delenv(D.ENV_TOKEN, raising=False)
+    monkeypatch.delenv(D.ENV_PARTNER, raising=False)
+    monkeypatch.setenv("DSP_ACCESS_TOKEN", "live-token")
+    monkeypatch.setenv("DSP_PARTNER_XXHASH", "0123456789ABCDEF")   # выдуманный
+    with pytest.raises(HTTPException) as e:
+        D._assert_ours("AAAAAAAAAAAAAAAA")      # такого хеша в журнале demo нет
+    assert e.value.status_code in (403, 503)
+
+    monkeypatch.setenv(D.ENV_TOKEN, "demo-token")
+    monkeypatch.setenv(D.ENV_PARTNER, "DEMOPARTNER00001")
+    D._assert_ours("AAAAAAAAAAAAAAAA")          # на своём демо-клиенте замка нет

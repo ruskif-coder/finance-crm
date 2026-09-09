@@ -22,6 +22,15 @@ from app.sales.models import SalesDeal
 
 TITLE_MAX = 254
 
+# Приставка к названию тренировочной кампании. Решение владельца 09.09.2026: отдельного
+# демо-клиента у нас НЕТ, и демо-экран ходит в боевой кабинет — значит тренировочные
+# кампании лежат там же, где настоящие, и должны быть отличимы с одного взгляда.
+#
+# Она же закрывает третью ступень защиты от дублей ниже: та сверяет название ТОЧНЫМ
+# равенством по всему кабинету партнёра, и без приставки тренировка с тем же именем была
+# бы принята за уже заведённую боевую РК — мы бы привязали сделку к чужой кампании.
+DEMO_TITLE_PREFIX = "ТЕСТ · "
+
 
 def campaign_title(camp: AdCampaign, deal: SalesDeal) -> str:
     """Имя РК в МС: <код сделки> · <название сделки> · <YYYY-MM>. По коду находим у себя."""
@@ -82,10 +91,16 @@ def ensure_campaign(db: Session, camp: AdCampaign, client: MsClient,
         raise MsError(f"РК #{camp.id}: сделка {camp.deal_id} не найдена")
     params = build_campaign_params(camp, deal)
 
-    # 2) та же кампания по имени уже есть у партнёра (заведена руками или раньше)
+    # 2) та же кампания по имени уже есть у партнёра (заведена руками или раньше).
+    #    Тренировочные пропускаем: они живут в том же кабинете и настоящей РК не являются.
     try:
         for row in client.campaign_list_by_partner():
-            if isinstance(row, dict) and row.get("title") == params["title"] and row.get("xxhash"):
+            if not isinstance(row, dict) or not row.get("xxhash"):
+                continue
+            title = str(row.get("title") or "")
+            if title.startswith(DEMO_TITLE_PREFIX):
+                continue
+            if title == params["title"]:
                 return _persist(db, camp, str(row["xxhash"]).upper(), commit)
     except MsError:
         pass  # список не критичен: без него просто идём в add

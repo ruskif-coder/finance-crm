@@ -24,7 +24,10 @@ import httpx
 
 log = logging.getLogger("finance.dsp")
 
-VIEWABILITY_SRC = "https://static.bumlam.com/engine/viewability.js"
+# Адрес скрипта видимости в коде НЕ живёт: он опознаёт поставщика, а репозиторий уходит
+# на GitHub и история гита не переписывается. Значение задаётся на вкладке «Скрипт»
+# админки трафика (`company_settings.dsp_viewability_src`) и приезжает сюда параметром.
+# Пусто — обёртка идёт без скрипта видимости, и потребитель обязан сказать об этом вслух.
 
 # Макросы DSP. Раскрывает их сам DSP в момент выдачи; наша задача — не потерять.
 MACROS = ("{CAMP_ID}", "{CR_ID}", "{TR_KEY}", "{LINK_UNESC}", "{RID}", "{RND}",
@@ -79,9 +82,14 @@ def upload_zip(client, data: bytes, filename: str = "creative.zip",
     return {"url": url, "html": html}
 
 
-def wrap_html(html: str, *, erid: Optional[str] = None, viewability: bool = True,
+def wrap_html(html: str, *, erid: Optional[str] = None,
+              viewability_src: Optional[str] = None,
               extra_script: Optional[str] = None) -> str:
     """Обернуть HTML баннера так, как ждёт DSP.
+
+    `viewability_src` — адрес скрипта видимости из настройки; пусто = не вшивать. Прежде
+    здесь стоял булев флаг и константа с адресом в коде — адрес вынесен на экран
+    09.09.2026, чтобы имя поставщика не жило в репозитории.
 
     `extra_script` — наш счётчик, который вшивается В КРЕАТИВ перед отправкой (уточнение
     владельца 06.09.2026). Их два, и какой именно — решает `traffic_catalog.creative_script`
@@ -96,8 +104,8 @@ def wrap_html(html: str, *, erid: Optional[str] = None, viewability: bool = True
     if extra_script and extra_script.strip():
         # Первым: счётчик должен успеть встать до отрисовки баннера.
         head.append(extra_script.strip())
-    if viewability:
-        head.append(f'<script src="{VIEWABILITY_SRC}"></script>')
+    if viewability_src and viewability_src.strip():
+        head.append(f'<script src="{viewability_src.strip()}"></script>')
         head.append("<script>window.adsn = window.adsn || {};"
                     " window.adsn.viewability = window.adsn.viewability || {};</script>")
     if erid:
