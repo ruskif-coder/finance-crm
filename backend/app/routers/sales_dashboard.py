@@ -23,6 +23,7 @@ from datetime import date, datetime
 import os
 import re
 
+from app.files_safe import existing_upload_path, remove_upload
 from app.database import get_db
 from app.models import User, Counterparty, AuditLog
 from app import own_company
@@ -90,7 +91,29 @@ def _own_rep_ids_or_all(db: Session, user: User, section: str = "sales_registry"
     row = (db.query(RolePermission)
            .filter(RolePermission.role_id == user.role_id,
                    RolePermission.section == section).first())
-    if not row or (row.deals_scope or "all") != "own":
+    if row is None:
+        # ⚠ АСИММЕТРИЯ УМОЛЧАНИЯ, из-за которой это и написано.
+        #
+        # ОТСУТСТВИЕ той же самой строки `role_permissions` означает в двух местах
+        # ПРОТИВОПОЛОЖНОЕ: в `require_permission` — «запрещено», здесь — «все сделки».
+        # То есть роль, которой выдали `creatives`, но не завели строку `sales_registry`,
+        # получала доступ ко ВСЕМ чужим сделкам в сборке запуска — молча и по умолчанию
+        # (F1-05 внешнего аудита 11.09.2026).
+        #
+        # Сегодня не стреляет: строка `sales_registry` есть у всех одиннадцати
+        # неадминских ролей (замер 11.09.2026), а `own` встречается дважды и обе — у
+        # годового плана. Но это свойство ДАННЫХ, а не кода: первая же новая роль,
+        # заведённая без неё, откроет чужие сделки.
+        #
+        # Отказываем ВСЛУХ, а не сужаем до «своих»: сужение дало бы второй тихий отказ —
+        # человек с правом видел бы пустой экран и не понимал почему. Текст говорит
+        # администратору, что именно настроить.
+        raise HTTPException(
+            status_code=403,
+            detail=(f"Для роли «{user.role.label}» не настроена видимость сделок в "
+                    f"разделе «{section}». Пока её нет, показывать чужие сделки нельзя. "
+                    f"Откройте Настройки → Роли и задайте область («свои» или «все»)."))
+    if (row.deals_scope or "all") != "own":
         return None
     return [r.id for r in db.query(SalesRep.id).filter(SalesRep.user_id == user.id).all()]
 
@@ -1850,7 +1873,6 @@ def sync_bulk_from_bitrix(payload: SyncBulkIn, db: Session = Depends(get_db),
 def download_deal_file(deal_id: int, kind: str, db: Session = Depends(get_db),
                        current_user: User = Depends(require_permission("sales_registry", "view"))):
     """Отдаёт сохранённый у нас файл сделки (МП/договор)."""
-    import os
     from fastapi.responses import FileResponse
     from app.sales.models import SalesDealFile
     deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
@@ -1861,9 +1883,9 @@ def download_deal_file(deal_id: int, kind: str, db: Session = Depends(get_db),
            .filter(SalesDealFile.deal_id == deal_id, SalesDealFile.kind == kind).first())
     if not rec:
         raise HTTPException(status_code=404, detail="Файл не найден")
-    abspath = os.path.join("/app/uploads", rec.path)
-    if not os.path.exists(abspath):
-        raise HTTPException(status_code=404, detail="Файл отсутствует на диске")
+    # Путь из базы — через общую проверку границы хранилища (`app/files_safe`).
+    # До 11.09.2026 она была ровно в одном месте из десяти.
+    abspath = existing_upload_path(rec.path)
     return FileResponse(abspath, filename=rec.filename or "file",
                         media_type=rec.content_type or "application/octet-stream")
 
@@ -1914,12 +1936,10 @@ async def upload_deal_file(deal_id: str, kind: str, file: UploadFile = File(...)
     rec = (db.query(SalesDealFile)
            .filter(SalesDealFile.deal_id == deal.id, SalesDealFile.kind == kind).first())
     if rec:   # заменяем: старый файл с диска убираем, чтобы не копить мусор
-        old = os.path.join("/app/uploads", rec.path or "")
-        if rec.path and os.path.exists(old) and old != os.path.join("/app/uploads", rel):
-            try:
-                os.remove(old)
-            except OSError:
-                logger.warning("upload_deal_file: не удалось удалить старый %s", old)
+        # Условие «путь другой» обязательно: совпал — файл уже перезаписан по тому же
+        # адресу, и удаление стёрло бы только что загруженное.
+        if rec.path and rec.path != rel:
+            remove_upload(rec.path)
     with open(os.path.join("/app/uploads", rel), "wb") as fh:
         fh.write(content)
     if not rec:
@@ -1940,7 +1960,6 @@ def delete_deal_file(deal_id: str, kind: str, db: Session = Depends(get_db),
                      current_user: User = Depends(require_permission("sales_registry", "edit"))):
     """Удаление документа сделки. Файлы из Битрикса (mp/contract) не трогаем —
     их владелец синк, ручное удаление разошлось бы с источником."""
-    import os
     from app.sales.models import SalesDealFile
     if kind not in DEAL_DOC_KINDS:
         raise HTTPException(status_code=400, detail="Этот документ удаляется только синхронизацией")
@@ -1952,12 +1971,7 @@ def delete_deal_file(deal_id: str, kind: str, db: Session = Depends(get_db),
            .filter(SalesDealFile.deal_id == deal.id, SalesDealFile.kind == kind).first())
     if not rec:
         raise HTTPException(status_code=404, detail="Файл не найден")
-    p = os.path.join("/app/uploads", rec.path or "")
-    if rec.path and os.path.exists(p):
-        try:
-            os.remove(p)
-        except OSError:
-            logger.warning("delete_deal_file: не удалось удалить %s", p)
+    remove_upload(rec.path)
     db.delete(rec)
     db.commit()
     log_action(db, current_user, "delete_deal_file", "sales_deal", deal.id, DEAL_DOC_KINDS[kind])

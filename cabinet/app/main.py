@@ -17,11 +17,13 @@
   · CORS не открывается: фронт кабинета живёт на том же origin через Caddy.
 """
 import os
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
-from fastapi import Depends, FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -135,8 +137,69 @@ def _note_login(email: str, ok: bool) -> None:
         db.close()
 
 
+# ── ограничение попыток входа ПО АДРЕСУ ──────────────────────────────────────
+#
+# У кабинета был только локаут по почте. Ядру этого сочли мало ещё после пентеста
+# 18.07.2026: локаут по одной почте не мешает перебору ОДНОГО пароля по многим учёткам,
+# и счётчик по адресу добавили именно поэтому. Внешний контур остался без него — а
+# перебор опаснее как раз здесь: адрес входа известен площадке, учёток у кабинета
+# немного, и ходят туда не наши сотрудники (F1-03 внешнего аудита 11.09.2026).
+#
+# Устройство повторяет ядро один в один, включая обе его сегодняшние правки: адрес
+# берётся из ПОСЛЕДНЕГО звена `X-Forwarded-For` (левое пишет клиент), а словарь имеет
+# потолок и уборку — иначе подделка заголовка растит память процесса без предела.
+MAX_LOGIN_PER_IP = 20
+LOGIN_IP_WINDOW_SECONDS = 15 * 60
+MAX_TRACKED_IPS = 10_000
+_ip_attempts: dict = {}
+_ip_lock = threading.Lock()
+
+
+def client_ip(request: Optional[Request]) -> str:
+    """Доверенное звено цепочки, а не первое попавшееся.
+
+    `X-Forwarded-For` дополняет каждый прокси на пути: всё, что прислал клиент, слева,
+    правее дописывает Caddy — то, что он видел на сокете. Доверять можно только правому.
+    Допущение: перед кабинетом ровно один наш прокси, и оно верно по построению —
+    порт сервиса слушает только `127.0.0.1`.
+    """
+    if request is None:
+        return "unknown"
+    chain = [x.strip() for x in (request.headers.get("x-forwarded-for") or "").split(",")]
+    chain = [x for x in chain if x]
+    if chain:
+        return chain[-1]
+    return request.client.host if request.client else "unknown"
+
+
+def _prune_ip_attempts(now: float) -> None:
+    stale = [ip for ip, ts in _ip_attempts.items()
+             if not ts or now - ts[-1] >= LOGIN_IP_WINDOW_SECONDS]
+    for ip in stale:
+        del _ip_attempts[ip]
+    if len(_ip_attempts) > MAX_TRACKED_IPS:
+        newest = sorted(_ip_attempts.items(), key=lambda kv: kv[1][-1], reverse=True)
+        _ip_attempts.clear()
+        _ip_attempts.update(dict(newest[:MAX_TRACKED_IPS]))
+
+
+def _check_ip_rate_limit(ip: str) -> None:
+    now = time.time()
+    with _ip_lock:
+        window = [x for x in _ip_attempts.get(ip, []) if now - x < LOGIN_IP_WINDOW_SECONDS]
+        _ip_attempts[ip] = window
+        if len(_ip_attempts) > MAX_TRACKED_IPS:
+            _prune_ip_attempts(now)
+            window = _ip_attempts.setdefault(ip, window)
+        if len(window) >= MAX_LOGIN_PER_IP:
+            raise HTTPException(
+                status_code=429,
+                detail="Слишком много попыток входа. Попробуйте позже.")
+        window.append(now)
+
+
 @app.post("/api/login")
-def login(payload: LoginIn):
+def login(payload: LoginIn, request: Request = None):
     """Вход. Одинаковый ответ на «нет такой учётки» и «неверный пароль».
 
     Проверка пароля прогоняется даже для несуществующего адреса: иначе разница во
@@ -147,6 +210,10 @@ def login(payload: LoginIn):
     ПЕРЕЧИСЛЕНИЯ. Для внешнего контура перебор опаснее: туда ходят не наши сотрудники,
     адрес входа известен площадке, и учётка у кабинета обычно одна.
     """
+    # Счётчик по адресу — ПЕРВЫМ: он не зависит от того, существует ли учётка, и потому
+    # не отвечает на вопрос «а заведён ли у вас такой человек».
+    _check_ip_rate_limit(client_ip(request))
+
     email = (payload.email or "").strip()
     left = _lock_minutes(email)
     if left:

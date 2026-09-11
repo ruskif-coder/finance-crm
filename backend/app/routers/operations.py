@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case, or_
+from app.files_safe import existing_upload_path, remove_upload
 from app.database import get_db
 from app.xlsx_safe import xlsx_safe
 from app.models import Operation, Article, Counterparty, User
@@ -25,14 +26,110 @@ import uuid
 
 router = APIRouter()
 
+# Потолок выгрузки. Не «сколько влезет в Excel», а сколько мы готовы держать один
+# поток и одно соединение: 3 048 строк это 957 мс, дальше линейно.
+EXPORT_MAX_ROWS = 20000
+
+# Словарь статусов операции. Раньше сервер принимал ЛЮБУЮ строку, а интерфейс предлагал
+# только эти три — и расхождение выяснялось бы на отчётах, которые фильтруют по точному
+# совпадению: строка с опечаткой в статусе просто выпадает из всех сводок, оставаясь в
+# журнале. Замер 11.09.2026: в базе ровно три значения, дырой пока не пользовались.
+OPERATION_STATUSES = ("ОПЛАЧЕНО", "ПЛАН ПОСТУПЛЕНИЙ", "ПЛАН ОПЛАТ")
+
+
+def _operation_problem(op) -> str | None:
+    """Что не так со СТРОКОЙ ЖУРНАЛА ДЕНЕГ, или `None`, если всё в порядке.
+
+    Инварианты проверяются на ИТОГОВОМ объекте, а не на теле запроса: при частичной
+    правке в теле лежит не вся операция.
+
+    Отдельной функцией — а не только исключением — потому что у правил ЧЕТЫРЕ входа, и
+    ведут они себя по-разному. Ручное создание и правка обязаны отказать сразу (400 на
+    одну строку). Импорт разбирает СОТНИ строк за раз: там бросить на первой негодной
+    значит написать «не получилось» и не сказать, на чём именно, — поэтому он собирает
+    список и отказывает целиком, одним понятным сообщением.
+
+    Два из этих четырёх входов проверок не имели вовсе (найдено 11.09.2026): `/import` и
+    `/import/apply` строили `Operation(...)` напрямую, а массовая правка — через
+    `setattr` в цикле. То есть правила, заведённые в тот же день «чтобы у API не было
+    второго набора правил», обходились ровно тем путём, которым в базу попадает больше
+    всего строк сразу.
+    """
+    if op.status not in OPERATION_STATUSES:
+        return (f"Неизвестный статус «{op.status}». Допустимы: "
+                + ", ".join(OPERATION_STATUSES))
+    if (op.income or 0) > 0 and (op.expense or 0) > 0:
+        return ("У операции не может быть одновременно дохода и расхода: обе стороны "
+                "попадут в отчёты, и обороты раздуются вдвое. Заведите две строки.")
+    if not op.article_id:
+        return ("Не выбрана статья. Без неё операция не попадёт ни в P&L, ни в ДДС — "
+                "деньги будут в журнале и нигде больше.")
+    if not (op.period or "").strip():
+        return ("Не указан период. Отчёты строятся по нему, и строка без периода из "
+                "них выпадает.")
+    return None
+
+
+def _assert_operation_valid(op) -> None:
+    """Одна строка: либо проходит, либо 400 с объяснением."""
+    problem = _operation_problem(op)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+
+
+# Сколько негодных строк перечислять в ответе импорта. Полный список на тысячу строк —
+# это стена текста, по которой ничего не найти; десяти хватает, чтобы понять ХАРАКТЕР
+# ошибки, а общее число говорит о масштабе.
+_IMPORT_PROBLEMS_SHOWN = 10
+
+
+def _assert_import_rows_valid(db, problems: list) -> None:
+    """Импорт либо встаёт целиком, либо не встаёт вовсе.
+
+    Частичный импорт денег — худший из исходов: половина строк в базе, человек видит
+    «ошибка» и запускает заново, получая дубли по уже вставленному. Поэтому откат.
+    """
+    if not problems:
+        return
+    db.rollback()
+    head = "; ".join(problems[:_IMPORT_PROBLEMS_SHOWN])
+    tail = (f" … и ещё {len(problems) - _IMPORT_PROBLEMS_SHOWN}"
+            if len(problems) > _IMPORT_PROBLEMS_SHOWN else "")
+    raise HTTPException(
+        status_code=400,
+        detail=f"Импорт отменён целиком — в файле {len(problems)} негодных строк. "
+               f"Ничего не записано. {head}{tail}")
+
 # Проверка схемы ссылки — общая для договоров, операций и реестра Диадока,
 # живёт в app/links.py (раньше была двумя почти одинаковыми копиями).
 from app.links import validate_link as _validate_link  # noqa: E402
 
 # Временное in-memory хранилище для шага preview→apply при синхронизации импорта.
-# Переживает только до перезапуска backend-контейнера — это сознательно временное решение,
-# пока система не переехала на боевой сервер (см. memory finance-system-status).
+# Переживает только до перезапуска backend-контейнера — сознательно временное решение.
+#
+# Три ограничителя, добавленные 11.09.2026 (F2-25 внешнего аудита). Каждый закрывает свой
+# случай, и все три раньше отсутствовали:
+#   · СРОК — непринятое превью висело вечно. Разобранный файл это сотни строк с суммами
+#     и контрагентами в памяти процесса, и держать их до перезапуска незачем;
+#   · ПОТОЛОК — число сессий ничем не ограничивалось: каждый повторный разбор добавлял
+#     ещё одну, а `mem_limit` у контейнера 512 МБ;
+#   · ВЛАДЕЛЕЦ — `user_id` в сессию клали, но при применении не сверяли. Чужой
+#     `import_id` применялся бы как свой, а это запись денег.
+IMPORT_SYNC_TTL_MINUTES = 60
+IMPORT_SYNC_MAX_SESSIONS = 20
 IMPORT_SYNC_CACHE = {}
+
+
+def _prune_import_cache() -> None:
+    """Выбросить протухшие сессии, а если их всё равно много — самые старые."""
+    now = datetime.utcnow()
+    for k in [k for k, v in IMPORT_SYNC_CACHE.items()
+              if (now - v['created_at']).total_seconds() > IMPORT_SYNC_TTL_MINUTES * 60]:
+        del IMPORT_SYNC_CACHE[k]
+    if len(IMPORT_SYNC_CACHE) > IMPORT_SYNC_MAX_SESSIONS:
+        oldest = sorted(IMPORT_SYNC_CACHE.items(), key=lambda kv: kv[1]['created_at'])
+        for k, _ in oldest[:len(IMPORT_SYNC_CACHE) - IMPORT_SYNC_MAX_SESSIONS]:
+            del IMPORT_SYNC_CACHE[k]
 
 def _sort_map():
     """Колонки, по которым можно сортировать список операций и выгрузку.
@@ -339,6 +436,19 @@ def export_operations(
     # Порядок общий со списком (см. _order_by): выгрузка обязана совпадать с экраном.
     query = query.order_by(_order_by(sort_col, sort_dir))
 
+    # ПОТОЛОК на выгрузку. Замер 11.09.2026: выгрузка 3 048 операций занимает 957 мс —
+    # на порядок дороже самого тяжёлого отчёта и в тридцать раз дороже списка. Всё это
+    # время занят и поток, и соединение с базой, а соединений в пуле пятнадцать.
+    #
+    # Отказ вместо молчаливого обрезания: файл с частью строк выглядит полным, и по нему
+    # сведут отчётность, не заметив пропажи. Лучше сказать «сузьте период».
+    total = query.count()
+    if total > EXPORT_MAX_ROWS:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Под фильтры попало {total} операций, а выгрузка отдаёт не более "
+                    f"{EXPORT_MAX_ROWS}. Сузьте период или добавьте фильтр — иначе файл "
+                    f"пришлось бы обрезать, а обрезанную выгрузку от полной не отличить."))
     operations = query.all()
 
     wb = Workbook()
@@ -435,6 +545,8 @@ def create_operation(
         own_company_id=own_company.sole_id(db),
         created_by=current_user.id
     )
+    # Проверка ДО записи: отказать дешевле, чем потом искать строку, выпавшую из отчётов.
+    _assert_operation_valid(operation)
     db.add(operation)
     db.commit()
     db.refresh(operation)
@@ -482,22 +594,41 @@ def update_operation(
     operation = db.query(Operation).filter(Operation.id == op_id).first()
     if not operation:
         raise HTTPException(status_code=404, detail="Операция не найдена")
-    for key, value in op.dict().items():
+    # `exclude_unset` — НЕ украшение. Без него `op.dict()` отдаёт ВСЕ поля модели,
+    # включая неприсланные, а у них умолчание `None`: PUT без `bank`/`period`/
+    # `article_id` молча обнулял их, и операция выпадала и из баланса, и из P&L.
+    # Канон проекта на этот случай уже есть — массовая правка ниже давно ходит через
+    # `exclude_unset=True`; одиночная просто до него не дошла (11.09.2026).
+    data = op.dict(exclude_unset=True)
+    for key, value in data.items():
         setattr(operation, key, value)
     # document_link проверяем на безопасную схему (setattr выше записал сырое значение).
-    operation.document_link = _validate_link(op.document_link)
+    # Только если он действительно прислан — иначе проверка затёрла бы чужую ссылку.
+    if "document_link" in data:
+        operation.document_link = _validate_link(op.document_link)
 
     # Пересчёт суммы НДС при сохранении. vat_fact не входит в OperationCreate,
     # поэтому цикл setattr выше его не трогает — без этого блока сумма НДС
     # оставалась прежней (с момента создания операции), даже если при
     # редактировании меняли доход/расход или ставку НДС. Логика та же, что
     # и при создании операции (см. create_operation выше).
-    operation.vat_fact = compute_vat_fact(op.income, op.expense, op.vat_rate)
+    #
+    # Считаем от ИТОГОВОЙ строки, а не от присланного тела: при частичном PUT в теле
+    # лежат умолчания (нули), и расчёт по ним обнулил бы НДС у нетронутой суммы.
+    operation.vat_fact = compute_vat_fact(
+        operation.income, operation.expense, operation.vat_rate)
+
+    # Итоговая строка обязана быть валидной — независимо от того, что прислали. Частичная
+    # правка может увести операцию из отчётов, ничего не «сломав» на вид.
+    _assert_operation_valid(operation)
 
     db.commit()
 
+    # В журнал — тоже итоговые значения: иначе частичная правка запишет нули,
+    # которых в операции нет.
     log_action(db, current_user, "update_operation", entity_type="operation", entity_id=op_id,
-               details=f"{op.status}, доход {op.income}, расход {op.expense}, банк {op.bank}")
+               details=f"{operation.status}, доход {operation.income}, "
+                       f"расход {operation.expense}, банк {operation.bank}")
     return {"message": "Операция обновлена"}
 
 class OperationBulkUpdate(BaseModel):
@@ -549,6 +680,16 @@ def bulk_update_operations(
         # что и при создании/одиночном редактировании операции (см. выше).
         if 'vat_rate' in fields:
             operation.vat_fact = compute_vat_fact(operation.income, operation.expense, operation.vat_rate)
+        # Те же инварианты, что и у одиночной правки. Массовая правка их не проверяла
+        # вовсе, то есть строгий путь (PUT) отказывал, а быстрый (выделить сто строк и
+        # поменять статус) — пропускал. Отказ адресный: без номера операции человек,
+        # выделивший сотню строк, не найдёт виноватую.
+        problem = _operation_problem(operation)
+        if problem:
+            db.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail=f"Операция #{operation.id}: {problem} Ничего не изменено.")
     db.commit()
 
     changed_desc = ", ".join(f"{k}={v}" for k, v in fields.items())
@@ -809,7 +950,18 @@ def _parse_cf_best_rows(contents: bytes) -> List[dict]:
     return rows
 
 
-def _get_or_create_article(db: Session, name: Optional[str]):
+def _get_or_create_article(db: Session, name: Optional[str], created: Optional[list] = None):
+    """Статья по имени; неизвестное имя заводит новую.
+
+    Новая статья создаётся БЕЗ разметки `pl_line`, и её деньги попадают в «Требует
+    разметки» — не теряются, но и не входят ни в EBITDA, ни в чистую прибыль. Само по
+    себе это законное состояние (правило проекта: неразмеченная статья — не ошибка).
+
+    Плохо было другое: создание происходило МОЛЧА. Файл заводил статьи, никто об этом не
+    узнавал, и деньги оседали в «Требует разметки» до следующего разбора отчёта. Поэтому
+    отказываться не стали — импорт с новой статьёй законная операция, — а имена
+    складываем в `created` и показываем в итоге загрузки (F2-21 аудита 11.09.2026).
+    """
     if not name:
         return None
     article = db.query(Article).filter(Article.name == name).first()
@@ -817,6 +969,8 @@ def _get_or_create_article(db: Session, name: Optional[str]):
         article = Article(name=name, type='expense')
         db.add(article)
         db.flush()
+        if created is not None:
+            created.append(name)
     return article
 
 
@@ -1038,14 +1192,22 @@ def _validate_import_file(file: UploadFile, contents: bytes):
 async def import_excel(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("import", "view"))
+    # ПИШЕТ ДЕНЬГИ, поэтому спрашивает право на правку операций, а не `import:view`
+    # (решение владельца 11.09.2026: «права оставь тем, у кого есть доступ к
+    # редактированию»). Секция `import` объявлена с единственным действием `view`, и
+    # до этой правки на нём висели все три ручки импорта — то есть роль с правом
+    # ТОЛЬКО СМОТРЕТЬ операции меняла файлом суммы и статусы уже проведённых.
+    # Второго права «можно писать деньги» заводить не стали: оно уже есть, и вторая
+    # его копия неизбежно разошлась бы с первой.
+    current_user: User = Depends(require_permission("operations", "edit"))
 ):
     contents = await file.read()
     _validate_import_file(file, contents)
     rows = _parse_cf_best_rows(contents)
 
     imported = 0
-    for row in rows:
+    problems = []
+    for n, row in enumerate(rows, start=1):
         article = _get_or_create_article(db, row['article'])
         counterparty = _get_or_create_counterparty(db, row['counterparty'], row.get('inn'))
 
@@ -1067,9 +1229,14 @@ async def import_excel(
             document_link=_validate_link(row.get('document_link'), raise_on_bad=False),
             created_by=current_user.id
         )
+        problem = _operation_problem(op)
+        if problem:
+            problems.append(f"строка {n}: {problem}")
+            continue
         db.add(op)
         imported += 1
 
+    _assert_import_rows_valid(db, problems)
     db.commit()
     return {"message": f"Импортировано {imported} операций"}
 
@@ -1167,6 +1334,8 @@ def _take_from_pool(pool, invoice, op_id=None):
 async def import_preview(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    # Остаётся на `import:view` НАМЕРЕННО: разбор ничего не пишет, а посмотреть, что
+    # файл сделает с журналом, полезно и тому, кто применять его не вправе.
     current_user: User = Depends(require_permission("import", "view"))
 ):
     """Шаг 1 синхронизации: парсит файл и сопоставляет строки с уже существующими
@@ -1278,6 +1447,7 @@ async def import_preview(
         cache_rows.append({'status': 'conflict', 'key': key, 'data': r, 'existing_id': existing.id})
 
     import_id = uuid.uuid4().hex
+    _prune_import_cache()
     IMPORT_SYNC_CACHE[import_id] = {
         'rows': cache_rows,
         'created_at': datetime.utcnow(),
@@ -1305,23 +1475,36 @@ class ImportApplyRequest(BaseModel):
 async def import_apply(
     payload: ImportApplyRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("import", "view"))
+    # Пишет и ПЕРЕЗАПИСЫВАЕТ операции — то же право, что у одиночной правки.
+    # Подробности решения — в комментарии у `/import` выше.
+    current_user: User = Depends(require_permission("operations", "edit"))
 ):
     """Шаг 2 синхронизации («Перепровести»): новые строки добавляются всегда,
     конфликтные строки обновляются только если их key есть в confirmed_keys —
     остальное (неподтверждённые конфликты, unchanged) пропускается."""
+    _prune_import_cache()
     cached = IMPORT_SYNC_CACHE.get(payload.import_id)
     if not cached:
         raise HTTPException(status_code=400, detail="Сессия импорта истекла или не найдена — загрузите файл повторно")
+    # Применяет ТОТ ЖЕ человек, который разбирал файл. Админа не исключаем — он проходит
+    # везде, — но чужую сессию не применяет и он: превью показывали не ему, и что именно
+    # он подтверждает, он не видел.
+    if cached.get('user_id') != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Эту загрузку разбирал другой пользователь. Применить её может только "
+                   "он: подтверждение относится к тому, что он видел на экране.")
 
     confirmed = set(payload.confirmed_keys)
     inserted = updated = skipped = 0
+    new_articles = []          # какие статьи файл завёл — покажем человеку
 
-    for row in cached['rows']:
+    problems = []
+    for n, row in enumerate(cached['rows'], start=1):
         data = row['data']
 
         if row['status'] == 'new':
-            article = _get_or_create_article(db, data['article'])
+            article = _get_or_create_article(db, data['article'], new_articles)
             counterparty = _get_or_create_counterparty(db, data['counterparty'], data.get('inn'))
             op = Operation(
                 date=data['date'],
@@ -1342,6 +1525,10 @@ async def import_apply(
                 own_company_id=own_company.sole_id(db),
                 created_by=current_user.id,
             )
+            problem = _operation_problem(op)
+            if problem:
+                problems.append(f"строка {n}: {problem}")
+                continue
             db.add(op)
             inserted += 1
 
@@ -1350,7 +1537,7 @@ async def import_apply(
             if not existing:
                 skipped += 1
                 continue
-            article = _get_or_create_article(db, data['article'])
+            article = _get_or_create_article(db, data['article'], new_articles)
             counterparty = _get_or_create_counterparty(db, data['counterparty'], data.get('inn'))
             existing.date = data['date']
             existing.status = data['status']
@@ -1369,19 +1556,40 @@ async def import_apply(
             # вручную добавленную в приложении.
             if data.get('document_link'):
                 existing.document_link = _validate_link(data['document_link'], raise_on_bad=False)
+            # Правку существующей строки проверяем ТОЖЕ: файл может увести годную
+            # операцию в негодное состояние — стереть статью, подменить статус.
+            problem = _operation_problem(existing)
+            if problem:
+                problems.append(f"строка {n} (правка операции #{existing.id}): {problem}")
+                continue
             updated += 1
 
         else:
             skipped += 1
 
+    _assert_import_rows_valid(db, problems)
     db.commit()
-    del IMPORT_SYNC_CACHE[payload.import_id]
+    # `pop`, а не `del`: при двух одновременных применениях одного import_id второй
+    # получал KeyError вместо понятного отказа.
+    IMPORT_SYNC_CACHE.pop(payload.import_id, None)
+
+    # ЖУРНАЛ ДЕЙСТВИЙ. Массовая запись денег — единственный путь в системе, который его
+    # не оставлял: одиночная правка, массовая и удаление пишут, импорт молчал. Вопрос
+    # «кто перезаписал эти сорок операций» не имел ответа вовсе (F2-24 аудита 11.09.2026).
+    log_action(db, current_user, "import_apply", entity_type="operation", entity_id=None,
+               details=(f"импорт {payload.import_id}: добавлено {inserted}, "
+                        f"обновлено {updated}, пропущено {skipped}"
+                        + (f"; заведено статей: {', '.join(sorted(set(new_articles)))}"
+                           if new_articles else "")))
 
     return {
         "message": f"Добавлено {inserted}, обновлено {updated}, пропущено {skipped}",
         "inserted": inserted,
         "updated": updated,
         "skipped": skipped,
+        # Новые статьи заводятся БЕЗ разметки, и их деньги уходят в «Требует разметки».
+        # Молчать нельзя: иначе это выясняется при следующем разборе P&L.
+        "new_articles": sorted(set(new_articles)),
     }
 
 
@@ -1652,7 +1860,6 @@ def download_operation_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("operations", "view")),
 ):
-    import os
     from fastapi.responses import FileResponse
     from app.models import OperationFile
 
@@ -1664,11 +1871,10 @@ def download_operation_file(
 
     # Ключ из базы — относительный, и склеивать его с корнем можно только после
     # проверки: подделанный путь с '..' иначе уводит за пределы хранилища.
-    full = os.path.normpath(os.path.join(UPLOADS_ROOT, row.path))
-    if not full.startswith(os.path.join(UPLOADS_ROOT, OP_FILES_SUBDIR) + os.sep):
-        raise HTTPException(status_code=400, detail="Некорректный путь файла")
-    if not os.path.exists(full):
-        raise HTTPException(status_code=404, detail="Файл не найден на сервере")
+    # Та самая проверка, что была здесь с самого начала, — теперь общей функцией
+    # (`app/files_safe`). Она же сузила границу до подпапки операций: файл договора
+    # не должен отдаваться этой ручкой, даже если путь формально внутри хранилища.
+    full = existing_upload_path(row.path, subdir=OP_FILES_SUBDIR)
 
     return FileResponse(full, filename=row.original_name,
                         media_type="application/octet-stream")
@@ -1681,7 +1887,6 @@ def delete_operation_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("operations", "edit")),
 ):
-    import os
     from app.models import OperationFile
 
     row = (db.query(OperationFile)
@@ -1690,9 +1895,11 @@ def delete_operation_file(
     if not row:
         raise HTTPException(status_code=404, detail="Файл не найден")
 
-    full = os.path.normpath(os.path.join(UPLOADS_ROOT, row.path))
-    if full.startswith(os.path.join(UPLOADS_ROOT, OP_FILES_SUBDIR) + os.sep) and os.path.exists(full):
-        os.remove(full)
+    # Была местная копия проверки на `normpath` + `startswith`. Держала `..`, но не
+    # держала символическую ссылку (её снимает только `realpath`) и, главное, была
+    # ВТОРЫМ описанием одного правила — тем самым расхождением, ради которого заведён
+    # `app/files_safe`. `subdir` сохраняет сужение до папки файлов операций.
+    remove_upload(row.path, subdir=OP_FILES_SUBDIR)
     name = row.original_name
     db.delete(row)
     db.commit()

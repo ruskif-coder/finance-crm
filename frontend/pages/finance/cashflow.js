@@ -8,6 +8,8 @@ import { MONO, UI, IconBtn } from '@/components/salesTableKit'
 import { bankColor, signRub } from '@/lib/salesFormat'
 import { makeApi as api } from '@/lib/http'
 import { T } from '@/lib/tokens'
+import { errText, isAuth } from '@/lib/loadError'
+import { LoadError } from '@/components/salesTableKit'
 import useIsMobile from '@/components/mobile/useIsMobile'
 // Мобильная ветка грузится отдельным чанком: десктопу она не нужна, а на сервере
 // useIsMobile всё равно false — SSR для неё бессмыслен. loading — пустая заглушка,
@@ -307,6 +309,8 @@ export default function DashboardV2() {
   const [ddsData, setDdsData] = useState({ periods: [] })
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
+  // Сбой загрузки. Отдельно от «нет движений» — см. lib/loadError.js.
+  const [err, setErr] = useState('')
   const [expanded, setExpanded] = useState(null)
   const [selectedBank, setSelectedBank] = useState('all')
   const [groupBy, setGroupBy] = useState('period')
@@ -329,7 +333,7 @@ export default function DashboardV2() {
   }, [dateFrom, dateTo, selectedBank, groupBy])
 
   const loadAll = async (token) => {
-    setLoading(true)
+    setLoading(true); setErr('')
     try {
       const a = api(token)
       const [d, s] = await Promise.all([
@@ -338,17 +342,31 @@ export default function DashboardV2() {
       ])
       setDdsData(d.data || { periods: [] })
       setSummary(s.data || null)
-    } catch (e) { if (e.response?.status === 401) router.push('/login') }
+    } catch (e) {
+      // Молчать тут дороже всего: ниже экран пишет зелёным «кассовых разрывов в
+      // периоде нет». Это утверждение о ДЕНЬГАХ, и на пустом ответе оно ложно.
+      if (!isAuth(e)) setErr(errText(e))
+    }
     finally { setLoading(false) }
   }
 
   const loadDds = async (token) => {
     try {
       const a = api(token)
+      // Чистим ПЕРЕД успешной записью, а не только в loadAll: loadDds срабатывает на
+      // каждую смену фильтра, банка и группировки, а `setErr('')` стоял один раз на
+      // монтировании. Один сбой фильтра — и красная полоса висела до конца сессии
+      // поверх заведомо свежих цифр. Ложная тревога на экране денег приучает не
+      // смотреть на полосу вовсе, то есть съедает сам прибор (найдено 11.09.2026).
       const bankParam = selectedBank !== 'all' ? `&bank=${selectedBank}` : ''
       const res = await a.get(`/reports/dds?date_from=${dateFrom}&date_to=${dateTo}${bankParam}&group_by=${groupBy}`)
       setDdsData(res.data || { periods: [] })
-    } catch (e) { }
+      setErr('')
+    } catch (e) {
+      // Пустой catch здесь оставлял старый срез на экране и молчал о том, что
+      // фильтр не применился — человек смотрел на цифры другого банка.
+      if (!isAuth(e)) setErr(errText(e))
+    }
   }
 
   const periods = ddsData?.periods || []
@@ -411,9 +429,18 @@ export default function DashboardV2() {
   }), [months])
 
   const exportCsv = () => {
+    /* КОПЕЙКИ СОХРАНЯЕМ. На экране суммы округляются до рубля осознанно — так реестр
+       читается, — но выгрузка это не экран, а данные: по ней сводят отчётность.
+       Серверная выгрузка операций копейки хранит, и пока здесь стоял Math.round, два
+       экспорта одних и тех же денег давали разные суммы (F2-28 аудита 11.09.2026).
+       Замер: у 1 206 операций из 3 048 копейки ненулевые.
+
+       Разделитель дробной части — ЗАПЯТАЯ: файл открывают в Excel с русской локалью,
+       и точка там превращает число в текст. Разделитель полей уже `;` по той же причине. */
+    const money = (n) => (Math.round((n || 0) * 100) / 100).toFixed(2).replace('.', ',')
     const head = ['Период', 'Поступления', 'Списания', 'Чистый поток', 'Накопит. остаток']
-    const rows = months.map(m => [formatPeriod(m.period), Math.round(m.income), Math.round(m.expense), Math.round(m.net), Math.round(m.cumulative)])
-    const csv = [head, ...rows, ['ИТОГО', Math.round(totals.income), Math.round(totals.expense), Math.round(totals.net), Math.round(totals.lastCum)]]
+    const rows = months.map(m => [formatPeriod(m.period), money(m.income), money(m.expense), money(m.net), money(m.cumulative)])
+    const csv = [head, ...rows, ['ИТОГО', money(totals.income), money(totals.expense), money(totals.net), money(totals.lastCum)]]
       .map(r => r.join(';')).join('\n')
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
@@ -428,7 +455,12 @@ export default function DashboardV2() {
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
         <Navbar active="dds" />
         <Head><title>ДДС | Финансовый учёт</title></Head>
-        {loading || !summary ? (
+        {/* При сбое «Загрузка…» держалась вечно: loading снимался, summary
+            оставался пустым. Теперь причина вместо ожидания. */}
+        {!loading && !summary && err ? (
+          <div style={{ padding: 20 }}><LoadError text={err}
+            onRetry={() => loadAll(localStorage.getItem('token'))} /></div>
+        ) : loading || !summary ? (
           <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>Загрузка…</div>
         ) : (
           <CashflowMobile
@@ -448,6 +480,9 @@ export default function DashboardV2() {
       <Head><title>ДДС | Финансовый учёт</title></Head>
 
       <div style={{ maxWidth: 1920, margin: '0 auto', padding: 32 }}>
+        {/* Полоса НАД содержимым: цифры под ней могли остаться от прошлого
+            удачного запроса, и выдавать их за свежие нельзя. */}
+        {!!err && <LoadError text={err} onRetry={() => loadAll(localStorage.getItem('token'))} />}
         {loading ? (
           <div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Загрузка…</div>
         ) : (
@@ -585,7 +620,10 @@ export default function DashboardV2() {
                 <span>факт по выпискам, далее — план операций</span>
                 <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, color: cumStats.gap ? DANGER_TXT : INCOME }}>
                   <span style={{ width: 7, height: 7, borderRadius: 2, background: cumStats.gap ? 'var(--dot-overdue)' : 'var(--income)' }} />
-                  {cumStats.gap ? `кассовый разрыв: ${shortMonth(cumStats.gap.period)}` : 'кассовых разрывов в периоде нет'}
+                  {/* При сбое загрузки не утверждаем НИЧЕГО: «разрывов нет» на
+                      неполных данных — ложь о деньгах, а прочерк честен. */}
+                  {err ? 'данные не загрузились — вывод о разрывах не делаем'
+                    : cumStats.gap ? `кассовый разрыв: ${shortMonth(cumStats.gap.period)}` : 'кассовых разрывов в периоде нет'}
                 </span>
               </div>
             </motion.div>

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, Fragment } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
+import { pageAccess } from '@/lib/pageGuard'
 import Navbar, { can } from '@/components/Navbar'
-import { MONO, UI, MultiDrop, IconBtn } from '@/components/salesTableKit'
+import { MONO, UI, MultiDrop, IconBtn, LoadError, NoAccessScreen } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const OperationsMobile = dynamic(() => import('@/components/mobile/OperationsMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
@@ -10,6 +11,7 @@ import { PeriodSelect } from '@/components/PeriodSelect'
 import { makeApi as api } from '@/lib/http'
 import { getPermissions } from '@/lib/auth'
 import { T } from '@/lib/tokens'
+import { errText, isAuth } from '@/lib/loadError'
 
 const STATUSES = ['ОПЛАЧЕНО', 'ПЛАН ОПЛАТ', 'ПЛАН ПОСТУПЛЕНИЙ']
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
@@ -226,6 +228,12 @@ const RIGHT = new Set(['income', 'expense', 'vat', 'vat_amount'])
 
 export default function Operations2() {
   const router = useRouter()
+  /* Прямая ссылка открывала экран и у того, кому раздел не открыт: меню пункт прячет,
+     адрес — нет. Дальше каждый экран вёл себя по-своему, и «нет доступа» читалось как
+     «сломалось». Решение о доступе принимает карта навигации — см. lib/pageGuard. */
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  const access = pageAccess(router.pathname, mounted)
   // Точечная ссылка на операцию — /finance/operations?op=<id>. Приходит из импорта
   // документов Диадока, где иначе на операцию сослаться нечем: у реестра нет ни
   // карточки строки, ни собственного адреса у операции.
@@ -237,6 +245,8 @@ export default function Operations2() {
   const [ops, setOps] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
+  // Сбой загрузки. Пустая таблица от сбоя и пустая от фильтра — разные вещи.
+  const [err, setErr] = useState('')
   const [articles, setArticles] = useState([])
   const [counterparties, setCounterparties] = useState([])
   const [periodOptions, setPeriodOptions] = useState([])
@@ -276,8 +286,11 @@ export default function Operations2() {
     if (!tok()) { router.push('/login'); return }
     try { setPerms(getPermissions()) } catch (e) {}
     try { const h = JSON.parse(localStorage.getItem('ops2_hidden')); if (Array.isArray(h)) setHidden(new Set(h)) } catch (e) {}
+    // Справочники формы. Один `.catch(() => {})` на оба обнулял ОБА списка при
+    // падении любого: выпадашки пустели, и это читалось как «в базе ничего нет».
     Promise.all([api(tok()).get('/articles/'), api(tok()).get('/counterparties/?limit=1000')])
-      .then(([a, c]) => { setArticles(a.data?.items || a.data || []); setCounterparties(c.data?.items || c.data || []) }).catch(() => {})
+      .then(([a, c]) => { setArticles(a.data?.items || a.data || []); setCounterparties(c.data?.items || c.data || []) })
+      .catch(e => { if (!isAuth(e)) setErr('Справочники статей и контрагентов не загрузились — выпадающие списки пусты не потому, что данных нет') })
     api(tok()).get('/operations/periods').then(r => setPeriodOptions(r.data?.periods || [])).catch(() => {})
     const measure = () => { const el = document.querySelector('[data-navbar]'); if (el) setNavH(el.getBoundingClientRect().height) }
     measure()
@@ -286,7 +299,7 @@ export default function Operations2() {
   }, [])
 
   const loadOps = async () => {
-    setLoading(true)
+    setLoading(true); setErr('')
     try {
       const params = new URLSearchParams({ skip: page * pageSize, limit: pageSize, sort_col: sortCol, sort_dir: sortDir })
       fStatus.forEach(s => params.append('status', s)); fBank.forEach(b => params.append('bank', b))
@@ -301,7 +314,11 @@ export default function Operations2() {
       // Время последней загрузки данных (обновляется при любом изменении — add/edit/delete
       // зовут loadOps). Считаем на клиенте, не при рендере — без SSR-рассинхрона.
       setUpdatedAt(new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }))
-    } catch (e) { if (e.response?.status === 401) router.push('/login') }
+    } catch (e) {
+      // Реестр операций — журнал денег. «Ничего не нашлось» и «не смогли спросить»
+      // на нём выглядят одинаково пустой таблицей, и различать их обязан экран.
+      if (!isAuth(e)) setErr(errText(e))
+    }
     finally { setLoading(false) }
   }
   useEffect(() => { if (tok()) loadOps() }, [page, pageSize, sortCol, sortDir, fStatus, fBank, fArticle, fCp, fPeriod, fGaps, dateFrom, dateTo, focusOp])
@@ -512,6 +529,15 @@ export default function Operations2() {
     </div>
   )
 
+  // Отказ рисуем ДО загрузки И ДО ветки мобилки: пустая таблица читается как «ничего
+  // не нашлось». Порядок был обратный, и с телефона гард не срабатывал вовсе — человек
+  // без права видел мобильный реестр с надписью «Нет операций по фильтрам», то есть
+  // ровно то ложное утверждение, которое убирали с десктопа (найдено 11.09.2026).
+  if (access === 'denied') return (
+    <NoAccessScreen title="Операции: нет доступа" what="Операции"
+      nav={<><Head><title>Операции</title></Head><Navbar /></>} />
+  )
+
   // ── Мобильная версия (< 1024px) ──
   if (isMobile) {
     return (
@@ -675,7 +701,12 @@ export default function Operations2() {
                   ? <span key={k}><input type="checkbox" ref={el => { if (el) el.indeterminate = someOnPage && !allOnPage }} checked={allOnPage} onChange={e => setSel(e.target.checked ? Object.fromEntries(rows.map(o => [o.id, true])) : {})} style={{ width: 14, height: 14, cursor: 'pointer' }} /></span>
                   : <span key={k} onClick={() => onSort(sc)} style={{ textAlign: RIGHT.has(k) ? 'right' : 'left', cursor: sc ? 'pointer' : 'default', color: sortCol === sc ? 'var(--accent)' : undefined }}>{label}{sortCol === sc ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''}</span>)}
               </div>
+              {/* «Нет операций по выбранным фильтрам» — утверждение о ДАННЫХ. На сбое
+                  загрузки оно неверно, и подменять им причину нельзя: человек начнёт
+                  менять фильтры вместо того, чтобы повторить запрос. */}
               {loading ? <div style={{ padding: 30, color: 'var(--text-muted)', fontSize: 13 }}>Загрузка…</div>
+                : err ? <div style={{ padding: 20 }}>
+                    <LoadError text={err} onRetry={() => loadOps()} /></div>
                 : rows.length === 0 ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Нет операций по выбранным фильтрам</div>
                   : rows.map(o => (
                     <Fragment key={o.id}>

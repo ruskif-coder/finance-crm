@@ -79,3 +79,65 @@ def test_bad_checks_say_what_it_costs(out):
     silent = [c["key"] for c in out["checks"]
               if c["tone"] == "bad" and not (c.get("consequence") or c.get("note"))]
     assert not silent, f'красные проверки без объяснения последствий: {silent}'
+
+
+# ── вокабуляр тонов: прибор, которого не хватило ─────────────────────────────
+#
+# Тест выше проверяет тона У ПОЛУЧЕННЫХ строк — и потому молчал, пока шесть проверок
+# ставили пятое слово «crit»: на стенде ни одна из них в это состояние не попадала
+# (диск в норме, каталог бэкапов не смонтирован, DEBUG выключен). А в бою `collect()`
+# падал с `KeyError` ровно в плохую минуту. Разбор внешнего аудита 11.09.2026.
+#
+# Поэтому проверяем ИСХОДНИК, а не прогон: любое слово-тон, способное доехать до
+# `_check`, обязано быть известно словарю. Так дефект ловится независимо от того,
+# в каком состоянии стенд.
+
+def test_tone_vocabulary_is_one_dictionary():
+    """`WORST` и ожидания приборов — один и тот же словарь, а не две копии."""
+    assert set(st.WORST) == TONES
+
+
+def test_no_check_can_pass_an_unknown_tone():
+    """Статический обход: у каждого вызова `_check` четвёртый аргумент — известный тон.
+
+    Разбираем и тернарники (`"bad" if on else "ok"`), и присваивания `sev = ...`:
+    именно так шесть раз и было записано «crit».
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(st))
+    unknown = []
+
+    def literals(node):
+        return [n.value for n in ast.walk(node)
+                if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+
+    for node in ast.walk(tree):
+        # 1) прямой вызов _check(key, group, title, ТОН, ...)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "_check" and len(node.args) >= 4):
+            for value in literals(node.args[3]):
+                if value not in TONES:
+                    unknown.append((node.lineno, value))
+        # 2) sev = "..." / sev = "..." if ... else "..."
+        if isinstance(node, ast.Assign):
+            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            if "sev" in names:
+                for value in literals(node.value):
+                    if value not in TONES:
+                        unknown.append((node.lineno, value))
+
+    assert not unknown, (
+        "В status.py есть тона вне словаря WORST — collect() упадёт на них с KeyError: "
+        + ", ".join(f"строка {line}: {value!r}" for line, value in unknown))
+
+
+def test_unknown_tone_degrades_to_bad_instead_of_crashing():
+    """Если чужое слово всё-таки появится — экран обязан остаться живым.
+
+    Падение здесь недопустимо: статус нужен как раз тогда, когда что-то сломано.
+    """
+    row = st._check("k", "Группа", "Заголовок", "совершенно новый тон")
+    assert row["tone"] == "bad"
+    assert st.WORST[row["tone"]] == max(st.WORST.values())

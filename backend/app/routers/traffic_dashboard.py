@@ -69,6 +69,40 @@ class StatusIn(BaseModel):
 # в этом месте, поэтому старая функция удалена, а не оставлена рядом.
 
 
+def _fact_sources(db: Session, campaign_ids: List[int]) -> list:
+    """Откуда взят факт у видимых РК.
+
+    Нужно ровно для одного: сказать вслух, когда цифры НЕ настоящие. На стенде весь
+    факт — из демо-скрипта (`source='demo'`), а на экране он до 11.09.2026 был
+    неотличим от боевого: слова «демо» в интерфейсе не встречалось ни разу, а тянучка
+    статистики DSP не написана вовсе, то есть настоящего факта пока неоткуда взяться.
+
+    Показывать правдоподобное вместо правды — худшее, что может делать витрина: по этим
+    числам принимают решения о перераспределении объёма.
+    """
+    if not campaign_ids:
+        return []
+    rows = db.execute(text(
+        "SELECT DISTINCT source FROM ad_campaign_stat WHERE campaign_id = ANY(:i)"),
+        {"i": campaign_ids}).all()
+    return sorted(r[0] for r in rows if r[0])
+
+
+def _fact_last_ingest(db: Session, campaign_ids: List[int]):
+    """Когда факт приезжал в последний раз.
+
+    Пустые столбики на графике значат две разные вещи: «ещё не крутили» и «данные не
+    приходят». Отличить их с экрана было нечем — мёртвый коннектор выглядел как тишина
+    в кампании (F5-10 внешнего аудита 11.09.2026). Дата последнего поступления отвечает
+    на это одним числом.
+    """
+    if not campaign_ids:
+        return None
+    return db.execute(text(
+        "SELECT max(imported_at) FROM ad_campaign_stat WHERE campaign_id = ANY(:i)"),
+        {"i": campaign_ids}).scalar()
+
+
 def _facts(db: Session, campaign_ids: List[int]) -> dict:
     if not campaign_ids:
         return {}
@@ -453,6 +487,10 @@ def dashboard(scope: Optional[str] = None,
 
     return {
         "rows": rows,
+        # Источники факта — на экран. Всё, что не боевой коннектор, обязано быть
+        # подписано: «19 из 19 крутят» на выдуманных числах читается как настоящее.
+        "fact_sources": _fact_sources(db, ids),
+        "fact_last_ingest": _fact_last_ingest(db, ids),
         "today": today,
         "kpi": {
             "campaigns": len(rows),

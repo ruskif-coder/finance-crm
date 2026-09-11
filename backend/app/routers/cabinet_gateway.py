@@ -26,9 +26,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.files_safe import existing_upload_path
 from app.database import get_db
 from app.launch_prep.models import LaunchPrepPair, LaunchPrepPairFile, LaunchPrepTarget
-from app.routers.launch_prep import UPLOADS_ROOT, apply_platform_verdict, url_state
+from app.routers.launch_prep import apply_platform_verdict, url_state
 from app.cabinet import journal
 from app.sales.models import SalesPublisher
 
@@ -284,9 +285,9 @@ def cabinet_rights_letter(pair_id: int, account_id: int, publisher_id: int,
     # существует ли пара с таким номером.
     if row is None or not row.rights_letter_path:
         raise HTTPException(status_code=404, detail="Письмо не найдено")
-    full = os.path.join(UPLOADS_ROOT, row.rights_letter_path)
-    if not os.path.exists(full):
-        raise HTTPException(status_code=404, detail="Письмо не найдено")
+    # Путь из базы — через общую проверку границы хранилища (`app/files_safe`).
+    # До 11.09.2026 она была ровно в одном месте из десяти.
+    full = existing_upload_path(row.rights_letter_path)
     return FileResponse(full, filename=row.rights_letter_name or "rights-letter",
                         media_type="application/octet-stream")
 

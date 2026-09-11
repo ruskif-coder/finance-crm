@@ -7,6 +7,7 @@ UPLOADS_DIR = "/app/uploads/contracts"
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 МБ — максимальный размер прикреплённого файла
 ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".jpeg", ".png", ".zip"}
 from sqlalchemy.orm import Session
+from app.files_safe import existing_upload_path, remove_upload
 from app.database import get_db
 from app.xlsx_safe import xlsx_safe
 from app.models import Contract, Counterparty, User
@@ -338,11 +339,11 @@ async def upload_contract_document(
 
     os.makedirs(UPLOADS_DIR, exist_ok=True)
 
-    # Удаляем старый файл, если был
+    # Удаляем старый файл, если был. Через общую проверку границы — тем же корнем
+    # `UPLOADS_DIR`, каким отдаёт скачивание десятью строками ниже: до 11.09.2026
+    # скачивание было проверено, а удаление рядом — нет.
     if contract.attached_filename:
-        old_path = os.path.join(UPLOADS_DIR, contract.attached_filename)
-        if os.path.exists(old_path):
-            os.remove(old_path)
+        remove_upload(contract.attached_filename, root=UPLOADS_DIR)
 
     # Санитизация имени файла: оставляем только безопасные символы
     original_name = file.filename or "document"
@@ -382,9 +383,8 @@ def download_contract_document(
     if not contract or not contract.attached_filename:
         raise HTTPException(status_code=404, detail="Документ не найден")
 
-    file_path = os.path.join(UPLOADS_DIR, contract.attached_filename)
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Файл не найден на сервере")
+    # Путь из базы — через общую проверку границы хранилища (`app/files_safe`).
+    file_path = existing_upload_path(contract.attached_filename, root=UPLOADS_DIR)
 
     # Отдаём с оригинальным именем (без префикса contract_id_)
     original_name = contract.attached_filename
@@ -408,9 +408,7 @@ def delete_contract_document(
 
     filename = contract.attached_filename
     if filename:
-        file_path = os.path.join(UPLOADS_DIR, filename)
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        remove_upload(filename, root=UPLOADS_DIR)
         contract.attached_filename = None
         db.commit()
         log_action(db, current_user, "delete_contract_document", entity_type="contract",

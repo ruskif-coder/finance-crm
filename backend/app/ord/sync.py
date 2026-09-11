@@ -218,26 +218,46 @@ def sync_contracts(db: Session) -> dict:
 
     stat = importer.upsert_rows(db, initial=rows['initial'], final=rows['final'],
                                 outer=rows['outer'])
-    _stamp_env(db, env)
+    # Контур ставим ТОЛЬКО тем записям, которые эта выгрузка и принесла. Идентификаторы
+    # у нас на руках — они пришли ответом ОРД, второй раз их искать не надо.
+    _stamp_env(db, env,
+               ids=[r.get('ord_id') for r in rows['final'] + rows['outer'] if r.get('ord_id')],
+               initial_ids=[r.get('ord_id') for r in rows['initial'] if r.get('ord_id')])
     db.commit()
     report['written'] = {k: stat[k] for k in ('contracts', 'initial', 'links')}
     report['warnings'] = stat['warnings']
     return report
 
 
-def _stamp_env(db: Session, env: str) -> None:
-    """Проставить контур тому, что размечено, но контура не имеет.
+def _stamp_env(db: Session, env: str, *, ids=None, initial_ids=None) -> None:
+    """Проставить контур записям, которые ПРИНЕСЛА ЭТА выгрузка.
 
     Отдельным шагом, а не внутри писателя: писатель общий с импортом файлов, а файл
     приходит из кабинета, чей контур известен только снаружи.
+
+    ⚠ РАНЬШЕ ЗДЕСЬ БЫЛ ГЛОБАЛЬНЫЙ UPDATE по всем строкам с пустым контуром — и это
+    ПЕРЕВОРАЧИВАЛО чужие записи. Пустой контур читается как боевой
+    (`registry.ENV_WHEN_UNKNOWN = 'prod'`: выгрузка кабинета приехала до появления
+    колонки, и все её идентификаторы боевые). Значит один синк на демо-контуре молча
+    объявлял демовыми все записи, пришедшие из боевого кабинета файлом, — и цепочки
+    договоров рвались, потому что искать их начинали не на том контуре
+    (находка F2-03 внешнего аудита 11.09.2026).
+
+    Теперь метится только то, чьи идентификаторы пришли в ЭТОМ ответе. Условие
+    «контур пуст» остаётся: уже размеченное не трогаем — перештамповка чужого контура
+    и была бедой.
     """
-    (db.query(Contract)
-       .filter(Contract.ord_contract_id.isnot(None), Contract.ord_env.is_(None))
-       .update({Contract.ord_env: env}, synchronize_session=False))
     from app.ord.models import OrdInitialContract
-    (db.query(OrdInitialContract)
-       .filter(OrdInitialContract.origin == 'ord', OrdInitialContract.ord_env.is_(None))
-       .update({OrdInitialContract.ord_env: env}, synchronize_session=False))
+    if ids:
+        (db.query(Contract)
+           .filter(Contract.ord_contract_id.in_(list(ids)), Contract.ord_env.is_(None))
+           .update({Contract.ord_env: env}, synchronize_session=False))
+    if initial_ids:
+        (db.query(OrdInitialContract)
+           .filter(OrdInitialContract.ord_id.in_(list(initial_ids)),
+                   OrdInitialContract.origin == 'ord',
+                   OrdInitialContract.ord_env.is_(None))
+           .update({OrdInitialContract.ord_env: env}, synchronize_session=False))
 
 
 def sync_kktu(db: Session) -> dict:

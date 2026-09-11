@@ -27,7 +27,7 @@
  */
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import Head from 'next/head'
-import Navbar, { can } from '@/components/Navbar'
+import Navbar, { can, getPermissions } from '@/components/Navbar'
 import { MONO, UI, card, CAP, btn, btnSm, inp, sel, chip, ROW_TONE, Modal, PickValue,
   KpiStrip, IconBtn } from '@/components/salesTableKit'
 import ValuePopover from '@/components/ValuePopover'
@@ -479,7 +479,7 @@ export default function CabinetsPage() {
   const [fullLog, setFullLog] = useState(null)
   const [vpop, setVpop] = useState(null)
 
-  useEffect(() => { setMayEdit(can('dir_publishers_cabinets', 'edit')) }, [])
+  useEffect(() => { setMayEdit(can(getPermissions(), 'dir_publishers_cabinets', 'edit')) }, [])
 
   const load = useCallback(async () => {
     setErr('')

@@ -106,10 +106,19 @@ export default function Import() {
   const [applyLoading, setApplyLoading] = useState(false)
   const [applyResult, setApplyResult] = useState(null)
 
+  // ДВА РАЗНЫХ ПРАВА, и это не небрежность. Посмотреть разбор файла — `import:view`:
+  // предпросмотр ничего не пишет. ПРИМЕНИТЬ разбор — `operations:edit`: это массовая
+  // запись денег, и владелец 11.09.2026 решил, что её получает тот, кто и так правит
+  // операции. Сервер так и гейтит (`/import/preview` — import:view, `/import` и
+  // `/import/apply` — operations:edit), а экран знал только про первое: кнопка
+  // «Перепровести» была видна всем, кто открыл страницу, и отвечала 403.
+  const [mayApply, setMayApply] = useState(null)
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (!token) { router.push('/login'); return }
-    if (!can(getPermissions(), 'import', 'view')) { router.push(firstAllowedHref(getPermissions(), localStorage.getItem('role') === 'admin')); return }
+    const perms = getPermissions()
+    if (!can(perms, 'import', 'view')) { router.push(firstAllowedHref(perms, localStorage.getItem('role') === 'admin')); return }
+    setMayApply(can(perms, 'operations', 'edit'))
   }, [])
 
   // Одноразовый импорт («/operations/import», всегда вставляет и на повторе плодит
@@ -283,10 +292,17 @@ export default function Import() {
                 </div>
               )}
 
-              <button onClick={handleApply} disabled={applyLoading}
-                style={{ ...btn(true), marginTop: 16, opacity: applyLoading ? .5 : 1 }}>
-                {applyLoading ? 'Применяем…' : 'Перепровести'}
-              </button>
+              {mayApply === false ? (
+                <div style={{ marginTop: 16, fontSize: 13, color: 'var(--text-muted)' }}>
+                  Разбор показан целиком. Применить его может тот, у кого есть право
+                  править операции, — это массовая запись денег.
+                </div>
+              ) : (
+                <button onClick={handleApply} disabled={applyLoading || mayApply !== true}
+                  style={{ ...btn(true), marginTop: 16, opacity: applyLoading ? .5 : 1 }}>
+                  {applyLoading ? 'Применяем…' : 'Перепровести'}
+                </button>
+              )}
             </div>
           )}
         </Section>

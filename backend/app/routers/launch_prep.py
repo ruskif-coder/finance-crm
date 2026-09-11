@@ -37,6 +37,7 @@ from pydantic import BaseModel
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
+from app.files_safe import existing_upload_path, inside_uploads, remove_upload
 from app.audit import log_action
 from app.database import get_db
 from app.launch_prep import sandbox
@@ -898,8 +899,11 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
         for f in (db.query(LaunchPrepCreativeFile)
                   .filter(LaunchPrepCreativeFile.set_id == s0.id)
                   .order_by(LaunchPrepCreativeFile.id).all()):
-            src_path = os.path.join(UPLOADS_ROOT, f.path)
-            if not os.path.exists(src_path):
+            # Источник копии — путь из базы, значит через общую проверку. Тихий
+            # режим: одна испорченная строка не должна отменять продление всей
+            # кампании, её пропускаем так же, как отсутствующий на диске файл.
+            src_path = inside_uploads(f.path)
+            if not src_path or not os.path.exists(src_path):
                 continue
             # Файл копируется ФИЗИЧЕСКИ, а не переиспользуется по пути: общая ссылка
             # означала бы, что удаление файла в одной кампании ломает предпросмотр в
@@ -1086,10 +1090,10 @@ def _remove_file(rel_path: str, token: str = None):
     продолжал бы раздаваться по своему адресу после удаления материала — то есть
     отозванный баннер оставался бы доступен всем, у кого сохранилась ссылка.
     """
-    try:
-        os.remove(os.path.join(UPLOADS_ROOT, rel_path))
-    except OSError:
-        pass          # файла нет — запись всё равно уходит, иначе строка зависнет навсегда
+    # Через общую проверку границы: путь пришёл из базы, и он единственное, что
+    # отделяет уборку от `os.remove` за пределами хранилища. Файла нет — запись всё
+    # равно уходит, иначе строка зависнет навсегда.
+    remove_upload(rel_path)
     sandbox.remove(UPLOADS_ROOT, token)
 
 
@@ -1134,7 +1138,10 @@ async def upload_file(set_id: int, ratio: Optional[str] = None,
             token, entry = sandbox.unpack(
                 os.path.join(UPLOADS_ROOT, CREATIVES_DIR, stored), UPLOADS_ROOT)
         except sandbox.SandboxError as e:
-            os.remove(os.path.join(UPLOADS_ROOT, CREATIVES_DIR, stored))
+            # Через общую проверку, хотя `stored` здесь наше, только что сгенерированное
+            # имя: правило «ни одного голого os.remove по пути хранилища» стоит
+            # исключений дороже, чем они экономят, — его стережёт tests/test_file_paths.
+            remove_upload(stored, subdir=CREATIVES_DIR)
             raise HTTPException(status_code=400, detail=str(e))
 
     # Размер берём из самого баннера, если он там объявлен: имя файла врёт, а
@@ -1183,9 +1190,9 @@ def get_file(file_id: int, db: Session = Depends(get_db),
         LaunchPrepCreativeSet.id == rec.set_id).first()
     _deal(db, parent.deal_id, current_user)
 
-    full = os.path.join(UPLOADS_ROOT, rec.path)
-    if not os.path.exists(full):
-        raise HTTPException(status_code=404, detail="Файл не найден в хранилище")
+    # Путь из базы — через общую проверку границы хранилища (`app/files_safe`).
+    # До 11.09.2026 она была ровно в одном месте из десяти.
+    full = existing_upload_path(rec.path)
 
     ext = os.path.splitext(rec.original_name or "")[1].lower()
     media = INLINE_TYPES.get(ext)
@@ -1246,10 +1253,7 @@ async def upload_rights_letter(set_id: int, file: UploadFile = File(...),
     row.rights_letter_at = datetime.utcnow()
     row.rights_letter_by = current_user.id
     if old_path and old_path != row.rights_letter_path:
-        try:
-            os.remove(os.path.join(UPLOADS_ROOT, old_path))
-        except OSError:
-            pass       # файла нет — запись всё равно обновляем, иначе она зависнет
+        remove_upload(old_path)
     log_action(db, current_user, "rights_letter_upload", "sales_deal", row.deal_id,
                f"креатив №{row.no}: {original}")
     db.commit()
@@ -1265,9 +1269,9 @@ def get_rights_letter(set_id: int, db: Session = Depends(get_db),
     if not row or not row.rights_letter_path:
         raise HTTPException(status_code=404, detail="Письмо не прикреплено")
     _deal(db, row.deal_id, current_user)
-    full = os.path.join(UPLOADS_ROOT, row.rights_letter_path)
-    if not os.path.exists(full):
-        raise HTTPException(status_code=404, detail="Файл не найден в хранилище")
+    # Путь из базы — через общую проверку границы хранилища (`app/files_safe`).
+    # До 11.09.2026 она была ровно в одном месте из десяти.
+    full = existing_upload_path(row.rights_letter_path)
     return FileResponse(full, filename=row.rights_letter_name or "rights-letter",
                         media_type="application/octet-stream")
 
@@ -1283,10 +1287,7 @@ def drop_rights_letter(set_id: int, db: Session = Depends(get_db),
         raise HTTPException(status_code=400,
                             detail="Комплект отправлен — показанное площадке письмо не снимается")
     if row.rights_letter_path:
-        try:
-            os.remove(os.path.join(UPLOADS_ROOT, row.rights_letter_path))
-        except OSError:
-            pass
+        remove_upload(row.rights_letter_path)
     name = row.rights_letter_name
     row.rights_letter_path = row.rights_letter_name = None
     row.rights_letter_type = None
@@ -1817,7 +1818,17 @@ def _files_with_content(db: Session, set_id: int):
     out = []
     for f in db.query(LaunchPrepCreativeFile).filter(
             LaunchPrepCreativeFile.set_id == set_id).order_by(LaunchPrepCreativeFile.id):
-        full = os.path.join(UPLOADS_ROOT, f.path)
+        # Граница хранилища — ЗДЕСЬ она дороже, чем где-либо ещё: содержимое уходит в
+        # ОРД и регистрируется в ЕРИР необратимо. Отправить по испорченному пути чужой
+        # файл значит зарегистрировать его навсегда. Поэтому отказ, а не пропуск, и
+        # отдельным сообщением: «путь неверный» — это про запись в базе, «файла нет» —
+        # про диск, и чинятся они по-разному.
+        full = inside_uploads(f.path)
+        if full is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"У файла «{f.original_name}» некорректный путь в базе — "
+                       "отправка в ОРД отменена")
         try:
             with open(full, "rb") as fh:
                 content = base64.b64encode(fh.read()).decode()
@@ -1946,10 +1957,16 @@ def erid_readiness(set_id: int, db: Session = Depends(get_db),
         blockers.append({"code": "chain", "text": "не собрана договорная цепочка ОРД"})
     if not (brand.kktu_code if brand else None):
         blockers.append({"code": "kktu", "text": "не заполнен код ККТУ у бренда"})
+    # КОНТУР — в ответ. Выпуск маркера необратим: в ЕРИР запись не отзывается, а на демо
+    # остаётся мусор, который потом путает сверку. Человек у кнопки обязан видеть, куда
+    # именно уйдёт запрос, ДО нажатия, а не узнавать об этом из журнала (F2-01 внешнего
+    # аудита 11.09.2026: подтверждения не было вовсе, и контур на экране не показывался).
+    from app.ord import client as ord_client
     return {**st, "threshold": erid_threshold(db), "blockers": blockers,
             # Бренд отдаётся всегда, а не только когда он мешает: тем же ответом
             # живёт справочная строка «что проставлено», а не только отказ.
             "brand": _brand_marking_out(db, brand),
+            "ord_env": ord_client.env(),
             "erid": s.erid, "erid_source": s.erid_source, "ord_status": s.ord_status}
 
 

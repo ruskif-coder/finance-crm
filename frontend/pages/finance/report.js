@@ -1,10 +1,12 @@
 import Navbar from '@/components/Navbar'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
+import { pageAccess } from '@/lib/pageGuard'
 import Head from 'next/head'
 import { makeApi as api } from '@/lib/http'
 import { grpDash as fmt, pctDot as fmtPct } from '@/lib/salesFormat'
-import { UI, MONO, card, th, td, inp, primaryBtn } from '@/components/salesTableKit'
+import { UI, MONO, card, th, td, inp, primaryBtn, LoadError, NoAccessScreen } from '@/components/salesTableKit'
+import { errText, isAuth } from '@/lib/loadError'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const FinReportMobile = dynamic(() => import('@/components/mobile/FinReportMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
@@ -54,9 +56,18 @@ const Toggle = ({ value, onChange, options }) => (
 
 export default function FinReport() {
   const router = useRouter()
+  /* Прямая ссылка открывала экран и у того, кому раздел не открыт: меню пункт прячет,
+     адрес — нет. Дальше каждый экран вёл себя по-своему, и «нет доступа» читалось как
+     «сломалось». Решение о доступе принимает карта навигации — см. lib/pageGuard. */
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  const access = pageAccess(router.pathname, mounted)
   const isMobile = useIsMobile()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  // Текст сбоя загрузки. Пустая строка — сбоя не было; это НЕ то же самое,
+  // что «данных нет», и именно смешение двух состояний и было дефектом.
+  const [err, setErr] = useState('')
   const [expanded, setExpanded] = useState({})
   const [basis, setBasis] = useState('accrual')
   const [vat, setVat] = useState('net')
@@ -91,7 +102,7 @@ export default function FinReport() {
   }, [dateFrom, dateTo, basis, vat, granularity])
 
   const load = async (token) => {
-    setLoading(true)
+    setLoading(true); setErr('')
     try {
       const res = await api(token).get(
         `/finreport?basis=${basis}&vat=${vat}&granularity=${granularity}&date_from=${dateFrom}&date_to=${dateTo}`)
@@ -100,7 +111,9 @@ export default function FinReport() {
       res.data.groups.forEach(g => { e[g.key] = false })
       setExpanded(e)
     } catch (e) {
-      if (e.response?.status === 401) router.push('/login')
+      // Сбой НЕ выдаём за пустоту: финотчёт без данных — это «не смогли спросить»,
+      // а не «движений нет». Прежние данные не затираем.
+      if (!isAuth(e)) setErr(errText(e))
     } finally {
       setLoading(false)
     }
@@ -167,6 +180,12 @@ export default function FinReport() {
     </div>
   )
 
+  // Отказ рисуем ДО загрузки: ходить за данными, которых не отдадут, незачем.
+  if (access === 'denied') return (
+    <NoAccessScreen title="Фин. отчёт: нет доступа" what="Фин. отчёт"
+      nav={<><Head><title>Финансовый отчёт | Финансовый учёт</title></Head><Navbar /></>} />
+  )
+
   if (loading || !data) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
@@ -176,9 +195,19 @@ export default function FinReport() {
           {header}
           <div style={{ ...card, overflow: 'hidden' }}>
             {controls}
-            <div style={{ textAlign: 'center', padding: '80px 20px', color: 'var(--text-muted)', fontFamily: MONO, fontSize: 13 }}>
-              Загрузка отчёта...
-            </div>
+            {/* «Загрузка отчёта…» держалась ВЕЧНО при любом сбое: catch ловил
+                только 401, loading снимался, а data оставалась пустой — и человек
+                ждал того, что уже не придёт (F5-03). Теперь либо грузим, либо
+                объясняем. */}
+            {err ? (
+              <div style={{ padding: '28px 20px' }}>
+                <LoadError text={err} onRetry={() => load(localStorage.getItem('token'))} />
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '80px 20px', color: 'var(--text-muted)', fontFamily: MONO, fontSize: 13 }}>
+                Загрузка отчёта...
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -262,6 +291,14 @@ export default function FinReport() {
 
       <div style={{ padding: '20px 24px' }}>
         {header}
+
+        {/* Полоса нужна и тогда, когда цифры УЖЕ есть. Отчёт перезапрашивается при смене
+            «по оплате / по начислению», НДС и детализации: переключил тумблер, запрос
+            упал — и на экране остались цифры прежней базы под новым положением тумблера.
+            Молча. Ниже по странице есть блок «Загрузка отчёта…», но до него дело не
+            доходит: `data` не пустая. Это худший из случаев, ради которых заводился
+            loadError, и он оставался открытым до 11.09.2026. */}
+        {!!err && <LoadError text={err} onRetry={() => load(localStorage.getItem('token'))} />}
 
         <div style={{ ...card, overflow: 'hidden' }}>
           {controls}

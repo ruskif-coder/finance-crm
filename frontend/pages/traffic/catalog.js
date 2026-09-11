@@ -17,7 +17,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import Head from 'next/head'
-import Navbar, { can } from '@/components/Navbar'
+import Navbar, { can, getPermissions } from '@/components/Navbar'
 import { MONO, UI, card, CAP, btn, btnSm, inp, sel, th, td, chip }
   from '@/components/salesTableKit'
 import ValuePopover from '@/components/ValuePopover'
@@ -70,18 +70,38 @@ export default function TrafficCatalog() {
   const [vpop, setVpop] = useState(null)         // {rect, blockId, value} — выбор раздела
   const [adminTab, setAdminTab] = useState('blocks')   // вкладка админки: blocks | balancer | script
 
-  const mayEdit = can('traffic_catalog', 'edit')
-  const mayCreate = can('traffic_catalog', 'create')
-  const mayDelete = can('traffic_catalog', 'delete')
+  /* Права читаются ИЗ СНИМКА в localStorage, поэтому только после монтирования:
+     на сервере localStorage нет, и вычисление прямо в теле компонента дало бы
+     расхождение разметки. Аргументов у `can` ТРИ — `(perms, section, action)`;
+     вызов с двумя молча возвращал false всем, кроме админа (11.09.2026). */
+  const [rights, setRights] = useState({})
+  useEffect(() => {
+    const p = getPermissions()
+    setRights({ edit: can(p, 'traffic_catalog', 'edit'),
+                create: can(p, 'traffic_catalog', 'create'),
+                del: can(p, 'traffic_catalog', 'delete') })
+  }, [])
+  const mayEdit = !!rights.edit
+  const mayCreate = !!rights.create
+  const mayDelete = !!rights.del
 
   const loadPubs = useCallback(async () => {
-    const r = await api.get('/traffic-catalog/publishers', auth())
-    setPubs(r.data || [])
+    // Обработчика ошибки не было ВОВСЕ (не пустой catch, а необработанный отказ):
+    // каталог площадок оставался пустым, и это выглядело как «площадок нет».
+    try {
+      const r = await api.get('/traffic-catalog/publishers', auth())
+      setPubs(r.data || [])
+    } catch (e) {
+      setCodeErr('Каталог площадок не загрузился — обновите страницу')
+    }
   }, [])
   useEffect(() => { loadPubs() }, [loadPubs])
 
   useEffect(() => {
-    api.get('/traffic-catalog/page-types', auth()).then((r) => setTypes(r.data || [])).catch(() => {})
+    api.get('/traffic-catalog/page-types', auth()).then((r) => setTypes(r.data || []))
+      // Пустой справочник разделов = пустая выпадашка, которая читается как «значений
+      // нет», а не как «не смогли спросить».
+      .catch(() => setCodeErr('Справочник разделов не загрузился — выпадающий список пуст'))
   }, [])
 
   const openPub = async (id) => {

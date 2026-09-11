@@ -1,10 +1,13 @@
 import Navbar from '@/components/Navbar'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
+import { pageAccess } from '@/lib/pageGuard'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, ReferenceLine, CartesianGrid } from 'recharts'
 import Head from 'next/head'
 import { makeApi as api } from '@/lib/http'
 import { grpDash as fmt, pctDot as fmtPct } from '@/lib/salesFormat'
+import { errText, isAuth } from '@/lib/loadError'
+import { LoadError, LoadErrorScreen, NoAccessScreen } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const PlanFactMobile = dynamic(() => import('@/components/mobile/PlanFactMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
@@ -52,9 +55,18 @@ const deviationStyle = (diff) => ({
 
 export default function PlanFact() {
   const router = useRouter()
+  /* Прямая ссылка открывала экран и у того, кому раздел не открыт: меню пункт прячет,
+     адрес — нет. Дальше каждый экран вёл себя по-своему, и «нет доступа» читалось как
+     «сломалось». Решение о доступе принимает карта навигации — см. lib/pageGuard. */
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  const access = pageAccess(router.pathname, mounted)
   const isMobile = useIsMobile()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  // Текст сбоя загрузки. Пустая строка — сбоя не было; это НЕ то же самое,
+  // что «данных нет», и именно смешение двух состояний и было дефектом.
+  const [err, setErr] = useState('')
   const [expandedGroups, setExpandedGroups] = useState({})
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date(); d.setMonth(d.getMonth() - 11)
@@ -72,7 +84,7 @@ export default function PlanFact() {
   }, [dateFrom, dateTo])
 
   const load = async (token) => {
-    setLoading(true)
+    setLoading(true); setErr('')
     try {
       const res = await api(token).get(`/reports/plan-fact?date_from=${dateFrom}&date_to=${dateTo}`)
       setData(res.data)
@@ -80,7 +92,9 @@ export default function PlanFact() {
       res.data.groups.forEach(g => { expanded[g.group] = true })
       setExpandedGroups(expanded)
     } catch (e) {
-      if (e.response?.status === 401) router.push('/login')
+      // Сбой НЕ выдаём за пустоту: план-факт без данных — это «не смогли спросить»,
+      // а не «движений нет». Прежние данные не затираем.
+      if (!isAuth(e)) setErr(errText(e))
     } finally {
       setLoading(false)
     }
@@ -90,7 +104,20 @@ export default function PlanFact() {
     setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }))
   }
 
+
+  // Отказ рисуем ДО любой загрузки: ходить за данными, которых человеку не отдадут,
+  // незачем, а пустой экран он прочитает как поломку.
+  if (access === 'denied') return (
+    <NoAccessScreen title="План / Факт: нет доступа" what="План / Факт"
+      nav={<><Head><title>План/Факт | Финансовый учёт</title></Head><Navbar /></>} />
+  )
+
   if (loading) return <div style={{ textAlign: 'center', padding: '80px', color: 'var(--text-muted)' }}>Загрузка План/Факт...</div>
+  if (!data && err) return (
+    <LoadErrorScreen title="План/Факт не загрузился" text={err}
+      nav={<><Head><title>План/Факт | Финансовый учёт</title></Head><Navbar active="plan-fact" /></>}
+      onRetry={() => load(localStorage.getItem('token'))} />
+  )
   if (!data) return null
 
   if (isMobile) {
@@ -141,6 +168,11 @@ export default function PlanFact() {
             style={{ padding: '5px 8px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-card)', fontSize: '15px' }} />
         </div>
       </Navbar>
+
+      {/* Цифры ниже — от предыдущего удачного запроса; свежий не прошёл. Молчать
+          об этом нельзя: план-факт читают как утверждение о деньгах. */}
+      {!!err && <div style={{ padding: '12px 24px 0' }}>
+        <LoadError text={err} onRetry={() => load(localStorage.getItem('token'))} /></div>}
 
       <div style={{ padding: '20px 24px', maxWidth: 1920, margin: '0 auto' }}>
 

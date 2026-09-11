@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
-import Navbar, { can } from '../../../components/Navbar'
+import Navbar, { can, getPermissions } from '../../../components/Navbar'
 import { card, inp, btn, primaryBtn, th, td, MONO, UI } from '../../../components/salesTableKit'
 import { grp, fmtFull } from '../../../lib/salesFormat'
 // Токен НЕ вшит в синглтон — он передаётся `auth()` на каждый запрос
@@ -147,8 +147,9 @@ export default function AnnexAssembly() {
   // показываем: она всё равно вернула бы 403, а мёртвая кнопка тратит время каждый раз.
   const [mayViewContracts, setMayViewContracts] = useState(false)
   useEffect(() => {
-    setMayEdit(can('annexes', 'edit'))
-    setMayViewContracts(can('contracts', 'view'))
+    const perms = getPermissions()
+    setMayEdit(can(perms, 'annexes', 'edit'))
+    setMayViewContracts(can(perms, 'contracts', 'view'))
   }, [])
 
   const load = useCallback(async () => {

@@ -1,9 +1,12 @@
 import Navbar from '@/components/Navbar'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
+import { pageAccess } from '@/lib/pageGuard'
 import Head from 'next/head'
 import { makeApi as api } from '@/lib/http'
 import { grpDash as fmt, pctDot as fmtPct } from '@/lib/salesFormat'
+import { errText, isAuth } from '@/lib/loadError'
+import { LoadError, LoadErrorScreen, NoAccessScreen } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const PnlMobile = dynamic(() => import('@/components/mobile/PnlMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
@@ -36,9 +39,18 @@ const totalStyle = {
 
 export default function PL() {
   const router = useRouter()
+  /* Прямая ссылка открывала экран и у того, кому раздел не открыт: меню пункт прячет,
+     адрес — нет. Дальше каждый экран вёл себя по-своему, и «нет доступа» читалось как
+     «сломалось». Решение о доступе принимает карта навигации — см. lib/pageGuard. */
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  const access = pageAccess(router.pathname, mounted)
   const isMobile = useIsMobile()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  // Текст сбоя загрузки. Пустая строка — сбоя не было; это НЕ то же самое,
+  // что «данных нет», и именно смешение двух состояний и было дефектом.
+  const [err, setErr] = useState('')
   const [expandedGroups, setExpandedGroups] = useState({})
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date(); d.setMonth(d.getMonth() - 11)
@@ -56,7 +68,7 @@ export default function PL() {
   }, [dateFrom, dateTo])
 
   const loadPL = async (token) => {
-    setLoading(true)
+    setLoading(true); setErr('')
     try {
       const res = await api(token).get(`/reports/pl?date_from=${dateFrom}&date_to=${dateTo}`)
       setData(res.data)
@@ -65,7 +77,9 @@ export default function PL() {
       res.data.groups.forEach(g => { expanded[g.group] = true })
       setExpandedGroups(expanded)
     } catch (e) {
-      if (e.response?.status === 401) router.push('/login')
+      // Сбой НЕ выдаём за пустоту: P&L без данных — это «не смогли спросить»,
+      // а не «движений нет». Прежние данные не затираем.
+      if (!isAuth(e)) setErr(errText(e))
     } finally {
       setLoading(false)
     }
@@ -75,7 +89,21 @@ export default function PL() {
     setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }))
   }
 
+
+  // Отказ рисуем ДО любой загрузки: ходить за данными, которых человеку не отдадут,
+  // незачем, а пустой экран он прочитает как поломку.
+  if (access === 'denied') return (
+    <NoAccessScreen title="P&L: нет доступа" what="P&L"
+      nav={<><Head><title>P&L | Финансовый учёт</title></Head><Navbar /></>} />
+  )
+
   if (loading) return <div style={{ textAlign: 'center', padding: '80px', color: 'var(--text-muted)' }}>Загрузка P&L...</div>
+  // Показывать нечего И запрос не прошёл — говорим об этом, а не отдаём белый лист.
+  if (!data && err) return (
+    <LoadErrorScreen title="P&L не загрузился" text={err}
+      nav={<><Head><title>P&L | Финансовый учёт</title></Head><Navbar active="pl" /></>}
+      onRetry={() => loadPL(localStorage.getItem('token'))} />
+  )
   if (!data) return null
 
   if (isMobile) {
@@ -140,6 +168,23 @@ export default function PL() {
             style={{ padding: '5px 8px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-card)', fontSize: '15px' }} />
         </div>
       </Navbar>
+
+      {/* РЕЖИМ РАСЧЁТА — подписью, а не молча. Этот отчёт строится ПО ОПЛАТЕ и по
+          суммам С НДС, а финотчёт умеет ещё и по начислению и без НДС. Цифры
+          расходятся законно, расхождение закреплено прибором `test_report_agreement`,
+          и объяснять его каждый раз заново — это разговор, которого можно избежать
+          одной строкой (F2-26 аудита 11.09.2026). У финотчёта такая подпись уже была,
+          у P&L — нет. */}
+      <div style={{ padding: '10px 24px 0', fontSize: 12, color: 'var(--text-muted)' }}>
+        по оплате · суммы с НДС · разметка статей (<code>pl_line</code>);
+        неразмеченное — в «Требует разметки». Финансовый отчёт умеет те же данные
+        по начислению и без НДС, поэтому его итоги законно отличаются.
+      </div>
+
+      {/* Показанные цифры — от ПРЕДЫДУЩЕГО удачного запроса. Не затираем их, но и не
+          выдаём за свежие: полоса говорит, что обновление не прошло. */}
+      {!!err && <div style={{ padding: '12px 24px 0' }}>
+        <LoadError text={err} onRetry={() => loadPL(localStorage.getItem('token'))} /></div>}
 
       <div style={{ padding: '20px 24px' }}>
         <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', overflow: 'auto' }}>

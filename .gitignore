@@ -26,7 +26,13 @@ backend/logs/
 
 # Internal docs and planning files — local only
 CLAUDE.md
-docs/
+# Каталог целиком локальный: там внутренние документы с именами контрагентов и планы.
+# Но ОДНА папка внутри обязана доезжать — runbook'и эксплуатации. Записано парой
+# `docs/*` + негация, а не `docs/` с негацией ниже: git НЕ заходит внутрь исключённого
+# каталога, и `!docs/runbooks/` при правиле `docs/` не работает вовсе — проверено
+# `git check-ignore` 11.09.2026. Ровно на этом молча терялся бы любой новый runbook.
+docs/*
+!docs/runbooks/
 
 # SQL — дампы и разовые скрипты держим локально, они содержат данные
 *.sql
@@ -65,6 +71,9 @@ uploads/
 # Keep DEPLOYMENT.md and README if present
 !DEPLOYMENT.md
 !README.md
+# Runbook'и эксплуатации — исключение из правила `*.md` выше. Сам каталог разрешён
+# парой `docs/*` + негация в блоке про docs; без ОБЕИХ правок файл не доедет.
+!docs/runbooks/**
 
 # OS
 .DS_Store

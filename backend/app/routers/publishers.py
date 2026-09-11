@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session, selectinload
 from pydantic import BaseModel
 from typing import Optional, List
 
+from app.files_safe import existing_upload_path, remove_upload
 from app.database import get_db
 from app.models import User, Counterparty, Contract, Operation, Article
 from app.permissions import require_any_permission
@@ -1091,10 +1092,10 @@ async def upload_contract_document(publisher_id: int, link_id: int, file: Upload
                   SalesPublisherContract.publisher_id == publisher_id).first())
     if not lk:
         raise HTTPException(status_code=404, detail="Договор не найден")
+    # Замена файла стирает прежний — через общую проверку границы, тем же корнем,
+    # каким его отдаёт скачивание.
     if lk.document_filename:
-        old = os.path.join(UPLOADS_DIR, lk.document_filename)
-        if os.path.exists(old):
-            os.remove(old)
+        remove_upload(lk.document_filename, root=UPLOADS_DIR)
     stored = await _save_upload(file, link_id, "con")
     lk.document_filename = stored
     lk.document_path = os.path.join(UPLOADS_DIR, stored)
@@ -1113,9 +1114,9 @@ def download_contract_document(publisher_id: int, link_id: int, db: Session = De
                   SalesPublisherContract.publisher_id == publisher_id).first())
     if not lk or not lk.document_filename:
         raise HTTPException(status_code=404, detail="Документ не приложен")
-    path = os.path.join(UPLOADS_DIR, lk.document_filename)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Файл не найден на сервере")
+    # Путь из базы — через общую проверку границы хранилища (`app/files_safe`).
+    # До 11.09.2026 она была ровно в одном месте из десяти.
+    path = existing_upload_path(lk.document_filename, root=UPLOADS_DIR)
     return FileResponse(path, filename=_original_name(link_id, lk.document_filename, "con"),
                         media_type="application/octet-stream")
 
@@ -1225,9 +1226,9 @@ def download_document(publisher_id: int, doc_id: int, db: Session = Depends(get_
                  SalesPublisherDocument.publisher_id == publisher_id).first())
     if not d:
         raise HTTPException(status_code=404, detail="Документ не найден")
-    path = os.path.join(UPLOADS_DIR, d.filename)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Файл не найден на сервере")
+    # Путь из базы — через общую проверку границы хранилища (`app/files_safe`).
+    # До 11.09.2026 она была ровно в одном месте из десяти.
+    path = existing_upload_path(d.filename, root=UPLOADS_DIR)
     return FileResponse(path, filename=_original_name(d.id, d.filename, "doc"),
                         media_type="application/octet-stream")
 
@@ -1240,9 +1241,7 @@ def delete_document(publisher_id: int, doc_id: int, db: Session = Depends(get_db
                  SalesPublisherDocument.publisher_id == publisher_id).first())
     if not d:
         raise HTTPException(status_code=404, detail="Документ не найден")
-    path = os.path.join(UPLOADS_DIR, d.filename)
-    if os.path.exists(path):
-        os.remove(path)
+    remove_upload(d.filename, root=UPLOADS_DIR)
     db.delete(d)
     db.commit()
     log_action(db, current_user, "delete_publisher_document", "sales_publisher", publisher_id,

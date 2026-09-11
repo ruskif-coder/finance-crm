@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, Fragment, useCallback } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
-import Navbar, { can } from '@/components/Navbar'
+import Navbar, { can, getPermissions } from '@/components/Navbar'
 import { MONO, UI, card, CAP, btnSm, sel, inp, PIP, STAGE_ORDER, FILL, StageLayerBar,
          MultiDrop, GAP_FIELDS, IconBtn, PortalPopover, ROW_TONE, CTA_TONE, ctaStyle, UNVERIFIED_BORDER } from '@/components/salesTableKit'
 import NotificationsWidget, { toItem } from '@/components/dashboard/NotificationsWidget'
@@ -236,7 +236,12 @@ export default function AccountDashboard() {
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
 
-  const canEdit = can('accounts_dashboard', 'edit')
+  /* Права читаются ИЗ СНИМКА в localStorage, поэтому только после монтирования:
+     на сервере localStorage нет, и вычисление прямо в теле компонента дало бы
+     расхождение разметки. Аргументов у `can` ТРИ — `(perms, section, action)`;
+     вызов с двумя молча возвращал false всем, кроме админа (11.09.2026). */
+  const [canEdit, setCanEdit] = useState(false)
+  useEffect(() => { setCanEdit(can(getPermissions(), 'accounts_dashboard', 'edit')) }, [])
   const myName = useMemo(() => (reps.find(r => r.id === myRepId) || {}).name, [reps, myRepId])
 
   const load = useCallback(() => {

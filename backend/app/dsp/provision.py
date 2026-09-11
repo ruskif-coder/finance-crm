@@ -30,6 +30,7 @@ from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.dsp import creatives as cr
 from app.dsp.campaigns import ensure_campaign
 from app.dsp.client import MsClient, MsError
+from app.files_safe import inside_uploads
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepPair,
                                     LaunchPrepTarget)
 from app.sales.models import SalesPublisher
@@ -142,7 +143,12 @@ def plan(db: Session, camp: AdCampaign) -> dict:
 
 
 def _read_archive(f: LaunchPrepCreativeFile) -> bytes:
-    path = os.path.join(UPLOADS_ROOT, f.path or "")
+    # Граница хранилища обязательна: содержимое уходит в DSP и там становится боевым
+    # креативом. Отправить по испорченному пути чужой файл значит загрузить его в
+    # рекламную сеть под нашим именем — отсюда отказ, а не пропуск.
+    path = inside_uploads(f.path)
+    if path is None:
+        raise DspProvisionError(f"некорректный путь файла в базе: {f.path}")
     if not os.path.exists(path):
         raise DspProvisionError(f"файл не найден в хранилище: {f.path}")
     with open(path, "rb") as fh:

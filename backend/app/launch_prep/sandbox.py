@@ -31,6 +31,8 @@ import shutil
 import zipfile
 from typing import Optional, Tuple
 
+from app.files_safe import inside_uploads
+
 # Каталог песочницы внутри общего хранилища. Отдельный от `creatives/`: там лежат
 # исходные архивы под нашей авторизацией, здесь — распакованное под раздачу наружу.
 SANDBOX_DIR = "sandbox"
@@ -54,10 +56,14 @@ class SandboxError(RuntimeError):
 
 
 def _is_inside(root: str, target: str) -> bool:
-    """Ведёт ли путь ВНУТРЬ каталога. Сравниваем разрешённые пути, а не строки."""
-    root = os.path.realpath(root)
-    target = os.path.realpath(target)
-    return target == root or target.startswith(root + os.sep)
+    """Ведёт ли путь ВНУТРЬ каталога. Сравниваем разрешённые пути, а не строки.
+
+    Внутри — общая проверка `app/files_safe.inside_uploads`, чтобы правило было одним
+    на весь проект: здесь оно раньше жило четвёртой копией, и разойтись копиям мешало
+    только то, что их никто не трогал. Подпись оставлена прежней — тут удобнее спросить
+    «внутрь ли этого каталога», а не «внутрь ли хранилища».
+    """
+    return inside_uploads(os.path.relpath(target, root), root=root) is not None
 
 
 def _pick_entry(names) -> Optional[str]:
@@ -208,7 +214,13 @@ def read_size(uploads_root: str, token: str, entry: str) -> Optional[str]:
     написано внутри. Нули — законный ответ: так помечают адаптивный баннер, и выдумывать
     ему размер нельзя, он тянется по контейнеру.
     """
-    path = os.path.join(uploads_root, SANDBOX_DIR, token, entry)
+    # `token` и `entry` приходят из базы, и читать по ним файл без проверки границы
+    # значит доверять записи больше, чем можно: испорченная строка увела бы чтение за
+    # пределы песочницы. Размер наружу отдаётся маленький, но путь — тот же класс.
+    path = inside_uploads(os.path.join(token, entry),
+                          root=uploads_root, subdir=SANDBOX_DIR)
+    if path is None:
+        return None
     try:
         with open(path, 'r', encoding='utf-8', errors='ignore') as fh:
             head = fh.read(8192)          # мета живёт в начале документа

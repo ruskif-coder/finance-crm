@@ -1,57 +1,95 @@
 # Finance CRM
 
-Internal financial management system — cash flow, P&L, balance sheet, receivables, and counterparty registry.
+Внутренняя система компании. Начиналась как финансовый учёт, сегодня закрывает путь
+сделки целиком: от годового плана и медиаплана до открутки рекламной кампании, маркировки
+в ЕРИР и закрывающих документов.
 
-## Stack
+## Контуры
 
-| Layer | Technology |
-|-------|-----------|
-| Backend | FastAPI 0.111 · SQLAlchemy 2.0 · PostgreSQL 16 |
-| Frontend | Next.js 14 · React 18 · Recharts |
-| Proxy | Caddy (automatic HTTPS) |
-| Runtime | Docker Compose on Windows 11 / Docker Desktop |
+| контур | что внутри |
+|---|---|
+| **Финансы** | ДДС, P&L, баланс, план-факт, дебиторка, журнал операций, финотчёт |
+| **Продажи** | реестр сделок, воронки и стадии, годовое планирование, медиапланы, приложения к договору |
+| **Аккаунты** | дашборд «что делать», сборка запуска, согласование креативов, справочник ОРД |
+| **Траффики** | дашборд открутки РК, очередь креативов на проверку, админка блоков и балансировщик |
+| **Справочники** | контрагенты, договоры, рекламодатели, агентства, площадки, услуги |
+| **Кабинет паблишера** | отдельное приложение на своём домене: площадка видит задания и отвечает вердиктом |
 
-## Features
+Внешние системы, с которыми система разговаривает: **Битрикс24** (источник сделок),
+**ОРД** (маркировка, ЕРИР), **DSP** (заведение кампаний и креативов), **Weborama**
+(верификация показов), **Диадок** (закрывающие документы).
 
-- DDS (cash flow) with bank breakdown and charts
-- P&L by article group (ВЫРУЧКА / СЕБЕСТОИМОСТЬ / ОПЕРАЦИОННЫЕ / МАРКЕТИНГ / НАЛОГИ)
-- Balance sheet with bank balances
-- Plan-fact comparison
-- Receivables aging report
-- Operations journal with bulk edit and Excel import/export
-- Counterparty registry with requisites and contract cards
-- Contract registry (linked to counterparties, file attachments, EDO status)
-- Role-based access control (RBAC) with audit log
-- JWT authentication with login lockout
+## Стек
 
-## Quick start
+| слой | чем |
+|---|---|
+| Бэкенд | FastAPI 0.118 · SQLAlchemy 2.0 · PostgreSQL 16 |
+| Аналитика DSP | отдельная база на TimescaleDB |
+| Фронтенд | Next.js 14 · React 18 · Recharts |
+| Печать | сайдкар на Node + Chromium |
+| Прокси | Caddy (HTTPS автоматом) |
+| Запуск | Docker Compose, **восемь сервисов** |
+
+Прод — Ubuntu VPS, `timon.simbad.pro`. Windows-машина только для разработки.
+
+## Запуск
 
 ```bash
-# Copy .env.example to .env and fill in secrets
-cp .env.example .env
-
-# Start all services
+cp .env.example .env      # заполнить секреты
 docker compose up -d
 ```
 
-Open **http://localhost** (through Caddy on port 80).  
-Do **not** use http://localhost:3000 directly — API calls will fail.
+Открывать **только `http://localhost`** (порт 80, через Caddy). На `:3000` напрямую
+относительный путь `/api` не резолвится, и любая ошибка выглядит как «неверный пароль».
 
-## Deployment
+## Правка кода — главная готча проекта
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for the full runbook: domain, DNS, router port-forwarding, and going live on the public internet.
+**Код запечён в образы.** `F:\finance` в контейнеры не смонтирован, поэтому правка файла
+на диске сама по себе **не меняет ничего**: бэкенд работает с файлами внутри контейнера,
+а фронт отдаёт собранный `.next`. Файл сначала кладут внутрь, и только потом перезапуск
+имеет смысл.
 
-## Development notes
+```bash
+# бэкенд — рестарт перечитывает скопированное (наблюдателя за файлами в образе нет)
+docker cp backend/app/<путь> finance_backend:/app/app/<путь>
+docker restart finance_backend
 
-- Frontend runs in **production mode** (`next build` + `next start`). Any frontend change requires a rebuild inside the container:
-  ```bash
-  docker exec finance_frontend sh -c "rm -rf /app/.next && npm run build"
-  docker restart finance_frontend
-  ```
-- Backend runs `uvicorn --reload` — a `docker restart finance_backend` is enough after backend changes.
-- Push files into containers from `cmd.exe` (not PowerShell) to avoid Cyrillic encoding issues.
-- Run `deploy_finance.bat` for a full backup → rebuild → redeploy cycle.
+# фронт — только с пересборкой
+docker cp frontend/<путь> finance_frontend:/app/<путь>
+docker exec finance_frontend sh -c "cd /app && rm -rf .next && npm run build"
+docker restart finance_frontend
+```
 
-## License
+Полная процедура со всеми граблями — в навыке `deploying-locally` (`.claude/skills/`).
+Копирование каталога целиком требует суффикса `/.`, иначе Docker вложит папку в себя.
 
-Private and confidential. See [LICENSE](LICENSE).
+## Гейты
+
+Один вход на всё: `docker exec finance_backend pytest` (в него входит и `ruff` через
+`tests/test_lint.py`). Фронт — `npm run lint` и `npm run build`; сборке предшествует
+`prebuild` с пятью сторожами:
+
+| сторож | что не пускает |
+|---|---|
+| `check-nav` | экран без адреса в карте навигации |
+| `check-money` | свой форматтер денег вместо общего |
+| `check-overlay` | подложку модалки мимо `overlayClose` |
+| `check-inline` | компонент, объявленный внутри рендера (слетает фокус) |
+| `check-perms` | вызов `can()` с именем раздела вместо снимка прав |
+
+Автоматического прогона (CI) нет — гейты запускаются руками.
+
+## Схема базы
+
+Alembic убран. Изменения схемы — сырой SQL в `backend/migrations/`, накат по одному файлу
+в порядке из `backend/migrations/README.md`. Разовые правки данных — скрипты в
+`backend/scripts/`, запускаются модулем: `docker exec finance_backend python -m scripts.<имя>`.
+
+## Выкладка
+
+[DEPLOYMENT.md](DEPLOYMENT.md) — контур эксплуатации и пошаговые runbook'и: бэкап,
+восстановление, накат миграций, включение боевой записи в ОРД, принятые риски.
+
+## Лицензия
+
+Private and confidential. См. [LICENSE](LICENSE).

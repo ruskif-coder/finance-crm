@@ -238,11 +238,27 @@ class WcmClient:
         return self.call("GET", f"/advertiser/insertions/{insertion_id}/tags.json")
 
     def ad_spaces_all(self, page: int = 500, cap: int = 5000) -> list:
-        """ВСЕ ad_space аккаунта, страницами.
+        """ВСЕ ad_space аккаунта, страницами. Единственный способ получить каталог.
+
+        Метода СОЗДАНИЯ ad_space у Weborama нет — выяснилось 09.09.2026 и обрывало цепочку
+        на предпоследнем шаге. Их ответ: пул заводится на их стороне, а нам доступен этот
+        список. Значит наша задача не «создать», а «выбрать правильный» —
+        см. `matching.match_ad_space`.
 
         Ответ постраничный: `items_per_page` по умолчанию **50**, а всего их 1080 (замер
         09.09.2026). Взять первую страницу и решить, что это весь каталог, — самая дешёвая
         и самая тихая ошибка здесь.
+
+        РЯДОМ БЫЛ ВТОРОЙ МЕТОД `ad_spaces()`, и он не работал. Он слал `format=json`
+        ПАРАМЕТРОМ, хотя формат у них — часть пути (`ad_spaces.json`). Неизвестный
+        параметр Weborama подставляет в SQL как имя колонки, и запрос падал с
+        `Unknown column 'format' in 'where clause'` — 500 с их стороны. Замерено
+        11.09.2026: тот же путь без `format` отдаёт данные, с ним — ошибку.
+
+        Метод удалён, а не починен: работающий он вернул бы ПЕРВУЮ страницу из 1080
+        записей и выглядел бы как «весь список» — ровно ловушка, от которой
+        предостерегает абзац выше. Звать его никто не звал, и это было его единственным
+        достоинством.
         """
         from app.weborama.matching import _rows, total_result
         out, off = [], 0
@@ -256,16 +272,6 @@ class WcmClient:
             if not got or (total is not None and off >= total):
                 break
         return out
-
-    def ad_spaces(self) -> Any:
-        """Весь список ad_space аккаунта.
-
-        Метода СОЗДАНИЯ ad_space у них нет — это выяснилось 09.09.2026 и обрывало цепочку
-        на предпоследнем шаге. Ответ Weborama: пул заводится на их стороне, а нам доступен
-        этот список (`/advertiser/ad_spaces.:format`). Значит наша задача не «создать», а
-        «выбрать правильный» — см. `matching.match_ad_space`.
-        """
-        return self.call("GET", "/advertiser/ad_spaces.json", params={"format": "json"})
 
     def ad_space_insertions(self, ad_space_id) -> Any:
         return self.call("GET", f"/advertiser/ad_spaces/{ad_space_id}/insertions.json")

@@ -1,6 +1,13 @@
+# Версии образов ЗАКРЕПЛЕНЫ. `latest` и major-only означают, что следующая пересборка
+# может принести другой образ — и узнаем мы об этом по поведению, а не по решению.
+# Особенно это касается Timescale: там политики и API continuous aggregate меняются
+# между минорными, а на них держится суточный срез. Значения — те, что реально крутятся
+# на 11.09.2026 (замер: postgres 16.14, timescaledb 2.29.2, caddy 2.11.4).
+# Обновление версии — отдельная осознанная правка, а не побочный эффект `up --build`.
+
 services:
   db:
-    image: postgres:16
+    image: postgres:16.14
     container_name: finance_db
     restart: always
     environment:
@@ -28,7 +35,7 @@ services:
   # только суточный срез (ad_campaign_stat). Порт только на 127.0.0.1. Схема —
   # backend/migrations/dsp/2026-09-02_dsp_analytics.sql (накат: docker exec -i finance_dsp_db psql).
   dsp_analytics_db:
-    image: timescale/timescaledb:latest-pg16
+    image: timescale/timescaledb:2.29.2-pg16
     container_name: finance_dsp_db
     # Без этой строки сервис не переживает перезапуск докера — и был единственным таким
     # из восьми (найдено 07.09.2026: контейнер лежал три часа, а соседние поднялись сами).
@@ -122,6 +129,29 @@ services:
     volumes:
       - ./backend/logs:/app/logs
       - ./uploads:/app/uploads   # персистентное хранилище прикреплённых файлов договоров
+      # Каталог бэкапов — ТОЛЬКО НА ЧТЕНИЕ. Без него проверка свежести на экране
+      # состояния отдаёт «нет доступа», а пороги 26/48 ч не срабатывают никогда: умерший
+      # cron и пустые дампы не попадают в оповещения (F3-09 внешнего аудита 11.09.2026).
+      #
+      # Источник задаётся переменной: на проде каталогов исторически несколько — ручной
+      # из `deploy.sh` и автоматический из сервиса бэкапов, — и смонтировать не тот
+      # значит смотреть на чужие старые файлы и считать их свежими. `BACKUPS_DIR` в .env
+      # выбирает ТОТ ЖЕ каталог, куда пишет `deploy.sh backup`; имя самого свежего файла
+      # видно в подписи проверки, так что ошибку монтажа видно с экрана.
+      - ${BACKUPS_DIR:-./backups}:/app/backups:ro
+    # Проверка живости. Её не было ни у одного приложения — только у двух баз, и
+    # «контейнер up» означало лишь «процесс не вышел»: зависший uvicorn или Next,
+    # отдающий 500 на всё, выглядели здоровыми. Инструмент внутри образа выбран по
+    # факту: в python-образах нет ни curl, ни wget, в node-образах нет python
+    # (замер 11.09.2026).
+    # `depends_on: service_healthy` НЕ добавляем — это изменило бы порядок старта всего
+    # контура; здесь только видимость состояния.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/', timeout=4).status==200 else 1)\""]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 40s
     # См. комментарий у db.ports — то же рассуждение: прямой доступ снаружи этой машины
     # не нужен, единственная публичная точка входа — caddy (80/443).
     ports:
@@ -137,6 +167,13 @@ services:
     # См. комментарий у db.ports.
     ports:
       - "127.0.0.1:3000:3000"
+    # Проверка живости — см. комментарий у backend.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/login || exit 1"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 40s
     mem_limit: 512m
 
   # ── Кабинет паблишера: ОТДЕЛЬНЫЙ контур ────────────────────────────────────────
@@ -166,6 +203,13 @@ services:
       CORE_API_URL: http://backend:8000
     ports:
       - "127.0.0.1:8001:8001"
+    # Проверка живости — см. комментарий у backend.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/api/health', timeout=4).status==200 else 1)\""]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 40s
     mem_limit: 512m
 
   cabinet_frontend:
@@ -176,6 +220,13 @@ services:
       - cabinet_backend
     ports:
       - "127.0.0.1:3001:3000"
+    # Проверка живости — см. комментарий у backend.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 40s
     mem_limit: 512m
 
   # PDF-сайдкар: headless Chromium (Playwright) рендерит страницу медиаплана в нативный
@@ -188,6 +239,13 @@ services:
       - frontend
     environment:
       FRONTEND_URL: http://frontend:3000
+    # Проверка живости — см. комментарий у backend.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3001/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 40s
     mem_limit: 1024m
 
   # Reverse proxy: единственный сервис, слушающий на всех интерфейсах (0.0.0.0:80/443).
@@ -200,7 +258,7 @@ services:
   # (DOMAIN=ваш-домен) только после того как DNS A-запись и проброс портов 80/443 настроены —
   # см. DEPLOYMENT.md.
   caddy:
-    image: caddy:2
+    image: caddy:2.11.4
     container_name: finance_caddy
     restart: always
     depends_on:

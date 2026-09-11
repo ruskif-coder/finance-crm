@@ -16,10 +16,11 @@
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api, { auth } from '@/lib/api'
-import { MONO, UI, inp, btn, PickValue, EXT_TONE, ExtChip } from '@/components/salesTableKit'
+import { MONO, UI, inp, btn, PickValue, EXT_TONE, ExtChip, Modal } from '@/components/salesTableKit'
 import BrandMarkingDialog, { saveBrandMarking } from '../ord/BrandMarking'
 import ValuePopover from '@/components/ValuePopover'
 import { overlayClose } from '@/lib/overlay'
+import { can, getPermissions } from '@/lib/auth'
 
 const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
 const BOX = { border: '1px solid var(--border-card)', borderRadius: 14, padding: '14px 16px', background: 'var(--bg-card)' }
@@ -764,6 +765,17 @@ function EridBlock({ set, onChanged }) {
   const [busy, setBusy] = useState(false)
   const [foreign, setForeign] = useState('')
   const [marking, setMarking] = useState(null)
+  // Подтверждение выпуска маркера. Держим состоянием, а не window.confirm: в окне
+  // надо показать КОНТУР и слово «необратимо», а системный диалог этого не умеет.
+  const [askErid, setAskErid] = useState(false)
+  // Право на отправку в ОРД. Самое необратимое действие в системе не имело клиентской
+  // проверки вовсе: кнопка была видна и нажималась всеми, кто видит комплект, а отказ
+  // приходил ответом 403 уже ПОСЛЕ подтверждения с контуром и словом «необратимо».
+  // Сервер гейтит ручку под `ord_submit:create` (routers/launch_prep.py), здесь тот же
+  // ключ. `null` — «ещё не знаю»: снимок прав живёт в localStorage и на сервере его нет,
+  // а `false` с первого кадра прятал бы кнопку у того, кому она положена.
+  const [maySubmit, setMaySubmit] = useState(null)
+  useEffect(() => { setMaySubmit(can(getPermissions(), 'ord_submit', 'create')) }, [])
 
   const reload = useCallback(() => {
     api.get(`/launch-prep/set/${set.id}/erid-readiness`, auth())
@@ -844,6 +856,42 @@ function EridBlock({ set, onChanged }) {
           Причина нехватки осталась выше блокером: он появляется только когда кода нет,
           то есть это не шум, а объяснение, почему маркер не выпускается. */}
 
+      {/* Выпуск маркера НЕОБРАТИМ: боевую запись в ЕРИР не отозвать, а на демо-контуре
+          остаётся мусор, который потом путает сверку. До 11.09.2026 это был один клик
+          без вопроса, и контур на экране не показывался вовсе. */}
+      {askErid && (() => {
+        const prod = (st.ord_env || '').toLowerCase() === 'prod'
+        return (
+          <Modal width={520} title="Выпустить ЕРИД" onClose={() => setAskErid(false)}
+            summary={`Комплект №${set.no ?? set.id} · площадок в отправке: ${st.sent ?? 0}`}
+            footer={(
+              <span style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button style={btn(false)} onClick={() => setAskErid(false)}>Отмена</button>
+                <button style={btn(true)} disabled={busy}
+                  onClick={() => { setAskErid(false); call(() => api.post(`/launch-prep/set/${set.id}/erid`, {}, auth())) }}>
+                  {prod ? 'Выпустить в БОЕВОЙ реестр' : 'Выпустить на демо-контуре'}
+                </button>
+              </span>
+            )}>
+            <div style={{ fontSize: 13, lineHeight: 1.6, display: 'grid', gap: 10 }}>
+              <div style={{ padding: '9px 12px', borderRadius: 9, fontSize: 12.5,
+                background: prod ? 'var(--danger-tint)' : 'var(--warning-tint)',
+                color: prod ? 'var(--danger)' : 'var(--warning-text)' }}>
+                Контур ОРД: <b>{st.ord_env || 'неизвестен'}</b>.{' '}
+                {prod
+                  ? 'Запись уходит в реестр НАВСЕГДА — отозвать её нельзя.'
+                  : 'Это тренировочный контур: объект создастся у оператора и останется там мусором.'}
+              </div>
+              <div>Маркер выпускается на весь комплект сразу и проставляется всем площадкам,
+                которые его получили. Повторный выпуск сервер отклонит.</div>
+              <div style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>
+                Маркер приходит сразу, а регистрация в реестре идёт асинхронно — статус
+                подтянется кнопкой «Обновить статус».</div>
+            </div>
+          </Modal>
+        )
+      })()}
+
       {!!marking && (
         <BrandMarkingDialog brand={marking} onClose={() => setMarking(null)}
           onSave={async (payload) => {
@@ -856,11 +904,17 @@ function EridBlock({ set, onChanged }) {
       {!!err && <div style={{ marginTop: 7, fontSize: 12, color: 'var(--dot-overdue)' }}>{err}</div>}
 
       <div style={{ display: 'flex', gap: 7, marginTop: 9, flexWrap: 'wrap', alignItems: 'center' }}>
-        {!set.erid && !st.blockers?.length && (
-          <button style={{ ...btn(true), padding: '4px 11px', fontSize: 12 }} disabled={busy}
-            onClick={() => call(() => api.post(`/launch-prep/set/${set.id}/erid`, {}, auth()))}>
+        {!set.erid && !st.blockers?.length && maySubmit !== false && (
+          <button style={{ ...btn(true), padding: '4px 11px', fontSize: 12 }}
+            disabled={busy || maySubmit !== true}
+            onClick={() => setAskErid(true)}>
             Выпустить ЕРИД
           </button>
+        )}
+        {!set.erid && !st.blockers?.length && maySubmit === false && (
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            Комплект готов к выпуску ЕРИД — права на отправку в ОРД у вас нет
+          </span>
         )}
         {!!set.erid && own && (
           <button style={{ ...btn(false), padding: '4px 11px', fontSize: 12 }} disabled={busy}

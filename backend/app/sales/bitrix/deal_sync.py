@@ -14,6 +14,7 @@ from datetime import datetime, date
 import httpx
 from sqlalchemy.orm import Session
 
+from app.files_safe import inside_uploads, remove_upload
 from app.sales.bitrix.transport import vibecode_get
 from app.sales.models import SalesDeal, SalesRep, SalesAdvertiser, SalesBrand, SalesDealFile
 
@@ -150,6 +151,79 @@ def _resolve_brand_id(db, text, advertiser_id):
     return None, f"бренд «{text}» неоднозначен ({len(cand)})"
 
 
+# Куда нам ВООБЩЕ можно ходить за файлами сделки. Адрес приходит из ответа портала, то
+# есть из поля, которое заполняется на чужой стороне. Без этого списка испорченное или
+# подменённое значение увело бы наш запрос куда угодно — включая адреса внутренней
+# docker-сети, куда снаружи не достучаться, а изнутри бэкенда легко (класс SSRF,
+# находка F5-05 внешнего аудита 11.09.2026).
+#
+# Совпадение по СУФФИКСУ домена, а не по подстроке: проверка `"bitrix24.ru" in host`
+# пропустила бы `bitrix24.ru.чужой-домен.tld`.
+FILE_HOST_SUFFIXES = (".bitrix24.ru", ".bitrix24.tech", ".bitrix24.com")
+
+
+def _allowed_file_url(url: str) -> bool:
+    from urllib.parse import urlparse
+    try:
+        u = urlparse(url)
+    except ValueError:
+        return False
+    if u.scheme != "https":
+        return False
+    host = (u.hostname or "").lower()
+    return any(host == s.lstrip(".") or host.endswith(s) for s in FILE_HOST_SUFFIXES)
+
+
+# Потолок на размер скачиваемого файла. У контейнера `mem_limit: 512m`, а `r.content`
+# буферизует ответ ЦЕЛИКОМ: ответ на гигабайт (или бесконечный поток) убивал процесс —
+# и не по злому умыслу, достаточно испорченного поля. В договорах и медиапланах
+# 50 МБ с большим запасом; сравните с 20 МБ, которыми ограничена ручная загрузка.
+FILE_MAX_BYTES = 50 * 1024 * 1024
+
+# Сколько переадресаций разрешаем. Ноль был бы честнее всего, но портал отдаёт файлы
+# через 302 на своё же файловое хранилище, и это законный ход.
+FILE_MAX_REDIRECTS = 5
+
+
+def _fetch_allowed(url: str):
+    """Скачать, ПРОВЕРЯЯ адрес на каждом шаге переадресации.
+
+    ЗАЧЕМ. Белый список выше проверял только первый адрес, а запрос шёл с
+    `follow_redirects=True`. httpx идёт по переадресации на ЛЮБОЙ хост и любую схему —
+    то есть портал (или тот, кто подменил поле) одним ответом `302 Location:
+    http://finance_db:5432/...` уводил наш запрос внутрь docker-сети, и тело писалось
+    на диск как файл сделки. Проверка давала ложное чувство закрытости: она стояла до
+    запроса и после него не повторялась ни разу (найдено 11.09.2026).
+
+    Поэтому переадресации разматываем сами и каждый следующий адрес прогоняем через тот
+    же `_allowed_file_url`. Заодно читаем потоком и обрываемся на потолке размера.
+    """
+    from urllib.parse import urljoin
+    seen = 0
+    cur = url
+    while True:
+        if not _allowed_file_url(cur):
+            raise ValueError("переадресация увела за пределы Битрикса")
+        with httpx.stream("GET", cur, timeout=120, follow_redirects=False) as r:
+            if r.status_code in (301, 302, 303, 307, 308):
+                seen += 1
+                if seen > FILE_MAX_REDIRECTS:
+                    raise ValueError("слишком много переадресаций")
+                loc = r.headers.get("location")
+                if not loc:
+                    raise ValueError("переадресация без адреса")
+                cur = urljoin(cur, loc)
+                continue
+            r.raise_for_status()
+            body = bytearray()
+            for chunk in r.iter_bytes():
+                body += chunk
+                if len(body) > FILE_MAX_BYTES:
+                    raise ValueError(
+                        f"файл больше {FILE_MAX_BYTES // 1024 // 1024} МБ — не скачиваю")
+            return bytes(body), dict(r.headers)
+
+
 def _download_file(db, deal, field_val, kind):
     """Скачивает файл по urlMachine (со встроенным токеном) в персистентный том."""
     item = _first(field_val)
@@ -159,16 +233,22 @@ def _download_file(db, deal, field_val, kind):
     fid = str(item.get("id") or "")
     if not url:
         return None, f"нет urlMachine у файла ({kind})"
+    if not _allowed_file_url(url):
+        # Адрес в отчёт НЕ кладём целиком: в нём токен доступа, а отчёт синка виден
+        # оператору и попадает в журнал.
+        from urllib.parse import urlparse
+        host = (urlparse(url).hostname or "?") if "//" in url else "?"
+        return None, (f"файл {kind}: адрес не из Битрикса ({host}) — не скачиваю")
     existing = (db.query(SalesDealFile)
                 .filter(SalesDealFile.deal_id == deal.id, SalesDealFile.kind == kind).first())
-    if existing and existing.bitrix_file_id == fid and os.path.exists(os.path.join(UPLOADS_ROOT, existing.path)):
+    _have = inside_uploads(existing.path) if existing else None
+    if existing and existing.bitrix_file_id == fid and _have and os.path.exists(_have):
         return existing, None  # тот же файл уже скачан
     try:
-        r = httpx.get(url, timeout=120, follow_redirects=True)
-        r.raise_for_status()
+        content, headers = _fetch_allowed(url)
     except Exception as e:
         return None, f"скачивание {kind} не удалось: {repr(e)[:80]}"
-    cd = r.headers.get("content-disposition", "")
+    cd = headers.get("content-disposition", "")
     m = re.search(r'filename="([^"]+)"', cd)
     fname = m.group(1) if m else f"{kind}_{fid}"
     subdir = os.path.join(UPLOADS_ROOT, FILES_SUBDIR, str(deal.id))
@@ -176,7 +256,7 @@ def _download_file(db, deal, field_val, kind):
     safe = re.sub(r"[^\w.\-]+", "_", fname)
     abspath = os.path.join(subdir, safe)
     with open(abspath, "wb") as f:
-        f.write(r.content)
+        f.write(content)
     rel = os.path.relpath(abspath, UPLOADS_ROOT)
     if existing:
         # ПРЕЖНИЙ ФАЙЛ СТИРАЕМ (30.08.2026). Строка одна на пару «сделка × вид», а имя
@@ -185,22 +265,24 @@ def _download_file(db, deal, field_val, kind):
         # файлов на 256 МБ против 37 строк — 82% папки.
         # Условие узкое: стираем ТОЛЬКО прежний путь этой же строки и только если он
         # отличается от нового. Совпал — файл уже перезаписан по тому же адресу.
+        # Граница — общей проверкой. Местная копия сравнивала СТРОКУ пути, а не
+        # разрешённый путь, и потому пропускала `deal_files/../../../etc/passwd`:
+        # строка начинается правильно, а `os.remove` уходил в `/etc`. Замерено
+        # 11.09.2026. `subdir` сужает границу до папки файлов сделок — этого местная
+        # проверка добивалась и почти добилась.
         old = existing.path
-        if old and old != rel and old.replace("\\", "/").startswith(FILES_SUBDIR + "/"):
-            try:
-                os.remove(os.path.join(UPLOADS_ROOT, old))
-            except OSError:
-                pass          # файла может не быть — синк не должен падать из-за уборки
+        if old and old != rel:
+            remove_upload(old, subdir=FILES_SUBDIR)
         existing.bitrix_file_id = fid
         existing.filename = fname
         existing.path = rel
-        existing.size = len(r.content)
-        existing.content_type = r.headers.get("content-type")
+        existing.size = len(content)
+        existing.content_type = headers.get("content-type")
         existing.synced_at = datetime.utcnow()
         rec = existing
     else:
         rec = SalesDealFile(deal_id=deal.id, kind=kind, bitrix_file_id=fid, filename=fname,
-                            path=rel, size=len(r.content), content_type=r.headers.get("content-type"))
+                            path=rel, size=len(content), content_type=headers.get("content-type"))
         db.add(rec)
     return rec, None
 

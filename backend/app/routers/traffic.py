@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func as sa_func
 
+from app.files_safe import existing_upload_path, inside_uploads, remove_upload
 from app.audit import log_action
 from app.database import get_db
 from app.launch_prep import sandbox
@@ -451,10 +452,8 @@ def creative_archive(pair_id: int, db: Session = Depends(get_db),
 
     if len(rows) == 1:
         f = rows[0]
-        full = os.path.join(UPLOADS_ROOT, f.path)
-        if not os.path.exists(full):
-            raise HTTPException(status_code=404,
-                                detail=f"Файл «{f.original_name}» не найден в хранилище")
+        # Граница хранилища — общей проверкой (`app/files_safe`).
+        full = existing_upload_path(f.path)
         ext = os.path.splitext(f.original_name or f.path)[1].lower() or ".bin"
         return FileResponse(full, media_type="application/octet-stream",
                             filename=tfiles.creative_download_name(deal.code, s.no, ext))
@@ -462,8 +461,11 @@ def creative_archive(pair_id: int, db: Session = Depends(get_db),
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for f in rows:
-            full = os.path.join(UPLOADS_ROOT, f.path)
-            if not os.path.exists(full):
+            # Та же граница хранилища, что и у ветки «один файл» десятью строками выше.
+            # Здесь тихий режим: одна испорченная строка не должна лишать человека
+            # остальных файлов комплекта — пропускаем её так же, как отсутствующую.
+            full = inside_uploads(f.path)
+            if not full or not os.path.exists(full):
                 continue
             z.write(full, arcname=f.original_name or os.path.basename(f.path))
     name = tfiles.creative_download_name(deal.code, s.no, ".zip")
@@ -551,9 +553,9 @@ def get_shot(file_id: int, db: Session = Depends(get_db),
     rec = db.query(LaunchPrepPairFile).filter(LaunchPrepPairFile.id == file_id).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Файл не найден")
-    full = os.path.join(UPLOADS_ROOT, rec.path)
-    if not os.path.exists(full):
-        raise HTTPException(status_code=404, detail="Файл не найден в хранилище")
+    # Путь из базы — через общую проверку границы хранилища (`app/files_safe`).
+    # До 11.09.2026 она была ровно в одном месте из десяти.
+    full = existing_upload_path(rec.path)
     return FileResponse(full, media_type=rec.content_type or "application/octet-stream")
 
 
@@ -563,16 +565,15 @@ def drop_shot(file_id: int, db: Session = Depends(get_db),
     rec = db.query(LaunchPrepPairFile).filter(LaunchPrepPairFile.id == file_id).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Файл не найден")
-    full = os.path.join(UPLOADS_ROOT, rec.path)
     # Что удалили — запоминаем ДО удаления: после `db.delete` объект уже не читается,
     # а в журнале нужно имя файла, а не голый id.
-    what, pair_id = rec.filename or rec.path, rec.pair_id
+    rel, what, pair_id = rec.path, rec.filename or rec.path, rec.pair_id
     db.delete(rec)
     db.commit()
-    try:
-        os.remove(full)
-    except OSError:
-        pass          # строки уже нет — файл на диске станет сиротой, а не ошибкой
+    # Уборка — через общую проверку границы: строки уже нет, и отказать некому, поэтому
+    # негодный путь просто не удаляется (и попадает в лог). Отсутствующий файл — сирота,
+    # а не ошибка запроса.
+    remove_upload(rel)
     # Удаление разрушительно и необратимо, а до 05.09.2026 не попадало в журнал вовсе:
     # скриншот размещения исчезал, и восстановить, кто его снял, было неоткуда.
     log_action(db, current_user, "delete_pair_file", "launch_prep_pair", pair_id,
@@ -599,8 +600,8 @@ def files_archive(pair_id: int, db: Session = Depends(get_db),
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for f in rows:
-            full = os.path.join(UPLOADS_ROOT, f.path)
-            if os.path.exists(full):
+            full = inside_uploads(f.path)
+            if full and os.path.exists(full):
                 z.write(full, arcname=os.path.basename(f.path).split("_", 1)[-1])
     prefix = f"{deal.code or deal.id}-{pub.code if pub else 'site'}"
     name = f"{prefix}-cr{s.no}-shots.zip"

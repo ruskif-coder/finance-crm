@@ -23,6 +23,7 @@
 смонтирован с хоста, и `disk_usage` по нему отдаёт свободное место НАСТОЯЩЕГО диска.
 """
 
+import logging
 import os
 import shutil
 import time
@@ -30,6 +31,8 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+log = logging.getLogger("finance.status")
 
 UPLOADS_ROOT = "/app/uploads"
 
@@ -65,6 +68,15 @@ PATH_COLUMNS = [
 # `action` — только туда, где вопрос действительно решается; кнопки в никуда не заводим.
 def _check(key, group, title, tone, value=None, note=None,
            consequence=None, keys=None, action=None):
+    # Незнакомый тон СВОДИМ к худшему, а не пропускаем дальше: `collect()` берёт по нему
+    # вес из словаря, и чужое слово роняло весь экран состояния (11.09.2026, «crit»).
+    # Падать тут нельзя — экран нужен как раз в плохую минуту; поэтому деградируем
+    # безопасно и говорим об этом в лог, а сам словарь стережёт прибор
+    # `tests/test_system_status.py`.
+    if tone not in WORST:
+        log.warning("Экран состояния: неизвестный тон %r у проверки %r — считаю за «bad»",
+                    tone, key)
+        tone = "bad"
     return {"key": key, "group": group, "title": title, "tone": tone,
             "value": value, "note": note, "consequence": consequence,
             "keys": keys, "action": action}
@@ -88,6 +100,15 @@ def check_core_db(db: Session):
         ms = int((time.time() - t) * 1000)
         return _check("db_core", "Службы", "Основная база", "ok", f"{ms} мс")
     except Exception as e:                       # noqa: BLE001 — причина уходит в detail
+        # ОТКАТ ОБЯЗАТЕЛЕН. Упавший запрос оставляет сессию в состоянии
+        # `InFailedSqlTransaction`, и тогда КАЖДЫЙ следующий запрос той же сессии падает
+        # ещё до попадания в базу — а ниже по `collect()` их шесть, и они уже без try.
+        # Без отката «база не отвечает» превращалась в 500 всего экрана: строку про
+        # отказ рисовать было некому. Замерено 11.09.2026 на отравленной сессии.
+        try:
+            db.rollback()
+        except Exception:                        # noqa: BLE001 — соединение уже потеряно
+            pass
         return _check("db_core", "Службы", "Основная база", "bad", "не отвечает", str(e)[:200])
 
 
@@ -125,8 +146,12 @@ def _http_probe(key, title, url, timeout=3.0):
 
 
 def check_pdf():
+    # Бьём в `/health`, а НЕ в корень. На `/` Express отдаёт 404, а проба считает живым
+    # всё, что меньше 500 — то есть мёртвый сервис с работающим процессом выглядел
+    # зелёным (найдено внешним аудитом 11.09.2026, F3-15). Ложнозелёная строка на экране
+    # состояния хуже отсутствующей: из-за неё смотрят в другую сторону.
     return _http_probe("pdf", "Сайдкар печати",
-                       os.getenv("PDF_SERVICE_URL", "http://pdf:3001") + "/")
+                       os.getenv("PDF_SERVICE_URL", "http://pdf:3001") + "/health")
 
 
 def check_cabinet():
@@ -170,7 +195,7 @@ def check_disk():
     """
     total, used, free = shutil.disk_usage(UPLOADS_ROOT)
     pct = free / total * 100
-    sev = "crit" if pct < DISK_CRIT_PCT else "warn" if pct < DISK_WARN_PCT else "ok"
+    sev = "bad" if pct < DISK_CRIT_PCT else "warn" if pct < DISK_WARN_PCT else "ok"
     # Подпись переписана 07.09.2026: было «21% · 139 из 661 ГБ», и владелец справедливо
     # переспросил, 139 — это занято или свободно. На экране состояния двусмысленная цифра
     # хуже отсутствующей: её прочитают наоборот и успокоятся не вовремя.
@@ -289,9 +314,9 @@ def check_notify_dispatch(db: Session):
                       "ни одного прогона",
                       "на стенде это норма — cron стоит только на сервере")
     hours = _age(row.f or row.s)
-    sev = "crit" if hours > 6 else "warn" if hours > 2 else "ok"
+    sev = "bad" if hours > 6 else "warn" if hours > 2 else "ok"
     if row.e:
-        sev = "crit"
+        sev = "bad"
     return _check("job_notify", "Фоновые задания", "Рассылка уведомлений", sev,
                   f"{hours:.1f} ч назад", (row.e or "")[:200] or None)
 
@@ -306,7 +331,7 @@ def check_bitrix_sync(db: Session):
                       # это тяжёлая операция, и место ей там, где её подтверждают.
                       action={"label": "Открыть сверку", "href": "/directory/reconcile"})
     hours = _age(row.f or row.s)
-    sev = "crit" if row.e else "ok"
+    sev = "bad" if row.e else "ok"
     return _check("job_bitrix", "Фоновые задания", "Синхронизация с Битриксом", sev,
                   f"{hours:.0f} ч назад", (row.e or "")[:200] or None)
 
@@ -331,6 +356,13 @@ def check_external_config():
              "ЕРИД не выпустить — маркировка встанет"),
             ("ext_dsp", "DSP", ("DSP_API_URL", "DSP_ACCESS_TOKEN", "DSP_PARTNER_XXHASH"),
              "Интеграция не настроена — отправок в DSP не будет"),
+            # Weborama не значилась здесь до 11.09.2026, хотя коннектор настроен, работает
+            # и на нём держится заведение пикселей. Четыре связи наблюдались, пятая — нет:
+            # пропади у неё доступ, экран состояния остался бы зелёным, а заведение
+            # молча перестало бы работать. Именно про такие «тихие» отказы и заведён
+            # весь этот модуль.
+            ("ext_wcm", "Weborama", ("WEBORAMA_EMAIL", "WEBORAMA_PASSWORD"),
+             "Пиксели не завести — сверки показов с верификатором не будет"),
             ("ext_tg", "Телеграм", ("TELEGRAM_BOT_TOKEN",),
              "Бот не поднят — уведомления не уйдут")):
         missing = [n for n in names if not (os.getenv(n) or "").strip()]
@@ -398,8 +430,11 @@ def check_dsp_journal(db_dsp_ok: bool):
         return _check("ext_dsp_last", "Внешние связи", "DSP: последняя отправка", "idle",
                       "журнал недоступен", str(e)[:150])
     if row is None:
+        # «БОЕВЫХ», а не просто «отправок»: запрос выше фильтрует по контуру `prod`, и без
+        # этого слова строка читается как «связью не пользовались ни разу», хотя в журнале
+        # могут лежать десятки демо-отправок (на стенде 11.09.2026 их 36).
         return _check("ext_dsp_last", "Внешние связи", "DSP: последняя отправка", "idle",
-                      "отправок не было")
+                      "боевых отправок не было")
     hours = _age(row.ts)
     return _check("ext_dsp_last", "Внешние связи", "DSP: последняя отправка",
                   "ok" if row.ok else "bad",
@@ -411,7 +446,7 @@ def check_dsp_journal(db_dsp_ok: bool):
 def check_debug_off():
     on = (os.getenv("DEBUG", "false") or "").lower() == "true"
     return _check("cfg_debug", "Конфигурация", "Swagger закрыт",
-                  "crit" if on else "ok",
+                  "bad" if on else "ok",
                   "ОТКРЫТ" if on else "закрыт",
                   "DEBUG=true открывает /docs без аутентификации" if on else None)
 
@@ -427,7 +462,8 @@ def check_backup_visibility():
     if not os.path.isdir(path):
         return _check("backups", "Бэкапы", "Каталог бэкапов", "idle",
                       "нет доступа",
-                      "нужен монтаж каталога только на чтение — шаг 2 плана",
+                      "нужен монтаж каталога только на чтение: "
+                      "`${BACKUPS_DIR:-./backups}:/app/backups:ro`",
                       consequence="Бэкенд не видит каталог — проверить восстановление нельзя")
     files = sorted((f for f in os.listdir(path) if f.endswith((".dump", ".sql"))),
                    key=lambda f: os.path.getmtime(os.path.join(path, f)), reverse=True)
@@ -436,9 +472,13 @@ def check_backup_visibility():
     newest = os.path.join(path, files[0])
     hours = (time.time() - os.path.getmtime(newest)) / 3600
     size = os.path.getsize(newest)
-    sev = "crit" if hours > 48 else "warn" if hours > 26 else "ok"
+    sev = "bad" if hours > 48 else "warn" if hours > 26 else "ok"
+    # Имя самого свежего файла — в подпись. Каталогов бэкапов на проде исторически три
+    # (ручной из `deploy.sh`, автоматический из сервиса, и тот, что смотрит бэкенд), и
+    # смонтировать не тот — значит получить зелёную строку про чужие, старые дампы.
+    # Имя файла показывает, ЧЕЙ каталог мы видим, без похода на сервер.
     return _check("backups", "Бэкапы", "Последний бэкап", sev,
-                  f"{hours:.0f} ч назад · {size / 2**20:.1f} МБ",
+                  f"{hours:.0f} ч назад · {size / 2**20:.1f} МБ · {files[0]}",
                   f"всего файлов: {len(files)}")
 
 
@@ -519,6 +559,12 @@ def activity(db: Session) -> dict:
 
 # ── сборка ───────────────────────────────────────────────────────────────────
 
+# Словарь тонов — ЕДИНСТВЕННЫЙ источник вокабуляра экрана состояния, и `_check`
+# сверяется с ним на входе. До 11.09.2026 шесть проверок ставили пятое слово «crit»
+# (диск, рассылка, синк Битрикса, DEBUG, возраст бэкапа), которого здесь не было, и
+# `collect()` падал с `KeyError` — то есть админский статус отдавал 500 РОВНО ТОГДА,
+# когда на него пришли смотреть из-за поломки. Пятое слово убрано, а не добавлено:
+# «bad» уже означает худшее, его знают и счётчики ниже, и экран настроек.
 WORST = {"bad": 3, "warn": 2, "idle": 1, "ok": 0}
 
 
@@ -531,27 +577,64 @@ def _disk_bar():
             "free_gb": round(free / 2**30), "free_pct": round(free / total * 100)}
 
 
+def _safe(fn, *args):
+    """Проверка, упавшая сама, становится строкой «bad», а не отказом всего экрана.
+
+    ЗАЧЕМ. Экран состояния нужен ровно в плохую минуту, и именно тогда у проверок
+    больше всего шансов упасть: база в откате, `/app/uploads` не смонтирован, внешняя
+    служба отвечает мусором. До 11.09.2026 любое такое падение поднималось до роутера
+    и превращалось в 500 — то есть чем хуже состояние системы, тем меньше про него
+    видно. Это тот же дефект, что и «неизвестный тон» в `_check`, только шире.
+
+    Подпись строки-заглушки собирается из имени функции, а не берётся из второго
+    списка названий: расходиться нечему, а читать её будут в разборе, а не каждый день.
+    """
+    try:
+        return fn(*args)
+    except Exception as e:                       # noqa: BLE001 — причина уходит в detail
+        log.exception("Экран состояния: проверка %s упала", fn.__name__)
+        return _check(fn.__name__, "Службы", f"Проверка «{fn.__name__}»", "bad",
+                      "не выполнена", str(e)[:200],
+                      consequence="Об этой части системы сейчас ничего не известно")
+
+
+def _safe_value(fn, *args, default):
+    """То же для не-проверок (KPI, диск, счётчики): пустое значение вместо отказа.
+
+    Строкой в списке проверок они не становятся, поэтому подставляем заведомо «пустой»
+    ответ нужной формы — экран покажет прочерк, а не 500."""
+    try:
+        return fn(*args)
+    except Exception:                            # noqa: BLE001
+        log.exception("Экран состояния: %s не посчиталось", fn.__name__)
+        return default
+
+
 def collect(db: Session, live: bool = False) -> dict:
-    checks = [check_core_db(db)]
-    dsp = check_dsp_db()
+    # ПОРЯДОК ВАЖЕН: `check_core_db` идёт первой и делает `rollback()`, если база
+    # ответила ошибкой, — иначе все запросы ниже падали бы на мёртвой транзакции.
+    checks = [_safe(check_core_db, db)]
+    dsp = _safe(check_dsp_db)
     checks.append(dsp)
-    checks += [check_pdf(), check_cabinet(),
-               check_db_sizes(db), check_db_connections(db),
-               check_disk(), check_storage(db), check_orphans(db),
-               check_notify_dispatch(db), check_bitrix_sync(db)]
-    checks += check_external_config()
-    checks.append(check_dsp_journal(dsp["tone"] == "ok"))
+    checks += [_safe(check_pdf), _safe(check_cabinet),
+               _safe(check_db_sizes, db), _safe(check_db_connections, db),
+               _safe(check_disk), _safe(check_storage, db), _safe(check_orphans, db),
+               _safe(check_notify_dispatch, db), _safe(check_bitrix_sync, db)]
+    ext = _safe(check_external_config)
+    checks += ext if isinstance(ext, list) else [ext]
+    checks.append(_safe(check_dsp_journal, dsp["tone"] == "ok"))
     # Живые запросы наружу — только по явному запросу (фоновый прогон раз в час).
     # Дёргать чужие сервисы при каждом открытии экрана — способ получить бан по частоте.
     if live:
-        checks.append(check_telegram_live())
-    checks += [check_debug_off(), check_backup_visibility()]
+        checks.append(_safe(check_telegram_live))
+    checks += [_safe(check_debug_off), _safe(check_backup_visibility)]
 
     worst = max((WORST[c["tone"]] for c in checks), default=0)
-    act = activity(db)
-    errs = errors_24h()
+    act = _safe_value(activity, db, default={"actions_24h": 0, "users_24h": 0})
+    errs = _safe_value(errors_24h, default={"count": None})
     up = uptime()
-    disk = _disk_bar()
+    disk = _safe_value(_disk_bar, default={"used_gb": 0, "total_gb": 0,
+                                           "free_gb": 0, "free_pct": 0})
 
     ok_n = sum(1 for c in checks if c["tone"] == "ok")
     need_setup = sum(1 for c in checks if c["tone"] in ("warn", "idle"))

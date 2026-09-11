@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import { MONO, UI } from '../salesTableKit'
 import { makeApi as api } from '../../lib/http'
 import { bankColor } from '../../lib/salesFormat'
@@ -328,7 +329,10 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
           <>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 2px' }}>
               <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Договора <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)' }}>{(card.contracts || []).length}</span></span>
-              <a href="/directory/contracts" style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none' }}>В реестр →</a>
+              {/* `next/link`, а не голый `<a>`: переход внутри приложения не должен
+                  перезагружать страницу — это теряет снимок прав и состояние экрана.
+                  Единственная ошибка `npm run lint` в проекте (F0-04), чинится строкой. */}
+              <Link href="/directory/contracts" style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none' }}>В реестр →</Link>
             </div>
             {(card.contracts || []).length === 0 ? <div style={{ ...CARD, padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Договоров нет</div>
               : card.contracts.map(c => {

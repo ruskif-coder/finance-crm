@@ -18,7 +18,7 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import Head from 'next/head'
-import Navbar, { can } from '@/components/Navbar'
+import Navbar, { can, getPermissions } from '@/components/Navbar'
 import { MONO, UI, card, CAP, btn, btnSm, chip as pill, inp, ROW_TONE, Modal }
   from '@/components/salesTableKit'
 // Предпросмотр — ТОТ ЖЕ компонент, что на карточке сделки: сетка типовых размеров,
@@ -200,8 +200,17 @@ export default function TrafficQueue() {
   const [reps, setReps] = useState([])
   const [myRepId, setMyRepId] = useState(null)
   const [canViewOthers, setCanViewOthers] = useState(false)
-  const mayApprove = can('traffic_queue', 'approve')
-  const mayEdit = can('traffic_queue', 'edit')
+  /* Права читаются ИЗ СНИМКА в localStorage, поэтому только после монтирования:
+     на сервере localStorage нет, и вычисление прямо в теле компонента дало бы
+     расхождение разметки. Аргументов у `can` ТРИ — `(perms, section, action)`;
+     вызов с двумя молча возвращал false всем, кроме админа (11.09.2026). */
+  const [mayApprove, setMayApprove] = useState(false)
+  const [mayEdit, setMayEdit] = useState(false)
+  useEffect(() => {
+    const p = getPermissions()
+    setMayApprove(can(p, 'traffic_queue', 'approve'))
+    setMayEdit(can(p, 'traffic_queue', 'edit'))
+  }, [])
 
   /* Тянем ВСЮ очередь одним запросом, а вкладки режем на месте. Иначе счётчик на
      вкладке нельзя показать, не сходив за ней же: «Проверенные 0» — это ответ, который
@@ -280,7 +289,10 @@ export default function TrafficQueue() {
   useEffect(() => {
     if (!urlAsk || phrases.length) return
     api.get('/launch-prep/url-request-phrases', auth())
-      .then(r => setPhrases(r.data.items || [])).catch(() => {})
+      .then(r => setPhrases(r.data.items || []))
+      // Пустой `catch` оставлял список заготовок пустым молча, и это читалось как
+      // «заготовок в базе нет». Вторичные данные тоже обязаны объяснять свою пропажу.
+      .catch(() => setErr('Заготовки текста запроса не загрузились — наберите текст руками'))
   }, [urlAsk, phrases.length])
 
   async function openShots(row) {

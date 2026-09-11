@@ -22,7 +22,7 @@
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
-import Navbar, { can } from '@/components/Navbar'
+import Navbar, { can, getPermissions } from '@/components/Navbar'
 import { MONO, UI, card, CAP, btnSm, btn, inp, sel, Modal, PortalPopover, ROW_TONE, Z,
   EXT_TONE, ExtChip, ExtCover } from '@/components/salesTableKit'
 import { surfaceTag } from '@/lib/dealTitle'
@@ -140,7 +140,12 @@ export default function TrafficDashboard() {
   const fail = useCallback((t) => { setNote(''); setMsg(t) }, [])
   const say = useCallback((t) => { setMsg(''); setNote(t) }, [])
 
-  const mayEdit = can('traffic_dashboard', 'edit')
+  /* Права читаются ИЗ СНИМКА в localStorage, поэтому только после монтирования:
+     на сервере localStorage нет, и вычисление прямо в теле компонента дало бы
+     расхождение разметки. Аргументов у `can` ТРИ — `(perms, section, action)`;
+     вызов с двумя молча возвращал false всем, кроме админа (11.09.2026). */
+  const [mayEdit, setMayEdit] = useState(false)
+  useEffect(() => { setMayEdit(can(getPermissions(), 'traffic_dashboard', 'edit')) }, [])
 
   const load = useCallback(async () => {
     const p = new URLSearchParams()
@@ -525,6 +530,21 @@ export default function TrafficDashboard() {
               риска на полосе — где должны быть по календарю
             </span>
           </div>
+
+          {/* Факт бывает НЕ настоящим. На стенде он весь из демо-скрипта, а тянучка
+              статистики ещё не написана — то есть боевому факту пока взяться неоткуда.
+              Молчать об этом нельзя: по этим числам перераспределяют объём. */}
+          {!!(data?.fact_sources || []).filter(s => s !== 'ms').length && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap',
+              padding: '9px 13px', marginBottom: 10, borderRadius: 10,
+              background: 'var(--warning-tint)', color: 'var(--warning-text)', fontSize: 12.5 }}>
+              <b>Факт не боевой</b>
+              <span>
+                источник данных: {data.fact_sources.join(', ')}. Эти показы и клики
+                не приходили из кабинета — выводы по ним делать нельзя.
+              </span>
+            </div>
+          )}
 
           {/* Шапка сдвинута на 9 px: у строк ниже 8 px внутреннего отступа плюс 1 px
               рамки — без поправки заголовки уезжают от своих колонок ровно на рамку. */}
@@ -1089,6 +1109,9 @@ export default function TrafficDashboard() {
 
           <div style={{ ...CAP, marginBottom: 0, marginTop: 12 }}>
             план — из медиаплана сделки · факт — суточный срез коннектора
+            {data?.fact_last_ingest
+              ? ` · последнее поступление факта: ${String(data.fact_last_ingest).slice(0, 16).replace('T', ' ')}`
+              : ' · факт не поступал ни разу'}{(data?.fact_sources || []).length ? ` · источники факта: ${data.fact_sources.join(', ')}` : ''}
           </div>
         </div>
       </div>

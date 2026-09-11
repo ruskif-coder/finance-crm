@@ -539,3 +539,67 @@ export const ExtCover = ({ letter, totals, label, size = 20 }) => (
       ? `${label}: заводить нечего — все площадки крутят сами`
       : `${label}: ${totals.done} из ${totals.need}`} />
 )
+
+/* ── сбой загрузки, сказанный вслух ──────────────────────────────────────────
+   Полоса поверх содержимого. Данные под ней НЕ затираются: если предыдущий срез уже
+   показан, он остаётся — но с честной подписью, что свежий запрос не прошёл. Текст
+   готовит `lib/loadError.js`, здесь только вид.
+
+   Красная, а не жёлтая: жёлтый в этом проекте означает «часть», а тут не часть —
+   тут неизвестно. */
+export const LoadError = ({ text, onRetry }) => (
+  <div role="alert" style={{
+    display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+    padding: '10px 14px', marginBottom: 12, borderRadius: 10,
+    background: 'var(--danger-tint)', border: '1px solid var(--danger-border, var(--danger))',
+    color: 'var(--danger)', fontFamily: UI, fontSize: 13,
+  }}>
+    <span style={{ fontWeight: 700 }}>Не загрузилось</span>
+    <span style={{ color: 'var(--text-secondary)' }}>{text}</span>
+    {onRetry && (
+      <button onClick={onRetry} style={{ ...btn(false), marginLeft: 'auto', padding: '5px 12px', fontSize: 12 }}>
+        Повторить
+      </button>
+    )}
+  </div>
+)
+
+/* Экран целиком, когда показывать нечего: первый запрос не прошёл и данных нет вовсе.
+   Раньше в этом месте страницы возвращали `null` — человек видел белый лист без меню и
+   не мог понять, сломалось или пусто. Меню остаётся: с него можно уйти. */
+export const LoadErrorScreen = ({ title, nav, text, onRetry }) => (
+  <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+    {nav}
+    <div style={{ maxWidth: 620, margin: '64px auto', padding: '0 20px', textAlign: 'center' }}>
+      <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>
+        {title || 'Данные не загрузились'}
+      </div>
+      <div style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{text}</div>
+      {onRetry && (
+        <button onClick={onRetry} style={{ ...btn(true), marginTop: 18 }}>Повторить</button>
+      )}
+    </div>
+  </div>
+)
+
+/* ── «нет доступа», сказанное по-человечески ─────────────────────────────────
+   Не редирект: увести человека на другой экран значит не ответить на его вопрос.
+   Меню остаётся — с него можно уйти туда, куда пускают. Решение о доступе принимает
+   `lib/pageGuard.js` по карте навигации, здесь только вид. */
+export const NoAccessScreen = ({ title, nav, what }) => (
+  <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
+    {nav}
+    <div style={{ maxWidth: 560, margin: '72px auto', padding: '0 20px', textAlign: 'center' }}>
+      <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>
+        {title || 'Нет доступа'}
+      </div>
+      <div style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        {what ? `Раздел «${what}» вам не открыт. ` : ''}
+        Если он нужен для работы — попросите администратора выдать право на просмотр.
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 14, lineHeight: 1.55 }}>
+        Права читаются при входе. Если их только что изменили — выйдите и войдите снова.
+      </div>
+    </div>
+  </div>
+)

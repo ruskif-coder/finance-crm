@@ -37,8 +37,34 @@ _DUMMY_BCRYPT_HASH = _hash_password("timing_equalizer_dummy_password")
 # счётчик обнуляется, что безопасно (не блокирует легитимных, лишь снимает защиту на миг).
 MAX_LOGIN_PER_IP = 20            # попыток с одного IP
 LOGIN_IP_WINDOW_SECONDS = 15 * 60
+# Потолок числа отслеживаемых адресов. Он тут не для экономии памяти «на всякий случай»:
+# ключ словаря приходит СНАРУЖИ (заголовок запроса), и без потолка неаутентифицированный
+# запрос наращивает память процесса неограниченно — при `mem_limit: 512m` это отказ в
+# обслуживании одним циклом curl. Дефект найден при разборе внешнего аудита 11.09.2026:
+# сам обход лимита (F1-01) был замечен, а вот его соседняя половина — нет.
+MAX_TRACKED_IPS = 10_000
 _ip_attempts: dict[str, list[float]] = {}
 _ip_lock = threading.Lock()
+
+
+def _prune_ip_attempts(now: float) -> None:
+    """Выбросить адреса, у которых окно целиком протухло.
+
+    Раньше чистилось ТОЛЬКО окно спрашиваемого адреса, а сам ключ оставался навсегда.
+    Зовётся под `_ip_lock` и только при переполнении — обходить весь словарь на каждом
+    входе незачем, а при переполнении это амортизированно дёшево.
+    """
+    stale = [ip for ip, ts in _ip_attempts.items()
+             if not ts or now - ts[-1] >= LOGIN_IP_WINDOW_SECONDS]
+    for ip in stale:
+        del _ip_attempts[ip]
+    # Если протухших не хватило — словарь забит активными адресами, и это уже похоже на
+    # распределённый перебор. Держим самые свежие: у старых окно всё равно вот-вот
+    # истечёт, а терять защиту у того, кто стучится прямо сейчас, нельзя.
+    if len(_ip_attempts) > MAX_TRACKED_IPS:
+        newest = sorted(_ip_attempts.items(), key=lambda kv: kv[1][-1], reverse=True)
+        _ip_attempts.clear()
+        _ip_attempts.update(dict(newest[:MAX_TRACKED_IPS]))
 
 
 def _check_ip_rate_limit(ip: str):
@@ -46,9 +72,33 @@ def _check_ip_rate_limit(ip: str):
     with _ip_lock:
         window = [t for t in _ip_attempts.get(ip, []) if now - t < LOGIN_IP_WINDOW_SECONDS]
         _ip_attempts[ip] = window
+        if len(_ip_attempts) > MAX_TRACKED_IPS:
+            _prune_ip_attempts(now)
+            window = _ip_attempts.setdefault(ip, window)
         if len(window) >= MAX_LOGIN_PER_IP:
             raise HTTPException(status_code=429, detail="Слишком много попыток входа. Попробуйте позже.")
         window.append(now)
+
+
+def client_ip(request) -> str:
+    """Адрес клиента ДЛЯ ТРОТТЛИНГА — из доверенного звена, а не из первого попавшегося.
+
+    `X-Forwarded-For` — список, который дополняет КАЖДЫЙ прокси на пути. Клиент волен
+    прислать его сам, и всё, что он прислал, окажется СЛЕВА; правее допишет Caddy — то,
+    что он увидел на сокете. Значит доверять можно только ПОСЛЕДНЕМУ элементу.
+
+    До 11.09.2026 брался первый: подставив свой заголовок, любой желающий получал новый
+    счётчик на каждую попытку и проходил мимо лимита 20/15 мин (F1-01 внешнего аудита).
+
+    Допущение, на котором это держится: перед бэкендом ровно один наш прокси. Оно верно
+    по построению — порт бэкенда слушает только `127.0.0.1`, и снаружи в него никто, кроме
+    Caddy, не попадает. Изменится схема — менять и здесь.
+    """
+    chain = [x.strip() for x in (request.headers.get("x-forwarded-for") or "").split(",")]
+    chain = [x for x in chain if x]
+    if chain:
+        return chain[-1]
+    return request.client.host if request.client else "unknown"
 
 # Блокировка входа — состояние хранится в таблице login_attempts (PostgreSQL),
 # а не в dict в памяти процесса, поэтому переживает docker restart finance_backend.
@@ -125,10 +175,8 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
     from app.audit import log_action  # локальный импорт — избегаем циклической зависимости (audit.py импортирует auth.py)
     from app.permissions import get_permissions_for_user  # тоже локальный — по той же причине (permissions.py импортирует auth.py)
 
-    # per-IP троттлинг (#2). За Caddy реальный IP в X-Forwarded-For; фолбэк — сокет.
-    client_ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-                 or (request.client.host if request.client else "unknown"))
-    _check_ip_rate_limit(client_ip)
+    # per-IP троттлинг (#2). Адрес берётся из ПОСЛЕДНЕГО звена цепочки — см. client_ip.
+    _check_ip_rate_limit(client_ip(request))
 
     email = _norm_email(form_data.username)
     _check_login_lockout(db, email)

@@ -2,7 +2,7 @@
 -- dsp_analytics (контейнер finance_dsp_db, TimescaleDB на pg16), НЕ в основную finance:
 --     docker exec -i finance_dsp_db psql -U dsp -d dsp_analytics < backend/migrations/dsp/2026-09-02_dsp_analytics.sql
 -- Состав согласован владельцем 01–02.09.2026 (docs/SPEC_дашборд_трафика.md §7.2).
--- Сырьё stat-API МедиаСнайпера в полном разрезе; в основную базу отдаётся ТОЛЬКО суточный срез
+-- Сырьё stat-API DSP в полном разрезе; в основную базу отдаётся ТОЛЬКО суточный срез
 -- (upsert в ad_campaign_stat). ORM эти таблицы не описывает: hypertable/continuous aggregate —
 -- DDL Timescale, create_all их не создаст. Идемпотентно.
 

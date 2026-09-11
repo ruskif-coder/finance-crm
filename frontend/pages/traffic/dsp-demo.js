@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Head from 'next/head'
-import Navbar from '@/components/Navbar'
+import Navbar, { can, getPermissions } from '@/components/Navbar'
 import { MONO, UI, Modal, card, inp, btn, primaryBtn, th, td } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/http'
 // Предпросмотр — ТОТ ЖЕ компонент, что на карточке сделки и в очереди трафика.
@@ -196,6 +196,19 @@ export default function DspDemo() {
     } finally { setBusy(''); load() }
   }
 
+  /* Право на ЗАПИСЬ. Сервер его проверяет на каждой пишущей ручке (`dsp_demo:edit`), а
+     экран не проверял вовсе: кнопки были видны всем, у кого есть просмотр, и отвечали
+     403 при нажатии (F5-19 аудита 11.09.2026). Кнопка, которая гарантированно не
+     сработает, — это не «защита на сервере», а ловушка времени.
+
+     Читаем после монтирования: снимок прав живёт в localStorage, на сервере его нет. */
+  // Начальное значение `null` — «ещё не знаю», а не «прав нет». `false` с первого кадра
+  // означал, что админ на КАЖДОЙ загрузке видел вспышку плашки «Только просмотр»: SSR и
+  // первый клиентский кадр рисуют её, а снимок прав приходит только после монтирования.
+  // Третье состояние сделано так же, как в lib/pageGuard.js, — там оно есть с рождения.
+  const [mayEdit, setMayEdit] = useState(null)
+  useEffect(() => { setMayEdit(can(getPermissions(), 'dsp_demo', 'edit')) }, [])
+
   const doCampaign = () => run('campaign', async () => {
     const r = await api.post('/dsp-demo/campaign', {
       title: camp.title, date_start: camp.date_start, date_end: camp.date_end,
@@ -323,6 +336,18 @@ export default function DspDemo() {
           </button>
         </div>
 
+        {/* Говорим вслух, а не просто гасим кнопки: серая кнопка без объяснения читается
+            как «сломалось», и человек идёт выяснять, что случилось. */}
+        {mayEdit === false && (
+          <div style={{ ...SECTION, borderColor: 'var(--warning)', background: 'var(--warning-tint)' }}>
+            <div style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--warning-text)' }}>
+              <b>Только просмотр.</b> Права на запись в этом разделе у вас нет, поэтому
+              шаги, которые что-то создают в кабинете DSP, отключены. Разбирать ответы и
+              смотреть журнал можно.
+            </div>
+          </div>
+        )}
+
         {live && (
           <div style={{ ...SECTION, borderColor: 'var(--danger)', background: 'var(--danger-tint)' }}>
             <div style={{ ...LBL, marginBottom: 8, color: 'var(--danger)' }}>
@@ -373,7 +398,7 @@ export default function DspDemo() {
             <F label="Показов, total" value={camp.total_shows} onChange={v => setCamp(c => ({ ...c, total_shows: v }))} placeholder="100000" />
             <F label="Бюджет, total" value={camp.total_budget} onChange={v => setCamp(c => ({ ...c, total_budget: v }))} placeholder="1000" />
           </div>
-          <button onClick={doCampaign} disabled={!ready || !!busy} style={{ ...primaryBtn, marginTop: 12 }}>
+          <button onClick={doCampaign} disabled={!mayEdit || !ready || !!busy} style={{ ...primaryBtn, marginTop: 12 }}>
             {busy === 'campaign' ? 'Завожу…' : 'Завести кампанию'}
           </button>
         </Step>
@@ -395,7 +420,7 @@ export default function DspDemo() {
                 </>
               )}>
           <input ref={fileRef} type="file" accept=".zip,application/zip" style={{ fontSize: 13 }} />
-          <button onClick={doUpload} disabled={!ready || !!busy} style={{ ...primaryBtn, marginLeft: 10 }}>
+          <button onClick={doUpload} disabled={!mayEdit || !ready || !!busy} style={{ ...primaryBtn, marginLeft: 10 }}>
             {busy === 'upload' ? 'Загружаю…' : 'Загрузить архив'}
           </button>
         </Step>
@@ -486,7 +511,7 @@ export default function DspDemo() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-            <button onClick={doCreative} disabled={!campOut || (!wrapOut && !upOut) || !!busy}
+            <button onClick={doCreative} disabled={!mayEdit || !campOut || (!wrapOut && !upOut) || !!busy}
                     style={primaryBtn}>
               {busy === 'creative' ? 'Завожу…' : 'Завести креатив'}
             </button>
@@ -504,7 +529,7 @@ export default function DspDemo() {
           <div style={{ display: 'flex', gap: 10, alignItems: 'end' }}>
             <F label="Ключ источника" value={srcKey} onChange={setSrcKey} width={220} />
             <F label="Ставка" value={bid} onChange={setBid} width={120} />
-            <button onClick={doTargeting} disabled={(!crvOut && !campOut) || !!busy} style={btn(false)}>
+            <button onClick={doTargeting} disabled={!mayEdit || (!crvOut && !campOut) || !!busy} style={btn(false)}>
               {busy === 'targeting' ? 'Ставлю…' : 'Поставить таргетинг'}
             </button>
           </div>
@@ -529,13 +554,13 @@ export default function DspDemo() {
                 </>
               )}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-            <button onClick={() => doStatus('start')} disabled={!xx || !!busy} style={primaryBtn}>
+            <button onClick={() => doStatus('start')} disabled={!mayEdit || !xx || !!busy} style={primaryBtn}>
               {busy === 'start' ? '…' : 'Запустить'}
             </button>
-            <button onClick={() => doStatus('pause')} disabled={!xx || !!busy} style={btn(false)}>
+            <button onClick={() => doStatus('pause')} disabled={!mayEdit || !xx || !!busy} style={btn(false)}>
               {busy === 'pause' ? '…' : 'Пауза'}
             </button>
-            <button onClick={() => doStatus('stop')} disabled={!xx || !!busy} style={btn(false)}>
+            <button onClick={() => doStatus('stop')} disabled={!mayEdit || !xx || !!busy} style={btn(false)}>
               {busy === 'stop' ? '…' : 'Стоп (в архив)'}
             </button>
             <button onClick={doInfo} disabled={!xx || !!busy} style={{ ...btn(false), marginLeft: 'auto' }}>
@@ -558,10 +583,10 @@ export default function DspDemo() {
                onChange={v => setPlan(p => ({ ...p, remaining_show: v }))} width={200} />
             <F label="Новая дата конца" type="date" value={plan.date_end}
                onChange={v => setPlan(p => ({ ...p, date_end: v }))} width={170} />
-            <button onClick={() => doPlan(true)} disabled={!xx || !!busy} style={btn(false)}>
+            <button onClick={() => doPlan(true)} disabled={!mayEdit || !xx || !!busy} style={btn(false)}>
               {busy === 'plan-dry' ? '…' : 'Посчитать'}
             </button>
-            <button onClick={() => doPlan(false)} disabled={!xx || !!busy} style={primaryBtn}>
+            <button onClick={() => doPlan(false)} disabled={!mayEdit || !xx || !!busy} style={primaryBtn}>
               {busy === 'plan' ? 'Отправляю…' : 'Отправить план'}
             </button>
           </div>

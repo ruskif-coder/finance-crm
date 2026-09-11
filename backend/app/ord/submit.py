@@ -27,6 +27,7 @@ from types import SimpleNamespace
 from typing import Optional
 
 import httpx
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Contract, Counterparty
@@ -77,12 +78,27 @@ def _assert_no_pending(db: Session, kind: str, local_id: int, env: str) -> None:
 
 def _start(db: Session, kind: str, local_id: int, env: str, body: dict,
            user) -> OrdSubmission:
-    """Завести строку журнала и ЗАФИКСИРОВАТЬ её до запроса."""
+    """Завести строку журнала и ЗАФИКСИРОВАТЬ её до запроса.
+
+    Вторым замком — уникальный индекс `uq_ord_submissions_pending` (миграция
+    2026-09-11): проверка `_assert_no_pending` выше от ОДНОВРЕМЕННОСТИ не спасает, между
+    ней и этой записью блокировки нет, и два нажатия проходили её оба. Отказ базы ловим
+    здесь и превращаем в тот же понятный текст, а не в 500: для человека это один и тот
+    же случай — «уже отправляется, подождите», — и он не должен зависеть от того,
+    выиграл его запрос гонку или нет.
+    """
     row = OrdSubmission(kind=kind, local_id=local_id, env=env, request=body,
                         started_at=datetime.utcnow(),
                         user_id=getattr(user, 'id', None))
     db.add(row)
-    db.commit()          # именно здесь: след обязан пережить падение процесса
+    try:
+        db.commit()      # именно здесь: след обязан пережить падение процесса
+    except IntegrityError:
+        db.rollback()
+        raise OrdSubmitRefused(
+            "По этому объекту прямо сейчас идёт другая отправка. Дождитесь её "
+            "завершения: две отправки подряд создали бы в ЕРИР дубль, который не "
+            "отозвать.")
     return row
 
 

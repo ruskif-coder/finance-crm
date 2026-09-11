@@ -1,10 +1,13 @@
 import Navbar from '@/components/Navbar'
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
+import { pageAccess } from '@/lib/pageGuard'
 import Head from 'next/head'
 import { makeApi as api } from '@/lib/http'
 import { getPermissions, can } from '@/lib/auth'
 import { grp0 as fmt } from '@/lib/salesFormat'
+import { errText, isAuth } from '@/lib/loadError'
+import { LoadError, LoadErrorScreen, NoAccessScreen } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const BalanceMobile = dynamic(() => import('@/components/mobile/BalanceMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
@@ -411,12 +414,20 @@ function DebtPanel({ data, mode, canEditNote, onSaveNote }) {
 
 export default function Balance() {
   const router = useRouter()
+  /* Прямая ссылка открывала экран и у того, кому раздел не открыт: меню пункт прячет,
+     адрес — нет. Дальше каждый экран вёл себя по-своему, и «нет доступа» читалось как
+     «сломалось». Решение о доступе принимает карта навигации — см. lib/pageGuard. */
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  const access = pageAccess(router.pathname, mounted)
   const isMobile = useIsMobile()
   const [data, setData] = useState(null)
   const [receivablesData, setReceivablesData] = useState(null)
   const [payablesData, setPayablesData] = useState(null)
   const [permissions, setPermissions] = useState({})
   const [loading, setLoading] = useState(true)
+  // Сбой загрузки отдельно от «пусто»: белый экран не объясняет ничего.
+  const [err, setErr] = useState('')
   const [showReceivables, setShowReceivables] = useState(false)
   const [showPayables, setShowPayables] = useState(false)
   // Примечания дебиторки на мобиле: десктоп держит это состояние внутри DebtPanel
@@ -442,7 +453,7 @@ export default function Balance() {
   }, [])
 
   const loadBalance = async (token) => {
-    setLoading(true)
+    setLoading(true); setErr('')
     try {
       const a = api(token)
       const [fullRes, recRes, payRes] = await Promise.all([
@@ -454,7 +465,10 @@ export default function Balance() {
       setReceivablesData(recRes.data)
       setPayablesData(payRes.data)
     } catch (e) {
-      if (e.response?.status === 401) router.push('/login')
+      // Баланс складывается из ТРЁХ запросов, и падение любого делало страницу
+      // белым листом без меню: `if (!data || !receivablesData || !payablesData)`
+      // ниже возвращал null, а причину никто не называл (F5-03).
+      if (!isAuth(e)) setErr(errText(e))
     } finally {
       setLoading(false)
     }
@@ -478,7 +492,20 @@ export default function Balance() {
     }
   }
 
+
+  // Отказ рисуем ДО любой загрузки: ходить за данными, которых человеку не отдадут,
+  // незачем, а пустой экран он прочитает как поломку.
+  if (access === 'denied') return (
+    <NoAccessScreen title="Баланс: нет доступа" what="Баланс"
+      nav={<><Head><title>Баланс | Финансовый учёт</title></Head><Navbar /></>} />
+  )
+
   if (loading) return <div style={{ textAlign: 'center', padding: '80px', color: 'var(--text-muted)' }}>Загрузка баланса...</div>
+  if ((!data || !receivablesData || !payablesData) && err) return (
+    <LoadErrorScreen title="Баланс не загрузился" text={err}
+      nav={<><Head><title>Баланс | Финансовый учёт</title></Head><Navbar active="balance" /></>}
+      onRetry={() => loadBalance(localStorage.getItem('token'))} />
+  )
   if (!data || !receivablesData || !payablesData) return null
 
   if (isMobile) {

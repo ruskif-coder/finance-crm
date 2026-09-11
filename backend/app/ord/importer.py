@@ -314,6 +314,28 @@ def upsert(db: Session, *, initial: Optional[bytes] = None,
                 f'кабинет переименовал колонку')
 
     stat = upsert_rows(db, initial=initial_rows, final=final_rows, outer=outer_rows)
+
+    # КОНТУР ставим явно — 'prod'. Выгрузку берут руками из БОЕВОГО кабинета, другого у
+    # нас нет: тренировочного клиента ОРД не заводили. Оставлять пусто нельзя — пустое
+    # значение означает «неизвестно», а неизвестное потом дометит первый попавшийся синк
+    # своим контуром. Именно так демо-прогон переворачивал боевые идентификаторы
+    # в демовые (F2-03 внешнего аудита 11.09.2026).
+    #
+    # Уже размеченное не трогаем: если запись когда-то пришла по API демо-контура, её
+    # контур — факт, а не догадка.
+    from app.models import Contract
+    from app.ord.models import OrdInitialContract
+    fids = [r.get('ord_id') for r in final_rows + outer_rows if r.get('ord_id')]
+    iids = [r.get('ord_id') for r in initial_rows if r.get('ord_id')]
+    if fids:
+        (db.query(Contract)
+           .filter(Contract.ord_contract_id.in_(fids), Contract.ord_env.is_(None))
+           .update({Contract.ord_env: 'prod'}, synchronize_session=False))
+    if iids:
+        (db.query(OrdInitialContract)
+           .filter(OrdInitialContract.ord_id.in_(iids), OrdInitialContract.ord_env.is_(None))
+           .update({OrdInitialContract.ord_env: 'prod'}, synchronize_session=False))
+
     stat.update(read)
     stat['warnings'] = warnings + stat['warnings']
     return stat

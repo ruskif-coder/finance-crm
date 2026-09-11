@@ -5,10 +5,13 @@
  * 34 страницы: превращение его в обёртку избавляет от правки каждой из них.
  */
 import Nav from '@/components/Nav'
-import { can } from '@/lib/auth'
+import { can, getPermissions } from '@/lib/auth'
 import { firstAllowedHref as _first, firstDirectoryHref as _dir } from '@/lib/nav'
 
-export { can }
+// `getPermissions` реэкспортируем рядом с `can`: порознь они не нужны — снимок прав
+// это первый аргумент проверки, и страницы, бравшие только `can`, звали её с двумя
+// аргументами вместо трёх.
+export { can, getPermissions }
 
 // Сигнатуры сохранены прежними (perms, role) — так их вызывают существующие страницы.
 export const firstAllowedHref = (perms, role) => _first(perms, role === 'admin')
