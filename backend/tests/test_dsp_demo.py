@@ -7,6 +7,7 @@
 бы, молча и «успешно». Это не падает и не видно в коде.
 """
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -298,3 +299,263 @@ def test_in_the_live_cabinet_the_screen_touches_only_its_own(monkeypatch):
     monkeypatch.setenv(D.ENV_TOKEN, "demo-token")
     monkeypatch.setenv(D.ENV_PARTNER, "DEMOPARTNER00001")
     D._assert_ours("AAAAAAAAAAAAAAAA")          # на своём демо-клиенте замка нет
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ответ загрузчика архива. Замерено на живом кабинете 09.09.2026.
+#
+# Он ВСЕГДА отвечает 200 и content-type text/html, а телом шлёт JSON: либо
+# {"result": {...,"html": …}}, либо {"error": {"message","code"}}. Обе ветки стоили нам
+# по ошибке: отказ выглядел как «вернул не HTML» (настоящая причина пряталась), а успех
+# уезжал бы в Creative.edit json-обёрткой вместо разметки — молча, потому что и «<», и
+# макросы внутри строки есть, и все прежние проверки проходили.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _zip_with(meta: str) -> bytes:
+    import io as _io
+    import zipfile
+    buf = _io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("index.html", f"<html><head>{meta}</head><body>x</body></html>")
+    return buf.getvalue()
+
+
+def test_uploader_success_is_json_and_we_take_the_markup_out_of_it():
+    body = ('{"result":{"width":240,"height":400,"size":"240x400",'
+            '"html":"<html><head><base href=\\"https://cdn.example.test/a/\\">'
+            '</head><body>{RID}</body></html>"}}')
+    out = cr._parse_upload_body(body)
+    assert out.get("error") is None
+    assert out["size"] == "240x400" and out["width"] == 240
+    assert out["html"].startswith("<html>") and "{RID}" in out["html"]
+    assert '"result"' not in out["html"], 'в креатив уехала бы обёртка, а не баннер'
+
+
+def test_uploader_refusal_is_reported_by_its_own_words():
+    body = ('{"error":{"message":"Error reading metadata. Meta-tag size not found. '
+            'Example of meta-tag: &lt;meta name=\\"ad.size\\"&gt;","code":2053}}')
+    out = cr._parse_upload_body(body)
+    assert "Meta-tag size not found" in out["error"]
+    assert "код 2053" in out["error"]
+    assert "<meta" in out["error"], 'экранирование обязано быть развёрнуто для человека'
+    assert "html" not in out
+
+
+def test_a_body_that_is_not_their_json_stays_markup():
+    """Если загрузчик когда-нибудь ответит голым HTML, конвейер из-за этого не встанет."""
+    assert cr._parse_upload_body("<html><body>ok</body></html>")["html"].startswith("<html>")
+    assert cr._parse_upload_body("{это не json")["html"] == "{это не json"
+
+
+def test_banner_without_the_size_meta_is_refused_before_the_network():
+    """Сказать «допиши тег ad.size» можно до отправки — и сказать понятнее, чем это
+    сделает загрузчик. Размер при этом НЕ выдумываем: имя файла врёт, а внутрь баннера
+    его пишет тот, кто баннер собрал."""
+    assert cr.ad_size_in_zip(_zip_with("")) is None
+    with pytest.raises(cr.CreativeError) as e:
+        cr.require_ad_size(_zip_with(""))
+    assert "ad.size" in str(e.value)
+
+    # Объявленный размер читается тем же разбором, что и предпросмотр стадии сборки.
+    assert cr.ad_size_in_zip(
+        _zip_with('<meta name="ad.size" content="width=240,height=400">')) == (240, 400)
+    # 0x0 — это ЗАЯВЛЕННЫЙ адаптивный баннер, и спорить с ним не наше дело.
+    cr.require_ad_size(_zip_with('<meta name="ad.size" content="width=0,height=0">'))
+
+
+def test_the_size_parser_has_exactly_one_definition():
+    """Второй разбор ad.size разошёлся бы с первым, и предпросмотр начал бы показывать
+    не то, что уходит в DSP."""
+    import inspect
+    from app.launch_prep import sandbox
+    assert "parse_ad_size" in inspect.getsource(cr.ad_size_in_zip)
+    assert callable(sandbox.parse_ad_size)
+
+
+def test_a_failed_upload_lands_in_the_journal_too():
+    """Прежде писалась только удачная загрузка, и на экране получалось худшее: шаг не
+    прошёл, а в журнале после getUploadFileUrl пусто — будто ничего и не отправляли."""
+    seen = []
+
+    class _Client:
+        def upload_get_url(self, kind):
+            return "https://uploader.example.test/put"
+
+        def journal_raw(self, method, entity, ref, req, resp, xxh, ok, error):
+            seen.append((method, ok, error))
+
+    import httpx as _httpx
+    real_post = _httpx.post
+    _httpx.post = lambda *a, **k: type("R", (), {
+        "status_code": 200, "text": '{"error":{"message":"нет тега","code":2053}}',
+        "raise_for_status": lambda self: None})()
+    try:
+        with pytest.raises(cr.CreativeError):
+            cr.upload_zip(_Client(),
+                          _zip_with('<meta name="ad.size" content="width=1,height=1">'),
+                          "b.zip", local_ref="TESTREF")
+    finally:
+        _httpx.post = real_post
+    assert seen and seen[0][0] == "Upload.file"
+    assert seen[0][1] is False and "нет тега" in seen[0][2]
+
+
+def test_ready_markup_goes_to_the_sandbox_not_into_srcdoc(tmp_path):
+    """Баннер после загрузчика ссылается на ЧУЖОЙ CDN (`<base href>` подставляет он сам).
+
+    Показать такое на нашем домене нельзя, и это не баг предпросмотра, а наш CSP:
+    `base-uri 'self'` отменяет их base, `img-src 'self' data: blob:` не пускает их
+    картинки. Рамка получается пустой — ровно так «предпросмотр умер» 09.09.2026.
+    Домен песочницы заведён именно для чужого кода, там ограничений по источникам нет.
+    """
+    from app.launch_prep import sandbox as sb
+    root = str(tmp_path)
+    html = '<html><head><base href="https://cdn.example.test/x/"></head><body>{RID}</body></html>'
+
+    token, entry = sb.stash_html(root, html, token="dsp-demo-test")
+    assert entry == "index.html"
+    written = (tmp_path / sb.SANDBOX_DIR / token / entry).read_text(encoding="utf-8")
+    assert written == html
+
+    # Каталог держит ОДИН баннер: тренировка грузит их подряд, а сроков хранения у
+    # демо-песочницы нет — иначе она растёт без конца.
+    sb.stash_html(root, "<html>второй</html>", token="dsp-demo-test")
+    again = (tmp_path / sb.SANDBOX_DIR / token / entry).read_text(encoding="utf-8")
+    assert again == "<html>второй</html>"
+    assert len(list((tmp_path / sb.SANDBOX_DIR).iterdir())) == 1
+
+    # Токен — часть пути раздачи наружу, и выйти из песочницы им нельзя.
+    with pytest.raises(sb.SandboxError):
+        sb.stash_html(root, "<html/>", token="../../etc")
+
+
+def test_the_sandbox_token_is_stable_but_not_guessable(monkeypatch):
+    """Песочница раздаётся БЕЗ авторизации, и её единственная защита — неподбираемость
+    адреса. Каталог при этом постоянный, иначе тренировки копили бы их без уборки."""
+    from app.routers import dsp_demo as D
+    monkeypatch.setenv("SECRET_KEY", "s3cret")
+    u = SimpleNamespace(id=7)
+    first = D._sandbox_token(u)
+    assert first == D._sandbox_token(u), "каталог обязан быть постоянным"
+    assert "demo" not in first.lower(), "по имени каталога не должно читаться, что это"
+    assert first != D._sandbox_token(SimpleNamespace(id=8))
+    monkeypatch.setenv("SECRET_KEY", "другой")
+    assert D._sandbox_token(u) != first, "секрет обязан участвовать"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ответы и тела вызовов. Всё ниже ЗАМЕРЕНО на живом кабинете 09.09.2026, а не выведено
+# из документации: документация об этом молчит, а цена ошибки — деньги и сироты в чужой
+# системе.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_creative_add_returns_the_hash_under_id_not_xxhash():
+    """`Campaign.add` отдаёт хеш строкой, а `Creative.add` — объектом с ключом `id`.
+
+    Пока разбор ждал только `xxhash`, происходило худшее из возможного: креатив в DSP
+    СОЗДАВАЛСЯ, мы считали вызов неудачным, разметку вторым вызовом не отправляли, и в
+    чужом кабинете оставался пустой креатив-сирота. На экране это выглядело как «кнопка
+    ничего не делает».
+    """
+    from app.dsp.client import _extract_xxhash
+    assert _extract_xxhash({"id": "6A12AD0CEB6F8AB5"}) == "6A12AD0CEB6F8AB5"
+    assert _extract_xxhash("AC71A89189EDD994") == "AC71A89189EDD994"
+    assert _extract_xxhash({"xxhash": "ac71a89189edd994"}) == "AC71A89189EDD994"
+    # Мусор остаётся мусором: не 16 hex — не идентификатор.
+    assert _extract_xxhash({"id": "ok"}) is None
+    assert _extract_xxhash({"id": 12345}) is None
+    assert _extract_xxhash(None) is None
+
+
+def test_traffic_distribution_lives_inside_limits_everywhere():
+    """На верхнем уровне API этот ключ ИГНОРИРУЕТ — проверено правкой живой кампании:
+    `limits.traffic_distribution` меняет режим, а тот же ключ снаружи не делает ничего.
+
+    Значит кампания молча остаётся с умолчанием `accelerated`, то есть крутит не тем
+    темпом, которым мы думаем. Прибор держит ОБА места сразу: демо-стенд и боевой
+    сборщик расходились именно здесь.
+    """
+    from datetime import date
+    from types import SimpleNamespace as NS
+
+    from app.dsp.campaigns import build_campaign_params, build_plan_params
+    from app.routers import dsp_demo as D
+
+    plan = build_plan_params(show_total=1000)
+    assert plan["limits"]["traffic_distribution"] == "uniform_pro"
+    assert "traffic_distribution" not in plan
+
+    camp = NS(id=1, month=date(2026, 9, 1), date_start=date(2026, 9, 1),
+              date_end=date(2026, 9, 30), plan_show=1000, plan_click=0, plan_budget=0)
+    built = build_campaign_params(camp, NS(code="ABC123", title="Сделка"))
+    assert built["limits"]["traffic_distribution"] == "uniform_pro"
+    assert "traffic_distribution" not in built
+
+    sent = {}
+
+    class _C:
+        def campaign_add(self, params, local_ref=None):
+            sent.update(params)
+            return "A" * 16
+
+    D.demo_client = lambda: _C()
+    try:
+        D.create_campaign(D.CampaignIn(title="проверка", date_start="2026-09-01",
+                                       date_end="2026-09-30", total_shows=1000),
+                          _FakeDb(), _FakeUser())
+    finally:
+        D.demo_client = _real_demo_client
+    assert sent["limits"]["traffic_distribution"] == "uniform_pro"
+    assert "traffic_distribution" not in sent
+    assert sent["status"] == "STOPPED", "тренировка не крутит"
+    assert sent["title"].startswith("ТЕСТ · "), "приставку ставит сервер"
+
+
+class _FakeDb:
+    def execute(self, *a, **k):
+        return self
+
+    def scalar(self):
+        return None
+
+    def add(self, *a, **k):
+        pass
+
+    def commit(self):
+        pass
+
+    def flush(self):
+        pass
+
+
+class _FakeUser:
+    id = 1
+    name = "тест"
+    role = None
+
+
+from app.routers.dsp_demo import demo_client as _real_demo_client   # noqa: E402
+
+
+def test_creative_carries_the_size_the_uploader_reported():
+    """Размер объявляет сам баннер, загрузчик его подтверждает — мы только передаём.
+
+    Без `size` DSP не знает, в какой блок креатив помещается. Адаптивный «0x0» —
+    ЗАКОННОЕ значение, а не «размер не заполнили»: так помечают баннер, который тянется
+    по контейнеру.
+    """
+    p = cr.build_creative_params(title="c", link="https://x.ru", size="240x400")
+    assert p["size"] == "240x400"
+    assert cr.build_creative_params(title="c", link="https://x.ru", size="0x0")["size"] == "0x0"
+    # Пусто — ключа нет вовсе: пустая строка обнулила бы чужое значение при edit.
+    assert "size" not in cr.build_creative_params(title="c", link="https://x.ru")
+    for bad in ("240*400", "240 x 400", "большой", "240x400px"):
+        with pytest.raises(cr.CreativeError):
+            cr.build_creative_params(title="c", link="https://x.ru", size=bad)
+
+
+def test_creative_title_is_cut_to_their_limit_not_ours():
+    """Официальная дока: длина имени >0 и ≤150. До 09.09.2026 резали по 255 — длинное имя
+    уезжало заведомо негодным, и узнали бы мы об этом отказом на их стороне."""
+    p = cr.build_creative_params(title="я" * 400, link="https://x.ru")
+    assert len(p["title"]) == 150

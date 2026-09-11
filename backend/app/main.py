@@ -11,7 +11,7 @@ from app.routers import (auth, operations, reports, counterparties, articles, se
                          year_plan, finreport, backlog, account_dashboard,
                          publishers, diadoc, ord, launch_prep, traffic, cabinets,
                          cabinet_gateway, traffic_catalog, traffic_balancer,
-                         dsp_demo, traffic_dashboard, annexes, directory_add,
+                         dsp_demo, weborama_demo, traffic_dashboard, annexes, directory_add,
                          exec_dashboard, system_status)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
@@ -39,6 +39,7 @@ from app.ord import models as ord_models          # noqa: F401,E402 — реги
 from app.launch_prep import models as launch_prep_models  # noqa: F401,E402 — модуль креативов (миграция 2026-08-26_launch_prep_creatives.sql)
 from app.cabinet import models as cabinet_models  # noqa: F401,E402 — учётки кабинета (миграция 2026-08-28_publisher_cabinet.sql)
 from app.ad import models as ad_models  # noqa: F401,E402 — дашборд трафика/РК (миграция 2026-09-01_ad_campaigns.sql)
+from app.weborama import models as weborama_models  # noqa: F401,E402 — контур Weborama (миграция 2026-09-09_weborama.sql)
 
 Base.metadata.create_all(bind=engine)
 
@@ -519,6 +520,7 @@ app.include_router(traffic_catalog.router, prefix="/api/traffic-catalog", tags=[
 app.include_router(traffic_balancer.router, prefix="/api/traffic-catalog", tags=["traffic_balancer"])
 app.include_router(traffic_dashboard.router, prefix="/api/traffic-dashboard", tags=["traffic_dashboard"])
 app.include_router(dsp_demo.router, prefix="/api/dsp-demo", tags=["dsp_demo"])
+app.include_router(weborama_demo.router, prefix="/api/weborama-demo", tags=["weborama_demo"])
 # Приложения к договору (ДС): сборка, подтверждение номера, шаблоны формулировок.
 app.include_router(annexes.router, prefix="/api/annexes", tags=["annexes"])
 # «Добавить данные» — вход на экран и набор доступных блоков. Писателей у него нет:

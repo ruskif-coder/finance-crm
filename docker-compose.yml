@@ -103,6 +103,17 @@ services:
       DSP_DEMO_API_URL: ${DSP_DEMO_API_URL:-}
       DSP_DEMO_TOKEN: ${DSP_DEMO_TOKEN:-}
       DSP_DEMO_PARTNER_XXHASH: ${DSP_DEMO_PARTNER_XXHASH:-}
+      # Верификатор Weborama (WCM): её пиксель обязателен для ротации креатива в DSP.
+      # Авторизация двухслойная — сначала JWT по email и паролю, потом два заголовка на
+      # каждый вызов. `account_id` СЮДА НЕ КЛАДЁМ: аккаунты Weborama выдаёт списком и
+      # закрепляет за клиентами, и брать его из окружения значило бы однажды записать
+      # кампанию одного рекламодателя в измерения другого.
+      WEBORAMA_API_URL: ${WEBORAMA_API_URL:-}
+      WEBORAMA_EMAIL: ${WEBORAMA_EMAIL:-}
+      WEBORAMA_PASSWORD: ${WEBORAMA_PASSWORD:-}
+      # Только ПОДСТАВЛЯЕТ номер аккаунта в поле демо-стенда. Клиент его не берёт:
+      # выбор аккаунта всегда делает человек и всегда его видит.
+      WEBORAMA_DEMO_ACCOUNT_ID: ${WEBORAMA_DEMO_ACCOUNT_ID:-}
       #
       # ORD_ALLOW_PROD_WRITE, DEBUG и LOG_DIR код читает, а здесь их НЕТ — намеренно, и
       # у каждой своя причина. Они записаны рядом с именем в

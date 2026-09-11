@@ -111,6 +111,12 @@
           "label": "ОРД",
           "href": "/accounts/ord",
           "perm": "ord"
+        },
+        {
+          "key": "weborama-demo",
+          "label": "Weborama демо",
+          "href": "/accounts/weborama-demo",
+          "perm": "weborama_demo"
         }
       ]
     },

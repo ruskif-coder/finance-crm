@@ -37,13 +37,26 @@ class MsError(RuntimeError):
     """Ошибка вызова МС: JSON-RPC error, HTTP-ошибка или неожиданный формат ответа."""
 
 
+# Под каким ключом приходит идентификатор созданного объекта. Единого правила у API нет,
+# и это замерено, а не выведено (09.09.2026, живой кабинет):
+#
+#   Campaign.add → "AC71A89189EDD994"        — строкой, без обёртки
+#   Creative.add → {"id": "6A12AD0CEB6F8AB5"} — ключ `id`, а НЕ `xxhash`
+#
+# Цена ошибки здесь несимметрична: объект в DSP уже СОЗДАН, а мы, не узнав его хеша,
+# считаем вызов неудачным. Креатив остаётся сиротой в чужом кабинете, разметка в него не
+# уезжает, и человек видит «шаг не сработал» — ровно это случилось 09.09.2026.
+ID_KEYS = ("xxhash", "id", "creative_xxhash", "campaign_xxhash")
+
+
 def _extract_xxhash(result: Any) -> Optional[str]:
     if isinstance(result, str) and XXHASH_RE.match(result):
         return result.upper()
     if isinstance(result, dict):
-        v = result.get("xxhash")
-        if isinstance(v, str) and XXHASH_RE.match(v):
-            return v.upper()
+        for k in ID_KEYS:
+            v = result.get(k)
+            if isinstance(v, str) and XXHASH_RE.match(v):
+                return v.upper()
     return None
 
 

@@ -56,6 +56,12 @@ class AdCampaignPlacement(Base):
     # согласования, последние три выбирает трафик (миграция 2026-09-04_placement_statuses).
     status = Column(String(32), nullable=False, default="у трафика")
     is_direct = Column(Boolean, nullable=False, default=False)   # «крутит сама» (10%)
+    # Сырой пиксель показа Weborama (`a.A=im`), как пришёл: с `[RANDOM]`, `~WIDTH~`,
+    # `${GDPR}`. Итоговый тег НЕ храним — он производный и зависит от того, куда едет
+    # (макрос рандомизатора у DSP и Adfox разный) и от размера конкретного креатива.
+    # Хранить производное значит завести вторую правду, которая разойдётся с первой.
+    # Миграция 2026-09-09_weborama.sql.
+    weborama_pixel = Column(Text)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(),
                         onupdate=func.now())

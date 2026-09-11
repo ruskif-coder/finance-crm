@@ -55,9 +55,33 @@ export function toCreative(s) {
       url: r.advertiser_url || '',
       erid: s.erid && ['ерид получен', 'заведён в DSP', 'в размещении'].includes(r.state)
         ? s.erid : '',
+      // Состояние во внешних системах считает СЕРВЕР одной функцией на два экрана.
+      // Здесь только раскладываем — своей арифметики у витрины быть не должно.
+      weborama: r.external?.weborama?.state || '',
+      weboramaWhy: r.external?.weborama?.why || '',
+      dsp: r.external?.dsp?.state || '',
+      dspWhy: r.external?.dsp?.why || '',
       status: siteStatus(r),
     })),
+    // Счётчики для сводки. Знаменатель — только те площадки, которым это НУЖНО:
+    // крутящие сами («—») не считаются ни в числителе, ни в знаменателе, иначе итог
+    // никогда не сойдётся и перестанет что-либо значить.
+    extW: extCount(s.recipients, 'weborama', ['есть']),
+    extD: extCount(s.recipients, 'dsp', ['заведён', 'крутится']),
   }
+}
+
+/** «Сделано из нужных» по одной внешней системе. */
+function extCount(recipients, key, doneStates) {
+  let done = 0
+  let need = 0
+  for (const r of recipients || []) {
+    const st = r.external?.[key]?.state
+    if (!st || st === '—') continue
+    need += 1
+    if (doneStates.includes(st)) done += 1
+  }
+  return { done, need }
 }
 
 /** Итог секции — строка `summary` в заголовке. Считается тем же `derive`, что и таблица:

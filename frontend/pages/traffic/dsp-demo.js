@@ -113,7 +113,7 @@ function ImportantInfo({ live, prefix, onClose }) {
 }
 
 /** Шаг цепочки: заголовок, тело, результат. */
-function Step({ n, title, note, children, result }) {
+function Step({ n, title, note, children, result, error, blocked }) {
   return (
     <div style={SECTION}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
@@ -121,7 +121,17 @@ function Step({ n, title, note, children, result }) {
         <span style={{ fontSize: 15, fontWeight: 700 }}>{title}</span>
       </div>
       {!!note && <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10, lineHeight: 1.5 }}>{note}</div>}
+      {/* Почему кнопка не нажимается — сказано словами. Отключённая кнопка молчит, и
+          человек считает, что сломался экран, а не что не пройден предыдущий шаг. */}
+      {!!blocked && (
+        <div style={{ fontSize: 12.5, color: 'var(--warning-text)', marginBottom: 10 }}>{blocked}</div>
+      )}
       {children}
+      {!!error && (
+        <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10,
+          border: '1px solid var(--danger)', background: 'var(--danger-tint)',
+          color: 'var(--danger)', fontSize: 12.5, lineHeight: 1.5 }}>{error}</div>
+      )}
       {!!result && <div style={{ marginTop: 12 }}>{result}</div>}
     </div>
   )
@@ -156,8 +166,11 @@ export default function DspDemo() {
   const [plan, setPlan] = useState({ delivered_show: '', remaining_show: '', date_end: '' })
   const [planOut, setPlanOut] = useState(null)
   const [info, setInfo] = useState(null)
-  const [preview, setPreview] = useState(null)   // разметка, открытая в предпросмотре
+  // Предпросмотр: {html, sandbox_url}. Через песочницу, а не srcdoc — баннер после
+  // загрузчика ссылается на чужой CDN, и наш CSP на своём домене его не покажет.
+  const [preview, setPreview] = useState(null)
   const [showInfo, setShowInfo] = useState(false)
+  const [stepErr, setStepErr] = useState({})   // отказ рядом с кнопкой, которую нажали
 
   // Зависимостей нет намеренно: `srcKey` в них давал бы `load` новую идентичность после
   // первой же загрузки, а `useEffect([load])` — второй запрос состояния при каждом
@@ -173,10 +186,13 @@ export default function DspDemo() {
 
   useEffect(() => { load() }, [load])
 
+  // Ошибка запоминает, НА КАКОМ шаге случилась: полоса ошибки живёт в шапке, а шаги
+  // уходят на два экрана вниз — 09.09.2026 отказ шага 4 выглядел как «кнопка молчит».
   const run = async (key, fn) => {
-    setBusy(key); setErr('')
+    setBusy(key); setErr(''); setStepErr(s => ({ ...s, [key]: '' }))
     try { await fn() } catch (e) {
-      setErr(e.response?.data?.detail || `Шаг «${key}» не прошёл`)
+      const msg = e.response?.data?.detail || `Шаг «${key}» не прошёл`
+      setErr(msg); setStepErr(s => ({ ...s, [key]: msg }))
     } finally { setBusy(''); load() }
   }
 
@@ -210,6 +226,9 @@ export default function DspDemo() {
     const r = await api.post('/dsp-demo/creative', {
       campaign_xxhash: campOut?.xxhash, title: crv.title, link: crv.link,
       html_code: wrapOut?.html || upOut?.html || '', erid: erid || null,
+      // Размер — тот, что объявил САМ баннер и подтвердил загрузчик на шаге 2.
+      // Своего мнения о нём у экрана нет и быть не должно.
+      size: upOut?.size || null,
       self_inn: crv.self_inn || null, self_name: crv.self_name || null,
       adomain: crv.adomain || null,
       total_shows: crv.total_shows ? Number(crv.total_shows) : null,
@@ -337,7 +356,8 @@ export default function DspDemo() {
           </div>
         )}
 
-        <Step n="1" title="Мастер-кампания"
+        <Step n="1" title="Мастер-кампания" error={stepErr.campaign}
+              blocked={!ready ? 'Ключей DSP нет — заводить кампанию нечем.' : ''}
               note="Заводится СТОЯЩЕЙ (STOPPED) и с явным uniform_pro: умолчание у API — accelerated, а не то, что стоит в кабинете. Лимит total — за весь срок, не остаток."
               result={campOut && (
                 <>
@@ -358,10 +378,15 @@ export default function DspDemo() {
           </button>
         </Step>
 
-        <Step n="2" title="Архив баннера"
-              note="Upload.getUploadFileUrl(type=zip) → multipart-POST архива на выданный URL → в ответ HTML-код баннера. Это единственный вызов мимо JSON-RPC, в журнал он пишется отдельной строкой."
+        <Step n="2" title="Архив баннера" error={stepErr.upload}
+              blocked={!ready ? 'Ключей DSP нет.' : ''}
+              note="Upload.getUploadFileUrl(type=zip) → multipart-POST архива на выданный URL. В index.html баннера ОБЯЗАН быть тег ad.size с размером — без него DSP архив не принимает, и мы говорим об этом до отправки. В ответ приходит разметка с проставленным загрузчиком base href на его CDN. Единственный вызов мимо JSON-RPC, в журнале отдельной строкой."
               result={upOut && (
                 <>
+                  <div style={LBL}>Размер, как его понял загрузчик</div>
+                  <div style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+                    {upOut.size || '— не сообщён'}
+                  </div>
                   <div style={LBL}>Макросы в ответе загрузчика</div>
                   <div style={{ fontFamily: MONO, fontSize: 12, marginBottom: 8 }}>
                     {upOut.macros?.length ? upOut.macros.join(' ') : '— ни одного, это подозрительно'}
@@ -375,7 +400,8 @@ export default function DspDemo() {
           </button>
         </Step>
 
-        <Step n="3" title="Обёртка"
+        <Step n="3" title="Обёртка" error={stepErr.wrap}
+              blocked={!upOut ? 'Сначала шаг 2: оборачивать нечего, пока загрузчик не вернул разметку.' : ''}
               note="Вшивает НАШ СЧЁТЧИК (свой для площадок с нашим кодом и без него), viewability-скрипт и метку ЕРИД — внутрь head креатива. Сети не касается: результат видно до отправки. Макросы DSP раскрывает сам, у себя мы их не трогаем."
               result={wrapOut && (
                 <>
@@ -416,20 +442,32 @@ export default function DspDemo() {
             </button>
             {/* Смотрим ИМЕННО обёрнутую разметку — ту, что уедет в DSP, а не исходную:
                 счётчик и viewability могут её сломать, и увидеть это надо здесь. */}
-            <button onClick={() => setPreview(wrapOut?.html || upOut?.html)}
+            <button onClick={() => setPreview(wrapOut || upOut)}
                     disabled={!wrapOut && !upOut} style={btn(false)}>
               Предпросмотр
             </button>
           </div>
         </Step>
 
-        <Step n="4" title="Креатив в кампании"
+        <Step n="4" title="Креатив в кампании" error={stepErr.creative}
+              blocked={!campOut ? 'Сначала шаг 1: креатив заводится ВНУТРИ кампании.'
+                       : (!wrapOut && !upOut) ? 'Сначала шаг 2: нет разметки, которую класть в креатив.' : ''}
               note="Creative.add возвращает xxhash, затем Creative.edit кладёт разметку. Это и есть связка площадка×креатив: у нас ей соответствует строка ad_campaign_creative со своим ms_creative_xxhash. description не трогаем — ломается."
               result={crvOut && (
                 <>
                   <div style={LBL}>xxhash креатива</div>
                   <div style={HASH}>{crvOut.xxhash}</div>
-                  <div style={{ ...CODE, marginTop: 8 }}>{JSON.stringify(crvOut.request, null, 2)}</div>
+                  {/* Два вызова, и разметка уходит ВТОРЫМ. Без этой строки экран
+                      показывал тело add — где html-кода нет по определению. */}
+                  <div style={{ fontSize: 12.5, marginTop: 8 }}>
+                    Разметка отправлена вторым вызовом{' '}
+                    <code style={{ fontFamily: MONO }}>{crvOut.edit?.method}</code> в поле{' '}
+                    <code style={{ fontFamily: MONO }}>{crvOut.edit?.field}</code>:{' '}
+                    <b>{crvOut.html_bytes} байт</b>, ответ{' '}
+                    <code style={{ fontFamily: MONO }}>{JSON.stringify(crvOut.edit?.result)}</code>
+                  </div>
+                  <div style={{ ...LBL, marginTop: 10 }}>Тело Creative.add</div>
+                  <div style={{ ...CODE, marginTop: 4 }}>{JSON.stringify(crvOut.request, null, 2)}</div>
                 </>
               )}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
@@ -438,21 +476,29 @@ export default function DspDemo() {
             <F label="Показов, total" value={crv.total_shows} onChange={v => setCrv(c => ({ ...c, total_shows: v }))} placeholder="без дня и часа" />
             <F label="ИНН рекламодателя" value={crv.self_inn} onChange={v => setCrv(c => ({ ...c, self_inn: v }))} />
             <F label="Название рекламодателя" value={crv.self_name} onChange={v => setCrv(c => ({ ...c, self_name: v }))} />
-            <F label="adomain" value={crv.adomain} onChange={v => setCrv(c => ({ ...c, adomain: v }))} placeholder="example.ru" />
+            <F label="adomain" value={crv.adomain} onChange={v => setCrv(c => ({ ...c, adomain: v }))} placeholder="https://example.ru/" />
+            <div>
+              <div style={{ ...LBL, marginBottom: 4 }}>Размер (из шага 2)</div>
+              <div style={{ ...inp, fontFamily: MONO, fontSize: 12,
+                background: 'var(--bg-subtle)', color: upOut?.size ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                {upOut?.size || 'будет после загрузки архива'}
+              </div>
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
             <button onClick={doCreative} disabled={!campOut || (!wrapOut && !upOut) || !!busy}
                     style={primaryBtn}>
               {busy === 'creative' ? 'Завожу…' : 'Завести креатив'}
             </button>
-            <button onClick={() => setPreview(wrapOut?.html || upOut?.html)}
+            <button onClick={() => setPreview(wrapOut || upOut)}
                     disabled={!wrapOut && !upOut} style={btn(false)}>
               Предпросмотр
             </button>
           </div>
         </Step>
 
-        <Step n="5" title="Таргетинг на источник"
+        <Step n="5" title="Таргетинг на источник" error={stepErr.targeting}
+              blocked={!campOut && !crvOut ? 'Сначала шаги 1 и 4.' : ''}
               note="У источника в DSP есть только включённость и ставка — лимита нет. Поэтому суточный лимит на площадку у нас ОРИЕНТИР по определению, а рычаги — ставка и вкл/выкл."
               result={tgtOut && <div style={CODE}>{JSON.stringify(tgtOut.result, null, 2)}</div>}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'end' }}>
@@ -557,7 +603,8 @@ export default function DspDemo() {
       {/* Тот же компонент, что в очереди трафика: сетка типовых пропорций и изолированная
           рамка без allow-same-origin — чужой код не дотянется до нашей сессии. */}
       {!!preview && (
-        <CreativePreview htmlSource={preview} title="Предпросмотр креатива для DSP"
+        <CreativePreview htmlSource={preview.html} sandboxUrl={preview.sandbox_url}
+                         title="Предпросмотр креатива для DSP"
                          onClose={() => setPreview(null)} />
       )}
 

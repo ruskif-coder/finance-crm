@@ -77,6 +77,10 @@ PASSED_THROUGH = {
     "DSP_DEMO_API_URL": "compose",
     "DSP_DEMO_TOKEN": "compose",
     "DSP_DEMO_PARTNER_XXHASH": "compose",
+    "WEBORAMA_API_URL": "compose",
+    "WEBORAMA_EMAIL": "compose",
+    "WEBORAMA_PASSWORD": "compose",
+    "WEBORAMA_DEMO_ACCOUNT_ID": "compose",
 }
 
 

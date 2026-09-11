@@ -126,6 +126,12 @@ SECTIONS = [
     # журнал обмена.
     {"key": "dsp_demo",           "label": "Трафики · DSP демо", "group": "Трафики", "actions": ["view", "edit"]},
 
+    # Стенд Weborama живёт в контуре АККАУНТОВ (решение владельца 09.09.2026): пиксель
+    # верификатора заводится вместе с креативами, а это работа аккаунта, не трафика.
+    # Бэкфилла НЕТ по той же причине, что у dsp_demo: инструмент шлёт запросы во внешнюю
+    # систему, и заведённое там переименовать уже нельзя.
+    {"key": "weborama_demo",      "label": "Аккаунты · Weborama демо", "group": "Аккаунты", "actions": ["view", "edit"]},
+
     {"key": "settings_balances",    "label": "Настройки · Остатки",  "group": "Ядро", "actions": ["view", "edit"]},
     {"key": "settings_articles",    "label": "Настройки · Статьи",   "group": "Ядро", "actions": ["view", "edit"]},
     {"key": "settings_pipelines",   "label": "Настройки · Воронки",  "group": "Ядро", "actions": ["view", "edit"]},

@@ -19,6 +19,8 @@
 видеть ответ КАЖДОГО шага. Обёртка (`/wrap`) вообще не ходит в сеть — её видно до
 отправки, и в этом её проверка.
 """
+import hashlib
+import logging
 import os
 from typing import Any, Dict, List, Optional
 
@@ -37,6 +39,11 @@ from app.models import User
 from app.permissions import require_permission
 
 router = APIRouter()
+
+log = logging.getLogger("finance.dsp")
+
+# Тот же корень хранилища, что у стадии сборки (`routers/launch_prep.UPLOADS_ROOT`).
+UPLOADS_ROOT = "/app/uploads"
 
 VIEW = require_permission("dsp_demo", "view")
 EDIT = require_permission("dsp_demo", "edit")
@@ -131,6 +138,39 @@ def _log_rows(limit: int = 30) -> List[dict]:
         return [{"error": f"журнал недоступен: {e!r}"}]
 
 
+def _sandbox(user, html: str) -> Optional[str]:
+    """Адрес разметки на домене песочницы, или None, если она не настроена.
+
+    Каталог СВОЙ у каждого человека и переиспользуется: тренировка грузит баннер за
+    баннером, а сроков хранения у демо-песочницы нет — случайный каталог на каждую
+    загрузку копил бы их вечно.
+
+    Своя рамка нужна потому, что баннер после загрузчика ссылается на ЧУЖОЙ CDN, а наш
+    CSP такое на своём домене не покажет: `base-uri 'self'` отменяет их `<base href>`,
+    `img-src`/`script-src` не пускают их файлы. Пустая рамка выглядит как «предпросмотр
+    сломался», хотя ломается ровно то, что и должно.
+    """
+    from app.launch_prep import sandbox as sb
+    try:
+        token, entry = sb.stash_html(UPLOADS_ROOT, html, token=_sandbox_token(user))
+        return sb.public_url(token, entry)
+    except Exception:  # noqa: BLE001 — предпросмотр не должен ронять сам шаг
+        log.warning("Не удалось положить разметку в песочницу", exc_info=True)
+        return None
+
+
+def _sandbox_token(user) -> str:
+    """Постоянный, но НЕПОДБИРАЕМЫЙ каталог песочницы для этого человека.
+
+    Песочница раздаётся без авторизации — иначе баннер не открылся бы в кабинете
+    площадки, — и единственная её защита в том, что адрес не угадать. Простое
+    `dspdemo-<id>` эту защиту сняло бы, а случайный каждый раз копил бы каталоги:
+    сроков хранения у демо-песочницы нет. Отсюда хеш от секрета приложения и id.
+    """
+    salt = os.getenv("SECRET_KEY") or ""
+    return "d" + hashlib.sha256(f"{salt}:dsp-demo:{user.id}".encode()).hexdigest()[:31]
+
+
 @router.get("/state")
 def state(db: Session = Depends(get_db), user: User = Depends(VIEW)):
     """Готов ли стенд, в ЧЕЙ кабинет он ходит и что уже отправляли."""
@@ -175,10 +215,14 @@ def create_campaign(payload: CampaignIn, db: Session = Depends(get_db),
     title = payload.title.strip()
     if not title.startswith(dsp_campaigns.DEMO_TITLE_PREFIX):
         title = dsp_campaigns.DEMO_TITLE_PREFIX + title
+    # traffic_distribution живёт ВНУТРИ limits. Замерено 09.09.2026 на живом кабинете:
+    # ключ на верхнем уровне API молча игнорирует, и кампания остаётся с умолчанием
+    # `accelerated`. Боевой сборщик (`campaigns.build_campaign_params`) всегда клал его
+    # правильно — расходились именно эти два места, и расхождение было тихим.
+    limits["traffic_distribution"] = "uniform_pro"
     params = {"title": title[:255],
               "date_start": payload.date_start, "date_end": payload.date_end,
               "status": "STOPPED",            # демо не должно ничего крутить
-              "traffic_distribution": "uniform_pro",
               "limits": limits}
     c = demo_client()
     try:
@@ -212,8 +256,11 @@ def upload(file: UploadFile = File(...), local_ref: str = Form("demo"),
         raise HTTPException(400, str(e))
     except MsError as e:
         raise HTTPException(502, f"DSP отказал: {e}")
+    # Размер отдаём наружу: его объявляет сам баннер, а загрузчик возвращает то, КАК он
+    # его понял. Расхождение с тем, что человек ждал, видно только здесь.
     return {"url": out["url"], "html": out["html"],
-            "macros": cr.macros_found(out["html"]), "bytes": len(data)}
+            "macros": cr.macros_found(out["html"]), "bytes": len(data),
+            "size": out.get("size"), "sandbox_url": _sandbox(user, out["html"])}
 
 
 class WrapIn(BaseModel):
@@ -238,6 +285,7 @@ def wrap(payload: WrapIn, db: Session = Depends(get_db), user: User = Depends(VI
     except cr.CreativeError as e:
         raise HTTPException(400, str(e))
     return {"html": out, "macros": cr.macros_found(out),
+            "sandbox_url": _sandbox(user, out),
             "viewability": bool(vsrc) and vsrc in out,
             # Адрес скрипта видимости не задан на вкладке «Скрипт» админки трафика.
             # Тот же принцип, что у счётчика ниже: молчать нельзя, креатив уедет без него.
@@ -252,6 +300,8 @@ class CreativeIn(BaseModel):
     title: str
     link: str
     html_code: str
+    # Размер — из ответа загрузчика на шаге 2. Своего мнения о нём у нас нет.
+    size: Optional[str] = None
     erid: Optional[str] = None
     self_inn: Optional[str] = None
     self_name: Optional[str] = None
@@ -272,7 +322,8 @@ def create_creative(payload: CreativeIn, db: Session = Depends(get_db),
         params = cr.build_creative_params(
             title=payload.title, link=payload.link, erid=payload.erid,
             self_inn=payload.self_inn, self_name=payload.self_name,
-            adomain=payload.adomain, total_shows=payload.total_shows)
+            adomain=payload.adomain, size=payload.size,
+            total_shows=payload.total_shows)
     except cr.CreativeError as e:
         raise HTTPException(400, str(e))
     if not payload.html_code.strip():
@@ -280,14 +331,19 @@ def create_creative(payload: CreativeIn, db: Session = Depends(get_db),
     c = demo_client()
     try:
         xxhash = c.creative_add(payload.campaign_xxhash, params, local_ref=payload.local_ref)
-        c.creative_edit(xxhash, {"data": {"html_code": payload.html_code}},
-                        local_ref=payload.local_ref)
+        edit_result = c.creative_edit(xxhash, {"data": {"html_code": payload.html_code}},
+                                      local_ref=payload.local_ref)
     except MsError as e:
         raise HTTPException(502, f"DSP отказал: {e}")
     log_action(db, user, "dsp_demo_creative", "dsp", None,
                f"{payload.title} → {xxhash} в {payload.campaign_xxhash}")
+    # Разметка уходит ВТОРЫМ вызовом (`Creative.edit`), и в теле `add` её нет по
+    # определению. Пока экран показывал только тело `add`, это читалось как «итоговый
+    # html не передан» — говорим прямо, сколько байт ушло и чем.
     return {"xxhash": xxhash, "campaign_xxhash": payload.campaign_xxhash,
-            "request": params}
+            "request": params, "html_bytes": len(payload.html_code),
+            "edit": {"method": "Creative.edit", "field": "data.html_code",
+                     "result": edit_result}}
 
 
 class TargetingIn(BaseModel):

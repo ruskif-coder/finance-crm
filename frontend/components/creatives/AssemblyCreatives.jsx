@@ -16,7 +16,7 @@
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api, { auth } from '@/lib/api'
-import { MONO, UI, inp, btn, PickValue } from '@/components/salesTableKit'
+import { MONO, UI, inp, btn, PickValue, EXT_TONE, ExtChip } from '@/components/salesTableKit'
 import BrandMarkingDialog, { saveBrandMarking } from '../ord/BrandMarking'
 import ValuePopover from '@/components/ValuePopover'
 import { overlayClose } from '@/lib/overlay'
@@ -536,7 +536,8 @@ const RATIO_PX = (ratio) => {
  *  на баннер по-разному, а спор «у меня всё ровно» разрешить нечем. Отличается только
  *  источник разметки — не показ. */
 export function CreativePreview({ files, startId, set, canApprove, onReviewed, onClose,
-                                  htmlSource = null, title = 'Предпросмотр креатива' }) {
+                                  htmlSource = null, sandboxUrl = null,
+                                  title = 'Предпросмотр креатива' }) {
   const [curId, setCurId] = useState(startId)
   const [blob, setBlob] = useState(null)
   const [html, setHtml] = useState(null)
@@ -657,8 +658,15 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
             <div style={{ width: wh ? Math.round(wh[0] * k) : '100%',
               height: wh ? Math.round(wh[1] * k) : 420, overflow: 'hidden' }}>
               {/* Чужой исполняемый код — только в изолированной рамке и без
-                  allow-same-origin: тогда у неё свой origin, и до нашей сессии не дотянуться. */}
-              <iframe srcDoc={html} sandbox="allow-scripts" title={'Креатив ' + (cur?.ratio || '')}
+                  allow-same-origin: тогда у неё свой origin, и до нашей сессии не дотянуться.
+
+                  Если разметка положена в ПЕСОЧНИЦУ — берём её оттуда, а не через srcdoc.
+                  Разница не косметическая: srcdoc наследует НАШ CSP, а баннер после
+                  загрузчика DSP ссылается на его CDN, и `base-uri 'self'` вместе с
+                  `img-src 'self'` показали бы пустую рамку. У домена песочницы таких
+                  ограничений нет — она ровно для чужого кода и заведена. */}
+              <iframe {...(sandboxUrl ? { src: sandboxUrl } : { srcDoc: html })}
+                sandbox="allow-scripts" title={'Креатив ' + (cur?.ratio || '')}
                 style={{ border: 0, display: 'block', background: 'var(--bg-card)',
                   width: wh ? wh[0] : '100%', height: wh ? wh[1] : 420,
                   transform: `scale(${k})`, transformOrigin: 'top left' }} />
@@ -882,6 +890,13 @@ function EridBlock({ set, onChanged }) {
 /* ── строка площадки внутри креатива ────────────────────────────────────── */
 /* Раскладка по референсу демостенда: строка на площадку, колонки справа. До отправки
    слева галочка выбора, после — она уступает место точке-маркеру состояния. */
+/* Состояние во внешней системе одной буквой. Цвет — значение, подсказка — подробности.
+
+   «—» и «нет» РАЗНЫЕ: «нет» зовёт нажать кнопку, «—» говорит, что делать нечего
+   (площадка из тех 10%, что крутят сами). Серый и пунктир различают их без слов. */
+/* Плашки внешних систем (`EXT_TONE`, `ExtChip`) переехали в общий кит 09.09.2026:
+   те же буквы нужны дашборду трафика, а вторая копия стилей разошлась бы с первой. */
+
 /* Колонки строки получателя. ЕРИД стоит СРАЗУ за статусом: как только строка доходит
    до «ерид получен», маркер — следующее, что от неё нужно, и берёт его тот, кто
    заводит кампанию в DSP, а не тот, кто согласовывал.
@@ -895,7 +910,7 @@ function EridBlock({ set, onChanged }) {
 /* Статус и ЕРИД — ФИКСИРОВАННЫЕ: в них короткое содержимое известной длины, и на
    широком экране доля растягивала бы пустоту вокруг плашки. Растут те две колонки,
    которым ширина действительно нужна, — имя площадки и посадочная страница. */
-const R_COLS = '20px minmax(0,1fr) 30px minmax(0,1.6fr) 116px 104px 88px'
+const R_COLS = '20px minmax(0,1fr) 30px minmax(0,1.6fr) 116px 84px 88px'
 
 /* Тестовая ссылка нацеливания. Живёт на КРЕАТИВЕ: кампания в DSP заводится на креатив,
    и два баннера в одной сделке — это две кампании и две ссылки. По ней трафик открывает
@@ -1118,21 +1133,24 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
         )}
       </span>
 
-      {/* Маркер выпускается на КОМПЛЕКТ, а показывается у той площадки, до которой он
-          дошёл: отказавшая и ждущая его не получают. Копируется одним нажатием — им
-          пользуются при заведении кампании, а не переписывают глазами. */}
-      <span style={{ display: 'inline-flex', justifyContent: 'center', minWidth: 0 }}>
-        {hasErid ? (
-          <span onClick={() => navigator.clipboard?.writeText(set.erid)}
-            title="Скопировать ЕРИД"
-            style={{ cursor: 'pointer', fontFamily: MONO, fontSize: 10.5, fontWeight: 700,
-              color: 'var(--income)', overflow: 'hidden', textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap' }}>
-            {set.erid}
-          </span>
-        ) : (
-          <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-faint)' }}>—</span>
-        )}
+      {/* Три внешние системы одной колонкой: маркировка, верификатор, закупка.
+          Раньше здесь была строка ЕРИДа целиком — она занимала ширину, а читалась как
+          «есть/нет» (владелец 09.09.2026: «ерид можно тоже показывать статусом»).
+          Три плашки вместо одной строки и двух новых колонок: семь колонок уже
+          перерастали блок, ещё две загнали бы таблицу в горизонтальную прокрутку.
+
+          Значение несёт ЦВЕТ, подпись — букву системы, подсказка — подробности.
+          Маркер по-прежнему копируется нажатием: им пользуются при заведении кампании. */}
+      <span style={{ display: 'inline-flex', justifyContent: 'center', gap: 4, minWidth: 0 }}>
+        <ExtChip letter="Е" tone={hasErid ? 'ok' : 'none'}
+                 title={hasErid ? `ЕРИД ${set.erid} — нажмите, чтобы скопировать` : 'ЕРИД не выпущен'}
+                 onClick={hasErid ? () => navigator.clipboard?.writeText(set.erid) : null} />
+        <ExtChip letter="W" tone={EXT_TONE[r.external?.weborama?.state] || 'none'}
+                 title={`Weborama: ${r.external?.weborama?.state || 'нет данных'}` +
+                        (r.external?.weborama?.why ? ` — ${r.external.weborama.why}` : '')} />
+        <ExtChip letter="D" tone={EXT_TONE[r.external?.dsp?.state] || 'none'}
+                 title={`DSP: ${r.external?.dsp?.state || 'нет данных'}` +
+                        (r.external?.dsp?.why ? ` — ${r.external.dsp.why}` : '')} />
       </span>
 
       <span style={{ display: 'inline-flex', justifyContent: 'flex-end', gap: 5 }}>
@@ -1424,7 +1442,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
                 <span /><span>Площадка</span><span style={{ textAlign: 'center' }}>ТТ</span>
                 <span>Посадочная страница</span>
                 <span style={{ textAlign: 'center' }}>Статус</span>
-                <span style={{ textAlign: 'center' }}>ЕРИД</span><span />
+                <span style={{ textAlign: 'center' }} title="Маркировка · Weborama · DSP">Внешние</span><span />
               </div>
               {set.recipients.map(r => (
                 <RecipientRow key={r.target_id} r={r} set={set} canEdit={canEdit} canApprove={canApprove}

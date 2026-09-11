@@ -16,8 +16,13 @@
 макросы. Значения макросов подставляет САМ DSP при выдаче — мы их не раскрываем, а
 оставляем как есть; развернуть их у себя значило бы прибить креатив к одной площадке.
 """
+import html as html_mod
+import io
+import json
 import logging
+import os
 import re
+import zipfile
 from typing import Optional
 
 import httpx
@@ -55,6 +60,30 @@ def check_zip(data: bytes, filename: str = "") -> None:
         raise CreativeError(f"Это не zip-архив: {filename or 'файл'} начинается не с PK")
 
 
+def ad_size_in_zip(data: bytes) -> Optional[tuple]:
+    """`(ширина, высота)` из мета-тега баннера внутри архива, или None, если тега нет.
+
+    Разбор один на проект — `launch_prep.sandbox.parse_ad_size`, тот же, которым живёт
+    предпросмотр. Импорт внутри функции: конвейер DSP не должен тянуть за собой стадию
+    сборки при старте.
+    """
+    from app.launch_prep.sandbox import parse_ad_size
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            names = [n for n in z.namelist() if n.lower().endswith((".html", ".htm"))]
+            # index.html вперёд: в архиве бывают вспомогательные страницы без мета-тега.
+            names.sort(key=lambda n: (os.path.basename(n).lower() != "index.html", n))
+            for n in names:
+                with z.open(n) as fh:
+                    head = fh.read(8192).decode("utf-8", "ignore")
+                wh = parse_ad_size(head)
+                if wh:
+                    return wh
+    except (zipfile.BadZipFile, OSError, KeyError):
+        return None
+    return None
+
+
 def upload_zip(client, data: bytes, filename: str = "creative.zip",
                *, local_ref=None, timeout: float = 60.0) -> dict:
     """Загрузить архив и получить HTML-код баннера.
@@ -63,23 +92,99 @@ def upload_zip(client, data: bytes, filename: str = "creative.zip",
     не тем, чего ждали.
     """
     check_zip(data, filename)
+    require_ad_size(data)
     url = client.upload_get_url("zip")
     if not isinstance(url, str) or not url.startswith("http"):
         raise CreativeError(f"Upload.getUploadFileUrl вернул не URL: {str(url)[:200]}")
+    req = {"url": url, "filename": filename, "bytes": len(data)}
     try:
         r = httpx.post(url, files={"file": (filename, data, "application/zip")},
                        timeout=timeout)
         r.raise_for_status()
         html = r.text
     except httpx.HTTPError as e:
+        _journal_upload(client, local_ref, req, None, False, repr(e))
         raise CreativeError(f"Загрузка архива не удалась: {e!r}") from e
-    if not html or "<" not in html:
+
+    # Загрузчик ВСЕГДА отвечает 200 и content-type text/html, а телом шлёт JSON:
+    # {"result": {"width", "height", "size", "html"}} либо {"error": {"message", "code"}}.
+    # Замерено 09.09.2026 на живом кабинете.
+    #
+    # Прежде тело считалось баннером как есть, и это две разные беды сразу: отказ
+    # выглядел как «загрузчик вернул не HTML» (настоящая причина пряталась), а УСПЕХ
+    # уезжал в `Creative.edit` json-обёрткой вместо разметки — молча и правдоподобно,
+    # потому что и `<`, и макросы внутри строки есть, все наши проверки проходили.
+    out = _parse_upload_body(html)
+    if out.get("error"):
+        _journal_upload(client, local_ref, req, html[:1000], False, out["error"])
+        raise CreativeError(f"Загрузчик отклонил архив: {out['error']}")
+    banner = out.get("html") or ""
+    if not banner or "<" not in banner:
+        _journal_upload(client, local_ref, req, html[:1000], False, "в ответе нет разметки")
         raise CreativeError(f"Загрузчик вернул не HTML: {html[:200]!r}")
     # Журнал ведёт клиент, но multipart идёт мимо него — записываем сами тем же контуром.
-    client.journal_raw("Upload.file", "upload", local_ref,
-                       {"url": url, "filename": filename, "bytes": len(data)},
-                       {"html_bytes": len(html)}, None, True, None)
-    return {"url": url, "html": html}
+    _journal_upload(client, local_ref, req,
+                    {"html_bytes": len(banner), "size": out.get("size")}, True, None)
+    return {"url": url, "html": banner, "size": out.get("size"),
+            "width": out.get("width"), "height": out.get("height")}
+
+
+def require_ad_size(data: bytes) -> None:
+    """Отказать ДО сети, если в баннере не объявлен размер.
+
+    Загрузчик без мета-тега архив не принимает (его код 2053). Проверка здесь, а не
+    только по ответу, потому что сказать это можно раньше — и сказать понятно: человеку
+    нужно знать, ЧТО дописать в баннер, а не что «загрузчик отклонил архив».
+
+    Размер НЕ подставляем: выдумать его нельзя, а имя файла врёт — то же рассуждение,
+    что в `launch_prep.sandbox.read_size`. `0x0` пропускаем: это заявленный адаптивный
+    баннер, и спорить с ним не наше дело.
+    """
+    if ad_size_in_zip(data) is None:
+        raise CreativeError(
+            'В баннере не объявлен размер. В index.html нужен тег '
+            '<meta name="ad.size" content="width=240,height=400"> с настоящими '
+            'размерами — без него DSP архив не принимает')
+
+
+def _parse_upload_body(body: str) -> dict:
+    """Разобрать ответ загрузчика: `{html, size, width, height}` либо `{error}`.
+
+    Тело, которое не является его JSON, возвращаем как разметку: если загрузчик когда-то
+    ответит голым HTML, конвейер не должен из-за этого встать.
+    """
+    s = (body or "").strip()
+    if not s.startswith("{"):
+        return {"html": body}
+    try:
+        doc = json.loads(s) or {}
+    except ValueError:
+        return {"html": body}
+
+    err = doc.get("error")
+    if isinstance(err, dict):
+        # Сообщение приходит с html-экранированием («&lt;meta …&gt;») — читать его человеку.
+        msg = html_mod.unescape(str(err.get("message") or "")).strip()
+        code = err.get("code")
+        return {"error": f"{msg} (код {code})" if code is not None else (msg or "без объяснения")}
+
+    res = doc.get("result")
+    if isinstance(res, dict):
+        return {"html": res.get("html") or "", "size": res.get("size"),
+                "width": res.get("width"), "height": res.get("height")}
+    return {"html": body}
+
+
+def _journal_upload(client, local_ref, req, resp, ok, error) -> None:
+    """Записать попытку загрузки — В ТОМ ЧИСЛЕ неудачную.
+
+    До 09.09.2026 писалась только удачная, и на экране получалось худшее: шаг не прошёл,
+    а в журнале после `getUploadFileUrl` пусто, будто ничего и не отправляли.
+    """
+    try:
+        client.journal_raw("Upload.file", "upload", local_ref, req, resp, None, ok, error)
+    except Exception:  # noqa: BLE001 — журнал не должен подменять собой результат вызова
+        log.warning("Не удалось записать в журнал попытку загрузки архива", exc_info=True)
 
 
 def wrap_html(html: str, *, erid: Optional[str] = None,
@@ -129,12 +234,24 @@ def macros_found(html: str) -> list:
     return [m for m in MACROS if m in (html or "")]
 
 
+# Предел длины имени креатива — ЕГО, не наш: официальная дока говорит «>0, ≤150».
+# До 09.09.2026 мы резали по 255, то есть длинное имя уезжало заведомо негодным.
+TITLE_MAX = 150
+
+# Размер: «240x400», адаптивный — «0x0». Применим к html и видео.
+SIZE_RE = re.compile(r"^\d{1,5}x\d{1,5}$")
+
+
 def build_creative_params(*, title: str, link: str, erid: Optional[str] = None,
                           self_inn: Optional[str] = None, self_name: Optional[str] = None,
-                          adomain: Optional[str] = None,
+                          adomain: Optional[str] = None, size: Optional[str] = None,
                           total_shows: Optional[int] = None,
                           total_clicks: Optional[int] = None) -> dict:
     """Тело креатива по плану.
+
+    `size` — «240x400» либо «0x0» у адаптивного. Берётся из ОТВЕТА загрузчика (он его
+    и объявляет), а не выдумывается: имя файла врёт, а внутрь баннера размер пишет тот,
+    кто его собрал. Без него DSP не знает, в какой блок креатив помещается.
 
     Лимиты — ТОЛЬКО `total`: при `uniform_pro` день и час на креативе конфликтуют с API
     (готча из теста владельца). `description` не трогаем ни здесь, ни в `Creative.edit` —
@@ -144,7 +261,14 @@ def build_creative_params(*, title: str, link: str, erid: Optional[str] = None,
         raise CreativeError("У креатива должно быть имя")
     if not link or not link.strip():
         raise CreativeError("У креатива должна быть посадочная ссылка")
-    params = {"title": title.strip()[:255], "link": link.strip()}
+    params = {"title": title.strip()[:TITLE_MAX], "link": link.strip()}
+    if size and str(size).strip():
+        s = str(size).strip().lower()
+        if not SIZE_RE.match(s):
+            raise CreativeError(
+                f"Размер «{size}» не в формате ширинаxвысота (например 240x400, "
+                f"адаптивный — 0x0)")
+        params["size"] = s
     if erid:
         params["erid"] = erid.strip()
     if self_inn:

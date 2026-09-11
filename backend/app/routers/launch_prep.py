@@ -201,7 +201,7 @@ def _candidates(db: Session, service_id: int, surfaces: List[str]) -> List[dict]
 
 
 def _recipient_out(target, pub, pair=None, review=None, traffic=None,
-                   files_count=0, moved_to_no=None) -> dict:
+                   files_count=0, moved_to_no=None, external=None) -> dict:
     """Строка получателя внутри комплекта.
 
     До отправки это кандидат, после — пара с вердиктом и кодом. Одна форма на оба случая
@@ -220,6 +220,9 @@ def _recipient_out(target, pub, pair=None, review=None, traffic=None,
         "tech_requirements": pub.tech_requirements if pub else None,
         "surface_kind": target.surface_kind,
         "state": target.state,
+        # Состояние во внешних системах — тем же расчётом, что у списка целей ниже.
+        # Одна функция на оба места: второй расчёт разошёлся бы с первым.
+        "external": external,
         "advertiser_url": target.advertiser_url,
         "url_state": url_state(target),
         "url_requested_at": target.url_requested_at,
@@ -269,7 +272,7 @@ def moved_to_rework(db: Session, set_ids) -> dict:
 
 
 def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
-             pubs=None, candidates=(), file_counts=None, moved=None) -> dict:
+             pubs=None, candidates=(), file_counts=None, moved=None, external=None) -> dict:
     """Комплект для экрана. Состояние ВЫЧИСЛЯЕТСЯ, а не читается из колонки.
 
     Площадки живут ВНУТРИ комплекта, а не отдельным списком сверху (решение владельца
@@ -283,6 +286,7 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
     pubs = pubs or {}
     file_counts = file_counts or {}
     moved = moved or {}
+    external = external or {}
 
     if pairs:
         recipients = []
@@ -292,9 +296,12 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
                 continue          # получателя сняли — пара ушла каскадом, строки нет
             recipients.append(_recipient_out(
                 t, pubs.get(t.publisher_id), p, by_pair.get(p.id), by_traffic.get(p.id),
-                file_counts.get(p.id, 0), (moved or {}).get((s.id, t.publisher_id))))
+                file_counts.get(p.id, 0), (moved or {}).get((s.id, t.publisher_id)),
+                external.get(t.publisher_id)))
     else:
-        recipients = [_recipient_out(t, pubs.get(t.publisher_id)) for t in candidates]
+        recipients = [_recipient_out(t, pubs.get(t.publisher_id),
+                                     external=external.get(t.publisher_id))
+                      for t in candidates]
 
     return {
         "id": s.id, "no": s.no, "title": s.title, "origin": s.origin,
@@ -475,6 +482,9 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
                                    LaunchPrepPairFile.kind == 'размещение')
                            .group_by(LaunchPrepPairFile.pair_id).all())
 
+    from app.ad.external import external_states
+    ext = external_states(db, deal.id)
+
     return {
         "deal": {"id": deal.id, "code": deal.code, "title": deal.title,
                  "is_self_promo": bool(deal.is_self_promo),
@@ -486,7 +496,10 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
         "service": ({"id": service.id, "name": service.name} if service else None),
         "service_reason": service_reason,
         "surfaces": _surfaces_from_plan(db, deal),
+        # Состояние во внешних системах считается ОДНОЙ функцией на два экрана —
+        # карточку сделки и дашборд трафика. Второй расчёт того же разошёлся бы с первым.
         "targets": [{"id": t.id, "publisher_id": t.publisher_id,
+                     "external": ext.get(t.publisher_id),
                      "name": pubs[t.publisher_id].name if t.publisher_id in pubs else None,
                      "code": pubs[t.publisher_id].code if t.publisher_id in pubs else None,
                      "tech_requirements": (pubs[t.publisher_id].tech_requirements
@@ -505,7 +518,7 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
                           # отправленного список уже зафиксирован парами.
                           () if any(p.set_id == s.id for p in pairs)
                           else _targets_for_set(db, s),
-                          file_counts, moved)
+                          file_counts, moved, ext)
                  for s in sets],
     }
 

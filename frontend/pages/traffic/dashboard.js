@@ -23,7 +23,8 @@ import { Fragment, useCallback, useEffect, useState } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '@/components/Navbar'
-import { MONO, UI, card, CAP, btnSm, inp, sel, PortalPopover, ROW_TONE, Z } from '@/components/salesTableKit'
+import { MONO, UI, card, CAP, btnSm, btn, inp, sel, Modal, PortalPopover, ROW_TONE, Z,
+  EXT_TONE, ExtChip, ExtCover } from '@/components/salesTableKit'
 import { surfaceTag } from '@/lib/dealTitle'
 import api, { auth } from '@/lib/api'
 import {
@@ -59,6 +60,9 @@ const COLS = [
   ['Услуга', 'minmax(120px,1fr)', 'product', 'left'],
   ['Площадки', '110px', 'placements_on', 'left'],
   ['Статус РК', '150px', 'status', 'left'],
+  // Покрытие внешними системами: две плашки на РК. Стоят СРАЗУ за статусом — так
+  // же, как на карточке сделки, чтобы одно и то же читалось в одном месте.
+  ['WR · DSP', '58px', null, 'center'],
   ['Период', '120px', 'date_start', 'left'],
   ['План', '104px', 'plan_show', 'right'],
   ['Факт', '104px', 'fact_shows', 'right'],
@@ -255,6 +259,42 @@ export default function TrafficDashboard() {
         + (r.data.placements_stopped ? `; площадок остановлено: ${r.data.placements_stopped}` : ''))
       await load()
     } catch (e) { fail(e?.response?.data?.detail || 'Не удалось завершить РК') }
+  }
+
+  /* ── внешние системы: пиксель Weborama и выгрузка в DSP ────────────────────
+     Оба действия НЕОБРАТИМЫ — ни вставку Weborama, ни креатив в DSP нельзя удалить или
+     переименовать по их API. Поэтому нажатие идёт в два шага: сперва спрашиваем сервер,
+     ЧТО именно произойдёт, и показываем это числами, и только после подтверждения
+     отправляем. Подтверждение без цифры «19 площадок» ничем не отличается от случайного
+     нажатия, а откатывать нечем. */
+  const [extAsk, setExtAsk] = useState(null)     // { row, kind, plan }
+  const [extBusy, setExtBusy] = useState(false)
+
+  const askExternal = async (row, kind) => {
+    try {
+      const r = await api.get(`/traffic-dashboard/campaign/${row.id}/external-plan`, auth())
+      setExtAsk({ row, kind, plan: r.data })
+    } catch (e) { fail(e?.response?.data?.detail || 'Не удалось узнать, что будет сделано') }
+  }
+
+  const runExternal = async () => {
+    if (!extAsk) return
+    const { row, kind } = extAsk
+    setExtBusy(true)
+    try {
+      const r = await api.post(`/traffic-dashboard/campaign/${row.id}/${kind}`, {}, auth())
+      const done = r.data.done?.length || 0
+      const bad = r.data.failed?.length || 0
+      // Отказы называем поимённо: «заведено 14 из 19» без причин заставляет разбираться
+      // заново, а причина у каждой своя и уже посчитана сервером.
+      say((kind === 'weborama' ? `Пикселей получено: ${done}` : `Креативов заведено: ${done}`)
+        + (bad ? `; отказов ${bad} — ${r.data.failed.map(x => `${x.name}: ${x.error}`).join('; ')}` : ''))
+      setExtAsk(null)
+      const d = await api.get(`/traffic-dashboard/campaign/${row.id}`, auth())
+      setDetail(x => ({ ...x, [row.id]: d.data }))
+      await load()
+    } catch (e) { fail(e?.response?.data?.detail || 'Не удалось выполнить') }
+    finally { setExtBusy(false) }
   }
 
   const setCreativeStatus = async (campId, cr, s) => {
@@ -568,6 +608,17 @@ export default function TrafficDashboard() {
                       должен читаться ровным краем, а не лесенкой. */}
                   <span><StatusPill value={r.status} w={132} /></span>
 
+                  {/* Свёртка по РК: серый — ни одной площадки, жёлтый — часть,
+                      зелёный — все (владелец 09.09.2026). Числа считает сервер
+                      тем же расчётом, что и плашки внутри расхлопа: два счёта
+                      одного и того же разошлись бы молча. */}
+                  <span style={{ display: 'inline-flex', gap: 4, justifySelf: 'center' }}>
+                    <ExtCover letter="W" size={17} label="Пиксель Weborama"
+                      totals={r.external_totals?.weborama} />
+                    <ExtCover letter="D" size={17} label="Заведено в DSP"
+                      totals={r.external_totals?.dsp} />
+                  </span>
+
                   <span style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.2 }}>
                     <span style={{ fontFamily: MONO, fontSize: 11 }}>
                       {dm(r.date_start)} … {dm(r.date_end)}</span>
@@ -653,6 +704,20 @@ export default function TrafficDashboard() {
                             сумма долей {Math.round(d.share_sum * 100)} % — часть объёма стоит на выключенных
                           </span>
                         )}
+                        {/* Две кнопки внешних систем. Порядок между ними НЕ косметика:
+                            пиксель показа вшивается в креатив, поэтому Weborama идёт
+                            первой, а DSP без пикселя площадку не берёт. Обе спрашивают
+                            подтверждение с числами — см. `askExternal`. */}
+                        {d && mayEdit && (
+                          <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
+                            <button style={btnSm(false)} onClick={() => askExternal(r, 'weborama')}
+                              title="Завести вставки в Weborama и забрать пиксели показа">
+                              ПИКСЕЛЬ WR</button>
+                            <button style={btnSm(false)} onClick={() => askExternal(r, 'dsp')}
+                              title="Выгрузить креативы согласованных площадок в DSP">
+                              выгрузить в DSP</button>
+                          </span>
+                        )}
                       </div>
                       {!d && <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>загрузка…</span>}
                       {d && !d.placements.length && (
@@ -704,22 +769,22 @@ export default function TrafficDashboard() {
                       {d && !!d.placements.length && !byCr && (
                         <>
                           <div style={{ display: 'grid', gap: 9, padding: '0 0 6px',
-                            gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 68px',
+                            gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 52px 68px',
                             borderBottom: '1px solid var(--border-inner)' }}>
-                            {['Площадка', 'Креативы', 'Код', 'Вес', 'Доля', 'План', 'Факт', 'Недокрут', 'Статус', '']
+                            {['Площадка', 'Креативы', 'Код', 'Вес', 'Доля', 'План', 'Факт', 'Недокрут', 'Статус', 'WR·DSP', '']
                               .map((h, i) => (
                                 <span key={h} style={{ fontFamily: MONO, fontSize: 9,
                                   letterSpacing: '.08em', textTransform: 'uppercase',
                                   color: 'var(--text-faint)',
                                   textAlign: i >= 3 && i <= 7 ? 'right'
-                                    : i === 8 ? 'center' : 'left' }}>{h}</span>
+                                    : (i === 8 || i === 9) ? 'center' : 'left' }}>{h}</span>
                               ))}
                           </div>
                           {d.placements.map(p => (
                             <Fragment key={p.id}>
                             <div onClick={() => setOpenPlace(x => (x === p.id ? null : p.id))}
                               style={{ display: 'grid', gap: 9, alignItems: 'center', cursor: 'pointer',
-                              gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 68px',
+                              gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 52px 68px',
                               padding: '7px 0', borderBottom: '1px solid var(--border-row)' }}>
                               <span style={{ fontFamily: MONO, fontSize: 11.5, overflow: 'hidden',
                                 textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -760,6 +825,20 @@ export default function TrafficDashboard() {
                                 <StatusPill value={p.status} w={116}
                                   title={d.placement_manual.includes(p.status) ? ''
                                     : 'Ставит согласование креативов'} /></span>
+                              {/* Внешние системы — СРАЗУ за статусом, как на карточке
+                                  сделки. Тот же расчёт, те же буквы, тот же тон: одно
+                                  состояние не должно называться на двух экранах
+                                  по-разному. */}
+                              <span style={{ justifySelf: 'center', display: 'inline-flex', gap: 3 }}>
+                                <ExtChip letter="W" size={17}
+                                  tone={EXT_TONE[p.external?.weborama?.state] || 'none'}
+                                  title={`Weborama: ${p.external?.weborama?.state || 'нет данных'}`
+                                    + (p.external?.weborama?.why ? ` — ${p.external.weborama.why}` : '')} />
+                                <ExtChip letter="D" size={17}
+                                  tone={EXT_TONE[p.external?.dsp?.state] || 'none'}
+                                  title={`DSP: ${p.external?.dsp?.state || 'нет данных'}`
+                                    + (p.external?.dsp?.why ? ` — ${p.external.dsp.why}` : '')} />
+                              </span>
                               <span style={{ justifySelf: 'end' }} onClick={e => e.stopPropagation()}>
                                 {mayEdit && (
                                   <PlaceActions status={p.status} canStart={p.can_start}
@@ -1013,6 +1092,84 @@ export default function TrafficDashboard() {
           </div>
         </div>
       </div>
+
+      {/* Подтверждение внешнего действия. Числа берутся с СЕРВЕРА (`external-plan`), а не
+          пересчитываются здесь: экран ничего не считает, и второй счёт разошёлся бы с
+          тем, что действительно уйдёт наружу. */}
+      {extAsk && (() => {
+        const wb = extAsk.kind === 'weborama'
+        const pl = wb ? extAsk.plan.weborama : extAsk.plan.dsp
+        const blocked = wb ? pl.blocked : null
+        // Кнопка не обещает того, чего сервер не сделает: у Weborama `blocked` —
+        // причина отказа целиком, и «Завести 10 вставок» при ней означало бы
+        // нажатие ради 400-го ответа.
+        const n = wb ? (pl.blocked ? 0 : pl.todo) : pl.placements
+        return (
+          <Modal width={620} onClose={() => setExtAsk(null)}
+            title={wb ? 'Получить пиксели Weborama' : 'Выгрузить креативы в DSP'}
+            summary={`РК ${extAsk.row.deal_code} · ${extAsk.row.deal_title}`}
+            footer={(
+              <span style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button style={btn(false)} onClick={() => setExtAsk(null)}>Отмена</button>
+                <button style={{ ...btn(true), opacity: (!n || extBusy) ? 0.5 : 1,
+                  cursor: (!n || extBusy) ? 'not-allowed' : 'pointer' }}
+                  disabled={!n || extBusy} onClick={runExternal}>
+                  {extBusy ? 'Идёт обмен…' : (wb ? `Завести ${n} вставок` : `Выгрузить ${n} площадок`)}
+                </button>
+              </span>
+            )}>
+            <div style={{ fontSize: 13, lineHeight: 1.6, display: 'grid', gap: 10 }}>
+              {blocked && (
+                <div style={{ padding: '9px 12px', borderRadius: 9, fontSize: 12.5,
+                  background: 'var(--warning-tint)', color: 'var(--warning-text)' }}>{blocked}</div>
+              )}
+              {wb ? (
+                <>
+                  <div>Площадок готово к заведению: <b>{pl.ready ?? 0}</b>.
+                    Пиксель уже есть у <b>{pl.have ?? 0}</b>, будет получено ещё <b>{pl.todo ?? 0}</b>.</div>
+                  {!!pl.not_ready && (
+                    <div style={{ color: 'var(--text-muted)' }}>
+                      Ещё {pl.not_ready} площадок не дошли до «ждёт запуска» — им рано.</div>
+                  )}
+                  {!!pl.skipped_direct && (
+                    <div style={{ color: 'var(--text-muted)' }}>
+                      {pl.skipped_direct} площадок крутят сами — они не заводятся.</div>
+                  )}
+                  {!!pl.landing && (
+                    <div style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>
+                      Посадочная кампании: {pl.landing}</div>
+                  )}
+                  <div style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>
+                    Заведение необратимо: вставку у Weborama нельзя ни удалить, ни переименовать.
+                    Уже заведённые пропускаются.</div>
+                </>
+              ) : (
+                <>
+                  <div>Будет заведено креативов: <b>{pl.todo ?? 0}</b> на <b>{pl.placements ?? 0}</b> площадках.
+                    Уже в кабинете: <b>{pl.have ?? 0}</b> из {pl.creatives ?? 0}.</div>
+                  {!pl.campaign_ready && (
+                    <div style={{ color: 'var(--text-muted)' }}>
+                      Кампания в DSP ещё не заведена — она будет создана первой, в статусе
+                      «остановлена».</div>
+                  )}
+                  {!!pl.blocked?.length && (
+                    <div>
+                      <div style={{ ...CAP, marginBottom: 4 }}>не пойдут</div>
+                      {pl.blocked.map(b => (
+                        <div key={b.why} style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                          {b.count} × {b.why}</div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>
+                    В каждый креатив вшиваются пиксель Weborama, счётчик площадки и скрипт
+                    видимости. Заведённый креатив удалить по API нечем.</div>
+                </>
+              )}
+            </div>
+          </Modal>
+        )
+      })()}
     </>
   )
 }

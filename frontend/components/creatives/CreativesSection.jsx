@@ -35,6 +35,23 @@ const BAR_COLOR = { 'принято': T.income, 'на проверке': T.accen
 export const PIPS_LIMIT = 12;
 
 /* сетки: одна на шапку, строки и итог каждой таблицы */
+/* ⚠ Полный `CreativesSection` (со своей таблицей площадок) НИКЕМ не рендерится —
+   проверено 09.09.2026: наружу из файла ходят только `CreativesBrief`, `derive`, `T` и
+   `SITE_STATUS`. Разметку площадок рисует `AssemblyCreatives`, и правки состояний
+   внешних систем сделаны там. Здесь живёт только сводка. */
+
+/** Счётчик «сделано из нужных» по внешней системе. Знаменатель — только те площадки,
+ *  которым это вообще нужно: крутящие сами в него не попадают. */
+function ExtCount({ letter, done, need, title }) {
+  const tone = !need ? T.t5 : done >= need ? T.income : done ? T.warning : T.t4;
+  return (
+    <span title={title} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 3,
+      fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, color: tone, whiteSpace: 'nowrap' }}>
+      <span>{letter}</span><span>{done}/{need}</span>
+    </span>
+  );
+}
+
 const BRIEF_COLS = 'minmax(150px,1.2fr) 116px 96px minmax(150px,1fr) minmax(210px,1.15fr) minmax(180px,0.9fr)';
 const SITE_COLS = '18px minmax(150px,1.25fr) 26px minmax(190px,1.5fr) 128px minmax(120px,0.9fr)';
 
@@ -115,6 +132,13 @@ export function CreativesBrief({ creatives = [], onPreview }) {
   const sumTotal = items.reduce((a, x) => a + x.d.total, 0);
   const sumOk = items.reduce((a, x) => a + x.d.ok, 0);
   const marked = creatives.filter(c => !!c.erid).length;
+  // Итог по внешним системам — суммой тех же счётчиков, что в строках: одно правило на
+  // строку и на итог, иначе они разойдутся и спорить будет не с чем.
+  const sumExt = (key) => creatives.reduce(
+    (a, c) => ({ done: a.done + (c[key]?.done || 0), need: a.need + (c[key]?.need || 0) }),
+    { done: 0, need: 0 });
+  const sumW = sumExt('extW');
+  const sumD = sumExt('extD');
 
   return (
     <div style={{ fontFamily: T.sans, color: T.t1 }}>
@@ -161,7 +185,18 @@ export function CreativesBrief({ creatives = [], onPreview }) {
                 <span className="cs-ghost" onClick={() => onPreview?.(c)} style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 10px', background: T.card, border: `1px solid ${T.border}`, color: T.t2, borderRadius: 8, fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer', flex: '0 0 auto' }}>предпросмотр</span>
               </span>
 
-              <span style={{ display: 'inline-flex', justifyContent: 'flex-end', minWidth: 0 }}><MarkBadge c={c} /></span>
+              {/* Маркировка и внешние системы одной колонкой: три разных «где мы»
+                  читаются одним взглядом, и колонка не растёт. Знаменатель считает
+                  только те площадки, которым это нужно. */}
+              <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, minWidth: 0 }}>
+                <MarkBadge c={c} />
+                <span style={{ display: 'inline-flex', gap: 10 }}>
+                  <ExtCount letter="W" done={c.extW?.done || 0} need={c.extW?.need || 0}
+                    title="Weborama: у скольких площадок креатива есть пиксель" />
+                  <ExtCount letter="D" done={c.extD?.done || 0} need={c.extD?.need || 0}
+                    title="DSP: у скольких площадок креатива заведён креатив" />
+                </span>
+              </span>
             </div>
           ))}
 
@@ -175,8 +210,16 @@ export function CreativesBrief({ creatives = [], onPreview }) {
             </span>
             <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.t3 }}>площадок согласовано по всем креативам</span>
             <span />
-            <span style={{ display: 'inline-flex', justifyContent: 'flex-end', fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: marked === creatives.length ? T.income : T.warning, whiteSpace: 'nowrap' }}>
-              {marked} из {creatives.length} маркировано
+            <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
+              <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: marked === creatives.length ? T.income : T.warning, whiteSpace: 'nowrap' }}>
+                {marked} из {creatives.length} маркировано
+              </span>
+              <span style={{ display: 'inline-flex', gap: 10 }}>
+                <ExtCount letter="W" done={sumW.done} need={sumW.need}
+                  title="Weborama: пикселей получено по всем креативам" />
+                <ExtCount letter="D" done={sumD.done} need={sumD.need}
+                  title="DSP: креативов заведено по всем креативам" />
+              </span>
             </span>
           </div>
         </div>

@@ -23,6 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.ad import build
+from app.ad import external as ext_mod
 from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_STATUSES,
                            GRAIN_DAYS, campaign_chain_status, effective_campaign_status,
                            PLACEMENT_CHAIN, PLACEMENT_MANUAL, PLACEMENT_RUNNING,
@@ -355,6 +356,9 @@ def dashboard(scope: Optional[str] = None,
     # Статус собирается так же, как в расхлопе: конвейер поверх сохранённого.
     places = _placements_of(db, ids)
     cr_all = _creatives_all(db, ids)
+    # Покрытие внешними системами — ОДНИМ расчётом на весь экран (четыре запроса на любое
+    # число РК). По одной РК за раз это было бы под двести запросов на реестре из 57.
+    ext_totals = ext_mod.totals_by_campaign(db, ids)
     culprit_rows = []
     dist_by_camp: dict = {}
     for c, d in pairs:
@@ -401,6 +405,10 @@ def dashboard(scope: Optional[str] = None,
             "plan_show": c.plan_show, "plan_budget": c.plan_budget,
             "fact_shows": f.get("shows"), "fact_clicks": f.get("clicks"),
             "ms_campaign_xxhash": c.ms_campaign_xxhash,
+            # Покрытие внешними системами прямо в строке: серый — нет, жёлтый — не все,
+            # зелёный — все (решение владельца 09.09.2026). Цвет считает экран, числа —
+            # сервер, и оба берут их из одного расчёта.
+            "external_totals": ext_totals.get(c.id),
             "placements": len(pls),
             "placements_on": sum(1 for p in pls if p["status"] in PLACEMENT_RUNNING),
             "placements_weighted": sum(1 for p in pls if p["weight"]),
@@ -523,6 +531,12 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
     for row in out["rows"]:
         row["creatives"] = split_evenly(row.get("plan_show"), creatives.get(row["id"], []))
 
+    # Состояние во внешних системах — ТОЙ ЖЕ функцией, что на карточке сделки. Второй
+    # расчёт разошёлся бы с первым, и спорить было бы нечем.
+    ext = ext_mod.states_by_placement(db, c.id)
+    for row in out["rows"]:
+        row["external"] = ext.get(row["id"])
+
     by_pl = {p["id"]: [x["status"] for x in creatives.get(p["id"], [])] for p in pls}
     chain_st = campaign_chain_status(
         has_plan=bool(c.plan_show), placements=len(pls),
@@ -532,6 +546,7 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
     return {
         "id": c.id, "status": effective_campaign_status(c.status, chain_st),
         "status_chain": chain_st, "plan_show": c.plan_show,
+        "external_totals": ext_mod.totals(ext),
         "date_start": c.date_start, "date_end": c.date_end,
         "placements": out["rows"], "share_sum": out["share_sum"],
         "creative_manual": list(CREATIVE_MANUAL),
@@ -859,3 +874,67 @@ def set_placement_status(placement_id: int, payload: StatusIn,
     log_action(db, user, "ad_placement_status", "sales_publisher", p.publisher_id,
                f"РК #{p.campaign_id}: площадка {old} → {p.status}")
     return {"id": p.id, "status": p.status}
+
+
+# ── внешние системы: пиксель Weborama и выгрузка в DSP ───────────────────────
+#
+# Две кнопки в расхлопе РК. Обе НЕОБРАТИМЫ: и вставка Weborama, и креатив в DSP не
+# удаляются и не переименовываются по API. Поэтому у каждой две ручки — «что будет»
+# и «делай», и первая обязана отвечать ЧИСЛАМИ: подтверждение без цифры «19 площадок»
+# ничем не отличается от случайного нажатия.
+#
+# Порядок между ними не косметика: пиксель показа вшивается В КРЕАТИВ, поэтому Weborama
+# идёт первой, а DSP отказывается заводить площадку без пикселя (`dsp.provision._blocker`).
+
+@router.get("/campaign/{campaign_id}/external-plan")
+def external_plan(campaign_id: int, db: Session = Depends(get_db),
+                  user: User = Depends(VIEW)):
+    """Что произойдёт при нажатии каждой из кнопок. Ничего не меняет."""
+    from app.dsp import provision as dsp_prov
+    from app.weborama import provision as wb_prov
+
+    c, _deal = _campaign_in_scope(db, campaign_id, user)
+    try:
+        wb = wb_prov.plan(db, c)
+        wb["landing"] = wb_prov.default_landing(db, c)
+        if not wb.get("blocked") and not wb["landing"]:
+            wb["blocked"] = ("Ни у одной площадки не заполнена посадочная ссылка, "
+                             "а Weborama требует её у кампании")
+    except wb_prov.ProvisionError as e:
+        wb = {"ready": 0, "todo": 0, "have": 0, "blocked": str(e)}
+    return {"weborama": wb, "dsp": dsp_prov.plan(db, c)}
+
+
+@router.post("/campaign/{campaign_id}/weborama")
+def run_weborama(campaign_id: int, db: Session = Depends(get_db),
+                 user: User = Depends(EDIT)):
+    """Завести вставки в Weborama и забрать пиксели показа по готовым площадкам."""
+    from app.weborama import provision as wb_prov
+
+    c, deal = _campaign_in_scope(db, campaign_id, user)
+    landing = wb_prov.default_landing(db, c)
+    try:
+        out = wb_prov.provision(db, c, landing, user_id=user.id)
+    except wb_prov.ProvisionError as e:
+        raise HTTPException(400, str(e))
+    log_action(db, user, "weborama_provision", "sales_deal", deal.id,
+               f"РК #{c.id}: пикселей получено {len(out['done'])}, "
+               f"отказов {len(out['failed'])}")
+    return out
+
+
+@router.post("/campaign/{campaign_id}/dsp")
+def run_dsp(campaign_id: int, db: Session = Depends(get_db),
+            user: User = Depends(EDIT)):
+    """Выгрузить креативы готовых площадок в DSP: кампания, архив, обёртка, креатив."""
+    from app.dsp import provision as dsp_prov
+
+    c, deal = _campaign_in_scope(db, campaign_id, user)
+    try:
+        out = dsp_prov.provision(db, c, user_id=user.id)
+    except dsp_prov.DspProvisionError as e:
+        raise HTTPException(400, str(e))
+    log_action(db, user, "dsp_provision", "sales_deal", deal.id,
+               f"РК #{c.id}: креативов заведено {len(out['done'])}, "
+               f"отказов {len(out['failed'])}")
+    return out

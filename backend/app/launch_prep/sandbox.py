@@ -153,6 +153,53 @@ AD_SIZE_RE = re.compile(
 WH_RE = re.compile(r"width\s*=\s*(\d+)\s*,\s*height\s*=\s*(\d+)", re.I)
 
 
+def stash_html(uploads_root: str, html: str, token: Optional[str] = None) -> Tuple[str, str]:
+    """Положить ГОТОВУЮ разметку в песочницу и вернуть `(токен, точка входа)`.
+
+    Зачем отдельно от `unpack`: разметку, которую вернул загрузчик DSP, распаковывать
+    неоткуда — она уже собрана, а её картинки и скрипты лежат на ЧУЖОМ CDN, куда указывает
+    подставленный им `<base href>`.
+
+    Показать такое в `srcdoc` на нашем домене нельзя, и это не баг, а наш CSP: `base-uri
+    'self'` отменяет чужой `<base>`, `img-src 'self' data: blob:` не пускает их картинки,
+    `script-src 'self'` — их скрипты. Рамка получается пустой. Ровно для чужого кода и
+    заведён отдельный домен песочницы, где ограничений по источникам нет.
+
+    `token` можно передать, чтобы переиспользовать каталог: демо-стенд грузит баннер за
+    баннером, и каждый раз новый случайный каталог означал бы, что песочница растёт от
+    тренировок и никогда не убирается — сроков хранения у неё для них нет.
+    """
+    token = token or secrets.token_urlsafe(24)
+    root = os.path.join(uploads_root, SANDBOX_DIR, token)
+    if not _is_inside(os.path.join(uploads_root, SANDBOX_DIR), root):
+        raise SandboxError("Недопустимый токен песочницы")
+    shutil.rmtree(root, ignore_errors=True)      # каталог держит ОДИН баннер, не историю
+    os.makedirs(root, exist_ok=True)
+    with open(os.path.join(root, "index.html"), "w", encoding="utf-8") as fh:
+        fh.write(html or "")
+    return token, "index.html"
+
+
+def parse_ad_size(html: str) -> Optional[tuple]:
+    """`(ширина, высота)` из мета-тега баннера, или None, если тега нет.
+
+    ЕДИНСТВЕННЫЙ разбор этого тега в проекте. Второй потребитель появился 09.09.2026 —
+    конвейер DSP отказывается грузить архив без размера, и заводить там свою регулярку
+    значило бы позволить двум чтениям разойтись.
+
+    Ноль здесь возвращается как ноль: `0x0` — это ЗАЯВЛЕННЫЙ адаптивный баннер, и он
+    отличается от «тег вообще не написан». Для предпросмотра разница неважна, для
+    загрузчика — принципиальна.
+    """
+    m = AD_SIZE_RE.search(html or "")
+    if not m:
+        return None
+    wh = WH_RE.search(m.group(1))
+    if not wh:
+        return None
+    return int(wh.group(1)), int(wh.group(2))
+
+
 def read_size(uploads_root: str, token: str, entry: str) -> Optional[str]:
     """Размер баннера из него самого: `<meta name="ad.size" content="width=..,height=..">`.
 
@@ -167,13 +214,10 @@ def read_size(uploads_root: str, token: str, entry: str) -> Optional[str]:
             head = fh.read(8192)          # мета живёт в начале документа
     except OSError:
         return None
-    m = AD_SIZE_RE.search(head)
-    if not m:
-        return None
-    wh = WH_RE.search(m.group(1))
+    wh = parse_ad_size(head)
     if not wh:
         return None
-    w, h = int(wh.group(1)), int(wh.group(2))
+    w, h = wh
     return f"{w}x{h}" if w > 0 and h > 0 else None
 
 

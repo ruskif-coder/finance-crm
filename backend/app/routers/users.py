@@ -329,6 +329,8 @@ ACTION_LABELS = {
     "traffic_catalog_block_delete": "Рекламный блок удалён",
     "counterparty_signer": "Подписант контрагента",
     "traffic_creative_script": "Скрипт, вшиваемый в креатив",
+    "weborama_provision": "Пиксели Weborama по РК",
+    "dsp_provision": "Выгрузка креативов РК в DSP",
     "dsp_demo_campaign": "DSP демо: кампания заведена",
     "dsp_demo_creative": "DSP демо: креатив заведён",
     "dsp_demo_status": "DSP демо: статус кампании",

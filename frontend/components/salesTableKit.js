@@ -489,3 +489,53 @@ export const GenTitleBtn = ({ onClick, title = 'Собрать название 
     </svg>
   </span>
 )
+
+/* ── состояние во внешних системах: ЕРИД, Weborama, DSP ──────────────────────
+   Одни и те же буквы-плашки на трёх экранах: карточка сделки, сводная по креативам и
+   дашборд трафика. Значения приходят с сервера одним расчётом (`app/ad/external.py`),
+   и вид у них тоже обязан быть один: тот же факт под двумя разными плашками читается
+   как два разных факта. */
+export const EXT_TONE = {
+  'есть': 'ok', 'крутится': 'ok', 'заведён': 'wait',
+  'нет': 'none', 'неизвестно': 'bad', '—': 'off',
+}
+
+export const EXT_STYLE = {
+  ok:   { color: 'var(--income-fg)', border: 'var(--income)', bg: 'var(--income-tint)' },
+  wait: { color: 'var(--warning-text)', border: 'var(--warning)', bg: 'var(--warning-tint)' },
+  bad:  { color: 'var(--danger)', border: 'var(--danger)', bg: 'var(--danger-tint)' },
+  none: { color: 'var(--text-muted)', border: 'var(--border-card)', bg: 'transparent' },
+  off:  { color: 'var(--text-faint)', border: 'transparent', bg: 'transparent' },
+}
+
+export function ExtChip({ letter, tone, title, onClick, size = 20 }) {
+  const s = EXT_STYLE[tone] || EXT_STYLE.none
+  return (
+    <span title={title} onClick={onClick || undefined}
+      style={{ width: size, height: size, borderRadius: 6, display: 'inline-flex',
+        alignItems: 'center', justifyContent: 'center', flex: '0 0 auto',
+        fontFamily: MONO, fontSize: size <= 17 ? 9.5 : 10.5, fontWeight: 700,
+        color: s.color, background: s.bg,
+        border: `1px ${tone === 'off' ? 'dashed' : 'solid'} ${s.border}`,
+        cursor: onClick ? 'pointer' : 'default' }}>
+      {letter}
+    </span>
+  )
+}
+
+/* Покрытие ПО КАМПАНИИ: серый — ни одной, жёлтый — часть, зелёный — все (владелец
+   09.09.2026). Знаменатель — только те площадки, которым это нужно; крутящие сами в
+   счёт не идут, поэтому `need = 0` означает «спрашивать не с кого», а не «ничего не
+   сделано» — такую плашку показываем прочерком, а не серым «0 из 0». */
+export const extCoverTone = (t) => {
+  if (!t || !t.need) return 'off'
+  if (t.done >= t.need) return 'ok'
+  return t.done ? 'wait' : 'none'
+}
+
+export const ExtCover = ({ letter, totals, label, size = 20 }) => (
+  <ExtChip letter={letter} tone={extCoverTone(totals)} size={size}
+    title={!totals || !totals.need
+      ? `${label}: заводить нечего — все площадки крутят сами`
+      : `${label}: ${totals.done} из ${totals.need}`} />
+)
