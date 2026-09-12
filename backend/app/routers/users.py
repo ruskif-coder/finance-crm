@@ -339,6 +339,7 @@ ACTION_LABELS = {
     "dsp_demo_plan": "DSP демо: план кампании",
     "dsp_demo_targeting": "DSP демо: таргетинг",
     "verify_media_plan": "МП проверен",
+    "ord_sync_kktu": "Заливка справочника ККТУ из ОРД",
     "ord_sync_clients": "Сверка юрлиц с ОРД",
     "ord_sync_contracts": "Сверка договоров с ОРД",
     "ord_register_final": "Договор зарегистрирован в ОРД",
