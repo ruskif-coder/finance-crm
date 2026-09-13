@@ -5,6 +5,7 @@ import Navbar, { firstAllowedHref } from '../../components/Navbar'
 import SettingsTabs from '../../components/SettingsTabs'
 import { MONO, UI, card, inp, sel, primaryBtn, th } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 // ── Роли и права доступа — отдельная страница раздела «Настройки» ──
 // Матрица: разделы по вертикали, роли по горизонтали, в ячейке — уровень доступа.
@@ -62,6 +63,7 @@ export default function SettingsRoles() {
   const [creatingRole, setCreatingRole] = useState(false)
   const [roleError, setRoleError] = useState('')
 
+  useRefreshOnReturn(() => loadRoles())
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }

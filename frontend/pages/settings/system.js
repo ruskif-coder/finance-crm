@@ -22,6 +22,7 @@ import Navbar from '@/components/Navbar'
 import SettingsTabs from '@/components/SettingsTabs'
 import api, { auth } from '@/lib/api'
 import { card, MONO, UI, btnSm } from '@/components/salesTableKit'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const CARD = { ...card, padding: '16px 18px' }
 const CAPS = { fontFamily: MONO, fontSize: 10, letterSpacing: '.1em',
@@ -181,6 +182,7 @@ export default function SystemStatus() {
     setBusy(false)
   }, [])
 
+  useRefreshOnReturn(() => load())
   useEffect(() => { load() }, [load])
 
   // Интервал живёт всё время, а перерисовывает только при включённом тумблере: снимать и

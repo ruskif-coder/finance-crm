@@ -477,6 +477,66 @@ class SalesStage(Base):
     phase = relationship("SalesStagePhase", back_populates="stages")
 
 
+class SalesStageCheck(Base):
+    """Требование к ВХОДУ в стадию. Миграция 2026-09-13_stage_checks.sql.
+
+    `check_key` — имя проверки из реестра в коде, а НЕ имя поля. Иначе на каждый вид
+    проверки (колонка сделки, документ, состояние в чужом модуле) код обрастал бы своей
+    веткой; с реестром новый случай это строка, а новая порода — функция.
+
+    Адресация входная (владелец 13.09.2026): точнее на развилках, потому что у перехода
+    «вперёд» и у перехода «в срыв» требования разные.
+
+    `applies_when` — СДЕЛОЧНАЯ применимость: {"service_id": 7, "self_promo": false}.
+    Применимость ПО ПЛОЩАДКАМ сюда не попадает и попасть не может: у одной сделки часть
+    площадок с нашим кодом, часть без, и ответа «да/нет» на уровне сделки нет — это
+    забота самой веерной проверки.
+
+    Нет строк у стадии = она никого не держит (пустая настройка повторяет прежнее
+    поведение)."""
+    __tablename__ = "sales_stage_checks"
+    __table_args__ = (UniqueConstraint("stage_id", "check_key", name="uq_stage_check"),)
+    id = Column(Integer, primary_key=True)
+    stage_id = Column(Integer, ForeignKey("sales_stages.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    check_key = Column(String(60), nullable=False)
+    # Запирает движение только исход «не сделано». «Неизвестно» (проверить нечем)
+    # показывается и пропускает — иначе недостроенный мост заморозил бы конвейер.
+    is_blocking = Column(Boolean, nullable=False, default=False)
+    applies_when = Column(JSONB)
+    sort_order = Column(Integer, nullable=False, default=0)
+    hint = Column(Text)
+
+
+class SalesStageService(Base):
+    """Стадия применима к услуге. Нет строк у стадии — применима ко всем.
+
+    Лестница ОДНА на все услуги: от неё кормятся реестр, очередь, годовой план и слои
+    денег, и при нескольких лестницах каждый из них спрашивал бы «чья». Применимость
+    трогает только движение — неприменимая стадия проскакивается."""
+    __tablename__ = "sales_stage_services"
+    __table_args__ = (UniqueConstraint("stage_id", "service_id", name="uq_stage_service"),)
+    id = Column(Integer, primary_key=True)
+    stage_id = Column(Integer, ForeignKey("sales_stages.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    service_id = Column(Integer, ForeignKey("sales_services.id"), nullable=False)
+
+
+class SalesStageBlock(Base):
+    """С какой стадии блок карточки становится виден. Нет строк — виден всегда.
+
+    Два правила, которые таблицей не выражаются и живут в коде:
+    · появившийся блок больше НЕ исчезает — иначе движение вперёд прятало бы заполненное;
+    · НЕПУСТОЕ НЕ ПРЯЧЕМ НИКОГДА — спрятанные данные не просто невидимы, их невозможно
+      найти, и человек заводит их второй раз."""
+    __tablename__ = "sales_stage_blocks"
+    __table_args__ = (UniqueConstraint("stage_id", "block_key", name="uq_stage_block"),)
+    id = Column(Integer, primary_key=True)
+    stage_id = Column(Integer, ForeignKey("sales_stages.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    block_key = Column(String(40), nullable=False)   # совпадает с id секции карточки
+
+
 class SalesDealStageHistory(Base):
     """Каждое движение сделки по нашей лестнице. Миграция 2026-08-17_account_dashboard.sql.
 
@@ -645,8 +705,16 @@ class SalesDeal(Base):
     # через агентство, рекламодатель при прямом договоре. Хранится строкой без
     # интерпретации: связи проставляются только при однозначном совпадении.
     payer_name = Column(String)
-    # Услуга/продукт из поля «Продукты Simb-ad» — текстом, для отображения в реестре.
+    # ЗАМОРОЖЕНО 13.09.2026: сырая строка «Продукты Simb-ad» из Битрикса. Осталась как
+    # подпись в старых выгрузках; услугу сделки читать НЕ отсюда — писателей у неё пять
+    # и правило «первая строка плана» соблюдал один. Живая услуга — `service_id` ниже.
     product = Column(String)
+    # Услуга сделки = первая строка её медиаплана (правило владельца 13.09.2026: одна
+    # сделка — одна услуга). Везётся переносом план→сделка, миграция
+    # 2026-09-13_deal_service.sql. Ссылка, а не имя: разметка требований сравнивает
+    # услугу, и сравнение по имени отключилось бы молча при переименовании в справочнике.
+    # NULL — услуга не определена, применяются только общие требования.
+    service_id = Column(Integer, ForeignKey("sales_services.id"))
     # Выбранное юрлицо-плательщик (из юрлиц, прикреплённых к агентству сделки).
     # Пусто — берём первое прикреплённое к агентству по умолчанию.
     payer_counterparty_id = Column(Integer, ForeignKey("counterparties.id"))

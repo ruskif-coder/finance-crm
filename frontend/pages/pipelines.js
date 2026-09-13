@@ -3,6 +3,7 @@ import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import api, { auth } from '../lib/api'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 export default function Pipelines({ embedded = false } = {}) {
   const router = useRouter()
@@ -28,6 +29,7 @@ export default function Pipelines({ embedded = false } = {}) {
     finally { setLoading(false) }
   }
 
+  useRefreshOnReturn(() => load())
   useEffect(() => {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     try { setPerms(JSON.parse(localStorage.getItem('permissions') || '{}')) } catch (e) { setPerms({}) }

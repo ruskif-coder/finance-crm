@@ -85,7 +85,7 @@ def test_live_catalog_has_a_target_and_it_lies_ahead():
 def _purge(db):
     """Убирает своё — и до теста тоже: до ловит мусор упавшего прогона.
 
-    Уборка обязана быть явной: `_advance_deal_after_verify` коммитит по дороге
+    Уборка обязана быть явной: `_advance_deal_on_link` коммитит по дороге
     (через `log_action`), поэтому откатом транзакции следы не убрать.
     """
     db.rollback()
@@ -171,10 +171,10 @@ def _notices(db, plan_id):
                     Notification.entity_id == plan_id).all())
 
 
-def test_verify_moves_the_deal_and_tells_the_sales_rep(env):
-    """Отметка «Проверено» уводит сделку на стадию, где план обязателен, и пишет сейлзу."""
+def test_linking_moves_the_deal_and_tells_the_sales_rep(env):
+    """Прикрепление плана уводит сделку на стадию, где план обязателен, и пишет сейлзу."""
     db = env.db
-    mp._advance_deal_after_verify(db, env.actor, env.plan)
+    mp._advance_deal_on_link(db, env.actor, env.plan)
     db.commit()
     db.refresh(env.deal)
 
@@ -191,16 +191,16 @@ def test_verify_moves_the_deal_and_tells_the_sales_rep(env):
     assert notes[0].link == f'/accounts/mp/{env.plan.id}'
 
 
-def test_saving_a_verified_plan_again_says_nothing(env):
-    """Пересохранение уже проверенного плана сделку не двигает и второй раз не пишет.
+def test_relinking_the_same_plan_says_nothing(env):
+    """Повторное прикрепление того же плана сделку не двигает и второй раз не пишет.
 
     Это и есть «событие на переход»: без этой границы сейлз получал бы письмо на каждое
     сохранение чужого плана — верный способ приучить его не читать уведомления.
     """
     db = env.db
-    mp._advance_deal_after_verify(db, env.actor, env.plan)
+    mp._advance_deal_on_link(db, env.actor, env.plan)
     db.commit()
-    mp._advance_deal_after_verify(db, env.actor, env.plan)
+    mp._advance_deal_on_link(db, env.actor, env.plan)
     db.commit()
     db.refresh(env.deal)
 
@@ -211,7 +211,7 @@ def test_saving_a_verified_plan_again_says_nothing(env):
 def test_a_deal_without_a_sales_rep_still_moves(env):
     """Некому написать — не повод не двигать: движение сделки не зависит от адресата."""
     db = env.db
-    mp._advance_deal_after_verify(db, env.actor, env.orphan_plan)
+    mp._advance_deal_on_link(db, env.actor, env.orphan_plan)
     db.commit()
     db.refresh(env.orphan)
 

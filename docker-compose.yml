@@ -105,6 +105,14 @@ services:
       DSP_API_URL: ${DSP_API_URL:-}
       DSP_ACCESS_TOKEN: ${DSP_ACCESS_TOKEN:-}
       DSP_PARTNER_XXHASH: ${DSP_PARTNER_XXHASH:-}
+      DSP_ADMIN_URL: ${DSP_ADMIN_URL:-}
+      MAIL_SMTP_HOST: ${MAIL_SMTP_HOST:-}
+      MAIL_SMTP_PORT: ${MAIL_SMTP_PORT:-}
+      MAIL_SMTP_USER: ${MAIL_SMTP_USER:-}
+      MAIL_SMTP_PASSWORD: ${MAIL_SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-}
+      MAIL_SMTP_SSL: ${MAIL_SMTP_SSL:-}
       # Демо-контур того же DSP — отдельный кабинет и отдельный токен. Разделены, чтобы
       # прогон на демо-стенде не попадал в дедуп боевых отправок (контур пишется в журнал).
       DSP_DEMO_API_URL: ${DSP_DEMO_API_URL:-}

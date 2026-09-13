@@ -242,15 +242,13 @@ export function ColumnsMenu({ open, setOpen, colOrder, hidden, onToggle, onReord
 // не по названию (его переименуют) и не по числовому id (зависит от засева).
 //
 //   ЗЕЛЁНЫЙ  — МП нет вообще (ни нашего, ни из Битрикса): сделку надо посчитать.
-//   ЖЁЛТЫЙ   — МП есть, но сделка всё ещё на первой стадии: план не завизирован.
-//              Откуда он — из конвейера годового плана или собран руками — не важно,
-//              признак один: сделка не сошла с первой стадии. Гаснет, когда аккаунт откроет МП,
-//              отметит обе «Проверено» и сохранит — тогда сделка уходит на
-//              следующую стадию (см. _advance_deal_after_verify на бэкенде).
-// Границы подсветок строк: зелёная «нужен расчёт», жёлтая «не завизирован».
-// Объявлены раньше тонов, потому что тона на них ссылаются.
+// ЖЁЛТОЙ подсветки «МП есть, но план не завизирован» здесь больше НЕТ (13.09.2026):
+// прикрепление плана само уводит сделку на «МП Отправлено», и состояния «план есть,
+// а сделка на первой стадии» не возникает. Замер на день удаления: 0 сделок из 920.
+// Граница подсветки строк: зелёная «нужен расчёт».
+// Объявлена раньше тонов, потому что тона на неё ссылаются.
 const NEEDS_MP_BORDER_HEX = '#CDEBDD'
-const UNVERIFIED_BORDER_HEX = '#F2E0B8'
+const WARN_BORDER_HEX = '#F2E0B8'   // рамка предупреждающих тонов CTA
 
 // ─── Тона строк по срочности и кнопок по виду действия ────────────────
 // Живут в ките, а не на экране: дашборд аккаунта, реестр и будущий кабинет трафика
@@ -265,18 +263,17 @@ export const ROW_TONE = {
 
 // Тон кнопки — по ВИДУ действия (Verdict.kind с бэкенда), а не один синий на всё:
 // «Собрать МП» зелёная, «Проверить» оранжевая, «Пингануть» синяя, «Переделать» красная.
-// [фон, текст, рамка]. Рамки берут те же значения, что NEEDS_MP_BORDER/UNVERIFIED_BORDER
+// [фон, текст, рамка]. Рамки берут те же значения, что NEEDS_MP_BORDER и WARN_BORDER
 // ниже — они здесь же, чтобы не расползались по страницам.
 export const CTA_TONE = {
   deal_mp_missing: ['var(--income-tint)', 'var(--income)', NEEDS_MP_BORDER_HEX],
-  mp_verify:       ['var(--warning-tint)', 'var(--warning-text)', UNVERIFIED_BORDER_HEX],
   mp_unapproved:   ['var(--accent-tint)', 'var(--accent)', 'var(--accent-border)'],
   mp_rework:       ['var(--danger-tint)', 'var(--danger)', ROW_TONE.overdue.border],
   booking_confirm: ['var(--accent-tint)', 'var(--accent)', 'var(--accent-border)'],
   launch_prep:     ['var(--accent-tint)', 'var(--accent)', 'var(--accent-border)'],
   launch_ready:    ['var(--income-tint)', 'var(--income)', NEEDS_MP_BORDER_HEX],
-  act_missing:     ['var(--warning-tint)', 'var(--warning-text)', UNVERIFIED_BORDER_HEX],
-  stage_stuck:     ['var(--warning-tint)', 'var(--warning-text)', UNVERIFIED_BORDER_HEX],
+  act_missing:     ['var(--warning-tint)', 'var(--warning-text)', WARN_BORDER_HEX],
+  stage_stuck:     ['var(--warning-tint)', 'var(--warning-text)', WARN_BORDER_HEX],
   stage_unmapped:  ['var(--danger-tint)', 'var(--danger)', ROW_TONE.overdue.border],
   payment_overdue: ['var(--danger-tint)', 'var(--danger)', ROW_TONE.overdue.border],
 }
@@ -290,14 +287,11 @@ export const ctaStyle = (kind) => {
 
 export const NEEDS_MP_BG = '#EEF9F4'        // мягкая зелёная заливка строки
 export const NEEDS_MP_BORDER = NEEDS_MP_BORDER_HEX
-export const UNVERIFIED_BG = '#FFF8E8'      // мягкая жёлтая заливка строки
-export const UNVERIFIED_BORDER = UNVERIFIED_BORDER_HEX
 
 const onFirstStage = (d) => !!(d && d.our_stage && d.our_stage.is_first)
 const hasAnyMp = (d) => !!((d.our_mps || []).length || (d.files || []).some(f => f.kind === 'mp'))
 
 export const needsMp = (d) => onFirstStage(d) && !hasAnyMp(d)          // зелёный
-export const needsMpCheck = (d) => onFirstStage(d) && hasAnyMp(d)      // жёлтый
 
 export const shortLabel = (lab) => (lab ? String(lab).split(' | ')[0].trim() : null)
 

@@ -71,6 +71,16 @@ export default function Section({ id, dealId, title, subtitle, summary, tone, fa
     setReady(true)
   }, [dealId, id])
 
+  // Ссылка «где это чинится» из списка требований обязана не только доскроллить, но и
+  // РАЗВЕРНУТЬ блок: свёрнутая секция в поле зрения — это ещё не ответ на вопрос «куда
+  // идти». Открываемся по событию, а не по пропу, потому что отправитель (список
+  // требований) висит в другом углу карточки и о секциях ничего не знает.
+  useEffect(() => {
+    const onOpen = (e) => { if (e.detail === id) setOpen(true) }
+    window.addEventListener('deal-section-open', onOpen)
+    return () => window.removeEventListener('deal-section-open', onOpen)
+  }, [id])
+
   const toggle = () => {
     const next = !open
     setOpen(next)
@@ -82,7 +92,7 @@ export default function Section({ id, dealId, title, subtitle, summary, tone, fa
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div id={`sec-${id}`} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
       <button type="button" onClick={toggle}
         style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'none',

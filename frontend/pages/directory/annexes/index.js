@@ -12,7 +12,7 @@
  * Экран только читает и открывает: приложение создаётся там, где есть сделка и сумма
  * (карточка сделки), а не в реестре документов.
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/http'
@@ -21,6 +21,7 @@ import SectionTabs from '@/components/SectionTabs'
 import { MONO, UI, IconBtn } from '@/components/salesTableKit'
 import { grp } from '@/lib/salesFormat'
 import { T } from '@/lib/tokens'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const dm = (d) => (d ? new Date(d).toLocaleDateString('ru-RU') : '—')
 
@@ -71,17 +72,19 @@ export default function AnnexRegistry() {
   const [sortDir, setSortDir] = useState('desc')
   const [busy, setBusy] = useState('')
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await api.get('/annexes', auth())
-        setItems(r.data.items || [])
-        setTotal(r.data.total ?? (r.data.items || []).length)
-        setTruncated(!!r.data.truncated)
-      } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить реестр') }
-      finally { setLoading(false) }
-    })()
+  // Загрузка вынесена из useEffect в именованную функцию: её зовёт и монтирование, и
+  // возврат на экран. Безымянная стрелка внутри эффекта второму вызывающему недоступна.
+  const load = useCallback(async () => {
+    try {
+      const r = await api.get('/annexes', auth())
+      setItems(r.data.items || [])
+      setTotal(r.data.total ?? (r.data.items || []).length)
+      setTruncated(!!r.data.truncated)
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить реестр') }
+    finally { setLoading(false) }
   }, [])
+  useEffect(() => { load() }, [load])
+  useRefreshOnReturn(() => load())
 
   const handleSort = (col) => {
     if (!col) return

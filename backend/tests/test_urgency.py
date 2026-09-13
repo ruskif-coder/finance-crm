@@ -137,33 +137,29 @@ def test_rules_1_to_3_silent_after_launch(stage_key):
 def test_rule2_silent_while_the_plan_is_still_ours():
     """На ПЕРВОЙ стадии план ещё не у клиента — пинговать некого.
 
-    Раньше это различие держал статус плана (None = «виза неизвестна»), теперь —
-    позиция сделки: «МП Подготовка» против «МП Отправлено»."""
+    Различие держит позиция сделки: «МП Подготовка» против «МП Отправлено»."""
     v = evaluate(facts(stage_is_first=True, period_from=d(2)), TODAY_D)
-    assert v.kind == "mp_verify"
+    assert v.kind != "mp_unapproved"
 
 
-def test_a_returned_deal_is_picked_up_as_unchecked():
-    """Клиент забраковал план — сделку возвращают на первую стадию, и она снова
-    поднимается как непроверенная, с мячом у аккаунта.
+def test_a_deal_with_a_plan_is_never_called_unchecked():
+    """«МП не проверен» больше не бывает состоянием (владелец 13.09.2026).
 
-    Правило «МП отклонён — нужны правки» (kind mp_rework) снято 30.08.2026 вместе с
-    флагом отказа: он читался со статуса плана, а своего состояния у плана больше нет.
-    Отказ виден там же, где всё остальное про сделку, — в её движении назад."""
-    v = evaluate(facts(stage_is_first=True, period_from=d(4)), TODAY_D)
-    assert (v.cta, v.kind) == ("Проверить", "mp_verify")
-
-
-def test_conveyor_mp_needs_manual_check():
-    """Сделка родилась в конвейере вместе с МП и стоит на первой стадии: отправлять
-    клиенту непроверенный автоплан нельзя, дата старта тут не важна."""
-    v = evaluate(facts(stage_is_first=True, period_from=d(40)), TODAY_D)
-    assert (v.urgency, v.cta, v.kind) == (SOON, "Проверить", "mp_verify")
+    Прикрепление плана само уводит сделку с первой стадии, поэтому пары «план есть +
+    сделка на „Подготовка МП"» не существует. Прибор ловит возврат снятой ступени: если
+    вердикт `mp_verify` появится снова, значит кто-то вернул промежуточное состояние,
+    а вместе с ним и второй ответ на вопрос «где сейчас план».
+    """
+    for days in (3, 4, 40):
+        v = evaluate(facts(stage_is_first=True, period_from=d(days)), TODAY_D)
+        assert v.kind != "mp_verify", f"вернулся снятый вердикт (старт через {days} дн.)"
 
 
-def test_conveyor_mp_check_is_overdue_near_start():
-    v = evaluate(facts(stage_is_first=True, period_from=d(3)), TODAY_D)
-    assert v.urgency == OVERDUE
+def test_a_deal_on_the_first_stage_without_a_plan_is_still_raised():
+    """А вот сделка БЕЗ плана на первой стадии поднимается как раньше: это и есть
+    смысл «Подготовка МП» — сделка сейлза, которой план ещё не собрали."""
+    v = evaluate(facts(stage_is_first=True, has_mp=False, period_from=d(3)), TODAY_D)
+    assert (v.urgency, v.kind) == (OVERDUE, "deal_mp_missing")
 
 
 def test_missing_mp_beats_verify():
@@ -273,12 +269,11 @@ def test_every_kind_is_registered_except_payment():
         evaluate(facts(period_from=d(2)), TODAY_D),
         evaluate(facts(stage_key="closing", money_layer="фактические",
                        period_to=d(-10), has_closing_docs=False), TODAY_D),
-        evaluate(facts(stage_is_first=True, period_from=d(40)), TODAY_D),
         evaluate(facts(stage_key="booking", period_from=d(12)), TODAY_D),
         evaluate(facts(stage_key="closing", stage_since=d(-11)), TODAY_D),
         evaluate(facts(stage_key=None, money_layer=None), TODAY_D),
     ]}
-    assert kinds == {"deal_mp_missing", "mp_verify", "mp_unapproved", "booking_confirm",
+    assert kinds == {"deal_mp_missing", "mp_unapproved", "booking_confirm",
                      "act_missing", "stage_stuck", "stage_unmapped"}
     for k in kinds:
         assert registry.get(k) is not None, f"событие {k} не зарегистрировано"

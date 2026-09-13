@@ -4,6 +4,7 @@ import { useRouter } from 'next/router'
 import Navbar from '@/components/Navbar'
 import api from '@/lib/api'
 import { mln, mlnAuto, grp, pct, niceMax } from '@/lib/salesFormat'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -68,6 +69,7 @@ export default function Analytics2() {
       setData(r.data)
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось загрузить') } finally { setLoading(false) }
   }
+  useRefreshOnReturn(() => loadWith())
   useEffect(() => {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     const v = defaultRange(); setF(v); loadWith(v)

@@ -6,6 +6,7 @@ import api, { auth } from '@/lib/http'
 import Navbar, { can } from '@/components/Navbar'
 import { MONO, UI, btn } from '@/components/salesTableKit'
 import PublisherCard from '@/components/publishers/PublisherCard'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 // Страница карточки площадки: загрузка, режим правки и сохранение. Вся вёрстка — в
 // components/publishers/PublisherCard. Режим правки включается и ссылкой ?edit=1 —
@@ -41,6 +42,7 @@ export default function PublisherCardPage() {
     } catch (e) { fail(e, 'Не удалось загрузить площадку') }
   }
 
+  useRefreshOnReturn(() => load(), { enabled: !editing })
   useEffect(() => {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     try { setPerms(JSON.parse(localStorage.getItem('permissions') || '{}')) } catch (e) { setPerms({}) }

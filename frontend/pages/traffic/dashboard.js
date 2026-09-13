@@ -30,8 +30,9 @@ import api, { auth } from '@/lib/api'
 import {
   CreativeCounts, CreativeRows, Culprits, DASH, DayWall, Dynamics, KpiRow, PaceBar, Pips,
   GOAL_LABELS, Owners, PlaceActions, ServiceCell, StatusPill, TABLE_LEGEND, TaskDoc, WALL_LEGEND,
-  WidgetsToggle, byCreative, num, pctTone,
+  VerifierStrip, WidgetsToggle, byCreative, num, pctTone,
 } from '@/components/traffic/dashboardKit'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const DashIcon = ({ size = 21 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -145,6 +146,7 @@ export default function TrafficDashboard() {
      расхождение разметки. Аргументов у `can` ТРИ — `(perms, section, action)`;
      вызов с двумя молча возвращал false всем, кроме админа (11.09.2026). */
   const [mayEdit, setMayEdit] = useState(false)
+  useRefreshOnReturn(() => load())
   useEffect(() => { setMayEdit(can(getPermissions(), 'traffic_dashboard', 'edit')) }, [])
 
   const load = useCallback(async () => {
@@ -158,6 +160,34 @@ export default function TrafficDashboard() {
     return null
   }, [scope, fail])
   useEffect(() => { load() }, [load])
+
+  // Сверка с верификатором. Отдельным запросом, а не полем в дашборде: она НЕ про
+  // кампании — состояние одно на весь аккаунт Weborama, и тащить его в ответ,
+  // отфильтрованный по области видимости, значило бы показывать разным людям разное
+  // состояние одного и того же коннектора.
+  const [verifier, setVerifier] = useState(null)
+  const [wbBusy, setWbBusy] = useState(false)
+  const loadVerifier = useCallback(async () => {
+    try {
+      const r = await api.get('/traffic-dashboard/weborama/stats', auth())
+      setVerifier(r.data)
+    } catch (e) { setVerifier(null) }
+  }, [])
+  useEffect(() => { loadVerifier() }, [loadVerifier])
+  const refreshVerifier = async () => {
+    setWbBusy(true)
+    try {
+      const r = await api.post('/traffic-dashboard/weborama/stats', {}, auth())
+      const d = r.data
+      say(`Weborama ${d.start}…${d.end}: строк ${d.rows}`
+        + (d.discrepancy ? `, РАСХОЖДЕНИЕ с их итогом ${d.discrepancy}` : '')
+        + (d.absent_metrics?.length ? `, не пришли метрики: ${d.absent_metrics.join(', ')}` : '')
+        + `, на дашборд легло ${d.written}, без соответствия ${d.skipped}`)
+      await Promise.all([loadVerifier(), load()])
+    } catch (e) {
+      fail(e?.response?.data?.detail || 'Не удалось забрать статистику Weborama')
+    } finally { setWbBusy(false) }
+  }
 
   useEffect(() => {
     try {
@@ -545,6 +575,9 @@ export default function TrafficDashboard() {
               </span>
             </div>
           )}
+
+          <VerifierStrip state={verifier} busy={wbBusy} mayEdit={mayEdit}
+            onRefresh={refreshVerifier} />
 
           {/* Шапка сдвинута на 9 px: у строк ниже 8 px внутреннего отступа плюс 1 px
               рамки — без поправки заголовки уезжают от своих колонок ровно на рамку. */}

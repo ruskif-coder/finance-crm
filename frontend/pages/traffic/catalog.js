@@ -24,6 +24,7 @@ import ValuePopover from '@/components/ValuePopover'
 import Balancer from '@/components/traffic/Balancer'
 import SiteScript from '@/components/traffic/SiteScript'
 import api, { auth } from '@/lib/api'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const PAGE_TYPES = ['главная', 'каталог', 'карточка товара', 'корзина', 'статьи', 'акции', 'лк']
 const NETWORKS = ['x-simb-web', 'x-simb']
@@ -75,6 +76,7 @@ export default function TrafficCatalog() {
      расхождение разметки. Аргументов у `can` ТРИ — `(perms, section, action)`;
      вызов с двумя молча возвращал false всем, кроме админа (11.09.2026). */
   const [rights, setRights] = useState({})
+  useRefreshOnReturn(() => loadPubs())
   useEffect(() => {
     const p = getPermissions()
     setRights({ edit: can(p, 'traffic_catalog', 'edit'),

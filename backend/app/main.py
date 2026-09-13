@@ -12,7 +12,7 @@ from app.routers import (auth, operations, reports, counterparties, articles, se
                          publishers, diadoc, ord, launch_prep, traffic, cabinets,
                          cabinet_gateway, traffic_catalog, traffic_balancer,
                          dsp_demo, weborama_demo, traffic_dashboard, annexes, directory_add,
-                         exec_dashboard, system_status)
+                         exec_dashboard, system_status, mail_admin)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -531,6 +531,8 @@ app.include_router(directory_add.router, prefix="/api/directory-add", tags=["dir
 app.include_router(exec_dashboard.router, prefix="/api/exec", tags=["exec_dashboard"])
 # Состояние системы. Тоже require_admin: показывает инфраструктуру, а не бизнес-данные.
 app.include_router(system_status.router, prefix="/api/system", tags=["system_status"])
+# Почтовый гейт: журнал писем наружу, шаблоны, проверка канала (13.09.2026).
+app.include_router(mail_admin.router, prefix="/api/mail", tags=["mail"])
 # Учётки внешнего кабинета — администрирование со стороны ядра. Сам кабинет живёт
 # отдельным сервисом (`cabinet/`) и ходит в базу под своей ролью.
 app.include_router(cabinets.router, prefix="/api/cabinets", tags=["cabinets"])

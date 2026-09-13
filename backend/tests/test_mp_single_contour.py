@@ -82,7 +82,7 @@ def test_urgency_no_longer_reads_a_plan_state():
     Это тот же контур с другой стороны: пока факты `mp_approved`/`mp_rejected`
     существуют, очередь аккаунта считает состояние плана отдельно от его сделки.
     """
-    fields = set(inspect.signature(mp.__dict__["_advance_deal_after_verify"]).parameters)
+    fields = set(inspect.signature(mp.__dict__["_advance_deal_on_link"]).parameters)
     assert fields  # держим импорт осмысленным
     from app.sales.urgency import DealFacts
     assert not {"mp_approved", "mp_rejected"} & set(DealFacts.__dataclass_fields__)

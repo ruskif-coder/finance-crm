@@ -88,16 +88,39 @@ def env():
         db.close()
 
 
-def test_a_deal_is_born_on_the_first_stage(env):
-    """Создание сделки НЕ двигает её: план ещё никто не проверял."""
+def test_a_deal_from_a_plan_starts_where_the_plan_is_required(env):
+    """Сделка из плана рождается СРАЗУ на «МП Отправлено» (владелец 13.09.2026).
+
+    «Подготовка МП» — это стадия сделки, у которой плана ещё нет. Здесь он есть с первой
+    секунды, поэтому проходить её не через что. Прибор ловит возврат промежуточной
+    ступени: если сделка снова начнёт рождаться на первой стадии и ждать чьей-то отметки,
+    тест покажет это сразу.
+    """
     db, plan = env.db, env.mk()
     out = mp.create_deal_from_plan(plan.id, mp.CreateDealIn(), db, env.actor)
 
     deal = db.query(SalesDeal).filter(SalesDeal.id == out['deal_id']).first()
     assert deal is not None and deal.code, 'сделка без метки — по ней не сослаться'
-    assert deal.our_stage_id == env.first.id, (
-        'сделка перепрыгнула первую стадию — гейтом снова стало что-то кроме «Проверено»')
+    assert deal.our_stage_id == mp._mp_sent_stage(Catalog(db)).id, (
+        'сделка из готового плана застряла на «Подготовка МП» — вернулась снятая ступень')
+    assert deal.our_stage_id != env.first.id
     assert deal.bitrix_id.startswith('local-')
+
+
+def test_the_birth_stage_is_recorded_in_history(env):
+    """Первая постановка стадии пишется в историю (`from_stage_id` NULL).
+
+    Без этой строки «сколько сделка стоит на стадии» считать не от чего, и правило
+    срочности по рождённым из плана сделкам молча не срабатывает.
+    """
+    from app.sales.models import SalesDealStageHistory
+    db, plan = env.db, env.mk()
+    out = mp.create_deal_from_plan(plan.id, mp.CreateDealIn(), db, env.actor)
+    rows = (db.query(SalesDealStageHistory)
+            .filter(SalesDealStageHistory.deal_id == out['deal_id']).all())
+    assert len(rows) == 1, 'рождение стадии не записано или записано дважды'
+    assert rows[0].from_stage_id is None
+    assert rows[0].to_stage_id == mp._mp_sent_stage(Catalog(db)).id
 
 
 def test_the_deal_carries_the_plan(env):
@@ -160,20 +183,36 @@ def test_incomplete_plans_are_refused(env, broken, code, why):
     assert e.value.status_code == code, why
 
 
-def test_verify_then_moves_the_new_deal(env):
-    """Полный путь: план → сделка → «Проверено» → сделка уходит на «МП Отправлено».
+def test_attaching_a_plan_moves_a_deal_off_the_first_stage(env):
+    """Второй путь: сделка уже была, аккаунт прикрепил к ней план — она двинулась.
 
-    Здесь два ранее независимых куска сходятся: рождение сделки из плана и переход по
-    отметке. Если создание начнёт двигать сделку само, этот прибор покажет пропуск
-    стадии — сделка окажется дальше, чем должна.
+    Это и есть граница «Подготовка МП» → «МП Отправлено» (владелец 13.09.2026): её
+    держит факт связи, а не отметка в конструкторе. Прибор ловит возврат прежнего
+    поведения, при котором прикрепление стадию не трогало.
     """
     db, plan = env.db, env.mk()
-    out = mp.create_deal_from_plan(plan.id, mp.CreateDealIn(), db, env.actor)
-    deal = db.query(SalesDeal).filter(SalesDeal.id == out['deal_id']).first()
-    assert deal.our_stage_id == env.first.id
+    deal = SalesDeal(bitrix_id='local-test-link', title='[тест] сделка сейлза',
+                     pipeline='', bitrix_stage='', our_stage_id=env.first.id)
+    db.add(deal)
+    db.flush()
 
-    db.refresh(plan)
-    mp._advance_deal_after_verify(db, env.actor, plan)
+    plan.deal_id = deal.id
+    mp._advance_deal_on_link(db, env.actor, plan)
     db.commit()
     db.refresh(deal)
     assert deal.our_stage_id == mp._mp_sent_stage(Catalog(db)).id
+
+
+def test_a_deal_already_further_is_not_dragged_back(env):
+    """Перепривязка плана к ушедшей вперёд сделке её не откатывает и не перепрыгивает."""
+    db, plan = env.db, env.mk()
+    out = mp.create_deal_from_plan(plan.id, mp.CreateDealIn(), db, env.actor)
+    deal = db.query(SalesDeal).filter(SalesDeal.id == out['deal_id']).first()
+    booked = mp._mp_sent_stage(Catalog(db))
+    deal.our_stage_id = booked.id
+    db.flush()
+
+    mp._advance_deal_on_link(db, env.actor, plan)
+    db.commit()
+    db.refresh(deal)
+    assert deal.our_stage_id == booked.id

@@ -17,6 +17,7 @@ import Head from 'next/head'
 import Navbar from '@/components/Navbar'
 import { MONO, UI, Modal, card, inp, btn, primaryBtn } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/http'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const SECTION = { ...card, padding: '16px 20px', marginBottom: 14 }
 const LBL = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)' }
@@ -140,6 +141,7 @@ export default function WeboramaDemo() {
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось прочитать состояние стенда') }
   }, [])
 
+  useRefreshOnReturn(() => load())
   useEffect(() => { load() }, [load])
 
   const run = async (key, fn) => {

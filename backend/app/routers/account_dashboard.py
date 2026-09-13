@@ -26,6 +26,7 @@ from app.audit import log_action
 from app.sales.models import (SalesDeal, SalesRep, SalesAdvertiser, SalesBrand,
                               SalesAgency, SalesDealSnooze, SalesMediaPlan)
 from app.sales.catalog import Catalog, stage_public
+from app.sales import stage_move
 from app.sales.row_context import load_row_context
 from app.sales.urgency import queue_sort_key
 from app.sales.urgency_db import facts_for_deals
@@ -156,7 +157,7 @@ def account_queue(
             "amount": d.amount, "amount_with_vat": d.amount_with_vat,
             "period_from": d.period_from, "period_to": d.period_to,
             "our_stage": stage_public(cat.by_id.get(d.our_stage_id), cat),
-            "our_next_stage": stage_public(cat.next_of(d.our_stage_id)),
+            "our_next_stage": stage_public(stage_move.next_stage(db, d, cat)),
             "urgency": v.urgency, "reason": v.reason, "cta": v.cta, "kind": v.kind,
             "due": v.due,
             "note": sn.note if sn else None,

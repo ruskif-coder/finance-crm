@@ -9,6 +9,7 @@ import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
 import { dm, grp0 } from '@/lib/salesFormat'
 import { overlayClose } from '@/lib/overlay'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
+import StageRequirements from '@/components/sales/StageRequirements'
 import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc } from '@/lib/dealDocs'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
@@ -20,6 +21,7 @@ import AssemblyCreatives from '@/components/creatives/AssemblyCreatives'
 import CampaignSummary from '@/components/campaign/CampaignSummary'
 import ValuePopover from '@/components/ValuePopover'
 import { productWithSurface } from '@/lib/dealTitle'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 const DealCardMobile = dynamic(() => import('@/components/mobile/DealCardMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // ── Карточка сделки /sales/deals/[id] ──
@@ -70,12 +72,17 @@ function SelfPromoChip({ on, canEdit, canUnset, onToggle }) {
   )
 }
 
-/** «В стадии N дней» — из журнала сделки, а не из выдуманного поля: берём дату
- *  последней смены стадии. Записи нет (сделка не двигалась у нас) — фразы нет. */
-function daysInStage(history) {
-  const mv = (history || []).find(h => h.action === 'move_deal' && h.at)
-  if (!mv) return null
-  const d = Math.floor((Date.now() - new Date(mv.at).getTime()) / 86400000)
+/** «В стадии N дней» — от даты ВХОДА В СТАДИЮ, которую даёт бэкенд из истории движения.
+ *
+ *  Раньше считалось по журналу действий: бралась последняя запись `move_deal`. Но журнал
+ *  пишут разными действиями (`bulk_update_deals`, `ad_campaign_finish`), и при переводе
+ *  не через диалог карточка показывала «в стадии 34 дня», пока очередь аккаунта считала
+ *  от сегодня. Оба числа были «правдивы» по своему источнику — расходились они молча.
+ *
+ *  Даты нет — фразы нет: сделка не двигалась у нас, и выдумывать вход в стадию нельзя. */
+function daysInStage(since) {
+  if (!since) return null
+  const d = Math.floor((Date.now() - new Date(since).getTime()) / 86400000)
   return d >= 0 ? d : null
 }
 
@@ -488,6 +495,24 @@ export default function DealCard() {
   const [phases, setPhases] = useState([])      // каталог стадий — для бара цепочки
   const [mp, setMp] = useState(null)            // последний медиаплан сделки (полные данные)
   const [moveOpen, setMoveOpen] = useState(false)
+  // Требования СЛЕДУЮЩЕГО шага — на карточке, а не только в диалоге: человек должен
+  // видеть, чего не хватает, ещё до того как нажмёт «Изменить стадию». Цель не задаём —
+  // ручка берёт следующую по цепочке, ту же, что подставит диалог.
+  const [nextReq, setNextReq] = useState(null)
+
+  useEffect(() => {
+    if (!id) return
+    let dead = false
+    api.get(`/sales/deals/${id}/move-preview`, auth())
+      .then(r => { if (!dead) setNextReq(r.data) })
+      .catch(() => { if (!dead) setNextReq(null) })   // молчим: список не обязателен
+    return () => { dead = true }
+    // Зависимость — `deal`, объявленная ВЫШЕ (строка 486), а не `d` из строки 705:
+    // `d` здесь ещё во временной мёртвой зоне, и `?.` от неё не спасает. Такая ссылка
+    // роняет карточку целиком в браузере, при этом сервер отдаёт 200 и чистый HTML —
+    // страница статическая, ошибка возникает только при гидратации. Ни curl, ни сборка
+    // этого не видят (13.09.2026).
+  }, [id, deal?.our_stage?.id])
   const [docBusy, setDocBusy] = useState('')    // kind документа в процессе загрузки/удаления
   const [canEdit, setCanEdit] = useState(false)
   // Роль администратора нужна отдельным признаком: за ней спрятаны действия,
@@ -590,6 +615,7 @@ export default function DealCard() {
     loadCreatives(); loadOrd()
   }, [loadCreatives, loadOrd])
 
+  useRefreshOnReturn(() => reload())
   useEffect(() => { loadOrd(); loadCreatives() }, [loadOrd, loadCreatives])
 
   useEffect(() => {
@@ -687,13 +713,18 @@ export default function DealCard() {
   if (err) return <div style={wrap}><div style={{ marginTop: 40 }}><div style={{ color: 'var(--danger)', marginBottom: 12 }}>{err}</div><Link href="/sales/deals" style={{ color: 'var(--accent)' }}>← к реестру сделок</Link></div></div>
 
   const d = deal
+  // Видимость блоков карточки считает бэкенд (app/sales/stage_scope.py): там же лежат
+  // три правила — появился и не исчезает, непустое не прячем, нет разметки = видно
+  // всегда. Отсутствие ответа (старый кэш, ошибка) показывает ВСЁ: спрятать карточку
+  // из-за неполученного поля хуже, чем показать лишний пустой блок.
+  const showBlock = (key) => d.card_blocks ? d.card_blocks[key] !== false : true
   const title = [d.advertiser, d.brand].filter(Boolean).join(' · ') || d.title || '—'
   // Услуга с поверхностью (WEB/APP у услуг с раздельным прайсом) — тем же помощником,
   // что в реестрах и на доске: сервер отдаёт `inventory` только там, где метка нужна.
   const svc = productWithSurface(d.product, d.inventory)
   const meta = [d.agency, svc, d.period, d.account_manager && `аккаунт ${d.account_manager}`, d.sales_rep && `продавец ${d.sales_rep}`].filter(Boolean).join(' · ')
   const metaShort = [d.agency, svc, d.period].filter(Boolean).join(' · ')
-  const stageDays = daysInStage(history)
+  const stageDays = daysInStage(d.stage_since)
   const dateVal = (x) => (x ? String(x).slice(0, 10) : '')
 
   // Цепочка стадий = все нетерминальные стадии каталога по порядку этапов.
@@ -769,7 +800,7 @@ export default function DealCard() {
         <Head><title>{title} · сделка {d.code || d.bitrix_id || d.id}</title></Head>
         <Navbar />
         {moveOpen && (
-          <MoveDealDialog deal={d} onClose={() => setMoveOpen(false)}
+          <MoveDealDialog onCard deal={d} onClose={() => setMoveOpen(false)}
             onMoved={(patch) => { setMoveOpen(false); setDeal(x => ({ ...x, ...patch })); reload() }} />
         )}
         <DealCardMobile
@@ -791,7 +822,7 @@ export default function DealCard() {
           со страницы нельзя было уйти иначе как ссылкой «к реестру». */}
       <Navbar />
       {moveOpen && (
-        <MoveDealDialog deal={d} onClose={() => setMoveOpen(false)}
+        <MoveDealDialog onCard deal={d} onClose={() => setMoveOpen(false)}
           onMoved={(patch) => { setMoveOpen(false); setDeal(x => ({ ...x, ...patch })); reload() }} />
       )}
       {promoAsk && (
@@ -823,7 +854,9 @@ export default function DealCard() {
             fontSize: 12.5, color: 'var(--text-muted)' }}>← к реестру сделок</Link>
 
           {/* ── Шапка ── */}
-          <div style={{ ...CARD, padding: '22px 26px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* id — якорь для ссылок «где это чинится» из списка требований. Соглашение
+              то же, что у сворачиваемых секций: `sec-<имя>`. */}
+          <div id="sec-head" style={{ ...CARD, padding: '22px 26px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
               {/* Код, название и мета — одна базовая линия. Мета MONO капсом: это
                   адресная строка сделки, а не текст. Люди из неё убраны намеренно —
@@ -957,6 +990,22 @@ export default function DealCard() {
                 {stageDays != null && <span>в стадии {plDays(stageDays)}</span>}
                 {!!d.our_next_stage?.name && <span>· следующая: {d.our_next_stage.name}</span>}
               </div>
+              )}
+
+              {/* Чего не хватает для следующего шага — ДО нажатия кнопки. Показываем
+                  только невыполненное: полный список с галочками на каждой карточке
+                  превращается в шум, а «чего не хватает» читается за секунду. */}
+              {!isLost && !!(nextReq?.lines || []).some(l => l.state !== 'ok') && (
+                <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 10,
+                  background: nextReq.allowed ? 'var(--bg-subtle)' : 'var(--danger-tint)',
+                  border: `1px solid ${nextReq.allowed ? 'var(--border-card)' : 'var(--danger-border)'}` }}>
+                  <StageRequirements
+                    onCard
+                    lines={nextReq.lines.filter(l => l.state !== 'ok')}
+                    title={nextReq.allowed
+                      ? `Для перехода в «${nextReq.target?.name || '—'}»`
+                      : `Не пускает в «${nextReq.target?.name || '—'}»`} />
+                </div>
               )}
               </div>
 
@@ -1175,6 +1224,7 @@ export default function DealCard() {
               </Section>
               </div>
 
+              {showBlock('ord') && (
               <div style={{ ...CARD, padding: '20px 26px 18px' }}>
               <Section id="ord" dealId={id} title="ОРД" subtitle="цепочка договоров и ЕРИД"
                 defaultOpen summary={ordSummaryText(ordSummary).text}
@@ -1184,9 +1234,11 @@ export default function DealCard() {
                   canEdit={canEdit} onReload={loadOrd} />}
               </Section>
               </div>
+              )}
 
               {/* Передача РК аккаунт → трафик. Стоит ПЕРЕД креативами: сначала «что и
                   зачем крутим», потом «чем крутим». */}
+              {showBlock('traffic-brief') && (
               <div style={{ ...CARD, padding: '20px 26px 18px' }}>
               <Section id="traffic-brief" dealId={id} title="Цели и особенности РК"
                 subtitle="что аккаунт передаёт трафику" defaultOpen={false}
@@ -1201,7 +1253,9 @@ export default function DealCard() {
                 )}
               </Section>
               </div>
+              )}
 
+              {showBlock('creatives') && (
               <div style={{ ...CARD, padding: '20px 26px 18px' }}>
               <Section id="creatives" dealId={id} title="Креативы" defaultOpen={false}
                 summary={creativesSummary(creatives).text}
@@ -1219,13 +1273,16 @@ export default function DealCard() {
               </Section>
 
               </div>
+              )}
 
               {/* Ход открутки — СВОЯ карточка после креативов, а не хвост внутри них:
                   собрали материал, отправили, дальше живёт кампания, и это отдельная
                   сущность. Карточка появляется сама, когда пошла статистика, и до
                   этого не рисует ни рамки (см. CampaignSummary). Тот же компонент
                   поедет на предварительную сверку. */}
-              <CampaignSummary dealId={d.id} cardStyle={{ ...CARD, padding: '20px 26px 18px' }} />
+              {showBlock('campaign') && (
+                <CampaignSummary dealId={d.id} cardStyle={{ ...CARD, padding: '20px 26px 18px' }} />
+              )}
             </div>
 
             {/* правая: документы / ответственные / история */}
@@ -1233,7 +1290,9 @@ export default function DealCard() {
                 вместе со страницей до 460, а там документы, ответственные и история:
                 им ширина не нужна, нужна центральной. 280 — ровно то, чем колонка была
                 при прежних 1120, так что на глаз она не изменилась. */}
-            <div style={{ width: 280, flex: '0 0 280px', ...CARD, padding: '20px 22px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div id="sec-docs" style={{ width: 280, flex: '0 0 280px', ...CARD, padding: '20px 22px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {/* Блок «Документы» внутри правой колонки: саму колонку не прячем — в ней
+                  живут ещё ответственные и история, нужные с первой стадии. */}
               {/* От какого юрлица оказываем услуги. Сегодня оно одно и берётся из
                   справочника (см. _own_company_out), выбора на сделке нет — но стоит
                   отдельно и явно: оно задаёт ставку НДС по нашим услугам, и здесь же
@@ -1254,6 +1313,7 @@ export default function DealCard() {
               </div>
 
               {/* документы — реальные: файлы сделки + наш МП. Загрузка/замена/удаление. */}
+              {showBlock('docs') && (<>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={CAPS}>Документы</span>
                 <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10, fontWeight: 700, color: 'var(--accent)' }}>{docsReady} из {DOC_KINDS.length + 1}</span>
@@ -1315,6 +1375,7 @@ export default function DealCard() {
                   )
                 })}
               </div>
+              </>)}
 
               {/* ответственные */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 9, paddingTop: 12, borderTop: '1px solid var(--border-card)' }}>

@@ -6,6 +6,7 @@ import api, { auth } from '@/lib/api'
 import { can } from '@/components/Navbar'
 import SectionTabs from '@/components/SectionTabs'
 import { Modal, primaryBtn } from '@/components/salesTableKit'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 const THRESHOLDS = [['Точное', 0.95], ['Высокое', 0.80], ['Среднее', 0.60]]
 
 const btn = { padding: '5px 10px', borderRadius: 8, border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', fontSize: 13 }
@@ -177,6 +178,7 @@ export default function Reconcile() {
     } catch (e) { /* счётчики некритичны — молчим */ }
     finally { setCountsLoading(false) }
   }
+  useRefreshOnReturn(() => load())
   useEffect(() => {
     const role = localStorage.getItem('role') || ''
     const perms = JSON.parse(localStorage.getItem('permissions') || '{}')

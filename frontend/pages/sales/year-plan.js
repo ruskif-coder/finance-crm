@@ -7,6 +7,7 @@ import Navbar, { can } from '@/components/Navbar'
 import YearPlan from '@/components/plan/YearPlan'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 const NotOnMobile = dynamic(() => import('@/components/mobile/NotOnMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // Годовой план продаж: план по рекламодателям/брендам × 12 месяцев, персональный по сейлзам.
@@ -119,6 +120,9 @@ export default function YearPlanPage() {
   }, [])
 
   useEffect(() => { if (perms) load(year, view) }, [perms, year, view, load])
+  // Год и вид берём ТЕКУЩИЕ: возврат на вкладку не должен перекидывать человека
+  // на другой год, он должен показать свежие числа того, что открыто.
+  useRefreshOnReturn(() => { if (perms) load(year, view) })
 
   // каталоги брифа (агентства/юрлица/гео/таргетинг/ответственные) — из открытых справочников, как в конструкторе МП
   useEffect(() => {

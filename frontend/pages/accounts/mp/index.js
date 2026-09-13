@@ -8,6 +8,7 @@ import { downloadName, fmtFull, fmtMoney, grp } from '@/lib/salesFormat'
 import { DownloadOverlay } from '@/components/LogoLoader'
 import ValuePopover from '@/components/ValuePopover'
 import { buildTitle, separatePriceSet, surfaceTag, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 // Реестр медиапланов (контур аккаунта). Тулбар (поиск/период/фильтры/сортировка) и
 // клик-редактирование ячеек — как в реестре сделок. Данные приходят пачкой (последние
@@ -76,6 +77,11 @@ export default function MpRegistry() {
     setLoading(true)
     api.get('/sales/media-plans', auth()).then(r => setItems(r.data.items || [])).catch(() => { }).finally(() => setLoading(false))
   }, [])
+
+  // Вернулись на вкладку или пришли «Назад» из карточки — перечитать реестр. Без этого
+  // экран показывает снимок, сделанный при открытии: переименовали медиаплан в карточке,
+  // вернулись — и видите старое имя (13.09.2026).
+  useRefreshOnReturn(load)
 
   useEffect(() => {
     if (typeof window === 'undefined') return

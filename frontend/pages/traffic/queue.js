@@ -28,6 +28,18 @@ import { MONO, UI, card, CAP, btn, btnSm, chip as pill, inp, ROW_TONE, Modal }
 import { CreativePreview } from '@/components/creatives/AssemblyCreatives'
 import api, { auth } from '@/lib/api'
 import { dm } from '@/lib/salesFormat'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+
+/* Что сказать человеку про письмо. Ответ ручки различает пять исходов, и каждый значит
+   для него РАЗНОЕ действие: отправлено — ничего не делать, не ушло — отправить самому.
+   Свести их в «готово» значило бы, что часть запросов площадка не получит никогда. */
+const MAIL_SAID = {
+  sent: 'Запрос записан, письмо ушло площадке',
+  failed: 'Запрос записан, но письмо НЕ ушло — отправьте текст сами',
+  queued: 'Запрос записан, письмо в очереди — уйдёт, когда настроят почту',
+  no_address: 'Запрос записан. У площадки не указана почта — отправьте текст сами',
+  off: 'Запрос записан. Почта не настроена — отправьте текст сами',
+}
 
 const TABS = [
   { key: 'waiting', label: 'Ждут проверки' },
@@ -65,6 +77,10 @@ const I_AIM = <><circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="2.4" 
 const I_PLUS = <><path d="M12 5v14M5 12h14" /></>
 const I_REDO = <><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></>
 const I_SEARCH = <><circle cx="11" cy="11" r="7" /><path d="M20 20l-4-4" /></>
+// Переход на сайт площадки: стрелка наружу из рамки — общепринятый знак «откроется в
+// новой вкладке». Рисуем сами, как и остальные: эмодзи прыгало бы по высоте между
+// платформами и выбивалось из ряда.
+const I_OUT = <><path d="M14 4h6v6" /><path d="M20 4l-9 9" /><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></>
 
 /** Кнопка-иконка. Квадрат 28×28 — палец попадает, а строка не растёт. */
 const iconBtn = (on = true) => ({
@@ -137,7 +153,10 @@ const OPEN_KEY = 'traffic_queue_open'
    ширины, и подпись перестаёт стоять над своим столбцом. */
 const ROW_GRID = {
   display: 'grid',
-  gridTemplateColumns: 'minmax(180px,1.6fr) 66px minmax(140px,1.2fr) 84px 100px minmax(130px,1fr) 150px',
+  // Колонки «Скрины» больше нет: кнопка переехала в блок решений, к остальным кнопкам
+  // (владелец 12.09.2026). Отдельный столбец под один плюсик держал 84 px ради того,
+  // чтобы в девяти строках из десяти показывать пустоту.
+  gridTemplateColumns: 'minmax(180px,1.6fr) 66px minmax(140px,1.2fr) 100px minmax(130px,1fr) 200px',
   alignItems: 'center', gap: 10,
 }
 
@@ -188,7 +207,13 @@ export default function TrafficQueue() {
   const [shots, setShots] = useState(null)       // { row, files }
   const [preview, setPreview] = useState(null)   // { files, startId }
   const [open, toggle] = useOpenSets()
-  const [aim, setAim] = useState(null)      // { setId, no, url }
+  const [aim, setAim] = useState(null)      // { setId, no, url } — ручная ссылка
+  // Какой комплект сейчас выпускает ссылку. Не общий `busy`: выпуск ходит наружу, и
+  // гасить на это время вердикты по ВСЕЙ очереди значило бы останавливать работу.
+  const [aiming, setAiming] = useState(null)
+  // Отдельно от ошибки: «письмо ушло» — не ошибка, а красная плашка на успехе учит
+  // людей не читать плашки вовсе.
+  const [note, setNote] = useState('')
   const [urlAsk, setUrlAsk] = useState(null)   // { targetId, name, text }
   const [phrases, setPhrases] = useState([])
   const [dragOver, setDragOver] = useState(false)
@@ -206,6 +231,7 @@ export default function TrafficQueue() {
      вызов с двумя молча возвращал false всем, кроме админа (11.09.2026). */
   const [mayApprove, setMayApprove] = useState(false)
   const [mayEdit, setMayEdit] = useState(false)
+  useRefreshOnReturn(() => load())
   useEffect(() => {
     const p = getPermissions()
     setMayApprove(can(p, 'traffic_queue', 'approve'))
@@ -255,10 +281,31 @@ export default function TrafficQueue() {
     setBusy(false)
   }
 
-  /* Ссылка нацеливания заводится ЗДЕСЬ, потому что нужна она трафику: по ней он
-     открывает сайт до старта и видит рекламу, которой в обычном браузере ещё нет.
-     Аккаунт видит её потом в развёрнутом блоке креативов на карточке сделки — ручка
-     одна и та же, право на неё «очередь трафика ИЛИ креативы». */
+  /* «Нацелить на себя» — главная кнопка трафика в этой строке: по ней он открывает сайт
+     до старта и видит рекламу, которой в обычном браузере ещё нет.
+
+     Ссылка ВЫПУСКАЕТСЯ по нажатию и нигде не хранится: живёт 48 часов, а согласование
+     идёт днями (замер 12.09.2026). Работает она на этой стадии только потому, что
+     нацеливание заводится на тестового клиента, а не на наш креатив — нашего в DSP пока
+     нет вовсе.
+
+     Вкладку открываем СИНХРОННО по клику, адрес подставляем после ответа: окно,
+     открытое из `await`, блокировщик всплывающих окон считает непрошеным и режет. */
+  async function aimAtMe(setId) {
+    setErr(''); setAiming(setId)
+    const tab = window.open('', '_blank')
+    try {
+      const r = await api.post(`/launch-prep/set/${setId}/targeting-link`, {}, auth())
+      if (tab) tab.location = r.data.url
+      else window.location.href = r.data.url
+    } catch (e) {
+      if (tab) tab.close()
+      setErr(e.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания')
+    } finally { setAiming(null) }
+  }
+
+  /* Ручная ссылка нацеливания. Поле заморожено (0 из 33 за две недели), но диалог
+     оставлен: то, что в нём когда-то завели, должно оставаться правимым. */
   async function saveAim() {
     setBusy(true); setErr('')
     try {
@@ -276,9 +323,12 @@ export default function TrafficQueue() {
   async function saveUrlAsk() {
     setBusy(true); setErr('')
     try {
-      await api.post(`/launch-prep/target/${urlAsk.targetId}/url-request`,
+      const r = await api.post(`/launch-prep/target/${urlAsk.targetId}/url-request`,
         { text: urlAsk.text }, auth())
       setUrlAsk(null)
+      // Человеку важно знать, отправила ли система письмо или текст нужно слать самому.
+      // Молчание здесь означало бы, что запрос уйдёт дважды — или не уйдёт вовсе.
+      setNote(MAIL_SAID[r.data?.mail] || MAIL_SAID.off)
       await load()
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось записать запрос') }
     setBusy(false)
@@ -485,6 +535,12 @@ export default function TrafficQueue() {
             {err}
           </div>
         )}
+        {!!note && (
+          <div onClick={() => setNote('')} style={{ ...card, padding: '10px 14px',
+            marginBottom: 14, cursor: 'pointer', color: 'var(--text-primary)' }}>
+            {note}
+          </div>
+        )}
 
         {!loading && !groups.length && (
           <div style={{ ...card, padding: '28px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
@@ -564,27 +620,29 @@ export default function TrafficQueue() {
                     onClick={() => download(`/traffic/pair/${g.rows[0].pair_id}/creative-archive`)}>
                     <Ico d={I_DOWN} />
                   </button>
-                  {/* Заведена — открываем по ней сайт; не заведена и есть право —
-                      заводим. Одна кнопка на оба случая заставляла бы выбирать между
-                      «открыть» и «изменить» вслепую, а это разные намерения. */}
-                  {g.set.test_targeting_url ? (
+                  {/* ОДНА кнопка, одно намерение: «нацелить на себя». Раньше их было
+                      три — открыть, завести, изменить, — потому что ссылку заводили
+                      руками и хранили. Теперь она выпускается по нажатию (12.09.2026):
+                      нацеливание заводится на тестового клиента, живёт 48 часов, и
+                      хранить её нельзя — сохранённая протухнет раньше, чем понадобится. */}
+                  <button style={iconBtn(mayEdit)} disabled={!mayEdit || aiming === g.set.id}
+                    title="Нацелить на себя: откроется страница DSP, нажмите «Включить» — и увидите баннер на сайте площадки до старта"
+                    onClick={() => aimAtMe(g.set.id)}>
+                    <Ico d={I_AIM} />
+                  </button>
+                  {/* Ручная ссылка, если её когда-то завели: поле заморожено, но то, что
+                      в нём лежит, остаётся доступным. Новых так не заводят. */}
+                  {!!g.set.test_targeting_url && (
                     <a href={g.set.test_targeting_url} target="_blank" rel="noreferrer"
-                       title={`Открыть сайт с рекламой · ${g.set.test_targeting_url}`}
-                       onContextMenu={() => {}}
+                       title={`Ручная ссылка · ${g.set.test_targeting_url}`}
                        style={{ ...iconBtn(true), color: 'var(--accent)',
                          borderColor: 'var(--accent-border)', background: 'var(--accent-tint)',
-                         textDecoration: 'none' }}>
-                      <Ico d={I_AIM} />
+                         textDecoration: 'none', fontSize: 12 }}>
+                      ↗
                     </a>
-                  ) : (
-                    <button style={iconBtn(mayEdit)} disabled={!mayEdit}
-                      title="Ссылка нацеливания — открыть сайт с рекламой до старта"
-                      onClick={() => setAim({ setId: g.set.id, no: g.set.no, url: '' })}>
-                      <Ico d={I_AIM} />
-                    </button>
                   )}
-                  {g.set.test_targeting_url && mayEdit && (
-                    <button style={iconBtn(true)} title="Изменить ссылку нацеливания"
+                  {!!g.set.test_targeting_url && mayEdit && (
+                    <button style={iconBtn(true)} title="Изменить ручную ссылку"
                       onClick={() => setAim({ setId: g.set.id, no: g.set.no,
                                               url: g.set.test_targeting_url })}>
                       <span style={{ fontSize: 12 }}>✎</span>
@@ -622,8 +680,8 @@ export default function TrafficQueue() {
               <div style={{ ...ROW_GRID, ...CAP, marginBottom: 0,
                 padding: '0 6px 7px', borderBottom: '1px solid var(--border-card)' }}>
                 <span>Площадка · ID</span><span>Поверхн.</span><span>Посадочная</span>
-                <span style={{ textAlign: 'right' }}>Скрины</span><span>Старт</span>
-                <span>Статус</span><span style={{ textAlign: 'right' }}>Решение</span>
+                <span>Старт</span><span>Статус</span>
+                <span style={{ textAlign: 'right' }}>Решение</span>
               </div>
 
               {g.rows.map(r => {
@@ -709,21 +767,6 @@ export default function TrafficQueue() {
                       )}
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6,
-                      justifyContent: 'flex-end' }}>
-                      <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700,
-                        color: r.shots_count ? 'var(--text-primary)' : 'var(--text-ghost)' }}>
-                        {r.shots_count || ''}
-                      </span>
-                      {mayEdit && (
-                        <button style={{ ...iconBtn(true), width: 24, height: 24 }}
-                          onClick={() => openShots(r)}
-                          title="Скриншоты размещения на этой площадке">
-                          <Ico d={I_PLUS} size={13} />
-                        </button>
-                      )}
-                    </div>
-
                     <div>
                       <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700,
                         color: hot ? 'var(--danger)' : 'var(--text-primary)' }}>
@@ -748,9 +791,48 @@ export default function TrafficQueue() {
                         по ТТ ASNA» — это про одну строку, а не про весь комплект. */}
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center',
                       justifyContent: 'flex-end' }}>
+                      {/* Сайт ЭТОЙ площадки: следующий шаг после нацеливания — пойти и
+                          посмотреть баннер там, где он будет крутиться. Ссылка своя у
+                          каждой строки, в шапке её быть не может: комплект уходит
+                          нескольким площадкам, и одна кнопка на группу открывала бы не
+                          тот сайт, о котором человек подумал.
+
+                          Кнопка стоит ПЕРВОЙ в ряду решений и не зависит от вердикта:
+                          сходить на сайт бывает нужно и после «Всё ок». */}
+                      {!!r.publisher.domain && (
+                        <a href={`https://${r.publisher.domain}`} target="_blank"
+                           rel="noreferrer" title={`Открыть ${r.publisher.domain} в новой вкладке`}
+                           style={{ ...iconBtn(true), textDecoration: 'none' }}>
+                          <Ico d={I_OUT} size={13} />
+                        </a>
+                      )}
+                      {/* Скриншоты размещения. Переехали сюда из собственной колонки:
+                          действие однотипно соседним, а счётчик читается прямо на
+                          кнопке — отдельный столбец под один плюсик держал ширину ради
+                          пустоты в большинстве строк. */}
+                      {mayEdit && (
+                        <button style={{ ...iconBtn(true), width: r.shots_count ? 'auto' : 28,
+                          padding: r.shots_count ? '0 7px' : 0, gap: 4 }}
+                          onClick={() => openShots(r)}
+                          title="Скриншоты размещения на этой площадке">
+                          <Ico d={I_PLUS} size={13} />
+                          {!!r.shots_count && (
+                            <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700 }}>
+                              {r.shots_count}
+                            </span>
+                          )}
+                        </button>
+                      )}
                       {!r.verdict && mayApprove && (
                         <>
-                          <button style={iconBtn(true)} disabled={busy}
+                          {/* Возврат площадки — НАШ ОРАНЖЕВЫЙ (владелец 12.09.2026), тот
+                              же, что у плашек «ждёт проверки». Не красный: красным на
+                              этом экране говорит «На переделку» по всему комплекту, и
+                              одинаковый цвет у групповой и построчной кнопки стирал бы
+                              разницу между «вернуть всё» и «вернуть одну площадку». */}
+                          <button disabled={busy}
+                            style={{ ...iconBtn(true), background: 'var(--warning-tint)',
+                              borderColor: 'var(--warning-border)', color: 'var(--warning-text)' }}
                             title={`Вернуть на переделку только ${r.publisher.name || 'эту площадку'}`}
                             onClick={() => setRework({ pairIds: [r.pair_id], setNo: g.set.no,
                               reason: '', only: r.publisher.name || r.publisher.domain })}>
@@ -797,8 +879,8 @@ export default function TrafficQueue() {
       )}
 
       {aim && (
-        <Modal title={`Ссылка нацеливания · креатив №${aim.no}`}
-               summary="Ставит демо-куку кампании: по ней сайт открывается с рекламой, которой в обычном браузере ещё нет. Живёт на креативе — у второго баннера будет своя. Аккаунт увидит её в блоке креативов на карточке сделки."
+        <Modal title={`Ручная ссылка нацеливания · креатив №${aim.no}`}
+               summary="Старый путь: ссылка, вставленная руками. Новые так не заводят — кнопка ◎ в строке выпускает свежую сама, потому что ссылка живёт двое суток и хранить её нельзя. Это окно оставлено, чтобы уже заведённую можно было поправить или убрать."
                width={620} onClose={() => setAim(null)}
                footer={
                  <>

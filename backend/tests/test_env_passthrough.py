@@ -77,10 +77,24 @@ PASSED_THROUGH = {
     "DSP_DEMO_API_URL": "compose",
     "DSP_DEMO_TOKEN": "compose",
     "DSP_DEMO_PARTNER_XXHASH": "compose",
+    # Адрес админки DSP: нужен генератору ссылок нацеливания. Не токен, но и не
+    # константа — в коде его быть не должно (поставщик DSP нигде не называется).
+    "DSP_ADMIN_URL": "compose",
     "WEBORAMA_API_URL": "compose",
     "WEBORAMA_EMAIL": "compose",
     "WEBORAMA_PASSWORD": "compose",
     "WEBORAMA_DEMO_ACCOUNT_ID": "compose",
+    # ── Почта ───────────────────────────────────────────────────
+    # Почтовый гейт (13.09.2026): единственная точка отправки писем наружу. Пароль
+    # ящика кладёт владелец, из переписки он не переносится. Пусто — канал считается
+    # ненастроенным честно, письма ложатся в очередь и уходят после настройки.
+    "MAIL_SMTP_HOST": "compose",
+    "MAIL_SMTP_PORT": "compose",
+    "MAIL_SMTP_USER": "compose",
+    "MAIL_SMTP_PASSWORD": "compose",
+    "MAIL_FROM": "compose",
+    "MAIL_FROM_NAME": "compose",
+    "MAIL_SMTP_SSL": "compose",
 }
 
 

@@ -32,6 +32,7 @@ from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_STATUSES,
                            creative_counts, culprits, daily_buckets,
                            distribute, effective_status, flight_of, progress, split_evenly)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
+from app.ad.stat_sources import fact_sources
 from app.traffic import urgency
 from app.audit import log_action
 from app.database import get_db
@@ -82,6 +83,9 @@ def _fact_sources(db: Session, campaign_ids: List[int]) -> list:
     """
     if not campaign_ids:
         return []
+    # Единственный запрос к таблице БЕЗ фильтра источника, и намеренно: он отвечает на
+    # вопрос «что там вообще лежит», а не «сколько показов». Остальные шесть фильтруют
+    # через `fact_sources()` — см. `app/ad/stat_sources.py`.
     rows = db.execute(text(
         "SELECT DISTINCT source FROM ad_campaign_stat WHERE campaign_id = ANY(:i)"),
         {"i": campaign_ids}).all()
@@ -99,8 +103,9 @@ def _fact_last_ingest(db: Session, campaign_ids: List[int]):
     if not campaign_ids:
         return None
     return db.execute(text(
-        "SELECT max(imported_at) FROM ad_campaign_stat WHERE campaign_id = ANY(:i)"),
-        {"i": campaign_ids}).scalar()
+        "SELECT max(imported_at) FROM ad_campaign_stat "
+        "WHERE campaign_id = ANY(:i) AND source = ANY(:src)"),
+        {"i": campaign_ids, "src": fact_sources()}).scalar()
 
 
 def _facts(db: Session, campaign_ids: List[int]) -> dict:
@@ -108,8 +113,9 @@ def _facts(db: Session, campaign_ids: List[int]) -> dict:
         return {}
     rows = db.execute(text(
         "SELECT campaign_id, sum(shows) AS shows, sum(clicks) AS clicks "
-        "FROM ad_campaign_stat WHERE campaign_id = ANY(:i) GROUP BY campaign_id"),
-        {"i": campaign_ids}).mappings().all()
+        "FROM ad_campaign_stat WHERE campaign_id = ANY(:i) AND source = ANY(:src) "
+        "GROUP BY campaign_id"),
+        {"i": campaign_ids, "src": fact_sources()}).mappings().all()
     return {r["campaign_id"]: dict(r) for r in rows}
 
 
@@ -195,11 +201,11 @@ def _placements_of(db: Session, campaign_ids: List[int]) -> dict:
         SELECT p.campaign_id, p.id, p.publisher_id, p.status, p.weight,
                pub.code, pub.domain, pub.name AS publisher,
                (SELECT sum(s.shows) FROM ad_campaign_stat s
-                 WHERE s.placement_id = p.id) AS fact
+                 WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact
           FROM ad_campaign_placement p
           JOIN sales_publishers pub ON pub.id = p.publisher_id
          WHERE p.campaign_id = ANY(:i)
-    """), {"i": campaign_ids}).mappings().all()
+    """), {"i": campaign_ids, "src": fact_sources()}).mappings().all()
     out: dict = {}
     for r in rows:
         out.setdefault(r["campaign_id"], []).append(dict(r))
@@ -216,8 +222,9 @@ def _stat_by_day(db: Session, campaign_ids: List[int]) -> dict:
         return {}
     rows = db.execute(text(
         "SELECT campaign_id, date, sum(shows) AS shows, sum(clicks) AS clicks "
-        "FROM ad_campaign_stat WHERE campaign_id = ANY(:i) "
-        "GROUP BY campaign_id, date"), {"i": campaign_ids}).mappings().all()
+        "FROM ad_campaign_stat WHERE campaign_id = ANY(:i) AND source = ANY(:src) "
+        "GROUP BY campaign_id, date"),
+        {"i": campaign_ids, "src": fact_sources()}).mappings().all()
     out: dict = {}
     for r in rows:
         out.setdefault(r["campaign_id"], {})[r["date"]] = (r["shows"], r["clicks"])
@@ -539,13 +546,15 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
     pls = db.execute(text("""
         SELECT p.id, p.publisher_id, p.status, p.weight, p.bid, p.is_direct,
                p.ms_source_key, pub.name AS publisher, pub.code, pub.domain,
-               (SELECT sum(s.shows) FROM ad_campaign_stat s WHERE s.placement_id = p.id) AS fact,
-               (SELECT sum(s.clicks) FROM ad_campaign_stat s WHERE s.placement_id = p.id) AS fact_clicks
+               (SELECT sum(s.shows) FROM ad_campaign_stat s
+                 WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact,
+               (SELECT sum(s.clicks) FROM ad_campaign_stat s
+                 WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact_clicks
         FROM ad_campaign_placement p
         JOIN sales_publishers pub ON pub.id = p.publisher_id
         WHERE p.campaign_id = :c
         ORDER BY p.weight DESC NULLS LAST, lower(pub.name)
-    """), {"c": campaign_id}).mappings().all()
+    """), {"c": campaign_id, "src": fact_sources()}).mappings().all()
 
     fl = flight_of(c.date_start, c.date_end)
     fact_total = _facts(db, [c.id]).get(c.id, {}).get("shows")
@@ -845,23 +854,36 @@ def finish_campaign(campaign_id: int, db: Session = Depends(get_db), user: User 
     Назад не двигаем: если сделка уже прошла сверку, «завершить» ничего не меняет и
     молча откатывать её на предыдущий этап нельзя.
     """
+    from app.sales import stage_move
     from app.sales.catalog import Catalog
-    from app.sales.models import SalesDealStageHistory
 
     c, deal = _campaign_in_scope(db, campaign_id, user)
     cat = Catalog(db)
+    # Стадия ищется ПО ИМЕНИ, а имя правится на экране «Настройки → Стадии». Раньше её
+    # отсутствие роняло ручку целиком — и тогда нельзя было завершить РК ВООБЩЕ:
+    # статус кампании и остановка площадок стоят ниже, то есть площадки продолжали
+    # крутить из-за переименования стадии. Теперь ненайденная стадия только лишает
+    # перевода: РК окончена — это факт, он от нашей лестницы не зависит.
     target = next((st for st in cat.stages if st.name == RECON_STAGE), None)
-    if target is None:
-        raise HTTPException(400, f"В каталоге стадий нет «{RECON_STAGE}»")
 
+    # Только ВПЕРЁД: РК, завершённая после ухода сделки в документооборот, не должна
+    # тащить её назад. Сам перевод — через общую точку (`app/sales/stage_move.py`),
+    # иначе это ещё один путь записи стадии мимо требований и истории.
     moved = None
-    if deal.our_stage_id != target.id and cat.is_before(deal.our_stage_id, target.id):
-        moved = cat.by_id.get(deal.our_stage_id)
-        deal.our_stage_id = target.id
-        db.add(SalesDealStageHistory(
-            deal_id=deal.id, from_stage_id=moved.id if moved else None,
-            to_stage_id=target.id, user_id=user.id,
-            reason="РК завершена трафиком"))
+    refused = None
+    if target is None:
+        refused = (f"Сделка не переведена: в каталоге стадий нет «{RECON_STAGE}» — "
+                   "стадию переименовали. Переведите вручную и поправьте название.")
+    elif deal.our_stage_id != target.id and cat.is_before(deal.our_stage_id, target.id):
+        plan = stage_move.plan_move(db, deal, target, cat)
+        if plan.blockers:
+            # Кампанию всё равно закрываем — она действительно окончена. А сделку не
+            # двигаем и ГОВОРИМ об этом: молчаливый неперевод человек примет за перевод.
+            refused = stage_move.refusal_text(plan)
+        else:
+            out = stage_move.apply_move(db, deal, target, user, catalog=cat,
+                                        reason="РК завершена трафиком")
+            moved = out["from_stage"]
 
     old, c.status = c.status, "окончена"
     # Завершение — тот же каскад: РК окончена, а площадки продолжают крутить, это не
@@ -871,9 +893,13 @@ def finish_campaign(campaign_id: int, db: Session = Depends(get_db), user: User 
     log_action(db, user, "ad_campaign_finish", "sales_deal", deal.id,
                f"РК #{c.id}: {old} → окончена"
                + (f"; сделка {moved.name} → {target.name}" if moved else "")
-               + (f"; остановлено площадок {stopped}" if stopped else ""))
+               + (f"; остановлено площадок {stopped}" if stopped else "")
+            + ("; сделка НЕ переведена: требования" if refused else ""))
     return {"id": c.id, "status": c.status, "placements_stopped": stopped,
-            "stage": target.name if moved else (cat.by_id.get(deal.our_stage_id) or target).name,
+            "stage_refused": refused,
+            "stage": (target.name if moved
+                      else (cat.by_id.get(deal.our_stage_id) or target or c).name
+                      if (cat.by_id.get(deal.our_stage_id) or target) else None),
             "moved": bool(moved)}
 
 
@@ -958,6 +984,43 @@ def run_weborama(campaign_id: int, db: Session = Depends(get_db),
     log_action(db, user, "weborama_provision", "sales_deal", deal.id,
                f"РК #{c.id}: пикселей получено {len(out['done'])}, "
                f"отказов {len(out['failed'])}")
+    return out
+
+
+@router.get("/weborama/stats")
+def weborama_stats_state(db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Состояние съёма статистики верификатора: когда забирали и что доехало.
+
+    Отвечает на два разных вопроса, которые легко спутать: «коннектор жив?» и «числа
+    доехали до экрана?». Пустой реестр соответствий — это второе: сырьё лежит, съём
+    прошёл, а на дашборде не появилось ничего, потому что прицепить показы не к чему.
+    """
+    from app.weborama.state import stats_state
+
+    return stats_state(db)
+
+
+@router.post("/weborama/stats")
+def weborama_stats_pull(days: int = 3, db: Session = Depends(get_db),
+                        user: User = Depends(EDIT)):
+    """Снять статистику Weborama сейчас, не дожидаясь суточной задачи.
+
+    Читающая операция снаружи: в чужую систему не пишет ничего, поэтому подтверждения
+    не требует — в отличие от кнопок заведения вставок и выгрузки в DSP.
+    """
+    from app.weborama import daily
+    from app.weborama.client import WcmError
+    from app.weborama.stats import window
+
+    days = max(1, min(int(days or 3), 92))
+    start, end = window(days=days)
+    try:
+        out = daily.run(start=start, end=end)
+    except (WcmError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+    log_action(db, user, "weborama_stats_pull", "ad_campaign", None,
+               f"Weborama {out['start']}..{out['end']}: строк {out['rows']}, "
+               f"на дашборд легло {out['written']}, без соответствия {out['skipped']}")
     return out
 
 

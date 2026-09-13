@@ -16,6 +16,7 @@ import SettingsTabs from '../../components/SettingsTabs'
 import { UI, MONO, card, inp, sel, primaryBtn, th, td } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import { getPermissions, can } from '../../lib/auth'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const SEVERITIES = ['низкая', 'средняя', 'высокая']
 const STATUSES = ['наблюдаем', 'подтвердилось', 'закрыто', 'не воспроизвелось']
@@ -42,6 +43,7 @@ export default function DebugBacklog() {
   const [creating, setCreating] = useState(false)
   const [err, setErr] = useState('')
 
+  useRefreshOnReturn(() => reload())
   useEffect(() => { setPerms(getPermissions()); setReady(true) }, [])
 
   const mayView = ready && can(perms, 'settings_backlog', 'view')

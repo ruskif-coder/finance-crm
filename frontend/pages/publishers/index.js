@@ -9,6 +9,7 @@ import ValuePopover from '@/components/ValuePopover'
 import { INTEG_TONE_SOLID as INTEG_TONE, STATUS_TONE, NEUTRAL_TONE, EMPTY_TONE,
   nextStatus, tzLabel, localTime, Pin, ChatBtn } from '@/components/publishers/kit'
 import PublisherSummary from '@/components/publishers/PublisherSummary'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 // Реестр площадок. Собран по экрану «Справочник паблишеров» из дизайн-хендоффа
 // (docs/паблишеры.zip): строка L1 — то, по чему площадку выбирают, не открывая;
@@ -129,6 +130,7 @@ export default function Publishers() {
   // кликом по своей же кнопке: открыл, ушёл мышью в таблицу — панель осталась висеть.
   // `closest('[data-pop-root]')` — канон проекта: клик внутри триггера или самой панели
   // (она рендерится порталом и тоже помечена) закрытием не считается.
+  useRefreshOnReturn(() => load())
   useEffect(() => {
     if (!openFilter) return undefined
     const off = (e) => { if (!e.target.closest('[data-pop-root]')) setOpenFilter(null) }

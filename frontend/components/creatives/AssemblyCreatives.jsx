@@ -966,35 +966,68 @@ function EridBlock({ set, onChanged }) {
    которым ширина действительно нужна, — имя площадки и посадочная страница. */
 const R_COLS = '20px minmax(0,1fr) 30px minmax(0,1.6fr) 116px 84px 88px'
 
-/* Тестовая ссылка нацеливания. Живёт на КРЕАТИВЕ: кампания в DSP заводится на креатив,
-   и два баннера в одной сделке — это две кампании и две ссылки. По ней трафик открывает
-   сайт до старта и видит рекламу, которой в обычном браузере ещё нет.
+/* Тестовая ссылка нацеливания. По ней трафик открывает сайт до старта и видит рекламу,
+   которой в обычном браузере ещё нет.
 
-   Правится и после отправки, в отличие от файлов: в согласованный материал она не входит.
-   Логики вокруг неё нет никакой — не склеивается с посадочной, ничего не блокирует. */
+   ДВА ПУТИ, И ГЛАВНЫЙ — КНОПКА. Нацеливание заводится на ТЕСТОВОГО КЛИЕНТА (владелец
+   12.09.2026), а не на наш креатив, поэтому ссылку можно выпустить когда угодно, в том
+   числе на согласовании. Кнопка просит у сервера свежую и открывает её.
+
+   Выпущенную ссылку НЕ ХРАНИМ: замер 12.09.2026 — она живёт ровно 48 часов, а
+   согласование идёт днями. Сохранённая показала бы «время действия истекло» вместо
+   баннера. Поле ниже остаётся для ручного случая и правится после отправки: в
+   согласованный материал ссылка не входит. */
 function TargetingUrl({ set, canEdit, onSave }) {
   const [v, setV] = useState(set.test_targeting_url || '')
   const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
   useEffect(() => { setV(set.test_targeting_url || '') }, [set.test_targeting_url])
+
+  // Вкладку открываем СИНХРОННО по клику, а адрес подставляем после ответа: окно,
+  // открытое из `await`, блокировщик всплывающих окон считает непрошеным и режет.
+  const aim = async () => {
+    setErr('')
+    const tab = window.open('', '_blank')
+    setBusy(true)
+    try {
+      const r = await api.post(`/launch-prep/set/${set.id}/targeting-link`, {}, auth())
+      if (tab) tab.location = r.data.url
+      else window.location.href = r.data.url
+    } catch (e) {
+      if (tab) tab.close()
+      setErr(e?.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания')
+    } finally { setBusy(false) }
+  }
 
   if (!editing) {
     return (
-      <div style={{ marginTop: 9, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ marginTop: 9, display: 'flex', alignItems: 'center', gap: 8,
+        flexWrap: 'wrap' }}>
         <span style={{ ...CAP }}>ссылка нацеливания</span>
-        {set.test_targeting_url ? (
+        {canEdit && (
+          <button onClick={aim} disabled={busy}
+            style={{ ...btn(false), padding: '4px 10px', fontSize: 12,
+              cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 }}
+            title="Откроет страницу DSP: нажмите «Включить» и увидите баннер на сайте площадки. Ссылка живёт двое суток, поэтому выпускается заново при каждом нажатии">
+            {busy ? 'выпускаю…' : 'нацелить на себя'}
+          </button>
+        )}
+        {!!err && <span style={{ fontSize: 12, color: 'var(--expense)' }}>{err}</span>}
+        {/* Пустое поле НЕ рисуем словом «не задана»: пока есть кнопка, пустота здесь
+            означает «ручная ссылка не понадобилась», а не пробел в данных. */}
+        {!!set.test_targeting_url && (
           <a href={set.test_targeting_url} target="_blank" rel="noreferrer"
             style={{ fontSize: 12.5, color: 'var(--accent)', overflow: 'hidden',
               textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 380 }}>
             {set.test_targeting_url}
           </a>
-        ) : (
-          <span style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>не задана</span>
         )}
         {canEdit && (
           <span onClick={() => setEditing(true)}
             style={{ cursor: 'pointer', fontSize: 10.5, color: 'var(--text-muted)',
               borderBottom: '1px dashed var(--border-card)' }}>
-            {set.test_targeting_url ? 'изменить' : 'задать'}
+            {set.test_targeting_url ? 'изменить свою' : 'задать свою'}
           </span>
         )}
       </div>

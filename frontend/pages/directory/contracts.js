@@ -10,6 +10,7 @@ const ContractsMobile = dynamic(() => import('@/components/mobile/ContractsMobil
 import { T } from '@/lib/tokens'
 import SectionTabs from '@/components/SectionTabs'
 import { COOPERATION_FORMATS, PAYMENT_TERM_CONDITIONS, PROLONGATION_OPTIONS } from '@/lib/contractTerms'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
@@ -162,6 +163,7 @@ export default function Contracts() {
   // `?q=` подставляет номер в поиск: с экрана приложения сюда приходят дозаполнить
   // ссылку в ЭДО или приложить файл, и искать договор руками в реестре на 173 строки —
   // потерянное время. Читается один раз, дальше поле обычное.
+  useRefreshOnReturn(() => loadAll())
   useEffect(() => {
     const q = router.query.q
     if (typeof q === 'string' && q) setSearch(q)

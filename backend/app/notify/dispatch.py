@@ -18,8 +18,10 @@ from datetime import datetime, timedelta
 
 from app.database import SessionLocal
 from app.notify import registry, telegram
+from app.mail import client as mail
 from app.notify.bus import _quiet_now
 from app.notify.models import NotificationDelivery, UserNotificationChannels
+from app.models import User
 
 MAX_AGE_HOURS = 48
 
@@ -31,7 +33,7 @@ def flush(dry_run: bool = False) -> dict:
     try:
         rows = (db.query(NotificationDelivery)
                 .filter(NotificationDelivery.status == "queued",
-                        NotificationDelivery.channel == "tg")
+                        NotificationDelivery.channel.in_(("tg", "mail")))
                 .order_by(NotificationDelivery.id).limit(500).all())
         stats["queued"] = len(rows)
         for r in rows:
@@ -45,6 +47,32 @@ def flush(dry_run: bool = False) -> dict:
             ev = registry.get(r.event_key)
             ch = (db.query(UserNotificationChannels)
                   .filter(UserNotificationChannels.user_id == r.user_id).first())
+
+            # Почта разгребается ТОЙ ЖЕ очередью, что телеграм: причина откладывания у
+            # них одна и та же — канал не настроен, адреса нет, тихие часы. Отдельная
+            # очередь означала бы второе место, где считается протухание и повтор.
+            if r.channel == "mail":
+                u = db.query(User).filter(User.id == r.user_id).first()
+                if not mail.configured() or u is None or not mail.valid_address(u.email or ""):
+                    stats["skipped"] += 1
+                    continue
+                if ev is not None and _quiet_now(ch, ev):
+                    stats["skipped"] += 1
+                    continue
+                if dry_run:
+                    stats["sent"] += 1
+                    print(f"    (сухой прогон) письмо -> {u.email}: {r.title}")
+                    continue
+                try:
+                    mail.send(to=u.email, subject=(r.title or "Уведомление")[:200],
+                              body=r.title or "", to_name=getattr(u, "name", None))
+                    r.status, r.suppress_reason = "sent", None
+                    stats["sent"] += 1
+                except Exception as e:                      # noqa: BLE001
+                    r.status, r.error = "failed", str(e)[:400]
+                    stats["failed"] += 1
+                continue
+
             if not telegram.configured() or ch is None or not ch.tg_chat_id or not ch.tg_verified_at:
                 stats["skipped"] += 1
                 continue
@@ -63,7 +91,7 @@ def flush(dry_run: bool = False) -> dict:
                 r.status, r.error = "failed", str(e)[:400]
                 stats["failed"] += 1
         db.commit()
-        print(f"Очередь Telegram: в очереди {stats['queued']}, отправлено {stats['sent']}, "
+        print(f"Очередь досылки: в очереди {stats['queued']}, отправлено {stats['sent']}, "
               f"отложено {stats['skipped']}, протухло {stats['expired']}, "
               f"ошибок {stats['failed']}" + (" (СУХОЙ ПРОГОН)" if dry_run else ""))
         return stats

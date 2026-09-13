@@ -4,6 +4,7 @@ import api, { auth } from '../lib/http'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import { inp, btn, th, td } from '../components/salesTableKit'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 
 const TYPE_META = {
@@ -52,6 +53,7 @@ export default function Articles({ embedded = false } = {}) {
     } finally { setLoading(false) }
   }
 
+  useRefreshOnReturn(() => load(), { enabled: !editId })
   useEffect(() => {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     try { setPerms(JSON.parse(localStorage.getItem('permissions') || '{}')) } catch (e) { setPerms({}) }

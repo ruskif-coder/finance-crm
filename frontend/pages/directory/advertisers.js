@@ -10,6 +10,7 @@ import useIsMobile from '@/components/mobile/useIsMobile'
 const AdvertisersMobile = dynamic(() => import('@/components/mobile/AdvertisersMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 import SectionTabs from '@/components/SectionTabs'
 import BrandMarkingDialog, { saveBrandMarking } from '@/components/ord/BrandMarking'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 
 const EMPTY = { short_name: '', name_en: '', name_ru: '', website: '', inn: '' }
@@ -188,6 +189,7 @@ export default function Advertisers() {
   }
 
   // Поиск контрагентов для прикрепления к рекламодателю
+  useRefreshOnReturn(() => load())
   useEffect(() => {
     const q = cpQueryAdv.trim()
     if (!q) { setCpsAdv([]); return }

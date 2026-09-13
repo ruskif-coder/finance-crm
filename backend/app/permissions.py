@@ -142,12 +142,17 @@ SECTIONS = [
     # Без "delete" осознанно — записи снимаются с наблюдения статусом, а не стиранием:
     # удалённое наблюдение не отличить от «не заводили».
     {"key": "settings_backlog",     "label": "Настройки · Бэклог отладки", "group": "Ядро", "actions": ["view", "create", "edit"]},
+    # Почта: журнал писем наружу и шаблоны. Решение владельца 13.09.2026 — ПРОСМОТР
+    # журнала трафикам и аккаунтам (они пишут площадкам и должны видеть, дошло ли),
+    # ПРАВКА шаблонов и настроек только админу. Поэтому "edit" в списке есть, но
+    # бэкфилл его никому не выдал: право существует, а включать его решает владелец.
+    {"key": "settings_mail",        "label": "Настройки · Почта", "group": "Ядро", "actions": ["view", "edit"]},
 ]
 
 # Разделы настроек (для фронта: SettingsTabs, редирект, гейт страниц).
 SETTINGS_SECTIONS = ("settings_balances", "settings_articles", "settings_pipelines",
                      "settings_services", "settings_field_audit", "settings_audit",
-                     "settings_backlog")
+                     "settings_backlog", "settings_mail")
 
 # Секции продаж (5-уровневый контроль со свои/все) — для UI-матрицы и gate-хелперов.
 SALES_SECTIONS = ("sales_dashboard", "sales_registry", "sales_analytics")

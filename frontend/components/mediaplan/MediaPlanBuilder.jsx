@@ -568,7 +568,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                 // «Согласовать», «Отклонить», «В архив»), и человек выбирал ими не
                 // действие, а состояние плана — параллельное стадии его сделки.
                 const okToSave = !emptyMain && calc.filled.length > 0 && verified;
-                const hint = !verified ? 'Завизируйте правки'
+                const hint = !verified ? 'Отметьте обе таблицы как проверенные'
                   : (calc.filled.length ? 'Заполните все строки' : 'Добавьте хотя бы одну строку размещения');
                 const btn = (bg, color, bd) => ({ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px', background: bg, border: bd || 'none', color, borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' });
                 const save = (note) => onSave?.({ brief: { ...bf, title: effectiveTitle, targeting: mergeTgDrafts() }, main: main.rows, extras: extras.rows, fc, goals, owners, verified: true, change_note: note || '' });

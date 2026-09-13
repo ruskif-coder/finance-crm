@@ -7,6 +7,7 @@ import Navbar, { can, firstAllowedHref } from '@/components/Navbar'
 import { MONO, UI, IconBtn, inp, sel, btn, headCell, card, CAP } from '@/components/salesTableKit'
 import { INTEG_TONE_SOLID as INTEG_TONE, STATUS_TONE, nextStatus, Pin }
   from '@/components/publishers/kit'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 // Экран быстрого заполнения: строка на площадку, всё правится одним кликом.
 // Заведён под первичное наполнение реестра — переносить из Excel было нечего, и на
@@ -78,6 +79,7 @@ export default function PublishersBulk() {
     finally { setLoading(false) }
   }
 
+  useRefreshOnReturn(() => load())
   useEffect(() => {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     let p = {}

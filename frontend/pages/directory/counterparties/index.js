@@ -11,6 +11,7 @@ const CounterpartiesMobile = dynamic(() => import('@/components/mobile/Counterpa
 import { T } from '@/lib/tokens'
 import { grp0 as fmt } from '@/lib/salesFormat'
 import SectionTabs from '@/components/SectionTabs'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
@@ -80,6 +81,7 @@ export default function Counterparties() {
     } finally { setLoading(false) }
   }
 
+  useRefreshOnReturn(() => load())
   useEffect(() => {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     try {

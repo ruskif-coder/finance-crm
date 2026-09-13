@@ -12,6 +12,7 @@
 и раньше). Telegram/почта/дайджест уже проходят через расчёт и пишутся в журнал
 отправок статусом queued — их обработчики появятся в фазах 4–5.
 """
+import os
 from datetime import date, datetime
 from typing import Iterable, List, Optional
 
@@ -22,10 +23,17 @@ from app.notify import registry, recipients as rcp
 from app.notify.models import (NotificationSubscription, NotificationProfile,
                                NotificationDelivery, UserNotificationChannels)
 from app.notify import telegram
+from app.mail import client as mail
 
 # Каналы, у которых уже есть обработчик. Остальные копятся в журнале как queued
 # и уйдут, когда обработчик появится (фаза 5: почта и дайджест).
-LIVE_CHANNELS = {"app", "tg"}
+# Каналы, которые умеют доставлять ПРЯМО СЕЙЧАС. Остальные (дайджест) ложатся в журнал
+# статусом queued и ждут своей отправки — не теряются.
+#
+# `mail` живой с 13.09.2026. Включение ничего не меняет само по себе: почтовый канал
+# выбирается подпиской, а на момент включения его не было включено ни у кого (замер: 0 из
+# 33 подписок) — просто потому, что отправлять было нечем.
+LIVE_CHANNELS = {"app", "tg", "mail"}
 
 
 def _effective(db: Session, user_id: int, event_key: str):
@@ -103,6 +111,42 @@ def _deliver_tg(db: Session, uid: int, ev: registry.Event, title: str, body: Opt
         return f"failed|{str(e)[:200]}"
 
 
+def _deliver_mail(db: Session, uid: int, ev: registry.Event, title: str,
+                  body: Optional[str], link: Optional[str]) -> str:
+    """Отправка письма сотруднику. Возвращает статус для журнала.
+
+    Симметрично телеграму, и по той же причине: ничего не теряем. Почта не настроена,
+    у человека нет адреса, тихие часы — строка ложится в `queued` и уходит досылкой,
+    а не исчезает.
+
+    Адрес берётся из учётки (`users.email`): в этой системе он же логин, второго
+    хранилища адреса сотрудника нет и заводить его незачем.
+    """
+    if not mail.configured():           # проверяем ДО обращения к базе, как у бота
+        return "queued|no_channel"
+    u = db.query(User).filter(User.id == uid).first()
+    if u is None or not mail.valid_address(u.email or ""):
+        return "queued|no_channel"
+    ch = (db.query(UserNotificationChannels)
+          .filter(UserNotificationChannels.user_id == uid).first())
+    if _quiet_now(ch, ev):
+        return "queued|quiet_hours"
+    text = title if not body else title + "\n\n" + body
+    if link:
+        # Ссылку даём абсолютной: в письме относительный адрес никуда не ведёт, а
+        # открывают письмо не в нашей вкладке.
+        base = (os.getenv("DOMAIN") or "").strip()
+        text += "\n\n" + (("https://" + base) if base else "") + link
+    try:
+        mail.send(to=u.email, subject=title[:200], body=text,
+                  to_name=getattr(u, "name", None))
+        return "sent|"
+    except mail.MailNotConfigured:
+        return "queued|no_channel"
+    except Exception as e:              # noqa: BLE001 — в журнал уходит любая причина
+        return f"failed|{str(e)[:200]}"
+
+
 def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
          link: Optional[str] = None, entity_type: Optional[str] = None,
          entity_id: Optional[int] = None, actor=None, ctx: Optional[dict] = None,
@@ -138,6 +182,17 @@ def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
                 db.add(NotificationDelivery(event_key=ev.key, entity_type=entity_type,
                                             entity_id=entity_id, user_id=uid, channel=ch,
                                             status="queued", title=title))
+                continue
+            if ch == "mail":
+                status, _, reason = _deliver_mail(db, uid, ev, title, body,
+                                                  link).partition("|")
+                db.add(NotificationDelivery(
+                    event_key=ev.key, entity_type=entity_type, entity_id=entity_id,
+                    user_id=uid, channel="mail", status=status, title=title,
+                    suppress_reason=(reason or None) if status == "queued" else None,
+                    error=(reason or None) if status == "failed" else None))
+                if status == "sent" and uid not in delivered:
+                    delivered.append(uid)
                 continue
             if ch == "tg":
                 status, _, reason = _deliver_tg(db, uid, ev, title, body, link,

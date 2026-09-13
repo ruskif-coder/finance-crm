@@ -258,6 +258,26 @@ SCRIPT_NO_CODE = "traffic_creative_script_no_code"       # площадка бе
 # скрипта, и демо-экран говорит об этом вслух, а не молчит.
 SCRIPT_VIEWABILITY = "dsp_viewability_src"
 
+# Куда заводится креатив НАЦЕЛИВАНИЯ (владелец и трафики 12.09.2026). Два значения, а
+# не одно: в DSP нет сущности «клиент» со своим хешем — есть ПАРТНЁР (кабинет) и его
+# кампании, а «клиент» это поле `advertiser_name` на креативе. Трафики для нацеливания
+# используют отдельный кабинет-демоклиент и в нём одну запущенную демокампанию.
+#
+# Зачем отдельный кабинет вообще: показывать наш баннер надо ДО согласования, а боевой
+# креатив попадает в DSP только после него (замер 12.09.2026: на стадии «у трафика» хеш
+# есть у 0 креативов из 205). Заводить его раньше в боевой кампании нельзя — площадку
+# ещё могут снять, а удалять в DSP нечем.
+#
+# В настройке, а не в коде: демокампанию меняют в кабинете, и смена не должна требовать
+# выкладки. Пусто — кнопка честно скажет «не настроено».
+TARGETING_PARTNER = "dsp_targeting_partner_xxhash"
+TARGETING_CAMPAIGN = "dsp_targeting_campaign_xxhash"
+
+# Форма хеша — ИХ, не наша, но она устойчива: 16 шестнадцатеричных знаков во всех
+# виденных значениях. Проверяем мягко, чтобы не спорить с чужим форматом, но не пускаем
+# пробелы и разметку: такое значение уедет в запрос и сломает его молча.
+HASH_FORBIDDEN = set(' \t\r\n<>"\'\\')
+
 # Строка, которую владелец назвал 06.09.2026. К какой колонке она относится — решает он
 # сам на экране: подставить её в обе значило бы вшить один счётчик всем, а это ровно то
 # разделение, ради которого вкладка и заводилась.
@@ -280,6 +300,16 @@ def viewability_src(db: Session) -> str:
     return _setting(db, SCRIPT_VIEWABILITY).strip()
 
 
+def targeting_cabinet(db: Session) -> tuple:
+    """Куда заводить креатив нацеливания: (кабинет-демоклиент, демокампания в нём).
+
+    ЕДИНСТВЕННАЯ точка чтения — как у счётчика колонок и скрипта видимости. Возвращает
+    пару, а не два вызова: по отдельности они бессмысленны, и разъехаться им нельзя.
+    """
+    return (_setting(db, TARGETING_PARTNER).strip(),
+            _setting(db, TARGETING_CAMPAIGN).strip())
+
+
 @router.get("/site-script")
 def get_site_script(db: Session = Depends(get_db), user: User = Depends(VIEW)):
     """Два скрипта и разделение площадок: у кого наш код на сайте есть, у кого нет.
@@ -298,6 +328,8 @@ def get_site_script(db: Session = Depends(get_db), user: User = Depends(VIEW)):
         "without_code": {"script": _setting(db, SCRIPT_NO_CODE),
                          "publishers": [out(p) for p in rows if not p.our_code]},
         "viewability": _setting(db, SCRIPT_VIEWABILITY),
+        "targeting_partner": _setting(db, TARGETING_PARTNER),
+        "targeting_campaign": _setting(db, TARGETING_CAMPAIGN),
         "suggested": SUGGESTED_SCRIPT,
         "where": "<head> креатива, перед отправкой в DSP",
     }
@@ -310,6 +342,9 @@ class SiteScriptIn(BaseModel):
     # Адрес, а не тег: тег собирает `wrap_html`, и хранить его дважды значило бы
     # позволить им разойтись.
     viewability: Optional[str] = None
+    # Куда заводить креатив нацеливания — хеши, не адреса.
+    targeting_partner: Optional[str] = None
+    targeting_campaign: Optional[str] = None
 
 
 @router.put("/site-script")
@@ -343,8 +378,22 @@ def set_site_script(payload: SiteScriptIn, db: Session = Depends(get_db),
             "INSERT INTO company_settings (key, value) VALUES (:k, :v) "
             "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
             {"k": SCRIPT_VIEWABILITY, "v": v})
+    for key, val in ((TARGETING_PARTNER, payload.targeting_partner),
+                     (TARGETING_CAMPAIGN, payload.targeting_campaign)):
+        if val is None:
+            continue
+        v = val.strip()
+        # Судить о чужом формате не беремся, но пробел или разметка уедут в запрос и
+        # сломают его молча — такое отсекаем здесь.
+        if v and (len(v) > 32 or any(c in HASH_FORBIDDEN for c in v)):
+            raise HTTPException(400, "Это не хеш: пробелы и разметка в нём недопустимы")
+        db.execute(sa_text(
+            "INSERT INTO company_settings (key, value) VALUES (:k, :v) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"), {"k": key, "v": v})
     db.commit()
     log_action(db, user, "traffic_creative_script", "settings", None,
                f"с кодом: {(payload.with_code or '')[:80]} | без: {(payload.without_code or '')[:80]}"
-               f" | видимость: {(payload.viewability or '')[:80]}")
+               f" | видимость: {(payload.viewability or '')[:80]}"
+               f" | нацеливание: {(payload.targeting_partner or '')[:40]}"
+               f"/{(payload.targeting_campaign or '')[:40]}")
     return get_site_script(db, user)

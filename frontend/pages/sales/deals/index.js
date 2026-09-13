@@ -12,10 +12,12 @@ import { buildTitle, productWithSurface, separatePriceSet, surfaceTag, TITLE_EMP
 import { DownloadOverlay } from '@/components/LogoLoader'
 import { fmtMoney, fmtFull, fmtDate, mln } from '@/lib/salesFormat'
 import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
-import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, tagSm as chip, needsMp, needsMpCheck, NEEDS_MP_BG, NEEDS_MP_BORDER, UNVERIFIED_BG, UNVERIFIED_BORDER, PortalPopover, Z } from '@/components/salesTableKit'
+import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import { overlayClose } from '@/lib/overlay'
+import StageRequirements from '@/components/sales/StageRequirements'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 const DealCardList = dynamic(() => import('@/components/mobile/DealCardList'), { ssr: false })
 const DealsMobileControls = dynamic(() => import('@/components/sales/DealsMobileControls'), { ssr: false })
 const BottomSheet = dynamic(() => import('@/components/mobile/BottomSheet'), { ssr: false })
@@ -66,6 +68,9 @@ export default function SalesRegistry2() {
   const [lastIdx, setLastIdx] = useState(null)   // якорь Shift-выделения
   const [bulkForm, setBulkForm] = useState({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', our_stage_id: '', period: '' })
   const [saving, setSaving] = useState(false)
+  // Итог массовой ПРАВКИ. Отдельно от `bulkResult` ниже — тот про массовую
+  // синхронизацию с Битриксом; одно имя на два разных итога однажды уже путало.
+  const [editResult, setEditResult] = useState(null)
   const selDealIds = Object.keys(selDeals).map(Number)
 
   const [sel, setSel] = useState(Object.fromEntries(REG_FILTER_DROPS.map(([k]) => [k, []])))
@@ -126,6 +131,7 @@ export default function SalesRegistry2() {
     await patchCell(dealId, { period_from: `${month}-01` }, { period: month, period_from: `${month}-01` })
   }
 
+  useRefreshOnReturn(() => load())
   useEffect(() => {
     try { const s = JSON.parse(localStorage.getItem(COLS_KEY)); if (Array.isArray(s)) setHidden(new Set(s)) } catch (e) {}
     try {
@@ -259,7 +265,11 @@ export default function SalesRegistry2() {
     setSaving(true); setErr('')
     try {
       const r = await api.post('/sales/deals/bulk-update', body, auth())
-      alert(r.data.message); setSelDeals({}); setBulkForm({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', our_stage_id: '', period: '' }); load(offset)
+      // Результат — модалкой, а не alert(): у массового перевода стадии часть сделок
+      // может не пройти требования, и человеку нужно увидеть ЧТО именно не выполнено и
+      // где чинится, а не одну строку в системном окне без подробностей.
+      setEditResult(r.data)
+      setSelDeals({}); setBulkForm({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', our_stage_id: '', period: '' }); load(offset)
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось применить') } finally { setSaving(false) }
   }
   const deleteBulk = async () => {
@@ -837,9 +847,9 @@ export default function SalesRegistry2() {
                       {deals.map(d => (
                         <Fragment key={d.id}>
                         <div className="d2-row" title={needsMp(d) ? 'Требует расчёта: медиаплана ещё нет'
-                          : (needsMpCheck(d) ? 'Медиаплан не завизирован: откройте МП, отметьте «Проверено» и сохраните' : undefined)}
+                          : undefined}
                           onClick={e => { if (e.target.closest('.d2-cell, .d2-gen, .d2-brief, input, select, button, a, textarea')) return; setExpandedId(x => x === d.id ? null : d.id) }}
-                          style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: `1px solid ${needsMp(d) ? NEEDS_MP_BORDER : (needsMpCheck(d) ? UNVERIFIED_BORDER : 'var(--border-row)')}`, fontSize: 12, color: 'var(--text-primary)', cursor: 'pointer', background: (expandedId === d.id || selDeals[d.id]) ? 'var(--accent-tint)' : (needsMp(d) ? NEEDS_MP_BG : (needsMpCheck(d) ? UNVERIFIED_BG : undefined)) }}>
+                          style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: `1px solid ${needsMp(d) ? NEEDS_MP_BORDER : 'var(--border-row)'}`, fontSize: 12, color: 'var(--text-primary)', cursor: 'pointer', background: (expandedId === d.id || selDeals[d.id]) ? 'var(--accent-tint)' : (needsMp(d) ? NEEDS_MP_BG : undefined) }}>
                           {/* Красной заливки «расхождение с Битриксом» здесь больше нет
                               (владелец 08.09.2026): Битрикс не источник, и подсветка
                               звала чинить то, что чинить не надо. Отчёт о расхождениях
@@ -925,6 +935,37 @@ export default function SalesRegistry2() {
         )}
 
         {syncBulkBusy && <DownloadOverlay label="Синхронизация сделок" progress={syncProgress} />}
+
+        {/* ── Итог массовой правки: что переведено и КТО не прошёл требования ── */}
+        {editResult && (
+          <div {...overlayClose(() => setEditResult(null))} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(20,26,40,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, boxShadow: 'var(--shadow-card)', width: 560, maxWidth: '94vw', maxHeight: '84vh', display: 'flex', flexDirection: 'column', fontFamily: UI }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '18px 22px 12px' }}>
+                <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>Массовая правка</span>
+                <span onClick={() => setEditResult(null)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>✕</span>
+              </div>
+              <div style={{ padding: '0 22px 14px', fontSize: 13.5, color: 'var(--text-secondary)' }}>
+                {editResult.message}
+              </div>
+              {!!(editResult.skipped || []).length && (
+                <div style={{ padding: '0 22px 18px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color: 'var(--danger)' }}>
+                    Не переведены — требования не выполнены
+                  </div>
+                  {editResult.skipped.map(d => (
+                    <div key={d.code} style={{ border: '1px solid var(--border-card)', borderRadius: 10, padding: '10px 12px' }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 7 }}>
+                        <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: 'var(--text-primary)' }}>{d.code}</span>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.title}</span>
+                      </div>
+                      <StageRequirements lines={d.lines} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* ── Сводка массовой синхронизации ── */}
         {bulkResult && (

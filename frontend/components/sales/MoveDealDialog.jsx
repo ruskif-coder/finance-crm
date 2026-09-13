@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import api, { auth } from '../../lib/http'
 import { overlayClose } from '@/lib/overlay'
+import StageRequirements from './StageRequirements'
 
 // Диалог движения сделки по нашему каталогу (E2). Одна кнопка → адаптивный диалог:
 // дефолт «следующая стадия», перепрыгнуть или уйти в терминал — из того же списка.
@@ -20,13 +21,19 @@ const layerColor = (l) => l === 'фактические' ? 'var(--success)'
 // toStageKey — предвыбрать конкретную позицию 2/2/2 (кнопки дашборда «Подтвердить бронь»
 // и «В размещение» ведут в известную стадию). Комментарий всё равно спрашивается: одно
 // нажатие не должно превращать движение сделки в запись без причины.
-export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toLost }) {
+// onCard — диалог открыт С КАРТОЧКИ сделки: только там работают ссылки на её блоки.
+export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toLost, onCard = false }) {
   const [phases, setPhases] = useState([])
   const [funnels, setFunnels] = useState([])
   const [sel, setSel] = useState('')          // «id» либо «id:воронка» — только для <select>
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  // Требования ЦЕЛИ. Спрашиваем заранее и показываем списком: отказ, прилетающий после
+  // нажатия кнопки, заставляет угадывать, чего не хватило.
+  const [req, setReq] = useState(null)
+  const [reqBusy, setReqBusy] = useState(false)
+  const [override, setOverride] = useState('')
 
   useEffect(() => {
     (async () => {
@@ -57,15 +64,10 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
     .map(s => s.bitrix_pipeline_id))
   const productFunnels = funnels.filter(f => !boundIds.has(f.id))
   const noFunnels = flat.some(s => s.is_realization) && productFunnels.length === 0
-  // Диалог открывают из ДВУХ мест с разной формой строки: реестр сделок отдаёт
-  // our_mps/files, очередь дашборда — mp_id/docs. Проверять только our_mps значило
-  // блокировать переход у сделки, у которой МП есть (кнопка «Двинуть» гасла, хотя
-  // бэкенд тот же переход разрешал).
-  const hasMp = (deal.our_mps || []).length > 0
-    || !!deal.mp_id
-    || (deal.docs || []).includes('mp')
-    || (deal.files || []).some(f => f.kind === 'mp')
-  const needMp = !!targetStage?.requires_media_plan && !targetStage?.is_terminal && !hasMp
+  // Своей проверки МП здесь БОЛЬШЕ НЕТ (13.09.2026). Она собирала признак из четырёх
+  // разных полей, потому что диалог открывают из двух мест с разной формой строки, —
+  // и всё равно повторяла бэкенд своими словами. Теперь требования приходят готовым
+  // списком из `move-preview`: один источник и одна формулировка на экране и в отказе.
   const cur = deal.our_stage
 
   // Предвыбор «следующей стадии» — после загрузки каталога и воронок. Для реализационной
@@ -86,13 +88,40 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
       setSel(`${st.id}:${deal.realization_pipeline_id}`)
   }, [phases, funnels, toStageKey, toLost])
 
+  useEffect(() => {
+    if (!selStageId) { setReq(null); return }
+    let dead = false
+    setReqBusy(true)
+    ;(async () => {
+      try {
+        // Воронку шлём ТУ, ЧТО ВЫБРАНА СЕЙЧАС: стадия и воронка выбираются одним
+        // списком, и до отправки формы у сделки её ещё нет. Без этого требование
+        // «воронка выбрана» всегда отвечало бы «не выбрана» и гасило кнопку.
+        const params = { to_stage_id: selStageId }
+        if (selFunnelId) params.realization_pipeline_id = selFunnelId
+        const r = await api.get(`/sales/deals/${deal.id}/move-preview`, { ...auth(), params })
+        if (!dead) setReq(r.data)
+      } catch (_) {
+        // Требования не загрузились — НЕ выдаём это за «требований нет»: пустой список
+        // выглядел бы как разрешение. Кнопка остаётся живой, решение примет бэкенд.
+        if (!dead) setReq(null)
+      } finally { if (!dead) setReqBusy(false) }
+    })()
+    return () => { dead = true }
+  }, [selStageId, selFunnelId, deal.id])
+
+  const blocking = (req?.blocking || [])
+  const locked = blocking.length > 0
+  const canPass = !locked || (req?.can_override && override.trim())
+
   const move = async () => {
     if (!comment.trim()) { setErr('Введите комментарий'); return }
-    if (needMp) { setErr('Нужен привязанный медиаплан — привяжите МП к сделке в конструкторе'); return }
+    if (locked && !canPass) { setErr('Не выполнены требования перехода — список выше'); return }
     setBusy(true); setErr('')
     try {
       const body = { to_stage_id: selStageId, comment: comment.trim() }
       if (selFunnelId) body.realization_pipeline_id = selFunnelId
+      if (locked && override.trim()) body.override_reason = override.trim()
       const r = await api.post(`/sales/deals/${deal.id}/move`, body, auth())
       onMoved({ our_stage: r.data.our_stage, our_next_stage: r.data.our_next_stage, realization_pipeline_id: r.data.realization_pipeline_id })
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось двинуть сделку'); setBusy(false) }
@@ -146,12 +175,46 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
           )}
         </div>
 
-        {/* Чек-лист полноты данных — v1: проверка привязки МП + простое подтверждение */}
-        <div style={{ marginBottom: 14, background: needMp ? 'var(--danger-tint)' : 'var(--bg-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 13, color: needMp ? 'var(--danger)' : 'var(--text-secondary)' }}>
-          {needMp
-            ? <>☐ Медиаплан не привязан — привяжите МП к сделке в конструкторе (обязательно с этой стадии)</>
-            : <>✓ Все данные внесены{targetStage?.requires_media_plan ? ' · медиаплан привязан' : ''} — поехали дальше</>}
-        </div>
+        {/* Требования ЦЕЛИ, списком и заранее. Плашка «✓ все данные внесены» здесь
+            стояла до 13.09.2026 и проверяла ровно одно — привязку МП; теперь список
+            приходит с бэкенда, тот же, что применится при попытке. */}
+        {!!selStageId && (
+          <div style={{
+            marginBottom: 14, borderRadius: 10, padding: '11px 12px',
+            background: locked ? 'var(--danger-tint)' : 'var(--bg-subtle)',
+            border: `1px solid ${locked ? 'var(--danger-border)' : 'var(--border-card)'}`,
+          }}>
+            {reqBusy && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Проверяю требования…</div>}
+            {!reqBusy && req && (
+              <StageRequirements
+                onCard={onCard}
+                lines={req.lines}
+                title={locked ? `Не выполнено для перехода в «${targetStage?.name || '—'}»`
+                              : `Требования перехода в «${targetStage?.name || '—'}»`}
+                empty="Для этого перехода требований нет" />
+            )}
+            {!reqBusy && !req && (
+              <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+                Требования не загрузились — проверит бэкенд при попытке
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Обход — только мастеру и только с причиной. Она уйдёт в историю движения
+            отдельной пометкой: «в обход требований» должно быть видно потом. */}
+        {locked && req?.can_override && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={lbl}>Причина обхода требований*</div>
+            <input value={override} onChange={e => setOverride(e.target.value)}
+              placeholder="почему двигаем, не выполнив" style={inp} />
+          </div>
+        )}
+        {locked && !req?.can_override && (
+          <div style={{ marginBottom: 14, fontSize: 12.5, color: 'var(--text-muted)' }}>
+            Провести сделку мимо требований может только мастер.
+          </div>
+        )}
 
         <div style={{ marginBottom: 14 }}>
           <div style={lbl}>Комментарий*</div>
@@ -162,7 +225,14 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button onClick={onClose} style={{ padding: '9px 18px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Отмена</button>
-          <button onClick={move} disabled={busy || !selStageId || needMp} style={{ padding: '9px 20px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', cursor: (busy || !selStageId || needMp) ? 'default' : 'pointer', fontSize: 14, fontWeight: 700, opacity: (busy || !selStageId || needMp) ? 0.5 : 1 }}>{busy ? 'Двигаю…' : 'Двинуть'}</button>
+          {(() => {
+            const off = busy || !selStageId || !canPass
+            return (
+              <button onClick={move} disabled={off} style={{ padding: '9px 20px', borderRadius: 10, border: 'none', background: locked ? 'var(--danger)' : 'var(--accent)', color: 'var(--on-accent)', cursor: off ? 'default' : 'pointer', fontSize: 14, fontWeight: 700, opacity: off ? 0.5 : 1 }}>
+                {busy ? 'Двигаю…' : (locked ? 'Двинуть в обход' : 'Двинуть')}
+              </button>
+            )
+          })()}
         </div>
       </div>
     </div>

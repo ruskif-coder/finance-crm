@@ -166,7 +166,7 @@ export default function MpEditor() {
     if (!savedId) return
     if (!window.confirm('Создать сделку по этому медиаплану?\n\n'
       + 'Реквизиты, сумма и период возьмутся из плана, название соберётся по шаблону.\n'
-      + 'Сделка встанет на первую стадию — дальше её двинет отметка «Проверено».')) return
+      + 'Сделка сразу встанет на стадию «МП Отправлено» — план к ней уже прикреплён.')) return
     try {
       const r = await api.post(`/sales/media-plans/${savedId}/create-deal`, {}, auth())
       await reloadPlan(); loadDealBrief(); loadVersions()

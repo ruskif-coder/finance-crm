@@ -21,6 +21,7 @@ import Navbar from '@/components/Navbar'
 import api, { auth } from '@/lib/api'
 import { card, CAP, MONO, UI, btnSm, th, td } from '@/components/salesTableKit'
 import { grp, mln, pctDot } from '@/lib/salesFormat'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const BOX = { ...card, padding: '18px 20px' }
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
@@ -82,6 +83,7 @@ export default function ExecDashboard() {
     }
   }, [scale, anchor])
 
+  useRefreshOnReturn(() => load())
   useEffect(() => { load() }, [load])
 
   const step = (dir) => {

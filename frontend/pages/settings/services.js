@@ -6,6 +6,7 @@ import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsT
 import { MONO, UI, card, inp, sel, ci, cs, th, td, primaryBtn, PortalPopover } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import { overlayClose } from '@/lib/overlay'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 // ── Справочник услуг (конструктор) — отдельная страница раздела «Настройки» ──
 // Услуга: тип размещения + форма расчёта + единая/раздельная (web/app) цена + базовые
@@ -49,6 +50,7 @@ export default function SettingsServices() {
   const [newFormat, setNewFormat] = useState({ name: '', group: '' })
   const [fmtOpen, setFmtOpen] = useState(null)         // id услуги с открытым пикером форматов
 
+  useRefreshOnReturn(() => load(), { enabled: !Object.keys(editingServices).length && !Object.keys(editingAddons).length })
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }

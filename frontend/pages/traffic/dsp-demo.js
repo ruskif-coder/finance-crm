@@ -21,6 +21,7 @@ import api, { auth } from '@/lib/http'
 // Вторая реализация означала бы, что проверяющий и трафик смотрят на баннер
 // по-разному, а спор «у меня всё ровно» разрешить было бы нечем.
 import { CreativePreview } from '@/components/creatives/AssemblyCreatives'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const SECTION = { ...card, padding: '16px 20px', marginBottom: 14 }
 const LBL = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)' }
@@ -184,6 +185,7 @@ export default function DspDemo() {
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось прочитать состояние стенда') }
   }, [])
 
+  useRefreshOnReturn(() => load())
   useEffect(() => { load() }, [load])
 
   // Ошибка запоминает, НА КАКОМ шаге случилась: полоса ошибки живёт в шапке, а шаги

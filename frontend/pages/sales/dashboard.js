@@ -11,7 +11,7 @@ import api, { auth } from '@/lib/api'
 import { fmtMoney, fmtFull, fmtDate } from '@/lib/salesFormat'
 import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
 import { buildTitle, productWithSurface, separatePriceSet, surfaceTag, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
-import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, tagSm as chip, needsMp, needsMpCheck, NEEDS_MP_BG, NEEDS_MP_BORDER, UNVERIFIED_BG, UNVERIFIED_BORDER, PortalPopover, Z } from '@/components/salesTableKit'
+import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const DealsMobileControls = dynamic(() => import('@/components/sales/DealsMobileControls'), { ssr: false })
@@ -20,6 +20,7 @@ import DealsBoard, { BoardTabs } from '@/components/sales/DealsBoard'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
 import NotificationsWidget, { NotificationsSlot, toItem } from '@/components/dashboard/NotificationsWidget'
 import { overlayClose } from '@/lib/overlay'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 // Светофор вероятности сделки (наша ручная разметка): цвет лампы по вероятности.
@@ -151,6 +152,7 @@ export default function SalesDashboard2() {
     await patchCell(dealId, { period_from: `${month}-01` }, { period: month, period_from: `${month}-01` })
   }
 
+  useRefreshOnReturn(() => load())
   useEffect(() => {
     try { const s = JSON.parse(localStorage.getItem(COLS_KEY)); if (Array.isArray(s)) setHidden(new Set(s)) } catch (e) {}
     try {
@@ -672,9 +674,9 @@ export default function SalesDashboard2() {
                       {deals.map(d => (
                         <Fragment key={d.id}>
                         <div className="d2-row" title={needsMp(d) ? 'Требует расчёта: медиаплана ещё нет'
-                          : (needsMpCheck(d) ? 'Медиаплан не завизирован: откройте МП, отметьте «Проверено» и сохраните' : undefined)}
+                          : undefined}
                           onClick={e => { if (e.target.closest('.d2-cell, .d2-gen, .d2-brief, input, select, button, a, textarea')) return; setExpandedId(x => x === d.id ? null : d.id) }}
-                          style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: `1px solid ${needsMp(d) ? NEEDS_MP_BORDER : (needsMpCheck(d) ? UNVERIFIED_BORDER : 'var(--border-row)')}`, fontSize: 12, color: 'var(--text-primary)', cursor: 'pointer', background: expandedId === d.id ? 'var(--accent-tint)' : (needsMp(d) ? NEEDS_MP_BG : (needsMpCheck(d) ? UNVERIFIED_BG : undefined)) }}>
+                          style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 12, alignItems: 'center', padding: '7px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: `1px solid ${needsMp(d) ? NEEDS_MP_BORDER : 'var(--border-row)'}`, fontSize: 12, color: 'var(--text-primary)', cursor: 'pointer', background: expandedId === d.id ? 'var(--accent-tint)' : (needsMp(d) ? NEEDS_MP_BG : undefined) }}>
                           {visibleCols.map(c => <Fragment key={c.key}>{cellFor(c.key, d)}</Fragment>)}
                         </div>
                         {expandedId === d.id && <DealDetail deal={d} canEdit={canEdit} onOpen={openDeal} onEdit={editDeal} onAddMp={addMp} onChanged={() => load()} />}

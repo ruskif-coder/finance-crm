@@ -19,7 +19,7 @@
  * действительно оформление: пороги цвета, геометрия полос, подписи.
  */
 import { useRef, useState } from 'react'
-import { MONO, UI, Modal, PortalPopover, Z, selSm } from '../salesTableKit'
+import { MONO, UI, Modal, PortalPopover, Z, btnSm, selSm } from '../salesTableKit'
 import { grp } from '@/lib/salesFormat'
 
 /** Прочерк — общий для всего экрана: пустое НЕ рисуется нулём. */
@@ -837,5 +837,52 @@ export const TaskDoc = ({ text, deal, title }) => {
         </Modal>
       )}
     </>
+  )
+}
+
+/**
+ * Полоса сверки с верификатором.
+ *
+ * Отвечает на вопрос, который иначе ниоткуда не виден: показы Weborama лежат в той же
+ * таблице, что наш факт, но в сумму НЕ входят (`app/ad/stat_sources.py`) — значит их
+ * отсутствие на экране ничем себя не выдаёт. Пустая полоса и полоса «всё хорошо»
+ * выглядели бы одинаково, поэтому состояние пишется словами, а не значком.
+ *
+ * Три состояния разведены намеренно: «не настроено» (виноват не код), «не забиралось»
+ * (настроено, съём не отработал) и «забрано, но прицепить не к чему» (каждый шаг
+ * отчитался успехом, а чисел на дашборде нет). Вердикт приходит С СЕРВЕРА — второй
+ * расчёт того же состояния разошёлся бы с первым.
+ */
+export const VerifierStrip = ({ state, busy, mayEdit, onRefresh }) => {
+  if (!state) return null
+  const raw = state.raw || {}
+  const cur = state.cursor || {}
+  const bad = !state.configured || !!cur.last_error || !state.mapped_insertions
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+      padding: '9px 13px', marginBottom: 10, borderRadius: 10,
+      background: bad ? 'var(--warning-tint)' : 'var(--bg-card)',
+      border: bad ? 'none' : '1px solid var(--border-card)',
+      color: bad ? 'var(--warning-text)' : 'var(--text-primary)', fontSize: 12.5 }}>
+      <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.08em',
+        textTransform: 'uppercase', color: bad ? 'var(--warning-text)' : 'var(--text-faint)' }}>
+        Сверка с Weborama
+      </span>
+      <span style={{ flex: '1 1 260px', minWidth: 0 }}>{state.verdict}</span>
+      {!!raw.rows && (
+        <span style={{ fontFamily: MONO, fontSize: 11,
+          color: bad ? 'var(--warning-text)' : 'var(--text-muted)' }}>
+          {raw.since}…{raw.until} · вставок {grp(raw.insertions)} · показов {grp(raw.impressions)}
+          {' · прицеплено '}{grp(state.mapped_insertions)}
+        </span>
+      )}
+      {mayEdit && state.configured && (
+        <button onClick={onRefresh} disabled={busy}
+          style={{ ...btnSm(false), cursor: busy ? 'default' : 'pointer',
+            opacity: busy ? 0.6 : 1, whiteSpace: 'nowrap' }}>
+          {busy ? 'Забираю…' : 'Обновить'}
+        </button>
+      )}
+    </div>
   )
 }

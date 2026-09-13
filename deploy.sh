@@ -127,18 +127,28 @@ case "$ACTION" in
       */migrations/dsp/*) DB_C=finance_dsp_db; DB_U=dsp;           DB_N=dsp_analytics ;;
       *)                  DB_C=finance_db;     DB_U=finance_user;  DB_N=finance ;;
     esac
-    psql_() { docker exec -i "$DB_C" psql -U "$DB_U" -d "$DB_N" "$@"; }
+    # ДВА ПОМОЩНИКА, и разница между ними — не стиль.
+    #
+    # `docker exec -i` ПОДКЛЮЧАЕТ stdin контейнеру, и внутри `$( )` он выпивает stdin
+    # всего скрипта. Дальше `read -r ANS` упирается в конец ввода, получает пустую
+    # строку и уходит в ветку «Отменено» — сколько бы человек ни печатал `y`. Символ он
+    # видит (его отображает терминал), а скрипт уже нет.
+    #
+    # Поймано на боевой выкладке 12.09.2026: подтверждение повторного наката ответить
+    # было НЕВОЗМОЖНО. Поэтому `-i` остаётся только там, где на stdin реально едет файл.
+    psql_()  { docker exec -i "$DB_C" psql -U "$DB_U" -d "$DB_N" "$@"; }
+    psql_q() { docker exec "$DB_C" psql -U "$DB_U" -d "$DB_N" "$@" </dev/null; }
 
     # ── учёт: предупреждаем, НЕ блокируем ───────────────────────────────────
     # Все миграции проекта повторно накатываемые, и законный повтор бывает — например
     # после восстановления из старого дампа. Запрет мешал бы ему; молчание же прячет
     # случай «накатываю второй раз, не заметив». Поэтому вопрос, а не отказ.
-    PREV=$(psql_ -tAc "SELECT coalesce(to_char(applied_at,'YYYY-MM-DD HH24:MI'),'время неизвестно')
+    PREV=$(psql_q -tAc "SELECT coalesce(to_char(applied_at,'YYYY-MM-DD HH24:MI'),'время неизвестно')
                          ||' · '|| coalesce(note,'')
                        FROM schema_migrations WHERE filename='$NAME_SQL'" 2>/dev/null || true)
     if [ -n "$PREV" ]; then
       echo "ВНИМАНИЕ: $NAME уже накатывали ($PREV)."
-      OLDSUM=$(psql_ -tAc "SELECT coalesce(checksum,'') FROM schema_migrations WHERE filename='$NAME_SQL'" 2>/dev/null || true)
+      OLDSUM=$(psql_q -tAc "SELECT coalesce(checksum,'') FROM schema_migrations WHERE filename='$NAME_SQL'" 2>/dev/null || true)
       if [ -n "$OLDSUM" ] && [ "$OLDSUM" != "$SUM" ]; then
         echo "         И ФАЙЛ ИЗМЕНИЛСЯ с тех пор: контрольная сумма другая."
       fi
@@ -184,13 +194,13 @@ case "$ACTION" in
     # восстановление из дампа старше 11.09.2026. Раньше INSERT в несуществующую таблицу
     # ронял скрипт ПОСЛЕ применения SQL — миграция накачена, в учёте её нет, действие
     # завершилось ошибкой. Теперь говорим об этом словами и не притворяемся провалом.
-    if ! psql_ -tAc "SELECT to_regclass('public.schema_migrations')" 2>/dev/null | grep -q .; then
+    if ! psql_q -tAc "SELECT to_regclass('public.schema_migrations')" 2>/dev/null | grep -q .; then
       echo "ВНИМАНИЕ: таблицы schema_migrations в базе $DB_N нет — миграция ПРИМЕНЕНА,"
       echo "         но в учёт не записана. Накатите migrations/.../2026-09-11_schema_migrations.sql"
       echo "         и запишите эту строку вручную (см. docs/runbooks/migrations.md)."
       exit 0
     fi
-    psql_ -v ON_ERROR_STOP=1 -qc \
+    psql_q -v ON_ERROR_STOP=1 -qc \
       "INSERT INTO schema_migrations (filename, applied_at, applied_by, checksum, note)
                VALUES ('$NAME_SQL', now(), '$WHO', '$SUM', 'deploy.sh migrate')
                ON CONFLICT (filename) DO UPDATE
@@ -215,7 +225,7 @@ case "$ACTION" in
       # от «база недоступна». Раньше и то и другое давало пустой ответ, и при лежащей
       # базе экран печатал «НЕ НАКАЧЕНО» про все 89 файлов — приглашение накатить всё
       # заново поверх живых данных (найдено 11.09.2026).
-      LEDGER=$(docker exec -i "$DB_C" psql -U "$DB_U" -d "$DB_N" -tAc \
+      LEDGER=$(docker exec "$DB_C" psql -U "$DB_U" -d "$DB_N" -tAc \
                  "SELECT filename||E'\t'||coalesce(checksum,'—') FROM schema_migrations" 2>/dev/null) || {
         echo "  БАЗА НЕДОСТУПНА — состояние учёта неизвестно, НЕ накатывайте по этому выводу"
         continue

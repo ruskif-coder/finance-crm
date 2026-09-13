@@ -34,6 +34,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+import logging
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
@@ -63,6 +64,8 @@ from app.sales.models import (SalesBrand, SalesDeal, SalesMediaPlan, SalesMediaP
                               SalesPublisher, SalesPublisherService,
                               SalesPublisherSurface, SalesService)
 from app.sales.reps import ensure_rep, staff_users
+
+log = logging.getLogger("finance.launch_prep")
 
 router = APIRouter()
 
@@ -1057,6 +1060,56 @@ def set_targeting_url(set_id: int, payload: TargetingUrlIn, db: Session = Depend
     return {"id": row.id, "test_targeting_url": row.test_targeting_url}
 
 
+@router.post("/set/{set_id}/targeting-link")
+def issue_targeting_link(set_id: int, db: Session = Depends(get_db),
+                         current_user: User = Depends(TARGETING_EDIT)):
+    """Выпустить СВЕЖУЮ ссылку нацеливания — «прицелить рекламу на себя».
+
+    Ссылка не хранится, и это главное решение здесь. Замер 12.09.2026: она живёт ровно
+    48 часов, а согласование идёт днями — сохранённая умерла бы раньше, чем до неё дойдут
+    руки, и человек получил бы «время действия истекло» вместо баннера. Поэтому она
+    выпускается в момент нажатия, всегда живая, и её срок возвращается вместе с ней.
+
+    Ссылка выпускается на КРЕАТИВ НАЦЕЛИВАНИЯ этого комплекта — тот, что заведён у
+    демоклиента (`app/dsp/targeting_creative.py`). Не на боевой: боевого на согласовании
+    ещё не существует. Не на постоянный «тестовый» — по нему человек увидел бы чужой
+    баннер, а смысл в том, чтобы увидеть НАШ.
+
+    Креатив заводится на отправке трафику, но если тогда не получилось — заводим здесь,
+    по нажатию. Первое нажатие в таком случае дольше обычного: внутри поход в чужую
+    систему с загрузкой архива.
+
+    ⚠ Выпущенная ссылка НЕ является подтверждением. Генератор подписывает любую строку
+    допустимого вида и существование креатива не проверяет: страница выдуманного крида
+    текстуально совпадает со страницей настоящего. Поэтому ответ говорит «ссылка
+    выпущена», а не «проверка пройдена».
+    """
+    from app.dsp import targeting_creative as tc_mod
+    from app.dsp.client import MsError
+    from app.dsp.targeting_link import TargetingLinkError, issue
+
+    row = db.query(LaunchPrepCreativeSet).filter(LaunchPrepCreativeSet.id == set_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Комплект не найден")
+    deal = _deal(db, row.deal_id, current_user)
+
+    try:
+        crid = tc_mod.ensure(db, row)
+    except (tc_mod.TargetingCreativeError, MsError) as e:
+        raise HTTPException(status_code=400,
+                            detail=f"Креатив нацеливания не заведён: {e}")
+    try:
+        link = issue(crid)
+    except TargetingLinkError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    until = f" до {link.expires_at:%d.%m %H:%M} UTC" if link.expires_at else ""
+    log_action(db, current_user, "targeting_link", "sales_deal", deal.id,
+               f"Комплект №{row.no}: выпущена ссылка нацеливания{until}")
+    return {"url": link.url, "targeting_xxhash": crid,
+            "expires_at": link.expires_at.isoformat() if link.expires_at else None}
+
+
 @router.delete("/set/{set_id}")
 def drop_set(set_id: int, db: Session = Depends(get_db),
              current_user: User = Depends(EDIT)):
@@ -1491,6 +1544,7 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
     db.commit()
     log_action(db, current_user, "send_creative_set", "sales_deal", deal.id,
                f"комплект №{s.no}: отправлен на проверку трафику — пар {created}")
+
     if created:
         emit(db, "creative_set_sent",
              title=f"Комплект №{s.no} — на проверке у трафика · {deal.code}",
@@ -1508,6 +1562,15 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
              entity_type="sales_deal", entity_id=deal.id, actor=current_user,
              ctx={"deal": deal})
         db.commit()
+
+    # Креатив НАЦЕЛИВАНИЯ в DSP — чтобы у трафика сразу работала кнопка «нацелить на
+    # себя». С предпросмотром не связано: тот читает тот же архив, но живёт у нас.
+    # ТИХО и В САМОМ КОНЦЕ, когда всё своё уже закоммичено: отправка на согласование не
+    # должна зависеть от чужой системы, а внутри — поход наружу с загрузкой архива.
+    # Не завелось (DSP недоступен, в комплекте нет архива) — материал всё равно ушёл,
+    # а креатив соберётся по первому нажатию кнопки.
+    from app.dsp.targeting_creative import ensure_quietly
+    ensure_quietly(db, s)
     return {"sent": created}
 
 
@@ -2164,11 +2227,18 @@ def request_target_url(target_id: int, payload: UrlRequestIn, db: Session = Depe
     посадочных первым видит трафик, и заставлять его писать аккаунту, чтобы тот нажал
     кнопку, значит терять день на пересказ.
 
-    **Система ничего не отправляет.** Внешнего канала до площадки пока нет: получатель
-    уведомлений — `User`, а площадка им не является, и отдельный тип получателя вместе
-    со своим ботом появляется только на этапе кабинета. Поэтому кнопка фиксирует ФАКТ
-    запроса и отдаёт текст, который человек отправляет почтой или в чат. Делать вид,
-    что письмо ушло, — хуже, чем не отправлять его вовсе.
+    **Письмо уходит почтой, если есть куда и чем** (13.09.2026). До появления почтового
+    гейта система не отправляла ничего: кнопка фиксировала факт запроса, а текст человек
+    слал сам. Теперь при настроенной почте и известном адресе контакта письмо уходит от
+    системы с ответом на сотрудника.
+
+    ФАКТ ЗАПРОСА ЗАПИСЫВАЕТСЯ В ЛЮБОМ СЛУЧАЕ. Нет почты у контакта, не настроен гейт,
+    сервер отказал — запрос всё равно отмечен, и текст возвращается человеку, как
+    раньше. Обратное означало бы, что отсутствие почты у площадки блокирует работу,
+    которая до сегодня шла руками.
+
+    Ответ честно говорит, что произошло: `mail` = sent | failed | queued | no_address |
+    off. Делать вид, что письмо ушло, хуже, чем не отправлять его вовсе.
     """
     t = db.query(LaunchPrepTarget).filter(LaunchPrepTarget.id == target_id).first()
     if not t:
@@ -2184,9 +2254,88 @@ def request_target_url(target_id: int, payload: UrlRequestIn, db: Session = Depe
     t.url_request_text = text
     t.url_requested_at = sa_func.now()
     db.commit()
+
+    mail_state = _mail_url_request(db, t, deal, text, current_user)
+
     log_action(db, current_user, "request_target_url", "sales_deal", deal.id,
-               f"площадка {t.publisher_id}: запрошена ссылка")
-    return {"url_state": url_state(t), "text": text}
+               f"площадка {t.publisher_id}: запрошена ссылка ({mail_state})")
+    return {"url_state": url_state(t), "text": text, "mail": mail_state}
+
+
+def _deal_brand_name(db: Session, deal) -> str:
+    """Бренд сделки для подстановки в письмо. Пусто — подставляем название сделки:
+    письмо «Готовим размещение  на Икс» читается как ошибка, а не как отсутствие бренда."""
+    from app.sales.models import SalesBrand
+    if deal.brand_id:
+        row = db.query(SalesBrand.name).filter(SalesBrand.id == deal.brand_id).first()
+        if row and (row[0] or "").strip():
+            return row[0].strip()
+    return deal.title or deal.code or str(deal.id)
+
+
+def _mail_url_request(db: Session, t, deal, body_text: str, user: User) -> str:
+    """Отправить запрос ссылки почтой. Возвращает одно слово для ответа ручки.
+
+    Ошибку наружу НЕ поднимаем: запрос уже записан, и падение отправки не должно
+    отменять зафиксированный факт. Человек узнает исход из ответа, а подробность — из
+    журнала писем.
+    """
+    from app.mail import client as mailc
+    from app.mail import send as gate
+    from app.mail.models import KIND_URL_REQUEST
+
+    if not mailc.configured():
+        return "off"
+    row = db.execute(sa_text("""
+        SELECT c.email, c.name FROM sales_publisher_contacts c
+         WHERE c.publisher_id = :p AND coalesce(c.email, '') <> ''
+         ORDER BY c.is_primary DESC, c.id LIMIT 1"""),
+        {"p": t.publisher_id}).first()
+    if row is None or not mailc.valid_address(row[0] or ""):
+        return "no_address"
+
+    pub = db.query(SalesPublisher).filter(SalesPublisher.id == t.publisher_id).first()
+
+    # Тема и обёртка письма — ИЗ ШАБЛОНА, который правится на «Настройки → Почта». До
+    # 13.09.2026 тема собиралась здесь строкой: человек правил шаблон, сохранял, письмо
+    # уходило с другим текстом, и узнать об этом можно было только от получателя.
+    #
+    # Тело: шаблон — конверт, а сам вопрос площадке подставляется как `{текст}`. Если в
+    # шаблоне этого места НЕТ, отправляем одну фразу без конверта: потерять то, что мы
+    # записали как «что мы спросили», нельзя ни при какой правке шаблона.
+    from app.mail import templates as mail_tpl
+    from app.mail.models import MailTemplate
+    values = {
+        "площадка": (pub.name if pub else "") or "",
+        "домен": (getattr(pub, "domain", "") or "") if pub else "",
+        "сделка": deal.title or deal.code or str(deal.id),
+        "бренд": _deal_brand_name(db, deal),
+        "период": deal.period or "",
+        "сотрудник": (user.full_name or user.email or ""),
+        "текст": body_text,
+    }
+    tpl = db.query(MailTemplate).filter(MailTemplate.key == KIND_URL_REQUEST).first()
+    subject = (mail_tpl.render(tpl.subject, values).strip() if tpl and tpl.subject
+               else f"Посадочная страница для размещения: {values['сделка']}")
+    if tpl and tpl.body and "текст" in mail_tpl.placeholders(tpl.body):
+        body_text = mail_tpl.render(tpl.body, values)
+    try:
+        sent = gate.send_and_log(
+            db, to=row[0], to_name=row[1],
+            subject=subject,
+            # Тело — ТОТ ЖЕ текст, что видит человек на экране и что записан в запрос.
+            # Собирать письмо отдельно значит завести вторую формулировку, и однажды
+            # площадке уйдёт не то, что мы у себя записали.
+            body=body_text,
+            kind=KIND_URL_REQUEST,
+            # Ответ площадки должен прийти живому человеку, а не в ящик системы.
+            reply_to=(user.email or None),
+            entity_type="launch_prep_target", entity_id=t.id, user_id=user.id)
+    except Exception as e:                                  # noqa: BLE001
+        log.warning("Запрос ссылки: письмо не отправлено (%s): %s",
+                    pub.name if pub else t.publisher_id, e)
+        return "failed"
+    return sent.status
 
 
 @router.get("/refusal-reasons")

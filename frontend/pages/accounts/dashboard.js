@@ -3,7 +3,7 @@ import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can, getPermissions } from '@/components/Navbar'
 import { MONO, UI, card, CAP, btnSm, sel, inp, PIP, STAGE_ORDER, FILL, StageLayerBar,
-         MultiDrop, GAP_FIELDS, IconBtn, PortalPopover, ROW_TONE, CTA_TONE, ctaStyle, UNVERIFIED_BORDER } from '@/components/salesTableKit'
+         MultiDrop, GAP_FIELDS, IconBtn, PortalPopover, ROW_TONE, CTA_TONE, ctaStyle } from '@/components/salesTableKit'
 import NotificationsWidget, { toItem } from '@/components/dashboard/NotificationsWidget'
 import DealDetail from '@/components/sales/DealDetail'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
@@ -11,6 +11,7 @@ import { SnoozeDialog, BookingConfirm, LaunchPrepDialog } from '@/components/acc
 import api, { auth } from '@/lib/api'
 import { surfaceTag } from '@/lib/dealTitle'
 import { dm } from '@/lib/salesFormat'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 // Дашборд аккаунта — рабочий экран, а не витрина цифр: очередь действий.
 // ТЗ и референс — docs/«кабинет аккаунта v1» (README + dc.html). Срочность, причина и
@@ -45,11 +46,8 @@ const STAGE_SHORT = { 'Подготовка ДС': 'Закрытие' }
 const GROUPS = [
   { key: 'mp_needed', title: 'Нужен МП', hint: 'новая сделка без медиаплана',
     dot: 'var(--income)', kinds: ['deal_mp_missing'] },
-  // Отдельная группа: план уже есть, но его никто не открывал. Не «нужен МП» (он есть)
-  // и не «ждём клиента» (ему ещё нечего показывать). Откуда план — не важно: путей два,
-  // конвейер годового плана и ручной МП с кнопкой «Создать сделку».
-  { key: 'mp_verify', title: 'МП завизировать', hint: 'аккаунт его ещё не открывал',
-    dot: 'var(--dot-current-dz)', kinds: ['mp_verify'] },
+  // Группы «МП завизировать» (вердикт mp_verify) здесь больше нет: 13.09.2026 отменена
+  // сама промежуточная ступень — прикрепление плана сразу ставит сделку на «МП Отправлено».
   { key: 'mp_sent', title: 'МП отправлен', hint: 'ждём ответа клиента',
     dot: 'var(--dot-current-dz)', kinds: ['mp_unapproved'] },
   // Бронь под подтверждение + всё, что уже на сборе запуска: один участок работы.
@@ -241,6 +239,7 @@ export default function AccountDashboard() {
      расхождение разметки. Аргументов у `can` ТРИ — `(perms, section, action)`;
      вызов с двумя молча возвращал false всем, кроме админа (11.09.2026). */
   const [canEdit, setCanEdit] = useState(false)
+  useRefreshOnReturn(() => load())
   useEffect(() => { setCanEdit(can(getPermissions(), 'accounts_dashboard', 'edit')) }, [])
   const myName = useMemo(() => (reps.find(r => r.id === myRepId) || {}).name, [reps, myRepId])
 
@@ -475,15 +474,6 @@ export default function AccountDashboard() {
   // Кнопка строки ведёт туда, где действие реально совершается. Подпись — с бэкенда.
   const runCta = (row) => {
     if (row.kind === 'deal_mp_missing') return router.push('/accounts/mp')
-    // Проверка автоплана делается в конструкторе МП: отметки «Проверено» там,
-    // и сохранение оттуда само двигает сделку на следующую стадию. Открываем в НОВОЙ
-    // вкладке — очередь остаётся на месте, аккаунт разбирает пачку планов не теряя её.
-    // Плана нет в конструкторе (МП приехал файлом из Битрикса) — тогда карточка сделки:
-    // там его можно скачать. Отправлять в конструктор по несуществующему id нельзя.
-    if (row.kind === 'mp_verify') {
-      if (row.mp_id) return window.open(`/accounts/mp/${row.mp_id}`, '_blank', 'noopener')
-      return router.push(`/sales/deals/${row.code || row.id}`)
-    }
     // Подтверждение брони — не одно движение, а выбор из двух: подтвердили → сбор
     // запуска, не подтвердили → срыв. Кнопка поэтому открывает меню, а не диалог.
     if (row.kind === 'booking_confirm') return setConfirmFor(row)
@@ -807,7 +797,7 @@ export default function AccountDashboard() {
                                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0, fontSize: 11 }}>
                                           {miss.length ? miss.map(m => (
                                             <span key={m} style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '.04em', padding: '2px 6px', borderRadius: 6,
-                                              background: 'var(--warning-tint)', color: 'var(--warning-text)', border: `1px solid ${UNVERIFIED_BORDER}`, whiteSpace: 'nowrap' }}>{m}</span>
+                                              background: 'var(--warning-tint)', color: 'var(--warning-text)', border: '1px solid var(--warning-border)', whiteSpace: 'nowrap' }}>{m}</span>
                                           )) : (
                                             <span style={{ fontSize: 11, color: 'var(--income)', fontWeight: 600 }}>всё приложено</span>
                                           )}

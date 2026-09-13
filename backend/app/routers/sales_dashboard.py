@@ -32,10 +32,12 @@ from app.audit import log_action
 from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
                               SalesRep, SalesBrand, SalesBitrixSyncLog,
                               SalesDealFieldOverride, SalesAgency,
-                              SalesStage, SalesStagePhase, SalesPipeline,
-                              SalesDealStageHistory)
+                              SalesStage, SalesStagePhase, SalesPipeline)
 from app.sales.stages import STAGE_CATALOG
 from app.sales.catalog import Catalog, stage_public
+from app.sales.models import SalesDealStageHistory
+from app.sales import stage_move
+from app.sales import stage_scope
 from app.sales.row_context import load_row_context
 from app.sales.mp_amounts import mp_amounts_by_deal, eff_net, eff_gross
 import logging
@@ -849,7 +851,10 @@ def deals_registry(
             "money_layer": layer or NO_GROUP,
             "stage_key": stage_key,
             "our_stage": stage_public(cat.by_id.get(d.our_stage_id), cat),
-            "our_next_stage": stage_public(cat.next_of(d.our_stage_id)),
+            # Через общую точку: у терминала следующей нет, неприменимые к услуге
+            # стадии проскакиваются. Иначе реестр называет одну стадию, а кнопка
+            # ведёт в другую.
+            "our_next_stage": stage_public(stage_move.next_stage(db, d, cat)),
             "realization_pipeline_id": d.realization_pipeline_id,
             "agency": agencies.get(d.agency_id),
             "agency_full": agency_full.get(d.agency_id),
@@ -921,9 +926,12 @@ class DealPatch(BaseModel):
 # в очередь на заливку в Битрикс.
 EDITABLE_INT = ("advertiser_id", "agency_id", "brand_id", "sales_rep_id",
                 "account_manager_id", "payer_counterparty_id",
-                # our_stage_id — наша стадия: правка ручная и синхронизация её
-                # не перезатирает (иначе следующий синк вернул бы стадию Битрикса).
-                "our_stage_id")
+                )
+# `our_stage_id` в этом списке БЫЛ и убран 13.09.2026: модель запроса `DealPatch` его
+# никогда не объявляла, Pydantic отбрасывал поле, и инлайн-правка стадии физически не
+# работала — то есть «третий путь записи стадии» существовал только в комментарии.
+# Стадию меняют двумя путями: диалог `/deals/{id}/move` и массовая правка. Понадобится
+# третий — объявить поле в `DealPatch` И провести через `app/sales/stage_move.py`.
 EDITABLE_DATE = ("period_from", "period_to")
 EDITABLE_STR = ("product", "bitrix_stage", "title")
 # Наши собственные признаки: в Битрикс не заливаются и в очередь заливки не попадают,
@@ -990,8 +998,12 @@ class BulkUpdate(BaseModel):
     # это поле мастера-Битрикса, и запись в него из реестра однажды уже утащила
     # в базу составной ключ фильтра («воронка\x1fстадия»), наплодив стадии-двойники.
     bitrix_stage: Optional[str] = None
-    # НАША стадия: массовый перевод по каталогу. Пишет историю, как обычное движение.
+    # НАША стадия: массовый перевод по каталогу. Идёт через ту же точку, что диалог
+    # (`app/sales/stage_move.py`), — с проверкой требований и записью истории.
     our_stage_id: Optional[int] = None
+    # Причина обхода требований. Только мастеру и только при массовом переводе стадии:
+    # без неё запертые сделки просто пропускаются.
+    override_reason: Optional[str] = None
     period: Optional[str] = None
 
 
@@ -1040,27 +1052,65 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
         if f in changes:
             updates[getattr(SalesDeal, f)] = changes[f]
 
-    # Массовый перевод по НАШЕЙ лестнице. Пишем историю на каждую сделку, где стадия
-    # реально меняется: правило простоя и аналитика «сколько живёт на стадии» стоят
-    # на истории, и молчаливый массовый сдвиг сделал бы их слепыми.
-    # Пререквизит МП здесь НЕ проверяется: массовая правка — инструмент разбора
-    # накопленного, а не движение сделки по конвейеру (для него есть /deals/{id}/move
-    # с комментарием и проверками).
+    # Массовый перевод по НАШЕЙ лестнице — через ту же точку, что и диалог
+    # (`app/sales/stage_move.py`). До 13.09.2026 он писал стадию напрямую и требований не
+    # спрашивал: «инструмент разбора накопленного, а не движение по конвейеру». Пока
+    # требований не было, разница была незаметна; с их появлением этот путь стал тихим
+    # обходом гейта, доступным именно админу, — а значит гейт превратился бы в
+    # декорацию.
+    #
+    # Запертые сделки ПРОПУСКАЮТСЯ, а не роняют всю пачку: отказать в двадцати сделках
+    # из-за одной значит заставить человека искать её вручную. В ответ уходит, сколько
+    # переведено и сколько не пустило, с именами первых.
+    # ДВИЖЕНИЕ НАЗАД ЗДЕСЬ РАЗРЕШЕНО ВСЕМ, И ЭТО СОЗНАТЕЛЬНО (владелец 13.09.2026).
+    #
+    # Диалог `/deals/{id}/move` отдаёт немастеру 403 на признаке «движение назад», а
+    # массовая правка этот признак не смотрит вовсе. Расхождение выглядит дырой и однажды уже было
+    # поднято проверкой безопасности — поэтому записано здесь, а не держится в голове:
+    # массовая правка это ИНСТРУМЕНТ РАЗБОРА накопленного, а не движение по конвейеру.
+    # Ею чинят чужие ошибки и раскладывают подгруженные сделки; требовать на это мастера
+    # значит сделать разбор невозможным для тех, кто им занимается.
+    #
+    # Что ограничение всё-таки держит: область видимости (`_scope_deal_ids` выше — чужую
+    # сделку не тронуть) и ТРЕБОВАНИЯ цели (`plan.blockers` ниже). Обходит требования
+    # только мастер и только с причиной.
+    #
+    # Асимметрия закреплена прибором `test_bulk_allows_going_back_on_purpose`: если
+    # кто-то «починит» её, не спросив, тест объяснит, почему так.
     moved = 0
+    skipped: list = []
+    target_id_used = bool(changes.get("our_stage_id"))
     if changes.get("our_stage_id"):
-        from app.sales.models import SalesDealStageHistory
         target_id = int(changes["our_stage_id"])
         target = db.query(SalesStage).filter(SalesStage.id == target_id).first()
         if not target:
             raise HTTPException(status_code=404, detail="Стадия не найдена")
+        cat = Catalog(db)
+        master = stage_move.is_master(current_user)
+        force = master and bool((payload.override_reason or "").strip())
+        reason = (payload.override_reason or "").strip() or "массовая правка стадии"
         for d in db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).all():
             if d.our_stage_id == target_id:
                 continue
-            db.add(SalesDealStageHistory(deal_id=d.id, from_stage_id=d.our_stage_id,
-                                         to_stage_id=target_id, user_id=current_user.id,
-                                         reason="массовая правка стадии"))
-            moved += 1
-        updates[SalesDeal.our_stage_id] = target_id
+            plan = stage_move.plan_move(db, deal=d, target=target, catalog=cat)
+            if plan.blockers and not force:
+                # Не просто «не прошла», а ЧТО именно не выполнено и где чинится —
+                # иначе человек получает список кодов и идёт открывать их по одному.
+                skipped.append({
+                    "code": d.code or str(d.id),
+                    "title": d.title,
+                    "lines": [_line_public(ln) for ln in plan.blockers],
+                })
+                continue
+            if stage_move.apply_move(db, d, target, current_user, catalog=cat,
+                                     force=force and bool(plan.blockers),
+                                     reason=reason)["moved"]:
+                moved += 1
+        # Стадию из общего обновления УБИРАЕМ: она уже проставлена поштучно теми, кого
+        # пустило. Оставить её здесь значило бы двинуть и пропущенных — тем самым
+        # обходом, который мы только что закрыли.
+        changes.pop("our_stage_id", None)
+        updates.pop(SalesDeal.our_stage_id, None)
 
     if updates:
         db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).update(
@@ -1083,9 +1133,25 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
             row.pushed_at = None
 
     db.commit()
-    log_action(db, current_user, "bulk_update_deals", "sales_deal", None,
-               f"{len(payload.deal_ids)} сделок: {', '.join(changes.keys())}")
-    return {"message": f"Обновлено сделок: {len(payload.deal_ids)}"}
+    label = f"{len(payload.deal_ids)} сделок: {', '.join(changes.keys()) or 'стадия'}"
+    if moved:
+        label += f"; переведено {moved}"
+    if skipped:
+        label += f"; не пустили требования: {len(skipped)}"
+    log_action(db, current_user, "bulk_update_deals", "sales_deal", None, label)
+    # Число ЧЕСТНОЕ: до 13.09.2026 в ответ шла длина входного списка, и человек читал
+    # «Обновлено сделок: 20» рядом со списком из тринадцати непереведённых. Обе фразы
+    # правдивы по отдельности, вместе бессмысленны.
+    msg = (f"Полей обновлено у сделок: {len(payload.deal_ids)}" if changes
+           else f"Обработано сделок: {len(payload.deal_ids)}")
+    if target_id_used:
+        msg += f". Переведено на новую стадию: {moved}"
+    if skipped:
+        # Называем поимённо: «часть не прошла» без списка означает искать вручную.
+        codes = [x["code"] for x in skipped]
+        head = ", ".join(codes[:5]) + (f" и ещё {len(codes) - 5}" if len(codes) > 5 else "")
+        msg += f". Не переведены — не выполнены требования: {head}"
+    return {"message": msg, "moved": moved, "skipped": skipped}
 
 
 @router.get("/deals/brand-suggestions")
@@ -2165,7 +2231,19 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         "own_company": _own_company_out(db),
         # для бара стадий и диалога движения — тот же контракт, что в реестре
         "our_stage": stage_public(cat.by_id.get(deal.our_stage_id), cat),
-        "our_next_stage": stage_public(cat.next_of(deal.our_stage_id)),
+        # Следующая стадия — с учётом применимости к услуге сделки: неприменимые
+        # проскакиваются, и кнопка «двинуть» ведёт туда же, куда указывает подпись.
+        "our_next_stage": stage_public(stage_move.next_stage(db, deal, cat)),
+        # Какие блоки карточки показывать. Пустой словарь означал бы «спрятать всё»,
+        # поэтому источник один и он всегда полный (см. app/sales/stage_scope.py).
+        "card_blocks": stage_scope.visible_blocks(db, deal, cat),
+        # Вход в ТЕКУЩУЮ стадию — из истории движения, того же источника, что у правила
+        # срочности. До 13.09.2026 карточка считала это по журналу действий (последняя
+        # запись `move_deal`), а очередь — по истории: при переводе не через диалог
+        # (массовая правка, завершение РК, прикрепление плана) два числа расходились, и
+        # каждое было «правдиво» по своему источнику. None — сделка не двигалась у нас,
+        # и это честнее выдуманной даты.
+        "stage_since": _stage_since(db, deal),
         "realization_pipeline_id": deal.realization_pipeline_id,
         "our_mps": list(our_mps.values()),
         # Приложения к договору, которые закрывают эту сделку. В карточке строка «Доп.
@@ -2252,7 +2330,8 @@ def move_event_key(prev_key, is_lost, is_terminal, stage_key):
 
 
 def _notify_move(db, deal, prev, target, comment, actor):
-    """Сейлзовые события перехода сделки. Вызывается ТОЛЬКО при реальной смене стадии."""
+    """Сейлзовые события перехода сделки. Зовётся из `stage_move.apply_move` — то есть
+    из ЕДИНСТВЕННОЙ точки перевода, а значит на всех путях, не только из диалога."""
     from app.notify.bus import emit
 
     key = move_event_key(getattr(prev, "stage_key", None), target.is_lost,
@@ -2266,6 +2345,79 @@ def _notify_move(db, deal, prev, target, comment, actor):
          body=(comment or "").strip() or None,
          link=f"/sales/deals/{deal.code or deal.id}",
          entity_type="sales_deal", entity_id=deal.id, actor=actor, ctx={"deal": deal})
+
+
+def _stage_since(db, deal):
+    """Когда сделка вошла в текущую стадию. Один источник с правилом срочности."""
+    if not deal.our_stage_id:
+        return None
+    row = db.query(func.max(SalesDealStageHistory.at)).filter(
+        SalesDealStageHistory.deal_id == deal.id,
+        SalesDealStageHistory.to_stage_id == deal.our_stage_id).first()
+    return row[0].isoformat() if row and row[0] else None
+
+
+def _line_public(ln) -> dict:
+    """Строка требования для экрана. `where`/`link` обязательны в выдаче: список «чего
+    не хватает» без ответа «куда идти» заставляет человека спрашивать нас."""
+    return {
+        "key": ln.key, "title": ln.title, "hint": ln.hint,
+        "is_blocking": bool(ln.is_blocking),
+        "where": ln.where, "link": ln.link,
+        "state": ln.result.state, "detail": ln.result.detail,
+        "blockers": list(ln.result.blockers),
+    }
+
+
+@router.get("/deals/{deal_id}/move-preview")
+def move_preview(
+    deal_id: int,
+    to_stage_id: Optional[int] = None,
+    realization_pipeline_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("sales_registry", "view")),
+):
+    """Что требуется для перехода — ДО попытки.
+
+    Нужна затем, чтобы отказ не прилетал после нажатия кнопки: человек должен видеть
+    список заранее, вместе с местом, где каждое чинится. Без цели считает следующую
+    стадию по цепочке — то же, что сделает кнопка «двинуть» без выбора.
+    """
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+
+    cat = Catalog(db)
+    target = cat.by_id.get(to_stage_id) if to_stage_id else cat.next_of(deal.our_stage_id)
+    if target is None:
+        return {"target": None, "lines": [], "allowed": True,
+                "reason": "Некуда двигать — сделка на последней стадии"}
+
+    # Воронку, ВЫБРАННУЮ ПРЯМО СЕЙЧАС, надо учесть: диалог выбирает стадию и воронку
+    # одним списком («В размещении · Pharm»), и до отправки формы у сделки её ещё нет.
+    # Без этого требование «воронка выбрана» всегда отвечало бы «не выбрана», кнопка
+    # гасла, и сделка без воронки не прошла бы дальше «Брони» НИКОГДА — а таких на
+    # 13.09.2026 тридцать четыре.
+    if realization_pipeline_id:
+        deal.realization_pipeline_id = realization_pipeline_id
+    try:
+        plan = stage_move.plan_move(db, deal, target, cat)
+        out = {
+            "target": stage_public(target, cat),
+            "is_back": plan.is_back,
+            "needs_pipeline": plan.needs_pipeline,
+            "allowed": plan.allowed,
+            "can_override": stage_move.is_master(current_user),
+            "lines": [_line_public(ln) for ln in plan.lines],
+            "blocking": [_line_public(ln) for ln in plan.blockers],
+        }
+    finally:
+        # Ручка ЧИТАЮЩАЯ: подставленную воронку в базу не пускаем. Autoflush мог
+        # отправить её вместе с любым запросом внутри plan_move — откат гарантирует,
+        # что предпросмотр ничего не изменил.
+        db.rollback()
+    return out
 
 
 @router.post("/deals/{deal_id}/move")
@@ -2301,49 +2453,44 @@ def move_deal(
         if target is None:
             raise HTTPException(status_code=400, detail="Некуда двигать — сделка на последней стадии")
 
-    is_back = cur_id is not None and not target.is_terminal and cat.is_before(target.id, cur_id)
-    is_master = (current_user.role.key == "admin") or bool(getattr(current_user.role, "is_master", False))
-    if is_back and not is_master:
-        raise HTTPException(status_code=403, detail="Двигать сделку назад может только мастер")
+    # Воронку принимаем ДО расчёта: без неё план сказал бы «нужна воронка», хотя её
+    # только что прислали в этом же запросе.
+    if target.phase and target.phase.is_realization and not target.is_terminal:
+        if payload.realization_pipeline_id is not None:
+            deal.realization_pipeline_id = payload.realization_pipeline_id
 
-    # МП обязателен со стадии «МП Отправлено» и далее — двигаем только с привязанным МП
-    if getattr(target, "requires_media_plan", False) and not target.is_terminal:
-        from app.sales.models import SalesMediaPlan
-        has_mp = db.query(SalesMediaPlan.id).filter(SalesMediaPlan.deal_id == deal.id).first()
-        if not has_mp:
-            raise HTTPException(status_code=400,
-                detail="Нужен привязанный медиаплан — привяжите МП к сделке в конструкторе")
+    plan = stage_move.plan_move(db, deal, target, cat)
+    master = stage_move.is_master(current_user)
+    if plan.is_back and not master:
+        raise HTTPException(status_code=403, detail="Двигать сделку назад может только мастер")
 
     # Воронка нужна рабочим стадиям реализационного этапа: одна и та же стадия живёт в
     # каждой продуктовой воронке. Терминальные — исключение: сделка умерла, привязывать
     # её к воронке незачем, а требование воронки сделало бы «сорвалась» недостижимой у
     # сделок, которые до реализации не дошли.
-    if target.phase and target.phase.is_realization and not target.is_terminal:
-        if payload.realization_pipeline_id is not None:
-            deal.realization_pipeline_id = payload.realization_pipeline_id
-        if not deal.realization_pipeline_id:
-            raise HTTPException(status_code=400, detail="Выберите воронку реализации под продукт")
+    if plan.needs_pipeline:
+        raise HTTPException(status_code=400, detail="Выберите воронку реализации под продукт")
 
-    prev = cat.by_id.get(cur_id)
-    deal.our_stage_id = target.id
-    _reflect_stage_binding(db, deal, target)
-    # История движения: от неё считается «сколько сделка стоит на стадии» (правило 5
-    # срочности) и по ней потом уточняются sla_days. Журнал действий для этого
-    # не годится — там свободный текст, разобрать его обратно в пару стадий нельзя.
-    # Перестановка в ту же стадию историю не пишет: иначе «сколько стоит на стадии»
-    # обнулялось бы от повторного нажатия, и просрочку можно было бы снять,
-    # не сделав ничего.
-    if target.id != cur_id:
-        db.add(SalesDealStageHistory(
-            deal_id=deal.id, from_stage_id=cur_id, to_stage_id=target.id,
-            user_id=current_user.id,
-            reason=(payload.override_reason or payload.comment or "").strip() or None,
-        ))
-        _notify_move(db, deal, prev, target, payload.comment, current_user)
+    # Требования цели. Обход разрешён мастеру и ТОЛЬКО с причиной: иначе «в обход» стало
+    # бы неотличимо от «правило не сработало», и разбирать было бы нечего.
+    override = bool(plan.blockers) and master and bool((payload.override_reason or "").strip())
+    if plan.blockers and not override:
+        detail = stage_move.refusal_text(plan)
+        if master:
+            detail += ". Мастер может провести мимо — укажите причину обхода."
+        raise HTTPException(status_code=400, detail=detail)
+
+    prev = plan.current
+    stage_move.apply_move(
+        db, deal, target, current_user, catalog=cat, force=override,
+        reason=(payload.override_reason or payload.comment or ""))
+    # Уведомление шлёт сама `apply_move` — одна точка на все пути движения.
     db.commit()
 
     label = f"{prev.name if prev else '—'} → {target.name}"
-    if payload.override_reason:
+    if override:
+        label += f" (В ОБХОД ТРЕБОВАНИЙ: {payload.override_reason})"
+    elif payload.override_reason:
         label += f" (оверрайд: {payload.override_reason})"
     log_action(db, current_user, "move_deal", "sales_deal", deal.id,
                f"{label}. Комментарий: {payload.comment.strip()}")

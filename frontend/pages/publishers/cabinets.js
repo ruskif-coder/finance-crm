@@ -32,6 +32,7 @@ import { MONO, UI, card, CAP, btn, btnSm, inp, sel, chip, ROW_TONE, Modal, PickV
   KpiStrip, IconBtn } from '@/components/salesTableKit'
 import ValuePopover from '@/components/ValuePopover'
 import api, { auth } from '@/lib/api'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 /* ── мелкие части, все на модульном уровне ──────────────────────────────────
    Компонент, объявленный внутри рендера родителя, пересоздаётся на каждый ввод, и
@@ -479,6 +480,7 @@ export default function CabinetsPage() {
   const [fullLog, setFullLog] = useState(null)
   const [vpop, setVpop] = useState(null)
 
+  useRefreshOnReturn(() => load())
   useEffect(() => { setMayEdit(can(getPermissions(), 'dir_publishers_cabinets', 'edit')) }, [])
 
   const load = useCallback(async () => {

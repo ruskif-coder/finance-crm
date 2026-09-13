@@ -303,7 +303,7 @@ def rule_mp_draft_stale(db: Session, ev: registry.Event) -> List[Hit]:
     прежнее условие подняло бы разом весь реестр. Осталась та часть смысла, которая
     проверяема: план построен, а сделки у него нет — значит он никуда не ведёт и, скорее
     всего, забыт. План, привязанный к сделке, ведёт себя по стадии сделки, и о нём
-    говорят правила очереди (`mp_verify`, `mp_unapproved`).
+    говорят правила очереди (`deal_mp_missing`, `mp_unapproved`).
     """
     from app.sales.models import SalesMediaPlan
 
@@ -380,7 +380,7 @@ def _after_backlog_overdue(db: Session, hit: Hit, now: datetime):
 # та же, что строит очередь на дашборде аккаунта; обёртка лишь разбирает её вердикты
 # по видам. invoice_overdue на неё не переезжает: он считается по операциям, а не по
 # сделкам — у него другая сущность и другой адресат.
-DEAL_QUEUE_EVENTS = ["deal_mp_missing", "mp_verify", "mp_unapproved", "booking_confirm",
+DEAL_QUEUE_EVENTS = ["deal_mp_missing", "mp_unapproved", "booking_confirm",
                      "act_missing", "stage_stuck", "stage_unmapped"]
 
 def rule_creative_silence(db: Session, ev: registry.Event) -> List[Hit]:

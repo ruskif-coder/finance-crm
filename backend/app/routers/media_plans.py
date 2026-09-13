@@ -374,6 +374,8 @@ def link_deal(plan_id: int, data: LinkDealIn, db: Session = Depends(get_db),
     # правят сделку руками. Отвязка (deal_id=None) ничего не переносит и ничего не чистит.
     if data.deal_id is not None:
         _sync_deal_from_plan(db, p, current_user)
+        # Прикрепление плана и ЕСТЬ переход на «МП Отправлено» (владелец 13.09.2026).
+        _advance_deal_on_link(db, current_user, p)
     db.commit()
     log_action(db, current_user, "link_deal_media_plan", "media_plan", p.id, f"deal_id={data.deal_id}")
     return {"message": "Сделка привязана" if data.deal_id else "Привязка снята", "deal_id": data.deal_id}
@@ -399,9 +401,11 @@ def create_deal_from_plan(plan_id: int, data: CreateDealIn, db: Session = Depend
     сделки, рождённой из годового плана. (Генератор ⟳ на карточке сделки собирает своё,
     через «|» и в другом порядке — это расхождение старше и живёт отдельно.)
 
-    Сделка встаёт на ПЕРВУЮ стадию каталога: план ещё не проверен. Проверка и сохранение
-    двинут её дальше сами (`_advance_deal_after_verify`) — второй раз то же самое здесь
-    делать нельзя, иначе «Проверено» перестанет быть единственным гейтом."""
+    Сделка встаёт СРАЗУ на «МП Отправлено»: она рождается из готового плана, то есть
+    связь план↔сделка существует с первой секунды, а «Подготовка МП» — это стадия
+    сделки, у которой плана ещё нет (владелец 13.09.2026). До этой даты сделка вставала
+    на первую стадию и ждала, пока её двинет сохранение плана с отметкой «Проверено» —
+    то есть проходила стадию, смысла которой не имела."""
     from datetime import datetime as _dt
     import uuid as _uuid
     from app.routers.sales_dashboard import _period_bounds
@@ -439,12 +443,17 @@ def create_deal_from_plan(plan_id: int, data: CreateDealIn, db: Session = Depend
         row = db.query(SalesRep.id).filter(SalesRep.user_id == user_id).first()
         return row[0] if row else None
 
-    stage = Catalog(db).first()
+    _cat = Catalog(db)
+    # Стадия, где план обязателен («МП Отправлено»). Падаем на первую, только если
+    # каталог её не знает вовсе — иначе сделка осталась бы без стадии.
+    stage = _mp_sent_stage(_cat) or _cat.first()
     deal = SalesDeal(
         bitrix_id="local-" + _uuid.uuid4().hex, title=title, pipeline="", bitrix_stage="",
         amount=p.amount_net, amount_with_vat=p.amount_gross, currency="RUB",
         advertiser_id=p.advertiser_id, brand_id=p.brand_id, agency_id=p.agency_id,
         payer_counterparty_id=p.payer_counterparty_id, product=product,
+        # Услуга — ссылкой на справочник; `product` остаётся сырой подписью.
+        service_id=_service_of_plan(db, p),
         sales_rep_id=_rep(p.sales_rep_id), account_manager_id=_rep(p.account_manager_id),
         our_stage_id=stage.id if stage else None,
         # Даты РК из плана, если он их знает: месяц периода — грубее, а по period_from
@@ -459,6 +468,14 @@ def create_deal_from_plan(plan_id: int, data: CreateDealIn, db: Session = Depend
     # рождение следующей версии.
     for pl in db.query(SalesMediaPlan).filter(SalesMediaPlan.group_id == p.group_id).all():
         pl.deal_id = deal.id
+    # Первая постановка стадии (`from_stage_id` NULL) — сделка рождается сразу на
+    # «МП Отправлено», и без этой строки «сколько она тут стоит» считать не от чего:
+    # правило срочности по такой сделке просто не сработало бы.
+    if stage:
+        from app.sales.models import SalesDealStageHistory
+        db.add(SalesDealStageHistory(deal_id=deal.id, from_stage_id=None,
+                                     to_stage_id=stage.id, user_id=current_user.id,
+                                     reason="сделка создана из медиаплана"))
     db.commit()
     log_action(db, current_user, "create_deal_from_media_plan", "sales_deal", deal.id,
                f"из МП #{p.id}: {title}")
@@ -613,11 +630,8 @@ def _mp_sent_stage(cat):
     """Стадия, на которую встаёт сделка с готовым планом: ПЕРВАЯ в цепочке, где план
     обязателен (`requires_media_plan`). Сегодня это «МП Отправлено».
 
-    Здесь стояло «следующая за первой», и это было верно ровно до 17.08.2026: между
-    «МП Подготовка» и «МП Отправлено» жила стадия «МП согласование». Её убрали из
-    каталога (`2026-08-17_drop_mp_approval_stage.sql`), а медиаплан от неё не отвязали —
-    код продолжил двигать сделку «куда-нибудь дальше», и с тех пор означал не то, что
-    в нём написано: проверка плана стала молча объявлять его отправленным.
+    Признак — не порядок и не имя. «Следующая за первой» сломалась бы от любой вставки
+    в лестницу, а имя правится на экране настроек.
 
     Признак выбран не по порядку и не по имени: требование плана и ЕСТЬ та граница,
     которую проверенный план открывает. Вернут промежуточную стадию — сделка встанет
@@ -644,19 +658,27 @@ def _notify_mp_ready(db, actor, p, deal, stage):
          actor=actor, ctx={"deal": deal, "media_plan": p})
 
 
-def _advance_deal_after_verify(db, current_user, p):
-    """Сделка приходит на ПЕРВУЮ стадию («МП Подготовка») — план к ней есть, но его
-    ещё никто не смотрел. Так и у сделки из конвейера годового плана, и у сделки,
-    рождённой из малого МП кнопкой «Создать сделку»: путей два и они равноправные.
-    В интерфейсе такая сделка светится жёлтым: «есть МП, но он не завизирован».
+def _advance_deal_on_link(db, current_user, p):
+    """Появилась связь план↔сделка — сделка уходит на стадию, где план обязателен.
 
-    Аккаунт открывает МП, жмёт обе отметки «Проверено» и сохраняет — вот здесь
-    сделка и уходит на стадию, где план уже обязателен, а жёлтый гаснет. Двигаем
-    только с первой стадии: если сделка уже дальше, повторное сохранение МП её не
-    откатывает и не перепрыгивает вперёд.
+    Владелец 13.09.2026: «Подготовка МП» — это сделка, которую завёл сейлз и плана у
+    неё пока нет. Как только аккаунт план прикрепил (или сам создал сделку из плана),
+    она на «МП Отправлено». Промежуточных стадий между ними нет.
 
-    Переход больше не молчит: сейлзу уходит «МП посчитан» — отправляет клиенту он, и
-    до 30.08.2026 узнать об этом он мог только зайдя в реестр и увидев смену стадии."""
+    Границу держит САМ ФАКТ СВЯЗИ, а не отметка в конструкторе. До 13.09.2026 сделку
+    двигало сохранение плана с флагом `verified`, оставшимся от снятой 17.08 стадии
+    «МП согласование»: `verified` — это «обе таблицы отмечены, можно сохранять», и
+    гейтом перехода он стал случайно. Из-за этого прикрепление плана к сделке стадию
+    не двигало вовсе, а двигало следующее за ним сохранение.
+
+    Связь возникает тремя путями — ручка `link-deal`, сохранение плана с готовым
+    `deal_id`, рождение сделки из плана — и правило одно на все три, поэтому
+    четвёртого пути с собственным поведением появиться не может.
+
+    Двигаем только с первой стадии: сделку, ушедшую дальше, перепривязка плана не
+    откатывает и вперёд не перепрыгивает.
+
+    Переход не молчит: сейлзу уходит «МП посчитан» — отправляет клиенту он."""
     if not p.deal_id:
         return
     from app.sales.models import SalesDeal
@@ -672,27 +694,30 @@ def _advance_deal_after_verify(db, current_user, p):
     # Только вперёд: если план обязателен уже на первой стадии, двигать некуда.
     if not nxt or not cat.is_before(first.id, nxt.id):
         return
-    from app.sales.models import SalesDealStageHistory
-    deal.our_stage_id = nxt.id
-    # История стадий пишется и здесь: это второе место в системе, которое двигает
-    # сделку (первое — /deals/{id}/move). Без этой записи «сколько сделка стоит на
-    # стадии» считалось бы от неизвестной даты, а автор перехода терялся.
-    db.add(SalesDealStageHistory(deal_id=deal.id, from_stage_id=first.id,
-                                 to_stage_id=nxt.id, user_id=current_user.id,
-                                 reason="медиаплан проверен и сохранён"))
+    # Перевод — через общую точку (`app/sales/stage_move.py`): она проверит требования
+    # цели, отразит привязку в Битрикс и запишет историю. Требование «план привязан» тут
+    # выполнено по построению — мы только что его привязали, — но звать точку всё равно
+    # обязаны: иначе это ещё один путь, который завтра разойдётся с остальными.
+    from app.sales import stage_move
+    plan = stage_move.plan_move(db, deal, nxt, cat)
+    if plan.blockers:
+        return
+    stage_move.apply_move(db, deal, nxt, current_user, catalog=cat,
+                          reason="медиаплан прикреплён к сделке")
     db.flush()
     log_action(db, current_user, "move_deal", "sales_deal", deal.id,
-               f"{first.name} → {nxt.name} (медиаплан проверен и сохранён)")
+               f"{first.name} → {nxt.name} (медиаплан прикреплён к сделке)")
     _notify_mp_ready(db, current_user, p, deal, nxt)
 
 
-def _log_verify_note(db, current_user, p, data):
-    """Журнал конструктора: отметка «МП проверен» и комментарий к изменениям.
-    Пишем отдельными записями, чтобы их было видно в истории сделки/МП."""
-    if getattr(data, "verified", None):
-        log_action(db, current_user, "verify_media_plan", "media_plan", p.id,
-                   f"МП проверен · {p.title} v{p.version}")
-        _advance_deal_after_verify(db, current_user, p)
+def _log_change_note(db, current_user, p, data):
+    """Журнал конструктора: комментарий к изменениям плана.
+
+    Записи «МП проверен» здесь больше нет (13.09.2026). Флаг `verified` приходит
+    ИСТИННЫМ на каждом сохранении — конструктор просто не даёт сохранить, пока обе
+    таблицы не отмечены, — поэтому строка журнала не отличала одно сохранение от
+    другого и читалась как виза, которой в процессе нет. Стадию она двигала по той же
+    инерции; теперь это делает прикрепление плана (`_advance_deal_on_link`)."""
     note = (getattr(data, "change_note", None) or "").strip()
     if note:
         log_action(db, current_user, "media_plan_change_note", "media_plan", p.id,
@@ -736,6 +761,25 @@ _PLAN_REPS = (("sales_rep_id", "sales_rep_id"),
 # а лишняя строка попала бы в очередь заливки НАШИХ правок обратно в Битрикс.
 _SYNC_TOUCHES = {"advertiser_id", "brand_id", "sales_rep_id", "account_manager_id",
                  "amount", "amount_with_vat", "period_from"}
+
+
+def _service_of_plan(db: Session, plan):
+    """Услуга плана = справочная услуга ПЕРВОЙ строки размещения.
+
+    Строка хранит имя (`position`), а не ссылку, — так устроен конструктор МП, — поэтому
+    сопоставление здесь по имени и только здесь: дальше по системе ездит уже id. Имени
+    нет в справочнике → None, и это честнее выдумывания: у сделки просто не будет услуги,
+    и к ней применятся общие требования.
+    """
+    from app.sales.models import SalesService
+    row = (db.query(SalesMediaPlanRow.position)
+           .filter(SalesMediaPlanRow.plan_id == plan.id)
+           .order_by(SalesMediaPlanRow.sort_order).first())
+    name = (row[0] or "").strip() if row else ""
+    if not name:
+        return None
+    svc = db.query(SalesService.id).filter(SalesService.name == name).first()
+    return svc[0] if svc else None
 
 
 def _sync_deal_from_plan(db: Session, plan, current_user) -> None:
@@ -812,6 +856,12 @@ def _sync_deal_from_plan(db: Session, plan, current_user) -> None:
         if plan.amount_gross:
             put("amount_with_vat", float(plan.amount_gross), "сумма с НДС")
 
+    # Услуга — ПЕРВАЯ строка плана (правило владельца 13.09.2026). Ехать она обязана
+    # тем же переносом, что шапка и суммы: до этого услуга ставилась только в момент
+    # рождения сделки и потом не догоняла план. Пустое поле сделку не чистит — общее
+    # правило переноса: «стёр в плане» и «убери из сделки» это разные намерения.
+    put("service_id", _service_of_plan(db, plan), "услуга")
+
     for pf, df in _PLAN_REPS:
         if getattr(deal, df, None):
             continue                      # занято — не трогаем, см. про область видимости
@@ -868,12 +918,12 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
                 _write_children(db, existing.id, data)
                 log_action(db, current_user, "update_media_plan", "media_plan", existing.id,
                            f"{existing.title} v{existing.version}")
-            # Отметка «Проверено» отрабатывается и на сохранении БЕЗ правок: аккаунт,
-            # открывший собранный конвейером план и просто подтвердивший его, не менял
-            # ни строки — а сделку двинуть надо. Ранняя ветка «содержимое совпало» этого
-            # не делала, и жёлтая сделка оставалась жёлтой.
-            _log_verify_note(db, current_user, existing, data)
+            _log_change_note(db, current_user, existing, data)
             _sync_deal_from_plan(db, existing, current_user)
+            # Связь план↔сделка могла появиться этим сохранением (у плана уже стоял
+            # deal_id). Отрабатываем и на сохранении БЕЗ правок: содержимое совпало,
+            # а сделка всё ещё на первой стадии — двинуть надо.
+            _advance_deal_on_link(db, current_user, existing)
             db.commit()
             db.refresh(existing)
             return {"id": existing.id, "group_id": existing.group_id, "version": existing.version,
@@ -896,8 +946,9 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
     _enforce_cap(db, p.group_id)
     db.flush()
     log_action(db, current_user, "create_media_plan", "media_plan", p.id, f"{p.title} v{p.version}")
-    _log_verify_note(db, current_user, p, data)
+    _log_change_note(db, current_user, p, data)
     _sync_deal_from_plan(db, p, current_user)
+    _advance_deal_on_link(db, current_user, p)
     db.commit()
     db.refresh(p)
     return {"id": p.id, "group_id": p.group_id, "version": p.version, "unchanged": False}
@@ -939,10 +990,12 @@ def patch_media_plan(plan_id: int, data: MpPatch, db: Session = Depends(get_db),
 # жили рядом. Замер на день удаления: 24 плана в базе, ВСЕ в `draft`; ни у одного
 # `decided_by`/`reject_reason` не заполнены — воркфлоу не пользовались ни разу.
 #
-# Единый контур: состояние плана = стадия его сделки. «МП Подготовка» — собирается,
-# «МП Отправлено» — у клиента, «Бронь» — принят. Гейт один — отметка «Проверено»
-# (см. `_advance_deal_after_verify`). Колонки `status`/`reject_reason`/`decided_by`/
-# `decided_at` заморожены по правилу проекта (не дропаем), но больше не читаются.
+# Единый контур: состояние плана = стадия его сделки, промежуточных ступеней нет
+# (владелец 13.09.2026). «МП Подготовка» — сделка есть, плана нет; «МП Отправлено» —
+# план прикреплён и ушёл клиенту; дальше вилка «Бронь» / «Сделка не случилась».
+# Границу держит ПРИКРЕПЛЕНИЕ плана (`_advance_deal_on_link`), а не отметка в
+# конструкторе. Колонки `status`/`reject_reason`/`decided_by`/`decided_at` заморожены
+# по правилу проекта (не дропаем), но больше не читаются и не пишутся.
 
 def _names(db):
     adv = dict(db.query(SalesAdvertiser.id, SalesAdvertiser.short_name).all())

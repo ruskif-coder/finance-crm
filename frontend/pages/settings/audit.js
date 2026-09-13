@@ -6,6 +6,7 @@ import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsT
 import { MONO, UI, card, sel, th, td } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import { grp0 as fmt } from '../../lib/salesFormat'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 // ── Журнал действий — отдельная страница раздела «Настройки» ──
 // Аудит мутаций: фильтры (действие/пользователь/период) + пагинация «показать ещё».
@@ -30,6 +31,9 @@ export default function SettingsAudit() {
   const [loadingAudit, setLoadingAudit] = useState(false)
   const [auditSkip, setAuditSkip] = useState(0)
 
+  // С НУЛЕВОГО смещения и текущими фильтрами: возврат показывает свежую первую
+  // страницу, а не дозагружает следующую — «ещё 50» это отдельное действие.
+  useRefreshOnReturn(() => loadAuditLog(0, auditFilters))
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }

@@ -83,6 +83,8 @@ export default function SiteScript({ mayEdit }) {
   const [withCode, setWithCode] = useState('')
   const [noCode, setNoCode] = useState('')
   const [vsrc, setVsrc] = useState('')
+  const [tPartner, setTPartner] = useState('')
+  const [tCamp, setTCamp] = useState('')
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -93,6 +95,8 @@ export default function SiteScript({ mayEdit }) {
       setWithCode(r.data.with_code.script || '')
       setNoCode(r.data.without_code.script || '')
       setVsrc(r.data.viewability || '')
+      setTPartner(r.data.targeting_partner || '')
+      setTCamp(r.data.targeting_campaign || '')
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось загрузить настройку') }
   }, [])
 
@@ -102,7 +106,8 @@ export default function SiteScript({ mayEdit }) {
     setSaving(true); setErr('')
     try {
       await api.put('/traffic-catalog/site-script',
-        { with_code: withCode, without_code: noCode, viewability: vsrc }, auth())
+        { with_code: withCode, without_code: noCode, viewability: vsrc,
+          targeting_partner: tPartner, targeting_campaign: tCamp }, auth())
       await load()
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить') }
     finally { setSaving(false) }
@@ -115,6 +120,8 @@ export default function SiteScript({ mayEdit }) {
   const dirtyNo = noCode !== (data.without_code.script || '')
   const dirtyV = vsrc !== (data.viewability || '')
   const vEmpty = !String(vsrc || '').trim()
+  const dirtyTgt = tPartner !== (data.targeting_partner || '') || tCamp !== (data.targeting_campaign || '')
+  const tgtEmpty = !String(tPartner || '').trim() || !String(tCamp || '').trim()
 
   return (
     <div style={{ fontFamily: UI }}>
@@ -158,6 +165,40 @@ export default function SiteScript({ mayEdit }) {
           )}
           {mayEdit && !vEmpty && !dirtyV && (
             <button onClick={() => setVsrc('')} style={btn(false)}>Очистить</button>
+          )}
+        </div>
+      </div>
+
+      {/* Куда заводится креатив нацеливания. Два значения, потому что в DSP «клиент» — это
+          отдельный КАБИНЕТ со своим хешем, а кампания внутри него своя. Стоит здесь же,
+          хотя в креатив ничего не вшивает: это вторая настройка стороны DSP, и прятать
+          две строки в отдельной вкладке значило бы плодить экраны. */}
+      <div style={{ ...BOX, marginBottom: 14 }}>
+        <div style={{ ...LBL, marginBottom: 4, color: tgtEmpty ? 'var(--warning-text)' : 'var(--text-faint)' }}>
+          Нацеливание креатива{tgtEmpty ? ' · не настроено' : ''}
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 8 }}>
+          Кабинет демоклиента и запущенная кампания в нём. На отправке трафику туда
+          заводится копия баннера, и кнопка ◎ в очереди показывает на площадке именно её —
+          боевого креатива в DSP до согласования площадки ещё нет. Это не предпросмотр:
+          тот открывается глазом и живёт у нас. Кампания должна быть ЗАПУЩЕНА —
+          остановленная не покажет ничего.
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input value={tPartner || ''} onChange={e => setTPartner(e.target.value)} readOnly={!mayEdit}
+            placeholder="хеш кабинета демоклиента"
+            style={{ ...inp, flex: '1 1 220px', fontFamily: MONO, fontSize: 12.5,
+              borderColor: tPartner ? 'var(--border-card)' : 'var(--warning)',
+              background: tPartner ? 'var(--bg-card)' : 'var(--warning-tint)' }} />
+          <input value={tCamp || ''} onChange={e => setTCamp(e.target.value)} readOnly={!mayEdit}
+            placeholder="хеш демокампании"
+            style={{ ...inp, flex: '1 1 220px', fontFamily: MONO, fontSize: 12.5,
+              borderColor: tCamp ? 'var(--border-card)' : 'var(--warning)',
+              background: tCamp ? 'var(--bg-card)' : 'var(--warning-tint)' }} />
+          {mayEdit && dirtyTgt && (
+            <button onClick={save} disabled={saving} style={primaryBtn}>
+              {saving ? 'Сохраняю…' : 'Сохранить'}
+            </button>
           )}
         </div>
       </div>

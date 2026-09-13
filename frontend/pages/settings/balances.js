@@ -6,6 +6,7 @@ import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsT
 import { MONO, UI, card, inp, sel, primaryBtn } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import { grp0 as fmt } from '../../lib/salesFormat'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 // ── Остатки по банкам — отдельная страница раздела «Настройки» ──
 // Стартовый остаток по счёту + обороты (из /settings/bank-balances), привязка юрлица
@@ -44,6 +45,7 @@ export default function SettingsBalances() {
   const [bankOwnCompany, setBankOwnCompany] = useState({})  // { "АльфаБанк": id|null }
   const [savingOwnCompany, setSavingOwnCompany] = useState({})
 
+  useRefreshOnReturn(() => loadBalances(), { enabled: !Object.keys(editing).length && !Object.keys(editingReq).length })
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }

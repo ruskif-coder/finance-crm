@@ -33,6 +33,7 @@ import { errText } from '../../lib/loadError'
 import { fmtDateFull } from '../../lib/salesFormat'
 import api, { auth } from '../../lib/http'
 import { can, getPermissions } from '../../lib/auth'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const TABS = [
   { key: 'initial', label: 'Изначальные договоры' },
@@ -63,6 +64,7 @@ export default function OrdDirectory() {
   const [stuckErr, setStuckErr] = useState('')   // отдельно от `err`: у вкладок разные запросы
 
   // localStorage не существует на сервере — читаем право только после монтирования.
+  useRefreshOnReturn(() => load())
   useEffect(() => { setMayEdit(can(getPermissions(), 'ord', 'edit')) }, [])
 
   // СБОЙ ≠ ПУСТОТА, и здесь это дороже, чем где-либо на экране. «Зависших отправок нет»

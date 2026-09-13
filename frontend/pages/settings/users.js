@@ -5,6 +5,7 @@ import Navbar, { firstAllowedHref } from '../../components/Navbar'
 import SettingsTabs from '../../components/SettingsTabs'
 import { MONO, UI, card, inp, sel, th, td, primaryBtn } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 // ── Пользователи — отдельная страница раздела «Настройки» ──
 // Создание/редактирование/удаление пользователей + привязка к сотруднику Битрикс24.
@@ -35,6 +36,9 @@ export default function SettingsUsers() {
   const [bxLoading, setBxLoading] = useState(false)
   const [bxError, setBxError] = useState('')
 
+  // Под защитой: строка, которую сейчас правят, не должна перезаписаться
+  // ответом сервера прямо под руками.
+  useRefreshOnReturn(() => loadUsers(), { enabled: !Object.keys(editingUsers).length })
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }

@@ -31,6 +31,7 @@ const SECTIONS = [
   { id: 'backlog', label: 'Бэклог отладки', href: '/settings/backlog', perm: 'settings_backlog' },
   // Профили уведомлений — политика на всю компанию, поэтому вкладка админская.
   // Личная часть той же страницы открывается всем из меню профиля («Мои уведомления»).
+  { id: 'mail', label: 'Почта', href: '/settings/mail', perm: 'settings_mail' },
   { id: 'notifications', label: 'Уведомления', href: '/settings/notifications', adminOnly: true },
   { id: 'users', label: 'Пользователи', href: '/settings/users', adminOnly: true },
   { id: 'roles', label: 'Роли', href: '/settings/roles', adminOnly: true },

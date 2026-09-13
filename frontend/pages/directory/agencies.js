@@ -8,6 +8,7 @@ import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const AgenciesMobile = dynamic(() => import('@/components/mobile/AgenciesMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 import SectionTabs from '@/components/SectionTabs'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 
 const EMPTY = { short_name: '', name_en: '', name_ru: '', holding: '' }
@@ -99,6 +100,7 @@ export default function Agencies() {
 
   // Поиск контрагентов — на сервере: их 207, а эндпойнт отдаёт страницами по 200,
   // поэтому грузить всё на клиент и фильтровать локально нельзя — часть выпадает.
+  useRefreshOnReturn(() => load())
   useEffect(() => {
     const q = cpQuery.trim()
     if (!q) { setCps([]); return }

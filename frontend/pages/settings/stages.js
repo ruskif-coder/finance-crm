@@ -5,6 +5,7 @@ import Navbar, { firstAllowedHref } from '../../components/Navbar'
 import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsTabs'
 import { MONO, UI, card, inp, sel, ci, cs, th, td, primaryBtn } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 // ── Наш каталог стадий (E1: движение сделки) ──
 // Этапы (орг-группировка) → стадии. У стадии: разметка 2/2/2 (для ДДС), флаг терминала,
@@ -27,6 +28,7 @@ export default function SettingsStages() {
   const kRef = useRef(1)
   const nextK = () => `k${kRef.current++}`
 
+  useRefreshOnReturn(() => load())
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }
