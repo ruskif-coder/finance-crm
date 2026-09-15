@@ -197,3 +197,22 @@ def test_save_blocks_markup_replaces_and_none_means_always(db):
     assert out["docs"] is None
     assert out["creatives"] is None, "прежняя разметка не была переписана"
     assert stage_scope.visible_blocks(db, _Deal(stage_id=cat.stages[0].id), cat)["docs"] is True
+
+
+def test_extra_params_belong_to_the_assembly_stage():
+    """Доп. параметры РК показываются со сбора запуска, не раньше.
+
+    Решение владельца 15.09.2026. Строки в разметке не было вовсе, то есть блок висел
+    с первой стадии: на «МП Подготовка» у сделки ещё нет ни площадок, ни баннеров,
+    а карточка уже спрашивала, нужен ли пиксель. Вопрос сборки, и до неё у него нет
+    ответа — ровно то же правило, по которому спрятаны креативы и сама РК.
+
+    Проверяется УМОЛЧАНИЕ из сида: разметку можно поменять на экране настроек, и это
+    законно, а вот молча потерять решение при следующем засеве — нет.
+    """
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[1]
+           / "scripts" / "2026-09-13_seed_stage_blocks.py").read_text(encoding="utf-8")
+    assert '"campaign-extra": "Готовятся к старту"' in src, (
+        "доп. параметры выпали из разметки — блок снова будет виден с первой стадии")
+    assert "campaign-extra" in stage_scope.BLOCK_KEYS

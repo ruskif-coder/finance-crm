@@ -231,12 +231,13 @@ const Warn = ({ children }) => (
 
 // Отметка «проверено» у заголовка блока. Обе (размещения + прогноз) обязательны,
 // чтобы сохранить МП — чек-лист конкретного сохранения, а не свойство плана.
-const VerifyBtn = ({ on, onClick, title, big }) => (
-  <span onClick={onClick} title={title}
+const VerifyBtn = ({ on, onClick, title, big, blocked }) => (
+  <span onClick={blocked ? undefined : onClick} title={title}
     style={{
       display: 'inline-flex', alignItems: 'center', gap: big ? 8 : 5,
       height: big ? 38 : 22, padding: big ? '0 16px' : '0 9px', borderRadius: big ? 10 : 7,
-      cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap',
+      cursor: blocked ? 'not-allowed' : 'pointer', userSelect: 'none', whiteSpace: 'nowrap',
+      opacity: blocked ? 0.45 : 1,
       background: on ? 'var(--income-tint)' : T.card, border: `1px solid ${on ? 'var(--income-border)' : T.border}`,
       color: on ? 'var(--income-fg)' : T.t3, fontSize: big ? 12.5 : 10, fontWeight: 800,
       letterSpacing: '.04em', textTransform: 'uppercase',
@@ -443,6 +444,18 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
 
   const emptyMain = main.rows.length - calc.filled.length;
   const emptyExtra = extras.rows.filter(e => !e.name).length;
+  // Отметку «проверено» нельзя поставить, пока в блоке есть недозаполненная строка
+  // (владелец 15.09.2026). Проверять нечего: строка без услуги или без цены — это не
+  // содержание, а забытый ряд. Он и уезжал дальше: сделка WGUPN5 приехала в выгрузку
+  // с пустой доп. услугой, и клиент прочитал пустой ряд как ошибку.
+  //
+  // Доп. услуги считаются здесь же, а не отдельно: визуально они внутри того же блока,
+  // что и размещения, и отметка у них общая.
+  const blockedMain = emptyMain > 0 || emptyExtra > 0;
+  // Отметку снимаем, если строку добавили или опустошили УЖЕ ПОСЛЕ проверки. Иначе
+  // «проверено» осталось бы от прошлого состояния плана и подтверждало бы то, чего
+  // человек не видел: нажал, потом добавил ряд — и галочка всё ещё стоит.
+  useEffect(() => { if (blockedMain) setOkMain(false); }, [blockedMain]);
   const plural = n => (n === 1 ? 'строка не заполнена' : n < 5 ? 'строки не заполнены' : 'строк не заполнено');
 
   const summary = [
@@ -568,9 +581,11 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                 // Раньше кнопок было пять («Сохранить черновик», «На согласование»,
                 // «Согласовать», «Отклонить», «В архив»), и человек выбирал ими не
                 // действие, а состояние плана — параллельное стадии его сделки.
-                const okToSave = !emptyMain && calc.filled.length > 0 && verified;
-                const hint = !verified ? 'Отметьте обе таблицы как проверенные'
-                  : (calc.filled.length ? 'Заполните все строки' : 'Добавьте хотя бы одну строку размещения');
+                const okToSave = !blockedMain && calc.filled.length > 0 && verified;
+                const hint = emptyExtra ? 'Выберите услугу в доп. услугах или удалите пустую строку'
+                  : emptyMain ? 'Заполните все строки размещения'
+                  : !calc.filled.length ? 'Добавьте хотя бы одну строку размещения'
+                  : !verified ? 'Отметьте обе таблицы как проверенные' : undefined;
                 const btn = (bg, color, bd) => ({ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 14px', background: bg, border: bd || 'none', color, borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' });
                 const save = (note) => onSave?.({ brief: { ...bf, title: effectiveTitle, targeting: mergeTgDrafts() }, main: main.rows, extras: extras.rows, fc, goals, owners, verified: true, change_note: note || '' });
                 doSaveRef.current = save;   // чтобы модалка комментария могла отправить
@@ -1068,8 +1083,11 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                 </span>
               ))}
               <span style={{ paddingLeft: 16, borderLeft: `1px solid ${T.inner}`, display: 'flex', alignItems: 'flex-end' }}>
-                <VerifyBtn big on={okMain} onClick={() => setOkMain(v => !v)}
-                  title="Отметьте, что блок размещений проверен — без этого сохранение недоступно" />
+                <VerifyBtn big on={okMain} blocked={blockedMain} onClick={() => setOkMain(v => !v)}
+                  title={blockedMain
+                    ? (emptyExtra ? 'Есть доп. услуга без названия — выберите услугу или удалите строку'
+                                  : 'Есть незаполненные строки размещения')
+                    : 'Отметьте, что блок размещений проверен — без этого сохранение недоступно'} />
               </span>
             </div>
 

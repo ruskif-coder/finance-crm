@@ -206,8 +206,17 @@ def _apply_extra_filters(q, db, hide_archive=False, search=None, gaps=None):
     контрагент-плательщик), «незаполненные» (включая контрагента).
     Держим в одном месте, чтобы список и сводка считались по одинаковым условиям."""
     if hide_archive:
-        q = q.filter(or_(SalesStage.stage_key.is_(None),
-                         SalesStage.stage_key != "archive"))
+        # Архив — это ЛЮБОЙ терминальный исход, а не только «Архив успешных сделок»
+        # (владелец 15.09.2026). Раньше признаком было `stage_key = 'archive'`, а у
+        # «Сделка не случилась» и «Сделка сорвалась» ключа нет вовсе — они проходили
+        # через ветку `IS NULL` и оставались в выдаче при включённом «скрыть архив».
+        # Замер на стенде: 569 сделок в архиве прятались, 3 сорванные — нет.
+        #
+        # Сделка БЕЗ нашей стадии (`SalesStage.id IS NULL` после LEFT JOIN) остаётся
+        # видимой: это «требует разбора», её как раз и надо найти, а не спрятать.
+        q = q.filter(or_(SalesStage.id.is_(None),
+                         and_(SalesStage.is_terminal.isnot(True),
+                              SalesStage.is_lost.isnot(True))))
     if search:
         pattern = f"%{search.strip()}%"
         adv_ids = (db.query(SalesAdvertiser.id)
