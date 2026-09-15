@@ -119,6 +119,15 @@ case "$ACTION" in
     git pull
     echo "[2/2] Copying backend files to container..."
     docker cp $PROJECT/backend/app finance_backend:/app/
+    # scripts/ ОБЯЗАТЕЛЕН, и его здесь не было до 15.09.2026. Каждый релиз приносит
+    # разовые скрипты — сиды разметки, разбор накопленного, уборку журналов, — а в
+    # контейнер они не попадали вовсе: копировался только `app`. Команда из руководства
+    # по выкладке отвечала «No module named scripts.<имя>», и это выяснялось ровно в тот
+    # момент, когда скрипт понадобился. Найдено при постановке journals_sweep в крон.
+    #
+    # `migrations/` сюда НЕ нужен: `deploy.sh migrate` читает файл с хоста и подаёт его
+    # psql на stdin. `tests/` тоже нет — на проде набор не гоняется.
+    docker cp $PROJECT/backend/scripts finance_backend:/app/
     docker restart finance_backend
     echo "Backend deployed."
     ;;
