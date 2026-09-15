@@ -77,7 +77,6 @@ function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
   const [d, setD] = useState(deal)
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
-  const local = String(d.bitrix_id || '').startsWith('local-')
   const TABS = [['overview', 'Обзор'], ['finance', 'Финансы'], ['docs', 'Документы'], ['history', 'История']]
   const withVat = d.amount_with_vat != null ? d.amount_with_vat : d.amount
   const layerLabel = (LAYER_CHIP[d.money_layer] || [])[0] || d.money_layer || '—'
@@ -126,7 +125,7 @@ function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
         <div style={{ ...CARD, padding: '14px 16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <button onClick={onClose} aria-label="Назад" style={{ width: 36, height: 36, borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 18, lineHeight: 1, flexShrink: 0 }}>‹</button>
-            <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: local ? 'var(--text-faint)' : 'var(--accent)' }}>{local ? 'локально' : d.bitrix_id}</span>
+            <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>{d.code || '—'}</span>
             <StatusChip layer={d.money_layer} stage={d.bitrix_stage} />
             <span style={{ marginLeft: 'auto' }}><DealBriefCell deal={d} canEdit={canEdit} v2 /></span>
           </div>
@@ -225,7 +224,6 @@ function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
 
 // ── Карточка-предпросмотр (макет 390px): свёрнутая → тап разворачивает → «Открыть сделку»/✎ ──
 function DealCard({ d, onOpen, canEdit, expanded, onToggle }) {
-  const local = String(d.bitrix_id || '').startsWith('local-')
   return (
     <div style={{ ...CARD, padding: '12px 14px', fontFamily: UI }}>
       {/* свёрнутая часть — клик разворачивает (аккордеон: одна карточка за раз) */}
@@ -233,7 +231,7 @@ function DealCard({ d, onOpen, canEdit, expanded, onToggle }) {
         {/* строка 1: слои + ID · период + бриф */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <LayerStrip layer={d.money_layer} />
-          <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: local ? 'var(--text-faint)' : 'var(--accent)' }}>{local ? 'локально' : d.bitrix_id}</span>
+          <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)' }}>{d.code || '—'}</span>
           <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>{d.period || '—'}</span>
           <DealBriefCell deal={d} canEdit={canEdit} v2 />
         </div>
@@ -270,10 +268,9 @@ function DealCard({ d, onOpen, canEdit, expanded, onToggle }) {
 
 // ── Табличный (компактный) вид ──
 function DealRow({ d, onOpen }) {
-  const local = String(d.bitrix_id || '').startsWith('local-')
   return (
     <div onClick={() => onOpen(d)} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 12, alignItems: 'center', padding: '11px 4px', borderTop: '1px solid var(--border-row)', cursor: 'pointer' }}>
-      <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: local ? 'var(--text-faint)' : 'var(--accent)' }}>{local ? '—' : d.bitrix_id}</span>
+      <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>{d.code || '—'}</span>
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.advertiser || '—'}{d.brand ? ` · ${d.brand}` : ''}</div>
         <div style={{ marginTop: 3, display: 'flex', alignItems: 'center', gap: 7, fontFamily: MONO, fontSize: 10.5, color: 'var(--text-muted)', overflow: 'hidden', whiteSpace: 'nowrap' }}>

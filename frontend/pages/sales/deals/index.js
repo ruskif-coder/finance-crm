@@ -461,16 +461,20 @@ export default function SalesRegistry2() {
         </span>
       )
       case 'bitrix_id': {
+        // Метки «нет в Битриксе» (→БХ) здесь больше НЕТ — снята 15.09.2026 по решению
+        // владельца: состояние неактуально. Сделка, заведённая у нас, полноценна сама
+        // по себе, Битрикс давно не источник, и значок звал к действию, которого никто
+        // не ждёт. Ручка `push-to-bitrix` жива и вызывается только осознанно.
+        // Сама заглушка `bitrix_id = local-…` в базе остаётся: колонка NOT NULL, и это
+        // служебный признак «идентификатора нет», а не статус сделки.
         const isLocal = String(d.bitrix_id || '').startsWith('local-')
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <a href={`/sales/deals/${encodeURIComponent(d.code || d.id)}`} title="Открыть карточку сделки"
               style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>{d.code || '—'}</a>
-            {isLocal
-              ? (canEdit && <button onClick={e => { e.stopPropagation(); api.post(`/sales/deals/${d.id}/push-to-bitrix`, {}, auth()).then(() => load(offset)).catch(er => alert(er.response?.data?.detail || 'Ошибка')) }} title="Отправить в Битрикс"
-                  style={{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-faint)', borderRadius: 5, cursor: 'pointer', fontSize: 9, padding: '1px 4px', fontFamily: MONO }}>→БХ</button>)
-              : (canEdit && <span onClick={e => { e.stopPropagation(); syncingId !== d.id && syncDeal(d) }} title="Обновить из Битрикса (поля + файлы)"
-                  style={{ cursor: syncingId === d.id ? 'default' : 'pointer', fontSize: 12, lineHeight: 1, color: syncingId === d.id ? 'var(--text-faint)' : 'var(--accent)' }}>{syncingId === d.id ? '⏳' : '⟳'}</span>)}
+            {/* Обновление из Битрикса — только у тех, кого там есть откуда обновлять. */}
+            {!isLocal && canEdit && <span onClick={e => { e.stopPropagation(); syncingId !== d.id && syncDeal(d) }} title="Обновить из Битрикса (поля + файлы)"
+              style={{ cursor: syncingId === d.id ? 'default' : 'pointer', fontSize: 12, lineHeight: 1, color: syncingId === d.id ? 'var(--text-faint)' : 'var(--accent)' }}>{syncingId === d.id ? '⏳' : '⟳'}</span>}
           </span>
         )
       }

@@ -119,3 +119,27 @@ def test_sorting_is_by_the_period_not_by_the_start_date():
             assert seen == ordered, f"периоды не идут подряд ({direction})"
     finally:
         db.close()
+
+
+def test_nothing_outranks_the_chosen_column():
+    """Служебный признак не смеет стоять в сортировке ВЫШЕ выбранной колонки.
+
+    Жалоба с прода 15.09.2026: список по периоду шёл 2026-10, 2026-09 … и только потом
+    2027-09, 2027-05 — то есть распадался на ДВА независимо отсортированных блока, и
+    «2027 год оказывался в середине». Первым ключом ORDER BY стоял `local_first`
+    («локальные сделки всегда вверху при любой сортировке»), и он делил таблицу надвое.
+
+    Тест выше (`test_sorting_is_by_the_period_not_by_the_start_date`) этого НЕ поймал и
+    поймать не мог: на стенде локальных сделок ноль, признак был константой. Поэтому
+    проверка здесь — на форме кода, а не на данных: она не зависит от того, что лежит
+    в базе именно сегодня.
+    """
+    import inspect
+    from app.routers import sales_dashboard as sd
+    src = inspect.getsource(sd.deals_registry)
+    ob = src[src.index("q.order_by("):]
+    ob = ob[:ob.index(")\n")]
+    head = ob[len("q.order_by("):].split(",")[0].strip()
+    assert head == "ordering", (
+        f"первым ключом сортировки стоит «{head}», а не выбранная колонка — "
+        f"таблица распадётся на блоки, и человек прочтёт это как сбой сортировки")

@@ -347,13 +347,11 @@ export default function SalesDashboard2() {
       }
       case 'brief': return <span className="d2-brief" style={{ display: 'inline-flex' }}><DealBriefCell deal={d} canEdit={canEdit} v2 /></span>
       case 'bitrix_id': {
-        const isLocal = String(d.bitrix_id || '').startsWith('local-')
+        // Метка «нет в Битриксе» снята 15.09.2026 — см. тот же разбор в реестре сделок.
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <a href={`/sales/deals/${encodeURIComponent(d.code || d.id)}`} title="Открыть карточку сделки"
               style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>{d.code || '—'}</a>
-            {isLocal && canEdit && <button onClick={e => { e.stopPropagation(); api.post(`/sales/deals/${d.id}/push-to-bitrix`, {}, auth()).then(() => loadDeals(data.rep_ids)).catch(er => alert(er.response?.data?.detail || 'Ошибка')) }} title="Отправить в Битрикс"
-              style={{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-faint)', borderRadius: 5, cursor: 'pointer', fontSize: 9, padding: '1px 4px', fontFamily: MONO }}>→БХ</button>}
           </span>
         )
       }

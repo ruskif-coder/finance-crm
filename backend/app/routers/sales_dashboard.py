@@ -15,7 +15,7 @@
    где операции без article.group молча исчезают из отчёта.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from sqlalchemy import func, or_, and_, case, text
+from sqlalchemy import func, or_, and_, text
 from sqlalchemy.orm import Session, aliased
 from typing import Optional, List, Annotated
 from pydantic import BaseModel
@@ -713,9 +713,18 @@ def deals_registry(
     if column is None:
         raise HTTPException(status_code=400, detail=f"Сортировка по «{sort}» не поддерживается")
 
-    # Локальные (ещё не выгруженные в Битрикс) сделки — всегда вверху таблицы
-    # при любой сортировке (если попали в выборку по фильтрам).
-    local_first = case((SalesDeal.bitrix_id.like("local-%"), 0), else_=1)
+    # ЗДЕСЬ СТОЯЛ `local_first` — «локальные сделки всегда вверху при ЛЮБОЙ сортировке»,
+    # первым ключом ORDER BY. Снято 15.09.2026 по жалобе с прода: список, отсортированный
+    # по периоду, шёл 2026-10, 2026-09 … и только потом 2027-09, 2027-05 … То есть
+    # таблица распадалась на ДВА независимо отсортированных блока, и человек читал это
+    # как «2027 год в середине». На стенде дефект не воспроизводился: там локальных
+    # сделок ноль, признак был константой и порядок не менял.
+    #
+    # Правило простое: человек нажал на колонку — колонка и решает. Служебный признак,
+    # стоящий выше выбранного, делает сортировку ложью, а не подсказкой.
+    #
+    # Локальные при этом не теряются: сортировка по умолчанию — `date_create` по
+    # убыванию, а они самые свежие, то есть и так наверху; плюс у них своя метка «→БХ».
     if sort == "date_create":
         # У недавно импортированных сделок date_create бывает NULL — считаем такие
         # «только что добавленными» (NULL → now()), чтобы они не тонули в конец.
@@ -727,7 +736,7 @@ def deals_registry(
         ordering = column.desc().nullslast() if direction == "desc" else column.asc().nullslast()
     # Вторичная сортировка — по рекламодателю: в рамках одного ключа
     # сделки идут по алфавиту рекламодателя.
-    rows = (q.order_by(local_first, ordering, adv_a.name.asc().nullslast(), SalesDeal.id.desc())
+    rows = (q.order_by(ordering, adv_a.name.asc().nullslast(), SalesDeal.id.desc())
             .limit(limit).offset(offset).all())   # границы — в Query(ge=…, le=…) выше
 
     adv = dict(db.query(SalesAdvertiser.id, func.coalesce(SalesAdvertiser.short_name, SalesAdvertiser.name)).all())

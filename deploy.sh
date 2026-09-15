@@ -21,6 +21,89 @@ if [ -f "$PROJECT/.env" ]; then
   set -a; . "$PROJECT/.env" 2>/dev/null || true; set +a
 fi
 
+# ══════════════ Пересборка Next-витрины: собрать РЯДОМ, подменить готовым ══════════════
+#
+# Порядок «снести .next → собирать новую» стоил простоя 15.09.2026: сборка основной
+# витрины была убита по памяти (SIGKILL) уже ПОСЛЕ удаления рабочей сборки, и прод отдавал
+# 500, пока сборку не вернули из образа руками. Причина падения — `mem_limit: 512m` у
+# сервисного контейнера: `next build` укладывается в него впритык и однажды не уложился.
+# Памяти на ХОСТЕ при этом было свободно 6,7 ГБ из 7,9 — то есть дело было не в машине.
+#
+# Та же беда годом раньше воспроизводилась на локальном стенде и была описана в навыке
+# `deploying-locally`; сюда её не перенесли, и она дождалась прода.
+#
+# Отсюда три свойства:
+#   · сборка идёт во ВРЕМЕННОМ контейнере из того же образа — у него лимита памяти нет;
+#   · рабочий контейнер не трогается, пока новая сборка не готова. Упавшая сборка теперь
+#     означает «ничего не изменилось», а не простой;
+#   · исходники в рабочий контейнер тоже едут ПОСЛЕ успеха: иначе там оказался бы новый
+#     код со старой сборкой, и следующий, кто заглянет, будет сверять несводимое.
+
+# Что составляет витрину. ОДИН список на временный и на рабочий контейнер: разойдясь,
+# они дадут сборку не из того кода, что лежит в контейнере.
+#   · `scripts/` обязателен — `prebuild` зовёт гейты (check-nav, check-money, check-tone
+#     и другие) именно оттуда. Без него приезжает новый `package.json`, а гейт нет, и
+#     сборка падает на «Cannot find module»;
+#   · `next.config.js` и `package.json` — из них берётся версия, вшиваемая в меню профиля;
+#     без них там останется версия последней полной пересборки образа;
+#   · каталога `helpers/` здесь был до 31.08.2026, и он ронял всё действие: каталог убрали
+#     из репозитория, а `set -e` на несуществующем источнике обрывал скрипт. Теперь
+#     отсутствие любого пункта — явная ошибка с именем файла, а не обрыв на полуслове.
+NEXT_SRC="pages components styles public lib scripts next.config.js package.json"
+
+copy_next_src() {
+  SRC=$1; DST=$2
+  for p in $NEXT_SRC; do
+    [ -e "$SRC/$p" ] || { echo "ERROR: нет $SRC/$p — список NEXT_SRC разошёлся с репозиторием"; exit 1; }
+    docker cp "$SRC/$p" "$DST:/app/"
+  done
+}
+
+rebuild_next() {
+  C=$1; SRC=$2; NAME=$3
+  IMG=$(docker inspect "$C" --format '{{.Config.Image}}')
+  TMPC="${C}_build"
+  # Каталог под готовую сборку — на ДИСКЕ, а не в /tmp: во многих установках /tmp это
+  # tmpfs, то есть оперативная память, а .next весит сотни мегабайт. Класть её в память
+  # на машине, которая только что уронила сборку по памяти, — то же самое ещё раз.
+  TMPD=$(mktemp -d "${TMPDIR:-/var/tmp}/deploy_next.XXXXXX")
+  # Уборка в ЛЮБОМ исходе, включая падение сборки по `set -e`: временный контейнер держит
+  # слой образа, а каталог — целую .next. Оба идемпотентны, поэтому ловушка на EXIT
+  # безопасна и тогда, когда всё прошло хорошо.
+  trap 'docker rm -f "$TMPC" >/dev/null 2>&1 || true; rm -rf "$TMPD"' EXIT
+
+  echo "  [1/4] временный контейнер из образа $IMG (лимита памяти у него нет)..."
+  docker rm -f "$TMPC" >/dev/null 2>&1 || true
+  docker run -d --name "$TMPC" --entrypoint sh "$IMG" -c "sleep 3600" >/dev/null
+  copy_next_src "$SRC" "$TMPC"
+
+  echo "  [2/4] сборка (3-5 мин)..."
+  # Читать вывод целиком: `Attempted import error` НЕ роняет next build, и
+  # «Compiled successfully» рядом с ним означает «соберётся и упадёт в браузере».
+  docker exec "$TMPC" sh -c "cd /app && rm -rf .next && npm run build"
+
+  # Сюда доходим только при удачной сборке: иначе `set -e` оборвал бы скрипт выше,
+  # не тронув рабочий контейнер.
+  # Готовую сборку достаём НА ХОСТ до того, как трогать рабочий контейнер. Порядок
+  # найден прогоном 15.09.2026: при выемке после сноса любая осечка здесь (нет места,
+  # недоступен путь) оставляет контейнер вовсе без сборки — то есть ровно тот простой,
+  # ради которого всё и переписано, только в узком окне.
+  echo "  [3/4] выемка готовой сборки на хост..."
+  docker cp "$TMPC:/app/.next" "$TMPD/.next"
+
+  echo "  [4/4] исходники и подмена сборки..."
+  copy_next_src "$SRC" "$C"
+  # Рабочую .next сносим ДО остановки: `docker exec` в остановленный контейнер не заходит
+  # и молча ничего не делает. А сносить обязательно — `docker cp` в существующий каталог
+  # не заменяет его, а СЛИВАЕТСЯ с ним, и в .next остаются слои двух сборок.
+  docker exec "$C" rm -rf /app/.next
+  docker stop "$C" >/dev/null
+  docker cp "$TMPD/.next" "$C:/app/"
+  docker start "$C" >/dev/null
+  sleep 3
+  echo "  $NAME готова, сборка $(docker exec "$C" cat /app/.next/BUILD_ID)"
+}
+
 ACTION=${1:-help}
 
 case "$ACTION" in
@@ -41,30 +124,10 @@ case "$ACTION" in
     ;;
 
   frontend)
-    echo "[1/3] Git pull..."
+    echo "[1/2] Git pull..."
     git pull
-    echo "[2/3] Copying frontend files to container..."
-    docker cp $PROJECT/frontend/pages finance_frontend:/app/
-    docker cp $PROJECT/frontend/components finance_frontend:/app/
-    docker cp $PROJECT/frontend/styles finance_frontend:/app/
-    docker cp $PROJECT/frontend/public finance_frontend:/app/
-    docker cp $PROJECT/frontend/lib finance_frontend:/app/
-    # helpers/ здесь был до 31.08.2026 и ронял всё действие: каталог удалён из репозитория
-    # (d195bea, уже на origin/main), а `set -e` на несуществующем источнике обрывает скрипт
-    # ДО копирования scripts/ и до пересборки. Новый каталог сюда добавляется вместе с
-    # проверкой, что он есть в гите.
-    # scripts/ обязателен: prebuild зовёт check-nav, check-money и check-overlay
-    # оттуда. Без этой строки package.json приезжает новый, а гейт — нет, и сборка
-    # падает на "Cannot find module". Ровно это случилось бы на релизе 31.08.2026,
-    # где добавился третий гейт (check-overlay.mjs).
-    docker cp $PROJECT/frontend/scripts finance_frontend:/app/
-    # next.config.js читает версию из package.json на этапе сборки — без них
-    # в меню профиля останется версия, вшитая при последней полной пересборке.
-    docker cp $PROJECT/frontend/next.config.js finance_frontend:/app/
-    docker cp $PROJECT/frontend/package.json finance_frontend:/app/
-    echo "[3/3] Rebuilding Next.js (3-5 min)..."
-    docker exec finance_frontend sh -c "cd /app && rm -rf .next && npm run build"
-    docker restart finance_frontend
+    echo "[2/2] Пересборка витрины..."
+    rebuild_next finance_frontend "$PROJECT/frontend" "Основная витрина"
     echo "Frontend deployed."
     ;;
 
@@ -78,22 +141,12 @@ case "$ACTION" in
     ;;
 
   cabinet-frontend)
-    echo "[1/3] Git pull..."
+    echo "[1/2] Git pull..."
     git pull
-    echo "[2/3] Copying cabinet frontend to container..."
-    docker cp $PROJECT/cabinet-frontend/pages cabinet_frontend:/app/
-    docker cp $PROJECT/cabinet-frontend/components cabinet_frontend:/app/
-    docker cp $PROJECT/cabinet-frontend/lib cabinet_frontend:/app/
-    docker cp $PROJECT/cabinet-frontend/styles cabinet_frontend:/app/
-    docker cp $PROJECT/cabinet-frontend/public cabinet_frontend:/app/
-    # Те же грабли, что у основного фронта: prebuild кабинета зовёт check-tokens и
-    # check-hooks из scripts/.
-    docker cp $PROJECT/cabinet-frontend/scripts cabinet_frontend:/app/
-    docker cp $PROJECT/cabinet-frontend/next.config.js cabinet_frontend:/app/
-    docker cp $PROJECT/cabinet-frontend/package.json cabinet_frontend:/app/
-    echo "[3/3] Rebuilding cabinet Next.js..."
-    docker exec cabinet_frontend sh -c "cd /app && rm -rf .next && npm run build"
-    docker restart cabinet_frontend
+    echo "[2/2] Пересборка витрины кабинета..."
+    # Тот же код, что у основной витрины: у кабинета была ровно та же дыра — рабочая
+    # сборка сносилась до начала новой.
+    rebuild_next cabinet_frontend "$PROJECT/cabinet-frontend" "Витрина кабинета"
     echo "Cabinet frontend deployed."
     ;;
 
