@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.routers.auth import get_current_user
 from app.models import User, Notification
+from app.mail import render
+from app.notify import tone as tone_of
 
 router = APIRouter()
 
@@ -43,9 +45,9 @@ KIND_META = {
     # mp_recalled) и легаси-вид mp_status убраны отсюда 30.08.2026 вместе со стейт-машиной.
     # Оформлять нечего: строк с этими видами в notifications не было ни одной — замер в
     # день удаления, не предположение.
-    "deal_stage":  {"tone": "success", "group": "Сделки", "action": "Открыть сделку"},
+    "deal_stage":  {"tone": "ok", "group": "Сделки", "action": "Открыть сделку"},
     "deal_brief":  {"tone": "info", "group": "Брифы", "action": "Открыть сделку"},
-    "payment":     {"tone": "success", "group": "Оплаты", "action": ""},
+    "payment":     {"tone": "ok", "group": "Оплаты", "action": ""},
 }
 DEFAULT_META = {"tone": "info", "group": "Сделки", "action": ""}
 
@@ -91,23 +93,37 @@ def _where_map(db, rows):
 @router.get("")
 def list_notifications(unread_only: bool = False, limit: int = 30, db: Session = Depends(get_db),
                        current_user: User = Depends(get_current_user)):
-    q = db.query(Notification).filter(Notification.user_id == current_user.id)
+    # Погашенные не показываем: причина исчезла — строке в панели делать нечего.
+    # Из базы их не удаляем, у события остаётся история.
+    q = (db.query(Notification)
+         .filter(Notification.user_id == current_user.id,
+                 Notification.resolved_at.is_(None)))
     if unread_only:
         q = q.filter(Notification.is_read.is_(False))
     rows = q.order_by(Notification.created_at.desc()).limit(min(max(limit, 1), 100)).all()
     unread = db.query(Notification).filter(Notification.user_id == current_user.id,
+                                           Notification.resolved_at.is_(None),
                                            Notification.is_read.is_(False)).count()
     where = _where_map(db, rows)
 
     def item(n):
         m = _meta(n.kind)
+        tone = tone_of.norm(n.tone or m["tone"])
         return {
             "id": n.id, "kind": n.kind, "title": n.title, "body": n.body, "link": n.link,
             "is_read": bool(n.is_read), "created_at": n.created_at,
             # поля для виджета уведомлений на дашборде
-            "tone": m["tone"], "group": m["group"],
+            # Тон СРАБОТКИ, если он записан: у правил очереди он меняется со
+            # срочностью. Реестр даёт постоянный тон события и служит запасным.
+            # Слово важности приходит С СЕРВЕРА, а не собирается панелью из своей
+            # таблицы: оно уже написано в письме (app/mail/render.py, PILLS), и вторая
+            # копия разошлась бы с первой — так у тона однажды завелось два словаря.
+            "tone": tone, "pill": render.PILLS[tone][3], "group": m["group"],
             "action": m["action"] if n.link else "",
             "where": where.get((n.entity_type, n.entity_id)) or "",
+            # Плашки фактов приходят от СОБЫТИЯ и одинаковы во всех каналах: панель
+            # их только отрисовывает, пересчитывать числа здесь нечем и незачем.
+            "facts": n.facts or [],
         }
 
     return {"unread": unread, "items": [item(n) for n in rows]}
@@ -115,8 +131,10 @@ def list_notifications(unread_only: bool = False, limit: int = 30, db: Session =
 
 @router.get("/count")
 def unread_count(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return {"unread": db.query(Notification).filter(Notification.user_id == current_user.id,
-                                                    Notification.is_read.is_(False)).count()}
+    return {"unread": db.query(Notification).filter(
+        Notification.user_id == current_user.id,
+        Notification.resolved_at.is_(None),
+        Notification.is_read.is_(False)).count()}
 
 
 class ReadIn(BaseModel):

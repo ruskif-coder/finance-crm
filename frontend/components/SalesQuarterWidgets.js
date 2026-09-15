@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { grp, mln as mlnBase } from '../lib/salesFormat'
 import useIsMobile from './mobile/useIsMobile'
 import BottomSheet from './mobile/BottomSheet'
+import { fmtTime } from '@/lib/dates'
 
 // Верхний блок дашборда сейлза «Мой квартал» — редизайн по хендоффу
 // (design_handoff_sales_widgets). Один контейнер: шапка → 4 KPI с вертикальными
@@ -56,7 +57,7 @@ export default function SalesQuarterWidgets({
   const portfolioAmt = totals?.amount || 0
   const width = (name) => (portfolioAmt > 0 ? (layerAmt(name) / portfolioAmt) * 100 : 0)
 
-  const syncTime = lastSyncAt ? new Date(lastSyncAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : null
+  const syncTime = lastSyncAt ? fmtTime(lastSyncAt, '') : null
   const recon = totals ? totals.reconciles : true
 
   const selBox = {

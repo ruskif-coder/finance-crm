@@ -22,6 +22,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.ad.build import pixel_setup
 from app.ad.models import AdCampaign, AdCampaignPlacement
 from app.weborama import enums, naming, tags
 from app.weborama.client import WcmClient, WcmError
@@ -81,7 +82,7 @@ def _start(db: Session, acc: str, kind: str, local_id: int, method: str,
 
 def _finish(db: Session, s: WeboramaSubmission, wcm_id=None, error=None) -> None:
     from datetime import datetime
-    s.finished_at = datetime.now()
+    s.finished_at = datetime.utcnow()      # в базе UTC, как у всех остальных колонок
     s.wcm_id = str(wcm_id) if wcm_id else None
     s.error = error
     db.commit()
@@ -144,6 +145,20 @@ def plan(db: Session, camp: AdCampaign) -> dict:
     pls = (db.query(AdCampaignPlacement)
            .filter(AdCampaignPlacement.campaign_id == camp.id).all())
     ready = [p for p in pls if p.status in READY_STATUSES and not p.is_direct]
+    # Пиксель заказывает аккаунт галочкой в доп. параметрах РК (владелец 14.09.2026).
+    # Не заказан — говорим это словами, а не пустыми числами: «0 площадок» и «по этой РК
+    # пиксель не нужен» человек читает совершенно по-разному.
+    px = pixel_setup(db, camp.deal_id)
+    if not px["needed"]:
+        return {"ready": len(ready), "todo": 0, "have": 0, "not_ordered": True,
+                "blocked": "по этой РК пиксель Weborama не заказан — "
+                           "включается в карточке сделки, блок «Доп. параметры РК»"}
+    # Внешний тег означает, что вставку завёл клиент. Заводить свою рядом — это вторая
+    # вставка на то же размещение и, как следствие, второй счёт показов.
+    if px["mode"] == "external":
+        return {"ready": len(ready), "todo": 0, "have": 0, "external": True,
+                "blocked": "по этой РК внешний пиксель: вставку завёл клиент, "
+                           "заводить свою не нужно"}
     try:
         acc = account_id(db)
     except ProvisionError as e:
@@ -169,6 +184,18 @@ def provision(db: Session, camp: AdCampaign, landing_url: str, user_id=None,
     deal = db.query(SalesDeal).filter(SalesDeal.id == camp.deal_id).first()
     if not deal:
         raise ProvisionError("У РК нет сделки")
+    # Отказ ЗДЕСЬ, а не только в `plan`: у заведения вставок два входа (кнопка дашборда
+    # и прямой вызов), и правило, стоящее на одном из них, однажды обойдут по второму.
+    # Заведение необратимо — вставки в их кабинете не удаляются по API.
+    px = pixel_setup(db, deal.id)
+    if not px["needed"]:
+        raise ProvisionError(
+            "По этой РК пиксель Weborama не заказан. Включается в карточке сделки, "
+            "блок «Доп. параметры РК»")
+    if px["mode"] == "external":
+        raise ProvisionError(
+            "По этой РК внешний пиксель — вставку завёл клиент. Заводить свою нельзя: "
+            "это второй счёт показов по тому же размещению")
     brand = db.execute(text("SELECT b.name FROM sales_brands b WHERE b.id = :i"),
                        {"i": deal.brand_id}).scalar() if deal.brand_id else None
     if not brand:

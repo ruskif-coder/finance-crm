@@ -63,6 +63,7 @@ from app.sales.models import (SalesBrand, SalesDeal, SalesMediaPlan, SalesMediaP
                               SalesRep, SalesStage,
                               SalesPublisher, SalesPublisherService,
                               SalesPublisherSurface, SalesService)
+from app.sales.deal_label import deal_label
 from app.sales.reps import ensure_rep, staff_users
 
 log = logging.getLogger("finance.launch_prep")
@@ -1547,7 +1548,7 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
 
     if created:
         emit(db, "creative_set_sent",
-             title=f"Комплект №{s.no} — на проверке у трафика · {deal.code}",
+             title=f"Комплект №{s.no} — на проверке у трафика · {deal_label(deal)}",
              body=f"Пар в очереди: {created}. Площадкам уйдёт после проверки.",
              link=f"/sales/deals/{deal.code or deal.id}",
              entity_type="sales_deal", entity_id=deal.id, actor=current_user,
@@ -1556,7 +1557,7 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
         # уходит аккаунту — то есть тому, кто отправил; трафику до 30.08.2026 не уходило
         # ничего, и о появлении работы он узнавал, только зайдя в очередь.
         emit(db, "traffic_new_work",
-             title=f"Креатив №{s.no} на проверку · {deal.code}",
+             title=f"Креатив №{s.no} на проверку · {deal_label(deal)}",
              body=f"Площадок в комплекте: {created}. После вашего «ок» уйдёт им.",
              link="/traffic/queue",
              entity_type="sales_deal", entity_id=deal.id, actor=current_user,
@@ -1687,7 +1688,7 @@ def apply_platform_verdict(db: Session, pair_id: int, verdict: str,
     log_action(db, actor, "creative_pair_verdict", "sales_deal", deal.id,
                f"комплект №{s.no}: {verdict}{who}" + (f", код {code}" if code else ""))
     emit(db, "creative_verdict",
-         title=f"Площадка ответила: {verdict} · {deal.code}",
+         title=f"Площадка ответила: {verdict} · {deal_label(deal)}",
          body=(rec.reason or f"Комплект №{s.no}" + (f", код {code}" if code else "")),
          link=f"/sales/deals/{deal.code or deal.id}",
          entity_type="sales_deal", entity_id=deal.id, actor=actor,
@@ -2075,11 +2076,13 @@ def issue_erid(set_id: int, db: Session = Depends(get_db),
     log_action(db, current_user, "issue_erid", "sales_deal", deal.id,
                f"комплект №{s.no}: ЕРИД {out.get('erid')}")
     emit(db, "creative_erid_issued",
-         title=f"ЕРИД выпущен · {deal.code}",
+         title=f"ЕРИД выпущен · {deal_label(deal)}",
          body=f"Комплект №{s.no}: {out.get('erid')}. Статус регистрации: {out.get('status')}",
          link=f"/sales/deals/{deal.code or deal.id}",
          entity_type="sales_deal", entity_id=deal.id, actor=current_user,
          ctx={"deal": deal})
+    # И площадке: её материал принят и промаркирован — можно ставить в эфир.
+    _tell_publisher_erid(db, s, deal)
     db.commit()
     return out
 
@@ -2263,14 +2266,34 @@ def request_target_url(target_id: int, payload: UrlRequestIn, db: Session = Depe
 
 
 def _deal_brand_name(db: Session, deal) -> str:
-    """Бренд сделки для подстановки в письмо. Пусто — подставляем название сделки:
-    письмо «Готовим размещение  на Икс» читается как ошибка, а не как отсутствие бренда."""
+    """Бренд сделки для подстановки в письмо ПЛОЩАДКЕ. Пусто — название размещения:
+    письмо «Готовим размещение  на Икс» читается как ошибка, а не как отсутствие бренда.
+
+    Запасная ветка НЕ отдаёт наш код и номер сделки (правило владельца 14.09.2026): это
+    письмо наружу, и внутренний идентификатор площадке бесполезен. Пустая строка честнее
+    кода — она хотя бы не выглядит осмысленной.
+    """
     from app.sales.models import SalesBrand
     if deal.brand_id:
         row = db.query(SalesBrand.name).filter(SalesBrand.id == deal.brand_id).first()
         if row and (row[0] or "").strip():
             return row[0].strip()
-    return deal.title or deal.code or str(deal.id)
+    return (deal.title or "").strip()
+
+
+def deal_period_text(deal) -> str:
+    """Период размещения словами: «09.2026» или «09.2026 — 11.2026».
+
+    У сделки НЕТ поля `period` — есть `period_from` и `period_to`. Обращение к
+    несуществующему полю жило в письме-запросе посадочной незамеченным: ветка
+    выполняется только при живой отправке, а в тестах сети нет. Нашлось 14.09.2026,
+    когда второй отправитель скопировал ту же строку и уронил прогон.
+    """
+    a, b = getattr(deal, "period_from", None), getattr(deal, "period_to", None)
+    if a and b and (a.year, a.month) != (b.year, b.month):
+        return f"{a.strftime('%m.%Y')} — {b.strftime('%m.%Y')}"
+    d = a or b
+    return d.strftime("%m.%Y") if d else ""
 
 
 def _mail_url_request(db: Session, t, deal, body_text: str, user: User) -> str:
@@ -2308,9 +2331,14 @@ def _mail_url_request(db: Session, t, deal, body_text: str, user: User) -> str:
     values = {
         "площадка": (pub.name if pub else "") or "",
         "домен": (getattr(pub, "domain", "") or "") if pub else "",
-        "сделка": deal.title or deal.code or str(deal.id),
+        # НАШИХ идентификаторов в письме площадке нет (правило владельца 14.09.2026):
+        # ни кода сделки, ни её номера. Запасная ветка была именно такой и сработала
+        # бы у сделки без имени — площадка получила бы «7E2JWE» вместо понятного
+        # названия и не смогла бы ничего с ним сделать. Замена — бренд: он ей и так
+        # виден в кабинете, а пустая строка честнее нашего кода.
+        "сделка": (deal.title or "").strip() or _deal_brand_name(db, deal) or "",
         "бренд": _deal_brand_name(db, deal),
-        "период": deal.period or "",
+        "период": deal_period_text(deal),
         "сотрудник": (user.full_name or user.email or ""),
         "текст": body_text,
     }
@@ -2388,3 +2416,35 @@ def add_url_request_phrase(payload: UrlRequestIn, db: Session = Depends(get_db),
         db.commit()
         db.refresh(row)
     return {"id": row.id, "text": row.text}
+
+
+def _tell_publisher_erid(db: Session, cset, deal) -> None:
+    """Сказать площадкам комплекта, что ЕРИД выпущен.
+
+    Веером по ПЛОЩАДКАМ комплекта, а не одним письмом на сделку: у площадки своя пара,
+    свой креатив и свой эфир, и «по сделке выпущен ЕРИД» не говорит ей, можно ли ставить
+    её баннер.
+    """
+    from app.notify.outward import notify_publisher
+    from app.launch_prep.models import LaunchPrepPair, LaunchPrepTarget
+    from app.sales.models import SalesPublisher
+
+    rows = (db.query(SalesPublisher, LaunchPrepPair)
+            .join(LaunchPrepTarget, LaunchPrepTarget.publisher_id == SalesPublisher.id)
+            .join(LaunchPrepPair, LaunchPrepPair.target_id == LaunchPrepTarget.id)
+            .filter(LaunchPrepPair.set_id == cset.id).all())
+    brand = _deal_brand_name(db, deal)
+    period = deal_period_text(deal)
+    for pub, pair in rows:
+        context = " · ".join(x for x in ((pub.domain or pub.name), brand, period) if x)
+        try:
+            notify_publisher(
+                db, "ерид выпущен", pub.id,
+                title="Креатив согласован, ЕРИД выпущен",
+                body="Материал принят и промаркирован — можно ставить в эфир.",
+                facts=[("комплект", f"№{cset.no}"),
+                       ("ЕРИД", (getattr(cset, "erid", "") or "—"))],
+                context=context, link="/", entity_type="launch_prep_pair",
+                entity_id=pair.id)
+        except Exception as e:                               # noqa: BLE001
+            log.warning("Площадке %s не ушло «ерид выпущен»: %s", pub.id, e)

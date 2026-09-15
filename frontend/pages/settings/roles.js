@@ -224,7 +224,7 @@ export default function SettingsRoles() {
 
   return (
     <>
-      <Head><title>Роли | Настройки</title></Head>
+      <Head><title>Роли · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SettingsTabs active="roles" />

@@ -84,7 +84,21 @@ def next_for(deal, catalog, marks: dict):
 # даже если его стадия ещё не наступила. Спрятанные данные не просто невидимы — их
 # невозможно найти: человек считает, что их нет, и заводит второй раз.
 
-BLOCK_KEYS = ("head", "mp", "ord", "traffic-brief", "creatives", "campaign", "docs")
+BLOCK_KEYS = ("head", "mp", "ord", "traffic-brief", "campaign-extra", "creatives",
+              "campaign", "docs")
+
+# Подписи для экрана настройки. Живут рядом с ключами, а не во фронте: список блоков —
+# свойство карточки, и разойтись эти два перечня не должны.
+BLOCK_LABELS = {
+    "head": "Шапка сделки",
+    "mp": "Медиаплан",
+    "ord": "ОРД",
+    "traffic-brief": "Цели и особенности РК",
+    "campaign-extra": "Доп. параметры РК",
+    "creatives": "Креативы",
+    "campaign": "Рекламная кампания",
+    "docs": "Документы",
+}
 
 
 def _has_content(db, deal, key: str) -> bool:
@@ -106,10 +120,24 @@ def _has_content(db, deal, key: str) -> bool:
         return bool(db.execute(text(
             "SELECT 1 FROM ad_campaign WHERE deal_id = :d LIMIT 1"),
             {"d": deal.id}).first())
+    if key == "campaign-extra":
+        # «Непусто» = параметр отличается от умолчания, то есть его кто-то осознанно
+        # включил. Пока параметр один; когда их станет несколько, условие станет ИЛИ по
+        # ним — и останется одним выражением, а не проверкой в каждом месте вывода.
+        return bool(getattr(deal, "weborama_pixel", False))
     if key == "docs":
-        return bool(db.execute(text(
-            "SELECT 1 FROM sales_deal_files WHERE deal_id = :d LIMIT 1"),
-            {"d": deal.id}).first())
+        # Блок документов наполняется ТРЕМЯ разными способами, и «загруженный файл» —
+        # только один из них. Медиаплан лежит своей строкой, а ДС считается готовой по
+        # ВЫПУЩЕННОМУ приложению — файла у него больше нет вовсе (`sales/deals/[id].js`,
+        # `docsReady`). Считать непустоту по одним файлам значило бы объявить пустой
+        # сделку с выпущенной ДС и планом — то есть спрятать ровно то, что уже собрано.
+        return bool(db.execute(text("""
+            SELECT 1 WHERE EXISTS (SELECT 1 FROM sales_deal_files WHERE deal_id = :d)
+                       OR EXISTS (SELECT 1 FROM sales_media_plans WHERE deal_id = :d)
+                       OR EXISTS (SELECT 1 FROM sales_deal_annex_allocation a
+                                  JOIN sales_annexes x ON x.id = a.annex_id
+                                  WHERE a.deal_id = :d AND x.no IS NOT NULL)
+            """), {"d": deal.id}).first())
     return True
 
 
@@ -145,3 +173,40 @@ def visible_blocks(db, deal, catalog, marks: Optional[dict] = None) -> dict:
         first = min((order.get(s, 10 ** 6) for s in stages), default=10 ** 6)
         out[key] = cur_pos >= first or _has_content(db, deal, key)   # правила 1 и 2
     return out
+
+
+def blocks_markup(db, catalog) -> list:
+    """Разметка блоков ДЛЯ ЭКРАНА настройки: по одной строке на блок.
+
+    В таблице ключ — пара (стадия, блок), то есть строк на блок может быть несколько. Но
+    читаются они правилом «виден НАЧИНАЯ с самой ранней» (`visible_blocks`), поэтому все
+    строки, кроме первой, не значат ничего. Экран показывает то, что действительно
+    работает, — одну стадию, — и сохранение приводит таблицу к этому же виду.
+
+    `stage_id = None` — «виден всегда» (правило 3: нет строки — нет ограничения).
+    """
+    rows = db.execute(text(
+        "SELECT stage_id, block_key FROM sales_stage_blocks")).fetchall()
+    order = {s.id: i for i, s in enumerate(catalog.stages)}
+    first: dict = {}
+    for sid, key in rows:
+        pos = order.get(sid)
+        if pos is None:          # стадия удалена из каталога — строка уже ничего не значит
+            continue
+        if key not in first or pos < first[key][0]:
+            first[key] = (pos, sid)
+    return [{"key": k, "label": BLOCK_LABELS.get(k, k),
+             "stage_id": first.get(k, (None, None))[1]} for k in BLOCK_KEYS]
+
+
+def save_blocks_markup(db, pairs: dict) -> None:
+    """Переписать разметку: {block_key: stage_id | None}. Вызывается внутри чужой
+    транзакции — `commit` остаётся за вызывающим, чтобы сохранение каталога и блоков
+    было одним действием, а не двумя с разной судьбой."""
+    db.execute(text("DELETE FROM sales_stage_blocks"))
+    for key, sid in pairs.items():
+        if sid is None:
+            continue
+        db.execute(text(
+            "INSERT INTO sales_stage_blocks (stage_id, block_key) VALUES (:s, :b)"),
+            {"s": sid, "b": key})

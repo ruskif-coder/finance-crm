@@ -118,11 +118,45 @@ def test_rule1_says_start_passed_not_negative_days():
     assert v.reason == "Старт прошёл 10 дн. назад, МП не готов"
 
 
-def test_rule1_ignores_long_forgotten_start():
-    """Старт год назад, сделка так и висит в проработке — это мусор в данных,
-    а не работа на сегодня; вечно занимать очередь он не должен."""
-    assert evaluate(facts(has_mp=False, period_from=d(-400)),
-                    TODAY_D).urgency == NORMAL
+def test_rule1_has_no_window_at_all():
+    """«Нужен МП» висит всегда, пока плана нет (владелец 15.09.2026).
+
+    Отсечка забытого старта (STALE_START_DAYS) к этому правилу не применяется: сделка
+    без плана — несделанная работа, а не устаревшая новость, и «старт был год назад»
+    её не отменяет. Для ОСТАЛЬНЫХ правил отсечка на месте — её держит `pre_launch`.
+    """
+    v = evaluate(facts(has_mp=False, period_from=d(-400)), TODAY_D)
+    assert (v.urgency, v.kind) == (OVERDUE, "deal_mp_missing")
+
+
+def test_the_stale_window_still_guards_the_other_rules():
+    """Правило 2 (пингануть клиента) на забытом старте молчит: ждать ответа по
+    кампании, которая должна была начаться год назад, бессмысленно."""
+    v = evaluate(facts(period_from=d(-400)), TODAY_D)   # план есть, отдан клиенту
+    assert v.kind != "mp_unapproved"
+
+
+def test_rule1_raises_a_new_deal_long_before_the_start():
+    """Сделка без плана попадает в «Нужен МП» СРАЗУ, а не за пять дней до старта.
+
+    Жалоба владельца 15.09.2026: «создали сделку, у аккаунта не появилась в разделе
+    „нужен МП"». Правило требовало `start_in <= 5`, и сделка со стартом через месяц
+    молчала — в очереди она садилась в «Без срочности», где искать работу никто не
+    станет. Замер в день правки: 185 сделок на предстартовых стадиях без плана,
+    в очередь попадали 38.
+    """
+    for days, urgency in ((3, OVERDUE), (12, SOON), (40, NORMAL), (200, NORMAL)):
+        v = evaluate(facts(has_mp=False, period_from=d(days)), TODAY_D)
+        assert (v.kind, v.urgency) == ("deal_mp_missing", urgency), f"старт через {days} дн."
+        assert v.cta == "Собрать МП"
+
+
+def test_rule1_raises_a_deal_without_any_dates():
+    """Дат нет вовсе — план нужен тем более: такую сделку не начнёт считать никто,
+    пока она не попадётся на глаза. Срочности при этом нет: гореть нечему."""
+    v = evaluate(facts(has_mp=False, period_from=None), TODAY_D)
+    assert (v.kind, v.urgency, v.due) == ("deal_mp_missing", NORMAL, None)
+    assert v.reason == "Даты размещения не заданы, МП не готов"
 
 
 @pytest.mark.parametrize("stage_key", ["launch", "closing", "archive"])

@@ -8,6 +8,7 @@ import YearPlan from '@/components/plan/YearPlan'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { nowTime } from '@/lib/dates'
 const NotOnMobile = dynamic(() => import('@/components/mobile/NotOnMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // Годовой план продаж: план по рекламодателям/брендам × 12 месяцев, персональный по сейлзам.
@@ -151,7 +152,7 @@ export default function YearPlanPage() {
     try {
       const r = await api.post('/sales/year-plan', { year, rep_id: saveRepId, lines: groupsToLines(curGroups) }, auth())
       setGroups(linesToGroups(r.data.lines || [], advertisers))
-      setSavedAt(new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }))
+      setSavedAt(nowTime())
       api.get('/sales/year-plan/years', auth()).then(r2 => setYears(r2.data.years || [])).catch(() => {})
     } catch (e) {
       console.error('year-plan save failed', e)
@@ -231,7 +232,7 @@ export default function YearPlanPage() {
 
   return (
     <>
-      <Head><title>Годовой план · {year}</title></Head>
+      <Head><title>Годовой план {year} · Продажи | SIMB-AD ERP</title></Head>
       <Navbar />
       <div style={{ background: 'var(--bg-canvas)', minHeight: 'calc(100vh - 56px)' }}>
         {loading

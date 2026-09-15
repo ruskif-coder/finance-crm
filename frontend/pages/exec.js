@@ -100,7 +100,7 @@ export default function ExecDashboard() {
 
   return (
     <>
-      <Head><title>Сводка руководителя</title></Head>
+      <Head><title>Сводка руководителя | SIMB-AD ERP</title></Head>
       <Navbar />
       <div style={{ maxWidth: 1240, margin: '0 auto', padding: '22px 24px 60px', fontFamily: UI }}>
 

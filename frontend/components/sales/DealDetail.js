@@ -5,7 +5,9 @@ import api, { auth } from '../../lib/api'
 import { BITRIX_DEAL_URL } from '../../lib/salesLayers'
 import { MONO, UI, CAP, docCard, addBtn, iconSq, DocIcon, DownloadIcon, EditIcon, GenTitleBtn, StageLayerBar } from '../salesTableKit'
 import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc } from '../../lib/dealDocs'
+import { downloadMp } from '../../lib/mpDownload'
 import { grp } from '@/lib/salesFormat'
+import { fmtDateTimeShort } from '@/lib/dates'
 
 // ── Раскрытая сводка сделки (раскрытие строки реестра /sales и дашборда) ──
 // Четыре колонки: Данные сделки → Медиаплан и документы → История → Оплаты.
@@ -16,11 +18,8 @@ import { grp } from '@/lib/salesFormat'
 // округлением и тем, что печатает для нуля, — так в проекте уже разъезжались тринадцать штук.
 const rub = (n) => (n == null ? '—' : `${grp(n)} ₽`)
 // audit_log хранит UTC; добавляем 'Z' если нет зоны и показываем в UTC+3 (как в Журнале).
-const fmtWhen = (str) => {
-  if (!str) return ''
-  const s = /[zZ]|[+-]\d{2}:?\d{2}$/.test(str) ? str : str + 'Z'
-  return new Date(s).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
-}
+// Время истории. Разбор момента общий, из lib/dates: копий этой функции было шесть.
+const fmtWhen = (str) => fmtDateTimeShort(str, '')
 const EVENT_COLOR = {
   create_deal: 'var(--text-faint)', patch_sales_deal: 'var(--dot-current-dz)',
   save_deal_brief: 'var(--accent)', push_deal_to_bitrix: 'var(--accent)', sync_deal_from_bitrix: 'var(--accent)',
@@ -161,8 +160,8 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
           onAdd={canEdit ? addMp : undefined}
           right={mpOur ? (
             <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}>
-              <button style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }} title="Скачать PDF" onClick={() => blobGet(`/sales/media-plans/${mpOur.id}/pdf`, `MP_${mpOur.id}_v${mpOur.version}.pdf`)}>PDF</button>
-              <button style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }} title="Скачать XLSX" onClick={() => blobGet(`/sales/media-plans/${mpOur.id}/export.xlsx`, `MP_${mpOur.id}_v${mpOur.version}.xlsx`)}>XLS</button>
+              <button style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }} title="Скачать PDF" onClick={() => downloadMp(mpOur, 'pdf')}>PDF</button>
+              <button style={{ ...iconSq(false), width: 'auto', padding: '0 7px', fontFamily: MONO, fontSize: 10, fontWeight: 700 }} title="Скачать XLSX" onClick={() => downloadMp(mpOur, 'xlsx')}>XLS</button>
               <button style={iconSq(true)} title="Открыть конструктор" onClick={() => router.push(`/accounts/mp/${mpOur.id}`)}><EditIcon /></button>
             </span>
           ) : undefined} />

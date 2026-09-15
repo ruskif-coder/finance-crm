@@ -454,7 +454,7 @@ export default function DashboardV2() {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
         <Navbar active="dds" />
-        <Head><title>ДДС | Финансовый учёт</title></Head>
+        <Head><title>ДДС · Финансы | SIMB-AD ERP</title></Head>
         {/* При сбое «Загрузка…» держалась вечно: loading снимался, summary
             оставался пустым. Теперь причина вместо ожидания. */}
         {!loading && !summary && err ? (
@@ -477,7 +477,7 @@ export default function DashboardV2() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Navbar active="dds" />
-      <Head><title>ДДС | Финансовый учёт</title></Head>
+      <Head><title>ДДС · Финансы | SIMB-AD ERP</title></Head>
 
       <div style={{ maxWidth: 1920, margin: '0 auto', padding: 32 }}>
         {/* Полоса НАД содержимым: цифры под ней могли остаться от прошлого

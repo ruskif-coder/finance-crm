@@ -313,7 +313,7 @@ export default function AddData() {
 
   return (
     <>
-      <Head><title>Добавить данные</title></Head>
+      <Head><title>Добавить данные · Справочники | SIMB-AD ERP</title></Head>
       <Navbar active="directories" />
       <div style={{ padding: '20px 26px 60px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SectionTabs section="directory" />

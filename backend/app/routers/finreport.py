@@ -22,7 +22,6 @@ docs/ПЛАН_PL_и_БДР_с_выгрузкой.md):
 """
 
 import re
-from datetime import datetime
 from io import BytesIO
 from typing import Optional
 
@@ -34,6 +33,7 @@ from app.database import get_db
 from app.models import Article, Operation, User
 from app.permissions import require_permission
 from app.routers.reports import QUARTER_MONTHS
+from app import timez
 
 router = APIRouter()
 
@@ -678,7 +678,7 @@ def export_finreport(
         ('Период с', rep['range']['from'] or '—'),
         ('Период по', rep['range']['to'] or '—'),
         ('Выбрано в фильтре', f"{date_from or '—'} — {date_to or '—'}"),
-        ('Выгружено', datetime.now().strftime('%d.%m.%Y %H:%M')),
+        ('Выгружено', timez.msk_now().strftime('%d.%m.%Y %H:%M')),
         ('Пользователь', getattr(current_user, 'name', None) or getattr(current_user, 'email', '—')),
     ]
     for i, (k, v) in enumerate(params, start=1):

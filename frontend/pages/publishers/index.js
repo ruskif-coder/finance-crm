@@ -10,6 +10,7 @@ import { INTEG_TONE_SOLID as INTEG_TONE, STATUS_TONE, NEUTRAL_TONE, EMPTY_TONE,
   nextStatus, tzLabel, localTime, Pin, ChatBtn } from '@/components/publishers/kit'
 import PublisherSummary from '@/components/publishers/PublisherSummary'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { downloadFile } from '@/lib/download'
 
 // Реестр площадок. Собран по экрану «Справочник паблишеров» из дизайн-хендоффа
 // (docs/паблишеры.zip): строка L1 — то, по чему площадку выбирают, не открывая;
@@ -240,16 +241,13 @@ export default function Publishers() {
     catch (e) { setError(e.response?.data?.detail || 'Не удалось сохранить') }
   }
 
-  const downloadBlob = async (url, filename) => {
-    try {
-      const r = await api.get(url, { responseType: 'blob', ...auth() })
-      const href = URL.createObjectURL(r.data)
-      const a = document.createElement('a')
-      a.href = href; a.download = filename || 'file'; a.click(); URL.revokeObjectURL(href)
-    } catch (e) { setError('Не удалось скачать файл') }
-  }
-  const downloadDoc = (pid, docId, filename) => downloadBlob(`/publishers/${pid}/documents/${docId}`, filename)
-  const downloadContractDoc = (pid, linkId) => downloadBlob(`/publishers/${pid}/contracts/${linkId}/document`, 'contract')
+  // Имя файла не выдумываем: если своего нет, downloadFile берёт то, что прислал
+  // сервер в Content-Disposition. Раньше документ договора сохранялся как «contract» —
+  // без расширения, такой файл не открывается двойным щелчком.
+  const downloadDoc = (pid, docId, filename) =>
+    downloadFile(`/publishers/${pid}/documents/${docId}`, filename, setError)
+  const downloadContractDoc = (pid, linkId) =>
+    downloadFile(`/publishers/${pid}/contracts/${linkId}/document`, null, setError)
   const uploadContractDoc = async (pid, linkId, file) => {
     const fd = new FormData(); fd.append('file', file)
     try { await api.post(`/publishers/${pid}/contracts/${linkId}/document`, fd, auth()); await reloadDetail(pid) }
@@ -359,7 +357,7 @@ export default function Publishers() {
 
   return (
     <>
-      <Head><title>Паблишеры</title></Head>
+      <Head><title>Площадки · Паблишеры | SIMB-AD ERP</title></Head>
       <Navbar active="publishers" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
 

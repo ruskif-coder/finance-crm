@@ -197,3 +197,129 @@ def test_no_event_is_addressed_to_a_generated_role_key():
     assert not bad, (
         'события адресованы ролью, ключ которой у каждой установки свой '
         '(адресуйте staff_group или резолвером):\n  ' + '\n  '.join(bad))
+
+
+# ── Единый ярлык сделки в уведомлениях ───────────────────────────────────────
+
+def test_deal_label_is_code_first_then_name():
+    """Код первым, имя вторым — тот же порядок, что у заголовка карточки сделки.
+
+    До 14.09.2026 формат зависел от события: у креативов в заголовке стоял только код,
+    у воронки — только имя, у очереди — имя с услугой. Человеку нужно и то и другое: по
+    имени он узнаёт сделку, по коду находит её в реестре и называет коллеге. Видел он
+    одно из двух, и какое именно — зависело от того, какое правило сработало.
+    """
+    from app.sales.deal_label import deal_label
+
+    class D:
+        id, code, title, product = 42, "7E2JWE", "Эспумизан 09", "еФарм"
+
+    assert deal_label(D()) == "7E2JWE · Эспумизан 09"
+    assert deal_label(D(), service=True) == "7E2JWE · Эспумизан 09 · еФарм"
+
+
+def test_deal_label_survives_missing_parts():
+    """Запасные ветки: сделка без имени, без кода, без всего.
+
+    Замер 14.09.2026: код и имя есть у всех 920 сделок, то есть ветки нужны импорту и
+    ручной вставке. Пустой ярлык хуже некрасивого — по нему нельзя найти сделку."""
+    from app.sales.deal_label import deal_label
+
+    class NoTitle:
+        id, code, title, product = 42, "7E2JWE", "", None
+
+    class NoCode:
+        id, code, title, product = 42, "", "Эспумизан 09", None
+
+    class Bare:
+        id, code, title, product = 42, None, None, None
+
+    assert deal_label(NoTitle()) == "7E2JWE"
+    assert deal_label(NoCode()) == "#42 · Эспумизан 09"
+    assert deal_label(Bare()) == "#42"
+    assert deal_label(Bare(), service=True) == "#42"
+
+
+def test_every_deal_notification_uses_the_one_label():
+    """Храповик: заголовок уведомления не собирается из `deal.code` или `deal.title` руками.
+
+    Иначе формат разойдётся снова — он уже расходился, и заметить это можно было только
+    прочитав все двадцать шесть текстов подряд.
+    """
+    import io
+    import re
+    from pathlib import Path
+
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    bad = []
+    for path in sorted(app_dir.rglob("*.py")):
+        src = io.open(path, encoding="utf-8").read()
+        for m in re.finditer(r"title=f\"[^\"]*\"", src):
+            frag = m.group(0)
+            if re.search(r"\{deal\.(code|title)\b", frag):
+                bad.append(f"{path.relative_to(app_dir)}: {frag[:70]}")
+    assert not bad, ("заголовок уведомления собран мимо deal_label:\n"
+                     + "\n".join("  " + b for b in bad))
+
+
+# ── Модуль собран воедино ────────────────────────────────────────────────────
+
+def test_notifications_live_in_one_module():
+    """Уведомления не расползаются обратно по проекту.
+
+    До 14.09.2026 внешний контур жил в `app/cabinet`, доставка была спрятана приватными
+    функциями внутри шины, и добавить вид означало править куски в трёх местах. Храповик
+    держит сборку: файл с уведомлениями за пределами `app/notify` — это возврат к тому
+    состоянию, и он должен быть заметен сразу, а не через полгода.
+    """
+    from pathlib import Path
+
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    strays = []
+    for p in app_dir.rglob("*.py"):
+        rel = p.relative_to(app_dir)
+        if "notify" not in p.name or "notify" in rel.parts:
+            continue
+        # Роутеры — HTTP-поверхность, они живут в `app/routers` по устройству проекта и
+        # исключены намеренно: `notify_settings.py` — экран настроек, а не логика.
+        if rel.parts[0] == "routers":
+            continue
+        strays.append(str(rel))
+    assert not strays, f"уведомления снова снаружи модуля: {strays}"
+
+
+def test_delivery_is_not_duplicated_by_the_contours():
+    """КАК доходит сообщение — знает `channels`, и только он.
+
+    Оба контура зовут почту через один гейт и один сборщик разметки. Второй способ
+    доставки в обход канала означал бы два разных письма на одно событие — ровно то, из-за
+    чего модуль и собирали.
+    """
+    import io
+    from pathlib import Path
+
+    notify = Path(__file__).resolve().parents[1] / "app" / "notify"
+    senders = []
+    for p in notify.rglob("*.py"):
+        if p.name in ("channels.py",):
+            continue
+        src = io.open(p, encoding="utf-8").read()
+        if "mail.send(" in src:
+            senders.append(str(p.relative_to(notify)))
+    assert senders == [], (
+        f"отправка почтой мимо канала: {senders} — доставка живёт в channels.py")
+
+
+def test_outward_has_its_own_door():
+    """У внешнего контура своя дверь, а не ветка в общей.
+
+    Проверка структурная: `outward` обязан быть подпакетом со своим `__init__`, а не
+    файлом рядом. Иначе первый же рефакторинг сольёт его с внутренним, и адресация
+    сотрудника окажется в одной функции с адресацией площадки.
+    """
+    from pathlib import Path
+
+    outward = Path(__file__).resolve().parents[1] / "app" / "notify" / "outward"
+    assert (outward / "__init__.py").exists()
+    for part in ("kinds.py", "send.py", "schedule.py"):
+        assert (outward / part).exists(), f"часть внешнего контура пропала: {part}"

@@ -1,7 +1,8 @@
 """Общие куски строки сделки для всех витрин.
 
-Реестр сделок и очередь аккаунта отдают разные наборы полей, но три поля у них
-обязаны совпадать: цвет услуги, поверхность (web/app) и список приложенных документов. Пока они считались
+Реестр сделок и очередь аккаунта отдают разные наборы полей, но несколько полей у них
+обязаны совпадать: цвет услуги, поверхность (web/app), гео и список приложенных
+документов. Пока они считались
 на месте в каждом сериализаторе, выражение было продублировано дословно — а третий
 экран скопировал бы его в третий раз, и первая же правка (например «Акт тоже считать
 закрывающим») разъехалась бы по копиям.
@@ -23,12 +24,15 @@ class RowContext:
 
     def __init__(self, colors: Dict[str, str], docs: Dict[int, Set[str]],
                  surfaces: Dict[int, Dict[str, str]] | None = None,
-                 separate_price: Set[str] | None = None):
+                 separate_price: Set[str] | None = None,
+                 geos: Dict[int, str] | None = None):
         self.colors = colors
         self.docs = docs
         # {deal_id: {название услуги: 'web'|'app'|'cross'}} — из строк медиаплана.
         self.surfaces = surfaces or {}
         self.separate_price = separate_price or set()
+        # {deal_id: 'РФ'} — из ШАПКИ медиаплана: своего гео у сделки нет.
+        self.geos = geos or {}
 
     def color(self, product: str | None) -> str:
         """Цвет услуги. Имени нет в справочнике (услуга удалена или не сматчена
@@ -53,6 +57,23 @@ class RowContext:
         if not product or product not in self.separate_price:
             return None
         return (self.surfaces.get(deal_id) or {}).get(product)
+
+    def geo(self, deal_id: int) -> str | None:
+        """Гео сделки = гео её медиаплана. Своего поля у сделки НЕТ.
+
+        Заводить его отдельной колонкой было бы вторым ответом на тот же вопрос: гео
+        задаётся в плане, оттуда же его печатает документ ДС (`app/sales/annex.py`),
+        и разойтись двум значениям ничего не мешало бы.
+
+        До 15.09.2026 на карточке сделки стоял ЗАШИТЫЙ прочерк — строка «Гео —»
+        отрисовывалась всегда, чем бы ни был заполнен план. Жалоба владельца: «гео не
+        тянется с МП в сделку». Данные при этом были на месте: 35 планов из 36
+        привязанных с заполненным гео, и в ДС оно печаталось верно.
+
+        Несколько планов с РАЗНЫМ гео — показываем оба через «·», а не выбираем
+        победителя молча: молчаливый выбор здесь и есть то, на что жалуются.
+        """
+        return self.geos.get(deal_id)
 
     def apply(self, row: dict, deal) -> dict:
         """Дописывает в строку общие поля. Возвращает ту же строку — удобно в цепочке."""
@@ -99,8 +120,29 @@ def load_row_context(db: Session, deal_ids: Iterable[int]) -> RowContext:
             if name:
                 raw.setdefault(r["deal_id"], {}).setdefault(name, set()).add(r["inventory"])
 
+    # Гео из шапки планов сделки: старшая версия каждой группы (как и суммы —
+    # app/sales/mp_amounts.py). Одна выборка на страницу.
+    geos: Dict[int, str] = {}
+    if ids:
+        from app.sales.models import SalesGeo, SalesMediaPlan
+        names = dict(db.query(SalesGeo.id, SalesGeo.name).all())
+        per_deal: Dict[int, list] = {}
+        seen_groups: Dict[int, Set[int]] = {}
+        for pl in (db.query(SalesMediaPlan.deal_id, SalesMediaPlan.group_id,
+                            SalesMediaPlan.geo_id)
+                   .filter(SalesMediaPlan.deal_id.in_(ids))
+                   .order_by(SalesMediaPlan.group_id, SalesMediaPlan.version.desc()).all()):
+            groups = seen_groups.setdefault(pl.deal_id, set())
+            if pl.group_id in groups:
+                continue
+            groups.add(pl.group_id)
+            name = names.get(pl.geo_id)
+            if name and name not in per_deal.setdefault(pl.deal_id, []):
+                per_deal[pl.deal_id].append(name)
+        geos = {did: " · ".join(vals) for did, vals in per_deal.items() if vals}
+
     surfaces = {did: {name: merge_inventory(vals) for name, vals in by_name.items()}
                 for did, by_name in raw.items()}
     separate = {n for (n,) in db.query(SalesService.name)
                 .filter(SalesService.separate_price.is_(True)).all()}
-    return RowContext(service_color_map(db), docs, surfaces, separate)
+    return RowContext(service_color_map(db), docs, surfaces, separate, geos)

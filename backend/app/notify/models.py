@@ -7,8 +7,8 @@
 Таблицы созданы миграцией; create_all() на старте их не тронет (IF NOT EXISTS по факту
 совпадения имён), но модели описаны полностью, чтобы на чистой базе поднялось всё.
 """
-from sqlalchemy import (Column, Integer, SmallInteger, String, Boolean, Date, DateTime,
-                        ForeignKey, CheckConstraint)
+from sqlalchemy import (Column, Integer, SmallInteger, String, Text, Boolean, Date,
+                        DateTime, ForeignKey, CheckConstraint)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 
@@ -108,6 +108,14 @@ class NotificationDelivery(Base):
     suppress_reason = Column(String(40))             # quiet_hours | dedup | disabled | no_channel | muted
     error = Column(String(400))
     title = Column(String(300))
+    # Тело и ссылка нужны ОТЛОЖЕННОЙ доставке: без них досылка сочиняет
+    # письмо заново и оно расходится с живым (миграция 2026-09-14).
+    body = Column(Text)
+    link = Column(String(512))
+    # Факты — копия на момент события: досылка через сутки не пересобирает их заново,
+    # иначе цифры разойдутся с заголовком, с которым приехали.
+    facts = Column(JSONB, nullable=False, default=list)
+    code = Column(String(20))
     notification_id = Column(Integer, ForeignKey("notifications.id", ondelete="SET NULL"))
     created_at = Column(DateTime, server_default=func.now())
 

@@ -29,6 +29,7 @@ import { CreativePreview } from '@/components/creatives/AssemblyCreatives'
 import api, { auth } from '@/lib/api'
 import { dm } from '@/lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { saveResponse } from '@/lib/download'
 
 /* Что сказать человеку про письмо. Ответ ручки различает пять исходов, и каждый значит
    для него РАЗНОЕ действие: отправлено — ничего не делать, не ушло — отправить самому.
@@ -55,10 +56,13 @@ const SHOT_LIMIT = 10
 const SHOT_EXT = ['.png', '.jpg', '.jpeg', '.webp', '.pdf']
 const shotOk = (name) => SHOT_EXT.some(e => String(name || '').toLowerCase().endsWith(e))
 
+// Цвет текста на тинте — из контрастной пары (--income-fg / --danger-fg / --warning-fg), а не
+// сам цвет смысла: --income на --income-tint давал 2.81:1 при норме 4.5, и «Всё ок» —
+// главное действие экрана — было самым тихим элементом на нём.
 const TONE = {
-  ok:      ['var(--income-tint)',  'var(--income)',       'var(--income-border)'],
-  rework:  ['var(--danger-tint)',  'var(--danger)',       'var(--danger-border)'],
-  warn:    ['var(--warning-tint)', 'var(--warning-text)', 'var(--warning-border)'],
+  ok:      ['var(--income-tint)',  'var(--income-fg)',          'var(--income-border)'],
+  rework:  ['var(--danger-tint)',  'var(--danger-fg)',         'var(--danger-border)'],
+  warn:    ['var(--warning-tint)', 'var(--warning-fg)',        'var(--warning-border)'],
   neutral: ['var(--bg-card)',      'var(--text-secondary)', 'var(--border-card)'],
 }
 
@@ -87,7 +91,7 @@ const iconBtn = (on = true) => ({
   width: 28, height: 28, borderRadius: 8, padding: 0, cursor: on ? 'pointer' : 'default',
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-  color: on ? 'var(--text-secondary)' : 'var(--text-ghost)',
+  color: on ? 'var(--text-secondary)' : 'var(--text-disabled)',
 })
 
 /** Свёрнутая сводка креатива — четырьмя плашками в шапке карточки.
@@ -114,8 +118,8 @@ const setFacts = (rows) => {
   ]
 }
 
-const DOT = { ok: 'var(--income)', warn: 'var(--warning)', rework: 'var(--danger)',
-              off: 'var(--text-ghost)' }
+const DOT = { ok: 'var(--income-fg)', warn: 'var(--warning-fg)', rework: 'var(--danger-fg)',
+              off: 'var(--text-disabled)' }
 const FACT_BG = { ok: 'var(--income-tint)', warn: 'var(--warning-tint)',
                   rework: 'var(--danger-tint)', off: 'var(--bg-subtle)' }
 const FACT_BD = { ok: 'var(--income-border)', warn: 'var(--warning-border)',
@@ -134,7 +138,7 @@ function FactLine({ rows }) {
           <span style={{ width: 6, height: 6, borderRadius: 999, background: DOT[f.tone],
             flex: '0 0 6px' }} />
           <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.07em',
-            textTransform: 'uppercase', color: 'var(--text-muted)' }}>{f.label}</span>
+            textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{f.label}</span>
           <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700,
             color: 'var(--text-primary)' }}>{f.value}</span>
         </span>
@@ -403,20 +407,12 @@ export default function TrafficQueue() {
 
   /* Имя файла БЕЗ аргумента берётся из ответа сервера: только он знает, отдал он архив
      или переименованную картинку. Через blob заголовок сам собой не срабатывает — файл
-     уже в памяти, и `a.download` перекрывает Content-Disposition, — поэтому читаем его
-     руками. Без этого одиночный креатив лёг бы на диск как «file» или с чужим `.zip`. */
+     уже в памяти, и `a.download` перекрывает Content-Disposition, — поэтому его читает
+     saveResponse. Без этого одиночный креатив лёг бы на диск как «file» или с чужим `.zip`. */
   function download(url, name) {
-    api.get(url, { ...auth(), responseType: 'blob' }).then(r => {
-      const cd = r.headers?.['content-disposition'] || ''
-      const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd)
-      let fromServer = null
-      try { fromServer = m ? decodeURIComponent(m[1]) : null } catch { fromServer = m ? m[1] : null }
-      const href = URL.createObjectURL(r.data)
-      const a = document.createElement('a')
-      a.href = href; a.download = name || fromServer || 'file'
-      document.body.appendChild(a); a.click(); a.remove()
-      URL.revokeObjectURL(href)
-    }).catch(e => setErr(e.response?.data?.detail || 'Не удалось скачать'))
+    api.get(url, { ...auth(), responseType: 'blob' })
+      .then(r => saveResponse(r, name))
+      .catch(e => setErr(e.response?.data?.detail || 'Не удалось скачать'))
   }
 
   const waiting = rows.filter(r => !r.verdict).length
@@ -452,7 +448,7 @@ export default function TrafficQueue() {
 
   return (
     <>
-      <Head><title>Креативы на проверку</title></Head>
+      <Head><title>Креативы на проверку · Трафики | SIMB-AD ERP</title></Head>
       <Navbar />
       <div style={{ maxWidth: 1600, margin: '0 auto', padding: '22px 20px 60px', fontFamily: UI }}>
 
@@ -472,7 +468,7 @@ export default function TrafficQueue() {
 
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8,
             padding: '0 12px', height: 34, borderRadius: 10, background: 'var(--bg-card)',
-            border: '1px solid var(--border-card)', color: 'var(--text-faint)' }}>
+            border: '1px solid var(--border-card)', color: 'var(--text-cap)' }}>
             <Ico d={I_SEARCH} size={14} />
             <input value={q} onChange={e => setQ(e.target.value)}
               placeholder="Креатив, ID, площадка, бренд…"
@@ -481,7 +477,7 @@ export default function TrafficQueue() {
             {!!q && (
               <button onClick={() => setQ('')} title="Очистить"
                 style={{ border: 0, background: 'none', cursor: 'pointer', padding: 0,
-                  color: 'var(--text-faint)', fontSize: 15, lineHeight: 1 }}>×</button>
+                  color: 'var(--text-cap)', fontSize: 15, lineHeight: 1 }}>×</button>
             )}
           </span>
 
@@ -517,10 +513,10 @@ export default function TrafficQueue() {
                     padding: '5px 12px', borderRadius: 8, border: 0, cursor: 'pointer',
                     fontFamily: UI, fontSize: 12.5, fontWeight: on ? 700 : 600,
                     background: on ? 'var(--accent-tint)' : 'transparent',
-                    color: on ? 'var(--accent)' : 'var(--text-muted)' }}>
+                    color: on ? 'var(--accent)' : 'var(--text-cap)' }}>
                   {t.label}
                   <span style={{ fontFamily: MONO, fontSize: 11,
-                    color: on ? 'var(--accent)' : 'var(--text-ghost)' }}>
+                    color: on ? 'var(--accent)' : 'var(--text-cap)' }}>
                     {counts[t.key]}
                   </span>
                 </button>
@@ -530,7 +526,7 @@ export default function TrafficQueue() {
         </div>
 
         {err && (
-          <div style={{ ...card, padding: '10px 14px', marginBottom: 14, color: 'var(--danger)',
+          <div style={{ ...card, padding: '10px 14px', marginBottom: 14, color: 'var(--danger-fg)',
                         borderColor: ROW_TONE.overdue.border, background: ROW_TONE.overdue.bg }}>
             {err}
           </div>
@@ -655,7 +651,7 @@ export default function TrafficQueue() {
                     что нажимают в девяти случаях из десяти. */}
                 {mayApprove && !!pending.length && (
                   <button style={{ ...pill(...TONE.neutral), padding: '6px 13px',
-                    fontSize: 12.5, cursor: 'pointer', color: 'var(--danger)',
+                    fontSize: 12.5, cursor: 'pointer', color: 'var(--danger-fg)',
                     borderColor: 'var(--danger-border)' }} disabled={busy}
                     onClick={() => setRework({ pairIds: pending.map(r => r.pair_id),
                                                setNo: g.set.no, reason: '' })}>
@@ -692,8 +688,8 @@ export default function TrafficQueue() {
                 const hot = r.urgency === 'overdue' || r.urgency === 'today'
                 const st = r.verdict === 'ок' ? ['проверено', TONE.ok]
                   : r.verdict === 'на переделку' ? ['на переделке', TONE.rework]
-                    : r.urgency === 'overdue' ? ['ждёт проверки', TONE.rework]
-                      : r.urgency === 'today' ? ['ждёт проверки', TONE.warn]
+                    : r.urgency === 'overdue' ? ['ждёт · просрочен', TONE.rework]
+                      : r.urgency === 'today' ? ['ждёт · сегодня', TONE.warn]
                         : ['ждёт проверки', TONE.neutral]
                 return (
                   <div key={r.pair_id} style={{ ...ROW_GRID, padding: '9px 6px',
@@ -722,7 +718,7 @@ export default function TrafficQueue() {
                         )}
                       </div>
                       <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.04em',
-                        color: 'var(--text-ghost)', marginTop: 2, paddingLeft: 14 }}>
+                        color: 'var(--text-cap)', marginTop: 2, paddingLeft: 14 }}>
                         {r.pair_prefix || r.publisher.code || ''}
                       </div>
                     </div>
@@ -745,13 +741,13 @@ export default function TrafficQueue() {
                         </a>
                       ) : (
                         <>
-                          <span style={{ fontSize: 11.5, color: 'var(--text-ghost)' }}>
+                          <span style={{ fontSize: 11.5, color: 'var(--text-cap)' }}>
                             не задана
                           </span>
                           {mayEdit && (
                             <button
                               style={{ ...pill('var(--bg-card)',
-                                r.url_state === 'запрошена' ? 'var(--warning-text)' : 'var(--text-secondary)',
+                                r.url_state === 'запрошена' ? 'var(--warning-fg)' : 'var(--text-secondary)',
                                 r.url_state === 'запрошена' ? 'var(--warning-border)' : 'var(--border-card)'),
                                 cursor: 'pointer', fontSize: 11.5 }}
                               title={r.url_state === 'запрошена'
@@ -769,7 +765,7 @@ export default function TrafficQueue() {
 
                     <div>
                       <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700,
-                        color: hot ? 'var(--danger)' : 'var(--text-primary)' }}>
+                        color: hot ? 'var(--danger-fg)' : 'var(--text-primary)' }}>
                         {dm(r.period_from)}
                       </div>
                       <div style={{ ...CAP, marginBottom: 0, marginTop: 1 }}>
@@ -780,7 +776,7 @@ export default function TrafficQueue() {
                     <div>
                       <span style={pill(...st[1])} title={r.urgency_reason || ''}>{st[0]}</span>
                       {r.verdict === 'на переделку' && r.reason && (
-                        <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 3 }}>
+                        <div style={{ fontSize: 10.5, color: 'var(--text-cap)', marginTop: 3 }}>
                           {r.reason}
                         </div>
                       )}
@@ -832,7 +828,7 @@ export default function TrafficQueue() {
                               разницу между «вернуть всё» и «вернуть одну площадку». */}
                           <button disabled={busy}
                             style={{ ...iconBtn(true), background: 'var(--warning-tint)',
-                              borderColor: 'var(--warning-border)', color: 'var(--warning-text)' }}
+                              borderColor: 'var(--warning-border)', color: 'var(--warning-fg)' }}
                             title={`Вернуть на переделку только ${r.publisher.name || 'эту площадку'}`}
                             onClick={() => setRework({ pairIds: [r.pair_id], setNo: g.set.no,
                               reason: '', only: r.publisher.name || r.publisher.domain })}>
@@ -846,7 +842,7 @@ export default function TrafficQueue() {
                         </>
                       )}
                       {r.verdict === 'ок' && (
-                        <span style={{ ...pill('var(--income)', 'var(--on-accent)', 'var(--income)'),
+                        <span style={{ ...pill('var(--income-fg)', 'var(--on-accent)', 'var(--income-fg)'),
                           padding: '5px 12px', fontSize: 11.5 }}
                           title={r.decided_by ? `Проверил ${r.decided_by}` : ''}>
                           Проверено
@@ -894,7 +890,7 @@ export default function TrafficQueue() {
             style={{ ...inp, width: '100%', fontFamily: MONO, fontSize: 12.5 }} />
           {/* Пустое поле — способ ССЫЛКУ СНЯТЬ, а не забытый ввод: заведённая по ошибке
               не должна остаться навсегда. */}
-          <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--text-faint)' }}>
+          <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--text-cap)' }}>
             Пустое поле снимает ссылку.
           </div>
         </Modal>
@@ -997,7 +993,7 @@ export default function TrafficQueue() {
               <a href="#" onClick={e => { e.preventDefault(); download(`/traffic/file/${f.id}`, f.name) }}
                  style={{ fontFamily: MONO, fontSize: 12, color: 'var(--accent)',
                           textDecoration: 'none' }}>{f.name}</a>
-              <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+              <span style={{ fontSize: 11, color: 'var(--text-cap)' }}>
                 {Math.round((f.size_bytes || 0) / 1024)} КБ
               </span>
               <span style={{ flex: 1 }} />
@@ -1021,7 +1017,7 @@ export default function TrafficQueue() {
             </label>
           )}
           {mayEdit && shots.files.length >= SHOT_LIMIT && (
-            <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-faint)' }}>
+            <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-cap)' }}>
               Предел в {SHOT_LIMIT} файлов достигнут — удалите лишние, чтобы добавить новые.
             </div>
           )}

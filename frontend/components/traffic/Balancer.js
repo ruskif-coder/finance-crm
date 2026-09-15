@@ -220,7 +220,7 @@ export default function Balancer({ mayEdit }) {
           <tbody>
             {shown.map((r) => {
               const [bg, fg] = SCOPE_TONE[r.scope] || SCOPE_TONE.web
-              const [sbg, sfg] = SRC_TONE[r.source] || ['var(--bg-soft, #f1f4f9)', 'var(--text-faint)']
+              const [sbg, sfg] = SRC_TONE[r.source] || ['var(--bg-subtle)', 'var(--text-faint)']
               return (
                 <tr key={key(r)}>
                   {/* Ссылка на карточку площадки — в НОВОЙ вкладке: балансировщик это

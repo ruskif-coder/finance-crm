@@ -15,7 +15,7 @@
 """
 import os
 import re
-from datetime import date, datetime
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import FileResponse
@@ -38,6 +38,7 @@ from app.sales.models import (SalesPublisher, SalesPublisherKind, SalesPublisher
                               SalesPublisherDocument, SalesDocumentType,
                               PUBLISHER_CONTRACT_ROLES, PLATFORM_KINDS, TRAFFIC_SCOPES,
                               normalize_domain)
+from app import timez
 
 router = APIRouter()
 
@@ -200,6 +201,7 @@ class ContactIn(BaseModel):
     phone: Optional[str] = None
     role: Optional[str] = None
     is_primary: Optional[bool] = False
+    notify: Optional[bool] = None       # получает уведомления кабинета
     note: Optional[str] = None
 
 
@@ -513,7 +515,8 @@ def get_publisher(publisher_id: int, db: Session = Depends(get_db),
                                for lk in p.counterparties],
             "contacts": [{"id": c.id, "name": c.name, "email": c.email,
                           "telegram": c.telegram, "max_url": c.max_url, "phone": c.phone,
-                          "role": c.role, "is_primary": c.is_primary, "note": c.note}
+                          "role": c.role, "is_primary": c.is_primary,
+                          "notify": bool(c.notify), "note": c.note}
                          for c in sorted(p.contacts,
                                          key=lambda x: (not x.is_primary, x.id))]}
 
@@ -633,7 +636,9 @@ def _apply_services(db, publisher_id, payload):
 
 
 def _apply_traffic(db, publisher_id, payload):
-    today = datetime.now()
+    # Месяц замера — по московскому календарю: первые три часа суток по UTC ещё
+    # вчерашние, и 1-го числа в 01:00 замер лёг бы в прошлый месяц.
+    today = timez.msk_now()
     measured = date(today.year, today.month, 1)
     for scope, body in (payload or {}).items():
         if scope not in TRAFFIC_SCOPES:
@@ -895,7 +900,8 @@ def add_contact(publisher_id: int, data: ContactIn, db: Session = Depends(get_db
                             detail="Нужно хотя бы имя или один способ связи")
     c = SalesPublisherContact(publisher_id=publisher_id, name=data.name, email=data.email,
                               telegram=data.telegram, max_url=data.max_url, phone=data.phone,
-                              role=data.role, is_primary=bool(data.is_primary), note=data.note)
+                              role=data.role, is_primary=bool(data.is_primary),
+                              notify=bool(data.notify), note=data.note)
     db.add(c)
     db.commit()
     db.refresh(c)
@@ -1026,7 +1032,7 @@ def upsert_traffic(publisher_id: int, data: TrafficIn, db: Session = Depends(get
         except (ValueError, IndexError):
             raise HTTPException(status_code=400, detail="Месяц замера в формате ГГГГ-ММ")
     else:
-        today = datetime.now()
+        today = timez.msk_now()
         measured = date(today.year, today.month, 1)
 
     row = (db.query(SalesPublisherTraffic)

@@ -149,7 +149,7 @@ export default function Pipelines({ embedded = false } = {}) {
 
   return (
     <>
-      {!embedded && <Head><title>Воронки</title></Head>}
+      {!embedded && <Head><title>Воронки | SIMB-AD ERP</title></Head>}
       {!embedded && <Navbar active="directories" />}
       <div style={{ padding: embedded ? 0 : '20px 24px 50px' }}>
 

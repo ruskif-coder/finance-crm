@@ -458,7 +458,7 @@ export default function Reconcile() {
 
   return (
     <>
-      <Head><title>Сверка с Битриксом</title></Head>
+      <Head><title>Сверка · Справочники | SIMB-AD ERP</title></Head>
       <Navbar active="directories" />
       <div style={{ padding: '12px 20px', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 56px)', boxSizing: 'border-box' }}>
         <SectionTabs section="directory" />

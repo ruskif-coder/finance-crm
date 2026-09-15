@@ -22,6 +22,8 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+import logging
+
 from app.ad import build
 from app.ad import external as ext_mod
 from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_STATUSES,
@@ -32,7 +34,7 @@ from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_STATUSES,
                            creative_counts, culprits, daily_buckets,
                            distribute, effective_status, flight_of, progress, split_evenly)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
-from app.ad.stat_sources import fact_sources
+from app.ad.stat_sources import VERIFIER, fact_sources
 from app.traffic import urgency
 from app.audit import log_action
 from app.database import get_db
@@ -42,6 +44,8 @@ from app.routers.traffic import _apply_scope, _is_master
 from app.sales.models import SalesDeal, SalesRep
 from app.sales.reps import staff_users
 from app.sales.row_context import load_row_context
+
+log = logging.getLogger("finance.traffic_dashboard")
 
 router = APIRouter()
 
@@ -117,6 +121,36 @@ def _facts(db: Session, campaign_ids: List[int]) -> dict:
         "GROUP BY campaign_id"),
         {"i": campaign_ids, "src": fact_sources()}).mappings().all()
     return {r["campaign_id"]: dict(r) for r in rows}
+
+
+def _verifier(db: Session, campaign_ids: List[int]) -> dict:
+    """Показы ВЕРИФИКАТОРА по РК и по каждой площадке — одним запросом на оба уровня.
+
+    Отдельной функцией от `_facts`, а не параметром к ней, СОЗНАТЕЛЬНО. `_facts` отдаёт
+    то, что идёт в закрытие; здесь — независимое измерение, которое в закрытие не идёт
+    никогда (решение владельца 10.09.2026, `app/ad/stat_sources.py`). Один вызов с
+    флажком «а теперь посчитай другое» рано или поздно вызвали бы не с тем флажком, и
+    справочная величина попала бы в факт — тихо и правдоподобно.
+
+    Площадки приходят вместе с РК: карточка показывает и итог, и расхлоп по площадкам,
+    а два запроса ради этого — лишний обход той же таблицы.
+    """
+    if not campaign_ids:
+        return {}
+    rows = db.execute(text(
+        "SELECT campaign_id, placement_id, sum(shows) AS shows "
+        "FROM ad_campaign_stat WHERE campaign_id = ANY(:i) AND source = ANY(:src) "
+        "GROUP BY campaign_id, placement_id"),
+        {"i": campaign_ids, "src": list(VERIFIER)}).mappings().all()
+    out: dict = {}
+    for r in rows:
+        slot = out.setdefault(r["campaign_id"], {"shows": 0, "by_placement": {}})
+        n = r["shows"] or 0
+        slot["shows"] += n
+        # Строка без площадки — замер по РК целиком: в итог входит, в расхлоп нет.
+        if r["placement_id"] is not None:
+            slot["by_placement"][r["placement_id"]] = n
+    return out
 
 
 def _campaign_in_scope(db: Session, campaign_id: int, user: User):
@@ -248,6 +282,13 @@ def _day_wall(rows: List[dict], stat: dict, today: date) -> List[dict]:
     Цвет клетки считает ЭКРАН — здесь только отношение, потому что пороги (0.95 / 0.8)
     это оформление, а не бухгалтерия. Клетка без данных отдаётся как None и рисуется
     серым: «ещё не отчитано» и «отчитано ноль» — разные утверждения.
+
+    В клетке лежат план, показы и клики — те же четыре числа, что в карточке дня у
+    графика динамики (владелец 13.09.2026: «при наведении на стену дней выводи такую же
+    подсказку»). Нового запроса это не стоило: `_stat_by_day` и так забирает показы
+    ВМЕСТЕ с кликами, а план на день уже посчитан здесь же для отношения — в ответ
+    просто не клали. `product` рядом с кодом нужен подписи карточки, чтобы она читалась
+    одинаково в обоих местах.
     """
     out = []
     for r in rows:
@@ -259,15 +300,17 @@ def _day_wall(rows: List[dict], stat: dict, today: date) -> List[dict]:
         cells = []
         for i in range(fl.length):
             d = fl.date_from + timedelta(days=i)
-            shows = by_day.get(d, (None, None))[0]
+            shows, clicks = by_day.get(d, (None, None))
             cells.append({
                 "date": d,
+                "plan": round(per_day),
                 "shows": shows,
+                "clicks": clicks,
                 "ratio": round(shows / per_day, 3) if (shows is not None and per_day) else None,
                 "ahead": d > today,
             })
         out.append({"id": r["id"], "deal_code": r["deal_code"], "cells": cells,
-                    "done_pct": r["done_pct"]})
+                    "product": r.get("product"), "done_pct": r["done_pct"]})
     out.sort(key=lambda x: (x["done_pct"] is None, x["done_pct"] or 0))
     return out[:WALL_LIMIT]
 
@@ -795,6 +838,11 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
     stopped = _cascade_placements(db, c.id, payload.status)
 
     db.commit()
+    # Площадкам — только о СТАРТЕ и только один раз: переход «не крутила → крутит»
+    # бывает у РК однажды, а «пауза → запущена» повторяется, и письмо «кампания
+    # стартовала» на третий раз перестают читать.
+    if payload.status == "запущена" and old in ("ожидает сборки", "готова"):
+        _tell_publishers_started(db, c)
     log_action(db, user, "ad_campaign_status", "sales_deal", c.deal_id,
                f"РК #{c.id}: {old} → {c.status}"
                + (f"; поднято площадок {raised}" if raised else "")
@@ -1039,3 +1087,36 @@ def run_dsp(campaign_id: int, db: Session = Depends(get_db),
                f"РК #{c.id}: креативов заведено {len(out['done'])}, "
                f"отказов {len(out['failed'])}")
     return out
+
+
+def _tell_publishers_started(db: Session, camp) -> None:
+    """Сказать площадкам РК, что размещение вышло в эфир.
+
+    Веером по площадкам: у каждой свой план показов и своя цена, и «кампания стартовала»
+    без её собственных чисел не говорит ей ничего.
+
+    Письмо НЕ отменяет старт: прослойка возвращает причину, а не бросает исключение.
+    """
+    from app.notify.outward import notify_publisher
+    from app.routers.launch_prep import _deal_brand_name, deal_period_text
+    from app.sales.models import SalesDeal, SalesPublisher
+
+    deal = db.query(SalesDeal).filter(SalesDeal.id == camp.deal_id).first()
+    if deal is None:
+        return
+    brand = _deal_brand_name(db, deal)
+    period = deal_period_text(deal)
+    rows = (db.query(AdCampaignPlacement, SalesPublisher)
+            .join(SalesPublisher, SalesPublisher.id == AdCampaignPlacement.publisher_id)
+            .filter(AdCampaignPlacement.campaign_id == camp.id).all())
+    for pl, pub in rows:
+        context = " · ".join(x for x in ((pub.domain or pub.name), brand, period) if x)
+        facts = [("план показов", f"{int(pl.plan_show):,}".replace(",", " "))]             if pl.plan_show else []
+        try:
+            notify_publisher(db, "старт рк", pub.id,
+                             title="Кампания стартовала",
+                             body="Размещение вышло в эфир.",
+                             facts=facts, context=context, link="/",
+                             entity_type="ad_campaign_placement", entity_id=pl.id)
+        except Exception as e:                               # noqa: BLE001
+            log.warning("Площадке %s не ушло «старт рк»: %s", pub.id, e)

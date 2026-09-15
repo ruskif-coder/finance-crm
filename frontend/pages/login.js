@@ -2,7 +2,13 @@ import { useState } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
 import Head from 'next/head'
-import { firstAllowedHref } from '../components/Navbar'
+
+// Экран входа НИЧЕГО не импортирует из системы — ни навигации, ни справочников.
+// Он единственный открывается до авторизации, и всё, что сюда затянуто, уезжает
+// анонимному посетителю. До 13.09.2026 ради одной функции `firstAllowedHref`
+// подтягивался `components/Navbar` → `Nav` → карта навигации, и вместе с ними в
+// бандл логина попадали НАЗВАНИЯ И АДРЕСА ВСЕХ ЭКРАНОВ системы (28 КБ отдельным
+// чанком). Куда вести человека после входа, решает `/` — там карта уже к месту.
 
 const POLICY_TEXT = `ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ
 ООО «Программатик медиа»
@@ -114,7 +120,7 @@ export default function Login() {
         setToken(res.data.access_token)
         setShowConsent(true)
       } else {
-        router.push(firstAllowedHref(res.data.permissions || {}, res.data.role))
+        router.push('/')      // корень сам выберет первый доступный экран по правам
       }
     } catch (e) {
       setError('Неверный email или пароль')
@@ -130,8 +136,7 @@ export default function Login() {
       await axios.post('/api/auth/accept-consent', {}, {
         headers: { Authorization: `Bearer ${token}` }
       })
-      const perms = JSON.parse(localStorage.getItem('permissions') || '{}')
-      router.push(firstAllowedHref(perms, localStorage.getItem('role')))
+      router.push('/')
     } catch (e) {
       setError('Ошибка при сохранении согласия. Попробуйте войти снова.')
       setShowConsent(false)
@@ -244,7 +249,7 @@ export default function Login() {
   // --- Форма входа ---
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', padding: '16px', boxSizing: 'border-box' }}>
-      <Head><title>Вход</title></Head>
+      <Head><title>Вход | SIMB-AD ERP</title></Head>
       <div style={{ background: 'var(--card)', padding: 'clamp(28px, 7vw, 40px)', borderRadius: '16px', width: '100%', maxWidth: '380px', boxSizing: 'border-box', boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
         <div style={{ marginBottom: '16px' }}>
           <input

@@ -183,7 +183,7 @@ export default function PublishersBulk() {
 
   return (
     <>
-      <Head><title>Заполнение · Паблишеры</title></Head>
+      <Head><title>Заполнение · Паблишеры | SIMB-AD ERP</title></Head>
       <Navbar active="publishers" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <div style={{ ...card, padding: '18px 22px 14px' }}>

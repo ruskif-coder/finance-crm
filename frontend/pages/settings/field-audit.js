@@ -15,7 +15,7 @@ export default function SettingsFieldAudit() {
   }, [])
   return (
     <>
-      <Head><title>Сверка полей | Настройки</title></Head>
+      <Head><title>Сверка полей · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SettingsTabs active="field_audit" />

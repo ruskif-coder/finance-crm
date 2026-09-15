@@ -23,6 +23,7 @@ import SettingsTabs from '@/components/SettingsTabs'
 import api, { auth } from '@/lib/api'
 import { card, MONO, UI, btnSm } from '@/components/salesTableKit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { fmtTime } from '@/lib/dates'
 
 const CARD = { ...card, padding: '16px 18px' }
 const CAPS = { fontFamily: MONO, fontSize: 10, letterSpacing: '.1em',
@@ -102,7 +103,7 @@ function Spark({ series, field, tone }) {
     <div>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 52 }}>
         {series.map(x => (
-          <div key={x.hour} title={`${new Date(x.hour).getHours()}:00 · ${x[field]}`}
+          <div key={x.hour} title={`${fmtTime(x.hour, '')} · ${x[field]}`}
                style={{ flex: 1, display: 'flex', flexDirection: 'column',
                         justifyContent: 'flex-end', height: '100%' }}>
             <div style={{ height: Math.max(2, Math.round(x[field] / top * 48)), borderRadius: 2,
@@ -112,7 +113,7 @@ function Spark({ series, field, tone }) {
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5,
                     fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)' }}>
-        <span>{new Date(series[0].hour).getHours()}:00 вчера</span><span>сейчас</span>
+        <span>{fmtTime(series[0].hour, '')} вчера</span><span>сейчас</span>
       </div>
     </div>
   )
@@ -198,7 +199,7 @@ export default function SystemStatus() {
 
   return (
     <>
-      <Head><title>Статус</title></Head>
+      <Head><title>Статус · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
       <div style={{ padding: '18px 20px 0', fontFamily: UI }}>
         <SettingsTabs active="system" />
@@ -232,7 +233,7 @@ export default function SystemStatus() {
             {!!d && (
               <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)',
                              textTransform: 'uppercase', letterSpacing: '.06em' }}>
-                {new Date(d.checked_at).toLocaleTimeString('ru-RU')}
+                {fmtTime(d.checked_at, '')}
               </span>
             )}
             <button style={btnSm(auto)} onClick={() => setAuto(a => !a)}

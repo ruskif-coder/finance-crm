@@ -122,6 +122,42 @@ def deal_goals(db: Session, deal_id: int) -> dict:
     return {k: v for k, v in goals.items() if str(v or "").strip()}
 
 
+def pixel_setup(db: Session, deal_id: int) -> dict:
+    """Как устроен пиксель у этой сделки: заказан ли, свой или внешний, и сам тег.
+
+    Одним запросом и одной функцией, потому что спрашивают это три контура сразу
+    (карточка, DSP, разметка стадий) и спрашивают ВМЕСТЕ: «нужен ли» без «какой» уже
+    недостаточно с 14.09.2026, когда появился внешний тег.
+
+    `tag` не пустой только у внешнего: у своего пиксель живёт на КАЖДОМ размещении
+    отдельно, потому что вставка там на площадку. У внешнего вставка одна на всю сеть,
+    и тег один на кампанию.
+    """
+    row = db.execute(text(
+        "SELECT weborama_pixel, weborama_pixel_mode, weborama_pixel_tag "
+        "FROM sales_deals WHERE id = :d"), {"d": deal_id}).first()
+    if not row:
+        return {"needed": False, "mode": "own", "tag": None}
+    needed = bool(row[0])
+    mode = (row[1] or "own") if needed else "own"
+    return {"needed": needed, "mode": mode,
+            "tag": (row[2] or None) if (needed and mode == "external") else None}
+
+
+def needs_pixel(db: Session, deal_id: int) -> bool:
+    """Заказан ли по этой сделке пиксель верификатора (Weborama).
+
+    Живёт ЗДЕСЬ, а не в одном из коннекторов, потому что читают его двое: контур
+    Weborama (заводить ли вставки) и контур DSP (требовать ли пиксель перед выгрузкой и
+    вшивать ли тег в разметку). Держать признак у одного из них значило бы, что второй
+    ходит к соседу за правилом — и однажды они разойдутся.
+
+    Признак на СДЕЛКЕ, а не на РК: у `ad_campaign` `deal_id` с UNIQUE, а ставится
+    галочка на сборке, когда строки РК может ещё не быть (миграция 2026-09-14).
+    """
+    return pixel_setup(db, deal_id)["needed"]
+
+
 def month_of(d: Optional[date]) -> Optional[date]:
     return d.replace(day=1) if d else None
 

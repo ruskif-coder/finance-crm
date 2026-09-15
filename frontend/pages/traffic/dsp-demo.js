@@ -22,13 +22,14 @@ import api, { auth } from '@/lib/http'
 // по-разному, а спор «у меня всё ровно» разрешить было бы нечем.
 import { CreativePreview } from '@/components/creatives/AssemblyCreatives'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { fmtDateTime } from '@/lib/dates'
 
 const SECTION = { ...card, padding: '16px 20px', marginBottom: 14 }
 const LBL = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)' }
 const CODE = { fontFamily: MONO, fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all', background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 10, padding: '10px 12px', maxHeight: 240, overflow: 'auto' }
 const HASH = { fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--income-fg)' }
 
-const ts = (v) => (v ? new Date(v).toLocaleString('ru-RU') : '—')
+const ts = (v) => fmtDateTime(v)
 
 /** Поле формы. На уровне модуля: компонент внутри компонента теряет фокус на каждом
  *  символе, и это ловит гейт check-inline. */
@@ -291,7 +292,7 @@ export default function DspDemo() {
 
   return (
     <>
-      <Head><title>DSP демо</title></Head>
+      <Head><title>DSP демо · Трафики | SIMB-AD ERP</title></Head>
       <Navbar active="traffic" />
       {/* В контуре Трафиков нет сквозного ряда вкладок (владелец 06.09.2026): в раздел
           заходят верхним меню. Ряд `SectionTabs` — канон СПРАВОЧНИКОВ, и переносить его

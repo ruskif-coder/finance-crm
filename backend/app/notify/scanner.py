@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.notify import registry
 from app.notify.bus import emit
+from app.sales.deal_label import deal_label
 from app.notify.models import NotificationAlertState, NotificationScanRun
 
 
@@ -37,10 +38,37 @@ class Hit:
     """Сработка правила по конкретному объекту."""
     def __init__(self, entity_type: str, entity_id: int, stage: str, title: str,
                  body: str = None, link: str = None, due_date: date = None,
-                 ctx: dict = None, payload: dict = None):
+                 ctx: dict = None, payload: dict = None, facts: list = None,
+                 code: str = None):
         self.entity_type, self.entity_id, self.stage = entity_type, entity_id, stage
         self.title, self.body, self.link = title, body, link
         self.due_date, self.ctx, self.payload = due_date, ctx or {}, payload or {}
+        # Плашки собирает ПРАВИЛО, а не отрисовщик: одно событие показывает одинаковые
+        # числа в панели, в письме и в телеграме. Порядок один на все события —
+        # объект → мера → срок → состояние, — потому что человек читает десятки
+        # уведомлений в день и привыкает, что срок стоит третьим.
+        self.facts = facts or []
+        self.code = code
+
+
+def fact_days(n: int) -> str:
+    """«1 день», «2 дня», «5 дней». Склонение в плашке своё, и одиннадцать здесь
+    главная ловушка: по последней цифре вышло бы «день»."""
+    n = abs(int(n))
+    if 11 <= n % 100 <= 14:
+        return f"{n} дн."
+    last = n % 10
+    if last == 1:
+        return f"{n} день"
+    if 2 <= last <= 4:
+        return f"{n} дня"
+    return f"{n} дн."
+
+
+def fact_money(v) -> str:
+    """Сумма полностью, без сокращения до миллионов: «0,19 млн» вместо «188 400 ₽»
+    у мелких сделок и площадок читается как ноль."""
+    return f"{(v or 0):,.0f}".replace(",", chr(160)) + " ₽"
 
 
 def _param(ev: registry.Event, name: str, default: int) -> int:
@@ -73,7 +101,13 @@ def _should_send(st: NotificationAlertState, hit: Hit, repeat_days: int, now: da
 
 
 def _resolve_gone(db: Session, event_key: str, alive_ids: set, entity_type: str, now: datetime):
-    """Объекты, переставшие подпадать под правило, закрываем — иначе повторы вечны."""
+    """Объекты, переставшие подпадать под правило, закрываем — иначе повторы вечны.
+
+    Закрывается НЕ ТОЛЬКО состояние сработки, но и строка в панели: причина исчезла —
+    уведомление уходит, даже если его не открывали. Загрузили ДС — «документов нет»
+    пропадает само. Пока гасилось одно состояние, панель показывала разобранное, и
+    отличить сделанное от несделанного в ней было нельзя.
+    """
     rows = (db.query(NotificationAlertState)
             .filter(NotificationAlertState.event_key == event_key,
                     NotificationAlertState.entity_type == entity_type,
@@ -84,7 +118,26 @@ def _resolve_gone(db: Session, event_key: str, alive_ids: set, entity_type: str,
             st.resolved_at = now
             st.resolve_note = "объект больше не подпадает под правило"
             closed += 1
+            _resolve_app_rows(db, event_key, entity_type, st.entity_id, now)
     return closed
+
+
+def _resolve_app_rows(db: Session, event_key: str, entity_type: str,
+                      entity_id: int, now) -> None:
+    """Погасить строки панели по этому объекту у ВСЕХ получателей.
+
+    Уведомление могло уйти нескольким, и причина исчезает для всех сразу — гасить у
+    одного значило бы оставить остальным строку, которую нечем снять.
+    """
+    from app.models import Notification
+    from app.notify.bus import dedup_key
+
+    key = dedup_key(event_key, entity_type, entity_id)
+    if not key:
+        return
+    (db.query(Notification)
+     .filter(Notification.dedup_key == key, Notification.resolved_at.is_(None))
+     .update({Notification.resolved_at: now}, synchronize_session=False))
 
 
 # ─────────────────────────── правила ───────────────────────────
@@ -120,12 +173,17 @@ def rule_invoice_overdue(db: Session, ev: registry.Event) -> List[Hit]:
         if left > before_days:
             continue                                   # ещё рано
         if left > 0:
-            stage, human = "warning", f"срок оплаты через {left} дн."
+            stage, human = "warning", f"срок оплаты через {fact_days(left)}"
+            hot = {"k": "осталось", "v": fact_days(left), "fg": "warning", "hot": True}
         elif (today - due).days <= GRACE_DAYS:
             stage, human = "due", ("срок оплаты наступил сегодня" if left == 0
-                                   else f"срок оплаты прошёл {(today - due).days} дн. назад")
+                                   else f"срок оплаты прошёл {fact_days((today - due).days)} назад")
+            hot = {"k": "срок", "v": "сегодня" if left == 0 else fact_days((today - due).days),
+                   "fg": "warning", "hot": True}
         else:
-            stage, human = "overdue", f"просрочка {(today - due).days - GRACE_DAYS} дн. сверх буфера"
+            over = (today - due).days - GRACE_DAYS
+            stage, human = "overdue", f"просрочка {fact_days(over)} сверх буфера"
+            hot = {"k": "просрочка", "v": fact_days(over), "fg": "danger", "hot": True}
 
         name = (cp.name if cp else None) or "контрагент не указан"
         amount = f"{(op.income or 0):,.0f}".replace(",", " ")
@@ -137,6 +195,10 @@ def rule_invoice_overdue(db: Session, ev: registry.Event) -> List[Hit]:
             title=f"{name}: {amount} ₽ — {human}",
             body=f"Период {op.period}, срок оплаты {due.strftime('%d.%m.%Y')}{term_note}",
             link="/finance/operations",
+            # Сумма уже названа в заголовке — в плашке её нет, по правилу
+            # «число из заголовка не повторяется». Остаются срок и период.
+            facts=[hot, {"k": "срок оплаты", "v": due.strftime("%d.%m")},
+                   {"k": "период", "v": op.period or "—", "fg": "muted"}],
             payload={"amount": op.income, "period": op.period, "due": due.isoformat()},
         ))
     return hits
@@ -166,6 +228,11 @@ _verdicts: Optional[list] = None
 # подмножество очереди, а не другой расчёт.
 SCAN_HORIZON_DAYS = 180
 
+# Срочность сработки → тон строки в панели. Соответствие ОДНО на систему: очередь
+# «Что делать» и панель уведомлений строятся из одних правил, и разный цвет у одного
+# состояния читался бы как разные состояния.
+STAGE_TONE = {"overdue": "bad", "today": "warn", "soon": "warn", "normal": "info"}
+
 
 def _deal_facts(db: Session):
     """Сделки в пределах горизонта рассылки → их срочность.
@@ -192,17 +259,48 @@ def _deal_facts(db: Session):
     return facts_for_deals(db, deals, today)
 
 
+def _queue_facts(d, v, today: date) -> list:
+    """Плашки сделки: сумма → срок → сколько осталось.
+
+    Покрашен СРОК, а не сумма: письмо пришло из-за срока, сумма здесь справочная. Если
+    срока у вердикта нет (такое бывает у «стадия не размечена»), красить нечего —
+    и тогда не красим ничего, а не назначаем горячей первую попавшуюся плашку.
+    """
+    facts = []
+    # Сумма сделки — `amount` (без НДС). `amount_net` есть у МЕДИАПЛАНА, и обращение
+    # к нему через getattr отдавало бы None молча: плашка просто не появлялась бы.
+    if d.amount:
+        facts.append({"k": "сумма", "v": fact_money(d.amount)})
+    if v.due:
+        left = (v.due - today).days
+        facts.append({"k": "срок", "v": v.due.strftime("%d.%m")})
+        facts.append({
+            "k": "осталось" if left >= 0 else "просрочено",
+            "v": "сегодня" if left == 0 else fact_days(left),
+            "fg": {"overdue": "danger", "today": "warning",
+                   "soon": "warning"}.get(v.urgency, "muted"),
+            "hot": True})
+    return facts
+
+
 def _deal_rule(kind: str):
     """Правило-обёртка: берёт из общего расчёта только сработки своего вида."""
     def rule(db: Session, ev: registry.Event) -> List[Hit]:
         global _verdicts
         if _verdicts is None:
             _verdicts = _deal_facts(db)
-        hits = []
+        hits, today = [], date.today()
         for d, v in _verdicts:
             if v.kind != kind:
                 continue
-            where = " · ".join(x for x in (d.title, d.product) if x) or f"#{d.code or d.id}"
+            if v.urgency == "normal":
+                # Лента — подмножество очереди, и отбирает она по срочности. NORMAL
+                # означает «в работе, ничего не горит»: такая строка на дашборде нужна,
+                # а письмо по ней — нет. Признак завёлся 15.09.2026 вместе с расширением
+                # правила «нет МП»: очередь обязана показывать всякую сделку без плана,
+                # а будить по сделке со стартом через полгода незачем.
+                continue
+            where = deal_label(d, service=True)
             hits.append(Hit(
                 entity_type="deal", entity_id=d.id,
                 # Ступень = уровень срочности: переход soon → overdue шлётся немедленно,
@@ -210,7 +308,8 @@ def _deal_rule(kind: str):
                 stage=v.urgency, due_date=v.due,
                 title=f"{where}: {v.reason}",
                 link=f"/sales/deals/{d.code or d.id}",
-                ctx={"deal": d},
+                ctx={"deal": d}, code=d.code or None,
+                facts=_queue_facts(d, v, today),
                 payload={"urgency": v.urgency, "cta": v.cta,
                          "due": v.due.isoformat() if v.due else None},
             ))
@@ -290,6 +389,10 @@ def rule_plan_month_empty(db: Session, ev: registry.Event) -> List[Hit]:
                 due_date=date(line.year, m + 1, 1),
                 title=f"{who}: {MONTHS_RU[m]} {line.year} запланирован на {money} ₽, сделок нет",
                 link="/sales/year-plan", ctx={"rep_id": line.sales_rep_id},
+                # Сумма названа в заголовке, поэтому в плашках только срок и
+                # состояние ячейки: сделок ноль — это и есть причина письма.
+                facts=[{"k": "период", "v": f"{line.year}-{m + 1:02d}", "fg": "muted"},
+                       {"k": "сделок", "v": "0", "fg": "danger", "hot": True}],
                 payload={"line_id": line.id, "month": m, "amount": amount},
             ))
     return hits
@@ -321,6 +424,7 @@ def rule_mp_draft_stale(db: Session, ev: registry.Event) -> List[Hit]:
             entity_type="media_plan", entity_id=p.id, stage="due",
             title=f"МП без сделки лежит {days} дн.: {p.title or ('#' + str(p.id))}",
             link=f"/accounts/mp/{p.id}", ctx={"media_plan": p},
+            facts=[{"k": "лежит", "v": fact_days(days), "fg": "warning", "hot": True}],
             payload={"days": days},
         ))
     return hits
@@ -352,6 +456,9 @@ def backlog_overdue_hits(items, today: date, now: datetime, repeat_days: int = 7
             title=f"Срок наблюдения истёк {days} дн. назад: {it.title}",
             body=(it.signal_bad or it.context or None),
             link="/settings/backlog",
+            facts=[{"k": "срок был", "v": it.watch_until.strftime("%d.%m")},
+                   {"k": "просрочен", "v": fact_days(days), "fg": "danger",
+                    "hot": True}],
             payload={"days": days, "watch_until": it.watch_until.isoformat()},
         ))
     return hits
@@ -422,10 +529,13 @@ def rule_creative_silence(db: Session, ev: registry.Event) -> List[Hit]:
         waited = (datetime.utcnow() - review.asked_at).days
         hits.append(Hit(
             entity_type="creative_pair", entity_id=pair.id, stage="silence",
-            title=f"{pub.name if pub else 'Площадка'} молчит {waited} дн. · {deal.code}",
+            title=f"{pub.name if pub else 'Площадка'} молчит {waited} дн. · {deal_label(deal)}",
             body="Комплект отправлен, вердикта нет. Напомнить или снять получателя.",
             link=f"/sales/deals/{deal.code or deal.id}",
-            ctx={"deal": deal},
+            ctx={"deal": deal}, code=deal.code or None,
+            facts=[{"k": "отправлен", "v": review.asked_at.strftime("%d.%m")},
+                   {"k": "молчит", "v": fact_days(waited), "fg": "warning",
+                    "hot": True}],
         ))
     return hits
 
@@ -461,12 +571,22 @@ def rule_creative_erid_failed(db: Session, ev: registry.Event) -> List[Hit]:
                 else "реестр отклонил регистрацию — проверить поля и материал")
         hits.append(Hit(
             entity_type="creative_set", entity_id=s.id, stage=s.ord_status,
-            title=f"Креатив не зарегистрирован · {deal.code}",
+            title=f"Креатив не зарегистрирован · {deal_label(deal)}",
             body=f"Комплект №{s.no}: {what}. {s.ord_error or ''}".strip(),
             link=f"/sales/deals/{deal.code or deal.id}",
-            ctx={"deal": deal},
+            ctx={"deal": deal}, code=deal.code or None,
+            facts=[{"k": "комплект", "v": f"№{s.no}"},
+                   {"k": "реестр", "v": _ORD_WORD.get(s.ord_status, s.ord_status),
+                    "fg": "danger", "hot": True}],
         ))
     return hits
+
+
+# Состояние реестра человеческим словом: в плашке должно стоять то, что человек
+# понимает без словаря, а не код чужой системы.
+_ORD_WORD = {"RegistrationError": "отклонил",
+             "MediaDownloadError": "не скачал файл",
+             "DeletionError": "ошибка удаления"}
 
 
 def rule_traffic_silence(db: Session, ev: registry.Event) -> List[Hit]:
@@ -509,14 +629,16 @@ def rule_traffic_silence(db: Session, ev: registry.Event) -> List[Hit]:
         waited = (datetime.utcnow() - review.asked_at).days if review.asked_at else days
         hits.append(Hit(
             entity_type="creative_pair", entity_id=pair.id, stage="silence",
-            title=f"{deal.title or deal.code}: трафик не проверил "
+            title=f"{deal_label(deal)}: трафик не проверил "
                   f"{pub.name if pub else 'площадку'} — {waited} дн.",
             body="Материал ждёт проверки трафика — площадке он ещё не уходил.",
             link="/traffic/queue",
             # Событие адресовано и роли трафика, и АККАУНТУ СДЕЛКИ (`account_manager`),
             # а тот резолвер читает `ctx["deal"]`. Без контекста аккаунт не узнавал бы,
             # что его сделка стоит из-за молчащего трафика.
-            ctx={"deal": deal},
+            ctx={"deal": deal}, code=deal.code or None,
+            facts=[{"k": "площадка", "v": (pub.name if pub else "—")},
+                   {"k": "ждёт", "v": fact_days(waited), "fg": "warning", "hot": True}],
             payload={"days": waited},
         ))
     return hits
@@ -588,9 +710,14 @@ def scan(dry_run: bool = False, only: Optional[str] = None) -> Dict[str, int]:
                     stats["sent"] += 1
                     print(f"    (сухой прогон) {hit.stage}: {hit.title}")
                     continue
+                # Тон СРАБОТКИ, а не события: у правил очереди он меняется вместе со
+                # срочностью («скоро» → «просрочено»), и ровно ухудшение делает строку
+                # в панели снова непрочитанной. Тон события из реестра постоянен и на
+                # этот вопрос не отвечает.
                 got = emit(db, event_key, title=hit.title, body=hit.body, link=hit.link,
                            entity_type=hit.entity_type, entity_id=hit.entity_id,
-                           ctx=hit.ctx)
+                           ctx=hit.ctx, tone=STAGE_TONE.get(hit.stage),
+                           facts=hit.facts, code=hit.code)
                 st.stage = hit.stage
                 st.due_date = hit.due_date
                 st.payload = hit.payload

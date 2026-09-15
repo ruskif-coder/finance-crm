@@ -18,24 +18,10 @@ export const DEAL_DOCS = [
   { kind: 'act', label: 'Акт' },
 ]
 
-// Скачивание файла сделки (или любого blob-эндпоинта) с сохранением имени.
-export async function downloadBlob(url, filename) {
-  try {
-    const r = await api.get(url, { ...auth(), responseType: 'blob' })
-    const href = URL.createObjectURL(r.data)
-    const a = document.createElement('a'); a.href = href; a.download = filename || 'file'; a.click()
-    URL.revokeObjectURL(href)
-    return true
-  } catch (e) {
-    // Отказ приходит блобом, а не JSON, потому что запрос просил blob. Без чтения тела
-    // на экране оказывается общее «не удалось», хотя сервер прислал, ЧЕГО не хватает —
-    // так выгрузка ДС молчала бы о незаполненных реквизитах подписанта.
-    let msg = 'Не удалось скачать файл'
-    try { msg = JSON.parse(await e.response.data.text()).detail || msg } catch (_) { /* тело не JSON */ }
-    alert(msg)
-    return false
-  }
-}
+// Скачивание файла сделки — через общую точку (lib/download). Реэкспорт под прежним
+// именем, чтобы не переписывать вызовы на экранах: правило имени файла и разбор отказа
+// живут теперь в одном месте на всё приложение.
+export { downloadFile as downloadBlob } from './download'
 
 // Выбор файла и загрузка. onDone вызывается только при успехе.
 export function pickAndUploadDoc(dealId, kind, onDone, onBusy) {

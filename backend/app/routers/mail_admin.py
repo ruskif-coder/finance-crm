@@ -26,6 +26,7 @@ from app.audit import log_action
 from app.database import get_db
 from app.mail import client as mail
 from app.mail import templates as tpl
+from app import retention
 from app.mail.models import KIND_LABELS, KIND_TEST, MailLog, MailTemplate
 from app.models import User
 from app.permissions import require_permission
@@ -82,6 +83,10 @@ def state(db: Session = Depends(get_db), user: User = Depends(VIEW)):
         # Пароль и логин НЕ отдаём — см. шапку модуля. Отдаём только факт настроенности
         # и адрес отправителя: он и так виден каждому получателю письма.
         "configured": cfg.ok,
+        # Почему не настроена — словами. «Не настроена» без причины отправляет человека
+        # перебирать семь переменных; замер 14.09.2026 показал, что ошибиться можно
+        # ровно одной — подписью вместо адреса в MAIL_FROM.
+        "problem": cfg.problem,
         "sender": cfg.sender or None,
         "host": cfg.host or None,
         "mode": cfg.mode,
@@ -178,7 +183,9 @@ def mail_log(limit: int = 100, offset: int = 0, kind: Optional[str] = None,
     total = query.count()
     rows = query.order_by(MailLog.id.desc()).offset(max(0, offset)).limit(limit).all()
     names = dict(db.query(User.id, User.name).all())
-    return {"total": total, "items": [{
+    # Срок хранения отдаём экрану, а не пишем на нём числом: иначе экран обещает три
+    # месяца, уборка живёт по своему сроку, и расходятся они молча.
+    return {"total": total, "keep_months": retention.JOURNAL_MONTHS, "items": [{
         "id": r.id, "to_email": r.to_email, "to_name": r.to_name,
         "reply_to": r.reply_to, "subject": r.subject, "body": r.body,
         "kind": r.kind, "kind_label": KIND_LABELS.get(r.kind, r.kind),

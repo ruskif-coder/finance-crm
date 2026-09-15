@@ -5,10 +5,11 @@ import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import { can } from '@/components/Navbar'
 import MediaPlanPdf, { NOTES, AGG_RULES, BONUS_NOTE } from '@/components/mediaplan/MediaPlanPdf'
+import { fmtDateOfMoment } from '@/lib/dates'
 
 // Печатный предпросмотр медиаплана (A4, 1 лист). Открывается в новой вкладке из
 // конструктора и из реестра. Данные — /sales/media-plans/{id}/pdf-data (гейт media_plans:view).
-const fmtDate = (s) => { if (!s) return '—'; const x = /[zZ]|[+-]\d{2}:?\d{2}$/.test(s) ? s : s + 'Z'; return new Date(x).toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' }) }
+const fmtDate = (s) => fmtDateOfMoment(s)
 
 // Таргетинг: группы конструктора → подписи PDF. Значение — массив строк/объектов.
 const TG_GROUPS = [['audience', 'Аудитория'], ['buys', 'Покупают'], ['interests', 'Интересы'], ['behavior', 'Поведение'], ['competitors', 'Конкуренты']]
@@ -48,7 +49,9 @@ function toPdf(plan) {
       // SIMB-AD (площадка) · агентство (или рекламодатель) · дата составления · срок
       subtitle: `SIMB-AD · ${agency || adv || '—'} · от ${fmtDate(plan.created_at)} · МП актуален 14 дней`,
     },
-    placementMeta: `гео ${plan.geo || 'РФ'} · период ${plan.period || '—'}`,
+    // Пустое гео печатается прочерком, а не «РФ»: незаполненное поле в документе
+    // видно при вычитке, выдуманное значение — нет. Правило проекта.
+    placementMeta: `гео ${plan.geo || '—'} · период ${plan.period || '—'}`,
     // 4×2, заливка по колонкам (пары в столбик):
     // 1) Название+Агентство  2) Рекламодатель+Бренд  3) Период+Дата старта  4) Место+Гео
     params: [
@@ -59,7 +62,7 @@ function toPdf(plan) {
       ['Период размещения', plan.period || '—', false],
       ['Дата старта', plan.date_from ? fmtDate(plan.date_from) : '—', true],
       ['Место размещения', 'SIMB-AD', false],
-      ['Гео', plan.geo || 'РФ', false],
+      ['Гео', plan.geo || '—', false],
     ],
     placements,
     extras,

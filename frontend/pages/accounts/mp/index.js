@@ -4,7 +4,8 @@ import { useRouter } from 'next/router'
 import Navbar, { can, firstAllowedHref } from '@/components/Navbar'
 import { MONO, UI, card, primaryBtn, GenTitleBtn, MultiDrop } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
-import { downloadName, fmtFull, fmtMoney, grp } from '@/lib/salesFormat'
+import { fmtFull, fmtMoney, grp } from '@/lib/salesFormat'
+import { downloadMp } from '@/lib/mpDownload'
 import { DownloadOverlay } from '@/components/LogoLoader'
 import ValuePopover from '@/components/ValuePopover'
 import { buildTitle, separatePriceSet, surfaceTag, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
@@ -215,17 +216,11 @@ export default function MpRegistry() {
   }
   const exportXlsx = async (it) => {
     setDownloading(true)
-    try {
-      const r = await api.get(`/sales/media-plans/${it.id}/export.xlsx`, { ...auth(), responseType: 'blob' })
-      const url = URL.createObjectURL(r.data); const a = document.createElement('a'); a.href = url; a.download = downloadName(it.title, 'xlsx', 'MP Simb-AD'); a.click(); URL.revokeObjectURL(url)
-    } catch (e) { alert('Ошибка выгрузки') } finally { setDownloading(false) }
+    try { await downloadMp(it, 'xlsx') } finally { setDownloading(false) }
   }
   const downloadPdf = async (it) => {
     setPdfBusy(it.id); setDownloading(true)
-    try {
-      const r = await api.get(`/sales/media-plans/${it.id}/pdf`, { ...auth(), responseType: 'blob' })
-      const url = URL.createObjectURL(r.data); const a = document.createElement('a'); a.href = url; a.download = downloadName(it.title, 'pdf', 'MP Simb-AD'); a.click(); URL.revokeObjectURL(url)
-    } catch (e) { alert('Ошибка генерации PDF') } finally { setPdfBusy(null); setDownloading(false) }
+    try { await downloadMp(it, 'pdf') } finally { setPdfBusy(null); setDownloading(false) }
   }
 
   const act = { padding: '4px 8px', borderRadius: 7, border: '1px solid var(--border-card)', background: 'var(--bg-card)', cursor: 'pointer', fontSize: 11.5, color: 'var(--text-secondary)' }
@@ -245,7 +240,7 @@ export default function MpRegistry() {
 
   return (
     <>
-      <Head><title>Медиапланы</title></Head>
+      <Head><title>Медиапланы · Аккаунты | SIMB-AD ERP</title></Head>
       {downloading && <DownloadOverlay />}
       <Navbar active="" />
       <style>{`.d2-row:hover{background:var(--bg-subtle)!important}`}</style>

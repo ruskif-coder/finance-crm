@@ -67,6 +67,14 @@ class MailLog(Base):
     entity_type = Column(String(32))
     entity_id = Column(Integer)
     user_id = Column(Integer, ForeignKey("users.id"))
+    # Тихие часы площадки: письмо ждёт своего часа в журнале, а не теряется и не
+    # будит ночью (миграция 2026-09-14_mail_send_after.sql). NULL — сразу.
+    send_after = Column(DateTime)
+    # Разметка на момент составления (миграция 2026-09-14_mail_log_html.sql).
+    # Нужна ДОСЫЛКЕ: собрать её заново нечем — тона, тега, фактов и контекста в
+    # журнале нет, — а пересчитанная по сегодняшнему состоянию она спорила бы с
+    # текстом, с которым приехала.
+    html = Column(Text)
     status = Column(String(16), nullable=False, default="queued", server_default="queued")
     error = Column(Text)
     attempts = Column(Integer, nullable=False, default=0, server_default="0")

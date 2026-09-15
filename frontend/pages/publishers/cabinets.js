@@ -33,6 +33,7 @@ import { MONO, UI, card, CAP, btn, btnSm, inp, sel, chip, ROW_TONE, Modal, PickV
 import ValuePopover from '@/components/ValuePopover'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { TONE, toneOf } from '@/lib/tone'
 
 /* ── мелкие части, все на модульном уровне ──────────────────────────────────
    Компонент, объявленный внутри рендера родителя, пересоздаётся на каждый ввод, и
@@ -123,6 +124,12 @@ const ContactRow = ({ c, mayEdit, busy, onLevel, onPassword, onGrant, onDisable,
           {c.is_primary && <span title="Главное контактное лицо"
             style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--income)',
               flex: '0 0 auto' }} />}
+          {/* Отметка рассылки — ОТДЕЛЬНАЯ от «главного»: тот отвечает, к кому идти с
+              вопросом, а эта — кому уходит почта. Совпадают они не всегда. */}
+          {c.notify && <span title="Получает уведомления кабинета"
+            style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.04em',
+              color: 'var(--accent-fg)', background: 'var(--accent-tint)',
+              borderRadius: 5, padding: '1px 5px', flex: '0 0 auto' }}>письма</span>}
         </span>
         <span style={{ ...CAP, marginBottom: 0, fontSize: 9 }}>
           {c.role || c.publisher_name}
@@ -204,7 +211,7 @@ const ContactRow = ({ c, mayEdit, busy, onLevel, onPassword, onGrant, onDisable,
 function ContactEdit({ c, busy, onCancel, onSave, onSyncLogin, onPickPosition }) {
   const [v, setV] = useState({
     name: c.name || '', email: c.email || '', role: c.role || '',
-    telegram: c.telegram || '', is_primary: !!c.is_primary,
+    telegram: c.telegram || '', is_primary: !!c.is_primary, notify: !!c.notify,
   })
   const set = (k, x) => setV(s => ({ ...s, [k]: x }))
   const isContact = !!c.contact_id
@@ -237,6 +244,17 @@ function ContactEdit({ c, busy, onCancel, onSave, onSyncLogin, onPickPosition })
           Главное контактное лицо площадки
           <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>
             — у площадки он один, с остальных пометка снимется
+          </span>
+        </label>
+      )}
+      {isContact && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5,
+          cursor: 'pointer' }}>
+          <input type="checkbox" checked={v.notify}
+            onChange={e => set('notify', e.target.checked)} />
+          Получает уведомления кабинета
+          <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>
+            — отмеченных может быть несколько; если не отмечен никто, писем не будет
           </span>
         </label>
       )}
@@ -458,12 +476,141 @@ const ColHead = ({ title, count, note, action }) => (
 
 /* ─────────────────────────────── страница ─────────────────────────────── */
 
+/* ── Вкладка «Что мы шлём» ───────────────────────────────────────────────────
+   Каталог рассылки площадкам с ЧЕСТНЫМ состоянием каждого вида.
+
+   Экран существует ради одного различия: «вид объявлен» ≠ «вид отправляется». В самом
+   кабинете все переключатели выглядят одинаково рабочими, и увидеть, что за четырьмя из
+   пяти нет отправителя, было нельзя ниоткуда.
+
+   Три состояния, и у каждого свой смысл:
+     нет отправителя — объявлено, кода нет; включать нечего;
+     выключено       — построено, но мы не шлём;
+     уходит          — площадки это получают.                                           */
+const TO_LABEL = { manager: 'аккаунт площадки', tech: 'техподдержка',
+  money: 'бухгалтерия', all: 'все учётки' }
+// Цвет точки — из общего словаря тона (`lib/tone.js`), а не своей копией:
+// ключи здесь были канонические, но третья карта тех же четырёх цветов — это
+// третье место, где их можно забыть поправить.
+const CATALOG_GROUPS = [
+  ['Креативы и согласование', ['новый креатив', 'старт близко', 'запрос ссылки',
+    'ерид выпущен', 'техтребования']],
+  ['Ход кампании', ['старт рк', 'недокрут', 'код молчит', 'финиш рк', 'продление']],
+  ['Сверка и деньги', ['сверка', 'документы отправлены', 'документы не подписаны',
+    'оплата отправлена', 'реквизиты устарели']],
+  ['Кабинет', ['приглашение']],
+]
+
+function NotifyCatalog({ mayEdit }) {
+  const [data, setData] = useState(null)
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+
+  const load = useCallback(() => {
+    api.get('/cabinets/notify-catalog', auth())
+      .then(r => setData(r.data)).catch(() => setErr('Не удалось загрузить каталог'))
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const toggle = (k, value) => {
+    setBusy(k.key); setErr('')
+    api.put('/cabinets/notify-catalog', { key: k.key, enabled: value }, auth())
+      .then(r => { setData(r.data); setBusy('') })
+      .catch(e => { setBusy(''); setErr(e.response?.data?.detail || 'Не удалось сохранить') })
+  }
+
+  if (!data) return <div style={{ ...card, padding: 20, color: 'var(--text-faint)' }}>Загрузка…</div>
+  const byKey = Object.fromEntries(data.kinds.map(k => [k.key, k]))
+
+  return (
+    <>
+      <KpiStrip items={[
+        { label: 'Объявлено видов', value: data.total, unit: 'шт.',
+          hint: 'состав рассылки площадкам' },
+        { label: 'Построено', value: data.built, unit: 'шт.', color: 'var(--income)',
+          hint: 'есть отправитель в коде' },
+        { label: 'Уходит площадкам', value: data.live, unit: 'шт.', color: 'var(--accent)',
+          hint: 'построено и включено' },
+        { label: 'Ждёт отправителя', value: data.total - data.built, unit: 'шт.',
+          color: 'var(--warning)', hint: 'объявлено, но слать нечем' },
+      ]} />
+
+      {!!err && (
+        <div style={{ ...card, padding: '10px 14px', margin: '14px 0',
+          color: 'var(--danger-fg)', borderColor: ROW_TONE.overdue.border,
+          background: ROW_TONE.overdue.bg }}>{err}</div>
+      )}
+
+      <p style={{ fontSize: 12.5, color: 'var(--text-muted)', maxWidth: 900,
+        margin: '14px 0 16px', lineHeight: 1.6 }}>
+        Что уходит площадкам в кабинет и на почту. В самом кабинете площадка видит только
+        включённое отсюда и может выключить лишнее у себя. Вид без отправителя площадке не
+        показывается вовсе: переключатель, который ничего не меняет, хуже его отсутствия.
+      </p>
+
+      {CATALOG_GROUPS.map(([title, keys]) => (
+        <div key={title} style={{ ...card, padding: '14px 18px 6px', marginBottom: 14 }}>
+          <span style={{ ...CAP, display: 'block', marginBottom: 10 }}>{title}</span>
+          {keys.map(key => {
+            const k = byKey[key]
+            if (!k) return null
+            const state = !k.built ? 'нет отправителя' : k.enabled ? 'уходит' : 'выключено'
+            const tone = !k.built ? { bg: 'var(--bg-subtle)', fg: 'var(--text-cap)' }
+              : k.enabled ? { bg: 'var(--income-tint)', fg: 'var(--income-fg)' }
+                : { bg: 'var(--warning-tint)', fg: 'var(--warning-fg)' }
+            return (
+              <div key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 12,
+                padding: '11px 0', borderTop: '1px solid var(--border-row)' }}>
+                <span style={{ width: 7, height: 7, borderRadius: 2, marginTop: 6,
+                  flex: '0 0 7px', background: TONE[toneOf(k.tone)].dot }} />
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 4,
+                  minWidth: 0, flex: 1 }}>
+                  <span style={{ display: 'flex', alignItems: 'baseline', gap: 8,
+                    flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, fontWeight: 700 }}>{k.label}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-cap)' }}>
+                      {TO_LABEL[k.to] || k.to} · {k.schedule}
+                      {!k.can_mute && ' · площадка не выключает'}
+                    </span>
+                  </span>
+                  <span style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                    {k.hint}
+                  </span>
+                  {/* Повод и правило повтора — то, что надо знать, чтобы вид построить.
+                      Держим на экране, а не только в документе: документ откроют раз. */}
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+                    повод: {k.trigger} · {k.repeat}
+                  </span>
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9,
+                  flex: '0 0 auto' }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, padding: '3px 9px',
+                    borderRadius: 7, background: tone.bg, color: tone.fg,
+                    whiteSpace: 'nowrap' }}>{state}</span>
+                  {mayEdit && k.built && (
+                    <button type="button" style={btnSm(k.enabled)} disabled={busy === k.key}
+                      onClick={() => toggle(k, !k.enabled)}>
+                      {busy === k.key ? '…' : k.enabled ? 'выключить' : 'включить'}
+                    </button>
+                  )}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      ))}
+    </>
+  )
+}
+
 export default function CabinetsPage() {
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [mayEdit, setMayEdit] = useState(false)
 
+  // Вкладки раздела: сами кабинеты и каталог того, что мы шлём наружу.
+  const [tab, setTab] = useState('cabinets')
   const [q, setQ] = useState('')
   const [fState, setFState] = useState('')
   const [fService, setFService] = useState('')
@@ -519,7 +666,7 @@ export default function CabinetsPage() {
         await api.put(`/publishers/${c.publisher_id}/contacts/${c.contact_id}`, {
           name: v.name.trim(), email: v.email.trim() || null,
           role: v.role || null, telegram: v.telegram || null,
-          is_primary: !!v.is_primary,
+          is_primary: !!v.is_primary, notify: !!v.notify,
         }, auth())
       } else {
         await api.put(`/cabinets/accounts/${c.account_id}`,
@@ -592,7 +739,7 @@ export default function CabinetsPage() {
 
   return (
     <>
-      <Head><title>Кабинеты паблишеров</title></Head>
+      <Head><title>Кабинеты · Паблишеры | SIMB-AD ERP</title></Head>
       <Navbar />
       <div style={{ maxWidth: 1600, margin: '0 auto', padding: '22px 20px 60px', fontFamily: UI }}>
 
@@ -600,10 +747,20 @@ export default function CabinetsPage() {
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: '-.02em' }}>
             Кабинеты паблишеров
           </h1>
+          {/* Вкладки: сами кабинеты и каталог рассылки наружу. Второе — про то же
+              хозяйство (что площадка получает от нас), поэтому здесь, а не отдельным
+              разделом меню. */}
+          <span style={{ display: 'inline-flex', gap: 6, marginLeft: 4 }}>
+            {[['cabinets', 'Кабинеты'], ['notify', 'Что мы шлём']].map(([k, l]) => (
+              <button key={k} type="button" style={btnSm(tab === k)}
+                onClick={() => setTab(k)}>{l}</button>
+            ))}
+          </span>
           <span style={{ ...CAP, marginBottom: 0 }}>
             {data ? `${cabinets.length} кабинета · ${kpi?.accounts ?? 0} учёток` : 'загрузка…'}
           </span>
           <span style={{ flex: 1 }} />
+          {tab === 'cabinets' && (<>
           <input style={{ ...inp, minWidth: 210 }} value={q} placeholder="Кабинет, площадка, контакт…"
             onChange={e => setQ(e.target.value)} />
           <select style={sel} value={fState} onChange={e => setFState(e.target.value)}>
@@ -621,8 +778,12 @@ export default function CabinetsPage() {
               + Кабинет
             </button>
           )}
+          </>)}
         </div>
 
+        {tab === 'notify' && <NotifyCatalog mayEdit={mayEdit} />}
+
+        {tab === 'cabinets' && (<>
         {!!kpi && (
           <div style={{ display: 'flex', gap: 14, marginBottom: 16,
             alignItems: 'stretch' }}>
@@ -864,6 +1025,7 @@ export default function CabinetsPage() {
             Под фильтры не подошёл ни один кабинет.
           </div>
         )}
+        </>)}
 
       </div>
 

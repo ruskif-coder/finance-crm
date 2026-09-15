@@ -20,6 +20,7 @@ export default function SettingsStages() {
   const [phases, setPhases] = useState([])      // [{_k, id, name, stages:[{_k, id, name, stage_key, is_terminal, bitrix_pipeline_id, bitrix_status_id}]}]
   const [bxPipes, setBxPipes] = useState([])    // [{id, name, stages:[{status_id, name}]}]
   const [catalog, setCatalog] = useState([])    // под-этапы 2/2/2: [{key, label, money_layer}]
+  const [blocks, setBlocks] = useState([])      // блоки карточки: [{key, label, stage_id|null}]
   const [loading, setLoading] = useState(true)
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -50,6 +51,7 @@ export default function SettingsStages() {
           bitrix_pipeline_id: s.bitrix_pipeline_id || '', bitrix_status_id: s.bitrix_status_id || '' })),
       })))
       setCatalog(c.data.catalog || [])
+      setBlocks(c.data.card_blocks || [])
       setBxPipes(b.data.pipelines || [])
       setDirty(false)
     } catch (e) { if (e.response?.status === 401) router.push('/login'); else setErr('Ошибка загрузки') }
@@ -65,6 +67,7 @@ export default function SettingsStages() {
   const addPhase = () => { setPhases(ps => [...ps, { _k: nextK(), id: null, name: '', stages: [] }]); touch() }
   const delPhase = (pk) => { setPhases(ps => ps.filter(p => p._k !== pk)); touch() }
   const addStage = (pk) => { setPhases(ps => ps.map(p => p._k !== pk ? p : { ...p, stages: [...p.stages, { _k: nextK(), id: null, name: '', money_layer: '', is_terminal: false, bitrix_pipeline_id: '', bitrix_status_id: '' }] })); touch() }
+  const setBlock = (key, stageId) => { setBlocks(bs => bs.map(b => b.key === key ? { ...b, stage_id: stageId } : b)); touch() }
   const delStage = (pk, sk) => { setPhases(ps => ps.map(p => p._k !== pk ? p : { ...p, stages: p.stages.filter(s => s._k !== sk) })); touch() }
   const movePhase = (pk, dir) => { setPhases(ps => { const i = ps.findIndex(p => p._k === pk); const j = i + dir; if (i < 0 || j < 0 || j >= ps.length) return ps; const n = [...ps];[n[i], n[j]] = [n[j], n[i]]; return n }); touch() }
   const moveStage = (pk, sk, dir) => { setPhases(ps => ps.map(p => { if (p._k !== pk) return p; const i = p.stages.findIndex(s => s._k === sk); const j = i + dir; if (i < 0 || j < 0 || j >= p.stages.length) return p; const n = [...p.stages];[n[i], n[j]] = [n[j], n[i]]; return { ...p, stages: n } })); touch() }
@@ -79,7 +82,8 @@ export default function SettingsStages() {
         stages: p.stages.map(s => ({ id: s.id || null, name: s.name,
           stage_key: s.stage_key || null, is_terminal: !!s.is_terminal,
           bitrix_pipeline_id: s.bitrix_pipeline_id ? Number(s.bitrix_pipeline_id) : null,
-          bitrix_status_id: s.bitrix_status_id || null })) })) }
+          bitrix_status_id: s.bitrix_status_id || null })) })),
+        card_blocks: blocks.map(b => ({ key: b.key, stage_id: b.stage_id || null })) }
       await api.put('/sales/directories/stage-catalog', payload, auth())
       flash('Каталог сохранён')
       await load()
@@ -91,7 +95,7 @@ export default function SettingsStages() {
 
   return (
     <>
-      <Head><title>Стадии | Настройки</title></Head>
+      <Head><title>Стадии · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
       <div style={{ padding: '20px 26px 60px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SettingsTabs active="stages" actions={
@@ -179,6 +183,34 @@ export default function SettingsStages() {
               </div>
             ))}
             <button onClick={addPhase} style={{ ...primaryBtn, background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--border-card)', fontWeight: 600 }}>+ этап</button>
+
+            {/* ── Видимость блоков карточки сделки ──
+                По СТРОКЕ НА БЛОК, а не сеткой галочек: правило читается как «виден
+                начиная с этой стадии», и дальше блок не исчезает. Сетка позволила бы
+                наставить галочек, которые ничего не меняют. */}
+            <div style={{ ...card, padding: '14px 18px', marginTop: 22, maxWidth: 720 }}>
+              <h2 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 4px', color: 'var(--text-primary)' }}>Блоки карточки сделки</h2>
+              <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: '0 0 12px' }}>
+                С какой стадии блок появляется в карточке. Появился — дальше не исчезает.
+                Блок, внутри которого уже что-то есть, виден всегда, даже раньше своей стадии.
+              </p>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <tbody>
+                  {blocks.map(b => (
+                    <tr key={b.key}>
+                      <td style={{ ...td, width: 210, fontWeight: 600 }}>{b.label}</td>
+                      <td style={td}>
+                        <select value={b.stage_id || ''} onChange={e => setBlock(b.key, e.target.value ? Number(e.target.value) : null)} style={cs}>
+                          <option value="">виден всегда</option>
+                          {phases.flatMap(p => p.stages.filter(s => s.id)
+                            .map(s => <option key={s.id} value={s.id}>{p.name} · {s.name}</option>))}
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </>
         )}
       </div>

@@ -203,7 +203,7 @@ export default function Agencies() {
   if (isMobile) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-        <Head><title>Агентства</title></Head>
+        <Head><title>Агентства · Справочники | SIMB-AD ERP</title></Head>
         <Navbar active="directories" />
         <AgenciesMobile
           total={items.length} rows={filtered} loading={loading} canEdit={mayEdit}
@@ -215,7 +215,7 @@ export default function Agencies() {
 
   return (
     <>
-      <Head><title>Рекламные агентства</title></Head>
+      <Head><title>Агентства · Справочники | SIMB-AD ERP</title></Head>
       <Navbar active="directories" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
 

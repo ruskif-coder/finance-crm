@@ -181,7 +181,7 @@ export default function Import() {
   return (
     <div style={{minHeight:'100vh',background:'var(--bg)'}}>
       <Navbar active="import" />
-      <Head><title>Импорт | Финансовый учёт</title></Head>
+      <Head><title>Импорт · Финансы | SIMB-AD ERP</title></Head>
 
       <div style={{ padding: '24px 32px', maxWidth: 1920, margin: '0 auto' }}>
         <div style={{ ...CAP, marginBottom: 14 }}>Импорт</div>

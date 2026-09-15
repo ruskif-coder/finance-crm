@@ -20,8 +20,10 @@ import { grp, fmtFull } from '../../../lib/salesFormat'
 // (lib/http.js). Без него ответ 401, а перехватчик уводит на логин, и
 // выглядит это как «страница требует входа», а не как забытый заголовок.
 import api, { auth } from '../../../lib/api'
+import { saveBlob, filenameFromResponse } from '@/lib/download'
+import { fmtDate as fmtCalendarDate } from '@/lib/dates'
 
-const dm = (d) => (d ? new Date(d).toLocaleDateString('ru-RU') : '—')
+const dm = (d) => fmtCalendarDate(d)
 
 const LBL = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)' }
 const SECTION = { ...card, padding: '18px 20px', marginBottom: 16 }
@@ -195,14 +197,7 @@ export default function AnnexAssembly() {
     try {
       const r = await api.get(`/contracts/${d.contract.id}/download`,
                               { ...auth(), responseType: 'blob' })
-      const cd = r.headers['content-disposition'] || ''
-      const m = /filename\*?=(?:UTF-8'')?"?([^;"]+)/.exec(cd)
-      const url = URL.createObjectURL(r.data)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = m ? decodeURIComponent(m[1]) : 'Договор'
-      link.click()
-      URL.revokeObjectURL(url)
+      saveBlob(r.data, filenameFromResponse(r) || 'Договор.pdf')
     } catch (e) {
       let msg = 'Не удалось скачать договор'
       try { msg = JSON.parse(await e.response.data.text()).detail || msg } catch (_) { /* не JSON */ }
@@ -215,13 +210,7 @@ export default function AnnexAssembly() {
     setErr('')
     try {
       const r = await api.get(`/annexes/${id}/${kind}`, { ...auth(), responseType: 'blob' })
-      const cd = r.headers['content-disposition'] || ''
-      const m = /filename\*=UTF-8''([^;]+)/.exec(cd)
-      const name = m ? decodeURIComponent(m[1]) : `ДС.${kind}`
-      const url = URL.createObjectURL(r.data)
-      const link = document.createElement('a')
-      link.href = url; link.download = name; link.click()
-      URL.revokeObjectURL(url)
+      saveBlob(r.data, filenameFromResponse(r) || `ДС.${kind}`)
     } catch (e) {
       // Отказ приходит блобом, а не JSON: тело надо прочитать, иначе на экране
       // окажется «[object Blob]» вместо перечня недостающего.
@@ -236,8 +225,8 @@ export default function AnnexAssembly() {
   const miss = d?.missing || []
 
   return (
-    <div style={{ fontFamily: UI, minHeight: '100vh', background: 'var(--bg-page)' }}>
-      <Head><title>{a?.number || 'Приложение к договору'}</title></Head>
+    <div style={{ fontFamily: UI, minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+      <Head><title>{a?.number ? a.number + ' · приложение' : 'Приложение к договору'} | SIMB-AD ERP</title></Head>
       <Navbar />
       <div style={{ maxWidth: 1180, margin: '0 auto', padding: '22px 20px 60px' }}>
         <button onClick={() => router.push('/directory/annexes')}

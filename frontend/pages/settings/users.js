@@ -198,7 +198,7 @@ export default function SettingsUsers() {
 
   return (
     <>
-      <Head><title>Пользователи | Настройки</title></Head>
+      <Head><title>Пользователи · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SettingsTabs active="users" />

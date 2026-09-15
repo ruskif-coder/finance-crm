@@ -400,3 +400,26 @@ def test_countdown_to_start_replaces_days_left_before_the_flight():
     assert p['days_left'] == 30, 'осталось = вся длина флайта — потому и не годится в подпись'
     p2 = progress(1000, 300, date(2026, 9, 1), date(2026, 9, 30), TODAY)
     assert p2['days_to_start'] is None, 'РК уже идёт — обратного отсчёта нет'
+
+
+def test_rejected_creative_is_not_counted_as_agreed():
+    """Отклонённый креатив — НЕ согласованный.
+
+    Список согласованных задавался отрицанием («всё, что не у трафика и не у площадки»),
+    и «отклонён» попадал в согласованные. Пока это была только подпись, разница почти не
+    мешала. С 14.09.2026 по зазору «согласовано минус запущено» красится индикатор
+    площадки: отклонённый держал бы её оранжевой навсегда, потому что запустить его
+    нельзя и снять тревогу нечем.
+    """
+    from app.ad.flight import creative_counts
+    cs = [{'status': 'согласован', 'ms_creative_xxhash': 'AABB'},
+          {'status': 'отклонён', 'ms_creative_xxhash': None}]
+    assert creative_counts(cs) == {'total': 2, 'agreed': 1, 'live': 1}
+
+
+def test_agreed_list_is_enumerated_not_negated():
+    """Новый статус не должен становиться «согласованным» просто потому, что его забыли
+    внести в исключения. Проверяем выдуманным статусом — он обязан не считаться."""
+    from app.ad.flight import creative_counts
+    cs = [{'status': 'придуманный завтра статус', 'ms_creative_xxhash': None}]
+    assert creative_counts(cs) == {'total': 1, 'agreed': 0, 'live': 0}

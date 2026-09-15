@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
 import { resolveLegacy } from '@/lib/nav'
+import { serverDate } from '@/lib/dates'
+import { TONE, toneOf } from '@/lib/tone'
 
 /**
  * Виджет «Уведомления» — правая колонка дашборда (25 % ширины ряда).
@@ -26,13 +28,17 @@ const T = {
   mono: MONO, sans: UI, ease: 'cubic-bezier(0.22,1,0.36,1)',
 }
 
-export const TONE = { danger: T.danger, warning: T.warning, success: T.income, info: T.accent }
+// Словарь тона — общий (`lib/tone.js`). Своя карта здесь стояла на СТАРЫХ словах
+// (danger/warning/success), а ручка с 14.09.2026 отдаёт канон bad/warn/ok — маркер
+// у всех строк молча становился синим, и красная подсветка срочной кнопки не
+// срабатывала больше никогда.
+export { TONE }
 export const TABS = ['Все', 'Сделки', 'Документы', 'Оплаты', 'Брифы']
 
 /** Относительное время: «20 мин» / «1 ч» / «вчера» / «2 дня». */
 export function whenText(iso) {
   if (!iso) return ''
-  const t = new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z').getTime()
+  const t = serverDate(iso).getTime()
   if (!Number.isFinite(t)) return ''
   const min = Math.max(0, Math.floor((Date.now() - t) / 60000))
   if (min < 1) return 'только что'
@@ -77,7 +83,7 @@ function Row({ n, onOpen, onAction }) {
         background: hover ? T.hoverBg : (n.unread ? T.unreadBg : T.card),
         transition: 'background-color 150ms ease', animation: `riseIn .24s ${T.ease} both`,
       }}>
-      <span style={{ width: 8, height: 8, borderRadius: 2, marginTop: 5, flex: '0 0 8px', background: TONE[n.tone] || T.accent }} />
+      <span style={{ width: 8, height: 8, borderRadius: 2, marginTop: 5, flex: '0 0 8px', background: TONE[toneOf(n.tone)].dot }} />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flex: 1 }}>
         <span style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.35, color: T.t1 }}>{n.text}</span>
         {(n.where || n.when) && (
@@ -94,9 +100,9 @@ function Row({ n, onOpen, onAction }) {
             style={{
               alignSelf: 'flex-start', height: 26, marginTop: 3, padding: '0 11px', borderRadius: 8,
               display: 'inline-flex', alignItems: 'center', fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
-              background: n.tone === 'danger' ? T.dangerTint : T.card,
-              border: `1px solid ${n.tone === 'danger' ? T.dangerBorder : T.accentBorder}`,
-              color: n.tone === 'danger' ? T.danger : T.accent,
+              background: toneOf(n.tone) === 'bad' ? T.dangerTint : T.card,
+              border: `1px solid ${toneOf(n.tone) === 'bad' ? T.dangerBorder : T.accentBorder}`,
+              color: toneOf(n.tone) === 'bad' ? T.danger : T.accent,
               transition: 'background-color 150ms ease, color 150ms ease',
             }}>{n.action}</span>
         )}

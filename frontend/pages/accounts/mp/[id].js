@@ -4,7 +4,8 @@ import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import Navbar, { can } from '@/components/Navbar'
 import MediaPlanBuilder from '@/components/mediaplan/MediaPlanBuilder'
-import { downloadName, grp } from '@/lib/salesFormat'
+import { grp } from '@/lib/salesFormat'
+import { downloadMp } from '@/lib/mpDownload'
 import { DownloadOverlay } from '@/components/LogoLoader'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
@@ -218,10 +219,7 @@ export default function MpEditor() {
   const onExportXlsx = async () => {
     if (!savedId) { alert('Сначала сохраните медиаплан'); return }
     setDownloading(true)
-    try {
-      const r = await api.get(`/sales/media-plans/${savedId}/export.xlsx`, { ...auth(), responseType: 'blob' })
-      const url = URL.createObjectURL(r.data); const a = document.createElement('a'); a.href = url; a.download = downloadName(loaded?.title, 'xlsx', 'MP Simb-AD'); a.click(); URL.revokeObjectURL(url)
-    } catch (e) { alert('Ошибка выгрузки') } finally { setDownloading(false) }
+    try { await downloadMp({ id: savedId, title: loaded?.title }, 'xlsx') } finally { setDownloading(false) }
   }
 
   if (isMobile) return (<><Navbar /><NotOnMobile title="Медиаплан" backHref="/accounts/mp" backLabel="К медиапланам" /></>)
@@ -237,7 +235,7 @@ export default function MpEditor() {
 
   return (
     <>
-      <Head><title>Конструктор медиаплана</title></Head>
+      <Head><title>{id === 'new' ? 'Новый медиаплан' : 'МП ' + id} · Аккаунты | SIMB-AD ERP</title></Head>
       {downloading && <DownloadOverlay />}
       <Navbar active="" />
       <MediaPlanBuilder
@@ -256,10 +254,7 @@ export default function MpEditor() {
         onPreviewPdf={async () => {
           if (!savedId) { alert('Сначала сохраните медиаплан'); return }
           setDownloading(true)
-          try {
-            const r = await api.get(`/sales/media-plans/${savedId}/pdf`, { ...auth(), responseType: 'blob' })
-            const url = URL.createObjectURL(r.data); const a = document.createElement('a'); a.href = url; a.download = downloadName(loaded?.title, 'pdf', 'MP Simb-AD'); a.click(); URL.revokeObjectURL(url)
-          } catch (e) { alert('Ошибка генерации PDF') } finally { setDownloading(false) }
+          try { await downloadMp({ id: savedId, title: loaded?.title }, 'pdf') } finally { setDownloading(false) }
         }}
         onLinkDeal={openLink} onCreateDeal={onCreateDeal}
         ownCompany={ownCompany || undefined}
@@ -308,7 +303,7 @@ export default function MpEditor() {
                       <td style={{ ...td, fontFamily: 'monospace', textAlign: 'right' }}>{money(d.amount)}</td>
                       <td style={td}>{d.our_stage || '—'}</td>
                       <td style={td}>{d.has_mp
-                        ? <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--success)', background: 'var(--success-tint, rgba(16,185,129,.12))', borderRadius: 6, padding: '2px 7px' }}>есть</span>
+                        ? <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--income-fg)', background: 'var(--income-tint)', borderRadius: 6, padding: '2px 7px' }}>есть</span>
                         : <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>нет</span>}</td>
                       <td style={{ ...td, color: 'var(--accent)', fontWeight: 700 }}>привязать →</td>
                     </tr>

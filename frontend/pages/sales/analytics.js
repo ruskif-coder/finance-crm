@@ -5,6 +5,7 @@ import Navbar from '@/components/Navbar'
 import api from '@/lib/api'
 import { mln, mlnAuto, grp, pct, niceMax } from '@/lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { fmtTime } from '@/lib/dates'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -88,7 +89,7 @@ export default function Analytics2() {
   const byLayer = data?.by_layer || []
   const layerAmt = (name) => (byLayer.find(b => b.name === name)?.amount) || 0
   const selBox = { border: `1px solid ${C.border}`, background: C.card, borderRadius: 12, padding: '9px 14px', fontFamily: UI, fontSize: 13, fontWeight: 600, color: C.text }
-  const syncTime = data?.last_sync_at ? new Date(data.last_sync_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : null
+  const syncTime = data?.last_sync_at ? fmtTime(data.last_sync_at, '') : null
   const periodLabel = (f.date_from || f.date_to) ? `${f.date_from || '…'} — ${f.date_to || '…'}` : '12 месяцев'
 
   // ── данные ──
@@ -125,7 +126,7 @@ export default function Analytics2() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Head>
-        <title>Аналитика продаж</title>
+        <title>Аналитика · Продажи | SIMB-AD ERP</title>
       </Head>
       <Navbar active="sales" />
       <style>{`

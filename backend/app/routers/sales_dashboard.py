@@ -15,7 +15,7 @@
    где операции без article.group молча исчезают из отчёта.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from sqlalchemy import func, or_, and_, case
+from sqlalchemy import func, or_, and_, case, text
 from sqlalchemy.orm import Session, aliased
 from typing import Optional, List, Annotated
 from pydantic import BaseModel
@@ -34,8 +34,10 @@ from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
                               SalesDealFieldOverride, SalesAgency,
                               SalesStage, SalesStagePhase, SalesPipeline)
 from app.sales.stages import STAGE_CATALOG
+from app.sales.deal_label import deal_label
 from app.sales.catalog import Catalog, stage_public
 from app.sales.models import SalesDealStageHistory
+from app.sales import periods
 from app.sales import stage_move
 from app.sales import stage_scope
 from app.sales.row_context import load_row_context
@@ -281,12 +283,23 @@ def _base_query(db: Session, date_from, date_to, pipeline, sales_rep_id,
 
     start, end = _month_bounds(date_from, False), _month_bounds(date_to, True)
     if start or end:
-        # Пересечение периода размещения с запрошенным окном.
-        # period_to = NULL означает календарный месяц period_from.
-        eff_to = func.coalesce(SalesDeal.period_to, SalesDeal.period_from)
+        # Отбор идёт по ФИНАНСОВОМУ ПЕРИОДУ сделки — месяцу, который стоит в её «Периоде»
+        # и виден в одноимённом столбце. Правило владельца 15.09.2026.
+        #
+        # Раньше считалось пересечение ДАТ РАЗМЕЩЕНИЯ с окном, и выборка отвечала на
+        # другой вопрос: «какие кампании в эти месяцы крутились». Оттуда и «работает
+        # криво»: в марте—мае показывались сделки с периодом «2026-01» (размещение
+        # длинное, задевает март), а сделка с периодом «2026-07» пропадала из июля,
+        # если у неё испорчен конец — а таких 32, вплоть до года разницы со стартом.
+        # Финансовый период в дате окончания не нуждается вовсе, поэтому испортить его
+        # больше нечем.
+        #
+        # Период материализован как первое число месяца в `period_from` (см.
+        # `_period_bounds` и правку «Периода» в реестре), поэтому окно — это просто
+        # границы месяцев.
         conds = []
         if start:
-            conds.append(eff_to >= start)
+            conds.append(SalesDeal.period_from >= start)
         if end:
             conds.append(SalesDeal.period_from < end)
         q = q.filter(and_(*conds))
@@ -434,7 +447,7 @@ def dashboard(
         "by_advertiser": _group(rows, lambda d, layer: adv_names.get(d.advertiser_id), excluded_adv, mp)[:50],
         "by_product": _group(rows, lambda d, layer: d.product, excluded_adv, mp)[:50],
         "by_month": sorted(
-            _group(rows, lambda d, layer: d.period_from.strftime("%Y-%m") if d.period_from else None, excluded_adv, mp),
+            _group(rows, lambda d, layer: periods.month_key(d.period_from), excluded_adv, mp),
             key=lambda b: b["name"],
         ),
         # Витрина всегда сообщает возраст данных: молча устаревшие цифры —
@@ -676,7 +689,13 @@ def deals_registry(
         "title": SalesDeal.title,
         "pipeline": SalesDeal.pipeline,
         "product": SalesDeal.product,
-        "period": SalesDeal.period_from,
+        # «Период» — ФИНАНСОВЫЙ месяц сделки, и сортируется он по месяцу, а не по дате
+        # старта (владелец 15.09.2026). Разница видна внутри одного месяца: по датам
+        # сделки, начатые 3-го и 25-го, расходятся, хотя период у них ОДИН и в столбце
+        # написано одно и то же. Внутри месяца дальше работает общая вторичная
+        # сортировка — по рекламодателю. Даты размещения сортируются отдельными
+        # колонками «Старт РК» / «Конец РК» — там дата и есть предмет.
+        "period": func.date_trunc("month", SalesDeal.period_from),
         "bitrix_stage": SalesDeal.bitrix_stage,
         "money_layer": SalesStage.money_layer,
         "amount": SalesDeal.amount,
@@ -846,7 +865,7 @@ def deals_registry(
             "product": d.product,
             # docs и product_color дописываются ниже из row_ctx (общий контекст строки).
             "probability_color": d.probability_color,
-            "period": d.period_from.strftime("%Y-%m") if d.period_from else None,
+            "period": periods.month_key(d.period_from),
             "bitrix_stage": d.bitrix_stage,
             "money_layer": layer or NO_GROUP,
             "stage_key": stage_key,
@@ -948,8 +967,13 @@ EDITABLE_OURS_INT = ("traffic_manager_id",)
 EDITABLE_OURS_STR = ()
 
 
-def _can_unset_self_promo(user) -> bool:
-    """Снять статус «самореклама» может админ и мастер АККАУНТОВ — не мастер вообще.
+def _is_account_master(user) -> bool:
+    """Админ или мастер АККАУНТОВ — не мастер вообще.
+
+    Понятие заведено под снятие статуса «самореклама» (26.08.2026) и с 14.09.2026
+    держит второе правило того же рода: снятие доп. параметра РК «нужен пиксель».
+    Обе отмены делает один и тот же человек, и два предиката на одно понятие разошлись
+    бы при первой же правке.
 
     Правило владельца 26.08.2026, и оно уже раз было понято шире. `Role.is_master` —
     один флаг на две рабочие группы: мастер стоит и у «Мастер Сейлз», и у «Мастер
@@ -1040,6 +1064,7 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
 
     # period ГГГГ-ММ -> period_from = первое число месяца
     updates = {}
+    stale_end_ids: list = []
     if "period" in changes:
         pv = (changes.pop("period") or "").strip()
         if pv:
@@ -1047,6 +1072,15 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
                 raise HTTPException(status_code=400, detail="Период должен быть ГГГГ-ММ")
             updates[SalesDeal.period_from] = date(int(pv[:4]), int(pv[5:7]), 1)
             changes["period_from"] = updates[SalesDeal.period_from]
+            # Те из выбранных, у кого прежний конец остаётся ПОЗАДИ нового старта. Их
+            # конец снимаем — то же правило, что у поштучной правки (patch_deal), и по
+            # той же причине: конец РК в интерфейсе не редактируется, а протухшая дата
+            # прячет сделку от отбора по периоду. Список считаем ДО обновления: после
+            # него прежнего значения уже не спросить.
+            stale_end_ids = [
+                d.id for d in db.query(SalesDeal)
+                .filter(SalesDeal.id.in_(payload.deal_ids)).all()
+                if periods.end_is_stale(updates[SalesDeal.period_from], d.period_to)]
     for f in ("advertiser_id", "agency_id", "sales_rep_id", "account_manager_id",
               "traffic_manager_id", "product", "bitrix_stage"):
         if f in changes:
@@ -1115,10 +1149,26 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
     if updates:
         db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).update(
             updates, synchronize_session=False)
+    if stale_end_ids:
+        db.query(SalesDeal).filter(SalesDeal.id.in_(stale_end_ids)).update(
+            {SalesDeal.period_to: None}, synchronize_session=False)
 
     # помечаем как ручные правки (защита от синхронизации)
     existing = {(o.deal_id, o.field_name): o for o in db.query(SalesDealFieldOverride)
                 .filter(SalesDealFieldOverride.deal_id.in_(payload.deal_ids)).all()}
+    for did in stale_end_ids:
+        # Снятый конец — тоже ручная правка: без пометки ближайшая сверка вернула бы
+        # прошлогоднюю дату из Битрикса, и сделка снова выпала бы из отбора.
+        row = existing.get((did, "period_to"))
+        if row is None:
+            row = SalesDealFieldOverride(deal_id=did, field_name="period_to")
+            db.add(row)
+            existing[(did, "period_to")] = row
+        row.value_int = None
+        row.value_text = None
+        row.set_by = current_user.id if current_user else None
+        row.set_at = datetime.utcnow()
+        row.pushed_at = None
     for did in payload.deal_ids:
         for field, value in changes.items():
             row = existing.get((did, field))
@@ -1551,6 +1601,193 @@ def save_deal_traffic_brief(deal_id: int, payload: TrafficBriefIn, db: Session =
     return {"traffic_brief": deal.traffic_brief}
 
 
+class CampaignExtraIn(BaseModel):
+    weborama_pixel: bool
+    # own — заводим вставку и забираем пиксель сами; external — тег принесли готовым.
+    mode: Optional[str] = None
+    tag: Optional[str] = None
+    insertion: Optional[str] = None
+
+
+@router.put("/deals/{deal_id}/campaign-extra")
+def save_deal_campaign_extra(deal_id: int, payload: CampaignExtraIn,
+                             db: Session = Depends(get_db),
+                             current_user: User = Depends(require_permission("sales_registry", "edit"))):
+    """Доп. параметры РК. Пока один: нужен ли пиксель Weborama (владелец 14.09.2026).
+
+    ВКЛЮЧЕНИЕ НЕОБРАТИМО ДЛЯ ОБЫЧНОГО АККАУНТА. Причина не в бюрократии: включение
+    поднимает требование пикселя в выгрузке в DSP и рождает задачу трафику. Снятая
+    задним числом галочка означала бы, что трафик получил указание, сделал работу во
+    внешней системе — и следа о том, зачем, не осталось. Снять может мастер аккаунта
+    или админ — тем же предикатом `_is_account_master`, что снимает «саморекламу»:
+    отмену в зоне аккаунтов делает один и тот же человек, и второе понятие про то же
+    самое разошлось бы с первым при первой правке.
+
+    Повторное включение уже включённого — не ошибка и не событие: ничего не меняется,
+    уведомление не рождается, в журнал не пишем. Иначе двойное нажатие кнопки в
+    интерфейсе выглядело бы как две разные задачи трафику.
+    """
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+
+    was = bool(deal.weborama_pixel)
+    want = bool(payload.weborama_pixel)
+    if was and not want and not _is_account_master(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Снять требование пикселя может только мастер аккаунта или админ: "
+                   "трафик уже получил задачу")
+
+    mode = (payload.mode or deal.weborama_pixel_mode or "own").strip().lower()
+    if mode not in ("own", "external"):
+        raise HTTPException(status_code=400, detail="Способ бывает own или external")
+
+    tag = None
+    if want and mode == "external":
+        from app.weborama.naming import check_external_pixel
+        try:
+            tag = check_external_pixel(payload.tag or deal.weborama_pixel_tag)
+        except ValueError as e:
+            # Причина — текстом наружу: человек вставляет тег из чужой таблицы, и
+            # «неверный формат» заставит его перебирать столбцы наугад.
+            raise HTTPException(status_code=400, detail=str(e))
+    ins = ((payload.insertion or "").strip() or None) if payload.insertion is not None         else deal.weborama_ext_insertion
+
+    # Проверка «ничего не изменилось» идёт ПОСЛЕ разбора тела, а не до него. Сперва было
+    # наоборот, и замер 14.09.2026 показал, чем это кончается: у сделки с уже включённым
+    # признаком ручка выходила на первой строке — то есть заведомо кривой тег принимался
+    # молча, а исправить опечатку в уже загруженном теге было нечем вовсе.
+    setup_changed = want and (mode != (deal.weborama_pixel_mode or "own")
+                              or tag != deal.weborama_pixel_tag
+                              or ins != deal.weborama_ext_insertion)
+    if was == want and not setup_changed:
+        return _campaign_extra_out(deal)
+
+    deal.weborama_pixel = want
+    if want:
+        if was != want:
+            deal.weborama_pixel_at = datetime.utcnow()
+        deal.weborama_pixel_mode = mode
+        # Тег и вставка хранятся только у внешнего. Переключение external → own их
+        # ЧИСТИТ: оставленный тег однажды вшился бы в креатив по кампании, которая давно
+        # считается своим пикселем, и расхождение искали бы в цифрах, а не в настройке.
+        deal.weborama_pixel_tag = tag if mode == "external" else None
+        deal.weborama_ext_insertion = ins if mode == "external" else None
+    db.commit()
+
+    if want and was != want:
+        # Событие трафику — «нужен пиксель». Рождается ТОЛЬКО на включении: это переход,
+        # а не состояние, и повтор при каждом сохранении карточки превратил бы его в шум.
+        #
+        # ОТДЕЛЬНОЙ транзакцией, ПОСЛЕ сохранения параметра. Уведомление — следствие, а
+        # не часть решения: сорвавшаяся рассылка не должна означать, что галочка не
+        # поставилась. Человек в этом случае видит успех, а молчание разбирается по логу.
+        try:
+            from app.notify.bus import emit
+            emit(db, "weborama_pixel_needed", entity_type="deal", entity_id=deal.id,
+                 title=f"{deal_label(deal)}: нужен пиксель Weborama",
+                 link="/traffic/dashboard", actor=current_user, ctx={"deal": deal})
+            db.commit()
+        except Exception as e:                      # noqa: BLE001
+            db.rollback()
+            print(f"weborama_pixel_needed: уведомление не ушло — {type(e).__name__}: {e}")
+
+    if not want:
+        what = "требование пикселя снято"
+    elif was != want:
+        what = ("пиксель Weborama требуется, "
+                + ("внешний тег" if mode == "external" else "получаем сами"))
+    else:
+        what = "правка настройки пикселя: " + ("внешний тег" if mode == "external"
+                                               else "получаем сами")
+    log_action(db, current_user, "deal_weborama_pixel", "sales_deal", deal.id, what)
+    return _campaign_extra_out(deal)
+
+
+def _campaign_extra_out(deal) -> dict:
+    return {"weborama_pixel": bool(deal.weborama_pixel),
+            "weborama_pixel_at": deal.weborama_pixel_at.isoformat()
+            if deal.weborama_pixel_at else None,
+            "weborama_pixel_mode": deal.weborama_pixel_mode or "own",
+            "weborama_pixel_tag": deal.weborama_pixel_tag,
+            "weborama_ext_insertion": deal.weborama_ext_insertion}
+
+
+class VerifierShowsIn(BaseModel):
+    shows: Optional[int] = None
+    period_to: Optional[date] = None
+
+
+@router.put("/deals/{deal_id}/verifier-shows")
+def save_verifier_shows(deal_id: str, payload: VerifierShowsIn,
+                        db: Session = Depends(get_db),
+                        current_user: User = Depends(require_permission("sales_registry", "edit"))):
+    """Показы по данным Weborama, введённые руками. Только для ВНЕШНЕГО пикселя.
+
+    Зачем ручной ввод вообще. У внешнего пикселя вставка одна на всю сеть, заводил её
+    клиент, и в нашем реестре соответствий её нет — тянуть статистику неоткуда. Их отчёт
+    приходит файлом: показы за период, одним числом, без кликов («ImpOnly»). Решение
+    владельца 14.09.2026: вводим руками на сверке.
+
+    ИСТОЧНИК ОТДЕЛЬНЫЙ (`weborama_manual`), хотя складывается он так же, как снятый через
+    API. Разница не в арифметике, а в доверии: одно измерено, другое перепечатано
+    человеком с чужого файла, и на экране они выглядят одинаково. Различить их потом
+    можно будет только по источнику.
+
+    В ФАКТ не входит никогда — как и любой верификатор (`app/ad/stat_sources.py`).
+
+    Одна строка на кампанию, без площадки: разбивки в их отчёте нет, и раскладывать одно
+    число по девятнадцати площадкам значило бы выдумать данные. Дата — конец периода, за
+    который отчитались; она не рисует ни один график, потому что верификатор в графики не
+    идёт, и нужна только чтобы строка была одна на период.
+
+    Пустое значение СТИРАЕТ строку: ошиблись при вводе — надо иметь чем убрать, иначе
+    неверное число останется в сверке навсегда.
+    """
+    from app.ad.models import AdCampaign
+
+    deal = _deal_by_ref(db, deal_id)
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+    if not (deal.weborama_pixel and (deal.weborama_pixel_mode or "own") == "external"):
+        raise HTTPException(
+            status_code=400,
+            detail="Ручной ввод — только для внешнего пикселя: по своему цифры "
+                   "снимаются автоматически")
+    c = db.query(AdCampaign).filter(AdCampaign.deal_id == deal.id).first()
+    if not c:
+        raise HTTPException(status_code=400, detail="РК ещё не собрана")
+
+    when = payload.period_to or c.date_end or date.today()
+    if payload.shows is None:
+        db.execute(text("DELETE FROM ad_campaign_stat WHERE campaign_id = :c "
+                        "AND placement_id IS NULL AND source = 'weborama_manual'"),
+                   {"c": c.id})
+        db.commit()
+        log_action(db, current_user, "deal_verifier_shows", "sales_deal", deal.id,
+                   "ручные показы Weborama удалены")
+        return {"shows": None, "period_to": None}
+    if payload.shows < 0:
+        raise HTTPException(status_code=400, detail="Показы не бывают отрицательными")
+
+    # Одна строка на кампанию: прежнюю убираем целиком, а не апсертим по дате — иначе
+    # исправленный период оставил бы рядом старое число, и в сверку пошла бы их сумма.
+    db.execute(text("DELETE FROM ad_campaign_stat WHERE campaign_id = :c "
+                    "AND placement_id IS NULL AND source = 'weborama_manual'"),
+               {"c": c.id})
+    db.execute(text(
+        "INSERT INTO ad_campaign_stat (campaign_id, placement_id, date, shows, clicks,"
+        " source) VALUES (:c, NULL, :d, :s, 0, 'weborama_manual')"),
+        {"c": c.id, "d": when, "s": int(payload.shows)})
+    db.commit()
+    log_action(db, current_user, "deal_verifier_shows", "sales_deal", deal.id,
+               f"ручные показы Weborama: {payload.shows} на {when}")
+    return {"shows": int(payload.shows), "period_to": when.isoformat()}
+
+
 @router.get("/deals/{deal_id}/campaign")
 def deal_campaign(deal_id: str, db: Session = Depends(get_db),
                   current_user: User = Depends(require_permission("sales_registry", "view"))):
@@ -1570,6 +1807,7 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
     from app.ad import build as ad_build
     from app.ad.flight import (PLACEMENT_RUNNING, best_chain_status, distribute,
                                effective_campaign_status, flight_of, progress)
+    from app.ad.stat_sources import mismatch_pct
     from app.ad.models import AdCampaign
     from app.routers import traffic_dashboard as td
 
@@ -1600,6 +1838,40 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
     by_day = td._stat_by_day(db, [c.id]).get(c.id, {})
     all_clicks = sum(v[1] or 0 for v in by_day.values())
 
+    # Верификатор — ОТДЕЛЬНОЙ величиной, рядом с фактом и никогда внутри него
+    # (решение владельца 10.09.2026). Расхождение считает общая функция, а не экран:
+    # тот же вопрос задаёт дашборд трафика, и два счёта разошлись бы знаком или
+    # знаменателем — ошибка, которую видно только при сверке с площадкой.
+    # Как устроен пиксель — экрану нужно, чтобы отличить «Weborama не измеряла» от
+    # «внешний тег: цифры вносятся руками». Для человека это разные состояния: первое
+    # ждёт данных само, второе ждёт ЕГО.
+    px = ad_build.pixel_setup(db, deal.id)
+    manual = db.execute(text(
+        "SELECT shows, date FROM ad_campaign_stat WHERE campaign_id = :c "
+        "AND placement_id IS NULL AND source = 'weborama_manual'"), {"c": c.id}).first()
+
+    ver = td._verifier(db, [c.id]).get(c.id) or {}
+    ver_by_pl = ver.get("by_placement", {})
+    ver_shows = ver.get("shows")
+
+    # СРАВНИВАЕМ СОПОСТАВИМОЕ. Верификатор покрывает не все площадки: соответствие
+    # «их вставка → наша площадка» появляется только у тех, что заводили мы, и на
+    # 14.09.2026 таких нет вовсе. Если делить их сумму на НАШ факт по всей РК, число
+    # получается арифметически верным и по смыслу ложным: замер 14.09 дал «расхождение
+    # 77 %» там, где по единственной покрытой площадке оно было 10 %, а остальные
+    # восемнадцать просто не измерялись. Такое число на карточке читается как «половина
+    # показов не засчитана» и ведёт разбираться не туда.
+    #
+    # Поэтому итог считается по ПОКРЫТЫМ площадкам, а рядом отдаётся охват — сколько из
+    # скольких. Строки верификатора без площадки (замер по РК целиком) сопоставлять
+    # не с чем по частям, и тогда сравнение идёт по всей РК.
+    covered = [r for r in rows if r.get("id") in ver_by_pl]
+    if covered:
+        own_cmp = sum(r.get("fact_shows") or 0 for r in covered)
+        ver_cmp = sum(ver_by_pl[r["id"]] for r in covered)
+    else:
+        own_cmp, ver_cmp = fact_shows, ver_shows
+
     return {
         "has": True,
         "campaign_id": c.id,
@@ -1618,10 +1890,28 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
         "placements_on": sum(1 for p_ in pls if p_["status"] in PLACEMENT_RUNNING),
         # Цели приёмки — из ТОГО ЖЕ медиаплана, что дал план показов.
         "goals": ad_build.deal_goals(db, deal.id),
+        # Факт верификатора и расхождение с нашим счётчиком. None означает «сравнивать
+        # нечем» — реестр соответствий «их вставка → наша площадка» может быть пуст, и
+        # тогда честный ответ прочерк, а не ноль: «сошлось» и «не с чем сверять» —
+        # разные утверждения, и ноль подменил бы второе первым.
+        "verifier_shows": ver_shows,
+        "mismatch_pct": mismatch_pct(own_cmp, ver_cmp),
+        # Охват верификатора: без него процент выглядит приговором всей РК, хотя
+        # посчитан по части площадок. Экран подписывает «по N из M».
+        "verifier_placements": len(covered),
+        "pixel_mode": px["mode"] if px["needed"] else None,
+        "verifier_manual": ({"shows": manual[0], "period_to": manual[1].isoformat()}
+                            if manual else None),
         # Строки площадок — для отчёта в модалке: доля, план, факт, недокрут.
-        "rows": [{k: r.get(k) for k in ("id", "domain", "code", "status", "weight",
-                                        "share", "plan_show", "fact_shows", "under",
-                                        "done_pct")}
+        # Строки площадок — для расхлопа: доля, план, факт, недокрут и та же пара
+        # «верификатор / расхождение», что в шапке. Считается тем же выражением —
+        # иначе итог и расхлоп однажды разойдутся, и правым окажется неизвестно кто.
+        "rows": [{**{k: r.get(k) for k in ("id", "domain", "code", "status", "weight",
+                                           "share", "plan_show", "fact_shows", "under",
+                                           "done_pct")},
+                  "verifier_shows": ver_by_pl.get(r.get("id")),
+                  "mismatch_pct": mismatch_pct(r.get("fact_shows"),
+                                               ver_by_pl.get(r.get("id")))}
                  for r in rows],
         **fc,
     }
@@ -2187,18 +2477,22 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
                                     "updated_at": mp.updated_at}
     cat = Catalog(db)
     _mp_amt = mp_amounts_by_deal(db, [deal.id])
+    _card_ctx = load_row_context(db, [deal.id])
     return {
         "id": deal.id, "code": deal.code, "bitrix_id": deal.bitrix_id, "title": deal.title,
         "advertiser": (adv.short_name or adv.name) if adv else None, "advertiser_id": deal.advertiser_id,
         "brand": brand.name if brand else None,
         "agency": (agc.short_name or agc.name) if agc else None, "agency_id": deal.agency_id,
         "product": deal.product,
-        # Поверхность услуги (web/app) — тем же контекстом, что в реестре и очереди:
-        # второе выражение здесь разъехалось бы с ними при первой же правке правила.
-        "inventory": load_row_context(db, [deal.id]).inventory(deal.id, deal.product),
+        # Поверхность услуги (web/app) и гео — тем же контекстом, что в реестре и
+        # очереди: второе выражение здесь разъехалось бы с ними при первой же правке.
+        # Гео у сделки своего нет, оно читается из шапки её медиаплана; до 15.09.2026
+        # карточка рисовала на этом месте зашитый прочерк.
+        "inventory": _card_ctx.inventory(deal.id, deal.product),
+        "geo": _card_ctx.geo(deal.id),
         "payer": payer, "payer_counterparty_id": deal.payer_counterparty_id,
         "counterparty_id": deal.payer_counterparty_id or deal.counterparty_id,
-        "period": deal.period_from.strftime("%Y-%m") if deal.period_from else None,
+        "period": periods.month_key(deal.period_from),
         "period_from": deal.period_from, "period_to": deal.period_to,
         "bitrix_stage": deal.bitrix_stage,
         "sales_rep": _short_fio(rep.name) if rep else None,
@@ -2211,12 +2505,21 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         # это не ленивый бриф из Битрикса, а наше поле, и второй заход за строчкой
         # текста добавил бы экрану состояние загрузки на пустом месте.
         "traffic_brief": deal.traffic_brief or "",
+        # Доп. параметры РК (миграция 2026-09-14). Пока один.
+        "weborama_pixel": bool(deal.weborama_pixel),
+        "weborama_pixel_at": deal.weborama_pixel_at.isoformat()
+        if deal.weborama_pixel_at else None,
+        "weborama_pixel_mode": deal.weborama_pixel_mode or "own",
+        "weborama_pixel_tag": deal.weborama_pixel_tag,
+        "weborama_ext_insertion": deal.weborama_ext_insertion,
+        # Замок рисуется сразу, а не узнаётся из 403 после клика — как у саморекламы.
+        "can_unset_weborama_pixel": _is_account_master(current_user),
         # Признак саморекламы: меняет правила маркировки в ОРД, поэтому виден на карточке
         # рядом со стадией, а не спрятан в форме правки.
         "is_self_promo": bool(deal.is_self_promo),
         # Снять признак может только мастер аккаунт: отдаём это карточке, чтобы она
         # рисовала замок сразу, а не узнавала о запрете из 403 после клика.
-        "can_unset_self_promo": _can_unset_self_promo(current_user),
+        "can_unset_self_promo": _is_account_master(current_user),
         # Суммы из нашего МП, если он привязан и посчитан (иначе — из сделки).
         "amount": eff_net(deal, _mp_amt),
         "amount_with_vat": (eff_gross(deal, _mp_amt) if deal.id in _mp_amt
@@ -2338,7 +2641,7 @@ def _notify_move(db, deal, prev, target, comment, actor):
                          target.is_terminal, target.stage_key)
     if key is None:
         return
-    where = deal.title or f"#{deal.code or deal.id}"
+    where = deal_label(deal)
     # Комментарий к переходу обязателен на входе, и для срыва он и есть содержание
     # уведомления: «сделка сорвалась» без причины не говорит ничего.
     emit(db, key, title=f"{MOVE_EVENT_TITLES[key]}: {where}",
@@ -2542,6 +2845,16 @@ def patch_deal(
         if _brand_orphaned(cur_brand.advertiser_id if cur_brand else None, changes["advertiser_id"]):
             changes["brand_id"] = None
 
+    # Старт уехал за прежний конец — конец протух. В реестре правится ТОЛЬКО месяц
+    # старта (конец РК нигде не редактируется), поэтому отказать значило бы запереть
+    # человека: починить конец ему нечем. Снимаем его: NULL по контракту модели читается
+    # как «календарный месяц старта» — это утверждение, а не потеря данных, и оно
+    # заведомо вернее прошлогодней даты. Настоящий конец приедет со сверкой из Битрикса,
+    # где кампанию и переносили (теперь она его тянет — см. deal_sync.F_PERIOD_TO).
+    if ("period_from" in changes and "period_to" not in changes
+            and periods.end_is_stale(changes["period_from"], deal.period_to)):
+        changes["period_to"] = None
+
     # own-роль не может переназначить сделку на чужого продавца/аккаунт
     # (симметрично create_deal). Сделку в своей зоне видимости уже подтвердил
     # _assert_deal_in_scope выше; здесь ограничиваем НОВОГО ответственного.
@@ -2596,7 +2909,7 @@ def patch_deal(
                 # есть последствия уходят наружу, и «передумал» стоит дороже, чем
                 # «поставил». Правило и его формулировка те же, что у движения
                 # сделки назад (см. move_deal ниже) — второго правила не заводим.
-                if not new_val and not _can_unset_self_promo(current_user):
+                if not new_val and not _is_account_master(current_user):
                     raise HTTPException(
                         status_code=403,
                         detail="Снять статус «самореклама» может только мастер аккаунт или админ")

@@ -91,7 +91,7 @@ def contacts_of(db: Session, publisher_ids: List[int]) -> List[dict]:
         return []
     rows = db.execute(text(
         "SELECT c.id, c.publisher_id, c.name, c.email, c.role, c.telegram, "
-        "       c.phone, c.note, c.is_primary, "
+        "       c.phone, c.note, c.is_primary, c.notify, "
         "       p.name AS publisher_name, "
         "       a.id AS account_id, a.email AS login_email, "
         "       a.is_active, a.can_approve, a.last_login_at, "
@@ -107,7 +107,7 @@ def contacts_of(db: Session, publisher_ids: List[int]) -> List[dict]:
              "phone": r.phone, "note": r.note,
              # Главное контактное лицо площадки — зелёный квадрат в её карточке. Здесь
              # тот же признак: это одно и то же лицо, а не две пометки.
-             "is_primary": bool(r.is_primary),
+             "is_primary": bool(r.is_primary), "notify": bool(r.notify),
              "account_id": r.account_id,
              # Почта входа отдельно от почты контакта: учётка копирует адрес при
              # заведении, дальше они расходятся. Экран обязан показать расхождение, а
@@ -136,7 +136,7 @@ def service_accounts_as_contacts(db: Session, cabinet_id: int) -> List[dict]:
              # существует. Ставим пусто, а не выдумываем — колонка должна показывать
              # отсутствие, а не подставлять правдоподобное.
              "name": r.name, "email": r.email, "role": None, "telegram": None,
-             "phone": None, "note": None, "is_primary": False,
+             "phone": None, "note": None, "is_primary": False, "notify": False,
              "account_id": r.id, "login_email": r.email, "has_account": True,
              "level": 'все' if r.can_approve else 'просмотр',
              "is_active": bool(r.is_active),

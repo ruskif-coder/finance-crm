@@ -29,6 +29,7 @@ log = logging.getLogger("finance.mail")
 
 
 def send_and_log(db: Session, *, to: str, subject: str, body: str, kind: str,
+                 html: Optional[str] = None, send_after=None,
                  to_name: Optional[str] = None, reply_to: Optional[str] = None,
                  entity_type: Optional[str] = None, entity_id: Optional[int] = None,
                  user_id: Optional[int] = None,
@@ -41,9 +42,15 @@ def send_and_log(db: Session, *, to: str, subject: str, body: str, kind: str,
     row = MailLog(to_email=(to or "").strip()[:320], to_name=(to_name or None),
                   reply_to=(reply_to or None), subject=subject, body=body, kind=kind,
                   entity_type=entity_type, entity_id=entity_id, user_id=user_id,
-                  status="queued", attempts=0)
+                  send_after=send_after, html=html, status="queued", attempts=0)
     db.add(row)
     db.commit()          # СНАЧАЛА след, потом отправка — см. шапку модуля
+
+    if send_after is not None:
+        # Тихие часы: строка остаётся `queued` со своим часом, досылка заберёт её сама.
+        # Возвращаем её как есть — вызывающий узнаёт из статуса, что письмо не ушло
+        # СЕЙЧАС, и не выдаёт отложенное за отправленное.
+        return row
 
     if not mail.configured():
         # Не ошибка, а состояние: уйдёт, когда почту настроят. Попытку не считаем —
@@ -52,8 +59,11 @@ def send_and_log(db: Session, *, to: str, subject: str, body: str, kind: str,
 
     row.attempts += 1
     try:
+        # Разметка вторым куском: в журнал пишем ТЕКСТ. Он и есть содержание письма,
+        # а хранить рядом ещё и разметку значит удвоить таблицу ради того, что никто
+        # не читает глазами.
         mid = mail.send(to=row.to_email, subject=subject, body=body, to_name=to_name,
-                        reply_to=reply_to, transport=transport)
+                        reply_to=reply_to, html=html, transport=transport)
         row.status, row.message_id, row.sent_at = "sent", mid, datetime.utcnow()
         row.error = None
     except mail.MailNotConfigured:

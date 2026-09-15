@@ -3,7 +3,11 @@
 
 Правило владельца 31.08.2026: при наличии нашего МП с посчитанной суммой реестр, дашборд
 и карточка показывают сумму ИЗ него, а не `deal.amount` (значение Битрикса). Прибор держит
-и обратный край: пустой/непосчитанный МП (amount_net NULL или 0) сделку НЕ обнуляет.
+и обратный край: заведённая и брошенная болванка БЕЗ СТРОК размещения сделку НЕ обнуляет.
+
+Признак «план посчитан» — строки, а не ненулевой итог (правка 15.09.2026 по жалобе на
+сделку MHNZUT): услуга со стопроцентной скидкой даёт посчитанный план на нулевую сумму,
+и по итогу его не отличить от пустого.
 """
 from types import SimpleNamespace
 
@@ -12,7 +16,7 @@ import pytest
 from app.database import SessionLocal
 from app.notify import models as _n  # noqa: F401
 from app.ord import models as _o     # noqa: F401
-from app.sales.models import SalesDeal, SalesMediaPlan
+from app.sales.models import SalesDeal, SalesMediaPlan, SalesMediaPlanRow
 from app.sales.mp_amounts import eff_gross, eff_net, mp_amounts_by_deal
 
 NO = 990000  # номера-версии МП теста — заведомо выше рабочих group_id теста
@@ -62,10 +66,15 @@ def env():
     db.close()
 
 
-def _mp(env, group, version, net, gross, deal_id):
+def _mp(env, group, version, net, gross, deal_id, rows=1):
+    """Медиаплан теста. rows=0 — болванка без размещений, то есть «план не заводили»."""
     p = SalesMediaPlan(title='[тест] сумма', group_id=group, version=version,
                        amount_net=net, amount_gross=gross, deal_id=deal_id)
     env.db.add(p)
+    env.db.commit()
+    for i in range(rows):
+        env.db.add(SalesMediaPlanRow(plan_id=p.id, sort_order=i, position='[тест]',
+                                     model='CPM', volume=1000, unit_price=0))
     env.db.commit()
     return p
 
@@ -84,11 +93,26 @@ def test_latest_version_wins(env):
     assert got[env.deal.id] == (700000.0, 854000.0)
 
 
-def test_empty_mp_does_not_zero_the_deal(env):
-    _mp(env, NO, 1, 0, 0, env.deal.id)             # пустой/непосчитанный МП
+def test_a_plan_without_rows_does_not_zero_the_deal(env):
+    """Болванка: план завели, размещений не внесли. Сумма остаётся битриксовой."""
+    _mp(env, NO, 1, 0, 0, env.deal.id, rows=0)
     got = mp_amounts_by_deal(env.db, [env.deal.id])
     assert env.deal.id not in got                  # в словаре его нет
     assert eff_net(env.deal, got) == float(env.deal.amount)   # сумма сделки, не 0
+
+
+def test_a_calculated_plan_worth_zero_wins_over_bitrix(env):
+    """Стопроцентная скидка: план посчитан, итог ноль — и сделка стоит ноль.
+
+    Сделка MHNZUT (жалоба владельца 15.09.2026): услуга отдана со стопроцентной скидкой,
+    а реестр показывал 372 000 из Битрикса. Цена Битрикса — ориентир аккаунту при сборке
+    плана; как только план привязан, цена только из него.
+    """
+    _mp(env, NO, 1, 0, 0, env.deal.id, rows=1)
+    got = mp_amounts_by_deal(env.db, [env.deal.id])
+    assert got[env.deal.id] == (0.0, 0.0)
+    assert eff_net(env.deal, got) == 0.0
+    assert eff_gross(env.deal, got) == 0.0
 
 
 def test_two_groups_are_summed(env):

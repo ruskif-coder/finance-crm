@@ -202,6 +202,14 @@ export const DEAL_COLS = [
   { key: 'files', w: '120px', label: 'Файлы' },
 ]
 export const DEAL_DEFAULT_HIDDEN = ['pipeline', 'period_from', 'period_to']
+
+// Направление ПЕРВОГО клика по заголовку. Везде «по убыванию» (у суммы и даты создания
+// это верно: сначала крупное и свежее), а у дат размещения — «по возрастанию»: период
+// читают по календарю, от раннего к позднему, и список, начинающийся с 2027 года,
+// выглядит перевёрнутым. Жалоба владельца 15.09.2026: «периоды выстраиваются не по
+// календарю». Дальше клик переключает направление как обычно.
+const ASC_FIRST = new Set(['period', 'period_from', 'period_to'])
+export const firstSortDir = (key) => (ASC_FIRST.has(key) ? 'asc' : 'desc')
 export const DEAL_COL_BY_KEY = Object.fromEntries(DEAL_COLS.map(c => [c.key, c]))
 export const DEAL_MIDDLE_KEYS = DEAL_COLS.map(c => c.key)
 
@@ -265,17 +273,18 @@ export const ROW_TONE = {
 // «Собрать МП» зелёная, «Проверить» оранжевая, «Пингануть» синяя, «Переделать» красная.
 // [фон, текст, рамка]. Рамки берут те же значения, что NEEDS_MP_BORDER и WARN_BORDER
 // ниже — они здесь же, чтобы не расползались по страницам.
+// Второй столбец — ТЕКСТ на тинте, поэтому семейство «-fg», а не сам цвет смысла.
 export const CTA_TONE = {
-  deal_mp_missing: ['var(--income-tint)', 'var(--income)', NEEDS_MP_BORDER_HEX],
-  mp_unapproved:   ['var(--accent-tint)', 'var(--accent)', 'var(--accent-border)'],
-  mp_rework:       ['var(--danger-tint)', 'var(--danger)', ROW_TONE.overdue.border],
-  booking_confirm: ['var(--accent-tint)', 'var(--accent)', 'var(--accent-border)'],
-  launch_prep:     ['var(--accent-tint)', 'var(--accent)', 'var(--accent-border)'],
-  launch_ready:    ['var(--income-tint)', 'var(--income)', NEEDS_MP_BORDER_HEX],
-  act_missing:     ['var(--warning-tint)', 'var(--warning-text)', WARN_BORDER_HEX],
-  stage_stuck:     ['var(--warning-tint)', 'var(--warning-text)', WARN_BORDER_HEX],
-  stage_unmapped:  ['var(--danger-tint)', 'var(--danger)', ROW_TONE.overdue.border],
-  payment_overdue: ['var(--danger-tint)', 'var(--danger)', ROW_TONE.overdue.border],
+  deal_mp_missing: ['var(--income-tint)', 'var(--income-fg)', NEEDS_MP_BORDER_HEX],
+  mp_unapproved:   ['var(--accent-tint)', 'var(--accent-fg)', 'var(--accent-border)'],
+  mp_rework:       ['var(--danger-tint)', 'var(--danger-fg)', ROW_TONE.overdue.border],
+  booking_confirm: ['var(--accent-tint)', 'var(--accent-fg)', 'var(--accent-border)'],
+  launch_prep:     ['var(--accent-tint)', 'var(--accent-fg)', 'var(--accent-border)'],
+  launch_ready:    ['var(--income-tint)', 'var(--income-fg)', NEEDS_MP_BORDER_HEX],
+  act_missing:     ['var(--warning-tint)', 'var(--warning-fg)', WARN_BORDER_HEX],
+  stage_stuck:     ['var(--warning-tint)', 'var(--warning-fg)', WARN_BORDER_HEX],
+  stage_unmapped:  ['var(--danger-tint)', 'var(--danger-fg)', ROW_TONE.overdue.border],
+  payment_overdue: ['var(--danger-tint)', 'var(--danger-fg)', ROW_TONE.overdue.border],
 }
 
 /** Кнопка действия в строке очереди: пастельный фон, цветной текст, рамка того же тона. */
@@ -362,6 +371,97 @@ export const IconBtn = ({ title, active, onClick, children }) => (
 // байт-в-байт в справочниках (contracts/advertisers/agencies), статьях и на
 // всех страницах настроек. Значения — «причёсанный» вид дизайн-системы (ds.jsx):
 // var(--*) токены + шрифты MONO/UI. Не заводить локальные копии в страницах.
+/** Подвал таблицы: сколько показано, страницы, выбор числа строк.
+
+    Один кирпич на все реестры. До 14.09.2026 блок был скопирован в четырёх экранах,
+    и разошёлся: где-то шаги 100/300/500, где-то 50/100/300/500, а в контрагентах
+    вместо страниц была кнопка «Показать ещё» — то есть на соседних экранах одно и то
+    же действие называлось и выглядело по-разному.
+
+    Страницы нумеруются с нуля (как offset), наружу показываются с единицы.
+    `total` — ВСЕГО строк в выборке, а не на странице: без него «страница 3 из ?» не
+    говорит ничего.
+
+    Длинные списки страниц схлопываются: при сорока страницах сорок кнопок — это не
+    навигация, а стена. Показываются первая, последняя и окно вокруг текущей.
+*/
+export function Pager({ page, pages, total, shown, pageSize, sizes = [25, 50, 100, 300],
+  onPage, onSize, unit = 'строк' }) {
+  if (!total) return null
+  const from = page * pageSize + 1
+  const to = page * pageSize + shown
+  const nums = pageWindow(page, pages)
+  const step = (d) => onPage(Math.min(Math.max(0, page + d), pages - 1))
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+      marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-inner)',
+      fontSize: 12, color: 'var(--text-secondary)',
+    }}>
+      <span style={{ fontFamily: MONO, fontSize: 11.5 }}>
+        {from}–{to} из {total}
+      </span>
+      {pages > 1 && (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <PagerBtn label="←" disabled={!page} onClick={() => step(-1)} />
+          {nums.map((n, i) => (n === null
+            ? <span key={`gap${i}`} style={{ color: 'var(--text-faint)', padding: '0 2px' }}>…</span>
+            : <PagerBtn key={n} label={n + 1} active={n === page} onClick={() => onPage(n)} />
+          ))}
+          <PagerBtn label="→" disabled={page >= pages - 1} onClick={() => step(1)} />
+        </span>
+      )}
+      <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+        <span>{unit} на странице</span>
+        <span style={{
+          display: 'flex', background: 'var(--bg-subtle)',
+          border: '1px solid var(--border-card)', borderRadius: 10, padding: 3,
+        }}>
+          {sizes.map(n => (
+            <span key={n} onClick={() => onSize(n)} style={{
+              borderRadius: 8, padding: '5px 11px', cursor: 'pointer',
+              fontFamily: MONO, fontSize: 12, fontWeight: pageSize === n ? 700 : 600,
+              background: pageSize === n ? 'var(--accent-tint)' : 'transparent',
+              color: pageSize === n ? 'var(--accent)' : 'var(--text-secondary)',
+            }}>{n}</span>
+          ))}
+        </span>
+      </span>
+    </div>
+  )
+}
+
+const PagerBtn = ({ label, active, disabled, onClick }) => (
+  <span onClick={disabled ? undefined : onClick} style={{
+    borderRadius: 8, padding: '4px 9px', fontFamily: MONO, fontSize: 12,
+    fontWeight: active ? 700 : 600,
+    cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.4 : 1,
+    background: active ? 'var(--accent-tint)' : 'transparent',
+    color: active ? 'var(--accent)' : 'var(--text-secondary)',
+  }}>{label}</span>
+)
+
+/** Номера страниц с многоточиями: 1 … 7 8 [9] 10 11 … 40.
+    `null` в списке — место многоточия.
+
+    Экспортируется ради прибора: логика окна — единственное, что здесь можно сломать
+    молча, и проверяется она без React. Наружу как компонент не предназначена. */
+export function pageWindow(page, pages, edge = 1, around = 2) {
+  if (pages <= 7) return Array.from({ length: pages }, (_, i) => i)
+  const keep = new Set()
+  for (let i = 0; i < edge; i++) { keep.add(i); keep.add(pages - 1 - i) }
+  for (let i = page - around; i <= page + around; i++) {
+    if (i >= 0 && i < pages) keep.add(i)
+  }
+  const sorted = [...keep].sort((a, b) => a - b)
+  const out = []
+  sorted.forEach((n, i) => {
+    if (i && n - sorted[i - 1] > 1) out.push(null)
+    out.push(n)
+  })
+  return out
+}
+
 export const card = { background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18 }
 
 export const inp = { padding: '8px 11px', border: '1px solid var(--border-card)', borderRadius: 10, fontSize: 13, background: 'var(--bg-card)', color: 'var(--text-primary)', fontFamily: UI, outline: 'none', boxSizing: 'border-box' }
@@ -410,7 +510,7 @@ export const tagSm = (extra) => ({
   borderRadius: 6, fontSize: 10.5, cursor: 'pointer', whiteSpace: 'nowrap', ...extra,
 })
 
-export const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.09em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)', marginBottom: 13 }
+export const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.09em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-cap)', marginBottom: 13 }
 // Белая карточка документа: две строки текста слева + действия справа.
 export const docCard = { display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, padding: '7px 8px 7px 10px' }
 // Кнопка «+ Добавить» — пунктирная рамка, акцентный текст, центр по вертикали.
@@ -496,8 +596,8 @@ export const EXT_TONE = {
 
 export const EXT_STYLE = {
   ok:   { color: 'var(--income-fg)', border: 'var(--income)', bg: 'var(--income-tint)' },
-  wait: { color: 'var(--warning-text)', border: 'var(--warning)', bg: 'var(--warning-tint)' },
-  bad:  { color: 'var(--danger)', border: 'var(--danger)', bg: 'var(--danger-tint)' },
+  wait: { color: 'var(--warning-fg)', border: 'var(--warning)', bg: 'var(--warning-tint)' },
+  bad:  { color: 'var(--danger-fg)', border: 'var(--danger)', bg: 'var(--danger-tint)' },
   none: { color: 'var(--text-muted)', border: 'var(--border-card)', bg: 'transparent' },
   off:  { color: 'var(--text-faint)', border: 'transparent', bg: 'transparent' },
 }

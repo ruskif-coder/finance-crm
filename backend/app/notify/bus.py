@@ -12,18 +12,16 @@
 и раньше). Telegram/почта/дайджест уже проходят через расчёт и пишутся в журнал
 отправок статусом queued — их обработчики появятся в фазах 4–5.
 """
-import os
-from datetime import date, datetime
+from datetime import datetime
 from typing import Iterable, List, Optional
 
 from sqlalchemy.orm import Session
 
 from app.models import Notification, User
-from app.notify import registry, recipients as rcp
+from app.notify import channels, registry, recipients as rcp
+from app.notify import tone as tone_of
 from app.notify.models import (NotificationSubscription, NotificationProfile,
-                               NotificationDelivery, UserNotificationChannels)
-from app.notify import telegram
-from app.mail import client as mail
+                               NotificationDelivery)
 
 # Каналы, у которых уже есть обработчик. Остальные копятся в журнале как queued
 # и уйдут, когда обработчик появится (фаза 5: почта и дайджест).
@@ -76,81 +74,65 @@ def _channels_for(db: Session, user_id: int, ev: registry.Event) -> List[str]:
     return chans
 
 
-def _quiet_now(ch: Optional[UserNotificationChannels], ev: registry.Event) -> bool:
-    """Тихие часы и «не беспокоить до». Событие с locked=True проходит сквозь них:
-    отказ по сделке и просрочка не ждут утра."""
-    if ch is None or ev.locked:
-        return False
-    today = date.today()
-    if ch.mute_until and ch.mute_until >= today:
-        return True
-    a, b = ch.quiet_from, ch.quiet_to
-    if a is None or b is None:
-        return False
-    h = datetime.now().hour
-    return (a <= h < b) if a < b else (h >= a or h < b)   # интервал через полночь
+# Порядок тонов по тяжести. Ухудшение — движение ВЛЕВО по этому списку.
 
 
-def _deliver_tg(db: Session, uid: int, ev: registry.Event, title: str, body: Optional[str],
-                link: Optional[str], entity_type, entity_id) -> str:
-    """Отправка в Telegram. Возвращает статус для журнала.
-    Ничего не теряем: не настроен бот или не привязан чат — строка ложится в queued."""
-    if not telegram.configured():       # проверяем ДО обращения к базе: бот не настроен —
-        return "queued|no_channel"      # ходить за привязками незачем
-    ch = (db.query(UserNotificationChannels)
-          .filter(UserNotificationChannels.user_id == uid).first())
-    if ch is None or not ch.tg_chat_id or not ch.tg_verified_at:
-        return "queued|no_channel"
-    if _quiet_now(ch, ev):
-        return "queued|quiet_hours"
-    text = title if not body else f"{title}\n{body}"
-    try:
-        telegram.send_message(ch.tg_chat_id, text, link=link)
-        return "sent|"
-    except Exception as e:
-        return f"failed|{str(e)[:200]}"
+def dedup_key(event_key: str, entity_type: Optional[str], entity_id: Optional[int]) -> str:
+    """Ключ схлопывания: событие плюс объект.
 
-
-def _deliver_mail(db: Session, uid: int, ev: registry.Event, title: str,
-                  body: Optional[str], link: Optional[str]) -> str:
-    """Отправка письма сотруднику. Возвращает статус для журнала.
-
-    Симметрично телеграму, и по той же причине: ничего не теряем. Почта не настроена,
-    у человека нет адреса, тихие часы — строка ложится в `queued` и уходит досылкой,
-    а не исчезает.
-
-    Адрес берётся из учётки (`users.email`): в этой системе он же логин, второго
-    хранилища адреса сотрудника нет и заводить его незачем.
+    Событие БЕЗ объекта схлопыванию не подлежит — у «конвейер создал сделки» нет одного
+    предмета, и склеивать два разных прогона в одну строку значило бы потерять второй.
     """
-    if not mail.configured():           # проверяем ДО обращения к базе, как у бота
-        return "queued|no_channel"
-    u = db.query(User).filter(User.id == uid).first()
-    if u is None or not mail.valid_address(u.email or ""):
-        return "queued|no_channel"
-    ch = (db.query(UserNotificationChannels)
-          .filter(UserNotificationChannels.user_id == uid).first())
-    if _quiet_now(ch, ev):
-        return "queued|quiet_hours"
-    text = title if not body else title + "\n\n" + body
-    if link:
-        # Ссылку даём абсолютной: в письме относительный адрес никуда не ведёт, а
-        # открывают письмо не в нашей вкладке.
-        base = (os.getenv("DOMAIN") or "").strip()
-        text += "\n\n" + (("https://" + base) if base else "") + link
-    try:
-        mail.send(to=u.email, subject=title[:200], body=text,
-                  to_name=getattr(u, "name", None))
-        return "sent|"
-    except mail.MailNotConfigured:
-        return "queued|no_channel"
-    except Exception as e:              # noqa: BLE001 — в журнал уходит любая причина
-        return f"failed|{str(e)[:200]}"
+    if not entity_type or entity_id is None:
+        return ""
+    return f"{event_key}:{entity_type}:{entity_id}"
+
+
+def _upsert_app_row(db: Session, uid: int, ev, title: str, body, link,
+                    entity_type, entity_id, tone: Optional[str],
+                    facts: Optional[list] = None):
+    """Строка в панели: обновить существующую или завести новую.
+
+    Повторная сработка сканера НЕ создаёт вторую запись — иначе «сделка стоит 17 дней»
+    копится ежедневно, и панель перестают открывать. Существующая обновляется, время
+    сдвигается, порядок пересчитывается.
+
+    СНОВА НЕПРОЧИТАННОЙ строка становится только при УХУДШЕНИИ тона. Иначе сканер
+    каждые сутки поднимает наверх одно и то же, и метка непрочитанного перестаёт
+    что-либо значить — а она единственное, чем человек отмечает разобранное.
+    """
+    key = dedup_key(ev.key, entity_type, entity_id)
+    tone = tone_of.norm(tone or getattr(ev, "tone", None))
+    old = None
+    if key:
+        old = (db.query(Notification)
+               .filter(Notification.user_id == uid, Notification.dedup_key == key,
+                       Notification.resolved_at.is_(None))
+               .order_by(Notification.id.desc()).first())
+    if old is None:
+        n = Notification(user_id=uid, kind=ev.key, title=title, body=body, link=link,
+                         entity_type=entity_type, entity_id=entity_id,
+                         dedup_key=key or None, tone=tone,
+                         facts=list(facts or []))
+        db.add(n)
+        return n
+
+    worse = tone_of.worse(tone, old.tone)
+    old.title, old.body, old.link, old.tone = title, body, link, tone
+    # Факты обновляются вместе с заголовком: просрочка выросла с 6 дней до 9, и плашка
+    # обязана сказать «9 дн.», иначе строка спорит сама с собой.
+    old.facts = list(facts or [])
+    old.created_at = datetime.utcnow()
+    if worse:
+        old.is_read = False
+    return old
 
 
 def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
          link: Optional[str] = None, entity_type: Optional[str] = None,
          entity_id: Optional[int] = None, actor=None, ctx: Optional[dict] = None,
-         user_ids: Optional[Iterable[int]] = None) -> List[int]:
+         user_ids: Optional[Iterable[int]] = None, tone: Optional[str] = None,
+         facts: Optional[list] = None, code: Optional[str] = None) -> List[int]:
     """Породить событие. Возвращает id получателей, которым что-то ушло.
 
     user_ids — явный список получателей в обход резолверов (для случаев, где адресаты
@@ -162,6 +144,7 @@ def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
         raise ValueError(f"Событие {event_key} не зарегистрировано в реестре")
 
     ctx = ctx or {}
+    facts = list(facts or [])
     if user_ids is None:
         user_ids = rcp.resolve(db, ev.recipients, ctx)
 
@@ -172,21 +155,24 @@ def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
     for uid in targets:
         chans = _channels_for(db, uid, ev)
         if not chans:
-            db.add(NotificationDelivery(event_key=ev.key, entity_type=entity_type,
+            db.add(NotificationDelivery(body=body, link=link, facts=facts, code=code,
+                                        event_key=ev.key, entity_type=entity_type,
                                         entity_id=entity_id, user_id=uid, channel="app",
                                         status="suppressed", suppress_reason="disabled",
                                         title=title))
             continue
         for ch in chans:
             if ch not in LIVE_CHANNELS:
-                db.add(NotificationDelivery(event_key=ev.key, entity_type=entity_type,
+                db.add(NotificationDelivery(body=body, link=link, facts=facts, code=code,
+                                            event_key=ev.key, entity_type=entity_type,
                                             entity_id=entity_id, user_id=uid, channel=ch,
                                             status="queued", title=title))
                 continue
             if ch == "mail":
-                status, _, reason = _deliver_mail(db, uid, ev, title, body,
-                                                  link).partition("|")
+                status, _, reason = channels.deliver_mail(
+                    db, uid, ev, title, body, link, facts, code).partition("|")
                 db.add(NotificationDelivery(
+                    body=body, link=link, facts=facts, code=code,
                     event_key=ev.key, entity_type=entity_type, entity_id=entity_id,
                     user_id=uid, channel="mail", status=status, title=title,
                     suppress_reason=(reason or None) if status == "queued" else None,
@@ -195,9 +181,11 @@ def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
                     delivered.append(uid)
                 continue
             if ch == "tg":
-                status, _, reason = _deliver_tg(db, uid, ev, title, body, link,
-                                                entity_type, entity_id).partition("|")
+                status, _, reason = channels.deliver_tg(
+                    db, uid, ev, title, body, link, entity_type, entity_id,
+                    facts).partition("|")
                 db.add(NotificationDelivery(
+                    body=body, link=link, facts=facts, code=code,
                     event_key=ev.key, entity_type=entity_type, entity_id=entity_id,
                     user_id=uid, channel="tg", status=status, title=title,
                     suppress_reason=(reason or None) if status == "queued" else None,
@@ -205,11 +193,10 @@ def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
                 if status == "sent" and uid not in delivered:
                     delivered.append(uid)
                 continue
-            n = Notification(user_id=uid, kind=ev.key, title=title, body=body, link=link,
-                             entity_type=entity_type, entity_id=entity_id)
-            db.add(n)
+            n = _upsert_app_row(db, uid, ev, title, body, link,
+                                entity_type, entity_id, tone, facts)
             db.flush()          # нужен n.id для ссылки из журнала отправок
-            db.add(NotificationDelivery(event_key=ev.key, entity_type=entity_type,
+            db.add(NotificationDelivery(body=body, link=link, event_key=ev.key, entity_type=entity_type,
                                         entity_id=entity_id, user_id=uid, channel=ch,
                                         status="sent", title=title, notification_id=n.id))
             if uid not in delivered:

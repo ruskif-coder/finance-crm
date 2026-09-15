@@ -12,6 +12,7 @@ import api, { auth } from '@/lib/api'
 import { surfaceTag } from '@/lib/dealTitle'
 import { dm } from '@/lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { calendarDate } from '@/lib/dates'
 
 // Дашборд аккаунта — рабочий экран, а не витрина цифр: очередь действий.
 // ТЗ и референс — docs/«кабинет аккаунта v1» (README + dc.html). Срочность, причина и
@@ -431,7 +432,7 @@ export default function AccountDashboard() {
   // Подтверждённые — слои «реализуемые» и «фактические» (деньги в работе), в проработке —
   // «планируемые». Разметка слоёв берётся со стадии, руками её задать нельзя.
   const forward = useMemo(() => {
-    const now = new Date(data?.today || Date.now())
+    const now = data?.today ? calendarDate(data.today) : new Date()
     const months = []
     for (let i = 0; i < 6; i++) {
       const d0 = new Date(now.getFullYear(), now.getMonth() + i, 1)
@@ -492,7 +493,7 @@ export default function AccountDashboard() {
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-      <Head><title>Дашборд аккаунта — Finance CRM</title></Head>
+      <Head><title>Дашборд · Аккаунты | SIMB-AD ERP</title></Head>
       <Navbar />
       {/* Во всю ширину экрана: ограничение 1720 из ТЗ снято по просьбе владельца.
           Правая колонка при этом фиксирована по ширине, а не в процентах — весь
@@ -561,7 +562,7 @@ export default function AccountDashboard() {
                     cursor: empty ? 'default' : 'pointer' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
                     <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: empty ? 'var(--text-faint)' : 'var(--text-primary)' }}>{dm(dd.date)}</span>
-                    <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{WD[new Date(dd.date).getDay()]}</span>
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{WD[calendarDate(dd.date).getDay()]}</span>
                   </div>
                   <div style={{ fontFamily: MONO, fontSize: 19, fontWeight: 700, color: empty ? 'var(--text-faint)' : 'var(--text-primary)', lineHeight: 1.3 }}>{dd.total}</div>
                   <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', minHeight: 14 }}>

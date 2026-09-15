@@ -34,7 +34,10 @@ class Event:
     group: str                      # блок внутри направления («Медиапланы», «Оплаты»)
     title: str                      # как называется в настройках
     description: str
-    tone: str = "info"              # danger | warning | success | info — тон в виджете
+    # Тон события. Словарь один на систему, он в app/notify/tone.py: bad | warn |
+    # ok | info. До 14.09.2026 здесь были свои слова (danger/warning/success), и
+    # письмо с реестровым тоном уезжало в «к сведению», а в панели падало вниз.
+    tone: str = "info"
     action: str = ""                # подпись кнопки в уведомлении («Открыть МП»)
     widget_group: str = "Сделки"    # вкладка виджета на дашборде
     scan: bool = False              # True — состояниевое, считается сканером по расписанию
@@ -83,7 +86,7 @@ register(Event(
     description=("Срок оплаты = конец периода операции + отсрочка контрагента "
                  "(та же формула, что в дебиторке). Ступени: предупреждение до срока, "
                  "срок наступил, просрочено сверх буфера."),
-    tone="danger", action="Открыть операции", widget_group="Оплаты", locked=True,
+    tone="bad", action="Открыть операции", widget_group="Оплаты", locked=True,
     scan=True,
     recipients=[{"type": "role", "value": "manager"}, {"type": "role", "value": "admin"}],
     channels={"app": True},
@@ -116,7 +119,7 @@ register(Event(
     title="Нет медиаплана, а старт близко",
     description=("Старт РК через 5 дней или меньше, а медиаплан к сделке не привязан. "
                  "Первое правило очереди: без плана дальше ничего не двинется."),
-    tone="danger", action="Собрать МП", widget_group="Сделки", scan=True,
+    tone="bad", action="Собрать МП", widget_group="Сделки", scan=True,
     recipients=[{"type": "resolver", "value": "account_manager"}],
     channels={"app": True},
     params={"repeat_days": 2},
@@ -128,7 +131,7 @@ register(Event(
     description=("Сделка стоит на «МП Отправлено» — план отдан клиенту, ответа нет, а РК "
                  "стартует. Признак взят со СТАДИИ сделки, а не со статуса плана: своего "
                  "состояния у плана нет с 30.08.2026."),
-    tone="danger", action="Пингануть", widget_group="Сделки", scan=True,
+    tone="bad", action="Пингануть", widget_group="Сделки", scan=True,
     recipients=[{"type": "resolver", "value": "account_manager"}],
     channels={"app": True},
     params={"repeat_days": 2},
@@ -150,7 +153,7 @@ register(Event(
     title="Бронь не подтверждена, старт на горизонте",
     description=("До старта РК 15 дней или меньше, а сделка всё ещё в брони. "
                  "Дальше — сбор запуска: креативы и площадки нужно успеть согласовать."),
-    tone="warning", action="Подтвердить бронь", widget_group="Сделки", scan=True,
+    tone="warn", action="Подтвердить бронь", widget_group="Сделки", scan=True,
     recipients=[{"type": "resolver", "value": "account_manager"}],
     channels={"app": True},
     params={"repeat_days": 3},
@@ -165,7 +168,7 @@ register(Event(
     title="Период закрыт, закрывающих нет",
     description=("РК закончилась больше 5 дней назад, а УПД/счёт не выставлены. "
                  "Пока их нет, платить клиенту не за что — это тормоз для денег."),
-    tone="warning", action="Прикрепить документы", widget_group="Документы", scan=True,
+    tone="warn", action="Прикрепить документы", widget_group="Документы", scan=True,
     recipients=[{"type": "resolver", "value": "account_manager"}],
     channels={"app": True},
     params={"repeat_days": 5},
@@ -176,7 +179,7 @@ register(Event(
     title="Сделка стоит на стадии дольше нормы",
     description=("Норма — sla_days: у стадии, иначе у этапа, иначе дефолт слоя. "
                  "Свыше нормы — «скоро», свыше двойной — «просрочено»."),
-    tone="warning", action="Двинуть", widget_group="Сделки", scan=True,
+    tone="warn", action="Двинуть", widget_group="Сделки", scan=True,
     recipients=[{"type": "resolver", "value": "account_manager"}],
     channels={"app": True},
     params={"repeat_days": 7},
@@ -188,7 +191,7 @@ register(Event(
     description=("Сделка не попадает ни в один слой, значит отчёты по ней врут. "
                  "Отключать не стоит: молча посчитанная планом сделка — это тихая "
                  "ошибка в деньгах, а не мелкое неудобство."),
-    tone="danger", action="Разобрать", widget_group="Сделки", scan=True, locked=True,
+    tone="bad", action="Разобрать", widget_group="Сделки", scan=True, locked=True,
     recipients=[{"type": "resolver", "value": "account_manager"},
                 {"type": "role", "value": "admin"}],
     channels={"app": True},
@@ -216,7 +219,7 @@ register(Event(
     title="Сделка ушла в бронь",
     description=("Сделка перешла на стадию «Бронь»: деньги из плановых стали реальными. "
                  "Отсюда же начинается отсчёт до подтверждения брони у аккаунта."),
-    tone="success", action="Открыть сделку", widget_group="Сделки",
+    tone="ok", action="Открыть сделку", widget_group="Сделки",
     recipients=[{"type": "resolver", "value": "sales_rep_of_deal"},
                 {"type": "resolver", "value": "sales_head"}],
     channels={"app": True},
@@ -228,7 +231,7 @@ register(Event(
     description=("Сделка переведена на терминальную стадию срыва («не случилась» / "
                  "«сорвалась») — с комментарием, который оставил тот, кто её двигал. "
                  "Порога по сумме нет: сообщаем по любой."),
-    tone="danger", action="Открыть сделку", widget_group="Сделки",
+    tone="bad", action="Открыть сделку", widget_group="Сделки",
     recipients=[{"type": "resolver", "value": "sales_rep_of_deal"},
                 {"type": "resolver", "value": "sales_head"}],
     channels={"app": True},
@@ -238,7 +241,7 @@ register(Event(
     key="deal_done", direction="sales", group="Воронка",
     title="Сделка доведена",
     description="Сделка дошла до терминальной стадии успеха — бонус по ней сформирован.",
-    tone="success", action="Открыть сделку", widget_group="Сделки",
+    tone="ok", action="Открыть сделку", widget_group="Сделки",
     recipients=[{"type": "resolver", "value": "sales_rep_of_deal"}],
     channels={"app": True},
 ))
@@ -263,7 +266,7 @@ register(Event(
     description=("В строке плана месяц включён и сумма проставлена, но ни одной сделки "
                  "в эту ячейку не привязано, а месяц уже начинается. Ступени: "
                  "предупреждение до начала месяца, «просрочено» — после."),
-    tone="warning", action="Открыть план", widget_group="Сделки", scan=True,
+    tone="warn", action="Открыть план", widget_group="Сделки", scan=True,
     recipients=[{"type": "resolver", "value": "year_plan_owner"}],
     channels={"app": True},
     params={"before_days": 14, "repeat_days": 7},
@@ -279,7 +282,7 @@ register(Event(
                  "ведёт. Планы, привязанные к сделке, живут по её стадии, и о них "
                  "говорят правила очереди («МП собран конвейером и не проверен», "
                  "«МП у клиента без ответа»)."),
-    tone="warning", action="Открыть МП", widget_group="Документы", scan=True,
+    tone="warn", action="Открыть МП", widget_group="Документы", scan=True,
     recipients=[{"type": "resolver", "value": "mp_author"}],
     channels={"app": True},
     params={"after_days": 7, "repeat_days": 7},
@@ -295,7 +298,7 @@ register(Event(
                  "оказывалась «отправлена» без единого сообщения тому, кто отправляет. "
                  "Событие на ПЕРЕХОД, а не на сохранение: пересохранение уже проверенного "
                  "плана второй раз не пишет."),
-    tone="success", action="Открыть МП", widget_group="Документы",
+    tone="ok", action="Открыть МП", widget_group="Документы",
     recipients=[{"type": "resolver", "value": "sales_rep_of_deal"}],
     channels={"app": True},
 ))
@@ -320,7 +323,7 @@ register(Event(
     title="Опасение подтвердилось",
     description=("Запись переведена в статус «подтвердилось»: то, чего боялись, "
                  "случилось. Отключать не стоит — это и есть смысл всего раздела."),
-    tone="danger", action="Открыть бэклог", widget_group="Документы", locked=True,
+    tone="bad", action="Открыть бэклог", widget_group="Документы", locked=True,
     recipients=[{"type": "role", "value": "admin"}],
     channels={"app": True},
 ))
@@ -330,7 +333,7 @@ register(Event(
     title="Истёк срок наблюдения",
     description=("watch_until прошёл, а запись так и не закрыта. Считается сканером: "
                  "истечение срока — не действие человека, эмитить его неоткуда."),
-    tone="warning", action="Открыть бэклог", widget_group="Документы", scan=True,
+    tone="warn", action="Открыть бэклог", widget_group="Документы", scan=True,
     recipients=[{"type": "role", "value": "admin"}],
     channels={"app": True},
     # Напоминаем не чаще раза в неделю: чаще — и раздел выключат целиком.
@@ -374,7 +377,7 @@ register(Event(
                  "площадке не уходил, поэтому переделка — работа аккаунта, а не разговор "
                  "с сайтом. Событие отдельное от «Площадка ответила»: адресат тот же, а "
                  "причина и следующий шаг разные."),
-    tone="warning", action="Открыть сделку", widget_group="Сделки",
+    tone="warn", action="Открыть сделку", widget_group="Сделки",
     recipients=[{"type": "resolver", "value": "account_manager"}],
     channels={"app": True},
 ))
@@ -385,7 +388,7 @@ register(Event(
     description=("Комплект отправлен, а вердикта нет. Считается по ПУСТЫМ строкам ожидания: "
                  "они заводятся в момент отправки именно затем, чтобы молчание было "
                  "вычислимым — по факту вердикта строку не с чем было бы сравнить."),
-    tone="warning", action="Открыть сделку", widget_group="Сделки", scan=True,
+    tone="warn", action="Открыть сделку", widget_group="Сделки", scan=True,
     recipients=[{"type": "resolver", "value": "account_manager"},
                 # Менеджер паблишеров — ролью, а не резолвером: у молчания площадки нет
                 # «ответственного» в сделке, есть тот, кто с площадками разговаривает.
@@ -415,6 +418,24 @@ register(Event(
 ))
 
 register(Event(
+    key="weborama_pixel_needed", direction="traffic", group="Рекламная кампания",
+    title="По сделке нужен пиксель Weborama",
+    description=("Аккаунт включил доп. параметр РК «нужен пиксель Weborama» (владелец "
+                 "14.09.2026). До этого пиксель требовался БЕЗУСЛОВНО и заказывать его "
+                 "было не нужно — трафик просто нажимал «ПИКСЕЛЬ WR» перед выгрузкой. "
+                 "Теперь это осознанный заказ, и без уведомления он остался бы невидимым: "
+                 "галочка стоит в карточке сделки, а работу делают на дашборде трафика, "
+                 "где её не видно. Событие рождается только НА ВКЛЮЧЕНИИ — повторное "
+                 "сохранение того же значения ничего не меняет и никого не будит."),
+    tone="warn", action="Открыть дашборд", widget_group="Сделки", scan=False,
+    # Контуром, а не «ответственным трафиком»: `traffic_rep_id` заполнен не у всех сделок,
+    # а на момент включения параметра — на сборке — чаще всего ещё не назначен вовсе.
+    # Резолвер вернул бы никого, и заказ пикселя тихо не дошёл бы (см. traffic_new_work).
+    recipients=[{"type": "staff_group", "value": "traffic"}],
+    channels={"app": True},
+))
+
+register(Event(
     key="traffic_silence", direction="traffic", group="Креативы",
     title="Трафик молчит третий день",
     description=("Материал ждёт проверки трафика, а вердикта нет. Ступень трафика стоит "
@@ -422,7 +443,7 @@ register(Event(
                  "не ответил, площадку даже не спросили. У площадки такое правило было с "
                  "самого начала (`creative_silence`), у трафика его не было до 30.08.2026 "
                  "— наблюдали за внешним ожиданием и не наблюдали за своим."),
-    tone="warning", action="Открыть очередь", widget_group="Сделки", scan=True,
+    tone="warn", action="Открыть очередь", widget_group="Сделки", scan=True,
     # Контур трафика: `traffic_manager_id` пуст у всех сделок, назначений ещё нет, и
     # резолвер «ответственный трафик» сегодня вернул бы никого. Аккаунт — потому что это
     # ЕГО сделка стоит, и узнать он должен не от клиента. (Про `staff_group` вместо
@@ -438,7 +459,7 @@ register(Event(
     title="ЕРИД выпущен",
     description=("Маркер получен на комплект. Согласовавшие площадки переходят в «ерид "
                  "получен»; сам маркер уезжает текстом в DSP при запуске кампании."),
-    tone="success", action="Открыть сделку", widget_group="Сделки",
+    tone="ok", action="Открыть сделку", widget_group="Сделки",
     recipients=[{"type": "resolver", "value": "account_manager"}],
     channels={"app": True},
 ))
@@ -450,7 +471,7 @@ register(Event(
                  "выдан в ответе сразу, а регистрация в ЕРИР идёт асинхронно и может "
                  "упасть. Две ветки отказа лечатся по-разному — ошибка регистрации "
                  "материалом или полями, ошибка скачивания перезаливкой файла."),
-    tone="danger", action="Открыть сделку", widget_group="Сделки", scan=True,
+    tone="bad", action="Открыть сделку", widget_group="Сделки", scan=True,
     recipients=[{"type": "resolver", "value": "account_manager"}],
     channels={"app": True},
     params={"repeat_days": 1},

@@ -30,6 +30,11 @@ F_KEY_ACC = "ufCrm_1723638961"         # employee — аккаунт (Key accoun
 F_ADVERTISER = "ufCrm_1761214459"      # crm/лид — рекламодатель (непоследовательное)
 F_BRAND = "ufCrm_64BD76BC5BC45"        # текст — бренд
 F_PERIOD_FROM = "ufCrm_1723639172"     # дата — Старт РК
+# Конец РК. Поля здесь НЕ БЫЛО до 15.09.2026, хотя импорт (deal_import.py) его читал с
+# самого начала: сверка обновляла старт и не трогала конец. Кампанию переносят в Битриксе
+# целиком, к нам приезжала половина переноса — старт новый, конец прошлогодний. Так
+# получились 32 сделки с концом РАНЬШЕ старта, и они выпадали из отбора по периоду.
+F_PERIOD_TO = "ufCrm_1723639189"       # дата — Конец РК
 F_MP = "ufCrm_1690138838403"           # file — МП
 F_CONTRACT = "ufCrm_1690897647759"     # file — Договор и приложения
 
@@ -332,6 +337,7 @@ def sync_deal_from_bitrix(db: Session, deal: SalesDeal, download_files: bool = T
             _gross = None
     setf("amount_with_vat", _gross)
     setf("period_from", _parse_date(d.get(F_PERIOD_FROM)))
+    setf("period_to", _parse_date(d.get(F_PERIOD_TO)))
 
     rid, w = _resolve_rep_id(db, _first(d.get(F_SALE_MGR)))
     setf("sales_rep_id", rid)

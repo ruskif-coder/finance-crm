@@ -39,6 +39,104 @@ router = APIRouter()
 VIEW = require_permission("dir_publishers_cabinets", "view")
 EDIT = require_permission("dir_publishers_cabinets", "edit")
 
+# Маршруты с ЛИТЕРАЛЬНЫМ путём объявлены до маршрутов с параметром: FastAPI
+# разбирает их по порядку регистрации, и `PUT /{cabinet_id}` ниже перехватил бы
+# `PUT /notify-catalog`, приняв «notify-catalog» за идентификатор кабинета.
+# Поймал это прибор `test_route_order`, а не браузер: снаружи выглядело бы как
+# «кнопка не работает» с ошибкой про несуществующий кабинет.
+
+# ── Что мы шлём площадкам ────────────────────────────────────────────────────
+# Вторая вкладка раздела «Кабинеты» (решение владельца 14.09.2026): каталог видов
+# рассылки наружу с честным состоянием каждого.
+#
+# Зачем отдельный экран, если в кабинете уже есть выключатели. Выключатели — СТОРОНА
+# ПЛОЩАДКИ: «мне это не нужно». Здесь — наша: «это вообще отправляется». Сегодня из
+# шестнадцати объявленных видов отправляется один, и без такого экрана долг не виден
+# никому: в кабинете все переключатели выглядят одинаково рабочими.
+#
+# ХРАНЕНИЕ — строка в `company_settings`, а не таблица. Данных здесь ровно один список
+# выключенного, первичными они не являются, и заводить таблицу под булев флаг значит
+# писать миграцию ради того, что переживёт один разговор. Когда у вида появятся СВОИ
+# настройки — расписание, адресат, шаблон, — это станет таблицей, и вот тогда схема
+# согласуется до кода, как положено.
+
+SET_CABINET_NOTIFY_OFF = "cabinet_notify_off"
+
+
+def _notify_off(db: Session) -> set:
+    """Ключи видов, выключенных НАМИ. Разбор мягкий: испорченное значение означает
+    «ничего не выключено», а не падение экрана."""
+    import json
+    raw = (db.execute(text("SELECT value FROM company_settings WHERE key = :k"),
+                      {"k": SET_CABINET_NOTIFY_OFF}).scalar() or "").strip()
+    if not raw:
+        return set()
+    try:
+        val = json.loads(raw)
+    except ValueError:
+        return set()
+    return {str(x) for x in val} if isinstance(val, list) else set()
+
+
+@router.get("/notify-catalog")
+def notify_catalog(db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Каталог рассылки площадкам: что объявлено, что построено, что мы включили.
+
+    Три состояния у каждого вида, и путать их нельзя:
+      · `built=false` — отправителя НЕТ, включай не включай;
+      · `built=true, enabled=false` — построено, но мы выключили;
+      · `built=true, enabled=true` — уходит площадкам.
+    """
+    from app.notify.outward.kinds import KINDS
+
+    off = _notify_off(db)
+    rows = [{"key": k.key, "label": k.label, "hint": k.hint, "can_mute": k.can_mute,
+             "to": k.to, "tone": k.tone, "trigger": k.trigger, "schedule": k.schedule,
+             "repeat": k.repeat, "built": k.built,
+             "enabled": k.built and k.key not in off} for k in KINDS]
+    return {"kinds": rows,
+            "built": sum(1 for r in rows if r["built"]),
+            "live": sum(1 for r in rows if r["enabled"]),
+            "total": len(rows)}
+
+
+class NotifyToggleIn(BaseModel):
+    key: str
+    enabled: bool
+
+
+@router.put("/notify-catalog")
+def notify_catalog_save(payload: NotifyToggleIn, db: Session = Depends(get_db),
+                        user: User = Depends(EDIT)):
+    """Включить или выключить вид рассылки целиком, для всех площадок.
+
+    Непостроенный вид включить нельзя — и отказ здесь не формальность: «включено» у вида
+    без отправителя означало бы, что мы считаем его работающим, и молчание списали бы на
+    площадку. Пока отправителя нет, честный ответ один.
+    """
+    import json
+    from app.notify.outward.kinds import by_key
+
+    kind = by_key(payload.key)
+    if kind is None:
+        raise HTTPException(404, f"Вида «{payload.key}» нет в каталоге")
+    if payload.enabled and not kind.built:
+        raise HTTPException(
+            400, f"«{kind.label}» пока некому отправлять — вид объявлен, отправитель не "
+                 f"написан. Включать нечего")
+
+    off = _notify_off(db)
+    off.discard(payload.key) if payload.enabled else off.add(payload.key)
+    db.execute(text(
+        "INSERT INTO company_settings (key, value) VALUES (:k, :v) "
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
+        {"k": SET_CABINET_NOTIFY_OFF, "v": json.dumps(sorted(off), ensure_ascii=False)})
+    db.commit()
+    log_action(db, user, "cabinet_notify_toggle", "settings", None,
+               f"{kind.label}: {'включено' if payload.enabled else 'выключено'}")
+    return notify_catalog(db=db, user=user)
+
+
 MIN_PASSWORD = 8
 
 

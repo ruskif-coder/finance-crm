@@ -10,12 +10,13 @@ import CounterpartyCardDesktop, { T as CT } from '@/components/counterparty/Coun
 import { makeApi as api } from '@/lib/http'
 import { bankColor } from '@/lib/salesFormat'
 import { overlayClose } from '@/lib/overlay'
+import { fmtDate as fmtCalendarDate } from '@/lib/dates'
 
 const fmt = (n) => {
   if (!n && n !== 0) return '—'
   return new Intl.NumberFormat('ru-RU').format(Math.round(n)) + ' ₽'
 }
-const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
+const fmtDate = (s) => fmtCalendarDate(s)
 const MONTHS_SHORT = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек']
 const fmtMonth = (p) => {
   if (!p) return ''
@@ -324,7 +325,7 @@ export default function CounterpartyCard() {
   if (isMobile) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
-        <Head><title>{card.name} | Контрагент</title></Head>
+        <Head><title>{card.name} · контрагент | SIMB-AD ERP</title></Head>
         <Navbar active="directories" />
         <CounterpartyCardMobile
           id={id} card={card} relation={relation} analytics={analytics} canEdit={canEdit}
@@ -403,7 +404,7 @@ export default function CounterpartyCard() {
     }
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
-        <Head><title>{card.name} | Контрагент</title></Head>
+        <Head><title>{card.name} · контрагент | SIMB-AD ERP</title></Head>
         <Navbar active="directories" />
         <CounterpartyCardDesktop data={data} canEdit={canEdit} copied={copied}
           onBack={() => router.push('/directory/counterparties')}

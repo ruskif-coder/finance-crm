@@ -6,9 +6,10 @@ import { T } from '../../lib/tokens'
 import { CARD, Marker, rise } from './kit'
 import BottomSheet from './BottomSheet'
 import DirectoryMobile, { FilterChip } from './DirectoryMobile'
+import { fmtDate as fmtCalendarDate } from '@/lib/dates'
 
 const fmt = (n) => grp(Math.abs(n || 0))
-const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
+const fmtDate = (s) => fmtCalendarDate(s)
 
 // тип контрагента (relation) → чип
 const REL_META = {

@@ -3,6 +3,7 @@ import { productWithSurface } from '@/lib/dealTitle';
 import { MONO, UI, HATCH, HATCH_RED, HATCH_GREEN } from '../salesTableKit'
 import { DEAL_DOCS, docState } from '../../lib/dealDocs'
 import { dm } from '@/lib/salesFormat'
+import { serverDate } from '@/lib/dates'
 
 /**
  * Канбан-доска сделок для дашборда: виды «По месяцам» и «По стадиям».
@@ -58,7 +59,7 @@ const serviceDot = (name) => {
 
 const daysAgo = (iso) => {
   if (!iso) return null
-  const t = new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z').getTime()
+  const t = serverDate(iso).getTime()
   if (!Number.isFinite(t)) return null
   const d = Math.floor((Date.now() - t) / 86400000)
   return d <= 0 ? 'обновлено сегодня' : `обновлено ${d} дн. назад`

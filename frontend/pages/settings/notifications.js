@@ -13,10 +13,12 @@ import Navbar from '../../components/Navbar'
 import SettingsTabs from '../../components/SettingsTabs'
 import { UI, MONO, card, inp, sel, primaryBtn, btnSm, th } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
+import { fmtDateTime } from '@/lib/dates'
+import { TONE, toneOf } from '@/lib/tone'
 
 const CH_LABELS = { app: 'В приложении', tg: 'Telegram', mail: 'Почта', digest: 'Дайджест' }
-const TONE = { danger: 'var(--dot-overdue)', warning: 'var(--dot-current-dz)',
-               success: 'var(--income)', info: 'var(--accent)' }
+// Цвет точки берётся из общего словаря: своя карта здесь стояла на старых словах,
+// и после перехода реестра на канон все точки, кроме «к сведению», стали синими.
 
 export default function NotificationSettings() {
   const [isAdmin, setIsAdmin] = useState(false)
@@ -128,7 +130,7 @@ export default function NotificationSettings() {
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-      <Head><title>Уведомления — Настройки</title></Head>
+      <Head><title>Уведомления · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
       <div style={{ maxWidth: 1320, margin: '0 auto', padding: '18px 20px 40px' }}>
         <SettingsTabs active="notifications" />
@@ -211,7 +213,7 @@ export default function NotificationSettings() {
                     <tr key={i.event_key}>
                       <td style={td}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-                          <i style={{ width: 7, height: 7, borderRadius: '50%', background: TONE[i.tone] || 'var(--accent)' }} />
+                          <i style={{ width: 7, height: 7, borderRadius: '50%', background: TONE[toneOf(i.tone)].dot }} />
                           <span style={{ fontWeight: 600, fontSize: 14 }}>{i.title}</span>
                           {i.scan && <span style={badge('#FFF6E9', '#F5E0BE', '#9A6512')}>сканер</span>}
                           {i.locked && <span style={badge('#FDECEE', '#F6CDD2', '#B23540')}>нельзя отключить</span>}
@@ -388,7 +390,7 @@ function DeliveryLog({ data }) {
             отличить от «сканер вообще не запускался». */}
         {scan && (
           <span style={{ color: 'var(--text-muted)' }}>
-            последний прогон: {new Date(scan.started_at).toLocaleString('ru-RU')} ·
+            последний прогон: {fmtDateTime(scan.started_at)} ·
             сработок {scan.matches} · отправок {scan.sent} · пропущено {scan.suppressed}
             {scan.dry_run ? ' · сухой прогон' : ''}
             {scan.error ? ` · ошибка: ${scan.error}` : ''}
@@ -410,7 +412,7 @@ function DeliveryLog({ data }) {
               return (
                 <tr key={r.id}>
                   <td style={{ ...td, whiteSpace: 'nowrap', color: 'var(--text-muted)', fontFamily: MONO, fontSize: 11 }}>
-                    {new Date(r.created_at).toLocaleString('ru-RU')}
+                    {fmtDateTime(r.created_at)}
                   </td>
                   <td style={{ ...td, fontSize: 13 }}>{r.event_title}</td>
                   <td style={{ ...td, fontSize: 13 }}>{r.title}</td>

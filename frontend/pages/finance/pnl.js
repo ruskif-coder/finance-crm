@@ -94,14 +94,14 @@ export default function PL() {
   // незачем, а пустой экран он прочитает как поломку.
   if (access === 'denied') return (
     <NoAccessScreen title="P&L: нет доступа" what="P&L"
-      nav={<><Head><title>P&L | Финансовый учёт</title></Head><Navbar /></>} />
+      nav={<><Head><title>P&L · Финансы | SIMB-AD ERP</title></Head><Navbar /></>} />
   )
 
   if (loading) return <div style={{ textAlign: 'center', padding: '80px', color: 'var(--text-muted)' }}>Загрузка P&L...</div>
   // Показывать нечего И запрос не прошёл — говорим об этом, а не отдаём белый лист.
   if (!data && err) return (
     <LoadErrorScreen title="P&L не загрузился" text={err}
-      nav={<><Head><title>P&L | Финансовый учёт</title></Head><Navbar active="pl" /></>}
+      nav={<><Head><title>P&L · Финансы | SIMB-AD ERP</title></Head><Navbar active="pl" /></>}
       onRetry={() => loadPL(localStorage.getItem('token'))} />
   )
   if (!data) return null
@@ -109,7 +109,7 @@ export default function PL() {
   if (isMobile) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
-        <Head><title>P&L | Финансовый учёт</title></Head>
+        <Head><title>P&L · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="pl" />
         <PnlMobile dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo} data={data} />
       </div>
@@ -158,7 +158,7 @@ export default function PL() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
       <Navbar active="pl">
-      <Head><title>P&L | Финансовый учёт</title></Head>
+      <Head><title>P&L · Финансы | SIMB-AD ERP</title></Head>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <span style={{ fontSize: '15px', color: 'var(--text-muted)' }}>С периода</span>
           <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)}

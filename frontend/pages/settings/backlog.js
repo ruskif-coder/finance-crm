@@ -17,6 +17,7 @@ import { UI, MONO, card, inp, sel, primaryBtn, th, td } from '../../components/s
 import api, { auth } from '../../lib/http'
 import { getPermissions, can } from '../../lib/auth'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { fmtDateTime, fmtDate as fmtDateOnly } from '@/lib/dates'
 
 const SEVERITIES = ['низкая', 'средняя', 'высокая']
 const STATUSES = ['наблюдаем', 'подтвердилось', 'закрыто', 'не воспроизвелось']
@@ -27,8 +28,8 @@ const ST_TONE = { 'наблюдаем': 'var(--accent)', 'подтвердило
                   'закрыто': 'var(--text-muted)', 'не воспроизвелось': 'var(--text-muted)' }
 
 const msg = e => e?.response?.data?.detail || e?.message || 'Ошибка'
-const fmtDate = v => v ? new Date(v).toLocaleDateString('ru-RU') : '—'
-const fmtDT = v => v ? new Date(v).toLocaleString('ru-RU') : ''
+const fmtDate = v => fmtDateOnly(v)
+const fmtDT = v => fmtDateTime(v, '')
 
 export default function DebugBacklog() {
   const [perms, setPerms] = useState({})
@@ -76,7 +77,7 @@ export default function DebugBacklog() {
 
   if (ready && !mayView) return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-      <Head><title>Бэклог отладки — Настройки</title></Head>
+      <Head><title>Бэклог отладки · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
       <div style={{ maxWidth: 1320, margin: '0 auto', padding: '18px 20px 40px' }}>
         <div style={{ ...card, padding: 20, color: 'var(--text-muted)', fontSize: 13 }}>
@@ -88,7 +89,7 @@ export default function DebugBacklog() {
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-      <Head><title>Бэклог отладки — Настройки</title></Head>
+      <Head><title>Бэклог отладки · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
       <div style={{ maxWidth: 1320, margin: '0 auto', padding: '18px 20px 40px' }}>
         <SettingsTabs active="backlog" />

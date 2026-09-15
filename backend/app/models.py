@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Text, Boolean
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -291,5 +292,20 @@ class Notification(Base):
     link = Column(String(300))                # куда вести по клику, напр. /accounts/mp/123
     entity_type = Column(String(40))
     entity_id = Column(Integer)
+    # Схлопывание, тон сработки и гашение (миграция 2026-09-14_notification_dedup.sql).
+    # Уведомление — СОСТОЯНИЕ объекта, а не след события: повтор обновляет строку,
+    # ухудшение тона делает её снова непрочитанной, исчезнувшая причина — гасит.
+    dedup_key = Column(String(120), index=True)
+    tone = Column(String(8))
+    # Плашки фактов и метка объекта (миграция 2026-09-14_notification_facts.sql).
+    # Числа приходят готовыми строками от события — панель, почта и телеграм
+    # отрисовывают одно и то же, а не считают каждый своё.
+    facts = Column(JSONB, nullable=False, default=list)
+    # ЗАМОРОЖЕНО 14.09.2026 аудитом: строка панели код не показывает — он и так стоит
+    # в «где» («7E2JWE · Эспумизан 09»). Колонка остаётся (правило проекта: не дропаем),
+    # но не пишется и не отдаётся. Код объекта в ПИСЬМЕ живёт своей колонкой —
+    # `notification_deliveries.code`, и там он читается досылкой.
+    code = Column(String(20))
+    resolved_at = Column(DateTime)
     is_read = Column(Boolean, nullable=False, default=False, index=True)
     created_at = Column(DateTime, server_default=func.now(), index=True)

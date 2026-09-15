@@ -183,13 +183,13 @@ export default function FinReport() {
   // Отказ рисуем ДО загрузки: ходить за данными, которых не отдадут, незачем.
   if (access === 'denied') return (
     <NoAccessScreen title="Фин. отчёт: нет доступа" what="Фин. отчёт"
-      nav={<><Head><title>Финансовый отчёт | Финансовый учёт</title></Head><Navbar /></>} />
+      nav={<><Head><title>Фин. отчёт · Финансы | SIMB-AD ERP</title></Head><Navbar /></>} />
   )
 
   if (loading || !data) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-        <Head><title>Финансовый отчёт | Финансовый учёт</title></Head>
+        <Head><title>Фин. отчёт · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="finreport" />
         <div style={{ padding: '20px 24px' }}>
           {header}
@@ -273,7 +273,7 @@ export default function FinReport() {
   if (isMobile) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-        <Head><title>Финансовый отчёт | Финансовый учёт</title></Head>
+        <Head><title>Фин. отчёт · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="finreport" />
         <FinReportMobile
           basis={basis} setBasis={setBasis} vat={vat} setVat={setVat}
@@ -286,7 +286,7 @@ export default function FinReport() {
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-      <Head><title>Финансовый отчёт | Финансовый учёт</title></Head>
+      <Head><title>Фин. отчёт · Финансы | SIMB-AD ERP</title></Head>
       <Navbar active="finreport" />
 
       <div style={{ padding: '20px 24px' }}>

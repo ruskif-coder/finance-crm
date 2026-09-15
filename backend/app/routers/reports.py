@@ -7,6 +7,7 @@ from app.permissions import require_permission, require_any_permission
 from app.audit import log_action
 from pydantic import BaseModel
 from typing import Optional, List
+from app import timez
 
 router = APIRouter()
 
@@ -1022,7 +1023,6 @@ def export_receivables(
     current_user: User = Depends(require_permission("receivables", "view"))
 ):
     import io
-    from datetime import datetime
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from fastapi.responses import StreamingResponse
@@ -1093,7 +1093,7 @@ def export_receivables(
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    filename = f"debitorka_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    filename = f"debitorka_{timez.msk_now().strftime('%Y%m%d_%H%M')}.xlsx"
     headers = {"Content-Disposition": f"attachment; filename={filename}"}
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)
 

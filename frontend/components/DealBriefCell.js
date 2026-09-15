@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import api, { auth } from '../lib/api'
 import { overlayClose } from '@/lib/overlay'
+import { fmtDateTime } from '@/lib/dates'
 
 // Иконка «бриф» в строке сделки + всплывающее окно с текстом и инлайн-правкой.
 // Ленивая загрузка: текст тянется только при первом открытии (GET), дальше — из кэша БД.
@@ -133,7 +134,7 @@ export default function DealBriefCell({ deal, canEdit, v2, controlledOpen, onClo
                 ⟳ Обновить из Битрикса
               </button>
               <span style={{ flex: 1, fontSize: 11.5, color: 'var(--muted)' }}>
-                {meta.synced_at ? `синхронизировано: ${new Date(meta.synced_at).toLocaleString('ru-RU')}` : ''}
+                {meta.synced_at ? `синхронизировано: ${fmtDateTime(meta.synced_at)}` : ''}
               </span>
               {canEdit && (
                 <button onClick={save} disabled={saving || loading || !dirty}

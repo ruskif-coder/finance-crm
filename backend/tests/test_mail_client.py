@@ -143,3 +143,54 @@ def test_empty_string_is_not_configured(monkeypatch):
     for k in ENV:
         monkeypatch.setenv(k, "")
     assert not M.configured()
+
+
+def test_sender_must_be_an_address_not_a_signature(monkeypatch):
+    """«Настроено» означает «адрес похож на адрес», а не «строка непуста».
+
+    Замер на проде 14.09.2026: в MAIL_FROM лежало «Уведомления SIMB-AD» — подпись вместо
+    адреса. Канал числился настроенным, экран состояния показывал зелёное, а отправка
+    падала в `smtplib` с «'ascii' codec can't encode characters in position 0-10»:
+    конверт обязан быть ASCII. По такой ошибке причину не найти — она не называет ни
+    поля, ни значения, и ушёл на это целый разбор.
+    """
+    from app.mail import client as mail
+
+    monkeypatch.setenv("MAIL_SMTP_HOST", "smtp.mail.ru")
+    monkeypatch.setenv("MAIL_FROM", "Уведомления SIMB-AD")
+    monkeypatch.setenv("MAIL_FROM_NAME", "Уведомления SIMB-AD")
+    cfg = mail.config()
+    assert cfg.ok is False, "подпись вместо адреса прошла как рабочая настройка"
+    assert "MAIL_FROM" in (cfg.problem or ""), "причина не называет поле"
+    assert "Уведомления" in (cfg.problem or ""), "причина не называет значение"
+
+    with pytest.raises(mail.MailNotConfigured):
+        mail.build_message(to="a@b.ru", subject="тема", body="текст")
+
+    monkeypatch.setenv("MAIL_FROM", "notify@simb-ad.com")
+    cfg = mail.config()
+    assert cfg.ok is True and cfg.problem is None
+
+
+def test_batch_does_not_die_on_one_bad_letter(cfg):
+    """Отказ по одному письму не отменяет остальные — как и обещает `send_many`.
+
+    Обещание было в описании, но не в коде: ловился перечень из четырёх типов, а
+    `smtplib` на кириллическом адресе конверта бросает `UnicodeEncodeError`. Замер
+    14.09.2026 на проде: пачка из 25 писем оборвалась на первом, остальные 24 даже не
+    собрались. Тип ошибки не имеет отношения к тому, должны ли уйти остальные.
+    """
+    sent = []
+
+    def transport(msg):
+        if "плохое" in (msg["Subject"] or ""):
+            raise UnicodeEncodeError("ascii", "х", 0, 1, "нарочно")
+        sent.append(msg["To"])
+
+    res = M.send_many([
+        {"to": "a@b.ru", "subject": "плохое", "body": "x"},
+        {"to": "c@d.ru", "subject": "хорошее", "body": "y"},
+    ], transport=transport)
+
+    assert [r["ok"] for r in res] == [False, True], "пачка оборвалась на первом отказе"
+    assert len(sent) == 1

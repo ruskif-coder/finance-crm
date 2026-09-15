@@ -141,7 +141,7 @@ export default function Articles({ embedded = false } = {}) {
 
   return (
     <>
-      {!embedded && <Head><title>Статьи</title></Head>}
+      {!embedded && <Head><title>Статьи | SIMB-AD ERP</title></Head>}
       {!embedded && <Navbar active="directories" />}
       <div style={{ padding: embedded ? 0 : '20px 24px 50px' }}>
 

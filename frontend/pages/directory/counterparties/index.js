@@ -12,9 +12,10 @@ import { T } from '@/lib/tokens'
 import { grp0 as fmt } from '@/lib/salesFormat'
 import SectionTabs from '@/components/SectionTabs'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { fmtDate as fmtCalendarDate } from '@/lib/dates'
 
 
-const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
+const fmtDate = (s) => fmtCalendarDate(s)
 const DEFAULT_TERM_DAYS = 60
 
 // тип контрагента (relation) → чип
@@ -175,7 +176,7 @@ export default function Counterparties() {
   if (isMobile) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-        <Head><title>Контрагенты</title></Head>
+        <Head><title>Контрагенты · Справочники | SIMB-AD ERP</title></Head>
         <Navbar active="directories" />
         <CounterpartiesMobile
           total={items.length} rows={filtered} loading={loading} canEdit={mayEdit} isAdmin={isAdmin}
@@ -200,7 +201,7 @@ export default function Counterparties() {
 
   return (
     <>
-      <Head><title>Контрагенты</title></Head>
+      <Head><title>Контрагенты · Справочники | SIMB-AD ERP</title></Head>
       <Navbar active="directories" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SectionTabs section="directory" />

@@ -497,13 +497,13 @@ export default function Balance() {
   // незачем, а пустой экран он прочитает как поломку.
   if (access === 'denied') return (
     <NoAccessScreen title="Баланс: нет доступа" what="Баланс"
-      nav={<><Head><title>Баланс | Финансовый учёт</title></Head><Navbar /></>} />
+      nav={<><Head><title>Баланс · Финансы | SIMB-AD ERP</title></Head><Navbar /></>} />
   )
 
   if (loading) return <div style={{ textAlign: 'center', padding: '80px', color: 'var(--text-muted)' }}>Загрузка баланса...</div>
   if ((!data || !receivablesData || !payablesData) && err) return (
     <LoadErrorScreen title="Баланс не загрузился" text={err}
-      nav={<><Head><title>Баланс | Финансовый учёт</title></Head><Navbar active="balance" /></>}
+      nav={<><Head><title>Баланс · Финансы | SIMB-AD ERP</title></Head><Navbar active="balance" /></>}
       onRetry={() => loadBalance(localStorage.getItem('token'))} />
   )
   if (!data || !receivablesData || !payablesData) return null
@@ -511,7 +511,7 @@ export default function Balance() {
   if (isMobile) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
-        <Head><title>Баланс | Финансовый учёт</title></Head>
+        <Head><title>Баланс · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="balance" />
         <BalanceMobile
           data={data} receivablesData={receivablesData} payablesData={payablesData}
@@ -539,7 +539,7 @@ export default function Balance() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
       <Navbar active="balance" />
-      <Head><title>Баланс | Финансовый учёт</title></Head>
+      <Head><title>Баланс · Финансы | SIMB-AD ERP</title></Head>
 
       <div style={{ padding: '24px', maxWidth: 1920, margin: '0 auto' }}>
 

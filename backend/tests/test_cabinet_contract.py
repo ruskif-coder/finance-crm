@@ -450,3 +450,91 @@ def test_profile_carries_the_extra_channels(cab):
         "SELECT column_name FROM information_schema.columns "
         " WHERE table_schema = 'pub' AND table_name = 'profile_v1'"))}
     assert 'messenger_note' in cols
+
+
+def test_cabinet_views_do_not_expose_our_deal_code():
+    """Наружу не уходит НАШ идентификатор сделки (правило владельца 14.09.2026).
+
+    Площадка знает рекламодателя, бренд, услугу и период — этого достаточно, чтобы понять,
+    что согласовывать. Код сделки — наш внутренний номер: площадке он бесполезен, а нам
+    показывает больше, чем нужно, о составе портфеля.
+
+    Проверяются СТОЛБЦЫ представлений, а не экраны кабинета: экран можно переписать, а
+    граница контура держится здесь. `account_publisher_v1.code` — код самой ПЛОЩАДКИ
+    («MXV», «KOP»), её собственный, и он к этому правилу не относится.
+    """
+    from sqlalchemy import text
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT table_name, column_name FROM information_schema.columns
+             WHERE table_schema = 'pub'
+               AND (column_name ~ 'deal' OR column_name = 'code')""")).fetchall()
+    finally:
+        db.close()
+    leaks = [f"{t}.{c}" for t, c in rows
+             if not (t == "account_publisher_v1" and c == "code")]
+    assert not leaks, f"наружу торчит наш идентификатор сделки: {leaks}"
+
+
+def test_publisher_letter_has_no_internal_identifiers():
+    """Подстановки письма площадке не подставляют код сделки даже запасной веткой.
+
+    Ветка `deal.title or deal.code or str(deal.id)` выглядела безобидно: у всех 920 сделок
+    имя заполнено. Но она сработала бы ровно там, где имени нет, — и площадка получила бы
+    «7E2JWE» вместо названия размещения.
+    """
+    import io
+    from pathlib import Path
+
+    src = io.open(Path(__file__).resolve().parents[1] / "app" / "routers" /
+                  "launch_prep.py", encoding="utf-8").read()
+    i = src.index('"сделка":')
+    line = src[i:src.index("\n", i)]
+    assert "deal.code" not in line and "deal.id" not in line, (
+        f"в письмо площадке подставляется наш идентификатор: {line.strip()}")
+
+
+def test_period_text_does_not_touch_a_field_that_does_not_exist():
+    """У сделки нет поля `period` — есть `period_from` и `period_to`.
+
+    Обращение к несуществующему полю жило в письме-запросе посадочной незамеченным:
+    ветка выполняется только при живой отправке, а в тестах сети нет. Нашлось
+    14.09.2026, когда второй отправитель скопировал ту же строку и уронил прогон —
+    то есть первый отправитель был сломан с рождения и молчал.
+    """
+    from datetime import date
+    from app.routers.launch_prep import deal_period_text
+    from app.sales.models import SalesDeal
+
+    assert not hasattr(SalesDeal, "period"), (
+        "у сделки появилось поле `period` — этот прибор и текст в нём устарели")
+    assert deal_period_text(SalesDeal(period_from=date(2026, 9, 1),
+                                      period_to=date(2026, 9, 30))) == "09.2026"
+    assert deal_period_text(SalesDeal(period_from=date(2026, 9, 1),
+                                      period_to=date(2026, 11, 30))) == "09.2026 — 11.2026"
+    assert deal_period_text(SalesDeal()) == ""
+
+
+def test_brand_fallback_never_returns_our_identifier():
+    """Запасная ветка бренда уходит В ПИСЬМО ПЛОЩАДКЕ.
+
+    Пока она возвращала `deal.code or str(deal.id)`, правило «наш идентификатор наружу не
+    уходит» держалось только на том, что у всех сделок заполнено имя. Прибор на
+    подстановку `{сделка}` этого не ловил: он читает строку исходника, а код прятался
+    внутри помощника.
+    """
+    from app.routers.launch_prep import _deal_brand_name
+    from app.database import SessionLocal
+    from app.sales.models import SalesDeal
+
+    db = SessionLocal()
+    try:
+        deal = SalesDeal(brand_id=None, title=None, code="7E2JWE", id=42)
+        assert _deal_brand_name(db, deal) == ""
+        deal.title = "Эспумизан 09"
+        assert _deal_brand_name(db, deal) == "Эспумизан 09"
+    finally:
+        db.close()

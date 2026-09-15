@@ -22,8 +22,10 @@ import { MONO, UI, IconBtn } from '@/components/salesTableKit'
 import { grp } from '@/lib/salesFormat'
 import { T } from '@/lib/tokens'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { saveBlob, filenameFromResponse } from '@/lib/download'
+import { fmtDate as fmtCalendarDate } from '@/lib/dates'
 
-const dm = (d) => (d ? new Date(d).toLocaleDateString('ru-RU') : '—')
+const dm = (d) => fmtCalendarDate(d)
 
 // Сетка одна на шапку и строки. Порядок колонок — владелец 05.09.2026: сперва ЧЬЁ и по
 // какому договору, потом сам документ, в конце выгрузка.
@@ -127,14 +129,7 @@ export default function AnnexRegistry() {
     setBusy(`${id}:${kind}`)
     try {
       const r = await api.get(`/annexes/${id}/${kind}`, { ...auth(), responseType: 'blob' })
-      const cd = r.headers['content-disposition'] || ''
-      const m = /filename\*=UTF-8''([^;]+)/.exec(cd)
-      const url = URL.createObjectURL(r.data)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = m ? decodeURIComponent(m[1]) : `ДС.${kind}`
-      link.click()
-      URL.revokeObjectURL(url)
+      saveBlob(r.data, filenameFromResponse(r) || `ДС.${kind}`)
     } catch (err) {
       // Отказ приходит блобом: без чтения тела на экране было бы общее «не удалось»,
       // хотя сервер прислал, ЧЕГО не хватает для выпуска документа.
@@ -151,14 +146,7 @@ export default function AnnexRegistry() {
     try {
       const r = await api.post('/annexes/export.xlsx', { ids: filtered.map(a => a.id) },
                                { ...auth(), responseType: 'blob' })
-      const cd = r.headers['content-disposition'] || ''
-      const m = /filename\*=UTF-8''([^;]+)/.exec(cd)
-      const url = URL.createObjectURL(r.data)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = m ? decodeURIComponent(m[1]) : 'Приложения.xlsx'
-      link.click()
-      URL.revokeObjectURL(url)
+      saveBlob(r.data, filenameFromResponse(r) || 'Приложения.xlsx')
     } catch (e) { setError(e.response?.data?.detail || 'Не удалось выгрузить реестр') }
     finally { setBusy('') }
   }
@@ -169,7 +157,7 @@ export default function AnnexRegistry() {
 
   return (
     <>
-      <Head><title>Приложения к договорам</title></Head>
+      <Head><title>Приложения · Справочники | SIMB-AD ERP</title></Head>
       <Navbar active="directories" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SectionTabs section="directory" />

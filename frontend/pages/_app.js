@@ -10,14 +10,21 @@ import { PageLoader } from '../components/LogoLoader'
 // up -d --build) скачивала Onest с fonts.googleapis.com/fonts.gstatic.com, и при
 // недоступности этих хостов из контейнера сборка фронтенда падала (ETIMEDOUT).
 // Файлы лежат в public/fonts/ — см. CLAUDE.md.
+//
+// Формат woff2, а не ttf (13.09.2026). Все шесть начертаний ПРЕДЗАГРУЖАЮТСЯ на каждой
+// странице — этот класс висит на <main>, — и в ttf они весили 354 КБ. На экране входа
+// это было 48 % всей страницы: форма из двух полей тянула шрифта больше, чем React.
+// woff2 — тот же шрифт под сжатием brotli: 149 КБ, глифы и таблица символов совпадают
+// один в один (509 глифов, 470 символов). Исходные .ttf оставлены в public/fonts/ —
+// из них конвертируются новые начертания, если понадобятся.
 const onest = localFont({
   src: [
-    { path: '../public/fonts/onest-300.ttf', weight: '300', style: 'normal' },
-    { path: '../public/fonts/onest-400.ttf', weight: '400', style: 'normal' },
-    { path: '../public/fonts/onest-500.ttf', weight: '500', style: 'normal' },
-    { path: '../public/fonts/onest-600.ttf', weight: '600', style: 'normal' },
-    { path: '../public/fonts/onest-700.ttf', weight: '700', style: 'normal' },
-    { path: '../public/fonts/onest-800.ttf', weight: '800', style: 'normal' },
+    { path: '../public/fonts/onest-300.woff2', weight: '300', style: 'normal' },
+    { path: '../public/fonts/onest-400.woff2', weight: '400', style: 'normal' },
+    { path: '../public/fonts/onest-500.woff2', weight: '500', style: 'normal' },
+    { path: '../public/fonts/onest-600.woff2', weight: '600', style: 'normal' },
+    { path: '../public/fonts/onest-700.woff2', weight: '700', style: 'normal' },
+    { path: '../public/fonts/onest-800.woff2', weight: '800', style: 'normal' },
   ],
   display: 'swap',
 })
@@ -69,6 +76,12 @@ export default function App({ Component, pageProps }) {
           по ширине. Явный initial-scale=1 фиксирует масштаб 1:1. Действует на все страницы. */}
       <Head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        {/* Заголовок по умолчанию. Страница со своим <title> его перекрывает: next/head
+            из нескольких тегов title оставляет ПОСЛЕДНИЙ, а Head страницы рендерится
+            после этого. Нужен точкам входа контуров (/finance, /sales, …) — они живут
+            доли секунды и перебрасывают дальше, но без него вкладка показывает голый
+            адрес. Заодно страховка: новая страница, где забыли <title>, покажет бренд. */}
+        <title>SIMB-AD ERP</title>
       </Head>
       <main className={onest.className}>
         {(!ready || nav) && <PageLoader />}

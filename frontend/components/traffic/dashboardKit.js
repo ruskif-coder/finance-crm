@@ -19,6 +19,7 @@
  * действительно оформление: пороги цвета, геометрия полос, подписи.
  */
 import { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { MONO, UI, Modal, PortalPopover, Z, btnSm, selSm } from '../salesTableKit'
 import { grp } from '@/lib/salesFormat'
 
@@ -367,34 +368,62 @@ export const WIDGET_BODY = CULPRIT_ROW * CULPRITS_SHOWN
 // полосе прокрутки.
 const SCROLL_PAD = { paddingBottom: 14, paddingRight: 8 }
 
-export const DayWall = ({ rows, onOpen }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 7, ...SCROLL_PAD,
-    height: WIDGET_BODY, overflowY: 'auto', overflowX: 'hidden' }}>
-    {rows.map(r => (
-      <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span onClick={() => onOpen?.(r.id)}
-          style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--accent)',
-            width: 72, flex: '0 0 72px', cursor: onOpen ? 'pointer' : 'default' }}>{r.deal_code}</span>
-        <span style={{ display: 'flex', gap: 2, flex: '1 1 auto', minWidth: 0 }}>
-          {r.cells.map((c, i) => (
-            <span key={i} title={`${c.date}${c.shows == null ? ' · нет данных' : ` · ${grp(c.shows)}`}`}
-              style={{ flex: '1 1 0', minWidth: 3, height: 14, borderRadius: 2,
-                background: cellTone(c) }} />
-          ))}
+/* Клетка стены в тех же полях, что столбец графика: карточка дня одна на два места и
+   ждёт именно такую форму. У стены клетка всегда один день, а «будущий» приходит флагом
+   `ahead` — в карточке это `days_past`. */
+const cellBucket = (c) => ({
+  plan: c.plan, shows: c.shows, clicks: c.clicks,
+  days: 1, date_from: c.date, date_to: c.date,
+  days_past: c.ahead ? 0 : 1,
+})
+
+export const DayWall = ({ rows, onOpen }) => {
+  // Наведение ловится на КЛЕТКЕ и запоминает её геометрию, а не курсор: клеток в стене
+  // до тысячи, и обновление состояния на каждое движение мыши перерисовывало бы весь
+  // виджет. Родное `title` с клеток снято — иначе поверх карточки всплывала бы ещё и
+  // системная подсказка.
+  const [tip, setTip] = useState(null)
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 7, ...SCROLL_PAD,
+      height: WIDGET_BODY, overflowY: 'auto', overflowX: 'hidden' }}>
+      {rows.map(r => (
+        <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span onClick={() => onOpen?.(r.id)}
+            style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--accent)',
+              width: 72, flex: '0 0 72px', cursor: onOpen ? 'pointer' : 'default' }}>{r.deal_code}</span>
+          <span style={{ display: 'flex', gap: 2, flex: '1 1 auto', minWidth: 0 }}>
+            {r.cells.map((c, i) => {
+              const key = `${r.id}:${i}`
+              return (
+                <span key={i}
+                  onMouseEnter={(e) => {
+                    const box = e.currentTarget.getBoundingClientRect()
+                    setTip({ key, b: cellBucket(c),
+                      label: `${r.deal_code}${r.product ? ` · ${r.product}` : ''}`,
+                      x: box.left + box.width / 2, y: box.top, bottom: box.bottom })
+                  }}
+                  onMouseLeave={() => setTip(t => (t && t.key === key ? null : t))}
+                  style={{ flex: '1 1 0', minWidth: 3, height: 14, borderRadius: 2,
+                    background: cellTone(c),
+                    boxShadow: tip && tip.key === key ? '0 0 0 2px var(--accent)' : 'none' }} />
+              )
+            })}
+          </span>
+          <span style={{ fontFamily: MONO, fontSize: 11, width: 46, textAlign: 'right',
+            flex: '0 0 46px', color: r.done_pct == null ? 'var(--text-faint)' : 'var(--text-secondary)' }}>
+            {r.done_pct == null ? DASH : `${r.done_pct} %`}
+          </span>
+        </div>
+      ))}
+      {!rows.length && (
+        <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>
+          Пока нечего показывать: ни у одной РК нет ни флайта, ни плана.
         </span>
-        <span style={{ fontFamily: MONO, fontSize: 11, width: 46, textAlign: 'right',
-          flex: '0 0 46px', color: r.done_pct == null ? 'var(--text-faint)' : 'var(--text-secondary)' }}>
-          {r.done_pct == null ? DASH : `${r.done_pct} %`}
-        </span>
-      </div>
-    ))}
-    {!rows.length && (
-      <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>
-        Пока нечего показывать: ни у одной РК нет ни флайта, ни плана.
-      </span>
-    )}
-  </div>
-)
+      )}
+      {tip && <DayTip {...tip} />}
+    </div>
+  )
+}
 
 /**
  * Легенда таблицы. Первая группа — ОДИН язык на обе колонки: и полоса выполнения, и
@@ -475,7 +504,18 @@ export const dayName = (iso) => {
  */
 const CARD_W = 290
 
-const DayCard = ({ b, label, at }) => {
+// Внешность карточки — одна на оба места, чтобы подсказка у графика и подсказка у стены
+// дней не разъехались по скруглению и тени, как это уже случалось с цветами банков.
+const CARD_SKIN = {
+  width: CARD_W, background: 'var(--bg-card)', border: '1px solid var(--border-card)',
+  borderRadius: 16, boxShadow: '0 1px 3px rgba(28,36,51,.06), 0 18px 46px rgba(28,36,51,.16)',
+  padding: '13px 16px 6px',
+}
+
+/* Содержимое карточки — ОДНО на два места: график динамики в расхлопе и стена дней в
+   виджете. Различается только способ поставить её на экран, поэтому разведены обёртки,
+   а не две карточки: две разошлись бы по числу строк на первой же правке. */
+const DayCardBody = ({ b, label }) => {
   const past = !!b.days_past
   const ctr = past && b.shows ? (b.clicks / b.shows * 100) : null
   const rows = [
@@ -485,24 +525,8 @@ const DayCard = ({ b, label, at }) => {
     ['CTR', ctr == null ? DASH : `${ctr.toFixed(2).replace('.', ',')} %`,
       past ? 'var(--text-primary)' : 'var(--text-faint)'],
   ]
-  /* Карточка следует за курсором ПО ГОРИЗОНТАЛИ и остаётся внутри своего графика.
-     
-     Позиционируется от САМОГО ГРАФИКА (`absolute` в его координатах), а не от окна.
-     Версия на `position: fixed` с координатами мыши считала край по `window`, и в
-     модалке — где окно заметно шире содержимого — уезжала наружу: чем правее день, тем
-     дальше. Здесь уехать некуда по построению: `left` зажат между нулём и шириной
-     графика минус ширина карточки, а оба числа локальные.
-     
-     `pointerEvents: none` обязателен: иначе карточка попадает под курсор, столбец
-     теряет наведение, и она начинает мигать. */
-  const half = CARD_W / 2
-  const left = Math.min(Math.max(at.dx - half, 0), Math.max(0, at.w - CARD_W))
   return (
-    <div style={{ position: 'absolute', top: '100%', marginTop: 8, left,
-      zIndex: Z.dropdown, pointerEvents: 'none',
-      width: CARD_W, background: 'var(--bg-card)', border: '1px solid var(--border-card)',
-      borderRadius: 16, boxShadow: '0 1px 3px rgba(28,36,51,.06), 0 18px 46px rgba(28,36,51,.16)',
-      padding: '13px 16px 6px' }}>
+    <>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8 }}>
         <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
           {b.days > 1 ? `${dayName(b.date_from)} — ${dayName(b.date_to)}` : dayName(b.date_from)}
@@ -525,8 +549,57 @@ const DayCard = ({ b, label, at }) => {
           план пересчитан под недокрут
         </div>
       )}
+    </>
+  )
+}
+
+/* Обёртка ГРАФИКА: карточка следует за курсором по горизонтали и остаётся внутри своего
+   графика.
+
+   Позиционируется от САМОГО ГРАФИКА (`absolute` в его координатах), а не от окна.
+   Версия на `position: fixed` с координатами мыши считала край по `window`, и в модалке —
+   где окно заметно шире содержимого — уезжала наружу: чем правее день, тем дальше. Здесь
+   уехать некуда по построению: `left` зажат между нулём и шириной графика минус ширина
+   карточки, а оба числа локальные.
+
+   `pointerEvents: none` обязателен: иначе карточка попадает под курсор, столбец теряет
+   наведение, и она начинает мигать. */
+const DayCard = ({ b, label, at }) => {
+  const half = CARD_W / 2
+  const left = Math.min(Math.max(at.dx - half, 0), Math.max(0, at.w - CARD_W))
+  return (
+    <div style={{ position: 'absolute', top: '100%', marginTop: 8, left,
+      zIndex: Z.dropdown, pointerEvents: 'none', ...CARD_SKIN }}>
+      <DayCardBody b={b} label={label} />
     </div>
   )
+}
+
+/* Обёртка СТЕНЫ ДНЕЙ: та же карточка, но в портале и на `fixed`.
+
+   Здесь нельзя как у графика: стена стоит в окне с `overflow: auto`, и `absolute` внутри
+   неё обрезался бы прокруткой — готча проекта, из-за неё же все выпадашки живут на
+   `PortalPopover`. Координаты берутся у САМОЙ КЛЕТКИ, а не у курсора: клеток в стене до
+   тысячи, и обновление состояния на каждое движение мыши перерисовывало бы весь виджет.
+   Привязка к клетке заодно не дрожит.
+
+   Карточка переворачивается вверх, если внизу не помещается: у нижних рядов стены места
+   под ней нет. Высота взята с запасом константой — измерять нечего, состав строк
+   фиксирован. */
+const CARD_H = 208
+
+const DayTip = ({ b, label, x, y, bottom }) => {
+  if (typeof document === 'undefined') return null
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  const left = Math.min(Math.max(x - CARD_W / 2, 8), Math.max(8, vw - CARD_W - 8))
+  const below = bottom + 10
+  const top = below + CARD_H > vh ? Math.max(8, y - 10 - CARD_H) : below
+  return createPortal(
+    <div style={{ position: 'fixed', left, top, zIndex: Z.dropdown, pointerEvents: 'none',
+      ...CARD_SKIN }}>
+      <DayCardBody b={b} label={label} />
+    </div>, document.body)
 }
 
 export const Dynamics = ({ data, label }) => {
@@ -598,13 +671,24 @@ export const Dynamics = ({ data, label }) => {
  * — одобрено ПЛОЩАДКОЙ, «запущено» — креатив есть в кабинете DSP. Согласованный
  * может ещё не уехать в DSP, и склеить их значило бы обещать открутку, которой нет.
  *
- * Цвет точки — состояние площадки одним взглядом: зелёная — что-то крутит, оранжевая —
- * согласовано, но в DSP не уехало, серая — согласовывать ещё нечего.
+ * Цвет точки — состояние площадки одним взглядом:
+ *   зелёная  — всё согласованное крутится;
+ *   оранжевая — согласовано больше, чем запущено (в том числе «согласовано, но не
+ *               запущено ничего»);
+ *   серая    — согласовывать ещё нечего.
+ *
+ * До 14.09.2026 зелёной считалась площадка, у которой крутится ХОТЬ ЧТО-ТО: «2 / 2 / 1»
+ * выглядело благополучно, хотя половина согласованного в DSP не уехала. Владелец: «не
+ * всё хорошо». Разница между «что-то идёт» и «идёт всё, что разрешили» — это и есть
+ * недокрут, который потом ищут в цифрах.
  */
 export const CreativeCounts = ({ counts }) => {
   const c = counts || { total: 0, agreed: 0, live: 0 }
-  const tone = c.live ? 'var(--income)' : c.agreed ? 'var(--warning-text)' : 'var(--border-inner)'
+  const short = Math.max(0, (c.agreed || 0) - (c.live || 0))
+  const tone = !c.agreed ? 'var(--border-inner)'
+    : short ? 'var(--warning-fg)' : 'var(--income)'
   const title = `всего ${c.total} · согласовано ${c.agreed} · запущено ${c.live}`
+    + (short ? ` — не запущено ${short} из согласованных` : '')
   return (
     <span title={title} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <span style={{ width: 7, height: 7, borderRadius: 2, background: tone, flex: '0 0 7px' }} />
@@ -613,7 +697,10 @@ export const CreativeCounts = ({ counts }) => {
         <span style={{ color: 'var(--text-faint)' }}> / </span>
         <span style={{ color: c.agreed ? 'var(--income)' : 'var(--text-faint)' }}>{c.agreed}</span>
         <span style={{ color: 'var(--text-faint)' }}> / </span>
-        <span style={{ color: c.live ? 'var(--blue)' : 'var(--text-faint)' }}>{c.live}</span>
+        {/* Само число «запущено» красится тем же правилом, что и точка: иначе вердикт
+            живёт отдельно от числа, которое его вызвало, и читать приходится подсказку. */}
+        <span style={{ color: !c.live ? 'var(--text-faint)'
+          : short ? 'var(--warning-fg)' : 'var(--blue)' }}>{c.live}</span>
       </span>
     </span>
   )

@@ -21,7 +21,7 @@
 import logging
 import os
 import re
-from datetime import date, datetime
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -35,6 +35,7 @@ from app.permissions import require_permission
 from app.weborama import enums, matching, naming, tags
 from app.weborama.client import (ENV_EMAIL, ENV_PASSWORD, ENV_URL, WcmAuthError,
                                  WcmClient, WcmError)
+from app import timez
 
 router = APIRouter()
 
@@ -91,7 +92,7 @@ def _journal(step: str, user, request: Any = None, response: Any = None,
         os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
         if os.path.exists(LOG_PATH) and os.path.getsize(LOG_PATH) > LOG_MAX_BYTES:
             os.replace(LOG_PATH, LOG_PATH + ".1")
-        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        stamp = timez.msk_now().strftime("%Y-%m-%d %H:%M:%S")   # журнал читают люди
         who = getattr(user, "name", None) or getattr(user, "id", "—")
 
         def dump(v):

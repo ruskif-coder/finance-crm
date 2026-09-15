@@ -109,13 +109,13 @@ export default function PlanFact() {
   // незачем, а пустой экран он прочитает как поломку.
   if (access === 'denied') return (
     <NoAccessScreen title="План / Факт: нет доступа" what="План / Факт"
-      nav={<><Head><title>План/Факт | Финансовый учёт</title></Head><Navbar /></>} />
+      nav={<><Head><title>План / Факт · Финансы | SIMB-AD ERP</title></Head><Navbar /></>} />
   )
 
   if (loading) return <div style={{ textAlign: 'center', padding: '80px', color: 'var(--text-muted)' }}>Загрузка План/Факт...</div>
   if (!data && err) return (
     <LoadErrorScreen title="План/Факт не загрузился" text={err}
-      nav={<><Head><title>План/Факт | Финансовый учёт</title></Head><Navbar active="plan-fact" /></>}
+      nav={<><Head><title>План / Факт · Финансы | SIMB-AD ERP</title></Head><Navbar active="plan-fact" /></>}
       onRetry={() => load(localStorage.getItem('token'))} />
   )
   if (!data) return null
@@ -123,7 +123,7 @@ export default function PlanFact() {
   if (isMobile) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
-        <Head><title>План / Факт | Финансовый учёт</title></Head>
+        <Head><title>План / Факт · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="planfact" />
         <PlanFactMobile dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo} data={data} />
       </div>
@@ -158,7 +158,7 @@ export default function PlanFact() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
       <Navbar active="planfact">
-      <Head><title>План / Факт | Финансовый учёт</title></Head>
+      <Head><title>План / Факт · Финансы | SIMB-AD ERP</title></Head>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <span style={{ fontSize: '15px', color: 'var(--text-muted)' }}>С периода</span>
           <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)}

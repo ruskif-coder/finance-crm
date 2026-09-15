@@ -314,7 +314,7 @@ export default function Advertisers() {
   if (isMobile) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-        <Head><title>Рекламодатели</title></Head>
+        <Head><title>Рекламодатели · Справочники | SIMB-AD ERP</title></Head>
         <Navbar active="directories" />
         <AdvertisersMobile
           total={items.length} rows={filtered} loading={loading} canEdit={mayEdit}
@@ -329,7 +329,7 @@ export default function Advertisers() {
 
   return (
     <>
-      <Head><title>Рекламодатели</title></Head>
+      <Head><title>Рекламодатели · Справочники | SIMB-AD ERP</title></Head>
       <Navbar active="directories" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
 

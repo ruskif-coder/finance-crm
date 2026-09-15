@@ -11,12 +11,23 @@
 
 Соответствие: `deal.amount`  ↔ `SalesMediaPlan.amount_net`  (без НДС),
               `deal.amount_with_vat` ↔ `SalesMediaPlan.amount_gross` (с НДС).
+
+ПОСЧИТАН ≠ НЕ НОЛЬ (найдено 15.09.2026 по жалобе владельца на сделку MHNZUT). Признаком
+«план посчитан» был `amount_net`, отличный от нуля, — и ноль читался как «плана ещё нет».
+Но ноль бывает настоящим: услуга со стопроцентной скидкой даёт посчитанный план на нулевую
+сумму, и реестр показывал по такой сделке 372 000 из Битрикса. Со стороны это выглядит как
+«цена не обновилась», хотя план привязан и посчитан.
+
+Признак теперь — СТРОКИ размещения: план со строками посчитан, чему бы ни равнялся итог;
+план без строк (болванка, заведённая и брошенная) сумму сделки не трогает. Ноль от
+стопроцентной скидки и пустая болванка — разные состояния, и различать их по итогу нельзя.
 """
 from typing import Dict, Iterable, Optional, Tuple
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.sales.models import SalesMediaPlan
+from app.sales.models import SalesMediaPlan, SalesMediaPlanRow
 
 
 def mp_amounts_by_deal(db: Session, deal_ids: Iterable[int]
@@ -24,9 +35,10 @@ def mp_amounts_by_deal(db: Session, deal_ids: Iterable[int]
     """{deal_id: (net, gross)} по ПОСЛЕДНИМ версиям МП, свёрнутым по группам.
 
     - берётся старшая версия каждого `group_id` (как и `our_mps` на экранах);
-    - НЕ посчитанный или ПУСТОЙ план (`amount_net` NULL или 0) не учитывается: пустой МП
-      не должен обнулять сделку — до расчёта показывается сумма Битрикса. Настоящий МП
-      всегда > 0, так что нулём мы теряем только незаполненные;
+    - план БЕЗ СТРОК размещения не учитывается: заведённая и брошенная болванка не должна
+      обнулять сделку — до расчёта показывается сумма Битрикса;
+    - план СО СТРОКАМИ учитывается всегда, включая нулевой итог: ноль по стопроцентной
+      скидке — это посчитанная цена, а не отсутствие плана;
     - если у сделки несколько групп МП — суммируются (на практике почти всегда одна).
 
     В словаре только те сделки, у которых есть хотя бы один посчитанный МП. Остальные
@@ -35,16 +47,25 @@ def mp_amounts_by_deal(db: Session, deal_ids: Iterable[int]
     ids = [i for i in deal_ids if i is not None]
     if not ids:
         return {}
+    plans = (db.query(SalesMediaPlan)
+             .filter(SalesMediaPlan.deal_id.in_(ids))
+             .order_by(SalesMediaPlan.group_id, SalesMediaPlan.version.desc()).all())
+    if not plans:
+        return {}
+    # Строки — одним запросом на всю страницу, а не по плану: реестр зовёт это на каждую
+    # сотню сделок, и N+1 здесь стоил бы сотни запросов на открытие экрана.
+    has_rows = {pid for pid, _n in
+                db.query(SalesMediaPlanRow.plan_id, func.count(SalesMediaPlanRow.id))
+                .filter(SalesMediaPlanRow.plan_id.in_([p.id for p in plans]))
+                .group_by(SalesMediaPlanRow.plan_id).all()}
     seen: Dict[int, set] = {}
     acc: Dict[int, list] = {}
-    for p in (db.query(SalesMediaPlan)
-              .filter(SalesMediaPlan.deal_id.in_(ids))
-              .order_by(SalesMediaPlan.group_id, SalesMediaPlan.version.desc()).all()):
+    for p in plans:
         groups = seen.setdefault(p.deal_id, set())
         if p.group_id in groups:
             continue                       # уже взяли старшую версию этой группы
         groups.add(p.group_id)
-        if not p.amount_net:               # None или 0 — план не посчитан/пуст
+        if p.id not in has_rows:           # болванка без размещений — план не заводили
             continue                       # не трогаем сумму: не обнуляем сделку пустым МП
         a = acc.setdefault(p.deal_id, [0.0, 0.0])
         a[0] += float(p.amount_net or 0)

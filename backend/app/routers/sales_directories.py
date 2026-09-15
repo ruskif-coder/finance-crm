@@ -35,6 +35,8 @@ from app.sales.models import (SalesService, SalesAddonService, SalesServiceGroup
                               SalesStagePhase, SalesStage)
 from app.sales.normalize import normalize_name, normalize_inn
 from app.sales.stages import STAGE_CATALOG, STAGE_BY_KEY
+from app.sales.catalog import Catalog
+from app.sales import stage_scope
 import logging
 
 router = APIRouter()
@@ -1160,8 +1162,18 @@ class PhaseIn(BaseModel):
     stages: List[StageIn] = []
 
 
+class CardBlockIn(BaseModel):
+    key: str
+    # Стадия, С КОТОРОЙ блок становится виден. Пусто — виден всегда.
+    stage_id: Optional[int] = None
+
+
 class StageCatalogIn(BaseModel):
     phases: List[PhaseIn] = []
+    # Пусто (не пришло вовсе) — разметку блоков НЕ ТРОГАЕМ. Пустой список означал бы
+    # «убрать всю разметку», и старый клиент, ничего не знающий про блоки, обнулял бы её
+    # каждым сохранением каталога.
+    card_blocks: Optional[List[CardBlockIn]] = None
 
 
 def _stage_dict(s):
@@ -1196,6 +1208,10 @@ def get_stage_catalog(db: Session = Depends(get_db),
         ],
         "catalog": [{"key": c["key"], "label": c["label"], "money_layer": c["money_layer"]}
                     for c in STAGE_CATALOG],
+        # Видимость блоков карточки сделки: по строке на блок, `stage_id=None` — виден
+        # всегда. Читается тем же модулем, что и сама карточка (`app/sales/stage_scope.py`),
+        # чтобы экран настройки показывал действующее правило, а не своё представление о нём.
+        "card_blocks": stage_scope.blocks_markup(db, Catalog(db)),
     }
 
 
@@ -1273,6 +1289,23 @@ def save_stage_catalog(data: StageCatalogIn, db: Session = Depends(get_db),
     for p in list(existing_phases.values()):
         if p.id not in keep_phases:
             db.delete(p)
+    # Видимость блоков карточки — в ТОЙ ЖЕ транзакции, что и каталог: иначе удаление
+    # стадии и перевешивание блока с неё расходятся по двум запросам, и между ними
+    # существует состояние, где блок указывает в никуда.
+    if data.card_blocks is not None:
+        pairs = {}
+        for b in data.card_blocks:
+            if b.key not in stage_scope.BLOCK_KEYS:
+                db.rollback()
+                raise HTTPException(status_code=400, detail=f"Неизвестный блок: {b.key}")
+            if b.stage_id is not None and b.stage_id not in keep_stages:
+                db.rollback()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Блок «{stage_scope.BLOCK_LABELS.get(b.key, b.key)}» привязан "
+                           f"к стадии, которой не будет после сохранения")
+            pairs[b.key] = b.stage_id
+        stage_scope.save_blocks_markup(db, pairs)
     db.commit()
     log_action(db, current_user, "save_stage_catalog", "sales_stage_catalog", None,
                f"этапов {len(data.phases)}")

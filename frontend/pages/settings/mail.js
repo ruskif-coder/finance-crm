@@ -20,14 +20,15 @@ import { useCallback, useEffect, useState } from 'react'
 import Head from 'next/head'
 import Navbar from '../../components/Navbar'
 import SettingsTabs from '../../components/SettingsTabs'
-import { UI, MONO, CAP, card, inp, btn, primaryBtn, th, td, sel, Modal }
+import { UI, MONO, CAP, card, inp, btn, primaryBtn, th, td, sel, Modal , Pager }
   from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import { getPermissions, can } from '../../lib/auth'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { fmtDateTime } from '@/lib/dates'
 
 const msg = e => e?.response?.data?.detail || e?.message || 'Ошибка'
-const fmtDT = v => v ? new Date(v).toLocaleString('ru-RU') : '—'
+const fmtDT = v => fmtDateTime(v)
 
 // Тон статуса письма. «В очереди» — не ошибка: канал не настроен или письмо ждёт
 // досылки, и красным оно быть не должно.
@@ -45,6 +46,15 @@ const Pill = ({ status }) => {
   )
 }
 
+/** «1 месяц», «3 месяца», «5 месяцев». Одиннадцать — ловушка: по последней цифре
+    вышло бы «месяц». */
+const plural = (n, one, few, many) => {
+  const a = Math.abs(n)
+  if (a % 100 >= 11 && a % 100 <= 14) return many
+  const last = a % 10
+  return last === 1 ? one : (last >= 2 && last <= 4 ? few : many)
+}
+
 export default function SettingsMail() {
   const [perms, setPerms] = useState({})
   const [ready, setReady] = useState(false)
@@ -52,8 +62,11 @@ export default function SettingsMail() {
   const [state, setState] = useState(null)
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
+  const [keepMonths, setKeepMonths] = useState(null)
   const [tpls, setTpls] = useState([])
   const [filter, setFilter] = useState({ kind: '', status: '', q: '' })
+  const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState(50)
   const [open, setOpen] = useState(null)          // письмо в разворот
   const [edit, setEdit] = useState(null)          // шаблон в правку
   const [busy, setBusy] = useState(false)
@@ -71,16 +84,22 @@ export default function SettingsMail() {
       if (filter.kind) p.set('kind', filter.kind)
       if (filter.status) p.set('status', filter.status)
       if (filter.q.trim()) p.set('q', filter.q.trim())
+      p.set('limit', String(pageSize))
+      p.set('offset', String(page * pageSize))
       const [s, l] = await Promise.all([
         api.get('/mail/state', auth()),
-        api.get(`/mail/log?limit=100&${p}`, auth()),
+        api.get(`/mail/log?${p}`, auth()),
       ])
       setState(s.data); setRows(l.data.items || []); setTotal(l.data.total || 0)
+      setKeepMonths(l.data.keep_months ?? null)
       setErr('')
     } catch (e) { setErr(msg(e)) }
-  }, [ready, filter])
+  }, [ready, filter, page, pageSize])
 
   useEffect(() => { load() }, [load])
+  // Смена фильтра или размера страницы возвращает на первую: остаться на седьмой
+  // странице выборки из двух строк — это пустой экран без объяснения.
+  useEffect(() => { setPage(0) }, [filter, pageSize])
   useRefreshOnReturn(() => load())
 
   const loadTpls = useCallback(async () => {
@@ -132,7 +151,7 @@ export default function SettingsMail() {
 
   return (
     <>
-      <Head><title>Почта · Настройки</title></Head>
+      <Head><title>Почта · Настройки | SIMB-AD ERP</title></Head>
       <Navbar />
       <SettingsTabs active="mail" />
       <div style={{ padding: '0 24px 32px', fontFamily: UI }}>
@@ -236,6 +255,23 @@ export default function SettingsMail() {
                   ))}
                 </tbody>
               </table>
+            )}
+
+            {/* Срок хранения написан на экране, а не подразумевается: иначе человек
+                ищет письмо полугодовой давности и думает, что журнал сломался.
+                Число приходит с сервера — то же, по которому работает уборка. */}
+            {!!keepMonths && (
+              <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--text-faint)' }}>
+                Журнал хранится {keepMonths} {plural(keepMonths, 'месяц', 'месяца', 'месяцев')};
+                более старые письма убираются автоматически. Письма в очереди не убираются.
+              </div>
+            )}
+
+            {!!rows.length && (
+              <Pager page={page} pages={Math.max(1, Math.ceil(total / pageSize))}
+                total={total} shown={rows.length} pageSize={pageSize}
+                sizes={[25, 50, 100, 300]} unit="писем"
+                onPage={setPage} onSize={setPageSize} />
             )}
           </div>
         )}

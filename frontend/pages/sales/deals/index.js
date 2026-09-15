@@ -12,12 +12,14 @@ import { buildTitle, productWithSurface, separatePriceSet, surfaceTag, TITLE_EMP
 import { DownloadOverlay } from '@/components/LogoLoader'
 import { fmtMoney, fmtFull, fmtDate, mln } from '@/lib/salesFormat'
 import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
-import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z } from '@/components/salesTableKit'
+import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, firstSortDir, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import { overlayClose } from '@/lib/overlay'
 import StageRequirements from '@/components/sales/StageRequirements'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { downloadFile } from '@/lib/download'
+import { fmtDateTime } from '@/lib/dates'
 const DealCardList = dynamic(() => import('@/components/mobile/DealCardList'), { ssr: false })
 const DealsMobileControls = dynamic(() => import('@/components/sales/DealsMobileControls'), { ssr: false })
 const BottomSheet = dynamic(() => import('@/components/mobile/BottomSheet'), { ssr: false })
@@ -296,7 +298,7 @@ export default function SalesRegistry2() {
   const btnSec = { background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-card)', borderRadius: 10, padding: '9px 13px', fontFamily: UI, fontSize: 13, fontWeight: 600, cursor: 'pointer' }
   const bulkInp = { padding: '7px 9px', border: '1px solid var(--border-card)', borderRadius: 8, fontSize: 12.5, background: 'var(--bg-card)', color: 'inherit', fontFamily: UI }
 
-  const onSort = (k, sortable) => { if (!sortable) return; if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(k); setSortDir('desc') } }
+  const onSort = (k, sortable) => { if (!sortable) return; if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(k); setSortDir(firstSortDir(k)) } }
   const resetFilters = () => { setSel(Object.fromEntries(REG_FILTER_DROPS.map(([k]) => [k, []]))); setGaps([]); setHideArchive(true); setOnlyPlanned(false); setSearch(''); setSearchQ(''); setDateFrom(''); setDateTo('') }
 
   const patchCell = async (id, patch, localApply) => {
@@ -404,14 +406,10 @@ export default function SalesRegistry2() {
     issues: d.sync_issues || [], warnings: (d.sync_issues || []).map(i => i.message),
     checked_at: d.sync_checked_at,
   })
-  // Скачивание сохранённого файла через blob (эндпоинт под Bearer-токеном)
-  const downloadDealFile = async (dealId, kind, filename) => {
-    try {
-      const r = await api.get(`/sales/deals/${dealId}/files/${kind}/download`, { ...auth(), responseType: 'blob' })
-      const url = URL.createObjectURL(r.data)
-      const a = document.createElement('a'); a.href = url; a.download = filename || 'file'; a.click(); URL.revokeObjectURL(url)
-    } catch (e) { alert('Не удалось скачать файл') }
-  }
+  // Скачивание сохранённого файла сделки — через общую точку (lib/download):
+  // имя берём из ответа сервера, если своего нет.
+  const downloadDealFile = (dealId, kind, filename) =>
+    downloadFile(`/sales/deals/${dealId}/files/${kind}/download`, filename)
   const SYNC_LABELS = { amount: 'Сумма до НДС', amount_with_vat: 'Сумма с НДС', sales_rep_id: 'Продавец', account_manager_id: 'Аккаунт', advertiser_id: 'Рекламодатель', brand_id: 'Бренд', period_from: 'Старт РК' }
   // Действия карточки-детализации (раскрытие строки). Открыть — в Битрикс; правка и
   // загрузка МП — заглушки (доработаем).
@@ -552,7 +550,7 @@ export default function SalesRegistry2() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Head>
-        <title>Реестр сделок</title>
+        <title>Реестр сделок · Продажи | SIMB-AD ERP</title>
       </Head>
       <Navbar active="sales" />
       <style>{`
@@ -898,7 +896,7 @@ export default function SalesRegistry2() {
                 <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>{syncResult.readonly ? 'Синхронизация' : 'Обновлено из Битрикса'} · сделка {syncResult.bitrix_id}</span>
                 <span onClick={() => setSyncResult(null)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>✕</span>
               </div>
-              {syncResult.checked_at && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 12 }}>проверено {new Date(syncResult.checked_at).toLocaleString('ru-RU')}</div>}
+              {syncResult.checked_at && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 12 }}>проверено {fmtDateTime(syncResult.checked_at)}</div>}
               {!syncResult.readonly && (Object.keys(syncResult.changes || {}).length > 0 ? (
                 <div style={{ marginBottom: 12 }}>
                   <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>Обновлены поля ({Object.keys(syncResult.changes).length})</div>

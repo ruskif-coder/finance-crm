@@ -9,6 +9,7 @@ import { GenTitleBtn, MONO, UI } from '../salesTableKit';
 import { overlayClose } from '@/lib/overlay'
 import { buildTitle, separatePriceSet } from '@/lib/dealTitle'
 import { isCpm, rowImp } from '@/lib/mpRow'
+import { fmtDateOfMoment } from '@/lib/dates'
 
 /* ── токены ─────────────────────────────────────────────────────────────
    Значения берём из нашей дизайн-системы (globals.css), НЕ вводим третью
@@ -547,7 +548,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                         <span key={v.id} onClick={() => { if (!cur && onOpenVersion) onOpenVersion(v.id); setVerOpen(false); }}
                           style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '7px 9px', borderRadius: 8, cursor: cur ? 'default' : 'pointer', background: cur ? T.accentTint : 'transparent' }}>
                           <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: cur ? T.accent : T.t1 }}>v{v.version}</span>
-                          <span style={{ fontSize: 11.5, color: T.t3 }}>{v.updated_at ? new Date(v.updated_at).toLocaleDateString('ru-RU') : ''}</span>
+                          <span style={{ fontSize: 11.5, color: T.t3 }}>{fmtDateOfMoment(v.updated_at, '')}</span>
                           <span style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 11, color: T.t2 }}>{v.amount_gross ? Math.round(v.amount_gross).toLocaleString('ru-RU') + ' ₽' : '—'}</span>
                           {cur && <span style={{ fontSize: 10, color: T.accent, fontWeight: 700 }}>• текущая</span>}
                         </span>

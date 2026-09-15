@@ -11,7 +11,7 @@ import api, { auth } from '@/lib/api'
 import { fmtMoney, fmtFull, fmtDate } from '@/lib/salesFormat'
 import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
 import { buildTitle, productWithSurface, separatePriceSet, surfaceTag, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
-import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z } from '@/components/salesTableKit'
+import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, firstSortDir, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const DealsMobileControls = dynamic(() => import('@/components/sales/DealsMobileControls'), { ssr: false })
@@ -21,6 +21,7 @@ import MoveDealDialog from '@/components/sales/MoveDealDialog'
 import NotificationsWidget, { NotificationsSlot, toItem } from '@/components/dashboard/NotificationsWidget'
 import { overlayClose } from '@/lib/overlay'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { downloadFile } from '@/lib/download'
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 // Светофор вероятности сделки (наша ручная разметка): цвет лампы по вероятности.
@@ -265,7 +266,7 @@ export default function SalesDashboard2() {
   useEffect(() => { if (data?.rep_ids?.length) loadDeals(data.rep_ids) }, [sortKey, sortDir, pageSize, sel, gaps, hideArchive, onlyPlanned, searchQ, dateFrom, dateTo])
   useEffect(() => { const t = setTimeout(() => setSearchQ(search), 300); return () => clearTimeout(t) }, [search])
 
-  const onSort = (k, sortable) => { if (!sortable) return; if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(k); setSortDir('desc') } }
+  const onSort = (k, sortable) => { if (!sortable) return; if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(k); setSortDir(firstSortDir(k)) } }
   const resetFilters = () => { setSel(Object.fromEntries(FILTER_DROPS.map(([k]) => [k, []]))); setGaps([]); setHideArchive(true); setOnlyPlanned(false); setSearch(''); setSearchQ(''); setDateFrom(''); setDateTo('') }
 
   const patchCell = async (id, patch, localApply) => {
@@ -321,13 +322,10 @@ export default function SalesDashboard2() {
 
   // Скачивание файла сделки (МП/договор из Битрикса) — как в реестре.
   const FILE_LABEL = { mp: 'МП', contract: 'Договор' }
-  const downloadDealFile = async (dealId, kind, filename) => {
-    try {
-      const r = await api.get(`/sales/deals/${dealId}/files/${kind}/download`, { ...auth(), responseType: 'blob' })
-      const href = URL.createObjectURL(r.data)
-      const a = document.createElement('a'); a.href = href; a.download = filename || 'file'; a.click(); URL.revokeObjectURL(href)
-    } catch { alert('Не удалось скачать файл') }
-  }
+  // Скачивание сохранённого файла сделки — через общую точку (lib/download):
+  // имя берём из ответа сервера, если своего нет.
+  const downloadDealFile = (dealId, kind, filename) =>
+    downloadFile(`/sales/deals/${dealId}/files/${kind}/download`, filename)
 
   // Ячейка строки по ключу колонки (для итерации по видимым колонкам).
   // Действия карточки-детализации (раскрытие строки). Открыть — в Битрикс; правка и
@@ -427,7 +425,7 @@ export default function SalesDashboard2() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Head>
-        <title>Дашборд</title>
+        <title>Дашборд · Продажи | SIMB-AD ERP</title>
       </Head>
       <Navbar active="sales" />
       <style>{`

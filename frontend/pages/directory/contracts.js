@@ -11,12 +11,13 @@ import { T } from '@/lib/tokens'
 import SectionTabs from '@/components/SectionTabs'
 import { COOPERATION_FORMATS, PAYMENT_TERM_CONDITIONS, PROLONGATION_OPTIONS } from '@/lib/contractTerms'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { fmtDate as fmtCalendarDate } from '@/lib/dates'
 
 
-const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
+const fmtDate = (s) => fmtCalendarDate(s)
 const fmtEndDate = (s) => {
   if (!s) return '—'
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(s).toLocaleDateString('ru-RU')
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return fmtCalendarDate(s)
   return s
 }
 
@@ -448,7 +449,7 @@ export default function Contracts() {
   if (isMobile) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-        <Head><title>Договора</title></Head>
+        <Head><title>Договора · Справочники | SIMB-AD ERP</title></Head>
         <Navbar active="directories" />
         <ContractsMobile
           total={items.length} rows={filtered} loading={loading} canEdit={mayEdit} counterparties={counterparties}
@@ -467,7 +468,7 @@ export default function Contracts() {
 
   return (
     <>
-      <Head><title>Договора</title></Head>
+      <Head><title>Договора · Справочники | SIMB-AD ERP</title></Head>
       <Navbar active="directories" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SectionTabs section="directory" />

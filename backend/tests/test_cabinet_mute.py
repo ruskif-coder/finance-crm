@@ -13,7 +13,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import text
 
-from app.cabinet.notify_kinds import KIND_KEYS, KINDS, MUTABLE_KEYS
+from app.notify.outward.kinds import KIND_KEYS, KINDS, MUTABLE_KEYS
 from app.database import SessionLocal
 from app.routers import cabinet_gateway as gw
 
@@ -232,7 +232,7 @@ def test_switch_leaves_a_trace_in_the_cabinet_feed(acc):
     записи нет ни у кого. Событий два, а не одно с флагом: в ленте читают глаголы, и
     «выключено» обязано отличаться тоном от «возвращено».
     """
-    from app.cabinet.notify_kinds import KINDS, MUTABLE_KEYS
+    from app.notify.outward.kinds import KINDS, MUTABLE_KEYS
     from app.routers import cabinet_gateway as gw
 
     kind = sorted(MUTABLE_KEYS)[0]

@@ -12,6 +12,7 @@ import { makeApi as api } from '@/lib/http'
 import { getPermissions } from '@/lib/auth'
 import { T } from '@/lib/tokens'
 import { errText, isAuth } from '@/lib/loadError'
+import { nowTime } from '@/lib/dates'
 
 const STATUSES = ['ОПЛАЧЕНО', 'ПЛАН ОПЛАТ', 'ПЛАН ПОСТУПЛЕНИЙ']
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
@@ -313,7 +314,7 @@ export default function Operations2() {
       setOps(res.data?.items || []); setTotal(res.data?.total || 0)
       // Время последней загрузки данных (обновляется при любом изменении — add/edit/delete
       // зовут loadOps). Считаем на клиенте, не при рендере — без SSR-рассинхрона.
-      setUpdatedAt(new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }))
+      setUpdatedAt(nowTime())
     } catch (e) {
       // Реестр операций — журнал денег. «Ничего не нашлось» и «не смогли спросить»
       // на нём выглядят одинаково пустой таблицей, и различать их обязан экран.
@@ -535,14 +536,14 @@ export default function Operations2() {
   // ровно то ложное утверждение, которое убирали с десктопа (найдено 11.09.2026).
   if (access === 'denied') return (
     <NoAccessScreen title="Операции: нет доступа" what="Операции"
-      nav={<><Head><title>Операции</title></Head><Navbar /></>} />
+      nav={<><Head><title>Операции · Финансы | SIMB-AD ERP</title></Head><Navbar /></>} />
   )
 
   // ── Мобильная версия (< 1024px) ──
   if (isMobile) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-        <Head><title>Операции</title></Head>
+        <Head><title>Операции · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="operations" />
         <OperationsMobile
           total={total} rows={rows} loading={loading} articles={articles} counterparties={counterparties} canEdit={canEdit}
@@ -559,7 +560,7 @@ export default function Operations2() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Head>
-        <title>Операции</title>
+        <title>Операции · Финансы | SIMB-AD ERP</title>
       </Head>
       <Navbar active="operations" />
       <style>{`

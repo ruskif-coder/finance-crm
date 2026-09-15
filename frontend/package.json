@@ -1,6 +1,6 @@
 {
   "name": "finance-frontend",
-  "version": "2.6.8",
+  "version": "2.6.9",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
@@ -8,8 +8,13 @@
     "check-money": "node scripts/check-money.mjs",
     "check-overlay": "node scripts/check-overlay.mjs",
     "check-perms": "node scripts/check-perms.mjs",
+    "check-login": "node scripts/check-login.mjs",
+    "check-tokens": "node scripts/check-tokens.mjs",
+    "check-dates": "node scripts/check-dates.mjs",
+    "check-tone": "node scripts/check-tone.mjs",
+    "check-notify": "node scripts/check-notify.mjs",
     "lint": "next lint --dir pages --dir components --dir lib",
-    "prebuild": "npm run check-nav && npm run check-money && npm run check-overlay && npm run check-inline && npm run check-perms",
+    "prebuild": "npm run check-nav && npm run check-money && npm run check-overlay && npm run check-inline && npm run check-perms && npm run check-login && npm run check-tokens && npm run check-dates && npm run check-tone && npm run check-notify",
     "build": "next build",
     "start": "next start -p 3000",
     "check-inline": "node scripts/check-inline-components.mjs"

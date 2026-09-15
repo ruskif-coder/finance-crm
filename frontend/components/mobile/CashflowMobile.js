@@ -4,6 +4,7 @@ import { grp, mln, signRub, bankColor } from '../../lib/salesFormat'
 import { T } from '../../lib/tokens'
 import { monoLbl, Marker, rise } from './kit'
 import ReportShell, { ReportSection } from './ReportShell'
+import { nowTime } from '@/lib/dates'
 
 // Мобильный ДДС (< 1024px) по хендоффу design_handoff_cashflow_mobile.
 // Данные считаются в pages/finance/cashflow.js — компонент только рисует.
@@ -68,7 +69,7 @@ export default function CashflowMobile({
   kpi, cashWeeks, cashScale, cumWeeks, cumScale, accounts, months, totals,
   expanded, setExpanded, exportCsv,
 }) {
-  const [updated] = useState(() => { try { return new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) } catch (e) { return '' } })
+  const [updated] = useState(() => { try { return nowTime() } catch (e) { return '' } })
   const [selWeek, setSelWeek] = useState(null)
   const [periodOpen, setPeriodOpen] = useState(false)
   const sel = selWeek != null ? cashWeeks[selWeek] : null

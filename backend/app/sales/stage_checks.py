@@ -163,7 +163,7 @@ class Ctx:
                 return []
             return self.db.execute(text("""
                 SELECT pl.id, coalesce(pub.name, 'без имени') AS publisher,
-                       pub.our_code
+                       pub.our_code, pl.weborama_pixel, pl.is_direct
                   FROM ad_campaign_placement pl
                   LEFT JOIN sales_publishers pub ON pub.id = pl.publisher_id
                  WHERE pl.campaign_id = :c
@@ -228,6 +228,7 @@ PLACES = {
     "placements_approved":  ("Трафик — очередь согласования", "/traffic/queue"),
     "erid_issued":          ("Карточка сделки — блок «ОРД»", "#ord"),
     "campaign_ready":       ("Трафик — дашборд кампаний", "/traffic/dashboard"),
+    "weborama_pixel":       ("Трафик — дашборд кампаний", "/traffic/dashboard"),
     "fact_collected":       ("Трафик — дашборд кампаний", "/traffic/dashboard"),
     "annex_generated":      ("Справочники — Приложения к договорам", "/directory/annexes"),
     "signatory_filled":     ("Справочники — Контрагенты", "/directory/counterparties"),
@@ -368,6 +369,40 @@ def _campaign_ready(c: Ctx) -> Result:
     return _ok()
 
 
+@register("weborama_pixel", "Пиксель Weborama получен по площадкам",
+          "Нажмите «ПИКСЕЛЬ WR» на дашборде трафика — до выгрузки в DSP",
+          fan=True)
+def _weborama_pixel(c: Ctx) -> Result:
+    """Веер по ПЛОЩАДКАМ: пиксель выдаётся на вставку, то есть на пару РК×площадка.
+
+    Требование применимо только там, где аккаунт его заказал — условие `applies_when`
+    `{"weborama_pixel": true}`. Без заказа проверка до сюда не доходит вовсе.
+
+    Площадки, которые крутят сами (`is_direct`), из знаменателя исключены: в DSP они не
+    заводятся, вставку им не делают, и требовать пиксель значило бы запереть сделку
+    условием, которое нечем выполнить.
+
+    Место в лестнице — вход в «В размещении», рядом с согласованием креативов, ЕРИД и
+    готовностью РК (владелец 14.09.2026: условие считается по подгрузке первой площадки,
+    а она идёт после согласования баннера и получения ЕРИД). Выгрузка в DSP к этому
+    моменту уже отказывает без пикселя (`dsp/provision._blocker`) — проверка делает тот
+    же запрет ВИДИМЫМ заранее, а не в момент нажатия.
+    """
+    # Внешний тег — один на всю кампанию, у размещений пикселя нет и не будет: вставку
+    # заводил клиент. Требование тогда читается иначе — «тег загружен», — и веером не
+    # раскладывается. Разложить его по площадкам значило бы просить у трафика работу,
+    # которой не существует.
+    if (getattr(c.deal, "weborama_pixel_mode", "own") or "own") == "external":
+        return _ok("внешний тег") if (c.deal.weborama_pixel_tag or "").strip()             else _not_yet("внешний тег не загружен — карточка сделки, «Доп. параметры РК»")
+
+    rows = [p for p in c.placements if not p["is_direct"]]
+    if not rows:
+        return _not_yet("в РК нет площадок, которым нужен пиксель")
+    done = [p for p in rows if (p["weborama_pixel"] or "").strip()]
+    bad = sorted({p["publisher"] for p in rows if not (p["weborama_pixel"] or "").strip()})
+    return _fan(len(done), len(rows), bad, "площадок")
+
+
 # ── Сверка ───────────────────────────────────────────────────────────────────
 
 @register("fact_collected", "Факт собран по размещениям",
@@ -461,7 +496,7 @@ def _payment_received(c: Ctx) -> Result:
 # `{"servise": 7}` иначе означала бы «применимо всегда», и требование тихо расползлось бы
 # на все услуги. Тот же порядок, что у подстановок в почтовых шаблонах.
 
-SCOPE_KEYS = ("service_id", "self_promo")
+SCOPE_KEYS = ("service_id", "self_promo", "weborama_pixel")
 
 # Правила «по свежести сделки» здесь НЕТ и не должно быть (владелец 13.09.2026: «я могу
 # создавать сделки с МП за прошлые периоды и переводить их в архив успешных, не надо
@@ -501,6 +536,11 @@ def scope_matches(applies_when: Optional[dict], deal) -> bool:
         if key == "service_id" and (deal.service_id or None) != want:
             return False
         if key == "self_promo" and bool(getattr(deal, "is_self_promo", False)) != bool(want):
+            return False
+        # Доп. параметр РК: требование пикселя применимо только там, где аккаунт его
+        # заказал. Ключ сделочный, как и два соседних, — значит разметка одна на все
+        # услуги, а различает сделки сам параметр.
+        if key == "weborama_pixel" and bool(getattr(deal, "weborama_pixel", False)) != bool(want):
             return False
     return True
 

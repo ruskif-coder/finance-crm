@@ -25,6 +25,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.ad.build import pixel_setup
 from app.ad.flight import PLACEMENT_IN_PLAN, PLACEMENT_READY
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.dsp import creatives as cr
@@ -88,11 +89,19 @@ def _rows(db: Session, camp: AdCampaign) -> list:
     return out
 
 
-def _blocker(row: dict) -> Optional[str]:
+def _blocker(row: dict, want_pixel: bool = True,
+             ext_tag: Optional[str] = None) -> Optional[str]:
     """Почему этот креатив выгрузить НЕЛЬЗЯ. Пусто — можно.
 
     Причина возвращается текстом и доезжает до экрана: «не выгрузилось» без причины
     заставляет разбираться заново каждый раз.
+
+    `want_pixel` — заказан ли пиксель верификатора по этой РК. Умолчание True сохраняет
+    прежнее поведение для любого вызова, забывшего передать признак: лишний отказ виден
+    и разбирается, а лишний пропуск отправил бы в сеть креатив без счётчика молча.
+
+    `ext_tag` — внешний тег, один на всю кампанию. Когда он есть, пиксель у размещения
+    не спрашиваем вовсе: вставку заводил клиент, у нас её нет и не будет.
     """
     c, p, f, tgt = row["creative"], row["placement"], row["file"], row["target"]
     pub = row["publisher"]
@@ -102,7 +111,7 @@ def _blocker(row: dict) -> Optional[str]:
         return f"площадка в статусе «{p.status}» — рано"
     if c.status not in CREATIVE_OK:
         return f"креатив в статусе «{c.status}» — вердикта ещё нет"
-    if not p.weborama_pixel:
+    if want_pixel and not ext_tag and not p.weborama_pixel:
         return "нет пикселя Weborama — сначала «ПИКСЕЛЬ WR»"
     if not f:
         return "к креативу не привязан файл комплекта"
@@ -119,18 +128,27 @@ def plan(db: Session, camp: AdCampaign) -> dict:
     """Что произойдёт при нажатии. Показывается ДО подтверждения — цифра в вопросе
     «завести N креативов?» и есть то, что отличает осознанное действие от случайного."""
     rows = _rows(db, camp)
+    px = pixel_setup(db, camp.deal_id)
+    want_pixel, ext_tag = px["needed"], px["tag"]
     done = [r for r in rows if r["creative"].ms_creative_xxhash]
     todo, blocked = [], {}
     for r in rows:
         if r["creative"].ms_creative_xxhash:
             continue
-        why = _blocker(r)
+        why = _blocker(r, want_pixel, ext_tag)
         if why:
             blocked[why] = blocked.get(why, 0) + 1
         else:
             todo.append(r)
     return {
         "campaign_ready": bool(camp.ms_campaign_xxhash),
+        # Экран обязан сказать, почему шага с пикселем нет: исчезнувшая кнопка без
+        # причины читается как поломка, а не как «по этой РК он не заказан».
+        "needs_pixel": want_pixel,
+        "pixel_mode": px["mode"],
+        # Внешний тег заказан, но не загружен — отдельная причина отказа: без неё экран
+        # скажет «нет пикселя» и отправит жать «ПИКСЕЛЬ WR», которая тут не поможет.
+        "ext_tag_missing": bool(want_pixel and px["mode"] == "external" and not ext_tag),
         "creatives": len(rows),
         "have": len(done),
         "todo": len(todo),
@@ -155,11 +173,14 @@ def _read_archive(f: LaunchPrepCreativeFile) -> bytes:
         return fh.read()
 
 
-def _pixel_tag(row: dict, width, height) -> str:
+def _pixel_tag(row: dict, width, height, ext_tag: Optional[str] = None) -> str:
     """Тег пикселя Weborama под ЭТОТ креатив: макрос рандомизатора DSP, домен площадки,
     размеры из ответа загрузчика. Собирается на лету — хранить производное значит завести
     вторую правду, которая разойдётся с первой."""
-    url = naming.final_tag(row["placement"].weborama_pixel,
+    # Внешний тег один на кампанию, свой — у каждого размещения. Дальше путь общий:
+    # сборщик подставляет макрос рандомизатора и дописывает `&a.ycp=https://<домен>`,
+    # поэтому даже фиксированный тег уезжает в каждую площадку СО СВОИМ адресом.
+    url = naming.final_tag(ext_tag or row["placement"].weborama_pixel,
                            row["publisher"].domain or "", kind="dsp")
     url = wtags.fill_size(url, width, height)
     return f'<img src="{url}" width="1" height="1" alt="" style="display:none">'
@@ -177,8 +198,14 @@ def provision(db: Session, camp: AdCampaign, user_id=None,
         raise DspProvisionError(f"Кампания в DSP не заведена: {e}")
 
     vsrc = viewability_src(db)
+    px = pixel_setup(db, camp.deal_id)
+    want_pixel, ext_tag = px["needed"], px["tag"]
+    if want_pixel and px["mode"] == "external" and not ext_tag:
+        raise DspProvisionError(
+            "По РК заказан внешний пиксель Weborama, но тег не загружен — "
+            "карточка сделки, блок «Доп. параметры РК»")
     rows = [r for r in _rows(db, camp)
-            if not r["creative"].ms_creative_xxhash and not _blocker(r)]
+            if not r["creative"].ms_creative_xxhash and not _blocker(r, want_pixel, ext_tag)]
     done, failed = [], []
     for r in rows:
         cre, pub = r["creative"], r["publisher"]
@@ -195,7 +222,10 @@ def provision(db: Session, camp: AdCampaign, user_id=None,
             # Пиксель показа — в конец разметки: у баннера от загрузчика собственный
             # `<head>` может быть, а может и не быть, и хвост не зависит ни от того, ни
             # от другого.
-            html += "\n" + _pixel_tag(r, up.get("width"), up.get("height"))
+            # Пиксель в разметку — только если он по этой РК заказан. Иначе тег
+            # верификатора уехал бы в сеть по кампании, которую он не считает.
+            if want_pixel:
+                html += "\n" + _pixel_tag(r, up.get("width"), up.get("height"), ext_tag)
             params = cr.build_creative_params(
                 title=cre.ms_title or name, link=r["target"].advertiser_url,
                 erid=cre.erid, size=up.get("size"),

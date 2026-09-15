@@ -5,13 +5,16 @@
  * Данные берутся из @/lib/nav — единственной карты приложения. Здесь нет ни одного
  * списка экранов: добавление раздела делается правкой nav.data.json и ничего больше.
  */
-import React, { useEffect, useRef, useState } from 'react'
+import React, { Fragment, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/router'
 // Уровень выпадашек из общей шкалы `Z` кита: одна лестница на весь проект.
 const Z_DROPDOWN = 3000
 import axios from 'axios'
 import { getPermissions, can } from '@/lib/auth'
+import { freshMark, hasFresh } from '@/lib/notify.mjs'
+import { ago } from '@/lib/dates'
+import { TONE, toneOf, toneWeight } from '@/lib/tone'
 import { allowedSections, allowedItems, findByPath, entryHref, firstAllowedHref, resolveLegacy } from '@/lib/nav'
 
 /* Сброс дефолтов <button>: вся навигация — настоящие кнопки (фокус с клавиатуры,
@@ -93,19 +96,163 @@ const SearchIcon = () => (
 )
 
 /* ══════════════════════════════════════════════════════════════════════
-   УВЕДОМЛЕНИЯ — логика перенесена из components/Navbar.js без изменений:
-   загрузка, опрос раз в минуту, отметка прочтения при открытии, закрытие
-   по клику вне.
+   УВЕДОМЛЕНИЯ — панель канала `app`.
+
+   Собрана по спеке хендоффа 14.09.2026. До неё панель показывала заголовок с
+   текстом и ничего больше: тон, группа, объект и кнопка действия приезжали с
+   сервера и выбрасывались. Плюс открытие колокольчика отмечало ВСЁ прочитанным —
+   человек заглядывал посмотреть и терял список того, что не разобрал.
+
+   Правила, которые легко нарушить обратно:
+
+   · ПРОЧТЕНИЕ НЕ ГАСИТ СОБЫТИЕ. Прочитано — свойство доставки; строка уходит из
+     панели сама, когда исчезла причина. Поэтому «прочитать» ничего не удаляет.
+   · БЕЙДЖ СЧИТАЕТ НЕПРОЧИТАННЫЕ, а счётчик вкладки — размер выборки. Это разные
+     числа, и путать их значит показывать «12» там, где не сделано три.
+   · СОРТИРОВКА ПО ТОНУ, потом по времени. Непрочитанные НЕ всплывают наверх:
+     иначе после «прочитать все» список перетасовывается под руками.
+   · «ПРОЧИТАТЬ ВСЕ» — про текущую вкладку, а не про всё подряд.
    ══════════════════════════════════════════════════════════════════════ */
 const authHdr = () => ({ headers: { Authorization: `Bearer ${typeof window !== 'undefined' ? localStorage.getItem('token') : ''}` } })
+
+// Порядок тонов: сначала то, что блокирует работу. Цвета — те же, что у плашек
+// состояния в реестре событий, второй палитры для уведомлений не заводим.
+// Вес для сортировки — из общего словаря: порядок тяжести один на систему.
+
+/* ТОН берётся из общего словаря `lib/tone.js` — того же, что у виджета на дашборде и
+   у каталога событий. Панель и почта показывают одно событие, и расходиться им нельзя:
+   человек, увидевший «срочно» в письме, ищет то же слово в колокольчике.
+
+   Важность несёт СЛОВО, а не только цвет: квадратный маркер 8×8 не читается ни в
+   чёрно-белой печати, ни при дальтонизме. Само слово приходит с сервера полем `pill`. */
+
+/* В СПИСКЕ пилюлю получают только `bad` и `warn`. Панель просматривают, чтобы понять,
+   что требует действия, и пилюля у каждой строки снова превратила бы её в светофор.
+   В письме пилюля есть у всех четырёх тонов — там она отвечает на другой вопрос,
+   «стоит ли читать дальше», и карточка в письме одна-две, а не двадцать. */
+const ROW_PILL = ['bad', 'warn']
+
+/** Пилюля важности. `compact` — вариант для строки списка: плотнее и без точки.
+
+    СЛОВО приходит с сервера (`pill`), а не берётся из таблицы здесь: оно уже написано
+    в письме, и вторая копия разошлась бы с первой — так у тона однажды и завелось два
+    словаря. Здесь остаются только цвета: они токены, а в почте литералы. */
+function Pill({ tone, word, compact }) {
+  const t = TONE[toneOf(tone)]
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto',
+      padding: compact ? '2px 7px' : '3px 9px', borderRadius: 9,
+      background: t.tint, border: `1px solid ${t.bd}`, color: t.fg,
+      fontFamily: T.mono, fontSize: 8.5, fontWeight: 700,
+      letterSpacing: '.06em', textTransform: 'uppercase', whiteSpace: 'nowrap',
+    }}>
+      {!compact && (
+        <span style={{ width: 6, height: 6, borderRadius: 2, flex: '0 0 6px',
+          background: 'currentColor' }} />
+      )}
+      {word}
+    </span>
+  )
+}
+
+/** Одно значение для строки «где · сколько · когда».
+
+    В плашки событие кладёт 2–4 числа, и все они нужны в письме. В список из двадцати
+    строк помещается одно — то, ради которого уведомление пришло, то есть помеченное
+    `hot`. Ключ не выводится: «15 дн.» после «7E2JWE · Эспумизан 09» понятно и без слова
+    «просрочка», а место в строке дорогое. */
+function rowFact(facts, title) {
+  const list = facts || []
+  const hot = list.find(f => f && f.hot)
+  const v = (hot || list[0] || {}).v || ''
+  // Если число уже произнесено в заголовке — в строке его нет. Иначе «просрочено
+  // 14 дн.» и «14 дн.» стоят друг под другом и выглядят как два разных факта.
+  return v && String(title || '').includes(v) ? '' : v
+}
+
+/** Строка панели уведомлений.
+
+    Вынесена отдельно не ради красоты: панель живёт за логином, и посмотреть на неё
+    глазами иначе нельзя — а две правки подряд «применились» только на бумаге.
+    Компонент чистый, всё приходит пропсами. */
+export function NotifyRow({ n, onOpen }) {
+  const fact = rowFact(n.facts, n.title)
+  const meta = [n.where, fact, ago(n.created_at)].filter(Boolean)
+  return (
+    /* СТРОКА, А НЕ КАРТОЧКА. Пилюля важности, заголовок, под ним одна служебная
+       строка. Ни текста события, ни плашек, ни кнопки: строка целиком нажимаема и
+       ведёт на объект, а кнопка действия вела бы туда же — второй элемент управления
+       с той же целью только отнимает место и внимание. */
+    <button type="button" onClick={() => onOpen(n)}
+      onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-subtle)' }}
+      onMouseLeave={e => {
+        e.currentTarget.style.background = n.is_read ? 'transparent' : 'var(--bg-tint)'
+      }}
+      style={{
+        ...btnReset, textAlign: 'left', cursor: n.link ? 'pointer' : 'default',
+        display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 11px',
+        borderRadius: 12, marginBottom: 1,
+        background: n.is_read ? 'transparent' : 'var(--bg-tint)',
+        borderBottom: `1px solid ${T.inner}`,
+      }}>
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 3,
+        minWidth: 0, flex: 1 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7,
+          flexWrap: 'wrap', minWidth: 0 }}>
+          {ROW_PILL.includes(n.tone) && <Pill tone={n.tone} word={n.pill} compact />}
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: T.t1,
+            lineHeight: 1.35, minWidth: 0 }}>{n.title}</span>
+        </span>
+        {!!meta.length && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 7,
+            flexWrap: 'wrap', fontFamily: T.mono, fontSize: 9,
+            letterSpacing: '.06em', textTransform: 'uppercase', color: T.t4 }}>
+            {meta.map((x, k) => (
+              <Fragment key={k}>
+                {k > 0 && (
+                  <span style={{ width: 3, height: 3, borderRadius: 1, flex: '0 0 3px',
+                    background: 'var(--border-hover)' }} />
+                )}
+                <span style={{ minWidth: 0, overflow: 'hidden',
+                  textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x}</span>
+              </Fragment>
+            ))}
+          </span>
+        )}
+      </span>
+      {!n.is_read && (
+        /* Метка непрочитанного — квадрат, а не точка: круглая читается как
+           статус объекта, квадратная в этой системе означает «моё внимание». */
+        <span title="Не прочитано" style={{ width: 7, height: 7, borderRadius: 2,
+          marginTop: 5, flex: '0 0 7px', background: T.accent }} />
+      )}
+    </button>
+  )
+}
+
+// Ключ «до какого момента уведомления уже показаны человеку». Хранится у него в
+// браузере, а не на сервере: это не состояние уведомления (прочитано/нет), а состояние
+// ЭТОГО экрана — «колокольчик уже мигал, я посмотрел».
+const SEEN_KEY = 'notif_seen_at'
 
 function useNotifications() {
   const [notifs, setNotifs] = useState([])
   const [unread, setUnread] = useState(0)
+  const [fresh, setFresh] = useState(false)   // есть непоказанное → колокольчик мигает
+  const mark = useRef('')
   const load = () => {
     if (typeof window === 'undefined' || !localStorage.getItem('token')) return
-    axios.get('/api/notifications?limit=20', authHdr())
-      .then(r => { setNotifs(r.data.items || []); setUnread(r.data.unread || 0) })
+    axios.get('/api/notifications?limit=60', authHdr())
+      .then(r => {
+        const items = r.data.items || []
+        setNotifs(items)
+        setUnread(r.data.unread || 0)
+        mark.current = freshMark(items)
+        let seen = ''
+        try { seen = localStorage.getItem(SEEN_KEY) || '' } catch (e) { seen = '' }
+        setFresh(hasFresh(mark.current, seen))
+      })
       .catch(() => {})
   }
   useEffect(() => {
@@ -113,13 +260,28 @@ function useNotifications() {
     const t = setInterval(load, 60000)
     return () => clearInterval(t)
   }, [])
-  const markRead = () => {
-    if (unread <= 0) return
-    axios.post('/api/notifications/read', {}, authHdr())
-      .then(() => { setUnread(0); setNotifs(ns => ns.map(n => ({ ...n, is_read: true }))) })
+
+  /** Колокольчик открыли — мигание снято. Именно ОТКРЫТИЕ, а не прочтение строк:
+      человек увидел список, и повторно звать его к тому же нечестно. Непрочитанными
+      строки при этом остаются — их метку ставит он сам. */
+  const markSeen = () => {
+    setFresh(false)
+    try { localStorage.setItem(SEEN_KEY, mark.current || '') } catch (e) { /* приватный режим */ }
+  }
+
+  /** Отметить прочитанными переданные. Пустой список — ничего не делаем: запрос
+      без `ids` на сервере означает «все», и случайно отправить его нельзя. */
+  const markRead = (ids) => {
+    const list = (ids || []).filter(Boolean)
+    if (!list.length) return
+    axios.post('/api/notifications/read', { ids: list }, authHdr())
+      .then(() => {
+        setNotifs(ns => ns.map(n => (list.includes(n.id) ? { ...n, is_read: true } : n)))
+        setUnread(u => Math.max(0, u - list.length))
+      })
       .catch(() => {})
   }
-  return { notifs, unread, markRead }
+  return { notifs, unread, markRead, fresh, markSeen }
 }
 
 // Число креативов, ждущих проверки трафика, — для значка на пункте меню. Отдельная
@@ -143,50 +305,107 @@ function useTrafficWaiting(enabled) {
 }
 
 function Bell({ onGoto, size = 32 }) {
-  const { notifs, unread, markRead } = useNotifications()
+  const { notifs, unread, markRead, fresh, markSeen } = useNotifications()
   const [open, setOpen] = useState(false)
+  const [tab, setTab] = useState('')          // '' — «Все»
   const ref = useRef(null)
   useEffect(() => {
     const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
     document.addEventListener('mousedown', h)
     return () => document.removeEventListener('mousedown', h)
   }, [])
-  const toggle = () => { const willOpen = !open; setOpen(willOpen); if (willOpen) markRead() }
+
+  // Вкладки — группы из реестра событий, как они там названы. Схлопывать их в
+  // пользовательские («Кампании», «Документы») пока не стал: это отдельное
+  // соответствие, и придумать его молча значит решить за людей, что куда относится.
+  const groups = []
+  notifs.forEach(n => { if (n.group && !groups.includes(n.group)) groups.push(n.group) })
+
+  const shown = notifs
+    .filter(n => !tab || n.group === tab)
+    .slice()
+    .sort((a, b) => toneWeight(a.tone) - toneWeight(b.tone)
+      || String(b.created_at || '').localeCompare(String(a.created_at || '')))
+  const unreadHere = shown.filter(n => !n.is_read).map(n => n.id)
+
+  const openRow = (n) => {
+    setOpen(false)
+    if (!n.is_read) markRead([n.id])
+    if (n.link) onGoto?.(resolveLegacy(n.link))
+  }
+
   return (
     <span ref={ref} style={{ position: 'relative', display: 'inline-flex', flex: `0 0 ${size}px` }}>
-      <button type="button" className="nav-icon" onClick={toggle} title="Уведомления" aria-label="Уведомления" style={{
-        ...btnReset,
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: size, height: size,
-        borderRadius: 10, border: size >= 36 ? `1px solid ${T.border}` : 'none',
-        background: size >= 36 ? T.card : 'transparent', color: T.t3,
-      }}>
+      <button type="button" className={'nav-icon' + (fresh ? ' nav-bell-new' : '')}
+        onClick={() => { const next = !open; setOpen(next); if (next) markSeen() }}
+        title={fresh ? 'Новые уведомления' : 'Уведомления'} aria-label="Уведомления" style={{
+          ...btnReset,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: size, height: size,
+          borderRadius: 10, border: size >= 36 ? `1px solid ${T.border}` : 'none',
+          background: size >= 36 ? T.card : 'transparent', color: T.t3,
+        }}>
         <BellIcon />
+        {/* Бейдж при нуле не показывается вовсе — не «0». */}
         {unread > 0 && (
-          <span style={{
+          <span className="nav-bell-badge" style={{
             position: 'absolute', top: -4, right: -4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
             minWidth: 17, height: 17, padding: '0 4px', borderRadius: 6, background: T.danger, color: 'var(--bg-card)',
             fontFamily: T.mono, fontSize: 9, fontWeight: 700,
           }}>{unread > 9 ? '9+' : unread}</span>
         )}
       </button>
+
       {open && (
         <span style={{
-          position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 3000, width: 340, maxHeight: 420,
-          overflowY: 'auto', background: T.card, border: `1px solid ${T.border}`, borderRadius: 14,
-          boxShadow: T.pop, padding: 6, display: 'flex', flexDirection: 'column',
+          position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 3000,
+          width: 420, maxWidth: '92vw', maxHeight: '78vh',
+          background: T.card, border: `1px solid ${T.border}`, borderRadius: 16,
+          boxShadow: T.pop, display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}>
-          <span style={{ padding: '8px 10px', fontSize: 11, fontFamily: T.mono, letterSpacing: '.06em', textTransform: 'uppercase', color: T.t4 }}>Уведомления</span>
-          {!notifs.length && <span style={{ padding: '14px 10px', fontSize: 13, color: T.t3 }}>Пока пусто</span>}
-          {notifs.map(n => (
-            <button type="button" key={n.id} onClick={() => { setOpen(false); if (n.link) onGoto?.(resolveLegacy(n.link)) }} style={{
-              ...btnReset,
-              padding: '9px 10px', borderRadius: 9, cursor: n.link ? 'pointer' : 'default',
-              background: n.is_read ? 'transparent' : T.accentTint, display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 2,
-            }}>
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: T.t1 }}>{n.title}</span>
-              {n.body && <span style={{ fontSize: 11.5, color: T.t2 }}>{n.body}</span>}
-            </button>
-          ))}
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px 8px' }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.t1 }}>Уведомления</span>
+            {unread > 0 && (
+              <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, padding: '1px 6px',
+                borderRadius: 9, background: T.accentTint, color: T.accent }}>{unread}</span>
+            )}
+            <span style={{ flex: 1 }} />
+            {!!unreadHere.length && (
+              <button type="button" onClick={() => markRead(unreadHere)} style={{
+                ...btnReset, fontSize: 11.5, color: T.accent, cursor: 'pointer',
+              }}>Прочитать все</button>
+            )}
+          </span>
+
+          {groups.length > 1 && (
+            <span style={{ display: 'flex', gap: 5, padding: '0 14px 10px', flexWrap: 'wrap' }}>
+              {[['', 'Все', notifs.length], ...groups.map(g =>
+                [g, g, notifs.filter(n => n.group === g).length])].map(([k, label, cnt]) => (
+                  <button key={k || 'all'} type="button" onClick={() => setTab(k)} style={{
+                    ...btnReset, cursor: 'pointer', borderRadius: 9, padding: '4px 9px',
+                    fontSize: 11.5, fontWeight: 600,
+                    border: `1px solid ${tab === k ? T.accentBorder : T.inner}`,
+                    background: tab === k ? T.accentTint : 'transparent',
+                    color: tab === k ? T.accent : T.t3,
+                  }}>
+                    {label}
+                    <span style={{ fontFamily: T.mono, fontSize: 9.5, marginLeft: 5,
+                      color: tab === k ? T.accent : T.t4 }}>{cnt}</span>
+                  </button>
+                ))}
+            </span>
+          )}
+
+          <span style={{ overflowY: 'auto', padding: '0 8px 8px', display: 'flex',
+            flexDirection: 'column' }}>
+            {!shown.length && (
+              <span style={{ padding: '18px 10px', fontSize: 12.5, color: T.t3 }}>
+                {notifs.length ? 'Здесь пусто' : 'Уведомлений нет — всё под контролем'}
+              </span>
+            )}
+            {shown.map(n => (
+              <NotifyRow key={n.id} n={n} onOpen={openRow} />
+            ))}
+          </span>
         </span>
       )}
     </span>
@@ -662,6 +881,21 @@ export default function Nav({ children, onSearch }) {
         .nav-item:hover { background:${T.subtle} }
         .nav-ghost:hover { border-color:${T.hoverBorder}; color:${T.accent} }
         .nav-icon:hover { background:${T.subtle}; color:${T.accent} }
+        /* Колокольчик мигает, пока есть непоказанное (владелец 15.09.2026). Признак
+           снимается ОТКРЫТИЕМ панели, не прочтением строк, — см. markSeen.
+           !important нужен: цвет иконки задан инлайном, а инлайн бьёт класс.
+           Общее правило prefers-reduced-motion выше глушит саму анимацию, но цвет
+           остаётся — то есть сигнал переживает отключение движения. */
+        .nav-bell-new { color:${T.danger} !important }
+        .nav-bell-new svg { animation: bellRing 2.6s ease-in-out infinite; transform-origin: 50% 15% }
+        .nav-bell-new .nav-bell-badge { animation: bellBlink 1.3s ease-in-out infinite }
+        @keyframes bellRing {
+          0%, 58%, 100% { transform: rotate(0) }
+          62% { transform: rotate(-12deg) }  68% { transform: rotate(10deg) }
+          74% { transform: rotate(-7deg) }   80% { transform: rotate(4deg) }
+          86% { transform: rotate(-2deg) }
+        }
+        @keyframes bellBlink { 0%, 100% { opacity:1 } 50% { opacity:.25 } }
       `}</style>
       {mobile ? <NavMobile {...props} /> : <NavDesktop {...props} />}
     </>

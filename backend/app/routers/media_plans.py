@@ -19,11 +19,13 @@ from app.database import get_db
 from app.permissions import require_permission
 from app.audit import log_action
 from app.sales import mp_row
+from app.sales import periods
 from app.notify import emit
 from app.models import User, Counterparty, RolePermission
 from app.sales.models import (SalesMediaPlan, SalesMediaPlanRow, SalesMediaPlanExtra,
                               SalesAdvertiser, SalesBrand, SalesAgency, SalesGeo)
 
+from app.sales.deal_label import deal_label
 from app.sales.row_context import merge_inventory
 
 router = APIRouter()
@@ -343,7 +345,7 @@ def deals_lookup(q: str = "", sort: str = "id", direction: str = "desc",
         "agency": (ag_r.short_name or ag_r.name) if ag_r else None,
         "sales_rep": rep_r.name if rep_r else None,
         "account_manager": acc_r.name if acc_r else None,
-        "period": d.period_from.strftime("%Y-%m") if d.period_from else None,
+        "period": periods.month_key(d.period_from),
         "amount": d.amount,
         "our_stage": st_r.name if st_r else None,
         "has_mp": d.id in mp_deals,
@@ -616,7 +618,7 @@ def mp_deal_prefill(deal_id: int, db: Session = Depends(get_db),
         "deal_id": deal.id, "title": deal.title,
         "advertiser_id": deal.advertiser_id, "brand_id": deal.brand_id,
         "agency_id": deal.agency_id, "payer_counterparty_id": deal.payer_counterparty_id,
-        "period": deal.period_from.strftime("%Y-%m") if deal.period_from else None,
+        "period": periods.month_key(deal.period_from),
         "product": deal.product,   # услуга сделки → первая строка МП
         "amount": deal.amount,     # сумма сделки (без НДС) → сумма первой строки МП
         "rows": _prefill_rows(db, deal),   # готовая строка размещения (как в конвейере)
@@ -653,7 +655,7 @@ def _notify_mp_ready(db, actor, p, deal, stage):
         money = " · " + f"{p.amount_net:,.0f}".replace(",", " ") + " ₽ без НДС"
     emit(db, "mp_ready",
          title=f"МП посчитан: {p.title or ('#' + str(p.id))}",
-         body=f"Сделка {deal.code or deal.id}{money} · стадия «{stage.name}»",
+         body=f"Сделка {deal_label(deal)}{money} · стадия «{stage.name}»",
          link=f"/accounts/mp/{p.id}", entity_type="media_plan", entity_id=p.id,
          actor=actor, ctx={"deal": deal, "media_plan": p})
 
@@ -851,9 +853,14 @@ def _sync_deal_from_plan(db: Session, plan, current_user) -> None:
     put("period_from", plan.date_from or (bounds[0] if bounds else None), "старт РК")
     put("period_to", plan.date_to or (bounds[1] if bounds else None), "конец РК")
 
-    if plan.amount_net:
+    # `is not None`, а не «истинно» (15.09.2026): посчитанный в НОЛЬ план — это цена,
+    # а не отсутствие цены. Услуга со стопроцентной скидкой даёт ноль, и сделка при
+    # этом оставалась с суммой Битрикса (жалоба на MHNZUT: 372 000 при нулевом плане).
+    # Та же поправка сделана в `app/sales/mp_amounts.py` — там ноль читался как
+    # «плана нет».
+    if plan.amount_net is not None:
         put("amount", float(plan.amount_net), "сумма без НДС")
-        if plan.amount_gross:
+        if plan.amount_gross is not None:
             put("amount_with_vat", float(plan.amount_gross), "сумма с НДС")
 
     # Услуга — ПЕРВАЯ строка плана (правило владельца 13.09.2026). Ехать она обязана
@@ -977,6 +984,12 @@ def patch_media_plan(plan_id: int, data: MpPatch, db: Session = Depends(get_db),
     fields = data.dict(exclude_unset=True)   # только явно присланные (в т.ч. null для сброса)
     for k, v in fields.items():
         setattr(p, k, v)
+    # Перенос в сделку — и отсюда тоже (15.09.2026). Его здесь НЕ БЫЛО, и это половина
+    # жалобы «медиаплан не всегда обновляет сделку»: правка из реестра меняет ровно те
+    # поля, которые перенос и возит — рекламодателя, бренд, агентство, плательщика,
+    # период, название, — а до сделки они не доезжали. Со стороны аккаунта: одно и то же
+    # поле, исправленное в конструкторе, доходит, а исправленное в реестре — нет.
+    _sync_deal_from_plan(db, p, current_user)
     db.commit()
     log_action(db, current_user, "patch_media_plan", "media_plan", p.id, ", ".join(fields.keys()))
     return {"ok": True}
@@ -1567,10 +1580,23 @@ def _find_token_row(ws, prefix):
 
 
 def _clone_below(ws, src, count):
-    """Вставить count копий строки src сразу под ней (стиль+высота+токены), сдвинув merge ниже."""
+    """Вставить count копий строки src сразу под ней (стиль+высота+токены), сдвинув merge ниже.
+
+    Копируются и ОБЪЕДИНЕНИЯ ВНУТРИ самой строки-образца. Их здесь не было до
+    15.09.2026, и это стоило наименований доп. услуг: в шаблоне название растянуто на
+    C..H (`C26:H26`), клон получал стиль и значение, но не объединение — имя оставалось
+    в узкой колонке C с переносом по словам и клонированной фиксированной высотой,
+    то есть обрезалось до невидимого. Первая доп. услуга при этом выглядела правильно
+    (она садится в саму строку-образец с её объединением), а вторая и дальше — пустыми.
+    Жалоба владельца 15.09.2026: «пропало наименование доп. услуг».
+    """
     from copy import copy
     if count <= 0:
         return
+    # Снимаем ДО вставки: сама строка-образец не сдвигается, но ниже мы обходим
+    # merged_cells.ranges ещё раз, и смешивать два списка нельзя.
+    inner = [(mr.min_col, mr.max_col) for mr in ws.merged_cells.ranges
+             if mr.min_row == mr.max_row == src]
     moved = []
     for mr in list(ws.merged_cells.ranges):
         if mr.min_row > src:
@@ -1590,6 +1616,11 @@ def _clone_below(ws, src, count):
             d.border = copy(s.border)
             d.alignment = copy(s.alignment)
             d.number_format = s.number_format
+        # Объединять ПОСЛЕ копирования значений: в объединённой области все ячейки,
+        # кроме левой верхней, становятся read-only, и присваивание упало бы.
+        for c1, c2 in inner:
+            ws.merge_cells(start_row=src + k, end_row=src + k,
+                           start_column=c1, end_column=c2)
 
 
 def _token_cols(ws, row, prefix):

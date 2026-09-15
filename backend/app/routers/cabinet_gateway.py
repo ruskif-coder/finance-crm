@@ -171,7 +171,7 @@ def cabinet_target_url(target_id: int, payload: CabinetUrlIn,
 
 
 @router.get("/notify-kinds", dependencies=[Depends(require_cabinet_service)])
-def cabinet_notify_kinds():
+def cabinet_notify_kinds(db: Session = Depends(get_db)):
     """Каталог видов уведомлений — ОДИН на оба контура.
 
     Кабинет мог бы держать свой список меток, и это была бы третья копия словаря после
@@ -179,9 +179,17 @@ def cabinet_notify_kinds():
     статический, запрашивается редко, и один сетевой вызов дешевле расхождения, которое
     видно только площадке.
     """
-    from app.cabinet.notify_kinds import KINDS
+    from app.notify.outward.kinds import KINDS
+    from app.routers.cabinets import _notify_off
+
+    # Площадке показываем только то, что ДЕЙСТВИТЕЛЬНО может прийти: построенные виды,
+    # не выключенные нами. Выключатель у вида без отправителя — обещание, которого мы не
+    # держим: человек снимает галочку, ничего не меняется, и доверие к экрану кончается.
+    # Наш собственный каталог со всеми шестнадцатью живёт во вкладке «Что мы шлём».
+    off = _notify_off(db)
     return {"kinds": [{"key": k.key, "label": k.label, "hint": k.hint,
-                       "can_mute": k.can_mute} for k in KINDS]}
+                       "can_mute": k.can_mute}
+                      for k in KINDS if k.built and k.key not in off]}
 
 
 class CabinetMuteIn(BaseModel):
@@ -204,7 +212,7 @@ def cabinet_mute(account_id: int, payload: CabinetMuteIn, db: Session = Depends(
     оставленная на вызывающей стороне, — это отсутствие проверки.
     """
     from app.cabinet.models import CabinetAccount
-    from app.cabinet.notify_kinds import KINDS, MUTABLE_KEYS
+    from app.notify.outward.kinds import KINDS, MUTABLE_KEYS
     from app.cabinet.scope import account_sees_publisher
 
     acc = db.query(CabinetAccount).filter(CabinetAccount.id == account_id).first()

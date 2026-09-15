@@ -103,6 +103,7 @@ def _assert_import_rows_valid(db, problems: list) -> None:
 # Проверка схемы ссылки — общая для договоров, операций и реестра Диадока,
 # живёт в app/links.py (раньше была двумя почти одинаковыми копиями).
 from app.links import validate_link as _validate_link  # noqa: E402
+from app import timez
 
 # Временное in-memory хранилище для шага preview→apply при синхронизации импорта.
 # Переживает только до перезапуска backend-контейнера — сознательно временное решение.
@@ -510,7 +511,7 @@ def export_operations(
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    filename = f"operacii_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    filename = f"operacii_{timez.msk_now().strftime('%Y%m%d_%H%M')}.xlsx"
     headers = {"Content-Disposition": f"attachment; filename={filename}"}
     return StreamingResponse(
         buf,

@@ -165,9 +165,9 @@ export default function Receivables() {
     } catch (e) { /* тихо */ }
   }
 
-  if (loading) return <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}><Head><title>Дебиторка</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Загрузка дебиторской задолженности…</div></div>
-  if (denied) return <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}><Head><title>Дебиторка</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Нет доступа к разделу «Дебиторка».</div></div>
-  if (!data || !Array.isArray(data.rows)) return <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}><Head><title>Дебиторка</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Нет данных.</div></div>
+  if (loading) return <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}><Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Загрузка дебиторской задолженности…</div></div>
+  if (denied) return <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}><Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Нет доступа к разделу «Дебиторка».</div></div>
+  if (!data || !Array.isArray(data.rows)) return <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}><Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Нет данных.</div></div>
 
   const canEditNote = can(getPermissions(), 'receivables', 'edit')
 
@@ -250,7 +250,7 @@ export default function Receivables() {
   if (isMobile) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-        <Head><title>Дебиторка | Финансовый учёт</title></Head>
+        <Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="receivables" />
         <ReceivablesMobile
           asOf={data.as_of} onlyActual={onlyActual} setOnlyActual={setOnlyActual} downloadExport={downloadExport}
@@ -271,7 +271,7 @@ export default function Receivables() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Head>
-        <title>Дебиторка | Финансовый учёт</title>
+        <title>Дебиторка · Финансы | SIMB-AD ERP</title>
       </Head>
       <Navbar active="receivables" />
 

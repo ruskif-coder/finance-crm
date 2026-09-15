@@ -27,6 +27,7 @@ from app.sales.models import (SalesDeal, SalesRep, SalesAdvertiser, SalesBrand,
                               SalesAgency, SalesDealSnooze, SalesMediaPlan)
 from app.sales.catalog import Catalog, stage_public
 from app.sales import stage_move
+from app.sales.mp_amounts import mp_amounts_by_deal, eff_net, eff_gross
 from app.sales.row_context import load_row_context
 from app.sales.urgency import queue_sort_key
 from app.sales.urgency_db import facts_for_deals
@@ -119,6 +120,12 @@ def account_queue(
                          .order_by(SalesMediaPlan.id).all()):
             mp_by_deal[did] = mid        # порядок по возрастанию → остаётся последняя версия
 
+    # Деньги — по общему правилу «есть наш МП, значит цена из него» (app/sales/mp_amounts).
+    # Здесь его НЕ БЫЛО до 15.09.2026: очередь показывала сумму Битрикса, а реестр и
+    # карточка — сумму плана, и одна сделка стоила на двух экранах разного. Правило одно
+    # на систему, второй реализации быть не должно.
+    mp_amt = mp_amounts_by_deal(db, queue_ids)
+
     # Цвет услуги и документы — тот же контекст, что у реестра сделок.
     row_ctx = load_row_context(db, queue_ids)
 
@@ -154,7 +161,7 @@ def account_queue(
             "sales_rep_id": d.sales_rep_id,
             "sales_rep": repnames.get(d.sales_rep_id),
             "payer_name": d.payer_name, "payer_counterparty_id": d.payer_counterparty_id,
-            "amount": d.amount, "amount_with_vat": d.amount_with_vat,
+            "amount": eff_net(d, mp_amt), "amount_with_vat": eff_gross(d, mp_amt),
             "period_from": d.period_from, "period_to": d.period_to,
             "our_stage": stage_public(cat.by_id.get(d.our_stage_id), cat),
             "our_next_stage": stage_public(stage_move.next_stage(db, d, cat)),

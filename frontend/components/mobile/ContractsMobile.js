@@ -5,11 +5,12 @@ import { T } from '../../lib/tokens'
 import BottomSheet from './BottomSheet'
 import DirectoryMobile, { FilterChip } from './DirectoryMobile'
 import { PAYMENT_TERM_CONDITIONS } from '@/lib/contractTerms'
+import { fmtDate as fmtCalendarDate } from '@/lib/dates'
 
-const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
+const fmtDate = (s) => fmtCalendarDate(s)
 const fmtEndDate = (s) => {
   if (!s) return '—'
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(s).toLocaleDateString('ru-RU')
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return fmtCalendarDate(s)
   return s
 }
 

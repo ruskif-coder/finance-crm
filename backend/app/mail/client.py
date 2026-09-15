@@ -87,7 +87,27 @@ class MailConfig:
 
     @property
     def ok(self) -> bool:
-        return bool(self.host and self.sender)
+        """Настроена ли почта. Адрес отправителя проверяется, а не просто «не пуст».
+
+        Замер на проде 14.09.2026: в `MAIL_FROM` лежало «Уведомления SIMB-AD» — подпись
+        вместо адреса. Непустая строка проходила эту проверку, канал числился рабочим, а
+        письмо падало у `smtplib` с `'ascii' codec can't encode characters in position
+        0-10`: конверт обязан быть ASCII, а там кириллица. По такой ошибке причину не
+        найти — она не называет ни поля, ни значения.
+        """
+        return bool(self.host) and valid_address(self.sender)
+
+    @property
+    def problem(self) -> Optional[str]:
+        """Почему не настроена — словами, для экрана состояния. None = всё в порядке."""
+        if not self.host:
+            return f"не задан {ENV_HOST}"
+        if not self.sender:
+            return f"не задан {ENV_FROM}"
+        if not valid_address(self.sender):
+            return (f"{ENV_FROM} = {self.sender!r} — это не почтовый адрес. "
+                    f"Адрес ящика идёт в {ENV_FROM}, подпись — в {ENV_FROM_NAME}")
+        return None
 
 
 def config() -> MailConfig:
@@ -129,6 +149,10 @@ def build_message(*, to: str, subject: str, body: str, cfg: Optional[MailConfig]
     cfg = cfg or config()
     if not valid_address(to):
         raise MailError(f"Это не почтовый адрес: {to!r}")
+    # Отправителя проверяем ЗДЕСЬ же, рядом с получателем: разница между ними только в
+    # том, кто ошибся — человек в форме или человек в `.env`, — а последствие одинаковое.
+    if not valid_address(cfg.sender):
+        raise MailNotConfigured(cfg.problem or f"{ENV_FROM} задан неверно")
     msg = EmailMessage()
     msg["From"] = formataddr((cfg.sender_name or None, cfg.sender))
     msg["To"] = formataddr((to_name or None, to.strip()))
@@ -230,7 +254,13 @@ def send_many(items: Iterable[dict], *,
                     srv.send_message(msg)
                     sent += 1
                 out.append({"to": it["to"], "ok": True, "id": msg["Message-ID"]})
-            except (MailError, smtplib.SMTPException, OSError, KeyError) as e:
+            except Exception as e:                         # noqa: BLE001
+                # ЛЮБАЯ причина, а не перечисленные четыре. Список типов обещал изоляцию,
+                # которой не давал: замер 14.09.2026 — `smtplib` кодирует адрес конверта
+                # в ASCII и на кириллическом отправителе бросил `UnicodeEncodeError`,
+                # это ValueError, в перечень он не входил, и пачка из 25 писем оборвалась
+                # на первом. Здесь ловится ИСХОД одного письма; тип ошибки к тому, должны
+                # ли уйти остальные, отношения не имеет.
                 out.append({"to": it.get("to"), "ok": False, "error": repr(e)[:300]})
     finally:
         if srv is not None:

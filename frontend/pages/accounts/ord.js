@@ -139,7 +139,7 @@ export default function OrdDirectory() {
 
   return (
     <>
-      <Head><title>ОРД · Справочник</title></Head>
+      <Head><title>ОРД · Аккаунты | SIMB-AD ERP</title></Head>
       <Navbar />
       <div style={{ padding: '18px 22px', fontFamily: UI }}>
 

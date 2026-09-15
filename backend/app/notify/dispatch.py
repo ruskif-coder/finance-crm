@@ -18,8 +18,8 @@ from datetime import datetime, timedelta
 
 from app.database import SessionLocal
 from app.notify import registry, telegram
-from app.mail import client as mail
-from app.notify.bus import _quiet_now
+from app.notify import channels
+from app.notify.channels import quiet_now
 from app.notify.models import NotificationDelivery, UserNotificationChannels
 from app.models import User
 
@@ -52,31 +52,34 @@ def flush(dry_run: bool = False) -> dict:
             # них одна и та же — канал не настроен, адреса нет, тихие часы. Отдельная
             # очередь означала бы второе место, где считается протухание и повтор.
             if r.channel == "mail":
-                u = db.query(User).filter(User.id == r.user_id).first()
-                if not mail.configured() or u is None or not mail.valid_address(u.email or ""):
-                    stats["skipped"] += 1
-                    continue
-                if ev is not None and _quiet_now(ch, ev):
-                    stats["skipped"] += 1
-                    continue
                 if dry_run:
+                    u = db.query(User).filter(User.id == r.user_id).first()
                     stats["sent"] += 1
-                    print(f"    (сухой прогон) письмо -> {u.email}: {r.title}")
+                    print(f"    (сухой прогон) письмо -> "
+                          f"{u.email if u else r.user_id}: {r.title}")
                     continue
-                try:
-                    mail.send(to=u.email, subject=(r.title or "Уведомление")[:200],
-                              body=r.title or "", to_name=getattr(u, "name", None))
+                # Отправляем ТЕМ ЖЕ каналом, что и живую доставку. Пока досылка слала
+                # сама, письмо расходилось с живым: телом уходил ЗАГОЛОВОК, без текста,
+                # фактов и кнопки. Одно событие, два разных письма, и разницу видел
+                # только получатель. Тело и ссылка берутся из журнала — ради этого они
+                # там и появились (миграция 2026-09-14_delivery_body_link.sql).
+                status, _, reason = channels.deliver_mail(
+                    db, r.user_id, ev, r.title or "", r.body, r.link,
+                    r.facts, r.code).partition("|")
+                if status == "sent":
                     r.status, r.suppress_reason = "sent", None
                     stats["sent"] += 1
-                except Exception as e:                      # noqa: BLE001
-                    r.status, r.error = "failed", str(e)[:400]
+                elif status == "failed":
+                    r.status, r.error = "failed", (reason or None)
                     stats["failed"] += 1
+                else:
+                    stats["skipped"] += 1       # канал не готов или тихие часы
                 continue
 
             if not telegram.configured() or ch is None or not ch.tg_chat_id or not ch.tg_verified_at:
                 stats["skipped"] += 1
                 continue
-            if ev is not None and _quiet_now(ch, ev):
+            if ev is not None and quiet_now(ch, ev):
                 stats["skipped"] += 1          # всё ещё тихие часы — придём в следующий раз
                 continue
             if dry_run:
@@ -84,7 +87,10 @@ def flush(dry_run: bool = False) -> dict:
                 print(f"    (сухой прогон) → {r.user_id}: {r.title}")
                 continue
             try:
-                telegram.send_message(ch.tg_chat_id, r.title or "")
+                telegram.send_message(
+                    ch.tg_chat_id,
+                    channels.tg_text(r.title or "", r.body, r.facts),
+                    link=r.link)
                 r.status, r.suppress_reason = "sent", None
                 stats["sent"] += 1
             except Exception as e:

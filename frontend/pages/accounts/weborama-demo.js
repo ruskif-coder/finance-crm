@@ -217,7 +217,7 @@ export default function WeboramaDemo() {
 
   return (
     <>
-      <Head><title>Weborama демо · Аккаунты</title></Head>
+      <Head><title>Weborama демо · Аккаунты | SIMB-AD ERP</title></Head>
       <Navbar />
       <div style={{ fontFamily: UI, padding: '18px 22px 60px', maxWidth: 1180, margin: '0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>

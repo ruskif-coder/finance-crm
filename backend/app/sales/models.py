@@ -11,7 +11,7 @@ SQLAlchemy-модели дашборда продаж.
 в вычислениях, а не в хранении.
 """
 from sqlalchemy import (Column, Integer, String, Float, Date, DateTime, Boolean,
-                        Text, ForeignKey, UniqueConstraint)
+                        Text, ForeignKey, UniqueConstraint, text)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -768,6 +768,21 @@ class SalesDeal(Base):
     # его быть не должно. Кто и когда правил — в журнале действий, своих колонок
     # «кем/когда» нет намеренно: вторая память о том же событии разойдётся с первой.
     traffic_brief = Column(Text, nullable=True)
+    # Доп. параметры РК (миграция 2026-09-14_deal_weborama_pixel.sql). Первый и пока
+    # единственный: нужен ли по этой РК пиксель верификатора. Не пометка для трафика —
+    # от него зависит, потребует ли выгрузка в DSP пикселя (`dsp/provision._blocker`) и
+    # появится ли проверка стадии `weborama_pixel`. Включает аккаунт, снимает мастер.
+    weborama_pixel = Column(Boolean, nullable=False, server_default=text("false"),
+                            default=False)
+    weborama_pixel_at = Column(DateTime, nullable=True)
+    # Откуда берётся пиксель (миграция 2026-09-14_weborama_external_pixel.sql):
+    # own — заводим вставку и забираем пиксель сами; external — тег принесли готовым,
+    # ОДИН на всю кампанию (у них одна вставка на сеть). Осмысленно только при
+    # включённом `weborama_pixel`.
+    weborama_pixel_mode = Column(String(10), nullable=False,
+                                 server_default=text("'own'"), default="own")
+    weborama_pixel_tag = Column(Text, nullable=True)
+    weborama_ext_insertion = Column(String(32), nullable=True)
     # Светофор синхронизации (считается при sync_deal_from_bitrix):
     # green — совпадает с Битриксом; blue — у нас данные полнее (не выгружено);
     # red — расхождение (Битрикс не матчится с нашими справочниками). NULL — не проверялось.
@@ -1247,5 +1262,10 @@ class SalesPublisherContact(Base):
     role = Column(String)          # должность
     is_primary = Column(Boolean, nullable=False, default=False)
     max_url = Column(String)       # MAX равноправен телеграму: площадки уходят с ТГ
+    # Получает ли контакт уведомления кабинета (миграция 2026-09-14_contact_notify.sql).
+    # Отдельно от `is_primary`: тот отвечает «к кому идти с вопросом», а это — «кому
+    # уходит почта». Совпадали они по случайности и разошлись бы на первом же «главный,
+    # но писать ему не надо».
+    notify = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     note = Column(Text)
     publisher = relationship("SalesPublisher", back_populates="contacts")

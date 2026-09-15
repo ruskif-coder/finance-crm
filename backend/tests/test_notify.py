@@ -9,6 +9,7 @@
 import pytest
 
 from app.notify import registry
+from app.notify import tone as tone_of
 from app.notify.bus import emit
 from app.notify.recipients import RESOLVERS
 
@@ -32,7 +33,9 @@ def test_directions_and_channels_are_known():
     dirs = {k for k, _ in registry.DIRECTIONS}
     for ev in registry.EVENTS.values():
         assert ev.direction in dirs, ev.key
-        assert ev.tone in ("danger", "warning", "success", "info"), ev.key
+        # Словарь тона — один на систему (app/notify/tone.py). Здесь он проверяется
+        # по нему же, а не списком слов: два списка уже разошлись однажды.
+        assert ev.tone in tone_of.TONES, ev.key
         for ch in ev.channels:
             assert ch in registry.CHANNELS, (ev.key, ch)
 
@@ -168,7 +171,7 @@ def test_scanner_rules_are_registered():
 
 # ---- тихие часы ----
 
-from app.notify.bus import _quiet_now
+from app.notify.channels import quiet_now
 
 
 class Ch:
@@ -177,22 +180,22 @@ class Ch:
 
 
 def test_quiet_hours_none_means_always_allowed():
-    assert _quiet_now(Ch(), registry.get("mp_ready")) is False
-    assert _quiet_now(None, registry.get("mp_ready")) is False
+    assert quiet_now(Ch(), registry.get("mp_ready")) is False
+    assert quiet_now(None, registry.get("mp_ready")) is False
 
 
 def test_locked_event_ignores_quiet_hours():
     """Отказ по МП и просрочка не ждут утра — на то они и «нельзя отключить»."""
     ev = registry.get("invoice_overdue")   # locked=True
     assert ev.locked is True
-    assert _quiet_now(Ch(0, 23), ev) is False
+    assert quiet_now(Ch(0, 23), ev) is False
 
 
 def test_mute_until_blocks(monkeypatch):
     from datetime import date, timedelta
-    assert _quiet_now(Ch(mute_until=date.today() + timedelta(days=1)),
+    assert quiet_now(Ch(mute_until=date.today() + timedelta(days=1)),
                       registry.get("mp_ready")) is True
-    assert _quiet_now(Ch(mute_until=date.today() - timedelta(days=1)),
+    assert quiet_now(Ch(mute_until=date.today() - timedelta(days=1)),
                       registry.get("mp_ready")) is False
 
 

@@ -158,3 +158,72 @@ def test_repeat_call_changes_nothing(db):
     db.commit()
     db.refresh(deal)
     assert (deal.advertiser_id, deal.brand_id, deal.amount, deal.title) == before
+
+
+def test_a_plan_calculated_to_zero_reaches_the_deal(db):
+    """Ноль — это цена, а не отсутствие цены.
+
+    Условие переноса было «истинно», и посчитанный в ноль план (услуга со стопроцентной
+    скидкой) сделку не трогал: в базе оставалась сумма Битрикса. Жалоба владельца
+    15.09.2026 по сделке MHNZUT — 372 000 при нулевом плане. Пара к этому прибору —
+    `test_mp_amounts.test_a_calculated_plan_worth_zero_wins_over_bitrix`, там то же
+    различие на стороне показа.
+    """
+    deal, plan = _pair(db, deal_kw={'amount': 372000.0, 'amount_with_vat': 453840.0},
+                       plan_kw={'amount_net': 0.0, 'amount_gross': 0.0})
+    mp._sync_deal_from_plan(db, plan, _USER)
+    db.commit()
+    db.refresh(deal)
+    assert deal.amount == 0.0, 'нулевой план не доехал — сделка осталась с суммой Битрикса'
+    assert deal.amount_with_vat == 0.0
+
+
+def test_an_uncalculated_plan_still_does_not_touch_the_amount(db):
+    """Обратный край: суммы у плана НЕТ (NULL) — сделку не трогаем.
+    «Не посчитан» и «посчитан в ноль» это разные состояния."""
+    deal, plan = _pair(db, deal_kw={'amount': 372000.0},
+                       plan_kw={'amount_net': None, 'amount_gross': None})
+    mp._sync_deal_from_plan(db, plan, _USER)
+    db.commit()
+    db.refresh(deal)
+    assert deal.amount == 372000.0
+
+
+def test_inline_edit_from_the_registry_also_reaches_the_deal():
+    """Правка МП из реестра (PATCH) обязана доезжать до сделки.
+
+    Половина жалобы «медиаплан не всегда обновляет сделку»: `patch_media_plan` менял
+    ровно те поля, которые перенос и возит, — рекламодателя, бренд, агентство,
+    плательщика, период, название, — и переноса не звал. Со стороны аккаунта: одно
+    и то же поле, исправленное в конструкторе, доходит, а в реестре — нет.
+
+    Прибор смотрит на ИСХОДНИК, а не на поведение: поднять реальный PATCH здесь значит
+    втащить право, own-scope и сессию запроса, а вопрос ровно один — зовётся ли перенос.
+    """
+    import inspect
+    src = inspect.getsource(mp.patch_media_plan)
+    assert "_sync_deal_from_plan" in src, (
+        "правка МП из реестра не доезжает до сделки")
+    assert src.index("_sync_deal_from_plan") < src.index("db.commit()"), (
+        "перенос зовётся после коммита — его записи не сохранятся")
+
+
+def test_the_resync_script_has_a_real_dry_run():
+    """Сухой прогон разового переноса обязан быть сухим.
+
+    Готча, на которой скрипт уже соврал 15.09.2026: перенос в конце зовёт `log_action`,
+    а тот делает СВОЙ `db.commit()`. Схема «позвать и в конце откатить» на этом не
+    работает — к моменту отката всё записано, и «сухой прогон» оказывается боевым
+    (на стенде так и вышло: 19 сделок доехали до состояния плана без команды).
+
+    Настоящий откат делается снаружи: сессия внутри внешней транзакции с
+    `join_transaction_mode="create_savepoint"`, тогда внутренний commit закрывает
+    только savepoint.
+    """
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[1]
+           / "scripts" / "2026-09-15_resync_deals_from_plans.py").read_text(encoding="utf-8")
+    assert 'join_transaction_mode="create_savepoint"' in src, (
+        "у скрипта нет настоящего отката — его сухой прогон пишет в базу")
+    assert "db.rollback()" not in src, (
+        "откат сессии здесь бесполезен: log_action уже сделал commit")

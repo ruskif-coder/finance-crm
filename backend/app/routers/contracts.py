@@ -72,6 +72,7 @@ def _clean(s: Optional[str]) -> Optional[str]:
 
 
 from app.links import validate_link as _validate_link  # общая проверка, см. app/links.py
+from app import timez
 
 
 def _resolve_counterparty(db: Session, counterparty_id: Optional[int]) -> Optional[Counterparty]:
@@ -473,7 +474,6 @@ def export_contracts(
     current_user: User = Depends(require_permission("contracts", "view"))
 ):
     import io
-    from datetime import datetime
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.worksheet.datavalidation import DataValidation
@@ -555,7 +555,7 @@ def export_contracts(
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    ts = datetime.now().strftime("%Y%m%d_%H%M")
+    ts = timez.msk_now().strftime("%Y%m%d_%H%M")   # имя файла — по московским часам
     filename = f"dogovory_{ts}.xlsx"
     return StreamingResponse(buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -237,7 +237,7 @@ export default function TrafficCatalog() {
 
   return (
     <>
-      <Head><title>Каталог площадок · Трафики</title></Head>
+      <Head><title>Админка · Трафики | SIMB-AD ERP</title></Head>
       <Navbar />
       <div style={{ maxWidth: 1600, margin: '0 auto', padding: '18px 24px 60px', fontFamily: UI }}>
         {/* шапка: пиктограмма + заголовок */}
@@ -390,7 +390,7 @@ export default function TrafficCatalog() {
                       style={{
                         padding: '7px 13px', borderRadius: '10px 10px 0 0', fontWeight: 700, fontSize: 13, cursor: 'pointer',
                         color: s.id === tab ? 'var(--text-primary)' : 'var(--text-faint)',
-                        background: s.id === tab ? 'var(--bg-soft, #f6f8fc)' : 'transparent',
+                        background: s.id === tab ? 'var(--bg-subtle)' : 'transparent',
                         border: s.id === tab ? '1px solid var(--border-card)' : '1px solid transparent', borderBottom: 'none',
                       }}>
                       {SURFACE_LABEL[s.kind] || s.kind}
@@ -406,7 +406,7 @@ export default function TrafficCatalog() {
                 </div>
 
                 {surface && (
-                  <div style={{ background: 'var(--bg-soft, #f6f8fc)', border: '1px solid var(--border-card)', borderTop: 'none', padding: '14px 18px' }}>
+                  <div style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderTop: 'none', padding: '14px 18px' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 16, alignItems: 'end' }}>
                       <label style={{ fontSize: 12 }}>
                         <div style={{ ...CAP, marginBottom: 4 }}>ID паблишера в МС</div>
@@ -431,7 +431,7 @@ export default function TrafficCatalog() {
                   <div style={{ padding: '14px 18px 18px', overflowX: 'auto' }}>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10, alignItems: 'center' }}>
                       <span style={{ ...CAP, marginBottom: 0 }}>Типовые разделы:</span>
-                      {PAGE_TYPES.map((t) => <span key={t} style={chip('var(--bg-soft,#eef1f6)', 'var(--text-secondary)', 'var(--border-card)')}>{t}</span>)}
+                      {PAGE_TYPES.map((t) => <span key={t} style={chip('var(--bg-subtle)', 'var(--text-secondary)', 'var(--border-card)')}>{t}</span>)}
                       <span style={{ flex: 1 }} />
                       <button style={btnSm(false)} onClick={exportBlocks}>Выгрузить в Excel</button>
                     </div>

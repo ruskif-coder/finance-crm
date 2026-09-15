@@ -43,6 +43,7 @@ from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepCreativeSe
 from app.models import Role, User
 from app.notify import emit
 from app.permissions import require_any_permission, require_permission
+from app.sales.deal_label import deal_label
 from app.sales.models import (SalesAdvertiser, SalesBrand, SalesDeal, SalesPublisher,
                               SalesRep)
 from app.traffic import files as tfiles
@@ -339,7 +340,49 @@ def _apply_verdict(db: Session, pair, s, target, pub, deal,
             db.add(LaunchPrepReview(set_id=s.id, pair_id=pair.id, kind="площадка",
                                     source="аккаунт"))
         pair.sent_at = sa_func.now()
+        _tell_publisher(db, pair, s, target, pub, deal)
     return f"{deal.code}-{pub.code if pub else '?'} комплект №{s.no}: {verdict}"
+
+
+def _tell_publisher(db, pair, s, target, pub, deal) -> None:
+    """Сказать площадке, что материал ждёт её решения.
+
+    Ровно та же дыра, что закрывал `traffic_new_work` внутри: до 14.09.2026 площадка
+    узнавала о работе, только зайдя в кабинет, — а заходит она тогда, когда вспомнит.
+    Первый вид рассылки наружу, у которого появился отправитель.
+
+    Письмо НЕ ОТМЕНЯЕТ вердикт: прослойка возвращает причину, а не бросает исключение.
+    Материал уже у площадки — в кабинете он виден независимо от почты.
+    """
+    # Импорты локальные: `launch_prep` импортирует этот модуль, и связь на уровне
+    # файла замкнула бы круг.
+    import logging
+
+    from app.notify.outward import notify_publisher
+    from app.routers.launch_prep import _deal_brand_name, deal_period_text
+
+    log = logging.getLogger("finance.traffic")
+    if pub is None:
+        return
+    # Имя бренда берём ТОЙ ЖЕ функцией, что подставляет его в письмо-запрос посадочной:
+    # два способа назвать бренд разошлись бы, и площадка получила бы разные имена в
+    # двух письмах об одном размещении.
+    brand = _deal_brand_name(db, deal)
+    period = deal_period_text(deal)
+    # НАШЕГО кода сделки здесь нет: площадка знает бренд, услугу и период.
+    context = " · ".join(x for x in ((pub.domain or pub.name), brand, period) if x)
+    try:
+        notify_publisher(
+            db, "новый креатив", pub.id,
+            title="Новый креатив на согласование",
+            body="Материал прошёл нашу проверку и ждёт вашего решения. "
+                 "Посмотрите дисклеймер, вес архива и соответствие техрегламенту.",
+            facts=[("комплект", f"№{s.no}"), ("услуга", deal.product or "—")],
+            context=context, link="/", entity_type="launch_prep_pair", entity_id=pair.id)
+    except Exception as e:                                   # noqa: BLE001
+        # Ошибка рассылки не должна ронять вердикт: он уже записан, и откат оставил бы
+        # человека с ошибкой при выполненном действии.
+        log.warning("Площадке %s не ушло «новый креатив»: %s", pub.id, e)
 
 
 @router.post("/pair/{pair_id}/verdict")
@@ -366,7 +409,7 @@ def pair_verdict(pair_id: int, payload: VerdictIn, db: Session = Depends(get_db)
     log_action(db, current_user, "traffic_pair_verdict", "sales_deal", deal.id, details)
     if payload.verdict == "на переделку":
         emit(db, "traffic_rework",
-             title=f"Трафик вернул креатив №{s.no} · {deal.code}",
+             title=f"Трафик вернул креатив №{s.no} · {deal_label(deal)}",
              body=(payload.reason or "").strip() or "Без комментария",
              link=f"/sales/deals/{deal.code or deal.id}",
              entity_type="sales_deal", entity_id=deal.id, actor=current_user,
@@ -414,7 +457,7 @@ def bulk_verdict(payload: BulkVerdictIn, db: Session = Depends(get_db),
                    f"комплект №{s.no}: {payload.verdict} — пар {done}")
         if payload.verdict == "на переделку":
             emit(db, "traffic_rework",
-                 title=f"Трафик вернул креатив №{s.no} · {deal.code}",
+                 title=f"Трафик вернул креатив №{s.no} · {deal_label(deal)}",
                  body=(payload.reason or "").strip() or "Без комментария",
                  link=f"/sales/deals/{deal.code or deal.id}",
                  entity_type="sales_deal", entity_id=deal_id, actor=current_user,

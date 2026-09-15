@@ -7,19 +7,13 @@ import { MONO, UI, card, sel, th, td } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import { grp0 as fmt } from '../../lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { fmtDateTime } from '@/lib/dates'
 
 // ── Журнал действий — отдельная страница раздела «Настройки» ──
 // Аудит мутаций: фильтры (действие/пользователь/период) + пагинация «показать ещё».
 // Список пользователей грузим для выпадающего фильтра «по пользователю».
 const AUDIT_LIMIT = 50
 
-const fmtDateTime = (s) => {
-  if (!s) return ''
-  // DB хранит UTC (func.now()); добавляем 'Z' если нет маркера зоны, чтобы браузер
-  // воспринял как UTC, затем отображаем в московском времени (UTC+3).
-  const str = /[Z+]/.test(s) ? s : s + 'Z'
-  return new Date(str).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })
-}
 
 export default function SettingsAudit() {
   const router = useRouter()
@@ -81,7 +75,7 @@ export default function SettingsAudit() {
 
   return (
     <>
-      <Head><title>Журнал действий | Настройки</title></Head>
+      <Head><title>Журнал действий · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SettingsTabs active="audit" />

@@ -141,3 +141,22 @@ def test_unknown_tone_degrades_to_bad_instead_of_crashing():
     row = st._check("k", "Группа", "Заголовок", "совершенно новый тон")
     assert row["tone"] == "bad"
     assert st.WORST[row["tone"]] == max(st.WORST.values())
+
+
+def test_dry_run_does_not_count_as_a_live_dispatch():
+    """Сухой прогон сканера не засчитывается за живую рассылку.
+
+    Найдено аудитом 14.09.2026. `--dry-run` пишет строку в `notification_scan_runs` —
+    это его устройство, иначе «сканер не запускался» не отличить от «запускался и ничего
+    не нашёл». Но проверка брала ПОСЛЕДНЮЮ строку любого вида, и после холостого прогона
+    экран показывал «рассылка жива», хотя не ушло ни одного письма.
+
+    То есть прибор, который обязан сообщать о поломке, гасился проверкой этой самой
+    поломки — а сухой прогон делают именно тогда, когда что-то подозревают.
+    """
+    import inspect
+
+    from app.system import status
+
+    src = inspect.getsource(status.check_notify_dispatch)
+    assert "NOT dry_run" in src, "проверка считает сухие прогоны за боевые"

@@ -132,3 +132,68 @@ def test_a_block_with_content_is_never_hidden(db):
     deal.our_stage_id = cat.flow[0]          # откатываем в начало лестницы (без commit)
     vis = stage_scope.visible_blocks(db, deal, cat)
     assert vis["docs"] is True, "блок с документами спрятан — данные стали недостижимы"
+
+
+def test_docs_counts_plan_and_released_annex_not_only_files(db):
+    """«Непустое» у документов — это НЕ только загруженные файлы.
+
+    Блок собирает три разных вещи: файлы, медиаплан и ДС. Причём у выпущенной ДС файла
+    нет вовсе — она считается готовой по номеру приложения. Пока непустота мерилась одной
+    таблицей `sales_deal_files`, сделка с планом и выпущенной ДС числилась пустой, и
+    правило «непустое не прячем» её не защищало: спрятанным оказывалось ровно то, что уже
+    собрано. Прибор берёт такую сделку — с планом, но БЕЗ файлов — и требует блок видимым.
+    """
+    from app.sales.models import SalesDeal
+    cat = Catalog(db)
+    row = db.execute(text("""
+        SELECT p.deal_id FROM sales_media_plans p
+         WHERE p.deal_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM sales_deal_files f WHERE f.deal_id = p.deal_id)
+           AND EXISTS (SELECT 1 FROM sales_deals d WHERE d.id = p.deal_id)
+         LIMIT 1""")).first()
+    if not row:
+        pytest.skip("на стенде нет сделки с планом и без файлов")
+    deal = db.query(SalesDeal).filter(SalesDeal.id == row[0]).first()
+    deal.our_stage_id = cat.flow[0]
+    # Разметка на ПОСЛЕДНЮЮ стадию: без правила «непустое не прячем» блок был бы скрыт.
+    db.execute(text("INSERT INTO sales_stage_blocks (stage_id, block_key) VALUES (:s, 'docs')"
+                    " ON CONFLICT DO NOTHING"), {"s": cat.flow[-1]})
+    assert stage_scope.visible_blocks(db, deal, cat)["docs"] is True, (
+        "сделка с медиапланом сочтена пустой — непустота меряется одними файлами")
+
+
+def test_blocks_markup_is_one_row_per_block(db):
+    """Экран настройки показывает ДЕЙСТВУЮЩЕЕ правило, а не содержимое таблицы.
+
+    Строк на блок может быть несколько, но читается самая ранняя — остальные не значат
+    ничего. Если бы экран показывал их все, человек правил бы строки без эффекта.
+    """
+    cat = Catalog(db)
+    if len(cat.stages) < 2:
+        pytest.skip("в каталоге меньше двух стадий")
+    early, late = cat.stages[0].id, cat.stages[-1].id
+    db.execute(text("DELETE FROM sales_stage_blocks WHERE block_key = 'campaign'"))
+    for sid in (late, early):
+        db.execute(text("INSERT INTO sales_stage_blocks (stage_id, block_key)"
+                        " VALUES (:s, 'campaign')"), {"s": sid})
+
+    out = stage_scope.blocks_markup(db, cat)
+    assert [b["key"] for b in out] == list(stage_scope.BLOCK_KEYS), "выдача обязана быть полной"
+    row = next(b for b in out if b["key"] == "campaign")
+    assert row["stage_id"] == early, "показана не та стадия, по которой блок реально виден"
+    assert row["label"], "блок без подписи — экран покажет служебный ключ"
+
+
+def test_save_blocks_markup_replaces_and_none_means_always(db):
+    """Сохранение переписывает разметку целиком, а пустая стадия означает «виден всегда».
+
+    Разница важна: строка со стадией и отсутствие строки — разные утверждения, и второе
+    обязано получаться именно очисткой, а не записью какой-нибудь нулевой стадии.
+    """
+    cat = Catalog(db)
+    stage_scope.save_blocks_markup(db, {"ord": cat.stages[0].id, "docs": None})
+    out = {b["key"]: b["stage_id"] for b in stage_scope.blocks_markup(db, cat)}
+    assert out["ord"] == cat.stages[0].id
+    assert out["docs"] is None
+    assert out["creatives"] is None, "прежняя разметка не была переписана"
+    assert stage_scope.visible_blocks(db, _Deal(stage_id=cat.stages[0].id), cat)["docs"] is True

@@ -7,6 +7,7 @@ import Navbar, { can } from '@/components/Navbar'
 import { MONO, UI, btn } from '@/components/salesTableKit'
 import PublisherCard from '@/components/publishers/PublisherCard'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { downloadFile } from '@/lib/download'
 
 // Страница карточки площадки: загрузка, режим правки и сохранение. Вся вёрстка — в
 // components/publishers/PublisherCard. Режим правки включается и ссылкой ?edit=1 —
@@ -191,13 +192,7 @@ export default function PublisherCardPage() {
       } catch (e) { fail(e, 'Не удалось загрузить документ'); return false }
     },
     downloadDocument: async (docId, filename) => {
-      try {
-        const r = await api.get(`/publishers/${id}/documents/${docId}`, { responseType: 'blob', ...auth() })
-        const url = URL.createObjectURL(r.data)
-        const a = document.createElement('a')
-        a.href = url; a.download = filename || 'file'
-        a.click(); URL.revokeObjectURL(url)
-      } catch (e) { fail(e, 'Не удалось скачать документ') }
+      await downloadFile(`/publishers/${id}/documents/${docId}`, filename, setError)
     },
     deleteDocument: async (docId) => {
       if (!window.confirm('Удалить документ?')) return
@@ -234,15 +229,10 @@ export default function PublisherCardPage() {
       try { await api.post(`/publishers/${id}/contracts/${linkId}/document`, fd, auth()); await load() }
       catch (e) { fail(e, 'Не удалось приложить документ') }
     },
+    // Имя файла не выдумываем: своего нет — берём из Content-Disposition. Заглушка
+    // 'contract' клала документ на диск без расширения.
     downloadContractDoc: async (linkId) => {
-      try {
-        const r = await api.get(`/publishers/${id}/contracts/${linkId}/document`,
-          { responseType: 'blob', ...auth() })
-        const url = URL.createObjectURL(r.data)
-        const a = document.createElement('a')
-        a.href = url; a.download = 'contract'
-        a.click(); URL.revokeObjectURL(url)
-      } catch (e) { fail(e, 'Не удалось скачать документ') }
+      await downloadFile(`/publishers/${id}/contracts/${linkId}/document`, null, setError)
     },
     // Поиск идёт на сервере: контрагентов больше, чем отдаёт одна страница реестра.
     searchCounterparties: async (q) => {
@@ -301,7 +291,7 @@ export default function PublisherCardPage() {
 
   return (
     <>
-      <Head><title>{data?.name || 'Площадка'}</title></Head>
+      <Head><title>{data?.name ? data.name + ' · площадка' : 'Площадка'} | SIMB-AD ERP</title></Head>
       <Navbar active="publishers" />
       {/* Полотно карточки ограничено по ширине, как в хендоффе: на широком мониторе
           строка в 2500 px читается хуже, а правая колонка уезжает от левой. */}

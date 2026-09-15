@@ -5,10 +5,11 @@ import { makeApi as api } from '../../lib/http'
 import { bankColor } from '../../lib/salesFormat'
 import { T } from '../../lib/tokens'
 import CardShell from './CardShell'
+import { fmtDate as fmtCalendarDate } from '@/lib/dates'
 
 const rub = (n) => (n || n === 0) ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) + ' ₽' : '—'
 const mln = (n) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format((n || 0) / 1e6)
-const fmtDate = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : '—'
+const fmtDate = (s) => fmtCalendarDate(s)
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
 const fmtMonth = (p) => { if (!p) return ''; const [y, m] = String(p).split('-'); return `${MONTHS[+m - 1] || m} ${String(y).slice(2)}` }
 const periodShort = (p) => String(p || '').replace(/^(\d{4})-(\d{2})$/, '$1-$2')
