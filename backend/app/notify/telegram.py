@@ -2,7 +2,10 @@
 
 Библиотек для бота не тянем — это два HTTP-запроса через httpx, который уже есть.
 
-Конфигурация: TELEGRAM_BOT_TOKEN в .env (не коммитится). Без токена канал считается
+ДВА КОНТУРА, один протокол: бот сотрудников и бот кабинета площадок. Контур передаётся
+параметром `contour` (STAFF/PUB), от него зависят токен, имя и адрес привязки.
+
+Конфигурация: TELEGRAM_BOT_TOKEN / TELEGRAM_PUB_BOT_TOKEN в .env (не коммитится). Без токена канал считается
 ненастроенным: сообщения не теряются, а ложатся в журнал отправок статусом queued —
 уйдут после настройки командой flush, а не пропадут молча.
 
@@ -20,13 +23,40 @@ import httpx
 API = "https://api.telegram.org/bot{token}/{method}"
 LINK_CODE_TTL_MIN = 30
 
+# ДВА БОТА, А НЕ ОДИН (владелец 15.09.2026). Внутренний пишет сотрудникам, бот кабинета —
+# площадкам. Разделение не техническое: площадка видит бота подрядчика, а не наш
+# внутренний алёрт-бот, и обработчик `/start` не гадает, чей перед ним код — у каждого
+# контура свой вебхук и своя таблица привязок.
+#
+# Контур — ПАРАМЕТР, а не копия модуля: протокол Телеграма один, и вторая копия этих
+# функций разошлась бы с первой на первой же правке (повтор при обрыве живёт здесь).
+STAFF, PUB = "staff", "pub"
 
-def bot_token() -> Optional[str]:
-    return (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip() or None
+# Имена переменных — ОТДЕЛЬНЫМИ КОНСТАНТАМИ, а не словарём `{контур: имя}`. Словарь здесь
+# был и выглядел аккуратнее, но прибор `tests/test_env_passthrough` разбирает код деревом
+# и умеет разворачивать константу модуля, а не выбор из словаря по ключу: под словарём
+# исчезли из виду разом и новые переменные, и две старых, живших тут год. Прибор ловит
+# ровно ту тишину, ради которой заведён, — «в .env значение есть, до процесса не дошло»,
+# — и прятаться от него ради красоты нельзя.
+ENV_TOKEN_STAFF = "TELEGRAM_BOT_TOKEN"
+ENV_TOKEN_PUB = "TELEGRAM_PUB_BOT_TOKEN"
+ENV_NAME_STAFF = "TELEGRAM_BOT_NAME"
+ENV_NAME_PUB = "TELEGRAM_PUB_BOT_NAME"
 
 
-def configured() -> bool:
-    return bot_token() is not None
+def token_var(contour: str = STAFF) -> str:
+    """Имя переменной окружения — для сообщения об ошибке: «не задан TELEGRAM_...»
+    полезнее, чем «бот не настроен»."""
+    return ENV_TOKEN_PUB if contour == PUB else ENV_TOKEN_STAFF
+
+
+def bot_token(contour: str = STAFF) -> Optional[str]:
+    raw = os.getenv(ENV_TOKEN_PUB) if contour == PUB else os.getenv(ENV_TOKEN_STAFF)
+    return (raw or "").strip() or None
+
+
+def configured(contour: str = STAFF) -> bool:
+    return bot_token(contour) is not None
 
 
 _USERNAME_CACHE: dict = {}
@@ -44,7 +74,7 @@ def _clean_name(raw: str) -> Optional[str]:
     return v or None
 
 
-def bot_username() -> Optional[str]:
+def bot_username(contour: str = STAFF) -> Optional[str]:
     """Юзернейм бота — то, что стоит после @ и работает в адресе t.me/<имя>.
 
     Источник истины — сам Telegram (getMe по токену), а НЕ переменная окружения:
@@ -56,8 +86,9 @@ def bot_username() -> Optional[str]:
     так). Сеть недоступна или бот не настроен — откатываемся на .env, привязку это
     не ломает: без имени просто не будет кнопки.
     """
-    token = bot_token()
-    env = _clean_name(os.getenv("TELEGRAM_BOT_NAME") or "")
+    token = bot_token(contour)
+    env = _clean_name((os.getenv(ENV_NAME_PUB) if contour == PUB
+                       else os.getenv(ENV_NAME_STAFF)) or "")
     if not token:
         return env
     if token not in _USERNAME_CACHE:
@@ -72,7 +103,7 @@ def bot_username() -> Optional[str]:
     return _USERNAME_CACHE[token] or env
 
 
-def link_url(code: str) -> Optional[str]:
+def link_url(code: str, contour: str = STAFF) -> Optional[str]:
     """Диплинк «открыть бота и отдать ему код».
 
     t.me/<бот>?start=<код> — Telegram сам подставляет «/start <код>» в кнопку
@@ -82,7 +113,7 @@ def link_url(code: str) -> Optional[str]:
     Кнопка не заменяет код на экране: если чат с ботом уже открывали, кнопки
     «Начать» в нём нет, и код отправляют сообщением.
     """
-    name = bot_username()
+    name = bot_username(contour)
     return f"https://t.me/{name}?start={code}" if name and code else None
 
 
@@ -92,15 +123,15 @@ def new_link_code() -> Tuple[str, datetime]:
 
 
 def send_message(chat_id: str, text: str, link: Optional[str] = None,
-                 base_url: Optional[str] = None) -> None:
+                 base_url: Optional[str] = None, contour: str = STAFF) -> None:
     """Отправить сообщение. Бросает исключение — вызывающий пишет причину в журнал.
 
     Ссылка добавляется отдельной строкой абсолютным адресом: в Telegram нет нашего
     origin, относительный путь вида /accounts/mp/12 там бесполезен.
     """
-    token = bot_token()
+    token = bot_token(contour)
     if not token:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN не задан")
+        raise RuntimeError(f"{token_var(contour)} не задан")
     body = text
     if link:
         domain = (base_url or os.getenv("DOMAIN") or "").strip()

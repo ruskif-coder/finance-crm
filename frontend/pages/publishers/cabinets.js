@@ -107,37 +107,108 @@ const Avatar = ({ name }) => (
   </span>
 )
 
+/* ── Сетка таблицы контактов ──
+   Одна константа на шапку и на строки: две копии колонок разъезжаются при первой же
+   правке, и заголовок начинает стоять не над своим столбцом. */
+const CT_GRID = ('minmax(0,1.35fr) minmax(0,1.05fr) 44px 44px 36px '
+                 + '46px 74px minmax(146px,0.9fr)')
+
+/** Галочка состояния. Кликабельна, только если состоянием можно управлять отсюда.
+
+    Без `onChange` рисуется тем же квадратом, но бледнее и без курсора: так показан бот,
+    которого мы переключить не можем — чат заводит сам человек. Отдельный вид «только
+    смотреть» нужен, чтобы не обещать кнопку там, где её нет. */
+const Tick = ({ on, onChange, title, dim }) => (
+  <span title={title} onClick={onChange || undefined}
+    style={{ width: 16, height: 16, borderRadius: 4, display: 'inline-flex',
+      alignItems: 'center', justifyContent: 'center', margin: '0 auto',
+      cursor: onChange ? 'pointer' : 'default', opacity: dim ? 0.55 : 1,
+      background: on ? (onChange ? 'var(--accent)' : 'var(--accent-tint)') : 'var(--bg-card)',
+      border: `1px solid ${on ? 'var(--accent)' : 'var(--border-card)'}`,
+      transition: 'background 120ms ease' }}>
+    {on && (
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
+        stroke={onChange ? 'var(--on-accent)' : 'var(--accent)'} strokeWidth="3.6"
+        strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+    )}
+  </span>
+)
+
+/** Шапка таблицы контактов. Колонки подписаны — иначе три галочки подряд не читаются. */
+const ContactHead = () => (
+  <div style={{ display: 'grid', gap: 7, alignItems: 'end', padding: '0 0 5px',
+    gridTemplateColumns: CT_GRID }}>
+    <span style={{ ...CAP, marginBottom: 0 }}>Контакт</span>
+    <span style={{ ...CAP, marginBottom: 0 }}>Почта</span>
+    <span style={{ ...CAP, marginBottom: 0, textAlign: 'center' }}
+      title="Главное контактное лицо площадки">Главный</span>
+    <span style={{ ...CAP, marginBottom: 0, textAlign: 'center' }}
+      title="Получает уведомления по почте">Письма</span>
+    <span style={{ ...CAP, marginBottom: 0, textAlign: 'center' }}
+      title="Подключил ли человек телеграм-бота — делает это он сам">Бот</span>
+    <span style={{ ...CAP, marginBottom: 0 }}>Вход</span>
+    <span style={{ ...CAP, marginBottom: 0 }}>Права</span>
+    <span />
+  </div>
+)
+
 /** Строка контактного лица. Уровень — переключаемый чип, но только при учётке. */
 const ContactRow = ({ c, mayEdit, busy, onLevel, onPassword, onGrant, onDisable,
-  onEdit, onEnable, onDelete }) => (
-  <div style={{ display: 'grid', gap: 10, alignItems: 'center', padding: '9px 0',
-    borderTop: '1px solid var(--border-row)',
-    gridTemplateColumns: 'minmax(0,1.5fr) minmax(0,1.2fr) 70px 116px minmax(196px,1.15fr)' }}>
+  onEdit, onEnable, onDelete, onFlag }) => (
+  <div style={{ display: 'grid', gap: 7, alignItems: 'center', padding: '7px 0',
+    borderTop: '1px solid var(--border-row)', gridTemplateColumns: CT_GRID }}>
     <span style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
       <Avatar name={c.name} />
       <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
-          <span style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden',
-            textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name || '—'}</span>
-          {/* Главное контактное лицо — тот же зелёный квадрат, что в карточке
-              паблишера: это одна и та же пометка, а не вторая её версия. */}
-          {c.is_primary && <span title="Главное контактное лицо"
-            style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--income)',
-              flex: '0 0 auto' }} />}
-          {/* Отметка рассылки — ОТДЕЛЬНАЯ от «главного»: тот отвечает, к кому идти с
-              вопросом, а эта — кому уходит почта. Совпадают они не всегда. */}
-          {c.notify && <span title="Получает уведомления кабинета"
-            style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.04em',
-              color: 'var(--accent-fg)', background: 'var(--accent-tint)',
-              borderRadius: 5, padding: '1px 5px', flex: '0 0 auto' }}>письма</span>}
+        {/* ИМЯ ЗАНИМАЕТ СВОЮ СТРОКУ ЦЕЛИКОМ. 15.09.2026 я поставил отметки рядом с ним,
+            и на узкой колонке они наехали на ФИО и должность — читать стало нечего.
+            Признаки живут в СВОИХ колонках (их видно и сравнивать по столбцу), а рядом с
+            именем остаётся только то, что относится к самой записи, а не к настройке. */}
+        <span style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden',
+          textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.name || ''}>
+          {c.name || '—'}
         </span>
-        <span style={{ ...CAP, marginBottom: 0, fontSize: 9 }}>
-          {c.role || c.publisher_name}
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+          <span style={{ ...CAP, marginBottom: 0, fontSize: 9, overflow: 'hidden',
+            textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {c.role || c.publisher_name}
+          </span>
+          {/* Человек остался от открепления площадки: доступ живой, площадки в кабинете
+              нет. Это состояние ЗАПИСИ, поэтому и стоит под именем, а не в колонке. */}
+          {c.publisher_detached && (
+            <span title="Площадка откреплена от кабинета, а доступ у человека остался"
+              style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.04em',
+                color: 'var(--warning-fg)', background: 'var(--warning-tint)',
+                border: '1px solid var(--warning-border)', flex: '0 0 auto',
+                borderRadius: 5, padding: '0 4px' }}>без площадки</span>
+          )}
         </span>
       </span>
     </span>
     <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-secondary)',
       overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.email}>{c.email || '—'}</span>
+    <span style={{ textAlign: 'center' }}>
+      <Tick on={c.is_primary} title="Главное контактное лицо площадки"
+        onChange={mayEdit && c.contact_id
+          ? () => onFlag(c, { is_primary: !c.is_primary }) : null} />
+    </span>
+    <span style={{ textAlign: 'center' }}>
+      {/* Рассылка — ОТДЕЛЬНАЯ от «главного»: тот отвечает, к кому идти с вопросом,
+          эта — кому уходит почта. Совпадают они не всегда. */}
+      <Tick on={c.notify} title="Получает уведомления по почте"
+        onChange={mayEdit && c.contact_id
+          ? () => onFlag(c, { notify: !c.notify }) : null} />
+    </span>
+    <span style={{ textAlign: 'center' }}>
+      {/* Бот НЕ ПЕРЕКЛЮЧАЕТСЯ отсюда, и это не недоделка: чат заводит сам человек,
+          отправив боту код. Наше дело — показать, сделал ли он это. У контакта без
+          учётки подключать нечем, поэтому там прочерк, а не пустая галочка. */}
+      {c.has_account
+        ? <Tick on={!!c.tg_linked} dim
+            title={c.tg_linked ? 'Бот подключён'
+              : 'Бот не подключён — подключает сам человек в кабинете'} />
+        : <span style={{ color: 'var(--text-disabled)', fontSize: 12 }}>—</span>}
+    </span>
     <span>
       {c.has_account
         ? <Chip text={c.is_active ? 'есть' : 'выкл'} tone={c.is_active ? 'активен' : 'приостановлен'} />
@@ -156,15 +227,16 @@ const ContactRow = ({ c, mayEdit, busy, onLevel, onPassword, onGrant, onDisable,
         )
         : <span style={{ color: 'var(--text-disabled)', fontSize: 12 }}>—</span>}
     </span>
-    <span style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+    <span style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
       {!mayEdit ? null : (
         <>
           <IconBtn title="Изменить данные" onClick={() => !busy && onEdit(c)}>✎</IconBtn>
           {c.has_account ? (
             <>
               {c.is_active ? (
-                <button style={{ ...btnSm(true), whiteSpace: 'nowrap' }} disabled={busy}
-                  onClick={() => onPassword(c)}>Выдать пароль</button>
+                <button style={{ ...btnSm(true), whiteSpace: 'nowrap', padding: '5px 8px' }}
+                  disabled={busy} title="Выдать новый пароль этому человеку"
+                  onClick={() => onPassword(c)}>Пароль</button>
               ) : (
                 <button style={{ ...btnSm(false), whiteSpace: 'nowrap' }} disabled={busy}
                   title="Вернуть доступ этому человеку"
@@ -177,11 +249,11 @@ const ContactRow = ({ c, mayEdit, busy, onLevel, onPassword, onGrant, onDisable,
             </>
           ) : (
             <>
-            <button style={{ ...btnSm(true), whiteSpace: 'nowrap' }}
+            <button style={{ ...btnSm(true), whiteSpace: 'nowrap', padding: '5px 8px' }}
               disabled={busy || !c.email}
               title={c.email ? 'Создать доступ этому контакту'
                 : 'У контакта нет почты — по ней он входит'}
-              onClick={() => onGrant(c)}>Создать учётку</button>
+              onClick={() => onGrant(c)}>+ Учётка</button>
             {/* Удаление есть только у контакта БЕЗ учётки: у контакта с учёткой тот же
                 крест означает «отключить доступ», а сам человек остаётся. Ядро откажет,
                 если удалить контакт с учёткой, — здесь просто не показываем такой путь. */}
@@ -501,6 +573,80 @@ const CATALOG_GROUPS = [
   ['Кабинет', ['приглашение']],
 ]
 
+/** Часы рассылки площадкам: тишина и время пачки.
+
+    ВСЁ ПО ВРЕМЕНИ ПЛОЩАДКИ, а не по нашему, и это главное, что должен понимать тот, кто
+    здесь что-то меняет: 09:00 в Иркутске наступает на пять часов раньше московских.
+    Смещение лежит в карточке площадки; у всех оно сегодня нулевое, и разница появится
+    молча, как только поле заполнят. Поэтому подпись про пояс стоит прямо в блоке, а не
+    в документации.
+
+    Час пачки, попавший в тишину, отвергается СЕРВЕРОМ — здесь только показываем причину
+    отказа. Проверять это на экране и не проверять на записи значило бы защищаться от
+    аккуратного пользователя. */
+function NotifyHours({ mayEdit }) {
+  const [v, setV] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    api.get('/cabinets/notify-hours', auth())
+      .then(r => setV(r.data)).catch(() => setErr('Не удалось загрузить часы'))
+  }, [])
+
+  const save = (patch) => {
+    const next = { digest: v.digest, quiet_from: v.quiet_from, quiet_to: v.quiet_to, ...patch }
+    setBusy(true); setErr('')
+    api.put('/cabinets/notify-hours', next, auth())
+      .then(r => { setV(r.data); setBusy(false) })
+      .catch(e => { setBusy(false); setErr(e.response?.data?.detail || 'Не удалось сохранить') })
+  }
+
+  if (!v) return null
+  const sel = (value, onPick, title) => (
+    <select value={value} disabled={!mayEdit || busy} title={title}
+      onChange={e => onPick(Number(e.target.value))}
+      style={{ ...inp, width: 78, fontFamily: MONO, fontSize: 12, padding: '5px 6px' }}>
+      {Array.from({ length: 24 }, (_, h) => (
+        <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+      ))}
+    </select>
+  )
+  const isDefault = v.digest === v.default.digest && v.quiet_from === v.default.quiet_from
+    && v.quiet_to === v.default.quiet_to
+
+  return (
+    <div style={{ ...card, padding: '14px 18px', marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ ...CAP, marginBottom: 0 }}>Тихие часы</span>
+          {sel(v.quiet_from, h => save({ quiet_from: h }), 'С какого часа не пишем')}
+          <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>—</span>
+          {sel(v.quiet_to, h => save({ quiet_to: h }), 'До какого часа не пишем')}
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ ...CAP, marginBottom: 0 }}>Дайджест в</span>
+          {sel(v.digest, h => save({ digest: h }), 'Когда уходит утренняя пачка')}
+        </span>
+        <span style={{ flex: 1 }} />
+        {!isDefault && mayEdit && (
+          <button style={btnSm(false)} disabled={busy}
+            onClick={() => save(v.default)}>Вернуть 21–09 и 09:00</button>
+        )}
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.6,
+        marginTop: 8 }}>
+        Время — <b>по часовому поясу площадки</b>, он берётся из её карточки. Ночью не
+        пишем даже срочное: снаружи мы не сотрудники друг другу, и срочное просто уходит
+        первым, отдельным письмом, как только тишина кончится.
+      </div>
+      {!!err && (
+        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--danger-fg)' }}>{err}</div>
+      )}
+    </div>
+  )
+}
+
 function NotifyCatalog({ mayEdit }) {
   const [data, setData] = useState(null)
   const [busy, setBusy] = useState('')
@@ -547,6 +693,8 @@ function NotifyCatalog({ mayEdit }) {
         включённое отсюда и может выключить лишнее у себя. Вид без отправителя площадке не
         показывается вовсе: переключатель, который ничего не меняет, хуже его отсутствия.
       </p>
+
+      <NotifyHours mayEdit={mayEdit} />
 
       {CATALOG_GROUPS.map(([title, keys]) => (
         <div key={title} style={{ ...card, padding: '14px 18px 6px', marginBottom: 14 }}>
@@ -675,6 +823,13 @@ export default function CabinetsPage() {
       setEditing(null)
     })
   }
+
+  /* Переключить отметку контакта одним кликом. Правится ЗАПИСЬ КОНТАКТА в реестре
+     площадок — она же общая с карточкой паблишера: «главный» и «получает письма» это
+     свойства человека, а не его роли в кабинете, и вторая их копия здесь разошлась бы
+     с первой. Шлём только изменённое поле — частично, как `saveRow`. */
+  const setFlag = (c, patch) => run(() => api.put(
+    `/publishers/${c.publisher_id}/contacts/${c.contact_id}`, patch, auth()))
 
   const deleteContact = (c) => {
     // Контакт — общая запись с карточкой паблишера, поэтому спрашиваем: удаление здесь
@@ -883,13 +1038,16 @@ export default function CabinetsPage() {
                     </span>
                   </div>
 
-                  {/* ── три колонки 50 / 25 / 25 ──
-                      Задаются через flex-основу 0, а не calc(50% - 16px): с учётом gap
-                      сумма процентов превышает 100 %, и колонки переносятся в столбец. */}
+                  {/* ── три колонки 60 / 20 / 20 (владелец 15.09.2026) ──
+                      Задаются через flex-основу 0, а не calc(60% - 16px): с учётом gap
+                      сумма процентов превышает 100 %, и колонки переносятся в столбец.
+                      Доля — это отношение коэффициентов: 3 : 1 : 1. Контактам отдано
+                      больше, потому что у них ТАБЛИЦА, а у соседей список строк; при
+                      50/25/25 она не помещалась и уезжала под горизонтальную прокрутку. */}
                   <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
 
                     {/* контакты */}
-                    <div style={{ flex: '2 1 0', minWidth: 0 }}>
+                    <div style={{ flex: '3 1 0', minWidth: 0 }}>
                       <ColHead title="Контактные лица" count={contacts.length}
                         note={service ? 'учётки нашей стороны'
                           : `учёток ${contacts.filter(x => x.has_account).length}`}
@@ -901,7 +1059,8 @@ export default function CabinetsPage() {
                           </button>
                         )} />
                       <div style={{ overflowX: 'auto' }}>
-                        <div style={{ minWidth: 600 }}>
+                        <div style={{ minWidth: 700 }}>
+                          {!!contacts.length && <ContactHead />}
                           {contacts.map(x => (editing === rowKey(x) ? (
                             <ContactEdit key={rowKey(x)} c={x} busy={busy}
                               onCancel={() => setEditing(null)}
@@ -929,7 +1088,8 @@ export default function CabinetsPage() {
                                 { is_active: true }, auth()))}
                               onDelete={deleteContact}
                               onGrant={t => run(() => api.post(`/cabinets/${c.id}/accounts`,
-                                { contact_id: t.contact_id, can_approve: true }, auth()))} />
+                                { contact_id: t.contact_id, can_approve: true }, auth()))}
+                              onFlag={setFlag} />
                           )))}
                           {!contacts.length && (
                             <div style={{ fontSize: 12.5, color: 'var(--text-faint)',
@@ -966,7 +1126,12 @@ export default function CabinetsPage() {
                           <button style={btnSm(false)} disabled={busy}
                             onClick={() => setAttach({ cabinet: c, ids: [] })}>+ Площадки</button>
                         )} />
-                      <div style={{ maxHeight: 216, overflowY: 'auto' }}>
+                      {/* Отступ справа — ПОД ПОЛОСУ ПРОКРУТКИ (владелец 15.09.2026).
+                          Без него полоса ложится поверх содержимого: цена «100 ₽ CPM» и
+                          правый край строки лога уходили под неё и не читались.
+                          `scrollbar-gutter` не годится — он резервирует место и когда
+                          прокрутки нет, то есть двигает вёрстку коротких списков. */}
+                      <div style={{ maxHeight: 216, overflowY: 'auto', paddingRight: 10 }}>
                         {sites.map(p => (
                           <SiteRow key={p.id} p={p} mayEdit={mayEdit} busy={busy}
                             canDetach={!service}
@@ -1003,7 +1168,13 @@ export default function CabinetsPage() {
                             Весь лог
                           </button>
                         )} />
-                      <div style={{ maxHeight: 216, overflowY: 'auto' }}>
+                      {/* Отступ справа — ПОД ПОЛОСУ ПРОКРУТКИ (владелец 15.09.2026).
+                          Без него полоса ложится поверх содержимого: цена «100 ₽ CPM»
+                          и правый край строки лога уходили под неё, и прочитать их было
+                          нельзя. `scrollbar-gutter` здесь не годится — он резервирует
+                          место и когда прокрутки нет, то есть двигает вёрстку у коротких
+                          списков. */}
+                      <div style={{ maxHeight: 216, overflowY: 'auto', paddingRight: 10 }}>
                         {(c.log || []).map((r, i) => <LogRow key={i} row={r} />)}
                         {!c.log?.length && (
                           <div style={{ fontSize: 12.5, color: 'var(--text-faint)',

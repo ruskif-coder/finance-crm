@@ -78,6 +78,62 @@ def _notify_off(db: Session) -> set:
     return {str(x) for x in val} if isinstance(val, list) else set()
 
 
+class NotifyHoursIn(BaseModel):
+    """Тихие часы и час пачки. Все три — по времени ПЛОЩАДКИ, а не по нашему."""
+    digest: int
+    quiet_from: int
+    quiet_to: int
+
+
+@router.get("/notify-hours")
+def notify_hours(db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    from app.notify.outward import schedule
+    d, qf, qt = schedule.hours(db)
+    return {"digest": d, "quiet_from": qf, "quiet_to": qt,
+            "default": {"digest": schedule.DIGEST_HOUR,
+                        "quiet_from": schedule.QUIET_FROM,
+                        "quiet_to": schedule.QUIET_TO}}
+
+
+@router.put("/notify-hours")
+def set_notify_hours(payload: NotifyHoursIn, db: Session = Depends(get_db),
+                     user: User = Depends(EDIT)):
+    """Сохранить часы. Три числа, и между ними есть зависимость, которую надо стеречь.
+
+    ЧАС ПАЧКИ НЕ ДОЛЖЕН ПОПАДАТЬ В ТИШИНУ. Иначе дайджест не уйдёт никогда: письмо будет
+    ждать конца тихих часов, а очередь к тому времени уже посчитает его отправленным.
+    Поломка тихая — экран покажет сохранённые числа, а площадка просто перестанет
+    получать пачки, — поэтому проверка стоит на записи, а не подсказкой рядом.
+
+    Пустой интервал тишины (`quiet_from == quiet_to`) не запрещаем: это осознанное
+    «тишины нет», и такое право у нас должно быть.
+    """
+    import json
+
+    from app.notify.outward import schedule
+
+    for name, v in (("час пачки", payload.digest), ("начало тишины", payload.quiet_from),
+                    ("конец тишины", payload.quiet_to)):
+        if not 0 <= int(v) <= 23:
+            raise HTTPException(status_code=400, detail=f"{name}: час от 0 до 23")
+    if (payload.quiet_from != payload.quiet_to
+            and schedule.hour_is_silent(payload.digest, payload.quiet_from,
+                                        payload.quiet_to)):
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Пачка в {payload.digest}:00 попадает в тишину "
+                    f"{payload.quiet_from}:00–{payload.quiet_to}:00 — она не уйдёт никогда"))
+
+    value = json.dumps({"digest": payload.digest, "quiet_from": payload.quiet_from,
+                        "quiet_to": payload.quiet_to})
+    db.execute(text("INSERT INTO company_settings (key, value) VALUES (:k, :v) "
+                    "ON CONFLICT (key) DO UPDATE SET value = :v"),
+               {"k": schedule.SETTING_KEY, "v": value})
+    log_action(db, user, "cabinet_notify_hours", "cabinet", 0, value)
+    db.commit()
+    return notify_hours(db, user)
+
+
 @router.get("/notify-catalog")
 def notify_catalog(db: Session = Depends(get_db), user: User = Depends(VIEW)):
     """Каталог рассылки площадкам: что объявлено, что построено, что мы включили.
@@ -229,7 +285,9 @@ def list_cabinets(db: Session = Depends(get_db), current_user: User = Depends(VI
             # наполняется его собственными учётками. Разделение сделано ЗДЕСЬ, а не на
             # экране: форма строки одна, и склейка на фронте развела бы правило надвое.
             "contacts": (overview.service_accounts_as_contacts(db, c.id) if service
-                         else overview.contacts_of(db, own_ids)),
+                         # `cabinet_id` передаётся, чтобы человек с живой учёткой в этом
+                         # кабинете не исчезал с экрана вместе с открепившейся площадкой.
+                         else overview.contacts_of(db, own_ids, c.id)),
             "activity": overview.activity(shown_ids, pending, live, recons, last_login),
             "services": [{"name": n, "surfaces": sorted(s)}
                          for n, s in sorted(svc.items())],

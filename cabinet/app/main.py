@@ -331,47 +331,223 @@ def health():
     return {"status": "ok"}
 
 
-class MuteIn(BaseModel):
+class CellIn(BaseModel):
     kind: str
-    muted: bool
+    channel: str                   # 'бот' | 'почта' | 'дайджест'
+    enabled: bool
+
+
+class MailIn(BaseModel):
+    # Часа здесь НЕТ: площадка его не выбирает, задаём мы (владелец 15.09.2026). Ручка
+    # ядра его принимать умеет — это наш рычаг, а не её.
+    enabled: Optional[bool] = None
 
 
 @app.get("/api/notify-settings")
 def notify_settings(acc=Depends(current_account)):
-    """Что площадке приходит и что она отключила.
+    """Матрица «событие × канал» и настройки почты — всё, что рисует экран.
+
+    ТРИ СПОСОБА ДОСТАВКИ, и два из них — почта: письмом сразу или в утренней пачке
+    (правка владельца 15.09.2026). Панели среди них нет: у паблишера панели уведомлений
+    не существует, а лента кабинета — журнал наших с ним действий, а не канал.
 
     Каталог видов берётся у ЯДРА, а не хранится здесь: второй список меток разошёлся бы
-    с первым, и разошёлся бы молча — площадка увидела бы переключатель, который ничего
-    не выключает. Выключенное читается напрямую из `pub.mute_v1`: это чтение, для него
-    ходить в ядро незачем.
-    """
-    cat = call_core("GET", "/api/cabinet-gw/notify-kinds", None).get("kinds", [])
-    db = plain_session()
-    try:
-        muted = {k for (k,) in db.execute(
-            text("SELECT kind FROM pub.mute_v1 WHERE account_id = :a"),
-            {"a": acc.id}).all()}
-    finally:
-        db.close()
-    return {"kinds": [{**k, "muted": k["key"] in muted} for k in cat]}
-
-
-@app.put("/api/notify-settings")
-def set_notify_setting(payload: MuteIn, acc=Depends(current_account)):
-    """Переключить вид. Пишет ядро — кабинет в базу не пишет по построению.
-
-    `publisher_id` берётся из ПЕРВОЙ площадки учётки: ядру он нужен, чтобы независимо
-    проверить, что учётка и площадка связаны. Настройка при этом одна на учётку, а не
-    на площадку: человек один, и «по этому сайту пишите, по тому нет» — это про сайты,
-    а не про то, что он читает.
+    с первым молча — площадка увидела бы переключатель, который ничего не выключает.
+    Показываются только ПОСТРОЕННЫЕ виды: выключатель у вида без отправителя — обещание,
+    которого мы не держим.
     """
     pubs = account_publishers(acc.id)
     if not pubs:
         raise HTTPException(status_code=404, detail="У учётки нет площадок")
-    out = call_core("PUT", f"/api/cabinet-gw/account/{acc.id}/mute",
-                    {"publisher_id": pubs[0].publisher_id, "kind": payload.kind,
-                     "muted": payload.muted, "author_name": acc.name})
-    return out
+    cat = call_core("GET", "/api/cabinet-gw/notify-kinds", None).get("kinds", [])
+    st = call_core("GET", f"/api/cabinet-gw/account/{acc.id}/notify"
+                          f"?publisher_id={pubs[0].publisher_id}", None)
+    # Клетки приходят от ядра УЖЕ РАЗРЕШЁННЫМИ — с подставленным умолчанием. Считать
+    # умолчание здесь значило бы завести его вторую копию во внешнем контуре, а оно
+    # непростое: у бота одно, у двух почтовых колонок противоположные и зависят от
+    # расписания вида.
+    on = {(c["kind"], c["channel"]): c["enabled"] for c in st["cells"]}
+    return {
+        "mail": st["mail"], "bot": st["bot"],
+        "kinds": [{**k,
+                   "бот": on.get((k["key"], "бот"), True),
+                   "почта": on.get((k["key"], "почта"), False),
+                   "дайджест": on.get((k["key"], "дайджест"), True)}
+                  for k in cat],
+    }
+
+
+@app.put("/api/notify-settings")
+def set_notify_cell(payload: CellIn, acc=Depends(current_account)):
+    """Переключить клетку. Пишет ядро — кабинет в базу не пишет по построению.
+
+    `publisher_id` берётся из ПЕРВОЙ площадки учётки: ядру он нужен, чтобы независимо
+    проверить связь учётки с площадкой. Сама настройка одна на учётку, а не на площадку:
+    человек один, и «по этому сайту пишите, по тому нет» — это про сайты.
+    """
+    pubs = account_publishers(acc.id)
+    if not pubs:
+        raise HTTPException(status_code=404, detail="У учётки нет площадок")
+    call_core("PUT", f"/api/cabinet-gw/account/{acc.id}/notify",
+              {"publisher_id": pubs[0].publisher_id, "kind": payload.kind,
+               "channel": payload.channel, "enabled": payload.enabled,
+               "author_name": acc.name})
+    return notify_settings(acc)
+
+
+@app.delete("/api/notify-settings")
+def reset_notify(acc=Depends(current_account)):
+    """«Вернуть по умолчанию»: снести отклонения. Час пачки не трогается — кнопка стоит
+    под матрицей и обещает вернуть галочки, а не время рассылки."""
+    from urllib.parse import quote
+    pubs = account_publishers(acc.id)
+    if not pubs:
+        raise HTTPException(status_code=404, detail="У учётки нет площадок")
+    call_core("DELETE", f"/api/cabinet-gw/account/{acc.id}/notify"
+                        f"?publisher_id={pubs[0].publisher_id}"
+                        f"&author_name={quote(acc.name or '')}", None)
+    return notify_settings(acc)
+
+
+@app.put("/api/mail-settings")
+def set_mail(payload: MailIn, acc=Depends(current_account)):
+    """Получать ли почту вообще. Больше отсюда ничего не настраивается.
+
+    ЧТО приходит пачкой, а что срочным письмом, решается в матрице у каждого события.
+    Час пачки — 09:00 по времени ПЛОЩАДКИ, константа расписания: площадке он показан,
+    но не предложен на выбор, и в базе его нет вовсе.
+    """
+    pubs = account_publishers(acc.id)
+    if not pubs:
+        raise HTTPException(status_code=404, detail="У учётки нет площадок")
+    call_core("PUT", f"/api/cabinet-gw/account/{acc.id}/mail",
+              {"publisher_id": pubs[0].publisher_id, "enabled": payload.enabled,
+               "author_name": acc.name})
+    return notify_settings(acc)
+
+
+@app.get("/api/campaigns")
+def campaigns(acc=Depends(current_account)):
+    """Актуальные кампании площадки — строка на размещение.
+
+    Блок возвращён в кабинет 15.09.2026 по хендоффу и собирается из НАСТОЯЩИХ данных:
+    до сих пор он жил в `lib/demo.js` под флагом `SHOW_MONEY = false`, то есть был
+    выключенной выдумкой.
+
+    ФЛАЙТ И ГОД СОБИРАЮТСЯ ЗДЕСЬ, а период компонент выводит из флайта сам. Так написано
+    в хендоффе, и причина не косметическая: пока период был отдельным полем, пара
+    «период ↔ срок РК» расходилась — декабрьский флайт лежал в сентябрьском периоде.
+    Отдай мы готовый период, у экрана снова стало бы два источника одного числа.
+    """
+    ids = [p.publisher_id for p in account_publishers(acc.id)]
+    if not ids:
+        return {"campaigns": []}
+    with scoped_session(ids) as db:
+        rows = db.execute(text(
+            "SELECT brand, service, surface, date_from, date_to, plan, fact, cpm, "
+            "       status, erid, site, reconciled "
+            "  FROM pub.campaign_v1")).all()
+
+    out = []
+    for r in rows:
+        # «01.09 — 30.09» либо прочерк: срок может быть не задан, и выдумывать его нельзя.
+        flight = ('%s — %s' % (r.date_from.strftime('%d.%m'), r.date_to.strftime('%d.%m'))
+                  if r.date_from and r.date_to else '—')
+        out.append({
+            "brand": r.brand, "service": r.service, "site": r.site,
+            "surface": r.surface, "flight": flight,
+            # Год — от НАЧАЛА флайта: у размещения, переходящего через новый год, период
+            # считается по месяцу старта, и год обязан браться оттуда же.
+            "year": (r.date_from or r.date_to).year if (r.date_from or r.date_to) else None,
+            "plan": int(r.plan or 0), "fact": int(r.fact or 0),
+            "cpm": float(r.cpm or 0), "status": r.status, "erid": r.erid or "",
+            # Признак, а не отбор: блок дашборда показывает несверенное, экран
+            # «Кампании» — всё. Один ответ на два экрана; фильтровать решает тот, кто
+            # рисует, а считается признак в одном месте — в витрине.
+            "reconciled": bool(r.reconciled),
+            # Месяц собирается ЗДЕСЬ, из той же даты, из которой экран выводит период:
+            # группировка по месяцам на экране «Кампании» и период в строке обязаны
+            # совпадать, а два вычисления одного месяца однажды разошлись бы.
+            "period": r.date_from.strftime('%Y-%m') if r.date_from else None,
+        })
+    return {"campaigns": out}
+
+
+# ─────────────────────────── Лента событий ───────────────────────────
+#
+# ПАНЕЛЬ — ТРЕТИЙ КАНАЛ ДОСТАВКИ, и единственный, который нельзя выключить. До 15.09.2026
+# его не было вовсе: журнал `cabinet_log` с самого начала объявлен «журналом с двумя
+# читателями — админом и самой площадкой», и второй читатель полтора месяца не имел
+# способа его прочесть. Поэтому лента не заводит своей таблицы: это тот же журнал, вид с
+# внешней стороны.
+
+FEED_LIMIT = 40          # столько влезает в блок, не превращая его в архив
+
+
+@app.get("/api/feed")
+def feed(acc=Depends(current_account)):
+    """Что происходило по площадкам этой учётки.
+
+    Подписи событий берутся у ЯДРА — там словарь, и вторая копия подписей разошлась бы с
+    первой молча, ровно как каталог рассылки. Тон и сторона лежат в самой строке: они
+    заданы событием в момент записи, и правка словаря не должна перекрашивать прошлое.
+    """
+    ids = [p.publisher_id for p in account_publishers(acc.id)]
+    if not ids:
+        return {"items": []}
+    labels = {a["key"]: a["label"]
+              for a in call_core("GET", "/api/cabinet-gw/log-actions", None)["actions"]}
+    with scoped_session(ids) as db:
+        rows = db.execute(text(
+            "SELECT id, created_at, action, tone, side, actor_name, subject "
+            "  FROM pub.log_v1 ORDER BY created_at DESC, id DESC LIMIT :n"),
+            {"n": FEED_LIMIT}).all()
+    return {"items": [{
+        "id": r.id, "at": r.created_at, "tone": r.tone, "side": r.side,
+        # Неизвестный ключ показываем КАК ЕСТЬ, а не прячем строку: пропавшее событие
+        # выглядит как «ничего не было», и это худшая из двух неправд.
+        "label": labels.get(r.action, r.action),
+        "actor": r.actor_name, "subject": r.subject,
+    } for r in rows]}
+
+
+# ─────────────────────────── Бот ───────────────────────────
+#
+# Бота человек подключает СЕБЕ САМ — за него это сделать нельзя, чат заводит он. Поэтому
+# кнопка доступна каждому, кто вошёл, и с галочкой «получает уведомления» на контакте она
+# не связана: та включает ПОЧТУ (владелец 15.09.2026).
+#
+# Всё состояние спрашивается у ядра одним вызовом: половина ответа живёт не в базе — имя
+# бота ядро берёт у самого Телеграма, из него же собирается диплинк с кодом.
+
+
+def _tg_publisher(acc) -> int:
+    pubs = account_publishers(acc.id)
+    if not pubs:
+        raise HTTPException(status_code=404, detail="У учётки нет площадок")
+    return pubs[0].publisher_id
+
+
+@app.get("/api/telegram")
+def tg_state(acc=Depends(current_account)):
+    return call_core("GET", f"/api/cabinet-gw/account/{acc.id}/tg"
+                            f"?publisher_id={_tg_publisher(acc)}", None)
+
+
+@app.post("/api/telegram/link")
+def tg_link(acc=Depends(current_account)):
+    """Получить код привязки. Повторный вызов выдаёт НОВЫЙ код и сбрасывает старый чат:
+    «подключить заново» не должно оставлять получателем чат, откуда человек ушёл."""
+    return call_core("POST", f"/api/cabinet-gw/account/{acc.id}/tg/link",
+                     {"publisher_id": _tg_publisher(acc)})
+
+
+@app.delete("/api/telegram")
+def tg_unlink(acc=Depends(current_account)):
+    from urllib.parse import quote
+    return call_core("DELETE", f"/api/cabinet-gw/account/{acc.id}/tg"
+                               f"?publisher_id={_tg_publisher(acc)}"
+                               f"&author_name={quote(acc.name or '')}", None)
 
 
 @app.get("/api/reasons")

@@ -172,3 +172,72 @@ def test_publisher_cabinet_refuses_a_typed_in_person(stand):
     with pytest.raises(HTTPException) as e:
         grant_access(cab, AccessIn(name='кто-то', email='someone@lk.local'), db, ADMIN)
     assert 'контакту площадки' in e.value.detail
+
+
+def test_contact_with_an_account_survives_detaching_the_publisher(stand):
+    """Открепили площадку — человек с живой учёткой остаётся на экране.
+
+    Жалоба владельца 15.09.2026: «я отвязал площадку — контакты пропали». Список выводился
+    ТОЛЬКО из площадок кабинета, поэтому открепление убирало с глаз человека, у которого в
+    этом кабинете есть действующий доступ: войти он по-прежнему мог, а увидеть и отключить
+    его было негде. Невидимый работающий доступ — худший исход из возможных, хуже, чем
+    лишняя строка.
+
+    Прибор ходит по НАСТОЯЩЕЙ ручке открепления, а не правит связь SQL-ом: проверяется
+    поведение экрана целиком, включая журнал.
+    """
+    from app.cabinet import overview
+    from app.routers.cabinets import detach_publisher, attach_publishers, PublishersIn
+
+    db = stand.db
+    cab = db.execute(text("SELECT cabinet_id FROM cabinet_publisher WHERE publisher_id = :p"),
+                     {"p": stand.pub}).scalar()
+    grant_access(cab, AccessIn(contact_id=stand.ids[0]), db, ADMIN)
+
+    def names(ids):
+        return {c['name'] for c in overview.contacts_of(db, ids, cab)}
+
+    ids = [i for (i,) in db.execute(text(
+        "SELECT publisher_id FROM cabinet_publisher WHERE cabinet_id = :c"), {"c": cab})]
+    assert '__проба 1__' in names(ids)
+
+    try:
+        detach_publisher(cab, stand.pub, db, ADMIN)
+        left = overview.contacts_of(db, [i for i in ids if i != stand.pub], cab)
+        with_acc = [c for c in left if c['name'] == '__проба 1__']
+        assert with_acc, 'человек с учёткой исчез вместе с площадкой'
+        assert with_acc[0]['publisher_detached'] is True, (
+            'он виден, но не помечен — экран не отличит его от обычного')
+        # А контакт БЕЗ учётки уходит вместе с площадкой, и это верно: он пришёл из её
+        # карточки и в кабинете ничего своего не имеет.
+        assert '__проба 2__' not in {c['name'] for c in left}
+    finally:
+        attach_publishers(cab, PublishersIn(publisher_ids=[stand.pub]), db, ADMIN)
+
+
+def test_a_new_contact_gets_mail_switched_on(stand):
+    """Новому контакту почта включена по умолчанию (владелец 15.09.2026).
+
+    Человека заводят, чтобы с ним переписываться; «завели, но писем не шлём» — не то
+    состояние, которое выбирают намеренно. Выключить можно сразу же, в той же форме.
+
+    Отдельно проверяется, что ПРАВКА чужого поля рассылку не включает: `None` означает
+    «поле не прислали», и путать его с «выключено» нельзя — иначе смена телефона у старого
+    контакта молча подписала бы человека на почту.
+    """
+    from app.routers.publishers import add_contact
+
+    db = stand.db
+    r = add_contact(stand.pub, ContactIn(name='__проба почты__', email='probe3@lk.local'),
+                    db, ADMIN)
+    stand.ids.append(r['id'])
+    assert db.execute(text("SELECT notify FROM sales_publisher_contacts WHERE id = :i"),
+                      {"i": r['id']}).scalar() is True
+
+    db.execute(text("UPDATE sales_publisher_contacts SET notify = false WHERE id = :i"),
+               {"i": r['id']})
+    db.commit()
+    update_contact(stand.pub, r['id'], ContactIn(phone='+79990000000'), db, ADMIN)
+    assert db.execute(text("SELECT notify FROM sales_publisher_contacts WHERE id = :i"),
+                      {"i": r['id']}).scalar() is False, (
+        'правка телефона включила рассылку — «не прислали» спутано с «выключено»')

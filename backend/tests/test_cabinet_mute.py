@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Выключатели уведомлений паблишера: словарь, запись через ядро, необязательный вид.
+"""Матрица «событие × канал»: словарь, запись через ядро, необязательный вид.
 
 Профиль рассылки паблишера задан нами — площадка не собирает подписку, а выключает
-лишнее. Отсюда форма хранения: строка есть = выключено, строки нет = включено. Новый вид
-включается сам и не требует бэкфилла всем учёткам.
+лишнее. Отсюда форма хранения: строка есть = отклонение от умолчания, строки нет = канал
+включён. Новый вид включается сам и не требует бэкфилла всем учёткам.
+
+**15.09.2026 у выключателя появилось ИЗМЕРЕНИЕ.** До этого он был один на вид и глушил
+сразу всё; макет v2 разложил его по каналам: панель — всегда, бот и почта — по галочке.
+Таблица `cabinet_account_mute` заморожена, её содержимое переехало в
+`cabinet_account_notify` как «почта выключена». Проверки файла остались те же — сменился
+только вызов: там, где был `muted=True`, теперь `channel='почта', enabled=False`.
 
 Проверяется то, что ломается молча: опечатка в ключе вида (переключатель нарисуется и
 ничего не выключит), запись мимо ядра (у таблицы обязан быть один писатель) и снятие
@@ -45,11 +51,11 @@ def acc():
     if row is None:
         db.close()
         pytest.skip('на стенде нет учётки с видимой площадкой')
-    db.execute(text("DELETE FROM cabinet_account_mute WHERE account_id = :a"),
+    db.execute(text("DELETE FROM cabinet_account_notify WHERE account_id = :a"),
                {"a": row.id})
     db.commit()
     yield type('A', (), {'db': db, 'id': row.id, 'pub': row.publisher_id})
-    db.execute(text("DELETE FROM cabinet_account_mute WHERE account_id = :a"),
+    db.execute(text("DELETE FROM cabinet_account_notify WHERE account_id = :a"),
                {"a": row.id})
     # С 05.09.2026 выключатель пишет строку в ленту кабинета. Без уборки каждый прогон
     # тестов оставлял бы площадке пару строк «уведомление выключено/возвращено» — ленту
@@ -61,10 +67,25 @@ def acc():
     db.close()
 
 
-def _muted(db, account_id):
+def _off(db, account_id, channel='дайджест'):
+    """Что выключено на этом канале.
+
+    Умолчание — ДАЙДЖЕСТ, и это не произвол. Хранятся отклонения от умолчания, а
+    умолчание у двух почтовых колонок противоположное: обычный вид по умолчанию идёт
+    пачкой, срочный — сразу. Все проверки этого файла работают с обычными видами
+    («сверка», «продление»), поэтому отклонение у них создаётся снятием ДАЙДЖЕСТА;
+    снятие «почты срочное» совпало бы с умолчанием и строки бы не оставило — прибор был
+    бы зелёным, ничего не проверив.
+    """
     return {k for (k,) in db.execute(
-        text("SELECT kind FROM cabinet_account_mute WHERE account_id = :a"),
-        {"a": account_id}).all()}
+        text("SELECT kind FROM cabinet_account_notify "
+             " WHERE account_id = :a AND channel = :c AND NOT enabled"),
+        {"a": account_id, "c": channel}).all()}
+
+
+def _cell(pub, kind, enabled, channel='дайджест', author=None):
+    return gw.CabinetCellIn(publisher_id=pub, kind=kind, channel=channel,
+                            enabled=enabled, author_name=author)
 
 
 def test_default_is_everything_on(acc):
@@ -73,26 +94,23 @@ def test_default_is_everything_on(acc):
     На этом стоит вся форма хранения: если однажды прочитать пустоту как «выключено»,
     площадка перестанет получать всё разом и не поймёт почему.
     """
-    assert _muted(acc.db, acc.id) == set()
+    assert _off(acc.db, acc.id) == set()
 
 
 def test_mute_and_unmute_are_symmetric(acc):
-    gw.cabinet_mute(acc.id, gw.CabinetMuteIn(publisher_id=acc.pub, kind='сверка',
-                                             muted=True, author_name='тест'), acc.db)
-    assert 'сверка' in _muted(acc.db, acc.id)
-    gw.cabinet_mute(acc.id, gw.CabinetMuteIn(publisher_id=acc.pub, kind='сверка',
-                                             muted=False), acc.db)
-    assert 'сверка' not in _muted(acc.db, acc.id)
+    gw.cabinet_notify_cell(acc.id, _cell(acc.pub, 'сверка', False, author='тест'), acc.db)
+    assert 'сверка' in _off(acc.db, acc.id)
+    gw.cabinet_notify_cell(acc.id, _cell(acc.pub, 'сверка', True), acc.db)
+    assert 'сверка' not in _off(acc.db, acc.id)
 
 
 def test_muting_twice_does_not_duplicate(acc):
     """Повторное выключение не плодит строк — первичный ключ по паре."""
     for _ in range(3):
-        gw.cabinet_mute(acc.id, gw.CabinetMuteIn(publisher_id=acc.pub, kind='продление',
-                                                 muted=True), acc.db)
+        gw.cabinet_notify_cell(acc.id, _cell(acc.pub, 'продление', False), acc.db)
     n = acc.db.execute(text(
-        "SELECT count(*) FROM cabinet_account_mute WHERE account_id = :a AND kind = 'продление'"),
-        {"a": acc.id}).scalar()
+        "SELECT count(*) FROM cabinet_account_notify "
+        " WHERE account_id = :a AND kind = 'продление'"), {"a": acc.id}).scalar()
     assert n == 1
 
 
@@ -104,10 +122,9 @@ def test_unknown_kind_is_refused(acc):
     настоящий продолжал бы приходить.
     """
     with pytest.raises(HTTPException) as e:
-        gw.cabinet_mute(acc.id, gw.CabinetMuteIn(publisher_id=acc.pub, kind='сверкa',
-                                                 muted=True), acc.db)
+        gw.cabinet_notify_cell(acc.id, _cell(acc.pub, 'сверкa', False), acc.db)
     assert e.value.status_code == 400
-    assert _muted(acc.db, acc.id) == set()
+    assert _off(acc.db, acc.id) == set()
 
 
 def test_mandatory_kind_cannot_be_muted(acc):
@@ -115,8 +132,7 @@ def test_mandatory_kind_cannot_be_muted(acc):
     hard = [k.key for k in KINDS if not k.can_mute]
     assert hard, 'ни одного обязательного вида — исключение потерялось'
     with pytest.raises(HTTPException) as e:
-        gw.cabinet_mute(acc.id, gw.CabinetMuteIn(publisher_id=acc.pub, kind=hard[0],
-                                                 muted=True), acc.db)
+        gw.cabinet_notify_cell(acc.id, _cell(acc.pub, hard[0], False), acc.db)
     assert e.value.status_code == 400
 
 
@@ -152,18 +168,16 @@ def test_publisher_of_another_cabinet_is_404():
     db.commit()
     try:
         # Своя — проходит.
-        gw.cabinet_mute(a.id, gw.CabinetMuteIn(publisher_id=free[0], kind='сверка',
-                                               muted=True), db)
+        gw.cabinet_notify_cell(a.id, _cell(free[0], 'сверка', False), db)
         # Чужая и несуществующая — одинаково 404, чтобы по коду ответа нельзя было
         # отличить «есть, но не твоя» от «нет такой».
         for pid in (free[1], 10 ** 9):
             with pytest.raises(HTTPException) as e:
-                gw.cabinet_mute(a.id, gw.CabinetMuteIn(publisher_id=pid, kind='сверка',
-                                                       muted=True), db)
+                gw.cabinet_notify_cell(a.id, _cell(pid, 'сверка', False), db)
             assert e.value.status_code == 404
     finally:
         db.rollback()
-        db.execute(text("DELETE FROM cabinet_account_mute WHERE account_id = :a"),
+        db.execute(text("DELETE FROM cabinet_account_notify WHERE account_id = :a"),
                    {"a": a.id})
         db.execute(text("DELETE FROM cabinet_account WHERE id = :a"), {"a": a.id})
         db.execute(text("DELETE FROM cabinet_publisher WHERE cabinet_id = :c"),
@@ -200,12 +214,11 @@ def test_suspended_cabinet_cannot_write():
     db.commit()
     try:
         with pytest.raises(HTTPException) as e:
-            gw.cabinet_mute(a.id, gw.CabinetMuteIn(publisher_id=free, kind='сверка',
-                                                   muted=True), db)
+            gw.cabinet_notify_cell(a.id, _cell(free, 'сверка', False), db)
         assert e.value.status_code == 404
     finally:
         db.rollback()
-        db.execute(text("DELETE FROM cabinet_account_mute WHERE account_id = :a"),
+        db.execute(text("DELETE FROM cabinet_account_notify WHERE account_id = :a"),
                    {"a": a.id})
         db.execute(text("DELETE FROM cabinet_account WHERE id = :a"), {"a": a.id})
         db.execute(text("DELETE FROM cabinet_publisher WHERE cabinet_id = :c"),
@@ -227,7 +240,7 @@ def test_vocabulary_is_coherent():
 def test_switch_leaves_a_trace_in_the_cabinet_feed(acc):
     """Выключатель пишет в ленту кабинета — обе стороны видят, когда состояние сменили.
 
-    Сама строка `cabinet_account_mute` помнит ТЕКУЩЕЕ состояние и не помнит, когда его
+    Сама строка `cabinet_account_notify` помнит ТЕКУЩЕЕ состояние и не помнит, когда его
     сменили и кто. Разговор «мы вам писали» / «нам не приходило» упирался в то, что
     записи нет ни у кого. Событий два, а не одно с флагом: в ленте читают глаголы, и
     «выключено» обязано отличаться тоном от «возвращено».
@@ -239,15 +252,15 @@ def test_switch_leaves_a_trace_in_the_cabinet_feed(acc):
     label = next(k.label for k in KINDS if k.key == kind)
     before = _feed(acc.db, acc.id)
 
-    gw.cabinet_mute(acc.id, gw.CabinetMuteIn(publisher_id=acc.pub, kind=kind,
-                                             muted=True, author_name='Прибор'), acc.db)
-    gw.cabinet_mute(acc.id, gw.CabinetMuteIn(publisher_id=acc.pub, kind=kind,
-                                             muted=False, author_name='Прибор'), acc.db)
+    gw.cabinet_notify_cell(acc.id, _cell(acc.pub, kind, False, author='Прибор'), acc.db)
+    gw.cabinet_notify_cell(acc.id, _cell(acc.pub, kind, True, author='Прибор'), acc.db)
 
     rows = _feed(acc.db, acc.id)[len(before):]
     assert [r.action for r in rows] == ['уведомление_выкл', 'уведомление_вкл']
-    # В ленту едет ЧЕЛОВЕЧЕСКОЕ имя вида, а не ключ: её читает и площадка тоже.
-    assert all(r.subject == label for r in rows), [r.subject for r in rows]
+    # В ленту едет ЧЕЛОВЕЧЕСКОЕ имя вида, а не ключ: её читает и площадка тоже. С
+    # появлением каналов к имени добавился канал: «выключил» без ответа на вопрос «где»
+    # в матрице из трёх колонок не значит ничего.
+    assert all(r.subject == f'{label} · дайджест' for r in rows), [r.subject for r in rows]
     assert all(r.actor_side == 'площадка' for r in rows)
     assert [r.tone for r in rows] == ['warn', 'ok']
 

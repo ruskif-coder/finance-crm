@@ -1,4 +1,9 @@
-"""Вход для СЕРВИСА кабинета. Два действия, и больше здесь ничего не появится.
+"""Вход для СЕРВИСА кабинета: всё, что внешний контур меняет у нас.
+
+Фраза «два действия, и больше здесь ничего не появится» стояла здесь с 28.08.2026 и к
+15.09 перестала быть правдой — ручек стало восемь. Правило, ради которого она писалась,
+живо: кабинет НЕ ПИШЕТ В БАЗУ, у таблицы один писатель. Растёт этот файл, а не права
+роли `cabinet`.
 
 Кабинет не пишет в базу — он зовёт ядро. Разбор решения целиком в шапке миграции
 `2026-08-28_publisher_cabinet_verdict.sql`; коротко: правила вердикта нетривиальны, и
@@ -16,14 +21,17 @@
 этом не может: роль `cabinet` в базе прав на `public` не имеет.
 """
 import hmac
+import logging
 import os
 import re
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
+from fastapi import (APIRouter, BackgroundTasks, Depends, File, Header, HTTPException,
+                     UploadFile)
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.files_safe import existing_upload_path
@@ -35,7 +43,19 @@ from app.sales.models import SalesPublisher
 
 router = APIRouter()
 
+# ВЕБХУК ЖИВЁТ НА ОТДЕЛЬНОМ РОУТЕРЕ, и это не стилистика.
+#
+# Caddy отдаёт 404 на весь `/api/cabinet-gw/*` намеренно: шлюз — разговор двух наших
+# процессов внутри docker-сети, и наружу ему смотреть незачем. А вебхуку смотреть наружу
+# ОБЯЗАТЕЛЬНО — стучится Телеграм из интернета. Оставь я его под общим префиксом,
+# привязка молча не работала бы на проде: локально всё зелено, апдейты уходят в 404, и
+# выглядит это как «код не приходит», то есть как проблема на стороне человека.
+#
+# Дырявить правило Caddy исключением — хуже: правило перестаёт читаться как правило.
+webhook_router = APIRouter()
+
 SERVICE_TOKEN = os.getenv("CABINET_SERVICE_TOKEN", "")
+log_gw = logging.getLogger("finance.cabinet.gateway")
 
 
 def require_cabinet_service(x_cabinet_token: Optional[str] = Header(default=None)):
@@ -187,77 +207,212 @@ def cabinet_notify_kinds(db: Session = Depends(get_db)):
     # держим: человек снимает галочку, ничего не меняется, и доверие к экрану кончается.
     # Наш собственный каталог со всеми шестнадцатью живёт во вкладке «Что мы шлём».
     off = _notify_off(db)
+    # `urgent` нужен экрану, чтобы объяснить, почему этот вид придёт письмом сразу даже
+    # при выбранном дайджесте: «наше сразу не понижается» (решение владельца 15.09.2026).
+    # Без подписи это выглядело бы как неработающая настройка.
     return {"kinds": [{"key": k.key, "label": k.label, "hint": k.hint,
-                       "can_mute": k.can_mute}
+                       "can_mute": k.can_mute, "urgent": k.schedule == "сразу",
+                       "tag": k.tag or ""}
                       for k in KINDS if k.built and k.key not in off]}
 
 
-class CabinetMuteIn(BaseModel):
+class CabinetCellIn(BaseModel):
     publisher_id: int              # чью площадку представляет вызывающий
     kind: str
-    muted: bool
+    channel: str                   # 'бот' | 'почта' | 'дайджест'
+    enabled: bool
     author_name: Optional[str] = None
 
 
-@router.put("/account/{account_id}/mute", dependencies=[Depends(require_cabinet_service)])
-def cabinet_mute(account_id: int, payload: CabinetMuteIn, db: Session = Depends(get_db)):
-    """Выключить или вернуть вид уведомления. Пишет ЯДРО, а не кабинет.
+class CabinetMailIn(BaseModel):
+    publisher_id: int
+    enabled: Optional[bool] = None       # получать ли почту вообще
+    author_name: Optional[str] = None
 
-    Тот же порядок, что у вердикта и посадочной ссылки: у таблицы один писатель, и
-    внешний процесс к нему обращается, а не пишет сам. Здесь это не формальность —
-    `cabinet_account_mute` ссылается на учётку каскадом, и право на запись означало бы
-    право удалить чужую строку подбором номера.
 
-    Принадлежность площадки учётке проверяется ЗДЕСЬ, а не только в кабинете: проверка,
-    оставленная на вызывающей стороне, — это отсутствие проверки.
+def _notify_account(db: Session, account_id: int, publisher_id: int):
+    """Та же проверка, что у бота: учётка существует и эту площадку видит.
+
+    Проверка ЗДЕСЬ, а не только в кабинете. 404, а не 403: 403 подтвердил бы, что такая
+    связка существует.
     """
     from app.cabinet.models import CabinetAccount
-    from app.notify.outward.kinds import KINDS, MUTABLE_KEYS
     from app.cabinet.scope import account_sees_publisher
 
     acc = db.query(CabinetAccount).filter(CabinetAccount.id == account_id).first()
-    if not acc:
+    if not acc or not account_sees_publisher(db, acc, publisher_id):
         raise HTTPException(status_code=404, detail="Учётка не найдена")
+    return acc
 
-    # Правило берётся из `scope`, а не пишется здесь: до 30.08.2026 запись проверялась по
-    # личному списку `cabinet_account_publisher`, а чтение шло от кабинета — два ответа на
-    # один вопрос, которые разошлись бы при первой же раздаче площадок.
-    if not account_sees_publisher(db, acc, payload.publisher_id):
-        # 404, а не 403: 403 подтвердил бы, что такая связка существует.
-        raise HTTPException(status_code=404, detail="Учётка не найдена")
 
-    known = {k.key for k in KINDS}
-    if payload.kind not in known:
-        raise HTTPException(status_code=400, detail="Неизвестный вид уведомления")
-    if payload.muted and payload.kind not in MUTABLE_KEYS:
+def _contact_mail(db: Session, acc) -> dict:
+    """Почтовый адрес человека и включена ли ему почта.
+
+    ОТВЕТ БЕРЁТСЯ У КОНТАКТА, а не из своей таблицы: галочка «получает уведомления» в
+    карточке контакта — единственный источник этого факта, по ней и уходят письма.
+    Завести рядом второе хранилище значило бы показывать на экране одно, а слать по
+    другому, и разошлись бы они молча.
+
+    Учётка без контакта (`contact_id IS NULL`) — не ошибка: так заводили до появления
+    связи. Почтой такой человек не управляет, и экран должен сказать это прямо.
+    """
+    if not acc.contact_id:
+        return {"address": None, "enabled": False, "why": "учётка не связана с контактом"}
+    row = db.execute(text(
+        "SELECT email, notify FROM sales_publisher_contacts WHERE id = :c"),
+        {"c": acc.contact_id}).first()
+    if not row or not (row.email or "").strip():
+        return {"address": None, "enabled": False, "why": "в карточке контакта нет почты"}
+    return {"address": row.email, "enabled": bool(row.notify), "why": ""}
+
+
+def _notify_state(db: Session, acc) -> dict:
+    """Всё, что рисует экран «Какие события присылать», одним ответом.
+
+    Клетки отдаются УЖЕ РАЗРЕШЁННЫМИ — с подставленным умолчанием, а не голыми
+    отклонениями. Иначе экрану пришлось бы знать правило умолчаний (бот включён, из двух
+    почтовых включена объявленная каталогом), и это была бы вторая его копия — в
+    JavaScript, где её никто не проверит.
+    """
+    from app.notify.outward import prefs, schedule
+    from app.notify.outward.kinds import KINDS
+
+    stored = prefs.matrix(db, acc.id)
+    tg = _tg_row(db, acc.id)
+    return {
+        # Час отдаётся как ФАКТ, а не как выбор: знать, когда придёт дайджест, полезно,
+        # а менять его площадка не будет — он настраивается у нас, на экране «Что мы
+        # шлём», и берётся оттуда же, а не из константы: иначе кабинет показывал бы 09:00
+        # после того, как мы поставили 12:00.
+        "mail": {**_contact_mail(db, acc), "digest_hour": schedule.hours(db)[0]},
+        "bot": {"linked": bool(tg and tg.verified_at)},
+        # Плоским списком, а не вложенным словарём: JSON-ключом кортеж не бывает, а
+        # склеенная строка «вид\x1fканал» — ровно та составная величина, которая в этом
+        # проекте уже протекала из фильтра в данные.
+        "cells": [{"kind": k.key, "channel": ch, "enabled": prefs.cell(stored, k, ch)}
+                  for k in KINDS if k.built
+                  for ch in prefs.CHANNELS],
+    }
+
+
+@router.get("/account/{account_id}/notify", dependencies=[Depends(require_cabinet_service)])
+def cabinet_notify_state(account_id: int, publisher_id: int, db: Session = Depends(get_db)):
+    return _notify_state(db, _notify_account(db, account_id, publisher_id))
+
+
+@router.put("/account/{account_id}/notify", dependencies=[Depends(require_cabinet_service)])
+def cabinet_notify_cell(account_id: int, payload: CabinetCellIn,
+                        db: Session = Depends(get_db)):
+    """Переключить одну клетку матрицы. Пишет ЯДРО — кабинет в базу не пишет.
+
+    Здесь это не формальность: `cabinet_account_notify` ссылается на учётку каскадом, и
+    право на запись означало бы право снести чужую строку подбором номера.
+    """
+    from app.notify.outward import prefs
+    from app.notify.outward.kinds import KINDS
+
+    acc = _notify_account(db, account_id, payload.publisher_id)
+    kind = next((k for k in KINDS if k.key == payload.kind), None)
+    if kind is None:
+        raise HTTPException(status_code=400, detail=f"Нет вида «{payload.kind}»")
+    if payload.channel not in prefs.CHANNELS:
+        # Панель сюда не проходит: у паблишера панели уведомлений нет вовсе, а лента
+        # кабинета — журнал действий, а не канал доставки.
+        raise HTTPException(status_code=400,
+                            detail="Способ: бот, почта или дайджест")
+    if not kind.can_mute and not payload.enabled:
+        raise HTTPException(status_code=400,
+                            detail=f"«{kind.label}» выключить нельзя")
+    # «НАШЕ СРАЗУ НЕ ПОНИЖАЕТСЯ»: вид, объявленный нами срочным, в пачку не уводится.
+    # Запрет стоит на ЗАПИСИ, а не только на экране: экран — не защита.
+    if (payload.channel == prefs.DIGEST and payload.enabled
+            and kind.schedule == "сразу"):
         raise HTTPException(
             status_code=400,
-            detail="Это уведомление выключить нельзя: пропущенное здесь означает "
-                   "сорванный запуск")
+            detail=f"«{kind.label}» приходит письмом сразу — в дайджест его не убрать")
 
-    from sqlalchemy import text as sa_text
-    if payload.muted:
-        db.execute(sa_text(
-            "INSERT INTO cabinet_account_mute (account_id, kind, muted_by) "
-            "VALUES (:a, :k, :w) ON CONFLICT (account_id, kind) DO NOTHING"),
-            {"a": account_id, "k": payload.kind,
-             "w": (payload.author_name or "").strip() or "кабинет"})
-    else:
-        db.execute(sa_text(
-            "DELETE FROM cabinet_account_mute WHERE account_id = :a AND kind = :k"),
-            {"a": account_id, "k": payload.kind})
+    who = (payload.author_name or acc.name)
 
-    # Строка журнала едет ТОЙ ЖЕ транзакцией, что и сам выключатель (правило `journal`):
-    # разошедшийся с фактом журнал хуже отсутствующего. `subject` — человеческое имя вида
-    # из словаря, а не ключ: ленту читает и площадка тоже.
-    label = next((k.label for k in KINDS if k.key == payload.kind), payload.kind)
-    journal.write(db, 'уведомление_выкл' if payload.muted else 'уведомление_вкл',
+    def _set(channel: str, value: bool):
+        """Записать клетку — или снести строку, если значение совпало с умолчанием.
+
+        Хранятся ОТКЛОНЕНИЯ: строка, повторяющая умолчание, — это мусор, который потом
+        не даст отличить «человек так решил» от «мы так решили», и «Вернуть по
+        умолчанию» перестанет что-либо значить.
+        """
+        if value == prefs.default_on(kind, channel):
+            db.execute(text("DELETE FROM cabinet_account_notify "
+                            " WHERE account_id = :a AND kind = :k AND channel = :c"),
+                       {"a": acc.id, "k": payload.kind, "c": channel})
+        else:
+            db.execute(text("""
+                INSERT INTO cabinet_account_notify
+                    (account_id, kind, channel, enabled, changed_by)
+                VALUES (:a, :k, :c, :v, :w)
+                ON CONFLICT (account_id, kind, channel)
+                DO UPDATE SET enabled = :v, changed_at = now(), changed_by = :w"""),
+                {"a": acc.id, "k": payload.kind, "c": channel, "v": value, "w": who})
+
+    _set(payload.channel, payload.enabled)
+    # ДВЕ ПОЧТОВЫЕ КОЛОНКИ ВЗАИМОИСКЛЮЧАЮЩИ: письмо приходит либо сразу, либо в пачке, и
+    # «и то и то» означало бы два письма об одном событии. Снимаем парную здесь, а не на
+    # экране: экран может быть старой сборкой, а правило одно.
+    if payload.enabled and payload.channel in prefs.MAIL_WAYS:
+        other = prefs.DIGEST if payload.channel == prefs.MAIL else prefs.MAIL
+        _set(other, False)
+
+    journal.write(db, 'уведомление_вкл' if payload.enabled else 'уведомление_выкл',
                   cabinet_id=acc.cabinet_id, account_id=acc.id,
-                  publisher_id=payload.publisher_id,
-                  actor_name=(payload.author_name or "").strip() or acc.name or "кабинет",
-                  subject=label, entity_type="cabinet_account_mute", entity_id=acc.id)
+                  publisher_id=payload.publisher_id, actor_name=who,
+                  subject=f"{kind.label} · {payload.channel}")
     db.commit()
-    return {"kind": payload.kind, "muted": payload.muted}
+    return _notify_state(db, acc)
+
+
+@router.delete("/account/{account_id}/notify",
+               dependencies=[Depends(require_cabinet_service)])
+def cabinet_notify_reset(account_id: int, publisher_id: int,
+                         author_name: Optional[str] = None,
+                         db: Session = Depends(get_db)):
+    """«Вернуть по умолчанию» — снести отклонения. Режим почты при этом НЕ трогается:
+    кнопка стоит под матрицей и обещает вернуть галочки, а не час рассылки."""
+    acc = _notify_account(db, account_id, publisher_id)
+    n = db.execute(text("DELETE FROM cabinet_account_notify WHERE account_id = :a"),
+                   {"a": acc.id}).rowcount
+    if n:
+        journal.write(db, 'уведомление_вкл', cabinet_id=acc.cabinet_id, account_id=acc.id,
+                      publisher_id=publisher_id, actor_name=(author_name or acc.name),
+                      subject=f"возврат к умолчаниям ({n})")
+    db.commit()
+    return _notify_state(db, acc)
+
+
+@router.put("/account/{account_id}/mail", dependencies=[Depends(require_cabinet_service)])
+def cabinet_mail_settings(account_id: int, payload: CabinetMailIn,
+                          db: Session = Depends(get_db)):
+    """Почта: получать ли её вообще. Больше здесь ничего не настраивается.
+
+    ЧТО приходит пачкой, а что срочным письмом, решается в матрице у каждого события.
+    Час пачки — константа 09:00 по времени площадки, и настройки у него нет вовсе.
+
+    `enabled` правит ГАЛОЧКУ КОНТАКТА, а не своё поле, — см. `_contact_mail`.
+    """
+    acc = _notify_account(db, account_id, payload.publisher_id)
+    who = (payload.author_name or acc.name)
+
+    if payload.enabled is not None:
+        if not acc.contact_id:
+            raise HTTPException(status_code=400,
+                                detail="Учётка не связана с контактом — почтой управляем мы")
+        db.execute(text("UPDATE sales_publisher_contacts SET notify = :v WHERE id = :c"),
+                   {"v": payload.enabled, "c": acc.contact_id})
+        journal.write(db, 'уведомление_вкл' if payload.enabled else 'уведомление_выкл',
+                      cabinet_id=acc.cabinet_id, account_id=acc.id,
+                      publisher_id=payload.publisher_id, actor_name=who,
+                      subject="почта целиком")
+
+    db.commit()
+    return _notify_state(db, acc)
 
 
 # Медиакит — презентация площадки. Только PDF и PPTX (владелец 28.08.2026): это документ
@@ -427,3 +582,183 @@ async def cabinet_rework_file(pair_id: int, account_id: int,
                   entity_type='launch_prep_pair', entity_id=pair_id)
     db.commit()
     return {"id": rec.id, "name": original, "size_bytes": len(content)}
+
+
+# ─────────────────────────── Бот площадки ───────────────────────────
+#
+# БОТ ОТДЕЛЬНЫЙ ОТ ВНУТРЕННЕГО (владелец 15.09.2026): свой токен, своё имя, свой вебхук.
+# Площадка видит бота подрядчика, а не наш внутренний алёрт-бот, и обработчик `/start`
+# не гадает, чей перед ним код — у каждого контура своя таблица привязок.
+#
+# ПОДКЛЮЧАЕТ ЧЕЛОВЕК СЕБЕ САМ. Это не наша раздача и не следствие галочки «получает
+# уведомления» на контакте: та галочка включает ПОЧТУ, а чат в телеграме мы за него
+# завести не можем в принципе. Поэтому кнопка доступна каждому, кто вошёл в кабинет.
+
+
+def _tg_row(db: Session, account_id: int):
+    from app.cabinet.models import CabinetAccountTg
+    return (db.query(CabinetAccountTg)
+            .filter(CabinetAccountTg.account_id == account_id).first())
+
+
+def _tg_account(db: Session, account_id: int, publisher_id: int):
+    """Учётка, за которую говорит кабинет. Проверка ЗДЕСЬ, а не только у вызывающего —
+    проверка, оставленная на вызывающей стороне, это отсутствие проверки."""
+    from app.cabinet.models import CabinetAccount
+    from app.cabinet.scope import account_sees_publisher
+
+    acc = db.query(CabinetAccount).filter(CabinetAccount.id == account_id).first()
+    if not acc or not account_sees_publisher(db, acc, publisher_id):
+        # 404, а не 403: 403 подтвердил бы, что такая связка существует.
+        raise HTTPException(status_code=404, detail="Учётка не найдена")
+    return acc
+
+
+def _tg_state(db: Session, account_id: int) -> dict:
+    """Состояние привязки одним ответом.
+
+    Собирается ЗДЕСЬ, а не представлением для кабинета: половина ответа живёт не в базе.
+    Имя бота ядро спрашивает у самого Телеграма (`getMe` по токену), из него же
+    собирается диплинк. Отдай мы кабинету view — на экране оказались бы два источника
+    одного состояния, и на перепривязке они разошлись бы.
+    """
+    from app.notify import telegram
+
+    row = _tg_row(db, account_id)
+    pending = None
+    if row and row.link_code and (not row.link_expires
+                                  or row.link_expires > datetime.utcnow()):
+        pending = {"code": row.link_code, "expires_at": row.link_expires,
+                   "link": telegram.link_url(row.link_code, telegram.PUB)}
+    return {"configured": telegram.configured(telegram.PUB),
+            "bot": telegram.bot_username(telegram.PUB),
+            "linked": bool(row and row.verified_at),
+            "linked_at": row.verified_at if row else None,
+            "mute_until": row.mute_until if row else None,
+            "pending": pending}
+
+
+class TgIn(BaseModel):
+    publisher_id: int
+
+
+@router.get("/account/{account_id}/tg", dependencies=[Depends(require_cabinet_service)])
+def cabinet_tg_state(account_id: int, publisher_id: int, db: Session = Depends(get_db)):
+    _tg_account(db, account_id, publisher_id)
+    return _tg_state(db, account_id)
+
+
+@router.post("/account/{account_id}/tg/link",
+             dependencies=[Depends(require_cabinet_service)])
+def cabinet_tg_link(account_id: int, payload: TgIn, db: Session = Depends(get_db)):
+    """Выдать код привязки. Человек отправляет его боту, chat_id запоминается на вебхуке.
+
+    Перепривязка СБРАСЫВАЕТ старый чат: иначе «подключить заново» оставляло бы прежний
+    чат получателем, и сообщения продолжали бы идти туда, откуда человек уже ушёл.
+    """
+    from app.cabinet.models import CabinetAccountTg
+    from app.notify import telegram
+
+    _tg_account(db, account_id, payload.publisher_id)
+    if not telegram.configured(telegram.PUB):
+        raise HTTPException(status_code=400,
+                            detail="Бот кабинета не настроен: не задан TELEGRAM_PUB_BOT_TOKEN")
+    row = _tg_row(db, account_id)
+    if row is None:
+        row = CabinetAccountTg(account_id=account_id)
+        db.add(row)
+    row.link_code, row.link_expires = telegram.new_link_code()
+    row.chat_id, row.verified_at = None, None
+    db.commit()
+    return _tg_state(db, account_id)
+
+
+@router.delete("/account/{account_id}/tg", dependencies=[Depends(require_cabinet_service)])
+def cabinet_tg_unlink(account_id: int, publisher_id: int, author_name: Optional[str] = None,
+                      db: Session = Depends(get_db)):
+    """Отвязать бота. Строку не удаляем — гасим поля: запись о том, что бот когда-то был,
+    остаётся в ленте, а не только в памяти того, кто отключал."""
+    acc = _tg_account(db, account_id, publisher_id)
+    row = _tg_row(db, account_id)
+    if row and (row.chat_id or row.verified_at or row.link_code):
+        row.chat_id = row.verified_at = row.link_code = row.link_expires = None
+        journal.write(db, 'бот_отвязан', cabinet_id=acc.cabinet_id, account_id=acc.id,
+                      publisher_id=publisher_id, actor_name=(author_name or acc.name))
+        db.commit()
+    return _tg_state(db, account_id)
+
+
+def _tg_reply_later(chat_id: str, text_: str):
+    """Ответ человеку ПОСЛЕ того, как мы уже ответили Телеграму.
+
+    Та же причина, что во внутреннем контуре: связь с Телеграмом рваная, и ответ внутри
+    запроса подвешивал обработчик — Телеграм не дожидался и считал доставку неуспешной,
+    хотя привязка уже была записана.
+    """
+    from app.notify import telegram
+    try:
+        telegram.send_message(chat_id, text_, contour=telegram.PUB)
+    except Exception:
+        log_gw.warning("pub tg_webhook: ответ не ушёл", exc_info=True)
+
+
+@webhook_router.post("/webhook/{secret}")
+def cabinet_tg_webhook(secret: str, update: Dict[str, Any], bg: BackgroundTasks,
+                       db: Session = Depends(get_db)):
+    """Апдейты от бота кабинета. БЕЗ сервисного токена — стучится Телеграм, не кабинет.
+
+    Поэтому закрыт секретом в пути (он же ставится в `setWebhook`), из тела берутся
+    ТОЛЬКО код и chat_id, и тело апдейта — данные, а не команда: никакой логики по его
+    содержимому нет. Всегда отвечаем 200, иначе Телеграм ретраит один и тот же апдейт.
+
+    Секрет СВОЙ, отдельный от внутреннего: общий означал бы, что апдейт одного бота
+    принимается адресом другого.
+
+    Адрес — `/api/pub-bot/webhook/<секрет>`, НЕ под `/api/cabinet-gw/`: тот префикс
+    закрыт на Caddy наглухо, и апдейты уходили бы в 404.
+    """
+    from app.cabinet.models import CabinetAccount, CabinetAccountTg
+    from app.notify import telegram
+
+    expected = os.getenv("TELEGRAM_PUB_WEBHOOK_SECRET") or ""
+    if not expected or secret != expected:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    code, chat_id = telegram.parse_start_command(update)
+    if not code or not chat_id:
+        return {"ok": True}
+
+    row = (db.query(CabinetAccountTg)
+           .filter(CabinetAccountTg.link_code == code).first())
+    if row is None or (row.link_expires and row.link_expires < datetime.utcnow()):
+        bg.add_task(_tg_reply_later, chat_id,
+                    "Код не найден или просрочен. Получите новый в кабинете, "
+                    "блок «Уведомления».")
+        return {"ok": True}
+
+    # Привязка пишется СРАЗУ и синхронно: она и есть результат запроса. В фон уходит
+    # только ответное сообщение — не дойдёт оно, человек всё равно уже привязан.
+    row.chat_id, row.verified_at = chat_id, datetime.utcnow()
+    row.link_code = row.link_expires = None
+    acc = db.query(CabinetAccount).filter(CabinetAccount.id == row.account_id).first()
+    if acc:
+        journal.write(db, 'бот_привязан', cabinet_id=acc.cabinet_id, account_id=acc.id,
+                      actor_name=acc.name)
+    db.commit()
+    bg.add_task(_tg_reply_later, chat_id,
+                f"Готово, {acc.name if acc else ''}. Уведомления будут приходить сюда.")
+    return {"ok": True}
+
+
+# ─────────────────────────── Лента ───────────────────────────
+
+@router.get("/log-actions", dependencies=[Depends(require_cabinet_service)])
+def cabinet_log_actions():
+    """Словарь событий ленты — ОДИН на оба контура, по той же причине, что каталог
+    рассылки: вторая копия подписей разошлась бы с первой, и разошлась бы молча.
+
+    Тон и сторона лежат в самой строке журнала (они заданы событием в момент записи и не
+    должны меняться задним числом, если словарь поправили). Отсюда берётся только
+    подпись — то, чего в строке нет.
+    """
+    return {"actions": [{"key": a.key, "label": a.label} for a in journal.ACTIONS]}

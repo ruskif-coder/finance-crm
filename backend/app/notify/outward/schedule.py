@@ -36,10 +36,48 @@ from typing import Optional
 
 from app.timez import MSK_OFFSET
 
-# Умолчания. Меняются здесь, а не в отправителях.
+# УМОЛЧАНИЯ, а не жёсткие значения (владелец 15.09.2026). Три числа настраиваются на
+# экране «Кабинеты паблишеров → Что мы шлём» и лежат в `company_settings` одной строкой:
+# отдельная таблица под три числа — лишняя сущность, а ключ-значение здесь уже есть и
+# тем же способом хранится список выключенных нами видов.
+#
+# Константы остаются ответом на вопрос «а если не настраивали»: пустое или испорченное
+# значение читается как умолчание, а не роняет отправку.
 DIGEST_HOUR = 9          # час дайджеста по времени площадки
 QUIET_FROM = 21          # с 21:00
 QUIET_TO = 9             # до 09:00
+
+SETTING_KEY = "cabinet_notify_hours"
+
+
+def hours(db=None) -> tuple:
+    """(час дайджеста, начало тишины, конец тишины). Без базы — умолчания.
+
+    Разбор МЯГКИЙ: испорченное значение означает умолчания, а не падение рассылки.
+    Письмо, не ушедшее из-за кривой строки в настройках, разбирается в разы дороже, чем
+    письмо, ушедшее в девять вместо двенадцати.
+    """
+    if db is None:
+        return DIGEST_HOUR, QUIET_FROM, QUIET_TO
+    import json
+
+    from sqlalchemy import text as _t
+    raw = (db.execute(_t("SELECT value FROM company_settings WHERE key = :k"),
+                      {"k": SETTING_KEY}).scalar() or "").strip()
+    if not raw:
+        return DIGEST_HOUR, QUIET_FROM, QUIET_TO
+    try:
+        v = json.loads(raw)
+        return (int(v["digest"]), int(v["quiet_from"]), int(v["quiet_to"]))
+    except (ValueError, KeyError, TypeError):
+        return DIGEST_HOUR, QUIET_FROM, QUIET_TO
+
+
+def hour_is_silent(hour: int, quiet_from: int, quiet_to: int) -> bool:
+    """Попадает ли час в тишину. Вынесено, потому что спрашивают двое: отправка и
+    проверка настройки — час дайджеста внутри тишины означал бы пачку, которая не уйдёт
+    никогда."""
+    return hour >= quiet_from or hour < quiet_to
 
 def publisher_now(now_utc: datetime, tz_offset: Optional[int]) -> datetime:
     """UTC → время площадки. `tz_offset` — смещение ОТ МОСКВЫ, как в карточке площадки.
@@ -53,14 +91,16 @@ def publisher_now(now_utc: datetime, tz_offset: Optional[int]) -> datetime:
     return now_utc + timedelta(hours=MSK_OFFSET + int(tz_offset or 0))
 
 
-def in_quiet_hours(local: datetime) -> bool:
-    """Тихие часы 21:00–09:00 — интервал ЧЕРЕЗ ПОЛНОЧЬ, и сравнение здесь не такое, как
-    у обычного диапазона: час 23 больше начала, час 3 меньше конца, и оба тихие."""
-    h = local.hour
-    return h >= QUIET_FROM or h < QUIET_TO
+def in_quiet_hours(local: datetime, quiet_from: int = QUIET_FROM,
+                   quiet_to: int = QUIET_TO) -> bool:
+    """Тихие часы — интервал ЧЕРЕЗ ПОЛНОЧЬ, и сравнение здесь не такое, как у обычного
+    диапазона: час 23 больше начала, час 3 меньше конца, и оба тихие."""
+    return hour_is_silent(local.hour, quiet_from, quiet_to)
 
 
-def due_at(now: datetime, tz_offset: Optional[int], *, immediate: bool) -> Optional[datetime]:
+def due_at(now: datetime, tz_offset: Optional[int], *, immediate: bool,
+           digest: int = DIGEST_HOUR, quiet_from: int = QUIET_FROM,
+           quiet_to: int = QUIET_TO) -> Optional[datetime]:
     """Когда отправлять. `None` — прямо сейчас.
 
     `immediate` — вид, объявленный срочным (`schedule='сразу'`). Он всё равно ждёт конца
@@ -72,13 +112,31 @@ def due_at(now: datetime, tz_offset: Optional[int], *, immediate: bool) -> Optio
     ошибиться знаком.
     """
     local = publisher_now(now, tz_offset)
-    if not in_quiet_hours(local):
+    if not in_quiet_hours(local, quiet_from, quiet_to):
         return None if immediate else None
 
-    # Ближайшие DIGEST_HOUR по времени площадки: сегодня, если ещё не наступили, иначе
+    # Ближайший конец тишины по времени площадки: сегодня, если ещё не наступил, иначе
     # завтра. Час 23 → завтра, час 3 → сегодня утром: у интервала через полночь это
     # разные дни, и перепутать их значит задержать письмо на сутки.
-    target = local.replace(hour=DIGEST_HOUR, minute=0, second=0, microsecond=0)
-    if local.hour >= QUIET_FROM:
+    target = local.replace(hour=quiet_to, minute=0, second=0, microsecond=0)
+    if local.hour >= quiet_from:
+        target += timedelta(days=1)
+    return target - timedelta(hours=MSK_OFFSET + int(tz_offset or 0))
+
+
+def next_hour_at(now_utc: datetime, tz_offset: Optional[int], hour: int) -> datetime:
+    """Ближайшее наступление ЧАСА ДАЙДЖЕСТА по времени площадки, в нашей шкале.
+
+    Сегодня, если час ещё не наступил, иначе завтра. Равенство считается наступившим:
+    событие, пришедшее ровно в 09:00:30, в сегодняшнюю девятичасовую пачку уже не
+    попадёт — она собирается заданием, которое в этот момент либо отработало, либо
+    отработает через секунду, и класть в неё задним числом значит терять событие.
+
+    Возвращается НАША шкала, как у `due_at` и `send_after` у письма: перевод в момент
+    отправки делался бы дважды, и однажды со знаком ошиблись бы.
+    """
+    local = publisher_now(now_utc, tz_offset)
+    target = local.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if local >= target:
         target += timedelta(days=1)
     return target - timedelta(hours=MSK_OFFSET + int(tz_offset or 0))

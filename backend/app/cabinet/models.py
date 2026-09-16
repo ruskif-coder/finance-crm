@@ -16,7 +16,7 @@
 Таблицы созданы миграциями 2026-08-28_publisher_cabinet.sql,
 2026-08-28_cabinet_org.sql и 2026-08-30_cabinet_log_and_our_contacts.sql.
 """
-from sqlalchemy import (Boolean, Column, DateTime, ForeignKey, Integer, Text,
+from sqlalchemy import (Boolean, Column, Date, DateTime, ForeignKey, Integer, Text,
                         UniqueConstraint)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -107,6 +107,29 @@ class CabinetAccountPublisher(Base):
     publisher_id = Column(Integer, ForeignKey("sales_publishers.id", ondelete="RESTRICT"),
                           primary_key=True)
     added_at = Column(DateTime, server_default=func.now())
+
+
+class CabinetAccountTg(Base):
+    """Привязка телеграм-бота к учётке кабинета. Заводится миграцией
+    `2026-09-15_cabinet_tg_and_feed.sql`.
+
+    НЕ на контакте, а на УЧЁТКЕ, и это решение владельца 15.09.2026, а не удобство.
+    Почту мы включаем сами — галочкой «получает уведомления» в карточке контакта; бота
+    за человека подключить нельзя в принципе, чат заводит он сам, отправив коду боту.
+    Поэтому подключить его может любой, кто вошёл в кабинет, независимо от той галочки.
+
+    `chat_id` и `verified_at` живут вместе: чат без подтверждения означал бы готовность
+    писать туда, куда код не приходил. Код одноразовый — гасится в момент привязки.
+    """
+    __tablename__ = "cabinet_account_tg"
+    account_id = Column(Integer, ForeignKey("cabinet_account.id", ondelete="CASCADE"),
+                        primary_key=True)
+    chat_id = Column(Text)
+    link_code = Column(Text)
+    link_expires = Column(DateTime)
+    verified_at = Column(DateTime)
+    mute_until = Column(Date)
+    created_at = Column(DateTime, server_default=func.now())
 
 
 # Тон строки журнала — он же цвет квадратного маркера в ленте. Словарь в КОДЕ, как

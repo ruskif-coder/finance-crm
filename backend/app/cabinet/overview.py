@@ -80,14 +80,25 @@ def services_by_publisher(db: Session) -> Dict[int, List[dict]]:
             for pid, svc in out.items()}
 
 
-def contacts_of(db: Session, publisher_ids: List[int]) -> List[dict]:
-    """Контактные лица площадок кабинета — ВСЕ, а не только те, у кого есть учётка.
+def contacts_of(db: Session, publisher_ids: List[int],
+                cabinet_id: Optional[int] = None) -> List[dict]:
+    """Контактные лица кабинета — ВСЕ, а не только те, у кого есть учётка.
 
     Контакт без учётки существует нормально: это человек для переписки. В колонке он
     ждёт кнопки «Создать учётку», и именно поэтому список один с реестром площадок —
     две истории по одним людям разошлись бы (владелец, 30.08.2026).
+
+    ДВА ИСТОЧНИКА, а не один (15.09.2026, по жалобе владельца «отвязал площадку —
+    контакты пропали»). Раньше список выводился ТОЛЬКО из площадок кабинета, и открепление
+    площадки убирало с экрана человека, у которого в этом кабинете есть действующая
+    учётка: войти он по-прежнему мог, а увидеть его и отключить было негде. Невидимый
+    работающий доступ — худший исход из возможных.
+
+    Поэтому берём объединение: контакты площадок кабинета И контакты, чья УЧЁТКА
+    заведена в этом кабинете. Второе множество обычно вложено в первое; расходятся они
+    ровно в случае открепления, и тогда человек остаётся видимым.
     """
-    if not publisher_ids:
+    if not publisher_ids and not cabinet_id:
         return []
     rows = db.execute(text(
         "SELECT c.id, c.publisher_id, c.name, c.email, c.role, c.telegram, "
@@ -95,12 +106,20 @@ def contacts_of(db: Session, publisher_ids: List[int]) -> List[dict]:
         "       p.name AS publisher_name, "
         "       a.id AS account_id, a.email AS login_email, "
         "       a.is_active, a.can_approve, a.last_login_at, "
-        "       (a.hashed_password IS NOT NULL) AS has_password "
+        "       (a.hashed_password IS NOT NULL) AS has_password, "
+        # Бот человек подключает СЕБЕ САМ — мы за него не можем. Здесь только показываем,
+        # подключил ли: без этого «ему не приходит в телеграм» не имеет ответа в системе.
+        "       (t.verified_at IS NOT NULL) AS tg_linked, "
+        # Площадка контакта могла уехать из кабинета — тогда человек виден, но помечен.
+        "       (c.publisher_id = ANY(:ids)) AS publisher_in_cabinet "
         "  FROM sales_publisher_contacts c "
         "  JOIN sales_publishers p ON p.id = c.publisher_id "
         "  LEFT JOIN cabinet_account a ON a.contact_id = c.id "
+        "  LEFT JOIN cabinet_account_tg t ON t.account_id = a.id "
         " WHERE c.publisher_id = ANY(:ids) "
-        " ORDER BY p.name, c.is_primary DESC, c.name"), {"ids": publisher_ids})
+        "    OR (:cab IS NOT NULL AND a.cabinet_id = :cab) "
+        " ORDER BY p.name, c.is_primary DESC, c.name"),
+        {"ids": publisher_ids or [], "cab": cabinet_id})
     return [{"contact_id": r.id, "publisher_id": r.publisher_id,
              "publisher_name": r.publisher_name,
              "name": r.name, "email": r.email, "role": r.role, "telegram": r.telegram,
@@ -108,6 +127,12 @@ def contacts_of(db: Session, publisher_ids: List[int]) -> List[dict]:
              # Главное контактное лицо площадки — зелёный квадрат в её карточке. Здесь
              # тот же признак: это одно и то же лицо, а не две пометки.
              "is_primary": bool(r.is_primary), "notify": bool(r.notify),
+             # Бот — свойство УЧЁТКИ, а не контакта: подключает его вошедший человек.
+             # Без учётки подключать нечем, поэтому там не «нет», а «неприменимо».
+             "tg_linked": (bool(r.tg_linked) if r.account_id is not None else None),
+             # Человек остался от открепления площадки: доступ живой, площадки в
+             # кабинете нет. Экран обязан назвать это, а не показать его как обычного.
+             "publisher_detached": not bool(r.publisher_in_cabinet),
              "account_id": r.account_id,
              # Почта входа отдельно от почты контакта: учётка копирует адрес при
              # заведении, дальше они расходятся. Экран обязан показать расхождение, а

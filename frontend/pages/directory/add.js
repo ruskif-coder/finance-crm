@@ -148,10 +148,60 @@ function Block({ blockKey, on, onToggle, allowed, children, note }) {
   )
 }
 
+/** Найденное юрлицо в режиме «прикрепить».
+ *
+ *  Чипы показывают, ГДЕ юрлицо уже участвует, и это не украшение: одно юрлицо за
+ *  несколькими объектами — норма (замер 06.09.2026: у 211 контрагентов так и есть), а
+ *  завести второе с тем же ИНН дешевле только на первый взгляд — потом их склеивать.
+ *
+ *  Отдельно помечается, чего у юрлица НЕТ. Подписант заполнен у 2 контрагентов из 211,
+ *  а без должности и основания не выгружается приложение к договору — человек должен
+ *  увидеть это в момент выбора, а не в момент выгрузки.
+ */
+function FoundCp({ item, active, onPick }) {
+  const chip = (label, tone) => (
+    <span key={label} style={{
+      fontFamily: MONO, fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 7,
+      background: tone === 'warn' ? 'var(--warning-bg)' : tone === 'accent' ? 'var(--accent-tint)' : 'var(--bg-subtle)',
+      color: tone === 'warn' ? 'var(--warning-text)' : tone === 'accent' ? 'var(--accent)' : 'var(--text-secondary)',
+    }}>{label}</span>
+  )
+  const links = item.objects + item.contracts
+  return (
+    <div onClick={onPick}
+         style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', cursor: 'pointer',
+                  borderRadius: 12, marginTop: 8,
+                  border: `1px solid ${active ? 'var(--accent-border)' : 'var(--border-card)'}`,
+                  background: active ? 'var(--accent-tint)' : 'var(--bg-card)' }}>
+      <span style={{ width: 20, height: 20, borderRadius: 6, flexShrink: 0, display: 'inline-flex',
+                     alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 800,
+                     border: `1px solid ${active ? 'var(--accent)' : 'var(--border-hover)'}`,
+                     background: active ? 'var(--accent)' : 'var(--bg-card)',
+                     color: active ? 'var(--on-accent)' : 'transparent' }}>✓</span>
+      <span style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</div>
+        <div style={{ ...META, marginTop: 3 }}>ИНН {item.inn || '—'}</div>
+      </span>
+      <span style={{ display: 'inline-flex', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        {links
+          ? [item.objects ? chip(`${item.objects} объект${item.objects === 1 ? '' : item.objects < 5 ? 'а' : 'ов'}`, 'accent') : null,
+             item.contracts ? chip(`${item.contracts} договор${item.contracts === 1 ? '' : item.contracts < 5 ? 'а' : 'ов'}`, 'soft') : null]
+          : chip('нет связей', 'warn')}
+        {!item.has_signer && chip('без подписанта', 'warn')}
+        {!item.has_bank && chip('без счёта', 'warn')}
+      </span>
+    </div>
+  )
+}
+
 const G = (cols, gap = 12) => ({ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap })
 
 export default function AddData() {
-  const [kind, setKind] = useState('agency')
+  // Умолчание — ПЕРВЫЙ вид из списка, а не вписанное отдельно имя. До 15.09.2026 здесь
+  // стояло `'agency'`, хотя первым в списке идёт подрядчик: экран открывался с активной
+  // второй вкладкой, и порядок спорил сам с собой. Связано с порядком, чтобы при
+  // перестановке видов умолчание ехало за ним, а не оставалось на прежнем ключе.
+  const [kind, setKind] = useState(KINDS[0].key)
   const [extra, setExtra] = useState([])          // блоки, добавленные вне вида
   const [off, setOff] = useState([])              // выключенные руками
   const [v, setV] = useState(EMPTY)               // значения живут отдельно от переключателей
@@ -161,6 +211,15 @@ export default function AddData() {
   const [rights, setRights] = useState({})
   const [mktTouched, setMktTouched] = useState(false)
   const [pop, setPop] = useState(null)
+  // Юрлицо: создаём новое или прикрепляем существующее. Умолчание — СОЗДАТЬ НОВОЕ
+  // (владелец 15.09.2026). В макете v2 умолчанием стоит «прикрепить», и я сперва
+  // перенёс его буквально; решение владельца это перекрывает: экран называется
+  // «добавить данные», и приходят на него чаще всего с новым юрлицом, а поиск —
+  // это шаг для случая, когда оно уже заведено.
+  const [cpMode, setCpMode] = useState('new')
+  const [cpQuery, setCpQuery] = useState('')
+  const [cpFound, setCpFound] = useState([])
+  const [cpPicked, setCpPicked] = useState(null)
   const fileRef = useRef(null)
   const [file, setFile] = useState(null)
 
@@ -196,6 +255,21 @@ export default function AddData() {
   const openPop = (rect, title, value, options, onChange) =>
     setPop({ rect, title, value, options, onChange })
 
+  // Поиск юрлица — по имени И ПО ИНН (ручка `/directory-add/counterparties`). Дебаунс,
+  // потому что ищут набором: без него запрос уходит на каждую букву.
+  useEffect(() => {
+    if (cpMode !== 'pick') return undefined
+    const q = cpQuery.trim()
+    if (q.length < 2) { setCpFound([]); return undefined }
+    let alive = true
+    const t = setTimeout(() => {
+      api.get(`/directory-add/counterparties?q=${encodeURIComponent(q)}`, auth())
+        .then(({ data }) => { if (alive) setCpFound(data.items || []) })
+        .catch(() => { if (alive) setCpFound([]) })
+    }, 300)
+    return () => { alive = false; clearTimeout(t) }
+  }, [cpQuery, cpMode])
+
   /** Маркетинговое название подтягивается из заводимого объекта, пока не написали своё. */
   const mktSource = useMemo(() => (
     (isOn('publisher') && (v.publisher.name.trim() || v.publisher.domain.trim()))
@@ -209,10 +283,29 @@ export default function AddData() {
       : { ...f, contract: { ...f.contract, marketing_name: mktSource } }))
   }, [mktSource, mktTouched])
 
+  /** Звенья цепочки: объект справочника → юрлицо → связь → договор.
+   *  Готовность считается по тем же признакам, что и запрет сохранения, — иначе полоса
+   *  говорила бы одно, а кнопка другое. */
+  const objKey = ['agency', 'advertiser', 'publisher'].find(isOn) || null
+  const objDone = objKey === 'agency' ? !!v.agency.short_name.trim()
+    : objKey === 'advertiser' ? !!v.advertiser.short_name.trim()
+    : objKey === 'publisher' ? !!v.publisher.domain.trim() : false
+  const cpDone = isOn('cp') && (cpMode === 'pick' ? !!cpPicked : !!v.cp.name.trim())
+  const chainSteps = [
+    { title: objKey ? BLOCKS[objKey].title : 'Объект', note: objKey ? 'ключ справочника' : 'нет в этом виде', active: !!objKey, done: objDone },
+    { title: 'Юрлицо', note: cpMode === 'pick' ? 'прикрепляем существующее' : 'создаём новое', active: isOn('cp'), done: cpDone },
+    { title: 'Связь', note: 'объект ↔ юрлицо', active: !!objKey && isOn('cp'), done: !!objKey && objDone && cpDone },
+    { title: 'Договор', note: 'на этом юрлице', active: isOn('contract'), done: !!v.contract.contract_number.trim() },
+  ]
+
   /** Что мешает сохранить — считается ДО нажатия, чтобы кнопка не отвечала отказом. */
   const problems = []
   if (!visible.some(isOn)) problems.push({ text: 'Не включён ни один блок', at: '' })
-  if (isOn('cp') && !v.cp.name.trim()) problems.push({ text: 'Нет наименования юрлица', at: 'Контрагент' })
+  // В режиме «прикрепить» обязателен ВЫБОР из списка, а не наименование: наименование
+  // у прикреплённого уже есть, и требовать его второй раз значит просить переписать
+  // то, что и так лежит в справочнике.
+  if (isOn('cp') && cpMode === 'pick' && !cpPicked) problems.push({ text: 'Юрлицо не выбрано из списка', at: 'Контрагент' })
+  if (isOn('cp') && cpMode === 'new' && !v.cp.name.trim()) problems.push({ text: 'Нет наименования юрлица', at: 'Контрагент' })
   if (isOn('contract') && !isOn('cp')) problems.push({ text: 'Договор заводится на юрлицо — включите блок контрагента', at: 'Договор' })
   if (isOn('contract') && !v.contract.contract_number.trim()) problems.push({ text: 'Нет номера договора', at: 'Договор' })
   if (isOn('agency') && !v.agency.short_name.trim()) problems.push({ text: 'Нет краткого названия агентства', at: 'Агентство' })
@@ -225,7 +318,13 @@ export default function AddData() {
     setBusy(true); setErr(''); setSteps([])
     try {
       let cpId = null
-      if (isOn('cp')) {
+      // Прикреплённое юрлицо НЕ создаётся и реквизиты его НЕ переписываются: человек
+      // выбрал существующую запись, а не принёс новые данные о ней. Правка реквизитов
+      // живёт в карточке контрагента — там её видно и там она одна.
+      if (isOn('cp') && cpMode === 'pick' && cpPicked) {
+        cpId = cpPicked.id
+        step(`Юрлицо «${cpPicked.name}» прикреплено`, true, `/directory/counterparties/${cpId}`)
+      } else if (isOn('cp')) {
         const r = await api.post('/counterparties/', { name: v.cp.name.trim() }, auth())
         cpId = r.data.id
         step(`Контрагент «${v.cp.name.trim()}» создан`, true, `/directory/counterparties/${cpId}`)
@@ -343,6 +442,17 @@ export default function AddData() {
                       <span style={{ fontSize: 14, fontWeight: 700, color: active ? 'var(--accent)' : 'var(--text-primary)' }}>{k.title}</span>
                     </div>
                     <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 6, lineHeight: 1.45 }}>{k.hint}</div>
+                    {/* Цепочка прямо в карточке вида: видно, ЧТО заведётся, до того как
+                        вид выбран. Раньше состав открывался только после клика. */}
+                    <div style={{ display: 'flex', gap: 4, marginTop: 9, flexWrap: 'wrap' }}>
+                      {k.blocks.map(b => (
+                        <span key={b} style={{
+                          fontFamily: MONO, fontSize: 9.5, fontWeight: 700, padding: '2px 7px', borderRadius: 7,
+                          background: active ? 'var(--accent-tint)' : 'var(--bg-subtle)',
+                          color: active ? 'var(--accent)' : 'var(--text-muted)',
+                        }}>{BLOCKS[b].title}</span>
+                      ))}
+                    </div>
                   </div>
                 )
               })}
@@ -362,6 +472,32 @@ export default function AddData() {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* Цепочка заведения. Показывает ПОРЯДОК и готовность каждого звена — связка
+              создаётся несколькими запросами, и человеку важно видеть, что именно
+              соберётся и чего ещё не хватает. «Связь» стоит отдельным звеном: именно её
+              раньше ставили руками и не ставили — из 211 контрагентов в связках было 70. */}
+          <div style={{ ...BOX, display: 'flex', alignItems: 'stretch', gap: 8, flexWrap: 'wrap' }}>
+            {chainSteps.map((c, i) => (
+              <span key={c.title} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 13px', borderRadius: 12,
+                               border: `1px solid ${!c.active ? 'var(--border-inner)' : c.done ? 'var(--income-border)' : 'var(--accent-border)'}`,
+                               background: !c.active ? 'var(--bg-subtle)' : c.done ? 'var(--income-tint)' : 'var(--bg-card)' }}>
+                  <span style={{ width: 20, height: 20, borderRadius: 6, display: 'inline-flex', alignItems: 'center',
+                                 justifyContent: 'center', fontFamily: MONO, fontSize: 11, fontWeight: 800,
+                                 background: 'var(--bg-card)',
+                                 color: !c.active ? 'var(--text-faint)' : c.done ? 'var(--income-fg)' : 'var(--accent)' }}>
+                    {!c.active ? '·' : c.done ? '✓' : String(i + 1)}
+                  </span>
+                  <span style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: c.active ? 'var(--text-primary)' : 'var(--text-muted)' }}>{c.title}</div>
+                    <div style={{ ...META, marginTop: 2 }}>{c.active ? c.note : 'пропускается'}</div>
+                  </span>
+                </span>
+                {i < chainSteps.length - 1 && <span style={{ color: 'var(--text-faint)', fontSize: 14 }}>→</span>}
+              </span>
+            ))}
           </div>
 
           {visible.includes('agency') && (
@@ -406,9 +542,57 @@ export default function AddData() {
 
           {visible.includes('cp') && (
             <Block blockKey="cp" on={isOn('cp')} onToggle={toggle('cp')} allowed={!!rights.cp}>
+              {/* Два режима: завести новое юрлицо или прикрепить существующее.
+                  Порядок кнопок повторяет умолчание — первым идёт то, что выбрано по
+                  умолчанию, иначе активной оказывается вторая кнопка и порядок спорит
+                  сам с собой (ровно это чинили в видах на этом же экране). */}
+              <div style={{ display: 'inline-flex', gap: 4, padding: 3, borderRadius: 11,
+                            background: 'var(--bg-subtle)', marginBottom: 16 }}>
+                {[['new', 'Создать новое'], ['pick', 'Прикрепить существующее']].map(([mk, label]) => (
+                  <span key={mk} onClick={() => setCpMode(mk)}
+                        style={{ padding: '6px 13px', borderRadius: 9, fontSize: 12.5, cursor: 'pointer',
+                                 fontWeight: cpMode === mk ? 700 : 600,
+                                 background: cpMode === mk ? 'var(--accent-tint)' : 'transparent',
+                                 color: cpMode === mk ? 'var(--accent)' : 'var(--text-secondary)' }}>{label}</span>
+                ))}
+              </div>
+
+              {cpMode === 'pick' && (
+                <div style={{ marginBottom: 4 }}>
+                  <F label="Поиск по названию или ИНН" value={cpQuery} onChange={setCpQuery}
+                     placeholder="ОККАМ или 7703…" />
+                  {cpQuery.trim().length >= 2 && (
+                    <div style={{ ...META, marginTop: 8 }}>
+                      {cpFound.length ? `${cpFound.length} совпадени${cpFound.length === 1 ? 'е' : cpFound.length < 5 ? 'я' : 'й'} по названию и ИНН` : 'ничего не нашлось — возможно, юрлица у нас ещё нет'}
+                    </div>
+                  )}
+                  {cpFound.map(it => (
+                    <FoundCp key={it.id} item={it} active={cpPicked && cpPicked.id === it.id}
+                             onPick={() => setCpPicked(p2 => (p2 && p2.id === it.id ? null : it))} />
+                  ))}
+                  {!!cpPicked && (
+                    <div style={{ marginTop: 14, padding: '12px 14px', borderRadius: 12,
+                                  background: 'var(--bg-subtle)', border: '1px solid var(--border-inner)' }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                        <span style={CAPS}>Прикрепляется</span>
+                        <a href={`/directory/counterparties/${cpPicked.id}`} target="_blank" rel="noreferrer"
+                           style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none' }}>
+                          открыть карточку →
+                        </a>
+                      </div>
+                      <div style={{ fontSize: 14, fontWeight: 700, marginTop: 6 }}>{cpPicked.name}</div>
+                      <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 6, lineHeight: 1.5 }}>
+                        Реквизиты берутся из справочника и правятся в карточке контрагента — здесь они
+                        не переписываются.{(!cpPicked.has_signer || !cpPicked.has_bank) && ' Незаполненное придётся дозаполнить там же: без подписанта не выгружается приложение к договору.'}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Две колонки: слева то, чем юрлицо опознаётся в документах и в ЭДО,
                   справа — связь с ним. Порядок владельца 06.09.2026. */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
+              <div style={{ display: cpMode === 'pick' ? 'none' : 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
                 <div style={{ paddingRight: 20 }}>
                   <div style={{ ...CAPS, marginBottom: 12 }}>Основные реквизиты</div>
                   <div style={{ display: 'grid', gap: 12 }}>
@@ -525,6 +709,12 @@ export default function AddData() {
                           color: problems.length ? 'var(--warning-text)' : 'var(--income-fg)' }}>
               {problems.length ? 'Пока нельзя сохранить' : 'Можно заводить'}
             </div>
+            {/* Число, а не только список: «2 из 5» сразу говорит, далеко ли до конца. */}
+            <div style={{ ...META, marginBottom: problems.length ? 8 : 0 }}>
+              {problems.length
+                ? `${problems.length} ${problems.length === 1 ? 'обязательное поле пусто' : problems.length < 5 ? 'обязательных поля пусты' : 'обязательных полей пусты'}`
+                : `связка из ${chainSteps.filter(c => c.active).length} шагов · вид: ${kindMeta.title.toLowerCase()}`}
+            </div>
             {problems.map((p, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '4px 0', fontSize: 13 }}>
                 <i style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--danger)' }} />
@@ -541,7 +731,7 @@ export default function AddData() {
                              cursor: problems.length ? 'not-allowed' : 'pointer' }}>
               {busy ? 'Завожу…' : `Завести · ${kindMeta.title.toLowerCase()}`}
             </button>
-            <button onClick={() => { setV(EMPTY); setFile(null); setMktTouched(false); setSteps([]); setErr('') }}
+            <button onClick={() => { setV(EMPTY); setFile(null); setMktTouched(false); setSteps([]); setErr(''); setCpPicked(null); setCpQuery(''); setCpFound([]) }}
                     style={btn(false)}>Очистить форму</button>
           </div>
 

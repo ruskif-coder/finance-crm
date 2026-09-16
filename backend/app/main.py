@@ -539,6 +539,9 @@ app.include_router(cabinets.router, prefix="/api/cabinets", tags=["cabinets"])
 # Вход для СЕРВИСА кабинета: два действия под общим секретом, не под правом роли.
 # Снаружи здесь стоит не человек, а наш же процесс во внешнем контуре.
 app.include_router(cabinet_gateway.router, prefix="/api/cabinet-gw", tags=["cabinet-gw"])
+# Вебхук бота площадок — ОТДЕЛЬНЫМ префиксом: `/api/cabinet-gw/*` закрыт на Caddy, а сюда
+# стучится Телеграм из интернета. Разбор в шапке `webhook_router`.
+app.include_router(cabinet_gateway.webhook_router, prefix="/api/pub-bot", tags=["pub-bot"])
 
 @app.get("/")
 def root():

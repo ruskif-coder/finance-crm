@@ -25,7 +25,9 @@ import api, { auth, signOut, TOKEN_KEY } from '../lib/http'
 import { PreviewModal } from '../lib/preview'
 import { overlayClose } from '../lib/overlay'
 import { Header, Side, Demo, WRAP } from './Shell'
-import { C, CAP, MONO, UI, arrowBtn, btn, btnSm, card, chip, dm, inp, num, periodLabel,
+import ActiveCampaigns, { billing } from './ActiveCampaigns'
+import CampaignsScreen from './CampaignsScreen'
+import { C, CAP, KPI_SIZE, MONO, UI, arrowBtn, btn, btnSm, card, chip, dm, inp, num, periodLabel,
   rub, soft }
   from '../lib/ui'
 import { daysTo, startNote, urgency } from '../lib/urgency'
@@ -793,86 +795,458 @@ function LegalCard({ legal }) {
   )
 }
 
-function NotifySwitches({ onErr, onClose }) {
-  const [kinds, setKinds] = useState(null)
-  const [busy, setBusy] = useState(null)
+/* Тон строки ленты — он же цвет квадратного маркера. Значение приходит СО СТРОКОЙ
+   журнала: оно задано событием в момент записи, и правка словаря не перекрашивает
+   прошлое. */
+const TONE_DOT = { ok: C.income, warn: C.warning, bad: C.danger, info: C.accent }
+
+function Feed({ onErr }) {
+  const [items, setItems] = useState(null)
 
   useEffect(() => {
-    api.get('/notify-settings', auth())
-      .then(r => setKinds(r.data.kinds || [])).catch(() => setKinds([]))
-  }, [])
+    api.get('/feed', auth())
+      .then(r => setItems(r.data.items || []))
+      .catch(e => { setItems([]); onErr?.(e.response?.data?.detail || 'Лента недоступна') })
+  }, [onErr])
 
-  const toggle = async (k) => {
-    if (!k.can_mute || busy) return
-    const next = !k.muted
-    setBusy(k.key)
-    setKinds(list => list.map(x => (x.key === k.key ? { ...x, muted: next } : x)))
-    try {
-      await api.put('/notify-settings', { kind: k.key, muted: next }, auth())
-    } catch (e) {
-      // Возвращаем как было: экран не должен показывать решение, которого нет в системе.
-      setKinds(list => list.map(x => (x.key === k.key ? { ...x, muted: !next } : x)))
-      onErr?.(e.response?.data?.detail || 'Не удалось сохранить')
-    }
-    setBusy(null)
+  return (
+    <Side title="лента событий">
+      {!items && <span style={{ fontSize: 12, color: C.faint }}>загрузка…</span>}
+      {items && !items.length && (
+        /* Пустое говорится словами: пустая карточка читается как «не загрузилось». */
+        <span style={{ fontSize: 12, color: C.faint }}>Событий пока нет.</span>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column',
+        maxHeight: 290, overflowY: 'auto', paddingRight: 8 }}>
+        {(items || []).map(it => (
+          <div key={it.id} style={{ display: 'flex', gap: 9, padding: '9px 0',
+            borderTop: `1px solid ${C.row}`, alignItems: 'flex-start' }}>
+            <span style={{ width: 6, height: 6, borderRadius: 2, marginTop: 5,
+              flex: '0 0 6px', background: TONE_DOT[it.tone] || C.faint }} />
+            <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, gap: 2 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: C.text }}>{it.label}</span>
+              {it.subject && (
+                <span style={{ fontSize: 11.5, color: C.secondary, textWrap: 'pretty' }}>
+                  {it.subject}
+                </span>
+              )}
+              <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.faint }}>
+                {dm(it.at)} · {it.actor}
+              </span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </Side>
+  )
+}
+
+function TgBlock({ onErr, onChange }) {
+  const [st, setSt] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(() => api.get('/telegram', auth())
+    .then(r => { setSt(r.data); return r.data })
+    .catch(() => { setSt({ configured: false }); return null }), [])
+
+  useEffect(() => { load() }, [load])
+
+  /* Пока ждём код — переспрашиваем состояние. Человек отвечает боту В ДРУГОМ ОКНЕ, и
+     узнать об этом экран может только сам: события с той стороны к нам не приходят.
+     Опрос идёт, ТОЛЬКО пока код висит, — иначе он бы шёл всегда и впустую. */
+  const pending = st?.pending
+  useEffect(() => {
+    if (!pending) return undefined
+    const t = setInterval(() => {
+      load().then(d => { if (d?.linked) { clearInterval(t); onChange?.() } })
+    }, 4000)
+    return () => clearInterval(t)
+  }, [pending, load, onChange])
+
+  const call = async (fn) => {
+    setBusy(true)
+    try { setSt(await fn()); onChange?.() }
+    catch (e) { onErr?.(e.response?.data?.detail || 'Не получилось') }
+    setBusy(false)
   }
+  const link = () => call(() => api.post('/telegram/link', {}, auth()).then(r => r.data))
+  const unlink = () => call(() => api.delete('/telegram', auth()).then(r => r.data))
 
-  /* Модалкой, а не панелью в колонке: за шестерёнкой есть место показать ПОДСКАЗКУ к
-     каждому виду, а в узкой колонке она умещалась только в тултип — то есть была видна
-     тому, кто и так знает, куда навести. Портал в `body` обязателен: карточки колонки
-     анимируются `riseIn`, а `transform` у предка переопределяет отсчёт `position: fixed`,
-     и окно уезжает под соседей — эта ошибка здесь уже случалась. */
+  return (
+    <div style={{ border: `1px solid ${C.inner}`, borderRadius: 12, padding: '12px 13px',
+      display: 'flex', flexDirection: 'column', gap: 9 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
+        <span style={{ fontSize: 13.5, fontWeight: 700 }}>Бот в телеграме</span>
+        <span style={{ ...CAP, marginBottom: 0,
+          color: st?.linked ? C.income : C.faint }}>
+          {st?.linked ? 'подключён' : 'не подключён'}
+        </span>
+      </div>
+      <div style={{ fontSize: 12, color: C.secondary, lineHeight: 1.5 }}>
+        Событие приходит сразу — креатив на согласование, дедлайн, сверка.
+      </div>
+
+      {!st && <span style={{ fontSize: 12, color: C.faint }}>загрузка…</span>}
+
+      {/* Бот не настроен у НАС. Говорим прямо, а не «подключите»: кнопка, которая не
+          может сработать, тратит время каждый раз заново. */}
+      {st && !st.configured && (
+        <span style={{ ...chip(C.subtle, C.muted, C.border) }}>пока недоступен</span>
+      )}
+
+      {st?.configured && st.linked && (
+        <button style={btn(false)} disabled={busy} onClick={unlink}>Отключить</button>
+      )}
+
+      {st?.configured && !st.linked && !st.pending && (
+        <button style={btn(true)} disabled={busy} onClick={link}>Подключить бота</button>
+      )}
+
+      {st?.configured && !st.linked && st.pending && (
+        <>
+          <div style={{ fontSize: 11.5, color: C.secondary, lineHeight: 1.45 }}>
+            Откройте бота и нажмите «Начать». Если чат с ним уже открывали, кнопки не
+            будет — отправьте ему этот код сообщением.
+          </div>
+          <div style={{ ...inp, fontFamily: MONO, fontSize: 16, letterSpacing: 2,
+            textAlign: 'center', padding: '9px 0', color: C.text }}>{st.pending.code}</div>
+          {/* Диплинк, а не имя бота текстом: по нему Телеграм сам подставит код в
+              кнопку «Начать», и вводить его руками не придётся. */}
+          {st.pending.link && (
+            <a href={st.pending.link} target="_blank" rel="noreferrer"
+              style={{ ...btn(true), textAlign: 'center', textDecoration: 'none' }}>
+              Открыть бота
+            </a>
+          )}
+          <button style={btn(false)} disabled={busy} onClick={link}>Другой код</button>
+        </>
+      )}
+    </div>
+  )
+}
+
+/* ── Матрица «событие × способ доставки» ────────────────────────────────────
+
+   ТРИ СПОСОБА, и два из них — почта: письмом сразу или в утренней пачке. Выбор делается
+   У КАЖДОГО СОБЫТИЯ (владелец 15.09.2026): про креатив человек хочет знать немедленно, а
+   про старт кампании прочтёт утром — общего ответа тут нет.
+
+   ПАНЕЛИ СРЕДИ НИХ НЕТ. Первая редакция экрана рисовала её колонкой «всегда», но у
+   паблишера панели уведомлений не существует: лента кабинета — журнал наших с ним
+   действий, а не канал доставки, и выключателя у неё нет по той же причине, по какой
+   его нет у истории переписки.
+
+   Колонка выключенного канала гаснет: галочка в ней правдива (решение сохранится), но
+   сегодня ничего не доставляет, и показывать её наравне с рабочей значит обещать
+   доставку, которой не будет. */
+const CHANNELS = [
+  { key: 'бот', label: 'Бот', on: (d) => !!d?.bot?.linked },
+  { key: 'почта', label: 'Почта', note: 'срочное', on: (d) => !!d?.mail?.enabled },
+  { key: 'дайджест', label: 'Дайджест', on: (d) => !!d?.mail?.enabled },
+]
+
+function Cell({ on, locked, dim, onClick }) {
+  /* Галочка, а не рубильник: здесь вопрос «выбрано ли», а рубильник отвечает на вопрос
+     «включено ли» — им сделаны каналы целиком, строкой выше. */
+  return (
+    <span onClick={locked ? undefined : onClick}
+      style={{ width: 20, height: 20, borderRadius: 6, display: 'inline-flex',
+        alignItems: 'center', justifyContent: 'center', margin: '0 auto',
+        cursor: locked ? 'default' : 'pointer',
+        opacity: dim ? 0.45 : 1,
+        background: on ? (locked ? C.accentTint : C.accent) : C.card,
+        border: `1px solid ${on ? (locked ? C.accentBorder : C.accent) : C.border}`,
+        transition: 'background 120ms ease' }}>
+      {on && (
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+          stroke={locked ? C.accent : C.onFill} strokeWidth="3.4"
+          strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+      )}
+    </span>
+  )
+}
+
+function EventMatrix({ data, onSave, onReset, onClose, busy }) {
+  const kinds = data?.kinds || []
+  const chOn = Object.fromEntries(CHANNELS.map(c => [c.key, c.on(data)]))
+
   return createPortal(
     <div style={{ position: 'fixed', inset: 0, background: 'var(--overlay)', zIndex: 10000,
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
       {...overlayClose(onClose)}>
-      <div style={{ ...card, width: 'min(520px, 96vw)', maxHeight: '86vh', overflowY: 'auto',
+      <div style={{ ...card, width: 'min(620px, 96vw)', maxHeight: '88vh', overflowY: 'auto',
         padding: '20px 22px', fontFamily: UI }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
-          <span style={{ fontSize: 17, fontWeight: 700 }}>Что присылать</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 17, fontWeight: 700 }}>Какие события присылать</span>
           <span style={{ flex: 1 }} />
-          <button style={btn(false)} onClick={onClose}>Закрыть</button>
+          <button style={btnSm(false)} onClick={onClose}>✕</button>
         </div>
-        <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 16, lineHeight: 1.5 }}>
-          Набор задаём мы — вы выключаете лишнее. Выключенное не придёт ни в бот, ни на
-          почту.
+        <div style={{ ...CAP, marginTop: 4, marginBottom: 14 }}>
+          {kinds.length} {kinds.length === 1 ? 'событие' : 'события'} · бот и почта
         </div>
 
-        {!kinds && <div style={{ fontSize: 12.5, color: C.faint }}>загрузка…</div>}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-      {(kinds || []).map(k => (
-        <div key={k.key} onClick={() => toggle(k)}
-          style={{ display: 'flex', alignItems: 'flex-start', gap: 11,
-            padding: '11px 2px', borderTop: `1px solid ${C.row}`,
-            cursor: k.can_mute ? 'pointer' : 'default', opacity: busy === k.key ? .5 : 1 }}>
-          {/* Рубильник, а не галочка: галочка отвечает на вопрос «выбрано ли», а здесь
-              вопрос «включено ли» — состояние, а не выбор. */}
-          <span style={{ width: 30, height: 17, borderRadius: 999, flex: '0 0 30px',
-            marginTop: 1, position: 'relative',
-            background: k.muted ? C.subtle : (k.can_mute ? C.income : C.incomeTint),
-            border: `1px solid ${k.muted ? C.border : (k.can_mute ? C.income : C.incomeBorder)}`,
-            transition: 'background 140ms ease' }}>
-            <span style={{ position: 'absolute', top: 2, left: k.muted ? 2 : 14,
-              width: 11, height: 11, borderRadius: 999,
-              background: k.muted ? C.faint : (k.can_mute ? C.onFill : C.income),
-              transition: 'left 140ms ease' }} />
-          </span>
-          <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, gap: 3 }}>
-            <span style={{ fontSize: 13.5, fontWeight: 700,
-              color: k.muted ? C.muted : C.text }}>{k.label}</span>
-            {/* Подсказка ТЕКСТОМ, а не тултипом: она объясняет, чего лишится площадка,
-                выключив пункт, — и читать её должен тот, кто ещё не знает. */}
-            <span style={{ fontSize: 11.5, color: C.faint, lineHeight: 1.45 }}>{k.hint}</span>
-            {!k.can_mute && (
-              <span style={{ ...CAP, marginBottom: 0, color: C.income }}>всегда включено</span>
-            )}
-          </span>
+        {!kinds.length && (
+          /* Пустое говорится словами. Каталог показывает только ПОСТРОЕННЫЕ виды, и
+             пустая таблица здесь — честное «пока ничего», а не сбой загрузки. */
+          <div style={{ fontSize: 12.5, color: C.faint, padding: '18px 0' }}>
+            Пока нечего настраивать — включённых видов уведомлений нет.
+          </div>
+        )}
+
+        {!!kinds.length && (
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={{ ...CAP, marginBottom: 0, textAlign: 'left', padding: '0 0 8px' }}>
+                  Событие
+                </th>
+                {CHANNELS.map(c => (
+                  <th key={c.key} style={{ width: 84, padding: '0 0 8px' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700,
+                      color: chOn[c.key] ? C.text : C.faint }}>{c.label}</div>
+                    <div style={{ ...CAP, marginBottom: 0,
+                      color: chOn[c.key] ? C.income : C.faint }}>
+                      {/* У почты подпись говорит не про состояние канала, а про СПОСОБ:
+                          две её колонки различаются только этим словом. */}
+                      {c.note || (chOn[c.key] ? 'включён' : 'выключен')}
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {kinds.map(k => (
+                <tr key={k.key} style={{ borderTop: `1px solid ${C.row}` }}>
+                  <td style={{ padding: '10px 10px 10px 0' }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{k.label}</div>
+                    <div style={{ ...CAP, marginBottom: 0,
+                      color: k.can_mute ? C.faint : C.warningFg }}>
+                      {k.can_mute ? 'по выбору' : 'обязательное'}
+                    </div>
+                    {/* Срочность объясняется СЛОВАМИ рядом с событием, а не молчанием:
+                        иначе выбранный дайджест выглядел бы неработающим. */}
+                    {k.urgent && (
+                      <div style={{ ...CAP, marginBottom: 0, color: C.warningFg }}>
+                        письмом сразу, мимо дайджеста
+                      </div>
+                    )}
+                  </td>
+                  {CHANNELS.map(c => (
+                    <td key={c.key} style={{ textAlign: 'center', padding: '10px 0' }}>
+                      {/* Срочный вид в пачку не уводится — «наше сразу не понижается».
+                          Клетка дайджеста у него не нажимается, а причина написана
+                          словами в строке слева, а не оставлена в виде молчания. */}
+                      <Cell on={!!k[c.key]}
+                        locked={busy || !k.can_mute || (c.key === 'дайджест' && k.urgent)}
+                        dim={!chOn[c.key]}
+                        onClick={() => onSave(k.key, c.key, !k[c.key])} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        <div style={{ fontSize: 11.5, color: C.faint, lineHeight: 1.5, margin: '14px 0 16px' }}>
+          Почта приходит либо сразу, либо дайджестом — одно из двух. Обязательные
+          события снять нельзя. Колонка выключенного канала гаснет: включить его можно в
+          блоке уведомлений.
         </div>
-      ))}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button style={btn(true)} onClick={onClose}>Готово</button>
+          <button style={btn(false)} disabled={busy} onClick={onReset}>
+            Вернуть по умолчанию
+          </button>
         </div>
       </div>
     </div>,
     document.body)
+}
+
+function MailCard({ data, onMail, busy }) {
+  const m = data?.mail || {}
+
+  return (
+    <div style={{ border: `1px solid ${C.inner}`, borderRadius: 12, padding: '12px 13px',
+      display: 'flex', flexDirection: 'column', gap: 9 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
+        <span style={{ fontSize: 13.5, fontWeight: 700 }}>Почта</span>
+        <span style={{ ...CAP, marginBottom: 0, color: m.enabled ? C.income : C.faint }}>
+          {m.enabled ? 'включено' : 'выключено'}
+        </span>
+        <span style={{ flex: 1 }} />
+        {/* Рубильник канала целиком. Недоступен, когда управлять нечем: у учётки нет
+            связанного контакта или в карточке нет адреса — тогда и включать некуда. */}
+        <span onClick={() => (m.address && !busy) ? onMail({ enabled: !m.enabled }) : null}
+          title={m.why || ''}
+          style={{ width: 34, height: 19, borderRadius: 999, position: 'relative',
+            flex: '0 0 34px', cursor: m.address ? 'pointer' : 'not-allowed',
+            opacity: m.address ? 1 : 0.5,
+            background: m.enabled ? C.income : C.subtle,
+            border: `1px solid ${m.enabled ? C.income : C.border}`,
+            transition: 'background 140ms ease' }}>
+          <span style={{ position: 'absolute', top: 2, left: m.enabled ? 17 : 2,
+            width: 13, height: 13, borderRadius: 999,
+            background: m.enabled ? C.onFill : C.faint, transition: 'left 140ms ease' }} />
+        </span>
+      </div>
+
+      <div style={{ fontSize: 12, color: C.secondary, lineHeight: 1.5 }}>
+        Адрес берётся из вашей карточки контакта. Что приходит сразу, а что
+        дайджестом — в списке событий.
+      </div>
+
+      {/* Адрес ПОКАЗЫВАЕТСЯ, но не правится: он же адрес, по которому мы пишем площадке
+          по всем делам, и менять его из кабинета — отдельное решение с проверкой. */}
+      <div style={{ ...inp, fontSize: 12, color: m.address ? C.text : C.faint,
+        background: C.subtle, cursor: 'default' }}>
+        {m.address || m.why || 'адреса нет'}
+      </div>
+
+    </div>
+  )
+}
+
+/** Расчёт биллинга — ТОТ ЖЕ, что внутри компонента хендоффа.
+
+    Импортируется из него, а не повторяется здесь: «факт ÷ 1000 × CPM» в двух местах
+    разойдётся на первом же округлении, и шапка начнёт спорить с итогом таблицы под ней.
+    Это прямое требование ТЗ: «литеральных значений в KPI быть не должно — расхождение с
+    итогом таблицы ловится сразу». */
+function campaignKpi(rows) {
+  const withFact = rows.filter(c => c.fact)
+  return {
+    // Расчётный биллинг — по строкам С ФАКТОМ. Размещение без открутки денег не
+    // приносит, и включать его нулём значило бы делать вид, что оно посчитано.
+    billing: withFact.reduce((a, c) => a + billing(c.fact, c.cpm), 0),
+    // Завершённые: флайт закончился, дальше сверка за период. Поле названо `awaiting`
+    // исторически — переименовывать не стал, чтобы не плодить правку ради слова; на
+    // экране подпись честная.
+    awaiting: rows.filter(c => c.status === 'завершён')
+      .reduce((a, c) => a + (c.fact ? billing(c.fact, c.cpm) : 0), 0),
+    live: rows.filter(c => c.status === 'в размещении').length,
+    soon: rows.filter(c => c.status === 'ждёт старта').length,
+  }
+}
+
+function NotifyBlock({ onErr }) {
+  const [data, setData] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [open, setOpen] = useState(false)
+
+  const load = useCallback(() => api.get('/notify-settings', auth())
+    .then(r => { setData(r.data); return r.data })
+    .catch(e => { onErr?.(e.response?.data?.detail || 'Настройки недоступны'); return null }),
+  [onErr])
+
+  useEffect(() => { load() }, [load])
+
+  const call = async (fn) => {
+    setBusy(true)
+    try { setData((await fn()).data) }
+    catch (e) { onErr?.(e.response?.data?.detail || 'Не удалось сохранить') }
+    setBusy(false)
+  }
+  const saveCell = (kind, channel, enabled) =>
+    call(() => api.put('/notify-settings', { kind, channel, enabled }, auth()))
+  const reset = () => call(() => api.delete('/notify-settings', auth()))
+  const saveMail = (patch) => call(() => api.put('/mail-settings', patch, auth()))
+
+  const m = data?.mail || {}
+  const on = (m.enabled ? 1 : 0) + (data?.bot?.linked ? 1 : 0)
+  /* Час пачки площадка НЕ ВЫБИРАЕТ (владелец 15.09.2026) — его задаём мы. Но знать,
+     когда она придёт, полезно, поэтому час остаётся ФАКТОМ в шапке и исчез только как
+     настройка: бездействующий выбор читается как поломка, а молчание про время — как
+     «неизвестно когда». */
+  const anyDigest = (data?.kinds || []).some(k => k['дайджест'])
+
+  /* СЖАТЫЙ ВИД, КОГДА УЖЕ НАСТРОЕНО (владелец 15.09.2026).
+
+     Пока каналы не подключены, блок — это дело: две карточки, кнопка, объяснения. Как
+     только человек настроил доставку, всё это превращается в мебель на треть колонки, а
+     нужен ему один ответ: «мне придёт и куда». Поэтому настроенный блок сворачивается в
+     строку состояния, и разворачивается по нажатию.
+
+     «Настроено» — это ХОТЯ БЫ ОДИН внешний канал: почта включена или бот привязан. Ноль
+     каналов сворачивать нельзя — тогда блок молчал бы ровно о том, что человек ещё не
+     сделал. */
+  const set0 = !!m.enabled || !!data?.bot?.linked
+  const [full, setFull] = useState(false)
+  const short = set0 && !full
+
+  /* Состояние почты ОДНОЙ ПОДПИСЬЮ. «Включено» само по себе не отвечает на вопрос,
+     который человек задаёт этому блоку, — «когда мне придёт»; поэтому при выбранном
+     дайджесте состояние называет час, а иначе говорит «сразу». */
+  const digestNote = anyDigest
+    ? `включено · дайджест в ${String(m.digest_hour || 9).padStart(2, '0')}:00`
+    : 'включено · сразу'
+
+  if (short) {
+    return (
+      <Side title="уведомления" accent>
+        {/* Строка состояния — ТЕМ ЖЕ приёмом, что в развёрнутой карточке: имя канала
+            жирным, состояние капсом цветом смысла (владелец 15.09.2026). Человек видит
+            одно и то же написание в свёрнутом и развёрнутом виде, и ему не приходится
+            заново разбираться, что перед ним.
+
+            Цветом здесь говорит СОСТОЯНИЕ, а не текст: включено — зелёным, выключено —
+            приглушённым. Для этого и заведено семейство «-fg», иначе на плашке получится
+            2.81:1 контраста, как уже было на главной кнопке. */}
+        {[['Почта', m.enabled, m.enabled ? digestNote : 'выключено'],
+          ['Бот', !!data?.bot?.linked, data?.bot?.linked ? 'подключён' : 'не подключён']]
+          .map(([label, on, note]) => (
+            <div key={label} style={{ display: 'flex', alignItems: 'baseline', gap: 8,
+              minWidth: 0 }}>
+              <span style={{ fontSize: 13.5, fontWeight: 700, flex: '0 0 auto' }}>
+                {label}
+              </span>
+              <span style={{ ...CAP, marginBottom: 0, minWidth: 0, overflow: 'hidden',
+                textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                color: on ? C.income : C.faint }}>
+                {note}
+              </span>
+            </div>
+          ))}
+        {/* «Настроить», а не «развернуть»: человек идёт сюда менять доставку, а не
+            любоваться карточками. */}
+        <button style={{ ...btnSm(false), width: '100%' }}
+          onClick={() => setFull(true)}>Настроить</button>
+      </Side>
+    )
+  }
+
+  return (
+    <Side title="уведомления" accent
+      footer={(
+        <button onClick={() => setOpen(true)} style={{ ...btn(false), width: '100%' }}>
+          Какие события присылать
+        </button>
+      )}>
+      {/* Шапка отвечает на вопрос «а что у меня сейчас» одной строкой — иначе за ответом
+          надо открывать модалку, то есть шапка бесполезна. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ ...CAP, marginBottom: 0 }}>
+          {on} из 2 каналов
+          {m.enabled && anyDigest
+            ? ` · дайджест в ${String(m.digest_hour || 9).padStart(2, '0')}:00` : ''}
+        </span>
+        <span style={{ flex: 1 }} />
+        {set0 && (
+          <button style={btnSm(false)} onClick={() => setFull(false)}>Свернуть</button>
+        )}
+      </div>
+
+      <TgBlock onErr={onErr} onChange={load} />
+      <MailCard data={data} onMail={saveMail} busy={busy} />
+
+      {open && (
+        <EventMatrix data={data} busy={busy} onSave={saveCell} onReset={reset}
+          onClose={() => setOpen(false)} />
+      )}
+    </Side>
+  )
 }
 
 /* ─────────────────────────── страница ─────────────────────────── */
@@ -881,11 +1255,16 @@ function NotifySwitches({ onErr, onClose }) {
    несделанное красное. Одинаковый цвет у всех четырёх превращает сводку в таблицу. */
 const KPI_TONE = ['var(--text-primary)', 'var(--warning)', 'var(--income)', 'var(--danger)']
 
+
+
 /* Только «Дашборд» (владелец, 30.08.2026): «Креативы» и «Кампании» пока не делаем.
    Убраны из МЕНЮ, а не спрятаны условием — пункт, который никуда не ведёт, хуже
    отсутствующего: по нему кликают и решают, что сломалось. Вернуть — дописать строку. */
 const NAV = [
   { key: 'queue', label: 'Дашборд' },
+  // Второй раздел (владелец 15.09.2026). На дашборде — только то, что в работе; здесь
+  // вся история по месяцам, включая сверенные периоды.
+  { key: 'campaigns', label: 'Кампании' },
 ]
 
 /** Заголовок вкладки. Формат собран В ОДНОМ месте: разделов три, и написанный руками
@@ -903,17 +1282,35 @@ export default function Dashboard({ name, onSignOut }) {
   const [reasons, setReasons] = useState(null)
   const [me, setMe] = useState(null)
   const [err, setErr] = useState('')
+  /* Кампании грузятся ЗДЕСЬ, а не внутри блока: из этого же массива считаются плитки
+     шапки. Держи их два компонента по отдельности — шапка и таблица однажды показали бы
+     разные деньги по одним размещениям, и спорить с экраном пришлось бы человеку. */
+  const [camps, setCamps] = useState(null)
   const [active, setActive] = useState('queue')
   const [openDone, setOpenDone] = useState(false)
   // Пусто = все площадки. Выбор живёт на СТРАНИЦЕ, а не в каждом списке: от него
   // пересчитывается и очередь, и обработанное, и счётчик в шапке.
   const [pubFilter, setPubFilter] = useState('')
   const [legalsAll, setLegalsAll] = useState(false)
-  const [notifyOpen, setNotifyOpen] = useState(false)
   const [bulk, setBulk] = useState(false)
   /* Сегодня берётся один раз после монтирования: `new Date()` при рендере даёт на
      сервере и клиенте разные значения на границе суток и ошибку гидрации. */
   const [today, setToday] = useState(null)
+
+  /* Кампании грузятся ОТДЕЛЬНЫМ вызовом и один раз: от периода и выбранной площадки
+     они не зависят, а от общего `load` их отделяет то, что блок должен появиться даже
+     если очередь заданий пуста.
+
+     Первая редакция этой загрузки НЕ ПОПАЛА В ФАЙЛ: замена в скрипте правки была без
+     проверки совпадения и промолчала. На экране это выглядело так, будто блок «пропал»,
+     хотя ручка отдавала пятнадцать строк — `camps` просто навсегда оставался `null`.
+     Отсюда правило, которое я нарушил: у каждой замены должна быть проверка. */
+  const loadCamps = useCallback(() => {
+    api.get('/campaigns', auth())
+      .then(r => setCamps(r.data.campaigns || []))
+      .catch(() => setCamps([]))     // блок и плитки просто не появятся
+  }, [])
+  useEffect(() => { loadCamps() }, [loadCamps])
 
   const load = useCallback(async () => {
     setErr('')
@@ -1052,16 +1449,33 @@ export default function Dashboard({ name, onSignOut }) {
   /* Значения по формулам эталона (README, 1.8). «Ожидает оплаты» считается по ВСЕМ
      периодам, а не по выбранному: иначе кабинет заявляет «оплачено 0 ₽» при подписанных
      актах прошлого месяца. Это подписано в хинте — иначе цифра выглядит ошибкой. */
-  // Три первые плитки считаются из ТЕХ ЖЕ выдуманных строк, что и таблица кампаний, —
-  // поэтому уходят вместе с ней. Оставить их значило бы оставить на экране те же
-  // придуманные деньги, только уже без пометки «демо» рядом.
+  // ТРИ ДЕНЕЖНЫЕ ПЛИТКИ ВЕРНУЛИСЬ 15.09.2026 вместе с настоящими данными. Они уходили
+  // не потому, что не нужны, а потому что считались из выдуманных строк `lib/demo.js`:
+  // придуманные деньги на экране — хуже, чем их отсутствие. Теперь источник тот же
+  // массив, что у таблицы ниже, и разойтись им нечем.
+  const k = campaignKpi(camps || [])
   const KPI = [
-    ...(SHOW_MONEY ? [
-      ['начислено за период', rub(accrued), '', '', null,
-       `до НДС · ${services} ${services === 1 ? 'услуга' : 'услуги'} в срезе`],
-      ['ожидает оплаты', rub(awaiting), '', awaiting ? '1 счёт' : '',
-       [C.warningTint, C.warningFg, C.warningBorder], 'по всем периодам'],
-      ['активных кампаний', String(activeCount), 'РК', '', null, 'все запущены'],
+    ...((camps && camps.length) ? [
+      ['расчётный биллинг', rub(k.billing), '', '', null,
+       'до НДС · по размещениям с фактом показов — суммы из таблицы ниже'],
+      // НЕ «ожидает оплаты» (владелец 15.09.2026). За такой подписью стояло бы обещание,
+      // которого система не держит: операций в контуре площадок нет, счетов и актов в
+      // кабинете нет — их блок убрали 28.08 ровно по этой причине. Площадка прочитала бы
+      // «мне поставлено в очередь на выплату», и спорить пришлось бы живому человеку.
+      //
+      // Число честно означает одно: сколько насчитано по размещениям, чей флайт
+      // закончился. Дальше по нашему же порядку — сверка за период, и только потом
+      // деньги. Так и подписано.
+      ['закрыто за период', rub(k.awaiting), '', '',
+       [C.warningTint, C.warningFg, C.warningBorder],
+       'флайт завершён · сумма уточняется на сверке'],
+      // «Ждёт старта» — ПОДСКАЗКА, а не чип (так и в ТЗ). Первая редакция дала сюда
+      // текст чипа без цвета, и `chip(...null)` уронил весь кабинет: страница белая,
+      // в консоли «s is not iterable». Цена промаха в необязательном поле не должна
+      // быть равна цене падения экрана — об этом ниже, в самом рендере.
+      ['в размещении', String(k.live), 'РК', '', null,
+       k.soon ? `идут сейчас · ${k.soon} ждёт старта`
+              : 'идут сейчас; после сверки за период уходят в архив'],
     ] : []),
     // Считается по ВЫБРАННОЙ площадке: иначе выбор меняет список, а шапка продолжает
     // говорить про всё сразу — и два числа на экране противоречат друг другу.
@@ -1077,7 +1491,7 @@ export default function Dashboard({ name, onSignOut }) {
           {pageTitle((NAV.find(n => n.key === active) || {}).label || 'Дашборд')}
         </title>
       </Head>
-      <Header profile={profile} name={name}
+      <Header profile={profile} name={name} account={me}
         nav={NAV.map(n => (n.key === 'queue'
           ? { ...n, badge: shownTasks.length } : n))}
         active={active} onNav={setActive} count={(dash?.publishers || []).length}
@@ -1093,10 +1507,36 @@ export default function Dashboard({ name, onSignOut }) {
               borderColor: C.dangerBorder, background: C.dangerBg }}>{err}</div>
           )}
 
+          {/* РАЗДЕЛ «КАМПАНИИ» занимает всю левую колонку и заканчивает рендер.
+
+              Правая колонка (уведомления, команда, договор, лента) при этом остаётся:
+              она про кабинет целиком, а не про дашборд, и прятать её при переходе
+              означало бы, что связь с нами пропадает вместе со сменой вкладки.
+
+              Проп называется `campaigns` — так в компоненте хендоффа. Пока я звал его
+              `rows`, экран молча рисовал СВОИ демо-данные из умолчания: июнь и июль,
+              которых у площадки нет. Выглядело правдоподобно, и поймал я это только
+              потому, что сверил месяцы с настоящими. */}
+          {active === 'campaigns' ? (
+            <CampaignsScreen campaigns={camps || []} />
+          ) : (
+          <>
+
           {/* Мой период */}
-          <div className="rise" style={{ ...card, padding: '18px 22px' }}>
+          {/* РАЗМЕРЫ ГЛАВНОГО ВИДЖЕТА СВЕРЕНЫ С ЭКРАНОМ «КАМПАНИИ» (владелец 15.09.2026).
+
+              Эталон — карточка из хендоффа: она нарисована дизайнером, а здешние плитки я
+              восстанавливал руками и взял размеры на глаз. Плавало всё сразу — отступы
+              карточки, кегль заголовка, кегль числа и подписи, — и при переходе между
+              разделами виджет «прыгал».
+
+              Числа держатся в общем ките (`lib/ui.js::KPI_SIZE`), а не вписаны по месту:
+              вторая копия размеров разъедется на первой же правке — ровно так это и
+              случилось. */}
+          <div className="rise" style={{ ...card, padding: '18px 24px 16px' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
-              <span style={{ fontSize: 26, fontWeight: 800 }}>Мой период</span>
+              <span style={{ fontSize: 24, fontWeight: 800,
+                letterSpacing: '-0.025em' }}>Мой период</span>
               <span style={{ fontFamily: MONO, fontSize: 11.5, color: C.faint,
                 letterSpacing: '.06em', textTransform: 'uppercase' }}>
                 {(profile?.domain || '—')} · {period}
@@ -1146,22 +1586,32 @@ export default function Dashboard({ name, onSignOut }) {
               {KPI.map(([label, value, unit, chipText, chipTone, hint], i) => (
                 <div key={label} style={{ padding: i ? '0 0 0 26px' : 0,
                   borderLeft: i ? `1px solid ${C.row}` : 'none', marginLeft: i ? 26 : 0 }}>
-                  <div style={{ ...CAP, marginBottom: 0 }}>{label}</div>
+                  <div style={{ ...CAP, marginBottom: 0,
+                    fontSize: KPI_SIZE.label, color: C.muted }}>{label}</div>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 7,
-                    marginTop: 7 }}>
-                    <span style={{ fontFamily: MONO, fontSize: 30, fontWeight: 700,
-                      letterSpacing: '-0.02em', color: KPI_TONE[i] }}>{value}</span>
+                    marginTop: 8 }}>
+                    <span style={{ fontFamily: MONO, fontSize: KPI_SIZE.value,
+                      fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1,
+                      whiteSpace: 'nowrap', color: KPI_TONE[i] }}>{value}</span>
                     {!!unit && (
-                      <span style={{ fontSize: 13, color: C.muted }}>{unit}</span>
+                      <span style={{ fontSize: KPI_SIZE.unit, fontWeight: 600,
+                        color: C.muted }}>{unit}</span>
                     )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6,
                     flexWrap: 'wrap' }}>
+                    {/* Цвет чипа берётся С ЗАПАСНЫМ ЗНАЧЕНИЕМ. Раньше здесь стоял голый
+                        `chip(...chipTone)`, и плитка с текстом, но без цвета обрушивала
+                        ВЕСЬ кабинет: `...null` бросает TypeError прямо в рендере, React
+                        снимает дерево, человек видит белый экран. Несоразмерно: пропущен
+                        необязательный цвет, а цена — недоступный кабинет.
+                        Нейтральная плашка вместо падения. */}
                     {!!chipText && (
-                      <span style={{ ...chip(...chipTone), fontSize: 10.5,
+                      <span style={{ ...chip(...(chipTone
+                        || [C.subtle, C.muted, C.border])), fontSize: 10.5,
                         padding: '2px 8px' }}>{chipText}</span>
                     )}
-                    <span style={{ fontSize: 11.5, color: C.faint }}>{hint}</span>
+                    <span style={{ fontSize: KPI_SIZE.hint, color: C.faint }}>{hint}</span>
                   </div>
                 </div>
               ))}
@@ -1262,9 +1712,20 @@ export default function Dashboard({ name, onSignOut }) {
             )}
           </div>
 
-          {SHOW_MONEY && (
-            <Campaigns period={period} sites={dash?.publishers || []}
-              publisher={pubOptions.find(o => o.id === pubFilter)?.name || ''} />
+          {/* Актуальные кампании — компонент из хендоффа, ВСТАВЛЕН ДОСЛОВНО
+              (`components/ActiveCampaigns.jsx`), данные подключены сбоку. Прежний
+              `Campaigns` собирался из `lib/demo.js` и был выключен флагом SHOW_MONEY:
+              выключенная выдумка вместо блока. Теперь строки приходят из витрины
+              `pub.campaign_v1` — настоящие размещения этой площадки. */}
+          {/* На дашборде — только то, что ЕЩЁ В РАБОТЕ: размещение висит здесь до сверки
+              за период, после неё уходит в раздел «Кампании». Отбор делает экран, а
+              признак считает витрина — определение одно на оба раздела. */}
+          {(() => {
+            const live = (camps || []).filter(c => !c.reconciled)
+            return !!live.length && <ActiveCampaigns campaigns={live} />
+          })()}
+
+          </>
           )}
         </div>
 
@@ -1272,33 +1733,15 @@ export default function Dashboard({ name, onSignOut }) {
         <div style={{ width: 280, flex: '0 0 280px', display: 'flex',
           flexDirection: 'column', gap: 14 }}>
 
-          <Side title="бот в телеграме" accent>
-            <div style={{ fontSize: 12.5, color: C.secondary, lineHeight: 1.5 }}>
-              Уведомления о новых креативах, дедлайнах и сверке.
-            </div>
-            <span style={{ ...chip(C.subtle, C.muted, C.border) }}>не подключён</span>
-            {/* Шестерёнка стоит РЯДОМ С КНОПКОЙ, а не в заголовке блока: настройка
-                относится к тому, что бот присылает, и читается вместе с ним одной
-                строкой. Кнопка подключения пока выключена — бота нет, — а настройка
-                работает уже сейчас: набор уведомлений существует независимо от канала. */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <button style={{ ...btn(false), flex: 1 }} disabled
-                title="Отдельный бот кабинета ещё не поднят">Подключить бота</button>
-              <button title="Что присылать" onClick={() => setNotifyOpen(true)}
-                style={{ width: 34, height: 34, borderRadius: 9, padding: 0, flex: '0 0 34px',
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', background: C.card,
-                  border: `1px solid ${C.border}`, color: C.secondary }}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                </svg>
-              </button>
-            </div>
-            <Demo what="Бота площадки в системе пока нет — это отдельный бот, не наш внутренний" />
-          </Side>
+          {/* ПОРЯДОК КОЛОНКИ ЗАДАН ВЛАДЕЛЬЦЕМ 15.09.2026: уведомления · команда ·
+              договор · лента. Это не вкусовщина — порядок читается как убывание
+              срочности: сначала то, что человек настраивает под себя, потом к кому
+              идти с вопросом, потом на каком основании работаем, и последней история.
 
+              МЕДИАКИТ УБРАН (тогда же). Блок остаётся в коде компонентом `MediaKit` и
+              вернётся, когда понадобится: удалять его насовсем значило бы выбросить
+              единственный путь, которым площадка что-то даёт нам сама. */}
+          <NotifyBlock onErr={setErr} />
 
           <Side title="ваша команда">
             {(dash?.team || []).map((m, i) => (
@@ -1395,21 +1838,23 @@ export default function Dashboard({ name, onSignOut }) {
             )}
           </Side>
 
-          <Side title="медиакит">
-            {/* Документов здесь больше нет (владелец 28.08.2026): актов и УПД в системе
-                не существует, а блок, показывающий несуществующее, площадка читает как
-                факт. Остался медиакит — единственное, что площадка действительно даёт
-                нам сама. */}
-            <MediaKit profile={profile} onDone={load} onErr={setErr} />
-          </Side>
+          <Feed onErr={setErr} />
         </div>
       </div>
 
-      {/* Модалка рисуется порталом в `body` из самого компонента, поэтому место вызова
-          здесь не влияет на её положение — но держим её рядом с остальными окнами. */}
-      {notifyOpen && (
-        <NotifySwitches onErr={setErr} onClose={() => setNotifyOpen(false)} />
-      )}
+      {/* Версия кабинета — внизу слева, отдельным контуром от финмодуля.
+
+          Показывается ВСЕМ, а не только админу, как в финмодуле: здесь по ту сторону
+          экрана внешний человек, и на вопрос «у меня всё ещё старая версия?» отвечать
+          должен сам экран, а не переписка. Значение инлайнится при СБОРКЕ, поэтому
+          старый номер в подвале означает «фронт не пересобрали», а не «правка не
+          доехала», — сегодня это ровно та ошибка, которая стоила часа. */}
+      <div style={{ ...WRAP, paddingTop: 18, paddingBottom: 22 }}>
+        <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.04em',
+          color: C.faint }}>
+          кабинет паблишера · v{process.env.NEXT_PUBLIC_CABINET_VERSION}
+        </span>
+      </div>
     </>
   )
 }

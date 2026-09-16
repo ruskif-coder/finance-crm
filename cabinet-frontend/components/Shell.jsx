@@ -46,7 +46,7 @@ export function ThemeToggle() {
   )
 }
 
-export function Header({ profile, name, nav, active, onNav, onExit, count = 1 }) {
+export function Header({ profile, name, account, nav, active, onNav, onExit, count = 1 }) {
   return (
     /* Плавающая карточка, а не полоса во всю ширину: кабинет — гостевой экран, и
        шапка на нём читается как панель приложения, а не как рамка сайта. Не липкая —
@@ -111,6 +111,27 @@ export function Header({ profile, name, nav, active, onNav, onExit, count = 1 })
               появится вместе с выбором; пока показывает, что список не один. */}
           {count > 1 && (
             <span style={{ color: C.faint, fontSize: 10 }}>▾</span>
+          )}
+
+          {/* КТО ВОШЁЛ — после площадки, через разделитель (владелец 15.09.2026).
+              До этого шапка называла только сайт, и на общей учётке площадки нельзя было
+              понять, под кем ты сидишь: «выйти» есть, а из-под кого — неизвестно. Почта
+              здесь не украшение, а различитель: имена у коллег совпадают чаще, чем
+              адреса, и по ней же человек понимает, куда ему приходят письма. */}
+          {!!account?.name && (
+            <>
+              <span style={{ color: C.border, fontSize: 15, padding: '0 2px' }}>|</span>
+              <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25,
+                minWidth: 0 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, overflow: 'hidden',
+                  textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{account.name}</span>
+                <span style={{ ...CAP, marginBottom: 0, textTransform: 'none',
+                  fontSize: 9.5, overflow: 'hidden', textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap' }} title={account.email || ''}>
+                  {account.email}
+                </span>
+              </span>
+            </>
           )}
         </span>
 

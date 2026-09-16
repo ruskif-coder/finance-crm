@@ -45,6 +45,10 @@ BODY_MARKS = ("get_permissions_for_user", "_has_perm", "_guard_owned",
 OPEN_BY_DESIGN = {
     ("POST", "/api/auth/login"),                                    # вход
     ("POST", "/api/notifications/settings/telegram/webhook/{secret}"),  # секрет в адресе
+    # Вебхук бота КАБИНЕТА. Открыт по той же причине и закрыт тем же способом: стучится
+    # Телеграм, у него нет ни нашей сессии, ни сервисного токена. Секрет свой, отдельный
+    # от внутреннего — общий означал бы, что апдейт одного бота принимается адресом другого.
+    ("POST", "/api/pub-bot/webhook/{secret}"),
     ("GET", "/"),                                                   # корень, отдаёт статус
 }
 

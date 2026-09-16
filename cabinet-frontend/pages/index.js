@@ -44,7 +44,9 @@ function Login({ onDone }) {
         <img className="logo-dark" src="/assets/logo-mediaplan-dark.svg" alt="SIMB-AD" height="26"
           style={{ alignSelf: 'flex-start' }} />
         <div>
-          <div style={{ fontSize: 20, fontWeight: 800 }}>Кабинет площадки</div>
+          {/* «Паблишера», а не «площадки» (владелец 15.09.2026): у одной учётки бывает
+              несколько сайтов, и «кабинет площадки» обещает вход на один. */}
+          <div style={{ fontSize: 20, fontWeight: 800 }}>Кабинет паблишера</div>
           <div style={{ fontSize: 12.5, color: C.muted, marginTop: 4 }}>
             {/* «и кампании» убрано 31.08.2026 вместе с блоком денег: подпись на входной
                 двери обещала раздел, которого за ней больше нет. Вернуть — вместе с

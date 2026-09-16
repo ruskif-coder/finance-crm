@@ -201,6 +201,12 @@ class ContactIn(BaseModel):
     phone: Optional[str] = None
     role: Optional[str] = None
     is_primary: Optional[bool] = False
+    # ПОЧТА НОВОМУ КОНТАКТУ ВКЛЮЧЕНА ПО УМОЛЧАНИЮ (владелец 15.09.2026): человека заводят,
+    # чтобы с ним переписываться, и «завели, но писем не шлём» — не то состояние, которое
+    # кто-нибудь выбирает намеренно. Выключить его можно сразу же, в той же форме.
+    #
+    # `None` здесь означает «поле не прислали», а не «выключено»: отличать их обязательно,
+    # иначе правка телефона старого контакта молча включала бы ему рассылку.
     notify: Optional[bool] = None       # получает уведомления кабинета
     note: Optional[str] = None
 
@@ -901,7 +907,9 @@ def add_contact(publisher_id: int, data: ContactIn, db: Session = Depends(get_db
     c = SalesPublisherContact(publisher_id=publisher_id, name=data.name, email=data.email,
                               telegram=data.telegram, max_url=data.max_url, phone=data.phone,
                               role=data.role, is_primary=bool(data.is_primary),
-                              notify=bool(data.notify), note=data.note)
+                              # Не прислали — включаем: см. комментарий у поля.
+                              notify=(True if data.notify is None else bool(data.notify)),
+                              note=data.note)
     db.add(c)
     db.commit()
     db.refresh(c)

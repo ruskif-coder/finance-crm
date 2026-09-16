@@ -83,10 +83,13 @@ def test_cabinet_sees_only_what_can_arrive():
     снимает галочку, ничего не меняется, и доверие к экрану кончается на первом же
     «я же выключил, а оно пришло» — или наоборот.
     """
-    src = io.open(Path(__file__).resolve().parents[1] / "app" / "routers" /
-                  "cabinet_gateway.py", encoding="utf-8").read()
-    i = src.index("def cabinet_notify_kinds")
-    body = src[i:src.index("class CabinetMuteIn", i)]
+    # Тело берётся `inspect`, а не нарезкой файла по имени соседнего класса: нарезка
+    # сломалась 15.09.2026 от переименования соседа (`CabinetMuteIn` → `CabinetCellIn`)
+    # — то есть прибор падал не там, где поломка, и это худший вид ложной тревоги.
+    import inspect
+
+    from app.routers import cabinet_gateway
+    body = inspect.getsource(cabinet_gateway.cabinet_notify_kinds)
     assert "k.built" in body, "шлюз отдаёт площадке виды без отправителя"
 
 
