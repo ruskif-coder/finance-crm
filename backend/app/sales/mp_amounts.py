@@ -27,6 +27,7 @@ from typing import Dict, Iterable, Optional, Tuple
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.sales import mp_row
 from app.sales.models import SalesMediaPlan, SalesMediaPlanRow
 
 
@@ -70,7 +71,9 @@ def mp_amounts_by_deal(db: Session, deal_ids: Iterable[int]
         a = acc.setdefault(p.deal_id, [0.0, 0.0])
         a[0] += float(p.amount_net or 0)
         a[1] += float(p.amount_gross or 0)
-    return {d: (v[0], v[1]) for d, v in acc.items()}
+    # Копейки складываются в двоичный хвост: 733 313,70 + 0,30 даёт 733 314,0000000001,
+    # и сумма сделки в реестре отличалась бы от суммы в медиаплане последним знаком.
+    return {d: (mp_row.rub(v[0]), mp_row.rub(v[1])) for d, v in acc.items()}
 
 
 def eff_net(deal, mp: Dict[int, Tuple[float, float]]) -> float:

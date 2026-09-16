@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { num as mpNum, rowImp, rowNet } from '@/lib/mpRow'
+import { num as mpNum, rowClicks, rowImp, rowNet } from '@/lib/mpRow'
 import Head from 'next/head'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
@@ -36,7 +36,8 @@ const DealCardMobile = dynamic(() => import('@/components/mobile/DealCardMobile'
 // бар стадий — каталог стадий + движение через MoveDealDialog (как в реестре).
 // Заглушка осталась одна: оплачено/остаток/срок оплаты — привязки платежей к сделке ещё нет.
 
-const rub = (v) => (v == null ? '—' : v.toLocaleString('ru-RU') + ' ₽')
+// Деньги — две цифры после запятой: сумма строки МП считается до копеек (lib/mpRow).
+const rub = (v) => (v == null ? '—' : v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽')
 
 /** Чип саморекламы в шапке. Объявлен на модульном уровне: компонент, созданный внутри
  *  рендера, пересоздаётся на каждом кадре и теряет фокус.
@@ -833,7 +834,9 @@ export default function DealCard() {
   // не выдумываем: прочерк и подсказка, где её задать. См. _own_company_out.
   const vatPct = (deal && deal.own_company && deal.own_company.vat_rate_income) || null
   const VAT = vatPct != null ? vatPct / 100 : null
-  const withVat = (x) => (x == null || VAT == null ? null : Math.round(x * (1 + VAT)))
+  // До копеек: сумма строки считается до копеек (lib/mpRow), и округление здесь
+  // разводило бы карточку с медиапланом и с подписанным документом.
+  const withVat = (x) => (x == null || VAT == null ? null : Math.round(x * (1 + VAT) * 100) / 100)
   const vatHint = VAT != null ? '' :
     `Ставка НДС не задана в карточке «${(deal && deal.own_company && deal.own_company.name) || 'нашего юрлица'}» — Справочники → Контрагенты, поле «НДС приход». Пока не задана, суммы с НДС не считаются.`
 
@@ -848,7 +851,7 @@ export default function DealCard() {
     const imp = rowImp(r.model, r.volume, fc)
     const freq = nn(fc.freq)
     const reach = freq > 0 ? imp / freq : 0
-    const clicks = imp * (nn(fc.ctr) / 100)
+    const clicks = rowClicks(r.model, r.volume, fc)
     return {
       position: r.position, format: r.format, model: r.model,
       volume: r.volume || 0, imp,
@@ -860,7 +863,7 @@ export default function DealCard() {
       // блок «Прогнозные показатели»): расхождение в них означало бы, что карточка и
       // медиаплан показывают разный прогноз по одним и тем же данным.
       cr: nn(fc.cr) / 100,
-      checks: imp * (nn(fc.ctr) / 100) * (nn(fc.cr) / 100),
+      checks: clicks * (nn(fc.cr) / 100),
       price: nn(fc.price),
       sov: nn(fc.sov),
     }
@@ -915,10 +918,10 @@ export default function DealCard() {
   // создании, может расходиться). Нет МП — показываем сумму, введённую при создании.
   // Формула итога повторяет конструктор МП: размещения + доп. услуги (grandNet).
   const netFromMp = hasMp ? tNet + extrasTotal : null
-  const net = netFromMp != null ? netFromMp : (d.amount != null ? Math.round(d.amount) : null)
+  const net = netFromMp != null ? netFromMp : (d.amount != null ? +d.amount : null)
   const gross = netFromMp != null
     ? withVat(netFromMp)
-    : (d.amount_with_vat != null ? Math.round(d.amount_with_vat)
+    : (d.amount_with_vat != null ? +d.amount_with_vat
       : (d.amount != null ? withVat(d.amount) : null))
 
   // Документы: карта по виду + счётчик готовых (МП считаем отдельной позицией)
@@ -1090,7 +1093,7 @@ export default function DealCard() {
                   {VAT != null ? `НДС ${Math.round(VAT * 100)} %` : 'НДС — ставка не задана'}
                 </span>
                 <span style={{ fontFamily: MONO, fontSize: 21, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                  {gross != null && net != null ? rub(Math.round(gross - net)) : '—'}
+                  {gross != null && net != null ? rub(Math.round((gross - net) * 100) / 100) : '—'}
                 </span>
               </span>
               {/* Период размещения вместо срока оплаты: срок брать неоткуда — привязки

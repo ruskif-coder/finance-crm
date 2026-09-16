@@ -135,10 +135,12 @@ def _fc_metrics(row, net):
     # Показы — ручной ввод аккаунта; объём годится за них только у CPM. См. mp_row.
     imp = mp_row.row_imp(row.get("model"), row.get("volume"), f)
     reach = imp / freq if freq > 0 else 0
-    clicks = imp * ctr_pct / 100
+    # Клики — общей арифметикой: у CPC они куплены и лежат в объёме, а не выводятся
+    # из показов (mp_row.row_clicks).
+    clicks = mp_row.row_clicks(row.get("model"), row.get("volume"), f)
     checks = clicks * cr_pct / 100
     revenue = checks * price
-    gross = round(net * (1 + VAT))
+    gross = mp_row.rub(net * (1 + VAT))
     return {
         "freq": freq or None, "reach": reach or None, "imp": imp or None,
         "ctr": ctr_pct or None, "clicks": clicks or None,
@@ -165,7 +167,7 @@ def _amounts(rows, extras):
     place = sum(_row_net(r) for r in rows)
     extra = sum((e.total or 0) for e in extras)
     net = place + extra
-    return net, round(net * (1 + VAT))
+    return mp_row.rub(net), mp_row.rub(net * (1 + VAT))
 
 
 def _apply_fields(p, data: MpIn):
@@ -1295,6 +1297,10 @@ def _wb_programmatic(full, p):
     LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
     RIGHT = Alignment(horizontal="right", vertical="center")
     MONEY, MONEY0, INT, PCT2, ROI = "#,##0.00", "#,##0", "#,##0", "0.00", "0%"
+    # Скидка: целую печатаем целой, дробную — с копейками процента. С форматом «#,##0»
+    # скидка 12,5 % печаталась как 13 %, и документ переставал сходиться: разница
+    # «до скидки минус скидка» не давала суммы к оплате.
+    PCT_D = "#,##0.##"
 
     def put(r, c, v=None, font=F10, fill=None, align=None, border=None, numfmt=None):
         cell = ws.cell(r, c)
@@ -1346,7 +1352,7 @@ def _wb_programmatic(full, p):
     # Итого-блок
     span("E6:H6", font=F10B, fill=None, align=Alignment(horizontal="center", vertical="center"), border=None).value = "Итого"
     net_total, gross_total = full.get("amount_net") or 0, full.get("amount_gross") or 0
-    tot = [("Стоимость до НДС", net_total), ("НДС", round(gross_total - net_total)), ("Стоимость с НДС", gross_total)]
+    tot = [("Стоимость до НДС", net_total), ("НДС", mp_row.rub(gross_total - net_total)), ("Стоимость с НДС", gross_total)]
     for i, (label, val) in enumerate(tot):
         rr = 7 + i
         span(f"E{rr}:F{rr}", font=F10B, fill=None, align=Alignment(horizontal="left", vertical="center"), border=None).value = label
@@ -1378,9 +1384,9 @@ def _wb_programmatic(full, p):
         model = row.get("model") or ""
         div = 1000 if _is_cpm(model) else 1
         vol, unit, disc = row.get("volume") or 0, row.get("unit_price") or 0, row.get("discount") or 0
-        n_noded = round(vol * unit / div) if (vol and unit) else 0     # до скидки
+        n_noded = mp_row.rub(vol * unit / div) if (vol and unit) else 0     # до скидки
         disc_rub = n_noded - net
-        gross = round(net * (1 + VAT))
+        gross = mp_row.rub(net * (1 + VAT))
         m = _fc_metrics(row, net)
         put(r, 2, "SIMB-AD", align=LEFT, border=BORD)
         put(r, 3, row.get("position"), align=LEFT, border=BORD)
@@ -1395,10 +1401,10 @@ def _wb_programmatic(full, p):
         put(r, 12, 1, align=CTR, border=BORD, numfmt=INT)
         put(r, 13, unit, align=RIGHT, border=BORD, numfmt=MONEY)
         put(r, 14, n_noded, align=RIGHT, border=BORD, numfmt=MONEY)
-        put(r, 15, round(disc * 100), align=CTR, border=BORD, numfmt=INT)
+        put(r, 15, mp_row.rub(disc * 100), align=CTR, border=BORD, numfmt=PCT_D)
         put(r, 16, disc_rub, align=RIGHT, border=BORD, numfmt=MONEY)
         put(r, 17, net, align=RIGHT, border=BORD, numfmt=MONEY)
-        put(r, 18, round(net * VAT), align=RIGHT, border=BORD, numfmt=MONEY)
+        put(r, 18, mp_row.rub(net * VAT), align=RIGHT, border=BORD, numfmt=MONEY)
         put(r, 19, gross, align=RIGHT, border=BORD, numfmt=MONEY)
         # прогноз T…AH
         fc_vals = [(m["freq"], INT), (m["reach"], INT), (m["imp"], INT), (m["ctr"], PCT2),
@@ -1408,7 +1414,7 @@ def _wb_programmatic(full, p):
         for i, (val, nf) in enumerate(fc_vals):
             put(r, 20 + i, val, align=RIGHT if nf != PCT2 else CTR, border=BORD, numfmt=nf)
         agg["vol"] += vol; agg["n"] += n_noded; agg["p"] += disc_rub
-        agg["q"] += net; agg["r"] += round(net * VAT); agg["s"] += gross
+        agg["q"] += net; agg["r"] += mp_row.rub(net * VAT); agg["s"] += gross
         agg["rev"] += m["revenue"] or 0
         r += 1
     # ИТОГО по размещениям
@@ -1442,8 +1448,8 @@ def _wb_programmatic(full, p):
         for e in full["extras"]:
             price = e.get("price") or 0
             total = e.get("total") or 0
-            disc_rub = round(price - total)
-            r_vat = round(total * VAT)
+            disc_rub = mp_row.rub(price - total)
+            r_vat = mp_row.rub(total * VAT)
             put(r, 2, "SIMB-AD", align=LEFT, border=BORD)
             put(r, 3, e.get("name"), align=LEFT, border=BORD)
             put(r, 9, 1, align=RIGHT, border=BORD, numfmt=INT)
@@ -1452,15 +1458,15 @@ def _wb_programmatic(full, p):
             put(r, 12, 1, align=CTR, border=BORD, numfmt=INT)
             put(r, 13, price, align=RIGHT, border=BORD, numfmt=MONEY)
             put(r, 14, price, align=RIGHT, border=BORD, numfmt=MONEY)
-            put(r, 15, round((disc_rub / price * 100) if price else 0), align=CTR, border=BORD, numfmt=INT)
+            put(r, 15, mp_row.rub((disc_rub / price * 100) if price else 0), align=CTR, border=BORD, numfmt=PCT_D)
             put(r, 16, disc_rub, align=RIGHT, border=BORD, numfmt=MONEY)
             put(r, 17, total, align=RIGHT, border=BORD, numfmt=MONEY)
             put(r, 18, r_vat, align=RIGHT, border=BORD, numfmt=MONEY)
-            put(r, 19, round(total + r_vat), align=RIGHT, border=BORD, numfmt=MONEY)
+            put(r, 19, mp_row.rub(total + r_vat), align=RIGHT, border=BORD, numfmt=MONEY)
             for c in (4, 5, 6, 7, 8):
                 put(r, c, border=BORD)
             ex["n"] += price; ex["p"] += disc_rub; ex["q"] += total
-            ex["r"] += r_vat; ex["s"] += round(total + r_vat)
+            ex["r"] += r_vat; ex["s"] += mp_row.rub(total + r_vat)
             r += 1
         put(r, 2, "ИТОГО:", font=F10B, align=LEFT, border=BORD)
         for c in (3, 9, 10, 11, 12, 13):
@@ -1538,7 +1544,7 @@ def _row_ctx(row, full):
     model = row.get("model") or ""
     div = 1000 if _is_cpm(model) else 1
     vol, unit, disc = row.get("volume") or 0, row.get("unit_price") or 0, row.get("discount") or 0
-    n_nodisc = round(vol * unit / div) if (vol and unit) else 0
+    n_nodisc = mp_row.rub(vol * unit / div) if (vol and unit) else 0
     m = _fc_metrics(row, net)
     return {
         "r.place": "SIMB-AD", "r.position": row.get("position"), "r.geo": full.get("geo") or "—",
@@ -1548,26 +1554,26 @@ def _row_ctx(row, full):
         # Период строки, если он у неё свой: на листе «Годовой МП» строки разных
         # месяцев лежат вперемешку, и период шапки (год) их бы не различал.
         "r.period": row.get("period") or full.get("period"), "r.season": 1,
-        "r.unit_price": unit, "r.net_nodisc": n_nodisc, "r.disc_pct": round(disc * 100),
-        "r.disc_rub": n_nodisc - net, "r.net": net, "r.vat": round(net * VAT), "r.gross": round(net * (1 + VAT)),
+        "r.unit_price": unit, "r.net_nodisc": n_nodisc, "r.disc_pct": mp_row.rub(disc * 100),
+        "r.disc_rub": mp_row.rub(n_nodisc - net), "r.net": net, "r.vat": mp_row.rub(net * VAT), "r.gross": mp_row.rub(net * (1 + VAT)),
         "r.freq": m["freq"], "r.reach": m["reach"], "r.imp": m["imp"], "r.ctr": m["ctr"],
         "r.clicks": m["clicks"], "r.cpm": m["cpm"], "r.cpc": m["cpc"], "r.cpu": m["cpu"],
         "r.cr": m["cr"], "r.checks": m["checks"], "r.cpo": m["cpo"], "r.price": m["price"],
         "r.revenue": m["revenue"], "r.roi": m["roi"], "r.sov": m["sov"],
-        "_net": net, "_n_nodisc": n_nodisc, "_disc_rub": n_nodisc - net, "_revenue": m["revenue"] or 0,
+        "_net": net, "_n_nodisc": n_nodisc, "_disc_rub": mp_row.rub(n_nodisc - net), "_revenue": m["revenue"] or 0,
     }
 
 
 def _extra_ctx(e):
     price, total = e.get("price") or 0, e.get("total") or 0
-    disc_rub = round(price - total)
-    vat = round(total * VAT)
+    disc_rub = mp_row.rub(price - total)
+    vat = mp_row.rub(total * VAT)
     return {
         "e.place": "SIMB-AD", "e.name": e.get("name"), "e.volume": 1, "e.unit_name": "—",
         "e.period": e.get("period") or "—", "e.season": 1, "e.unit_price": price,
-        "e.net_nodisc": price, "e.disc_pct": round((disc_rub / price * 100) if price else 0),
-        "e.disc_rub": disc_rub, "e.total": total, "e.vat": vat, "e.gross": round(total + vat),
-        "_price": price, "_total": total, "_disc_rub": disc_rub, "_vat": vat, "_gross": round(total + vat),
+        "e.net_nodisc": price, "e.disc_pct": mp_row.rub((disc_rub / price * 100) if price else 0),
+        "e.disc_rub": disc_rub, "e.total": total, "e.vat": vat, "e.gross": mp_row.rub(total + vat),
+        "_price": price, "_total": total, "_disc_rub": disc_rub, "_vat": vat, "_gross": mp_row.rub(total + vat),
     }
 
 
@@ -1684,7 +1690,7 @@ def _row_formula_ctx(row, full, C, R):
         # Период строки, если он у неё свой: на листе «Годовой МП» строки разных
         # месяцев лежат вперемешку, и период шапки (год) их бы не различал.
         "r.period": row.get("period") or full.get("period"), "r.season": 1,
-        "r.unit_price": row.get("unit_price") or 0, "r.disc_pct": round(disc * 100),
+        "r.unit_price": row.get("unit_price") or 0, "r.disc_pct": mp_row.rub(disc * 100),
         "r.freq": n(fc.get("freq")), "r.ctr": n(fc.get("ctr")), "r.cr": n(fc.get("cr")),
         "r.price": n(fc.get("price")), "r.sov": n(fc.get("sov")),
         # производные — формулы (KeyError → фолбэк на числа в вызывающем коде)
@@ -1696,10 +1702,14 @@ def _row_formula_ctx(row, full, C, R):
         # Показы: у CPM это тот же объём (живая формула — правка объёма в книге
         # пересчитает прогноз), у остальных моделей объём это штуки или клики, и
         # показы приходят числом из ручного ввода аккаунта.
+        # У CPC куплены КЛИКИ (они в объёме), а показы выводятся из них через CTR —
+        # живой формулой, чтобы правка CTR в книге пересчитала и показы, и CPM.
         "r.imp": (f'={C["volume"]}{R}' if _is_cpm(model)
-                  else (mp_row.row_imp(model, row.get("volume"), fc) or "")),
+                  else (f'=IF({C["ctr"]}{R}>0,{C["volume"]}{R}/{C["ctr"]}{R}*100,"")' if mp_row.is_cpc(model)
+                        else (mp_row.row_imp(model, row.get("volume"), fc) or ""))),
         "r.reach": f'=IF({C["freq"]}{R}>0,{C["imp"]}{R}/{C["freq"]}{R},"")',
-        "r.clicks": f'={C["imp"]}{R}*{C["ctr"]}{R}/100',
+        "r.clicks": (f'={C["volume"]}{R}' if mp_row.is_cpc(model)
+                     else f'={C["imp"]}{R}*{C["ctr"]}{R}/100'),
         "r.cpm": f'=IF({C["imp"]}{R}>0,{C["net"]}{R}/{C["imp"]}{R}*1000,"")',
         "r.cpc": f'=IF({C["clicks"]}{R}>0,{C["net"]}{R}/{C["clicks"]}{R},"")',
         "r.cpu": f'=IF(AND({C["freq"]}{R}>0,{C["imp"]}{R}>0),{C["net"]}{R}*{C["freq"]}{R}/{C["imp"]}{R},"")',
@@ -1713,7 +1723,7 @@ def _row_formula_ctx(row, full, C, R):
 
 def _extra_formula_ctx(e, C, R):
     price, total = e.get("price") or 0, e.get("total") or 0
-    disc_pct = round((1 - total / price) * 100) if price else 0
+    disc_pct = mp_row.rub((1 - total / price) * 100) if price else 0
     v = str(VAT)
     return {
         "e.place": "SIMB-AD", "e.name": e.get("name"), "e.volume": 1, "e.unit_name": "—",

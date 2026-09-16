@@ -7,6 +7,7 @@
  */
 import React, { useMemo, useState } from 'react';
 import { overlayClose } from '@/lib/overlay'
+import { rowClicks, rowImp } from '@/lib/mpRow'
 
 // Локальные токены (не импортируем из YearPlan — иначе циклический импорт рушит сборку).
 const T = {
@@ -58,7 +59,12 @@ export default function BrandBrief({ open, onClose, brandLabel, advertiserId, br
   const { agencies = [], advCps = {}, agencyCps = {}, geoList = [], targeting = {}, sellers = [], accounts = [], svcName = {}, addonName = {}, services = [] } = catalogs;
   const svcMap = useMemo(() => Object.fromEntries((services || []).map(s => [s.id, s])), [services]);
   // цена услуги с учётом web/моб; показы = сумма ÷ цена × (CPM→1000, иначе 1)
-  const lineImp = (it) => {
+  // Сколько ЕДИНИЦ закупки покупается на эти деньги. Единица зависит от модели: у CPM
+  // это показы, у Фикса штуки, у CPC КЛИКИ — поэтому величина называется объёмом, а не
+  // показами, и в прогноз идёт через общую арифметику строки (lib/mpRow). Раньше она
+  // подставлялась прямо в колонку «Показы», и у CPC-услуги весь прогноз считался от
+  // кликов как от показов.
+  const lineVol = (it) => {
     const s = svcMap[it.ref_id]; if (!s) return 0;
     const price = s.separate_price ? (it.inventory === 'app' ? s.unit_price_app : s.unit_price_web) : s.unit_price;
     if (!(price > 0)) return 0;
@@ -95,9 +101,9 @@ export default function BrandBrief({ open, onClose, brandLabel, advertiserId, br
     Object.values(products || {}).forEach(arr => (arr || []).forEach(it => {
       if (!it || it.ref_id == null) return;
       const key = `${it.type || 'service'}:${it.ref_id}`;
-      if (!agg[key]) agg[key] = { key, type: it.type || 'service', ref_id: it.ref_id, amount: 0, units: 0, imp: 0 };
+      if (!agg[key]) agg[key] = { key, type: it.type || 'service', ref_id: it.ref_id, amount: 0, units: 0, vol: 0, model: (svcMap[it.ref_id] || {}).calc_form };
       agg[key].amount += +it.amount || 0; agg[key].units += +it.units || 0;
-      if ((it.type || 'service') === 'service') agg[key].imp += lineImp(it);   // показы из тарификации
+      if ((it.type || 'service') === 'service') agg[key].vol += lineVol(it);   // объём из тарификации
     }));
     return Object.values(agg);
   }, [products, svcMap]);
@@ -110,9 +116,10 @@ export default function BrandBrief({ open, onClose, brandLabel, advertiserId, br
     let imp = 0, reach = 0, clicks = 0, checks = 0, revenue = 0, net = 0;
     fcRows.forEach(r => {
       const fc = forecast[r.key] || {};
-      const _imp = Math.round(r.imp || r.units);
-      const freq = parseN(fc.freq), ctr = parseN(fc.ctr) / 100, cr = parseN(fc.cr) / 100, price = parseN(fc.price);
-      const _reach = freq > 0 ? _imp / freq : 0, _clicks = _imp * ctr, _checks = _clicks * cr;
+      const _vol = Math.round(r.vol || r.units);
+      const freq = parseN(fc.freq), cr = parseN(fc.cr) / 100, price = parseN(fc.price);
+      const _imp = rowImp(r.model, _vol, fc), _clicks = rowClicks(r.model, _vol, fc);
+      const _reach = freq > 0 ? _imp / freq : 0, _checks = _clicks * cr;
       imp += _imp; reach += _reach; clicks += _clicks; checks += _checks; revenue += _checks * price; net += r.amount;
     });
     return { imp, reach, clicks, checks, revenue, net };
@@ -274,12 +281,14 @@ export default function BrandBrief({ open, onClose, brandLabel, advertiserId, br
                     </div>
                     {fcRows.map(r => {
                       const fc = forecast[r.key] || {};
-                      const imp = Math.round(r.imp || r.units);   // показы из тарификации (цена+модель услуги)
-                      const freq = parseN(fc.freq), ctr = parseN(fc.ctr) / 100, cr = parseN(fc.cr) / 100, price = parseN(fc.price);
-                      const net = r.amount, gross = Math.round(net * (1 + VAT));
-                      const reach = freq > 0 ? imp / freq : 0, clicks = imp * ctr, checks = clicks * cr, revenue = checks * price;
+                      const vol = Math.round(r.vol || r.units);   // объём из тарификации (цена+модель услуги)
+                      const freq = parseN(fc.freq), cr = parseN(fc.cr) / 100, price = parseN(fc.price);
+                      // Показы и клики — общей арифметикой: у CPM объём это показы, у CPC клики.
+                      const imp = rowImp(r.model, vol, fc), clicks = rowClicks(r.model, vol, fc);
+                      const net = r.amount, gross = Math.round(net * (1 + VAT) * 100) / 100;
+                      const reach = freq > 0 ? imp / freq : 0, checks = clicks * cr, revenue = checks * price;
                       const roi = gross > 0 ? (revenue - gross) / gross : NaN;
-                      const ok = imp > 0;
+                      const ok = vol > 0;
                       const dim = ok ? undefined : T.emptyNum;
                       const money = v => (Number.isFinite(v) && v > 0 ? dec(v) : '—');
                       const int = v => (Number.isFinite(v) && v > 0 ? num(v) : '—');
@@ -322,7 +331,7 @@ export default function BrandBrief({ open, onClose, brandLabel, advertiserId, br
                           [agg.checks ? dec(agg.net / agg.checks) : '—', T.accent],
                           ['', T.t1],
                           [dec(agg.revenue), T.income],
-                          [(() => { const gr = Math.round(agg.net * (1 + VAT)); return gr > 0 ? `${agg.revenue - gr >= 0 ? '+' : '−'}${Math.abs((agg.revenue - gr) / gr * 100).toFixed(0)} %` : '—'; })(), T.income],
+                          [(() => { const gr = Math.round(agg.net * (1 + VAT) * 100) / 100; return gr > 0 ? `${agg.revenue - gr >= 0 ? '+' : '−'}${Math.abs((agg.revenue - gr) / gr * 100).toFixed(0)} %` : '—'; })(), T.income],
                           ['', T.t1],
                         ];
                         return cells.map(([v, c], k) => <span key={k} style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, textAlign: 'right', color: c }}>{v}</span>);

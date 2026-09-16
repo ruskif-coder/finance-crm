@@ -18,6 +18,7 @@
  * и получал NaN → 0. На экране конструктора CTR был, в PDF у клиента — пусто.
  */
 export const isCpm = (model) => String(model || '').trim().toUpperCase() === 'CPM'
+export const isCpc = (model) => String(model || '').trim().toUpperCase() === 'CPC'
 
 export const num = (v) => {
   if (v === null || v === undefined || v === '') return 0
@@ -26,11 +27,28 @@ export const num = (v) => {
 }
 
 export const rowNet = (model, volume, unitPrice, discount = 0) =>
-  Math.round(num(volume) * num(unitPrice) * (1 - num(discount)) / (isCpm(model) ? 1000 : 1))
+  Math.round(num(volume) * num(unitPrice) * (1 - num(discount)) / (isCpm(model) ? 1000 : 1) * 100) / 100
 
-/** Прогнозные показы: ручной ввод аккаунта, иначе объём — но только у CPM. */
+/** Прогнозные показы: ручной ввод аккаунта, иначе объём — но только у CPM.
+ *
+ * У CPC показы ВЫВОДЯТСЯ из закупленных кликов: `клики ÷ CTR`. Заставлять аккаунта
+ * вводить их руками значило бы разрешить трём числам разойтись — в CPC-строке независимы
+ * ровно два (клики куплены, CTR прогнозируется), третье считается. */
 export const rowImp = (model, volume, forecast) => {
-  const v = (forecast || {}).imp
+  const f = forecast || {}
+  const v = f.imp
   if (v !== null && v !== undefined && v !== '') return num(v)
+  if (isCpc(model)) { const ctr = num(f.ctr) / 100; return ctr > 0 ? num(volume) / ctr : 0 }
   return isCpm(model) ? num(volume) : 0
+}
+
+/** Прогнозные клики строки.
+ *
+ * До 16.09.2026 считалось `показы × CTR` в шести местах сразу, и для CPC это было неверно
+ * дважды: показов у CPC нет вовсе (в объёме лежат КЛИКИ), поэтому и показы выходили в
+ * ноль, и клики следом. Строка «CPC · 50 000 кликов» показывала прочерк в кликах и в CPC,
+ * притом что клики — единственное, что в ней куплено наверняка. */
+export const rowClicks = (model, volume, forecast) => {
+  if (isCpc(model)) return num(volume)
+  return rowImp(model, volume, forecast) * num((forecast || {}).ctr) / 100
 }

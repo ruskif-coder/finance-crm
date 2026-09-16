@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import Head from 'next/head'
-import { num, rowImp, rowNet } from '@/lib/mpRow'
+import { num, rowClicks, rowImp, rowNet } from '@/lib/mpRow'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import { can } from '@/components/Navbar'
@@ -29,11 +29,10 @@ function toPdf(plan) {
     const f = r.forecast || {}
     const imp = rowImp(r.model, vol, f)
     const freq = num(f.freq)
-    const ctr = num(f.ctr) / 100
     const cr = num(f.cr) / 100
     const price = num(f.price)
     const sov = num(f.sov)
-    const clicks = imp * ctr
+    const clicks = rowClicks(r.model, vol, f)
     const checks = clicks * cr
     return {
       position: r.position, format: r.format || '', inventory: r.inventory || 'cross', model: r.model || 'CPM',

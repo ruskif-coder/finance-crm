@@ -66,7 +66,8 @@ def test_volume_counts_as_impressions_only_for_cpm():
     assert mp_row.row_imp('CPM', 1515152, {}) == 1515152
     assert mp_row.row_imp('Фикс', 1, {}) == 0
     assert mp_row.row_imp('Пакет', 1, {}) == 0
-    # CPC: в объёме КЛИКИ. Подставить их в показы значило бы посчитать клики дважды.
+    # CPC: в объёме КЛИКИ. Подставить их в показы значило бы посчитать клики дважды;
+    # без CTR вывести показы не из чего, и это ноль (с CTR — см. блок про CPC ниже).
     assert mp_row.row_imp('CPC', 5000, {}) == 0
 
 
@@ -110,9 +111,26 @@ def test_cpm_row_is_untouched_by_the_change():
 
 @pytest.mark.parametrize('raw, expected', [
     ('0,8', 0.8), ('0.8', 0.8), ('1 500,5', 1500.5), ('4', 4.0),
+    # Единицы измерения человек дописывает руками. Фронт их снимал с самого начала,
+    # бэкенд — нет, и `float("0,2%")` давал ноль. Найдено 16.09.2026 на живых данных:
+    # МП 109 «Клик-аут», CTR «0,201619081013%» — весь прогноз строки был прочерком.
+    ('0,8%', 0.8), ('55 ₽', 55.0), ('0.201619081013%', 0.201619081013),
 ])
-def test_comma_is_a_decimal_separator_not_a_parse_error(raw, expected):
+def test_units_typed_by_hand_are_not_a_parse_error(raw, expected):
     assert mp_row.num(raw) == expected
+
+
+def test_both_mirrors_strip_the_same_characters():
+    """Зеркала обязаны снимать ОДИН набор символов.
+
+    Разойдясь, они дают картинку, в которой на экране число есть, а в документе клиента
+    прочерк — и обе половины правдивы по отдельности. Файла фронта в контейнере бэкенда
+    нет, поэтому сверяется ПОВЕДЕНИЕ по тому же правилу, что записано в `lib/mpRow.js`.
+    """
+    import re
+    for raw in ('0,8%', '55 ₽', '1 500,5', '0.2%', '1 200 000'):
+        expected = float(re.sub(r'[\s ₽%]', '', raw).replace(',', '.'))
+        assert mp_row.num(raw) == expected, raw
 
 
 def test_comma_in_ctr_no_longer_empties_the_client_facing_columns():
@@ -129,3 +147,66 @@ def test_garbage_stays_zero_and_does_not_raise():
     assert mp_row.num('абв') == 0
     assert mp_row.num(None) == 0
     assert mp_row.row_imp('Фикс', 1, {'imp': 'много'}) == 0
+
+
+# ── CPC: куплены клики, показы выводятся ──────────────────────────────────────
+
+def test_cpc_clicks_come_from_the_volume_not_from_the_impressions():
+    """Разбор 16.09.2026, находка владельца: «при модели cpc неверно считает показы и клики».
+
+    В CPC-строке куплены КЛИКИ — они и лежат в объёме. Формула `клики = показы × CTR`
+    стояла в шести местах сразу (конструктор, PDF-маппер, карточка сделки, формула Excel,
+    `_fc_metrics`), и для CPC была неверна дважды: показов у CPC нет вовсе, поэтому они
+    выходили в ноль, а клики следом. На экране строка «CPC · 50 000 кликов» показывала
+    прочерки в кликах, показах, CPM и CPC — притом что клики единственное, что в ней
+    куплено наверняка.
+    """
+    assert mp_row.row_clicks('CPC', 50000, {'ctr': '0,5'}) == 50000
+    # показы выводятся обратной формулой: 50 000 кликов при CTR 0,5 % = 10 млн показов
+    assert mp_row.row_imp('CPC', 50000, {'ctr': '0,5'}) == 10_000_000
+
+
+def test_cpc_without_ctr_shows_clicks_but_not_impressions():
+    """Клики известны и без CTR. Показы — нет, и это прочерк, а не выдуманное число."""
+    m = _fc_metrics({'model': 'CPC', 'volume': 50000, 'forecast': {}}, 1_000_000)
+    assert m['clicks'] == 50000
+    assert m['imp'] is None and m['cpm'] is None
+    assert m['cpc'] == 20.0                       # 1 000 000 ₽ / 50 000 кликов
+
+
+def test_cpc_row_is_whole_once_the_ctr_is_filled():
+    """Полная строка: CPC считается от закупленных кликов, CPM — от выведенных показов."""
+    m = _fc_metrics({'model': 'CPC', 'volume': 50000,
+                     'forecast': {'ctr': '0,5', 'freq': '2'}}, 1_000_000)
+    assert m['clicks'] == 50000
+    assert m['imp'] == 10_000_000
+    assert m['reach'] == 5_000_000
+    assert round(m['cpm'], 2) == 100.0
+    assert round(m['cpc'], 2) == 20.0
+
+
+def test_other_models_still_count_clicks_from_the_impressions():
+    """Правило меняется ТОЛЬКО для CPC; остальные планы обязаны считаться как считались."""
+    assert mp_row.row_clicks('CPM', 1_000_000, {'ctr': '0,8'}) == 8000
+    assert mp_row.row_clicks('Фикс', 1, {'ctr': '1', 'imp': '250000'}) == 2500
+    assert mp_row.row_clicks('Фикс', 1, {'ctr': '1'}) == 0
+
+
+# ── копейки ───────────────────────────────────────────────────────────────────
+
+def test_the_row_sum_keeps_kopecks():
+    """Находка владельца 16.09.2026: «не даёт вводить копейки, обнуляет введённое до целого».
+
+    Сумма строки округлялась до РУБЛЯ, и на самом обычном CPM-случае это съедало копейки
+    цены: 2 927 400 показов по 250,50 ₽ за тысячу это 733 313,70 ₽. В конструкторе так и
+    выглядело — поле бюджета возвращалось к целому числу после ввода.
+    """
+    assert mp_row.row_net('CPM', 2927400, 250.50) == 733313.70
+    assert mp_row.row_net('Fix', 3, 1000.33) == 3000.99
+    assert mp_row.row_net('CPC', 50000, 20.25, 0.1) == 911250.0
+
+
+def test_the_sum_is_not_a_float_tail():
+    """Копейки — две цифры, а не хвост двоичной дроби: 0.1+0.2 в документе недопустимо."""
+    v = mp_row.row_net('Fix', 3, 0.1)
+    assert v == 0.3 and str(v) == '0.3'

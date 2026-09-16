@@ -47,7 +47,11 @@ export const STAGES_FALLBACK = ['Медиаплан', 'Бронь', 'Сбор з
 
 /* ── формат ─────────────────────────────────────────────────────────── */
 const nf = v => v.toLocaleString('ru-RU');
-const rub = v => nf(v) + ' ₽';
+// Деньги — всегда две цифры после запятой: сумма строки МП считается до копеек
+// (lib/mpRow), и «733 313,7 ₽» рядом с «733 313,70 ₽» в документе читается как
+// расхождение. Штуки (показы, клики) форматирует nf, у них дробных нет.
+const rub = v => (+v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
+const withVat = v => Math.round((+v || 0) * (1 + VAT) * 100) / 100;
 
 /* ── примитивы ──────────────────────────────────────────────────────── */
 const capTitle = { fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: T.t3 };
@@ -134,9 +138,9 @@ export default function DealCard({ deal = DEMO, onChangeStage, onOpenPlan, onPic
 
   /* деньги в шапке: единственная точка расчёта НДС */
   const money = [
-    { label: 'Сумма сделки · с НДС · по медиаплану', value: rub(Math.round(mp.net * (1 + VAT))), size: 30, color: T.t1 },
+    { label: 'Сумма сделки · с НДС · по медиаплану', value: rub(withVat(mp.net)), size: 30, color: T.t1 },
     { label: 'Клиентская цена до НДС', value: rub(mp.net), size: 20, color: T.t1 },
-    { label: 'НДС 22 %', value: rub(Math.round(mp.net * VAT)), size: 20, color: T.t2 },
+    { label: 'НДС 22 %', value: rub(Math.round(mp.net * VAT * 100) / 100), size: 20, color: T.t2 },
     { label: 'Период размещения', value: mp.period, size: 20, color: T.t1 },
   ];
 
@@ -221,7 +225,7 @@ export default function DealCard({ deal = DEMO, onChangeStage, onOpenPlan, onPic
               {open.mp ? <MpBody mp={mp} /> : <BriefRow items={[
                 { label: 'Услуга', value: mp.service },
                 { label: 'Сумма до НДС', value: rub(mp.net), size: 18 },
-                { label: 'С НДС', value: rub(Math.round(mp.net * (1 + VAT))), size: 18, fg: T.accent },
+                { label: 'С НДС', value: rub(withVat(mp.net)), size: 18, fg: T.accent },
                 { label: 'Показы по прогнозу', value: nf(mp.impressions), fg: T.income },
                 { label: 'Период РК', value: mp.flight },
                 { label: 'Версия', value: mp.version, fg: T.warningFg, tag: 'черновик' },
@@ -366,7 +370,7 @@ function MpBody({ mp }) {
             <span style={{ fontFamily: T.mono, fontSize: 11, color: T.t2, textAlign: 'right' }}>{l.unit.toFixed(2).replace('.', ',')} ₽</span>
             <span style={{ fontFamily: T.mono, fontSize: 11, color: T.t4, textAlign: 'right' }}>{l.discount} %</span>
             <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, textAlign: 'right' }}>{rub(l.net)}</span>
-            <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: T.accent, textAlign: 'right' }}>{rub(Math.round(l.net * (1 + VAT)))}</span>
+            <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: T.accent, textAlign: 'right' }}>{rub(withVat(l.net))}</span>
           </div>
         ))}
       </Table>

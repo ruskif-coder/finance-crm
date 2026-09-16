@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom';
 import { GenTitleBtn, MONO, UI } from '../salesTableKit';
 import { overlayClose } from '@/lib/overlay'
 import { buildTitle, separatePriceSet } from '@/lib/dealTitle'
-import { isCpm, rowImp } from '@/lib/mpRow'
+import { isCpc, isCpm, rowClicks, rowImp, rowNet } from '@/lib/mpRow'
 import { fmtDateOfMoment } from '@/lib/dates'
 
 /* ── токены ─────────────────────────────────────────────────────────────
@@ -29,6 +29,10 @@ export const T = {
   ease: 'cubic-bezier(0.22,1,0.36,1)',
 };
 const VAT = 0.22;
+// С НДС — до копеек, а не до рубля: цена услуги копейки имеет (см. lib/mpRow.rowNet),
+// и округление здесь возвращало бы их в целое уже на экране.
+const kop = v => Math.round(v * 100) / 100;
+const withVat = v => kop(v * (1 + VAT));
 
 /* ── справочники (заменить на API) ──────────────────────────────────── */
 export const CATALOG = [
@@ -74,7 +78,6 @@ const ROLE_TINT = {
 /* ── формат ─────────────────────────────────────────────────────────── */
 const num = v => Math.round(v).toLocaleString('ru-RU');
 const dec = v => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
-const rub = v => Math.round(v).toLocaleString('ru-RU') + ' ₽';
 const pct = v => (v * 100).toFixed(2).replace('.', ',') + ' %';
 const parseN = v => {
   const n = parseFloat(String(v ?? '').replace(/\s|₽|%|\u00a0/g, '').replace(',', '.'));
@@ -421,8 +424,9 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
 
   /* расчёты */
   const calc = useMemo(() => {
-    // Формула зависит от модели: CPM — за 1000 (объём/1000×цена), иначе — кол-во×цена (Fix/CPC).
-    const net = r => Math.round(r.volume * r.unit * (1 - r.discount) / (r.model === 'CPM' ? 1000 : 1));
+    // Сумма строки — общей арифметикой (lib/mpRow), не копией формулы: здесь она стояла
+    // отдельно и округляла до рубля, из-за чего введённые копейки пропадали.
+    const net = r => rowNet(r.model, r.volume, r.unit, r.discount);
     const filled = main.rows.filter(r => r.position && r.volume && r.unit);
     const tNet = filled.reduce((a, r) => a + net(r), 0);
     const tVol = filled.reduce((a, r) => a + r.volume, 0);
@@ -431,12 +435,12 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
     main.rows.forEach(r => {
       const f = fc[r.id] || {};
       if (!(r.position && r.volume && r.unit)) return;
-      const freq = parseN(f.freq), ctr = parseN(f.ctr) / 100, cr = parseN(f.cr) / 100, price = parseN(f.price);
+      const freq = parseN(f.freq), cr = parseN(f.cr) / 100, price = parseN(f.price);
       // Показы, а не объём: у Фикса и Пакета в объёме штуки закупки (см. lib/mpRow).
-      const imp = rowImp(r.model, r.volume, f), clicks = imp * ctr, checks = clicks * cr;
+      const imp = rowImp(r.model, r.volume, f), clicks = rowClicks(r.model, r.volume, f), checks = clicks * cr;
       agg.reach += freq > 0 ? imp / freq : 0;
       agg.imp += imp; agg.clicks += clicks; agg.checks += checks;
-      agg.revenue += checks * price; agg.gross += Math.round(net(r) * (1 + VAT));
+      agg.revenue += checks * price; agg.gross += withVat(net(r));
       agg.sov += parseN(f.sov); agg.freq = Math.max(agg.freq, freq);
     });
     return { net, filled, tNet, tVol, extrasNet, agg, grandNet: tNet + extrasNet };
@@ -459,9 +463,9 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
   const plural = n => (n === 1 ? 'строка не заполнена' : n < 5 ? 'строки не заполнены' : 'строк не заполнено');
 
   const summary = [
-    { label: 'Размещение до НДС', value: rub(calc.tNet), color: T.t1 },
-    { label: 'Доп. услуги', value: rub(calc.extrasNet), color: T.income },
-    { label: 'НДС 22 %', value: rub(calc.grandNet * VAT), color: T.t2 },
+    { label: 'Размещение до НДС', value: dec(calc.tNet), color: T.t1 },
+    { label: 'Доп. услуги', value: dec(calc.extrasNet), color: T.income },
+    { label: 'НДС 22 %', value: dec(kop(calc.grandNet * VAT)), color: T.t2 },
     { label: 'Строк в плане', value: `${calc.filled.length} из ${main.rows.length}`, color: emptyMain ? T.warning : T.t1 },
     { label: 'Прогноз показов', value: num(calc.agg.imp), color: T.accent },
   ];
@@ -940,14 +944,14 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                           {/* Объём / Цена / Скидка */}
                           <NumInput value={r.volume || ''} format={num} placeholder="0" onChange={v => main.patch(r.id, { volume: parseN(v) })} />
                           <NumInput value={r.unit || ''} format={dec} placeholder="0,00" onChange={v => main.patch(r.id, { unit: parseN(v) })} weight={600} />
-                          <NumInput value={r.discount * 100} format={v => `${Math.round(v)} %`} onChange={v => main.patch(r.id, { discount: Math.max(0, Math.min(1, parseN(v) / 100)) })} weight={600} />
+                          <NumInput value={r.discount * 100} format={v => `${String(kop(v)).replace('.', ',')} %`} onChange={v => main.patch(r.id, { discount: Math.max(0, Math.min(1, parseN(v) / 100)) })} weight={600} />
 
                           {/* Бюджет до НДС — вводимый, пересчитывает объём (защита от деления на 0 при скидке 100%) */}
                           <NumInput value={net || ''} format={dec} placeholder="0,00"
                             onChange={v => { const val = parseN(v); if (r.unit > 0 && r.discount < 1) main.patch(r.id, { volume: Math.round(val / (1 - r.discount) / r.unit * (r.model === 'CPM' ? 1000 : 1)) }); }} />
 
                           <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, color: net ? T.accent : T.t4, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                            {net ? dec(Math.round(net * (1 + VAT))) : '—'}
+                            {net ? dec(withVat(net)) : '—'}
                           </span>
 
                           <DeleteBtn onClick={() => main.remove(r.id)} />
@@ -967,7 +971,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                       <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, textAlign: 'right' }}>{num(calc.tVol)}</span>
                       <span /><span />
                       <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, textAlign: 'right' }}>{dec(calc.tNet)}</span>
-                      <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent, textAlign: 'right' }}>{dec(Math.round(calc.tNet * (1 + VAT)))}</span>
+                      <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent, textAlign: 'right' }}>{dec(withVat(calc.tNet))}</span>
                       <span />
                     </div>
                   </div>
@@ -1032,7 +1036,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                         <span style={{ fontFamily: T.mono, fontSize: 11, color: T.t4, textAlign: 'right', whiteSpace: 'nowrap', textDecoration: e.total < e.price ? 'line-through' : 'none' }}>{dec(e.price)}</span>
                         <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: e.total ? T.t1 : T.income, textAlign: 'right', whiteSpace: 'nowrap' }}>{dec(e.total)}</span>
                         {/* цена с НДС — от «Итого» (что реально в счёте), а не от прайса */}
-                        <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: T.accent, textAlign: 'right', whiteSpace: 'nowrap' }}>{dec(Math.round((e.total || 0) * (1 + VAT)))}</span>
+                        <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: T.accent, textAlign: 'right', whiteSpace: 'nowrap' }}>{dec(withVat(e.total || 0))}</span>
                         <DeleteBtn onClick={() => extras.remove(e.id)} />
                       </div>
                     );
@@ -1045,8 +1049,8 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                     <span />
                     <span style={{ ...colHead, fontWeight: 700, color: T.t3 }}>Итого доп.</span>
                     <span /><span /><span /><span />
-                    <span style={{ fontFamily: T.mono, fontSize: 12.5, fontWeight: 700, color: T.income, textAlign: 'right' }}>{rub(calc.extrasNet)}</span>
-                    <span style={{ fontFamily: T.mono, fontSize: 12.5, fontWeight: 700, color: T.accent, textAlign: 'right' }}>{rub(Math.round(calc.extrasNet * (1 + VAT)))}</span>
+                    <span style={{ fontFamily: T.mono, fontSize: 12.5, fontWeight: 700, color: T.income, textAlign: 'right' }}>{dec(calc.extrasNet)}</span>
+                    <span style={{ fontFamily: T.mono, fontSize: 12.5, fontWeight: 700, color: T.accent, textAlign: 'right' }}>{dec(withVat(calc.extrasNet))}</span>
                     <span />
                   </span>
                 </div>
@@ -1074,7 +1078,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
             <div style={{ display: 'grid', gridTemplateColumns: '1.35fr repeat(5,minmax(0,1fr)) auto', alignItems: 'end', marginTop: 16, paddingTop: 18, borderTop: `1px solid ${T.border}` }}>
               <span style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingRight: 16, minWidth: 0 }}>
                 <span style={{ fontFamily: T.mono, fontSize: 9.5, letterSpacing: '.08em', textTransform: 'uppercase', color: T.t3 }}>Итого с НДС</span>
-                <span style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1, whiteSpace: 'nowrap' }}>{rub(calc.grandNet * (1 + VAT))}</span>
+                <span style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1, whiteSpace: 'nowrap' }}>{dec(withVat(calc.grandNet))}</span>
               </span>
               {summary.map(s => (
                 <span key={s.label} style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '0 8px 2px 12px', borderLeft: `1px solid ${T.inner}`, minWidth: 0 }}>
@@ -1123,9 +1127,9 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                 {main.rows.map(r => {
                   const f = fc[r.id] || {};
                   const ok = !!(r.position && r.volume && r.unit);
-                  const freq = parseN(f.freq), ctr = parseN(f.ctr) / 100, cr = parseN(f.cr) / 100, price = parseN(f.price);
-                  const imp = rowImp(r.model, r.volume, f), net = calc.net(r), gross = Math.round(net * (1 + VAT));
-                  const reach = freq > 0 ? imp / freq : 0, clicks = imp * ctr, checks = clicks * cr, revenue = checks * price;
+                  const freq = parseN(f.freq), cr = parseN(f.cr) / 100, price = parseN(f.price);
+                  const imp = rowImp(r.model, r.volume, f), net = calc.net(r), gross = withVat(net);
+                  const reach = freq > 0 ? imp / freq : 0, clicks = rowClicks(r.model, r.volume, f), checks = clicks * cr, revenue = checks * price;
                   const roi = gross > 0 ? (revenue - gross) / gross : NaN;
                   const dim = ok ? undefined : T.emptyNum;
                   const money = v => (Number.isFinite(v) && v > 0 ? dec(v) : '—');
@@ -1142,7 +1146,10 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                           отдельно значило бы разрешить им разойтись с суммой. У Фикса и
                           Пакета объём это штуки, а предоплаченный объём показов знает
                           только аккаунт — поле жёлтое (владелец 08.09.2026). */}
-                      {isCpm(r.model)
+                      {/* У CPC в объёме куплены КЛИКИ, показы выводятся из них через CTR —
+                          поле не спрашивается по той же причине, что и у CPM: три числа,
+                          из которых независимы два. */}
+                      {isCpm(r.model) || isCpc(r.model)
                         ? cell(int(imp), T.t1, true)
                         : <NumInput yellow value={f.imp || ''} onChange={v => setFcField(r.id, 'imp', v)} />}
                       <NumInput yellow value={f.ctr || ''} onChange={v => setFcField(r.id, 'ctr', v)} />
