@@ -1111,12 +1111,15 @@ def _tell_publishers_started(db: Session, camp) -> None:
             .filter(AdCampaignPlacement.campaign_id == camp.id).all())
     for pl, pub in rows:
         context = " · ".join(x for x in ((pub.domain or pub.name), brand, period) if x)
-        facts = [("план показов", f"{int(pl.plan_show):,}".replace(",", " "))]             if pl.plan_show else []
+        # ПЛАШЕК У ЭТОГО ПИСЬМА НЕТ (владелец 16.09.2026). План показов убран: письмо
+        # сообщает площадке факт выхода в эфир, а наши плановые числа ей не адресованы.
+        # Отправитель и каталог обязаны совпадать — иначе экран шаблонов показывает одно,
+        # а получатель видит другое; на это стоит прибор.
         try:
             notify_publisher(db, "старт рк", pub.id,
                              title="Кампания стартовала",
                              body="Размещение вышло в эфир.",
-                             facts=facts, context=context, link="/",
+                             facts=(), context=context, link="/",
                              entity_type="ad_campaign_placement", entity_id=pl.id)
         except Exception as e:                               # noqa: BLE001
             log.warning("Площадке %s не ушло «старт рк»: %s", pub.id, e)
