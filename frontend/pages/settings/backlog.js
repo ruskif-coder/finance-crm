@@ -79,7 +79,7 @@ export default function DebugBacklog() {
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Head><title>Бэклог отладки · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
-      <div style={{ maxWidth: 1320, margin: '0 auto', padding: '18px 20px 40px' }}>
+      <div style={{ maxWidth: 1320, padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <div style={{ ...card, padding: 20, color: 'var(--text-muted)', fontSize: 13 }}>
           Нет доступа к разделу «Бэклог отладки».
         </div>
@@ -91,7 +91,7 @@ export default function DebugBacklog() {
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Head><title>Бэклог отладки · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
-      <div style={{ maxWidth: 1320, margin: '0 auto', padding: '18px 20px 40px' }}>
+      <div style={{ maxWidth: 1320, padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SettingsTabs active="backlog" />
 
         <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>

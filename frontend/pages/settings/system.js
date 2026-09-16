@@ -201,12 +201,14 @@ export default function SystemStatus() {
     <>
       <Head><title>Статус · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
-      <div style={{ padding: '18px 20px 0', fontFamily: UI }}>
+      <div style={{ padding: '20px 26px 0', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SettingsTabs active="system" />
       </div>
 
-      <div style={{ width: 1600, maxWidth: '100%', margin: '0 auto',
-                    padding: '0 20px 48px', fontFamily: UI }}>
+      {/* Ширина прежняя, центровки нет: все экраны настроек выровнены по левому краю
+          (владелец 16.09.2026) — иначе при переходе между ними содержимое прыгает. */}
+      <div style={{ width: 1600, maxWidth: '100%',
+                    padding: '0 26px 48px', fontFamily: UI }}>
 
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap',
                       marginBottom: 16 }}>

@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
@@ -25,6 +26,8 @@ from sqlalchemy.orm import Session
 from app.audit import log_action
 from app.database import get_db
 from app.mail import client as mail
+from app.mail import editor
+from app.mail import preview
 from app.mail import templates as tpl
 from app import retention
 from app.mail.models import KIND_LABELS, KIND_TEST, MailLog, MailTemplate
@@ -129,6 +132,120 @@ def list_templates(db: Session = Depends(get_db), user: User = Depends(VIEW)):
                        "fields": tpl.known_fields(r.key)} for r in rows]}
 
 
+@router.get("/cards/text")
+def card_text(contour: str, key: str, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Тема и текстовая часть письма по текущему шаблону."""
+    try:
+        return preview.text_part(db, contour, key)
+    except (KeyError, IndexError):
+        raise HTTPException(404, "Такой карточки нет")
+
+
+@router.get("/editor/{contour}")
+def editor_state(contour: str, keys: str = "", db: Session = Depends(get_db),
+                 user: User = Depends(VIEW)):
+    """Всё для экрана редактора одним ответом: оболочка, карточки, подстановки, проверки.
+
+    Одним, а не четырьмя: экран показывает их СОГЛАСОВАННО — подстановки считаются из
+    состава, проверки из подстановок. Четыре запроса означали бы четыре момента времени
+    и, при медленной сети, взаимно противоречивые числа на одном экране.
+    """
+    if contour not in (editor.STAFF, editor.PUB):
+        raise HTTPException(404, "Нет такого контура")
+    chosen = [k for k in keys.split("|") if k]
+    cards_list = editor.cards(db, contour)
+    data = [{"tone": c["tone"], "tag": c["tag"]} for c in cards_list if c["key"] in chosen]
+    return {
+        "shell": editor.shell(db, contour),
+        "cards": cards_list,
+        "fields": editor.fields_of(contour),
+        "values": editor.values(db, contour, data),
+        "checks": editor.checks(db, contour, chosen),
+    }
+
+
+@router.get("/editor/{contour}/preview", response_class=HTMLResponse)
+def editor_preview(contour: str, keys: str = "", db: Session = Depends(get_db),
+                   user: User = Depends(VIEW)):
+    """Собранное письмо — тем же рисовальщиком, что и живая отправка."""
+    if contour not in (editor.STAFF, editor.PUB):
+        raise HTTPException(404, "Нет такого контура")
+    brand = _setting(db, SET_FROM_NAME) or "SIMB-AD"
+    return HTMLResponse(editor.compose(db, contour,
+                                       [k for k in keys.split("|") if k], brand=brand))
+
+
+@router.post("/editor/{contour}/test")
+def editor_test(contour: str, keys: str = "", db: Session = Depends(get_db),
+                user: User = Depends(EDIT)):
+    """Отправить СОБРАННОЕ письмо себе — ровно в том виде, в каком его увидит адресат.
+
+    Только себе, как и проверка канала: кнопка с произвольным адресом превращает систему
+    в отправщик писем кому угодно от имени компании. Проверить вёрстку можно и на своём
+    ящике — а почтовые клиенты режут разметку по-разному, и «в браузере выглядит хорошо»
+    про письмо не значит ничего.
+    """
+    if contour not in (editor.STAFF, editor.PUB):
+        raise HTTPException(404, "Нет такого контура")
+    if not mail.valid_address(user.email or ""):
+        raise HTTPException(400, "У вашей учётки нет почтового адреса")
+    chosen = [k for k in keys.split("|") if k]
+    if not chosen:
+        raise HTTPException(400, "В письме нет ни одной карточки — отправлять нечего")
+
+    from app.mail import send as gate
+    brand = _setting(db, SET_FROM_NAME) or "SIMB-AD"
+    html = editor.compose(db, contour, chosen, brand=brand)
+    cards_list = [c for c in editor.cards(db, contour) if c["key"] in chosen]
+    vals = editor.values(db, contour,
+                         [{"tone": c["tone"], "tag": c["tag"]} for c in cards_list])
+    sh = editor.shell(db, contour)
+    # Тема — ИЗ ОБОЛОЧКИ, а не «Проверка»: проверяем в том числе и её, она первое, что
+    # видит получатель. Приставка говорит, что письмо проверочное.
+    subject = ("[проверка] " + editor.subst(sh["subject"]["value"], vals))[:200]
+    body = "\n\n".join(
+        f'{c["title"]}\n{c["body"] or ""}'.strip() for c in cards_list)
+
+    row = gate.send_and_log(db, to=user.email, to_name=getattr(user, "name", None),
+                            subject=subject, body=body, html=html,
+                            kind=KIND_TEST, user_id=user.id)
+    if row.status != "sent":
+        raise HTTPException(400, f"Письмо не ушло: {row.error or 'причина не названа'}")
+    log_action(db, user, "mail_test", "settings", None,
+               f"Пробное письмо контура {contour} на {user.email}: карточек {len(chosen)}")
+    return {"status": row.status, "to": row.to_email, "cards": len(chosen)}
+
+
+class ShellIn(BaseModel):
+    patch: dict
+
+
+@router.put("/editor/{contour}/shell")
+def save_shell(contour: str, payload: ShellIn, db: Session = Depends(get_db),
+               user: User = Depends(EDIT)):
+    if contour not in (editor.STAFF, editor.PUB):
+        raise HTTPException(404, "Нет такого контура")
+    editor.save_shell(db, contour, payload.patch)
+    db.commit()
+    log_action(db, user, "mail_shell", "settings", None,
+               f"контур {contour}: {', '.join(payload.patch)}")
+    return {"shell": editor.shell(db, contour)}
+
+
+@router.put("/editor/{contour}/card/{key}")
+def save_card(contour: str, key: str, payload: ShellIn, db: Session = Depends(get_db),
+              user: User = Depends(EDIT)):
+    if contour not in (editor.STAFF, editor.PUB):
+        raise HTTPException(404, "Нет такого контура")
+    try:
+        editor.save_card(db, contour, key, payload.patch)
+    except KeyError:
+        raise HTTPException(404, "Такой карточки нет")
+    db.commit()
+    log_action(db, user, "mail_card_text", "settings", None, f"{contour}: {key}")
+    return {"cards": editor.cards(db, contour)}
+
+
 class TemplateIn(BaseModel):
     subject: Optional[str] = None
     body: Optional[str] = None
@@ -164,6 +281,73 @@ def save_template(key: str, payload: TemplateIn, db: Session = Depends(get_db),
     log_action(db, user, "mail_template", "settings", row.id, f"Шаблон «{row.title}»")
     return {"key": row.key, "subject": row.subject, "body": row.body,
             "is_active": row.is_active}
+
+
+@router.get("/channels")
+def channels(db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Состояние ВСЕХ каналов модуля одним ответом: почта и оба телеграм-бота.
+
+    Каналов у рассылки несколько, а вопрос к ним один — «настроен ли и чем проверить».
+    Три отдельных места для этого ответа означали бы, что ненастроенный канал находят
+    последним, уже разбирая «почему не пришло».
+
+    Секретов здесь нет: токены и пароль ящика живут в `.env`, на экран уходит только
+    ФАКТ настроенности и то, что и так видно получателю — адрес отправителя, имя бота.
+    """
+    from app.notify import telegram
+    from app.notify.models import UserNotificationChannels
+
+    cfg = mail.config()
+    staff_chats = (db.query(UserNotificationChannels)
+                   .filter(UserNotificationChannels.tg_verified_at.isnot(None)).count())
+    pub_chats = db.execute(sa_text(
+        "SELECT count(*) FROM cabinet_account_tg WHERE verified_at IS NOT NULL")).scalar()
+
+    return {
+        "mail": {
+            "configured": cfg.ok, "problem": cfg.problem,
+            "sender": cfg.sender or None, "host": cfg.host or None, "mode": cfg.mode,
+            "queued": db.query(MailLog).filter(MailLog.status != "sent").count(),
+            "from_name": _setting(db, SET_FROM_NAME) or cfg.sender_name,
+            "subject_prefix": _setting(db, SET_SUBJECT_PREFIX),
+            "signature": _setting(db, SET_SIGNATURE),
+            "env_hint": "Хост, логин и пароль ящика правятся в .env на сервере",
+        },
+        # Ботов ДВА и они разные по существу: наш рабочий пишет сотрудникам, бот
+        # площадок — наружу. Один бот на оба контура означал бы, что площадка видит
+        # внутренний алёрт-бот подрядчика, а обработчик `/start` гадает, чей перед ним код.
+        "bots": [
+            {"contour": "staff", "label": "Наш рабочий бот",
+             "hint": "Пишет сотрудникам: очередь сделок, поломки, просрочки.",
+             "configured": telegram.configured(telegram.STAFF),
+             "username": telegram.bot_username(telegram.STAFF),
+             "env": telegram.ENV_TOKEN_STAFF, "linked": staff_chats,
+             "linked_hint": "учёток привязали чат"},
+            {"contour": "pub", "label": "Бот площадок",
+             "hint": "Пишет паблишерам в их кабинет. Подключает его каждый себе сам — "
+                     "создать за человека чат мы не можем.",
+             "configured": telegram.configured(telegram.PUB),
+             "username": telegram.bot_username(telegram.PUB),
+             "env": telegram.ENV_TOKEN_PUB, "linked": pub_chats or 0,
+             "linked_hint": "учёток кабинета привязали чат"},
+        ],
+    }
+
+
+@router.get("/log/{row_id}")
+def mail_one(row_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Одно письмо целиком. Нужно общему журналу отправок: он показывает строки обоих
+    контуров, а тело письма лежит только у внешнего — и лежит ИТОГОВОЕ, а не ссылка на
+    шаблон, поэтому видно ровно то, что получила площадка.
+    """
+    row = db.query(MailLog).filter(MailLog.id == row_id).first()
+    if row is None:
+        raise HTTPException(404, "Письма нет в журнале")
+    return {"id": row.id, "subject": row.subject, "body": row.body, "html": row.html,
+            "to_email": row.to_email, "to_name": row.to_name, "reply_to": row.reply_to,
+            "status": row.status, "error": row.error, "kind": row.kind,
+            "kind_label": KIND_LABELS.get(row.kind, row.kind),
+            "created_at": row.created_at, "sent_at": row.sent_at}
 
 
 @router.get("/log")

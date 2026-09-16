@@ -1,24 +1,34 @@
 /**
- * Настройки уведомлений — страница раздела «Настройки». Два режима:
- *   • «Профили» — админ задаёт, что получают сотрудники профиля (политика компании);
- *   • «Мои»     — каждый правит только свои, видит унаследованное от профиля пунктиром.
+ * Настройки → Уведомления и письма. ОДИН модуль, четыре вкладки:
  *
- * Матрица строится ИЗ реестра на бэкенде (/api/notifications/settings/catalog):
- * новое событие появляется здесь само, без правки этого файла.
- * Макет: docs/mockup_notifications.html
+ *   Правила          что кому приходит: политика профиля и личные переопределения
+ *   Журнал отправок  общая лента обоих контуров с указанием канала
+ *   Шаблоны писем    оболочка письма и тексты карточек, с предпросмотром
+ *   Каналы           общие настройки, почта и два телеграм-бота
+ *
+ * Почта жила отдельным пунктом меню до 16.09.2026, и это было ошибкой раскладки:
+ * рассылка — одно целое, а человек должен был помнить, что правила тут, а текст письма
+ * через два клика. Части модуля лежат в `components/notify/`, общий набор стилей и слов
+ * там же в `kit.js`.
+ *
+ * Эта страница — ОБОЛОЧКА: вкладки, загрузка данных правил и раскладка. Ни одной плашки
+ * и ни одного словаря состояний здесь нет — иначе они разойдутся с частями модуля.
  */
 import { useEffect, useMemo, useState } from 'react'
 import Head from 'next/head'
 import Navbar from '../../components/Navbar'
 import SettingsTabs from '../../components/SettingsTabs'
-import { UI, MONO, card, inp, sel, primaryBtn, btnSm, th } from '../../components/salesTableKit'
+import { UI, MONO, CAP, card, inp, sel, primaryBtn, btnSm, th } from '../../components/salesTableKit'
+import Channels from '../../components/notify/Channels'
+import DeliveryLog from '../../components/notify/DeliveryLog'
+import MyChannels from '../../components/notify/MyChannels'
+import TemplateEditor from '../../components/notify/TemplateEditor'
+import { CH_LABELS, badge, checkbox, hint, linkBtn, msg, segBtn, td, topTab }
+  from '../../components/notify/kit'
 import api, { auth } from '../../lib/http'
 import { fmtDateTime } from '@/lib/dates'
 import { TONE, toneOf } from '@/lib/tone'
 
-const CH_LABELS = { app: 'В приложении', tg: 'Telegram', mail: 'Почта', digest: 'Дайджест' }
-// Цвет точки берётся из общего словаря: своя карта здесь стояла на старых словах,
-// и после перехода реестра на канон все точки, кроме «к сведению», стали синими.
 
 export default function NotificationSettings() {
   const [isAdmin, setIsAdmin] = useState(false)
@@ -31,7 +41,11 @@ export default function NotificationSettings() {
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
-  const [tab, setTab] = useState('rules')        // 'rules' | 'log'
+  /* Вкладки МОДУЛЯ, а не экрана: почта переехала сюда (владелец 16.09.2026) — рассылка
+     это один модуль, и держать правила в одном пункте меню, а текст письма в другом
+     значило заставлять человека помнить, где что лежит. */
+  const [tab, setTab] = useState('rules')   // rules | log | templates | sender
+  const [logFilter, setLogFilter] = useState({ channel: '', contour: '', status: '', q: '' })
   const [log, setLog] = useState(null)
   const [me, setMe] = useState(null)             // личные каналы: Telegram, тихие часы
   const [tgCode, setTgCode] = useState(null)
@@ -78,10 +92,17 @@ export default function NotificationSettings() {
   }, [catalog, mode, profileId])
 
   useEffect(() => {
-    if (tab !== 'log' || !isAdmin) return
-    api.get('/notifications/settings/deliveries?limit=100', auth())
-      .then(r => setLog(r.data)).catch(e => setErr(msg(e)))
-  }, [tab, isAdmin])
+    if (tab !== 'log' || !isAdmin) return undefined
+    const p = new URLSearchParams({ limit: '100' })
+    Object.entries(logFilter).forEach(([k, v]) => { if (v) p.set(k, v) })
+    // Пауза перед запросом: иначе поле поиска шлёт его на каждый символ.
+    const t = setTimeout(() => {
+      api.get(`/notifications/settings/deliveries?${p}`, auth())
+        .then(r => setLog(r.data)).catch(e => setErr(msg(e)))
+    }, 250)
+    return () => clearTimeout(t)
+  }, [tab, isAdmin, logFilter])
+
 
   const dirs = catalog?.directions || []
   const channels = catalog?.channels || []
@@ -132,17 +153,28 @@ export default function NotificationSettings() {
     <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
       <Head><title>Уведомления · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
-      <div style={{ maxWidth: 1320, margin: '0 auto', padding: '18px 20px 40px' }}>
+      {/* Ширина модуля — 2500 (владелец 16.09.2026). Здесь она нужна не «на всякий
+          случай»: у правил четыре канала плюс пороги, у журнала шесть колонок, у
+          шаблонов три полосы сразу — список карточек, редактор и письмо. На 1320 всё
+          это жило в горизонтальной прокрутке, то есть половина экрана была не видна. */}
+      <div style={{ maxWidth: 2500, padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SettingsTabs active="notifications" />
 
         {isAdmin && (
-          <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-            <button onClick={() => setTab('rules')} style={topTab(tab === 'rules')}>Правила</button>
-            <button onClick={() => setTab('log')} style={topTab(tab === 'log')}>Журнал отправок</button>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+            {[['rules', 'Правила'], ['log', 'Журнал отправок'],
+              ['templates', 'Шаблоны писем'], ['channels', 'Каналы']].map(([k, label]) => (
+              <button key={k} onClick={() => setTab(k)} style={topTab(tab === k)}>{label}</button>
+            ))}
           </div>
         )}
 
-        {tab === 'log' ? <DeliveryLog data={log} /> : (
+        {tab === 'templates' ? <TemplateEditor mayEdit={isAdmin} onErr={setErr} />
+        : tab === 'channels' ? <Channels mayEdit={isAdmin} onErr={setErr} />
+        : tab === 'log' ? (
+          <DeliveryLog data={log} filter={logFilter} setFilter={setLogFilter}
+            onErr={setErr} />
+        ) : (
         <div style={{ ...card, overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-inner)',
             display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -169,6 +201,9 @@ export default function NotificationSettings() {
               <span style={hint}>Пунктир — унаследовано от профиля, сплошная галочка — вы переопределили.</span>
             )}
           </div>
+
+          {/* Текст письма — соседняя вкладка «Шаблоны писем» этого же экрана: модуль
+              один, и ходить за ним в другой пункт меню больше не надо. */}
 
           {mode === 'me' && me && (
             <MyChannels me={me} tgCode={tgCode} setTgCode={setTgCode}
@@ -277,179 +312,14 @@ export default function NotificationSettings() {
             </button>
             {err && <span style={{ color: 'var(--dot-overdue)', fontSize: 12 }}>{err}</span>}
             <span style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: 12 }}>
-              Telegram доставляется после привязки чата. Почта и дайджест настраиваются, но пока не доставляются — их отправки копятся в журнале.
+              Telegram доставляется после привязки чата. Дайджест уходит одним письмом в свой час; событие после этого часа ждёт следующего дня.
             </span>
           </div>
         </div>
         )}
+
       </div>
     </div>
   )
 }
 
-/** Личные каналы: привязка Telegram, тихие часы, «не беспокоить». */
-function MyChannels({ me, tgCode, setTgCode, reload, onErr }) {
-  const c = me.channels || {}
-  const [quiet, setQuiet] = useState({ from: c.quiet_from ?? '', to: c.quiet_to ?? '' })
-  const [busy, setBusy] = useState(false)
-
-  const link = async () => {
-    setBusy(true)
-    try {
-      const r = await api.post('/notifications/settings/me/telegram/link', {}, auth())
-      setTgCode(r.data)
-    } catch (e) { onErr(msg(e)) } finally { setBusy(false) }
-  }
-  const unlink = async () => {
-    try { await api.delete('/notifications/settings/me/telegram', auth()); setTgCode(null); reload() }
-    catch (e) { onErr(msg(e)) }
-  }
-  const test = async () => {
-    try { await api.post('/notifications/settings/me/telegram/test', {}, auth()); onErr('') }
-    catch (e) { onErr(msg(e)) }
-  }
-  const saveQuiet = async () => {
-    try {
-      await api.put('/notifications/settings/me/channels', {
-        quiet_from: quiet.from === '' ? null : Number(quiet.from),
-        quiet_to: quiet.to === '' ? null : Number(quiet.to),
-      }, auth())
-      reload()
-    } catch (e) { onErr(msg(e)) }
-  }
-
-  return (
-    <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-inner)',
-      display: 'flex', gap: 22, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
-      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <b>Telegram</b>
-        {c.tg_linked
-          ? <>
-              <span style={badge('#E8F6F0', '#CBE9DE', '#1E7A5C')}>привязан</span>
-              <button onClick={test} style={linkBtn}>Отправить тест</button>
-              <button onClick={unlink} style={linkBtn}>Отвязать</button>
-            </>
-          : <>
-              <span style={{ color: 'var(--text-muted)' }}>не привязан</span>
-              <button onClick={link} disabled={busy} style={linkBtn}>Привязать</button>
-            </>}
-      </span>
-      {tgCode && (
-        <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-          color: 'var(--text-secondary)' }}>
-          {/* Кнопка ведёт в чат с ботом и несёт код в себе: Telegram подставит его в
-              «Начать», вводить руками не нужно. Код рядом оставлен намеренно — если
-              чат с ботом уже открывали, кнопки «Начать» в нём нет. */}
-          {tgCode.link
-            ? <a href={tgCode.link} target="_blank" rel="noopener noreferrer"
-                 style={{ ...btnSm(true), textDecoration: 'none', display: 'inline-flex',
-                   alignItems: 'center', gap: 6 }}>
-                Перейти в бота{tgCode.bot ? ` @${tgCode.bot}` : ''} →
-              </a>
-            : <span>Откройте бота{tgCode.bot ? ` @${tgCode.bot}` : ' в Telegram'} и отправьте:</span>}
-          <span>
-            код{' '}
-            <code style={{ fontFamily: MONO, background: 'var(--bg-subtle)', padding: '2px 6px', borderRadius: 6 }}>
-              /start {tgCode.code}
-            </code>
-          </span>
-        </span>
-      )}
-      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <b>Тихие часы</b>
-        <input type="number" min={0} max={23} value={quiet.from} placeholder="с"
-          onChange={e => setQuiet(q => ({ ...q, from: e.target.value }))}
-          style={{ ...inp, width: 58, padding: '5px 7px', textAlign: 'center' }} />
-        <input type="number" min={0} max={23} value={quiet.to} placeholder="по"
-          onChange={e => setQuiet(q => ({ ...q, to: e.target.value }))}
-          style={{ ...inp, width: 58, padding: '5px 7px', textAlign: 'center' }} />
-        <button onClick={saveQuiet} style={linkBtn}>Сохранить</button>
-        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-          в это время ничего не приходит, кроме событий «нельзя отключить»
-        </span>
-      </span>
-    </div>
-  )
-}
-
-/** Журнал отправок: что реально ушло, кому и чем это кончилось. */
-function DeliveryLog({ data }) {
-  if (!data) return <div style={{ ...card, padding: 20, color: 'var(--text-muted)' }}>Загрузка…</div>
-  const scan = data.last_scan
-  const ST = { sent: ['#E8F6F0', '#1E7A5C', 'доставлено'],
-               queued: ['#F4F5F9', 'var(--text-muted)', 'ждёт канала'],
-               suppressed: ['#F4F5F9', 'var(--text-muted)', 'подавлено'],
-               failed: ['#FDECEE', '#B23540', 'ошибка'] }
-  return (
-    <div style={{ ...card, overflow: 'hidden' }}>
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-inner)',
-        display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 }}>
-        <span style={{ fontWeight: 700, fontSize: 13 }}>Журнал отправок</span>
-        <span style={{ color: 'var(--text-muted)' }}>всего записей: {data.total}</span>
-        {/* Прогон сканера показываем здесь же: «алерты не приходят» надо уметь
-            отличить от «сканер вообще не запускался». */}
-        {scan && (
-          <span style={{ color: 'var(--text-muted)' }}>
-            последний прогон: {fmtDateTime(scan.started_at)} ·
-            сработок {scan.matches} · отправок {scan.sent} · пропущено {scan.suppressed}
-            {scan.dry_run ? ' · сухой прогон' : ''}
-            {scan.error ? ` · ошибка: ${scan.error}` : ''}
-          </span>
-        )}
-      </div>
-      <div style={{ overflowX: 'auto', padding: '12px 4px 0' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr>
-            <th style={th}>Когда</th><th style={th}>Событие</th><th style={th}>Что ушло</th>
-            <th style={th}>Кому</th><th style={th}>Канал</th><th style={th}>Статус</th>
-          </tr></thead>
-          <tbody>
-            {data.items.length === 0 && (
-              <tr><td colSpan={6} style={{ ...td, color: 'var(--text-muted)' }}>Пока пусто.</td></tr>
-            )}
-            {data.items.map(r => {
-              const [bg, fg, label] = ST[r.status] || ['#F4F5F9', 'var(--text-muted)', r.status]
-              return (
-                <tr key={r.id}>
-                  <td style={{ ...td, whiteSpace: 'nowrap', color: 'var(--text-muted)', fontFamily: MONO, fontSize: 11 }}>
-                    {fmtDateTime(r.created_at)}
-                  </td>
-                  <td style={{ ...td, fontSize: 13 }}>{r.event_title}</td>
-                  <td style={{ ...td, fontSize: 13 }}>{r.title}</td>
-                  <td style={{ ...td, fontSize: 13 }}>{r.user}</td>
-                  <td style={{ ...td, fontSize: 13 }}>{CH_LABELS[r.channel] || r.channel}</td>
-                  <td style={td}>
-                    <span style={{ ...badge(bg, bg, fg) }}>
-                      {label}{r.suppress_reason ? ` · ${r.suppress_reason}` : ''}
-                    </span>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
-
-const msg = e => e?.response?.data?.detail || e?.message || 'Ошибка'
-const topTab = on => ({ padding: '8px 14px', borderRadius: 10, border: 'none', fontFamily: UI,
-  cursor: on ? 'default' : 'pointer', fontWeight: on ? 700 : 600, fontSize: 13,
-  background: on ? 'var(--accent-tint)' : 'var(--bg-card)',
-  color: on ? 'var(--accent)' : 'var(--text-secondary)' })
-const linkBtn = { background: 'none', border: 0, padding: 0, fontSize: 12, color: 'var(--accent)', cursor: 'pointer', fontFamily: UI }
-const hint = { fontSize: 12, color: 'var(--text-muted)' }
-const td = { padding: '11px 10px', borderBottom: '1px solid var(--border-row)', verticalAlign: 'top' }
-const segBtn = on => ({ border: 0, background: on ? 'var(--bg-card)' : 'transparent', padding: '7px 14px',
-  borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: on ? 700 : 600, fontFamily: UI,
-  color: on ? 'var(--text-primary)' : 'var(--text-secondary)' })
-const badge = (bg, bd, fg) => ({ fontSize: 10, borderRadius: 5, padding: '2px 6px', background: bg,
-  border: `1px solid ${bd}`, color: fg, whiteSpace: 'nowrap' })
-const checkbox = (on, inherited) => ({
-  display: 'inline-block', width: 18, height: 18, borderRadius: 6, cursor: 'pointer', verticalAlign: 'middle',
-  border: `1.5px ${inherited ? 'dashed' : 'solid'} ${on ? (inherited ? '#B9C5F2' : 'var(--accent)') : '#C9D1E4'}`,
-  background: on ? (inherited ? '#DDE3FA' : 'var(--accent)') : 'var(--bg-card)',
-  backgroundImage: on ? `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M2 6.5l2.5 2.5L10 3.5' fill='none' stroke='${inherited ? '%237E90DF' : 'white'}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>")` : 'none',
-  backgroundSize: '13px 13px', backgroundPosition: 'center', backgroundRepeat: 'no-repeat',
-})

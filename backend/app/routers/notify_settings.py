@@ -297,43 +297,37 @@ def save_my_channels(data: ChannelsIn, db: Session = Depends(get_db),
 # ─────────────────────────── журнал отправок ───────────────────────────
 
 @router.get("/deliveries")
-def deliveries(limit: int = 100, offset: int = 0, event_key: Optional[str] = None,
-               channel: Optional[str] = None, status: Optional[str] = None,
+def deliveries(limit: int = 100, offset: int = 0, channel: Optional[str] = None,
+               status: Optional[str] = None, contour: Optional[str] = None,
+               q: Optional[str] = None,
                db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
-    """Кому, когда и что ушло. Без этого спор «мне не приходило» неразрешим,
-    а молотящее вхолостую правило не находится."""
-    from app.notify.models import NotificationDelivery, NotificationScanRun
+    """Кому, когда и что ушло — ОБА контура одной лентой. Без этого спор «мне не
+    приходило» неразрешим, а молотящее вхолостую правило не находится.
 
-    q = db.query(NotificationDelivery)
-    if event_key:
-        q = q.filter(NotificationDelivery.event_key == event_key)
-    if channel:
-        q = q.filter(NotificationDelivery.channel == channel)
-    if status:
-        q = q.filter(NotificationDelivery.status == status)
-    total = q.count()
-    rows = (q.order_by(NotificationDelivery.created_at.desc(), NotificationDelivery.id.desc())
-            .offset(max(offset, 0)).limit(min(max(limit, 1), 500)).all())
+    До 16.09.2026 лент было две на разных экранах, а вопрос у человека один. Устройство
+    и причина, по которой таблицы объединяются на чтении, а не сливаются, — в
+    `app/notify/deliveries.py`.
+    """
+    from app.notify.models import NotificationScanRun
 
-    names = dict(db.query(User.id, User.name).all())
+    from app.notify import deliveries as feed
+
+    data = feed.query(db, limit=limit, offset=offset, channel=channel, status=status,
+                      contour=contour, q=q)
+    # Подпись события — из реестра: в журнале лежит ключ, а человек ищет по названию.
     titles = {k: e.title for k, e in registry.EVENTS.items()}
+    for it in data["items"]:
+        it["kind_label"] = titles.get(it["kind"], it["kind"])
+
     last_run = (db.query(NotificationScanRun)
                 .order_by(NotificationScanRun.id.desc()).first())
-    return {
-        "total": total,
-        "last_scan": None if last_run is None else {
-            "started_at": last_run.started_at, "finished_at": last_run.finished_at,
-            "dry_run": last_run.dry_run, "matches": last_run.matches,
-            "sent": last_run.sent, "suppressed": last_run.suppressed,
-            "error": last_run.error,
-        },
-        "items": [{
-            "id": r.id, "created_at": r.created_at, "event_key": r.event_key,
-            "event_title": titles.get(r.event_key, r.event_key),
-            "user": names.get(r.user_id, "—"), "channel": r.channel, "status": r.status,
-            "suppress_reason": r.suppress_reason, "error": r.error, "title": r.title,
-        } for r in rows],
+    data["last_scan"] = None if last_run is None else {
+        "started_at": last_run.started_at, "finished_at": last_run.finished_at,
+        "dry_run": last_run.dry_run, "matches": last_run.matches,
+        "sent": last_run.sent, "suppressed": last_run.suppressed,
+        "error": last_run.error,
     }
+    return data
 
 
 # ─────────────────────────── Telegram ───────────────────────────

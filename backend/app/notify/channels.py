@@ -29,7 +29,46 @@ from app.notify import tone as tone_of
 from app.notify.models import UserNotificationChannels
 from app.mail import client as mail
 from app.mail import render
+from app.mail import templates as tpl
+from app.mail.models import MailTemplate
 from app import timez
+
+TEMPLATE_KEY = "notify"     # шаблон письма-уведомления; правится на «Настройки → Почта»
+
+
+def notify_template(db: Session):
+    """Шаблон, которым уходит письмо сотруднику. Может не существовать: заводится он
+    при первом открытии экрана почты, а не миграцией. Тогда письмо собирается как
+    раньше — молчать об этом нельзя, но и падать не из-за чего.
+    """
+    return (db.query(MailTemplate)
+            .filter(MailTemplate.key == TEMPLATE_KEY,
+                    MailTemplate.is_active.is_(True)).first())
+
+
+def deliver_digest(*, to: str, to_name: Optional[str], subject: str,
+                   text: str, html: str) -> str:
+    """Отправка СОБРАННОЙ пачки. Возвращает статус строкой, как остальные каналы.
+
+    Сборка живёт в `notify/digest.py` — это правила «кому и когда», — а доставка здесь,
+    потому что доставка вся здесь. Прибор `test_delivery_is_not_duplicated_by_the_contours`
+    стоит ровно на этом и поймал первую редакцию сборщика, звавшую гейт напрямую.
+
+    Тихие часы НЕ проверяются: час пачки человек задал сам, и он же назначил, когда его
+    можно трогать. Проверка здесь означала бы, что письмо, назначенное на 09:30,
+    отменяется тихими часами до 10:00 — и не уходит уже никогда.
+    """
+    if not mail.configured():
+        return "queued|no_channel"
+    if not mail.valid_address(to or ""):
+        return "queued|no_channel"
+    try:
+        mail.send(to=to, subject=subject[:200], body=text, html=html, to_name=to_name)
+        return "sent|"
+    except mail.MailNotConfigured:
+        return "queued|no_channel"
+    except Exception as e:              # noqa: BLE001 — в журнал уходит любая причина
+        return f"failed|{str(e)[:200]}"
 
 
 def quiet_now(ch: Optional[UserNotificationChannels], ev: registry.Event) -> bool:
@@ -109,7 +148,16 @@ def deliver_mail(db: Session, uid: int, ev: registry.Event, title: str,
     # открывают письмо не в нашей вкладке.
     link_abs = render.abs_url(link)
     facts = list(facts or [])
-    text = render.text_body(title, body, link_abs, facts)
+    # ТЕМА И СЛОВЕСНАЯ ЧАСТЬ — ИЗ ШАБЛОНА, вёрстка остаётся кодовой. До 16.09.2026
+    # шаблон `notify` лежал на экране, был доступен к правке и не влиял ни на что:
+    # письмо собиралось здесь целиком. Правка текста молча ничего не меняла — худший
+    # вид неработающей настройки, потому что выглядит работающей.
+    subject, text = tpl.apply(
+        db, TEMPLATE_KEY,
+        {"заголовок": title, "текст": body or "", "ссылка": link_abs or "",
+         "факты": render.facts_line(facts)},
+        subject_default=title,
+        text_default=render.text_body(title, body, link_abs, facts))
     # Разметка вторым куском, текст первым: письмо уходит `multipart/alternative`, и
     # получатель без картинок читает ту же правду, что и получатель с ними.
     html = render.notification_html(
@@ -124,7 +172,7 @@ def deliver_mail(db: Session, uid: int, ev: registry.Event, title: str,
         logo_url=render.abs_url(render.LOGO_PATH),
         settings_url=render.abs_url(render.SETTINGS_PATH))
     try:
-        mail.send(to=u.email, subject=title[:200], body=text, html=html,
+        mail.send(to=u.email, subject=subject[:200], body=text, html=html,
                   to_name=getattr(u, "name", None))
         return "sent|"
     except mail.MailNotConfigured:

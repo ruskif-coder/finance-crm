@@ -430,7 +430,8 @@ def notification_html(*, title: str, body: Optional[str], link_abs: Optional[str
                       logo_url: Optional[str] = None,
                       settings_url: Optional[str] = None,
                       code: str = "",
-                      context: Optional[str] = None) -> str:
+                      context: Optional[str] = None,
+                      audience: str = "staff") -> str:
     """Одно событие письмом.
 
     Заголовок письма и заголовок карточки совпадают намеренно: письмо про одно событие,
@@ -445,12 +446,50 @@ def notification_html(*, title: str, body: Optional[str], link_abs: Optional[str
     card = _card(title=title, body=body, link_abs=link_abs, tone=tone, tag=tag,
                  when=when.strftime("%H:%M"), action=action, facts=facts,
                  context=context, code=code)
+    # АДРЕСАТ МЕНЯЕТ СЛОВА, а не только адрес ссылки. «Включён в вашем профиле» и
+    # «настраивается в системе» — это наш внутренний язык: у площадки нет ни профиля,
+    # ни доступа в систему, и такое письмо читается как отправленное не тому. Увидели
+    # это 16.09.2026 в предпросмотре — за полтора месяца отправки никто не заметил.
+    if audience == "pub":
+        sub = f"{word.capitalize()} · по вашей площадке"
+        footer = "Что приходит на почту — настраивается в кабинете."
+    else:
+        sub = f"{word.capitalize()} · этот вид уведомления включён в вашем профиле"
+        footer = "Что приходит и как часто — настраивается в системе."
     return _letter(
         brand=brand, logo_url=logo_url, when=when, headline=title,
-        sub=f"{word.capitalize()} · этот вид уведомления включён в вашем профиле",
-        counters=(), cards=[card],
-        footer="Что приходит и как часто — настраивается в системе.",
+        sub=sub, counters=(), cards=[card], footer=footer,
         settings_url=settings_url, preheader=(body or title))
+
+
+def composed_html(*, cards_data: Sequence[dict], headline: str, sub: str,
+                  preheader: str, footer: str, brand: str = "SIMB-AD",
+                  when: Optional[datetime] = None, logo_url: Optional[str] = None,
+                  settings_url: Optional[str] = None,
+                  counters: bool = True) -> str:
+    """Письмо, СОБРАННОЕ ИЗ ЗАДАННОЙ ОБОЛОЧКИ и произвольного набора карточек.
+
+    Отличается от `digest_html` одним: шапку здесь не сочиняет код, её задаёт человек в
+    редакторе шаблонов. Поэтому заголовок, подзаголовок, прехедер и подвал приходят
+    готовыми строками — правила подстановки уже применены вызывающим.
+
+    Карточки рисуются тем же `_card`, что и в живой отправке: другой рисовальщик
+    означал бы, что редактор показывает не то письмо.
+    """
+    when = when or msk_now()
+    order = {t: i for i, t in enumerate(TONE_ORDER)}
+    rows = sorted(cards_data, key=lambda x: order.get(x.get("tone") or "info", 9))
+    counts = [(t, sum(1 for x in rows if (x.get("tone") or "info") == t))
+              for t in TONE_ORDER] if counters else ()
+    cards = [_card(title=x.get("title") or "", body=x.get("body"),
+                   link_abs=x.get("link_abs"), tone=x.get("tone") or "info",
+                   tag=x.get("tag") or "", when=x.get("when") or "",
+                   action=x.get("action") or "Открыть", facts=x.get("facts") or (),
+                   context=x.get("context"), code=x.get("code") or "")
+             for x in rows]
+    return _letter(brand=brand, logo_url=logo_url, when=when, headline=headline,
+                   sub=sub, counters=counts, cards=cards, footer=footer,
+                   settings_url=settings_url, preheader=preheader)
 
 
 def digest_html(*, items: Sequence[dict], to_name: str = "",
