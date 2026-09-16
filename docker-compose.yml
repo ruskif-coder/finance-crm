@@ -85,6 +85,9 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_BOT_NAME: ${TELEGRAM_BOT_NAME:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      TELEGRAM_PUB_BOT_TOKEN: ${TELEGRAM_PUB_BOT_TOKEN:-}
+      TELEGRAM_PUB_BOT_NAME: ${TELEGRAM_PUB_BOT_NAME:-}
+      TELEGRAM_PUB_WEBHOOK_SECRET: ${TELEGRAM_PUB_WEBHOOK_SECRET:-}
       # Доступ к API ОРД МедиаСкаут. Значения — в .env (gitignored), сюда только ссылки.
       # Контур ПО УМОЛЧАНИЮ demo: забытая переменная должна отправлять в песочницу, а не
       # в ЕРИР — регистрация маркера необратима. prod ставится осознанно.

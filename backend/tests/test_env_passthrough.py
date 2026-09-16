@@ -60,6 +60,13 @@ PASSED_THROUGH = {
     "TELEGRAM_BOT_TOKEN": "compose",
     "TELEGRAM_BOT_NAME": "compose",
     "TELEGRAM_WEBHOOK_SECRET": "compose",
+    # Бот кабинета площадок — ОТДЕЛЬНЫЙ от внутреннего (владелец 15.09.2026): площадка
+    # видит бота подрядчика, а не наш алёрт-бот. Без проброса кнопка в кабинете скажет
+    # «пока недоступен» при заполненном .env — ровно та тишина, ради которой этот
+    # список и ведётся.
+    "TELEGRAM_PUB_BOT_TOKEN": "compose",
+    "TELEGRAM_PUB_BOT_NAME": "compose",
+    "TELEGRAM_PUB_WEBHOOK_SECRET": "compose",
     # ── ОРД МедиаСкаут ───────────────────────────────────────────────────────
     "ORD_ENV": "compose",
     "ORD_LOGIN": "compose",

@@ -52,11 +52,18 @@ def test_deal_plan_reads_service_surface_and_volume_from_media_plan():
     """
     db = SessionLocal()
     try:
+        # Модель ЗАДАЁТСЯ явно, а не берётся первой попавшейся: показы гарантированы
+        # объёмом только у CPM, у Фикса и Пакета их вводит аккаунт, у CPC они выводятся
+        # из кликов. `LIMIT 1` без сортировки отдаёт строку в физическом порядке, и на
+        # данных прода 16.09.2026 сюда попал не-CPM план — тест падал на «plan_show is
+        # None», хотя это ровно то поведение, которое мы и закладывали (см. mp_row).
         row = db.execute(text("""
             SELECT mp.deal_id FROM sales_media_plans mp
             JOIN sales_media_plan_rows r ON r.plan_id = mp.id
             WHERE r.volume > 0 AND r.position IS NOT NULL
-              AND mp.deal_id IS NOT NULL AND mp.status <> 'rejected' LIMIT 1
+              AND upper(trim(r.model)) = 'CPM'
+              AND mp.deal_id IS NOT NULL AND mp.status <> 'rejected'
+            ORDER BY mp.id DESC LIMIT 1
         """)).first()
         if not row:
             return
@@ -178,6 +185,13 @@ def test_sync_is_idempotent_and_keeps_placement_status():
     """Повторный прогон не плодит и НЕ трогает статусы: их ставит трафик по согласованию."""
     db = SessionLocal()
     try:
+        # Идемпотентность — свойство ВТОРОГО прогона, а не первого. Раньше тест требовал
+        # нуля сразу, то есть молча предполагал, что витрина уже наполнена. На копии прода
+        # 16.09.2026 она пуста (строки `sync_ad_campaigns` нет в кроне прода вовсе), и
+        # первый же прогон создал 88 пар — падение говорило про состояние данных, а не
+        # про то, ради чего тест написан.
+        build.sync_all(db, commit=False)
+        db.flush()
         before_c = db.query(AdCampaign).count()
         before_p = db.query(AdCampaignPlacement).count()
         pl = db.query(AdCampaignPlacement).first()

@@ -522,35 +522,76 @@ def check_debug_off():
                   "DEBUG=true открывает /docs без аутентификации" if on else None)
 
 
+# Каталог бэкапов, каким его видит бэкенд (монтируется `:ro`). Вынесен константой,
+# чтобы проверку можно было прогнать на временном каталоге: подменять `/app/backups` в
+# тесте значит писать в боевой монтаж.
+BACKUPS_PATH = "/app/backups"
+
+
 def check_backup_visibility():
-    """Каталог бэкапов в бэкенд НЕ смонтирован — и это надо говорить, а не молчать.
+    """Свежесть бэкапа — ОТДЕЛЬНОЙ строкой на каждую базу.
 
     Проверка существует ради честности экрана: без неё раздел «Бэкапы» просто отсутствовал
-    бы, и отсутствие читалось бы как «всё хорошо». Закрывается одной строкой `:ro` в
-    compose (шаг 2 спеки).
+    бы, и отсутствие читалось бы как «всё хорошо». Каталог закрывается одной строкой `:ro`
+    в compose.
+
+    ОДНА СТРОКА НА ВСЕХ — ВРАЛА (найдено владельцем 15.09.2026). Брался самый свежий файл
+    каталога, а бэкап аналитической базы делается в 03:10, через десять минут после
+    основной, — то есть «самый свежий» это ВСЕГДА он. Экран показывал дамп dsp_analytics
+    на 24 КБ и подписывал его «Последний бэкап»; основной базы на экране не было вовсе.
+    Хуже того, по нему же считалась и тревога: упади бэкап основной базы совсем, строка
+    осталась бы зелёной — прибор, поставленный ради главного, сообщал бы о второстепенном.
+
+    Разделение по имени файла — то же, что у ротации в `deploy.sh`: `backup_<дата>.sql`
+    у основной базы, `backup_dsp_analytics_<дата>.sql` у аналитической. Правило одно на
+    два места, и разъехаться им нельзя: там оно решает, что удалять, здесь — о чём
+    отчитываться.
     """
-    path = "/app/backups"
+    path = BACKUPS_PATH
     if not os.path.isdir(path):
-        return _check("backups", "Бэкапы", "Каталог бэкапов", "idle",
-                      "нет доступа",
-                      "нужен монтаж каталога только на чтение: "
-                      "`${BACKUPS_DIR:-./backups}:/app/backups:ro`",
-                      consequence="Бэкенд не видит каталог — проверить восстановление нельзя")
-    files = sorted((f for f in os.listdir(path) if f.endswith((".dump", ".sql"))),
-                   key=lambda f: os.path.getmtime(os.path.join(path, f)), reverse=True)
+        return [_check("backups", "Бэкапы", "Каталог бэкапов", "idle",
+                       "нет доступа",
+                       "нужен монтаж каталога только на чтение: "
+                       "`${BACKUPS_DIR:-./backups}:/app/backups:ro`",
+                       consequence="Бэкенд не видит каталог — проверить восстановление нельзя")]
+
+    files = [f for f in os.listdir(path) if f.endswith((".dump", ".sql"))]
     if not files:
-        return _check("backups", "Бэкапы", "Каталог бэкапов", "bad", "пуст")
-    newest = os.path.join(path, files[0])
-    hours = (time.time() - os.path.getmtime(newest)) / 3600
-    size = os.path.getsize(newest)
-    sev = "bad" if hours > 48 else "warn" if hours > 26 else "ok"
-    # Имя самого свежего файла — в подпись. Каталогов бэкапов на проде исторически три
-    # (ручной из `deploy.sh`, автоматический из сервиса, и тот, что смотрит бэкенд), и
-    # смонтировать не тот — значит получить зелёную строку про чужие, старые дампы.
-    # Имя файла показывает, ЧЕЙ каталог мы видим, без похода на сервер.
-    return _check("backups", "Бэкапы", "Последний бэкап", sev,
-                  f"{hours:.0f} ч назад · {size / 2**20:.1f} МБ · {files[0]}",
-                  f"всего файлов: {len(files)}")
+        return [_check("backups", "Бэкапы", "Каталог бэкапов", "bad", "пуст",
+                       consequence="Восстанавливать нечем")]
+
+    def newest(pred):
+        got = [f for f in files if pred(f)]
+        if not got:
+            return None
+        return max(got, key=lambda f: os.path.getmtime(os.path.join(path, f)))
+
+    DBS = (
+        ("backups", "Основная база",
+         lambda f: f.startswith("backup_") and not f.startswith("backup_dsp_analytics_")),
+        ("backups_dsp", "Аналитическая база (DSP)",
+         lambda f: f.startswith("backup_dsp_analytics_")),
+    )
+    out = []
+    for key, title, pred in DBS:
+        name = newest(pred)
+        if name is None:
+            out.append(_check(key, "Бэкапы", title, "bad", "бэкапов нет",
+                              "проверьте строку в cron: `deploy.sh backup` для основной, "
+                              "`deploy.sh backup dsp_analytics` для аналитической",
+                              consequence="Эту базу восстанавливать нечем"))
+            continue
+        full = os.path.join(path, name)
+        hours = (time.time() - os.path.getmtime(full)) / 3600
+        size = os.path.getsize(full)
+        sev = "bad" if hours > 48 else "warn" if hours > 26 else "ok"
+        # Имя файла в подписи — чтобы было видно, ЧЕЙ каталог мы читаем: каталогов
+        # бэкапов на проде исторически три, и смонтировать не тот значит получить
+        # зелёную строку про чужие старые дампы.
+        out.append(_check(key, "Бэкапы", title, sev,
+                          f"{hours:.0f} ч назад · {size / 2**20:.1f} МБ · {name}",
+                          f"всего файлов в каталоге: {len(files)}"))
+    return out
 
 
 # ── аптайм и ошибки ──────────────────────────────────────────────────────────
@@ -698,7 +739,10 @@ def collect(db: Session, live: bool = False) -> dict:
     # Дёргать чужие сервисы при каждом открытии экрана — способ получить бан по частоте.
     if live:
         checks.append(_safe(check_telegram_live))
-    checks += [_safe(check_debug_off), _safe(check_backup_visibility)]
+    checks.append(_safe(check_debug_off))
+    # Бэкапы отдают СПИСОК — по строке на базу (см. докстроку проверки).
+    bk = _safe(check_backup_visibility)
+    checks += bk if isinstance(bk, list) else [bk]
 
     worst = max((WORST[c["tone"]] for c in checks), default=0)
     act = _safe_value(activity, db, default={"actions_24h": 0, "users_24h": 0})
