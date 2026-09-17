@@ -42,7 +42,7 @@
 """
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import text
@@ -51,6 +51,7 @@ from sqlalchemy.orm import Session
 from app.dsp import creatives as cr
 from app.dsp.client import MsClient, MsError
 from app.files_safe import inside_uploads
+from app.dsp.targeting_link import ENV_ADMIN_URL
 from app.launch_prep.models import LaunchPrepCreativeFile, LaunchPrepCreativeSet
 
 log = logging.getLogger("finance.dsp")
@@ -176,6 +177,11 @@ def ensure(db: Session, s: LaunchPrepCreativeSet, *,
     c = client or _client(partner)
     ref = f"tgt{s.id}"
 
+    # КАМПАНИЮ ГОТОВИМ ПО ХОДУ ДЕЛА, а не требуем готовой. Полигон нацеливания живёт
+    # ровно столько, сколько нужно проверке, и продлевается в момент получения — так
+    # решил владелец 17.09.2026.
+    wake_campaign(db, client=c)
+
     # Уже заведённый креатив ПРОВЕРЯЕМ, а не берём на веру. Причина конкретная: объект
     # создаётся одним вызовом, а HTML вшивается вторым, и между ними связь может
     # оборваться. Тогда в кабинете остаётся креатив БЕЗ КОДА — ссылка на него
@@ -222,6 +228,168 @@ def _persist(db: Session, s: LaunchPrepCreativeSet, xxhash: str) -> str:
     return xxhash
 
 
+# Насколько кампания нацеливания живёт после каждого получения. Двое суток — решение
+# владельца 17.09.2026, и это ровно срок жизни самой ссылки нацеливания: кампания,
+# пережившая свою ссылку, крутилась бы впустую, а умершая раньше — сорвала бы проверку
+# на середине.
+LIVE_DAYS = 2
+
+
+def wake_campaign(db: Session, *, client: Optional[MsClient] = None) -> dict:
+    """Продлить срок кампании нацеливания и запустить её — В МОМЕНТ ПОЛУЧЕНИЯ.
+
+    ПОЧЕМУ НЕ ЗАРАНЕЕ И НЕ НАВСЕГДА. Запущенная кампания крутится настоящим людям в
+    пределах своих лимитов, и держать полигон открытым месяцами — платить за показы,
+    которые никто не смотрит. Поэтому она спит, а просыпается ровно тогда, когда трафик
+    нажал «нацелить на себя», и на два дня.
+
+    ПОЧЕМУ НЕ ОТКАЗ. Первая редакция этой проверки (утро 17.09.2026) отказывала: «не
+    запущена — покажется ничего». Отказ верен по факту, но перекладывает на человека ход,
+    который система делает сама двумя вызовами.
+
+    СРОК ТОЛЬКО ВПЕРЁД. Если кампания уже живёт дольше — не трогаем: укоротить чужой срок
+    своей проверкой значит однажды погасить кампанию под чьей-то рукой.
+
+    ЛИМИТЫ ПЕРЕНОСИМ ЦЕЛИКОМ. `Campaign.edit` принимает `limits` объектом, и посылка без
+    них обнулила бы показы и бюджет — то есть тихо сняла бы потолок, ради которого они и
+    стоят (замер 17.09.2026: показы 200 000, бюджет 1000).
+    """
+    from app.routers.traffic_catalog import targeting_cabinet
+
+    partner, campaign = targeting_cabinet(db)
+    if not (partner and campaign):
+        raise TargetingCreativeError(
+            "Не задан кабинет или кампания нацеливания: Трафики → Каталог → Скрипты сайта")
+    c = client or _client(partner)
+    try:
+        info = c.campaign_get_info(campaign) or {}
+    except MsError as e:
+        raise TargetingCreativeError(f"DSP не ответил про кампанию нацеливания: {e}")
+
+    status = (info.get("status") or "").upper()
+    # Удалённую и архивную поднять НЕЛЬЗЯ, и делать вид, что можно, — хуже отказа:
+    # человек ждал бы показов от того, чего в кабинете уже нет.
+    if status in ("DELETED", "ARCHIVE"):
+        raise TargetingCreativeError(
+            f"Кампания нацеливания «{info.get('title') or campaign}» {STATUS_RU.get(status, status)} "
+            f"в кабинете DSP — нужна другая: Трафики → Каталог → Скрипты сайта")
+
+    want_end = (datetime.utcnow() + timedelta(days=LIVE_DAYS)).date()
+    end = _moment(info.get("date_end"))
+    start = _moment(info.get("date_start"))
+    changed = []
+
+    if not end or end.date() < want_end:
+        params = {"limits": info.get("limits") or {},
+                  "date_end": want_end.isoformat()}
+        # Начало двигаем назад, только если оно в будущем: иначе кампания «запущена», а
+        # показов нет — и это ровно тот вид поломки, который выглядит как работа.
+        if start and start > datetime.utcnow():
+            params["date_start"] = datetime.utcnow().date().isoformat()
+        elif start:
+            params["date_start"] = start.date().isoformat()
+        c.campaign_edit(campaign, params, local_ref=campaign)
+        changed.append(f"срок до {want_end:%d.%m.%Y}")
+
+    if status != RUNNING:
+        c.campaign_set_status(campaign, RUNNING, local_ref=campaign)
+        changed.append("запущена")
+
+    if changed:
+        log.info("DSP: кампания нацеливания %s — %s", campaign, ", ".join(changed))
+    return {"campaign_xxhash": campaign, "changed": changed,
+            "date_end": want_end.isoformat()}
+
+
+# ── состояние кампании нацеливания ───────────────────────────────────────────
+
+# Кампания, в которой лежат креативы нацеливания, — ЧУЖАЯ: её заводят и останавливают
+# руками в кабинете DSP, а не мы. Поэтому её состояние не хранится, а спрашивается.
+RUNNING = "LAUNCHED"
+
+# Их словарь статусов по-русски. Нужен в текстах отказа: человек читает наше сообщение,
+# а видит в кабинете английское слово — поэтому в отказе стоят оба.
+STATUS_RU = {"LAUNCHED": "запущена", "STOPPED": "остановлена",
+             "DELETED": "удалена", "ARCHIVE": "в архиве"}
+
+
+def _moment(v):
+    """Их дата приходит объектом `{'date': '...', 'timezone': ...}`, а не строкой."""
+    if isinstance(v, dict):
+        v = v.get("date")
+    if not v:
+        return None
+    try:
+        return datetime.strptime(str(v)[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def campaign_state(db: Session, *, client: Optional[MsClient] = None) -> dict:
+    """Карточка кампании нацеливания: имя, статус, сроки — и годна ли она показывать.
+
+    ЗАЧЕМ. До 17.09.2026 в настройке стоял голый хеш, и по нему нельзя было понять
+    ничего: ни какая это кампания, ни жива ли она. Кампания при этом была ОСТАНОВЛЕНА и
+    закончилась 13.09 — ссылка нацеливания выпускалась, открывалась и не показывала
+    ничего. Отказ молчал, потому что спросить было некому.
+
+    Ошибка обмена возвращается полем `error`, а не исключением: это карточка для экрана,
+    и недоступность DSP на ней — такая же новость, как остановленная кампания.
+    """
+    from app.routers.traffic_catalog import targeting_cabinet
+
+    partner, campaign = targeting_cabinet(db)
+    out = {"partner_xxhash": partner, "campaign_xxhash": campaign,
+           "title": None, "status": None, "date_start": None, "date_end": None,
+           "running": False, "asleep": False, "reason": None, "error": None,
+           "admin_url": (os.getenv(ENV_ADMIN_URL) or "").strip().rstrip("/") or None}
+    if not (partner and campaign):
+        out["reason"] = ("Не задан кабинет или кампания нацеливания: "
+                         "Трафики → Каталог → Скрипты сайта")
+        return out
+
+    c = client or _client(partner)
+    try:
+        info = c.campaign_get_info(campaign) or {}
+    except MsError as e:
+        out["error"] = str(e)
+        out["reason"] = f"DSP не ответил про кампанию: {e}"
+        return out
+    if not isinstance(info, dict):
+        out["reason"] = "DSP вернул не карточку кампании"
+        return out
+
+    out["title"] = info.get("title") or None
+    out["status"] = info.get("status") or None
+    start, end = _moment(info.get("date_start")), _moment(info.get("date_end"))
+    out["date_start"] = start.isoformat() if start else None
+    out["date_end"] = end.isoformat() if end else None
+
+    # Два РАЗНЫХ отказа, и различать их обязательно: остановленную запускают одной
+    # кнопкой, просроченной надо двигать даты. «Не работает» на оба случая отправляет
+    # человека искать причину не там.
+    now = datetime.utcnow()
+    st = (out["status"] or "").upper()
+    if st in ("DELETED", "ARCHIVE"):
+        # Единственный настоящий отказ: поднять такую кампанию нечем.
+        out["reason"] = (f"Кампания {STATUS_RU.get(st, st)} в кабинете DSP — нужна другая: "
+                         f"Трафики → Каталог → Скрипты сайта")
+    elif st != RUNNING or (end and end < now):
+        # Спит — это НОРМА, а не поломка: полигон просыпается в момент получения
+        # нацеливания и живёт двое суток (владелец 17.09.2026). Писать здесь «не
+        # работает» значило бы пугать человека штатным состоянием.
+        out["asleep"] = True
+        out["reason"] = (f"Кампания спит: при получении нацеливания она запустится "
+                         f"сама и будет жить {LIVE_DAYS} дня")
+    elif start and start > now:
+        out["reason"] = (f"Начало {start:%d.%m.%Y} — до этой даты показов не будет")
+        out["running"] = True
+    else:
+        out["running"] = True
+        out["reason"] = None
+    return out
+
+
 def ensure_quietly(db: Session, s: LaunchPrepCreativeSet) -> Optional[str]:
     """То же, но без исключения: для отправки трафику.
 
@@ -238,5 +406,6 @@ def ensure_quietly(db: Session, s: LaunchPrepCreativeSet) -> Optional[str]:
         return None
 
 
-__all__ = ["ensure", "ensure_quietly", "TargetingCreativeError", "TITLE_PREFIX",
-           "FALLBACK_LINK"]
+__all__ = ["ensure", "ensure_quietly", "campaign_state", "wake_campaign",
+           "TargetingCreativeError", "TITLE_PREFIX", "FALLBACK_LINK", "RUNNING",
+           "LIVE_DAYS"]

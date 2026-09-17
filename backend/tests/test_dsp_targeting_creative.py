@@ -23,11 +23,38 @@ class FakeClient:
     """Подменный клиент: описывает ВЕСЬ обмен заведения, как у клиентов DSP и WCM."""
 
     def __init__(self, journal_hash=None, add_hash="NEWHASH000000001",
-                 info_html="<div>баннер</div>"):
+                 info_html="<div>баннер</div>", campaign_status="LAUNCHED",
+                 campaign_end="2999-01-01 00:00:00"):
         self.journal_hash = journal_hash
         self.add_hash = add_hash
         self.info_html = info_html
+        self.campaign_status = campaign_status
+        self.campaign_end = campaign_end
         self.calls = []
+
+    def campaign_edit(self, xxhash, params, local_ref=None):
+        self.calls.append(("campaign_edit", xxhash, params.get("date_end")))
+        self.campaign_end = str(params.get("date_end")) + " 00:00:00"
+        self.edited_limits = params.get("limits")
+        return True
+
+    def campaign_set_status(self, xxhash, status, local_ref=None):
+        self.calls.append(("campaign_status", xxhash, status))
+        self.campaign_status = status
+        return True
+
+    def campaign_get_info(self, xxhash):
+        """Карточка кампании, в которой живут креативы нацеливания.
+
+        Кампания ЧУЖАЯ: её останавливают руками в кабинете DSP, и остановленная не
+        покажет ничего — поэтому заведение обязано её спрашивать (замер 17.09.2026).
+        """
+        self.calls.append(("campaign", xxhash))
+        return {"title": "ТЕСТ · кампания нацеливания", "xxhash": xxhash,
+                "status": self.campaign_status,
+                "limits": {"show": {"total": 200000}, "budget": {"total": 1000}},
+                "date_start": {"date": "2026-01-01 00:00:00"},
+                "date_end": {"date": self.campaign_end}}
 
     def last_ok_xxhash(self, method, entity_type, local_ref):
         self.calls.append(("journal", method, local_ref))
@@ -90,7 +117,11 @@ def test_stored_hash_is_verified_but_never_duplicated():
     c = FakeClient()
     try:
         assert P.ensure(db, s, client=c) == "ALREADY0000000001"
-        assert c.calls == [("info", "ALREADY0000000001")], (
+        # Первым идёт вопрос о КАМПАНИИ: остановленная не покажет ничего, и проверять
+        # креатив в ней бессмысленно. Дальше — одно чтение креатива. `Creative.add` в
+        # этой ветке не вызывается никогда: удалить лишний в чужом кабинете нечем.
+        assert c.calls == [("campaign", c.calls[0][1]),
+                           ("info", "ALREADY0000000001")], (
             f"лишние вызовы при сохранённом хеше: {c.calls}")
         assert not any(k[0] == "add" for k in c.calls), "создан второй креатив"
     finally:
@@ -123,7 +154,7 @@ def test_journal_saves_us_from_a_duplicate():
     try:
         assert P.ensure(db, s, client=c) == "FROMJOURNAL00001"
         # Журнал подсказал хеш, чтение подтвердило код — создавать нечего.
-        assert [k[0] for k in c.calls] == ["journal", "info"], (
+        assert [k[0] for k in c.calls] == ["campaign", "journal", "info"], (
             f"после журнала должно быть только чтение, а было: {c.calls}")
         db.refresh(s)
         assert s.ms_targeting_creative_xxhash == "FROMJOURNAL00001"
@@ -242,3 +273,95 @@ def test_set_without_anything_still_gets_a_link():
         assert P._landing(db, s) == P.FALLBACK_LINK
     finally:
         _drop(db, s)
+
+
+def test_a_sleeping_campaign_is_woken_by_the_request_itself():
+    """Спящую кампанию получение нацеливания БУДИТ, а не отвергает.
+
+    Полигон нацеливания не держат открытым месяцами: запущенная кампания крутится
+    настоящим людям в пределах лимитов. Поэтому она спит, а просыпается ровно в момент
+    нажатия и живёт двое суток (владелец 17.09.2026). Первая редакция проверки в тот же
+    день отказывала — отказ был верен по факту, но перекладывал на человека ход, который
+    система делает двумя вызовами.
+    """
+    from datetime import datetime, timedelta
+    db = _db()
+    try:
+        s = _set_with(db)
+        c = FakeClient(campaign_status="STOPPED", campaign_end="2026-09-13 00:00:00")
+        P.wake_campaign(db, client=c)
+        assert [x for x in c.calls if x[0] == "campaign_status"][0][2] == "LAUNCHED"
+        end = [x for x in c.calls if x[0] == "campaign_edit"][0][2]
+        want = (datetime.utcnow() + timedelta(days=P.LIVE_DAYS)).date().isoformat()
+        assert end == want, f"срок должен ехать на {P.LIVE_DAYS} дня вперёд, а не {end}"
+    finally:
+        _drop(db, s)
+        db.close()
+
+
+def test_waking_carries_the_limits_over():
+    """Потолок показов и бюджета переносится ЦЕЛИКОМ.
+
+    `Campaign.edit` принимает `limits` объектом: посылка одних дат обнулила бы показы и
+    бюджет, то есть тихо сняла бы потолок, ради которого они и стоят. Тихо — потому что
+    кампания при этом продолжает работать, и заметить это можно только по счёту.
+    """
+    db = _db()
+    try:
+        s = _set_with(db)
+        c = FakeClient(campaign_status="STOPPED", campaign_end="2026-09-13 00:00:00")
+        P.wake_campaign(db, client=c)
+        assert c.edited_limits == {"show": {"total": 200000}, "budget": {"total": 1000}}
+    finally:
+        _drop(db, s)
+        db.close()
+
+
+def test_a_live_campaign_is_not_shortened():
+    """Срок двигается ТОЛЬКО ВПЕРЁД: укоротить чужую кампанию своей проверкой значит
+    однажды погасить её под чьей-то рукой."""
+    db = _db()
+    try:
+        s = _set_with(db)
+        c = FakeClient(campaign_end="2999-01-01 00:00:00")
+        P.wake_campaign(db, client=c)
+        assert not [x for x in c.calls if x[0] == "campaign_edit"]
+        assert not [x for x in c.calls if x[0] == "campaign_status"]
+    finally:
+        _drop(db, s)
+        db.close()
+
+
+def test_a_deleted_campaign_is_the_one_real_refusal():
+    """Удалённую и архивную поднять нечем — и делать вид, что можно, хуже отказа: человек
+    ждал бы показов от того, чего в кабинете уже нет."""
+    db = _db()
+    try:
+        s = _set_with(db)
+        c = FakeClient(campaign_status="DELETED")
+        with pytest.raises(P.TargetingCreativeError) as e:
+            P.ensure(db, s, client=c)
+        assert "удалена" in str(e.value)
+        assert not [x for x in c.calls if x[0] == "add"]
+    finally:
+        _drop(db, s)
+        db.close()
+
+
+def test_the_process_itself_wakes_the_campaign():
+    """Пробуждение вшито в ПОЛУЧЕНИЕ нацеливания, а не вынесено в отдельную кнопку.
+
+    Смысл ровно в этом: кампания просыпается от того, что человек попросил нацеливание,
+    и ему не нужно знать, что где-то есть спящий полигон. Прибор смотрит на порядок
+    вызовов — вопрос о кампании идёт ПЕРВЫМ, до всякой работы с архивом.
+    """
+    db = _db()
+    try:
+        s = _set_with(db)
+        c = FakeClient(campaign_status="STOPPED", campaign_end="2026-09-13 00:00:00")
+        with pytest.raises(P.TargetingCreativeError):
+            P.ensure(db, s, client=c)        # архива у времянки нет — дальше не уедет
+        assert [x[0] for x in c.calls][:3] == ["campaign", "campaign_edit", "campaign_status"]
+    finally:
+        _drop(db, s)
+        db.close()

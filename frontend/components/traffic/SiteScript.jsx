@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { MONO, UI, card, inp, btn, primaryBtn } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
+import { TargetingCampaignCard, useTargetingCampaign } from './TargetingCampaign'
 
 const LBL = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)' }
 const BOX = { ...card, padding: '16px 18px' }
@@ -88,6 +89,9 @@ export default function SiteScript({ mayEdit }) {
   const [wbAcc, setWbAcc] = useState('')
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
+  /* Что стоит за хешем: имя, статус и сроки кампании. Хеш сам по себе не говорит
+     ничего, а остановленная кампания не покажет на площадке ничего. */
+  const tgt = useTargetingCampaign()
 
   const load = useCallback(async () => {
     try {
@@ -206,6 +210,7 @@ export default function SiteScript({ mayEdit }) {
             </button>
           )}
         </div>
+        {!tgtEmpty && <TargetingCampaignCard state={tgt.state} />}
       </div>
 
       {/* Аккаунт WCM — здесь же, рядом с остальными настройками обмена. Жил он в двух

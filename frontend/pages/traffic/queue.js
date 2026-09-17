@@ -31,6 +31,7 @@ import { dm } from '@/lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { saveResponse } from '@/lib/download'
 import { Cube } from '@/components/LogoLoader'
+import { TargetingCampaignHint, useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
 
 /* Что сказать человеку про письмо. Ответ ручки различает пять исходов, и каждый значит
    для него РАЗНОЕ действие: отправлено — ничего не делать, не ушло — отправить самому.
@@ -216,6 +217,10 @@ export default function TrafficQueue() {
   // Какой комплект сейчас выпускает ссылку. Не общий `busy`: выпуск ходит наружу, и
   // гасить на это время вердикты по ВСЕЙ очереди значило бы останавливать работу.
   const [aiming, setAiming] = useState(null)
+  /* Кампания нацеливания — ОДИН запрос на экран, а не по строке: она у всех комплектов
+     одна, и спрашивать её на каждую кнопку значило бы ходить в чужую систему десятки
+     раз за открытие. */
+  const tgt = useTargetingCampaign()
   // Отдельно от ошибки: «письмо ушло» — не ошибка, а красная плашка на успехе учит
   // людей не читать плашки вовсе.
   const [note, setNote] = useState('')
@@ -634,6 +639,11 @@ export default function TrafficQueue() {
                       руками и хранили. Теперь она выпускается по нажатию (12.09.2026):
                       нацеливание заводится на тестового клиента, живёт 48 часов, и
                       хранить её нельзя — сохранённая протухнет раньше, чем понадобится. */}
+                  {/* Подсказка на НАВЕДЕНИИ, а не по клику: клик у этой кнопки дорогой —
+                      он уходит в DSP и заводит там креатив. Узнать, в какую кампанию он
+                      поедет и жива ли она, человек обязан ДО нажатия (владелец
+                      17.09.2026). */}
+                  <TargetingCampaignHint state={tgt.state}>
                   <button style={iconBtn(mayEdit)} disabled={!mayEdit || aiming === g.set.id}
                     title="Нацелить на себя: откроется страница DSP, нажмите «Включить» — и увидите баннер на сайте площадки до старта"
                     onClick={() => aimAtMe(g.set.id)}>
@@ -644,6 +654,7 @@ export default function TrafficQueue() {
                         копию креатива (владелец 17.09.2026). */}
                     {aiming === g.set.id ? <Cube variant="spinner" size={14} /> : <Ico d={I_AIM} />}
                   </button>
+                  </TargetingCampaignHint>
                   {/* Ручная ссылка, если её когда-то завели: поле заморожено, но то, что
                       в нём лежит, остаётся доступным. Новых так не заводят. */}
                   {!!g.set.test_targeting_url && (

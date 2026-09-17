@@ -343,6 +343,21 @@ def get_site_script(db: Session = Depends(get_db), user: User = Depends(VIEW)):
     }
 
 
+@router.get("/targeting-campaign")
+def get_targeting_campaign(db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Кампания нацеливания ЛИЦОМ: имя, статус, сроки — а не голый хеш.
+
+    Настройка хранит хеш, и по нему человек не может сказать ничего: ни какая это
+    кампания, ни жива ли она. 17.09.2026 это стоило дня разбора — кампания была
+    остановлена и просрочена, ссылка выпускалась, а на площадке не показывалось ничего.
+
+    Ходит в чужую систему на каждый вызов и намеренно НЕ кэшируется: статус меняют
+    руками в кабинете DSP, и показывать вчерашний — то же самое, что не показывать.
+    """
+    from app.dsp import targeting_creative as tc
+    return tc.campaign_state(db)
+
+
 class SiteScriptIn(BaseModel):
     """Пусто — законное значение: «в эту колонку ничего не вшиваем»."""
     with_code: Optional[str] = None
