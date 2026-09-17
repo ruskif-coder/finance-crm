@@ -6,6 +6,7 @@
  */
 import { useState, useEffect } from 'react'
 import { C, CAP, MONO, UI, btn, btnSm, card, chip } from '../lib/ui'
+import BugReport from './BugReport'
 
 export const WRAP = { maxWidth: 1600, margin: '0 auto', padding: '0 20px' }
 
@@ -93,6 +94,12 @@ export function Header({ profile, name, account, nav, active, onNav, onExit, cou
         </nav>
 
         <span style={{ flex: 1 }} />
+        {/* Кнопка сбоя стоит ПЕРЕД переключателем темы (владелец 17.09.2026): рядом с
+            тем, что человек и так трогает, а не спрятана в профиле. */}
+        <BugReport btnStyle={{ width: 32, height: 32, borderRadius: 9, display: 'inline-flex',
+          alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+          background: C.card, border: `1px solid ${C.border}`, color: C.secondary,
+          marginRight: 8 }} />
         <ThemeToggle />
 
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>

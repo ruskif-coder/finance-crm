@@ -29,6 +29,7 @@ const SECTIONS = [
   { id: 'audit', label: 'Журнал', href: '/settings/audit', perm: 'settings_audit' },
   // Рядом с «Журналом» намеренно: журнал — «что сделали», бэклог — «что может выстрелить».
   { id: 'backlog', label: 'Бэклог отладки', href: '/settings/backlog', perm: 'settings_backlog' },
+  { id: 'bugs', label: 'Заявки о сбоях', href: '/settings/bugs', perm: 'settings_bugs' },
   // Профили уведомлений — политика на всю компанию, поэтому вкладка админская.
   // Личная часть той же страницы открывается всем из меню профиля («Мои уведомления»).
   { id: 'notifications', label: 'Уведомления', href: '/settings/notifications', adminOnly: true },

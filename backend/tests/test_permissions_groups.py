@@ -43,6 +43,7 @@ EXPECTED_KEYS = {
     "settings_services", "settings_field_audit", "settings_audit",
     # Добавлен 2026-08-16 вместе с разделом «Бэклог отладки» (routers/backlog.py).
     "settings_backlog",
+    "settings_bugs",
     "settings_mail",
 }
 

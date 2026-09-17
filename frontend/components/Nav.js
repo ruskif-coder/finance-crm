@@ -16,6 +16,8 @@ import { freshMark, hasFresh } from '@/lib/notify.mjs'
 import { ago } from '@/lib/dates'
 import { TONE, toneOf, toneWeight } from '@/lib/tone'
 import { allowedSections, allowedItems, findByPath, entryHref, firstAllowedHref, resolveLegacy } from '@/lib/nav'
+import BugReport from './BugReport'
+import { useMaintenance, MaintenanceBar, MaintenanceStub } from './Maintenance'
 
 /* Сброс дефолтов <button>: вся навигация — настоящие кнопки (фокус с клавиатуры,
    Enter/Space, роль для скринридера), но выглядят ровно как в макете. */
@@ -586,7 +588,7 @@ function Section({ s, variant = 'tab', align = 'left', hover, open, close, close
 /* ══════════════════════════════════════════════════════════════════════
    ДЕСКТОП (≥ 1024px)
    ══════════════════════════════════════════════════════════════════════ */
-export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGear, bell, canSettings, hasDirectory, onLogo, logo = '/logo.png', children }) {
+export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGear, bell, bug, canSettings, hasDirectory, onLogo, logo = '/logo.png', children }) {
   const [hover, setHover] = useState(null)
   const timer = useRef(null)
   const open = key => { clearTimeout(timer.current); setHover(key) }
@@ -656,6 +658,7 @@ export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGea
             hover={hover} open={open} close={close} closeNow={closeNow}
             perms={perms} isAdmin={isAdmin} active={active} onNavigate={onNavigate} />
         )}
+        {bug}
         {bell}
         {canSettings && (
           <button type="button" className="nav-icon" onClick={onGear} title="Настройки" aria-label="Настройки" style={{ ...btnReset, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 10, color: T.t3 }}>
@@ -673,7 +676,7 @@ export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGea
 /* ══════════════════════════════════════════════════════════════════════
    МОБИЛЬНЫЙ (< 1024px)
    ══════════════════════════════════════════════════════════════════════ */
-export function NavMobile({ sections, active, perms, isAdmin, onNavigate, bell, canSettings, onSearch, onLogo, logo = '/logo.png', children }) {
+export function NavMobile({ sections, active, perms, isAdmin, onNavigate, bell, bug, canSettings, onSearch, onLogo, logo = '/logo.png', children }) {
   const [menu, setMenu] = useState(false)
   const curKey = active?.section?.key || null       // null — активного контура нет
   const [exp, setExp] = useState(curKey)            // раскрытый в аккордеоне раздел; null — все свёрнуты
@@ -725,6 +728,7 @@ export function NavMobile({ sections, active, perms, isAdmin, onNavigate, bell, 
               <SearchIcon />
             </button>
           )}
+          {bug}
           {bell}
           <Profile onGoto={h => onNavigate?.({ href: h })} canSettings={canSettings} compact />
         </span>
@@ -870,9 +874,13 @@ export default function Nav({ children, onSearch }) {
     canSettings,
     hasDirectory: mounted && sections.some(s => s.key === 'directory'),
     bell: <Bell onGoto={go} size={mobile ? 36 : 32} />,
+    // Кнопка сбоя стоит РЯДОМ с колокольчиком (владелец 17.09.2026): там же,
+    // куда человек смотрит, когда система о чём-то сообщает.
+    bug: <BugReport size={mobile ? 36 : 32} />,
     onSearch,
     children,
   }
+  const mnt = useMaintenance()
   return (
     <>
       <style>{`
@@ -897,7 +905,12 @@ export default function Nav({ children, onSearch }) {
         }
         @keyframes bellBlink { 0%, 100% { opacity:1 } 50% { opacity:.25 } }
       `}</style>
+      {/* Полоса и заглушка живут ЗДЕСЬ, а не на каждом экране: шапка есть на всех
+          страницах, и это единственная точка, где режим появится везде сразу, без
+          правки сорока экранов. */}
+      <MaintenanceBar state={mnt} />
       {mobile ? <NavMobile {...props} /> : <NavDesktop {...props} />}
+      <MaintenanceStub state={mnt} />
     </>
   )
 }

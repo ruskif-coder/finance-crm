@@ -826,6 +826,61 @@ def rights_letter(task_id: int, acc=Depends(current_account)):
                              r.headers.get("content-disposition", "attachment")})
 
 
+class BugIn(BaseModel):
+    comment: str
+    page_url: Optional[str] = None
+    page_title: Optional[str] = None
+    app_version: Optional[str] = None
+    viewport: Optional[str] = None
+
+
+@app.post("/api/bug")
+def bug_create(payload: BugIn, acc=Depends(current_account)):
+    """Заявка о сбое из кабинета. Кабинет в базу не пишет — просит об этом ядро.
+
+    Площадка попадает в заявку НЕ из запроса, а берётся у учётки: подставить её снаружи
+    означало бы разрешить писать от чужого имени.
+    """
+    pubs = account_publishers(acc.id)
+    if not pubs:
+        raise HTTPException(status_code=400, detail="За учёткой не закреплена площадка")
+    return call_core("POST", f"/api/cabinet-gw/account/{acc.id}/bug",
+               {"publisher_id": pubs[0].publisher_id, **payload.dict()})
+
+
+@app.post("/api/bug/{report_id}/file")
+async def bug_file(report_id: int, file: UploadFile = File(...),
+                   acc=Depends(current_account)):
+    """Снимок к заявке. Файл пишет ядро — том смонтирован только туда."""
+    if not SERVICE_TOKEN:
+        raise HTTPException(status_code=503,
+                            detail="Кабинет не настроен на связь с системой")
+    data = await file.read()
+    try:
+        r = httpx.post(f"{CORE_API_URL}/api/cabinet-gw/bug/{report_id}/file",
+                       params={"account_id": acc.id},
+                       files={"file": (file.filename, data,
+                                       file.content_type or "application/octet-stream")},
+                       headers={"X-Cabinet-Token": SERVICE_TOKEN}, timeout=60.0)
+    except httpx.RequestError:
+        raise HTTPException(status_code=503,
+                            detail="Система временно недоступна — попробуйте позже")
+    if r.status_code >= 400:
+        try:
+            detail = r.json().get("detail") or "Не удалось приложить снимок"
+        except Exception:      # noqa: BLE001
+            detail = "Не удалось приложить снимок"
+        raise HTTPException(status_code=r.status_code if r.status_code < 500 else 502,
+                            detail=detail)
+    return r.json()
+
+
+@app.post("/api/bug/{report_id}/sent")
+def bug_sent(report_id: int, acc=Depends(current_account)):
+    """Заявка дописана — ядро уведомляет владельца."""
+    return call_core("POST", f"/api/cabinet-gw/bug/{report_id}/sent?account_id={acc.id}", None)
+
+
 @app.post("/api/tasks/{task_id}/rework-file")
 async def rework_file(task_id: int, file: UploadFile = File(...),
                       acc=Depends(current_account)):

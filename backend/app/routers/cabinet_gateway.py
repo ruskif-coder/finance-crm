@@ -584,6 +584,77 @@ async def cabinet_rework_file(pair_id: int, account_id: int,
     return {"id": rec.id, "name": original, "size_bytes": len(content)}
 
 
+# ─────────────────────────── Заявки о сбоях ───────────────────────────
+#
+# Площадка пишет в ТОТ ЖЕ журнал, что и сотрудники, — с пометкой контура (решение
+# владельца 17.09.2026). Отдельный список для неё означал бы, что половина заявок
+# теряется из виду просто потому, что лежит в другом месте.
+#
+# Кабинет в базу не пишет сам: приём и уведомление живут в `routers/bugs.py`, здесь
+# только дверь для внешнего контура. Вторая копия приёма разошлась бы с первой молча.
+
+
+class BugIn(BaseModel):
+    publisher_id: int
+    comment: str
+    page_url: Optional[str] = None
+    page_title: Optional[str] = None
+    app_version: Optional[str] = None
+    viewport: Optional[str] = None
+
+
+@router.post("/account/{account_id}/bug", dependencies=[Depends(require_cabinet_service)])
+def cabinet_bug_create(account_id: int, payload: BugIn, db: Session = Depends(get_db)):
+    from app.bugs import models as bug_models
+    from app.routers import bugs as bug_api
+
+    acc = _actor(db, account_id, payload.publisher_id)
+    r = bug_api.create_report(
+        db, contour=bug_models.PUB, author_name=acc.name or "—",
+        account_id=acc.id, publisher_id=payload.publisher_id, comment=payload.comment,
+        page_url=payload.page_url, page_title=payload.page_title,
+        app_version=payload.app_version, viewport=payload.viewport)
+    journal.write(db, 'заявка_о_сбое', cabinet_id=acc.cabinet_id, account_id=acc.id,
+                  publisher_id=payload.publisher_id, actor_name=acc.name,
+                  entity_type='bug_report', entity_id=r.id)
+    db.commit()
+    return {"id": r.id}
+
+
+@router.post("/bug/{report_id}/file", dependencies=[Depends(require_cabinet_service)])
+async def cabinet_bug_file(report_id: int, account_id: int,
+                           file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Снимок к своей заявке. Чужую дополнить нельзя — проверяем по учётке автора."""
+    from app.bugs import models as bug_models
+    from app.routers import bugs as bug_api
+
+    r = db.query(bug_models.BugReport).filter(
+        bug_models.BugReport.id == report_id).first()
+    if not r or r.author_account_id != account_id:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    f = bug_api.attach(db, r, content=await file.read(),
+                       filename=file.filename or "screen.png",
+                       content_type=file.content_type)
+    db.commit()
+    return {"id": f.id, "name": f.original_name, "size_bytes": f.size_bytes}
+
+
+@router.post("/bug/{report_id}/sent", dependencies=[Depends(require_cabinet_service)])
+def cabinet_bug_sent(report_id: int, account_id: int, db: Session = Depends(get_db)):
+    """Заявка дописана — уведомляем владельца. Отдельным вызовом по той же причине, что
+    и во внутреннем контуре: снимки приезжают ПОСЛЕ создания."""
+    from app.bugs import models as bug_models
+    from app.routers import bugs as bug_api
+
+    r = db.query(bug_models.BugReport).filter(
+        bug_models.BugReport.id == report_id).first()
+    if not r or r.author_account_id != account_id:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    bug_api.announce(db, r)
+    db.commit()
+    return {"ok": True}
+
+
 # ─────────────────────────── Бот площадки ───────────────────────────
 #
 # БОТ ОТДЕЛЬНЫЙ ОТ ВНУТРЕННЕГО (владелец 15.09.2026): свой токен, своё имя, свой вебхук.
