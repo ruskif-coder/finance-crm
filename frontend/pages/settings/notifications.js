@@ -28,6 +28,7 @@ import { CH_LABELS, badge, checkbox, hint, linkBtn, msg, segBtn, td, topTab }
 import api, { auth } from '../../lib/http'
 import { fmtDateTime } from '@/lib/dates'
 import { TONE, toneOf } from '@/lib/tone'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 
 export default function NotificationSettings() {
@@ -65,6 +66,14 @@ export default function NotificationSettings() {
     } finally { setTesting(null) }
   }
 
+  // Счётчик перечитывания: у экрана нет одной функции загрузки — данные тянут три
+  // эффекта по своим ключам. Тик добавлен в их зависимости, и возврат на экран
+  // сдвигает его, а не дублирует запросы третьим местом.
+  const [tick, setTick] = useState(0)
+  // ТОЛЬКО когда нет несохранённых правок: перечитать поверх набранного значило бы
+  // молча выбросить работу человека. Несвежесть дешевле потери.
+  useRefreshOnReturn(() => setTick(t => t + 1), { enabled: !dirty })
+
   useEffect(() => {
     const admin = localStorage.getItem('role') === 'admin'
     setIsAdmin(admin)
@@ -74,7 +83,7 @@ export default function NotificationSettings() {
     if (admin) api.get('/notifications/settings/profiles', auth())
       .then(r => { setProfiles(r.data); if (r.data.length) setProfileId(r.data[0].id) })
       .catch(e => setErr(msg(e)))
-  }, [])
+  }, [tick])
 
   useEffect(() => {
     if (!catalog) return
@@ -89,7 +98,7 @@ export default function NotificationSettings() {
         setDirty(false)
       })
       .catch(e => setErr(msg(e)))
-  }, [catalog, mode, profileId])
+  }, [catalog, mode, profileId, tick])
 
   useEffect(() => {
     if (tab !== 'log' || !isAdmin) return undefined
@@ -101,7 +110,7 @@ export default function NotificationSettings() {
         .then(r => setLog(r.data)).catch(e => setErr(msg(e)))
     }, 250)
     return () => clearTimeout(t)
-  }, [tab, isAdmin, logFilter])
+  }, [tab, isAdmin, logFilter, tick])
 
 
   const dirs = catalog?.directions || []

@@ -201,14 +201,16 @@ export default function SystemStatus() {
     <>
       <Head><title>Статус · Настройки | SIMB-AD ERP</title></Head>
       <Navbar active="settings" />
-      <div style={{ padding: '20px 26px 0', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
-        <SettingsTabs active="system" />
-      </div>
+      {/* Вкладки и содержимое — В ОДНОЙ обёртке. Порознь они и разъехались: у обёртки с
+          одними вкладками стоял `minHeight: 100vh`, то есть пустая полоса высотой в целый
+          экран, и данные уезжали ПОД сгиб (владелец 17.09.2026). Высота в один экран
+          нужна фону страницы, а фон — это тот же контейнер, что держит содержимое.
 
-      {/* Ширина прежняя, центровки нет: все экраны настроек выровнены по левому краю
+          Ширина прежняя, центровки нет: все экраны настроек выровнены по левому краю
           (владелец 16.09.2026) — иначе при переходе между ними содержимое прыгает. */}
-      <div style={{ width: 1600, maxWidth: '100%',
-                    padding: '0 26px 48px', fontFamily: UI }}>
+      <div style={{ width: 1600, maxWidth: '100%', background: 'var(--bg-canvas)',
+                    minHeight: '100vh', padding: '20px 26px 48px', fontFamily: UI }}>
+        <SettingsTabs active="system" />
 
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap',
                       marginBottom: 16 }}>
