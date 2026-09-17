@@ -206,6 +206,21 @@ class MsClient:
             raise MsError(f"Creative.add: в result нет xxhash: {str(result)[:200]}")
         return xx
 
+    def creative_get_info(self, xxhash: str) -> Any:
+        """Что за креатив лежит в кабинете под этим хешем.
+
+        Метод есть у DSP и отвечает «Creative not found» на несуществующий хеш (проба
+        17.09.2026). Нужен он ради одной проверки: `Creative.add` создаёт объект, а HTML
+        вшивается ВТОРЫМ вызовом `Creative.edit`. Между ними связь может оборваться — и
+        тогда в кабинете остаётся креатив без кода, то есть пустая страница, по которой
+        человек «убедился, что баннер загружен».
+
+        `Creative.getListByCampaign` у DSP НЕТ (проверено там же, отвечает «Method not
+        found»), поэтому перечислить креативы кампании нельзя — только спросить про
+        конкретный.
+        """
+        return self.call("Creative.getInfo", {"xxhash": xxhash}, entity_type="creative")
+
     def creative_edit(self, xxhash: str, params: dict, local_ref=None) -> Any:
         # N.B. владельца: description не менять; при uniform_pro без day/hour лимитов
         return self.call("Creative.edit", {"xxhash": xxhash, **params},

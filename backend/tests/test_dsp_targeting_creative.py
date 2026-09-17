@@ -22,9 +22,11 @@ CAMPAIGN = "6F76E42EF4FD1492"
 class FakeClient:
     """Подменный клиент: описывает ВЕСЬ обмен заведения, как у клиентов DSP и WCM."""
 
-    def __init__(self, journal_hash=None, add_hash="NEWHASH000000001"):
+    def __init__(self, journal_hash=None, add_hash="NEWHASH000000001",
+                 info_html="<div>баннер</div>"):
         self.journal_hash = journal_hash
         self.add_hash = add_hash
+        self.info_html = info_html
         self.calls = []
 
     def last_ok_xxhash(self, method, entity_type, local_ref):
@@ -38,6 +40,15 @@ class FakeClient:
     def creative_edit(self, xxhash, params, local_ref=None):
         self.calls.append(("edit", xxhash, local_ref))
         return True
+
+    def creative_get_info(self, xxhash):
+        """Чтение креатива в кабинете. `html` задаётся тестом: `None` — объекта нет,
+        пустая строка — объект без кода, текст — полноценный креатив."""
+        self.calls.append(("info", xxhash))
+        if self.info_html is None:
+            from app.dsp.client import MsError
+            raise MsError("Creative.getInfo: Creative not found")
+        return {"data": {"html_code": self.info_html}}
 
 
 def _db():
@@ -62,17 +73,44 @@ def _drop(db, s):
     db.commit()
 
 
-def test_stored_hash_is_returned_without_going_outside():
-    """Заведён — значит заведён. Второй раз наружу не ходим ВООБЩЕ.
+def test_stored_hash_is_verified_but_never_duplicated():
+    """Заведён — значит заведён: ВТОРОЙ креатив не создаётся никогда.
 
-    Это главная защита: в DSP нет удаления, и лишний креатив останется там навсегда.
+    Это главная защита: в DSP нет удаления, лишний креатив останется там навсегда.
+
+    До 17.09.2026 правило было сильнее — «наружу не ходим вообще». Оно защищало от
+    дубля, но обещало больше, чем проверяло: объект создаётся одним вызовом, а HTML
+    вшивается ВТОРЫМ, и между ними связь может оборваться. Тогда в кабинете остаётся
+    креатив БЕЗ КОДА, ссылка на него открывается и показывает пустую страницу — а мы
+    рапортовали «заведён». Теперь сохранённый хеш ПЕРЕПРОВЕРЯЕТСЯ чтением, и это
+    единственный поход наружу: `Creative.add` в этой ветке по-прежнему не вызывается.
     """
     db = _db()
     s = _set_with(db, ms_targeting_creative_xxhash="ALREADY0000000001")
     c = FakeClient()
     try:
         assert P.ensure(db, s, client=c) == "ALREADY0000000001"
-        assert c.calls == [], "при сохранённом хеше не должно быть ни одного вызова"
+        assert c.calls == [("info", "ALREADY0000000001")], (
+            f"лишние вызовы при сохранённом хеше: {c.calls}")
+        assert not any(k[0] == "add" for k in c.calls), "создан второй креатив"
+    finally:
+        _drop(db, s)
+
+
+def test_an_object_without_html_is_finished_not_duplicated():
+    """Креатив есть, кода нет — дошиваем код в него же.
+
+    Завести второй было бы проще и непоправимо: удаления в чужом кабинете нет.
+    """
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="EMPTY00000000001")
+    c = FakeClient(info_html="")
+    try:
+        with pytest.raises(P.TargetingCreativeError):
+            # архива у времянки нет — важно, что путь пошёл в дошивку, а не в создание
+            P.ensure(db, s, client=c)
+        assert not any(k[0] == "add" for k in c.calls), (
+            "пустой креатив продублирован вместо дошивки")
     finally:
         _drop(db, s)
 
@@ -84,7 +122,9 @@ def test_journal_saves_us_from_a_duplicate():
     c = FakeClient(journal_hash="FROMJOURNAL00001")
     try:
         assert P.ensure(db, s, client=c) == "FROMJOURNAL00001"
-        assert [k[0] for k in c.calls] == ["journal"], "после журнала создавать нечего"
+        # Журнал подсказал хеш, чтение подтвердило код — создавать нечего.
+        assert [k[0] for k in c.calls] == ["journal", "info"], (
+            f"после журнала должно быть только чтение, а было: {c.calls}")
         db.refresh(s)
         assert s.ms_targeting_creative_xxhash == "FROMJOURNAL00001"
         assert s.ms_targeting_at is not None

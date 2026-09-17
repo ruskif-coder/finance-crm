@@ -137,13 +137,36 @@ def _read(f: LaunchPrepCreativeFile) -> bytes:
         return fh.read()
 
 
+def _html_state(c: MsClient, xxhash: str) -> str:
+    """Что с креативом в кабинете: `ok` — код на месте, `empty` — объект без кода,
+    `gone` — такого нет.
+
+    Недоступность DSP отдельным исходом НЕ делаем: молчащая связь не должна выглядеть
+    как «всё хорошо», поэтому ошибка обмена поднимается наверх и человек видит её текстом.
+    """
+    try:
+        info = c.creative_get_info(xxhash) or {}
+    except MsError as e:
+        if "not found" in str(e).lower():
+            return "gone"
+        raise
+    data = info.get("data") if isinstance(info, dict) else None
+    html = (data or {}).get("html_code") if isinstance(data, dict) else None
+    return "ok" if (html or "").strip() else "empty"
+
+
+def _html_of(db: Session, s: LaunchPrepCreativeSet, c: MsClient, ref: str) -> str:
+    """HTML баннера: архив заливается загрузчиком, он же и отдаёт код."""
+    f = _archive(db, s)
+    up = cr.upload_zip(c, _read(f), filename=(f.original_name or "creative.zip"),
+                       local_ref=ref)
+    return up["html"]
+
+
 def ensure(db: Session, s: LaunchPrepCreativeSet, *,
            client: Optional[MsClient] = None) -> str:
     """Хеш креатива нацеливания для комплекта; заводит его, если ещё нет."""
     from app.routers.traffic_catalog import targeting_cabinet, viewability_src
-
-    if s.ms_targeting_creative_xxhash:
-        return s.ms_targeting_creative_xxhash
 
     partner, campaign = targeting_cabinet(db)
     if not partner or not campaign:
@@ -153,11 +176,26 @@ def ensure(db: Session, s: LaunchPrepCreativeSet, *,
     c = client or _client(partner)
     ref = f"tgt{s.id}"
 
-    # DSP мог создать креатив, а наш коммит не дойти — журнал помнит, и повтор без этой
-    # проверки оставил бы в чужом кабинете второй такой же, неудаляемый.
-    known = c.last_ok_xxhash("Creative.add", "creative", ref)
+    # Уже заведённый креатив ПРОВЕРЯЕМ, а не берём на веру. Причина конкретная: объект
+    # создаётся одним вызовом, а HTML вшивается вторым, и между ними связь может
+    # оборваться. Тогда в кабинете остаётся креатив БЕЗ КОДА — ссылка на него
+    # выпускается, открывается и показывает пустую страницу, по которой человек делает
+    # вывод «баннер не загрузился» и идёт искать причину не там (владелец 17.09.2026:
+    # «а как убедиться, что баннер загружен?»).
+    known = s.ms_targeting_creative_xxhash or c.last_ok_xxhash("Creative.add", "creative", ref)
     if known:
-        return _persist(db, s, known)
+        state = _html_state(c, known)
+        if state == "ok":
+            return _persist(db, s, known)
+        if state == "empty":
+            # Объект есть, кода нет — дошиваем его, а не заводим второй: второй в чужом
+            # кабинете уже не удалить.
+            html = cr.wrap_html(_html_of(db, s, c, ref), viewability_src=viewability_src(db))
+            c.creative_edit(known, {"data": {"html_code": html}}, local_ref=ref)
+            return _persist(db, s, known)
+        # state == "gone" — креатив снесли в кабинете руками: заводим заново.
+        log.warning("DSP: креатив нацеливания %s не найден в кабинете, завожу заново", known)
+        s.ms_targeting_creative_xxhash = None
 
     f = _archive(db, s)
     link = _landing(db, s)

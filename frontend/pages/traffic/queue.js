@@ -30,6 +30,7 @@ import api, { auth } from '@/lib/api'
 import { dm } from '@/lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { saveResponse } from '@/lib/download'
+import { Cube } from '@/components/LogoLoader'
 
 /* Что сказать человеку про письмо. Ответ ручки различает пять исходов, и каждый значит
    для него РАЗНОЕ действие: отправлено — ничего не делать, не ушло — отправить самому.
@@ -298,6 +299,18 @@ export default function TrafficQueue() {
   async function aimAtMe(setId) {
     setErr(''); setAiming(setId)
     const tab = window.open('', '_blank')
+    // Пустая вкладка на несколько секунд читается как «открылось битое». Пишем в неё
+    // строку ожидания сразу: ждать придётся и здесь, и там, а объяснение должно быть в
+    // том окне, куда человек смотрит.
+    if (tab) {
+      try {
+        tab.document.write('<title>Нацеливание…</title>'
+          + '<body style="margin:0;display:flex;align-items:center;justify-content:center;'
+          + 'height:100vh;font:15px/1.5 system-ui,sans-serif;color:#5b6474">'
+          + 'Готовим нацеливание: копируем баннер в DSP и выпускаем ссылку…</body>')
+        tab.document.close()
+      } catch (e) { /* другое происхождение — не страшно, просто останется пустой */ }
+    }
     try {
       const r = await api.post(`/launch-prep/set/${setId}/targeting-link`, {}, auth())
       if (tab) tab.location = r.data.url
@@ -624,7 +637,12 @@ export default function TrafficQueue() {
                   <button style={iconBtn(mayEdit)} disabled={!mayEdit || aiming === g.set.id}
                     title="Нацелить на себя: откроется страница DSP, нажмите «Включить» — и увидите баннер на сайте площадки до старта"
                     onClick={() => aimAtMe(g.set.id)}>
-                    <Ico d={I_AIM} />
+                    {/* Пока выпускается — фирменный кубик вместо значка. Кнопка уходит в
+                        DSP, копирует туда баннер и заводит нацеливание: это секунды, а
+                        иногда и минута. Погасший значок без движения читается как «не
+                        нажалось», и человек жмёт второй раз — то есть заводит вторую
+                        копию креатива (владелец 17.09.2026). */}
+                    {aiming === g.set.id ? <Cube variant="spinner" size={14} /> : <Ico d={I_AIM} />}
                   </button>
                   {/* Ручная ссылка, если её когда-то завели: поле заморожено, но то, что
                       в нём лежит, остаётся доступным. Новых так не заводят. */}
