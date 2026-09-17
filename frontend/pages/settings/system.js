@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Head from 'next/head'
 import Navbar from '@/components/Navbar'
 import SettingsTabs from '@/components/SettingsTabs'
+import MaintenanceButton from '@/components/MaintenanceButton'
 import api, { auth } from '@/lib/api'
 import { card, MONO, UI, btnSm } from '@/components/salesTableKit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -245,6 +246,9 @@ export default function SystemStatus() {
             <button style={btnSm(false)} disabled={busy} onClick={() => load(true)}>
               Проверить
             </button>
+            {/* Техобслуживание стоит ЗДЕСЬ, а не в шапке: нажатие останавливает работу
+                всем сразу, и место у такой кнопки — там, куда заходят осознанно. */}
+            <MaintenanceButton />
           </span>
         </div>
 

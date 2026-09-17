@@ -221,7 +221,7 @@ export default function OrdDirectory() {
                   тоже: пустая «0» приучает не смотреть. */}
               {t.key === 'pending' && stuck.length > 0 && (
                 <span style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 7,
-                  background: 'var(--danger)', color: '#fff', fontSize: 11, fontWeight: 700 }}>
+                  background: 'var(--danger)', color: 'var(--on-accent)', fontSize: 11, fontWeight: 700 }}>
                   {stuck.length}
                 </span>
               )}
