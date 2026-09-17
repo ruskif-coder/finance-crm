@@ -339,6 +339,7 @@ ACTION_LABELS = {
     "dsp_demo_plan": "DSP демо: план кампании",
     "dsp_demo_targeting": "DSP демо: таргетинг",
     "verify_media_plan": "МП проверен",
+    "traffic_dashboard_sync": "Обновление РК из сделок",
     "deal_weborama_pixel": "Доп. параметр РК: пиксель Weborama",
     "deal_verifier_shows": "Ручные показы Weborama на сверке",
     "cabinet_notify_toggle": "Рассылка площадкам: вид включён или выключен",

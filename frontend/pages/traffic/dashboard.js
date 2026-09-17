@@ -153,6 +153,10 @@ export default function TrafficDashboard() {
   const [mayEdit, setMayEdit] = useState(false)
   useRefreshOnReturn(() => load())
   useEffect(() => { setMayEdit(can(getPermissions(), 'traffic_dashboard', 'edit')) }, [])
+  /* Роль читаем В useEffect, а не при рендере: `localStorage` на сервере не существует,
+     и обращение к нему в теле компонента роняет страницу при SSR. */
+  const [isAdmin, setIsAdmin] = useState(false)
+  useEffect(() => { setIsAdmin(localStorage.getItem('role') === 'admin') }, [])
 
   const load = useCallback(async () => {
     const p = new URLSearchParams()
@@ -179,6 +183,31 @@ export default function TrafficDashboard() {
     } catch (e) { setVerifier(null) }
   }, [])
   useEffect(() => { loadVerifier() }, [loadVerifier])
+  /* ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ — только админу.
+
+     Кнопку «Обновить из сделок» убрали 04.09.2026 со словами «РК появляются по цепочке,
+     а не по кнопке». Мысль верная, но 17.09.2026 выяснилось, что цепочка эту сборку не
+     зовёт ВООБЩЕ: ЕРИД согласованного креатива не доезжал до кампании, пока прогон не
+     запустили руками из консоли. Пока вызов из цепочки не сделан, ручной ход должен
+     быть у того, кто разбирает такие случаи, — то есть у админа, и только у него: это
+     не рабочее действие трафика, а инструмент разбора. Крон делает то же по расписанию.
+  */
+  const [syncing, setSyncing] = useState(false)
+  const [syncSaid, setSyncSaid] = useState('')
+  const forceSync = async () => {
+    setSyncing(true); setSyncSaid('')
+    try {
+      const r = await api.post('/traffic-dashboard/sync', {}, auth())
+      // Говорим ЧИСЛАМИ сервера, а не «готово»: «готово» одинаково выглядит и когда
+      // прогон собрал сотню строк, и когда не сделал ничего.
+      setSyncSaid(`РК создано ${r.data?.created ?? 0}, обновлено ${r.data?.updated ?? 0}, `
+        + `площадок ${r.data?.placements_added ?? 0}, креативов `
+        + `${(r.data?.creatives_added ?? 0) + (r.data?.creatives_updated ?? 0)}`)
+      await load()
+    } catch (e) { setSyncSaid(e.response?.data?.detail || 'Не удалось обновить') }
+    finally { setSyncing(false) }
+  }
+
   const refreshVerifier = async () => {
     setWbBusy(true)
     try {
@@ -444,6 +473,19 @@ export default function TrafficDashboard() {
           </div>
 
           <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            {isAdmin && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                {!!syncSaid && (
+                  <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-faint)' }}>
+                    {syncSaid}
+                  </span>
+                )}
+                <button style={btnSm(false)} disabled={syncing} onClick={forceSync}
+                  title="Пересобрать РК, площадки и креативы из сделок. Это же делает крон в 06:00; кнопка — для разбора, когда ждать до утра нельзя.">
+                  {syncing ? 'Обновляю…' : 'Обновить из сделок'}
+                </button>
+              </span>
+            )}
             <input style={{ ...inp, width: 250 }} value={q} onChange={e => setQ(e.target.value)}
               placeholder="Сделка, РК, услуга, стадия…" />
             {/* Выбор трафика — у всех, а не только у мастера: очередь общая, и «чьи РК»
