@@ -85,6 +85,7 @@ export default function SiteScript({ mayEdit }) {
   const [vsrc, setVsrc] = useState('')
   const [tPartner, setTPartner] = useState('')
   const [tCamp, setTCamp] = useState('')
+  const [wbAcc, setWbAcc] = useState('')
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -97,6 +98,7 @@ export default function SiteScript({ mayEdit }) {
       setVsrc(r.data.viewability || '')
       setTPartner(r.data.targeting_partner || '')
       setTCamp(r.data.targeting_campaign || '')
+      setWbAcc(r.data.weborama_account || '')
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось загрузить настройку') }
   }, [])
 
@@ -107,7 +109,8 @@ export default function SiteScript({ mayEdit }) {
     try {
       await api.put('/traffic-catalog/site-script',
         { with_code: withCode, without_code: noCode, viewability: vsrc,
-          targeting_partner: tPartner, targeting_campaign: tCamp }, auth())
+          targeting_partner: tPartner, targeting_campaign: tCamp,
+          weborama_account: wbAcc }, auth())
       await load()
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить') }
     finally { setSaving(false) }
@@ -121,6 +124,8 @@ export default function SiteScript({ mayEdit }) {
   const dirtyV = vsrc !== (data.viewability || '')
   const vEmpty = !String(vsrc || '').trim()
   const dirtyTgt = tPartner !== (data.targeting_partner || '') || tCamp !== (data.targeting_campaign || '')
+  const dirtyWb = wbAcc !== (data.weborama_account || '')
+  const wbEmpty = !String(wbAcc || '').trim()
   const tgtEmpty = !String(tPartner || '').trim() || !String(tCamp || '').trim()
 
   return (
@@ -196,6 +201,35 @@ export default function SiteScript({ mayEdit }) {
               borderColor: tCamp ? 'var(--border-card)' : 'var(--warning)',
               background: tCamp ? 'var(--bg-card)' : 'var(--warning-tint)' }} />
           {mayEdit && dirtyTgt && (
+            <button onClick={save} disabled={saving} style={primaryBtn}>
+              {saving ? 'Сохраняю…' : 'Сохранить'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Аккаунт WCM — здесь же, рядом с остальными настройками обмена. Жил он в двух
+          местах, и ни одно не было рабочим: на демо-экране поле вводится руками и никуда
+          не сохраняется, а кнопка «ПИКСЕЛЬ WR» читает НАСТРОЙКУ, задать которую было
+          негде — на проде она пустая, на стенде стояла вписанной прямо в базу
+          (17.09.2026). Одно значение — одно место. */}
+      <div style={{ ...BOX, marginBottom: 14 }}>
+        <div style={{ ...LBL, marginBottom: 4, color: wbEmpty ? 'var(--warning-text)' : 'var(--text-faint)' }}>
+          Аккаунт Weborama (WCM){wbEmpty ? ' · не задан' : ''}
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 8 }}>
+          Номер аккаунта адресует весь обмен с верификатором: по нему заводятся вставки и
+          забираются пиксели показа. Weborama выдаёт его списком — из кода он не выводится
+          и умолчания не имеет. Пока пусто, кнопка «ПИКСЕЛЬ WR» в дашборде трафика честно
+          откажет, а не промолчит.
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input value={wbAcc || ''} onChange={e => setWbAcc(e.target.value)} readOnly={!mayEdit}
+            placeholder="10419" inputMode="numeric"
+            style={{ ...inp, width: 160, fontFamily: MONO, fontSize: 12.5,
+              borderColor: wbAcc ? 'var(--border-card)' : 'var(--warning)',
+              background: wbAcc ? 'var(--bg-card)' : 'var(--warning-tint)' }} />
+          {mayEdit && dirtyWb && (
             <button onClick={save} disabled={saving} style={primaryBtn}>
               {saving ? 'Сохраняю…' : 'Сохранить'}
             </button>

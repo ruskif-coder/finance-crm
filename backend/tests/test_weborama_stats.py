@@ -211,3 +211,24 @@ def test_checksum_catches_a_lost_branch():
 def test_no_total_in_answer_is_not_a_discrepancy():
     rows, _, margins = parse(LIVE)
     assert margins["grand"] is None
+
+
+def test_the_wcm_account_has_exactly_one_home():
+    """Аккаунт WCM адресует ВЕСЬ обмен с верификатором, и место у него одно.
+
+    17.09.2026 он жил в двух местах, и ни одно не было рабочим: переменная
+    `WEBORAMA_DEMO_ACCOUNT_ID` подставляется подсказкой в поле демо-экрана, а само поле
+    вводится руками и никуда не сохраняется. Кнопка «ПИКСЕЛЬ WR» при этом читает
+    настройку `weborama_account_id`, задать которую было НЕГДЕ: на проде она пустая, на
+    стенде стояла вписанной прямо в базу и едва не потерялась при перезаписи стенда
+    копией прода.
+
+    Прибор держит ключ чтения и ключ записи одним значением: разойдись они — экран
+    показывал бы сохранённое, а отправка отказывала «не задан аккаунт».
+    """
+    from app.routers.traffic_catalog import WEBORAMA_ACCOUNT, SiteScriptIn
+    from app.weborama.provision import SETTING_ACCOUNT
+
+    assert WEBORAMA_ACCOUNT == SETTING_ACCOUNT
+    assert 'weborama_account' in SiteScriptIn.model_fields, (
+        'поле аккаунта пропало из настроек — задать его снова будет негде')

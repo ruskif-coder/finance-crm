@@ -272,6 +272,13 @@ SCRIPT_VIEWABILITY = "dsp_viewability_src"
 # выкладки. Пусто — кнопка честно скажет «не настроено».
 TARGETING_PARTNER = "dsp_targeting_partner_xxhash"
 TARGETING_CAMPAIGN = "dsp_targeting_campaign_xxhash"
+# Аккаунт WCM — он адресует ВЕСЬ обмен с верификатором. Жил в двух местах и ни одно из
+# них не было рабочим: переменная `WEBORAMA_DEMO_ACCOUNT_ID` — всего лишь подсказка в
+# поле демо-экрана, а само поле вводится руками и никуда не сохраняется. Рабочий путь
+# (кнопка «ПИКСЕЛЬ WR») читает настройку, и её негде было задать: на проде она пустая,
+# на стенде стояла вписанной вручную в базу и едва не потерялась при перезаписи стенда
+# копией прода (17.09.2026). Поле заведено здесь, рядом с остальными настройками обмена.
+WEBORAMA_ACCOUNT = "weborama_account_id"
 
 # Форма хеша — ИХ, не наша, но она устойчива: 16 шестнадцатеричных знаков во всех
 # виденных значениях. Проверяем мягко, чтобы не спорить с чужим форматом, но не пускаем
@@ -330,6 +337,7 @@ def get_site_script(db: Session = Depends(get_db), user: User = Depends(VIEW)):
         "viewability": _setting(db, SCRIPT_VIEWABILITY),
         "targeting_partner": _setting(db, TARGETING_PARTNER),
         "targeting_campaign": _setting(db, TARGETING_CAMPAIGN),
+        "weborama_account": _setting(db, WEBORAMA_ACCOUNT),
         "suggested": SUGGESTED_SCRIPT,
         "where": "<head> креатива, перед отправкой в DSP",
     }
@@ -345,6 +353,8 @@ class SiteScriptIn(BaseModel):
     # Куда заводить креатив нацеливания — хеши, не адреса.
     targeting_partner: Optional[str] = None
     targeting_campaign: Optional[str] = None
+    # Номер аккаунта WCM: цифры. Выдаёт Weborama списком, из кода не выводится.
+    weborama_account: Optional[str] = None
 
 
 @router.put("/site-script")
@@ -390,10 +400,21 @@ def set_site_script(payload: SiteScriptIn, db: Session = Depends(get_db),
         db.execute(sa_text(
             "INSERT INTO company_settings (key, value) VALUES (:k, :v) "
             "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"), {"k": key, "v": v})
+    if payload.weborama_account is not None:
+        v = payload.weborama_account.strip()
+        # Только цифры: подставленный с пробелом или с «№» уедет в адрес запроса и
+        # вернёт 404, который читается как «Weborama не отвечает».
+        if v and not v.isdigit():
+            raise HTTPException(400, "Аккаунт WCM — это номер, только цифры")
+        db.execute(sa_text(
+            "INSERT INTO company_settings (key, value) VALUES (:k, :v) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
+            {"k": WEBORAMA_ACCOUNT, "v": v})
     db.commit()
     log_action(db, user, "traffic_creative_script", "settings", None,
                f"с кодом: {(payload.with_code or '')[:80]} | без: {(payload.without_code or '')[:80]}"
                f" | видимость: {(payload.viewability or '')[:80]}"
                f" | нацеливание: {(payload.targeting_partner or '')[:40]}"
-               f"/{(payload.targeting_campaign or '')[:40]}")
+               f"/{(payload.targeting_campaign or '')[:40]}"
+               f" | аккаунт WCM: {(payload.weborama_account or '')[:20]}")
     return get_site_script(db, user)
