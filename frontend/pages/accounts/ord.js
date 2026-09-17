@@ -34,6 +34,16 @@ import { fmtDateFull } from '../../lib/salesFormat'
 import api, { auth } from '../../lib/http'
 import { can, getPermissions } from '../../lib/auth'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { Cube } from '../../components/LogoLoader'
+
+// Согласование числительного: «удалить 2 договоров» читается как машинный текст,
+// а подтверждение сноса — ровно то место, где человек должен читать внимательно.
+const plural = (n) => {
+  const d = n % 10, dd = n % 100
+  if (d === 1 && dd !== 11) return 'договор'
+  if (d >= 2 && d <= 4 && (dd < 12 || dd > 14)) return 'договора'
+  return 'договоров'
+}
 
 const TABS = [
   { key: 'initial', label: 'Изначальные договоры' },
@@ -62,10 +72,47 @@ export default function OrdDirectory() {
   const [resolving, setResolving] = useState(null)   // строка, по которой отвечаем
   const [foundId, setFoundId] = useState('')
   const [stuckErr, setStuckErr] = useState('')   // отдельно от `err`: у вкладок разные запросы
+  // Сверка с ОРД: состояние подключения, ход прогона и его отчёт.
+  const [conn, setConn] = useState(null)         // {configured, env, base_url}
+  const [syncing, setSyncing] = useState('')     // текущий этап словами, '' — не идёт
+  const [report, setReport] = useState(null)     // {clients, contracts} — отчёт последнего прогона
+  // Чистка зеркала перед сменой контура: отбор по источнику и выбор строк.
+  const [src, setSrc] = useState('')             // '' — все
+  const [picked, setPicked] = useState(() => new Set())
+  const [dropMsg, setDropMsg] = useState(null)
 
   // localStorage не существует на сервере — читаем право только после монтирования.
   useRefreshOnReturn(() => load())
   useEffect(() => { setMayEdit(can(getPermissions(), 'ord', 'edit')) }, [])
+  // Состояние подключения — чтобы экран не предлагал кнопку в пустоту и, главное, ВСЕГДА
+  // называл контур: демо и прод это разные кабинеты с разными идентификаторами, и
+  // «синхронизировано» без контура через месяц не прочитать.
+  useEffect(() => { api.get('/ord/connection', auth()).then(r => setConn(r.data)).catch(() => setConn(null)) }, [])
+
+  /* Сверка зеркала: сначала юрлица, потом договоры. Порядок не переставить — разметка
+     договора опирается на `ord_client_id`, который проставляют юрлица.
+
+     В ОРД НИЧЕГО НЕ ПИШЕТ: оба прогона только читают кабинет и заполняют наши колонки.
+     Поэтому подтверждение спрашивает не «вы уверены», а называет КОНТУР: опасно здесь
+     не действие, а сверка не с тем кабинетом. */
+  const syncOrd = async () => {
+    const env = (conn && conn.env) || '—'
+    if (!window.confirm(
+      `Сверить зеркало с кабинетом ОРД, контур «${env}»?\n\n` +
+      'Читаются юрлица и договоры, в ОРД ничего не отправляется. ' +
+      'Записи, размеченные другим контуром, будут перепроверены.')) return
+    setErr(''); setReport(null)
+    try {
+      setSyncing('юрлица')
+      const cl = await api.post('/ord/sync/clients', {}, auth())
+      setSyncing('договоры')
+      const co = await api.post('/ord/sync/contracts', {}, auth())
+      setReport({ clients: cl.data, contracts: co.data })
+      await load()
+    } catch (e) {
+      setErr(e.response?.data?.detail || errText(e))
+    } finally { setSyncing('') }
+  }
 
   // СБОЙ ≠ ПУСТОТА, и здесь это дороже, чем где-либо на экране. «Зависших отправок нет»
   // читается как «повторной отправки не будет, дубля в ЕРИР не случится». Упавший запрос
@@ -90,7 +137,10 @@ export default function OrdDirectory() {
     if (tab === 'pending') { await loadStuck(); return }
     try {
       const url = tab === 'initial' ? '/ord/initial' : '/ord/contracts'
-      const r = await api.get(url, { ...auth(), params: tab === 'initial' && q ? { q } : {} })
+      const params = {}
+      if (tab === 'initial' && q) params.q = q
+      if (tab === 'initial' && src) params.source = src
+      const r = await api.get(url, { ...auth(), params })
       setRows(r.data)
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось загрузить') }
   }
@@ -115,6 +165,26 @@ export default function OrdDirectory() {
         ? 'Попытка закрыта, повтор разрешён.'
         : 'Попытка закрыта. Повтор остаётся запрещённым — запись в кабинете уже есть.')
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось закрыть попытку') }
+  }
+
+  /* Удаление пачкой — чистка ЗЕРКАЛА, не ОРД: строка вернётся следующим синком, если в
+     кабинете она есть. Связанные защищены на сервере и называются поимённо: снести
+     изначальный договор, на котором держится сборка доходного, — отдельное решение. */
+  const dropPicked = async (withLinks = false) => {
+    const ids = [...picked]
+    if (!ids.length) return
+    if (!window.confirm(
+      `Удалить ${ids.length} изнач. ${plural(ids.length)} из нашего зеркала?\n\n` +
+      'В ОРД ничего не удаляется — строка вернётся следующим синком, если она есть ' +
+      'в кабинете.' + (withLinks ? '\n\nВМЕСТЕ СО СВЯЗЯМИ с нашими доходными договорами.' : ''))) return
+    setBusy(true); setErr(''); setDropMsg(null)
+    try {
+      const r = await api.post('/ord/initial/delete', { ids, with_links: withLinks }, auth())
+      setDropMsg(r.data)
+      setPicked(new Set())
+      await load()
+    } catch (e) { setErr(e.response?.data?.detail || errText(e)) }
+    finally { setBusy(false) }
   }
 
   const upload = async (e) => {
@@ -166,6 +236,17 @@ export default function OrdDirectory() {
             </button>
           ))}
           {tab === 'initial' && (
+            <select value={src} onChange={e => { setSrc(e.target.value); setPicked(new Set()) }}
+              title="Откуда строка: файл выгрузки, синк с демо или с боевого кабинета"
+              style={{ ...inp, width: 190, marginLeft: 8 }}>
+              <option value="">источник: любой</option>
+              <option value="файл">из файла выгрузки</option>
+              <option value="demo">синк · демо</option>
+              <option value="prod">синк · ПРОД</option>
+              <option value="ручная">заведён руками</option>
+            </select>
+          )}
+          {tab === 'initial' && (
             <input value={q} onChange={e => setQ(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && load()}
               placeholder="рекламодатель, исполнитель, номер или ИНН"
@@ -174,6 +255,27 @@ export default function OrdDirectory() {
           <span style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: 12 }}>
             строк: {tab === 'pending' ? stuck.length : rows.length}
           </span>
+          {/* Контур — ВСЕГДА рядом с кнопкой, а не в настройках: демо и прод это разные
+              кабинеты, и «сверено» без контура ничего не значит. Демо у нас ушёл дальше
+              прода, так что перепутать их — значит разметить зеркало чужими id. */}
+          {conn && (
+            <span title={conn.base_url || ''} style={{
+              padding: '3px 9px', borderRadius: 8, fontFamily: MONO, fontSize: 11, fontWeight: 700,
+              background: conn.env === 'prod' ? 'var(--danger-tint)' : 'var(--accent-tint)',
+              color: conn.env === 'prod' ? 'var(--danger)' : 'var(--accent)',
+            }}>ОРД · {conn.env === 'prod' ? 'ПРОД' : 'демо'}</span>
+          )}
+          {mayEdit && conn && conn.configured && (
+            <button onClick={syncOrd} disabled={!!syncing}
+              title="Прочитать юрлица и договоры из кабинета ОРД в наше зеркало. В ОРД ничего не пишет"
+              style={{ ...btnSm(false), display: 'inline-flex', alignItems: 'center', gap: 7,
+                cursor: syncing ? 'default' : 'pointer' }}>
+              {/* Пока идёт — фирменный кубик и НАЗВАНИЕ ЭТАПА. Прогон ходит в чужой
+                  кабинет по каждому юрлицу отдельно и занимает минуты; погасшая кнопка
+                  без признака работы читается как «не нажалось». */}
+              {syncing ? (<><Cube variant="spinner" size={14} /> сверяю {syncing}…</>) : 'Сверить с ОРД'}
+            </button>
+          )}
           {mayEdit && (
             <label style={{ ...primaryBtn, cursor: busy ? 'default' : 'pointer' }}>
               {busy ? 'Загрузка…' : 'Загрузить выгрузку'}
@@ -186,6 +288,46 @@ export default function OrdDirectory() {
         {!!err && (
           <div style={{ ...card, padding: 12, marginBottom: 12, color: 'var(--dot-overdue)' }}>
             {err}
+          </div>
+        )}
+
+        {/* Отчёт сверки. Показываем НЕ «готово», а числа: «нет в ОРД» и «неоднозначных» —
+            это список работы человека, и ради него прогон запускают повторно. */}
+        {!!report && (
+          <div style={{ ...card, padding: 12, marginBottom: 12, fontSize: 13 }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>
+              Сверено с ОРД · контур {report.clients.env}
+            </div>
+            <div style={{ color: 'var(--text-muted)' }}>
+              Юрлица: проверено {report.clients.looked}, проставлено {report.clients.matched},
+              нет в ОРД {report.clients.not_in_ord.length},
+              неоднозначных {report.clients.ambiguous.length},
+              отказов {report.clients.failed.length}
+              {!!report.clients.requeued && `, перепроверено после смены контура ${report.clients.requeued}`}
+              {!!report.clients.cleared && `, снято чужих идентификаторов ${report.clients.cleared}`}.
+            </div>
+            <div style={{ marginTop: 4, color: 'var(--text-muted)' }}>
+              Договоры: прочитано доходных {report.contracts.read?.final ?? 0},
+              расходных {report.contracts.read?.outer ?? 0},
+              изначальных {report.contracts.read?.initial ?? 0};
+              размечено {report.contracts.written?.contracts ?? 0},
+              изначальных {report.contracts.written?.initial ?? 0},
+              связей {report.contracts.written?.links ?? 0}.
+            </div>
+            {/* Неоднозначные называем поимённо: выбирать за человека из нескольких
+                юрлиц мы отказались сознательно — подставленный не тот id уедет в ЕРИР. */}
+            {report.clients.ambiguous.length > 0 && (
+              <div style={{ marginTop: 6 }}>
+                Разобрать руками:{' '}
+                {report.clients.ambiguous.slice(0, 8).map(a => `${a.name} (${a.count})`).join('; ')}
+                {report.clients.ambiguous.length > 8 && ' …'}
+              </div>
+            )}
+            {report.contracts.failed?.length > 0 && (
+              <div style={{ marginTop: 6, color: 'var(--dot-overdue)' }}>
+                Не прочиталось: {report.contracts.failed.map(f => `${f.kind} — ${f.why}`).join('; ')}
+              </div>
+            )}
           </div>
         )}
 
@@ -209,6 +351,40 @@ export default function OrdDirectory() {
                 предупреждений {stat.warnings.length} — договоры ОРД, которых нет
                 в нашем реестре, незнакомые значения справочников, и листы, где
                 прочитанные строки не распознаны ни разу
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Панель чистки появляется ТОЛЬКО когда что-то выбрано: висящая всегда кнопка
+            сноса рядом со справочником — приглашение нажать её случайно. */}
+        {tab === 'initial' && mayEdit && picked.size > 0 && (
+          <div style={{ ...card, padding: '10px 12px', marginBottom: 12, fontSize: 13,
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span>Выбрано {picked.size} {plural(picked.size)}</span>
+            <button style={btn} onClick={() => setPicked(new Set())}>Снять выбор</button>
+            <button style={{ ...btn, color: 'var(--danger)', borderColor: 'var(--danger)' }}
+              disabled={busy} onClick={() => dropPicked(false)}>
+              {busy ? 'Удаляю…' : 'Удалить из зеркала'}
+            </button>
+            <span style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>
+              удаляется только у нас — в ОРД ничего не трогаем; связанные со сборкой
+              пропускаются и будут названы
+            </span>
+          </div>
+        )}
+
+        {/* Итог чистки: сколько снесли и что пропустили. «Пропущено» — не ошибка, а
+            список решений, которые человек должен принять глазами. */}
+        {!!dropMsg && (
+          <div style={{ ...card, padding: 12, marginBottom: 12, fontSize: 13 }}>
+            Удалено {dropMsg.deleted} {plural(dropMsg.deleted)}
+            {dropMsg.links_deleted > 0 && `, вместе с ними связей ${dropMsg.links_deleted}`}.
+            {dropMsg.kept?.length > 0 && (
+              <div style={{ marginTop: 6 }}>
+                Пропущены — на них держится сборка наших доходных договоров:{' '}
+                {dropMsg.kept.slice(0, 8).map(k => `${k.advertiser || '—'} ${k.number || 'б/н'} (связей ${k.links})`).join('; ')}
+                {dropMsg.kept.length > 8 && ' …'}
               </div>
             )}
           </div>
@@ -288,9 +464,17 @@ export default function OrdDirectory() {
               <thead>
                 {tab === 'initial' ? (
                   <tr>
+                    {mayEdit && (
+                      <th style={{ ...th, width: 30 }}>
+                        <input type="checkbox"
+                          checked={rows.length > 0 && picked.size === rows.length}
+                          onChange={e => setPicked(e.target.checked ? new Set(rows.map(r => r.id)) : new Set())} />
+                      </th>
+                    )}
                     <th style={th}>Рекламодатель</th><th style={th}>Исполнитель</th>
                     <th style={th}>Номер</th><th style={th}>Дата</th>
                     <th style={th}>Вид</th><th style={th}>Статус</th>
+                    <th style={th}>Источник</th>
                   </tr>
                 ) : (
                   <tr>
@@ -310,12 +494,37 @@ export default function OrdDirectory() {
                 )}
                 {rows.map(r => tab === 'initial' ? (
                   <tr key={r.id}>
+                    {mayEdit && (
+                      <td style={td}>
+                        <input type="checkbox" checked={picked.has(r.id)}
+                          onChange={e => setPicked(p => {
+                            const n = new Set(p)
+                            if (e.target.checked) n.add(r.id); else n.delete(r.id)
+                            return n
+                          })} />
+                      </td>
+                    )}
                     <td style={{ ...td, fontWeight: 600 }}>{r.advertiser?.name || '—'}</td>
                     <td style={td}>{r.contractor?.name || '—'}</td>
                     <td style={{ ...td, fontFamily: MONO }}>{r.number || 'б/н'}</td>
                     <td style={{ ...td, fontFamily: MONO }}>{r.date ? fmtDateFull(r.date) : '—'}</td>
                     <td style={td}>{r.subject_type || '—'}</td>
                     <td style={td}>{r.status || '—'}</td>
+                    {/* Источник и число связей рядом: связь — то, из-за чего строку нельзя
+                        снести молча, и видно это должно быть ДО выбора. */}
+                    <td style={{ ...td, fontFamily: MONO, fontSize: 11.5 }}>
+                      <span style={{
+                        padding: '1px 7px', borderRadius: 7, fontWeight: 700,
+                        background: r.source === 'prod' ? 'var(--danger-tint)'
+                          : r.source === 'demo' ? 'var(--accent-tint)' : 'var(--bg-subtle)',
+                        color: r.source === 'prod' ? 'var(--danger)'
+                          : r.source === 'demo' ? 'var(--accent)' : 'var(--text-muted)',
+                      }}>{r.source === 'prod' ? 'ПРОД' : r.source}</span>
+                      {r.links > 0 && (
+                        <span title="Связан с нашим доходным договором — на нём держится сборка"
+                          style={{ marginLeft: 6, color: 'var(--text-faint)' }}>связей {r.links}</span>
+                      )}
+                    </td>
                   </tr>
                 ) : (
                   <tr key={r.id}>

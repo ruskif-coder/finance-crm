@@ -8,7 +8,7 @@
 украшение: связи нашего рекламодателя с юрлицом ОРД нет по решению владельца, поэтому
 подсказка бывает догадкой, и человек должен видеть какой именно.
 """
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -91,6 +91,14 @@ def _initial_out(c: Optional[OrdInitialContract]) -> Optional[dict]:
         'subject_type': label_by_code(SUBJECT_TYPES, c.subject_type),
         'advertiser': {'inn': c.advertiser_inn, 'name': c.advertiser_name},
         'contractor': {'inn': c.contractor_inn, 'name': c.contractor_name},
+        # ОТКУДА строка. `origin` этого не отвечает: и файл, и API кладут 'ord'.
+        # Отвечает контур: у синхронизированных он проставлен, у загруженных файлом —
+        # пуст. Различать обязательно, потому что демо и прод дают РАЗНЫЕ идентификаторы
+        # одному и тому же договору, и перед боевым синком демовские надо снять.
+        'source': c.ord_env or ('ручная' if c.origin == 'manual' else 'файл'),
+        'synced_at': c.synced_at,
+        # Связь с нашим доходным договором: удалять такую строку — рвать сборку.
+        'links': len(c.final_links or []),
     }
 
 
@@ -236,7 +244,11 @@ def ord_sync_clients(payload: SyncLimit, db: Session = Depends(get_db),
     log_action(db, current_user, "ord_sync_clients", "counterparty", 0,
                f"контур {report['env']}: сверено {report['looked']}, "
                f"проставлено {report['matched']}, нет в ОРД {len(report['not_in_ord'])}, "
-               f"неоднозначных {len(report['ambiguous'])}, отказов {len(report['failed'])}")
+               f"неоднозначных {len(report['ambiguous'])}, отказов {len(report['failed'])}"
+               + (f", перепроверено после смены контура {report['requeued']}"
+                  if report.get('requeued') else "")
+               + (f", снято чужих идентификаторов {report['cleared']}"
+                  if report.get('cleared') else ""))
     return report
 
 
@@ -394,10 +406,26 @@ def ord_enums(current_user: User = Depends(require_permission("sales_registry", 
 
 @router.get("/initial")
 def list_initial(q: Optional[str] = None, final_ord_id: Optional[str] = None,
+                 source: Optional[str] = None,
                  limit: int = 200, db: Session = Depends(get_db),
                  current_user: User = Depends(require_permission("ord", "view"))):
-    """Справочник изначальных договоров."""
+    """Справочник изначальных договоров.
+
+    `source` — откуда строка: `файл` (загружена выгрузкой, контур не проставлен),
+    `demo` или `prod` (пришла синком с этого контура), `ручная` (заведена руками).
+    Отбор нужен перед боевым синком: демовские идентификаторы к проду отношения не
+    имеют, и чистить их надо прицельно, а не «всё подряд».
+    """
     query = db.query(OrdInitialContract)
+    if source:
+        src = source.strip()
+        if src == 'файл':
+            query = query.filter(OrdInitialContract.ord_env.is_(None),
+                                 OrdInitialContract.origin != 'manual')
+        elif src == 'ручная':
+            query = query.filter(OrdInitialContract.origin == 'manual')
+        else:
+            query = query.filter(OrdInitialContract.ord_env == src)
     if final_ord_id:
         query = (query.join(OrdInitialFinalLink,
                             OrdInitialFinalLink.initial_contract_id == OrdInitialContract.id)
@@ -410,6 +438,59 @@ def list_initial(q: Optional[str] = None, final_ord_id: Optional[str] = None,
                              (OrdInitialContract.advertiser_inn.ilike(like)))
     rows = query.order_by(OrdInitialContract.date.desc()).limit(min(limit, 1000)).all()
     return [_initial_out(c) for c in rows]
+
+
+class InitialDrop(BaseModel):
+    ids: List[int]
+    # Признание, а не флажок «я подтверждаю»: строка со связью держит сборку доходного
+    # договора, и снос её — отдельное решение, которое человек принимает глазами.
+    with_links: bool = False
+
+
+@router.post("/initial/delete")
+def drop_initial(payload: InitialDrop, db: Session = Depends(get_db),
+                 current_user: User = Depends(require_permission("ord", "edit"))):
+    """Удалить изначальные договоры пачкой — чистка зеркала перед сменой контура.
+
+    Право пока `ord.edit`, а не отдельное `ord.delete`. Сознательно и с оговоркой:
+    новое действие в секции требует решения владельца, кому его выдать, и бэкфилла
+    `role_permissions` — иначе право по умолчанию запрещено всем, и чистка окажется
+    недоступна тому, кто её и затевал. Разделять — когда будет это решение.
+
+    В ОРД НИЧЕГО НЕ УДАЛЯЕТСЯ. Это наше зеркало: строка уйдёт отсюда и вернётся следующим
+    синком, если в кабинете она есть. Именно поэтому чистка безопасна и именно поэтому
+    она нужна — демовские идентификаторы к боевому контуру отношения не имеют.
+
+    СВЯЗАННЫЕ ЗАЩИЩЕНЫ ПО УМОЛЧАНИЮ. Изначальный договор, привязанный к нашему доходному,
+    участвует в сборке креатива: снеся его молча, мы получим сборку, которая перестанет
+    собираться, и причину будем искать в другом месте. Поэтому такие строки отбрасываются
+    и НАЗЫВАЮТСЯ в ответе, а снести их можно только отдельным признанием `with_links`.
+    """
+    ids = [int(i) for i in (payload.ids or [])]
+    if not ids:
+        raise HTTPException(status_code=400, detail="Не выбрано ни одной строки")
+    rows = (db.query(OrdInitialContract)
+              .filter(OrdInitialContract.id.in_(ids)).all())
+    if not rows:
+        raise HTTPException(status_code=404, detail="Строки не найдены")
+
+    kept, doomed = [], []
+    for c in rows:
+        if c.final_links and not payload.with_links:
+            kept.append({'id': c.id, 'number': c.number,
+                         'advertiser': c.advertiser_name, 'links': len(c.final_links)})
+        else:
+            doomed.append(c)
+
+    links = sum(len(c.final_links or []) for c in doomed)
+    for c in doomed:
+        db.delete(c)          # связи уходят каскадом delete-orphan
+    log_action(db, current_user, "ord_initial_delete", "settings", None,
+               f"удалено изначальных договоров {len(doomed)}"
+               + (f", вместе с ними связей {links}" if links else "")
+               + (f"; пропущено со связями {len(kept)}" if kept else ""))
+    db.commit()
+    return {'deleted': len(doomed), 'links_deleted': links, 'kept': kept}
 
 
 @router.get("/contracts")

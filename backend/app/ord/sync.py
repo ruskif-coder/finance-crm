@@ -23,6 +23,7 @@
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models import Contract, Counterparty
@@ -42,16 +43,26 @@ def sync_clients(db: Session, limit: Optional[int] = None) -> dict:
     экран, и «сколько не сошлось и почему» — единственное, ради чего этот прогон
     запускают повторно.
     """
+    env = client.env()
+    # Берём не только пустые, но и проставленные на ДРУГОМ КОНТУРЕ. Демо и прод — разные
+    # кабинеты с разными идентификаторами: демо ушёл дальше прода, и юрлицо, найденное
+    # в демо, на проде имеет другой `id` или не заведено вовсе. Пока фильтр смотрел
+    # только на пустоту, прогон по проду МОЛЧА ПРОПУСТИЛ БЫ всех, кого до этого
+    # разметили демо-идентификаторами, — и они уехали бы в ЕРИР чужими (владелец
+    # 17.09.2026: «сейчас с демо, а потом когда прод подключим и его прогоним»).
     rows = (db.query(Counterparty)
-              .filter(Counterparty.ord_client_id.is_(None),
+              .filter(or_(Counterparty.ord_client_id.is_(None),
+                          func.coalesce(Counterparty.ord_env, '') != env),
                       Counterparty.inn.isnot(None), Counterparty.inn != '')
               .order_by(Counterparty.name).all())
+    # Сколько из них размечены другим контуром — это число объясняет, почему прогон,
+    # уже делавшийся вчера, снова нашёл работу.
+    requeued = sum(1 for cp in rows if cp.ord_client_id is not None)
     if limit:
         rows = rows[:limit]
 
-    env = client.env()
     now = datetime.utcnow()
-    report = {'env': env, 'looked': 0, 'matched': 0,
+    report = {'env': env, 'looked': 0, 'matched': 0, 'requeued': requeued, 'cleared': 0,
               'not_in_ord': [], 'ambiguous': [], 'failed': []}
 
     for cp in rows:
@@ -76,8 +87,21 @@ def sync_clients(db: Session, limit: Optional[int] = None) -> dict:
         elif not found:
             # Не поломка: юрлицо просто ещё не заведено в кабинете. Это список работы,
             # а не список ошибок, — поэтому отдельно от `failed`.
+            #
+            # НО чужой контур СНИМАЕМ. Идентификатор, выданный демо-кабинетом, на проде
+            # не значит ничего: оставить его — значит держать наготове чужой `clientId`,
+            # который при регистрации договора уедет в ЕРИР и не отзовётся. Пустое поле
+            # честно говорит «не сопоставлено», а чужое число выглядит как сопоставленное.
+            if cp.ord_client_id is not None and (cp.ord_env or '') != env:
+                cp.ord_client_id, cp.ord_env, cp.ord_synced_at = None, None, now
+                report['cleared'] = report.get('cleared', 0) + 1
             report['not_in_ord'].append({'name': cp.name, 'inn': inn})
         else:
+            # Неоднозначность на новом контуре — тоже повод снять чужой идентификатор:
+            # выбирать за человека из нескольких юрлиц мы отказались сознательно.
+            if cp.ord_client_id is not None and (cp.ord_env or '') != env:
+                cp.ord_client_id, cp.ord_env, cp.ord_synced_at = None, None, now
+                report['cleared'] = report.get('cleared', 0) + 1
             report['ambiguous'].append({
                 'name': cp.name, 'inn': inn, 'count': len(found),
                 'ids': [f.get('id') for f in found][:5]})
