@@ -8,7 +8,8 @@ from app.database import engine, Base, SessionLocal
 from app.routers import (auth, operations, reports, counterparties, articles, settings,
                          users, roles, contracts, sales_directories, sales_dashboard,
                          sales_reconcile, media_plans, notifications, notify_settings,
-                         year_plan, finreport, backlog, account_dashboard,
+                         year_plan, finreport, backlog, bugs, maintenance as maintenance_api,
+                         account_dashboard,
                          publishers, diadoc, ord, launch_prep, traffic, cabinets,
                          cabinet_gateway, traffic_catalog, traffic_balancer,
                          dsp_demo, weborama_demo, traffic_dashboard, annexes, directory_add,
@@ -457,6 +458,60 @@ app.add_middleware(ExceptionLoggingMiddleware)
 
 
 @app.middleware("http")
+async def _maintenance_gate(request: Request, call_next):
+    """Техобслуживание: после наступления пускаем только админа.
+
+    Прослойкой, а не обходом экранов: правило одно на всю систему, и держать его в
+    одном месте — единственный способ не забыть ручку. Экраны о режиме не знают вовсе,
+    они просто получают отказ С ТЕКСТОМ вместо молчания.
+
+    Состояние читается на КАЖДЫЙ запрос — и это осознанно: кеш в памяти процесса
+    пережил бы снятие режима и запер бы людей после того, как обслуживание кончилось.
+    Запрос дешёвый (одна строка настроек по первичному ключу).
+
+    Роль берём из токена, а не из базы: прослойка работает до зависимостей FastAPI, и
+    ходить здесь за пользователем значило бы удваивать запрос на каждом обращении.
+    """
+    from fastapi.responses import JSONResponse
+
+    from app import maintenance as mnt
+    from app.database import SessionLocal
+
+    path = request.scope.get("path", "")
+    if not path.startswith("/api/") or path.startswith("/api/cabinet-gw/"):
+        return await call_next(request)
+
+    db = SessionLocal()
+    try:
+        st = mnt.state(db)
+    except Exception:                                   # noqa: BLE001
+        # Недоступная база — не повод закрывать систему: она и так не работает, а
+        # заглушка «техобслуживание» соврала бы о причине.
+        st = {"mode": "off"}
+    finally:
+        db.close()
+
+    if st.get("mode") == "active":
+        is_admin = False
+        auth_header = request.headers.get("authorization") or ""
+        if auth_header.lower().startswith("bearer "):
+            try:
+                import jwt as _jwt
+
+                from app.routers.auth import ALGORITHM, SECRET_KEY
+                claims = _jwt.decode(auth_header.split(" ", 1)[1], SECRET_KEY,
+                                     algorithms=[ALGORITHM])
+                is_admin = bool(claims.get("is_admin") or claims.get("role") == "admin")
+            except Exception:                           # noqa: BLE001
+                is_admin = False
+        if mnt.blocks(path, request.method, is_admin=is_admin, mode="active"):
+            return JSONResponse(status_code=503, content={
+                "detail": mnt.STUB_TITLE, "maintenance": True,
+                "note": st.get("stub_note")})
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def _neutralize_ad_query(request: Request, call_next):
     """Блокировщики рекламы (uBlock/AdGuard) режут запросы с "advertiser" в URL.
     Фронт шлёт нейтральные producer_id и /reconcile/producers — здесь возвращаем
@@ -508,6 +563,10 @@ app.include_router(sales_dashboard.router, prefix="/api/sales", tags=["sales"])
 app.include_router(account_dashboard.router, prefix="/api/sales", tags=["sales"])
 app.include_router(year_plan.router, prefix="/api/sales/year-plan", tags=["sales"])
 app.include_router(backlog.router, prefix="/api/backlog", tags=["backlog"])
+# Заявки о сбоях: подача открыта каждому вошедшему, журнал — по праву settings_bugs.
+app.include_router(bugs.router, prefix="/api/bugs", tags=["bugs"])
+# Техобслуживание: состояние читает каждый вошедший, объявляет только админ.
+app.include_router(maintenance_api.router, prefix="/api/maintenance", tags=["maintenance"])
 app.include_router(diadoc.router, prefix="/api/diadoc", tags=["diadoc"])
 app.include_router(ord.router, prefix="/api/ord", tags=["ord"])
 # Модуль креативов: сбор запуска. Живёт на карточке сделки, отдельного экрана
