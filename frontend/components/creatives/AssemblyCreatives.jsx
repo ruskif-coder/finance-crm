@@ -540,6 +540,14 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
                                   htmlSource = null, sandboxUrl = null,
                                   title = 'Предпросмотр креатива' }) {
   const [curId, setCurId] = useState(startId)
+  /* СВЕЖИЙ ДОКУМЕНТ НА КАЖДЫЙ ПОКАЗ. Баннер играет свою анимацию ОДИН раз
+     (`animation: … 1` + `animation-fill-mode: forwards`) и застывает на последнем
+     кадре — это его собственное устройство, не наше. Пока адрес рамки не менялся,
+     браузер переиспользовал уже отработавший документ, и со второго-третьего открытия
+     человек видел застывшую картинку. Выглядит это как «предпросмотр сломался».
+     Метка времени берётся на КАЖДОЕ открытие и на каждое переключение файла. */
+  const [nonce] = useState(() => Date.now())
+  const fresh = (u) => (u ? u + (u.includes('?') ? '&' : '?') + 'v=' + nonce + '-' + curId : u)
   const [blob, setBlob] = useState(null)
   const [html, setHtml] = useState(null)
   const [err, setErr] = useState('')
@@ -666,7 +674,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
                   загрузчика DSP ссылается на его CDN, и `base-uri 'self'` вместе с
                   `img-src 'self'` показали бы пустую рамку. У домена песочницы таких
                   ограничений нет — она ровно для чужого кода и заведена. */}
-              <iframe {...(sandboxUrl ? { src: sandboxUrl } : { srcDoc: html })}
+              <iframe {...(sandboxUrl ? { src: fresh(sandboxUrl) } : { srcDoc: html })}
                 sandbox="allow-scripts" title={'Креатив ' + (cur?.ratio || '')}
                 style={{ border: 0, display: 'block', background: 'var(--bg-card)',
                   width: wh ? wh[0] : '100%', height: wh ? wh[1] : 420,
@@ -680,7 +688,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
           {!err && !isImg && !isHtml && !!cur?.sandbox_url && (
             <div style={{ width: wh ? Math.round(wh[0] * k) : '100%',
               height: wh ? Math.round(wh[1] * k) : 420, overflow: 'hidden' }}>
-              <iframe src={cur.sandbox_url} title={'Креатив ' + (cur?.ratio || '')}
+              <iframe key={curId} src={fresh(cur.sandbox_url)} title={'Креатив ' + (cur?.ratio || '')}
                 style={{ border: 0, display: 'block', background: 'var(--bg-card)',
                   width: wh ? wh[0] : '100%', height: wh ? wh[1] : 420,
                   transform: `scale(${k})`, transformOrigin: 'top left' }} />
