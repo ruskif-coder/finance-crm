@@ -34,7 +34,8 @@ from sqlalchemy.orm import Session
 from app.sales import mp_row
 
 from app.ad.balance import SCOPES, SCOPE_SURFACE
-from app.ad.flight import (PLACEMENT_NEW, PLACEMENT_READY, chain_status, distribute,
+from app.ad.flight import (PLACEMENT_NEW, PLACEMENT_READY, as_placement_scale,
+                           best_chain_status, chain_status, distribute, effective_status,
                            effective_status_creative)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.sales.models import PUBLISHER_ARCHIVE_STATUS
@@ -342,7 +343,7 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
     roots = root_set_map(db, camp.deal_id)
     pairs = db.execute(text("""
         SELECT pr.id AS pair_id, pr.code AS pair_code, pr.sent_at,
-               cs.id AS set_id, cs.no AS set_no, cs.title,
+               cs.id AS set_id, cs.no AS set_no, cs.title, cs.erid,
                t.publisher_id,
                tr.verdict AS traffic_verdict,
                pv.verdict AS platform_verdict
@@ -388,7 +389,43 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
             updated += 1
         # Ссылка всегда на ПОСЛЕДНЮЮ пару цепочки: запрос отсортирован по id.
         row.pair_id = r["pair_id"]
+        # МАРКЕР переносим с комплекта, по которому пара согласована, а не с корня
+        # цепочки: корень мог быть отвергнут и заменён, а маркер выдан на действующий.
+        #
+        # Колонка `erid` читалась в двух местах — экран трафика и выгрузка в DSP — и НЕ
+        # ЗАПОЛНЯЛАСЬ НИКЕМ (замер 17.09.2026: 0 из 1 на проде). Это не косметика:
+        # `dsp/provision` подставляет её в `wrap_html` и в тело креатива, то есть баннер
+        # уезжал бы в сеть БЕЗ МАРКИРОВКИ.
+        #
+        # Пустым не затираем: маркер может прийти позже согласования, и «ещё нет» не
+        # должно стирать уже перенесённое.
+        if r["erid"]:
+            row.erid = r["erid"]
         row.ms_title = creative_title(db, camp, pl, row.creative_no)
+
+    # СТАТУС ПЛОЩАДКИ ПЕРЕСЧИТЫВАЕМ ЗДЕСЬ ЖЕ, из её креативов.
+    #
+    # Экран трафика считал его на лету (`best_chain_status` по креативам), а в колонке
+    # `ad_campaign_placement.status` оставалось то, что записали при создании строки, —
+    # «у трафика». Пока на колонку никто не смотрел, расхождение было невидимым. Но по
+    # ней считают ДЕЙСТВИЯ: и заведение вставок Weborama, и выгрузка в DSP берут
+    # «готовые» площадки именно оттуда.
+    #
+    # Отсюда 17.09.2026 и вышло: на экране площадка «ждёт запуска», а кнопка «ПИКСЕЛЬ WR»
+    # честно отвечает «0 заведённых» — она смотрит в колонку, которую никто не обновлял.
+    # Ручной статус не трогаем: `effective_status` пропускает решения человека вперёд.
+    by_pl: dict = {}
+    for (pid, _), c in have.items():
+        by_pl.setdefault(pid, []).append(c.status)
+    for pl in pls.values():
+        mine = by_pl.get(pl.id)
+        if not mine:
+            continue
+        chain = best_chain_status(as_placement_scale(x) for x in mine)
+        nxt = effective_status(pl.status, chain)
+        if nxt != pl.status:
+            pl.status = nxt
+            updated += 1
 
     db.flush()
     if commit:

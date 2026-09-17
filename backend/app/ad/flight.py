@@ -463,6 +463,16 @@ def chain_status(traffic_verdict: Optional[str], platform_verdict: Optional[str]
 _CHAIN_RANK = {"у трафика": 0, "у площадки": 1, "ждёт запуска": 2}
 
 
+def as_placement_scale(creative_status: str) -> str:
+    """Статус КРЕАТИВА в шкалу ПЛОЩАДКИ. Словари различаются одним словом: у креатива
+    согласованное состояние зовётся «согласован», у площадки — «ждёт запуска».
+
+    Вынесено из `routers/traffic_dashboard` 17.09.2026: тем же переводом пользуется
+    синк, и вторая копия разошлась бы с первой ровно в том месте, где это дороже всего.
+    """
+    return PLACEMENT_READY if creative_status == "согласован" else creative_status
+
+
 def best_chain_status(statuses):
     """Статус площадки по ВСЕМ её креативам — самый продвинутый из них.
 

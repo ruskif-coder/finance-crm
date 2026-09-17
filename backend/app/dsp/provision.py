@@ -111,6 +111,11 @@ def _blocker(row: dict, want_pixel: bool = True,
         return f"площадка в статусе «{p.status}» — рано"
     if c.status not in CREATIVE_OK:
         return f"креатив в статусе «{c.status}» — вердикта ещё нет"
+    # БЕЗ МАРКЕРА В СЕТЬ НЕ УХОДИМ. Маркер подставляется и в разметку, и в тело креатива;
+    # пустой означал бы рекламу без маркировки — это не «некрасиво», а нарушение, и
+    # обнаруживается оно не нами. Отказ виден в плане выгрузки словами, а не молчанием.
+    if not (c.erid or "").strip():
+        return "нет ЕРИД — маркер не перенесён в креатив кампании"
     if want_pixel and not ext_tag and not p.weborama_pixel:
         return "нет пикселя Weborama — сначала «ПИКСЕЛЬ WR»"
     if not f:

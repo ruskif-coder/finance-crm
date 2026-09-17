@@ -30,7 +30,7 @@ from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_STATUSES,
                            GRAIN_DAYS, campaign_chain_status, effective_campaign_status,
                            PLACEMENT_CHAIN, PLACEMENT_MANUAL, PLACEMENT_RUNNING,
                            PLACEMENT_STATUSES, PLACEMENT_OFF, PLACEMENT_READY,
-                           best_chain_status, can_start_placement,
+                           as_placement_scale, best_chain_status, can_start_placement,
                            creative_counts, culprits, daily_buckets,
                            distribute, effective_status, flight_of, progress, split_evenly)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
@@ -219,8 +219,9 @@ def _creatives_of(db: Session, campaign_id: int) -> dict:
 # Словари площадки и креатива различаются одним словом: согласованное состояние у
 # площадки зовётся «ждёт запуска», у креатива — «согласован». Перевод нужен там, где
 # статус площадки собирается из статусов её креативов.
-def _as_placement_scale(creative_status: str) -> str:
-    return PLACEMENT_READY if creative_status == "согласован" else creative_status
+# Перевод шкалы живёт в `ad/flight` — им пользуется и синк. Имя здесь оставлено,
+# чтобы не править два десятка мест вызова.
+_as_placement_scale = as_placement_scale
 
 
 def _placements_of(db: Session, campaign_ids: List[int]) -> dict:
