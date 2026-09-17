@@ -10,6 +10,7 @@ import { errText, isAuth } from '@/lib/loadError'
 import { LoadError, LoadErrorScreen, NoAccessScreen } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 const BalanceMobile = dynamic(() => import('@/components/mobile/BalanceMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 
@@ -451,6 +452,11 @@ export default function Balance() {
     setPermissions(getPermissions())
     loadBalance(token)
   }, [])
+
+  // Возврат на экран = перечитать. Финмодуль был пропущен, когда механизм
+  // актуальности заводили 13.09.2026: правка операции не появлялась здесь
+  // никогда, а число на экране — утверждение о деньгах (lib/useRefreshOnReturn).
+  useRefreshOnReturn(() => loadBalance(localStorage.getItem('token')))
 
   const loadBalance = async (token) => {
     setLoading(true); setErr('')

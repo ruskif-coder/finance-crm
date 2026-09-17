@@ -13,6 +13,7 @@ import { getPermissions } from '@/lib/auth'
 import { T } from '@/lib/tokens'
 import { errText, isAuth } from '@/lib/loadError'
 import { nowTime } from '@/lib/dates'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const STATUSES = ['ОПЛАЧЕНО', 'ПЛАН ОПЛАТ', 'ПЛАН ПОСТУПЛЕНИЙ']
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
@@ -298,6 +299,11 @@ export default function Operations2() {
     window.addEventListener('resize', measure)
     return () => window.removeEventListener('resize', measure)
   }, [])
+
+  // Возврат на экран = перечитать. Реестр операций правят с других экранов и другие
+  // люди; без этого список показывал состояние на момент открытия вкладки
+  // (lib/useRefreshOnReturn, замер 13.09.2026 — финмодуль был пропущен целиком).
+  useRefreshOnReturn(() => { if (tok()) loadOps() })
 
   const loadOps = async () => {
     setLoading(true); setErr('')

@@ -8,6 +8,7 @@ const ReceivablesMobile = dynamic(() => import('@/components/mobile/ReceivablesM
 import { makeApi as api } from '@/lib/http'
 import { getPermissions } from '@/lib/auth'
 import { grp0 as fmt } from '@/lib/salesFormat'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -116,6 +117,11 @@ export default function Receivables() {
     if (!token) { router.push('/login'); return }
     load(token)
   }, [])
+
+  // Возврат на экран = перечитать. Финмодуль был пропущен, когда механизм
+  // актуальности заводили 13.09.2026: правка операции не появлялась здесь
+  // никогда, а число на экране — утверждение о деньгах (lib/useRefreshOnReturn).
+  useRefreshOnReturn(() => load(localStorage.getItem('token')))
 
   useEffect(() => {
     if (data && Array.isArray(data.rows)) {

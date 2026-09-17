@@ -11,6 +11,7 @@ import { T } from '@/lib/tokens'
 import { errText, isAuth } from '@/lib/loadError'
 import { LoadError } from '@/components/salesTableKit'
 import useIsMobile from '@/components/mobile/useIsMobile'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 // Мобильная ветка грузится отдельным чанком: десктопу она не нужна, а на сервере
 // useIsMobile всё равно false — SSR для неё бессмыслен. loading — пустая заглушка,
 // чтобы не мелькала десктопная вёрстка, пока чанк догружается.
@@ -326,6 +327,11 @@ export default function DashboardV2() {
     if (!can(perms, 'dashboard')) { router.replace(firstAllowedHref(perms, role)); return }
     loadAll(token)
   }, [])
+
+  // Возврат на экран = перечитать. Финмодуль был пропущен, когда механизм
+  // актуальности заводили 13.09.2026: правка операции не появлялась здесь
+  // никогда, а число на экране — утверждение о деньгах (lib/useRefreshOnReturn).
+  useRefreshOnReturn(() => loadAll(localStorage.getItem('token')))
 
   useEffect(() => {
     const token = localStorage.getItem('token')

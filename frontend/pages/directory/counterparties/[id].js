@@ -11,6 +11,7 @@ import { makeApi as api } from '@/lib/http'
 import { bankColor } from '@/lib/salesFormat'
 import { overlayClose } from '@/lib/overlay'
 import { fmtDate as fmtCalendarDate } from '@/lib/dates'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const fmt = (n) => {
   if (!n && n !== 0) return '—'
@@ -160,6 +161,10 @@ export default function CounterpartyCard() {
   }, [id])
 
   useEffect(() => { loadCard() }, [loadCard])
+  // Возврат на карточку = перечитать. Операции и реквизиты контрагента правят с
+  // соседних экранов, а карточка показывала состояние на момент открытия
+  // (найдено прибором check-freshness 16.09.2026).
+  useRefreshOnReturn(() => loadCard())
   useEffect(() => { if (id) loadOps(0, '', 'date', 'desc') }, [id])
   useEffect(() => { loadAnalytics() }, [loadAnalytics])
 

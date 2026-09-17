@@ -9,6 +9,7 @@ import { UI, MONO, card, th, td, inp, primaryBtn, LoadError, NoAccessScreen } fr
 import { errText, isAuth } from '@/lib/loadError'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 const FinReportMobile = dynamic(() => import('@/components/mobile/FinReportMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // Финансовый отчёт — новый P&L рядом со старым (/pl). Старый намеренно оставлен
@@ -100,6 +101,11 @@ export default function FinReport() {
     localStorage.setItem('finreport_granularity', granularity)
     load(token)
   }, [dateFrom, dateTo, basis, vat, granularity])
+
+  // Возврат на экран = перечитать. Финмодуль был пропущен, когда механизм
+  // актуальности заводили 13.09.2026: правка операции не появлялась здесь
+  // никогда, а число на экране — утверждение о деньгах (lib/useRefreshOnReturn).
+  useRefreshOnReturn(() => load(localStorage.getItem('token')))
 
   const load = async (token) => {
     setLoading(true); setErr('')

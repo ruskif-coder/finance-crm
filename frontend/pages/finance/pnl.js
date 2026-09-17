@@ -9,6 +9,7 @@ import { errText, isAuth } from '@/lib/loadError'
 import { LoadError, LoadErrorScreen, NoAccessScreen } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
+import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 const PnlMobile = dynamic(() => import('@/components/mobile/PnlMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 
@@ -66,6 +67,11 @@ export default function PL() {
     if (!token) { router.push('/login'); return }
     loadPL(token)
   }, [dateFrom, dateTo])
+
+  // Возврат на экран = перечитать. Финмодуль был пропущен, когда механизм
+  // актуальности заводили 13.09.2026: правка операции не появлялась здесь
+  // никогда, а число на экране — утверждение о деньгах (lib/useRefreshOnReturn).
+  useRefreshOnReturn(() => loadPL(localStorage.getItem('token')))
 
   const loadPL = async (token) => {
     setLoading(true); setErr('')
