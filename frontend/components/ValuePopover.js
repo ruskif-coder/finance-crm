@@ -1,6 +1,21 @@
 import { useState, useEffect, useRef } from 'react'
+import { Z } from '@/components/salesTableKit'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
+
+/* ПОВЕРХ ВСЕГО, ЧТО ЕГО ОТКРЫЛО.
+
+   Было 60/61 — на голой странице это работало, а из модалки (`zIndex` подложки 10000)
+   поповер уходил ПОД неё: на карточке паблишера выбор должности контакта открывался
+   невидимым, и модалка добавления контакта выглядела так, будто кнопка не нажимается
+   (владелец 18.09.2026).
+
+   Поповер всегда самый верхний временный слой: он и открывается последним, и закрывается
+   первым. Поэтому шкала берётся из общего кита, а не назначается числом заново — и берётся
+   ступенью выше подложки. Выше остаётся только тост: уведомление вправе перекрыть выбор,
+   обратное было бы неверно. */
+const Z_CATCH = Z.overlay + 1
+const Z_BOX = Z.overlay + 2
 
 // Поповер выбора значения у места клика (Агентство / Рекламодатель / Бренд / Услуга).
 // Дизайн-хендофф v2 дашборда сейлза: 216px, поиск, ✓ на текущем, оптимистичный выбор.
@@ -26,8 +41,8 @@ export default function ValuePopover({ anchor, title, dealLabel, options, value,
 
   return (
     <>
-      <div style={{ position: 'fixed', inset: 0, zIndex: 60 }} onClick={onClose} />
-      <div ref={boxRef} style={{ position: 'fixed', left: x, top: y, width: W, zIndex: 61, background: 'var(--bg-card)',
+      <div style={{ position: 'fixed', inset: 0, zIndex: Z_CATCH }} onClick={onClose} />
+      <div ref={boxRef} style={{ position: 'fixed', left: x, top: y, width: W, zIndex: Z_BOX, background: 'var(--bg-card)',
         border: '1px solid var(--border-card)', borderRadius: 16, overflow: 'hidden',
         boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)',
         animation: 'vpRise .22s cubic-bezier(0.22,1,0.36,1) both', fontFamily: "'Manrope', system-ui, sans-serif" }}>
