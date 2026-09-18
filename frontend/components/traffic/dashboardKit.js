@@ -196,6 +196,10 @@ export const TONE = {
   'окончена': ['var(--bg-subtle)', 'var(--text-primary)', 'var(--border-card)'],
   'архив': ['var(--bg-subtle)', 'var(--text-faint)', 'var(--border-card)'],
   // площадки
+  // «Ждёт сборки» — приглушённый: по этой площадке ещё ничего не происходит, и цветом
+  // работы её красить нельзя (владелец 18.09.2026). Глаз должен отличать «сборка идёт»
+  // от «мяч у трафика» с одного взгляда — иначе человек ищет у себя задачу, которой нет.
+  'ждёт сборки': ['var(--bg-subtle)', 'var(--text-muted)', 'var(--border-card)'],
   'у трафика': ['var(--bg-card)', 'var(--blue)', 'var(--blue)'],
   'у площадки': ['var(--bg-card)', 'var(--warning-text)', 'var(--warning-text)'],
   'ждёт запуска': ['var(--bg-card)', 'var(--income)', 'var(--income)'],
@@ -767,7 +771,7 @@ export const CreativeRows = ({ rows, manual, mayEdit, onStatus }) => {
           <span style={{ justifySelf: 'end' }}>
             {mayEdit && (
               <PlaceActions status={c.status === 'отклонён' ? 'завершена' : c.status}
-                canStart={c.status !== 'у трафика' && c.status !== 'у площадки'}
+                canStart={!['ждёт сборки', 'у трафика', 'у площадки'].includes(c.status)}
                 onStart={() => onStatus(c, 'запущен')}
                 onPause={() => onStatus(c, 'пауза')}
                 onOff={() => onStatus(c, 'отклонён')} />

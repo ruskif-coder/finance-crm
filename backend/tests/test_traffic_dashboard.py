@@ -35,7 +35,7 @@ def test_calculations_come_from_the_core_not_from_the_router():
 
 
 def test_status_vocabularies_are_closed():
-    """Семь статусов РК и шесть — площадки (владелец 04.09.2026).
+    """Семь статусов РК и семь — площадки (04.09.2026, расширено 18.09.2026).
 
     Площадочные разделены на те, что ставит конвейер согласования, и те, что выбирает
     трафик: экран не должен предлагать в поповере статус, который человек не ставит.
@@ -43,8 +43,10 @@ def test_status_vocabularies_are_closed():
     assert "запущена" in td.CAMPAIGN_STATUSES and "чепуха" not in td.CAMPAIGN_STATUSES
     assert set(td.RUNNING) <= set(td.CAMPAIGN_STATUSES)
 
-    assert td.PLACEMENT_STATUSES == ('у трафика', 'у площадки', 'ждёт запуска',
-                                     'запущен', 'пауза', 'завершена')
+    # Семь с 18.09.2026: в начало добавлено «ждёт сборки» — площадка есть, креативов
+    # по ней нет.
+    assert td.PLACEMENT_STATUSES == ('ждёт сборки', 'у трафика', 'у площадки',
+                                     'ждёт запуска', 'запущен', 'пауза', 'завершена')
     assert set(td.PLACEMENT_MANUAL) < set(td.PLACEMENT_STATUSES)
     assert set(td.PLACEMENT_RUNNING) <= set(td.PLACEMENT_MANUAL), (
         'крутит только то, что включил человек'

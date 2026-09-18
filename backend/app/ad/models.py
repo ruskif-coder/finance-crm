@@ -54,7 +54,9 @@ class AdCampaignPlacement(Base):
     bid = Column(Float)              # ставка source — наш рычаг
     # Шесть значений — `app/ad/flight.PLACEMENT_STATUSES`. Первые три ставит конвейер
     # согласования, последние три выбирает трафик (миграция 2026-09-04_placement_statuses).
-    status = Column(String(32), nullable=False, default="у трафика")
+    # Умолчание — «ждёт сборки»: площадка попадает в РК кандидатом, когда креативов по
+    # ней ещё нет вовсе (миграция 2026-09-18_placement_wait_status.sql).
+    status = Column(String(32), nullable=False, default="ждёт сборки")
     is_direct = Column(Boolean, nullable=False, default=False)   # «крутит сама» (10%)
     # Сырой пиксель показа Weborama (`a.A=im`), как пришёл: с `[RANDOM]`, `~WIDTH~`,
     # `${GDPR}`. Итоговый тег НЕ храним — он производный и зависит от того, куда едет
