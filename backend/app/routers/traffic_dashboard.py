@@ -983,10 +983,16 @@ def set_placement_status(placement_id: int, payload: StatusIn,
                                      "площадку нельзя запустить")
     old, p.status = p.status, payload.status
     build.recompute_shares(db, p.campaign_id)
+    # ЗАПУСК — ЕДИНСТВЕННЫЙ ПИСАТЕЛЬ «в размещении» у пары в сборе запуска. Раньше эту
+    # строку ставили кнопкой на карточке сделки, и карточка говорила «в размещении» о
+    # площадке, которая ждёт запуска, при несобранной РК и ненаступившем сроке
+    # (владелец 18.09.2026). Один факт — одно место записи.
+    moved = build.mark_target_placed(db, p) if p.status == "запущен" else 0
     db.commit()
     log_action(db, user, "ad_placement_status", "sales_publisher", p.publisher_id,
-               f"РК #{p.campaign_id}: площадка {old} → {p.status}")
-    return {"id": p.id, "status": p.status}
+               f"РК #{p.campaign_id}: площадка {old} → {p.status}"
+               + (f"; получателей переведено в размещение: {moved}" if moved else ""))
+    return {"id": p.id, "status": p.status, "targets_placed": moved}
 
 
 # ── внешние системы: пиксель Weborama и выгрузка в DSP ───────────────────────

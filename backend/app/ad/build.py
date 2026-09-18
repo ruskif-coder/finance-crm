@@ -470,3 +470,44 @@ def sync_all(db: Session, commit: bool = True) -> dict:
     return {**res, "placements_added": added, "placement_candidates": cands,
             "placements_without_weight": no_w,
             "creatives_added": cr_new, "creatives_updated": cr_upd}
+
+
+# ── «в размещении» пишет ЗАПУСК, а не человек ────────────────────────────────
+
+# Состояние получателя после запуска. Оно же — единственное место, где эта строка
+# ставится: до 18.09.2026 её ставили кнопкой на карточке сделки, и карточка говорила
+# «в размещении» о площадке, у которой РК не собрана, площадка ждёт запуска, а срок ещё
+# не наступил. Два источника правды об одном факте разошлись ровно так, как расходятся
+# всегда: обе надписи выглядели правдой.
+TARGET_PLACED = "в размещении"
+
+# Ступени, после которых двигать уже некуда: назад состояние не ходит.
+_TARGET_AFTER = ("в размещении", "завершён", "сверка завершена", "архив", "отказ площадки")
+
+
+def mark_target_placed(db: Session, pl: AdCampaignPlacement, commit: bool = False) -> int:
+    """Площадка РК запущена → её пара в сборе запуска переходит «в размещении».
+
+    Связь по (сделка, площадка): у получателя нет ссылки на строку РК, и заводить её
+    ради этого не нужно — пара уникальна и так.
+
+    Возвращает число изменённых строк, чтобы вызывающий мог сказать это словами, а не
+    «готово».
+    """
+    camp = db.query(AdCampaign).filter(AdCampaign.id == pl.campaign_id).first()
+    if not camp:
+        return 0
+    rows = db.execute(text("""
+        SELECT id, state FROM launch_prep_target
+         WHERE deal_id = :d AND publisher_id = :p AND archived_at IS NULL
+    """), {"d": camp.deal_id, "p": pl.publisher_id}).mappings().all()
+    n = 0
+    for r in rows:
+        if (r["state"] or "") in _TARGET_AFTER:
+            continue
+        db.execute(text("UPDATE launch_prep_target SET state = :s WHERE id = :i"),
+                   {"s": TARGET_PLACED, "i": r["id"]})
+        n += 1
+    if commit and n:
+        db.commit()
+    return n
