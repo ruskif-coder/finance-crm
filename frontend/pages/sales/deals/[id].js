@@ -212,6 +212,7 @@ function CampaignExtra({ dealId, deal, canEdit, onSaved }) {
   const on = !!deal.weborama_pixel
   const external = (deal.weborama_pixel_mode || 'own') === 'external'
   const canUnset = !!deal.can_unset_weborama_pixel
+  const decided = !!deal.weborama_pixel_decided
 
   const send = (value) => {
     setBusy(true); setErr('')
@@ -242,13 +243,36 @@ function CampaignExtra({ dealId, deal, canEdit, onSaved }) {
           </span>
           <span style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
             {!on
-              ? 'Не заказан. Вставки в Weborama не заводятся, пиксель в креатив не вшивается, выгрузка в DSP его не требует.'
+              ? (decided
+                ? 'Решено: не нужен. Вставки в Weborama не заводятся, пиксель в креатив не вшивается, выгрузка в DSP его не требует.'
+                : 'Решение не принято. Выберите «нужен» или «не нужен» — от этого зависит, потребует ли выгрузка в DSP пиксель по каждой площадке.')
               : external
                 ? `Внешний тег${when ? ', загружен ' + when : ''}. Вставку завёл клиент — свою не заводим. Статистику Weborama по такой РК не снимает: показы вносятся руками на сверке.`
                 : `Свой${when ? ', заказан ' + when : ''}. Трафик получил задачу; выгрузка в DSP не пойдёт, пока пиксель не получен по всем площадкам.`}
           </span>
         </span>
-        {canEdit && !on && (
+        {/* ПОКА НЕ РЕШИЛИ — две кнопки, и обе называют решение. «Заказать» в одиночку
+            предлагало только один исход, а второй («не надо») делался бездействием — то
+            есть был неотличим от «забыли». */}
+        {canEdit && !on && !decided && (
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}>
+            <button type="button" onClick={() => send(false)} disabled={busy}
+              style={{ height: 32, padding: '0 14px', borderRadius: 9,
+                border: '1px solid var(--border-card)', background: 'var(--bg-card)',
+                color: 'var(--text-secondary)', fontSize: 12.5, fontWeight: 700,
+                fontFamily: UI, cursor: busy ? 'default' : 'pointer' }}>
+              {busy ? '…' : 'Не нужен'}
+            </button>
+            <button type="button" onClick={() => setAsk(true)} disabled={busy}
+              style={{ height: 32, padding: '0 14px', borderRadius: 9,
+                border: 'none', background: 'var(--accent)', color: 'var(--bg-card)',
+                fontSize: 12.5, fontWeight: 700, fontFamily: UI, cursor: 'pointer' }}>
+              Нужен
+            </button>
+          </span>
+        )}
+        {/* Решение «не нужен» уже принято — оставляем один ход назад. */}
+        {canEdit && !on && decided && (
           <button type="button" onClick={() => setAsk(true)} disabled={busy}
             style={{ marginLeft: 'auto', height: 32, padding: '0 14px', borderRadius: 9,
               border: 'none', background: 'var(--accent)', color: 'var(--bg-card)',
@@ -1438,10 +1462,20 @@ export default function DealCard() {
 
               {showBlock('campaign-extra') && (
               <div style={{ ...CARD, padding: '20px 26px 18px' }}>
+              {/* РАЗВЁРНУТ, ПОКА ВЫБОР НЕ СДЕЛАН (владелец 18.09.2026). Свёрнутый блок
+                  с подписью «пиксель не заказан» читался как принятое решение, хотя
+                  решения не было: умолчание колонки и осознанное «не надо» выглядели
+                  одинаково. Теперь различие хранится (`weborama_pixel_decided_at`), и
+                  блок сам просит закрыть вопрос. */}
               <Section id="campaign-extra" dealId={id} title="Доп. параметры РК"
-                subtitle="что включено по этой кампании" defaultOpen={false}
-                summary={deal.weborama_pixel ? 'пиксель Weborama заказан' : 'пиксель Weborama не заказан'}
-                tone={deal.weborama_pixel ? 'ok' : undefined}>
+                subtitle="что включено по этой кампании"
+                defaultOpen={!deal.weborama_pixel_decided}
+                summary={!deal.weborama_pixel_decided
+                  ? 'по пикселю Weborama решение не принято'
+                  : (deal.weborama_pixel ? 'пиксель Weborama заказан'
+                    : 'пиксель Weborama не нужен')}
+                tone={!deal.weborama_pixel_decided ? 'warn'
+                  : (deal.weborama_pixel ? 'ok' : undefined)}>
                 {() => (
                   <CampaignExtra dealId={d.id} deal={deal} canEdit={canEdit}
                     onSaved={v => setDeal(x => ({ ...x, ...v }))} />

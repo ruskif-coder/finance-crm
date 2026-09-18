@@ -1680,7 +1680,13 @@ def save_deal_campaign_extra(deal_id: int, payload: CampaignExtraIn,
     setup_changed = want and (mode != (deal.weborama_pixel_mode or "own")
                               or tag != deal.weborama_pixel_tag
                               or ins != deal.weborama_ext_insertion)
+    # ВЫБОР ЗАСЧИТЫВАЕТСЯ ДАЖЕ ТОГДА, КОГДА НИЧЕГО НЕ ИЗМЕНИЛОСЬ. «Не надо» по сделке,
+    # где флаг и так false, не меняет ни одного поля — но это РЕШЕНИЕ человека, и без
+    # отметки блок остался бы развёрнутым навсегда, а нажатие выглядело бы как
+    # проигнорированное (владелец 18.09.2026).
+    deal.weborama_pixel_decided_at = datetime.utcnow()
     if was == want and not setup_changed:
+        db.commit()
         return _campaign_extra_out(deal)
 
     deal.weborama_pixel = want
@@ -1728,6 +1734,7 @@ def _campaign_extra_out(deal) -> dict:
     return {"weborama_pixel": bool(deal.weborama_pixel),
             "weborama_pixel_at": deal.weborama_pixel_at.isoformat()
             if deal.weborama_pixel_at else None,
+            "weborama_pixel_decided": deal.weborama_pixel_decided_at is not None,
             "weborama_pixel_mode": deal.weborama_pixel_mode or "own",
             "weborama_pixel_tag": deal.weborama_pixel_tag,
             "weborama_ext_insertion": deal.weborama_ext_insertion}
@@ -2527,6 +2534,7 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         "weborama_pixel": bool(deal.weborama_pixel),
         "weborama_pixel_at": deal.weborama_pixel_at.isoformat()
         if deal.weborama_pixel_at else None,
+        "weborama_pixel_decided": deal.weborama_pixel_decided_at is not None,
         "weborama_pixel_mode": deal.weborama_pixel_mode or "own",
         "weborama_pixel_tag": deal.weborama_pixel_tag,
         "weborama_ext_insertion": deal.weborama_ext_insertion,

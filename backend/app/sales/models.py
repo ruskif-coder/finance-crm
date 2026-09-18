@@ -775,6 +775,11 @@ class SalesDeal(Base):
     weborama_pixel = Column(Boolean, nullable=False, server_default=text("false"),
                             default=False)
     weborama_pixel_at = Column(DateTime, nullable=True)
+    # КОГДА РЕШИЛИ — отдельно от того, ЧТО решили (миграция 2026-09-18_pixel_decision).
+    # Пусто означает «выбор ещё не сделан»: блок доп. параметров РК на карточке стоит
+    # развёрнутым, пока человек не нажал «надо» или «не надо». Булев флаг рядом этого
+    # различить не мог — «не надо» и «не решали» были в нём одним значением.
+    weborama_pixel_decided_at = Column(DateTime, nullable=True)
     # Откуда берётся пиксель (миграция 2026-09-14_weborama_external_pixel.sql):
     # own — заводим вставку и забираем пиксель сами; external — тег принесли готовым,
     # ОДИН на всю кампанию (у них одна вставка на сеть). Осмысленно только при
