@@ -365,3 +365,47 @@ def test_the_process_itself_wakes_the_campaign():
     finally:
         _drop(db, s)
         db.close()
+
+
+def test_the_targeting_creative_carries_a_placeholder_marker():
+    """У нацеливания стоит ОДНА общая заглушка маркера, а не пусто и не чужой ЕРИД.
+
+    Настоящего маркера на этой стадии нет и быть не может — он выпускается после
+    согласования площадки. А DSP без маркера креатив не запускает, и проверка, ради
+    которой всё затевалось, не состоится (владелец 18.09.2026).
+
+    Одна и та же строка на все креативы нацеливания — намеренно: увидев её дважды в
+    разных кампаниях, человек сразу понимает, что это заглушка, а не чей-то настоящий
+    маркер. Длина и форма как у настоящего, иначе DSP отвергнет форматом.
+    """
+    db = _db()
+    try:
+        s = _set_with(db)
+        assert len(P.TEST_ERID) == 9 and P.TEST_ERID.isalnum()
+        c = FakeClient()
+        # Заглушка уезжает и в параметры креатива, и в тело разметки.
+        src = __import__("inspect").getsource(P.ensure)
+        assert "erid=TEST_ERID" in src
+        assert src.count("erid=TEST_ERID") >= 2, "маркер нужен и в параметрах, и в html"
+        assert c is not None
+    finally:
+        _drop(db, s)
+        db.close()
+
+
+def test_the_live_contour_never_takes_the_placeholder():
+    """В боевой креатив заглушка не попадает НИКОГДА: там отдельный заслон, который
+    отказывает при пустом маркере. Подмена означала бы рекламу без маркировки —
+    нарушение, и обнаруживается оно не нами."""
+    import inspect
+
+    from app.dsp import provision, targeting_creative
+    assert "TEST_ERID" not in inspect.getsource(provision)
+    assert "нет ЕРИД" in inspect.getsource(provision._blocker)
+    assert "TEST_ERID" in inspect.getsource(targeting_creative)
+
+
+def test_the_fallback_link_is_our_own_site():
+    """Посадочная, когда её ещё нет, — наш сайт: по такому баннеру не кликают, а если
+    кликнут, видно, чей это тест (владелец 18.09.2026)."""
+    assert P.FALLBACK_LINK == "https://simb-ad.com"

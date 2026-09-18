@@ -64,10 +64,20 @@ def test_domain_is_normalised_because_the_tail_url_must_be_bare():
 
 def test_final_tag_substitutes_the_platform_macro():
     """Формулы п. 3.1.2–3.1.3 инструкции, один в один. Разница между Adfox и DSP — только
-    в макросе рандомизатора; перепутать значит собрать тег, который не считает показы."""
-    pixel = "https://wcm.example.test/px?rnd=[RANDOM]&site="
+    в макросе рандомизатора; перепутать значит собрать тег, который не считает показы.
+
+    ⚠ Образец пикселя ЗАМЕНЁН 18.09.2026 на измеренный. Раньше здесь стоял выдуманный
+    `?rnd=[RANDOM]&site=`, где плейсхолдер в середине, и ожидание было под него —
+    `…&a.ycp=&site=https://maksavit.ru`, то есть с ПУСТЫМ параметром адреса. Настоящий
+    пиксель WCM выглядит иначе (замер 12.09.2026): `…&a.hr=p&a.ra=[RANDOM]`, плейсхолдер
+    последний, и формула инструкции только на такой форме и работает. Выдуманный образец
+    закреплял поведение, которого в жизни нет, и мешал поставить заслон на настоящую
+    ошибку — склеенный хвост.
+    """
+    pixel = ("https://wcm.example.test/dispatch.fcgi?a.A=im&a.si=10419&a.te=546"
+             "&a.he=1&a.wi=1&a.hr=p&a.ra=[RANDOM]")
     dsp = naming.final_tag(pixel, "maksavit.ru", "dsp")
-    assert dsp == "https://wcm.example.test/px?rnd={RND}&a.ycp=&site=https://maksavit.ru"
+    assert dsp == pixel.replace("[RANDOM]", "{RND}&a.ycp=") + "https://maksavit.ru"
     adfox = naming.final_tag(pixel, "maksavit.ru", "adfox")
     assert "%system.random%&a.ycp=" in adfox
     assert adfox.endswith("https://maksavit.ru")
@@ -80,6 +90,10 @@ def test_tag_without_the_placeholder_is_refused_loudly():
         naming.final_tag("https://wcm.example.test/px?site=", "maksavit.ru", "dsp")
     with pytest.raises(ValueError):
         naming.final_tag("px [RANDOM]", "", "dsp")
+    # И отдельно — плейсхолдер не в конце: подстановка адреса дала бы пустой a.ycp и
+    # домен, приклеенный к чужому параметру. Тег при этом выглядит рабочим.
+    with pytest.raises(ValueError):
+        naming.final_tag("https://w.test/px?a.ra=[RANDOM]&a.x=1", "maksavit.ru", "dsp")
     with pytest.raises(ValueError):
         naming.final_tag("px [RANDOM]", "maksavit.ru", "неизвестно")
 

@@ -32,7 +32,10 @@
     верификатора кладётся именно туда. Его показы попали бы в сверку с верификатором и
     испортили бы её. Пометка «обязателен для ротации» в их доке относится к боевой
     выдаче: **на демо пиксель не нужен** (владелец 12.09.2026);
-  · **ЕРИД** — на отправке трафику маркера обычно ещё нет, а подставлять чужой нельзя.
+  · **настоящего ЕРИД** — на отправке трафику маркера ещё нет: он выпускается после
+    согласования площадки. Вместо него стоит одна общая заглушка `TEST_ERID` — без
+    маркера DSP не запускает креатив, и проверка не состоялась бы вовсе. Подставлять
+    ЧУЖОЙ настоящий маркер нельзя ни при каких обстоятельствах.
 
 Скрипт видимости оставлен: его требует сам DSP, и на внешний вид он не влияет.
 
@@ -66,7 +69,24 @@ TITLE_PREFIX = "НАЦЕЛИВАНИЕ · "
 # страницы на отправке трафику обычно ещё нет — и это НЕ повод не выдать нацеливание.
 # Наш сайт честнее выдуманного адреса: по такому баннеру не кликают, а если кликнут,
 # будет видно, чей это тест.
-FALLBACK_LINK = "https://simbtech.ru"
+FALLBACK_LINK = "https://simb-ad.com"
+
+# МАРКЕР-ЗАГЛУШКА ДЛЯ НАЦЕЛИВАНИЯ (владелец 18.09.2026).
+#
+# На отправке трафику настоящего ЕРИД ещё нет и быть не может: маркер выпускается после
+# согласования площадки. А DSP без маркера креатив не запускает — и проверка,
+# ради которой всё затевалось, не состоится вовсе.
+#
+# Поэтому здесь стоит ОДИН И ТОТ ЖЕ выдуманный маркер на все креативы нацеливания:
+#
+#   · один на всех — чтобы его нельзя было спутать с настоящим ни глазом, ни поиском:
+#     увидев его дважды в разных кампаниях, человек сразу понимает, что это заглушка;
+#   · той же длины и формы, что настоящий (9 знаков, буквы и цифры) — иначе DSP
+#     отвергнет его форматом, а мы будем искать причину не там;
+#   · только в кабинете демоклиента. В боевой креатив он не попадает НИКОГДА: там стоит
+#     отдельный заслон `dsp.provision._blocker`, который отказывает при пустом маркере,
+#     и подменять его заглушкой нельзя — это была бы реклама без маркировки.
+TEST_ERID = "TEST00000"
 
 
 class TargetingCreativeError(RuntimeError):
@@ -196,7 +216,8 @@ def ensure(db: Session, s: LaunchPrepCreativeSet, *,
         if state == "empty":
             # Объект есть, кода нет — дошиваем его, а не заводим второй: второй в чужом
             # кабинете уже не удалить.
-            html = cr.wrap_html(_html_of(db, s, c, ref), viewability_src=viewability_src(db))
+            html = cr.wrap_html(_html_of(db, s, c, ref), erid=TEST_ERID,
+                                viewability_src=viewability_src(db))
             c.creative_edit(known, {"data": {"html_code": html}}, local_ref=ref)
             return _persist(db, s, known)
         # state == "gone" — креатив снесли в кабинете руками: заводим заново.
@@ -208,10 +229,13 @@ def ensure(db: Session, s: LaunchPrepCreativeSet, *,
     try:
         up = cr.upload_zip(c, _read(f), filename=(f.original_name or "creative.zip"),
                            local_ref=ref)
-        html = cr.wrap_html(up["html"], viewability_src=viewability_src(db))
+        # Маркер и в ТЕЛЕ креатива, не только в поле: DSP показывает плашку по разметке,
+        # и креатив без неё на демо-показе выглядит иначе, чем будет выглядеть боевой.
+        html = cr.wrap_html(up["html"], erid=TEST_ERID,
+                            viewability_src=viewability_src(db))
         params = cr.build_creative_params(
             title=f"{TITLE_PREFIX}{s.no} · {s.title or s.deal_id}",
-            link=link, size=up.get("size"))
+            link=link, erid=TEST_ERID, size=up.get("size"))
         xxhash = c.creative_add(campaign, params, local_ref=ref)
         c.creative_edit(xxhash, {"data": {"html_code": html}}, local_ref=ref)
     except (cr.CreativeError, MsError, ValueError) as e:
@@ -407,5 +431,5 @@ def ensure_quietly(db: Session, s: LaunchPrepCreativeSet) -> Optional[str]:
 
 
 __all__ = ["ensure", "ensure_quietly", "campaign_state", "wake_campaign",
-           "TargetingCreativeError", "TITLE_PREFIX", "FALLBACK_LINK", "RUNNING",
-           "LIVE_DAYS"]
+           "TargetingCreativeError", "TITLE_PREFIX", "FALLBACK_LINK", "TEST_ERID",
+           "RUNNING", "LIVE_DAYS"]

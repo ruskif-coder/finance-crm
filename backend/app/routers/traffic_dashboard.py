@@ -1015,10 +1015,11 @@ def external_plan(campaign_id: int, db: Session = Depends(get_db),
     c, _deal = _campaign_in_scope(db, campaign_id, user)
     try:
         wb = wb_prov.plan(db, c)
+        # Посадочная кампании — наш сайт, один на все кампании: у Weborama это поле
+        # справочное, а подставлять туда адрес одной из площадок значит выбирать
+        # произвольную и путать того, кто читает. Заслона «ни у кого нет ссылки» больше
+        # нет: собственный адрес есть всегда.
         wb["landing"] = wb_prov.default_landing(db, c)
-        if not wb.get("blocked") and not wb["landing"]:
-            wb["blocked"] = ("Ни у одной площадки не заполнена посадочная ссылка, "
-                             "а Weborama требует её у кампании")
     except wb_prov.ProvisionError as e:
         wb = {"ready": 0, "todo": 0, "have": 0, "blocked": str(e)}
     return {"weborama": wb, "dsp": dsp_prov.plan(db, c)}

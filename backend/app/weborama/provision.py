@@ -118,25 +118,25 @@ def _ensure(db: Session, client: WcmClient, acc: str, kind: str, local_id: int,
     return wid
 
 
-def default_landing(db: Session, camp: AdCampaign) -> str:
-    """Посадочная ссылка КАМПАНИИ Weborama.
+# Посадочная КАМПАНИИ у Weborama — НАШ САЙТ (владелец 18.09.2026).
+#
+# Поле у них одно на кампанию и справочное: счёт ведут вставки, каждая со своей
+# площадкой. Мы же до 18.09 подставляли туда адрес самой весомой площадки — выбор
+# произвольный и вводящий в заблуждение: в диалоге стояло «Посадочная кампании:
+# minicen.ru» рядом со строкой Maksavit, и это читалось как перепутанный адрес.
+#
+# Наш сайт честнее любой из двадцати одной: он ничей из них и ничего не обещает. На
+# счёт показов поле не влияет — в креатив уезжает ссылка СВОЕЙ площадки, а не эта.
+OWN_LANDING = "https://simb-ad.com"
 
-    У них она одна на кампанию, а у нас страница своя у каждой площадки
-    (`launch_prep_target.advertiser_url` — «страница всегда чужая и своя у каждого
-    сайта»). Берём первую заполненную: поле у них справочное, счёт ведут вставки, и
-    выбирать «главную» из девятнадцати равноправных нечем. Пусто — вызывающий обязан
-    сказать об этом вслух, а не подставить заглушку.
+
+def default_landing(db: Session, camp: AdCampaign) -> str:
+    """Посадочная ссылка кампании Weborama — всегда наш сайт.
+
+    Аргументы остались ради вызывающих: подпись менять незачем, а чтение из базы здесь
+    больше не нужно.
     """
-    row = db.execute(text("""
-        SELECT t.advertiser_url
-          FROM ad_campaign_placement p
-          JOIN launch_prep_target t ON t.publisher_id = p.publisher_id
-                                   AND t.deal_id = :deal
-         WHERE p.campaign_id = :camp AND NOT p.is_direct
-               AND coalesce(t.advertiser_url, '') <> ''
-         ORDER BY p.weight DESC NULLS LAST
-         LIMIT 1"""), {"camp": camp.id, "deal": camp.deal_id}).scalar()
-    return (row or "").strip()
+    return OWN_LANDING
 
 
 def plan(db: Session, camp: AdCampaign) -> dict:

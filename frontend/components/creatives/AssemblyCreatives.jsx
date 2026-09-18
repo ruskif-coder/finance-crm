@@ -21,6 +21,7 @@ import BrandMarkingDialog, { saveBrandMarking } from '../ord/BrandMarking'
 import ValuePopover from '@/components/ValuePopover'
 import { overlayClose } from '@/lib/overlay'
 import { can, getPermissions } from '@/lib/auth'
+import { downloadFile } from '@/lib/download'
 
 const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
 const BOX = { border: '1px solid var(--border-card)', borderRadius: 14, padding: '14px 16px', background: 'var(--bg-card)' }
@@ -496,6 +497,38 @@ function PairVerdictDialog({ rec, onDone, onClose }) {
   )
 }
 
+/* Кнопка-пиктограмма «заявка на пиксели Weborama».
+
+   Объявлена на модульном уровне, как и остальные помощники этого файла: компонент,
+   созданный внутри рендера, пересоздаётся на каждый ввод.
+
+   Отказ показывается ТЕКСТОМ рядом, а не alert'ом: причины у этого файла бытовые — нет
+   бренда у сделки, нет домена у площадки, — и чинятся за минуту, если сказать, какая
+   именно. */
+function WeboramaRequestButton({ set }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  if (!set?.recipients?.length) return null
+  return (
+    <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      {!!err && (
+        <span style={{ fontSize: 11.5, color: 'var(--dot-overdue)', maxWidth: 420 }}>{err}</span>
+      )}
+      <button title="Скачать заявку на пиксели Weborama (Excel для менеджера)"
+        disabled={busy} onClick={async () => {
+          setBusy(true); setErr('')
+          await downloadFile(`/launch-prep/set/${set.id}/weborama-request`, null, setErr)
+          setBusy(false)
+        }}
+        style={{ ...btn(false), padding: '5px 10px', display: 'inline-flex',
+          alignItems: 'center', gap: 6, fontSize: 12 }}>
+        <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 11 }}>WB</span>
+        <span aria-hidden="true">⤓</span>
+      </button>
+    </span>
+  )
+}
+
 /* ── предпросмотр креатива ──────────────────────────────────────────────── */
 /* Взято с демо-стенда (docs/Стенд_согласования_креативов.html), но с настоящими файлами.
    Там баннер был вшит в страницу строкой — потому и крутился без сервера.
@@ -703,6 +736,23 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
             </span>
           )}
         </div>
+
+        {/* АДРЕС РАМКИ — ССЫЛКОЙ. Белая рамка выглядит одинаково при трёх разных
+            причинах: баннер не загрузился, загрузился и ничего не рисует, или его не
+            пустил браузер. Различает их один клик — открыть ровно то же в отдельной
+            вкладке, — но до 18.09.2026 адрес был спрятан внутри iframe, и добыть его
+            можно было только через инструменты разработчика. */}
+        {!err && !!(cur?.sandbox_url || sandboxUrl) && (
+          <div style={{ marginTop: 8, fontSize: 11, fontFamily: MONO }}>
+            <a href={fresh(cur?.sandbox_url || sandboxUrl)} target="_blank" rel="noreferrer"
+              style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+              открыть баннер в отдельной вкладке ↗
+            </a>
+            <span style={{ color: 'var(--text-faint)', marginLeft: 8 }}>
+              рисуется там, а здесь пусто — дело в рамке, а не в баннере
+            </span>
+          </div>
+        )}
 
         <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
           {isHtml
@@ -1498,14 +1548,20 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
         )}
       </div>
 
-      {!!set.primary_review && (
-        <div style={{ marginTop: 9, fontSize: 12.5,
-          color: set.primary_review.verdict === 'ок' ? 'var(--income)' : 'var(--dot-overdue)' }}>
-          Первичная проверка: {set.primary_review.verdict}
-          {!!set.primary_review.decided_by && ` · ${set.primary_review.decided_by}`}
-          {!!set.primary_review.reason && ` — ${set.primary_review.reason}`}
-        </div>
-      )}
+      <div style={{ marginTop: 9, display: 'flex', alignItems: 'center', gap: 10 }}>
+        {!!set.primary_review && (
+          <div style={{ fontSize: 12.5,
+            color: set.primary_review.verdict === 'ок' ? 'var(--income)' : 'var(--dot-overdue)' }}>
+            Первичная проверка: {set.primary_review.verdict}
+            {!!set.primary_review.decided_by && ` · ${set.primary_review.decided_by}`}
+            {!!set.primary_review.reason && ` — ${set.primary_review.reason}`}
+          </div>
+        )}
+        {/* ЗАЯВКА НА ПИКСЕЛИ — пиктограммой, справа в этой же строке (владелец
+            18.09.2026). Файл тот же `Mediaplan_template`, который заполняли руками:
+            ручной путь остался запасным после появления API и никуда не делся. */}
+        <WeboramaRequestButton set={set} />
+      </div>
 
       <TargetingUrl set={set} canEdit={canEdit} onSave={handlers.targetingUrl} />
 
