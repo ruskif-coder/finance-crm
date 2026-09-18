@@ -140,3 +140,36 @@ def test_linking_is_written_to_the_feed():
     assert 'бот_привязан' in journal.BY_KEY and 'бот_отвязан' in journal.BY_KEY
     assert 'бот_привязан' in inspect.getsource(gw.cabinet_tg_webhook)
     assert 'бот_отвязан' in inspect.getsource(gw.cabinet_tg_unlink)
+
+
+def test_a_bare_code_is_accepted_too():
+    """Человек присылает КОД, а не команду `/start`.
+
+    В инструкции написано «отправьте код боту» — слова `/start` площадка в глаза не
+    видела. До 18.09.2026 такое сообщение молча игнорировалось, и со стороны это
+    выглядело как «бот не подключается»: пишешь — в ответ тишина.
+    """
+    from app.notify.telegram import parse_start_command as parse
+
+    def upd(text):
+        return {"message": {"text": text, "chat": {"id": 42}}}
+
+    assert parse(upd("/start A1B2C3")) == ("A1B2C3", "42")   # диплинк, как было
+    assert parse(upd("A1B2C3")) == ("A1B2C3", "42")          # голый код
+    assert parse(upd("a1b2c3")) == ("A1B2C3", "42")          # регистр не важен
+    assert parse(upd("  A1B2C3  ")) == ("A1B2C3", "42")      # с пробелами
+
+
+def test_chatter_is_not_mistaken_for_a_code():
+    """Кодом считаем только одиночное слово нужного вида: иначе чужая фраза однажды
+    совпадёт с чьим-то кодом, и бот привяжется не к тому человеку."""
+    from app.notify.telegram import parse_start_command as parse
+
+    def upd(text):
+        return {"message": {"text": text, "chat": {"id": 42}}}
+
+    for text in ("привет", "A1B2C3 и ещё что-то", "ABCDEFG", "12345", "/help"):
+        assert parse(upd(text))[0] is None, text
+    # chat_id возвращаем всегда: на любое сообщение бот обязан ответить, а для ответа
+    # нужен адрес. Молчание человек читает как поломку.
+    assert parse(upd("привет"))[1] == "42"

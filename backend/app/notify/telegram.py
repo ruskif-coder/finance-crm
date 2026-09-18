@@ -14,6 +14,7 @@
 пользователя при этом нигде не участвуют.
 """
 import os
+import re
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
@@ -117,6 +118,11 @@ def link_url(code: str, contour: str = STAFF) -> Optional[str]:
     return f"https://t.me/{name}?start={code}" if name and code else None
 
 
+# Код привязки — три байта hex, то есть шесть знаков 0-9A-F. Формат записан здесь один
+# раз: по нему и выдаётся код, и узнаётся присланный голышом.
+_CODE_RE = re.compile(r"[0-9A-Fa-f]{6}")
+
+
 def new_link_code() -> Tuple[str, datetime]:
     """Код привязки: короткий, одноразовый, живёт полчаса."""
     return secrets.token_hex(3).upper(), datetime.utcnow() + timedelta(minutes=LINK_CODE_TTL_MIN)
@@ -174,8 +180,17 @@ def parse_start_command(update: dict) -> Tuple[Optional[str], Optional[str]]:
     msg = (update or {}).get("message") or (update or {}).get("edited_message") or {}
     text = (msg.get("text") or "").strip()
     chat_id = str(((msg.get("chat") or {}).get("id") or "")) or None
-    if not chat_id or not text.startswith("/start"):
+    if not chat_id or not text:
         return None, chat_id
-    parts = text.split(maxsplit=1)
-    code = parts[1].strip().upper() if len(parts) > 1 else None
-    return (code or None), chat_id
+    # ГОЛЫЙ КОД ТОЖЕ ПРИНИМАЕМ. Инструкция говорит «отправьте код боту», и человек
+    # отправляет именно код — без слова `/start`, которого он в глаза не видел. До
+    # 18.09.2026 такое сообщение молча игнорировалось, и со стороны площадки это
+    # выглядело как «бот не подключается»: она пишет, в ответ тишина.
+    if text.startswith("/start"):
+        parts = text.split(maxsplit=1)
+        code = parts[1].strip() if len(parts) > 1 else None
+    else:
+        # Только одиночное слово нужной длины: любой текст кодом считать нельзя, иначе
+        # чужая фраза случайно совпадёт с чьим-то кодом.
+        code = text if (len(text.split()) == 1 and _CODE_RE.fullmatch(text)) else None
+    return ((code or "").upper() or None), chat_id

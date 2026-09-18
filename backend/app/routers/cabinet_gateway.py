@@ -796,7 +796,16 @@ def cabinet_tg_webhook(secret: str, update: Dict[str, Any], bg: BackgroundTasks,
         raise HTTPException(status_code=404, detail="Not found")
 
     code, chat_id = telegram.parse_start_command(update)
-    if not code or not chat_id:
+    if not chat_id:
+        return {"ok": True}
+    if not code:
+        # НА ЛЮБОЕ СООБЩЕНИЕ ОТВЕЧАЕМ. Молчание бота человек читает как «не работает» и
+        # идёт жаловаться, а не пробовать снова: со стороны площадки тишина и поломка
+        # выглядят одинаково (18.09.2026). Ответ дешевле любого разбирательства.
+        bg.add_task(_tg_reply_later, chat_id,
+                    "Чтобы получать уведомления, пришлите код из кабинета — "
+                    "блок «Уведомления», кнопка «Подключить бота». Код из шести знаков, "
+                    "живёт полчаса.")
         return {"ok": True}
 
     row = (db.query(CabinetAccountTg)
