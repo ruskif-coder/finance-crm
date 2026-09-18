@@ -187,9 +187,23 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
         })}
       </div>
 
-      {/* 3. История */}
-      <div>
+      {/* 3. История.
+
+          ПОД СКРОЛЛОМ, И ВЫСОТУ ЗАДАЁТ НЕ ОНА (владелец 18.09.2026). У сделки в работе
+          событий десятки, и лента растягивала расхлоп на несколько экранов: соседние
+          колонки заканчивались в первой трети, а под ними шла пустота.
+
+          Устроено без замеров и таймеров: колонка `position:relative`, а сама лента —
+          `position:absolute; inset:0` с прокруткой. Её содержимое НЕ УЧАСТВУЕТ в расчёте
+          высоты ряда: высоту задают соседние колонки, лента занимает ровно столько,
+          сколько они оставили.
+
+          `minHeight` держит нижнюю границу на случай коротких соседей: лента в сорок
+          пикселей выглядела бы поломкой вёрстки. */}
+      <div style={{ position: 'relative', minHeight: 220 }}>
         <div style={CAP}>История</div>
+        <div style={{ position: 'absolute', top: 22, left: 0, right: 0, bottom: 0,
+          overflowY: 'auto', paddingRight: 6 }}>
         {history === null ? (
           <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>Загрузка…</div>
         ) : history.length ? history.map((e, i) => (
@@ -205,6 +219,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
             {d.date_create ? <>Сделка создана · {fmtWhen(d.date_create)}</> : 'Событий пока нет'}
           </div>
         )}
+        </div>
       </div>
 
       {/* 4. Стадия (бар 2\2\2 во всю ширину) + Оплаты */}
