@@ -82,6 +82,15 @@ def test_erid_belongs_to_the_placement_not_to_the_brand():
     Ключ по бренду означал бы, что второй флайт того же бренда наследует чужой номер, —
     дефект, проверенный на макете («Ферон · Виферон» дважды получал один ЕРИД). В
     маркировке чужой номер это не косметика.
+
+    18.09.2026 прибор пришлось переписать, и это тот случай, когда переписать его —
+    правильно. Он пинил ТЕКСТ условия `cs.publisher_id = t.publisher_id`, а условие всё
+    это время не находило ничего: у живых комплектов `publisher_id` равен NULL, площадку
+    с комплектом связывает ПАРА. Прибор сторожил букву и пропустил смысл — в кабинете
+    стояло «ЕРИД не выпущен» при выпущенном маркере.
+
+    Теперь проверяется именно смысл: отбор идёт внутри сделки И сужается до этой строки
+    через пару.
     """
     db = SessionLocal()
     try:
@@ -89,7 +98,8 @@ def test_erid_belongs_to_the_placement_not_to_the_brand():
             "SELECT pg_get_viewdef('pub.campaign_v1'::regclass, true)")).scalar().split())
     finally:
         db.close()
-    assert 'cs.deal_id = t.deal_id AND cs.publisher_id = t.publisher_id' in sql
+    assert 'cs.deal_id = t.deal_id' in sql, 'маркер обязан отбираться внутри сделки'
+    assert 'p2.target_id = t.id' in sql, 'и сужаться до этой пары «сделка × площадка»'
 
 
 def test_scope_closes_when_it_is_not_set():
