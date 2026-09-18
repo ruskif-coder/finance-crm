@@ -112,3 +112,35 @@ def test_cancel_clears_everything():
         assert mnt._get(db, mnt.KEY_NOTE) is None and mnt._get(db, mnt.KEY_BY) is None
     finally:
         db.close()
+
+
+def test_the_screen_is_told_whether_this_person_passes():
+    """Ответ о состоянии несёт `passes` — и это половина заслона, а не украшение.
+
+    18.09.2026 админ включил обслуживание и остался снаружи собственного портала.
+    Виноват был не заслон: прослойка пускала его честно. Виноват экран — заглушка
+    рисовалась всем, у кого режим активен, роли она не спрашивала. Снимать режим
+    пришлось из консоли базы, то есть ровно тогда, когда это сложнее всего.
+
+    Право теперь считает ОДНО место — сервер. Прибор держит контракт: поле есть, оно
+    булево и оно отвечает на вопрос «пускает ли МЕНЯ».
+    """
+    import inspect
+
+    from app.routers import maintenance as api
+    src = inspect.getsource(api.maintenance_state)
+    assert '"passes"' in src
+    assert 'key", None) == "admin"' in src
+
+
+def test_the_stub_hides_from_whoever_passes():
+    """Вторая половина того же правила — на экране. Заглушка обязана СПРАШИВАТЬ сервер,
+    а не роль из localStorage: второй расчёт одного права однажды разойдётся с первым."""
+    from pathlib import Path
+
+    src = Path("/app/../frontend/components/Maintenance.jsx")
+    if not src.exists():                      # фронт рядом не всегда (образ бэкенда)
+        import pytest
+        pytest.skip("фронт недоступен из этого контейнера")
+    text = src.read_text(encoding="utf-8")
+    assert "state.passes" in text

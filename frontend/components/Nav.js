@@ -908,7 +908,7 @@ export default function Nav({ children, onSearch }) {
       {/* Полоса и заглушка живут ЗДЕСЬ, а не на каждом экране: шапка есть на всех
           страницах, и это единственная точка, где режим появится везде сразу, без
           правки сорока экранов. */}
-      <MaintenanceBar state={mnt} />
+      <MaintenanceBar state={mnt} onLifted={mnt.reload} />
       {mobile ? <NavMobile {...props} /> : <NavDesktop {...props} />}
       <MaintenanceStub state={mnt} />
     </>
