@@ -35,7 +35,7 @@ from typing import Tuple
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.weborama import naming
+from app.weborama import naming, tags as wtags
 
 ACCOUNT = "SIMB-AD"        # он же Site name в шаблоне — так заполнено у владельца
 FORMAT = "banner"
@@ -170,9 +170,14 @@ def pixels_for_set(db: Session, set_id: int) -> list:
     отсутствующей строки — иначе человек пересчитает площадки и решит, что часть потерял.
     """
     rows = db.execute(text("""
-        SELECT pb.name, pb.domain, pb.our_code, pl.weborama_pixel
+        SELECT pb.name, pb.domain, pb.our_code, pl.weborama_pixel,
+               cs.erid,
+               (SELECT f.ratio FROM launch_prep_creative_file f
+                 WHERE f.set_id = cs.id AND f.is_archive IS TRUE
+                 ORDER BY f.id LIMIT 1) AS ratio
           FROM launch_prep_pair p
           JOIN launch_prep_target t ON t.id = p.target_id
+          JOIN launch_prep_creative_set cs ON cs.id = p.set_id
           JOIN sales_publishers pb ON pb.id = t.publisher_id
           LEFT JOIN ad_campaign c ON c.deal_id = t.deal_id
           LEFT JOIN ad_campaign_placement pl
@@ -188,17 +193,46 @@ def pixels_for_set(db: Session, set_id: int) -> list:
             tag = naming.final_tag(r["weborama_pixel"], r["domain"] or "", kind)
         except ValueError as e:
             why = str(e)
-        # Размер НЕ подставляем: `~WIDTH~`/`~HEIGHT~` зависят от конкретного креатива, а
-        # выгрузка идёт по комплекту, где их может быть несколько. При заведении в DSP их
-        # подставляет `dsp.provision` из ответа загрузчика — там размер известен точно.
-        note = why
-        if tag and ("~WIDTH~" in tag or "~HEIGHT~" in tag):
-            note = ("размер подставляется при вставке: ~WIDTH~ и ~HEIGHT~ заменить на "
-                    "размер баннера")
+
+        # ССЫЛКА СОБИРАЕТСЯ ДО КОНЦА (владелец 18.09.2026). Файл существует для того,
+        # чтобы тег можно было ПРОВЕРИТЬ — открыть, вставить, сверить. Тег с
+        # недоподставленными макросами проверить нельзя: он уедет как есть, и в счётчик
+        # попадёт мусор вместо размера.
+        if tag:
+            w, h = _wh(r["ratio"])
+            if w and h:
+                tag = wtags.fill_size(tag, w, h)
+            if r["erid"]:
+                # Маркер в теге, если их формат его просит. Подставляем НАСТОЯЩИЙ: файл
+                # уходит человеку для сверки, и заглушка в нём означала бы проверку не
+                # того, что поедет в эфир.
+                tag = (tag.replace("[ERID_VALUE]", r["erid"])
+                          .replace("[ERID_ID]", r["erid"]))
+            # Оставшееся называем вслух. Молчать нельзя: тег выглядит рабочим, а DSP
+            # чужих макросов не знает и подставлять их не будет (замер 09.09.2026).
+            left = wtags.leftovers(tag)
+            if left:
+                why = ("в теге осталось подставить: " + ", ".join(left)
+                       + (" — размер объявлен адаптивным (0x0), его задаёт площадка"
+                          if ("~WIDTH~" in left or "~HEIGHT~" in left) else ""))
+
         out.append({"publisher": r["name"], "domain": r["domain"],
                     "kind": "наш DSP" if kind == "dsp" else "сервер площадки",
-                    "tag": tag, "why": note})
+                    "tag": tag, "why": why})
     return out
+
+
+def _wh(ratio):
+    """`«240x400»` → (240, 400). Пусто и `0x0` — размера нет: баннер адаптивный, и
+    выдумывать за него нельзя."""
+    parts = str(ratio or "").lower().replace("х", "x").split("x")
+    if len(parts) != 2:
+        return None, None
+    try:
+        w, h = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None, None
+    return (w, h) if w and h else (None, None)
 
 
 __all__ = ["build", "rows_for_set", "pixels_for_set", "ACCOUNT", "FORMAT",

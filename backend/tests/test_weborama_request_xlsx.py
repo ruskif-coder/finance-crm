@@ -169,3 +169,37 @@ def test_the_campaign_landing_is_our_own_site():
 
     assert OWN_LANDING.startswith("https://")
     assert default_landing(None, None) == OWN_LANDING
+
+
+def test_the_tag_is_assembled_to_the_end():
+    """Файл существует, чтобы тег МОЖНО БЫЛО ПРОВЕРИТЬ — открыть, вставить, сверить.
+
+    Значит и собран он должен быть до конца: макрос рандомизатора, домен своей площадки,
+    размер креатива, маркер. Тег с недоподставленными макросами проверить нельзя — он
+    уедет как есть, и в счётчик попадёт мусор вместо размера (владелец 18.09.2026).
+    """
+    from app.weborama import naming, tags as wtags
+
+    raw = ("https://sc.weborama-tech.ru/?a.A=im&a.wi=~WIDTH~&a.he=~HEIGHT~"
+           "&a.erid=[ERID_VALUE]&a.ra=[RANDOM]")
+    tag = naming.final_tag(raw, "maksavit.ru", "dsp")
+    tag = wtags.fill_size(tag, 240, 400).replace("[ERID_VALUE]", "Kra23r5Lz")
+    assert "~WIDTH~" not in tag and "~HEIGHT~" not in tag
+    assert "[ERID_VALUE]" not in tag and "[RANDOM]" not in tag
+    assert tag.endswith("https://maksavit.ru")
+    assert not wtags.leftovers(tag), "в проверочном теге не должно остаться макросов"
+
+
+def test_what_cannot_be_filled_is_named_out_loud():
+    """Адаптивный баннер (0x0) размера не имеет, и выдумывать за него нельзя.
+
+    Тогда в файле стоит замечание со списком оставшихся макросов: тег выглядит рабочим,
+    а DSP чужих макросов не знает и подставлять не будет — молчать об этом нельзя.
+    """
+    from app.weborama.request_xlsx import _wh
+
+    assert _wh("240x400") == (240, 400)
+    assert _wh("0x0") == (None, None), "адаптивный — это ОТСУТСТВИЕ размера, а не 0×0"
+    assert _wh("") == (None, None) and _wh(None) == (None, None)
+    # Кириллическая «х» в размере — обычная опечатка при ручном вводе; читаем и её.
+    assert _wh("240х400") == (240, 400)

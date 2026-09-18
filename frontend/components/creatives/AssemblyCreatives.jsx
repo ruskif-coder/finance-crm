@@ -1451,7 +1451,19 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
     catch (e2) { setErr(e2.response?.data?.detail || 'Не удалось удалить') }
   }
 
-  const send = async () => {
+  /* НАЗВАНИЕ СПРАШИВАЕМ ПЕРЕД ОТПРАВКОЙ, НО НЕ ТРЕБУЕМ (владелец 18.09.2026).
+
+     Площадка видит креатив в своём кабинете как «Креатив №3 — <название>». Когда в одной
+     кампании их несколько, без названия они различаются только номером, и человек на той
+     стороне согласовывает вслепую. Спросить в момент отправки — единственный момент,
+     когда это ещё дёшево: потом материал уже у неё.
+
+     Принуждения нет намеренно: название — удобство, а не условие. Отказ («отправить
+     так») уходит сразу, без второго нажатия. */
+  const [askName, setAskName] = useState(null)   // {value} — открытый вопрос
+
+  const doSend = async () => {
+    setAskName(null)
     setBusy(true); setErr('')
     try {
       // Отправляем ВСЕМ, кто в списке: галочек больше нет — список и есть выбор
@@ -1461,6 +1473,22 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
       handlers.reload()
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось отправить') }
     setBusy(false)
+  }
+
+  const send = () => {
+    if (!(set.title || '').trim()) { setAskName({ value: '' }); return }
+    doSend()
+  }
+
+  const sendWithName = async () => {
+    const v = (askName?.value || '').trim()
+    if (!v) { doSend(); return }
+    setBusy(true); setErr('')
+    try {
+      await api.put(`/launch-prep/set/${set.id}/title`, { title: v }, auth())
+    } catch (e) { setErr(e.response?.data?.detail || 'Название не сохранилось') }
+    setBusy(false)
+    doSend()
   }
 
   /* Крестик СНИМАЕТ площадку из списка, а не снимает галочку: два разных смысла у
@@ -1492,9 +1520,17 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
             }} />
         ) : (
           <span onDoubleClick={() => canEdit && setNaming(true)}
-            title={canEdit ? 'Двойной клик — переименовать' : ''}
+            title={canEdit
+              ? (set.title ? 'Двойной клик — переименовать'
+                : 'Двойной клик — назвать. Название видит площадка в своём кабинете и '
+                  + 'по нему отличает креативы одной кампании друг от друга')
+              : ''}
+            /* ПУСТОЕ НАЗВАНИЕ ПОДСВЕЧЕНО. Не ошибка — недоделка, и цвет у неё
+               предупреждающий, а не красный: отправить можно и так. */
             style={{ fontSize: 13.5, cursor: canEdit ? 'text' : 'default',
-              color: set.title ? 'var(--text-secondary)' : 'var(--text-faint)' }}>
+              color: set.title ? 'var(--text-secondary)' : 'var(--warning-text)',
+              background: set.title ? 'transparent' : 'var(--warning-tint)',
+              borderRadius: 7, padding: set.title ? 0 : '1px 8px' }}>
             {set.title || 'без названия'}
           </span>
         )}
@@ -1671,6 +1707,37 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
           )}
         </span>
       </div>
+
+      {/* Вопрос о названии — перед самой отправкой. Ровно один экран, две кнопки, и
+          «отправить так» стоит слева: отказ должен быть так же дёшев, как согласие. */}
+      {!!askName && (
+        <Modal width={520} title={`Назвать креатив №${set.no}?`}
+          onClose={() => setAskName(null)}
+          footer={(
+            <span style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button style={btn(false)} disabled={busy} onClick={doSend}>
+                Отправить без названия
+              </button>
+              <button style={btn(true)} disabled={busy} onClick={sendWithName}>
+                {busy ? 'Отправка…' : 'Назвать и отправить'}
+              </button>
+            </span>
+          )}>
+          <div style={{ fontSize: 13, lineHeight: 1.6, display: 'grid', gap: 10 }}>
+            <div style={{ color: 'var(--text-secondary)' }}>
+              Название увидит площадка в своём кабинете — «Креатив №{set.no} — …». Когда
+              в кампании их несколько, без названия она различает их только номером.
+            </div>
+            <input autoFocus value={askName.value} placeholder="например: баннер с пачкой"
+              onChange={e => setAskName({ value: e.target.value })}
+              onKeyDown={e => { if (e.key === 'Enter') sendWithName() }}
+              style={{ ...inp, width: '100%', boxSizing: 'border-box' }} />
+            <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>
+              Необязательно: назвать можно и позже, двойным кликом по заголовку.
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {sent && <EridBlock set={set} onChanged={handlers.reload} />}
 
