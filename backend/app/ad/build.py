@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 from app.sales import mp_row
 
 from app.ad.balance import SCOPES, SCOPE_SURFACE
-from app.ad.flight import (PLACEMENT_NEW, PLACEMENT_READY, as_placement_scale,
+from app.ad.flight import (PLACEMENT_READY, PLACEMENT_WAIT, as_placement_scale,
                            best_chain_status, chain_status, distribute, effective_status,
                            effective_status_creative)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
@@ -277,7 +277,7 @@ def sync_placements(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
         if pid in have:
             continue
         db.add(AdCampaignPlacement(campaign_id=camp.id, publisher_id=pid,
-                                   weight=weights.get(pid), status=PLACEMENT_NEW))
+                                   weight=weights.get(pid), status=PLACEMENT_WAIT))
         have.add(pid)
         added += 1
     db.flush()
@@ -341,6 +341,23 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
         return {"created": 0, "updated": 0}
 
     roots = root_set_map(db, camp.deal_id)
+    # Номер креатива = НОМЕР КОМПЛЕКТА В СДЕЛКЕ (владелец 18.09.2026). Раньше он считался
+    # порядковым внутри площадки, и «Креатив №4» на карточке сделки уезжал в DSP под
+    # именем `PFPYGX-MXV-cr1`. Два номера у одной вещи — гарантированная путаница при
+    # разборе: человек ищет cr4 и не находит.
+    set_no = {r["id"]: r["no"] for r in db.execute(text(
+        "SELECT id, no FROM launch_prep_creative_set WHERE deal_id = :d"),
+        {"d": camp.deal_id}).mappings().all()}
+    # Архив каждого комплекта сделки одним запросом: по нему выгрузка в DSP берёт zip.
+    # Берём ПЕРВЫЙ архив комплекта — тот же, что показывает предпросмотр и что уезжает
+    # в нацеливание; три чтения одного файла обязаны давать один файл.
+    archives = {r["set_id"]: r["file_id"] for r in db.execute(text("""
+        SELECT DISTINCT ON (f.set_id) f.set_id, f.id AS file_id
+          FROM launch_prep_creative_file f
+          JOIN launch_prep_creative_set cs ON cs.id = f.set_id
+         WHERE cs.deal_id = :d AND f.is_archive IS TRUE
+         ORDER BY f.set_id, f.id
+    """), {"d": camp.deal_id}).mappings().all()}
     pairs = db.execute(text("""
         SELECT pr.id AS pair_id, pr.code AS pair_code, pr.sent_at,
                cs.id AS set_id, cs.no AS set_no, cs.title, cs.erid,
@@ -375,15 +392,27 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
         # состояние зовётся «согласован», а не «ждёт запуска».
         chain = "согласован" if chain == PLACEMENT_READY else chain
 
+        # Номер берём у КОРНЯ цепочки: доработка рождает новый комплект со своим номером,
+        # а креатив остаётся тем же рекламным сообщением — иначе после каждой правки он
+        # менял бы имя в чужой системе.
+        no = set_no.get(root) or set_no.get(r["set_id"]) or (next_no.get(pl.id, 0) + 1)
+
         row = have.get((pl.id, root))
         if row is None:
-            next_no[pl.id] = next_no.get(pl.id, 0) + 1
+            next_no[pl.id] = max(next_no.get(pl.id, 0), no)
             row = AdCampaignCreative(
                 campaign_id=camp.id, placement_id=pl.id, root_set_id=root,
-                creative_no=next_no[pl.id], status=chain)
+                creative_no=no, status=chain)
             db.add(row)
             have[(pl.id, root)] = row
             created += 1
+        elif row.creative_no != no and not (row.ms_creative_xxhash or "").strip():
+            # Перенумеровываем ТОЛЬКО то, что ещё не уехало в DSP: имя заведённого
+            # креатива там уже зафиксировано, переименовать его нечем, и расхождение
+            # «у нас cr4, в кабинете cr1» было бы хуже исходной путаницы. Такие строки
+            # остаются со старым номером осознанно.
+            row.creative_no = no
+            updated += 1
         elif row.status != effective_status_creative(row.status, chain):
             row.status = effective_status_creative(row.status, chain)
             updated += 1
@@ -401,6 +430,16 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
         # должно стирать уже перенесённое.
         if r["erid"]:
             row.erid = r["erid"]
+        # ФАЙЛ — С ТОГО ЖЕ КОМПЛЕКТА, ЧТО И МАРКЕР, а не с корня цепочки: в DSP должен
+        # уехать тот архив, который площадка согласовала, а корень мог быть отвергнут и
+        # заменён.
+        #
+        # Колонка `file_id` — четвёртая за два дня с читателями и без писателя: выгрузка
+        # в DSP берёт по ней zip и без неё отказывает словами «к креативу не привязан
+        # файл комплекта» (замер 18.09.2026, сделка PFPYGX). Пустым не затираем по той же
+        # причине, что и маркер.
+        if archives.get(r["set_id"]):
+            row.file_id = archives[r["set_id"]]
         row.ms_title = creative_title(db, camp, pl, row.creative_no)
 
     # СТАТУС ПЛОЩАДКИ ПЕРЕСЧИТЫВАЕМ ЗДЕСЬ ЖЕ, из её креативов.
@@ -419,9 +458,10 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
         by_pl.setdefault(pid, []).append(c.status)
     for pl in pls.values():
         mine = by_pl.get(pl.id)
-        if not mine:
-            continue
-        chain = best_chain_status(as_placement_scale(x) for x in mine)
+        # Площадку БЕЗ КРЕАТИВОВ тоже пересчитываем — в «ждёт сборки». Раньше её просто
+        # пропускали, и она навсегда оставалась с тем, что записали при создании строки,
+        # то есть «у трафика» при пустой сборке (владелец 18.09.2026).
+        chain = best_chain_status(as_placement_scale(x) for x in (mine or []))
         nxt = effective_status(pl.status, chain)
         if nxt != pl.status:
             pl.status = nxt
@@ -511,3 +551,44 @@ def mark_target_placed(db: Session, pl: AdCampaignPlacement, commit: bool = Fals
     if commit and n:
         db.commit()
     return n
+
+
+def sync_deal(db: Session, deal_id: int, commit: bool = True) -> dict:
+    """Пересобрать кампанию ОДНОЙ сделки: площадки и креативы.
+
+    ПО СОБЫТИЮ, А НЕ ПО РАСПИСАНИЮ (владелец 18.09.2026). Ночной прогон `sync_all` ходит
+    по всем сделкам раз в сутки, и до утра кампания не знала ни о выпущенном маркере, ни
+    о согласованной площадке, ни о файле комплекта. «Раз в сутки очень редко» — и это
+    правда: между вердиктом площадки и выгрузкой в DSP проходит не ночь, а минуты.
+
+    Крон остаётся страховкой на пропущенное — событие может не дойти из-за обрыва или
+    ошибки, и тогда утренний прогон доберёт. Два пути к одному результату здесь не
+    «вторая правда»: расчёт один и тот же, различается только повод его запустить.
+    """
+    camp = db.query(AdCampaign).filter(AdCampaign.deal_id == deal_id).first()
+    if camp is None:
+        # РК ещё нет — её порождает `sync_campaigns` по стадии сделки. Молча выходим:
+        # событие может прийти раньше, чем сделка дойдёт до стадии с кампанией.
+        return {"skipped": "нет РК"}
+    p = sync_placements(db, camp, commit=False)
+    c = sync_creatives(db, camp, commit=False)
+    if commit:
+        db.commit()
+    return {"placements_added": p["added"], "creatives_added": c["created"],
+            "creatives_updated": c["updated"]}
+
+
+def sync_deal_quietly(db: Session, deal_id: int) -> None:
+    """То же, но событие НЕ ПАДАЕТ из-за сборки.
+
+    Вердикт площадки, выпуск маркера и отправка — действия самостоятельные; их результат
+    уже записан. Если пересборка кампании не удалась, правильнее оставить её крону, чем
+    вернуть человеку ошибку на действии, которое на самом деле прошло.
+    """
+    import logging
+    try:
+        sync_deal(db, deal_id)
+    except Exception as e:                              # noqa: BLE001
+        db.rollback()
+        logging.getLogger("finance.ad").warning(
+            "Пересборка РК сделки %s по событию не удалась: %s", deal_id, e)

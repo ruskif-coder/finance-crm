@@ -102,8 +102,12 @@ def env():
 
     targets = []
     for p in pubs:
+        # Посадочная у времянки заполнена НЕ ДЛЯ КРАСОТЫ: с 18.09.2026 отправка
+        # требует либо ссылку, либо нажатый запрос — иначе согласованному креативу
+        # некуда вести. Без неё фикстура проверяла бы путь, которого больше нет.
         t = LaunchPrepTarget(deal_id=deal.id, publisher_id=p.id, service_id=service.id,
-                             surface_kind='web')
+                             surface_kind='web',
+                             advertiser_url=f'https://{p.domain or "site.test"}/tovar/1')
         db.add(t)
         targets.append(t)
     db.flush()
@@ -299,6 +303,9 @@ def test_open_url_request_blocks_agreement(env):
 
     target = env.db.query(LaunchPrepTarget).filter(
         LaunchPrepTarget.id == pairs[0].target_id).first()
+    # Ссылку СНИМАЕМ: фикстура с 18.09.2026 заполняет её всем получателям (без неё не
+    # проходит отправка), а здесь проверяется именно открытый запрос без ответа.
+    target.advertiser_url = None
     target.url_requested_at = datetime.now()
     env.db.commit()
 
@@ -313,6 +320,7 @@ def test_open_url_request_blocks_agreement(env):
     # Ссылка пришла — «ок» проходит.
     t2 = env.db.query(LaunchPrepTarget).filter(
         LaunchPrepTarget.id == pairs[1].target_id).first()
+    t2.advertiser_url = None          # см. выше: фикстура заполняет её для отправки
     t2.url_requested_at = datetime.now()
     env.db.commit()
     with pytest.raises(HTTPException):

@@ -32,6 +32,7 @@ from types import SimpleNamespace
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import logging
@@ -1087,6 +1088,37 @@ def set_targeting_url(set_id: int, payload: TargetingUrlIn, db: Session = Depend
     return {"id": row.id, "test_targeting_url": row.test_targeting_url}
 
 
+@router.get("/set/{set_id}/weborama-request")
+def weborama_request(set_id: int, db: Session = Depends(get_db),
+                     current_user: User = Depends(VIEW)):
+    """Заявка на пиксели Weborama по этому креативу — Excel тем же шаблоном, каким её
+    заполняли руками.
+
+    Ручной путь остался запасным после появления API (09.09.2026) и никуда не делся:
+    часть случаев решается перепиской с менеджером, и тогда уходит ровно этот файл.
+    Собирать его в Excel по двадцать строк руками — работа для машины, а не для человека.
+
+    Имена собираются ТЕМИ ЖЕ функциями, что и заведение через API: файл и кабинет обязаны
+    называть одно и то же одинаково, иначе ответ менеджера не сойдётся с заведённым.
+    """
+    from app.weborama import request_xlsx
+
+    row = db.query(LaunchPrepCreativeSet).filter(LaunchPrepCreativeSet.id == set_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Комплект не найден")
+    _deal(db, row.deal_id, current_user)
+    try:
+        name, blob = request_xlsx.build(db, set_id)
+    except ValueError as e:
+        # Причина — человеку, а не 500: «нет бренда» и «нет домена» чинятся за минуту,
+        # если сказать, что именно чинить.
+        raise HTTPException(status_code=400, detail=str(e))
+    return Response(content=blob,
+                    media_type="application/vnd.openxmlformats-officedocument."
+                               "spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
 @router.post("/set/{set_id}/targeting-link")
 def issue_targeting_link(set_id: int, db: Session = Depends(get_db),
                          current_user: User = Depends(TARGETING_EDIT)):
@@ -1531,6 +1563,27 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
             detail=f"Не задан код площадки: {', '.join(sorted(unnamed))}. "
                    f"Без него размещение не получит номер для DSP")
 
+    # ССЫЛКА ЛИБО ЕСТЬ, ЛИБО ЗАПРОШЕНА — третьего состояния на отправке быть не должно
+    # (владелец 18.09.2026). «Нужна» означает, что о ней ещё даже не спрашивали: материал
+    # уедет площадке, она его согласует, выпустится ЕРИД — а вести рекламу некуда, и
+    # выяснится это на старте, когда чинить поздно и дорого.
+    #
+    # Запрошенная ссылка отправку НЕ запирает: ждать её можно параллельно согласованию,
+    # и именно так работа и идёт. Запирает она согласование — это правило стоит на
+    # вердикте и остаётся там.
+    #
+    # Проверка на ОТПРАВКЕ, а не на кнопке экрана: входов в отправку больше одного, и
+    # правило, оставленное на кнопке, обошли бы соседним путём.
+    silent = [pubs[t.publisher_id].name if t.publisher_id in pubs else str(t.publisher_id)
+              for t in targets if url_state(t) == "нужна"]
+    if silent:
+        raise HTTPException(
+            status_code=400,
+            detail="Нет посадочной страницы и не нажат «запрос ссылки»: "
+                   + ", ".join(sorted(silent))
+                   + ". Либо впишите ссылку, либо запросите её у площадки — "
+                     "иначе согласованному креативу будет некуда вести")
+
     from sqlalchemy.sql import func as sa_func
     created = 0
     for t in targets:
@@ -1598,6 +1651,11 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
     # а креатив соберётся по первому нажатию кнопки.
     from app.dsp.targeting_creative import ensure_quietly
     ensure_quietly(db, s)
+    # Строка креатива в РК рождается в момент ОТПРАВКИ пары — значит и собирать её надо
+    # здесь, а не ждать ночного прогона: счётчик «всего / согласовано / запущено» на
+    # дашборде трафика до утра показывал бы вчерашний состав.
+    from app.ad.build import sync_deal_quietly
+    sync_deal_quietly(db, deal.id)
     return {"sent": created}
 
 
@@ -1710,6 +1768,12 @@ def apply_platform_verdict(db: Session, pair_id: int, verdict: str,
         _recompute_target_state(db, target)
 
     db.commit()
+    # СОБЫТИЕ ВЕДЁТ СБОРКУ. Вердикт площадки меняет то, что кампания обязана знать:
+    # статус площадки, состав креативов, а за ним и право на выгрузку в DSP. Раньше это
+    # доезжало ночным прогоном — до суток ожидания на действии, которое делается за
+    # минуты (владелец 18.09.2026).
+    from app.ad.build import sync_deal_quietly
+    sync_deal_quietly(db, deal.id)
     who = f" ({author_name})" if source == "кабинет" else ""
     log_action(db, actor, "creative_pair_verdict", "sales_deal", deal.id,
                f"комплект №{s.no}: {verdict}{who}" + (f", код {code}" if code else ""))
@@ -2099,6 +2163,10 @@ def issue_erid(set_id: int, db: Session = Depends(get_db),
 
     _mark_targets_erid(db, set_id)
     db.commit()
+    # Маркер обязан доехать до кампании СРАЗУ: без него выгрузка в DSP отказывает, и
+    # человек, только что выпустивший ЕРИД, читал бы «нет ЕРИД» до следующего утра.
+    from app.ad.build import sync_deal_quietly
+    sync_deal_quietly(db, deal.id)
     log_action(db, current_user, "issue_erid", "sales_deal", deal.id,
                f"комплект №{s.no}: ЕРИД {out.get('erid')}")
     emit(db, "creative_erid_issued",

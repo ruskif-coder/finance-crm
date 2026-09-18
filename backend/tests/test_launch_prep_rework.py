@@ -76,8 +76,12 @@ def env():
     db.flush()
     targets, pairs = [], []
     for p in pubs:
+        # Посадочная у времянки заполнена НЕ ДЛЯ КРАСОТЫ: с 18.09.2026 отправка
+        # требует либо ссылку, либо нажатый запрос — иначе согласованному креативу
+        # некуда вести. Без неё фикстура проверяла бы путь, которого больше нет.
         t = LaunchPrepTarget(deal_id=deal.id, publisher_id=p.id, service_id=service.id,
-                             surface_kind='web')
+                             surface_kind='web',
+                             advertiser_url=f'https://{p.domain or "site.test"}/tovar/1')
         db.add(t)
         db.flush()
         db.add(LaunchPrepSetTarget(set_id=base.id, target_id=t.id))
