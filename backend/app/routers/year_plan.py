@@ -7,8 +7,15 @@
 сделка попадает в план ТОЛЬКО через явный линк (конвейер ставит автоматом; отдельные
 сделки — вручную attach/detach).
 
-Персональный: строка/план принадлежит сейлзу (sales_rep_id). Обычный сейлз видит и
-правит только свой; «мастер» (year_plan.deals_scope='all' или admin) — любой.
+У строки ДВЕ оси владения, и они отвечают на разные вопросы. `sales_rep_id` —
+ПРОДАВЕЦ: в чей дашборд продаж лягут деньги. `account_manager_id` — кто план ВЕДЁТ.
+Строку видит и правит и тот, и другой; «мастер» (year_plan.deals_scope='all' или
+admin) — любую.
+
+Осей стало две 21.09.2026. До того была одна, и в неё писался создатель — то есть
+план, заведённый аккаунтом, объявлял аккаунта же продавцом. Такой план не видел ни
+настоящий продавец, ни руководитель, а деньги считались не в тот дашборд. Снаружи это
+выглядело как «аккаунт сохранил план, а его нет».
 
 Слой денег — от НАШЕЙ стадии сделки (SalesStage.money_layer): «фактические» → closed=1
 (факт), остальное → бронь (closed=0).
@@ -18,7 +25,7 @@ import uuid as _uuid
 from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, or_, false as sa_false
 from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any
 
@@ -55,6 +62,37 @@ def _own_rep_ids(db: Session, user: User) -> List[int]:
     return [r.id for r in db.query(SalesRep.id).filter(SalesRep.user_id == user.id).all()]
 
 
+def _scope_reps(db: Session, user: User, rep_id: Optional[int]):
+    """→ (профили, чьи строки показываем; is_master).
+
+    Профиль засчитывается В ОБЕИХ РОЛЯХ — и как продавец, и как ведущий аккаунт.
+    Отсечение по одной роли прячет план от второго владельца, и именно так план
+    аккаунта пропадал с глаз у продавца.
+    """
+    master = _is_master(db, user)
+    own = _own_rep_ids(db, user)
+    if master and rep_id is not None:
+        return [rep_id], True
+    return own, master
+
+
+def _mine(q, reps: List[int], master: bool):
+    """Сузить выборку строк до владельцев `reps` — по любой из двух ролей.
+
+    Пустой `reps` — это две РАЗНЫЕ ситуации, и слить их нельзя. У мастера без профиля
+    в справочнике ответственных это «покажи бесхозные строки» (легаси до бэкфилла,
+    они существуют). У обычного сотрудника без профиля — «показывать нечего»: отдать
+    ему бесхозные значило бы раздать чужое тому, у кого прав на это нет.
+    """
+    if reps:
+        return q.filter(or_(SalesYearPlanLine.sales_rep_id.in_(reps),
+                            SalesYearPlanLine.account_manager_id.in_(reps)))
+    if master:
+        return q.filter(SalesYearPlanLine.sales_rep_id.is_(None),
+                        SalesYearPlanLine.account_manager_id.is_(None))
+    return q.filter(sa_false())
+
+
 def _resolve_rep(db: Session, user: User, rep_id: Optional[int]):
     """→ (effective_rep_id, is_master). Не-мастер всегда прижат к своему сейлзу."""
     master = _is_master(db, user)
@@ -77,7 +115,9 @@ def _guard_plan_owner(db: Session, plan, user: User):
     """
     if _is_master(db, user):
         return
-    if plan.sales_rep_id not in _own_rep_ids(db, user):
+    # Владельцев у плана двое: продавец и ведущий аккаунт. Проверять одного значило бы
+    # запретить аккаунту править план, который он же и завёл.
+    if not ({plan.sales_rep_id, plan.account_manager_id} & set(_own_rep_ids(db, user))):
         raise HTTPException(status_code=403, detail="Это план другого сейлза")
 
 
@@ -106,8 +146,55 @@ def _auto_title(db: Session, advertiser_id: Optional[int], year: int) -> str:
     return f"{name or 'Без рекламодателя'} · {year}"
 
 
+def _rep_of_user(db: Session, user_id: Optional[int]) -> Optional[int]:
+    """Профиль справочника по УЧЁТКЕ. Бриф хранит ответственных учётками, а колонки
+    владения ссылаются на `sales_reps` — это разные множества чисел.
+
+    Перепутать их дёшево и незаметно: id учётки почти всегда окажется существующим
+    id профиля, внешний ключ промолчит, и строка достанется чужому человеку. Ровно
+    так же конвертирует порождение сделок (`rep_by_user` ниже по файлу).
+    """
+    if not user_id:
+        return None
+    row = (db.query(SalesRep.id).filter(SalesRep.user_id == user_id)
+           .order_by(SalesRep.id).first())
+    return row[0] if row else None
+
+
+def _advertiser_rep(db: Session, advertiser_id: Optional[int]) -> Optional[int]:
+    """Ответственный сейлз рекламодателя из справочника (заведён 21.09.2026)."""
+    if not advertiser_id:
+        return None
+    adv = db.get(SalesAdvertiser, advertiser_id)
+    return adv.sales_rep_id if adv else None
+
+
+def _line_owners(db: Session, brief: dict, row, advertiser_id, eff_rep):
+    """→ (продавец, ведущий аккаунт) для строки плана.
+
+    Источник истины — БРИФ СТРОКИ: там оба поля человек и заполняет, и именно оттуда
+    их уже берёт порождение сделок (`_brief_missing` без продавца сделку не создаёт).
+    До 21.09.2026 бриф на владение строки не влиял вовсе, и строка доставалась тому,
+    кто нажал «Сохранить».
+
+    Дальше по убыванию: у существующей строки — то, что там уже стоит (иначе чужое
+    сохранение переписало бы владельца молча), у продавца сверх того — ответственный
+    сейлз рекламодателя, и лишь в конце сам сохраняющий.
+    """
+    b = brief or {}
+    seller = (_rep_of_user(db, b.get("sales_rep_id"))
+              or (row.sales_rep_id if row is not None else None)
+              or _advertiser_rep(db, advertiser_id)
+              or eff_rep)
+    manager = (_rep_of_user(db, b.get("account_manager_id"))
+               or (row.account_manager_id if row is not None else None)
+               or eff_rep)
+    return seller, manager
+
+
 def _default_plan(db: Session, advertiser_id: Optional[int], year: int,
-                  rep_id: Optional[int], user: User) -> SalesYearPlan:
+                  rep_id: Optional[int], user: User,
+                  manager_id: Optional[int] = None) -> SalesYearPlan:
     """Найти дефолтный план (advertiser, year, rep) или создать. Для строк без явного
     plan_id — чтобы каждая строка всегда была под пакетом (совместимость с легаси)."""
     q = db.query(SalesYearPlan).filter(SalesYearPlan.year == year)
@@ -118,8 +205,12 @@ def _default_plan(db: Session, advertiser_id: Optional[int], year: int,
     plan = q.order_by(SalesYearPlan.id).first()
     if plan:
         return plan
+    # account_manager_id ОТДЕЛЬНЫМ значением. Раньше сюда шёл тот же rep_id, то есть
+    # создатель объявлялся и продавцом, и ведущим — из-за этого план аккаунта и
+    # оказывался в его же персональной корзине.
     plan = SalesYearPlan(advertiser_id=advertiser_id, year=year, sales_rep_id=rep_id,
-                         account_manager_id=rep_id, title=_auto_title(db, advertiser_id, year),
+                         account_manager_id=manager_id if manager_id is not None else rep_id,
+                         title=_auto_title(db, advertiser_id, year),
                          created_by=user.id)
     db.add(plan)
     db.flush()
@@ -218,10 +309,10 @@ def _reps(db: Session) -> list:
 @router.get("")
 def get_year_plan(year: int, rep_id: Optional[int] = None,
                   db: Session = Depends(get_db), current_user: User = Depends(YP_VIEW)):
-    eff_rep, master = _resolve_rep(db, current_user, rep_id)
-    q = db.query(SalesYearPlanLine).filter(SalesYearPlanLine.year == year)
-    q = q.filter(SalesYearPlanLine.sales_rep_id == eff_rep) if eff_rep is not None \
-        else q.filter(SalesYearPlanLine.sales_rep_id.is_(None))
+    reps, master = _scope_reps(db, current_user, rep_id)
+    eff_rep, _ = _resolve_rep(db, current_user, rep_id)
+    q = _mine(db.query(SalesYearPlanLine).filter(SalesYearPlanLine.year == year),
+              reps, master)
     lines = q.order_by(SalesYearPlanLine.sort_order, SalesYearPlanLine.id).all()
     # планы, к которым принадлежат строки (для группировки на фронте)
     plan_ids = {l.plan_id for l in lines if l.plan_id}
@@ -316,12 +407,10 @@ def export_year_xlsx(year: int, advertiser_id: int, rep_id: Optional[int] = None
     from app.year_mp_export import build_workbook
     from app.routers.media_plans import TEMPLATE_PATH, _names
 
-    eff_rep, _master = _resolve_rep(db, current_user, rep_id)
-    q = (db.query(SalesYearPlanLine)
-         .filter(SalesYearPlanLine.year == year,
-                 SalesYearPlanLine.advertiser_id == advertiser_id))
-    q = q.filter(SalesYearPlanLine.sales_rep_id == eff_rep) if eff_rep is not None \
-        else q.filter(SalesYearPlanLine.sales_rep_id.is_(None))
+    reps, master = _scope_reps(db, current_user, rep_id)
+    q = _mine(db.query(SalesYearPlanLine)
+              .filter(SalesYearPlanLine.year == year,
+                      SalesYearPlanLine.advertiser_id == advertiser_id), reps, master)
     lines = q.order_by(SalesYearPlanLine.sort_order, SalesYearPlanLine.id).all()
     if not lines:
         raise HTTPException(status_code=404, detail="У рекламодателя нет строк плана на этот год")
@@ -429,38 +518,48 @@ class SaveIn(BaseModel):
 @router.post("")
 def save_year_plan(payload: SaveIn, db: Session = Depends(get_db),
                    current_user: User = Depends(YP_EDIT)):
-    """Upsert строк за (год, сейлз) БЕЗ delete-all — id строк (и линки сделок) сохраняются.
-    Строки, которых нет в payload, удаляются; их сделки предварительно откручиваются."""
+    """Upsert видимых человеку строк года БЕЗ delete-all — id строк (и линки сделок)
+    сохраняются. Строки, которых нет в payload, удаляются; их сделки предварительно
+    откручиваются. Владелец каждой строки берётся из её брифа, а не от сохраняющего."""
     eff_rep, _master = _resolve_rep(db, current_user, payload.rep_id)
     if eff_rep is None or eff_rep < 0:
         raise HTTPException(status_code=400, detail="Не удалось определить сейлза для сохранения плана")
 
-    existing = {l.id: l for l in db.query(SalesYearPlanLine)
-                .filter(SalesYearPlanLine.year == payload.year,
-                        SalesYearPlanLine.sales_rep_id == eff_rep).all()}
+    # НАБОР ДЛЯ УДАЛЕНИЯ = РОВНО ТО, ЧТО ЧЕЛОВЕК ВИДЕЛ. Ниже строки, которых нет в
+    # присланном, удаляются, а вместе с ними откручиваются привязанные сделки. Пока
+    # корзина была одна, это было безопасно. С двумя осями владения набор прочитанный
+    # и набор записываемый разойдутся, если брать их разными запросами, — и
+    # сохранение снесёт строки, которых человек на экране даже не видел. Поэтому
+    # выборка здесь ТА ЖЕ, что в чтении экрана.
+    reps, master = _scope_reps(db, current_user, payload.rep_id)
+    existing = {l.id: l for l in _mine(
+        db.query(SalesYearPlanLine).filter(SalesYearPlanLine.year == payload.year),
+        reps, master).all()}
     seen: set = set()
 
     for i, ln in enumerate(payload.lines):
         months = ((ln.months_on or [])[:12]) + [0] * (12 - len(ln.months_on or []))
+        row = existing.get(ln.id) if ln.id else None
+        seller, manager = _line_owners(db, ln.brief, row, ln.advertiser_id, eff_rep)
         plan_id = ln.plan_id
         if not plan_id:  # без явного пакета — под дефолтный (find-or-create)
-            plan_id = _default_plan(db, ln.advertiser_id, payload.year, eff_rep, current_user).id
+            plan_id = _default_plan(db, ln.advertiser_id, payload.year, seller,
+                                    current_user, manager).id
         fields = dict(
             plan_id=plan_id, advertiser_id=ln.advertiser_id, brand_id=ln.brand_id,
+            sales_rep_id=seller, account_manager_id=manager,
             plan_amount=ln.plan_amount or 0, months_on=months,
             sums=ln.sums or {}, locks=ln.locks or {}, products=ln.products or {},
             deals=ln.deals or {}, brief=ln.brief or {},
             service_forecast=ln.service_forecast or {},
             sort_order=ln.sort_order if ln.sort_order else i)
-        row = existing.get(ln.id) if ln.id else None
         if row is not None:
             _guard_advertiser_change(db, row, ln.advertiser_id)
             for f, v in fields.items():
                 setattr(row, f, v)
             seen.add(row.id)
         else:
-            row = SalesYearPlanLine(year=payload.year, sales_rep_id=eff_rep,
-                                    created_by=current_user.id, **fields)
+            row = SalesYearPlanLine(year=payload.year, created_by=current_user.id, **fields)
             db.add(row)
 
     # удалить пропавшие строки (открепив сделки)
@@ -475,9 +574,9 @@ def save_year_plan(payload: SaveIn, db: Session = Depends(get_db),
 
     db.commit()
     log_action(db, current_user, "year_plan_save", "year_plan", payload.year,
-               f"сейлз {eff_rep}, строк: {len(payload.lines)}")
-    lines = (db.query(SalesYearPlanLine)
-             .filter(SalesYearPlanLine.year == payload.year, SalesYearPlanLine.sales_rep_id == eff_rep)
+               f"корзина {reps or 'без сейлза'}, строк: {len(payload.lines)}")
+    lines = (_mine(db.query(SalesYearPlanLine)
+                   .filter(SalesYearPlanLine.year == payload.year), reps, master)
              .order_by(SalesYearPlanLine.sort_order, SalesYearPlanLine.id).all())
     return {"year": payload.year, "rep_id": eff_rep, "lines": [_line_out(l) for l in lines]}
 
@@ -540,9 +639,9 @@ def refresh_deals(payload: RefreshIn, db: Session = Depends(get_db),
     if eff_rep is None or eff_rep < 0:
         return {"matched": [], "deals_count": 0}
 
-    lines = (db.query(SalesYearPlanLine)
-             .filter(SalesYearPlanLine.year == payload.year,
-                     SalesYearPlanLine.sales_rep_id == eff_rep).all())
+    reps, master = _scope_reps(db, current_user, payload.rep_id)
+    lines = _mine(db.query(SalesYearPlanLine)
+                  .filter(SalesYearPlanLine.year == payload.year), reps, master).all()
     line_ids = [l.id for l in lines]
     if not line_ids:
         return {"matched": [], "deals_count": 0}
@@ -696,9 +795,9 @@ def _planned_months(line: SalesYearPlanLine) -> list:
     return [m for m in range(12) if m < len(on) and on[m] and _month_items(line, m)]
 
 
-def _target_lines(db, eff_rep, year, advertiser_id, line_id):
-    q = db.query(SalesYearPlanLine).filter(SalesYearPlanLine.year == year,
-                                           SalesYearPlanLine.sales_rep_id == eff_rep)
+def _target_lines(db, reps, master, year, advertiser_id, line_id):
+    q = _mine(db.query(SalesYearPlanLine).filter(SalesYearPlanLine.year == year),
+              reps, master)
     if line_id:
         q = q.filter(SalesYearPlanLine.id == line_id)
     elif advertiser_id:
@@ -820,7 +919,8 @@ def create_deals_preview(payload: ConveyorIn, db: Session = Depends(get_db),
     eff_rep, _ = _resolve_rep(db, current_user, payload.rep_id)
     if eff_rep is None or eff_rep < 0:
         return {"new": [], "changed": [], "unchanged": 0, "in_work": []}
-    lines = _target_lines(db, eff_rep, payload.year, payload.advertiser_id, payload.line_id)
+    lines = _target_lines(db, *_scope_reps(db, current_user, payload.rep_id),
+                          payload.year, payload.advertiser_id, payload.line_id)
     brand_names = {b.id: b.name for b in db.query(SalesBrand).all()}
     new_items, changed, unchanged, blocked, locked = [], [], 0, [], []
     in_work = []                      # дошедшие сделки: их конвейер не трогает
@@ -872,7 +972,8 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
     eff_rep, _ = _resolve_rep(db, current_user, payload.rep_id)
     if eff_rep is None or eff_rep < 0:
         raise HTTPException(status_code=400, detail="Не удалось определить сейлза")
-    lines = _target_lines(db, eff_rep, payload.year, payload.advertiser_id, payload.line_id)
+    lines = _target_lines(db, *_scope_reps(db, current_user, payload.rep_id),
+                          payload.year, payload.advertiser_id, payload.line_id)
     svc = {s.id: s for s in db.query(SalesService).all()}
     add = {a.id: a for a in db.query(SalesAddonService).all()}
     # бриф хранит USER id (из справочника «Сотрудники»), а SalesDeal.*_id — FK на sales_reps

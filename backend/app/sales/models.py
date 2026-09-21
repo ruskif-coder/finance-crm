@@ -971,10 +971,17 @@ class SalesYearPlanLine(Base):
     # Родитель — план/пакет. NULL только у легаси-строк до бэкфилла.
     plan_id = Column(Integer, ForeignKey("sales_year_plans.id"), nullable=True, index=True)
     year = Column(Integer, nullable=False, index=True)
-    # Персональный план: строка принадлежит сейлзу. NULL — «общий/безхозный» (легаси/черновик).
-    # «Свой» план — sales_rep_id == SalesRep.user_id текущего юзера; мастер (year_plan.deals_scope
-    # 'all' или admin) видит и выбирает чужой. См. _own_rep_ids_or_all в дашборде.
+    # ДВЕ ОСИ ВЛАДЕНИЯ, и путать их нельзя: sales_rep_id — ПРОДАВЕЦ, в чей дашборд
+    # считаются деньги строки; account_manager_id — тот, кто план ВЕДЁТ. Строку видит
+    # и тот, и другой.
+    #
+    # До 21.09.2026 ось была одна, и в неё писался создатель. Годовые планы заводят и
+    # аккаунты — такой план уходил в персональную корзину аккаунта: продавец его не
+    # видел, руководитель не видел, деньги считались не туда. Оба значения человек
+    # уже вводит в брифе строки, они просто ни на что не влияли.
+    # Миграция 2026-09-21_year_plan_account_manager.sql.
     sales_rep_id = Column(Integer, ForeignKey("sales_reps.id"), nullable=True, index=True)
+    account_manager_id = Column(Integer, ForeignKey("sales_reps.id"), nullable=True, index=True)
     # nullable — легальный черновик: строка без выбранного рекламодателя/бренда.
     advertiser_id = Column(Integer, ForeignKey("sales_advertisers.id"), nullable=True)
     brand_id = Column(Integer, ForeignKey("sales_brands.id"), nullable=True)
