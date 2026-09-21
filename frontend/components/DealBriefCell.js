@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import api, { auth } from '../lib/api'
 import { overlayClose } from '@/lib/overlay'
 import { fmtDateTime } from '@/lib/dates'
+import BriefFiles from '@/components/deal/BriefFiles'
 
 // Иконка «бриф» в строке сделки + всплывающее окно с текстом и инлайн-правкой.
 // Ленивая загрузка: текст тянется только при первом открытии (GET), дальше — из кэша БД.
@@ -119,6 +120,13 @@ export default function DealBriefCell({ deal, canEdit, v2, controlledOpen, onClo
                       padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-card)',
                       background: canEdit ? 'var(--bg-card)' : 'var(--bg-subtle)', color: 'inherit',
                       fontSize: 13.5, lineHeight: 1.5, fontFamily: 'inherit', whiteSpace: 'pre-wrap' }} />
+                  {/* Файлы брифа. Тот же компонент, что в конструкторе МП, только
+                      другая дверь: здесь право продаж, там — медиапланов. */}
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase',
+                      color: 'var(--text-faint)', marginBottom: 6 }}>Файлы брифа</div>
+                    <BriefFiles base={`/sales/deals/${deal.id}/brief/files`} readOnly={!canEdit} />
+                  </div>
                 </>
               )}
               {err && <div style={{ color: 'var(--danger)', fontSize: 13, marginTop: 10 }}>{err}</div>}

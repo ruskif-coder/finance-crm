@@ -7,7 +7,7 @@ from datetime import date
 from io import BytesIO
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
@@ -552,6 +552,71 @@ def mp_save_deal_brief(plan_id: int, data: DealBriefIn, db: Session = Depends(ge
     db.commit()
     log_action(db, current_user, "save_deal_brief_mp", "media_plan", p.id, f"бриф {len(text_val)} симв.")
     return {"brief": deal.brief, "pushed_to_bitrix": pushed, "is_local": _deal_is_local(deal)}
+
+
+def _plan_deal_for_brief(db, plan_id: int, current_user):
+    """Сделка медиаплана — для работы с файлами брифа из конструктора.
+
+    Отдельные ручки, а не те же, что в реестре сделок: конструктор живёт на праве
+    медиапланов, и требовать от аккаунта ещё и право реестра значило бы выдавать
+    доступ ко всем сделкам ради одного вложения. Хранение при этом ОБЩЕЕ — вызываем
+    те же функции, что и реестр, а не вторую копию правил.
+    """
+    p = db.query(SalesMediaPlan).filter(SalesMediaPlan.id == plan_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Медиаплан не найден")
+    _guard_owned(db, p, current_user, "media_plans_editor")
+    if not p.deal_id:
+        raise HTTPException(status_code=400, detail="Медиаплан не привязан к сделке")
+    from app.sales.models import SalesDeal
+    from app.routers.sales_dashboard import _assert_deal_in_scope
+    deal = db.query(SalesDeal).filter(SalesDeal.id == p.deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    # Область видимости СДЕЛКИ — отдельно от владения ПЛАНОМ. `_guard_owned` выше
+    # спрашивает «твой ли это медиаплан», и при `deals_scope='all'` (умолчание) не
+    # спрашивает ничего; сама сделка при этом может быть вне зоны видимости человека.
+    # Без этой строки право конструктора МП открывало бы файлы брифа любой сделки,
+    # у которой есть план, в обход права реестра (прогон 21.09.2026).
+    #
+    # Сегодня не стреляет: у всех четырёх ролей с `media_plans_editor` область реестра
+    # 'all' (замер 21.09.2026), то есть эти сделки им и так видны. Но это свойство
+    # ДАННЫХ — ровно та же асимметрия, из-за которой написан `_own_rep_ids_or_all`.
+    _assert_deal_in_scope(db, current_user, deal)
+    return deal
+
+
+@router.get("/{plan_id}/deal-brief/files")
+def mp_list_brief_files(plan_id: int, db: Session = Depends(get_db),
+                        current_user: User = Depends(MP_ED_VIEW)):
+    from app.routers.sales_dashboard import brief_files_of
+    deal = _plan_deal_for_brief(db, plan_id, current_user)
+    return {"items": brief_files_of(db, deal.id)}
+
+
+@router.post("/{plan_id}/deal-brief/files")
+async def mp_upload_brief_file(plan_id: int, file: UploadFile = File(...),
+                               db: Session = Depends(get_db),
+                               current_user: User = Depends(MP_EDIT)):
+    from app.routers.sales_dashboard import store_brief_file
+    deal = _plan_deal_for_brief(db, plan_id, current_user)
+    return await store_brief_file(db, deal, file, current_user)
+
+
+@router.get("/{plan_id}/deal-brief/files/{file_id}")
+def mp_download_brief_file(plan_id: int, file_id: int, db: Session = Depends(get_db),
+                           current_user: User = Depends(MP_ED_VIEW)):
+    from app.routers.sales_dashboard import brief_file_response
+    deal = _plan_deal_for_brief(db, plan_id, current_user)
+    return brief_file_response(db, deal.id, file_id)
+
+
+@router.delete("/{plan_id}/deal-brief/files/{file_id}")
+def mp_delete_brief_file(plan_id: int, file_id: int, db: Session = Depends(get_db),
+                         current_user: User = Depends(MP_EDIT)):
+    from app.routers.sales_dashboard import delete_brief_file
+    deal = _plan_deal_for_brief(db, plan_id, current_user)
+    return delete_brief_file(db, deal, file_id, current_user)
 
 
 def _prefill_rows(db, deal):

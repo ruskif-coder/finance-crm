@@ -22,6 +22,9 @@ from pydantic import BaseModel
 from datetime import date, datetime
 import os
 import re
+import uuid
+
+from fastapi.responses import FileResponse
 
 from app.files_safe import existing_upload_path, remove_upload
 from app.database import get_db
@@ -32,7 +35,8 @@ from app.audit import log_action
 from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
                               SalesRep, SalesBrand, SalesBitrixSyncLog,
                               SalesDealFieldOverride, SalesAgency,
-                              SalesStage, SalesStagePhase, SalesPipeline)
+                              SalesStage, SalesStagePhase, SalesPipeline,
+                              SalesDealBriefFile)
 from app.sales.stages import STAGE_CATALOG
 from app.sales.deal_label import deal_label
 from app.sales.catalog import Catalog, stage_public
@@ -1585,6 +1589,147 @@ def save_deal_brief(deal_id: int, payload: BriefIn, db: Session = Depends(get_db
                f"бриф {len(text_val)} симв.{' → Битрикс' if pushed else ' (локально)'}")
     return {"brief": deal.brief, "pushed_to_bitrix": pushed,
             "synced_at": deal.brief_synced_at.isoformat()}
+
+
+# ── Файлы брифа ──────────────────────────────────────────────────────────────
+# Бриф приходит не только текстом: презентация, тз, чужой медиаплан. Раньше исходник
+# оставался в почте у того, кто его получил, а в сделку попадал пересказ.
+#
+# Хранилище и правила — общие с остальными вложениями проекта: папка внутри
+# `/app/uploads`, потолок 20 МБ, белый список расширений, и НИ ОДНОГО обращения к диску
+# по пути из базы мимо `app/files_safe.py` (разбор внешнего аудита, F1-06).
+
+BRIEF_UPLOADS_DIR = "/app/uploads/deal_briefs"
+BRIEF_MAX_BYTES = 20 * 1024 * 1024
+BRIEF_ALLOWED_EXT = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+                     ".jpg", ".jpeg", ".png", ".zip", ".txt", ".csv", ".rtf"}
+
+
+def brief_file_out(f: SalesDealBriefFile, who: Optional[str] = None) -> dict:
+    return {"id": f.id, "name": f.original_name, "size": f.size_bytes,
+            "uploaded_at": f.uploaded_at.isoformat() if f.uploaded_at else None,
+            "uploaded_by": who}
+
+
+def brief_files_of(db: Session, deal_id: int) -> list:
+    """Список файлов брифа с именами загрузивших — одним запросом на имена, не по одному."""
+    rows = (db.query(SalesDealBriefFile)
+              .filter(SalesDealBriefFile.deal_id == deal_id)
+              .order_by(SalesDealBriefFile.uploaded_at, SalesDealBriefFile.id).all())
+    if not rows:
+        return []
+    ids = {r.uploaded_by for r in rows if r.uploaded_by}
+    names = dict(db.query(User.id, User.name).filter(User.id.in_(ids)).all()) if ids else {}
+    return [brief_file_out(r, names.get(r.uploaded_by)) for r in rows]
+
+
+async def store_brief_file(db: Session, deal, file: UploadFile, user: User) -> dict:
+    """Положить файл на диск и завести строку. Возвращает её в форме ответа.
+
+    Общая для обеих точек входа — реестра сделок и конструктора МП: у них разные права
+    (продажи против медиапланов), но правило хранения одно, и второй копией оно бы
+    разошлось — ровно как разошлись бы проверки пути, не будь `files_safe`.
+    """
+    original = file.filename or "file"
+    ext = os.path.splitext(original)[1].lower()
+    if ext not in BRIEF_ALLOWED_EXT:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Недопустимый тип файла. Разрешены: {', '.join(sorted(BRIEF_ALLOWED_EXT))}")
+    content = await file.read()
+    if len(content) > BRIEF_MAX_BYTES:
+        raise HTTPException(status_code=413,
+                            detail=f"Файл больше {BRIEF_MAX_BYTES // 1024 // 1024} МБ")
+    if not content:
+        raise HTTPException(status_code=400, detail="Файл пустой")
+    os.makedirs(BRIEF_UPLOADS_DIR, exist_ok=True)
+    safe = re.sub(r"\.{2,}", ".", re.sub(r"[^\w.\-]", "_", original))[-120:]
+    # Префикс сделки и СЛУЧАЙНЫЙ хвост, а не время: два «бриф.pdf», загруженные в одну
+    # секунду, при отметке времени затирали друг друга молча — список показывал две
+    # строки, а на диске лежал один файл (поймано прибором 21.09.2026).
+    stored = f"{deal.id}_{uuid.uuid4().hex[:10]}_{safe}"
+    with open(os.path.join(BRIEF_UPLOADS_DIR, stored), "wb") as fh:
+        fh.write(content)
+    row = SalesDealBriefFile(deal_id=deal.id, filename=stored, original_name=original,
+                             size_bytes=len(content), uploaded_by=user.id)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    log_action(db, user, "upload_deal_brief_file", "sales_deal", deal.id,
+               f"файл брифа «{original}», {len(content) // 1024} КБ")
+    return brief_file_out(row, user.name)
+
+
+def brief_file_response(db: Session, deal_id: int, file_id: int):
+    """Отдать файл под ИСХОДНЫМ именем. Путь проверяется `files_safe`, а не берётся
+    из базы как есть, и сужен до своей папки: файл договора не должен уезжать этой
+    ручкой, даже если путь формально внутри хранилища."""
+    row = (db.query(SalesDealBriefFile)
+             .filter(SalesDealBriefFile.id == file_id,
+                     SalesDealBriefFile.deal_id == deal_id).first())
+    if not row:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    path = existing_upload_path(row.filename, root=BRIEF_UPLOADS_DIR)
+    return FileResponse(path, filename=row.original_name,
+                        media_type="application/octet-stream")
+
+
+def delete_brief_file(db: Session, deal, file_id: int, user: User) -> dict:
+    row = (db.query(SalesDealBriefFile)
+             .filter(SalesDealBriefFile.id == file_id,
+                     SalesDealBriefFile.deal_id == deal.id).first())
+    if not row:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    name = row.original_name
+    db.delete(row)
+    db.commit()
+    # Строки уже нет — файл на диске снимаем после, и неудача уборки не роняет запрос:
+    # оставшийся файл это сирота, а не отказ (см. app/files_safe.py).
+    remove_upload(row.filename, root=BRIEF_UPLOADS_DIR)
+    log_action(db, user, "delete_deal_brief_file", "sales_deal", deal.id,
+               f"снят файл брифа «{name}»")
+    return {"ok": True}
+
+
+@router.get("/deals/{deal_id}/brief/files")
+def list_deal_brief_files(deal_id: int, db: Session = Depends(get_db),
+                          current_user: User = Depends(require_permission("sales_registry", "view"))):
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+    return {"items": brief_files_of(db, deal.id)}
+
+
+@router.post("/deals/{deal_id}/brief/files")
+async def upload_deal_brief_file(deal_id: int, file: UploadFile = File(...),
+                                 db: Session = Depends(get_db),
+                                 current_user: User = Depends(require_permission("sales_registry", "edit"))):
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+    return await store_brief_file(db, deal, file, current_user)
+
+
+@router.get("/deals/{deal_id}/brief/files/{file_id}")
+def download_deal_brief_file(deal_id: int, file_id: int, db: Session = Depends(get_db),
+                             current_user: User = Depends(require_permission("sales_registry", "view"))):
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+    return brief_file_response(db, deal.id, file_id)
+
+
+@router.delete("/deals/{deal_id}/brief/files/{file_id}")
+def remove_deal_brief_file(deal_id: int, file_id: int, db: Session = Depends(get_db),
+                           current_user: User = Depends(require_permission("sales_registry", "edit"))):
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+    return delete_brief_file(db, deal, file_id, current_user)
 
 
 class TrafficBriefIn(BaseModel):

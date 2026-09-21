@@ -6,6 +6,7 @@ import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import { MONO, UI, HATCH_RED, Modal } from '@/components/salesTableKit'
 import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
+import BriefFiles from '@/components/deal/BriefFiles'
 import { dm, grp0 } from '@/lib/salesFormat'
 import { overlayClose } from '@/lib/overlay'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
@@ -167,6 +168,15 @@ function BriefDialog({ dealId, canEdit, onClose }) {
                 placeholder={canEdit ? 'Бриф пуст — напишите, что заказчик хочет получить' : 'Бриф пуст'}
                 style={{ width: '100%', boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 10, padding: '11px 12px', fontSize: 13, lineHeight: 1.5, fontFamily: UI, background: canEdit ? 'var(--bg-card)' : 'var(--bg-subtle)', color: 'var(--text-primary)', outline: 'none', resize: 'vertical' }} />
             )}
+          {/* Файлы брифа — тот же компонент, что в реестре и конструкторе МП.
+              Бриф приходит презентацией и тз, а не только текстом. */}
+          {!state.loading && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase',
+                color: 'var(--text-faint)', marginBottom: 6 }}>Файлы брифа</div>
+              <BriefFiles base={`/sales/deals/${dealId}/brief/files`} readOnly={!canEdit} />
+            </div>
+          )}
           {!!state.err && <div style={{ marginTop: 8, fontSize: 12.5, color: 'var(--danger)' }}>{state.err}</div>}
         </div>
         {canEdit && !state.loading && (

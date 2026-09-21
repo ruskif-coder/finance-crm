@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import api, { auth } from '../lib/api'
 import useIsMobile from './mobile/useIsMobile'
 import { overlayClose } from '@/lib/overlay'
@@ -78,6 +78,11 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
   const [f, setF] = useState({ agency_id: '', advertiser_id: '', brand_id: '', product: '', inventory: '', pipeline: '', bitrix_stage: '', period: '', amount: '', amount_with_vat: '', sales_rep_id: '', account_manager_id: '', title: '' })
   const [brief, setBrief] = useState('')
   const [briefOpen, setBriefOpen] = useState(true)   // бриф открыт по умолчанию
+  /* Файлы брифа копятся ЛОКАЛЬНО и уезжают после создания сделки: загружать их некуда,
+     пока сделки нет — ровно та же причина, по которой текст брифа тоже сохраняется
+     вторым шагом. */
+  const [briefFiles, setBriefFiles] = useState([])
+  const briefFileRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const isMobile = useIsMobile()
   const set = (k, v) => setF(p => ({ ...p, [k]: v }))
@@ -158,8 +163,20 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
         account_manager_id: f.account_manager_id ? +f.account_manager_id : null, title: f.title || null,
       }, auth())
       if (brief.trim() && r.data?.id) { try { await api.put(`/sales/deals/${r.data.id}/brief`, { brief }, auth()) } catch (e) {} }
+      // Файлы — после создания и по одному: отказ на третьем не должен отменять два
+      // уже уехавших, а сама сделка к этому моменту создана и теряться не должна.
+      if (briefFiles.length && r.data?.id) {
+        const failed = []
+        for (const file of briefFiles) {
+          try {
+            const fd = new FormData(); fd.append('file', file)
+            await api.post(`/sales/deals/${r.data.id}/brief/files`, fd, auth())
+          } catch (e) { failed.push(file.name) }
+        }
+        if (failed.length) alert(`Сделка создана, но файлы не прикрепились: ${failed.join(', ')}`)
+      }
       setF({ agency_id: '', advertiser_id: '', brand_id: '', product: '', inventory: '', pipeline: f.pipeline, bitrix_stage: f.bitrix_stage, period: '', amount: '', amount_with_vat: '', sales_rep_id: '', account_manager_id: '', title: '' })
-      setBrief(''); setBriefOpen(true)
+      setBrief(''); setBriefOpen(true); setBriefFiles([])
       onCreated && onCreated(); onClose()
     } catch (e) { alert(e.response?.data?.detail || 'Не удалось создать сделку') }
     finally { setBusy(false) }
@@ -234,6 +251,28 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
           <span style={LBL}>Бриф (сохранится вместе со сделкой)</span>
           <textarea value={brief} onChange={e => setBrief(e.target.value)} placeholder="Задачи, ЦА, гео, форматы, KPI, бюджет…"
             style={{ ...INP, minHeight: 120, resize: 'vertical', lineHeight: 1.5 }} />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+            {briefFiles.map((file, i) => (
+              <span key={`${file.name}_${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
+                maxWidth: 240, padding: '4px 9px', borderRadius: 9, fontSize: 12,
+                background: 'var(--bg-subtle)', border: '1px solid var(--border-card)' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  title={file.name}>{file.name}</span>
+                <span onClick={() => setBriefFiles(list => list.filter((_, j) => j !== i))}
+                  title="Убрать" style={{ cursor: 'pointer', color: 'var(--danger)', fontWeight: 700 }}>×</span>
+              </span>
+            ))}
+            <input ref={briefFileRef} type="file" style={{ display: 'none' }}
+              onChange={e => { const file = e.target.files?.[0]; e.target.value = ''
+                if (file) setBriefFiles(list => [...list, file]) }} />
+            <button type="button" onClick={() => briefFileRef.current?.click()}
+              title="Презентация, тз, чужой медиаплан — прикрепятся после создания сделки"
+              style={{ padding: '5px 11px', borderRadius: 9, border: '1px solid var(--border-card)',
+                background: 'var(--bg-card)', color: 'var(--accent)', fontSize: 12, fontWeight: 700,
+                cursor: 'pointer' }}>
+              📎 Прикрепить файл
+            </button>
+          </div>
         </div>
       )}
     </>
