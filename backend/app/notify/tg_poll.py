@@ -182,12 +182,19 @@ def poll_once(db: Session, contour: str, handle: Callable[[Session, dict], None]
     except urllib.error.HTTPError as e:
         body = ""
         try:
-            body = e.read().decode()[:200]
+            raw = json.loads(e.read().decode())
+            body = raw.get("description") or str(raw)[:200]
         except Exception:
             pass
         if e.code == 409:
-            log.error("tg_poll: контур %s — 409, вебхук ещё стоит. "
-                      "Снимите его: python -m app.notify.tg_poll --switch", contour)
+            # 409 у Телеграма означает ДВЕ РАЗНЫЕ вещи: «стоит вебхук» и «этот же
+            # getUpdates уже выполняется другим процессом». Прежний текст утверждал
+            # первую — и 21.09.2026 соврал: вебхуки были сняты, а запуск просто наложился
+            # на крон. Печатаем то, что говорит сам Телеграм, а причину не додумываем.
+            log.error("tg_poll: контур %s — отказ 409 от Телеграма: %s. Это либо "
+                      "не снятый вебхук (снять: --switch), либо одновременный второй "
+                      "запуск опроса — например, ручной поверх кронового.",
+                      contour, body or "описание не пришло")
         else:
             log.error("tg_poll: контур %s — HTTP %s %s", contour, e.code, body)
         return 0
