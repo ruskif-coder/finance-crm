@@ -34,23 +34,22 @@ import ValuePopover from '@/components/ValuePopover'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { TONE, toneOf } from '@/lib/tone'
+import { CABINET_STATES, cabinetState } from '@/lib/cabinetState'
 
 /* ── мелкие части, все на модульном уровне ──────────────────────────────────
    Компонент, объявленный внутри рендера родителя, пересоздаётся на каждый ввод, и
    фокус в поле формы слетает после каждого символа. Этот проект на этом уже спотыкался. */
 
-const STATE_TONE = {
-  'активен': ['var(--income-tint)', 'var(--income-fg)'],
-  'черновик': ['var(--bg-subtle)', 'var(--text-muted)'],
-  'приостановлен': ['var(--danger-tint)', 'var(--danger-fg)'],
-}
+// Карта состояний — одна на проект (lib/cabinetState). Своя копия здесь разошлась
+// бы с реестром площадок, где то же состояние показано кружком; это уже случилось
+// 21.09.2026 и потому сведено.
 const TONE_COLOR = {
   ok: 'var(--income)', warn: 'var(--warning)', bad: 'var(--danger)',
   info: 'var(--accent)',
 }
 
 const Chip = ({ text, tone }) => {
-  const [bg, fg] = STATE_TONE[tone || text] || STATE_TONE['черновик']
+  const [bg, fg] = cabinetState(tone || text).plashka
   return <span style={chip(bg, fg, 'transparent')}>{text}</span>
 }
 
@@ -920,7 +919,7 @@ export default function CabinetsPage() {
             onChange={e => setQ(e.target.value)} />
           <select style={sel} value={fState} onChange={e => setFState(e.target.value)}>
             <option value="">Статус</option>
-            {['активен', 'приостановлен', 'черновик'].map(x => <option key={x}>{x}</option>)}
+            {CABINET_STATES.map(x => <option key={x}>{x}</option>)}
           </select>
           <select style={sel} value={fService} onChange={e => setFService(e.target.value)}>
             <option value="">Услуга</option>

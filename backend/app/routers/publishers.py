@@ -340,8 +340,20 @@ def list_publishers(status: Optional[str] = None,
     rows = query.order_by(SalesPublisher.name).all()
     ids = [p.id for p in rows]
 
-    surfaces, supported, contracts, service_list = {}, {}, {}, {}
+    surfaces, supported, contracts, service_list, cabinets = {}, {}, {}, {}, {}
     if ids:
+        # Кабинет площадки — одной пачкой, а не по строке: связь ключом по площадке
+        # (`CabinetPublisher.publisher_id` — первичный ключ), поэтому кабинет ровно
+        # один либо его нет. В реестре он показан цветом, и состояние берём у самого
+        # кабинета: «черновик» — людей ещё нет, вход невозможен, и это не то же, что
+        # приостановленный кабинет, где вход отобрали.
+        from app.cabinet.models import Cabinet, CabinetPublisher
+        for pid, cid, cname, cstate in (
+                db.query(CabinetPublisher.publisher_id, Cabinet.id,
+                         Cabinet.name, Cabinet.state)
+                .join(Cabinet, Cabinet.id == CabinetPublisher.cabinet_id)
+                .filter(CabinetPublisher.publisher_id.in_(ids)).all()):
+            cabinets[pid] = {"id": cid, "name": cname, "state": cstate}
         for s in (db.query(SalesPublisherSurface)
                   .options(selectinload(SalesPublisherSurface.platforms))
                   .filter(SalesPublisherSurface.publisher_id.in_(ids)).all()):
@@ -404,6 +416,7 @@ def list_publishers(status: Optional[str] = None,
                        "contracts": contracts.get(p.id, []),
                        "surfaces": surfaces.get(p.id, {}),
                        "services_supported": supported.get(p.id, 0),
+                       "cabinet": cabinets.get(p.id),
                        "services": sorted(service_list.get(p.id, {}).values(),
                                           key=lambda x: x["name"] or ""),
                        } for p in rows]}

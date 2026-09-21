@@ -11,6 +11,7 @@ import { INTEG_TONE_SOLID as INTEG_TONE, STATUS_TONE, NEUTRAL_TONE, EMPTY_TONE,
 import PublisherSummary from '@/components/publishers/PublisherSummary'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { downloadFile } from '@/lib/download'
+import { cabinetState } from '@/lib/cabinetState'
 
 // Реестр площадок. Собран по экрану «Справочник паблишеров» из дизайн-хендоффа
 // (docs/паблишеры.zip): строка L1 — то, по чему площадку выбирают, не открывая;
@@ -46,6 +47,26 @@ const FlagCell = ({ row }) => (
     })}
   </span>
 )
+
+// Кабинет площадки — цветом, а не текстом: колонка узкая, а вопрос к ней один —
+// «доступ у них уже есть или ещё нет». Имя кабинета уходит в подсказку.
+//
+// Цвет и подпись — из общего словаря lib/cabinetState: та же карта красит метку на
+// экране кабинетов. Локальная копия здесь прожила полдня и успела разойтись с ним
+// по двум состояниям из трёх.
+const CabinetDot = ({ row }) => {
+  const cab = row.cabinet
+  if (!cab) {
+    return <span title="Не привязана ни к какому кабинету"
+      style={{ color: 'var(--text-faint)', fontSize: 13 }}>—</span>
+  }
+  const { dot: color, hint: what } = cabinetState(cab.state)
+  return (
+    <span title={`${cab.name} — ${what}`}
+      style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
+        background: color, boxShadow: '0 0 0 3px var(--bg-card)' }} />
+  )
+}
 
 // Метки поверхностей строки: WEB, а у приложения — Android и iOS отдельными метками,
 // потому что подключаются они врозь.
@@ -352,7 +373,7 @@ export default function Publishers() {
   }, [fServices.join(',')])
 
   const dash = <span style={{ color: 'var(--text-faint)' }}>—</span>
-  const GRID = 'minmax(150px,1.1fr) 70px 120px minmax(96px,0.8fr) 104px 58px minmax(190px,1.3fr) 58px 66px 84px minmax(150px,1fr) 58px 38px'
+  const GRID = 'minmax(150px,1.1fr) 70px 120px 62px minmax(96px,0.8fr) 104px 58px minmax(190px,1.3fr) 58px 66px 84px minmax(150px,1fr) 58px 38px'
   const shown = filtered.slice(0, limit)
 
   return (
@@ -476,10 +497,10 @@ export default function Publishers() {
 
           {!loading && (
             <div style={{ overflowX: 'auto', maxWidth: '100%', margin: '4px -4px 0' }}>
-              <div style={{ minWidth: 1720 }}>
+              <div style={{ minWidth: 1782 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12,
                   borderBottom: '1px solid var(--border-card)' }}>
-                  {headCell('Площадка')}{headCell('Время')}{headCell('Статус')}{headCell('Сеть')}{headCell('Поверхности')}
+                  {headCell('Площадка')}{headCell('Время')}{headCell('Статус')}{headCell('Кабинет')}{headCell('Сеть')}{headCell('Поверхности')}
                   {headCell('Услуг', true)}{headCell('Подключенные услуги')}{headCell('CPM', true)}{headCell('Отметки')}{headCell('Эксклюзив')}
                   {headCell('Договор · юрлицо')}{headCell('Связь')}<div />
                 </div>
@@ -523,6 +544,8 @@ export default function Publishers() {
                           <Pin text={p.status} tone={[stBg, stFg]} title="Статус работы — нажмите, чтобы изменить"
                             onClick={mayEdit ? (e => openPin('status', p, e)) : undefined} />
                         </div>
+
+                        <div style={cell}><CabinetDot row={p} /></div>
 
                         {/* Сеть правится пином прямо в строке: значений мало, они
                             повторяются, и уходить за этим в карточку незачем. */}
