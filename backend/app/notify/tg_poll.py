@@ -242,6 +242,12 @@ HANDLERS: Dict[str, Callable[[Session, dict], None]] = {
 def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # ТОКЕН ЛЕЖИТ В АДРЕСЕ ЗАПРОСА, а httpx на уровне INFO печатает адрес целиком —
+    # и наш же вывод крона отправил бы его в файл на диске. Поймано 21.09.2026 на
+    # первом боевом запуске: в логах ноль, но следующий прогон записал бы.
+    # Свои сообщения (`finance.tg_poll`) адресов не содержат — они остаются.
+    for noisy in ("httpx", "httpcore", "urllib3"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     ap = argparse.ArgumentParser(description="Опрос Телеграма (вместо вебхука)")
     # БЕЗ АРГУМЕНТА ОБХОДИМ ВСЕ КОНТУРЫ. Одна строка крона на оба бота: вторая строка
     # была бы вторым местом, где помнят список контуров, и новый бот однажды остался

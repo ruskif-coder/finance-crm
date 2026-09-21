@@ -365,3 +365,24 @@ class _FakeSession:
 def test_unknown_contour_is_refused(monkeypatch):
     monkeypatch.setattr(tg_poll, 'SessionLocal', lambda: _FakeSession())
     assert tg_poll.main(['--contour', 'нетакого']) == 2
+
+
+def test_token_cannot_reach_the_log_through_httpx(monkeypatch, capsys):
+    """Токен лежит в адресе запроса, а httpx на уровне INFO печатает адрес целиком.
+
+    Поймано 21.09.2026 на первом боевом запуске: вывод разового прогона показал
+    `api.telegram.org/bot<ТОКЕН>/sendMessage`. В файлы тогда не попало, но следующий
+    прогон крона записал бы. Прибор на то, чтобы шумные логгеры не расшумелись снова.
+    """
+    import logging
+    for noisy in ('httpx', 'httpcore', 'urllib3'):
+        logging.getLogger(noisy).setLevel(logging.NOTSET)
+
+    monkeypatch.setattr(tg_poll, 'SessionLocal', lambda: _FakeSession())
+    monkeypatch.setattr(tg_poll, 'poll_once', lambda db, c, h: 0)
+    tg_poll.main([])
+
+    for noisy in ('httpx', 'httpcore', 'urllib3'):
+        lvl = logging.getLogger(noisy).level
+        assert lvl >= logging.WARNING, (
+            f'логгер {noisy} снова печатает адреса запросов — токен уедет в лог крона')
