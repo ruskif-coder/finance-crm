@@ -241,7 +241,7 @@ def sync_contracts(db: Session) -> dict:
         rows[kind] = [build(i) for i in items if i.get('id')]
 
     stat = importer.upsert_rows(db, initial=rows['initial'], final=rows['final'],
-                                outer=rows['outer'])
+                                outer=rows['outer'], env=env)
     # Контур ставим ТОЛЬКО тем записям, которые эта выгрузка и принесла. Идентификаторы
     # у нас на руках — они пришли ответом ОРД, второй раз их искать не надо.
     _stamp_env(db, env,

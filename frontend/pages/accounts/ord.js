@@ -47,11 +47,37 @@ const plural = (n) => {
 
 const TABS = [
   { key: 'initial', label: 'Изначальные договоры' },
+  { key: 'finals', label: 'Доходные в ОРД' },
   { key: 'contracts', label: 'Наши договоры в ОРД' },
   { key: 'pending', label: 'Зависшие отправки' },
 ]
 
 // Человеческие имена видов отправки. Ключ приходит с сервера как есть.
+/* Идентификатор ОРД: 24 знака, читать их глазами незачем, а копировать приходится —
+   его вбивают в кабинет, когда сверяют запись. Поэтому короткий хвост на экране,
+   полный в подсказке и копирование по клику. Контур рядом, когда он известен: демо и
+   прод выдают РАЗНЫЕ идентификаторы одному договору, и без метки демовский неотличим
+   от боевого. */
+function OrdId({ value, env }) {
+  const [hit, setHit] = useState(false)
+  if (!value) return <span style={{ color: 'var(--text-faint)' }}>—</span>
+  const copy = () => {
+    try { navigator.clipboard.writeText(value); setHit(true); setTimeout(() => setHit(false), 1200) } catch (e) {}
+  }
+  return (
+    <span title={value} onClick={copy}
+      style={{ fontFamily: MONO, fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap',
+        color: hit ? 'var(--accent)' : 'var(--text-muted)' }}>
+      {hit ? 'скопирован' : `…${String(value).slice(-8)}`}
+      {env === 'demo' && (
+        <span title="Идентификатор выдан демо-контуром — в ЕРИР такой записи нет"
+          style={{ marginLeft: 5, padding: '0 5px', borderRadius: 6, fontSize: 10,
+            background: 'var(--accent-tint)', color: 'var(--accent)' }}>демо</span>
+      )}
+    </span>
+  )
+}
+
 const KIND_LABEL = {
   contract: 'договор', creative: 'креатив', invoice: 'акт',
   platform: 'площадка', client: 'юрлицо',
@@ -78,6 +104,17 @@ export default function OrdDirectory() {
   const [report, setReport] = useState(null)     // {clients, contracts} — отчёт последнего прогона
   // Чистка зеркала перед сменой контура: отбор по источнику и выбор строк.
   const [src, setSrc] = useState('')             // '' — все
+  /* Доходные кабинета ОРД. `finState` — что показываем: на разбор / сошедшиеся / всё.
+     `finTodo` считает сервер по всему зеркалу, а не по показанным строкам: число в
+     ярлыке обязано быть про работу целиком, иначе фильтр «сошедшиеся» обнулял бы его
+     и выглядело бы это как «разбирать нечего». */
+  const [finState, setFinState] = useState('todo')
+  const [finTodo, setFinTodo] = useState(0)
+  const [linking, setLinking] = useState(null)   // строка зеркала, которую привязываем
+  const [linkQ, setLinkQ] = useState('')
+  const [ours, setOurs] = useState([])           // наш реестр договоров для выбора
+  const [defer, setDefer] = useState(null)       // строка, которую откладываем
+  const [deferNote, setDeferNote] = useState('')
   const [picked, setPicked] = useState(() => new Set())
   const [dropMsg, setDropMsg] = useState(null)
 
@@ -136,6 +173,11 @@ export default function OrdDirectory() {
     setErr('')
     if (tab === 'pending') { await loadStuck(); return }
     try {
+      if (tab === 'finals') {
+        const r = await api.get('/ord/finals', { ...auth(), params: { state: finState } })
+        setRows(r.data.items || []); setFinTodo(r.data.todo || 0)
+        return
+      }
       const url = tab === 'initial' ? '/ord/initial' : '/ord/contracts'
       const params = {}
       if (tab === 'initial' && q) params.q = q
@@ -144,7 +186,45 @@ export default function OrdDirectory() {
       setRows(r.data)
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось загрузить') }
   }
-  useEffect(() => { load() }, [tab])
+  useEffect(() => { load() }, [tab, finState])
+
+  /* Число на ярлыке нужно ДО того, как вкладку открыли: «есть что разбирать» — это
+     сообщение, а не содержимое вкладки. Тот же довод, что у зависших отправок. */
+  useEffect(() => {
+    api.get('/ord/finals', { ...auth(), params: { state: 'todo' } })
+      .then(r => setFinTodo(r.data.todo || 0)).catch(() => {})
+  }, [])
+
+  // Наш реестр договоров для ручной привязки. 176 строк — тянем один раз и фильтруем
+  // на месте: отдельная ручка поиска здесь была бы третьим способом прочитать реестр.
+  const openLink = async (row) => {
+    setLinking(row); setLinkQ(''); setErr('')
+    if (ours.length) return
+    try {
+      const r = await api.get('/contracts/registry', auth())
+      setOurs(r.data.items || [])
+    } catch (e) { setErr('Не удалось загрузить реестр договоров') }
+  }
+
+  const doLink = async (row, contractId) => {
+    try {
+      await api.post(`/ord/finals/${row.id}/link`, { contract_id: contractId }, auth())
+      setLinking(null); load()
+    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось привязать') }
+  }
+
+  const doDefer = async () => {
+    try {
+      await api.post(`/ord/finals/${defer.id}/defer`, { note: deferNote.trim() }, auth())
+      setDefer(null); setDeferNote(''); load()
+    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось отложить') }
+  }
+
+  const doReopen = async (row) => {
+    try {
+      await api.post(`/ord/finals/${row.id}/reopen`, {}, auth()); load()
+    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось вернуть на разбор') }
+  }
 
   /* Закрыть зависшую попытку СО СЛОВ человека, сходившего в кабинет.
      Два исхода несимметричны, и это не наша выдумка, а правило сервера:
@@ -219,6 +299,14 @@ export default function OrdDirectory() {
               {t.label}
               {/* Число рядом с ярлыком — само сообщение. Пока зависших нет, значка нет
                   тоже: пустая «0» приучает не смотреть. */}
+              {t.key === 'finals' && finTodo > 0 && (
+                <span title="Доходных договоров в ОРД, которых нет у нас"
+                  style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 7,
+                    background: 'var(--warning-tint)', color: 'var(--danger)',
+                    fontSize: 11, fontWeight: 700 }}>
+                  {finTodo}
+                </span>
+              )}
               {t.key === 'pending' && stuck.length > 0 && (
                 <span style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 7,
                   background: 'var(--danger)', color: 'var(--on-accent)', fontSize: 11, fontWeight: 700 }}>
@@ -235,6 +323,15 @@ export default function OrdDirectory() {
               )}
             </button>
           ))}
+          {tab === 'finals' && (
+            <select value={finState} onChange={e => setFinState(e.target.value)}
+              title="Что показывать из зеркала доходных договоров кабинета"
+              style={{ ...inp, width: 230, marginLeft: 8 }}>
+              <option value="todo">на разбор: нет у нас</option>
+              <option value="matched">сошлись с нашим реестром</option>
+              <option value="all">все доходные кабинета</option>
+            </select>
+          )}
           {tab === 'initial' && (
             <select value={src} onChange={e => { setSrc(e.target.value); setPicked(new Set()) }}
               title="Откуда строка: файл выгрузки, синк с демо или с боевого кабинета"
@@ -460,27 +557,45 @@ export default function OrdDirectory() {
                 </tbody>
               </table>
             ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
               <thead>
                 {tab === 'initial' ? (
                   <tr>
                     {mayEdit && (
-                      <th style={{ ...th, width: 30 }}>
+                      <th style={{ ...th, width: 34 }}>
                         <input type="checkbox"
                           checked={rows.length > 0 && picked.size === rows.length}
                           onChange={e => setPicked(e.target.checked ? new Set(rows.map(r => r.id)) : new Set())} />
                       </th>
                     )}
-                    <th style={th}>Рекламодатель</th><th style={th}>Исполнитель</th>
-                    <th style={th}>Номер</th><th style={th}>Дата</th>
-                    <th style={th}>Вид</th><th style={th}>Статус</th>
-                    <th style={th}>Источник</th>
+                    <th style={{ ...th, width: '22%' }}>Рекламодатель</th>
+                    <th style={{ ...th, width: '16%' }}>Исполнитель</th>
+                    <th style={{ ...th, width: 132 }}>Номер</th>
+                    <th style={{ ...th, width: 92 }}>Дата</th>
+                    <th style={{ ...th, width: '18%' }}>Вид</th>
+                    <th style={{ ...th, width: 126 }}>Статус</th>
+                    <th style={{ ...th, width: 104 }}>ID в ОРД</th>
+                    <th style={{ ...th, width: 118 }}>Источник</th>
+                  </tr>
+                ) : tab === 'finals' ? (
+                  <tr>
+                    <th style={{ ...th, width: '26%' }}>Заказчик</th>
+                    <th style={{ ...th, width: 108 }}>ИНН</th>
+                    <th style={{ ...th, width: 150 }}>Номер в ОРД</th>
+                    <th style={{ ...th, width: 92 }}>Дата</th>
+                    <th style={{ ...th, width: 126 }}>Статус</th>
+                    <th style={{ ...th, width: 104 }}>ID в ОРД</th>
+                    <th style={{ ...th, width: '20%' }}>Наш договор</th>
+                    <th style={{ ...th, width: 196 }}></th>
                   </tr>
                 ) : (
                   <tr>
-                    <th style={th}>Номер</th><th style={th}>Дата</th>
-                    <th style={th}>Контрагент</th><th style={th}>Вид</th>
-                    <th style={th}>Статус в ОРД</th>
+                    <th style={{ ...th, width: 150 }}>Номер</th>
+                    <th style={{ ...th, width: 92 }}>Дата</th>
+                    <th style={{ ...th, width: '40%' }}>Контрагент</th>
+                    <th style={{ ...th, width: 120 }}>Вид</th>
+                    <th style={{ ...th, width: 150 }}>Статус в ОРД</th>
+                    <th style={{ ...th, width: 104 }}>ID в ОРД</th>
                   </tr>
                 )}
               </thead>
@@ -489,7 +604,11 @@ export default function OrdDirectory() {
                   <tr><td colSpan={6} style={{ ...td, color: 'var(--text-muted)' }}>
                     {tab === 'initial'
                       ? 'Пусто. Загрузите выгрузку изначальных договоров из кабинета ОРД.'
-                      : 'Ни у одного договора нет отметки ОРД.'}
+                      : tab === 'finals'
+                        ? (finState === 'todo'
+                          ? 'Разбирать нечего: все доходные договоры кабинета нашлись в нашем реестре.'
+                          : 'Зеркало доходных пусто. Загрузите выгрузку из кабинета ОРД.')
+                        : 'Ни у одного договора нет отметки ОРД.'}
                   </td></tr>
                 )}
                 {rows.map(r => tab === 'initial' ? (
@@ -504,15 +623,20 @@ export default function OrdDirectory() {
                           })} />
                       </td>
                     )}
-                    <td style={{ ...td, fontWeight: 600 }}>{r.advertiser?.name || '—'}</td>
-                    <td style={td}>{r.contractor?.name || '—'}</td>
+                    <td style={{ ...td, fontWeight: 600, overflow: 'hidden',
+                      textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      title={r.advertiser?.name || ''}>{r.advertiser?.name || '—'}</td>
+                    <td style={{ ...td, overflow: 'hidden', textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap' }}
+                      title={r.contractor?.name || ''}>{r.contractor?.name || '—'}</td>
                     <td style={{ ...td, fontFamily: MONO }}>{r.number || 'б/н'}</td>
                     <td style={{ ...td, fontFamily: MONO }}>{r.date ? fmtDateFull(r.date) : '—'}</td>
                     <td style={td}>{r.subject_type || '—'}</td>
                     <td style={td}>{r.status || '—'}</td>
+                    <td style={td}><OrdId value={r.ord_id} /></td>
                     {/* Источник и число связей рядом: связь — то, из-за чего строку нельзя
                         снести молча, и видно это должно быть ДО выбора. */}
-                    <td style={{ ...td, fontFamily: MONO, fontSize: 11.5 }}>
+                    <td style={{ ...td, fontFamily: MONO, fontSize: 11.5, whiteSpace: 'nowrap' }}>
                       <span style={{
                         padding: '1px 7px', borderRadius: 7, fontWeight: 700,
                         background: r.source === 'prod' ? 'var(--danger-tint)'
@@ -521,9 +645,45 @@ export default function OrdDirectory() {
                           : r.source === 'demo' ? 'var(--accent)' : 'var(--text-muted)',
                       }}>{r.source === 'prod' ? 'ПРОД' : r.source}</span>
                       {r.links > 0 && (
-                        <span title="Связан с нашим доходным договором — на нём держится сборка"
-                          style={{ marginLeft: 6, color: 'var(--text-faint)' }}>связей {r.links}</span>
+                        <span title={`Связей с нашими доходными договорами: ${r.links}. На них держится сборка`}
+                          style={{ marginLeft: 6, color: 'var(--text-faint)' }}>·{r.links}</span>
                       )}
+                    </td>
+                  </tr>
+                ) : tab === 'finals' ? (
+                  <tr key={r.id}>
+                    <td style={{ ...td, fontWeight: 600, overflow: 'hidden',
+                      textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      title={r.client_name || ''}>{r.client_name || '—'}</td>
+                    <td style={{ ...td, fontFamily: MONO }}>{r.client_inn || '—'}</td>
+                    <td style={{ ...td, fontFamily: MONO }}>{r.number || 'б/н'}</td>
+                    <td style={{ ...td, fontFamily: MONO }}>{r.date ? fmtDateFull(r.date) : '—'}</td>
+                    <td style={td}>{r.status || '—'}</td>
+                    <td style={td}><OrdId value={r.ord_id} env={r.env} /></td>
+                    <td style={td}>
+                      {r.contract ? (
+                        <span style={{ fontFamily: MONO, fontSize: 12 }}>
+                          {r.contract.number || 'б/н'}
+                        </span>
+                      ) : r.review_state === 'deferred' ? (
+                        <span title={r.review_note || ''} style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                          отложен: {(r.review_note || '').slice(0, 40)}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--danger)', fontSize: 12 }}>нет у нас</span>
+                      )}
+                    </td>
+                    <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {!r.contract && mayEdit && (r.review_state === 'deferred' ? (
+                        <button style={btnSm(false)} onClick={() => doReopen(r)}>вернуть на разбор</button>
+                      ) : (
+                        <>
+                          <button style={btnSm(false)} onClick={() => openLink(r)}>привязать</button>
+                          <span style={{ marginLeft: 6 }}>
+                            <button style={btnSm(false)} onClick={() => { setDefer(r); setDeferNote('') }}>отложить</button>
+                          </span>
+                        </>
+                      ))}
                     </td>
                   </tr>
                 ) : (
@@ -533,6 +693,7 @@ export default function OrdDirectory() {
                     <td style={td}>{r.counterparty || '—'}</td>
                     <td style={td}>{r.ord_kind === 'outer' ? 'расходный' : 'доходный'}</td>
                     <td style={td}>{r.ord_status || '—'}</td>
+                    <td style={td}><OrdId value={r.ord_contract_id} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -541,6 +702,71 @@ export default function OrdDirectory() {
           </div>
         </div>
       </div>
+
+      {/* Привязка руками: доходный в кабинете есть, а совпадения по номеру не нашлось.
+          Отметка ложится НА ДОГОВОР — туда же, куда её пишет загрузка. */}
+      {!!linking && (
+        <Modal width={640} title="Привязать доходный договор ОРД к нашему"
+          summary={`${linking.client_name || 'без заказчика'} · № ${linking.number || 'б/н'} · ИНН ${linking.client_inn || '—'}`}
+          onClose={() => setLinking(null)}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <input autoFocus value={linkQ} onChange={e => setLinkQ(e.target.value)}
+              placeholder="номер договора или контрагент" style={{ ...inp, width: '100%' }} />
+            <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid var(--border-card)',
+              borderRadius: 'var(--radius-card-sm)' }}>
+              {ours
+                .filter(c => !c.ord_contract_id)
+                .filter(c => {
+                  const t = linkQ.trim().toLowerCase()
+                  if (!t) return c.inn === linking.client_inn
+                  return `${c.contract_number || ''} ${c.counterparty_name || ''} ${c.inn || ''}`
+                    .toLowerCase().includes(t)
+                })
+                .slice(0, 60)
+                .map(c => (
+                  <div key={c.id} onClick={() => doLink(linking, c.id)}
+                    style={{ padding: '7px 10px', cursor: 'pointer', fontSize: 12.5,
+                      borderBottom: '1px solid var(--border-row)', display: 'flex', gap: 10 }}>
+                    <span style={{ fontFamily: MONO }}>{c.contract_number || 'б/н'}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{c.counterparty_name || '—'}</span>
+                    {c.inn === linking.client_inn && (
+                      <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--accent)' }}>
+                        ИНН совпадает
+                      </span>
+                    )}
+                  </div>
+                ))}
+            </div>
+            {/* Пустой поиск показывает договоры ТОГО ЖЕ ИНН — это единственная подсказка,
+                которую можно дать не угадывая: номер уже не совпал, иначе строки бы
+                здесь не было. */}
+            <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+              Без поиска показаны договоры контрагента с тем же ИНН. Договоры, у которых
+              отметка ОРД уже стоит, в списке не показываются.
+            </span>
+          </div>
+        </Modal>
+      )}
+
+      {/* Откладывание — с обязательным объяснением: «отложено» без причины через месяц
+          неотличимо от «забыли», и разбирать придётся заново. */}
+      {!!defer && (
+        <Modal width={520} title="Отложить разбор"
+          summary={`${defer.client_name || 'без заказчика'} · № ${defer.number || 'б/н'}`}
+          onClose={() => { setDefer(null); setDeferNote('') }}
+          footer={(
+            <span style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button style={btn(false)} onClick={() => { setDefer(null); setDeferNote('') }}>Отмена</button>
+              <button style={{ ...btn(true), opacity: deferNote.trim() ? 1 : 0.5,
+                cursor: deferNote.trim() ? 'pointer' : 'not-allowed' }}
+                disabled={!deferNote.trim()} onClick={doDefer}>Отложить</button>
+            </span>
+          )}>
+          <textarea autoFocus value={deferNote} onChange={e => setDeferNote(e.target.value)}
+            rows={3} placeholder="например: номер в ОРД ошибочный, попросили исправить"
+            style={{ ...inp, width: '100%', resize: 'vertical' }} />
+        </Modal>
+      )}
 
       {/* Идентификатор набирает человек, глядя в чужой кабинет, поэтому окно, а не
           `prompt`: нужно место для объяснения, чем этот ответ отличается от «записи

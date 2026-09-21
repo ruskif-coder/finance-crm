@@ -171,6 +171,7 @@ export default function Contracts() {
   }, [router.query.q])
   const [formatFilter, setFormatFilter] = useState('')
   const [prolongFilter, setProlongFilter] = useState('')
+  const [ordFilter, setOrdFilter] = useState('')   // '' | 'yes' | 'no' — отметка ОРД
   const [sortCol, setSortCol] = useState('contract_date')
   const [sortDir, setSortDir] = useState('desc')
   const [mobileLimit, setMobileLimit] = useState(50)
@@ -417,6 +418,10 @@ export default function Contracts() {
 
   const filtered = items
     .filter(c => {
+      // Отметка ОРД: договор сопоставлен с записью кабинета. Ставит её загрузка
+      // выгрузки и ручная привязка на экране ОРД — здесь только видно.
+      if (ordFilter === 'yes' && !c.ord_contract_id) return false
+      if (ordFilter === 'no' && c.ord_contract_id) return false
       if (formatFilter && c.cooperation_format !== formatFilter) return false
       if (prolongFilter && c.prolongation !== prolongFilter) return false
       if (search) {
@@ -493,8 +498,14 @@ export default function Contracts() {
             <option value="">Все пролонгации</option>
             {prolongOptions.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
+          <select style={inp} value={ordFilter} onChange={e => setOrdFilter(e.target.value)}
+            title="Отметка ОРД — договор сопоставлен с записью кабинета">
+            <option value="">ОРД: все</option>
+            <option value="yes">с отметкой ОРД</option>
+            <option value="no">без отметки</option>
+          </select>
           <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            <IconBtn title="Сбросить фильтры" onClick={() => { setSearch(''); setFormatFilter(''); setProlongFilter('') }}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v4h-4" /></svg></IconBtn>
+            <IconBtn title="Сбросить фильтры" onClick={() => { setSearch(''); setFormatFilter(''); setProlongFilter(''); setOrdFilter('') }}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v4h-4" /></svg></IconBtn>
             <IconBtn title="Экспорт в Excel" onClick={downloadExport}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg></IconBtn>
             {mayEdit && <IconBtn title="Импорт из Excel" onClick={() => importRef.current?.click()}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 21V9" /><path d="M7 13l5-5 5 5" /><path d="M4 4h16" /></svg></IconBtn>}
             {mayEdit && (
@@ -701,6 +712,7 @@ export default function Contracts() {
             ['end', '104px', 'Окончание', 'end_date_text'], ['prol', '118px', 'Пролонгация', 'prolongation'],
             ['days', '52px', 'Дни', 'payment_term_days'], ['cond', '122px', 'Условие', 'payment_term_condition'],
             ['annex', '86px', 'ДС с', 'annex_start_no'],
+            ['ord', '96px', 'ОРД', 'ord_contract_id'],
             ['act', '92px', ''],
           ]
           const CRIGHT = new Set(['days', 'annex'])
@@ -779,6 +791,24 @@ export default function Contracts() {
                           {c.annex_start_no != null ? c.annex_start_no : dash}
                         </span>
                       )}
+                    </div>
+                    {/* Отметка ОРД. Ставится загрузкой выгрузки и ручной привязкой на
+                        экране ОРД — здесь ТОЛЬКО ЧИТАЕТСЯ. Контур обязателен рядом:
+                        демо и прод выдают РАЗНЫЕ идентификаторы одному договору, и
+                        демовский снаружи неотличим от боевого, а сдавать отчётность
+                        можно только по боевому. */}
+                    <div style={{ padding: '0 8px' }}>
+                      {c.ord_contract_id ? (
+                        <span title={`${c.ord_contract_id}${c.ord_status ? ' · ' + c.ord_status : ''}`}
+                          onClick={() => { try { navigator.clipboard.writeText(c.ord_contract_id) } catch (e) {} }}
+                          style={{ cursor: 'pointer', borderRadius: 8, padding: '3px 8px', fontSize: 11, fontWeight: 700,
+                            whiteSpace: 'nowrap',
+                            background: (c.ord_env || 'prod') === 'demo' ? 'var(--bg-subtle)' : 'var(--accent-tint)',
+                            color: (c.ord_env || 'prod') === 'demo' ? 'var(--text-muted)' : 'var(--accent)' }}>
+                          {c.ord_kind === 'outer' ? 'расходный' : 'доходный'}
+                          {(c.ord_env || 'prod') === 'demo' ? ' · демо' : ''}
+                        </span>
+                      ) : dash}
                     </div>
                     <div style={{ display: 'inline-flex', gap: 2, justifyContent: 'flex-end' }}>
                       {c.document_link && <a href={/^https?:\/\//i.test(c.document_link) ? c.document_link : undefined} target="_blank" rel="noopener noreferrer" title="Ссылка на документ" style={icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg></a>}

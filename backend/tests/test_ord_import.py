@@ -19,7 +19,7 @@ from openpyxl import Workbook                                    # noqa: E402
 from app.database import SessionLocal                            # noqa: E402
 from app.models import Contract, Counterparty                    # noqa: E402
 from app.ord import importer                                     # noqa: E402
-from app.ord.models import OrdInitialContract, OrdInitialFinalLink  # noqa: E402
+from app.ord.models import OrdFinalMirror, OrdInitialContract, OrdInitialFinalLink  # noqa: E402
 
 INITIAL_HEADER = [
     'Id изначального договора', 'Cid изначального договора',
@@ -211,6 +211,12 @@ def _purge_ord_test_rows(db):
         (Contract.contract_number.like(f'{TEST_ORD_PREFIX}%'))
     ).delete(synchronize_session=False)
     db.query(Counterparty).filter(Counterparty.inn.in_(TEST_INNS)).delete(synchronize_session=False)
+    # Зеркало доходных — ещё одно место, куда пишет загрузка с 21.09.2026. Уборка о нём
+    # узнала не сама: четыре тестовые строки успели осесть на стенде, пока фикстура
+    # чистила только зеркало изначальных.
+    db.query(OrdFinalMirror).filter(
+        OrdFinalMirror.ord_id.like(f'{TEST_ORD_PREFIX}%')
+    ).delete(synchronize_session=False)
     db.commit()
 
 
@@ -363,7 +369,10 @@ def test_unmatched_number_is_not_guessed_from_the_only_contract_at_counterparty(
 
     matched_warnings = [w for w in stat['warnings'] if 'CTtest0000000000000002BB' in w]
     assert len(matched_warnings) == 1
-    assert 'не найден в реестре' in matched_warnings[0]
+    # Формулировка изменилась 21.09.2026 вместе с появлением зеркала доходных: та же
+    # фраза стала причиной, которая ХРАНИТСЯ в ord_final_mirror.match_note, а не только
+    # звучит в отчёте. Проверяем смысл — «такого договора у нас нет», — а не буквы.
+    assert 'нет в нашем реестре' in matched_warnings[0]
 
 
 # ── _match_contract(): неоднозначность по номеру — находка ревью C1, 25.08.2026 ─

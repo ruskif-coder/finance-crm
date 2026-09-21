@@ -8,6 +8,7 @@
 украшение: связи нашего рекламодателя с юрлицом ОРД нет по решению владельца, поэтому
 подсказка бывает догадкой, и человек должен видеть какой именно.
 """
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -23,7 +24,9 @@ from app.ord.enums import (ACTION_TYPES, CONTRACT_TYPES, INITIAL_CONTRACT_TYPES,
                            SUBJECT_TYPES, label_by_code)
 from app.launch_prep.models import LaunchPrepCreativeSet
 from app.ord.matching import propose_initial, resolve_final
-from app.ord.models import OrdInitialContract, OrdInitialFinalLink, OrdKktu
+from app.ord.models import (OrdFinalMirror, OrdInitialContract, OrdInitialFinalLink,
+                            OrdKktu)
+from app.ord.registry import ENV_WHEN_UNKNOWN
 from app.permissions import require_permission
 from app.routers.sales_dashboard import _assert_deal_in_scope
 from app.sales.models import SalesAgencyCounterparty, SalesBrand, SalesDeal
@@ -502,6 +505,157 @@ def list_contracts(db: Session = Depends(get_db),
               .filter(Contract.ord_contract_id.isnot(None))
               .order_by(Contract.contract_date.desc().nullslast()).all())
     return [_contract_out(c) for c in rows]
+
+
+# ── Доходные договоры кабинета ОРД ───────────────────────────────────────────
+# Зеркало (`ord_final_mirror`) отвечает на два вопроса сразу, и это ОДИН запрос с разным
+# условием, а не два механизма: что из кабинета сошлось с нашим реестром (и значит несёт
+# отметку ОРД) и чего у нас нет вовсе. Раньше второй ответ существовал только строкой
+# предупреждения в отчёте о загрузке и умирал вместе с ним.
+
+def _final_mirror_out(m: OrdFinalMirror, contract: Optional[Contract]) -> dict:
+    return {
+        'id': m.id, 'ord_id': m.ord_id, 'env': m.ord_env,
+        'number': m.number, 'date': m.date, 'type': label_by_code(CONTRACT_TYPES, m.type),
+        'client_inn': m.client_inn, 'client_name': m.client_name,
+        'status': m.status, 'error_text': m.error_text,
+        'match_note': m.match_note,
+        'review_state': m.review_state, 'review_note': m.review_note,
+        'reviewed_at': m.reviewed_at,
+        # Наш договор — НЕ колонка зеркала: отметка живёт на самом договоре, и вторая
+        # копия того же факта со временем разошлась бы с первой.
+        'contract': _contract_out(contract),
+        'first_seen_at': m.first_seen_at, 'synced_at': m.synced_at,
+    }
+
+
+def _finals_with_contracts(db: Session, rows: List[OrdFinalMirror]) -> List[tuple]:
+    """Сопоставить строки зеркала с нашими договорами одним запросом, не по одному.
+
+    Контур обязателен в ключе: демо и прод выдают РАЗНЫЕ идентификаторы одному и тому же
+    договору, и без него демовская строка нашла бы боевой договор. Пустой контур у
+    нашего договора читается как боевой — то же правило, что в `app/ord/registry.py`.
+    """
+    ids = [m.ord_id for m in rows]
+    ours = {}
+    if ids:
+        for c in db.query(Contract).filter(Contract.ord_contract_id.in_(ids)).all():
+            ours[(c.ord_contract_id, c.ord_env or ENV_WHEN_UNKNOWN)] = c
+    return [(m, ours.get((m.ord_id, m.ord_env))) for m in rows]
+
+
+@router.get("/finals")
+def list_final_mirror(state: str = "all", db: Session = Depends(get_db),
+                      current_user: User = Depends(require_permission("ord", "view"))):
+    """Доходные договоры кабинета ОРД.
+
+    `state`: `all` — всё зеркало; `todo` — только на разбор (не сошлись и человек ещё не
+    решил, что с ними делать); `matched` — сошедшиеся с нашим реестром.
+    """
+    q = db.query(OrdFinalMirror)
+    if state == 'todo':
+        q = q.filter(OrdFinalMirror.match_note.isnot(None),
+                     OrdFinalMirror.review_state == 'new')
+    elif state == 'matched':
+        q = q.filter(OrdFinalMirror.match_note.is_(None))
+    rows = q.order_by(OrdFinalMirror.client_name, OrdFinalMirror.number).all()
+    pairs = _finals_with_contracts(db, rows)
+    total = db.query(OrdFinalMirror).count()
+    todo = (db.query(OrdFinalMirror)
+              .filter(OrdFinalMirror.match_note.isnot(None),
+                      OrdFinalMirror.review_state == 'new').count())
+    return {'items': [_final_mirror_out(m, c) for m, c in pairs],
+            'total': total, 'todo': todo}
+
+
+class FinalLinkIn(BaseModel):
+    contract_id: int
+
+
+@router.post("/finals/{mirror_id}/link")
+def link_final_mirror(mirror_id: int, payload: FinalLinkIn, db: Session = Depends(get_db),
+                      current_user: User = Depends(require_permission("ord", "edit"))):
+    """Привязать доходный из ОРД к нашему договору руками.
+
+    Отметка пишется туда же, куда её пишет загрузка, — на сам договор. Зеркало хранит
+    только решение человека (`review_*`): вторая колонка «наш договор» была бы вторым
+    ответом на один вопрос, и он разошёлся бы с первым.
+    """
+    m = db.query(OrdFinalMirror).filter(OrdFinalMirror.id == mirror_id).first()
+    if m is None:
+        raise HTTPException(status_code=404, detail="Строка зеркала не найдена")
+    c = db.query(Contract).filter(Contract.id == payload.contract_id).first()
+    if c is None:
+        raise HTTPException(status_code=404, detail="Договор не найден")
+    if c.ord_contract_id and c.ord_contract_id != m.ord_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"У договора уже стоит другая отметка ОРД ({c.ord_contract_id}). "
+                   f"Снимите её, если она ошибочна.")
+    taken = (db.query(Contract)
+               .filter(Contract.ord_contract_id == m.ord_id, Contract.id != c.id).first())
+    if taken is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Этот идентификатор ОРД уже стоит на договоре "
+                   f"«{taken.contract_number or taken.id}» ({taken.counterparty_name})")
+    c.ord_contract_id = m.ord_id
+    c.ord_kind = 'final'
+    c.ord_status = m.status
+    c.ord_env = m.ord_env
+    c.ord_synced_at = datetime.utcnow()
+    m.match_note = None
+    m.review_state = 'linked'
+    m.reviewed_by, m.reviewed_at = current_user.id, datetime.utcnow()
+    db.commit()
+    log_action(db, current_user, "ord_link_final", "contract", c.id,
+               f"доходный ОРД {m.ord_id} (№ {m.number or 'б/н'}) привязан вручную")
+    return {'ok': True}
+
+
+class FinalDeferIn(BaseModel):
+    note: str
+
+
+@router.post("/finals/{mirror_id}/defer")
+def defer_final_mirror(mirror_id: int, payload: FinalDeferIn, db: Session = Depends(get_db),
+                       current_user: User = Depends(require_permission("ord", "edit"))):
+    """Отложить строку с объяснением — она уходит из списка на разбор.
+
+    Объяснение обязательно: «отложено» без причины через месяц неотличимо от «забыли»,
+    и разбирать придётся заново.
+    """
+    m = db.query(OrdFinalMirror).filter(OrdFinalMirror.id == mirror_id).first()
+    if m is None:
+        raise HTTPException(status_code=404, detail="Строка зеркала не найдена")
+    note = (payload.note or '').strip()
+    if not note:
+        raise HTTPException(status_code=400,
+                            detail="Напишите, почему откладываем: без причины строка "
+                                   "через месяц неотличима от забытой")
+    m.review_state = 'deferred'
+    m.review_note = note
+    m.reviewed_by, m.reviewed_at = current_user.id, datetime.utcnow()
+    db.commit()
+    log_action(db, current_user, "ord_defer_final", "ord", m.id,
+               f"доходный ОРД {m.ord_id} отложен: {note}")
+    return {'ok': True}
+
+
+@router.post("/finals/{mirror_id}/reopen")
+def reopen_final_mirror(mirror_id: int, db: Session = Depends(get_db),
+                        current_user: User = Depends(require_permission("ord", "edit"))):
+    """Вернуть отложенное в список на разбор."""
+    m = db.query(OrdFinalMirror).filter(OrdFinalMirror.id == mirror_id).first()
+    if m is None:
+        raise HTTPException(status_code=404, detail="Строка зеркала не найдена")
+    m.review_state = 'new'
+    m.review_note = None
+    m.reviewed_by, m.reviewed_at = current_user.id, datetime.utcnow()
+    db.commit()
+    log_action(db, current_user, "ord_reopen_final", "ord", m.id,
+               f"доходный ОРД {m.ord_id} возвращён на разбор")
+    return {'ok': True}
 
 
 def _brand_marking(db: Session, deal) -> Optional[dict]:

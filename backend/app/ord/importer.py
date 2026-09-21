@@ -24,7 +24,8 @@ from sqlalchemy.orm import Session
 
 from app.models import Contract, Counterparty
 from app.ord.enums import ACTION_TYPES, CONTRACT_TYPES, SUBJECT_TYPES, code_by_label
-from app.ord.models import OrdInitialContract, OrdInitialFinalLink
+from app.ord.registry import ENV_WHEN_UNKNOWN
+from app.ord.models import OrdFinalMirror, OrdInitialContract, OrdInitialFinalLink
 
 SHEET_INITIAL = "Изначальные договоры"
 SHEET_FINAL = "Доходные договоры"
@@ -144,6 +145,14 @@ def parse_initial(contents: bytes) -> List[Dict[str, Any]]:
                                          'Регистрационный номер')),
             'contractor_name': _text(r.get('Исполнитель')),
             'final_ord_id': _text(r.get('Id доходного договора')),
+            # Лист изначальных несёт ещё и ДОХОДНОГО — четырьмя колонками. До
+            # 21.09.2026 читался только его идентификатор (ради связи), а номер, ИНН и
+            # имя заказчика пропадали. Из-за этого выгрузка, состоящая из одного этого
+            # листа, не помечала ни одного нашего договора: 41 доходный в файле
+            # владельца от 18.09 и ноль пометок.
+            'final_number': _text(r.get('Номер доходного договора')),
+            'final_client_inn': _inn(r.get('ИНН заказчика')),
+            'final_client_name': _text(r.get('Заказчик')),
             'status': _text(r.get('Статус изначального договора')),
             'status_at': _dt(r.get('Дата статуса изначального договора')),
             'error_text': _text(r.get('Текст ошибки')),
@@ -177,6 +186,33 @@ def parse_final(contents: bytes) -> List[Dict[str, Any]]:
             'warnings': w,
         })
     return out
+
+
+def finals_from_initial(initial_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Доходные, о которых рассказывает лист изначальных договоров.
+
+    Строк на один доходный бывает несколько (у него несколько изначальных) — сводим по
+    идентификатору. Полей здесь меньше, чем на своём листе: дата, тип и статус доходного
+    в этом листе не приходят вовсе. Поэтому строка отсюда НИКОГДА не затирает то, что
+    принёс собственный лист доходных, — см. слияние в `upsert_rows`.
+    """
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for r in initial_rows:
+        ord_id = r.get('final_ord_id')
+        if not ord_id or ord_id in by_id:
+            continue
+        by_id[ord_id] = {
+            'ord_id': ord_id, 'ord_cid': None,
+            'number': r.get('final_number'),
+            'date': None, 'expiration_date': None, 'type': None,
+            'client_inn': r.get('final_client_inn'),
+            'client_name': r.get('final_client_name'),
+            'parent_number': None, 'is_agent_acting_for_publisher': None,
+            'status': None, 'status_at': None, 'error_text': None,
+            'partial': True,     # пришёл из чужого листа: не затирает полные данные
+            'warnings': [],
+        }
+    return list(by_id.values())
 
 
 def parse_outer(contents: bytes) -> List[Dict[str, Any]]:
@@ -223,7 +259,8 @@ def _fold(s):
 MatchResult = namedtuple('MatchResult', 'contract warning')
 
 
-def _match_contract(db: Session, number: Optional[str], inn: Optional[str]) -> MatchResult:
+def _match_contract(db: Session, number: Optional[str], inn: Optional[str],
+                    env: str = ENV_WHEN_UNKNOWN) -> MatchResult:
     """Найти наш договор для пометки среди ещё не помеченных — по номеру, а
     неоднозначность разрешать по ИНН из этой же строки, не угадывать.
 
@@ -260,8 +297,19 @@ def _match_contract(db: Session, number: Optional[str], inn: Optional[str]) -> M
     folded = _fold(number)
     if not folded:
         return MatchResult(None, None)
-    candidates = [c for c in db.query(Contract).filter(Contract.ord_contract_id.is_(None)).all()
-                 if c.contract_number and _fold(c.contract_number) == folded]
+    # Кандидат — договор без отметки ИЛИ с отметкой ЧУЖОГО контура, когда пришла боевая
+    # выгрузка. Асимметрия та же, что в `app/ord/registry.py`: прод вытесняет песочницу,
+    # песочница прод — никогда. Без этого условия боевая загрузка на проде объявила бы
+    # «нет у нас» 34 договора из 35, у которых уже стоял демовский идентификатор:
+    # демовский и боевой id одного договора выглядят как разные записи, а искать наш
+    # договор было негде — все помеченные из выборки исключались (замер 21.09.2026).
+    pool = db.query(Contract).filter(Contract.ord_contract_id.is_(None)).all()
+    if env == 'prod':
+        pool += (db.query(Contract)
+                   .filter(Contract.ord_contract_id.isnot(None),
+                           Contract.ord_env == 'demo').all())
+    candidates = [c for c in pool
+                  if c.contract_number and _fold(c.contract_number) == folded]
     if not candidates:
         return MatchResult(None, None)
     if len(candidates) == 1:
@@ -343,7 +391,8 @@ def upsert(db: Session, *, initial: Optional[bytes] = None,
 
 def upsert_rows(db: Session, *, initial: Optional[List[Dict[str, Any]]] = None,
                 final: Optional[List[Dict[str, Any]]] = None,
-                outer: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                outer: Optional[List[Dict[str, Any]]] = None,
+                env: Optional[str] = None) -> Dict[str, Any]:
     """Записать зеркало по уже разобранным строкам. Повторный прогон обновляет, а не плодит.
 
     Единственный писатель зеркала. Источников у него два — файлы выгрузки и API, — и
@@ -356,13 +405,21 @@ def upsert_rows(db: Session, *, initial: Optional[List[Dict[str, Any]]] = None,
     второго прогона.
     """
     stat: Dict[str, Any] = {'clients': 0, 'contracts': 0, 'initial': 0, 'links': 0,
+                            'final_seen': 0, 'final_unmatched': 0,
                             'read_initial': 0, 'read_final': 0, 'read_outer': 0,
                             'warnings': []}
     now = datetime.utcnow()
 
-    final_rows = final or []
     outer_rows = outer or []
     initial_rows = initial or []
+    env = env or ENV_WHEN_UNKNOWN
+
+    # Доходные приходят из ДВУХ мест: своего листа (полные) и листа изначальных
+    # (номер + заказчик, без даты и статуса). Неполная строка не затирает полную —
+    # иначе загрузка одного листа изначальных стёрла бы статусы, пришедшие раньше.
+    final_rows = list(final or [])
+    have = {r['ord_id'] for r in final_rows}
+    final_rows += [r for r in finals_from_initial(initial_rows) if r['ord_id'] not in have]
 
     # ── 1. Юрлица: контрагент встретился в выгрузке ОРД ────────────────────────
     # Counterparty.ord_client_id не пишем — в выгрузке кабинета настоящего id
@@ -405,25 +462,57 @@ def upsert_rows(db: Session, *, initial: Optional[List[Dict[str, Any]]] = None,
         ord_id = r['ord_id']
         row = db.query(Contract).filter(Contract.ord_contract_id == ord_id).first()
         if row is None:
-            match = _match_contract(db, r['number'], r.get(inn_key))
+            match = _match_contract(db, r['number'], r.get(inn_key), env)
             row = match.contract
             if row is None:
-                if match.warning:
-                    stat['warnings'].append(f"{label} {r['ord_id']}: {match.warning}")
-                else:
-                    stat['warnings'].append(
-                        f"{label} {r['ord_id']} (№ {r['number']!r}, "
-                        f"{r[name_key]!r}): договор не найден в реестре — не заведён")
-                return
+                note = match.warning or (
+                    f"№ «{r['number'] or 'б/н'}» ({r[name_key] or 'без заказчика'}) — "
+                    f"такого договора нет в нашем реестре")
+                stat['warnings'].append(f"{label} {r['ord_id']}: {note}")
+                return note
             row.ord_contract_id = ord_id
+            # Контур ставим здесь же: иначе боевой идентификатор лёг бы на строку, всё
+            # ещё помеченную как демовая, и следующий прогон счёл бы её чужой.
+            row.ord_env = env
             stat['contracts'] += 1
         row.ord_kind = kind
         row.ord_status = r['status']
         row.ord_synced_at = now
         db.flush()
+        return None
+
+    def _mirror_final(r: Dict[str, Any], note: Optional[str]) -> None:
+        """Записать доходный в зеркало. Причина несовпадения хранится строкой, а не
+        живёт предупреждением в отчёте: по отчёту разбирать нельзя, он умирает вместе
+        с загрузкой, а список «есть в ОРД, нет у нас» нужен каждый день.
+
+        Разбор человека (`review_*`) загрузка НЕ трогает вовсе: отложенное с
+        объяснением не должно всплывать заново после каждой выгрузки. Список «на
+        разбор» = `match_note` заполнен И `review_state = 'new'`; сошедшийся уходит из
+        него сам, потому что причина обнуляется."""
+        row = (db.query(OrdFinalMirror)
+                 .filter(OrdFinalMirror.ord_id == r['ord_id'],
+                         OrdFinalMirror.ord_env == env).first())
+        if row is None:
+            row = OrdFinalMirror(ord_id=r['ord_id'], ord_env=env, first_seen_at=now,
+                                 review_state='new')
+            db.add(row)
+        for f in ('ord_cid', 'number', 'date', 'expiration_date', 'type',
+                  'client_inn', 'client_name', 'status', 'status_at', 'error_text'):
+            v = r.get(f)
+            # Неполная строка (из листа изначальных) только дозаполняет; своего листа
+            # пустое значение — это факт, и оно перезаписывает.
+            if v is not None or not r.get('partial'):
+                setattr(row, f, v)
+        row.match_note = note
+        row.synced_at = now
+        stat['final_seen'] += 1
+        if note is not None:
+            stat['final_unmatched'] += 1
+        db.flush()
 
     for r in final_rows:
-        _tag_contract(r, 'final', 'client_name', 'client_inn')
+        _mirror_final(r, _tag_contract(r, 'final', 'client_name', 'client_inn'))
     for r in outer_rows:
         _tag_contract(r, 'outer', 'contractor_name', 'contractor_inn')
 

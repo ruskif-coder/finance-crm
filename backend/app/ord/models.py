@@ -50,6 +50,48 @@ class OrdInitialContract(Base):
                                cascade="all, delete-orphan")
 
 
+class OrdFinalMirror(Base):
+    """Доходный договор кабинета ОРД — как он там записан.
+
+    Миграция `2026-09-21_ord_final_mirror.sql`. Имя не `ord_final_contracts`: то занято
+    замороженной таблицей первой редакции схемы, см. комментарий в миграции.
+
+    Зачем зеркало, если сопоставление было и раньше: раньше жил только его РЕЗУЛЬТАТ у
+    совпавших (отметка на `contracts.ord_*`), а несовпавший превращался в строку
+    предупреждения в отчёте о загрузке и умирал вместе с ним. Замер 21.09.2026 на
+    выгрузке владельца: 41 доходный, 34 совпали, 7 нет — и все семеро по существующим
+    контрагентам, то есть разбирать надо договор, а не юрлицо.
+
+    **Ссылки на наш договор здесь нет намеренно.** Она уже есть с другой стороны —
+    `contracts.ord_contract_id`. Вторая колонка с тем же смыслом это два писателя одного
+    факта; «сошёлся» вычисляется соединением по идентификатору в том же контуре, поэтому
+    список сошедшихся и список на разбор — один запрос с разным условием.
+    """
+    __tablename__ = "ord_final_mirror"
+    __table_args__ = (UniqueConstraint("ord_id", "ord_env"),)
+    id = Column(Integer, primary_key=True)
+    ord_id = Column(String(64), nullable=False)
+    ord_env = Column(String(8), nullable=False, default="prod")
+    ord_cid = Column(String(64))
+    number = Column(Text)            # как записано в ОРД: встречается и «ПРОВЕРИТЬ»
+    date = Column(Date)
+    expiration_date = Column(Date)
+    type = Column(String(40))
+    client_inn = Column(String(20))
+    client_name = Column(Text)
+    status = Column(String(64))
+    status_at = Column(DateTime)
+    error_text = Column(Text)
+    match_note = Column(Text)        # почему не сошлись / кандидаты при неоднозначности
+    # new — не разобран; linked — привязан человеком; deferred — отложен с объяснением.
+    review_state = Column(String(16), nullable=False, default="new")
+    review_note = Column(Text)
+    reviewed_by = Column(Integer, ForeignKey("users.id"))
+    reviewed_at = Column(DateTime)
+    first_seen_at = Column(DateTime, server_default=func.now())
+    synced_at = Column(DateTime, server_default=func.now())
+
+
 class OrdInitialFinalLink(Base):
     """Привязка изначального договора к нашему доходному.
 
