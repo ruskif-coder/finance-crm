@@ -66,6 +66,12 @@ def test_final_tag_substitutes_the_platform_macro():
     """Формулы п. 3.1.2–3.1.3 инструкции, один в один. Разница между Adfox и DSP — только
     в макросе рандомизатора; перепутать значит собрать тег, который не считает показы.
 
+    ⚠ МАКРОСЫ БЫЛИ ПЕРЕПУТАНЫ МЕСТАМИ и исправлены 18.09.2026 по образцу владельца
+    «Пиксели как выглядит финально»: у НАШЕГО DSP рандомизатор `%system.random%`, у
+    Adfox — `{RND}`. Прибор держал перевёрнутую пару и потому ничего не поймал: он
+    сверялся сам с собой, а не с живым тегом. Единственное, что могло это вскрыть, —
+    сверка с образцом, что и произошло.
+
     ⚠ Образец пикселя ЗАМЕНЁН 18.09.2026 на измеренный. Раньше здесь стоял выдуманный
     `?rnd=[RANDOM]&site=`, где плейсхолдер в середине, и ожидание было под него —
     `…&a.ycp=&site=https://maksavit.ru`, то есть с ПУСТЫМ параметром адреса. Настоящий
@@ -77,9 +83,9 @@ def test_final_tag_substitutes_the_platform_macro():
     pixel = ("https://wcm.example.test/dispatch.fcgi?a.A=im&a.si=10419&a.te=546"
              "&a.he=1&a.wi=1&a.hr=p&a.ra=[RANDOM]")
     dsp = naming.final_tag(pixel, "maksavit.ru", "dsp")
-    assert dsp == pixel.replace("[RANDOM]", "{RND}&a.ycp=") + "https://maksavit.ru"
+    assert dsp == pixel.replace("[RANDOM]", "%system.random%&a.ycp=") + "https://maksavit.ru"
     adfox = naming.final_tag(pixel, "maksavit.ru", "adfox")
-    assert "%system.random%&a.ycp=" in adfox
+    assert "{RND}&a.ycp=" in adfox
     assert adfox.endswith("https://maksavit.ru")
 
 

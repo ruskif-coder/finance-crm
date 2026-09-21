@@ -117,10 +117,10 @@ def test_the_tag_carries_the_site_domain_not_the_placeholder(fixture):
     """
     raw = "https://sc.weborama-tech.ru/?a.A=im&a.rnd=[RANDOM]"
     dsp = naming.final_tag(raw, "maksavit.ru", "dsp")
-    own = naming.final_tag(raw, "maksavit.ru", "adfox")
+    adfox = naming.final_tag(raw, "maksavit.ru", "adfox")
     assert "[RANDOM]" not in dsp and dsp.endswith("https://maksavit.ru")
-    assert "{RND}" in dsp, "у нашего DSP макрос {RND}"
-    assert "%system.random%" in own, "в сервере площадки макрос %system.random%"
+    assert "%system.random%" in dsp, "у нашего DSP макрос %system.random%"
+    assert "{RND}" in adfox, "у Adfox макрос {RND}"
 
 
 def test_a_placement_without_a_pixel_keeps_its_row(fixture):
@@ -203,3 +203,42 @@ def test_what_cannot_be_filled_is_named_out_loud():
     assert _wh("") == (None, None) and _wh(None) == (None, None)
     # Кириллическая «х» в размере — обычная опечатка при ручном вводе; читаем и её.
     assert _wh("240х400") == (240, 400)
+
+
+def test_the_check_link_has_no_macros_left_at_all():
+    """Ссылка для проверки ОТКРЫВАЕТСЯ: ни одного макроса, включая наш рандомизатор.
+
+    Тег для вставки и ссылка для проверки — разные вещи, и это не дубль. В теге макросы
+    разрешает сервер показа, и стереть их значило бы отдать площадке неполный тег. А
+    проверочная ссылка нужна человеку прямо сейчас: с `${GDPR}` и `{RND}` в адресе она
+    не открывается, и проверять по ней нечего (владелец 18.09.2026).
+    """
+    from app.weborama.request_xlsx import ADAPTIVE_WH, _checkable
+
+    tag = ("https://w.test/f.fcgi?a.A=im&a.he=~HEIGHT~&a.wi=~WIDTH~"
+           "&a.g=${GDPR}&a.c=${GDPR_CONSENT_284}&a.ra={RND}&a.ycp=https://maksavit.ru")
+    out = _checkable(tag)
+    for macro in ("~WIDTH~", "~HEIGHT~", "${GDPR}", "${GDPR_CONSENT_284}", "{RND}"):
+        assert macro not in out, f"в проверочной ссылке остался {macro}"
+    # Адаптивный размер — единица, ровно как в их собственной выгрузке Excel.
+    assert f"a.he={ADAPTIVE_WH[1]}" in out and f"a.wi={ADAPTIVE_WH[0]}" in out
+    assert out.endswith("https://maksavit.ru")
+
+
+def test_our_code_is_a_flag_and_chooses_the_right_macro():
+    """`our_code` — булев признак: с нашим кодом площадка крутится в нашем DSP, без
+    него — через Adfox (он тоже наш, просто автозаведение туда пока не прикручено).
+
+    Прежняя проверка `(our_code or "").strip()` на значении True упала бы с
+    AttributeError, то есть у первой же площадки с нашим кодом выгрузка не собралась бы
+    вовсе. Ошибка пряталась ровно до этого случая: на False она работает.
+
+    Прежняя проверка `(our_code or "").strip()` на значении True упала бы с
+    AttributeError, то есть у первой же площадки С НАШИМ КОДОМ выгрузка не собралась бы
+    вовсе. Ошибка пряталась ровно до этого случая: на False она работает.
+    """
+    import inspect
+
+    from app.weborama import request_xlsx as R
+    src = inspect.getsource(R.pixels_for_set)
+    assert 'kind = "dsp" if r["our_code"] else "adfox"' in src

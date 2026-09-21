@@ -29,6 +29,7 @@
 файл и API обязаны называть одно и то же одинаково, иначе ответ менеджера не сойдётся с
 тем, что у нас уже заведено.
 """
+from datetime import datetime
 from io import BytesIO
 from typing import Tuple
 
@@ -117,13 +118,15 @@ def build(db: Session, set_id: int) -> Tuple[str, bytes]:
     # ЛИСТ ПЕРВЫЙ И ГЛАВНЫЙ — готовые теги: за ними и приходят.
     px = wb.active
     px.title = "Пиксели"
-    px.append(["Площадка", "Домен", "Куда вшивать", "Итоговый тег показа", "Замечание"])
+    px.append(["Площадка", "Домен", "Куда вшивать", "Итоговый тег показа",
+               "Ссылка для проверки", "Замечание"])
     for c in px[1]:
         c.font = Font(bold=True, size=10)
         c.fill = PatternFill("solid", fgColor="EFEFEF")
     for r in pixels_for_set(db, set_id):
-        px.append([r["publisher"], r["domain"], r["kind"], r["tag"] or "", r["why"] or ""])
-    for col, width in (("A", 26), ("B", 26), ("C", 18), ("D", 96), ("E", 52)):
+        px.append([r["publisher"], r["domain"], r["kind"], r["tag"] or "",
+                   r["check"] or "", r["why"] or ""])
+    for col, width in (("A", 26), ("B", 26), ("C", 18), ("D", 96), ("E", 96), ("F", 44)):
         px.column_dimensions[col].width = width
 
     ws = wb.create_sheet("Mediaplan")
@@ -187,12 +190,23 @@ def pixels_for_set(db: Session, set_id: int) -> list:
     """), {"s": set_id}).mappings().all()
     out = []
     for r in rows:
-        kind = "dsp" if (r["our_code"] or "").strip() else "adfox"
+        # Куда едет показ: площадка с нашим кодом крутится в НАШЕМ DSP, без него —
+        # через Adfox (он тоже наш, просто автозаведение туда пока не прикручено).
+        # Макрос рандомизатора у каждого свой, и их однажды уже перепутали — разбор
+        # стоит в `naming.RANDOM_MACRO`.
+        #
+        # `our_code` — БУЛЕВ признак, а не строка кода: прежняя проверка
+        # `(... or "").strip()` на значении True упала бы с AttributeError.
+        kind = "dsp" if r["our_code"] else "adfox"
         tag, why = None, None
         try:
             tag = naming.final_tag(r["weborama_pixel"], r["domain"] or "", kind)
         except ValueError as e:
             why = str(e)
+            if "Пустой пиксель" in why:
+                # Причина бытовая, и ответ на неё — не «почему», а «что нажать».
+                why = ("пиксель ещё не получен: сначала «ПИКСЕЛЬ WR» в дашборде "
+                       "трафика (а до неё — заказать пиксель в карточке сделки)")
 
         # ССЫЛКА СОБИРАЕТСЯ ДО КОНЦА (владелец 18.09.2026). Файл существует для того,
         # чтобы тег можно было ПРОВЕРИТЬ — открыть, вставить, сверить. Тег с
@@ -212,14 +226,40 @@ def pixels_for_set(db: Session, set_id: int) -> list:
             # чужих макросов не знает и подставлять их не будет (замер 09.09.2026).
             left = wtags.leftovers(tag)
             if left:
-                why = ("в теге осталось подставить: " + ", ".join(left)
-                       + (" — размер объявлен адаптивным (0x0), его задаёт площадка"
-                          if ("~WIDTH~" in left or "~HEIGHT~" in left) else ""))
+                why = ("подставляет сервер показа: " + ", ".join(left))
 
         out.append({"publisher": r["name"], "domain": r["domain"],
-                    "kind": "наш DSP" if kind == "dsp" else "сервер площадки",
-                    "tag": tag, "why": why})
+                    "kind": "наш DSP" if kind == "dsp" else "Adfox",
+                    "tag": tag, "check": _checkable(tag), "why": why})
     return out
+
+
+# Размер адаптивного баннера в ПРОВЕРОЧНОЙ ссылке. Единица — не выдумка: ровно так
+# приходят пиксели в их собственной выгрузке Excel (`a.he=1&a.wi=1`, замер 09.09.2026).
+# Для показа размер подставит сервер, а для «открыть и убедиться, что пиксель отвечает»
+# он не важен — важно, чтобы в адресе не осталось текста вместо числа.
+ADAPTIVE_WH = (1, 1)
+
+
+def _checkable(tag):
+    """Ссылка, которую можно ОТКРЫТЬ и проверить: ни одного неразрешённого макроса.
+
+    Отдельно от тега для вставки, и это не дубль. Тег уезжает в креатив, и там макросы
+    разрешает сервер показа — стереть их значило бы отдать площадке неполный тег.
+    А проверочная ссылка нужна человеку прямо сейчас: с `${GDPR}` в адресе она не
+    открывается, и проверить по ней нечего (владелец 18.09.2026).
+    """
+    if not tag:
+        return None
+    out = wtags.fill_size(tag, *ADAPTIVE_WH) if ("~WIDTH~" in tag or "~HEIGHT~" in tag) else tag
+    for m in wtags.leftovers(out):
+        out = out.replace(m, "")
+    # Рандомизатор тоже макрос, просто НАШ: в теге на его месте стоит `{RND}` (DSP) или
+    # `%system.random%` (сервер площадки). В проверочной ссылке вместо него — конкретное
+    # число: с фигурными скобками адрес не откроется, а без кеш-бастера повторный запрос
+    # вернётся из кеша и ничего не проверит.
+    stamp = str(int(datetime.utcnow().timestamp()))
+    return out.replace("{RND}", stamp).replace("%system.random%", stamp)
 
 
 def _wh(ratio):
