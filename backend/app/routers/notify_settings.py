@@ -401,7 +401,17 @@ def tg_webhook(secret: str, update: Dict[str, Any], bg: BackgroundTasks,
         raise HTTPException(status_code=404, detail="Not found")
 
     code, chat_id = telegram.parse_start_command(update)
-    if not code or not chat_id:
+    if not chat_id:
+        return {"ok": True}
+    if not code:
+        # НА ЛЮБОЕ СООБЩЕНИЕ ОТВЕЧАЕМ. У бота площадок так с 18.09.2026, внутренний
+        # остался молчащим — и 21.09.2026 это увидели своими глазами: человек шлёт
+        # `/start`, в ответ ничего, и он решает, что бот сломан. Тишина и поломка со
+        # стороны выглядят одинаково, а ответ дешевле любого разбирательства.
+        bg.add_task(_reply_later, chat_id,
+                    "Чтобы получать уведомления, пришлите код из портала — "
+                    "раздел «Мои уведомления», кнопка «Подключить бота». Код из шести "
+                    "знаков, живёт полчаса.")
         return {"ok": True}
 
     row = (db.query(UserNotificationChannels)

@@ -86,6 +86,8 @@ services:
       TELEGRAM_BOT_NAME: ${TELEGRAM_BOT_NAME:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
       TELEGRAM_PUB_BOT_TOKEN: ${TELEGRAM_PUB_BOT_TOKEN:-}
+      # Прокси до Телеграма (CONNECT или SOCKS5). Пусто — напрямую.
+      TELEGRAM_PROXY_URL: ${TELEGRAM_PROXY_URL:-}
       TELEGRAM_PUB_BOT_NAME: ${TELEGRAM_PUB_BOT_NAME:-}
       TELEGRAM_PUB_WEBHOOK_SECRET: ${TELEGRAM_PUB_WEBHOOK_SECRET:-}
       # Доступ к API ОРД МедиаСкаут. Значения — в .env (gitignored), сюда только ссылки.

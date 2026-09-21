@@ -138,7 +138,10 @@ def test_linking_is_written_to_the_feed():
     from app.cabinet import journal
     from app.routers import cabinet_gateway as gw
     assert 'бот_привязан' in journal.BY_KEY and 'бот_отвязан' in journal.BY_KEY
-    assert 'бот_привязан' in inspect.getsource(gw.cabinet_tg_webhook)
+    # Разбор апдейта вынесен из ручки в `handle_pub_update` 21.09.2026 — его зовут
+    # и вебхук, и опрос (`app/notify/tg_poll.py`). Правило не изменилось, у него
+    # сменился дом; прибор смотрит туда, где правило живёт теперь.
+    assert 'бот_привязан' in inspect.getsource(gw.handle_pub_update)
     assert 'бот_отвязан' in inspect.getsource(gw.cabinet_tg_unlink)
 
 

@@ -787,37 +787,55 @@ def cabinet_tg_webhook(secret: str, update: Dict[str, Any], bg: BackgroundTasks,
 
     Адрес — `/api/pub-bot/webhook/<секрет>`, НЕ под `/api/cabinet-gw/`: тот префикс
     закрыт на Caddy наглухо, и апдейты уходили бы в 404.
-    """
-    from app.cabinet.models import CabinetAccount, CabinetAccountTg
-    from app.notify import telegram
 
+    ⚠ С 21.09.2026 боевой путь доставки — НЕ этот. Телеграм до сервера не дозванивается
+    (`Connection timed out`, ноль входящих за неделю при живых ретраях), поэтому
+    апдейты забирает опрос `app/notify/tg_poll.py`. Ручка оставлена рабочей: она
+    правильная, и когда сеть починят, её можно вернуть одной командой `setWebhook`.
+    """
     expected = os.getenv("TELEGRAM_PUB_WEBHOOK_SECRET") or ""
     if not expected or secret != expected:
         raise HTTPException(status_code=404, detail="Not found")
 
+    handle_pub_update(db, update, lambda cid, txt: bg.add_task(_tg_reply_later, cid, txt))
+    return {"ok": True}
+
+
+def handle_pub_update(db: Session, update: Dict[str, Any], reply) -> bool:
+    """Разобрать одно сообщение боту кабинета. Общий код вебхука и опроса.
+
+    Вынесен из ручки 21.09.2026, когда добавился опрос (`app/notify/tg_poll.py`): вторая
+    копия разбора означала бы, что привязка по вебхуку и привязка по опросу однажды
+    разойдутся — и разойдутся молча, на глазах у площадки.
+
+    `reply` — как отправить ответ: вебхук кладёт его в фон (иначе Телеграм не дожидается
+    и считает доставку неуспешной), опрос шлёт прямо. Возвращает True, если привязали.
+    """
+    from app.cabinet.models import CabinetAccount, CabinetAccountTg
+    from app.notify import telegram
+
     code, chat_id = telegram.parse_start_command(update)
     if not chat_id:
-        return {"ok": True}
+        return False
     if not code:
         # НА ЛЮБОЕ СООБЩЕНИЕ ОТВЕЧАЕМ. Молчание бота человек читает как «не работает» и
         # идёт жаловаться, а не пробовать снова: со стороны площадки тишина и поломка
         # выглядят одинаково (18.09.2026). Ответ дешевле любого разбирательства.
-        bg.add_task(_tg_reply_later, chat_id,
-                    "Чтобы получать уведомления, пришлите код из кабинета — "
-                    "блок «Уведомления», кнопка «Подключить бота». Код из шести знаков, "
-                    "живёт полчаса.")
-        return {"ok": True}
+        reply(chat_id,
+              "Чтобы получать уведомления, пришлите код из кабинета — "
+              "блок «Уведомления», кнопка «Подключить бота». Код из шести знаков, "
+              "живёт полчаса.")
+        return False
 
     row = (db.query(CabinetAccountTg)
            .filter(CabinetAccountTg.link_code == code).first())
     if row is None or (row.link_expires and row.link_expires < datetime.utcnow()):
-        bg.add_task(_tg_reply_later, chat_id,
-                    "Код не найден или просрочен. Получите новый в кабинете, "
-                    "блок «Уведомления».")
-        return {"ok": True}
+        reply(chat_id, "Код не найден или просрочен. Получите новый в кабинете, "
+                       "блок «Уведомления».")
+        return False
 
-    # Привязка пишется СРАЗУ и синхронно: она и есть результат запроса. В фон уходит
-    # только ответное сообщение — не дойдёт оно, человек всё равно уже привязан.
+    # Привязка пишется СРАЗУ и синхронно: она и есть результат запроса. Ответное
+    # сообщение отдельно — не дойдёт оно, человек всё равно уже привязан.
     row.chat_id, row.verified_at = chat_id, datetime.utcnow()
     row.link_code = row.link_expires = None
     acc = db.query(CabinetAccount).filter(CabinetAccount.id == row.account_id).first()
@@ -825,9 +843,8 @@ def cabinet_tg_webhook(secret: str, update: Dict[str, Any], bg: BackgroundTasks,
         journal.write(db, 'бот_привязан', cabinet_id=acc.cabinet_id, account_id=acc.id,
                       actor_name=acc.name)
     db.commit()
-    bg.add_task(_tg_reply_later, chat_id,
-                f"Готово, {acc.name if acc else ''}. Уведомления будут приходить сюда.")
-    return {"ok": True}
+    reply(chat_id, f"Готово, {acc.name if acc else ''}. Уведомления будут приходить сюда.")
+    return True
 
 
 # ─────────────────────────── Лента ───────────────────────────

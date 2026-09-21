@@ -466,8 +466,12 @@ def check_telegram_live():
         return _check("tg_live", "Внешние связи", "Телеграм: связь", "idle",
                       "не проверялось", "бот не настроен")
     try:
+        # Через тот же прокси, что и отправка: иначе проверка ходила бы другим путём
+        # и отчитывалась о связи, которой приложение не пользуется.
         import httpx
-        r = httpx.get(f"https://api.telegram.org/bot{token}/getWebhookInfo", timeout=8)
+        from app.notify import telegram as _tg
+        r = httpx.get(_tg.API.format(token=token, method="getWebhookInfo"),
+                      timeout=8, proxy=_tg.proxy())
         info = (r.json() or {}).get("result", {}) if r.status_code == 200 else {}
     except Exception as e:                       # noqa: BLE001
         return _check("tg_live", "Внешние связи", "Телеграм: связь", "bad",
@@ -484,6 +488,52 @@ def check_telegram_live():
         return _check("tg_live", "Внешние связи", "Телеграм: связь", "warn",
                       f"{pending} в очереди", f"последняя ошибка: {err}")
     return _check("tg_live", "Внешние связи", "Телеграм: связь", "ok", "очередь пуста")
+
+
+def check_pub_bot_poll(db):
+    """Опрос Телеграма у бота площадок: РАБОТАЕТ ли он, а не настроен ли.
+
+    Заведена 21.09.2026 вместе с самим опросом, и по той же причине, по которой
+    08.09.2026 заведена соседняя `check_telegram_live`: та проверка ловила «токен есть,
+    экран зелёный, бот молчит» по РАСТУЩЕЙ ОЧЕРЕДИ у Телеграма. Для бота площадок этот
+    признак больше не работает вовсе — вебхук снят, очередь у Телеграма всегда пуста,
+    и мёртвый крон опроса выглядел бы идеально здоровым.
+
+    Единственный честный признак здесь — когда опрос ПОСЛЕДНИЙ РАЗ поговорил с
+    Телеграмом. Отметку ставит сам опрос (`app/notify/tg_poll.py`), в том числе когда
+    сообщений не было: важен канал, а не трафик.
+
+    Порог 15 минут при кроне раз в минуту: связь рваная (жив один адрес Телеграма из
+    восьми и отвечает через раз), поэтому единичные пропуски — норма, а четверть часа
+    тишины — уже поломка.
+    """
+    from app.notify import telegram
+    if not telegram.configured(telegram.PUB):
+        return _check("tg_poll_pub", "Внешние связи", "Бот площадок: опрос", "idle",
+                      "бот не настроен")
+    try:
+        from app.notify.tg_poll import last_ok
+        seen = last_ok(db, telegram.PUB)
+    except Exception as e:                       # noqa: BLE001
+        return _check("tg_poll_pub", "Внешние связи", "Бот площадок: опрос", "bad",
+                      "не удалось прочитать", str(e)[:160])
+    if seen is None:
+        return _check("tg_poll_pub", "Внешние связи", "Бот площадок: опрос", "bad",
+                      "ни разу не отработал",
+                      "крон не поставлен либо не может достучаться до Телеграма",
+                      consequence="Площадка жмёт «Старт» в боте и не получает ответа — "
+                                  "привязка не проходит, а снаружи это выглядит как "
+                                  "«бот сломан»")
+    from datetime import datetime
+    mins = int((datetime.utcnow() - seen).total_seconds() // 60)
+    when = seen.strftime("%d.%m %H:%M")
+    if mins > 15:
+        return _check("tg_poll_pub", "Внешние связи", "Бот площадок: опрос", "bad",
+                      f"молчит {mins} мин", f"последний успешный заход {when} UTC",
+                      consequence="Сообщения площадок не забираются — «Старт» остаётся "
+                                  "без ответа, коды привязки протухают")
+    return _check("tg_poll_pub", "Внешние связи", "Бот площадок: опрос", "ok",
+                  f"{mins} мин назад", f"последний заход {when} UTC")
 
 
 def check_dsp_journal(db_dsp_ok: bool):
@@ -735,6 +785,9 @@ def collect(db: Session, live: bool = False) -> dict:
     ext = _safe(check_external_config)
     checks += ext if isinstance(ext, list) else [ext]
     checks.append(_safe(check_dsp_journal, dsp["tone"] == "ok"))
+    # Читает только нашу базу, наружу не ходит — поэтому в обычном прогоне, а не в
+    # живом: поломку опроса надо видеть сразу при открытии экрана, а не раз в час.
+    checks.append(_safe(check_pub_bot_poll, db))
     # Живые запросы наружу — только по явному запросу (фоновый прогон раз в час).
     # Дёргать чужие сервисы при каждом открытии экрана — способ получить бан по частоте.
     if live:

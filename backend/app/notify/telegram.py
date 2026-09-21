@@ -24,6 +24,39 @@ import httpx
 API = "https://api.telegram.org/bot{token}/{method}"
 LINK_CODE_TTL_MIN = 30
 
+# СКОЛЬКО РАЗ ПРОБОВАТЬ ОДИН ЗАПРОС — одно число на весь контур Телеграма, и опрос
+# (`app/notify/tg_poll.py`) берёт его отсюда же. Замер 21.09.2026 на проде: из восьми
+# адресов api.telegram.org с сервера жив РОВНО ОДИН (149.154.167.220, он закреплён в
+# прод-compose через `extra_hosts`), и отвечает он примерно в трёх случаях из четырёх —
+# 9 удач из 12. Двух попыток мало: одна неудача на шестнадцать отправок. Трёх хватает:
+# 6 операций из 6. Второе такое же число в другом файле разошлось бы с этим молча.
+ATTEMPTS = 3
+
+# ПРОКСИ ДО ТЕЛЕГРАМА — одна точка на весь контур: отправка, getMe, опрос и проверка
+# состояния ходят через него же.
+#
+# Зачем: с прода жив ровно один адрес api.telegram.org из восьми, и отвечает он примерно
+# в трёх случаях из четырёх (замер 21.09.2026). Прокси на машине за пределами этой сети
+# снимает и рваность, и зависимость от закреплённого вручную адреса.
+#
+# ТОЛЬКО CONNECT или SOCKS5. При них шифрование идёт до самого Телеграма, и прокси видит
+# лишь адрес назначения — токен ему недоступен. Прокси, разворачивающий TLS, использовать
+# нельзя: он увидит токен бота целиком.
+#
+# Пусто — ходим напрямую, как раньше. Это рабочее состояние, а не поломка.
+ENV_PROXY = "TELEGRAM_PROXY_URL"
+
+
+def proxy() -> Optional[str]:
+    """Адрес прокси или None. Отдельной функцией, чтобы точек чтения было не четыре."""
+    return (os.getenv(ENV_PROXY) or "").strip() or None
+
+
+# Прокси передаётся ПАРАМЕТРОМ в те же вызовы, что были, а не через свой клиент:
+# `httpx.post/get` умеют `proxy=` начиная с 0.26. Свой клиент сместил бы шов, за который
+# держатся три прибора (`test_tg_webhook_async`, `test_notify`), — а поведение при этом
+# осталось бы прежним. Ломать приборы ради стиля нельзя.
+
 # ДВА БОТА, А НЕ ОДИН (владелец 15.09.2026). Внутренний пишет сотрудникам, бот кабинета —
 # площадкам. Разделение не техническое: площадка видит бота подрядчика, а не наш
 # внутренний алёрт-бот, и обработчик `/start` не гадает, чей перед ним код — у каждого
@@ -95,7 +128,8 @@ def bot_username(contour: str = STAFF) -> Optional[str]:
     if token not in _USERNAME_CACHE:
         name = None
         try:
-            r = httpx.get(API.format(token=token, method="getMe"), timeout=5)
+            r = httpx.get(API.format(token=token, method="getMe"), timeout=5,
+                          proxy=proxy())
             if r.status_code == 200:
                 name = ((r.json() or {}).get("result") or {}).get("username") or None
         except Exception:
@@ -155,17 +189,18 @@ def send_message(chat_id: str, text: str, link: Optional[str] = None,
     # Повторяем ТОЛЬКО обрыв соединения. Ответ Телеграма с кодом ошибки не повторяем: 403
     # («бот не запущен пользователем») и 400 («чат не найден») от повтора не изменятся, а
     # 429 требует выдержать паузу, которую Телеграм называет сам, — это другой разговор.
+    # Число попыток — общая константа ATTEMPTS, см. её обоснование в шапке модуля.
     last = None
-    for attempt in (1, 2):
+    for attempt in range(1, ATTEMPTS + 1):
         try:
             r = httpx.post(API.format(token=token, method="sendMessage"),
                            json={"chat_id": chat_id, "text": body,
                                  "disable_web_page_preview": True},
-                           timeout=10)
+                           timeout=10, proxy=proxy())
             break
         except httpx.TransportError as e:      # таймаут, обрыв, отказ в соединении
             last = e
-            if attempt == 2:
+            if attempt == ATTEMPTS:
                 raise RuntimeError(f"Telegram недоступен: {type(e).__name__}") from last
     if r.status_code != 200:
         raise RuntimeError(f"Telegram {r.status_code}: {r.text[:200]}")
