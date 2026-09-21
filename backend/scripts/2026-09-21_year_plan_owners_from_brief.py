@@ -23,6 +23,11 @@
 """
 import sys
 
+# НЕ ЛИШНИЙ ИМПОРТ. У строки плана внешний ключ created_by → users, и без модели
+# пользователя в том же реестре SQLAlchemy не соберёт связь — падает на commit, уже
+# ПОСЛЕ того, как скрипт напечатал список перестановок. Первый боевой прогон
+# 21.09.2026 так и выглядел: вывод как при успехе, в базе ноль изменений.
+import app.models  # noqa: F401
 from app.database import SessionLocal
 from app.sales.models import SalesAdvertiser, SalesRep, SalesYearPlanLine
 
@@ -63,8 +68,11 @@ def main(apply: bool) -> int:
                 line.sales_rep_id = seller
             moved += 1
 
-        if apply:
+        if apply and moved:
             db.commit()
+            # Слово «записано» печатается ПОСЛЕ успешного commit. Раньше список
+            # перестановок печатался до записи, и упавший commit выглядел как удача.
+            print("\n  ↑ записано в базу")
         print("\nпереставлено: %d, уже верно: %d, без продавца в брифе: %d, "
               "учётка без профиля: %d%s"
               % (moved, same, no_brief, unknown,
