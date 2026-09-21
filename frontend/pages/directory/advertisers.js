@@ -11,6 +11,7 @@ const AdvertisersMobile = dynamic(() => import('@/components/mobile/AdvertisersM
 import SectionTabs from '@/components/SectionTabs'
 import BrandMarkingDialog, { saveBrandMarking } from '@/components/ord/BrandMarking'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import ValuePopover from '@/components/ValuePopover'
 
 
 const EMPTY = { short_name: '', name_en: '', name_ru: '', website: '', inn: '' }
@@ -36,6 +37,10 @@ export default function Advertisers() {
   const [saving, setSaving] = useState(false)
   const [pageSize, setPageSize] = useState(100)
   const [mobileLimit, setMobileLimit] = useState(50)
+  // Кандидаты в ответственные — УЧЁТКИ с рабочей группой роли «Продавец», а не строки
+  // sales_reps: справочник ответственных заполнен не всеми (см. /sales/directories/staff).
+  const [sellers, setSellers] = useState([])
+  const [repPop, setRepPop] = useState(null)
 
   const mayEdit = can(perms, 'dir_advertisers', 'edit')
 
@@ -224,9 +229,20 @@ export default function Advertisers() {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     try { setPerms(JSON.parse(localStorage.getItem('permissions') || '{}')) } catch (e) { setPerms({}) }
     load()
+    api.get('/sales/directories/staff?group=seller&only_active=true', auth())
+      .then(r => setSellers(r.data.items || [])).catch(() => setSellers([]))
   }, [])
 
   const flash = (msg) => { setOk(msg); setTimeout(() => setOk(''), 2500) }
+
+  // Назначение отдельной ручкой: правка карточки переписывает свои поля целиком, и
+  // сейлз в её теле обнулялся бы при любом сохранении названия или сайта.
+  const setRep = async (advId, userId) => {
+    try {
+      await api.put(`/sales/directories/producers/${advId}/sales-rep`, { user_id: userId }, auth())
+      flash(userId ? 'Ответственный назначен' : 'Ответственный снят'); load()
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось назначить ответственного') }
+  }
 
   const cancelForm = () => { setEditId(null); setForm(EMPTY); setShowForm(false); setError('') }
 
@@ -420,12 +436,12 @@ export default function Advertisers() {
         {loading && <div style={{ color: 'var(--muted)' }}>Загрузка…</div>}
 
         {!loading && (() => {
-          const AGRID = '26px 64px minmax(120px,1fr) minmax(120px,1fr) minmax(120px,1fr) 60px minmax(120px,1fr) minmax(200px,1.6fr) minmax(180px,1.4fr) 232px'
+          const AGRID = '26px 64px minmax(120px,1fr) minmax(120px,1fr) minmax(120px,1fr) 60px minmax(120px,1fr) minmax(200px,1.6fr) minmax(180px,1.4fr) minmax(150px,1.1fr) 232px'
           return (
           <div style={{ overflowX: 'auto', maxWidth: '100%', margin: '4px -4px 0' }}>
             <div style={{ minWidth: 1360 }}>
               <div style={{ display: 'grid', gridTemplateColumns: AGRID, gap: 12, borderBottom: '1px solid var(--border-card)' }}>
-                <div />{headCell('BX_ID')}{headCell('Короткое')}{headCell('Англ')}{headCell('Русское')}{headCell('Сделок', true)}{headCell('Сайт')}{headCell('Бренды')}{headCell('Юрлица')}<div />
+                <div />{headCell('BX_ID')}{headCell('Короткое')}{headCell('Англ')}{headCell('Русское')}{headCell('Сделок', true)}{headCell('Сайт')}{headCell('Бренды')}{headCell('Юрлица')}{headCell('Ответственный сейлз')}<div />
               </div>
                 {filtered.map(a => (
                   <div key={a.id} style={{
@@ -610,6 +626,21 @@ export default function Advertisers() {
                         </div>
                       )}
                     </div>
+                    {/* Ответственный сейлз — подставляется в медиаплан (обычный и годовой) */}
+                    <div style={cell}>
+                      <span
+                        onClick={mayEdit ? (e => setRepPop({
+                          rect: e.currentTarget.getBoundingClientRect(), advId: a.id,
+                          value: a.sales_rep_user_id || null,
+                        })) : undefined}
+                        style={{
+                          fontSize: 12.5, cursor: mayEdit ? 'pointer' : 'default',
+                          borderBottom: mayEdit ? '1px dashed var(--border-card)' : 'none',
+                          color: a.sales_rep ? 'var(--text)' : 'var(--muted)',
+                        }}>
+                        {a.sales_rep || (mayEdit ? 'не назначен' : '—')}
+                      </span>
+                    </div>
                     <div style={{ ...cell, display: 'flex', flexWrap: 'nowrap', gap: 6, justifyContent: 'flex-end', alignItems: 'flex-start' }}>
                       {mayEdit && editId === a.id ? (
                         <>
@@ -721,6 +752,14 @@ export default function Advertisers() {
             })))
             setMarkBrand(null)
           }} />
+      )}
+
+      {repPop && (
+        <ValuePopover anchor={repPop.rect} title="Ответственный сейлз"
+          clearLabel="— не назначен —" value={repPop.value}
+          options={sellers.map(u => ({ value: u.id, label: u.name + (u.is_master ? ' ★' : '') }))}
+          onPick={v => { setRep(repPop.advId, v); setRepPop(null) }}
+          onClose={() => setRepPop(null)} />
       )}
     </>
   )

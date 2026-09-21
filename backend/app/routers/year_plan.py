@@ -186,6 +186,7 @@ def _catalog(db: Session) -> dict:
             .order_by(func.coalesce(SalesAdvertiser.short_name, SalesAdvertiser.name)).all())
     brands = (db.query(SalesBrand).filter(SalesBrand.is_active.is_(True))
               .order_by(SalesBrand.name).all())
+    rep_user = {r.id: r.user_id for r in db.query(SalesRep).all()}
     by_adv: Dict[int, list] = {}
     for b in brands:
         by_adv.setdefault(b.advertiser_id, []).append({"id": b.id, "name": b.name})
@@ -194,7 +195,10 @@ def _catalog(db: Session) -> dict:
     addons = (db.query(SalesAddonService).filter(SalesAddonService.is_active.is_(True))
               .order_by(SalesAddonService.sort_order, SalesAddonService.name).all())
     return {
+        # sales_rep_user_id — закреплённый за рекламодателем сейлз УЧЁТКОЙ: бриф строки
+        # хранит ответственных как id пользователей (как и медиаплан), а не как sales_reps.
         "advertisers": [{"id": a.id, "name": a.short_name or a.name,
+                         "sales_rep_user_id": rep_user.get(a.sales_rep_id),
                          "brands": by_adv.get(a.id, [])} for a in advs],
         "services": [{"id": s.id, "name": s.name, "separate_price": bool(s.separate_price),
                       "unit_price": s.unit_price, "unit_price_web": s.unit_price_web,

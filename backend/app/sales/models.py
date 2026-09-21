@@ -198,6 +198,10 @@ class SalesAdvertiser(Base):
     # Пусто = платит агентство, нормальное состояние, а не пропуск данных.
     counterparty_id = Column(Integer, ForeignKey("counterparties.id"))
     inn = Column(String)
+    # Ответственный сейлз. NULL — не назначен, нормальное состояние.
+    # Профиль из sales_reps (как у сделки и годового плана); ручка принимает id учётки
+    # и заводит профиль через ensure_rep. Миграция 2026-09-21_advertiser_sales_rep.sql.
+    sales_rep_id = Column(Integer, ForeignKey("sales_reps.id"))
     # перенос листа MP Advertisers — исключение «МП» из выручки
     exclude_from_revenue = Column(Boolean, nullable=False, default=False)
     is_active = Column(Boolean, nullable=False, default=True)
@@ -1242,6 +1246,27 @@ class SalesPublisherDocument(Base):
     uploaded_at = Column(DateTime, server_default=func.now())
     uploaded_by = Column(Integer, ForeignKey("users.id"))
     note = Column(Text)
+
+
+class SalesDealBriefFile(Base):
+    """Файл, приложенный к брифу сделки (миграция 2026-09-21_deal_brief_files.sql).
+
+    Бриф приходит от клиента не только текстом — презентацией, тз, чужим медиапланом.
+    Своя таблица, а не тройка колонок на сделке: файлов бывает несколько, и одна колонка
+    молча затирала бы первый вторым. Тот же довод, что у `SalesPublisherDocument`.
+
+    `filename` — имя на диске в `/app/uploads/deal_briefs/` (с префиксом id, иначе два
+    «бриф.pdf» затрут друг друга); `original_name` — под ним файл отдаётся человеку.
+    """
+    __tablename__ = "sales_deal_brief_files"
+    id = Column(Integer, primary_key=True)
+    deal_id = Column(Integer, ForeignKey("sales_deals.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    filename = Column(String(255), nullable=False)
+    original_name = Column(String(255), nullable=False)
+    size_bytes = Column(Integer)
+    uploaded_at = Column(DateTime, server_default=func.now())
+    uploaded_by = Column(Integer, ForeignKey("users.id"))
 
 
 class SalesContactPosition(Base):

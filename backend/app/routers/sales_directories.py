@@ -32,8 +32,9 @@ from app.sales.models import (SalesService, SalesAddonService, SalesServiceGroup
                               SalesBitrixStageMap, SalesAnnexItem,
                               SalesFormat, SalesServiceFormat, SalesTargetingItem, SalesGeo,
                               SalesAgencyCounterparty, SalesAdvertiserCounterparty,
-                              SalesStagePhase, SalesStage)
+                              SalesStagePhase, SalesStage, SalesRep)
 from app.sales.normalize import normalize_name, normalize_inn
+from app.sales.reps import ensure_rep
 from app.sales.stages import STAGE_CATALOG, STAGE_BY_KEY
 from app.sales.catalog import Catalog
 from app.sales import stage_scope
@@ -734,6 +735,10 @@ def list_advertisers(only_active: bool = True, db: Session = Depends(get_db),
     deal_counts = dict(db.query(SalesDeal.advertiser_id, func.count(SalesDeal.id))
                        .group_by(SalesDeal.advertiser_id).all())
 
+    # Ответственный сейлз — одним запросом на всех. Отдаём и id профиля, и id учётки:
+    # хранится профиль, а выбирают человека (учётку), как во всех остальных пикерах.
+    reps = {r.id: (r.name, r.user_id) for r in db.query(SalesRep).all()}
+
     # Юрлица рекламодателей (прямые договора) — одним запросом
     cp_names = dict(db.query(Counterparty.id, Counterparty.name).all())
     adv_cps = {}
@@ -747,6 +752,9 @@ def list_advertisers(only_active: bool = True, db: Session = Depends(get_db),
                        "inn": a.inn, "counterparty_id": a.counterparty_id,
                        "exclude_from_revenue": a.exclude_from_revenue,
                        "is_active": a.is_active,
+                       "sales_rep_id": a.sales_rep_id,
+                       "sales_rep": reps.get(a.sales_rep_id, (None, None))[0],
+                       "sales_rep_user_id": reps.get(a.sales_rep_id, (None, None))[1],
                        "deals": deal_counts.get(a.id, 0),
                        "brands": by_adv.get(a.id, []),
                        "counterparties": adv_cps.get(a.id, [])} for a in rows]}
@@ -801,6 +809,40 @@ def update_advertiser(advertiser_id: int, data: AdvertiserIn, db: Session = Depe
     db.commit()
     log_action(db, current_user, "update_sales_advertiser", "sales_advertiser", adv.id, name)
     return {"message": "Рекламодатель обновлён"}
+
+
+class AdvertiserRepIn(BaseModel):
+    # Учётка, а не строка справочника: выбирают человека, профиль ответственного под ним
+    # заводится сам (`ensure_rep`). См. заметку «Справочник ответственных ≠ сотрудники».
+    user_id: Optional[int] = None                 # None — снять назначение
+
+
+@router.put("/producers/{advertiser_id}/sales-rep")
+def set_advertiser_sales_rep(advertiser_id: int, payload: AdvertiserRepIn,
+                             db: Session = Depends(get_db),
+                             current_user: User = Depends(ADV_EDIT)):
+    """Закрепить за рекламодателем ответственного сейлза.
+
+    Отдельной ручкой, а не полем формы правки: назначение делается прямо из колонки
+    реестра, а `update_advertiser` переписывает все свои поля целиком — попади сейлз
+    туда, правка сайта обнуляла бы назначение.
+    """
+    adv = _require(db, SalesAdvertiser, advertiser_id, "Рекламодатель")
+    if payload.user_id is not None:
+        try:
+            rep = ensure_rep(db, payload.user_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        adv.sales_rep_id = rep.id
+        who = rep.name
+    else:
+        adv.sales_rep_id = None
+        who = "снят"
+    db.commit()
+    log_action(db, current_user, "set_advertiser_sales_rep", "sales_advertiser", adv.id,
+               f"ответственный сейлз: {who}")
+    return {"sales_rep_id": adv.sales_rep_id, "sales_rep": None if payload.user_id is None else who,
+            "sales_rep_user_id": payload.user_id}
 
 
 @router.delete("/producers/{advertiser_id}")

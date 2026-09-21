@@ -59,6 +59,8 @@ function AdvCard({ a, open, onToggle, onEdit, onDeals, canEdit }) {
               ['Английское', a.name_en || '—'],
               ['Короткое', a.short_name || a.name || '—'],
               ['Сделок', a.deals > 0 ? grp(a.deals) : '—'],
+              // Назначение делается с десктопа: на телефоне поле только читается.
+              ['Ответственный сейлз', a.sales_rep || '—'],
             ].map(([k, v], i) => (
               <div key={k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '8px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border-inner)' }}>
                 <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{k}</span>

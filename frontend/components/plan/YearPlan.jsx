@@ -708,8 +708,16 @@ export default function YearPlan({
                                   onPick={() => {
                                     setGroups(gs => gs.map(x => (x.id === g.id ? {
                                       ...x, adv: a.name, adv_id: a.id,
-                                      // сброс брендов при смене рекламодателя — списки брендов разные
-                                      brands: x.brands.map(b => ({ ...b, brand: '', brand_id: null })),
+                                      // сброс брендов при смене рекламодателя — списки брендов разные;
+                                      // ответственный сейлз закреплён за рекламодателем в справочнике и
+                                      // подставляется в бриф строки, но только в пустое поле — выбранного
+                                      // руками не перетираем.
+                                      brands: x.brands.map(b => ({
+                                        ...b, brand: '', brand_id: null,
+                                        brief: (a.sales_rep_user_id && !(b.brief || {}).sales_rep_id)
+                                          ? { ...(b.brief || {}), sales_rep_id: a.sales_rep_user_id }
+                                          : b.brief,
+                                      })),
                                     } : x)));
                                     setSel(null);
                                   }} />

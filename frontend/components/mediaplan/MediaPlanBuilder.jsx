@@ -6,6 +6,7 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { GenTitleBtn, MONO, UI } from '../salesTableKit';
+import BriefFiles from '../deal/BriefFiles';
 import { overlayClose } from '@/lib/overlay'
 import { buildTitle, separatePriceSet } from '@/lib/dealTitle'
 import { isCpc, isCpm, rowClicks, rowImp, rowNet } from '@/lib/mpRow'
@@ -318,9 +319,10 @@ function mergeInventory(values) {
 
 export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalog = EXTRA_CATALOG, staff = STAFF, models = MODELS, modes = MODES,
   advertisers = [], agencies = [], brandsByAdv = {}, advCps = {}, agencyCps = {}, geoList = [], targetingCatalog = {},
+  advSalesRep = {},
   bound = false, initial, backLabel = 'Реестр медиапланов', onBack, versions = [], onOpenVersion,
   onAddTargeting, onAddGeo, onCreateBrand, onSave, onExportXlsx, onPreviewPdf, onEditBrief, onLinkDeal, onCreateDeal,
-  dealBrief, onDealBriefSave, onDealBriefSync, ownCompany }) {
+  dealBrief, onDealBriefSave, briefFilesBase, briefFilesReadOnly = false, ownCompany }) {
   const init = initial || {};
   /* Раздельный прайс приходит в каталоге услуг (`separate`) — тем же признаком, по
      которому конструктор показывает две цены. Для имени он решает, дописывать ли
@@ -650,7 +652,14 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                     {/* Параметры РК — слева, 2 колонки × 3 строки (колоночный порядок) */}
                     <div style={{ flex: '0 0 30%', minWidth: 240, display: 'flex', flexDirection: 'column' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gridTemplateRows: 'repeat(3,auto)', gridAutoFlow: 'column', columnGap: 16 }}>
-                      <BriefField label="Рекламодатель" open={isOpen('brief', 0, 'adv')} onToggle={() => toggle('brief', 0, 'adv')} value={bf.advertiser_id} options={advertisers} onPick={v => { setBf(s => ({ ...s, advertiser_id: v, brand_id: '', payer_id: '' })); setSel(null); }} />
+                      <BriefField label="Рекламодатель" open={isOpen('brief', 0, 'adv')} onToggle={() => toggle('brief', 0, 'adv')} value={bf.advertiser_id} options={advertisers} onPick={v => {
+                        setBf(s => ({ ...s, advertiser_id: v, brand_id: '', payer_id: '' })); setSel(null);
+                        /* Ответственный сейлз закреплён за рекламодателем (справочник).
+                           Подставляем, только когда «Продавец» пуст: выбранного руками
+                           не перетираем — иначе ручной выбор молча терялся бы. */
+                        const repUid = advSalesRep[v];
+                        if (repUid) setOwners(o => (o['Продавец'] ? o : { ...o, 'Продавец': repUid }));
+                      }} />
                       <BriefField label="Бренд" open={isOpen('brief', 0, 'brand')} onToggle={() => bf.advertiser_id && toggle('brief', 0, 'brand')} value={bf.brand_id} options={brOpts} placeholder={bf.advertiser_id ? '—' : 'сначала рекламодатель'} onPick={v => { setBf(s => ({ ...s, brand_id: v })); setSel(null); }}
                         onAddNew={(bf.advertiser_id && onCreateBrand) ? (async (name) => { const id = await onCreateBrand(bf.advertiser_id, name); if (id) { setBf(s => ({ ...s, brand_id: id })); setSel(null); } }) : undefined} addPlaceholder="+ новый бренд" />
                       <BriefField label="Агентство" open={isOpen('brief', 0, 'ag')} onToggle={() => toggle('brief', 0, 'ag')} value={bf.agency_id} options={agencies} onPick={v => { setBf(s => ({ ...s, agency_id: v, payer_id: '' })); setSel(null); }} />
@@ -810,12 +819,14 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                 <span style={capTitle}>Бриф сделки</span>
                 {!briefHasDeal && <span style={{ fontSize: 12, color: T.t3 }}>привяжите сделку, чтобы сохранять и синхронизировать бриф</span>}
                 {dealBrief?.is_local && <span style={{ fontSize: 11, color: T.t4 }}>локальная сделка — без Битрикса</span>}
-                <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}>
-                  <button type="button" disabled={!briefHasDeal || dealBrief?.is_local || briefBusy}
-                    onClick={async () => { setBriefBusy(true); try { await onDealBriefSync?.(); } finally { setBriefBusy(false); } }}
-                    style={{ padding: '7px 12px', borderRadius: 9, border: `1px solid ${T.border}`, background: T.card, color: (!briefHasDeal || dealBrief?.is_local) ? T.t4 : T.accent, fontSize: 12, fontWeight: 700, cursor: (!briefHasDeal || dealBrief?.is_local) ? 'default' : 'pointer', opacity: (!briefHasDeal || dealBrief?.is_local) ? 0.5 : 1 }}>
-                    ⟳ С Битрикса
-                  </button>
+                <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                  {/* Файлы брифа на месте прежней кнопки «⟳ С Битрикса». Ручное
+                      перечитывание текста из Битрикса убрано по решению владельца
+                      21.09.2026: ленивая подгрузка при открытии и запись обратно
+                      остались, кнопка была третьим способом сделать то же самое. */}
+                  <BriefFiles base={briefFilesBase} readOnly={briefFilesReadOnly}
+                    disabled={!briefHasDeal} compact
+                    disabledHint="Файл прикрепится после привязки сделки" />
                   <button type="button" disabled={!briefHasDeal || briefBusy}
                     onClick={async () => { setBriefBusy(true); try { await onDealBriefSave?.(briefText); } finally { setBriefBusy(false); } }}
                     style={{ padding: '7px 14px', borderRadius: 9, border: 'none', background: T.accent, color: 'var(--bg-card)', fontSize: 12, fontWeight: 700, cursor: (!briefHasDeal || briefBusy) ? 'default' : 'pointer', opacity: (!briefHasDeal || briefBusy) ? 0.5 : 1 }}>

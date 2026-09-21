@@ -54,6 +54,7 @@ export default function MpEditor() {
   const [dealTotal, setDealTotal] = useState(0)
   const [dealPer, setDealPer] = useState(50)   // размер страницы задаёт сервер
   const [dealBrief, setDealBrief] = useState(null)   // free-text бриф связанной сделки
+  const [advSalesRep, setAdvSalesRep] = useState({})   // рекламодатель → учётка сейлза
 
   const loadTargeting = useCallback(() => api.get('/sales/directories/targeting', auth()).then(r => setTargetingCatalog(r.data.groups || {})).catch(() => {}), [])
   const loadGeo = useCallback(() => api.get('/sales/directories/geo', auth()).then(r => setGeoList(r.data.items || [])).catch(() => {}), [])
@@ -89,6 +90,9 @@ export default function MpEditor() {
       const items = r.data.items || []
       setAdvertisers(items.map(a => ({ value: a.id, label: a.short_name || a.name })))
       const m = {}; items.forEach(a => { m[a.id] = (a.counterparties || []).map(c => ({ value: c.counterparty_id, label: c.name })) }); setAdvCps(m)
+      // Ответственный сейлз рекламодателя — учётками: конструктор хранит ответственных
+      // как id пользователей, а не строк справочника sales_reps.
+      const rp = {}; items.forEach(a => { if (a.sales_rep_user_id) rp[a.id] = a.sales_rep_user_id }); setAdvSalesRep(rp)
     }).catch(() => {})
     api.get('/sales/directories/agencies', auth()).then(r => {
       const items = r.data.items || []
@@ -199,21 +203,19 @@ export default function MpEditor() {
   }
 
   // ── Free-text бриф связанной сделки ──
-  const loadDealBrief = (refresh = 0) => {
+  // Параметр refresh снят вместе с кнопкой «⟳ С Битрикса» (21.09.2026): его не
+  // передавал ни один вызов, то есть ветка `?refresh=1` была недостижима. Ленивая
+  // подгрузка из Битрикса при первом открытии живёт на бэкенде и работает без него.
+  const loadDealBrief = () => {
     const pid = savedId || (id && id !== 'new' ? id : null)
     if (!pid) return
-    api.get(`/sales/media-plans/${pid}/deal-brief${refresh ? '?refresh=1' : ''}`, auth())
+    api.get(`/sales/media-plans/${pid}/deal-brief`, auth())
       .then(r => setDealBrief(r.data)).catch(() => {})
   }
   const onDealBriefSave = async (text) => {
     if (!savedId) { alert('Сначала сохраните медиаплан — потом бриф запишется в сделку'); return }
     try { const r = await api.put(`/sales/media-plans/${savedId}/deal-brief`, { brief: text }, auth()); setDealBrief(d => ({ ...(d || {}), ...r.data, has_deal: true })); alert(r.data.pushed_to_bitrix ? 'Бриф сохранён и отправлен в Битрикс' : 'Бриф сохранён') }
     catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить бриф') }
-  }
-  const onDealBriefSync = async () => {
-    if (!savedId) { alert('Сначала сохраните медиаплан'); return }
-    try { const r = await api.get(`/sales/media-plans/${savedId}/deal-brief?refresh=1`, auth()); setDealBrief(r.data) }
-    catch (e) { alert(e.response?.data?.detail || 'Битрикс недоступен') }
   }
 
   const onExportXlsx = async () => {
@@ -248,7 +250,7 @@ export default function MpEditor() {
         onOpenVersion={(vid) => router.push(`/accounts/mp/${vid}`)}
         catalog={catalog || undefined} extraCatalog={extraCatalog || undefined}
         advertisers={advertisers} agencies={agencies} brandsByAdv={brandsByAdv} advCps={advCps} agencyCps={agencyCps}
-        geoList={geoList} targetingCatalog={targetingCatalog} staff={staff || { 'Продавец': [], 'Аккаунт': [] }}
+        geoList={geoList} advSalesRep={advSalesRep} targetingCatalog={targetingCatalog} staff={staff || { 'Продавец': [], 'Аккаунт': [] }}
         onAddTargeting={onAddTargeting} onAddGeo={onAddGeo} onCreateBrand={onCreateBrand}
         onSave={onSave} onExportXlsx={onExportXlsx}
         onPreviewPdf={async () => {
@@ -258,7 +260,9 @@ export default function MpEditor() {
         }}
         onLinkDeal={openLink} onCreateDeal={onCreateDeal}
         ownCompany={ownCompany || undefined}
-        dealBrief={dealBrief} onDealBriefSave={onDealBriefSave} onDealBriefSync={onDealBriefSync}
+        dealBrief={dealBrief} onDealBriefSave={onDealBriefSave}
+        briefFilesBase={savedId ? `/sales/media-plans/${savedId}/deal-brief/files` : null}
+        briefFilesReadOnly={false}
       />
       {linkOpen && (() => {
         const COLS = [['code', 'ID сделки'], ['advertiser', 'Рекламодатель'], ['brand', 'Бренд'], ['agency', 'Агентство'], ['sales_rep', 'Продавец'], ['account_manager', 'Аккаунт'], ['period', 'Период'], ['amount', 'Сумма'], ['our_stage', 'Наш этап'], ['has_mp', 'МП']]
