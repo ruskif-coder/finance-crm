@@ -319,3 +319,49 @@ def test_no_proxy_means_direct(db, monkeypatch):
     proxies = [h for h in opener.handlers
                if type(h).__name__ == 'ProxyHandler' and getattr(h, 'proxies', None)]
     assert not proxies, 'без переменной запрос всё равно пошёл через прокси'
+
+
+# ── оба контура ──────────────────────────────────────────────────────────────
+
+def test_both_bots_are_polled():
+    """Внутренний бот тоже на опросе.
+
+    21.09.2026 на опрос перевели только бота площадок, и через десять минут стало
+    видно, чего это стоит: пять сообщений внутреннему боту зависли у Телеграма
+    недоставленными, а человек видел тишину. Болезнь у ботов одна.
+    """
+    from app.notify import telegram
+    assert set(tg_poll.HANDLERS) == {telegram.PUB, telegram.STAFF}
+
+
+def test_staff_handler_is_shared_with_its_webhook():
+    """Опрос внутреннего бота зовёт ТОТ ЖЕ разбор, что и его ручка."""
+    import inspect
+    from app.routers import notify_settings as ns
+    assert 'handle_staff_update' in inspect.getsource(tg_poll._handle_staff)
+    assert 'handle_staff_update' in inspect.getsource(ns.tg_webhook), \
+        'ручка внутреннего бота перестала звать общий разбор'
+
+
+def test_one_cron_line_covers_every_contour(monkeypatch):
+    """Без аргумента обходим ВСЕ контуры — одна строка крона на всех.
+
+    Вторая строка крона была бы вторым местом, где помнят список ботов, и новый бот
+    однажды остался бы без приёма молча.
+    """
+    seen = []
+    monkeypatch.setattr(tg_poll, 'poll_once',
+                        lambda db, c, h: seen.append(c) or 0)
+    monkeypatch.setattr(tg_poll, 'SessionLocal', lambda: _FakeSession())
+    assert tg_poll.main([]) == 0
+    assert set(seen) == set(tg_poll.HANDLERS), 'опрос обошёл не все контуры'
+
+
+class _FakeSession:
+    def close(self):
+        pass
+
+
+def test_unknown_contour_is_refused(monkeypatch):
+    monkeypatch.setattr(tg_poll, 'SessionLocal', lambda: _FakeSession())
+    assert tg_poll.main(['--contour', 'нетакого']) == 2

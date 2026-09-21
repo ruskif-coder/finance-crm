@@ -395,43 +395,56 @@ def tg_webhook(secret: str, update: Dict[str, Any], bg: BackgroundTasks,
     исходящие уведомления шли нормально, а привязка по коду просто молчала, и у Телеграма
     накопилось 13 неотданных обновлений.
     """
-    from app.notify import telegram
     expected = os.getenv("TELEGRAM_WEBHOOK_SECRET") or ""
     if not expected or secret != expected:
         raise HTTPException(status_code=404, detail="Not found")
 
+    handle_staff_update(db, update, lambda cid, txt: bg.add_task(_reply_later, cid, txt))
+    return {"ok": True}
+
+
+def handle_staff_update(db: Session, update: Dict[str, Any], reply) -> bool:
+    """Разобрать одно сообщение внутреннему боту. Общий код вебхука и опроса.
+
+    Вынесен 21.09.2026 по тому же поводу, что и у бота площадок: вход к нам рваный, и
+    приём переведён на опрос (`app/notify/tg_poll.py`). Вторая копия разбора означала
+    бы, что привязка по вебхуку и по опросу однажды разойдутся — и разойдутся молча.
+
+    `reply` — как отправить ответ: вебхук кладёт его в фон (иначе Телеграм не дожидается
+    и считает доставку неуспешной), опрос шлёт прямо. Возвращает True, если привязали.
+    """
+    from app.notify import telegram
+
     code, chat_id = telegram.parse_start_command(update)
     if not chat_id:
-        return {"ok": True}
+        return False
     if not code:
         # НА ЛЮБОЕ СООБЩЕНИЕ ОТВЕЧАЕМ. У бота площадок так с 18.09.2026, внутренний
         # остался молчащим — и 21.09.2026 это увидели своими глазами: человек шлёт
         # `/start`, в ответ ничего, и он решает, что бот сломан. Тишина и поломка со
         # стороны выглядят одинаково, а ответ дешевле любого разбирательства.
-        bg.add_task(_reply_later, chat_id,
-                    "Чтобы получать уведомления, пришлите код из портала — "
-                    "раздел «Мои уведомления», кнопка «Подключить бота». Код из шести "
-                    "знаков, живёт полчаса.")
-        return {"ok": True}
+        reply(chat_id,
+              "Чтобы получать уведомления, пришлите код из портала — "
+              "раздел «Мои уведомления», кнопка «Подключить бота». Код из шести "
+              "знаков, живёт полчаса.")
+        return False
 
     row = (db.query(UserNotificationChannels)
            .filter(UserNotificationChannels.tg_link_code == code).first())
     if row is None or (row.tg_link_expires and row.tg_link_expires < datetime.utcnow()):
-        bg.add_task(_reply_later, chat_id,
-                    "Код не найден или просрочен. "
-                    "Получите новый в разделе «Мои уведомления».")
-        return {"ok": True}
+        reply(chat_id, "Код не найден или просрочен. "
+                       "Получите новый в разделе «Мои уведомления».")
+        return False
 
-    # Привязка записывается СРАЗУ и синхронно: она и есть результат запроса. В фон уходит
-    # только ответное сообщение — если оно не дойдёт, человек всё равно уже привязан.
+    # Привязка записывается СРАЗУ и синхронно: она и есть результат запроса. Ответное
+    # сообщение отдельно — если оно не дойдёт, человек всё равно уже привязан.
     row.tg_chat_id = chat_id
     row.tg_verified_at = datetime.utcnow()
     row.tg_link_code = row.tg_link_expires = None
     db.commit()
     user = db.query(User).filter(User.id == row.user_id).first()
-    bg.add_task(_reply_later, chat_id,
-                f"Готово, {user.name if user else ''}. Уведомления будут приходить сюда.")
-    return {"ok": True}
+    reply(chat_id, f"Готово, {user.name if user else ''}. Уведомления будут приходить сюда.")
+    return True
 
 
 @router.post("/events/{event_key}/test")

@@ -226,8 +226,16 @@ def _handle_pub(db: Session, update: dict) -> None:
                       lambda cid, txt: _reply_now(cid, txt, telegram.PUB))
 
 
+def _handle_staff(db: Session, update: dict) -> None:
+    """Разбор апдейта внутреннего бота — ТЕМ ЖЕ кодом, что и вебхук."""
+    from app.routers.notify_settings import handle_staff_update
+    handle_staff_update(db, update,
+                        lambda cid, txt: _reply_now(cid, txt, telegram.STAFF))
+
+
 HANDLERS: Dict[str, Callable[[Session, dict], None]] = {
     telegram.PUB: _handle_pub,
+    telegram.STAFF: _handle_staff,
 }
 
 
@@ -235,29 +243,36 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     ap = argparse.ArgumentParser(description="Опрос Телеграма (вместо вебхука)")
-    ap.add_argument("--contour", default=telegram.PUB,
-                    help="pub — бот площадок (по умолчанию)")
+    # БЕЗ АРГУМЕНТА ОБХОДИМ ВСЕ КОНТУРЫ. Одна строка крона на оба бота: вторая строка
+    # была бы вторым местом, где помнят список контуров, и новый бот однажды остался
+    # бы без приёма — молча, как это было с внутренним 21.09.2026.
+    ap.add_argument("--contour", default=None,
+                    help="pub | staff; без него обходятся все переведённые контуры")
     ap.add_argument("--switch", action="store_true",
                     help="снять вебхук перед первым опросом (делается один раз)")
     args = ap.parse_args(argv)
 
-    if args.contour not in HANDLERS:
-        print(f"Контур {args.contour} на опрос не переведён. Доступны: "
+    contours = sorted(HANDLERS) if args.contour is None else [args.contour]
+    unknown = [c for c in contours if c not in HANDLERS]
+    if unknown:
+        print(f"Контур {unknown[0]} на опрос не переведён. Доступны: "
               f"{', '.join(sorted(HANDLERS))}")
         return 2
 
     if args.switch:
-        try:
-            r = drop_webhook(args.contour)
-            print(f"Вебхук контура {args.contour} снят: {r.get('description') or r}")
-        except Exception as e:
-            print(f"Не удалось снять вебхук: {e}")
-            return 1
+        for c in contours:
+            try:
+                r = drop_webhook(c)
+                print(f"Вебхук контура {c} снят: {r.get('description') or r}")
+            except Exception as e:
+                print(f"Контур {c}: не удалось снять вебхук: {e}")
+                return 1
 
     db = SessionLocal()
     try:
-        n = poll_once(db, args.contour, HANDLERS[args.contour])
-        print(f"Разобрано апдейтов: {n}")
+        for c in contours:
+            n = poll_once(db, c, HANDLERS[c])
+            print(f"{c}: разобрано апдейтов {n}")
     finally:
         db.close()
     return 0
