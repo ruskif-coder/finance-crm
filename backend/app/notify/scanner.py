@@ -22,7 +22,7 @@ import sys
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -354,7 +354,13 @@ def rule_plan_month_empty(db: Session, ev: registry.Event) -> List[Hit]:
     today = date.today()
     before_days = _param(ev, "before_days", 14)
 
-    lines = db.query(SalesYearPlanLine).filter(SalesYearPlanLine.sales_rep_id.isnot(None)).all()
+    # Строка «чья-то», если есть ХОТЬ ОДИН владелец: продавец или ведущий аккаунт.
+    # Спрашивать только продавца значило бы молча выкинуть из напоминаний планы,
+    # которые ведёт аккаунт, — а это и есть основная масса того, ради чего оси
+    # разделили 21.09.2026.
+    lines = (db.query(SalesYearPlanLine)
+             .filter(or_(SalesYearPlanLine.sales_rep_id.isnot(None),
+                         SalesYearPlanLine.account_manager_id.isnot(None))).all())
     if not lines:
         return []
     adv = dict(db.query(SalesAdvertiser.id,
@@ -388,7 +394,8 @@ def rule_plan_month_empty(db: Session, ev: registry.Event) -> List[Hit]:
                 entity_type="year_plan_month", entity_id=line.id * 12 + m, stage=stage,
                 due_date=date(line.year, m + 1, 1),
                 title=f"{who}: {MONTHS_RU[m]} {line.year} запланирован на {money} ₽, сделок нет",
-                link="/sales/year-plan", ctx={"rep_id": line.sales_rep_id},
+                link="/sales/year-plan",
+                ctx={"rep_id": [line.sales_rep_id, line.account_manager_id]},
                 # Сумма названа в заголовке, поэтому в плашках только срок и
                 # состояние ячейки: сделок ноль — это и есть причина письма.
                 facts=[{"k": "период", "v": f"{line.year}-{m + 1:02d}", "fg": "muted"},

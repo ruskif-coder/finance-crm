@@ -95,16 +95,23 @@ def sales_head(db: Session, ctx: dict) -> List[int]:
 
 
 def year_plan_owner(db: Session, ctx: dict) -> List[int]:
-    """Сейлз, которому принадлежит строка/план года. ctx: {"rep_id": <SalesRep.id>}.
+    """Владельцы строки/плана года. ctx: {"rep_id": <id или список id SalesRep>}.
 
     Через rep_id, а не через сделку: события годового плана рождаются до сделок либо
-    вовсе из-за их отсутствия («месяц запланирован, сделок нет»)."""
-    rep_id = ctx.get("rep_id")
-    if not rep_id:
+    вовсе из-за их отсутствия («месяц запланирован, сделок нет»).
+
+    ВЛАДЕЛЬЦЕВ ДВОЕ — продавец и ведущий аккаунт (21.09.2026). Список, а не одно
+    число, по той же причине, что и у `responsible` выше: до разделения осей в
+    `sales_rep_id` сидел создатель строки, и напоминание доходило до того, кто план
+    ведёт. Оставь одно число — и аккаунт перестанет получать письма, которые получал
+    вчера, причём молча."""
+    raw = ctx.get("rep_id")
+    rep_ids = [x for x in (raw if isinstance(raw, (list, tuple, set)) else [raw]) if x]
+    if not rep_ids:
         return []
     from app.sales.models import SalesRep
-    rep = db.query(SalesRep).filter(SalesRep.id == rep_id).first()
-    return _active(db, [rep.user_id]) if rep else []
+    rows = db.query(SalesRep).filter(SalesRep.id.in_(rep_ids)).all()
+    return _active(db, [r.user_id for r in rows])
 
 
 def mp_author(db: Session, ctx: dict) -> List[int]:
@@ -178,7 +185,7 @@ RESOLVER_CTX = {
     "responsible": "deal",              # SalesDeal
     "account_manager": "deal",          # SalesDeal
     "sales_rep_of_deal": "deal",        # SalesDeal
-    "year_plan_owner": "rep_id",        # int — id SalesRep владельца плана
+    "year_plan_owner": "rep_id",        # int или список id SalesRep — владельцы строки
     "master_of_responsible": "deal",    # SalesDeal
     # "sales_head" и роль/пользователь в получателях контекста не читают вовсе.
 }
