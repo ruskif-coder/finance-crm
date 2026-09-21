@@ -386,3 +386,19 @@ def test_token_cannot_reach_the_log_through_httpx(monkeypatch, capsys):
         lvl = logging.getLogger(noisy).level
         assert lvl >= logging.WARNING, (
             f'логгер {noisy} снова печатает адреса запросов — токен уедет в лог крона')
+
+
+def test_app_itself_does_not_log_request_urls():
+    """Приложение тоже не должно печатать адреса запросов.
+
+    Опрос был не единственным местом: `app/main.py` поднимал INFO для всего, и КАЖДОЕ
+    исходящее сообщение клало `api.telegram.org/bot<ТОКЕН>/sendMessage` в логи
+    контейнера и в backend.log, который ротируется по 5 МБ и хранит пять поколений.
+    """
+    import logging
+
+    import app.main  # noqa: F401  — импорт настраивает запись так же, как uvicorn
+    for noisy in ('httpx', 'httpcore', 'urllib3'):
+        lvl = logging.getLogger(noisy).getEffectiveLevel()
+        assert lvl >= logging.WARNING, (
+            f'{noisy} снова печатает адреса — токены уедут в backend.log')

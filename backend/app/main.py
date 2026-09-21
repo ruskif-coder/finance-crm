@@ -32,6 +32,16 @@ logging.basicConfig(
         logging.StreamHandler(),
     ],
 )
+# ТОКЕНЫ ЛЕЖАТ В АДРЕСАХ ЗАПРОСОВ, а http-библиотеки на уровне INFO печатают адрес
+# целиком: `api.telegram.org/bot<ТОКЕН>/sendMessage` попадал в логи контейнера и в
+# backend.log при КАЖДОМ исходящем сообщении (найдено 21.09.2026 на боевом прогоне).
+# Файл ротируется по 5 МБ и хранит пять поколений, то есть токен жил бы там долго.
+#
+# Глушим сами библиотеки, а не отключаем INFO целиком: наши собственные сообщения
+# (`finance.*`) адресов не содержат и нужны для разбора происшествий.
+for _noisy in ("httpx", "httpcore", "urllib3"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 logger = logging.getLogger("finance")
 
 from app.sales import models as sales_models  # noqa: F401,E402 — регистрирует таблицы дашборда продаж в Base.metadata
