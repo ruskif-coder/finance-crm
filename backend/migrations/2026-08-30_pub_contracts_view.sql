@@ -12,7 +12,7 @@
 -- раскладку по карточкам делает кабинет — и делает её видимой: договор без юрлица
 -- попадает в отдельную группу, а не растворяется.
 
-CREATE OR REPLACE VIEW pub.counterparty_v1 AS
+CREATE OR REPLACE VIEW pub.counterparty_v1 WITH (security_barrier) AS
     SELECT pc.publisher_id,
            cp.id AS counterparty_id,
            cp.name,
@@ -24,7 +24,7 @@ CREATE OR REPLACE VIEW pub.counterparty_v1 AS
       JOIN counterparties cp ON cp.id = pc.counterparty_id
      WHERE pc.publisher_id = ANY (pub.allowed_publisher_ids());
 
-CREATE OR REPLACE VIEW pub.contract_v1 AS
+CREATE OR REPLACE VIEW pub.contract_v1 WITH (security_barrier) AS
     SELECT spc.publisher_id,
            c.counterparty_id,
            -- Номер из карточки, а при её отсутствии — тот, которым договор завели.

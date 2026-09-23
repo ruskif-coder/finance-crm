@@ -106,10 +106,23 @@ GRANT EXECUTE ON FUNCTION pub.allowed_publisher_ids() TO cabinet;
 -- вызывающий подсовывает свою временную таблицу с именем `cabinet_account`, и функция,
 -- работающая от владельца, пишет в неё. Классическая дыра, которая выглядит как
 -- забытая мелочь.
-CREATE OR REPLACE FUNCTION pub.touch_login(p_account_id integer) RETURNS void
+--
+-- ПОВТОРНЫЙ НАКАТ (ревью 23.09.2026). Функцию уточняет `2026-08-30_cabinet_login_writes_journal`
+-- (вход пишет строку в журнал кабинета). Безусловный `CREATE OR REPLACE` здесь при повторе
+-- возвращал редакцию 28.08 — журнал входов молча переставал пополняться. Поэтому создаём,
+-- только если функции ещё нет.
+DO $mig$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                    WHERE n.nspname = 'pub' AND p.proname = 'touch_login') THEN
+        EXECUTE $ddl$
+CREATE FUNCTION pub.touch_login(p_account_id integer) RETURNS void
 LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $$
     UPDATE cabinet_account SET last_login_at = now() WHERE id = p_account_id;
-$$;
+$$
+        $ddl$;
+    END IF;
+END $mig$;
 REVOKE ALL ON FUNCTION pub.touch_login(integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION pub.touch_login(integer) TO cabinet;
 
@@ -118,7 +131,7 @@ DO $mig$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_views WHERE schemaname='pub' AND viewname='account_v1') THEN
         EXECUTE $ddl$
-CREATE VIEW pub.account_v1 AS
+CREATE VIEW pub.account_v1 WITH (security_barrier) AS
 SELECT a.id, a.email, a.name, a.hashed_password, a.is_active
 FROM cabinet_account a
         $ddl$;
@@ -145,7 +158,7 @@ DO $mig$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_views WHERE schemaname='pub' AND viewname='account_publisher_v1') THEN
         EXECUTE $ddl$
-CREATE VIEW pub.account_publisher_v1 AS
+CREATE VIEW pub.account_publisher_v1 WITH (security_barrier) AS
 SELECT ap.account_id, ap.publisher_id, p.name, p.domain, p.code
 FROM cabinet_account_publisher ap
 JOIN sales_publishers p ON p.id = ap.publisher_id

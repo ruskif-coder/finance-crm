@@ -31,39 +31,49 @@
 -- миграцией, а `CREATE OR REPLACE VIEW` не умеет менять состав колонок — на втором
 -- проходе он падал с `cannot drop columns from view`. Поэтому пересоздаём: зависимостей
 -- между представлениями `pub` нет, DROP ничего не тянет за собой, грант выдаётся тут же.
-DROP VIEW IF EXISTS pub.task_v1;
-CREATE VIEW pub.task_v1 WITH (security_barrier) AS
-SELECT
-    p.id                                    AS task_id,
-    t.publisher_id,
-    pb.name                                 AS publisher_name,
-    pb.domain                               AS publisher_domain,
-    pb.tech_requirements,
-    s.id                                    AS creative_id,
-    s.no                                    AS creative_no,
-    s.title                                 AS creative_title,
-    s.form,
-    coalesce(adv.short_name, adv.name)      AS advertiser,
-    br.name                                 AS brand,
-    d.product                               AS service,
-    coalesce(t.period_from, d.period_from)  AS period_from,
-    coalesce(t.period_to,   d.period_to)    AS period_to,
-    t.advertiser_url,
-    r.asked_at,
-    t.id                                    AS target_id,
-    t.url_requested_at,
-    t.url_request_text
-FROM launch_prep_review r
-JOIN launch_prep_pair       p  ON p.id = r.pair_id
-JOIN launch_prep_creative_set s ON s.id = p.set_id
-JOIN launch_prep_target     t  ON t.id = p.target_id
-JOIN sales_publishers       pb ON pb.id = t.publisher_id
-JOIN sales_deals            d  ON d.id = s.deal_id
-LEFT JOIN sales_advertisers adv ON adv.id = d.advertiser_id
-LEFT JOIN sales_brands      br  ON br.id = d.brand_id
-WHERE r.kind = 'площадка'
-  AND r.verdict IS NULL
-  AND t.publisher_id = ANY (pub.allowed_publisher_ids());
+-- ПОВТОРНЫЙ НАКАТ (23.09.2026): пересоздаём, только если представление ещё НЕ расширено
+-- более поздней миграцией (признак — колонка `surface_kind`, её добавляет 2026-08-30_task_surface.sql). Без условия повтор
+-- этого файла откатывал представление к редакции 28.08 (аудит 23.09.2026, 8.H3).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'pub' AND table_name = 'task_v1'
+                   AND column_name = 'surface_kind') THEN
+    DROP VIEW IF EXISTS pub.task_v1;
+    CREATE VIEW pub.task_v1 WITH (security_barrier) AS
+    SELECT
+        p.id                                    AS task_id,
+        t.publisher_id,
+        pb.name                                 AS publisher_name,
+        pb.domain                               AS publisher_domain,
+        pb.tech_requirements,
+        s.id                                    AS creative_id,
+        s.no                                    AS creative_no,
+        s.title                                 AS creative_title,
+        s.form,
+        coalesce(adv.short_name, adv.name)      AS advertiser,
+        br.name                                 AS brand,
+        d.product                               AS service,
+        coalesce(t.period_from, d.period_from)  AS period_from,
+        coalesce(t.period_to,   d.period_to)    AS period_to,
+        t.advertiser_url,
+        r.asked_at,
+        t.id                                    AS target_id,
+        t.url_requested_at,
+        t.url_request_text
+    FROM launch_prep_review r
+    JOIN launch_prep_pair       p  ON p.id = r.pair_id
+    JOIN launch_prep_creative_set s ON s.id = p.set_id
+    JOIN launch_prep_target     t  ON t.id = p.target_id
+    JOIN sales_publishers       pb ON pb.id = t.publisher_id
+    JOIN sales_deals            d  ON d.id = s.deal_id
+    LEFT JOIN sales_advertisers adv ON adv.id = d.advertiser_id
+    LEFT JOIN sales_brands      br  ON br.id = d.brand_id
+    WHERE r.kind = 'площадка'
+      AND r.verdict IS NULL
+      AND t.publisher_id = ANY (pub.allowed_publisher_ids());
+  END IF;
+END $$;
 
 -- ────────────────────────────────────────────────────────────────────────────────
 -- 2. Причины отрицательных исходов — готовые формулировки.
@@ -74,7 +84,7 @@ WHERE r.kind = 'площадка'
 -- версию — в общем списке человек выбирал бы из смеси несравнимого.
 --
 -- Область видимости здесь не нужна: это справочник формулировок, а не данные площадки.
-CREATE OR REPLACE VIEW pub.reason_v1 AS
+CREATE OR REPLACE VIEW pub.reason_v1 WITH (security_barrier) AS
 SELECT 'отказ'::text AS kind, id, text AS name, sort_order
 FROM sales_refusal_reasons WHERE is_active
 UNION ALL

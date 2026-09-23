@@ -80,7 +80,7 @@ END $$;
 --
 -- Приостановленный кабинет перестаёт видеть задания сразу, не дожидаясь, пока истекут
 -- выданные токены: проверка на каждом запросе, а не только при входе.
-CREATE OR REPLACE VIEW pub.account_publisher_v1 AS
+CREATE OR REPLACE VIEW pub.account_publisher_v1 WITH (security_barrier) AS
 SELECT a.id AS account_id, p.id AS publisher_id, p.name, p.domain, p.code
 FROM cabinet_account a
 JOIN cabinet c ON c.id = a.cabinet_id
@@ -92,7 +92,7 @@ WHERE c.state = 'активен';
 
 -- Право согласовывать кабинет проверяет сам: ядро о ролях внешнего контура не знает и
 -- знать не должно — у него своя матрица прав, к этой отношения не имеющая.
-CREATE OR REPLACE VIEW pub.account_v1 AS
+CREATE OR REPLACE VIEW pub.account_v1 WITH (security_barrier) AS
 SELECT a.id, a.email, a.name, a.hashed_password, a.is_active, a.can_approve
 FROM cabinet_account a;
 

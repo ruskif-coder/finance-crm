@@ -19,25 +19,34 @@
 -- Умолчание для НОВЫХ контактов — false: человека заводят в справочник, чтобы знать, а
 -- рассылку включают отдельным решением.
 
-ALTER TABLE sales_publisher_contacts
-    ADD COLUMN IF NOT EXISTS notify boolean NOT NULL DEFAULT false;
+-- ПОВТОРНЫЙ НАКАТ (ревью 23.09.2026). Бэкфилл идёт ТОЛЬКО вместе с появлением колонки.
+-- Условие `AND NOT c.notify` не спасало: у площадки, где рассылку выключили вручную,
+-- второй прогон снова включал её «основному» — письма уходили тому, кто от них
+-- отказался. Признак первого наката — сама колонка: её ещё нет.
+DO $mig$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'sales_publisher_contacts' AND column_name = 'notify') THEN
+        ALTER TABLE sales_publisher_contacts
+            ADD COLUMN notify boolean NOT NULL DEFAULT false;
+
+        -- Бэкфилл: по одному получателю на площадку, тому же, что получал бы сегодня.
+        WITH chosen AS (
+            SELECT DISTINCT ON (publisher_id) id
+              FROM sales_publisher_contacts
+             WHERE coalesce(email, '') <> ''
+             ORDER BY publisher_id, is_primary DESC, id
+        )
+        UPDATE sales_publisher_contacts c
+           SET notify = true
+          FROM chosen
+         WHERE c.id = chosen.id;
+    END IF;
+END $mig$;
 
 COMMENT ON COLUMN sales_publisher_contacts.notify IS
     'Получает ли контакт уведомления кабинета (решение владельца 14.09.2026). '
     'Какие именно виды — площадка выключает у себя в кабинете.';
-
--- Бэкфилл: по одному получателю на площадку, тому же, что получал бы сегодня.
-WITH chosen AS (
-    SELECT DISTINCT ON (publisher_id) id
-      FROM sales_publisher_contacts
-     WHERE coalesce(email, '') <> ''
-     ORDER BY publisher_id, is_primary DESC, id
-)
-UPDATE sales_publisher_contacts c
-   SET notify = true
-  FROM chosen
- WHERE c.id = chosen.id
-   AND NOT c.notify;
 
 CREATE INDEX IF NOT EXISTS ix_publisher_contacts_notify
     ON sales_publisher_contacts (publisher_id) WHERE notify;

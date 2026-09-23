@@ -17,23 +17,33 @@
 -- миграцией, а `CREATE OR REPLACE VIEW` не умеет менять состав колонок — на втором
 -- проходе он падал с `cannot drop columns from view`. Поэтому пересоздаём: зависимостей
 -- между представлениями `pub` нет, DROP ничего не тянет за собой, грант выдаётся тут же.
-DROP VIEW IF EXISTS pub.profile_v1;
-CREATE VIEW pub.profile_v1 WITH (security_barrier) AS
-SELECT p.id            AS publisher_id,
-       p.name,
-       p.domain,
-       p.kind,
-       p.network,
-       -- Рабочий чат — общий, площадка в нём состоит (владелец 28.08.2026: «только
-       -- почта и рабочая группа»). Личных мессенджеров менеджеров здесь нет и не будет:
-       -- один канал связи, иначе переписка размывается по личкам.
-       p.chat_title,
-       p.chat_url,
-       p.chat_url_max,
-       p.media_kit_filename,
-       p.tech_requirements
-FROM sales_publishers p
-WHERE p.id = ANY (pub.allowed_publisher_ids());
+-- ПОВТОРНЫЙ НАКАТ (23.09.2026): пересоздаём, только если представление ещё НЕ расширено
+-- более поздней миграцией (признак — колонка `messenger_note`, её добавляет 2026-08-30_team_from_our_contacts.sql). Без условия повтор
+-- этого файла откатывал представление к редакции 28.08 (аудит 23.09.2026, 8.H3).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'pub' AND table_name = 'profile_v1'
+                   AND column_name = 'messenger_note') THEN
+    DROP VIEW IF EXISTS pub.profile_v1;
+    CREATE VIEW pub.profile_v1 WITH (security_barrier) AS
+    SELECT p.id            AS publisher_id,
+           p.name,
+           p.domain,
+           p.kind,
+           p.network,
+           -- Рабочий чат — общий, площадка в нём состоит (владелец 28.08.2026: «только
+           -- почта и рабочая группа»). Личных мессенджеров менеджеров здесь нет и не будет:
+           -- один канал связи, иначе переписка размывается по личкам.
+           p.chat_title,
+           p.chat_url,
+           p.chat_url_max,
+           p.media_kit_filename,
+           p.tech_requirements
+    FROM sales_publishers p
+    WHERE p.id = ANY (pub.allowed_publisher_ids());
+  END IF;
+END $$;
 
 -- ────────────────────────────────────────────────────────────────────────────────
 -- 2. Команда SIMB-AD по площадке.
@@ -49,21 +59,31 @@ WHERE p.id = ANY (pub.allowed_publisher_ids());
 -- миграцией, а `CREATE OR REPLACE VIEW` не умеет менять состав колонок — на втором
 -- проходе он падал с `cannot drop columns from view`. Поэтому пересоздаём: зависимостей
 -- между представлениями `pub` нет, DROP ничего не тянет за собой, грант выдаётся тут же.
-DROP VIEW IF EXISTS pub.team_v1;
-CREATE VIEW pub.team_v1 WITH (security_barrier) AS
-SELECT DISTINCT
-       t.publisher_id,
-       r.id                        AS rep_id,
-       r.name,
-       v.role,
-       u.email
-FROM launch_prep_target t
-JOIN sales_deals d ON d.id = t.deal_id
-CROSS JOIN LATERAL (VALUES ('аккаунт', d.account_manager_id),
-                           ('трафик и креативы', d.traffic_manager_id)) AS v(role, rep_id)
-JOIN sales_reps r ON r.id = v.rep_id
-LEFT JOIN users u ON u.id = r.user_id
-WHERE t.publisher_id = ANY (pub.allowed_publisher_ids());
+-- ПОВТОРНЫЙ НАКАТ (23.09.2026): пересоздаём, только если представление ещё НЕ расширено
+-- более поздней миграцией (признак — колонка `sort_order`, её добавляет 2026-08-30_team_from_our_contacts.sql). Без условия повтор
+-- этого файла откатывал представление к редакции 28.08 (аудит 23.09.2026, 8.H3).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'pub' AND table_name = 'team_v1'
+                   AND column_name = 'sort_order') THEN
+    DROP VIEW IF EXISTS pub.team_v1;
+    CREATE VIEW pub.team_v1 WITH (security_barrier) AS
+    SELECT DISTINCT
+           t.publisher_id,
+           r.id                        AS rep_id,
+           r.name,
+           v.role,
+           u.email
+    FROM launch_prep_target t
+    JOIN sales_deals d ON d.id = t.deal_id
+    CROSS JOIN LATERAL (VALUES ('аккаунт', d.account_manager_id),
+                               ('трафик и креативы', d.traffic_manager_id)) AS v(role, rep_id)
+    JOIN sales_reps r ON r.id = v.rep_id
+    LEFT JOIN users u ON u.id = r.user_id
+    WHERE t.publisher_id = ANY (pub.allowed_publisher_ids());
+  END IF;
+END $$;
 
 -- ────────────────────────────────────────────────────────────────────────────────
 -- 3. Обработанное — решённые запросы.

@@ -12,7 +12,7 @@
 -- Область — та же, что у всех витрин: `pub.allowed_publisher_ids()`. Служебная учётка
 -- увидит услуги всех площадок, обычная — только своих.
 
-CREATE OR REPLACE VIEW pub.publisher_service_v1 AS
+CREATE OR REPLACE VIEW pub.publisher_service_v1 WITH (security_barrier) AS
     SELECT ps.publisher_id,
            sv.name AS service,
            ps.surface_kind,

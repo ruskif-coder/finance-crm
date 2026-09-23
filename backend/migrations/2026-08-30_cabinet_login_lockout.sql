@@ -18,7 +18,17 @@
 -- SECURITY DEFINER + SET search_path — не гигиена, а часть защиты: без явного пути
 -- вызывающий может подставить свою схему и увести вызов на свою таблицу.
 
-CREATE OR REPLACE FUNCTION pub.login_lock_minutes(p_email text)
+-- ПОВТОРНЫЙ НАКАТ (ревью 23.09.2026). Все три функции уточняет
+-- `2026-08-31_cabinet_lockout_scope` (счётчик кабинета в своей области). Безусловный
+-- `CREATE OR REPLACE` здесь при повторе откатывал их к редакции 30.08, поэтому каждая
+-- создаётся, только если её ещё нет. Тела не менялись.
+
+DO $mig$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                    WHERE n.nspname = 'pub' AND p.proname = 'login_lock_minutes') THEN
+        EXECUTE $ddl$
+CREATE FUNCTION pub.login_lock_minutes(p_email text)
 RETURNS integer
 LANGUAGE sql
 STABLE
@@ -31,9 +41,17 @@ AS $$
          FROM login_attempts
          WHERE lower(email) = lower(p_email) AND locked_until > now()
          LIMIT 1), 0);
-$$;
+$$
+        $ddl$;
+    END IF;
+END $mig$;
 
-CREATE OR REPLACE FUNCTION pub.register_failed_login(p_email text)
+DO $mig$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                    WHERE n.nspname = 'pub' AND p.proname = 'register_failed_login') THEN
+        EXECUTE $ddl$
+CREATE FUNCTION pub.register_failed_login(p_email text)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -76,16 +94,27 @@ BEGIN
          WHERE lower(email) = lower(p_email);
     END IF;
 END;
-$$;
+$$
+        $ddl$;
+    END IF;
+END $mig$;
 
-CREATE OR REPLACE FUNCTION pub.clear_login_attempts(p_email text)
+DO $mig$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                    WHERE n.nspname = 'pub' AND p.proname = 'clear_login_attempts') THEN
+        EXECUTE $ddl$
+CREATE FUNCTION pub.clear_login_attempts(p_email text)
 RETURNS void
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
     DELETE FROM login_attempts WHERE lower(email) = lower(p_email);
-$$;
+$$
+        $ddl$;
+    END IF;
+END $mig$;
 
 -- Роль внешнего контура получает ТОЛЬКО право выполнить эти три функции. Прав на саму
 -- `login_attempts` у неё нет и не появляется: она по-прежнему не видит `public`.

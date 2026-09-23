@@ -14,7 +14,15 @@ ALTER TABLE sales_publisher_surfaces ADD COLUMN IF NOT EXISTS ms_publisher_id VA
 ALTER TABLE sales_publisher_surfaces ADD COLUMN IF NOT EXISTS default_ms_block_id VARCHAR;  -- «кукуха2»: авто-цепляется к креативу, скрыт из статистики кабинета
 
 -- 2. Блок вешаем на существующую поверхность, а не на дубль publisher_surface.
-DELETE FROM publisher_block;                                       -- строки указывали на снесённую publisher_surface; каталог перезаливается импортом
+-- Очистка нужна ТОЛЬКО при первом накате: строки указывали на ошибочную publisher_surface,
+-- которую этот же файл сносит ниже. При повторном накате её уже нет — и безусловный DELETE
+-- стирал живой каталог блоков (аудит 23.09.2026, 8.H2).
+DO $$
+BEGIN
+  IF to_regclass('public.publisher_surface') IS NOT NULL THEN
+    DELETE FROM publisher_block;
+  END IF;
+END $$;
 ALTER TABLE publisher_block DROP CONSTRAINT IF EXISTS publisher_block_surface_id_fkey;
 ALTER TABLE publisher_block ADD COLUMN IF NOT EXISTS surface_id INTEGER;
 DROP TABLE IF EXISTS publisher_surface CASCADE;                    -- ошибочный дубль (создан в этой же сессии, реальных данных нет)
