@@ -263,7 +263,25 @@ def _apply_extra_filters(q, db, hide_archive=False, search=None, gaps=None):
             "brand_id": SalesDeal.brand_id, "sales_rep_id": SalesDeal.sales_rep_id,
             "account_manager_id": SalesDeal.account_manager_id,
             "period_from": SalesDeal.period_from, "period_to": SalesDeal.period_to,
+            # «Нет стадии» — про НАШУ лестницу (our_stage_id), а не про имя стадии из
+            # Битрикса: в реестре колонка «Стадия» показывает именно её, и фильтр
+            # обязан отвечать на то, что человек видит. Сделка без нашей стадии не
+            # попадает ни в один слой денег и молча выпадает из всех сводок.
+            "our_stage_id": SalesDeal.our_stage_id,
         }
+        # НЕИЗВЕСТНОЕ ЗНАЧЕНИЕ — ОТКАЗ, а не тишина. Раньше чужой ключ просто
+        # выпадал из списка условий, и при единственном непонятом фильтре `conds`
+        # оставался пустым: экран показывал ВСЕ сделки, утверждая, что отобрал
+        # незаполненные. Признак фильтра, который «ничего не нашёл», и признак
+        # фильтра, который не сработал вовсе, при этом одинаковы — а выводы из них
+        # противоположные. Список значений живёт на фронте (GAP_FIELDS в
+        # components/salesTableKit.js); отказ здесь — то, что не даст им разойтись
+        # молча: новая метка без обработчика упадёт на первом же щелчке.
+        unknown = [g for g in gaps if g not in gap_columns and g != "payer"]
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail="Фильтр «Незаполненные» не знает признака: %s" % ", ".join(unknown))
         conds = [gap_columns[g].is_(None) for g in gaps if g in gap_columns]
         if "payer" in gaps:
             from app.sales.models import SalesAgencyCounterparty, SalesAdvertiserCounterparty
@@ -2845,7 +2863,12 @@ def _line_public(ln) -> dict:
 
 @router.get("/deals/{deal_id}/move-preview")
 def move_preview(
-    deal_id: int,
+    # СТРОКА, а не int: карточка сделки живёт по адресу /deals/{code}, и в ручку
+    # приезжает наша метка вроде N3A4D6. Объявление `int` давало 422 ещё до входа в
+    # тело — FastAPI просто не мог разобрать путь. Карточка этот отказ проглатывала
+    # («список не обязателен»), поэтому полоса требований к переходу не появлялась
+    # НИКОГДА, и выглядело это как «её и не задумывали».
+    deal_id: str,
     to_stage_id: Optional[int] = None,
     realization_pipeline_id: Optional[int] = None,
     db: Session = Depends(get_db),
@@ -2857,7 +2880,9 @@ def move_preview(
     список заранее, вместе с местом, где каждое чинится. Без цели считает следующую
     стадию по цепочке — то же, что сделает кнопка «двинуть» без выбора.
     """
-    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    # Через общий резолвер, как соседние ручки карточки: свой поиск по id был вторым
+    # способом найти сделку и единственным, не знавшим про метки.
+    deal = _deal_by_ref(db, deal_id)
     if not deal:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
     _assert_deal_in_scope(db, current_user, deal)

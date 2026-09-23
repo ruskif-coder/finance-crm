@@ -12,7 +12,7 @@ import { buildTitle, productWithSurface, separatePriceSet, surfaceTag, TITLE_EMP
 import { DownloadOverlay } from '@/components/LogoLoader'
 import { fmtMoney, fmtFull, fmtDate, mln } from '@/lib/salesFormat'
 import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
-import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, firstSortDir, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z } from '@/components/salesTableKit'
+import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, firstSortDir, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z, DealCodeLink } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import { overlayClose } from '@/lib/overlay'
@@ -156,6 +156,20 @@ export default function SalesRegistry2() {
   const visibleCols = [FIXED_COLS.prob, canEdit ? FIXED_COLS.sel : null, FIXED_COLS.brief, ...colOrder.map(k => COL_BY_KEY[k]).filter(c => c && !hidden.has(c.key))].filter(Boolean)
   const gridTemplate = visibleCols.map(c => c.w).join(' ')
   const isMobile = useIsMobile()
+  // Высота шапки меряется, а не задаётся числом: строк в ней может быть две, и их
+  // набор зависит от прав пользователя. С константой закреплённая панель массовой
+  // правки то наезжала бы на меню, то висела бы с зазором. Тот же приём, что в
+  // реестре операций, откуда взята и сама панель.
+  const [navH, setNavH] = useState(60)
+  useEffect(() => {
+    const measure = () => {
+      const el = document.querySelector('[data-navbar]')
+      if (el) setNavH(el.getBoundingClientRect().height)
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [])
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [mobView, setMobView] = useState('cards')     // мобильный вид: карточки | таблица
   const [mobSearchOpen, setMobSearchOpen] = useState(false)
@@ -470,8 +484,7 @@ export default function SalesRegistry2() {
         const isLocal = String(d.bitrix_id || '').startsWith('local-')
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-            <a href={`/sales/deals/${encodeURIComponent(d.code || d.id)}`} title="Открыть карточку сделки"
-              style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>{d.code || '—'}</a>
+            <DealCodeLink deal={d} emptyLabel="—" />
             {/* Обновление из Битрикса — только у тех, кого там есть откуда обновлять. */}
             {!isLocal && canEdit && <span onClick={e => { e.stopPropagation(); syncingId !== d.id && syncDeal(d) }} title="Обновить из Битрикса (поля + файлы)"
               style={{ cursor: syncingId === d.id ? 'default' : 'pointer', fontSize: 12, lineHeight: 1, color: syncingId === d.id ? 'var(--text-faint)' : 'var(--accent)' }}>{syncingId === d.id ? '⏳' : '⟳'}</span>}
@@ -738,9 +751,17 @@ export default function SalesRegistry2() {
                 {/* Заголовок «Список сделок» со счётчиком переехал в шапку страницы,
                     настройка колонок и выгрузка — в правую группу строки фильтров. */}
 
-                {/* массовое редактирование выбранных — под заголовком, в одну строку */}
+                {/* Массовое редактирование — закреплено под шапкой страницы, как в
+                    реестре операций. В потоке страницы панель оставалась у начала
+                    таблицы: выделив строки ниже по списку, человек её не видел и
+                    прокручивал вверх за каждой правкой.
+
+                    zIndex 45 — под шапкой приложения (у неё 50) и над таблицей:
+                    панель не должна перекрывать меню, из которого уходят со страницы.
+                    Отступы по краям равны отступам самой страницы, иначе она кажется
+                    съехавшей относительно таблицы под ней. */}
                 {canEdit && selDealIds.length > 0 && (
-                  <div style={{ marginBottom: 12, background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: '10px 14px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ position: 'fixed', top: navH + 10, left: isMobile ? 14 : 24, right: isMobile ? 14 : 24, zIndex: 45, background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: 12, boxShadow: 'var(--shadow-float)', padding: '10px 14px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', maxHeight: '60vh', overflowY: 'auto', animation: 'riseIn .24s cubic-bezier(0.22,1,0.36,1) both' }}>
                     <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>Выбрано: {selDealIds.length}</span>
                     {(() => {
                       const W = { flexShrink: 0, width: 132, maxWidth: 132, textOverflow: 'ellipsis' }

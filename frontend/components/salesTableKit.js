@@ -171,10 +171,36 @@ export const FILTER_DROPS = [
   ['pipeline', 'Воронка'], ['product', 'Услуга'], ['our_stage_id', 'Стадия'], ['stage_key', 'Слой денег'],
   ['advertiser_id', 'Рекламодатель'], ['brand_id', 'Бренд'], ['agency_id', 'Агентство'], ['account_manager_id', 'Аккаунт'],
 ]
+// ─── Номер сделки — ссылка, открывающая карточку в НОВОЙ вкладке ─────────
+//
+// Один компонент на реестр сделок, дашборд сейлза и дашборд аккаунта. Правило
+// «щёлкнул по номеру — открылась карточка рядом» жило в четырёх местах четырьмя
+// копиями: на двух экранах настоящей ссылкой в той же вкладке, на дашборде
+// аккаунта вообще не ссылкой, а подписью — номер там выглядел кликабельным
+// (синий, моноширинный) и не был им.
+//
+// Новая вкладка — по просьбе владельца 22.09.2026: список, из которого уходишь,
+// теряет прокрутку, фильтры и выделение, а из карточки почти всегда возвращаются.
+//
+// stopPropagation обязателен: у строк этих таблиц есть свой onClick — разворот
+// и переход. Без него щелчок по номеру и открывал бы вкладку, и разворачивал
+// строку под ней.
+export function DealCodeLink({ deal, size = 12, emptyLabel }) {
+  const key = deal.code || deal.id
+  if (!key) return <span style={{ color: 'var(--text-faint)', fontSize: size }}>{emptyLabel || '—'}</span>
+  return (
+    <a href={`/sales/deals/${encodeURIComponent(key)}`} target="_blank" rel="noreferrer"
+      onClick={e => e.stopPropagation()} title="Открыть карточку сделки в новой вкладке"
+      style={{ fontFamily: MONO, fontSize: size, fontWeight: 700, color: 'var(--accent)',
+        textDecoration: 'none', flex: '0 0 auto' }}>{deal.code || emptyLabel || deal.id}</a>
+  )
+}
+
 export const GAP_FIELDS = [
   { value: 'advertiser_id', label: 'без рекламодателя' }, { value: 'brand_id', label: 'без бренда' },
   { value: 'agency_id', label: 'без агентства' }, { value: 'sales_rep_id', label: 'без сейлза' }, { value: 'account_manager_id', label: 'без аккаунта' },
   { value: 'period_from', label: 'без старта РК' }, { value: 'payer', label: 'контрагент не из базы' },
+  { value: 'our_stage_id', label: 'нет стадии' },
 ]
 
 // ─── Единый шаблон настраиваемых колонок таблиц сделок ─────────────────

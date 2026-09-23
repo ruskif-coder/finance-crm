@@ -3,7 +3,7 @@ import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can, getPermissions } from '@/components/Navbar'
 import { MONO, UI, card, CAP, btnSm, sel, inp, PIP, STAGE_ORDER, FILL, StageLayerBar,
-         MultiDrop, GAP_FIELDS, IconBtn, PortalPopover, ROW_TONE, CTA_TONE, ctaStyle } from '@/components/salesTableKit'
+         MultiDrop, GAP_FIELDS, IconBtn, PortalPopover, ROW_TONE, CTA_TONE, ctaStyle, DealCodeLink } from '@/components/salesTableKit'
 import NotificationsWidget, { toItem } from '@/components/dashboard/NotificationsWidget'
 import DealDetail from '@/components/sales/DealDetail'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
@@ -736,7 +736,7 @@ export default function AccountDashboard() {
                                 style={{ display: 'grid', gridTemplateColumns: GRID, gap: 10, alignItems: 'center', boxSizing: 'border-box',
                                   padding: '7px 10px', borderRadius: 9, border: `1px solid ${u.border}`, marginBottom: 4, cursor: 'pointer',
                                   background: expandedId === r.id ? 'var(--accent-tint)' : u.bg, color: 'var(--text-primary)' }}>
-                                <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: 'var(--accent)' }}>{r.code || r.id}</span>
+                                <DealCodeLink deal={r} size={11.5} />
 
                                 {/* рекламодатель и бренд — двумя строками, как в референсе */}
                                 <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
@@ -955,7 +955,7 @@ export default function AccountDashboard() {
                     {filtered.map(r => (
                       <div key={r.id} onClick={() => router.push(`/sales/deals/${r.code || r.id}`)}
                         style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 9, border: '1px solid var(--border-inner)', cursor: 'pointer' }}>
-                        <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700, color: 'var(--accent)', flex: '0 0 auto' }}>{r.code || r.id}</span>
+                        <DealCodeLink deal={r} size={10.5} />
                         <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, flex: '1 1 auto' }}>
                           <span style={{ fontSize: 11.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {[r.advertiser || r.title, r.brand].filter(Boolean).join(' · ')}
