@@ -231,11 +231,11 @@ export default function BugsPage() {
                     ))}
                     <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}>
                       {open.backlog_item_id ? (
-                        <Link href="/settings/backlog" style={{ ...btn, textDecoration: 'none' }}>
+                        <Link href="/settings/backlog" style={{ ...btn(false), textDecoration: 'none' }}>
                           наблюдение №{open.backlog_item_id}
                         </Link>
                       ) : (
-                        <button style={btn} disabled={busy} onClick={toBacklog}>
+                        <button style={btn(false)} disabled={busy} onClick={toBacklog}>
                           Завести наблюдение
                         </button>
                       )}

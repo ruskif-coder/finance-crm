@@ -149,7 +149,7 @@ export default function BugReport({ size = 32 }) {
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10,
                   flexWrap: 'wrap' }}>
-                  <button style={btn} onClick={() => pick.current?.click()}
+                  <button style={btn(false)} onClick={() => pick.current?.click()}
                     disabled={files.length >= MAX_FILES}>
                     📎 Снимок экрана
                   </button>
@@ -183,7 +183,7 @@ export default function BugReport({ size = 32 }) {
                   <button style={primaryBtn} disabled={busy} onClick={send}>
                     {busy ? 'Отправляю…' : 'Отправить'}
                   </button>
-                  <button style={btn} onClick={close}>Отмена</button>
+                  <button style={btn(false)} onClick={close}>Отмена</button>
                 </div>
               </>
             )}

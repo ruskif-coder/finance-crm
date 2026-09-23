@@ -459,8 +459,8 @@ export default function OrdDirectory() {
           <div style={{ ...card, padding: '10px 12px', marginBottom: 12, fontSize: 13,
             display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span>Выбрано {picked.size} {plural(picked.size)}</span>
-            <button style={btn} onClick={() => setPicked(new Set())}>Снять выбор</button>
-            <button style={{ ...btn, color: 'var(--danger)', borderColor: 'var(--danger)' }}
+            <button style={btn(false)} onClick={() => setPicked(new Set())}>Снять выбор</button>
+            <button style={{ ...btn(false), color: 'var(--danger)', borderColor: 'var(--danger)' }}
               disabled={busy} onClick={() => dropPicked(false)}>
               {busy ? 'Удаляю…' : 'Удалить из зеркала'}
             </button>
