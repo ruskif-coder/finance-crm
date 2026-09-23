@@ -19,6 +19,7 @@ from app.database import get_db
 from app.permissions import require_permission
 from app.audit import log_action
 from app.sales import mp_row
+from app import vat as vat_rules
 from app.sales import periods
 from app.notify import emit
 from app.models import User, Counterparty, RolePermission
@@ -29,7 +30,30 @@ from app.sales.deal_label import deal_label
 from app.sales.row_context import merge_inventory
 
 router = APIRouter()
-VAT = 0.22
+# Ставка НДС — у ВЕРСИИ ПЛАНА, а не константой (правило владельца 23.09.2026: фиксируется на
+# дату расчёта; до 2026 было 20 %, с 2026 — 22 %, пересчёт посчитанного недопустим).
+# Правила ставки — в `app/vat.py`; здесь только запас для рендера без плана.
+DEFAULT_VAT_PCT = vat_rules.DEFAULT_PCT
+
+
+def _current_vat_pct(db) -> float:
+    """Ставка для НОВОГО расчёта: из карточки нашего юрлица («НДС приход»)."""
+    return vat_rules.current(db)
+
+
+def _vat_frac(full) -> float:
+    """Ставка плана долей (0.22) — из собранного плана (`_plan_full`) или словаря с ней."""
+    rate = (full or {}).get("vat_rate")
+    return (float(rate) if rate is not None else DEFAULT_VAT_PCT) / 100.0
+
+
+# Подпись колонки НДС в шаблоне и запасной книге. Шаблон несёт «НДС 22%» текстом, и план
+# 2025 года уходил клиенту с суммой по 20 % под заголовком 22 % (ревью 23.09.2026).
+TEMPLATE_VAT_LABEL = "НДС 22%"
+
+
+def vat_label(full) -> str:
+    return f"НДС {round(_vat_frac(full) * 100, 2):g}%"
 KEEP_VERSIONS = 3
 MP_EDIT = require_permission("media_plans_editor", "edit")   # создание/правка МП
 MP_REG_VIEW = require_permission("media_plans", "view")       # реестр + выгрузка
@@ -119,7 +143,7 @@ def _row_net(r):
     return mp_row.row_net(getattr(r, "model", None), r.volume, r.unit_price, r.discount)
 
 
-def _fc_metrics(row, net):
+def _fc_metrics(row, net, vat=DEFAULT_VAT_PCT / 100.0):
     """Прогнозные показатели строки — та же формула, что в конструкторе/PDF (чтобы Excel бился).
     Вход в forecast: imp (показы), freq, ctr(%), cr(%), price, sov(%). Остальное —
     производное от net и показов.
@@ -140,7 +164,7 @@ def _fc_metrics(row, net):
     clicks = mp_row.row_clicks(row.get("model"), row.get("volume"), f)
     checks = clicks * cr_pct / 100
     revenue = checks * price
-    gross = mp_row.rub(net * (1 + VAT))
+    gross = mp_row.rub(net * (1 + vat))
     return {
         "freq": freq or None, "reach": reach or None, "imp": imp or None,
         "ctr": ctr_pct or None, "clicks": clicks or None,
@@ -163,14 +187,14 @@ def _xlsx_safe(v):
     return v
 
 
-def _amounts(rows, extras):
+def _amounts(rows, extras, vat_pct: float):
     place = sum(_row_net(r) for r in rows)
     extra = sum((e.total or 0) for e in extras)
     net = place + extra
-    return mp_row.rub(net), mp_row.rub(net * (1 + VAT))
+    return mp_row.rub(net), mp_row.rub(net * (1 + vat_pct / 100.0))
 
 
-def _apply_fields(p, data: MpIn):
+def _apply_fields(p, data: MpIn, db):
     """Поля шапки из формы. `deal_id` СЮДА НЕ ВХОДИТ намеренно.
 
     Привязка к сделке — свойство ГРУППЫ версий, а не отдельной версии: `link-deal`
@@ -182,7 +206,12 @@ def _apply_fields(p, data: MpIn):
               "period", "geo_id", "date_from", "date_to", "targeting", "goals",
               "sales_rep_id", "account_manager_id", "traffic_manager_id"):
         setattr(p, f, getattr(data, f))
-    net, gross = _amounts(data.rows, data.extras)
+    # Ставка НДС фиксируется ОДИН РАЗ — при первом расчёте версии, текущей ставкой нашего
+    # юрлица. Пересохранение считает по ставке, что уже записана в версии: план, посчитанный
+    # по 20 %, не переезжает на 22 % от того, что его открыли и сохранили (23.09.2026).
+    if p.vat_rate is None:
+        p.vat_rate = _current_vat_pct(db)
+    net, gross = _amounts(data.rows, data.extras, float(p.vat_rate))
     p.amount_net, p.amount_gross = net, gross
 
 
@@ -230,10 +259,13 @@ def _dstr(x):
     return x.isoformat()[:10] if hasattr(x, "isoformat") else str(x)[:10]
 
 
-def _content_sig(fields, rows, extras):
+def _content_sig(fields, rows, extras, with_dates: bool = True):
     head = {k: getattr(fields, k, None) for k in _SIG_HEAD}
-    head["date_from"] = _dstr(getattr(fields, "date_from", None))
-    head["date_to"] = _dstr(getattr(fields, "date_to", None))
+    # Без дат — чтобы сравнить «изменилось ли что-то, КРОМЕ дат запуска»: на плане,
+    # зафиксированном на «Сборке», открыты только они (`app/sales/plan_lock.py`).
+    if with_dates:
+        head["date_from"] = _dstr(getattr(fields, "date_from", None))
+        head["date_to"] = _dstr(getattr(fields, "date_to", None))
     head["targeting"] = getattr(fields, "targeting", None) or {}
     head["goals"] = getattr(fields, "goals", None) or {}
     rowd = [{"position": getattr(r, "position", None), "format": getattr(r, "format", None),
@@ -245,10 +277,50 @@ def _content_sig(fields, rows, extras):
     return json.dumps(_norm({"h": head, "r": rowd, "e": exd}), sort_keys=True, ensure_ascii=False)
 
 
-def _plan_content_sig(db, plan):
+def _plan_content_sig(db, plan, with_dates: bool = True):
     rows = db.query(SalesMediaPlanRow).filter(SalesMediaPlanRow.plan_id == plan.id).order_by(SalesMediaPlanRow.sort_order).all()
     extras = db.query(SalesMediaPlanExtra).filter(SalesMediaPlanExtra.plan_id == plan.id).order_by(SalesMediaPlanExtra.sort_order).all()
-    return _content_sig(plan, rows, extras)
+    return _content_sig(plan, rows, extras, with_dates)
+
+
+def _deal_for_plan(db, deal_id, user):
+    """Сделка, в которую медиаплан собирается писать: существует и видна пользователю.
+
+    Область видимости сделок до 23.09.2026 проверялась только в файловых ручках брифа.
+    Привязка переписывала ЧУЖОЙ сделке название, сумму и стадию, новый план с `deal_id`
+    не проверял даже существование сделки, бриф чужой сделки читался и уходил в Битрикс
+    (аудит 23.09.2026, 1.M1). Правило то же, что в реестре сделок.
+    """
+    from app.routers.sales_dashboard import _assert_deal_in_scope
+    from app.sales.models import SalesDeal
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, user, deal)
+    return deal
+
+
+def _lock_guard(db, deal_id, user, what: str) -> bool:
+    """Фиксация плана на «Сборке» (решение владельца 23.09.2026, `app/sales/plan_lock.py`).
+
+    Сделка ещё до «Сборки» → False, пишем как обычно. Сделка на «Сборке» и дальше:
+    мастеру → True (вызывающий пишет это в журнал отдельным действием, «в обход фиксации»
+    должно быть видно потом), остальным → 409 с объяснением, что осталось открытым.
+    """
+    from app.sales import plan_lock, stage_move
+    if not plan_lock.deal_locks_plan(db, deal_id):
+        return False
+    if stage_move.is_master(user):
+        return True
+    raise HTTPException(
+        status_code=409,
+        detail=(f"{what}: медиаплан зафиксирован — сделка на стадии сборки или дальше. "
+                "Меняются только даты запуска. Остальное может поправить мастер."))
+
+
+def _log_locked_edit(db, user, plan_id, what: str):
+    log_action(db, user, "media_plan_locked_edit", "media_plan", plan_id,
+               f"{what} — правка зафиксированного плана мастером")
 
 
 class LinkDealIn(BaseModel):
@@ -367,10 +439,22 @@ def link_deal(plan_id: int, data: LinkDealIn, db: Session = Depends(get_db),
     if not p:
         raise HTTPException(status_code=404, detail="Медиаплан не найден")
     _guard_owned(db, p, current_user, "media_plans_editor")
+    # Та же сделка — менять нечего. До ревью 23.09.2026 повтор привязки к зафиксированной
+    # сделке получал 409 «зафиксирован», хотя ничего не менялось.
+    if data.deal_id is not None and data.deal_id == p.deal_id:
+        return {"message": "Сделка уже привязана", "deal_id": p.deal_id, "unchanged": True}
     if data.deal_id is not None:
-        from app.sales.models import SalesDeal
-        if not db.query(SalesDeal).filter(SalesDeal.id == data.deal_id).first():
-            raise HTTPException(status_code=400, detail="Сделка не найдена")
+        _deal_for_plan(db, data.deal_id, current_user)
+    # Отвязка тоже меняет сделку — оставляет её без плана: область видимости проверяется и
+    # у СТАРОЙ сделки (если она ещё существует — план удалённой отвязать можно всегда).
+    from app.sales.models import SalesDeal
+    if p.deal_id is not None and db.query(SalesDeal.id).filter(SalesDeal.id == p.deal_id).first():
+        _deal_for_plan(db, p.deal_id, current_user)
+    # И привязка, и отвязка меняют план зафиксированной сделки: привязка перевозит в неё
+    # сумму ДРУГОГО плана, отвязка оставляет сборку без плана.
+    for d_id in {p.deal_id, data.deal_id} - {None}:
+        if _lock_guard(db, d_id, current_user, "Привязка медиаплана"):
+            _log_locked_edit(db, current_user, p.id, f"привязка к сделке {data.deal_id}")
     for pl in db.query(SalesMediaPlan).filter(SalesMediaPlan.group_id == p.group_id).all():
         pl.deal_id = data.deal_id
     # Привязали — сделка сразу берёт шапку и суммы плана. Это главный путь для СТАРЫХ
@@ -506,6 +590,8 @@ def mp_get_deal_brief(plan_id: int, refresh: int = 0, db: Session = Depends(get_
     deal = db.query(SalesDeal).filter(SalesDeal.id == p.deal_id).first() if p.deal_id else None
     if not deal:
         return {"has_deal": False, "deal_id": None, "brief": "", "is_local": None, "synced_at": None}
+    # Бриф — содержание сделки: чужую не читаем и в Битрикс за ней не ходим.
+    _deal_for_plan(db, deal.id, current_user)
     if (deal.brief is None or refresh) and not _deal_is_local(deal):
         from app.sales.bitrix.transport import vibecode_get
         try:
@@ -532,12 +618,9 @@ def mp_save_deal_brief(plan_id: int, data: DealBriefIn, db: Session = Depends(ge
     _guard_owned(db, p, current_user, "media_plans_editor")
     if not p.deal_id:
         raise HTTPException(status_code=400, detail="Медиаплан не привязан к сделке")
-    from app.sales.models import SalesDeal
     from app.routers.sales_dashboard import BRIEF_FIELD, _deal_is_local
     from datetime import datetime as _dt
-    deal = db.query(SalesDeal).filter(SalesDeal.id == p.deal_id).first()
-    if not deal:
-        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    deal = _deal_for_plan(db, p.deal_id, current_user)
     text_val = data.brief or ""
     pushed = False
     if not _deal_is_local(deal):
@@ -999,11 +1082,23 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
             raise HTTPException(status_code=404, detail="Группа медиаплана не найдена")
         _guard_owned(db, existing, current_user, "media_plans_editor")
 
+    # Фиксация на «Сборке»: всё, кроме дат запуска, закрыто. Сравниваем БЕЗ дат — если
+    # отличие только в них, это разрешённая правка и идёт обычным путём.
+    if existing is not None and existing.deal_id:
+        if (_content_sig(data, data.rows, data.extras, with_dates=False)
+                != _plan_content_sig(db, existing, with_dates=False)):
+            if _lock_guard(db, existing.deal_id, current_user, "Правка медиаплана"):
+                _log_locked_edit(db, current_user, existing.id, existing.title or "")
+    elif existing is None and data.deal_id:
+        _deal_for_plan(db, data.deal_id, current_user)
+        if _lock_guard(db, data.deal_id, current_user, "Новый медиаплан к сделке"):
+            _log_locked_edit(db, current_user, None, f"новый план к сделке {data.deal_id}")
+
     if existing is not None:
         same = _content_sig(data, data.rows, data.extras) == _plan_content_sig(db, existing)
         if same or not _plan_is_sealed(db, existing):
             if not same:
-                _apply_fields(existing, data)
+                _apply_fields(existing, data, db)
                 _write_children(db, existing.id, data)
                 log_action(db, current_user, "update_media_plan", "media_plan", existing.id,
                            f"{existing.title} v{existing.version}")
@@ -1023,7 +1118,14 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
 
     p = SalesMediaPlan(group_id=data.group_id, version=version,
                        created_by=current_user.id if current_user else None)
-    _apply_fields(p, data)
+    # Новая версия — новый расчёт и потому текущая ставка. КРОМЕ правки одних дат: деньги
+    # те же, расчёта не было, и ставка остаётся той, по которой план посчитан. Иначе сдвиг
+    # старта РК на зафиксированном плане 2025 года переводил его на 22 % и менял сумму
+    # сделки (ревью 23.09.2026).
+    if existing is not None and (_content_sig(data, data.rows, data.extras, with_dates=False)
+                                 == _plan_content_sig(db, existing, with_dates=False)):
+        p.vat_rate = existing.vat_rate
+    _apply_fields(p, data, db)
     # Сделка: у новой версии — от предыдущей, у самой первой — из payload (так работает
     # «+ МП» с карточки сделки, `deal-prefill`). Дальше её меняет только `link-deal`.
     p.deal_id = existing.deal_id if existing is not None else data.deal_id
@@ -1063,6 +1165,19 @@ def patch_media_plan(plan_id: int, data: MpPatch, db: Session = Depends(get_db),
     if not p:
         raise HTTPException(status_code=404, detail="Медиаплан не найден")
     _guard_owned(db, p, current_user, "media_plans")
+    # Из реестра правятся только поля шапки, дат запуска среди них нет — значит на
+    # зафиксированном плане открыто здесь ничего.
+    if _lock_guard(db, p.deal_id, current_user, "Правка из реестра"):
+        _log_locked_edit(db, current_user, p.id, p.title or "")
+    # Версия, отданная клиенту, на месте не правится: конструктор в этом случае рождает
+    # НОВУЮ версию, а инлайн-правка из реестра переписывала ту, что клиент уже видел
+    # (аудит 23.09.2026, 3.M7). Мастер на зафиксированном плане прошёл выше и сюда не
+    # доходит с отказом: его правка — осознанное исключение с записью в журнал.
+    elif _plan_is_sealed(db, p):
+        raise HTTPException(
+            status_code=409,
+            detail=("Эта версия медиаплана уже отдана клиенту — правка из реестра переписала "
+                    "бы её. Откройте план в конструкторе: сохранение создаст новую версию."))
     fields = data.dict(exclude_unset=True)   # только явно присланные (в т.ч. null для сброса)
     for k, v in fields.items():
         setattr(p, k, v)
@@ -1226,6 +1341,9 @@ def _plan_full(db, p, n):
         # Признак производный (от стадии сделки), в базе не хранится — конструктору он
         # нужен, чтобы называть кнопку тем, что она сделает.
         "sealed": _plan_is_sealed(db, p),
+        # Ставка НДС версии — по ней считают конструктор, выгрузка и PDF. Не считавшийся
+        # план показывается по текущей ставке: её он и получит при первом сохранении.
+        "vat_rate": float(p.vat_rate) if p.vat_rate is not None else _current_vat_pct(db),
         "advertiser_id": p.advertiser_id, "brand_id": p.brand_id, "agency_id": p.agency_id,
         "payer_counterparty_id": p.payer_counterparty_id, "period": p.period, "geo_id": p.geo_id,
         "date_from": p.date_from, "date_to": p.date_to, "targeting": p.targeting or {}, "goals": p.goals or {},
@@ -1249,7 +1367,14 @@ def get_media_plan(plan_id: int, db: Session = Depends(get_db), current_user: Us
     if not p:
         raise HTTPException(status_code=404, detail="Медиаплан не найден")
     _guard_owned(db, p, current_user, "media_plans_editor")
-    return _plan_full(db, p, _names(db))
+    from app.sales import plan_lock, stage_move
+    out = _plan_full(db, p, _names(db))
+    # Зафиксирован на «Сборке»: конструктор запирает всё, кроме дат запуска, и говорит
+    # почему. Мастеру — открыто, но с той же плашкой: правка пойдёт в журнал.
+    out["locked"] = plan_lock.deal_locks_plan(db, p.deal_id)
+    out["can_edit_locked"] = stage_move.is_master(current_user)
+    out["lock_notice"] = plan_lock.NOTICE
+    return out
 
 
 @router.get("/{plan_id}/pdf-data")
@@ -1303,6 +1428,8 @@ def delete_media_plan(plan_id: int, whole_group: bool = False, db: Session = Dep
     if not p:
         raise HTTPException(status_code=404, detail="Медиаплан не найден")
     _guard_owned(db, p, current_user, "media_plans")
+    if _lock_guard(db, p.deal_id, current_user, "Удаление медиаплана"):
+        _log_locked_edit(db, current_user, p.id, "удаление")
     if whole_group:
         db.query(SalesMediaPlan).filter(SalesMediaPlan.group_id == p.group_id).delete()
     else:
@@ -1344,6 +1471,7 @@ def _mp_targeting_text(targeting):
 
 def _wb_programmatic(full, p):
     """Фолбэк: собрать книгу с нуля (если шаблон mp_template.xlsx недоступен)."""
+    VAT = _vat_frac(full)   # ставка ПЛАНА, не константа (23.09.2026)
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
@@ -1430,7 +1558,7 @@ def _wb_programmatic(full, p):
                  ("F", "Девайс"), ("G", "Тип ротации (для медийных форматов)"), ("H", "Модель закупки"),
                  ("K", "Период"), ("L", "Сезонный коэффициент"), ("M", "Стоимость за единицу закупки"),
                  ("N", "Стоимость без скидки"), ("O", "Скидка,%"), ("P", "Скидка,руб"),
-                 ("Q", "Итоговая стоимость размещения до НДС"), ("R", "НДС 22%"),
+                 ("Q", "Итоговая стоимость размещения до НДС"), ("R", vat_label(full)),
                  ("S", "Итоговая стоимость размещения с НДС")]
     for col, name in base_cols:
         span(f"{col}{H1}:{col}{H1+1}").value = name
@@ -1452,7 +1580,7 @@ def _wb_programmatic(full, p):
         n_noded = mp_row.rub(vol * unit / div) if (vol and unit) else 0     # до скидки
         disc_rub = n_noded - net
         gross = mp_row.rub(net * (1 + VAT))
-        m = _fc_metrics(row, net)
+        m = _fc_metrics(row, net, VAT)
         put(r, 2, "SIMB-AD", align=LEFT, border=BORD)
         put(r, 3, row.get("position"), align=LEFT, border=BORD)
         put(r, 4, full.get("geo") or "—", align=CTR, border=BORD)
@@ -1503,7 +1631,7 @@ def _wb_programmatic(full, p):
         for col, name in [("B", "Место размещения"), ("C", "Позиция"), ("K", "Период"),
                           ("L", "Сезонный коэффициент"), ("M", "Стоимость за единицу закупки"),
                           ("N", "Стоимость без скидки"), ("O", "Скидка,%"), ("P", "Скидка,руб"),
-                          ("Q", "Итоговая стоимость размещения до НДС"), ("R", "НДС 22%"),
+                          ("Q", "Итоговая стоимость размещения до НДС"), ("R", vat_label(full)),
                           ("S", "Итоговая стоимость размещения с НДС")]:
             col_i = {"B": 2, "C": 3, "K": 11, "L": 12, "M": 13, "N": 14, "O": 15, "P": 16, "Q": 17, "R": 18, "S": 19}[col]
             hdrcell(r, col_i, name)
@@ -1605,12 +1733,13 @@ def _insert_logo(ws, coord):
 
 
 def _row_ctx(row, full):
+    VAT = _vat_frac(full)   # ставка ПЛАНА
     net = _row_net(MpRowIn(**{k: row.get(k) for k in ("position", "format", "model", "volume", "unit_price", "discount")}))
     model = row.get("model") or ""
     div = 1000 if _is_cpm(model) else 1
     vol, unit, disc = row.get("volume") or 0, row.get("unit_price") or 0, row.get("discount") or 0
     n_nodisc = mp_row.rub(vol * unit / div) if (vol and unit) else 0
-    m = _fc_metrics(row, net)
+    m = _fc_metrics(row, net, VAT)
     return {
         "r.place": "SIMB-AD", "r.position": row.get("position"), "r.geo": full.get("geo") or "—",
         "r.format": row.get("format"), "r.device": _MP_INV.get(row.get("inventory") or "cross", "Кросс-девайс"),
@@ -1629,7 +1758,8 @@ def _row_ctx(row, full):
     }
 
 
-def _extra_ctx(e):
+def _extra_ctx(e, full=None):
+    VAT = _vat_frac(full)   # ставка ПЛАНА
     price, total = e.get("price") or 0, e.get("total") or 0
     disc_rub = mp_row.rub(price - total)
     vat = mp_row.rub(total * VAT)
@@ -1740,6 +1870,7 @@ def _tg_join(full, key):
 def _row_formula_ctx(row, full, C, R):
     """Значения строки размещения: входные — числами (редактируемые), производные — Excel-формулами
     (НДС/итоги/прогноз пересчитываются в файле). Формулы ссылаются на колонки C[field] строки R."""
+    VAT = _vat_frac(full)   # ставка ПЛАНА
     def n(x):
         # Пусто остаётся пустым, «0,8» становится числом (mp_row.num, десятичная запятая).
         return None if x in (None, "") else mp_row.num(x, default=None)
@@ -1786,7 +1917,8 @@ def _row_formula_ctx(row, full, C, R):
     return ctx
 
 
-def _extra_formula_ctx(e, C, R):
+def _extra_formula_ctx(e, C, R, full=None):
+    VAT = _vat_frac(full)   # ставка ПЛАНА
     price, total = e.get("price") or 0, e.get("total") or 0
     disc_pct = mp_row.rub((1 - total / price) * 100) if price else 0
     v = str(VAT)
@@ -1892,10 +2024,16 @@ def render_mp_sheet(ws, full, rows=None, extras=None, row_hook=None):
     кодом двенадцать месячных листов в одной книге: месячный лист годовой выгрузки —
     это тот же МП, только строки собраны по всем брендам и отбиты полосами.
     rows/extras можно передать явно (полосы = элементы {"_band": ...}).
+    Подпись колонки НДС в шаблоне переписывается под ставку плана (`vat_label`).
     row_hook(ws, cols, tcol, first, last, specials) вызывается после заливки блока
     размещений — им лист «Годовой МП» проставляет свои подытоги. Если хук вернул список
     строк, ИТОГО суммирует ИХ, а не весь диапазон: иначе подытоги, попавшие внутрь
     диапазона, удвоили бы годовую сумму."""
+    label = vat_label(full)
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value == TEMPLATE_VAT_LABEL:
+                cell.value = label
     rows = full["rows"] if rows is None else rows
     extras = full["extras"] if extras is None else extras
 
@@ -1930,8 +2068,8 @@ def render_mp_sheet(ws, full, rows=None, extras=None, row_hook=None):
         tecol = _token_cols(ws, src_e + 1, "te")
         efirst, elast, ecol, especials = _fill_block(ws, src_e,
                                                      "e", extras,
-                                                     lambda it, C, R: _extra_formula_ctx(it, C, R),
-                                                     lambda it: _extra_ctx(it))
+                                                     lambda it, C, R: _extra_formula_ctx(it, C, R, full),
+                                                     lambda it: _extra_ctx(it, full))
         _style_bands(ws, [(R, it["_band"]) for R, it in especials if it.get("_band")], ecol)
         etot_row = elast + 1
         tectx = {f"te.{f}": f"=SUM({ecol.get(f, col)}{efirst}:{ecol.get(f, col)}{elast})" for f, col in tecol.items()}

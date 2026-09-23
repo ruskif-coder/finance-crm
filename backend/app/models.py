@@ -232,6 +232,10 @@ class Operation(Base):
     description = Column(String)
     document_link = Column(String)
     own_company_id = Column(Integer, ForeignKey("counterparties.id"), nullable=True)  # наше юрлицо-плательщик/получатель
+    # Материнская операция: эта — отделённая от неё часть (частичная оплата). Ссылка всегда
+    # на корень цепочки. Миграция 2026-09-23_operation_parent.sql, там же смысл и правила.
+    parent_operation_id = Column(Integer, ForeignKey("operations.id", ondelete="SET NULL"),
+                                 nullable=True, index=True)
     created_at = Column(DateTime, server_default=func.now())
     created_by = Column(Integer, ForeignKey("users.id"))
     article = relationship("Article", back_populates="operations")

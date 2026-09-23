@@ -32,6 +32,7 @@ from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepCreativeSe
 from app.routers import launch_prep as lp
 from app.routers import traffic
 from app.sales.models import SalesRep, SalesDeal, SalesPublisher, SalesService
+from tests._launch_prep_cleanup import drop_campaign_creatives
 
 NO_BASE = 9700
 CODES = ('ZZTA', 'ZZTB')
@@ -144,6 +145,7 @@ def _purge(db, deal_id=None):
     Порядок обязателен: пары ссылаются и на комплект, и на получателя, проверки — на пару.
     """
     db.rollback()
+    drop_campaign_creatives(db, NO_BASE)   # до комплектов: FK без каскада
     sets = db.query(LaunchPrepCreativeSet).filter(
         LaunchPrepCreativeSet.no >= NO_BASE).all()
     deal_ids = {s.deal_id for s in sets}

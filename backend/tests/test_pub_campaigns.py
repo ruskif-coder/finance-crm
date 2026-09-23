@@ -185,22 +185,28 @@ def test_the_demo_seeder_refuses_anywhere_but_the_stand():
 
     mod = importlib.import_module('scripts.2026-09-15_demo_publisher_campaigns')
 
+    # С 23.09.2026 замков два: явный `DOMAIN=localhost` и флаг запуска `STAND=1`. Compose
+    # подставляет `localhost` вместо пустого домена, так что одного домена мало
+    # (`scripts/_stand_guard.py`).
     import os as _os
-    was = _os.environ.get('DOMAIN')
+    was = {k: _os.environ.get(k) for k in ('DOMAIN', 'STAND')}
     try:
-        for value, allowed in ((None, False), ('', False), ('  ', False),
-                               ('timon.simbad.pro', False), ('localhost', True)):
-            if value is None:
-                _os.environ.pop('DOMAIN', None)
-            else:
-                _os.environ['DOMAIN'] = value
+        for value, stand, allowed in ((None, '1', False), ('', '1', False), ('  ', '1', False),
+                                      ('timon.simbad.pro', '1', False),
+                                      ('localhost', None, False), ('localhost', '1', True)):
+            for k, v in (('DOMAIN', value), ('STAND', stand)):
+                if v is None:
+                    _os.environ.pop(k, None)
+                else:
+                    _os.environ[k] = v
             assert mod._stand_only() is allowed, (
-                f'DOMAIN={value!r}: скрипт {"не " if allowed else ""}должен работать')
+                f'DOMAIN={value!r} STAND={stand!r}: скрипт {"не " if allowed else ""}должен работать')
     finally:
-        if was is None:
-            _os.environ.pop('DOMAIN', None)
-        else:
-            _os.environ['DOMAIN'] = was
+        for k, v in was.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
 
 
 def test_demo_rows_are_marked_and_removable():

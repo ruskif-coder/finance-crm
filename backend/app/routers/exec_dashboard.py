@@ -13,7 +13,6 @@
 числа в этом проекте уже расходился с первым, и расхождение выглядит как ошибка отчёта.
 """
 
-import re
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
@@ -22,14 +21,13 @@ from sqlalchemy.orm import Session
 
 from ..audit import require_admin
 from ..database import get_db
-from ..models import Article, Operation, User
+from ..models import User
 from ..sales.models import (SalesDeal, SalesPublisher, SalesPublisherCounterparty,
                             SalesStage, SalesStagePhase)
 from .reports import QUARTER_MONTHS, _compute_debt_grouped
 
 router = APIRouter()
 
-QUARTER_RE = re.compile(r"^(Q[1-4])\s+(\d{4})$")
 STALE_DAYS = 30          # сколько дней без правки считаем «сделка стоит»
 BOOKING_MONTHS = 6       # горизонт блока загрузки
 SERIES_MONTHS = 12       # глубина помесячной динамики маржи
@@ -63,38 +61,28 @@ def _period_label(scale: str, months: list) -> str:
 
 
 def _pl_by_month(db: Session, months: set) -> dict:
-    """{месяц: {строка P&L: {income, expense}}} — ОДНИМ проходом по операциям.
+    """{месяц: {строка P&L: {income, expense}}} — РАСЧЁТОМ ФИНОТЧЁТА.
 
-    Квартальная строка операции раскладывается на три месяца равными долями: так же, как в
-    отчётах. Иначе дашборд и P&L показали бы разные числа на одних данных, и расхождение
-    выглядело бы как ошибка расчёта.
+    До 23.09.2026 здесь был свой проход по операциям: все статусы вместе с планами, суммы
+    с НДС и одна сторона строки (доход для выручки, расход для затрат — возвраты терялись).
+    Докстрока обещала «те же числа, что P&L», а на одном месяце дашборд, P&L и финотчёт
+    показывали три разные маржи (аудит 23.09.2026, 2.M7). Теперь число одно: то, что
+    финотчёт показывает по умолчанию — по начислению, без НДС, нетто по знаку строки
+    (`finreport._collect`, квартал делится на три месяца там же).
 
-    Проход один намеренно: помесячная динамика за год — это двенадцать точек, и запрос на
-    каждую превратил бы экран в тринадцать полных сканов таблицы операций.
+    Форма ответа прежняя: выручка кладётся в `income`, затратные строки — в `expense`,
+    уже нетто. Так `_margin_of` и помесячный ряд не меняются.
     """
-    rows = (db.query(Operation.period, Article.pl_line,
-                     func.sum(Operation.income).label("inc"),
-                     func.sum(Operation.expense).label("exp"))
-            .outerjoin(Article, Article.id == Operation.article_id)
-            .group_by(Operation.period, Article.pl_line).all())
+    from app.routers import finreport
     out = {mo: {} for mo in months}
-    for period, line, inc, exp in rows:
-        if not period:
+    if not months:
+        return out
+    rows, _control = finreport._collect(db, "accrual", "net", min(months), max(months))
+    for period, line, _sg, _label, value in rows:
+        if period not in out:
             continue
-        qm = QUARTER_RE.match(period)
-        if qm:
-            quarter, year = qm.group(1), qm.group(2)
-            targets = [f"{year}-{mm}" for mm in QUARTER_MONTHS[quarter]]
-            share = 1 / 3.0
-        else:
-            targets, share = [period], 1.0
-        key = line or "unmarked"
-        for mo in targets:
-            if mo not in out:
-                continue
-            cur = out[mo].setdefault(key, {"income": 0.0, "expense": 0.0})
-            cur["income"] += float(inc or 0) * share
-            cur["expense"] += float(exp or 0) * share
+        cur = out[period].setdefault(line, {"income": 0.0, "expense": 0.0})
+        cur["income" if line == finreport.REVENUE else "expense"] += float(value or 0)
     return out
 
 

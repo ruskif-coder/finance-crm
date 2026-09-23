@@ -90,13 +90,17 @@ def test_nothing_shows_container_time_to_a_human():
     `timez.py`, где этот вызов только упомянут; сторож, краснеющий на объяснении, почему
     так делать нельзя, — сторож, которому перестают верить. Вызов С АРГУМЕНТОМ
     (`datetime.now(timezone.utc)`) разрешён: там пояс задан явно.
+
+    `scripts/` — тоже: демо-скрипт цепочки креативов писал `datetime.now()` в колонки UTC,
+    и демо-события вставали на три часа в будущем (ревью 23.09.2026).
     """
     import ast
     from pathlib import Path
 
-    app = Path(__file__).resolve().parent.parent / "app"
+    root = Path(__file__).resolve().parent.parent
+    app = root
     stray = []
-    for p in app.rglob("*.py"):
+    for p in [*(root / "app").rglob("*.py"), *(root / "scripts").rglob("*.py")]:
         for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
             if not isinstance(node, ast.Call) or node.args or node.keywords:
                 continue
@@ -324,3 +328,105 @@ def test_no_naive_timestamp_calls():
                 stray.append(f"{p.relative_to(app)}:{node.lineno}")
     assert not stray, ("`.timestamp()` читает наивную дату как московскую: "
                        + ", ".join(stray))
+
+
+# ─── Фоновые процессы (23.09.2026) ────────────────────────────────────────────────
+#
+# Первая редакция ставила пояс только в `main.py`, то есть только веб-процессу. А
+# сканер, досылка, оба дайджеста, `mail.flush`, `tg_poll` и съём Weborama запускаются
+# кроном как `python -m app.<модуль>` и `main` не импортируют: их «сегодня» оставалось
+# гринвичским. Правила сканера считали просрочку от `date.today()` — прогон в 00:20 по
+# Москве жил во вчерашнем дне, и число дней в уведомлении расходилось с экраном.
+
+def _cron_modules():
+    """Все модули `app/`, у которых есть точка входа `__main__` — их зовёт крон."""
+    from pathlib import Path
+
+    app = Path(__file__).resolve().parent.parent / "app"
+    out = []
+    for p in sorted(app.rglob("*.py")):
+        if '__name__ == "__main__"' in p.read_text(encoding="utf-8") or \
+           "__name__ == '__main__'" in p.read_text(encoding="utf-8"):
+            rel = p.relative_to(app.parent).with_suffix("")
+            out.append(".".join(rel.parts))
+    return out
+
+
+def test_cron_modules_are_found():
+    """Прибор ниже пуст, если не нашёл ни одного модуля, — и тогда он зелёный впустую."""
+    mods = _cron_modules()
+    assert "app.notify.scanner" in mods and "app.mail.flush" in mods, mods
+
+
+def test_every_cron_process_lives_in_moscow():
+    """Процесс, начатый с импорта любого модуля крона, — в московском поясе.
+
+    Окружение дочернего процесса чистится от `TZ`: тесты сами ставят пояс (см. выше), и
+    унаследованная переменная сделала бы прибор зелёным без всякой правки в коде.
+    """
+    import os
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if k != "TZ"}
+    wrong = {}
+    for mod in _cron_modules():
+        out = subprocess.run(
+            [sys.executable, "-c",
+             "import importlib, time; importlib.import_module(%r); print(time.tzname[0])" % mod],
+            capture_output=True, text=True, timeout=120, env=env,
+            cwd=str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+        got = out.stdout.strip().splitlines()[-1:] or [out.stderr.strip()[-200:]]
+        if got != ["MSK"]:
+            wrong[mod] = got[0]
+    assert not wrong, "процессы крона живут не по Москве: %r" % wrong
+
+
+# ─── Дайджест сотрудникам: событие в UTC, час пачки — московский (23.09.2026) ─────
+#
+# Выбор строк в `notify/digest.py` — `due_at(to_msk(created_at), час, минута) <= msk_now()`.
+# Проверяем это выражение целиком, а не `due_at` отдельно: ошибка знака в любом из трёх
+# слагаемых уводит пачку на три часа, и каждое по отдельности при этом «верно».
+
+def test_staff_digest_takes_the_morning_event_today_and_the_late_one_tomorrow():
+    """Проверяется ТА функция, которой пользуется рассылка (`digest.due_rows`), а не
+    выражение, собранное рядом: копия осталась бы зелёной, убери из кода `to_msk`
+    (ревью 23.09.2026)."""
+    from types import SimpleNamespace
+
+    from app.notify.digest import due_rows
+    early = SimpleNamespace(created_at=datetime(2026, 9, 23, 5, 0))    # 08:00 МСК
+    late = SimpleNamespace(created_at=datetime(2026, 9, 23, 6, 40))    # 09:40 МСК
+    # 09:35 МСК: пачка 09:30 настала для утреннего, вечернее ждёт завтрашней.
+    assert due_rows([early, late], 9, 30, datetime(2026, 9, 23, 9, 35)) == [early]
+    # 07:00 МСК (04:00 UTC): без перевода в Москву 05:00 UTC уже «после» — и ушло бы.
+    assert due_rows([early], 9, 30, datetime(2026, 9, 23, 7, 0)) == []
+    assert due_rows([late], 9, 30, datetime(2026, 9, 24, 9, 30)) == [late]
+
+
+def test_second_digest_run_skips_while_the_first_holds_the_lock():
+    """Крон раз в 5 минут, письма синхронные: зависший SMTP не должен давать дубли."""
+    from sqlalchemy import text
+
+    from app.database import engine
+    from app.notify import digest
+    with engine.connect() as other:
+        other.execute(text("SELECT pg_advisory_lock(:a, :b)"),
+                      {"a": digest.RUN_LOCK[0], "b": digest.RUN_LOCK[1]})
+        try:
+            assert digest.run(dry_run=True).get("busy") is True
+        finally:
+            other.execute(text("SELECT pg_advisory_unlock(:a, :b)"),
+                          {"a": digest.RUN_LOCK[0], "b": digest.RUN_LOCK[1]})
+    assert not digest.run(dry_run=True).get("busy")      # отпустили — и снова работает
+
+
+def test_staff_digest_moment_does_not_depend_on_the_process_zone():
+    """`msk_now()` — это UTC + 3, а не местные часы процесса.
+
+    С 23.09 процесс сам живёт по Москве. Если бы «сейчас» для дайджеста бралось из
+    местных часов И ещё переводилось `to_msk`, получился бы двойной сдвиг — пачка
+    уходила бы на три часа раньше. Сверяем с `utcnow()`, который пояса не знает.
+    """
+    diff = (timez.msk_now() - datetime.utcnow()).total_seconds()
+    assert abs(diff - 3 * 3600) < 5

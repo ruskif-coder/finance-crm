@@ -35,6 +35,7 @@ from collections import defaultdict
 
 from sqlalchemy import text
 
+from app import timez
 from app.database import SessionLocal
 from app.mail import client as mail
 from app.mail import render
@@ -78,16 +79,7 @@ def run(dry_run: bool = False) -> dict:
         brand = (os.getenv("MAIL_FROM_NAME") or "SIMB-AD").strip()
         for email, items in by_addr.items():
             to_name = next((r.to_name for r in items if r.to_name), "")
-            cards = [{
-                "title": r.title, "body": r.body, "link_abs": r.link_abs,
-                "tone": r.tone or "info", "tag": r.tag or "",
-                "context": r.context,
-                # Час события, а не час письма: в пачке из шести карточек «когда это
-                # случилось» — половина смысла.
-                "when": r.created_at.strftime("%H:%M") if r.created_at else "",
-                "facts": [tuple(f) for f in (r.facts or [])],
-                "action": "Открыть кабинет",
-            } for r in items]
+            cards = [_card(r) for r in items]
 
             html = render.digest_html(items=cards, to_name=to_name, brand=brand,
                                       logo_url=render.abs_url(render.LOGO_PATH))
@@ -129,6 +121,25 @@ def run(dry_run: bool = False) -> dict:
         return stats
     finally:
         db.close()
+
+
+def _card(r) -> dict:
+    """Карточка пачки для площадки.
+
+    Час события — МОСКОВСКИЙ: `created_at` в очереди лежит в UTC, и площадка читала
+    06:14 о событии, случившемся у неё в 09:14 (аудит 23.09.2026). Дайджест сотрудникам
+    переводил время с самого начала; здесь перевод забыли.
+    """
+    return {
+        "title": r.title, "body": r.body, "link_abs": r.link_abs,
+        "tone": r.tone or "info", "tag": r.tag or "",
+        "context": r.context,
+        # Час события, а не час письма: в пачке из шести карточек «когда это
+        # случилось» — половина смысла.
+        "when": timez.to_msk(r.created_at).strftime("%H:%M") if r.created_at else "",
+        "facts": [tuple(f) for f in (r.facts or [])],
+        "action": "Открыть кабинет",
+    }
 
 
 def _plural(n: int) -> str:

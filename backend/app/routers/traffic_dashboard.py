@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 import logging
 
+from app import timez
 from app.ad import build
 from app.ad import external as ext_mod
 from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_STATUSES,
@@ -367,7 +368,7 @@ def _queue_badge(db: Session) -> dict:
     for r in rows:
         v = urgency.evaluate(urgency.PairFacts(
             traffic_verdict=None,
-            asked_at=r["asked_at"].date() if r["asked_at"] else None,
+            asked_at=timez.msk_date(r["asked_at"]),   # момент UTC → день по Москве
             period_from=r["period_from"] or r["deal_from"],
             is_dropped=(r["state"] == "отказ площадки"),
         ), today)

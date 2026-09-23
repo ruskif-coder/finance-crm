@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func as sa_func
 
+from app import timez
 from app.files_safe import existing_upload_path, inside_uploads, remove_upload
 from app.audit import log_action
 from app.database import get_db
@@ -139,7 +140,9 @@ def _facts(traffic: LaunchPrepReview, target: LaunchPrepTarget,
     start = target.period_from or deal.period_from
     return urgency.PairFacts(
         traffic_verdict=traffic.verdict,
-        asked_at=traffic.asked_at.date() if traffic.asked_at else None,
+        # День по Москве: колонка — момент в UTC, а «сегодня» у процесса московское.
+        # `.date()` засчитывал запрос, пришедший в 00:00–03:00 МСК, вчерашним (ревью 23.09.2026).
+        asked_at=timez.msk_date(traffic.asked_at),
         period_from=start,
         is_dropped=(target.state == "отказ площадки"),
     )

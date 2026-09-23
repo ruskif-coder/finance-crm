@@ -23,6 +23,8 @@ from typing import Iterable, Optional
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
+from app import timez
+
 # Имя, а не id: стадии — данные, и на другом стенде id окажется другим. Строка сравнивается
 # буквально, как и все русские значения в этом проекте.
 ORD_REPORT_STAGE = "Отчёты в ОРД"
@@ -64,5 +66,7 @@ def is_expired(closed: Optional[datetime], days: int, today: date) -> bool:
     """
     if closed is None:
         return False
-    closed_day = closed.date() if isinstance(closed, datetime) else closed
+    # Момент закрытия лежит в UTC, `today` — московский: день берётся по Москве, иначе
+    # закрытое в 00:00–03:00 МСК стиралось на сутки раньше срока (ревью 23.09.2026).
+    closed_day = timez.msk_date(closed) if isinstance(closed, datetime) else closed
     return (today - closed_day).days > days

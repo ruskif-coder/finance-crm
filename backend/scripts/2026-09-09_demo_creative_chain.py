@@ -206,7 +206,9 @@ def main(apply: bool):
         db.flush()
 
         # 3) адресация, пары и вердикты
-        now = datetime.now()
+        # Колонки `sent_at`/`decided_at` — UTC; `now()` с 23.09 московский, и демо-события
+        # оказывались на три часа в будущем (ревью 23.09.2026).
+        now = datetime.utcnow()
         for t, state, p in targets:
             db.add(LaunchPrepSetTarget(set_id=cs.id, target_id=t.id))
             pub = db.query(SalesPublisher).get(p.publisher_id)
@@ -273,6 +275,8 @@ if __name__ == "__main__":
     ap.add_argument("--apply", action="store_true", help="записать (иначе сухой прогон)")
     ap.add_argument("--undo", action="store_true", help="снять демо")
     a = ap.parse_args()
+    from scripts._stand_guard import require_stand
+    require_stand("демо-цепочка креативов")
     if a.undo:
         db = SessionLocal()
         try:

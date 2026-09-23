@@ -432,7 +432,17 @@ def _fact_collected(c: Ctx) -> Result:
 @register("annex_generated", "Приложение сформировано конструктором",
           "Соберите ДС в конструкторе приложений")
 def _annex_generated(c: Ctx) -> Result:
-    return _ok() if c.deal.annex_id else _not_yet("приложения нет")
+    """Есть ли у сделки приложение — по РАЗНЕСЕНИЮ, а не по колонке сделки.
+
+    До 23.09.2026 проверка читала `SalesDeal.annex_id`, которую не пишет ни один путь
+    кода: связь живёт в `sales_deal_annex_allocation`. Требование было блокирующим, и
+    «Согласование ДС» оставалось закрытым для всех, кроме мастера (аудит 23.09.2026, 3.H2).
+    На согласование уходит черновик, поэтому годится и неподтверждённое приложение.
+    """
+    from app.sales.models import SalesDealAnnexAllocation
+    n = (c.db.query(SalesDealAnnexAllocation)
+         .filter(SalesDealAnnexAllocation.deal_id == c.deal.id).count())
+    return _ok(f"приложений: {n}") if n else _not_yet("приложения нет")
 
 
 @register("signatory_filled", "Реквизиты подписанта заполнены",

@@ -58,6 +58,14 @@ def _operation_problem(op) -> str | None:
     if op.status not in OPERATION_STATUSES:
         return (f"Неизвестный статус «{op.status}». Допустимы: "
                 + ", ".join(OPERATION_STATUSES))
+    # Знак и диапазон НДС — ЗДЕСЬ, а не только у формы (`OperationCreate`): импорт шёл
+    # мимо формы, и «Списания = −5000» переворачивал знак в ДДС и P&L (аудит 23.09.2026).
+    if (op.income or 0) < 0 or (op.expense or 0) < 0:
+        return ("Сумма не может быть отрицательной: направление задаёт колонка "
+                "(поступление или списание), а не знак.")
+    rate = getattr(op, "vat_rate", None)
+    if rate is not None and not (0 <= rate <= 100):
+        return f"Ставка НДС {rate} вне диапазона 0–100 %."
     if (op.income or 0) > 0 and (op.expense or 0) > 0:
         return ("У операции не может быть одновременно дохода и расхода: обе стороны "
                 "попадут в отчёты, и обороты раздуются вдвое. Заведите две строки.")
@@ -67,6 +75,11 @@ def _operation_problem(op) -> str | None:
     if not (op.period or "").strip():
         return ("Не указан период. Отчёты строятся по нему, и строка без периода из "
                 "них выпадает.")
+    # Оплаченная без банка выпадала из остатков и сводки ДДС, оставаясь в накопительном
+    # итоге: деньги были в журнале и расходились с банком (аудит 23.09.2026, 2.L8).
+    if op.status == "ОПЛАЧЕНО" and not (getattr(op, "bank", None) or "").strip():
+        return ("У оплаченной операции не указан банк: без него она не попадёт в остатки "
+                "и сводку ДДС.")
     return None
 
 
@@ -104,6 +117,8 @@ def _assert_import_rows_valid(db, problems: list) -> None:
 # живёт в app/links.py (раньше была двумя почти одинаковыми копиями).
 from app.links import validate_link as _validate_link  # noqa: E402
 from app import timez
+from app import import_match  # noqa: E402
+from app import operation_chains  # noqa: E402
 
 # Временное in-memory хранилище для шага preview→apply при синхронизации импорта.
 # Переживает только до перезапуска backend-контейнера — сознательно временное решение.
@@ -179,6 +194,23 @@ def _sort_map():
         'doc': Operation.document_link,
         'description': Operation.description,
     }
+
+
+def _apply_op_type(query, op_type):
+    """Тип операции — поступления и/или списания. На СЕРВЕРЕ, а не по загруженной странице:
+    клиентский фильтр резал только текущую сотню строк, счётчик и страницы считались без
+    него, а выгрузка его не знала вовсе (аудит 23.09.2026, 6.M3).
+
+    Только список: при прямом вызове ручки умолчание `Query(None)` приезжает объектом.
+    """
+    if not isinstance(op_type, list) or not op_type:
+        return query
+    conds = []
+    if "income" in op_type:
+        conds.append(Operation.income > 0)
+    if "expense" in op_type:
+        conds.append(Operation.expense > 0)
+    return query.filter(or_(*conds)) if conds else query
 
 
 def _apply_gaps(query, gaps):
@@ -303,6 +335,7 @@ def get_operations(
     article_id: Optional[List[int]] = Query(None),
     counterparty_id: Optional[List[int]] = Query(None),
     period: Optional[List[str]] = Query(None),
+    op_type: Optional[List[str]] = Query(None),
     gaps: Optional[List[str]] = Query(None),
     # Точечный показ конкретных операций по id. Нужен для ссылок «открыть операцию»
     # из импорта документов Диадока: без него на операцию нельзя сослаться никак,
@@ -314,6 +347,7 @@ def get_operations(
     current_user: User = Depends(require_permission("operations", "view"))
 ):
     query = db.query(Operation)
+    query = _apply_op_type(query, op_type)
 
     if ids:
         query = query.filter(Operation.id.in_(ids))
@@ -360,6 +394,13 @@ def get_operations(
             files_by_op.setdefault(f.operation_id, []).append(
                 {"id": f.id, "name": f.original_name})
 
+    # Цепочка частичных оплат — тоже одним запросом на страницу: число частей у каждой
+    # материнской. Сама ссылка на материнскую лежит в строке.
+    parts_by_op = dict(
+        db.query(Operation.parent_operation_id, func.count(Operation.id))
+        .filter(Operation.parent_operation_id.in_(op_ids))
+        .group_by(Operation.parent_operation_id).all()) if op_ids else {}
+
     return {
         "total": total,
         "items": [
@@ -383,6 +424,8 @@ def get_operations(
                 "description": op.description,
                 "document_link": op.document_link,
                 "files": files_by_op.get(op.id, []),
+                "parent_operation_id": op.parent_operation_id,
+                "parts_count": parts_by_op.get(op.id, 0),
                 "receivable_status": _receivable_status(op),
             }
             for op in operations
@@ -421,6 +464,7 @@ def export_operations(
     article_id: Optional[List[int]] = Query(None),
     counterparty_id: Optional[List[int]] = Query(None),
     period: Optional[List[str]] = Query(None),
+    op_type: Optional[List[str]] = Query(None),
     gaps: Optional[List[str]] = Query(None),
     sort_col: Optional[str] = 'date',
     sort_dir: Optional[str] = 'desc',
@@ -433,6 +477,7 @@ def export_operations(
     фильтрации/сортировки повторяют GET /operations/, чтобы кнопка "Скачать"
     на фронтенде выгружала ровно то, что выбрано текущими фильтрами."""
     query = db.query(Operation)
+    query = _apply_op_type(query, op_type)
 
     if status:
         query = query.filter(Operation.status.in_(status))
@@ -670,6 +715,9 @@ class OperationBulkUpdate(BaseModel):
 
 class OperationBulkDelete(BaseModel):
     ids: List[int]
+    # Пароль своей учётки — нужен, только если в выделении есть цепочка (материнская с
+    # частями). Решение владельца 23.09.2026: цепочка удаляется только с паролем.
+    password: Optional[str] = None
 
 @router.patch("/bulk")
 def bulk_update_operations(
@@ -735,6 +783,36 @@ def bulk_delete_operations(
     if not operations:
         raise HTTPException(status_code=404, detail="Операции не найдены")
 
+    # Материнская уходит только вместе со всеми своими частями. Если хоть одна часть не
+    # выделена — отказ целиком: принудительное удаление с паролем — по одной операции,
+    # чтобы оно оставалось осознанным действием, а не побочным эффектом выделения.
+    orphaned = sorted({r.parent_operation_id for r in db.query(Operation.parent_operation_id)
+                       .filter(Operation.parent_operation_id.in_(payload.ids),
+                               Operation.id.notin_(payload.ids)).all()})
+    if orphaned:
+        raise HTTPException(
+            status_code=409,
+            detail=("У операций " + ", ".join(f"#{i}" for i in orphaned) + " есть частичные "
+                    "оплаты, не попавшие в выделение. Выделите цепочку целиком или удалите "
+                    "материнскую отдельно — с подтверждением паролем. Ничего не удалено."))
+    # Цепочка целиком — только с паролем (владелец 23.09.2026). Без этого выделение всей
+    # цепочки стирало её без вопроса, тогда как удаление одной материнской — более
+    # осторожное действие — требовало пароль. 428: экран спрашивает пароль и повторяет.
+    mothers = sorted({pid for (pid,) in db.query(Operation.parent_operation_id)
+                      .filter(Operation.parent_operation_id.in_(payload.ids)).distinct()})
+    if mothers:
+        if not payload.password:
+            raise HTTPException(status_code=428, detail={
+                "need_password": True,
+                "message": ("В выделении цепочки частичных оплат ("
+                            + ", ".join(f"#{i}" for i in mothers)
+                            + "): план и полученные по нему оплаты удалятся вместе. "
+                              "Подтвердите паролем.")})
+        from app.routers.operation_chains import confirm_password
+        confirm_password(db, current_user, payload.password)
+    # Части — раньше материнских: так порядок удаления не упирается в ссылку.
+    operations.sort(key=lambda o: (o.parent_operation_id is None, o.id))
+
     count = len(operations)
     for operation in operations:
         db.delete(operation)
@@ -754,6 +832,15 @@ def delete_operation(
     operation = db.query(Operation).filter(Operation.id == op_id).first()
     if not operation:
         raise HTTPException(status_code=404, detail="Операция не найдена")
+    # Материнская с частичными оплатами обычным удалением не удаляется: вместе с ней ушёл
+    # бы и смысл частей — от какого договора эти деньги. Только принудительно, с паролем
+    # (`POST /operations/{id}/force-delete`, решение владельца 23.09.2026).
+    parts = db.query(Operation).filter(Operation.parent_operation_id == op_id).count()
+    if parts:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"У операции есть частичные оплаты ({parts}). Удалить её можно только "
+                    "принудительно, с подтверждением паролем; части останутся самостоятельными."))
     details = f"{operation.status}, доход {operation.income}, расход {operation.expense}, банк {operation.bank}"
     db.delete(operation)
     db.commit()
@@ -916,6 +1003,23 @@ def _find_import_sheet(contents: bytes):
                      'Скачайте шаблон импорта и заполните его.')
 
 
+def _period_cell(value) -> Optional[str]:
+    """Ячейка «Период» — строкой для `_normalize_period`.
+
+    Excel превращает ввод «Январь 2026» в ДАТУ, и строкой она приходит как
+    «2026-01-01 00:00:00» — её не узнаёт ни одно правило, и операция получала месяц
+    ОПЛАТЫ или теряла период вовсе (аудит 23.09.2026, 2.M3). Дата в этой колонке
+    означает свой месяц.
+    """
+    if value is None or (not isinstance(value, str) and pd.isna(value)):
+        return None
+    if isinstance(value, (datetime, date, pd.Timestamp)):
+        return value.strftime('%Y-%m')
+    s = str(value).strip()
+    m = re.match(r'^(\d{4})-(\d{2})-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?$', s)
+    return f"{m.group(1)}-{m.group(2)}" if m else s
+
+
 def _parse_cf_best_rows(contents: bytes) -> List[dict]:
     """Парсит Excel-файл с листом CF BEST в список словарей (без обращения к БД).
     Логика идентична исходному /import — вынесена в helper, чтобы её могли
@@ -936,14 +1040,13 @@ def _parse_cf_best_rows(contents: bytes) -> List[dict]:
     rows = []
     for _, row in df.iterrows():
         parsed_date = row['date'].date() if pd.notna(row.get('date')) else None
-        raw_period = str(row['period']) if pd.notna(row.get('period')) else None
+        raw_period = _period_cell(row.get('period'))
         parsed_income = float(row['income']) if pd.notna(row.get('income')) else 0
         parsed_expense = float(row['expense']) if pd.notna(row.get('expense')) else 0
         parsed_vat_rate = float(row['vat_rate']) if pd.notna(row.get('vat_rate')) else 0
-        if pd.notna(row.get('vat_fact')):
-            parsed_vat_fact = float(row['vat_fact'])
-        else:
-            parsed_vat_fact = compute_vat_fact(parsed_income, parsed_expense, parsed_vat_rate)
+        # НДС считает СЕРВЕР, колонка файла не читается: иначе сумма, набранная руками в
+        # Excel, побеждала расчёт от ставки (аудит 11.09.2026 №9, повтор 23.09.2026).
+        parsed_vat_fact = compute_vat_fact(parsed_income, parsed_expense, parsed_vat_rate)
         try:
             parsed_op_id = int(float(row['op_id'])) if pd.notna(row.get('op_id')) else None
         except (TypeError, ValueError):
@@ -956,6 +1059,9 @@ def _parse_cf_best_rows(contents: bytes) -> List[dict]:
             'expense': parsed_expense,
             'bank': str(row['bank']) if pd.notna(row.get('bank')) else None,
             'period': _normalize_period(raw_period, parsed_date),
+            # Ячейка как есть — чтобы отличить «период не трогали» от «период сменили»:
+            # нормализованный квартал зависит от даты строки (см. применение).
+            'period_raw': str(raw_period).strip() if raw_period else None,
             'vat_rate': parsed_vat_rate,
             'vat_fact': parsed_vat_fact,
             'article': str(row['article']) if pd.notna(row.get('article')) else None,
@@ -1247,6 +1353,9 @@ async def import_excel(
             invoice_date=row['invoice_date'],
             description=row['description'],
             document_link=_validate_link(row.get('document_link'), raise_on_bad=False),
+            # Наше юрлицо — как у формы и у сверки. Без него первичный импорт давал
+            # операции, невидимые фильтру по юрлицу (аудит 23.09.2026, 2.L6).
+            own_company_id=own_company.sole_id(db),
             created_by=current_user.id
         )
         problem = _operation_problem(op)
@@ -1265,8 +1374,10 @@ async def import_excel(
 # 'period' исключён намеренно — это легитимно изменяемое поле (например, перенос платежа),
 # включение его в ключ или в сравнение как блокирующего привело бы к ложным конфликтам.
 # Здесь оно как раз участвует в сравнении (чтобы показать пользователю изменение), но НЕ в ключе.
+# `vat_fact` не сравнивается: он выводится из суммы и ставки, которые сравниваются и так.
+# У старых операций он бывает посчитан иначе, и сравнение давало бы ложный конфликт.
 _SYNC_COMPARE_FIELDS = ['date', 'status', 'income', 'expense', 'bank', 'period',
-                        'vat_rate', 'vat_fact', 'article', 'counterparty',
+                        'vat_rate', 'article', 'counterparty',
                         'invoice_date', 'description', 'document_link']
 
 # document_link сравнивается мягко: пустое значение в файле НЕ считается изменением
@@ -1369,17 +1480,19 @@ async def import_preview(
     ds_nums = list({r['ds_num'] for r in keyed_rows})
     invoices = list({r['invoice'] for r in keyed_rows})
 
-    existing_map = {}
+    # Строки с № ДС и Счётом сопоставляются в `app/import_match.py`. Пара номеров НЕ
+    # уникальна: частичные оплаты одного счёта и совпадения номеров у разных контрагентов.
+    # До 23.09.2026 здесь был словарь «пара → последняя операция», и выгрузка, загруженная
+    # обратно без правок, давала конфликты против одной операции с одним ключом
+    # подтверждения на всех (аудит 23.09.2026, 2.H1).
+    keyed_decisions = {}
     if ds_nums and invoices:
-        # order_by(id) — в данных встречаются операции с одинаковым (ds_num, invoice)
-        # (дубликаты от прошлых "слепых" импортов без дедупликации). При совпадении
-        # ключа детерминированно берём запись с наибольшим id (последнюю созданную).
         candidates = db.query(Operation).filter(
             Operation.ds_num.in_(ds_nums),
             Operation.invoice.in_(invoices)
         ).order_by(Operation.id).all()
-        for op in candidates:
-            existing_map[(op.ds_num, op.invoice)] = op
+        keyed_decisions = import_match.match_keyed(
+            [(i, r) for i, r in enumerate(rows) if r['ds_num'] and r['invoice']], candidates)
 
     # Большинство операций (зарплата, банк, налоги и т.п.) не имеют № ДС / Счёта —
     # для них составного ключа нет, и раньше они ВСЕГДА считались "новыми" при каждой
@@ -1408,16 +1521,34 @@ async def import_preview(
 
     new_rows = []
     conflicts = []
+    ambiguous = []
     unchanged_count = 0
     cache_rows = []
 
-    for r in rows:
+    for idx, r in enumerate(rows):
         has_key = bool(r['ds_num'] and r['invoice'])
         existing = None
 
         if has_key:
-            key = f"{r['ds_num']}||{r['invoice']}"
-            existing = existing_map.get((r['ds_num'], r['invoice']))
+            verdict, found = keyed_decisions.get(idx, ("new", None))
+            if verdict == "ambiguous":
+                # Кандидатов несколько, и подсказать нечем — решает человек. Строка не
+                # применяется: выбрать за него операцию значит однажды переписать чужую.
+                ambiguous.append({
+                    'incoming': _serialize_for_json(r),
+                    'candidates': [_serialize_for_json({
+                        'id': op.id, 'date': op.date, 'status': op.status,
+                        'income': op.income, 'expense': op.expense, 'bank': op.bank,
+                        'counterparty': op.counterparty.name if op.counterparty else None,
+                        'description': op.description}) for op in found],
+                })
+                cache_rows.append({'status': 'ambiguous', 'key': None, 'data': r,
+                                   'existing_id': None})
+                continue
+            existing = found
+            # Ключ подтверждения — СВОЙ у каждой строки: с id операции. Одинаковый ключ
+            # у нескольких строк означал, что одна галка применяет их все к одной операции.
+            key = f"{r['ds_num']}||{r['invoice']}||{existing.id}" if existing else None
         else:
             nk = _natural_key(r['date'], r['status'], r['bank'], r['income'], r['expense'],
                                r['article'], r['counterparty'])
@@ -1480,9 +1611,11 @@ async def import_preview(
             'new': len(new_rows),
             'conflict': len(conflicts),
             'unchanged': unchanged_count,
+            'ambiguous': len(ambiguous),
         },
         'new_rows': new_rows,
         'conflicts': conflicts,
+        'ambiguous': ambiguous,
     }
 
 
@@ -1544,6 +1677,10 @@ async def import_apply(
                 document_link=_validate_link(data.get('document_link'), raise_on_bad=False),
                 own_company_id=own_company.sole_id(db),
                 created_by=current_user.id,
+                # Новый транш размеченной цепочки встаёт её частью (ревью 23.09.2026).
+                parent_operation_id=operation_chains.chain_root_for(
+                    db, data['ds_num'], data['invoice'],
+                    counterparty.id if counterparty else None),
             )
             problem = _operation_problem(op)
             if problem:
@@ -1559,14 +1696,25 @@ async def import_apply(
                 continue
             article = _get_or_create_article(db, data['article'], new_articles)
             counterparty = _get_or_create_counterparty(db, data['counterparty'], data.get('inn'))
+            # Период сравнивается с тем, каким он был ДО правки (по старой дате). И ещё —
+            # буквально с ячейкой файла: «Q3 2026» при сдвиге даты с июля на август
+            # сводится к РАЗНЫМ месяцам, и нетронутый квартал переписывался месяцем
+            # новой даты (ревью 23.09.2026).
+            raw = (data.get('period_raw') or '').strip().lower()
+            period_same = ((raw and raw == (existing.period or '').strip().lower())
+                           or _normalize_period(existing.period, existing.date) == data['period'])
             existing.date = data['date']
             existing.status = data['status']
             existing.income = data['income']
             existing.expense = data['expense']
             existing.bank = data['bank']
-            existing.period = data['period']
+            # Период пишется, только если он ДЕЙСТВИТЕЛЬНО другой. Разбор сводит «Q3 2026»
+            # к месяцу даты, и безусловная запись превращала квартал в месяц при
+            # подтверждении конфликта по любому другому полю (аудит 23.09.2026, 2.M1).
+            if not period_same:
+                existing.period = data['period']
             existing.vat_rate = data['vat_rate']
-            existing.vat_fact = data['vat_fact']
+            existing.vat_fact = compute_vat_fact(data['income'], data['expense'], data['vat_rate'])
             existing.article_id = article.id if article else None
             existing.counterparty_id = counterparty.id if counterparty else None
             existing.invoice_date = data['invoice_date']
@@ -1614,6 +1762,62 @@ async def import_apply(
 
 
 # ===================== Экспорт платёжных поручений в Альфа-Банк =====================
+
+# Замены для cp1251: банк принимает файл только в этой кодировке, а в описаниях операций
+# встречаются символы вне неё. Раньше они роняли выгрузку с 500 — уже после записи
+# счётчика номеров, то есть номера сгорали (аудит 23.09.2026, 2.L1).
+_CP1251_SUBST = {"₽": "руб.", "‑": "-", "‐": "-", " ": " ", " ": " ",
+                 " ": " ", "​": ""}
+PURPOSE_MAX = 210          # длина поля «Назначение платежа» у банка
+
+
+def _cp1251_text(s: str) -> str:
+    """Текст, гарантированно кодируемый в cp1251: известные символы заменяются
+    по смыслу, прочие неизвестные — знаком «?», а не падением выгрузки."""
+    for a, b in _CP1251_SUBST.items():
+        s = s.replace(a, b)
+    return s.encode("cp1251", errors="replace").decode("cp1251")
+
+
+def _one_line(v) -> str:
+    """Значение поля файла 1С — ОДНА строка. Файл построчный («Ключ=значение»), и перенос
+    строки в описании или в имени получателя дописывал в документ лишнее поле (ревью
+    23.09.2026). Переносы, табуляции и повторные пробелы сводятся к одному пробелу."""
+    return " ".join(str(v if v is not None else "").split())
+
+
+def _alfa_document(fields) -> str:
+    """Секция «Платежное поручение» из пар (ключ, значение); значения — в одну строку."""
+    lines = ["СекцияДокумент=Платежное поручение"]
+    lines += [f"{k}={_one_line(v)}" for k, v in fields]
+    lines.append("КонецДокумента")
+    return "\n".join(lines)
+
+
+def _payment_purpose(op) -> str:
+    """Назначение платежа с оговоркой про НДС.
+
+    До 23.09.2026 «НДС не облагается» стояло при ЛЮБОЙ ставке, если описание пустое, а с
+    описанием НДС не упоминался вовсе (аудит 23.09.2026, 2.M5). Теперь: ставка ноль —
+    «НДС не облагается», иначе «В т.ч. НДС X% — N руб.». Сумма НДС СЧИТАЕТСЯ из суммы и
+    ставки, а не берётся из сохранённого `vat_fact`: тот мог разойтись со ставкой.
+    Описание, где НДС уже назван, не трогаем: его формулировку выбирал человек.
+
+    Предел банка режет ОПИСАНИЕ, а не оговорку: обрезка хвоста целиком съедала НДС у
+    длинных описаний (ревью 23.09.2026).
+    """
+    rate = float(op.vat_rate or 0)
+    vat = compute_vat_fact(float(op.income or 0), float(op.expense or 0), rate)
+    clause = (f"В т.ч. НДС {rate:g}% — {float(vat or 0):.2f} руб."
+              if rate > 0 else "НДС не облагается.")
+    desc = _one_line(op.description)
+    if not desc:
+        return f"Оплата по договору. {clause}"[:PURPOSE_MAX]
+    if "ндс" in desc.lower():
+        return desc[:PURPOSE_MAX]
+    room = PURPOSE_MAX - len(clause) - 2
+    return f"{desc.rstrip('.')[:room].rstrip()}. {clause}"
+
 
 class AlfaExportRequest(BaseModel):
     ids: List[int]       # id операций для выгрузки
@@ -1671,9 +1875,14 @@ def export_to_alfa(
                    f"Заполните реквизиты в Настройках → Остатки по банкам."
         )
 
-    # Следующий номер платёжного поручения
+    # Следующий номер платёжного поручения — ПОД БЛОКИРОВКОЙ строки счётчика: без неё
+    # два одновременных экспорта читали одно значение и выдавали одинаковые номера
+    # (аудит 23.09.2026, 2.L1). Строку заводим заранее, чтобы было что блокировать.
+    db.execute(_text(
+        "INSERT INTO company_settings (key, value) VALUES ('payment_number_last', '0') "
+        "ON CONFLICT (key) DO NOTHING"))
     num_row = db.execute(_text(
-        "SELECT value FROM company_settings WHERE key = 'payment_number_last'"
+        "SELECT value FROM company_settings WHERE key = 'payment_number_last' FOR UPDATE"
     )).fetchone()
     next_num = int(num_row.value if num_row else 0) + 1
 
@@ -1714,36 +1923,34 @@ def export_to_alfa(
             continue
 
         today_str = op.date.strftime('%d.%m.%Y') if op.date else date.today().strftime('%d.%m.%Y')
-        purpose = (op.description or "Оплата по договору. НДС не облагается.")[:210]
+        purpose = _payment_purpose(op)
 
-        block = "\n".join([
-            "СекцияДокумент=Платежное поручение",
-            f"Номер={next_num}",
-            f"Дата={today_str}",
-            f"Сумма={op.expense:.2f}",
-            f"ПлательщикСчет={company_row.rs}",
-            f"Плательщик=ИНН {_payer_inn} {_payer_name}",
-            f"ПлательщикИНН={_payer_inn}",
-            f"ПлательщикКПП={_payer_kpp}",
-            f"Плательщик1={_payer_name}",
-            f"ПлательщикБанк1={company_row.bank_full_name or ''}",
-            f"ПлательщикБанк2={company_row.bank_city or ''}",
-            f"ПлательщикБИК={company_row.bik}",
-            f"ПлательщикКорсчет={company_row.ks or ''}",
-            f"ПолучательСчет={ba.rs}",
-            f"Получатель={cp.name}",
-            f"ПолучательИНН={cp.inn or '0'}",
-            f"ПолучательКПП={cp.kpp or '0'}",
-            f"Получатель1={cp.name}",
-            f"ПолучательБанк1={ba.bank_name or ''}",
-            f"ПолучательБанк2={ba.bank_city or ''}",
-            f"ПолучательБИК={ba.bik}",
-            f"ПолучательКорсчет={ba.ks or ''}",
-            "ВидПлатежа=",
-            "Очередность=5",
-            "Код=0",
-            f"НазначениеПлатежа={purpose}",
-            "КонецДокумента",
+        block = _alfa_document([
+            ("Номер", next_num),
+            ("Дата", today_str),
+            ("Сумма", f"{op.expense:.2f}"),
+            ("ПлательщикСчет", company_row.rs),
+            ("Плательщик", f"ИНН {_payer_inn} {_payer_name}"),
+            ("ПлательщикИНН", _payer_inn),
+            ("ПлательщикКПП", _payer_kpp),
+            ("Плательщик1", _payer_name),
+            ("ПлательщикБанк1", company_row.bank_full_name or ''),
+            ("ПлательщикБанк2", company_row.bank_city or ''),
+            ("ПлательщикБИК", company_row.bik),
+            ("ПлательщикКорсчет", company_row.ks or ''),
+            ("ПолучательСчет", ba.rs),
+            ("Получатель", cp.name),
+            ("ПолучательИНН", cp.inn or '0'),
+            ("ПолучательКПП", cp.kpp or '0'),
+            ("Получатель1", cp.name),
+            ("ПолучательБанк1", ba.bank_name or ''),
+            ("ПолучательБанк2", ba.bank_city or ''),
+            ("ПолучательБИК", ba.bik),
+            ("ПолучательКорсчет", ba.ks or ''),
+            ("ВидПлатежа", ""),
+            ("Очередность", "5"),
+            ("Код", "0"),
+            ("НазначениеПлатежа", purpose),
         ])
 
         blocks.append(block)
@@ -1752,19 +1959,21 @@ def export_to_alfa(
     if errors and not blocks:
         raise HTTPException(status_code=400, detail="; ".join(errors))
 
-    # Обновляем счётчик
-    actual_next = next_num - 1  # последний использованный
-    db.execute(_text(
-        "INSERT INTO company_settings (key, value) VALUES ('payment_number_last', :v) "
-        "ON CONFLICT (key) DO UPDATE SET value = :v"
-    ), {"v": str(actual_next)})
-    db.commit()
-
     content = "1CClientBankExchange\n\n" + "\n\n".join(blocks) + "\n\nКонецФайла"
     if errors:
         # Добавляем предупреждения о пропущенных операциях в начало как комментарий
-        warn_block = "// ПРОПУЩЕНО:\n" + "\n".join(f"// {e}" for e in errors) + "\n\n"
+        warn_block = "// ПРОПУЩЕНО:\n" + "\n".join(f"// {_one_line(e)}" for e in errors) + "\n\n"
         content = "1CClientBankExchange\n\n" + warn_block + "\n\n".join(blocks) + "\n\nКонецФайла"
+    # Файл собирается и КОДИРУЕТСЯ до записи счётчика: упади кодирование после — номера
+    # были бы израсходованы на файл, которого человек не получил.
+    payload_bytes = _cp1251_text(content).encode("cp1251")
+
+    # Обновляем счётчик
+    actual_next = next_num - 1  # последний использованный
+    db.execute(_text(
+        "UPDATE company_settings SET value = :v WHERE key = 'payment_number_last'"
+    ), {"v": str(actual_next)})
+    db.commit()
 
     from datetime import date as _d
     filename = f"alfa_payments_{_d.today().isoformat()}.txt"
@@ -1773,7 +1982,7 @@ def export_to_alfa(
                details=f"Выгружено {len(blocks)} п/п, пропущено {len(errors)}, банк={payload.bank}")
 
     return StreamingResponse(
-        io.BytesIO(content.encode("cp1251")),  # Альфа-Банк ожидает Windows-1251
+        io.BytesIO(payload_bytes),  # Альфа-Банк ожидает Windows-1251
         media_type="text/plain; charset=windows-1251",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )

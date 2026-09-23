@@ -1155,6 +1155,22 @@ def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db),
     p = _require(db, SalesPipeline, pipeline_id, "Воронка")
 
     deal_ids = [d.id for d in db.query(SalesDeal.id).filter(SalesDeal.pipeline == p.name).all()]
+    # НАШИ сделки (рождённые у нас, `local-…`) воронка не уносит: в Битриксе их нет, и
+    # удаление было бы безвозвратным. Такие сделки получают имя продуктовой воронки при
+    # переводе по стадиям — до 23.09.2026 удаление воронки стирало их молча (аудит 3.M9).
+    local = db.query(func.count(SalesDeal.id)).filter(
+        SalesDeal.pipeline == p.name, SalesDeal.bitrix_id.like("local-%")).scalar() or 0
+    if local:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Нельзя удалить: в воронке {local} сделок, заведённых у нас, — в Битриксе "
+                    "их нет, и удаление было бы безвозвратным. Переведите их в другую воронку."))
+    from app.sales import deal_delete
+    held = deal_delete.holders(db, deal_ids)
+    if held:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Нельзя удалить: к сделкам воронки привязана работа ({deal_delete.describe(db, held)}).")
     if deal_ids:
         from app.sales.models import SalesDealFieldOverride, SalesDealAnnexAllocation
         blocked = (db.query(func.count(SalesDealFieldOverride.id))
@@ -1174,6 +1190,7 @@ def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db),
         db.query(SalesBitrixRaw).filter(SalesBitrixRaw.entity == "deal",
                                         SalesBitrixRaw.bitrix_id.in_(bitrix_ids)
                                         ).delete(synchronize_session=False)
+    deal_delete.purge_links(db, deal_ids)
     db.query(SalesDeal).filter(SalesDeal.pipeline == p.name).delete(synchronize_session=False)
     db.query(SalesBitrixStageMap).filter(SalesBitrixStageMap.pipeline == p.name
                                          ).delete(synchronize_session=False)
@@ -1326,6 +1343,24 @@ def save_stage_catalog(data: StageCatalogIn, db: Session = Depends(get_db),
                 status_code=400,
                 detail="Нельзя удалить стадии, на которых стоят сделки: "
                        + "; ".join(parts) + ". Сначала переведите сделки на другую стадию.")
+        # История переходов ссылается на стадию внешним ключом БЕЗ каскада: удаление стадии,
+        # через которую сделки уже проходили, падало с 500 (аудит 23.09.2026, 3.L7). Историю
+        # не стираем — она и есть ответ на «как сделка шла», — а отказываем с объяснением.
+        from app.sales.models import SalesDealStageHistory as _H
+        doomed_ids = [s.id for s in doomed]
+        hist = dict(db.query(_H.to_stage_id, func.count(_H.id))
+                    .filter(_H.to_stage_id.in_(doomed_ids)).group_by(_H.to_stage_id).all())
+        for sid, n in db.query(_H.from_stage_id, func.count(_H.id)).filter(
+                _H.from_stage_id.in_(doomed_ids)).group_by(_H.from_stage_id).all():
+            hist[sid] = hist.get(sid, 0) + n
+        if hist:
+            db.rollback()
+            parts = [f"«{s.name}» — {hist[s.id]}" for s in doomed if s.id in hist]
+            raise HTTPException(
+                status_code=409,
+                detail=("Нельзя удалить стадии, через которые сделки уже проходили (история "
+                        "переходов): " + "; ".join(parts) + ". Переименуйте стадию или "
+                        "оставьте её — история не стирается."))
     for s in doomed:
         db.delete(s)
     for p in list(existing_phases.values()):

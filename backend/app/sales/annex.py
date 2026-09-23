@@ -266,6 +266,34 @@ def plan_rows(db: Session, deal_ids) -> list:
             "unit_price": price or None,
             "amount": net,
         })
+
+    # ДОП. УСЛУГИ ПЛАНА — та же таблица, те же колонки. До 23.09.2026 они сюда не попадали
+    # вовсе: ДС собирался из одних размещений, и документ на план 500 000 + 50 000 доп.
+    # услуг выходил на 610 000 вместо 671 000 — подписанная сумма и НДС были занижены
+    # (аудит 23.09.2026, 3.H1). `total` доп. услуги — сумма БЕЗ НДС, как в самом плане
+    # (`media_plans._amounts`); налог начисляется поверх в `build`, как у строк размещения.
+    extras = db.execute(sa_text("""
+        SELECT e.name, e.mode, e.price, e.total, mp.deal_id, mp.date_from, mp.date_to
+          FROM sales_media_plan_extras e
+          JOIN sales_media_plans mp ON mp.id = e.plan_id
+         WHERE mp.deal_id = ANY(:d)
+           AND mp.id = (SELECT id FROM sales_media_plans
+                         WHERE deal_id = mp.deal_id AND status <> 'rejected'
+                         ORDER BY version DESC, id DESC LIMIT 1)
+         ORDER BY mp.deal_id, e.sort_order, e.id
+    """), {"d": ids}).mappings().all()
+    for e in extras:
+        total = float(e["total"] or 0)
+        out.append({
+            "network": PLACEMENT_NETWORK,
+            "position": e["name"], "doc_position": None, "rotation": None, "geo": None,
+            "format": None, "device": None, "model": (e["mode"] or "").strip() or None,
+            "volume": None,
+            "date_from": e["date_from"], "date_to": e["date_to"],
+            "unit_price": float(e["price"] or 0) or None,
+            "amount": round(total, 2) if total else None,
+            "kind": "extra",
+        })
     return out
 
 
@@ -283,8 +311,11 @@ def build(db: Session, contract: Contract, *, period_from: date, period_to: date
     # Ставка берётся из `vat_rate_income` нашего юрлица — это НДС по нашим УСЛУГАМ
     # (22 % на 05.09.2026). Поле `vat_rate` у того же контрагента означает ставку по
     # его расходам и стоит нулём; перепутать их значит выпустить документ без налога.
+    # Ставка юрлица не заполнена — ставка ЗАКОНА на период документа (`app/vat.py`). До
+    # ревью 23.09.2026 запасом было `vat_rate` контрагента, а за ним 0: ДС выходил без НДС.
+    from app import vat as vat_rules
     rate = vat_rate if vat_rate is not None else (
-        getattr(us, "vat_rate_income", None) or getattr(us, "vat_rate", None) or 0)
+        getattr(us, "vat_rate_income", None) or vat_rules.on(period_from))
     n = no or next_no(db, contract)
 
     # НДС по строке НАЧИСЛЯЕТСЯ, а не извлекается: `r["amount"]` — стоимость размещения

@@ -92,13 +92,26 @@ def _day_factor(d: date, rnd: random.Random) -> float:
     return weekend * (1 + math.sin(d.toordinal() * 1.1) * 0.18) * rnd.uniform(0.93, 1.07)
 
 
-def seed(db):
+# Свой диапазон номеров комплектов: у соседнего демо-скрипта цепочки креативов — 8500,
+# и «>= 8000» при откате сносил и его (аудит 23.09.2026, 8.H4).
+DEMO_SET_TOP = DEMO_SET_NO + 100
+
+
+def _demo_campaigns(db):
+    """РК, которые наполняет демо — ТОТ ЖЕ отбор для наполнения и для отката.
+
+    Откат должен трогать ровно их. До 23.09.2026 он сбрасывал статусы площадок и веса у
+    ВСЕХ РК системы, включая ручные."""
     camps = (db.query(AdCampaign)
              .filter(AdCampaign.plan_show.isnot(None), AdCampaign.date_start.isnot(None))
              .order_by(AdCampaign.id).all())
     camps = [c for c in camps
              if db.query(AdCampaignPlacement).filter_by(campaign_id=c.id).count() >= 4]
-    camps = camps[:len(PROFILES)]
+    return camps[:len(PROFILES)]
+
+
+def seed(db):
+    camps = _demo_campaigns(db)
     if not camps:
         print("нет подходящих РК: нужны план, даты и хотя бы четыре площадки")
         return
@@ -199,23 +212,30 @@ def seed(db):
 
 
 def undo(db):
-    stats = db.execute(text("DELETE FROM ad_campaign_stat WHERE source = :s"),
-                       {"s": DEMO_SOURCE}).rowcount
+    camp_ids = [c.id for c in _demo_campaigns(db)]
+    # Только факты СВОИХ РК: `source='demo'` пишет и демо кабинета площадок
+    # (`2026-09-15_demo_publisher_campaigns`), и откат этого скрипта сносил их тоже —
+    # та же коллизия, что уже была с номерами комплектов (ревью 23.09.2026). Если отбор
+    # РК с тех пор сменился, факты старых останутся: лишняя строка лучше чужой удалённой.
+    stats = db.execute(text("DELETE FROM ad_campaign_stat WHERE source = :s "
+                            "AND campaign_id = ANY(:c)"),
+                       {"s": DEMO_SOURCE, "c": camp_ids}).rowcount if camp_ids else 0
     crs = db.execute(text(
         "DELETE FROM ad_campaign_creative WHERE root_set_id IN "
-        "(SELECT id FROM launch_prep_creative_set WHERE no >= :n)"),
-        {"n": DEMO_SET_NO}).rowcount
-    sets = db.execute(text("DELETE FROM launch_prep_creative_set WHERE no >= :n"),
-                      {"n": DEMO_SET_NO}).rowcount
+        "(SELECT id FROM launch_prep_creative_set WHERE no >= :n AND no < :top)"),
+        {"n": DEMO_SET_NO, "top": DEMO_SET_TOP}).rowcount
+    sets = db.execute(text("DELETE FROM launch_prep_creative_set WHERE no >= :n AND no < :top"),
+                      {"n": DEMO_SET_NO, "top": DEMO_SET_TOP}).rowcount
     # Статусы площадок — обратно в исходное «у трафика»: конвейер согласования на стенде
     # пуст, и именно это состояние он и даёт.
     pl = db.execute(text("UPDATE ad_campaign_placement SET status = 'у трафика' "
-                         "WHERE status <> 'у трафика'")).rowcount
+                         "WHERE status <> 'у трафика' AND campaign_id = ANY(:c)"),
+                    {"c": camp_ids}).rowcount if camp_ids else 0
     db.commit()
 
     # Веса и даты восстанавливаем ИЗ ПЕРВОИСТОЧНИКА, а не из сохранённой копии.
     build.sync_campaigns(db, commit=False)
-    for camp in db.query(AdCampaign).all():
+    for camp in db.query(AdCampaign).filter(AdCampaign.id.in_(camp_ids)).all():
         plan = build.deal_plan(db, camp.deal_id)
         w = build.publisher_weights(db, plan["surfaces"])
         for p in db.query(AdCampaignPlacement).filter_by(campaign_id=camp.id).all():
@@ -231,6 +251,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--undo", action="store_true", help="убрать демо-данные")
     args = ap.parse_args()
+    from scripts._stand_guard import require_stand
+    require_stand("демо-месяц трафика")
     db = SessionLocal()
     try:
         undo(db) if args.undo else seed(db)

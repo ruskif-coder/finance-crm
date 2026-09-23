@@ -19,6 +19,7 @@ from app.routers.launch_prep import (CREATIVES_DIR, _candidates, _derive_form,
                                      _set_state, resolve_service)
 from app.sales.models import (SalesDeal, SalesPublisherService, SalesPublisherSurface,
                               SalesService)
+from tests._launch_prep_cleanup import drop_campaign_creatives
 
 NO_BASE = 9500
 
@@ -36,6 +37,7 @@ def db():
 
 def _purge(session):
     session.rollback()
+    drop_campaign_creatives(session, NO_BASE)   # до комплектов: FK без каскада
     session.query(LaunchPrepCreativeSet).filter(
         LaunchPrepCreativeSet.no >= NO_BASE).delete(synchronize_session=False)
     session.commit()

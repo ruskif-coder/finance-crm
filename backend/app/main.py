@@ -559,6 +559,9 @@ async def _neutralize_ad_query(request: Request, call_next):
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(operations.router, prefix="/api/operations", tags=["operations"])
+# Цепочка частичных оплат — те же адреса /api/operations, свой файл (решение 23.09.2026).
+from app.routers import operation_chains  # noqa: E402
+app.include_router(operation_chains.router, prefix="/api/operations", tags=["operations"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(finreport.router, prefix="/api/finreport", tags=["reports"])
 app.include_router(counterparties.router, prefix="/api/counterparties", tags=["counterparties"])

@@ -162,19 +162,9 @@ def bulk_delete_counterparties(
         raise HTTPException(status_code=400,
                             detail=f"Нельзя удалить свои организации: {'; '.join(own)}")
 
-    # Проверяем наличие связанных операций — при их наличии удаление запрещено:
-    # FK Operation.counterparty_id не даст сделать это на уровне БД, но лучше
-    # дать понятное сообщение заранее, чем поймать IntegrityError.
-    blocked = []
-    for cp in cps:
-        op_count = db.query(func.count(Operation.id)).filter(Operation.counterparty_id == cp.id).scalar() or 0
-        if op_count:
-            blocked.append(f"«{cp.name}» ({op_count} оп.)")
-    if blocked:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Нельзя удалить: у следующих контрагентов есть операции — {'; '.join(blocked)}"
-        )
+    # Любые ссылки на контрагентов — отказ целиком, с перечнем (а не одни операции, как
+    # было до 23.09.2026: договоры и сделки молча теряли ссылку).
+    _refuse_if_referenced(db, cps)
 
     names = [cp.name for cp in cps]
     for cp in cps:
@@ -184,6 +174,64 @@ def bulk_delete_counterparties(
     log_action(db, current_user, "bulk_delete_counterparty", entity_type="counterparty", entity_id=None,
                details=f"Удалено {len(names)} контрагентов: {'; '.join(names)}")
     return {"message": f"Удалено {len(names)} контрагентов"}
+
+
+# Подписи таблиц, которые держат контрагента. Незнакомая таблица показывается своим именем:
+# лучше некрасиво, чем промолчать о связи.
+_REF_LABELS = {
+    "operations": "операции", "contracts": "договоры", "sales_deals": "сделки",
+    "diadoc_documents": "документы Диадока", "ord_clients": "юрлица ОРД",
+    "sales_advertisers": "рекламодатели", "sales_agencies": "агентства",
+    "sales_advertiser_counterparties": "привязки к рекламодателям",
+    "sales_agency_counterparties": "привязки к агентствам",
+    "sales_publisher_counterparties": "привязки к площадкам",
+    "sales_publishers": "площадки (посредник)", "annex_templates": "шаблоны ДС",
+    "bank_balances": "остатки банков",
+}
+
+
+# Собственные данные контрагента — уходят вместе с ним. ЯВНЫЙ список, а не «всё с каскадным
+# ключом»: каскад был и у шаблонов ДС плательщика, и они удалялись молча (ревью 23.09.2026).
+OWN_DATA_TABLES = {"counterparty_bank_accounts"}
+
+
+def _references(db: Session, ids) -> dict:
+    """{id контрагента: ["операции: 12", …]} — всё, что на него ссылается, кроме его СОБСТВЕННЫХ
+    данных (`OWN_DATA_TABLES` — банковские счета уходят вместе с ним).
+
+    Связи берутся из КАТАЛОГА базы, а не списком в коде: до 23.09.2026 одиночное удаление не
+    проверяло ничего, и SQLAlchemy молча обнуляла `counterparty_id` у операций и договоров,
+    а массовое проверяло одни операции (аудит 23.09.2026, 2.L5). Новая таблица со ссылкой
+    попадёт в проверку сама.
+    """
+    from sqlalchemy import text as _t
+    fks = db.execute(_t("""
+        SELECT c.conrelid::regclass::text AS tbl, a.attname AS col
+          FROM pg_constraint c
+          JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+         WHERE c.confrelid = 'counterparties'::regclass AND c.contype = 'f'
+    """)).all()
+    out: dict = {}
+    for tbl, col in fks:
+        if tbl.split(".")[-1] in OWN_DATA_TABLES:
+            continue
+        # Имена — из системного каталога, не от пользователя; regclass уже экранирован.
+        rows = db.execute(_t(f'SELECT "{col}" AS cp, count(*) AS n FROM {tbl} '
+                             f'WHERE "{col}" = ANY(:ids) GROUP BY 1'), {"ids": list(ids)}).all()
+        for cp, n in rows:
+            out.setdefault(cp, []).append(f"{_REF_LABELS.get(tbl.split('.')[-1], tbl)}: {n}")
+    return out
+
+
+def _refuse_if_referenced(db: Session, cps) -> None:
+    refs = _references(db, [cp.id for cp in cps])
+    if refs:
+        names = {cp.id: cp.name for cp in cps}
+        parts = "; ".join(f"«{names.get(i, i)}» — {', '.join(v)}" for i, v in refs.items())
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Нельзя удалить: на контрагентов ссылаются записи ({parts}). "
+                    "Удаление обнулило бы эти ссылки — сначала перепривяжите их."))
 
 
 @router.delete("/{counterparty_id}")
@@ -197,6 +245,7 @@ def delete_counterparty(
         raise HTTPException(status_code=404, detail="Контрагент не найден")
     if counterparty.is_own_company:
         raise HTTPException(status_code=400, detail="Нельзя удалить свою организацию")
+    _refuse_if_referenced(db, [counterparty])
     name = counterparty.name
     db.delete(counterparty)
     db.commit()

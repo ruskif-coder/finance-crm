@@ -1,24 +1,32 @@
 # -*- coding: utf-8 -*-
-"""Ни одна свежая миграция не теряется: каждая названа в упорядоченном списке README.
+"""Прибор: порядок наката миграций — по имени файла, и там, где имя врёт, это записано.
 
-ЗАЧЕМ. Таблицы учёта применённых миграций в проекте нет (осознанный отказ от Alembic),
-и единственный ответ на вопрос «что и в каком порядке накатывать» — список в
-`backend/migrations/README.md`. Список, который отстаёт, хуже отсутствующего: по нему
-накатывают и считают, что накатили всё.
+РЕШЕНИЕ ВЛАДЕЛЬЦА 23.09.2026. Полный упорядоченный список в README отменён. «Что уже
+накатано» знает учёт `schema_migrations` (`deploy.sh migrate-status`), «в каком порядке» —
+имя файла (дата впереди, внутри дня алфавит), а README держит только ИСКЛЮЧЕНИЯ: файл обязан
+идти после другого, хотя по имени стоит раньше.
 
-ЧЕМ ЭТО БЫЛО. На 11.09.2026 список обрывался на релизе 31.08, а в каталоге лежали ещё
-**17 файлов** — пятнадцать сентябрьских и два для отдельной базы `dsp/`. Ни один из них
-в README не упоминался (находка F6-03 внешнего аудита). Алфавитный `for f in *.sql` уже
-трижды ломал зависимости в августе, так что «накатим всё подряд» тут не работает.
+ЧТО БЫЛО. Прибор требовал, чтобы каждая миграция была названа в списке. С 12.09 список не
+дописывали, к 23.09 он отстал на 27 файлов — а прибор оставался зелёным: тесты идут в
+контейнере, где каталог `migrations/` лежал со времени сборки образа. Список, который надо
+вести руками, отстаёт; прибор, который сверяет список, ловит только отставание списка.
 
-ВТОРАЯ БЕДА ТОГО ЖЕ КОРНЯ. 06.09.2026 каталог `dsp/` целиком не попадал в репозиторий:
-правило `.gitignore` съедало его молча, и на проде миграции просто не появились. Этот
-прибор ловит такой случай с другой стороны: файл, которого нет в списке, заметен сразу,
-а не через месяц на боевом накате.
+ЧТО ДЕРЖИМ ТЕПЕРЬ:
+  · имя каждого файла — `ГГГГ-ММ-ДД_что.sql`: на этом стоит весь порядок;
+  · ссылка «вперёд» — файл упоминает таблицу, представление, функцию или схему, которую
+    заводит файл, стоящий по имени ПОЗЖЕ, — обязана быть в блоке исключений. Её находит
+    сам прибор, а не память человека: так найдены все шесть исключений за историю, включая
+    `cabinet_dashboard` после `cabinet_org`, которое старый список держал неявно;
+  · исключения ссылаются на существующие файлы;
+  · про `dsp/` написано, что это другая база.
 
-ПОЧЕМУ НЕ ПРОВЕРЯЕМ ГИТ НАПРЯМУЮ. Тесты идут внутри контейнера, где нет ни `.git`, ни
-самого git. Проверка «файл отслеживается» делается на хосте перед выкладкой и записана
-в runbook; здесь — то, что можно проверить честно и всегда.
+ЧЕГО ПРИБОР НЕ ЛОВИТ: зависимость по смыслу без упоминания имени (например, «сначала
+барьер на все представления, потом закрыть public»). Такие дописываются в блок руками —
+прибор проверяет только, что файлы существуют.
+
+КАТАЛОГ. Тест читает `migrations/` ИЗ КОНТЕЙНЕРА. Перед прогоном его надо донести целиком
+(`docker cp backend/migrations/. finance_backend:/app/migrations`), иначе прибор проверит
+каталог со времени сборки образа — именно так прошлый прибор и оставался зелёным.
 """
 import pathlib
 import re
@@ -26,103 +34,102 @@ import re
 MIGRATIONS = pathlib.Path(__file__).resolve().parent.parent / "migrations"
 README = MIGRATIONS / "README.md"
 
-NAME_RE = r"(2026-\d\d-\d\d_[\w\-]+\.sql)"
+NAME_OK = re.compile(r"^\d{4}-\d{2}-\d{2}_[a-z0-9_]+\.sql$")
+EXC_FROM = "### Исключения из порядка по имени"
+EXC_TO = "### Как это читать при релизе"
+EXC_LINE = re.compile(r"^(\S+\.sql)\s+после\s+(\S+\.sql)\s*$", re.M)
+
+CREATES = (
+    re.compile(r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW|MATERIALIZED\s+VIEW)\s+"
+               r"(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][\w.]*)", re.I),
+    re.compile(r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-z_][\w.]*)", re.I),
+    re.compile(r"CREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_]\w*)", re.I),
+)
 
 
-def _listed_in_readme() -> str:
-    assert README.exists(), "backend/migrations/README.md пропал — без него порядка нет"
+def _readme() -> str:
+    assert README.exists(), "backend/migrations/README.md пропал"
     return README.read_text(encoding="utf-8")
 
 
-ORDER_FROM = "### Порядок"
-ORDER_TO = "### Как накатывать"
+def _exceptions() -> set:
+    text = _readme()
+    i, j = text.find(EXC_FROM), text.find(EXC_TO)
+    assert i >= 0 and j > i, f"в README нет раздела «{EXC_FROM}»"
+    blocks = "\n".join(re.findall(r"```\n(.*?)```", text[i:j], re.S))
+    return {(a, b) for a, b in EXC_LINE.findall(blocks)}
 
 
-def _order_blocks(text: str) -> str:
-    """Перечисления ТОЛЬКО из раздела «Порядок».
-
-    Не по всему файлу: README в других разделах разбирает историю и рецепты и называет
-    там файлы из КОРНЕВОГО `scripts/` — каталога вне гита, куда сложено то, что
-    публиковать нельзя. Взяв их, проверка вычислила бы границу по июлю и потребовала бы
-    задокументировать порядок тридцати одной старой миграции — то есть выдумать его.
-    """
-    i, j = text.find(ORDER_FROM), text.find(ORDER_TO)
-    assert i >= 0 and j > i, (
-        f"В README нет раздела «{ORDER_FROM}» или «{ORDER_TO}» — по нему и читается "
-        "порядок наката, без него проверять нечего")
-    return "\n".join(re.findall(r"```\n(.*?)```", text[i:j], re.S))
+def _dirs():
+    """Главная база и отдельная `dsp/` — у каждой свой порядок."""
+    return [MIGRATIONS] + [d for d in MIGRATIONS.iterdir() if d.is_dir()]
 
 
-def _all_migrations():
-    """Все .sql каталога, включая подпапки (`dsp/` — отдельная база)."""
-    return sorted(p for p in MIGRATIONS.rglob("*.sql"))
+def _sql(d):
+    return sorted(d.glob("*.sql"))
 
 
-def _cutoff(text: str) -> str:
-    """ГРАНИЦА, с которой список обязателен.
+def _strip(sql: str) -> str:
+    return re.sub(r"--[^\n]*", "", sql)
 
-    Упорядоченный список собран под релиз 31.08.2026 и начинается с 25.08. Всё, что
-    старше, накатано на обоих стендах задолго до него, и восстанавливать их порядок
-    задним числом — значит ВЫДУМЫВАТЬ его: зависимости тех миграций сегодня никто не
-    помнит, а неверный порядок в документе опаснее его отсутствия.
 
-    Граница берётся из самого списка, а не константой: сдвинется список — сдвинется и
-    проверка, и второго места, где записана та же дата, не появится.
-    """
-    dates = re.findall(r"(2026-\d\d-\d\d)_[\w\-]+\.sql", _order_blocks(text))
-    assert dates, "в README не нашлось ни одного имени миграции — список потерян"
-    return min(dates)
+def forward_refs(files) -> set:
+    """{(файл, файл-создатель)} — упоминания объектов, которые заводит файл ПОЗЖЕ по имени."""
+    texts = {f.name: _strip(f.read_text(encoding="utf-8")) for f in files}
+    creator, own = {}, {}
+    for name, t in texts.items():
+        own[name] = {m.group(1).lower() for rx in CREATES for m in rx.finditer(t)}
+        for obj in own[name]:
+            creator.setdefault(obj, name)
+    out = set()
+    for name, t in texts.items():
+        low = t.lower()
+        for obj, first in creator.items():
+            if first <= name or obj in own[name]:
+                continue
+            prefix = r"(?<![\w.])" if "." in obj else r"(?<![\w.])(?:public\.)?"
+            if re.search(prefix + re.escape(obj) + r"(?!\w)", low):
+                out.add((name, first))
+    return out
 
 
 def test_migrations_directory_is_not_empty():
     """Страховка от того, что тест зелёный, потому что ничего не нашёл."""
-    assert len(_all_migrations()) > 30
+    assert len(_sql(MIGRATIONS)) > 100
 
 
-def test_every_recent_migration_is_named_in_the_ordered_list():
-    """Каждая миграция НЕ СТАРШЕ границы названа в списке.
+def test_every_file_name_orders_by_date():
+    bad = [f"{d.name}/{p.name}" for d in _dirs() for p in _sql(d) if not NAME_OK.match(p.name)]
+    assert not bad, ("имя миграции не по образцу ГГГГ-ММ-ДД_что.sql — порядок наката стоит "
+                     "на имени:\n  " + "\n  ".join(bad))
 
-    Это и есть рабочий случай: новый файл добавляют сегодня, и забыть про него можно
-    только сегодня. Старое уже накатано везде.
-    """
-    text = _listed_in_readme()
-    cutoff = _cutoff(text)
-    missing = [p.name for p in _all_migrations()
-               if p.name[:10] >= cutoff and p.name not in _order_blocks(text)]
+
+def test_every_forward_reference_is_a_written_exception():
+    exc = _exceptions()
+    missing = sorted(pair for d in _dirs() for pair in forward_refs(_sql(d)) if pair not in exc)
     assert not missing, (
-        f"Эти миграции (от {cutoff} и новее) лежат в каталоге, но не названы в README — "
-        "значит на боевом накате их пропустят или накатят не в том порядке:\n  "
-        + "\n  ".join(missing)
-        + "\n\nДобавьте их в блок «Порядок» (для отдельной базы — в блок `dsp/`)."
-    )
+        "по имени эти файлы идут РАНЬШЕ того, что используют. Допишите в README, блок "
+        f"«{EXC_FROM[4:]}», строкой `<файл>  после  <файл>` — или переименуйте файл:\n  "
+        + "\n  ".join(f"{a}  после  {b}" for a, b in missing))
 
 
-def test_ordered_list_does_not_name_files_that_do_not_exist():
-    """Обратная сторона: список не должен звать к файлам, которых нет.
+def test_exceptions_name_existing_files():
+    names = {p.name for d in _dirs() for p in _sql(d)}
+    ghosts = sorted({n for pair in _exceptions() for n in pair} - names)
+    assert not ghosts, "исключения зовут файлы, которых нет:\n  " + "\n  ".join(ghosts)
 
-    Переименовали или удалили миграцию — список обязан это заметить, иначе оператор
-    остановится на середине наката с «файл не найден».
-    """
-    names = {p.name for p in _all_migrations()}
-    blocks = _order_blocks(_listed_in_readme())
-    mentioned = set()
-    for m in re.finditer(NAME_RE, blocks):
-        # `scripts/<имя>` — корневой каталог вне гита; README зовёт его файлы как
-        # «НЕ накатывать» и как адрес рецепта, проверять их наличие здесь незачем.
-        if blocks[max(0, m.start() - 8):m.start()].endswith("scripts/"):
-            continue
-        mentioned.add(m.group(1))
-    ghosts = sorted(n for n in mentioned if n not in names)
-    assert not ghosts, (
-        "README зовёт накатывать файлы, которых в каталоге нет:\n  " + "\n  ".join(ghosts))
+
+def test_the_probe_sees_a_forward_reference(tmp_path):
+    """Прибор на прибор: ссылка на таблицу из файла, который по имени позже, — ловится,
+    а ссылка на свою же или более раннюю — нет."""
+    (tmp_path / "2026-01-01_a.sql").write_text("ALTER TABLE later_t ADD COLUMN x int;", "utf-8")
+    (tmp_path / "2026-01-01_b.sql").write_text("CREATE TABLE IF NOT EXISTS later_t (id int);", "utf-8")
+    (tmp_path / "2026-01-02_c.sql").write_text("SELECT * FROM later_t;", "utf-8")
+    assert forward_refs(sorted(tmp_path.glob("*.sql"))) == {("2026-01-01_a.sql", "2026-01-01_b.sql")}
 
 
 def test_dsp_migrations_are_marked_as_a_separate_database():
-    """`dsp/` идёт в ДРУГУЮ базу, и это должно быть написано рядом со списком.
-
-    Перепутать базу — значит завести hypertable рядом с боевыми деньгами. Одного
-    комментария в шапке самого файла мало: порядок читают из README.
-    """
-    text = _listed_in_readme()
+    """`dsp/` идёт в ДРУГУЮ базу, и это должно быть написано в README."""
+    text = _readme()
     assert "dsp_analytics" in text and "finance_dsp_db" in text, (
         "В README нет указания, что миграции из `dsp/` накатываются в отдельную базу")

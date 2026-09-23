@@ -45,6 +45,56 @@ def test_every_read_of_the_table_names_its_source():
         "измерением верификатора и удвоится: " + str(holes))
 
 
+def _views_over_the_table():
+    """Представления и функции базы, читающие таблицу, — их ЖИВЫЕ определения.
+
+    Строковые константы в `app/` (прибор выше) — только половина читателей. Вторая
+    живёт в самой базе: витрины кабинета площадки (`pub.*_v1`) пишутся миграциями, и
+    `.py`-прибор их не видит. Так 23.09.2026 нашлось, что `pub.campaign_v1` суммировал
+    показы площадки без условия на источник.
+
+    Смотрим определения из КАТАЛОГА, а не файлы миграций: файлы — история, в них
+    лежат и прежние редакции представления, а площадке отдаётся то, что накатано.
+    """
+    from sqlalchemy import text
+
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        views = db.execute(text("""
+            SELECT schemaname || '.' || viewname, definition
+              FROM pg_views
+             WHERE definition ILIKE '%' || :t || '%'
+        """), {"t": TABLE}).all()
+        funcs = db.execute(text("""
+            SELECT n.nspname || '.' || p.proname, p.prosrc
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+               AND p.prosrc ILIKE '%' || :t || '%'
+        """), {"t": TABLE}).all()
+    finally:
+        db.close()
+    return list(views) + list(funcs)
+
+
+def test_views_over_the_table_count_only_our_counter():
+    """Витрина в базе считает факт только нашим счётчиком — ровно по списку `OWN`.
+
+    Не «упоминает source», а сверяет сам список: представление держит его литералами,
+    импортировать `OWN` в SQL нечем, и новый источник, объявленный в коде, иначе молча
+    не доехал бы до кабинета площадки.
+    """
+    found = _views_over_the_table()
+    assert found, "в базе нет ни одного представления над ad_campaign_stat — прибор смотрит не туда"
+    for name, body in found:
+        low = body.lower()
+        assert "source" in low, f"{name}: читает {TABLE} без условия на источник"
+        for s in VERIFIER:
+            assert f"'{s}'" not in low, f"{name}: замер {s} попал в факт"
+        missing = [s for s in OWN if f"'{s}'" not in low]
+        assert not missing, f"{name}: источники нашего счётчика не учтены: {missing}"
+
+
 def test_our_counter_and_verifier_do_not_overlap():
     assert not (set(OWN) & set(VERIFIER)), (
         "источник не может быть одновременно нашим счётчиком и независимым измерением")

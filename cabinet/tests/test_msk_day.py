@@ -52,3 +52,20 @@ def test_msk_today_is_three_hours_ahead_of_greenwich_today():
     """
     expected = (datetime.utcnow() + timedelta(hours=MSK_OFFSET)).date()
     assert _msk_today() == expected
+
+
+def test_feed_shows_the_moscow_moment():
+    """Лента кабинета отдаёт московское время, а не UTC из `pub.log_v1`.
+
+    Экран берёт дату срезом строки (`lib/ui.js: dm`), поэтому событие 01:30 по Москве
+    (22:30 UTC прошлых суток) показывалось вчерашним днём.
+    """
+    from types import SimpleNamespace
+
+    from app.main import _feed_item
+
+    row = SimpleNamespace(id=1, created_at=datetime(2026, 9, 13, 22, 30), action="x",
+                          tone=None, side=None, actor_name="", subject="")
+    item = _feed_item(row, {})
+    assert item["at"] == datetime(2026, 9, 14, 1, 30)
+    assert _feed_item(SimpleNamespace(**{**row.__dict__, "created_at": None}), {})["at"] is None

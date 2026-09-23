@@ -121,8 +121,9 @@ def stand(db):
                                .order_by(SalesAdvertiser.id).first())
 
 
-def _save(db, user, lines, rep_id=None):
-    return save_year_plan(SaveIn(year=YEAR, rep_id=rep_id, lines=lines),
+def _save(db, user, lines, rep_id=None, confirm_empty=False):
+    return save_year_plan(SaveIn(year=YEAR, rep_id=rep_id, lines=lines,
+                                 confirm_empty=confirm_empty),
                           db=db, current_user=user)
 
 
@@ -212,7 +213,10 @@ def test_saving_still_deletes_your_own_dropped_lines(db, stand):
     _save(db, stand.manager_user, [_line(brief={"sales_rep_id": stand.seller.user_id})])
     db.flush()
     assert _rows(db).count() == 1
-    _save(db, stand.manager_user, [])
+    # С 23.09.2026 пустой список принимается только с явным подтверждением: без него он
+    # неотличим от «план не загрузился» (test_year_plan_save_guard.py). Экран шлёт флаг,
+    # когда человек сам убрал все строки.
+    _save(db, stand.manager_user, [], confirm_empty=True)
     db.flush()
     assert _rows(db).count() == 0
 

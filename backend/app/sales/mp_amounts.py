@@ -86,3 +86,48 @@ def eff_gross(deal, mp: Dict[int, Tuple[float, float]]) -> Optional[float]:
     """Сумма с НДС: из МП; иначе `amount_with_vat` сделки как есть (может быть None)."""
     a = mp.get(deal.id)
     return float(a[1]) if a else deal.amount_with_vat
+
+
+def vat_pct_of(deal, mp: Dict[int, Tuple[float, float]]) -> Optional[float]:
+    """Ставка НДС, по которой ПОСЧИТАНА сделка, — для показа её сумм (правило 23.09.2026).
+
+    Ставка фиксируется на дату расчёта, поэтому берётся из уже посчитанного, а не из
+    текущей карточки юрлица: сделка 2025 года на 20 % не должна показываться по 22 %.
+    Порядок: медиаплан сделки (его суммы несут его ставку) → суммы самой сделки →
+    ставка закона на период сделки. None — нет ни одной суммы, считать нечего.
+    """
+    from app import vat as vat_rules
+    # Деление посчитанных сумм даёт приближение (копейки, рубли у старых планов) — оно
+    # приводится к законной ставке; не приводится (17 %, 0 % при ошибке ввода) — не
+    # угадываем, идём дальше по порядку (ревью 23.09.2026).
+    a = mp.get(deal.id)
+    if a and a[0]:
+        got = vat_rules.snap((float(a[1]) / float(a[0]) - 1) * 100)
+        if got is not None:
+            return got
+    if deal.amount and deal.amount_with_vat:
+        got = vat_rules.snap((float(deal.amount_with_vat) / float(deal.amount) - 1) * 100)
+        if got is not None:
+            return got
+    if deal.amount is None:
+        return None
+    d = deal.period_from or (deal.date_create.date() if deal.date_create else None)
+    return vat_rules.on(d)
+
+
+def gross_of(deal, mp: Dict[int, Tuple[float, float]]) -> Optional[float]:
+    """Сумма сделки с НДС — одно правило для карточки и реестра (ревью 23.09.2026).
+
+    Порядок: посчитанный медиаплан сделки → сохранённая сумма с НДС → досчёт по ставке
+    ЗАКОНА на период сделки (сделка 2025 года — по 20 %, а не по текущей). Реестр суммы с
+    НДС не отдавал вовсе, и доска сделок досчитывала её сама по зашитым 22 %.
+    """
+    from app import vat as vat_rules
+    if deal.id in mp:
+        return eff_gross(deal, mp)
+    if deal.amount_with_vat is not None:
+        return deal.amount_with_vat
+    if deal.amount is None:
+        return None
+    d = deal.period_from or (deal.date_create.date() if deal.date_create else None)
+    return round(float(deal.amount) * (1 + vat_rules.on(d) / 100.0), 2)

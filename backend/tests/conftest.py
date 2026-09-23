@@ -90,3 +90,63 @@ def journals_stay_clean():
         with engine.begin() as c:
             for t in JOURNALS:
                 c.execute(text(f"DELETE FROM {t} WHERE id > :b"), {"b": before[t]})
+
+
+# ── Наружу из теста не уходит ничего ────────────────────────────────────────────────────
+#
+# Ревью 23.09.2026: `test_mp_deal_scope` при сломанной проверке области видимости дошёл бы
+# до `vibecode_patch` и записал бриф в НАСТОЯЩУЮ сделку Битрикса (ключ на стенде задан), а
+# соседний тест — до `emit` → Telegram. Откат транзакции не возвращает ни то, ни другое:
+# фикстура `db` с `commit = flush` защищает базу, а сеть — нет.
+#
+# Заслон стоит на уровне транспорта, а не отдельных функций: `from x import f` в модуле
+# обходит подмену `x.f`, а `httpx.get` и `httpx.Client.send` ищутся в момент вызова. Внутренние
+# адреса стенда (сайдкар PDF, соседние контейнеры) и `TestClient` (`testserver`) пропускаются;
+# клиент с подменным транспортом (`httpx.MockTransport`) — тоже: это и есть проверка обмена.
+# Тест, которому сеть действительно нужна, подменяет вызов сам — его `monkeypatch` ляжет
+# поверх этого.
+
+import smtplib                      # noqa: E402
+from urllib.parse import urlsplit   # noqa: E402
+
+import httpx                        # noqa: E402
+
+INTERNAL_HOSTS = {"testserver", "localhost", "127.0.0.1", "pdf", "backend", "db",
+                  "finance_backend", "finance_db", "cabinet_backend", "finance_pdf"}
+
+
+class NetworkInTest(RuntimeError):
+    """Тест пытался выйти во внешнюю систему."""
+
+
+def _guard(url) -> None:
+    host = urlsplit(str(url)).hostname or ""
+    if host not in INTERNAL_HOSTS:
+        raise NetworkInTest(f"тест пытался выйти наружу: {url} — подмените вызов в тесте")
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    for name in ("get", "post", "put", "patch", "delete", "request"):
+        orig = getattr(httpx, name)
+
+        def blocked(*a, _orig=orig, _name=name, **k):
+            url = (a[1] if _name == "request" and len(a) > 1 else a[0] if a else
+                   k.get("url"))
+            _guard(url)
+            return _orig(*a, **k)
+        monkeypatch.setattr(httpx, name, blocked)
+
+    orig_send = httpx.Client.send
+
+    def send(self, request, *a, **k):
+        if not isinstance(getattr(self, "_transport", None), httpx.MockTransport):
+            _guard(request.url)
+        return orig_send(self, request, *a, **k)
+    monkeypatch.setattr(httpx.Client, "send", send)
+
+    def no_smtp(*a, **k):
+        raise NetworkInTest("тест пытался открыть SMTP — подмените отправку в тесте")
+    monkeypatch.setattr(smtplib, "SMTP", no_smtp)
+    monkeypatch.setattr(smtplib, "SMTP_SSL", no_smtp)
+    yield

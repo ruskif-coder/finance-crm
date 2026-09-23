@@ -10,7 +10,7 @@ SQLAlchemy-модели дашборда продаж.
 (см. app/sales/periods.py, app/sales/periods.py): плавающие копейки рождаются
 в вычислениях, а не в хранении.
 """
-from sqlalchemy import (Column, Integer, String, Float, Date, DateTime, Boolean,
+from sqlalchemy import (Numeric, Column, Integer, String, Float, Date, DateTime, Boolean,
                         Text, ForeignKey, UniqueConstraint, text)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -148,6 +148,10 @@ class SalesMediaPlan(Base):
     traffic_manager_id = Column(Integer)
     amount_net = Column(Float)
     amount_gross = Column(Float)
+    # Ставка НДС (%), по которой посчитана ЭТА версия. Фиксируется при расчёте и не
+    # пересчитывается: до 2026 было 20 %, с 2026 — 22 % (правило владельца 23.09.2026,
+    # миграция 2026-09-23_media_plan_vat_rate.sql). NULL — план ещё не считался.
+    vat_rate = Column(Numeric(5, 2))
     deal_id = Column(Integer)
     created_by = Column(Integer)
     created_at = Column(DateTime, server_default=func.now())

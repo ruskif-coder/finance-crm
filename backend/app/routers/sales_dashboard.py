@@ -31,7 +31,7 @@ from app.database import get_db
 from app.models import User, Counterparty, AuditLog
 from app import own_company
 from app.permissions import require_permission, require_any_permission
-from app.audit import log_action
+from app.audit import log_action, require_admin
 from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
                               SalesRep, SalesBrand, SalesBitrixSyncLog,
                               SalesDealFieldOverride, SalesAgency,
@@ -40,12 +40,14 @@ from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
 from app.sales.stages import STAGE_CATALOG
 from app.sales.deal_label import deal_label
 from app.sales.catalog import Catalog, stage_public
+from app.sales import plan_lock
+from app import vat as vat_rules
 from app.sales.models import SalesDealStageHistory
 from app.sales import periods
 from app.sales import stage_move
 from app.sales import stage_scope
 from app.sales.row_context import load_row_context
-from app.sales.mp_amounts import mp_amounts_by_deal, eff_net, eff_gross
+from app.sales.mp_amounts import mp_amounts_by_deal, eff_net, gross_of, vat_pct_of
 import logging
 
 router = APIRouter()
@@ -489,8 +491,8 @@ def dashboard(
 
 # ===== Бонус-виджеты сейлза (квартальная система) =====
 # База: amount трактуем как БЕЗ НДС (поле «Клиентская стоимость до НДС»), поэтому НЕ делим.
-# Если перейдём на «основную сумму с НДС» — делить на (1 + SALES_VAT_RATE). Константы — чтобы легко править.
-SALES_VAT_RATE = 0.22
+# Ставка НДС — не константой (правило владельца 23.09.2026: фиксируется на дату расчёта):
+# текущая для новых расчётов и ставка по дате для записей без своей — `app/vat.py`.
 SALES_AGENCY_SK = 0.30       # базовый СК агентства (потом из справочника по агентству)
 SALES_BONUS_RATE = 0.03      # доля сейлза от «нашей» суммы
 _CLOSED_FUNNEL = "ДО"        # воронка «доведено до результата»
@@ -546,7 +548,8 @@ def dashboard_bonus(
             raise HTTPException(status_code=400, detail="Неверный формат квартала (ожидается «2026-Q2»)")
         start, end, label = rng
     rep_names = [n for (n,) in db.query(SalesRep.name).filter(SalesRep.id.in_(rep_ids)).all()] if rep_ids else []
-    params = {"vat_rate": SALES_VAT_RATE, "agency_sk": SALES_AGENCY_SK, "bonus_rate": SALES_BONUS_RATE}
+    params = {"vat_rate": vat_rules.current(db) / 100.0, "agency_sk": SALES_AGENCY_SK,
+              "bonus_rate": SALES_BONUS_RATE}
 
     base = {"quarter": label, "rep": ", ".join(rep_names), "linked": bool(rep_ids),
             "can_view_others": can_view_others, "rep_ids": rep_ids, "params": params,
@@ -924,6 +927,10 @@ def deals_registry(
             "payer_counterparty_id": d.payer_counterparty_id,
             "agency_legals": payer_options(d),
             "amount": eff_net(d, mp_amt),
+            # Сумма с НДС и ставка — тем же правилом, что в карточке. Без них доска сделок
+            # досчитывала «с НДС» сама по зашитым 22 % (ревью 23.09.2026).
+            "amount_with_vat": gross_of(d, mp_amt),
+            "vat_rate": vat_pct_of(d, mp_amt),
             "our_sum": round(eff_net(d, mp_amt) * (1 - ((sk_by_agency.get(d.agency_id, default_sk_pct) if d.agency_id else 0) or 0) / 100)),
             "currency": d.currency,
             "advertiser": adv.get(d.advertiser_id),
@@ -1335,7 +1342,7 @@ def apply_brand_suggestions(payload: ApplyBrands, db: Session = Depends(get_db),
 
 @router.post("/deals/bulk-delete")
 def bulk_delete_deals(payload: BulkDelete, db: Session = Depends(get_db),
-                      current_user: User = Depends(require_permission("sales_registry", "edit"))):
+                      current_user: User = Depends(require_admin)):
     """Удаляет выбранные сделки. Правки и разнесения уходят каскадом,
     сырьё в sales_bitrix_raw остаётся историей.
 
@@ -1346,7 +1353,20 @@ def bulk_delete_deals(payload: BulkDelete, db: Session = Depends(get_db),
         raise HTTPException(status_code=400, detail="Не выбрано ни одной сделки")
     _scope_deal_ids(db, current_user, payload.deal_ids)
 
+    # ТОЛЬКО АДМИН и только «пустые» сделки (решение владельца 23.09.2026, аудит 3.H3).
+    # До этого удаление стояло под правом «правка» и КАСКАДОМ стирало кампании, разнесения
+    # по приложениям, сборку запуска и историю стадий; медиапланы оставались без сделки.
+    # Сделка с привязанной работой не удаляется даже админом: сначала отвязать — тогда
+    # удаление осознанное, а не побочный эффект выделения строк в реестре.
+    from app.sales import deal_delete
     from app.sales.models import SalesDeletedDeal
+    held = deal_delete.holders(db, payload.deal_ids)
+    if held:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Не удалено ничего: к сделкам привязана работа ({deal_delete.describe(db, held)}). "
+                    "Отвяжите её или переведите сделку в «Сделка не случилась»."))
+
     deals = db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).all()
     tombstoned = {t.bitrix_id for t in db.query(SalesDeletedDeal.bitrix_id).all()}
     for d in deals:
@@ -1355,6 +1375,9 @@ def bulk_delete_deals(payload: BulkDelete, db: Session = Depends(get_db),
                                     deleted_by=(current_user.id if current_user else None)))
             tombstoned.add(d.bitrix_id)
 
+    # Внешние ключи без каскада (комментарии, «продление от»): без этого пачка, где
+    # попалась сделка с комментарием, падала целиком с 500.
+    deal_delete.purge_links(db, payload.deal_ids)
     n = db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).delete(
         synchronize_session=False)
     db.commit()
@@ -1443,7 +1466,8 @@ def create_deal(payload: DealCreate, db: Session = Depends(get_db),
     our_stage_id = _first.id if _first else None
 
     # Единый базис: amount = БЕЗ НДС. Дозаполняем недостающую сумму по ставке НДС.
-    vat_mult = 1 + SALES_VAT_RATE
+    # Новая сделка — новый расчёт: текущая ставка нашего юрлица.
+    vat_mult = 1 + vat_rules.current(db) / 100.0
     amount, amount_wv = payload.amount, payload.amount_with_vat
     if amount is None and amount_wv is not None:
         amount = round(amount_wv / vat_mult, 2)
@@ -2711,10 +2735,12 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         "can_unset_self_promo": _is_account_master(current_user),
         # Суммы из нашего МП, если он привязан и посчитан (иначе — из сделки).
         "amount": eff_net(deal, _mp_amt),
-        "amount_with_vat": (eff_gross(deal, _mp_amt) if deal.id in _mp_amt
-                            else (deal.amount_with_vat if deal.amount_with_vat is not None
-                                  else (round(float(deal.amount) * (1 + SALES_VAT_RATE), 2)
-                                        if deal.amount is not None else None))),
+        # План → сохранённая сумма → досчёт по ставке ЗАКОНА на период сделки (правило
+        # 23.09.2026). Одно правило с реестром: `mp_amounts.gross_of`.
+        "amount_with_vat": gross_of(deal, _mp_amt),
+        # Ставка, по которой ПОСЧИТАНА сделка, — карточка показывает суммы с НДС по ней,
+        # а не по текущей ставке юрлица (правило 23.09.2026, mp_amounts.vat_pct_of).
+        "vat_rate": vat_pct_of(deal, _mp_amt),
         "our_sum": round(eff_net(deal, _mp_amt) * (1 - (sk_pct or 0) / 100)),
         "currency": deal.currency, "files": files, "date_create": deal.date_create,
         "plan_month": deal.plan_month, "year_plan_line_id": deal.year_plan_line_id,
@@ -2910,6 +2936,11 @@ def move_preview(
             "can_override": stage_move.is_master(current_user),
             "lines": [_line_public(ln) for ln in plan.lines],
             "blocking": [_line_public(ln) for ln in plan.blockers],
+            # Переход ФИКСИРУЕТ медиаплан (Бронь → Сборка): диалог показывает это до
+            # нажатия — решение владельца 23.09.2026, `app/sales/plan_lock.py`.
+            "plan_lock_notice": (plan_lock.NOTICE
+                                 if plan_lock.crosses_lock(cat, deal.our_stage_id, target.id)
+                                 else None),
         }
     finally:
         # Ручка ЧИТАЮЩАЯ: подставленную воронку в базу не пускаем. Autoflush мог
@@ -3313,17 +3344,24 @@ def filter_options(db: Session = Depends(get_db),
         db.query(SalesDeal.our_stage_id, func.count(SalesDeal.id)), own)
         .group_by(SalesDeal.our_stage_id).all())
     our_stage_opts = []
+    lock_cat = Catalog(db)
     for ph in (db.query(SalesStagePhase).order_by(SalesStagePhase.sort_order).all()):
         for st in sorted(ph.stages, key=lambda x: (x.sort_order, x.id)):
             opt = {"value": st.id, "label": st.name, "group": ph.name,
                    "count": our_counts.get(st.id, 0)}
             if st.is_lost:
                 opt["tone"] = "danger"
+            # Стадия фиксирует медиаплан — массовая смена стадии в реестре предупреждает
+            # об этом до «Применить». Признак считает сервер (`plan_lock`), своего
+            # правила стадий на фронте нет.
+            if plan_lock.stage_locks_plan(lock_cat, st.id):
+                opt["locks_plan"] = True
             our_stage_opts.append(opt)
 
     return {
         "money_layer": [{"value": l, "label": l} for l in ("планируемые", "реализуемые", "фактические")],
         "our_stage_id": our_stage_opts,
+        "plan_lock_notice": plan_lock.NOTICE,
         "stage_key": [{"value": s["key"], "label": f"{s['label']} · {s['money_layer']}",
                        "count": sk_counts.get(s["key"], 0)} for s in STAGE_CATALOG],
         "pipeline": pipeline_opts,

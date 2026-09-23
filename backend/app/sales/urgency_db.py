@@ -16,6 +16,24 @@ from sqlalchemy.orm import Session
 from app.sales.urgency import DealFacts, evaluate
 
 
+def stage_since(db: Session, ids) -> dict:
+    """(сделка, стадия) → МОСКОВСКИЙ день последнего входа в эту стадию.
+
+    `at` — `timestamptz`, драйвер отдаёт его в UTC. День берётся по Москве, потому что
+    сравнивается с московским «сегодня»: вход в 01:30 МСК по Гринвичу ещё вчерашний, и
+    просрочка наступала на сутки раньше (аудит 23.09.2026).
+    """
+    from app.sales.models import SalesDealStageHistory
+    from app.timez import msk_date
+    return {(did, sid): msk_date(at)
+            for did, sid, at in (db.query(SalesDealStageHistory.deal_id,
+                                          SalesDealStageHistory.to_stage_id,
+                                          sqlfunc.max(SalesDealStageHistory.at))
+                                 .filter(SalesDealStageHistory.deal_id.in_(ids))
+                                 .group_by(SalesDealStageHistory.deal_id,
+                                           SalesDealStageHistory.to_stage_id).all())}
+
+
 def facts_for_deals(db: Session, deals, today: date = None):
     """Считает срочность для переданных сделок. Возвращает [(deal, verdict)].
 
@@ -23,7 +41,7 @@ def facts_for_deals(db: Session, deals, today: date = None):
     и свои фильтры, у сканера — свой горизонт рассылки. Правила при этом одни."""
     from app.models import Counterparty
     from app.sales.models import (SalesStage, SalesStagePhase, SalesMediaPlan,
-                                  SalesDealFile, SalesDealStageHistory)
+                                  SalesDealFile)
 
     today = today or date.today()
     deals = list(deals)
@@ -60,14 +78,7 @@ def facts_for_deals(db: Session, deals, today: date = None):
     # Вход в текущую стадию — последняя запись истории с этим to_stage_id.
     # Сделки без истории (импортированные до её появления) отдают None: правило 5
     # по ним не считается, и это честнее, чем принять дату создания за вход в стадию.
-    since = {}
-    for did, sid, at in (db.query(SalesDealStageHistory.deal_id,
-                                  SalesDealStageHistory.to_stage_id,
-                                  sqlfunc.max(SalesDealStageHistory.at))
-                         .filter(SalesDealStageHistory.deal_id.in_(ids))
-                         .group_by(SalesDealStageHistory.deal_id,
-                                   SalesDealStageHistory.to_stage_id).all()):
-        since[(did, sid)] = at.date() if hasattr(at, "date") else at
+    since = stage_since(db, ids)
 
     out = []
     for d in deals:

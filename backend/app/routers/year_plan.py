@@ -25,11 +25,12 @@ import uuid as _uuid
 from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, or_, false as sa_false
+from sqlalchemy import func, or_, false as sa_false, text as sa_text
 from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any
 
 from app.database import get_db
+from app import vat as vat_rules
 from app.permissions import require_permission
 from app.audit import log_action
 from app.models import User, RolePermission
@@ -38,7 +39,8 @@ from app.sales.models import (SalesYearPlan, SalesYearPlanLine, SalesAdvertiser,
                               SalesStage, SalesRep, SalesMediaPlan, SalesMediaPlanRow,
                               SalesMediaPlanExtra)
 
-SALES_VAT_RATE = 0.22   # сделки/МП: amount = БЕЗ НДС, gross = ×(1+ставка)
+# Ставка НДС — не константой: текущая из карточки юрлица для новых расчётов (`app/vat.py`,
+# правило владельца 23.09.2026 — ставка фиксируется на дату расчёта). amount = БЕЗ НДС.
 
 router = APIRouter()
 YP_VIEW = require_permission("year_plan", "view")
@@ -324,6 +326,9 @@ def get_year_plan(year: int, rep_id: Optional[int] = None,
         "me": {"is_master": master, "rep_id": eff_rep,
                "own_rep_id": (_own_rep_ids(db, current_user) or [None])[0]},
         "reps": _reps(db) if master else [],
+        # Ставка НДС года — для сумм «с НДС» в брифе бренда: 2025 год по 20 %, текущий
+        # и будущие по ставке юрлица. До ревью 23.09.2026 бриф считал по зашитым 22 %.
+        "vat_rate": vat_rules.for_year(db, year),
     }
 
 
@@ -430,7 +435,7 @@ def export_year_xlsx(year: int, advertiser_id: int, rep_id: Optional[int] = None
         raise HTTPException(status_code=500, detail="Нет шаблона медиаплана")
     wb, data = build_workbook(db, plan, lines, {s.id: s for s in db.query(SalesService).all()},
                               {a.id: a for a in db.query(SalesAddonService).all()},
-                              _names(db), tpl, SALES_VAT_RATE)
+                              _names(db), tpl, vat_rules.for_year(db, year) / 100.0)
     if not data["months"]:
         raise HTTPException(status_code=400, detail="В плане нет месяцев с закупкой")
     buf = BytesIO()
@@ -513,6 +518,9 @@ class SaveIn(BaseModel):
     year: int
     rep_id: Optional[int] = None
     lines: List[LineIn] = []
+    # Человек САМ убрал с экрана все строки плана. Без этого флага пустой список при
+    # непустом плане отклоняется: он неотличим от «план не загрузился» (аудит 7.H1).
+    confirm_empty: bool = False
 
 
 @router.post("")
@@ -536,6 +544,24 @@ def save_year_plan(payload: SaveIn, db: Session = Depends(get_db),
         db.query(SalesYearPlanLine).filter(SalesYearPlanLine.year == payload.year),
         reps, master).all()}
     seen: set = set()
+
+    # ПОСЛЕДНЯЯ ЛИНИЯ ПРОТИВ СТИРАНИЯ (аудит 23.09.2026, 7.H1). Сохранение удаляет всё, чего
+    # нет в присланном списке, поэтому два входа означают не правку, а сбой экрана:
+    #   · пустой список при непустом плане — экран не загрузил план и показал пустоту;
+    #   · строки с id, которых в ЭТОЙ корзине нет, — гонка переключения сейлза: план A
+    #     сохраняется в корзину B, и строки B удаляются.
+    # Удалить план целиком можно по строкам — это осознанные действия, а не одно нажатие.
+    if existing and not payload.lines and not payload.confirm_empty:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Пустой список удалил бы весь план ({len(existing)} строк). Похоже, план не "
+                    "загрузился — обновите страницу. Удалять строки можно по одной."))
+    foreign = [ln.id for ln in payload.lines if ln.id and ln.id not in existing]
+    if foreign:
+        raise HTTPException(
+            status_code=409,
+            detail=("Строки из другого плана (переключили сейлза, пока шло сохранение?). "
+                    "Ничего не сохранено — обновите страницу."))
 
     for i, ln in enumerate(payload.lines):
         months = ((ln.months_on or [])[:12]) + [0] * (12 - len(ln.months_on or []))
@@ -728,7 +754,7 @@ def _stage_index(db: Session) -> dict:
     return {st.id: st for st in db.query(SalesStage).all()}
 
 
-def _deal_frozen(deal, stages: dict) -> Optional[str]:
+def _deal_frozen(deal, stages: dict, first_id: Optional[int] = None) -> Optional[str]:
     """Дошедшая сделка — безусловный мастер: причина заморозки или None.
 
     Правило владельца 27.08.2026. Как только сделка ушла со стадии планирования, план
@@ -755,6 +781,11 @@ def _deal_frozen(deal, stages: dict) -> Optional[str]:
         return "в работе"
     if getattr(st, "is_terminal", False):
         return "сделка закрыта"
+    # До «Сборки» (МП Подготовка, МП Отправлено, Бронь) сделка НЕ заморожена: она
+    # обновляется из годового плана при каждом прогоне, если на месяце нет замочка —
+    # правило владельца, подтверждено 23.09.2026. Днём 23.09 здесь стояла заморозка «ушла
+    # с первой стадии» (по пункту аудита 3.M3) — она противоречила правилу и откачена.
+    # `first_id` оставлен в подписи ради вызывающих, решения он больше не меняет.
     return None
 
 
@@ -878,6 +909,107 @@ def mp_parts(line, m, svc, add, items=None) -> tuple:
     return rows, extras
 
 
+CONVEYOR_LOCK = 7301
+
+
+def conveyor_lock_key(year) -> int:
+    """Ключ блокировки конвейера — ГОД, и только он.
+
+    До ревью 23.09.2026 ключом была пара «год × сейлз». Но строка плана принадлежит двоим —
+    продавцу и ведущему аккаунту, — и они запускали конвейер каждый под своим ключом:
+    блокировка не встречалась, и общая строка давала две сделки. Конвейер запускают
+    редко, так что прогоны одного года проще выстроить в очередь целиком.
+
+    Год проверяется: ключ — int4, и год вне разумного диапазона переполнял его (500)."""
+    y = int(year)
+    if not 2000 <= y <= 2100:
+        raise HTTPException(status_code=400, detail=f"Год вне диапазона: {year}")
+    return y
+
+
+def _conveyor_ctx(db) -> dict:
+    """Справочники конвейера — ОДИН раз на прогон, а не на ячейку."""
+    from app.sales.models import SalesAgency
+    rep_by_user = {}
+    for r in db.query(SalesRep).all():
+        if r.user_id is not None:
+            rep_by_user.setdefault(r.user_id, r.id)
+    return {
+        "svc": {s.id: s for s in db.query(SalesService).all()},
+        "add": {a.id: a for a in db.query(SalesAddonService).all()},
+        "adv": {a.id: (a.short_name or a.name) for a in db.query(SalesAdvertiser).all()},
+        "brand": {b.id: b.name for b in db.query(SalesBrand).all()},
+        "agency": {a.id: (a.short_name or a.name) for a in db.query(SalesAgency).all()},
+        # бриф хранит USER id (справочник «Сотрудники»), а SalesDeal.*_id — FK на sales_reps
+        "rep": rep_by_user,
+        "vat": vat_rules.current(db) / 100.0,
+    }
+
+
+def _cell_fields(ctx: dict, line, m, items) -> dict:
+    """Поля сделки, которые конвейер пишет в ячейку «строка × месяц × группа».
+
+    Один расчёт на предпросмотр, прогон и сравнение «изменилось ли»: три копии одной
+    формулы однажды разошлись бы, и «без изменений» врало бы. Продавец из брифа, которого
+    нет в справочнике, в поля не попадает — существующий не затирается пустотой.
+    """
+    b = line.brief or {}
+    period = f"{line.year}-{m + 1:02d}"
+    net = _intended_amount(line, m, items)
+    product = _product_label(line, m, ctx["svc"], ctx["add"], items)
+    agc = ctx["agency"].get(b.get("agency_id")) if b.get("agency_id") else None
+    # Шаблон названия: Рекламодатель · [Агентство] · Бренд · Услуга · Период
+    title = " · ".join([x for x in [ctx["adv"].get(line.advertiser_id), agc,
+                                    ctx["brand"].get(line.brand_id), product, period] if x])
+    out = {"amount": net, "amount_with_vat": round(net * (1 + ctx["vat"]), 2),
+           "title": title, "product": product,
+           # Рекламодатель и бренд переписываются ВМЕСТЕ с названием: однажды строку плана
+           # переназначили с BEIERSDORF на BINNO, заголовок переписался, а ссылки остались
+           # старыми — карточка показывала чужого рекламодателя.
+           "advertiser_id": line.advertiser_id, "brand_id": line.brand_id,
+           "agency_id": b.get("agency_id"), "payer_counterparty_id": b.get("payer_counterparty_id"),
+           "account_manager_id": ctx["rep"].get(b.get("account_manager_id")) if b.get("account_manager_id") else None}
+    sr = ctx["rep"].get(b.get("sales_rep_id")) if b.get("sales_rep_id") else None
+    if sr:
+        out["sales_rep_id"] = sr
+    return out
+
+
+_DEAL_FIELDS = ("amount", "amount_with_vat", "title", "product", "advertiser_id", "brand_id",
+                "agency_id", "payer_counterparty_id", "sales_rep_id", "account_manager_id")
+
+
+def _cell_unchanged(db, deal, fields: dict, line, m, svc, add, created_by, items) -> bool:
+    """Повторный прогон изменил бы что-нибудь в этой ячейке? Ответ — без единой записи.
+
+    Сделка сравнивается по полям, которые пишет конвейер; медиаплан — ПО СОДЕРЖАНИЮ:
+    ячейку собирают заново во вложенной транзакции и сравнивают подпись нового плана с
+    подписью существующего (`media_plans._plan_content_sig`, та же, что решает про новую
+    версию в конструкторе). Проба откатывается всегда.
+
+    До 23.09.2026 «без изменений» не существовало: каждая сделка переписывалась, а её
+    медиаплан удалялся и создавался заново с новым id (аудит 23.09.2026, 3.M3).
+    """
+    from app.routers.media_plans import _plan_content_sig
+    if any(getattr(deal, k) != v for k, v in fields.items()):
+        return False
+    old = (db.query(SalesMediaPlan).filter(SalesMediaPlan.deal_id == deal.id)
+           .order_by(SalesMediaPlan.version.desc(), SalesMediaPlan.id.desc()).first())
+    if old is None:
+        return False
+    old_sig = _plan_content_sig(db, old)
+    probe = db.begin_nested()
+    try:
+        new = _build_mp(db, deal, line, m, svc, add, created_by, items)
+        # Строки плана добавлены, но не отправлены: у сессии проекта autoflush выключен, и
+        # без этого подпись читала бы план пустым — «изменилось» было бы всегда.
+        db.flush()
+        new_sig = _plan_content_sig(db, new)
+    finally:
+        probe.rollback()
+    return new_sig == old_sig
+
+
 def _build_mp(db, deal, line, m, svc, add, created_by, items=None):
     """Собирает МП (голова + строки размещений + доп услуги) из услуг месяца, брифа и прогноза.
     items — услуги конкретной сделки месяца (группа «+ сделка»); None = весь месяц.
@@ -893,7 +1025,9 @@ def _build_mp(db, deal, line, m, svc, add, created_by, items=None):
         payer_counterparty_id=b.get("payer_counterparty_id"), period=period, geo_id=b.get("geo_id"),
         date_from=pf, date_to=pt, targeting=b.get("targeting") or {}, goals={},
         sales_rep_id=b.get("sales_rep_id"), account_manager_id=b.get("account_manager_id"),
-        amount_net=net, amount_gross=round(net * (1 + SALES_VAT_RATE), 2),
+        # Новый расчёт — текущей ставкой, и она ЗАПИСЫВАЕТСЯ в версию (правило 23.09.2026).
+        amount_net=net, amount_gross=round(net * (1 + vat_rules.current(db) / 100.0), 2),
+        vat_rate=vat_rules.current(db),
         deal_id=deal.id, created_by=created_by)
     db.add(mp); db.flush()
     mp.group_id = mp.id
@@ -925,6 +1059,10 @@ def create_deals_preview(payload: ConveyorIn, db: Session = Depends(get_db),
     new_items, changed, unchanged, blocked, locked = [], [], 0, [], []
     in_work = []                      # дошедшие сделки: их конвейер не трогает
     stages = _stage_index(db)
+    from app.sales.catalog import Catalog as _Cat
+    _first = _Cat(db).first()
+    first_id = _first.id if _first else None
+    ctx = _conveyor_ctx(db)
     for line in lines:
         if not line.brand_id:
             continue
@@ -953,10 +1091,13 @@ def create_deals_preview(payload: ConveyorIn, db: Session = Depends(get_db),
                 else:
                     # Дошедшая сделка — безусловный мастер: показываем отдельно, а не в
                     # «изменится». Иначе человек жмёт «создать», ожидая пересборки.
-                    why = _deal_frozen(existing, stages)
+                    why = _deal_frozen(existing, stages, first_id)
                     if why:
                         in_work.append({**base, "deal_id": existing.id,
                                         "code": existing.code, "reason": why})
+                    elif _cell_unchanged(db, existing, _cell_fields(ctx, line, m, items),
+                                         line, m, ctx["svc"], ctx["add"], current_user.id, items):
+                        unchanged += 1
                     else:   # перегенерируем (название/метка/МП) при повторном запуске
                         changed.append({**base, "deal_id": existing.id,
                                         "old_amount": round(existing.amount or 0, 2)})
@@ -974,23 +1115,18 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
         raise HTTPException(status_code=400, detail="Не удалось определить сейлза")
     lines = _target_lines(db, *_scope_reps(db, current_user, payload.rep_id),
                           payload.year, payload.advertiser_id, payload.line_id)
-    svc = {s.id: s for s in db.query(SalesService).all()}
-    add = {a.id: a for a in db.query(SalesAddonService).all()}
-    # бриф хранит USER id (из справочника «Сотрудники»), а SalesDeal.*_id — FK на sales_reps
-    rep_by_user = {}
-    for r in db.query(SalesRep).all():
-        if r.user_id is not None:
-            rep_by_user.setdefault(r.user_id, r.id)
-    _rep = lambda uid: rep_by_user.get(uid) if uid else None
-    from app.sales.models import SalesAgency
-    adv_names = {a.id: (a.short_name or a.name) for a in db.query(SalesAdvertiser).all()}
-    brand_names = {b.id: b.name for b in db.query(SalesBrand).all()}
-    agc_names = {a.id: (a.short_name or a.name) for a in db.query(SalesAgency).all()}
+    # ДВОЙНОЙ ЗАПУСК (двойной клик, два окна): без блокировки оба прогона видели пустые
+    # ячейки и создавали по сделке и медиаплану каждый (аудит 23.09.2026, 3.M4). Второй
+    # ждёт первого и видит его сделки.
+    db.execute(sa_text("SELECT pg_advisory_xact_lock(:a, :b)"),
+               {"a": CONVEYOR_LOCK, "b": conveyor_lock_key(payload.year)})
+    ctx = _conveyor_ctx(db)
+    svc, add = ctx["svc"], ctx["add"]
     from app.sales.catalog import Catalog
     first = Catalog(db).first()
     stage_id = first.id if first else None
 
-    created = updated = blocked = frozen = 0
+    created = updated = blocked = frozen = unchanged = 0
     in_work = []                      # дошедшие сделки, пропущенные конвейером
     stages = _stage_index(db)
     for line in lines:
@@ -1001,7 +1137,6 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
         if _brief_missing(line):   # бриф не заполнен — отказываем в создании
             blocked += 1
             continue
-        b = line.brief or {}
         for m in _planned_months(line):
             if _is_locked(line, m):   # замок = полная заморозка месяца в обе стороны
                 frozen += 1
@@ -1009,16 +1144,9 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
             period = f"{line.year}-{m + 1:02d}"
             pf, pt = _pbounds(period)
             for idx, items in _month_groups(line, m):
-                net = _intended_amount(line, m, items)
-                if net <= 0:
+                if _intended_amount(line, m, items) <= 0:
                     continue
-                gross = round(net * (1 + SALES_VAT_RATE), 2)
-                # Шаблон названия: Рекламодатель · [Агентство] · Бренд · Услуга · Период
-                product = _product_label(line, m, svc, add, items)
-                agc = agc_names.get(b.get("agency_id")) if b.get("agency_id") else None
-                title = " · ".join([p for p in [
-                    adv_names.get(line.advertiser_id), agc, brand_names.get(line.brand_id), product, period
-                ] if p])
+                fields = _cell_fields(ctx, line, m, items)
                 existing = (db.query(SalesDeal)
                             .filter(SalesDeal.year_plan_line_id == line.id,
                                     SalesDeal.plan_month == m,
@@ -1027,28 +1155,20 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
                     # Дошедшая сделка — безусловный мастер (владелец, 27.08.2026): её
                     # реквизиты и медиаплан правились уже под живое размещение, а ветка
                     # ниже переписывает всё и УДАЛЯЕТ медиапланы. Пропускаем и называем.
-                    why = _deal_frozen(existing, stages)
+                    why = _deal_frozen(existing, stages, stage_id)
                     if why:
                         in_work.append({"deal_id": existing.id, "code": existing.code,
-                                        "brand": brand_names.get(line.brand_id),
+                                        "brand": ctx["brand"].get(line.brand_id),
                                         "month": m, "reason": why})
                         continue
-                    # повторный запуск всегда пересобирает сделку и МП под текущий план/бриф
-                    existing.amount = net; existing.amount_with_vat = gross
-                    existing.title = title; existing.product = product
-                    # Рекламодатель и бренд обязаны переписываться вместе с названием.
-                    # Их тут не было, и это дало сделку, которая называется одним, а
-                    # ссылается на другое: строку плана переназначили с BEIERSDORF на
-                    # BINNO, повторный прогон переписал заголовок на «BINNO · Аккерслим»,
-                    # а advertiser_id/brand_id остались от BEIERSDORF. В карточке и
-                    # реестре видно имя из ссылки — то есть чужого рекламодателя.
-                    existing.advertiser_id = line.advertiser_id
-                    existing.brand_id = line.brand_id
-                    existing.agency_id = b.get("agency_id"); existing.payer_counterparty_id = b.get("payer_counterparty_id")
-                    _sr = _rep(b.get("sales_rep_id"))
-                    if _sr:
-                        existing.sales_rep_id = _sr
-                    existing.account_manager_id = _rep(b.get("account_manager_id"))
+                    # Ничего не изменилось — ничего и не пишем: медиаплан остаётся тем же,
+                    # с тем же id, и ссылки на него в уведомлениях живы.
+                    if _cell_unchanged(db, existing, fields, line, m, svc, add,
+                                       current_user.id, items):
+                        unchanged += 1
+                        continue
+                    for k, v in fields.items():
+                        setattr(existing, k, v)
                     for mp in db.query(SalesMediaPlan).filter(SalesMediaPlan.deal_id == existing.id).all():
                         db.delete(mp)   # cascade строк/доп
                     db.flush()
@@ -1056,14 +1176,12 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
                     updated += 1
                 else:
                     deal = SalesDeal(
-                        bitrix_id="local-" + _uuid.uuid4().hex, title=title, pipeline="", bitrix_stage="",
-                        amount=net, amount_with_vat=gross, currency="RUB",
-                        advertiser_id=line.advertiser_id, brand_id=line.brand_id, agency_id=b.get("agency_id"),
-                        payer_counterparty_id=b.get("payer_counterparty_id"), product=product,
-                        sales_rep_id=_rep(b.get("sales_rep_id")) or line.sales_rep_id,
-                        account_manager_id=_rep(b.get("account_manager_id")), our_stage_id=stage_id,
+                        bitrix_id="local-" + _uuid.uuid4().hex, pipeline="", bitrix_stage="",
+                        currency="RUB", our_stage_id=stage_id,
                         period_from=pf, period_to=pt, date_create=datetime.utcnow(),
-                        year_plan_line_id=line.id, plan_month=m, plan_deal_idx=idx)
+                        year_plan_line_id=line.id, plan_month=m, plan_deal_idx=idx, **fields)
+                    if deal.sales_rep_id is None:
+                        deal.sales_rep_id = line.sales_rep_id
                     from app.sales.deal_code import assign_code
                     assign_code(db, deal)
                     db.add(deal); db.flush()
@@ -1084,10 +1202,10 @@ def create_deals(payload: ConveyorIn, db: Session = Depends(get_db),
              actor=current_user, ctx={"rep_id": eff_rep})
     db.commit()
     log_action(db, current_user, "year_plan_create_deals", "year_plan", payload.year,
-               f"сейлз {eff_rep}: создано {created}, обновлено {updated}, "
+               f"сейлз {eff_rep}: создано {created}, обновлено {updated}, без изменений {unchanged}, "
                f"без брифа {blocked}, заморожено замком {frozen}")
-    return {"created": created, "updated": updated, "blocked": blocked,
-            "frozen": frozen, "in_work": in_work}
+    return {"created": created, "updated": updated, "unchanged": unchanged,
+            "blocked": blocked, "frozen": frozen, "in_work": in_work}
 
 
 # ── сводка по всем сейлзам (только мастер) ───────────────────────────────

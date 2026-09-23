@@ -143,17 +143,25 @@ def _parts(line, m, svc, add, items, verified=None):
 def verified_parts(db, lines) -> dict:
     """{(line_id, месяц): {deal_idx: (rows, extras)}} по ПРОВЕРЕННЫМ медиапланам.
 
-    «Проверен» — не колонка, а действие: конструктор пишет в журнал `verify_media_plan`
-    по конкретной версии и двигает сделку со стадии. Поэтому версия ищется по журналу, а
-    не по статусу МП: статусы (draft/review/approved) — это согласование с клиентом,
-    другая ось. Непроверенный черновик конвейера намеренно игнорируется: в нём те же
-    плановые цифры, только лишний источник.
+    «Проверен» — СДЕЛКА ДОШЛА ДО «СБОРКИ»: денежный слой «реализуемые» или «фактические».
+    Правило владельца 23.09.2026: до «Сборки» сделка повторяет годовой план (конвейер её
+    обновляет), со «Сборки» её медиаплан зафиксирован — только тогда он и расходится с
+    планом законно. Сорвавшаяся сделка слоя не имеет и в выгрузку не идёт: её план не
+    должен подменять цифры года — в том числе сорвавшаяся ПОСЛЕ «Сборки»: её план
+    зафиксирован (`plan_lock`), конвейер её не трогает (`_deal_frozen`, по `is_lost`), но в
+    выгрузку она не идёт — это осознанно, денег по ней нет. Граница «Сборки» у всех трёх
+    одна; расходятся они только в том, что делать с сорвавшимися. Днём 23.09 признаком было «ушла с первой стадии» — и план
+    сделки на «МП Отправлено» или сорвавшейся подменял цифры. До 23.09.2026 признаком было действие
+    `verify_media_plan` в журнале, а его с 13.09.2026 не пишет никто: выгрузка молча
+    считала всё по годовому плану, а не по реальным планам (аудит 23.09.2026, 3.M5).
+    Берётся старшая неотклонённая версия. Черновик конвейера на первой стадии намеренно
+    игнорируется: в нём те же плановые цифры, только лишний источник.
 
     Ключ второго уровня — plan_deal_idx: ячейка, разбитая кнопкой «+ сделка», может быть
     проверена частично, и подставлять надо ровно проверенные сделки, а остальные считать
     из плана (см. _parts).
     """
-    from app.models import AuditLog
+    from app.sales.catalog import Catalog
     from app.sales.models import SalesDeal, SalesMediaPlan
     from app.routers.media_plans import _plan_full, _names
 
@@ -165,18 +173,18 @@ def verified_parts(db, lines) -> dict:
                      SalesDeal.plan_month.isnot(None)).all())
     if not deals:
         return {}
+    layer = {s.id: s.money_layer for s in Catalog(db).stages}
+    sent = {d.id for d in deals
+            if layer.get(d.our_stage_id) in ("реализуемые", "фактические")}
+    if not sent:
+        return {}
     plans = (db.query(SalesMediaPlan)
-             .filter(SalesMediaPlan.deal_id.in_([d.id for d in deals])).all())
+             .filter(SalesMediaPlan.deal_id.in_(sent),
+                     SalesMediaPlan.status != "rejected").all())
     if not plans:
         return {}
-    ok = {x for (x,) in db.query(AuditLog.entity_id)
-          .filter(AuditLog.action == "verify_media_plan",
-                  AuditLog.entity_type == "media_plan",
-                  AuditLog.entity_id.in_([p.id for p in plans])).all()}
-    best: dict = {}                      # deal_id → проверенный МП старшей версии
+    best: dict = {}                      # deal_id → МП старшей версии отданной сделки
     for p in plans:
-        if p.id not in ok:
-            continue
         cur = best.get(p.deal_id)
         if cur is None or (p.version or 0) > (cur.version or 0):
             best[p.deal_id] = p
@@ -195,6 +203,13 @@ def verified_parts(db, lines) -> dict:
         rows.extend(full["rows"])
         extras.extend(full["extras"])
     return out
+
+
+def row_cost(r) -> float:
+    """Стоимость строки МП до НДС — единой формулой проекта (`mp_row.row_net`)."""
+    from app.sales import mp_row
+    return mp_row.row_net(r.get("model"), r.get("volume") or 0, r.get("unit_price") or 0,
+                          r.get("discount") or 0)
 
 
 # ── сбор данных плана ────────────────────────────────────────────────────
@@ -227,13 +242,15 @@ def collect(db, lines, svc, add, names, verified=None) -> dict:
                 slot = services.setdefault(label, {
                     "name": label, "model": r.get("model"), "unit_price": r.get("unit_price"),
                     "is_cpm": is_cpm, "cost": [0.0] * 12, "vol": [0.0] * 12})
-                vol, price = r.get("volume") or 0, r.get("unit_price") or 0
-                div = 1000 if is_cpm else 1
-                # Округляем: объём получен обратным счётом из суммы и тарифа, и без
+                vol = r.get("volume") or 0
+                # Стоимость — ОБЩЕЙ формулой строки (со скидкой). Здесь стояла своя копия
+                # `объём × цена ÷ 1000` без скидки, и выгрузка завышала суммы планов со
+                # скидкой (аудит 23.09.2026, 3.M5).
+                slot["cost"][m] += row_cost(r)
+                # Объём округляем: он получен обратным счётом из суммы и тарифа, и без
                 # округления в сводной вылезает 499 999,9999 вместо 500 000. Объём
                 # CPM — до штуки показа, прочие формы (Фикс, пакеты) — до сотых:
                 # там 2,5 единицы это реальные полторы недели, а не ошибка ввода.
-                slot["cost"][m] += round(vol * price / div, 2)
                 slot["vol"][m] += round(vol) if is_cpm else round(vol, 2)
             for e in exs:
                 extras.append({"brand": name, "name": e.get("name") or "—",
@@ -1049,6 +1066,10 @@ def build_workbook(db, plan, lines, svc, add, names, template_path, vat_rate):
             # Таргетинги в шапку не идут: у каждого бренда свой бриф, общей строки не
             # существует. Они на листе «Бриф».
             "targeting": {}, "created_at": None, "date_from": None, "date_to": None,
+            # Ставка НДС листа — та же, что у «Сводной». Без неё лист считался по ставке
+            # по умолчанию, и сумма с НДС на листе месяца расходилась со сводной у года
+            # до 2026 (ревью 23.09.2026).
+            "vat_rate": vat_rate * 100,
             "head_override": {
                 "mp_title": f"Медиаплан · {adv} · {period}",
                 "mp_subtitle": subtitle,

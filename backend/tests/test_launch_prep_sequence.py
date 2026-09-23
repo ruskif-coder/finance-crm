@@ -34,7 +34,8 @@ from app.launch_prep.models import (LaunchPrepCreativeSet, LaunchPrepPair,
                                     LaunchPrepTarget)
 from app.routers import launch_prep as lp
 from app.routers import traffic
-from app.sales.models import SalesDeal, SalesMediaPlan, SalesMediaPlanRow, SalesStage
+from app.sales.models import (SalesDeal, SalesMediaPlan, SalesMediaPlanExtra,
+                              SalesMediaPlanRow, SalesStage)
 
 # Стенд общий с ядром модуля: своя копия фикстуры разошлась бы с ним молча. В общий
 # `conftest.py` он не вынесен намеренно — имя `env` занято ещё в трёх файлах и означает
@@ -188,11 +189,16 @@ def _drop_deal(db, did):
     if plans:
         db.query(SalesMediaPlanRow).filter(
             SalesMediaPlanRow.plan_id.in_(plans)).delete(synchronize_session=False)
+        db.query(SalesMediaPlanExtra).filter(
+            SalesMediaPlanExtra.plan_id.in_(plans)).delete(synchronize_session=False)
         db.query(SalesMediaPlan).filter(
             SalesMediaPlan.id.in_(plans)).delete(synchronize_session=False)
     sets = [s.id for s in db.query(LaunchPrepCreativeSet).filter(
         LaunchPrepCreativeSet.deal_id == did).all()]
     if sets:
+        from app.ad.models import AdCampaignCreative   # FK без каскада — раньше комплектов
+        db.query(AdCampaignCreative).filter(
+            AdCampaignCreative.root_set_id.in_(sets)).delete(synchronize_session=False)
         db.query(LaunchPrepReview).filter(
             LaunchPrepReview.set_id.in_(sets)).delete(synchronize_session=False)
         db.query(LaunchPrepPair).filter(
@@ -263,3 +269,46 @@ def test_prolonged_set_skips_the_traffic_step(prolonged):
         "площадку спрашиваем заново: согласие давалось на прошлый период")
     assert _state(db, out["id"], cset.id) == 'отправлен', (
         "у продления комплект не задерживается у трафика")
+
+
+def test_prolonged_plan_is_a_new_calculation(prolonged):
+    """Продление — новый период, значит новый расчёт: ставка текущая, сумма с НДС от неё.
+
+    До ревью 23.09.2026 копия плана брала старые суммы с НДС, но не ставку (первое же
+    сохранение пересчитало бы их молча), теряла доп. услуги (сумма без НДС их включала —
+    таблица с ней не сходилась) и группу версий (`group_id` пустой)."""
+    from app import vat
+    from app.sales import mp_row
+    stand, made = prolonged
+    db = stand.db
+    src = SalesMediaPlan(deal_id=stand.deal.id, version=1, status="draft",
+                         title="прибор продления", vat_rate=20,
+                         amount_net=550_000, amount_gross=660_000)
+    db.add(src)
+    db.flush()
+    src.group_id = src.id
+    db.add(SalesMediaPlanRow(plan_id=src.id, sort_order=0, position="прибор", model="CPM",
+                             inventory="web", volume=1_000_000, unit_price=500, discount=0))
+    db.add(SalesMediaPlanExtra(plan_id=src.id, sort_order=0, name="Отчёт верификатора",
+                               period="", mode="фикс", price=50_000, total=50_000))
+    db.flush()
+    try:
+        out = lp.prolong_deal(stand.deal.id, lp.ProlongIn(period_from="2026-10-01"), db, _ADMIN)
+        made.append(out["id"])
+        cp = db.query(SalesMediaPlan).filter(SalesMediaPlan.deal_id == out["id"]).one()
+        rate = vat.current(db)
+        assert cp.group_id == cp.id
+        assert float(cp.vat_rate) == rate
+        assert cp.amount_net == 550_000
+        assert cp.amount_gross == mp_row.rub(550_000 * (1 + rate / 100))
+        extras = db.query(SalesMediaPlanExtra).filter(SalesMediaPlanExtra.plan_id == cp.id).all()
+        assert [(e.name, e.total) for e in extras] == [("Отчёт верификатора", 50_000)]
+        new = db.query(SalesDeal).filter(SalesDeal.id == out["id"]).one()
+        if new.amount:
+            assert new.amount_with_vat == mp_row.rub(float(new.amount) * (1 + rate / 100))
+    finally:
+        db.rollback()
+        db.query(SalesMediaPlanRow).filter(SalesMediaPlanRow.plan_id == src.id).delete()
+        db.query(SalesMediaPlanExtra).filter(SalesMediaPlanExtra.plan_id == src.id).delete()
+        db.query(SalesMediaPlan).filter(SalesMediaPlan.id == src.id).delete()
+        db.commit()

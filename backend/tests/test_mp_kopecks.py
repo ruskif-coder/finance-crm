@@ -34,13 +34,13 @@ class _Extra:
 
 def test_plan_totals_keep_kopecks():
     """2 927 400 показов по 250,50 ₽ за тысячу — 733 313,70 ₽, и с НДС 894 642,71 ₽."""
-    net, gross = mp_api._amounts([_Row('CPM', 2927400, 250.50)], [])
+    net, gross = mp_api._amounts([_Row('CPM', 2927400, 250.50)], [], 22.0)
     assert net == 733313.70
     assert gross == 894642.71
 
 
 def test_extras_are_added_with_their_kopecks():
-    net, gross = mp_api._amounts([_Row('Fix', 1, 1000.55)], [_Extra(499.45)])
+    net, gross = mp_api._amounts([_Row('Fix', 1, 1000.55)], [_Extra(499.45)], 22.0)
     assert net == 1500.0 and gross == 1830.0
 
 

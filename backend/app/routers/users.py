@@ -381,6 +381,11 @@ ACTION_LABELS = {
     "create_operation": "Создание операции",
     "update_operation": "Изменение операции",
     "delete_operation": "Удаление операции",
+    # Цепочки частичных оплат и фиксация МП на «Сборке» (23.09.2026).
+    "partial_payment_operation": "Частичная оплата операции",
+    "unlink_operation_parent": "Отвязка частичной оплаты",
+    "force_delete_operation": "Принудительное удаление операции (с паролем)",
+    "media_plan_locked_edit": "Правка зафиксированного медиаплана мастером",
     "create_role": "Создание роли",
     "update_role": "Изменение роли",
     "delete_role": "Удаление роли",

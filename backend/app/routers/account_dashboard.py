@@ -27,7 +27,7 @@ from app.sales.models import (SalesDeal, SalesRep, SalesAdvertiser, SalesBrand,
                               SalesAgency, SalesDealSnooze, SalesMediaPlan)
 from app.sales.catalog import Catalog, stage_public
 from app.sales import stage_move
-from app.sales.mp_amounts import mp_amounts_by_deal, eff_net, eff_gross
+from app.sales.mp_amounts import mp_amounts_by_deal, eff_net, gross_of
 from app.sales.row_context import load_row_context
 from app.sales.urgency import queue_sort_key
 from app.sales.urgency_db import facts_for_deals
@@ -161,9 +161,14 @@ def account_queue(
             "sales_rep_id": d.sales_rep_id,
             "sales_rep": repnames.get(d.sales_rep_id),
             "payer_name": d.payer_name, "payer_counterparty_id": d.payer_counterparty_id,
-            "amount": eff_net(d, mp_amt), "amount_with_vat": eff_gross(d, mp_amt),
+            # Сумма с НДС — тем же правилом, что реестр и карточка (`gross_of`): план →
+            # сохранённая сумма → ставка закона на период (ревью 23.09.2026).
+            "amount": eff_net(d, mp_amt), "amount_with_vat": gross_of(d, mp_amt),
             "period_from": d.period_from, "period_to": d.period_to,
             "our_stage": stage_public(cat.by_id.get(d.our_stage_id), cat),
+            # id — для фильтра «Незаполненные → нет стадии»: он смотрит `!r.our_stage_id`,
+            # и без этого поля «пусто» было у КАЖДОЙ строки (аудит 23.09.2026).
+            "our_stage_id": d.our_stage_id,
             "our_next_stage": stage_public(stage_move.next_stage(db, d, cat)),
             "urgency": v.urgency, "reason": v.reason, "cta": v.cta, "kind": v.kind,
             "due": v.due,

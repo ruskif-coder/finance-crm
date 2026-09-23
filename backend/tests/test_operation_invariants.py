@@ -36,6 +36,8 @@ class _Op:
         self.expense = kw.pop("expense", 0.0)
         self.article_id = kw.pop("article_id", 7)
         self.period = kw.pop("period", "2026-09")
+        # Банк правила видят с 23.09.2026: оплаченная без банка выпадала из остатков.
+        self.bank = kw.pop("bank", "АльфаБанк")
         assert not kw, kw
 
 
@@ -58,6 +60,7 @@ def test_good_row_passes():
     ({"income": 100.0, "expense": 50.0},    "одновременно"),
     ({"article_id": None},                  "статья"),
     ({"period": "   "},                     "период"),
+    ({"bank": None},                        "банк"),
     ({"period": None},                      "период"),
 ])
 def test_bad_rows_are_named(kw, expect):

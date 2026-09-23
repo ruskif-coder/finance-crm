@@ -3,8 +3,10 @@
 
     docker exec finance_backend python -m app.notify.digest [--dry-run]
 
-Крон: раз в час. Точность до часа достаточна — пачка, обещанная к 09:30, уйдёт в
-интервале своего часа, и это ровно то, чего ждёт получатель.
+Крон: каждые 5 минут (`*/5`, docs/CRON_после_релиза.md). До 23.09.2026 — раз в час в
+:30, и выбранная человеком МИНУТА не соблюдалась: пачка к 09:00 приходила в 09:30, к
+09:35 — в 10:30. Минута на экране выбирается с шагом 5, отсюда и шаг прогона. Частый
+запуск безопасен: отправленные строки помечаются исходом сразу и повторно не уходят.
 
 ## Что здесь было до 16.09.2026
 
@@ -42,6 +44,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
 
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app import timez
@@ -104,6 +107,23 @@ def _cards(rows) -> list:
     return out
 
 
+def due_rows(rows, hour: int, minute: int, now: datetime) -> list:
+    """Строки, чья пачка уже настала к `now` (московскому).
+
+    `created_at` в базе — UTC, а час пачки человек задавал МОСКОВСКИЙ. Сравнивать их
+    напрямую значит ошибиться на три часа: пачка уходила бы в 06:30 вместо 09:30, и
+    выглядело бы это правдоподобно. Отдельная функция — чтобы прибор проверял ИМЕННО это
+    выражение, а не собранную рядом копию (ревью 23.09.2026)."""
+    return [r for r in rows
+            if r.created_at and due_at(timez.to_msk(r.created_at), hour, minute) <= now]
+
+
+# Один прогон за раз. Крон дайджеста — каждые 5 минут, а письма уходят синхронно: зависни
+# SMTP дольше пяти минут, следующий прогон взял бы те же строки `queued` у ещё не
+# обработанных получателей, и люди получили бы пачку дважды (ревью 23.09.2026).
+RUN_LOCK = (7302, 1)
+
+
 def run(dry_run: bool = False) -> dict:
     """Разослать пачки, чей час настал. Возвращает счётчики.
 
@@ -112,6 +132,13 @@ def run(dry_run: bool = False) -> dict:
     """
     db: Session = SessionLocal()
     stats = {"queued": 0, "due": 0, "letters": 0, "sent": 0, "failed": 0}
+    locked = bool(db.execute(sa_text("SELECT pg_try_advisory_lock(:a, :b)"),
+                             {"a": RUN_LOCK[0], "b": RUN_LOCK[1]}).scalar())
+    if not locked:
+        print("дайджест: предыдущий прогон ещё идёт — этот пропускаю")
+        db.close()
+        stats["busy"] = True
+        return stats
     try:
         if not mail.configured():
             print("почта не настроена — дайджест собирать некуда")
@@ -139,12 +166,7 @@ def run(dry_run: bool = False) -> dict:
                   .filter(UserNotificationChannels.user_id == uid).first())
             addr = (ch.mail_override if ch and ch.mail_override else (u.email if u else "")) or ""
             hour, minute = _digest_time(ch)
-            # `created_at` в базе — UTC, а час пачки человек задавал МОСКОВСКИЙ.
-            # Сравнивать их напрямую значит ошибиться на три часа: пачка уходила бы
-            # в 06:30 вместо 09:30, и выглядело бы это правдоподобно.
-            items = [r for r in all_rows
-                     if r.created_at
-                     and due_at(timez.to_msk(r.created_at), hour, minute) <= now]
+            items = due_rows(all_rows, hour, minute, now)
             if not items:
                 continue
             stats["due"] += len(items)
@@ -198,7 +220,14 @@ def run(dry_run: bool = False) -> dict:
               + (", сухой прогон" if dry_run else ""))
         return stats
     finally:
-        db.close()
+        # Блокировка — на СОЕДИНЕНИИ, а `close()` возвращает его в пул живым: без явного
+        # снятия следующий прогон в этом процессе нашёл бы её занятой.
+        try:
+            db.rollback()
+            db.execute(sa_text("SELECT pg_advisory_unlock(:a, :b)"),
+                       {"a": RUN_LOCK[0], "b": RUN_LOCK[1]})
+        finally:
+            db.close()
 
 
 def plural(n: int) -> str:

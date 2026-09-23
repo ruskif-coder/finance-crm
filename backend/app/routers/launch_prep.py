@@ -60,7 +60,9 @@ from app.ord.models import OrdInitialContract, OrdKktu
 from app.ord.payloads import OrdPayloadError
 from app.permissions import require_any_permission, require_permission
 from app.routers.sales_dashboard import _assert_deal_in_scope
-from app.sales.models import (SalesBrand, SalesDeal, SalesMediaPlan, SalesMediaPlanRow,
+from app.sales import mp_row
+from app.sales.models import (SalesBrand, SalesDeal, SalesMediaPlan, SalesMediaPlanExtra,
+                              SalesMediaPlanRow,
                               SalesRep, SalesStage,
                               SalesPublisher, SalesPublisherService,
                               SalesPublisherSurface, SalesService)
@@ -868,19 +870,39 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
             targeting=p0.targeting, goals=p0.goals,
             sales_rep_id=p0.sales_rep_id, account_manager_id=p0.account_manager_id,
             traffic_manager_id=p0.traffic_manager_id,
-            amount_net=p0.amount_net, amount_gross=p0.amount_gross,
             deal_id=new.id, created_by=getattr(current_user, "id", None),
         )
         db.add(mp)
         db.flush()
-        for r in (db.query(SalesMediaPlanRow)
-                  .filter(SalesMediaPlanRow.plan_id == p0.id)
-                  .order_by(SalesMediaPlanRow.sort_order, SalesMediaPlanRow.id).all()):
-            db.add(SalesMediaPlanRow(
-                plan_id=mp.id, sort_order=r.sort_order, position=r.position,
-                format=r.format, model=r.model, inventory=r.inventory,
-                volume=r.volume, unit_price=r.unit_price, discount=r.discount,
-                forecast=r.forecast))
+        # Своя группа версий: без неё копия — версия ни одного плана, и история версий
+        # и правило «отдан клиенту — новая версия» на ней не работают.
+        mp.group_id = mp.id
+        rows = [SalesMediaPlanRow(
+                    plan_id=mp.id, sort_order=r.sort_order, position=r.position,
+                    format=r.format, model=r.model, inventory=r.inventory,
+                    volume=r.volume, unit_price=r.unit_price, discount=r.discount,
+                    forecast=r.forecast)
+                for r in (db.query(SalesMediaPlanRow)
+                          .filter(SalesMediaPlanRow.plan_id == p0.id)
+                          .order_by(SalesMediaPlanRow.sort_order, SalesMediaPlanRow.id).all())]
+        # Доп. услуги — часть плана: сумма без НДС их включает, и без них таблица копии
+        # не сходилась со своей же суммой.
+        extras = [SalesMediaPlanExtra(
+                      plan_id=mp.id, sort_order=e.sort_order, name=e.name, period=e.period,
+                      mode=e.mode, price=e.price, total=e.total)
+                  for e in (db.query(SalesMediaPlanExtra)
+                            .filter(SalesMediaPlanExtra.plan_id == p0.id)
+                            .order_by(SalesMediaPlanExtra.sort_order, SalesMediaPlanExtra.id).all())]
+        db.add_all(rows + extras)
+        # Новый период — новый расчёт: ставка текущая (правило «ставка на дату расчёта»,
+        # 23.09.2026), суммы — из скопированных строк по ней. Раньше копировались старые
+        # суммы с НДС без ставки, и первое сохранение пересчитывало их молча.
+        from app import vat as vat_rules
+        from app.routers.media_plans import _amounts
+        mp.vat_rate = vat_rules.current(db)
+        mp.amount_net, mp.amount_gross = _amounts(rows, extras, float(mp.vat_rate))
+        if new.amount:
+            new.amount_with_vat = mp_row.rub(float(new.amount) * (1 + float(mp.vat_rate) / 100))
 
     # ── площадки: состав, поверхность, посадочные ───────────────────────────
     old_to_new_target = {}

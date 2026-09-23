@@ -28,6 +28,7 @@ from app.ord import models as _ord_models   # noqa: F401  (маппер sales_de
 from app.routers.launch_prep import (active_pairs, moved_to_rework, threshold_numbers,
                                      threshold_state)
 from app.sales.models import SalesDeal, SalesPublisher, SalesService
+from tests._launch_prep_cleanup import drop_campaign_creatives
 
 NO_BASE = 9500          # номера комплектов теста — заведомо выше рабочих
 
@@ -35,6 +36,7 @@ NO_BASE = 9500          # номера комплектов теста — за�
 def _purge(db):
     """Убирает своё — и до теста тоже: до ловит мусор упавшего прогона."""
     db.rollback()
+    drop_campaign_creatives(db, NO_BASE)   # до комплектов: FK без каскада
     sets = db.query(LaunchPrepCreativeSet).filter(
         LaunchPrepCreativeSet.no >= NO_BASE).all()
     ids = [s.id for s in sets]

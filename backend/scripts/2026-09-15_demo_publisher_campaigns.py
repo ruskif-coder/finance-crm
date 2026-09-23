@@ -95,9 +95,11 @@ def _stand_only() -> bool:
     `DOMAIN` на боевом сервере выглядел бы для мягкой проверки как стенд, и демо-сделки
     уехали бы в кабинет настоящей площадки.
 
-    Поэтому пропускается только ЯВНОЕ `localhost`.
+    Поэтому пропускается только ЯВНОЕ `localhost` — и с 23.09.2026 ещё явный флаг запуска
+    `STAND=1`: проверка общая для всех демо-скриптов, `scripts/_stand_guard.py`.
     """
-    return (os.getenv("DOMAIN") or "").strip() == "localhost"
+    from scripts._stand_guard import is_stand
+    return is_stand()
 
 
 def _day(pair):

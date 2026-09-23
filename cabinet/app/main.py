@@ -524,13 +524,24 @@ def feed(acc=Depends(current_account)):
             "SELECT id, created_at, action, tone, side, actor_name, subject "
             "  FROM pub.log_v1 ORDER BY created_at DESC, id DESC LIMIT :n"),
             {"n": FEED_LIMIT}).all()
-    return {"items": [{
-        "id": r.id, "at": r.created_at, "tone": r.tone, "side": r.side,
+    return {"items": [_feed_item(r, labels) for r in rows]}
+
+
+def _feed_item(r, labels):
+    """Строка ленты для площадки.
+
+    Время — МОСКОВСКОЕ. В `pub.log_v1` оно лежит в UTC, а экран берёт дату срезом
+    строки: событие с 00:00 до 03:00 по Москве показывалось вчерашним днём (аудит
+    23.09.2026).
+    """
+    return {
+        "id": r.id, "at": _to_msk(r.created_at) if r.created_at else None,
+        "tone": r.tone, "side": r.side,
         # Неизвестный ключ показываем КАК ЕСТЬ, а не прячем строку: пропавшее событие
         # выглядит как «ничего не было», и это худшая из двух неправд.
         "label": labels.get(r.action, r.action),
         "actor": r.actor_name, "subject": r.subject,
-    } for r in rows]}
+    }
 
 
 # ─────────────────────────── Бот ───────────────────────────

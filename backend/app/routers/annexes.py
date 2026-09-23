@@ -88,8 +88,30 @@ def _deal_cards(db: Session, annex_id: int) -> list:
             .join(Alloc, Alloc.deal_id == SalesDeal.id)
             .filter(Alloc.annex_id == annex_id)
             .order_by(SalesDeal.id).all())
-    return [{"id": d.id, "code": d.code, "title": d.title, "amount": amt}
+    return [{"id": d.id, "code": d.code, "title": d.title, "amount": amt,
+             "deal_amount_with_vat": d.amount_with_vat}
             for d, amt in rows]
+
+
+def _mismatch(a: SalesAnnex, deals: list) -> Optional[str]:
+    """Расхождение суммы документа с суммой его сделок — вслух, до подписания.
+
+    Сумма приложения собирается из медиаплана, сумма сделки живёт своей жизнью (её правят,
+    переносят, она приезжает из Битрикса). До 23.09.2026 сверки не было вовсе: сумму ДС
+    подменяли итогом той же таблицы, и «не сходится с планом» сравнивало число само с собой
+    (аудит 23.09.2026, 3.H1). Рубль допуска — на округления строк.
+    """
+    # Сумма неизвестна хоть у одной сделки — сравнивать не с чем: сумма остальных всегда
+    # меньше итога документа, и «не совпадает» было бы ложной тревогой (ревью 23.09.2026).
+    known = [d.get("deal_amount_with_vat") for d in deals]
+    if not known or any(v is None for v in known) or a.total_amount is None:
+        return None
+    deals_sum = round(sum(known), 2)
+    if abs(deals_sum - float(a.total_amount)) <= 1.0:
+        return None
+    f = lambda v: f"{v:,.2f}".replace(",", " ")  # noqa: E731
+    return (f"Сумма приложения {f(float(a.total_amount))} ₽ не совпадает с суммой сделок "
+            f"{f(deals_sum)} ₽ (с НДС). Проверьте медиаплан и сумму сделки до подписания.")
 
 
 def _out(a: SalesAnnex) -> dict:
@@ -317,13 +339,23 @@ def edit_annex(annex_id: int, payload: AnnexIn, db: Session = Depends(get_db),
     if payload.period_to < payload.period_from:
         raise HTTPException(400, "Конец периода раньше начала")
     a.period_from, a.period_to = payload.period_from, payload.period_to
+    # Ставка — присланная, иначе СВОЯ ставка черновика. Пустая ставка в `build` означает
+    # «текущая юрлица», и правка без поля ставки пересчитывала документ, посчитанный по
+    # 20 %, по 22 % (ревью 23.09.2026; правило «ставка на дату расчёта»).
+    rate = payload.vat_rate if payload.vat_rate is not None else a.vat_rate
     # Сумма пересчитывается по медиаплану, как и при сборке: править её руками означало бы
     # развести текст документа с его же таблицей.
     plan = annex_build.build(db, _contract(db, a.contract_id),
                              period_from=payload.period_from, period_to=payload.period_to,
-                             amount=payload.total_amount, vat_rate=payload.vat_rate,
+                             amount=payload.total_amount, vat_rate=rate,
                              deal_ids=_annex_deals(db, a.id)).get("plan_total")
     a.total_amount = plan if plan is not None else payload.total_amount
+    # Разнесение по сделкам — вслед за суммой. До 23.09.2026 оно писалось только при
+    # создании черновика: правка меняла сумму документа, а доли в карточках сделок
+    # оставались старыми и переставали в неё складываться (аудит 23.09.2026, 2.M6).
+    deal_ids = _annex_deals(db, a.id)
+    db.query(Alloc).filter(Alloc.annex_id == a.id).delete(synchronize_session=False)
+    _link_deals(db, a, deal_ids, a.total_amount)
     a.date = annex_build.annex_date(payload.period_from)
     if payload.vat_rate is not None:
         a.vat_rate = payload.vat_rate
@@ -522,8 +554,10 @@ def get_annex(annex_id: int, db: Session = Depends(get_db), user: User = Depends
     """Приложение вместе с собранным документом — тем же расчётом, что предпросмотр."""
     a = _annex(db, annex_id)
     c = _contract(db, a.contract_id)
+    deals = _deal_cards(db, a.id)
     return {**_out(a), "doc": _doc(db, a),
-            "deals": _deal_cards(db, a.id),
+            "deals": deals,
+            "mismatch": _mismatch(a, deals),
             # Границу нумерации экран показывает рядом с полем: без неё отказ «номер не
             # больше стартового» выглядит как придирка непонятно к чему.
             "annex_start_no": c.annex_start_no,

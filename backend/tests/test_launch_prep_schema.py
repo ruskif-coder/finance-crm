@@ -23,6 +23,7 @@ from app.database import SessionLocal
 from app.launch_prep.models import (ERID_SOURCES, REVIEW_KINDS, REVIEW_SOURCES,
                                     REVIEW_VERDICTS, SET_ORIGINS, TARGET_STATES,
                                     TARGET_STATE_PUBLIC, LaunchPrepCreativeSet)
+from tests._launch_prep_cleanup import drop_campaign_creatives
 
 NO_BASE = 9000          # номера комплектов, которых не бывает у живых сделок
 
@@ -40,6 +41,7 @@ def db():
 
 def _purge(session):
     session.rollback()
+    drop_campaign_creatives(session, NO_BASE)   # до комплектов: FK без каскада
     session.query(LaunchPrepCreativeSet).filter(
         LaunchPrepCreativeSet.no >= NO_BASE).delete(synchronize_session=False)
     session.commit()

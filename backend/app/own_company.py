@@ -71,7 +71,12 @@ def public(db) -> Optional[dict]:
     c = sole(db)
     if c is None:
         return None
-    return {"id": c.id, "name": c.name, "vat_rate_income": c.vat_rate_income}
+    from app import vat
+    # `vat_current` — ставка, по которой считается НОВЫЙ расчёт (`vat.current`: пустая или
+    # нулевая ставка юрлица — это «не задана», и берётся текущая по закону). Фронт берёт её,
+    # а не сырое поле: форма новой сделки иначе держала свою константу 22 (ревью 23.09.2026).
+    return {"id": c.id, "name": c.name, "vat_rate_income": c.vat_rate_income,
+            "vat_current": vat.current(db)}
 
 
 def of_contract(contract) -> Optional[Counterparty]:

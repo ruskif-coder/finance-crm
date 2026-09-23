@@ -651,6 +651,13 @@ def check_backup_visibility():
 # одно и то же: бэкенд перезапускается и без пересоздания контейнера.
 STARTED_AT = datetime.now(timezone.utc)
 
+
+def started_label() -> str:
+    """Момент перезапуска — по Москве, как журнал рядом. `STARTED_AT` в UTC, и подпись
+    «перезапуск 23.09 в 22:30» при запуске в 01:30 МСК 24-го путала (ревью 23.09.2026)."""
+    from app import timez
+    return timez.to_msk(STARTED_AT.replace(tzinfo=None)).strftime("%d.%m в %H:%M")
+
 LOG_PATH = "/app/logs/backend.log"
 
 
@@ -669,7 +676,10 @@ def errors_24h() -> dict:
     Файл ротируется по 5 МБ и живёт неделями; счёт по всему файлу отвечал бы на вопрос
     «сколько ошибок было когда-то», а нужен другой: «сколько сейчас».
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+    # Граница — в ТОМ ЖЕ поясе, что метки строк. С 23.09.2026 процесс живёт по Москве, и
+    # `%(asctime)s` пишет московское время; граница от UTC делала «сутки» 27-часовыми.
+    from app.timez import msk_now
+    cutoff = (msk_now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
     n, last = 0, None
     try:
         with open(LOG_PATH, encoding="utf-8", errors="replace") as fh:
@@ -820,7 +830,7 @@ def collect(db: Session, live: bool = False) -> dict:
          "hint": (f"{need_setup} требуют настройки" if need_setup else "все зелёные")
                  + (f" · отказов {broken}" if broken else "")},
         {"key": "uptime", "label": "Аптайм бэкенда", "value": up["human"],
-         "hint": "перезапуск " + STARTED_AT.strftime("%d.%m в %H:%M")},
+         "hint": "перезапуск " + started_label()},
         {"key": "db", "label": "Ответ базы", "value": (core or {}).get("value") or "—",
          "hint": f"сайдкар {(pdf or {}).get('value') or '—'} · "
                  f"кабинет {(cab or {}).get('value') or '—'}"},

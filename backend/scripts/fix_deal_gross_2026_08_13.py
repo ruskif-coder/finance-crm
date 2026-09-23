@@ -15,7 +15,9 @@ import sys
 
 from app.database import SessionLocal
 from app.sales.models import SalesDeal
-from app.routers.year_plan import SALES_VAT_RATE
+# Ставка ТОГО ДНЯ (13.08.2026), зафиксирована здесь: с 23.09.2026 константы в year_plan нет —
+# ставка живёт у записей (app/vat.py). Скрипт разовый и уже отработал.
+SALES_VAT_RATE = 0.22
 
 # Верхняя граница правдоподобия: gross не может быть меньше net и не может превышать
 # net более чем на треть (ставка 22 % + запас на округления и старые ставки).
