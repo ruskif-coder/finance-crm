@@ -3,7 +3,7 @@ import Head from 'next/head'
 import { useRouter } from 'next/router'
 import { pageAccess } from '@/lib/pageGuard'
 import Navbar, { can } from '@/components/Navbar'
-import { MONO, UI, MultiDrop, IconBtn, LoadError, NoAccessScreen } from '@/components/salesTableKit'
+import { MONO, UI, MultiDrop, IconBtn, LoadError, NoAccessScreen, PortalPopover } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const OperationsMobile = dynamic(() => import('@/components/mobile/OperationsMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
@@ -14,6 +14,7 @@ import { T } from '@/lib/tokens'
 import { errText, isAuth } from '@/lib/loadError'
 import { nowTime } from '@/lib/dates'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { downloadFile } from '@/lib/download'
 
 const STATUSES = ['ОПЛАЧЕНО', 'ПЛАН ОПЛАТ', 'ПЛАН ПОСТУПЛЕНИЙ']
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
@@ -101,6 +102,77 @@ function SingleSelect({ value, onChange, options, placeholder, emptyLabel }) {
 // Обводка иконок. На модульном уровне, а не внутри Operations2: её использует и
 // OpFields, объявленный здесь же снаружи, — из компонента он её не видит.
 const IcoStroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round', strokeLinejoin: 'round' }
+
+const DOC_ICON = <svg width="14" height="14" viewBox="0 0 24 24" style={IcoStroke}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg>
+
+const docBtn = {
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  width: 26, height: 26, borderRadius: 8, border: 'none', padding: 0, cursor: 'pointer',
+  background: 'var(--accent-tint)', color: 'var(--accent)',
+}
+
+// Документы операции: ВНЕШНЯЯ ССЫЛКА И ПРИЛОЖЕННЫЕ ФАЙЛЫ РАВНОПРАВНЫ.
+//
+// До 22.09.2026 пиктограмма зависела только от `document_link`. Человек прикладывал
+// скан — файл ложился и в базу, и на диск, — а в реестре оставался прочерк: открыть
+// его отсюда было нечем, и со стороны это выглядело как «файл не прикрепился».
+//
+// Одна цель — открываем сразу, без лишнего щелчка. Несколько — показываем выбор:
+// угадывать за человека, что ему нужнее, скан или ссылка, не из чего.
+//
+// Компонент объявлен на модульном уровне, а не внутри страницы: этот проект уже
+// спотыкался о компоненты, рождённые заново на каждый рендер.
+function DocCell({ op, open, onToggle, onOpenFile }) {
+  const link = op.document_link
+  const files = op.files || []
+  const total = (link ? 1 : 0) + files.length
+  if (!total) return <span style={{ color: '#C3C9D8' }}>—</span>
+
+  // Ссылка остаётся ссылкой: средний щелчок, «открыть в новой вкладке» и копирование
+  // адреса работают только у настоящего <a>. Проверка схемы та же, что была: адрес в
+  // этом поле вводят руками, и `javascript:` туда попасть не должен.
+  const linkEl = (title) => (
+    <a href={/^https?:\/\//i.test(link) ? link : undefined} target="_blank" rel="noreferrer"
+      onClick={e => e.stopPropagation()} title={title} style={docBtn}>{DOC_ICON}</a>
+  )
+  if (total === 1 && link) return linkEl('Открыть документ по ссылке')
+  if (total === 1) {
+    const f = files[0]
+    return (
+      <button onClick={e => { e.stopPropagation(); onOpenFile(op.id, f) }}
+        title={`Скачать «${f.name}»`} style={docBtn}>{DOC_ICON}</button>
+    )
+  }
+  return (
+    <span data-pop-root style={{ position: 'relative', display: 'inline-flex' }} onClick={e => e.stopPropagation()}>
+      <button onClick={onToggle} title={`Документов: ${total}`}
+        style={{ ...docBtn, width: 'auto', padding: '0 7px', gap: 4 }}>
+        {DOC_ICON}<span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700 }}>{total}</span>
+      </button>
+      <PortalPopover open={open} minWidth={240} maxHeight={280}>
+          {link && (
+            <a href={/^https?:\/\//i.test(link) ? link : undefined} target="_blank" rel="noreferrer"
+              style={docRow}>
+              <span style={{ color: 'var(--accent)', flex: '0 0 auto' }}>{DOC_ICON}</span>
+              <span style={docRowName}>Ссылка на документ</span>
+            </a>
+          )}
+          {files.map(f => (
+            <button key={f.id} onClick={() => onOpenFile(op.id, f)} style={{ ...docRow, width: '100%', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer' }}>
+              <span style={{ color: 'var(--text-faint)', flex: '0 0 auto' }}>{DOC_ICON}</span>
+              <span style={docRowName} title={f.name}>{f.name}</span>
+            </button>
+          ))}
+      </PortalPopover>
+    </span>
+  )
+}
+
+const docRow = {
+  display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8,
+  fontSize: 12.5, color: 'var(--text-primary)', textDecoration: 'none', fontFamily: UI,
+}
+const docRowName = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 
 // Ячейка формы. ВЫНЕСЕНА из OpFields на модульный уровень: если объявлять её внутри
 // компонента, при каждом рендере (нажатии клавиши в поле) она получает новую
@@ -278,6 +350,21 @@ export default function Operations2() {
   const lastSelIdx = useRef(null)   // якорь для shift-выбора диапазона
   const [hidden, setHidden] = useState(new Set())   // скрытые колонки
   const [colPicker, setColPicker] = useState(false)
+  // Какая строка показывает выбор документа. Одна на таблицу: два открытых списка
+  // одновременно не нужны, а хранение в самой строке потребовало бы состояния на
+  // каждую из сотни.
+  const [docMenu, setDocMenu] = useState(null)
+  // Закрытие списка документов — щелчком мимо. Признак «мимо» один на проект:
+  // `closest('[data-pop-root]')`. Сама панель рисуется порталом в body, поэтому
+  // проверять вложенность в строку таблицы бесполезно — её там нет.
+  useEffect(() => {
+    if (docMenu === null) return undefined
+    const onDown = (e) => {
+      if (!e.target.closest || !e.target.closest('[data-pop-root]')) setDocMenu(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [docMenu])
   const toggleCol = (k) => setHidden(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); localStorage.setItem('ops2_hidden', JSON.stringify([...n])); return n })
   const visibleCols = COLS.filter(([k]) => !hidden.has(k))
   const gridT = visibleCols.map(c => c[1]).join(' ')
@@ -401,6 +488,13 @@ export default function Operations2() {
   // В создании id ещё нет, поэтому выбранные файлы ждут в памяти браузера и уезжают
   // сразу после того, как POST вернёт номер новой операции. Промежуточное хранилище
   // на сервере при таком порядке не нужно.
+  // Открыть приложенный файл из реестра. Через lib/download — там единственное в
+  // проекте правило имени файла; свой <a download> здесь снова терял бы расширение.
+  const openOpFile = async (opId, f) => {
+    setDocMenu(null)
+    await downloadFile(`/operations/${opId}/files/${f.id}`, f.name, (msg) => setErr(msg))
+  }
+
   const loadOpFiles = async (id) => {
     try { const r = await api(tok()).get(`/operations/${id}/files`); setEditFiles(r.data || []) }
     catch (e) { setEditFiles([]) }
@@ -516,7 +610,9 @@ export default function Operations2() {
       case 'ds_num': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.ds_num || '—'}</span>
       case 'invoice': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.invoice || '—'}</span>
       case 'invoice_date': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{fmtDate(o.invoice_date) || '—'}</span>
-      case 'doc': return o.document_link ? <a href={/^https?:\/\//i.test(o.document_link) ? o.document_link : undefined} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} title="Открыть документ" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 8, background: 'var(--accent-tint)', color: 'var(--accent)' }}><svg width="14" height="14" viewBox="0 0 24 24" style={IcoStroke}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg></a> : <span style={{ color: '#C3C9D8' }}>—</span>
+      case 'doc': return <DocCell op={o} open={docMenu === o.id}
+        onToggle={() => setDocMenu(m => m === o.id ? null : o.id)}
+        onOpenFile={openOpFile} />
       case 'description': return <span title={o.description} style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.description || '—'}</span>
       case 'actions': return canEdit ? <span style={{ display: 'inline-flex', gap: 4 }}>
         <span onClick={() => dupOp(o)} title="Дублировать" className="op-ico" style={{ color: 'var(--text-muted)' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg></span>
@@ -654,7 +750,7 @@ export default function Operations2() {
               можно в любом месте списка, и панель не уезжает вместе с ним. В потоке
               страницы она оставалась у начала таблицы, то есть за экраном. */}
           {canEdit && selIds.length > 0 && (
-              <div style={{ position: 'fixed', top: navH + 10, left: 24, right: 24, zIndex: 45, boxShadow: '0 10px 34px rgba(28,36,51,.16)', background: '#F6F8FF', border: '1px solid #D7DEFA', borderRadius: 14, padding: '16px 18px', display: 'flex', alignItems: 'flex-end', gap: 14, flexWrap: 'wrap', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
+              <div style={{ position: 'fixed', top: navH + 10, left: 24, right: 24, zIndex: 45, boxShadow: 'var(--shadow-float)', background: '#F6F8FF', border: '1px solid #D7DEFA', borderRadius: 14, padding: '16px 18px', display: 'flex', alignItems: 'flex-end', gap: 14, flexWrap: 'wrap', animation: 'opRise .24s cubic-bezier(0.22,1,0.36,1) both' }}>
                 <div style={{ minWidth: 150, borderRight: '1px solid #DDE3F5', paddingRight: 14 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: '#3A50BE', marginBottom: 6 }}>Выбрано: {selIds.length}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: 'var(--income)' }}><span style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--income)' }} />+{fmt2(selIncome)} ₽</div>

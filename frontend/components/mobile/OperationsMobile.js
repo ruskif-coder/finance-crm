@@ -3,6 +3,7 @@ import { MONO, UI, MultiDrop } from '../salesTableKit'
 import { grp, signRub, fmtDateShort, bankColor } from '../../lib/salesFormat'
 import { CARD, monoLbl, Marker, PeriodSelect, rise } from './kit'
 import BottomSheet from './BottomSheet'
+import { downloadFile } from '../../lib/download'
 import DirectoryMobile from './DirectoryMobile'
 
 const fmt = (n) => grp(Math.abs(n || 0))
@@ -40,7 +41,10 @@ function OpCard({ o, artName, cpName, open, onToggle, onEdit, onCopy }) {
             <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.bank || 'не указан'}</span>
           </span>
           <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            {o.document_link && <span style={{ width: 22, height: 22, borderRadius: 6, background: 'var(--accent-tint)', color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><DocIco /></span>}
+            {/* Метка «документ есть» считает И ссылку, И приложенные файлы. Смотреть
+                только на ссылку значило бы показывать на телефоне пусто там, где на
+                десктопе виден скан, — то есть врать про наличие первички. */}
+            {(o.document_link || (o.files || []).length > 0) && <span style={{ width: 22, height: 22, borderRadius: 6, background: 'var(--accent-tint)', color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><DocIco /></span>}
             <span style={{ background: st.bg, color: st.fg, borderRadius: 8, padding: '4px 9px', fontFamily: MONO, fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>{st.label}</span>
           </span>
         </div>
@@ -69,9 +73,19 @@ function OpCard({ o, artName, cpName, open, onToggle, onEdit, onCopy }) {
             <button onClick={() => onCopy(o)} aria-label="Копировать" title="Копировать в новую операцию" style={{ width: 46, height: 44, borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
             </button>
+            {/* Одна кнопка на телефоне, а не список выбора: ссылка, если она есть,
+                иначе первый приложенный файл. Полный выбор из нескольких документов
+                остаётся на десктопе — раскрывающийся список на карточке шириной в
+                ладонь перекрыл бы саму карточку. */}
             {o.document_link
               ? <a href={/^https?:\/\//i.test(o.document_link) ? o.document_link : undefined} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} aria-label="Документ" style={{ width: 46, height: 44, borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg></a>
-              : <span style={{ width: 46, height: 44, borderRadius: 12, border: '1px dashed var(--border-card)', color: 'var(--text-faint)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>—</span>}
+              : (o.files || []).length > 0
+                ? <button onClick={e => { e.stopPropagation(); downloadFile(`/operations/${o.id}/files/${o.files[0].id}`, o.files[0].name) }}
+                    aria-label="Скачать документ" title={o.files[0].name}
+                    style={{ width: 46, height: 44, borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg>
+                  </button>
+                : <span style={{ width: 46, height: 44, borderRadius: 12, border: '1px dashed var(--border-card)', color: 'var(--text-faint)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>—</span>}
           </div>
         </div>
       )}

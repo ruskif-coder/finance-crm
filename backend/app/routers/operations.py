@@ -342,6 +342,24 @@ def get_operations(
 
     operations = query.offset(skip).limit(limit).all()
 
+    # Приложенные файлы — ОДНИМ запросом на страницу, а не по строке: реестр отдаёт
+    # до сотни операций за раз.
+    #
+    # В колонке «Документы» файл равноправен со ссылкой. До 22.09.2026 строка ничего о
+    # файлах не знала, и пиктограмма зависела только от `document_link`: человек
+    # прикладывал скан, файл ложился в базу и на диск — а в реестре оставался прочерк.
+    # Снаружи это выглядело как «файл не прикрепился», хотя он был на месте: открыть
+    # его из реестра было просто нечем.
+    op_ids = [op.id for op in operations]
+    files_by_op: dict = {}
+    if op_ids:
+        from app.models import OperationFile
+        for f in (db.query(OperationFile)
+                  .filter(OperationFile.operation_id.in_(op_ids))
+                  .order_by(OperationFile.id).all()):
+            files_by_op.setdefault(f.operation_id, []).append(
+                {"id": f.id, "name": f.original_name})
+
     return {
         "total": total,
         "items": [
@@ -364,6 +382,7 @@ def get_operations(
                 "invoice_date": op.invoice_date,
                 "description": op.description,
                 "document_link": op.document_link,
+                "files": files_by_op.get(op.id, []),
                 "receivable_status": _receivable_status(op),
             }
             for op in operations
