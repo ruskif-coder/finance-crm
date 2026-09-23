@@ -12,6 +12,7 @@
  * заполняется по кнопке «Обновить данные о сделках» (проп onMatch).
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { markDirty, markClean } from '@/lib/unsaved';
 import { PortalPopover } from '../salesTableKit';
 import BrandBrief from './BrandBrief';
 import { DownloadOverlay } from '../LogoLoader';
@@ -257,6 +258,12 @@ export default function YearPlan({
   // сериализация значимых полей (без UI-состояний open/id) — для детекта несохранённых правок
   const serGroups = gs => JSON.stringify((gs || []).map(x => ({ a: x.adv_id, b: (x.brands || []).map(b => ({ i: b.line_id, r: b.brand_id, p: b.plan, on: b.on, s: b.sums, l: b.locks, pr: b.products, bf: b.brief, sf: b.service_forecast })) })));
   const dirty = !readOnly && savedRef.current != null && serGroups(groups) !== serGroups(savedRef.current);
+  // Признак «есть несохранённые правки» отдаём общему учёту: пока он горит, возврат на
+  // вкладку не перечитывает план и не затирает заполненное (lib/unsaved, 23.09.2026).
+  // Правка здесь идёт в основном щелчками — выбор из списков, — и учёт по вводу в поля
+  // её бы не увидел; а этот признак уже считается точно, по сравнению со снимком.
+  useEffect(() => { if (dirty) markDirty(); else markClean(); }, [dirty]);
+  useEffect(() => () => markClean(), []);
   const cancelEdits = () => { if (savedRef.current) setGroups(JSON.parse(JSON.stringify(savedRef.current))); };
 
   const advById = useMemo(() => Object.fromEntries(advertisers.map(a => [a.id, a])), [advertisers]);

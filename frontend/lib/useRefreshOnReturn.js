@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { hasUnsaved } from '@/lib/unsaved'
 
 /**
  * Перечитать данные, когда человек ВЕРНУЛСЯ на экран.
@@ -32,6 +33,13 @@ import { useEffect, useRef } from 'react'
  *     const load = useCallback(() => { ... }, [])
  *     useEffect(() => { load() }, [load])
  *     useRefreshOnReturn(load)
+ *
+ * НЕСОХРАНЁННЫЙ ВВОД ВАЖНЕЕ СВЕЖЕСТИ (23.09.2026). Перечитка пишет данные сервера
+ * поверх экрана, а многие экраны на время загрузки меняют содержимое на «Загрузка…» и
+ * размонтируют всё открытое для правки. Аккаунты собирают материал для годового плана в
+ * соседних вкладках — и каждый возврат стирал заполненное. Поэтому, пока на экране есть
+ * несохранённый ввод (`lib/unsaved`), возврат его не трогает: устаревшее число —
+ * неудобство, стёртая работа — потеря. После сохранения перечитка снова работает.
  */
 export default function useRefreshOnReturn(reload, { enabled = true } = {}) {
   const fn = useRef(reload)
@@ -41,14 +49,15 @@ export default function useRefreshOnReturn(reload, { enabled = true } = {}) {
     if (!enabled || typeof window === 'undefined') return undefined
     // Скрытая вкладка не перечитывает: смысл в возврате, а не в каждом переключении.
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && typeof fn.current === 'function') {
+      if (document.visibilityState === 'visible' && typeof fn.current === 'function'
+          && !hasUnsaved()) {
         fn.current()
       }
     }
     // `persisted` обязателен: обычный `pageshow` приходит и при первой загрузке, где
     // данные уже грузит монтирование, и без проверки каждый вход стоил бы двух запросов.
     const onShow = (e) => {
-      if (e.persisted && typeof fn.current === 'function') fn.current()
+      if (e.persisted && typeof fn.current === 'function' && !hasUnsaved()) fn.current()
     }
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('pageshow', onShow)

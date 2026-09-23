@@ -8,6 +8,7 @@ import YearPlan from '@/components/plan/YearPlan'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { hasUnsaved } from '@/lib/unsaved'
 import { nowTime } from '@/lib/dates'
 const NotOnMobile = dynamic(() => import('@/components/mobile/NotOnMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
@@ -98,9 +99,15 @@ export default function YearPlanPage() {
 
   const allMode = view === 'all'
 
-  const load = useCallback((y, v) => {
-    setLoading(true)
-    setSavedAt('')
+  // `silent` — перечитка при возврате на вкладку. Без неё экран на время запроса
+  // менялся на «Загрузка…», план размонтировался, и пропадало всё открытое: бриф,
+  // раскрытые строки, место прокрутки. Возврат должен освежить числа, а не собрать
+  // экран заново (23.09.2026).
+  const load = useCallback((y, v, { silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true)
+      setSavedAt('')
+    }
     if (v === 'all') {
       api.get(`/sales/year-plan/all?year=${y}`, auth())
         .then(r => setAllData(r.data.reps || []))
@@ -110,6 +117,10 @@ export default function YearPlanPage() {
     }
     const q = typeof v === 'number' ? `&rep_id=${v}` : ''
     api.get(`/sales/year-plan?year=${y}${q}`, auth()).then(r => {
+      // Тихая перечитка ушла, пока правок не было, а человек начал править, пока шёл
+      // запрос: ответ лёг бы поверх. Проверяем в момент ответа, а не только в момент
+      // возврата на вкладку.
+      if (silent && hasUnsaved()) return
       const advs = r.data.catalog?.advertisers || []
       setAdvertisers(advs)
       setServices(r.data.catalog?.services || [])
@@ -123,7 +134,7 @@ export default function YearPlanPage() {
   useEffect(() => { if (perms) load(year, view) }, [perms, year, view, load])
   // Год и вид берём ТЕКУЩИЕ: возврат на вкладку не должен перекидывать человека
   // на другой год, он должен показать свежие числа того, что открыто.
-  useRefreshOnReturn(() => { if (perms) load(year, view) })
+  useRefreshOnReturn(() => { if (perms) load(year, view, { silent: true }) })
 
   // каталоги брифа (агентства/юрлица/гео/таргетинг/ответственные) — из открытых справочников, как в конструкторе МП
   useEffect(() => {
