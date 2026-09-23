@@ -4,6 +4,8 @@ import { grp, signRub, fmtDateShort, bankColor } from '../../lib/salesFormat'
 import { CARD, monoLbl, Marker, PeriodSelect, rise } from './kit'
 import BottomSheet from './BottomSheet'
 import { downloadFile } from '../../lib/download'
+import { monthEnd } from '../../lib/dates'
+import { sanMoney, moneyNum } from '../../lib/money'
 import DirectoryMobile from './DirectoryMobile'
 
 const fmt = (n) => grp(Math.abs(n || 0))
@@ -98,19 +100,24 @@ function OperationForm({ initial, editId, articles, counterparties, onClose, onS
   const [f, setF] = useState(initial)
   const [saving, setSaving] = useState(false)
   const set = (p) => setF(s => ({ ...s, ...p }))
-  const amount = (f.income || 0) > 0 ? f.income : (f.expense || 0)
-  const vatAmount = f.vat_rate ? Math.round(amount * f.vat_rate / (100 + f.vat_rate)) : 0
+  // Сумма — СТРОКОЙ, как её набирают, и направление — отдельным выбором. Раньше разбор
+  // выкидывал запятую («1500,50» → 150 050 ₽), а у «Исполнено» направления не было вовсе:
+  // оплата подрядчику с телефона ложилась ПОСТУПЛЕНИЕМ (аудит 23.09.2026, 6.H5–6.H6).
+  const initAmount = (initial.income || 0) > 0 ? initial.income : (initial.expense || 0)
+  const [amtText, setAmtText] = useState(initAmount ? String(initAmount).replace('.', ',') : '')
+  const [dir, setDir] = useState(
+    (initial.expense || 0) > 0 || initial.status === 'ПЛАН ОПЛАТ' ? 'expense' : 'income')
+  const amount = moneyNum(amtText)
+  const vatAmount = f.vat_rate ? Math.round(amount * f.vat_rate / (100 + f.vat_rate) * 100) / 100 : 0
 
-  const setAmount = (v) => {
-    const n = +String(v).replace(/\D/g, '') || 0
-    if (f.status === 'ПЛАН ПОСТУПЛЕНИЙ') set({ income: n, expense: 0 })
-    else if (f.status === 'ПЛАН ОПЛАТ') set({ expense: n, income: 0 })
-    else { if ((f.expense || 0) > 0) set({ expense: n, income: 0 }); else set({ income: n, expense: 0 }) }
-  }
+  const put = (n, d) => set(d === 'expense' ? { expense: n, income: 0 } : { income: n, expense: 0 })
+  const setAmount = (v) => { const t = sanMoney(v); setAmtText(t); put(moneyNum(t), dir) }
+  const setDirection = (d) => { setDir(d); put(amount, d) }
   const setStatus = (s) => {
-    if (s === 'ПЛАН ПОСТУПЛЕНИЙ') set({ status: s, income: amount, expense: 0 })
-    else if (s === 'ПЛАН ОПЛАТ') set({ status: s, expense: amount, income: 0 })
-    else set({ status: s })
+    // План сам задаёт направление; у «Исполнено» его выбирают кнопкой.
+    const d = s === 'ПЛАН ПОСТУПЛЕНИЙ' ? 'income' : s === 'ПЛАН ОПЛАТ' ? 'expense' : dir
+    setDir(d)
+    set({ status: s, ...(d === 'expense' ? { expense: amount, income: 0 } : { income: amount, expense: 0 }) })
   }
 
   const TILES = [
@@ -159,10 +166,22 @@ function OperationForm({ initial, editId, articles, counterparties, onClose, onS
           </div>
         </div>
 
-        {/* сумма */}
+        {/* направление — у «Исполнено»; у планов его задаёт сам статус */}
+        {f.status === 'ОПЛАЧЕНО' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            {[['income', 'Поступление'], ['expense', 'Списание']].map(([d, l]) => {
+              const on = dir === d
+              return (
+                <button key={d} type="button" onClick={() => setDirection(d)} style={{ padding: '10px 4px', borderRadius: 12, cursor: 'pointer', border: `1px solid ${on ? 'var(--accent)' : 'var(--border-card)'}`, background: on ? 'var(--accent-tint)' : 'var(--bg-card)', fontSize: 13, fontWeight: on ? 700 : 600, color: on ? 'var(--accent)' : 'var(--text-secondary)' }}>{l}</button>
+              )
+            })}
+          </div>
+        )}
+
+        {/* сумма — строкой, с копейками */}
         <div style={{ ...fieldRow }}>
           <span style={flbl}>Сумма</span>
-          <input inputMode="numeric" value={amount ? fmt(amount) : ''} onChange={e => setAmount(e.target.value)} placeholder="0 ₽" style={{ ...fval, fontSize: 17 }} />
+          <input inputMode="decimal" value={amtText} onChange={e => setAmount(e.target.value)} placeholder="0 ₽" style={{ ...fval, fontSize: 17 }} />
         </div>
 
         {/* НДС пара */}
@@ -289,7 +308,7 @@ export default function OperationsMobile({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <input type="month" value={dateFrom.slice(0, 7)} onChange={e => setDateFrom(e.target.value ? e.target.value + '-01' : '')} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 12, padding: '11px 12px', fontSize: 13, fontFamily: MONO, outline: 'none' }} />
           <span style={{ color: 'var(--text-faint)' }}>—</span>
-          <input type="month" value={dateTo.slice(0, 7)} onChange={e => setDateTo(e.target.value ? e.target.value + '-28' : '')} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 12, padding: '11px 12px', fontSize: 13, fontFamily: MONO, outline: 'none' }} />
+          <input type="month" value={dateTo.slice(0, 7)} onChange={e => setDateTo(e.target.value ? monthEnd(e.target.value) : '')} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', border: '1px solid var(--border-card)', borderRadius: 12, padding: '11px 12px', fontSize: 13, fontFamily: MONO, outline: 'none' }} />
         </div>
         <div style={{ ...monoLbl, marginBottom: 6 }}>Период учёта</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

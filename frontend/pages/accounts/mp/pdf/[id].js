@@ -40,6 +40,10 @@ function toPdf(plan) {
       imp, freq, reach: freq > 0 ? imp / freq : 0, clicks, checks, price, revenue: checks * price, sov,
     }
   })
+  // Ставку сервер отдаёт всегда (своя у версии или текущая у не считавшегося плана).
+  // Нет её — печатать нечего: подставленная «по умолчанию» дала бы клиенту чужую сумму.
+  const vatPct = Number(plan.vat_rate)
+  if (plan.vat_rate == null || !Number.isFinite(vatPct)) throw new Error('нет ставки НДС плана')
   const extras = (plan.extras || []).map(e => ({ name: e.name || '', period: e.period || '', price: +e.price || 0, total: +e.total || 0 }))
   return {
     header: {
@@ -65,6 +69,7 @@ function toPdf(plan) {
     ],
     placements,
     extras,
+    vatPct,
     targeting: TG_GROUPS.map(([k, l]) => [l, tval((plan.targeting || {})[k])]),
     goals: plan.goals || {},
     notes: NOTES, aggRules: AGG_RULES, bonusNote: BONUS_NOTE,

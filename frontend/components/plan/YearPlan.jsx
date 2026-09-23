@@ -187,7 +187,7 @@ export default function YearPlan({
   onSave, onMatch, saving = false, matching = false, savedAt = '', readOnly = false,
   reps = [], repValue = null, onRep = () => {}, ownRepId = null, isMaster = false,
   mode = 'edit', allData = [], onVerifyPassword, onAddTargeting,
-  onConveyorPreview, onConveyorApply, onExport,
+  onConveyorPreview, onConveyorApply, onExport, vatPct = null,
 }) {
   const [groups, setGroups] = useState(initial);
   const [pendingDel, setPendingDel] = useState(null);   // { kind:'group'|'brand', gid, bid, label }
@@ -388,7 +388,7 @@ export default function YearPlan({
         const b = g && g.brands.find(x => x.id === briefFor.bid);
         if (!b) return null;
         return (
-          <BrandBrief open onClose={() => setBriefFor(null)}
+          <BrandBrief open onClose={() => setBriefFor(null)} vatPct={vatPct}
             brandLabel={b.brand} advertiserId={g.adv_id}
             brief={b.brief || {}} forecast={b.service_forecast || {}} products={b.products || {}}
             catalogs={{ ...briefCatalogs, svcName, addonName, services }}

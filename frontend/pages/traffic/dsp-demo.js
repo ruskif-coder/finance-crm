@@ -22,7 +22,7 @@ import api, { auth } from '@/lib/http'
 // по-разному, а спор «у меня всё ровно» разрешить было бы нечем.
 import { CreativePreview } from '@/components/creatives/AssemblyCreatives'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
-import { fmtDateTime } from '@/lib/dates'
+import { fmtDateTime, todayMsk } from '@/lib/dates'
 
 const SECTION = { ...card, padding: '16px 20px', marginBottom: 14 }
 const LBL = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)' }
@@ -145,7 +145,7 @@ export default function DspDemo() {
   const [busy, setBusy] = useState('')
 
   // Шаг 1 — кампания
-  const [camp, setCamp] = useState({ title: 'стенд · ' + new Date().toISOString().slice(0, 7), date_start: '', date_end: '', total_shows: '', total_budget: '' })
+  const [camp, setCamp] = useState({ title: 'стенд · ' + todayMsk().slice(0, 7), date_start: '', date_end: '', total_shows: '', total_budget: '' })
   const [campOut, setCampOut] = useState(null)
   // Шаг 2 — архив
   const fileRef = useRef(null)

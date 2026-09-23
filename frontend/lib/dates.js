@@ -87,6 +87,29 @@ export const fmtTime = (v, dash = DASH) => {
     иркутянину его время рядом с московским временем событий на том же экране. */
 export const nowTime = () => fmtTime(new Date().toISOString())
 
+/** Сегодня по Москве, «2026-09-23» — для полей даты и отбора по дню.
+    `new Date().toISOString().slice(0, 10)` — это сегодня ПО ГРИНВИЧУ: с полуночи до трёх
+    ночи новая операция получала вчерашнее число (аудит 23.09.2026). */
+export const todayMsk = () => {
+  const p = partsOf(new Date(), { year: 'numeric', month: '2-digit', day: '2-digit' })
+  return `${p.year}-${p.month}-${p.day}`
+}
+
+/** Последний день месяца «2026-02» → «2026-02-28» (в високосный — 29-е).
+    Фильтр «по месяц» подставлял 28-е число, и бэкенд с `date <= date_to` терял операции
+    29–31 числа — в реестре и в выгрузке (аудит 23.09.2026, 6.H4). */
+export const monthEnd = (ym) => {
+  const [y, m] = String(ym).split('-').map(Number)
+  return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`
+}
+
+/** Метка в имя выгружаемого файла, «2026-09-23_0130» — по Москве, по той же причине. */
+export const fileStamp = () => {
+  const p = partsOf(new Date(), { year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+  return `${p.year}-${p.month}-${p.day}_${p.hour}${p.minute}`
+}
+
 /** Момент → «14.09.2026» по Москве. Когда время не нужно, а сдвиг суток — нужен:
     событие в 01:00 МСК произошло 14-го, хотя по UTC это ещё 13-е. */
 export const fmtDateOfMoment = (v, dash = DASH) => {

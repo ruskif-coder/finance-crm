@@ -22,7 +22,6 @@ const T = {
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
   ease: 'cubic-bezier(0.22,1,0.36,1)',
 };
-const VAT = 0.22;
 
 const num = v => Math.round(+v || 0).toLocaleString('ru-RU');
 const dec = v => (+v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
@@ -55,7 +54,12 @@ function NumInput({ value, onChange, disabled, placeholder }) {
 }
 
 export default function BrandBrief({ open, onClose, brandLabel, advertiserId, brief = {}, forecast = {}, products = {},
-  catalogs = {}, readOnly = false, isMaster = false, onChange, onAddTargeting }) {
+  catalogs = {}, readOnly = false, isMaster = false, onChange, onAddTargeting, vatPct = null }) {
+  // Ставка НДС года — с сервера (`vat_rate` ответа годового плана: 2025 год — 20 %).
+  // Нужна только для ROI «с НДС»; пока не пришла — ROI прочерком, а не по чужой ставке.
+  // До ревью 23.09.2026 здесь стояли зашитые 22 %.
+  const VAT = vatPct != null ? vatPct / 100 : null;
+  const grossOf = (net) => (VAT == null ? 0 : Math.round(net * (1 + VAT) * 100) / 100);
   const { agencies = [], advCps = {}, agencyCps = {}, geoList = [], targeting = {}, sellers = [], accounts = [], svcName = {}, addonName = {}, services = [] } = catalogs;
   const svcMap = useMemo(() => Object.fromEntries((services || []).map(s => [s.id, s])), [services]);
   // цена услуги с учётом web/моб; показы = сумма ÷ цена × (CPM→1000, иначе 1)
@@ -285,7 +289,7 @@ export default function BrandBrief({ open, onClose, brandLabel, advertiserId, br
                       const freq = parseN(fc.freq), cr = parseN(fc.cr) / 100, price = parseN(fc.price);
                       // Показы и клики — общей арифметикой: у CPM объём это показы, у CPC клики.
                       const imp = rowImp(r.model, vol, fc), clicks = rowClicks(r.model, vol, fc);
-                      const net = r.amount, gross = Math.round(net * (1 + VAT) * 100) / 100;
+                      const net = r.amount, gross = grossOf(net);
                       const reach = freq > 0 ? imp / freq : 0, checks = clicks * cr, revenue = checks * price;
                       const roi = gross > 0 ? (revenue - gross) / gross : NaN;
                       const ok = vol > 0;
@@ -331,7 +335,7 @@ export default function BrandBrief({ open, onClose, brandLabel, advertiserId, br
                           [agg.checks ? dec(agg.net / agg.checks) : '—', T.accent],
                           ['', T.t1],
                           [dec(agg.revenue), T.income],
-                          [(() => { const gr = Math.round(agg.net * (1 + VAT) * 100) / 100; return gr > 0 ? `${agg.revenue - gr >= 0 ? '+' : '−'}${Math.abs((agg.revenue - gr) / gr * 100).toFixed(0)} %` : '—'; })(), T.income],
+                          [(() => { const gr = grossOf(agg.net); return gr > 0 ? `${agg.revenue - gr >= 0 ? '+' : '−'}${Math.abs((agg.revenue - gr) / gr * 100).toFixed(0)} %` : '—'; })(), T.income],
                           ['', T.t1],
                         ];
                         return cells.map(([v, c], k) => <span key={k} style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, textAlign: 'right', color: c }}>{v}</span>);

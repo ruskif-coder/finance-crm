@@ -866,7 +866,10 @@ export default function DealCard() {
   // молча. Ноль и пусто здесь значат одно — «не задана»: своё юрлицо продаёт с НДС,
   // и ноль означает незаполненную карточку, а не ставку 0 %. Не задана — сумму с НДС
   // не выдумываем: прочерк и подсказка, где её задать. См. _own_company_out.
-  const vatPct = (deal && deal.own_company && deal.own_company.vat_rate_income) || null
+  // Ставка, по которой ПОСЧИТАНА сделка (сервер: mp_amounts.vat_pct_of), а не текущая
+  // ставка юрлица: сделка 2025 года на 20 % не показывается по 22 % (правило 23.09.2026).
+  const vatPct = (deal && deal.vat_rate != null ? deal.vat_rate : null)
+    ?? ((deal && deal.own_company && deal.own_company.vat_rate_income) || null)
   const VAT = vatPct != null ? vatPct / 100 : null
   // До копеек: сумма строки считается до копеек (lib/mpRow), и округление здесь
   // разводило бы карточку с медиапланом и с подписанным документом.

@@ -249,6 +249,15 @@ export default function AnnexAssembly() {
                 <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
                   период размещения {dm(a.period_from)} — {dm(a.period_to)}
                 </div>
+                {/* Сумма документа не сходится с суммой его сделок — говорим ДО подписания.
+                    Текст считает сервер (routers/annexes._mismatch, аудит 23.09.2026, 3.H1). */}
+                {!!a.mismatch && (
+                  <div role="alert" style={{ marginTop: 10, padding: '9px 12px', borderRadius: 10,
+                    background: 'var(--warning-tint)', border: '1px solid var(--warning-border)',
+                    color: 'var(--text-primary)', fontSize: 13, lineHeight: 1.45 }}>
+                    <b style={{ color: 'var(--warning-fg)' }}>!</b> {a.mismatch}
+                  </div>
+                )}
                 {/* Из документа надо уметь вернуться к тому, из чего он собран: метки
                     сделок кликабельные. Приложение может закрывать несколько — поэтому
                     список, а не одна ссылка, и рядом разнесённая на сделку сумма. */}

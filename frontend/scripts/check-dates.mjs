@@ -15,6 +15,11 @@
  *   1. `new Date(` от переменной с временем (`*_at`, `*At`, `hour`, `iso`, `str`);
  *   2. локальную копию суффикса `Z` — `+ 'Z'` рядом с `new Date`.
  *
+ *   3. «сегодня» через `new Date().toISOString().slice(…)` (дополнено 23.09.2026). Это
+ *      дата ПО ГРИНВИЧУ: с полуночи до трёх ночи по Москве новая операция получала
+ *      вчерашнее число, а имя выгрузки — вчерашний день. Для «сегодня» есть
+ *      `todayMsk()`, для метки в имени файла — `fileStamp()`.
+ *
  * ЧЕГО НЕ ЛОВИМ. `new Date()` без аргументов, конструирование из чисел
  * (`new Date(y, m, 1)`), арифметику по календарным дням — там часовых поясов нет.
  */
@@ -22,7 +27,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
-const DIRS = ['pages', 'components']
+const DIRS = ['pages', 'components', 'lib']
 const ALLOW = ['lib/dates.js']
 
 function walk(dir, out = []) {
@@ -37,6 +42,9 @@ function walk(dir, out = []) {
 // Аргумент, похожий на время с сервера: имя кончается на _at / At, либо это hour/iso/str.
 const TIMEY = /new Date\(\s*[^)]*?(_at\b|At\b|\bhour\b|\biso\b|\bstr\b|\bsince\b)/
 const OWN_Z = /new Date\([^)]*\+\s*'Z'|\+\s*'Z'\s*\)/
+const UTC_TODAY = /new Date\(\)\.toISOString\(\)\.(slice|substring|split)\(/
+// «по месяц» = 28-е: терялись 29–31 числа (аудит 23.09.2026, 6.H4) — нужен monthEnd().
+const DAY_28 = /\+\s*'-28'/
 
 const bad = []
 for (const dir of DIRS) {
@@ -48,6 +56,8 @@ for (const dir of DIRS) {
       if (line.trimStart().startsWith('*') || line.trimStart().startsWith('//')) return
       if (TIMEY.test(line)) bad.push(`${rel}:${i + 1} — new Date() от метки времени`)
       else if (OWN_Z.test(line)) bad.push(`${rel}:${i + 1} — своя копия суффикса 'Z'`)
+      else if (UTC_TODAY.test(line)) bad.push(`${rel}:${i + 1} — «сегодня» по Гринвичу (toISOString)`)
+      else if (DAY_28.test(line)) bad.push(`${rel}:${i + 1} — конец месяца 28-м числом, нужен monthEnd()`)
     })
   }
 }

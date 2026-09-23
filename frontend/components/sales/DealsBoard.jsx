@@ -42,7 +42,6 @@ const LAYER = {
 const LAYER_ORDER = ['фактические', 'реализуемые', 'планируемые']
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
 const COL_W = 292, GAP = 16
-const VAT = 0.22
 
 const kk = v => Math.round(v / 1000).toLocaleString('ru-RU') + ' тыс'
 const money = v => (Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2).replace('.', ',') + ' млн' : kk(v))
@@ -81,7 +80,9 @@ function toCard(d) {
   const st = d.our_stage
   const lost = !!(st && st.is_terminal)
   const L = st && LAYER[st.money_layer]
-  const gross = d.amount_with_vat != null ? d.amount_with_vat : (d.amount || 0) * (1 + VAT)
+  // Сумму с НДС считает сервер (`mp_amounts.gross_of`) по ставке самой сделки. Досчёт
+  // здесь по зашитым 22 % показывал сделку 2025 года не по той ставке (ревью 23.09.2026).
+  const gross = d.amount_with_vat ?? 0
   const sum = d.amount || 0
   const DOC_BG = [T.income, T.warning, T.inner]      // 0 готово · 1 в работе · 2 нет
   const docs = [

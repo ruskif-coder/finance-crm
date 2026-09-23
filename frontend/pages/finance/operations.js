@@ -12,8 +12,10 @@ import { makeApi as api } from '@/lib/http'
 import { getPermissions } from '@/lib/auth'
 import { T } from '@/lib/tokens'
 import { errText, isAuth } from '@/lib/loadError'
-import { nowTime } from '@/lib/dates'
+import { nowTime, fileStamp, todayMsk, monthEnd } from '@/lib/dates'
+import { sanMoney, moneyNum } from '@/lib/money'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { ChainMark, ChainPanel, ForceDeleteDialog } from '@/components/operations/OperationChain'
 import { downloadFile } from '@/lib/download'
 
 const STATUSES = ['ОПЛАЧЕНО', 'ПЛАН ОПЛАТ', 'ПЛАН ПОСТУПЛЕНИЙ']
@@ -42,16 +44,8 @@ const fmt = (n) => (n ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) : '
 // с копейками (для сумм выбранного): всегда 2 знака
 const fmt2 = (n) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0)
 const fmtDate = (d) => { if (!d) return ''; const [y, m, dd] = String(d).slice(0, 10).split('-'); return dd ? `${dd}.${m}.${y.slice(2)}` : d }
-const emptyForm = () => ({ date: new Date().toISOString().slice(0, 10), status: 'ОПЛАЧЕНО', income: '', expense: '', bank: 'АльфаБанк', period: '', vat_rate: 0, article_id: '', counterparty_id: '', ds_num: '', invoice: '', invoice_date: '', description: '', document_link: '' })
+const emptyForm = () => ({ date: todayMsk(), status: 'ОПЛАЧЕНО', income: '', expense: '', bank: 'АльфаБанк', period: '', vat_rate: 0, article_id: '', counterparty_id: '', ds_num: '', invoice: '', invoice_date: '', description: '', document_link: '' })
 
-// Ввод суммы с копейками: цифры + один разделитель (точка/запятая). Храним строкой во
-// время ввода (чтобы курсор не прыгал и можно было набрать копейки), парсим при сохранении.
-const sanMoney = (s) => {
-  s = String(s ?? '').replace(/[^\d.,]/g, '')
-  const i = s.search(/[.,]/)
-  return i === -1 ? s : s.slice(0, i + 1) + s.slice(i + 1).replace(/[.,]/g, '')
-}
-const moneyNum = (v) => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0 }
 
 const CARD = { background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)' }
 const lbl = { fontFamily: MONO, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5, display: 'block' }
@@ -197,7 +191,7 @@ function OpFields({ f, set, articles, counterparties, accent, mode = 'edit',
   // «план оплат/поступлений» — дата и банк пустые (даже при переключении).
   const onStatus = (v) => {
     if (mode !== 'create') return set({ status: v })
-    if (v === 'ОПЛАЧЕНО') set({ status: v, date: f.date || new Date().toISOString().slice(0, 10), bank: f.bank || 'АльфаБанк' })
+    if (v === 'ОПЛАЧЕНО') set({ status: v, date: f.date || todayMsk(), bank: f.bank || 'АльфаБанк' })
     else set({ status: v, date: '', bank: '' })
   }
   // Выбор контрагента подтягивает его статью/НДС по умолчанию — по направлению суммы
@@ -321,6 +315,10 @@ export default function Operations2() {
   const [loading, setLoading] = useState(true)
   // Сбой загрузки. Пустая таблица от сбоя и пустая от фильтра — разные вещи.
   const [err, setErr] = useState('')
+  // Материнская с частичными оплатами удаляется только принудительно, с паролем: сервер
+  // отвечает 409, и здесь открывается подтверждение. { id, message } или null.
+  const [forceDel, setForceDel] = useState(null)
+  const [bulkPwd, setBulkPwd] = useState(null)   // массовое удаление цепочки ждёт пароль
   const [articles, setArticles] = useState([])
   const [counterparties, setCounterparties] = useState([])
   const [periodOptions, setPeriodOptions] = useState([])
@@ -392,11 +390,17 @@ export default function Operations2() {
   // (lib/useRefreshOnReturn, замер 13.09.2026 — финмодуль был пропущен целиком).
   useRefreshOnReturn(() => { if (tok()) loadOps() })
 
+  // Номер запроса: ответ, пришедший после более нового, отбрасывается. Иначе при быстрой
+  // смене фильтров старый ответ ложился поверх свежего, и под новым фильтром висел
+  // список старого (аудит 23.09.2026, 6.M4).
+  const reqNo = useRef(0)
   const loadOps = async () => {
+    const my = ++reqNo.current
     setLoading(true); setErr('')
     try {
       const params = new URLSearchParams({ skip: page * pageSize, limit: pageSize, sort_col: sortCol, sort_dir: sortDir })
       fStatus.forEach(s => params.append('status', s)); fBank.forEach(b => params.append('bank', b))
+      fOpType.forEach(t => params.append('op_type', t))
       fArticle.forEach(id => params.append('article_id', id)); fCp.forEach(id => params.append('counterparty_id', id))
       fPeriod.forEach(p => params.append('period', p)); fGaps.forEach(g => params.append('gaps', g))
       if (dateFrom) params.append('date_from', dateFrom); if (dateTo) params.append('date_to', dateTo)
@@ -404,6 +408,7 @@ export default function Operations2() {
       // Пока она в адресе, остальные фильтры не важны: показывается ровно эта строка.
       if (focusOp) params.append('ids', focusOp)
       const res = await api(tok()).get(`/operations/?${params}`)
+      if (my !== reqNo.current) return
       setOps(res.data?.items || []); setTotal(res.data?.total || 0)
       // Время последней загрузки данных (обновляется при любом изменении — add/edit/delete
       // зовут loadOps). Считаем на клиенте, не при рендере — без SSR-рассинхрона.
@@ -411,14 +416,28 @@ export default function Operations2() {
     } catch (e) {
       // Реестр операций — журнал денег. «Ничего не нашлось» и «не смогли спросить»
       // на нём выглядят одинаково пустой таблицей, и различать их обязан экран.
-      if (!isAuth(e)) setErr(errText(e))
+      if (my === reqNo.current && !isAuth(e)) setErr(errText(e))
     }
-    finally { setLoading(false) }
+    finally { if (my === reqNo.current) setLoading(false) }
   }
-  useEffect(() => { if (tok()) loadOps() }, [page, pageSize, sortCol, sortDir, fStatus, fBank, fArticle, fCp, fPeriod, fGaps, dateFrom, dateTo, focusOp])
+  // Смена ЛЮБОГО фильтра возвращает на первую страницу и снимает выделение. Раньше это
+  // делал только фильтр «Незаполненные»: на третьей странице выбранный статус с сорока
+  // строками запрашивал skip=600 и показывал пустую таблицу при «40 записей», а
+  // выделение переживало фильтр и «Удалить» задевало невидимые строки (6.M1, 6.M2).
+  const filtersKey = JSON.stringify([fStatus, fBank, fArticle, fCp, fPeriod, fOpType, fGaps, dateFrom, dateTo])
+  const lastFilters = useRef(filtersKey)
+  useEffect(() => {
+    if (!tok()) return
+    if (lastFilters.current !== filtersKey) {
+      lastFilters.current = filtersKey
+      setSel({})
+      if (page !== 0) { setPage(0); return }      // загрузку сделает прогон с page = 0
+    }
+    loadOps()
+  }, [page, pageSize, sortCol, sortDir, filtersKey, focusOp])
 
-  // op-type фильтр — клиентски по загруженной странице
-  const rows = ops.filter(o => !fOpType.length || (fOpType.includes('income') && o.income > 0) || (fOpType.includes('expense') && o.expense > 0))
+  // Тип операции фильтрует сервер (op_type), строки приходят уже отобранными.
+  const rows = ops
 
   const onSort = (k) => { if (!k) return; if (sortCol === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortCol(k); setSortDir('desc') }; setPage(0) }
   const resetFilters = () => { setDateFrom(''); setDateTo(''); setFStatus([]); setFBank([]); setFArticle([]); setFCp([]); setFPeriod([]); setFOpType([]); setFGaps([]); setPage(0) }
@@ -464,11 +483,12 @@ export default function Operations2() {
       fStatus.forEach(s => params.append('status', s)); fBank.forEach(b => params.append('bank', b))
       fArticle.forEach(id => params.append('article_id', id)); fCp.forEach(id => params.append('counterparty_id', id))
       fPeriod.forEach(p => params.append('period', p)); fGaps.forEach(g => params.append('gaps', g))
+      fOpType.forEach(t => params.append('op_type', t))
       if (dateFrom) params.append('date_from', dateFrom); if (dateTo) params.append('date_to', dateTo)
       const res = await api(tok()).get(`/operations/export?${params}`, { responseType: 'blob' })
       const url = URL.createObjectURL(new Blob([res.data]))
       const a = document.createElement('a'); a.href = url
-      a.download = `operacii_${new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '')}.xlsx`
+      a.download = `operacii_${fileStamp()}.xlsx`
       a.click(); URL.revokeObjectURL(url)
     } catch (e) { alert('Не удалось выгрузить') }
   }
@@ -534,8 +554,17 @@ export default function Operations2() {
     try { if (id) await api(tok()).put(`/operations/${id}`, b); else await api(tok()).post('/operations/', b); loadOps(); return true }
     catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить'); return false }
   }
-  const mobileDelete = async (id) => { try { await api(tok()).delete(`/operations/${id}`); loadOps() } catch (e) { alert('Не удалось удалить') } }
-  const delOp = async (id) => { if (!window.confirm('Удалить операцию?')) return; try { await api(tok()).delete(`/operations/${id}`); loadOps() } catch (e) { alert('Не удалось удалить') } }
+  // 409 — у операции есть частичные оплаты: удалить можно только принудительно, с
+  // паролем. Остальные отказы показываем текстом сервера, а не общим «не удалось».
+  const deleteOne = async (id) => {
+    try { await api(tok()).delete(`/operations/${id}`); loadOps() }
+    catch (e) {
+      if (e?.response?.status === 409) setForceDel({ id, message: e.response.data?.detail || '' })
+      else alert(e?.response?.data?.detail || 'Не удалось удалить')
+    }
+  }
+  const mobileDelete = (id) => deleteOne(id)
+  const delOp = (id) => { if (!window.confirm('Удалить операцию?')) return; deleteOne(id) }
 
   const selIds = Object.keys(sel).filter(k => sel[k]).map(Number)
   const selRows = rows.filter(o => sel[o.id])
@@ -561,7 +590,19 @@ export default function Operations2() {
     try { await api(tok()).patch('/operations/bulk', body); setSel({}); setBulk({ status: '', date: '', period: '', bank: '', vat_rate: '', article_id: '', counterparty_id: '' }); loadOps() }
     catch (e) { alert(e.response?.data?.detail || 'Не удалось применить') } finally { setSaving(false) }
   }
-  const delBulk = async () => { if (!window.confirm(`Удалить ${selIds.length} операций?`)) return; setSaving(true); try { await api(tok()).delete('/operations/bulk', { data: { ids: selIds } }); setSel({}); loadOps() } catch (e) { alert('Не удалось удалить') } finally { setSaving(false) } }
+  // Цепочка в выделении — сервер отвечает 428 и просит пароль; окно пароля повторяет
+  // тот же запрос с ним (решение владельца 23.09.2026).
+  const bulkDelete = (ids, password) => api(tok()).delete('/operations/bulk', { data: { ids, password } })
+  const delBulk = async () => {
+    if (!window.confirm(`Удалить ${selIds.length} операций?`)) return
+    setSaving(true)
+    try { await bulkDelete(selIds); setSel({}); loadOps() }
+    catch (e) {
+      const d = e?.response?.data?.detail
+      if (e?.response?.status === 428 && d?.need_password) setBulkPwd({ ids: selIds, message: d.message })
+      else alert((typeof d === 'string' && d) || 'Не удалось удалить')
+    } finally { setSaving(false) }
+  }
 
   const pageIncome = rows.reduce((s, o) => s + (o.income || 0), 0)
   const pageExpense = rows.reduce((s, o) => s + (o.expense || 0), 0)
@@ -607,7 +648,10 @@ export default function Operations2() {
       }
       case 'vat': return <span style={{ fontFamily: MONO }}>{o.vat_rate ? o.vat_rate + '%' : <span style={{ color: '#C3C9D8' }}>—</span>}</span>
       case 'vat_amount': return o.vat_fact ? <span title={fmt2(o.vat_fact) + ' ₽'} style={{ fontFamily: MONO }}>{fmt(o.vat_fact)}</span> : <span style={{ color: '#C3C9D8' }}>—</span>
-      case 'ds_num': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.ds_num || '—'}</span>
+      case 'ds_num': return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+        <span style={{ fontFamily: MONO, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.ds_num || '—'}</span>
+        <ChainMark op={o} />
+      </span>
       case 'invoice': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{o.invoice || '—'}</span>
       case 'invoice_date': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{fmtDate(o.invoice_date) || '—'}</span>
       case 'doc': return <DocCell op={o} open={docMenu === o.id}
@@ -655,6 +699,8 @@ export default function Operations2() {
           fPeriod={fPeriod} setFPeriod={setFPeriod} periodOptions={periodOptions}
           resetFilters={resetFilters} pageSize={pageSize} setPageSize={setPageSize}
           onSave={mobileSave} onDelete={mobileDelete} downloadExport={downloadExport} emptyForm={emptyForm} />
+        {forceDel && <ForceDeleteDialog opId={forceDel.id} message={forceDel.message}
+          onClose={() => setForceDel(null)} onDone={() => { setForceDel(null); loadOps() }} />}
       </div>
     )
   }
@@ -665,6 +711,12 @@ export default function Operations2() {
         <title>Операции · Финансы | SIMB-AD ERP</title>
       </Head>
       <Navbar active="operations" />
+      {forceDel && <ForceDeleteDialog opId={forceDel.id} message={forceDel.message}
+        onClose={() => setForceDel(null)} onDone={() => { setForceDel(null); loadOps() }} />}
+      {bulkPwd && <ForceDeleteDialog message={bulkPwd.message}
+        title={`Удалить ${bulkPwd.ids.length} операций?`} confirmLabel="Удалить с цепочкой"
+        submit={pwd => bulkDelete(bulkPwd.ids, pwd)}
+        onClose={() => setBulkPwd(null)} onDone={() => { setBulkPwd(null); setSel({}); loadOps() }} />}
       <style>{`
         @keyframes opRise { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
         .op-row:hover { background: var(--bg-subtle) !important; }
@@ -713,7 +765,7 @@ export default function Operations2() {
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border-card)', borderRadius: 10, padding: '7px 10px', fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>
               <input type="month" value={dateFrom.slice(0, 7)} onChange={e => setDateFrom(e.target.value ? e.target.value + '-01' : '')} style={{ border: 'none', outline: 'none', fontFamily: MONO, fontSize: 11, width: 92, background: 'transparent' }} />
               <span style={{ color: '#C3C9D8' }}>—</span>
-              <input type="month" value={dateTo.slice(0, 7)} onChange={e => setDateTo(e.target.value ? e.target.value + '-28' : '')} style={{ border: 'none', outline: 'none', fontFamily: MONO, fontSize: 11, width: 92, background: 'transparent' }} />
+              <input type="month" value={dateTo.slice(0, 7)} onChange={e => setDateTo(e.target.value ? monthEnd(e.target.value) : '')} style={{ border: 'none', outline: 'none', fontFamily: MONO, fontSize: 11, width: 92, background: 'transparent' }} />
             </span>
             <MultiDrop label="Статус" options={STATUSES.map(s => ({ value: s, label: s }))} selected={fStatus} onChange={setFStatus} />
             <MultiDrop label="Банк" options={BANKS.map(b => ({ value: b, label: b }))} selected={fBank} onChange={setFBank} />
@@ -829,6 +881,11 @@ export default function Operations2() {
                             files={editFiles} busyFiles={filesBusy}
                             onAttach={list => attachToExisting(editing.id, list)}
                             onRemoveFile={fl => removeFromExisting(editing.id, fl)} />
+                          {/* Цепочка частичных оплат и «Частичная оплата» у плановой. Строится по
+                              СОХРАНЁННОЙ операции (o), а не по черновику формы: делит сервер, и
+                              делит то, что лежит в базе. */}
+                          <ChainPanel op={o} canEdit={canEdit} banks={BANKS}
+                            onChanged={() => { setEditing(null); loadOps() }} />
                           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
                             <span style={{ fontSize: 12, color: 'var(--text-faint)', flex: 1 }}>поля, отмеченные «необяз.», можно оставить пустыми</span>
                             <button onClick={saveEdit} disabled={saving} style={{ background: 'var(--dot-current-dz)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Сохранить изменения</button>

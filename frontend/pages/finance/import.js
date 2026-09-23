@@ -7,6 +7,7 @@ import { getPermissions, can } from '@/lib/auth'
 import { firstAllowedHref } from '@/lib/nav'
 import DiadocImport from '@/components/DiadocImport'
 import { card, btn, inp, CAP, MONO, UI } from '@/components/salesTableKit'
+import { fmtFull, fmtDateShort } from '@/lib/salesFormat'
 
 const FIELD_LABELS = {
   date: 'Дата', status: 'Статус', income: 'Доход', expense: 'Расход', bank: 'Банк',
@@ -212,6 +213,9 @@ export default function Import() {
                 <div style={{padding:'8px 12px',borderRadius:'8px',background:'#dcfce7',color:'var(--success)'}}>Новых: {preview.summary.new}</div>
                 <div style={{padding:'8px 12px',borderRadius:'8px',background:'#fef9c3',color:'#854d0e'}}>Конфликтов: {preview.summary.conflict}</div>
                 <div style={{padding:'8px 12px',borderRadius:'8px',background:'var(--bg)',color:'var(--muted)'}}>Без изменений: {preview.summary.unchanged}</div>
+                {!!preview.summary.ambiguous && (
+                  <div style={{padding:'8px 12px',borderRadius:'8px',background:'var(--danger-tint)',color:'var(--danger)'}}>Неоднозначных: {preview.summary.ambiguous}</div>
+                )}
               </div>
 
               {preview.conflicts.length > 0 && (
@@ -262,6 +266,40 @@ export default function Import() {
                         ]))}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+              )}
+
+              {/* НЕОДНОЗНАЧНЫЕ: у строки несколько подходящих операций с теми же номерами и
+                  контрагентом, и ни ID из выгрузки, ни сумма со статусом не указали на одну.
+                  Такие строки НЕ применяются: выбрать за человека значит однажды переписать
+                  чужую оплату из цепочки. Решение — вернуть в файл колонку ID из выгрузки
+                  или поправить операцию вручную (аудит 23.09.2026, 2.H1). */}
+              {(preview.ambiguous || []).length > 0 && (
+                <div style={{marginBottom:'24px'}}>
+                  <div style={{fontWeight:'500',fontSize:'15px',marginBottom:'4px'}}>
+                    Неоднозначные строки ({preview.ambiguous.length}) — не применятся
+                  </div>
+                  <div style={{fontSize:'13px',color:'var(--text-muted)',marginBottom:'8px'}}>
+                    Операция с теми же № ДС и Счётом есть, но выбрать её однозначно нельзя: подходящих
+                    несколько или контрагент в файле написан иначе. Верните в файл колонку ID из выгрузки,
+                    впишите ИНН или поправьте нужную операцию вручную.
+                  </div>
+                  <div style={{border:'1px solid var(--border)',borderRadius:'8px',overflow:'hidden'}}>
+                    {preview.ambiguous.map((a, i) => (
+                      <div key={i} style={{padding:'10px 12px',borderBottom:'1px solid var(--border)',fontSize:'13px'}}>
+                        <div style={{fontWeight:600,marginBottom:4}}>
+                          Строка файла: № ДС «{a.incoming.ds_num}» / счёт «{a.incoming.invoice}» · {a.incoming.counterparty || '—'} ·{' '}
+                          <span style={{fontFamily:MONO}}>{fmtFull(a.incoming.income || a.incoming.expense)}</span> · {a.incoming.status}
+                        </div>
+                        <div style={{color:'var(--text-muted)'}}>Подходят операции:</div>
+                        {a.candidates.map(c => (
+                          <div key={c.id} style={{fontFamily:MONO,fontSize:'12.5px',paddingLeft:12}}>
+                            #{c.id} · {fmtDateShort(c.date)} · {c.counterparty || '—'} · {c.status} · {fmtFull(c.income || c.expense)}{c.bank ? ` · ${c.bank}` : ''}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

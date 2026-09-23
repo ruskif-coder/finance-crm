@@ -9,6 +9,7 @@ import { makeApi as api } from '@/lib/http'
 import { getPermissions } from '@/lib/auth'
 import { grp0 as fmt } from '@/lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { fileStamp } from '@/lib/dates'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -166,7 +167,7 @@ export default function Receivables() {
       const res = await api(token).get(`/reports/receivables/export${qs ? '?' + qs : ''}`, { responseType: 'blob' })
       const url = window.URL.createObjectURL(new Blob([res.data]))
       const a = document.createElement('a'); a.href = url
-      a.download = `debitorka_${new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '')}.xlsx`
+      a.download = `debitorka_${fileStamp()}.xlsx`
       document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url)
     } catch (e) { /* тихо */ }
   }

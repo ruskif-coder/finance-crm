@@ -338,12 +338,20 @@ export default function DashboardV2() {
     if (token) loadDds(token)
   }, [dateFrom, dateTo, selectedBank, groupBy])
 
+  // Адрес среза ДДС — ОДИН на оба запроса. `loadAll` (первый показ и возврат на вкладку)
+  // собирал его сам и забывал банк: после возврата переключатель стоял на «АльфаБанк», а
+  // график и кассовые разрывы были уже по всем банкам (аудит 23.09.2026, 6.H7).
+  const ddsUrl = () => {
+    const bank = selectedBank !== 'all' ? `&bank=${encodeURIComponent(selectedBank)}` : ''
+    return `/reports/dds?date_from=${dateFrom}&date_to=${dateTo}${bank}&group_by=${groupBy}`
+  }
+
   const loadAll = async (token) => {
     setLoading(true); setErr('')
     try {
       const a = api(token)
       const [d, s] = await Promise.all([
-        a.get(`/reports/dds?date_from=${dateFrom}&date_to=${dateTo}&group_by=${groupBy}`),
+        a.get(ddsUrl()),
         a.get('/reports/dds/summary'),
       ])
       setDdsData(d.data || { periods: [] })
@@ -364,8 +372,7 @@ export default function DashboardV2() {
       // монтировании. Один сбой фильтра — и красная полоса висела до конца сессии
       // поверх заведомо свежих цифр. Ложная тревога на экране денег приучает не
       // смотреть на полосу вовсе, то есть съедает сам прибор (найдено 11.09.2026).
-      const bankParam = selectedBank !== 'all' ? `&bank=${selectedBank}` : ''
-      const res = await a.get(`/reports/dds?date_from=${dateFrom}&date_to=${dateTo}${bankParam}&group_by=${groupBy}`)
+      const res = await a.get(ddsUrl())
       setDdsData(res.data || { periods: [] })
       setErr('')
     } catch (e) {

@@ -19,7 +19,7 @@ import { overlayClose } from '@/lib/overlay'
 import StageRequirements from '@/components/sales/StageRequirements'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { downloadFile } from '@/lib/download'
-import { fmtDateTime } from '@/lib/dates'
+import { fmtDateTime, todayMsk } from '@/lib/dates'
 const DealCardList = dynamic(() => import('@/components/mobile/DealCardList'), { ssr: false })
 const DealsMobileControls = dynamic(() => import('@/components/sales/DealsMobileControls'), { ssr: false })
 const BottomSheet = dynamic(() => import('@/components/mobile/BottomSheet'), { ssr: false })
@@ -54,7 +54,10 @@ export default function SalesRegistry2() {
   // права под конкретные действия (бэк требует разные секции)
   const canDirAg = can(perms, 'dir_agencies', 'edit')
   const canDirAdv = can(perms, 'dir_advertisers', 'edit')
-  const isAdmin = typeof window !== 'undefined' && localStorage.getItem('role') === 'admin'
+  // Роль читается В ЭФФЕКТЕ, а не при рендере: на сервере localStorage нет, и кнопки админа
+  // рисовались на клиенте иначе, чем в разметке сервера (аудит 23.09.2026, 7.L3).
+  const [isAdmin, setIsAdmin] = useState(false)
+  useEffect(() => { try { setIsAdmin(localStorage.getItem('role') === 'admin') } catch (e) { setIsAdmin(false) } }, [])
 
   const [deals, setDeals] = useState([])
   const [dealsTotal, setDealsTotal] = useState(0)
@@ -183,7 +186,7 @@ export default function SalesRegistry2() {
     const lines = deals.map(d => [d.code || d.bitrix_id, d.agency, d.advertiser, d.brand, d.product, d.period, d.bitrix_stage, d.amount, d.account_manager, d.payer, d.money_layer, d.title].map(esc).join(';'))
     const csv = '﻿' + head.map(esc).join(';') + '\n' + lines.join('\n')
     const url = window.URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
-    const a = document.createElement('a'); a.href = url; a.download = `deals_${new Date().toISOString().slice(0, 10)}.csv`
+    const a = document.createElement('a'); a.href = url; a.download = `deals_${todayMsk()}.csv`
     document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url)
   }
 
@@ -242,6 +245,9 @@ export default function SalesRegistry2() {
 
   // фильтры/сортировка → перезагрузка с 1-й страницы (дебаунс 300 мс)
   useEffect(() => { const t = setTimeout(() => load(0), 300); return () => clearTimeout(t) }, [sel, gaps, hideArchive, onlyPlanned, searchQ, dateFrom, dateTo, sortKey, sortDir])
+  // Смена фильтра, поиска или страницы снимает выделение: иначе «Удалить» и массовая правка
+  // задевали сделки, которых на экране уже нет (аудит 23.09.2026, 7.M2).
+  useEffect(() => { setSelDeals({}) }, [sel, gaps, hideArchive, onlyPlanned, searchQ, dateFrom, dateTo])
 
   // Диплинк из справочника (счётчик сделок): ?producer_id / ?agency_id — ставим фильтр
   // и показываем в т.ч. архивные (иначе часть сделок не видна). producer_id вместо
@@ -776,10 +782,24 @@ export default function SalesRegistry2() {
                         {bsel('account_manager_id', 'account_manager_id', 'аккаунт —')}
                       </>
                     })()}
+                    {/* Выбранная стадия фиксирует медиаплан — предупреждаем до «Применить».
+                        Признак и текст приходят с сервера (/sales/filters): правило стадий
+                        живёт в backend/app/sales/plan_lock.py, здесь его не повторяем. */}
+                    {(() => {
+                      const st = (fopts.our_stage_id || []).find(o => String(o.value) === String(bulkForm.our_stage_id))
+                      if (!st || !st.locks_plan || !fopts.plan_lock_notice) return null
+                      return (
+                        <span role="note" style={{ flexBasis: '100%', fontSize: 12.5, lineHeight: 1.4, color: 'var(--text-primary)', background: 'var(--warning-tint)', border: '1px solid var(--warning-border)', borderRadius: 8, padding: '7px 10px' }}>
+                          <b style={{ color: 'var(--warning-fg)' }}>!</b> {fopts.plan_lock_notice}
+                        </span>
+                      )
+                    })()}
                     <button onClick={applyBulk} disabled={saving} style={{ ...btnAcc, flexShrink: 0 }}>Применить</button>
                     <button onClick={syncBulk} disabled={saving} title="Синхронизировать выбранные из Битрикса (до 50 за раз)" style={{ ...btnSec, color: 'var(--accent)', borderColor: 'var(--accent)', flexShrink: 0 }}>{saving ? '…' : `⟳ Синхронизировать`}</button>
                     {selDealIds.length > 25 && <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', flexShrink: 0 }} title="Каждая сделка ≈ 6 сек">выбрано {selDealIds.length} — займёт ≈ {Math.ceil(selDealIds.length * 6 / 60)} мин</span>}
-                    <button onClick={deleteBulk} disabled={saving} style={{ ...btnSec, color: 'var(--danger)', flexShrink: 0 }}>Удалить</button>
+                    {/* Удаление сделок — только админу (решение владельца 23.09.2026); сервер
+                        отказывает остальным сам, здесь лишь не показываем недоступное. */}
+                    {isAdmin && <button onClick={deleteBulk} disabled={saving} style={{ ...btnSec, color: 'var(--danger)', flexShrink: 0 }}>Удалить</button>}
                     <button onClick={() => setSelDeals({})} style={{ ...btnSec, flexShrink: 0 }}>Сбросить</button>
                   </div>
                 )}
@@ -889,9 +909,9 @@ export default function SalesRegistry2() {
 
                   {/* подвал */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', paddingTop: 14, borderTop: '1px solid var(--border-inner)', fontSize: 12, color: 'var(--text-muted)' }}>
-                    <button onClick={() => load(Math.max(0, offset - pageSize))} disabled={offset === 0} style={{ ...btnSec, padding: '5px 11px', opacity: offset === 0 ? 0.5 : 1 }}>← Назад</button>
+                    <button onClick={() => { setSelDeals({}); load(Math.max(0, offset - pageSize)) }} disabled={offset === 0} style={{ ...btnSec, padding: '5px 11px', opacity: offset === 0 ? 0.5 : 1 }}>← Назад</button>
                     <span>{dealsTotal ? `${offset + 1}–${Math.min(offset + pageSize, dealsTotal)} из ${dealsTotal}` : '0'}</span>
-                    <button onClick={() => load(offset + pageSize)} disabled={offset + pageSize >= dealsTotal} style={{ ...btnSec, padding: '5px 11px', opacity: offset + pageSize >= dealsTotal ? 0.5 : 1 }}>Вперёд →</button>
+                    <button onClick={() => { setSelDeals({}); load(offset + pageSize) }} disabled={offset + pageSize >= dealsTotal} style={{ ...btnSec, padding: '5px 11px', opacity: offset + pageSize >= dealsTotal ? 0.5 : 1 }}>Вперёд →</button>
                     <span style={{ display: 'inline-flex', gap: 14, flexWrap: 'wrap' }}>
                       {[['фактические', 'var(--income)'], ['реализуемые', 'var(--dot-current-dz)'], ['планируемые', 'var(--text-faint)']].map(([l, c]) => (
                         <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: c }} />{l}</span>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
@@ -66,12 +66,19 @@ export default function YearPlanPage() {
   const [year, setYear] = useState(CUR_YEAR)
   const [view, setView] = useState(null)        // null=свой | number=сейлз | 'all'=показать все
   const [groups, setGroups] = useState([])
+  // Для какого «год|вид» план ДЕЙСТВИТЕЛЬНО загружен, и чем кончилась последняя загрузка.
+  // Сохранение разрешено только поверх загруженного плана: экран глотал ошибку загрузки и
+  // показывал пустоту, а «Сохранить» стирал все строки сейлза за год (аудит 23.09.2026, 7.H1).
+  const [loadedFor, setLoadedFor] = useState(null)
+  const [loadErr, setLoadErr] = useState('')
+  const reqNo = useRef(0)
   const [advertisers, setAdvertisers] = useState([])
   const [services, setServices] = useState([])
   const [addons, setAddons] = useState([])
   const [briefCatalogs, setBriefCatalogs] = useState({})
   const [years, setYears] = useState([])
   const [me, setMe] = useState({ is_master: false, rep_id: null, own_rep_id: null })
+  const [yearVat, setYearVat] = useState(null)   // ставка НДС года — с сервера
   const [reps, setReps] = useState([])
   const [allData, setAllData] = useState([])
   const [loading, setLoading] = useState(true)
@@ -116,7 +123,12 @@ export default function YearPlanPage() {
       return
     }
     const q = typeof v === 'number' ? `&rep_id=${v}` : ''
+    // Номер запроса: ответ по сейлзу A, пришедший после переключения на B, не ложится
+    // на экран B — иначе строки A сохранились бы в план B, а строки B удалились.
+    const my = ++reqNo.current
+    if (!silent) setLoadedFor(null)
     api.get(`/sales/year-plan?year=${y}${q}`, auth()).then(r => {
+      if (my !== reqNo.current) return
       // Тихая перечитка ушла, пока правок не было, а человек начал править, пока шёл
       // запрос: ответ лёг бы поверх. Проверяем в момент ответа, а не только в момент
       // возврата на вкладку.
@@ -127,8 +139,20 @@ export default function YearPlanPage() {
       setAddons(r.data.catalog?.addons || [])
       setGroups(linesToGroups(r.data.lines || [], advs))
       setMe(r.data.me || { is_master: false, rep_id: null, own_rep_id: null })
+      setYearVat(r.data.vat_rate ?? null)
       setReps(r.data.reps || [])
-    }).catch(() => { setGroups([]) }).finally(() => setLoading(false))
+      setLoadErr('')
+      setLoadedFor(`${y}|${v}`)
+    }).catch(e => {
+      if (my !== reqNo.current) return
+      // Тихая перечитка не удалась — на экране остаётся загруженный план, он по-прежнему
+      // верен; стирать его из-за сбоя фонового запроса нельзя.
+      if (silent) return
+      // Пустой список больше не выдаётся за «плана нет»: это сбой, и он виден.
+      setGroups([])
+      setLoadedFor(null)
+      setLoadErr(e?.response?.data?.detail || 'План не загрузился — сохранение заблокировано, чтобы не стереть строки. Обновите страницу.')
+    }).finally(() => { if (my === reqNo.current) setLoading(false) })
   }, [])
 
   useEffect(() => { if (perms) load(year, view) }, [perms, year, view, load])
@@ -150,18 +174,37 @@ export default function YearPlanPage() {
     ]).then(() => setBriefCatalogs(g))
   }, [perms])
 
-  // сейлз для записи: явно выбранный сейлз, иначе свой (бэк сам прижмёт не-мастера)
-  const saveRepId = typeof view === 'number' ? view : (me.own_rep_id ?? null)
+  // Зона плана для ВСЕХ запросов — ровно та, с которой план загружен: явно выбранный
+  // сейлз, иначе пусто («свои» — сервер сам соберёт все профили учётки). До 23.09.2026
+  // здесь уходил `own_rep_id` — первый профиль, и у человека с двумя профилями (продаёт
+  // и ведёт аккаунт) строки второго сервер считал чужими: сохранить план было нельзя, а
+  // генерация сделок молча обходила половину строк.
+  const scopeRepId = typeof view === 'number' ? view : null
+  // Есть ли вообще, в чей план писать: у мастера без своего профиля (админ) «своего» нет.
+  const canWriteOwn = typeof view === 'number' || me.own_rep_id != null
 
   const onSave = useCallback(async (curGroups) => {
     // у мастера без своего SalesRep (напр. админ) нет «своего» плана — нужен явный выбор сейлза
-    if (saveRepId == null) {
+    if (!canWriteOwn) {
       alert('Выберите сейлза в шапке (в чей план сохранять) — у вашей учётки нет собственного плана.')
       return
     }
+    // Сохранять можно только поверх ЗАГРУЖЕННОГО плана этого года и этого вида: список,
+    // полученный не с сервера, при сохранении удалил бы всё, чего в нём нет.
+    if (loadedFor !== `${year}|${view}`) {
+      alert('План не загрузился — сохранение заблокировано, чтобы не стереть строки. Обновите страницу.')
+      return
+    }
+    const lines = groupsToLines(curGroups)
+    // Номер загрузки на момент отправки: если, пока шло сохранение, человек переключил
+    // год или сейлза, ответ относится к ДРУГОМУ плану и на экран не ложится (ревью 23.09.2026).
+    const sentFor = reqNo.current
     setSaving(true)
     try {
-      const r = await api.post('/sales/year-plan', { year, rep_id: saveRepId, lines: groupsToLines(curGroups) }, auth())
+      // confirm_empty — человек сам убрал все строки: сервер без этого флага пустой список
+      // при непустом плане отклоняет.
+      const r = await api.post('/sales/year-plan', { year, rep_id: scopeRepId, lines, confirm_empty: lines.length === 0 }, auth())
+      if (sentFor !== reqNo.current) return
       setGroups(linesToGroups(r.data.lines || [], advertisers))
       setSavedAt(nowTime())
       api.get('/sales/year-plan/years', auth()).then(r2 => setYears(r2.data.years || [])).catch(() => {})
@@ -171,7 +214,7 @@ export default function YearPlanPage() {
       alert(d ? `Ошибка сохранения: ${typeof d === 'string' ? d : JSON.stringify(d)}` : `Не удалось сохранить (${e.response?.status || e.message || 'нет ответа от сервера'})`)
     }
     finally { setSaving(false) }
-  }, [year, advertisers, saveRepId])
+  }, [year, view, advertisers, scopeRepId, canWriteOwn, loadedFor])
 
   const onAddTargeting = useCallback(async (group, value) => {
     try {
@@ -182,17 +225,17 @@ export default function YearPlanPage() {
   }, [])
 
   const onConveyorPreview = useCallback(async (target) => {
-    const r = await api.post('/sales/year-plan/create-deals/preview', { year, rep_id: saveRepId, ...target }, auth())
+    const r = await api.post('/sales/year-plan/create-deals/preview', { year, rep_id: scopeRepId, ...target }, auth())
     return r.data
-  }, [year, saveRepId])
+  }, [year, scopeRepId])
 
   const onConveyorApply = useCallback(async (target) => {
-    const r = await api.post('/sales/year-plan/create-deals', { year, rep_id: saveRepId, ...target }, auth())
+    const r = await api.post('/sales/year-plan/create-deals', { year, rep_id: scopeRepId, ...target }, auth())
     // подтянуть факт/бронь по жёсткому линку и перезагрузить план, чтобы сделки появились в ячейках
-    try { await api.post('/sales/year-plan/match-deals', { year, rep_id: saveRepId }, auth()) } catch {}
+    try { await api.post('/sales/year-plan/match-deals', { year, rep_id: scopeRepId }, auth()) } catch {}
     load(year, view)
     return r.data
-  }, [year, saveRepId, view, load])
+  }, [year, scopeRepId, view, load])
 
   // Годовой МП в Excel: книга целиком собирается на бэке (сводная + бриф + месяцы).
   // Единица выгрузки — рекламодатель со всеми брендами, как он показан на странице:
@@ -228,12 +271,12 @@ export default function YearPlanPage() {
     if (!pairs.length) { alert('Нет заведённых строк для сверки со сделками'); return null }
     setMatching(true)
     try {
-      const r = await api.post('/sales/year-plan/match-deals', { year, rep_id: saveRepId, pairs }, auth())
+      const r = await api.post('/sales/year-plan/match-deals', { year, rep_id: scopeRepId, pairs }, auth())
       if (!(r.data.deals_count || 0)) alert('Сделок под заведённые планы не найдено')
       return r.data.matched || []
     } catch (e) { alert(e.response?.data?.detail || 'Ошибка сверки'); return null }
     finally { setMatching(false) }
-  }, [year, saveRepId])
+  }, [year, scopeRepId])
 
   if (isMobile) return (<><Navbar /><NotOnMobile title="Годовой план" backHref="/sales" backLabel="К продажам" /></>)
 
@@ -246,6 +289,14 @@ export default function YearPlanPage() {
       <Head><title>Годовой план {year} · Продажи | SIMB-AD ERP</title></Head>
       <Navbar />
       <div style={{ background: 'var(--bg-canvas)', minHeight: 'calc(100vh - 56px)' }}>
+        {!!loadErr && !loading && (
+          <div role="alert" style={{ margin: '16px 24px 0', padding: '10px 14px', borderRadius: 10,
+            background: 'var(--danger-tint)', border: '1px solid var(--danger-border)',
+            color: 'var(--danger)', fontSize: 13, fontFamily: 'Manrope, sans-serif' }}>
+            {loadErr}{' '}
+            <button type="button" onClick={() => load(year, view)} style={{ marginLeft: 8, border: '1px solid var(--danger-border)', background: 'var(--bg-card)', color: 'var(--danger)', borderRadius: 8, padding: '4px 10px', cursor: 'pointer', fontSize: 12.5 }}>Повторить</button>
+          </div>
+        )}
         {loading
           ? <div style={{ padding: 40, fontFamily: 'Manrope, sans-serif', color: 'var(--text-muted)' }}>Загрузка…</div>
           : <YearPlan
@@ -254,7 +305,7 @@ export default function YearPlanPage() {
               onSave={onSave} onMatch={onMatch} saving={saving} matching={matching}
               savedAt={savedAt} readOnly={!canEdit || allMode}
               reps={reps} repValue={me.rep_id} onRep={setView}
-              ownRepId={me.own_rep_id} isMaster={me.is_master}
+              ownRepId={me.own_rep_id} isMaster={me.is_master} vatPct={yearVat}
               mode={allMode ? 'all' : 'edit'} allData={allData}
               onVerifyPassword={onVerifyPassword} onAddTargeting={onAddTargeting}
               onConveyorPreview={onConveyorPreview} onConveyorApply={onConveyorApply}

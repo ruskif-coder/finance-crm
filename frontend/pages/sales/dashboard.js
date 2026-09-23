@@ -22,6 +22,7 @@ import NotificationsWidget, { NotificationsSlot, toItem } from '@/components/das
 import { overlayClose } from '@/lib/overlay'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { downloadFile } from '@/lib/download'
+import { todayMsk } from '@/lib/dates'
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 // Светофор вероятности сделки (наша ручная разметка): цвет лампы по вероятности.
@@ -189,7 +190,7 @@ export default function SalesDashboard2() {
     const lines = deals.map(d => [d.code || d.bitrix_id, d.agency, d.advertiser, d.brand, d.product, d.period, d.bitrix_stage, d.amount, d.account_manager, d.payer, d.money_layer, d.title].map(esc).join(';'))
     const csv = '﻿' + head.map(esc).join(';') + '\n' + lines.join('\n')
     const url = window.URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
-    const a = document.createElement('a'); a.href = url; a.download = `deals_${new Date().toISOString().slice(0, 10)}.csv`
+    const a = document.createElement('a'); a.href = url; a.download = `deals_${todayMsk()}.csv`
     document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url)
   }
 

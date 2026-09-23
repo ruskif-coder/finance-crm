@@ -201,6 +201,21 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
           </div>
         )}
 
+        {/* Переход ФИКСИРУЕТ медиаплан (Бронь → Сборка) — говорим до нажатия, а не после:
+            узнать об этом на отказе при сохранении плана значит потерять правку. Текст и
+            условие приходят с сервера (`plan_lock_notice`), своей проверки стадий здесь
+            нет — решение владельца 23.09.2026, backend/app/sales/plan_lock.py. */}
+        {!reqBusy && req?.plan_lock_notice && (
+          <div role="note" style={{
+            marginBottom: 14, borderRadius: 10, padding: '11px 12px', display: 'flex', gap: 10,
+            background: 'var(--warning-tint)', border: '1px solid var(--warning-border)',
+            color: 'var(--text-primary)', fontSize: 13, lineHeight: 1.45,
+          }}>
+            <span aria-hidden style={{ color: 'var(--warning-fg)', fontWeight: 700 }}>!</span>
+            <span>{req.plan_lock_notice}</span>
+          </div>
+        )}
+
         {/* Обход — только мастеру и только с причиной. Она уйдёт в историю движения
             отдельной пометкой: «в обход требований» должно быть видно потом. */}
         {locked && req?.can_override && (

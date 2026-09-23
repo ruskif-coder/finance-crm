@@ -5,7 +5,6 @@ import { overlayClose } from '@/lib/overlay'
 import { buildTitle, separatePriceSet, SURFACE_TAG } from '@/lib/dealTitle'
 import { GenTitleBtn } from './salesTableKit'
 
-const VAT = 1.22
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
 
@@ -87,8 +86,13 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
   const isMobile = useIsMobile()
   const set = (k, v) => setF(p => ({ ...p, [k]: v }))
 
+  // Ставка НОВОГО расчёта — с сервера (`vat_current` юрлица), а не константой: до ревью
+  // 23.09.2026 здесь стояли зашитые 22 %. Пока ставка не пришла, вторая сумма не
+  // досчитывается — её досчитает сервер той же ставкой.
+  const [vatPct, setVatPct] = useState(null)
   useEffect(() => {
     if (!open) return
+    api.get('/sales/own-company', auth()).then(r => setVatPct(r.data?.vat_current ?? null)).catch(() => {})
     api.get('/sales/filters', auth()).then(r => setOpts(r.data || {})).catch(() => {})
     api.get('/sales/directories/services?only_active=true', auth()).then(r => setServices(r.data.items || [])).catch(() => {})
     api.get('/sales/directories/pipelines', auth()).then(r => {
@@ -131,8 +135,10 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
 
   const onAmount = (withVat, v) => {
     const n = parseFloat(String(v).replace(',', '.'))
-    if (withVat) setF(p => ({ ...p, amount_with_vat: v, amount: isNaN(n) ? '' : (n / VAT).toFixed(2) }))
-    else setF(p => ({ ...p, amount: v, amount_with_vat: isNaN(n) ? '' : (n * VAT).toFixed(2) }))
+    const mult = vatPct != null ? 1 + vatPct / 100 : null
+    const other = (x) => (isNaN(n) || mult == null ? '' : x.toFixed(2))
+    if (withVat) setF(p => ({ ...p, amount_with_vat: v, amount: other(n / mult) }))
+    else setF(p => ({ ...p, amount: v, amount_with_vat: other(n * mult) }))
   }
 
   /* Имя собирает общий модуль (lib/dealTitle.js): та же логика в реестрах, на карточке
@@ -314,7 +320,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
               background: canSubmit ? 'var(--accent)' : 'var(--accent-tint)', color: canSubmit ? '#fff' : '#A9B6F2', cursor: canSubmit ? 'pointer' : 'not-allowed' }}>
             {busy ? 'Создание…' : 'Создать сделку'}</button>
           <button onClick={onClose} style={{ padding: '9px 16px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-primary)', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Отмена</button>
-          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>суммы пересчитываются в обе стороны по НДС 22% · обязательны: рекламодатель, услуга, период, сумма</span>
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>суммы пересчитываются в обе стороны по НДС {vatPct ?? '…'}% · обязательны: рекламодатель, услуга, период, сумма</span>
         </div>
       </div>
     </div>

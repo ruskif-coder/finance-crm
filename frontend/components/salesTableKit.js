@@ -196,6 +196,9 @@ export function DealCodeLink({ deal, size = 12, emptyLabel }) {
   )
 }
 
+// Дашборд аккаунта фильтрует по этим полям НА ФРОНТЕ (`!r[поле]`), значит каждое
+// обязано приходить в строке очереди. Новая метка → строка в
+// backend/tests/test_account_queue_gap_fields.py (GAP_KEYS).
 export const GAP_FIELDS = [
   { value: 'advertiser_id', label: 'без рекламодателя' }, { value: 'brand_id', label: 'без бренда' },
   { value: 'agency_id', label: 'без агентства' }, { value: 'sales_rep_id', label: 'без сейлза' }, { value: 'account_manager_id', label: 'без аккаунта' },

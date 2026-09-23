@@ -11,7 +11,7 @@ import { T } from '@/lib/tokens'
 import SectionTabs from '@/components/SectionTabs'
 import { COOPERATION_FORMATS, PAYMENT_TERM_CONDITIONS, PROLONGATION_OPTIONS } from '@/lib/contractTerms'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
-import { fmtDate as fmtCalendarDate } from '@/lib/dates'
+import { fmtDate as fmtCalendarDate, fileStamp } from '@/lib/dates'
 
 
 const fmtDate = (s) => fmtCalendarDate(s)
@@ -190,6 +190,9 @@ export default function Contracts() {
   const [editError, setEditError] = useState('')
 
   const [selectedIds, setSelectedIds] = useState([])
+  // Смена поиска или фильтра снимает выделение: иначе «Удалить» и массовая правка задевали
+  // договоры, которых на экране уже нет (аудит 23.09.2026, 6.M2).
+  useEffect(() => { setSelectedIds([]) }, [search, formatFilter, prolongFilter, ordFilter])
   const [bulkFormat, setBulkFormat] = useState('')
   const [bulkProlong, setBulkProlong] = useState('')
   const [bulkDays, setBulkDays] = useState('')
@@ -320,7 +323,7 @@ export default function Contracts() {
       const res = await api.get('/contracts/export', { responseType: 'blob', ...auth() })
       const url = window.URL.createObjectURL(new Blob([res.data]))
       const a = document.createElement('a'); a.href = url
-      a.download = `dogovory_${new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '')}.xlsx`
+      a.download = `dogovory_${fileStamp()}.xlsx`
       document.body.appendChild(a); a.click(); a.remove()
       window.URL.revokeObjectURL(url)
     } catch { alert('Не удалось скачать файл') }

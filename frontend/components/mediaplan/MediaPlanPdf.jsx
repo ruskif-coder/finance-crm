@@ -14,7 +14,6 @@ export const T = {
   accent: '#4F6CE6', income: '#2FA37C',
   mono: "'JetBrains Mono', monospace", sans: "'Manrope', system-ui, sans-serif",
 };
-const VAT = 0.22;
 
 /* ── формат чисел ───────────────────────────────────────────────────── */
 const num = v => Math.round(v || 0).toLocaleString('ru-RU');
@@ -71,7 +70,12 @@ const N = ({ children, size = 9.5, color = T.t1, bold, align = 'right' }) => (
    ДОКУМЕНТ
    ══════════════════════════════════════════════════════════════════════ */
 export default function MediaPlanPdf({ data = SAMPLE }) {
-  const { header, placements, extras, targeting, notes, aggRules, bonusNote, params, placementMeta, goals = {} } = data;
+  const { header, placements, extras, targeting, notes, aggRules, bonusNote, params, placementMeta, goals = {}, vatPct } = data;
+  // Ставка НДС — ставка ЭТОЙ версии плана (sales_media_plans.vat_rate), а не текущая:
+  // план, посчитанный по 20 % до 2026 года, печатается по 20 %. До 23.09.2026 здесь
+  // стояли зашитые 22 %, и PDF расходился с конструктором и со сделкой.
+  const VAT = vatPct / 100;
+  const vatLabel = `${String(vatPct).replace('.', ',')} %`;
   // Блок целевых показывается, если задан хоть один KPI; внутри — все 5, пустые → «не задано».
   const hasGoals = GOALS_META.some(([k]) => (goals[k] ?? '').toString().trim() !== '');
 
@@ -110,7 +114,7 @@ export default function MediaPlanPdf({ data = SAMPLE }) {
 
   const kpi = [
     { label: 'Стоимость до НДС', value: rub(grandNet), hint: `${placements.length} строки размещения + доп. услуги`, color: T.t1 },
-    { label: 'НДС 22 %', value: rub(grandNet * VAT), hint: 'ставка 22 %', color: T.t3 },
+    { label: `НДС ${vatLabel}`, value: rub(grandNet * VAT), hint: `ставка ${vatLabel}`, color: T.t3 },
     { label: 'Стоимость с НДС', value: rub(grandNet * (1 + VAT)), hint: 'к оплате', color: T.accent },
     { label: 'Показы', value: num(tImp), hint: `CPM ${dec(sd(tNet, tImp) * 1000)} ₽`, color: T.income },
   ];
@@ -367,6 +371,7 @@ export const NOTES = [
    с объёмами и ценами. Пример нужен ради формы данных, а не ради имён.
    ══════════════════════════════════════════════════════════════════════ */
 export const SAMPLE = {
+  vatPct: 22,     // образец для макета; живой PDF получает ставку плана (toPdf)
   header: {
     logo: '/assets/logo-mediaplan.svg',
     title: 'Медиаплан · Рекламодатель / Бренд',

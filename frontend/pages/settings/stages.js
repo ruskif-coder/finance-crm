@@ -6,6 +6,7 @@ import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsT
 import { MONO, UI, card, inp, sel, ci, cs, th, td, primaryBtn } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { markDirty, markClean } from '@/lib/unsaved'
 
 // ── Наш каталог стадий (E1: движение сделки) ──
 // Этапы (орг-группировка) → стадии. У стадии: разметка 2/2/2 (для ДДС), флаг терминала,
@@ -29,7 +30,10 @@ export default function SettingsStages() {
   const kRef = useRef(1)
   const nextK = () => `k${kRef.current++}`
 
-  useRefreshOnReturn(() => load())
+  // Правка каталога идёт ЩЕЛЧКАМИ (стрелки, переключатели), а не вводом — общий учёт
+  // несохранённого её не видит. Поэтому экран отмечает правку сам (`markDirty`), и возврат
+  // на вкладку не перечитывает каталог поверх неё (аудит 23.09.2026, 6.H3).
+  useRefreshOnReturn(() => { if (!dirty) load() })
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }
@@ -54,12 +58,13 @@ export default function SettingsStages() {
       setBlocks(c.data.card_blocks || [])
       setBxPipes(b.data.pipelines || [])
       setDirty(false)
+      markClean()
     } catch (e) { if (e.response?.status === 401) router.push('/login'); else setErr('Ошибка загрузки') }
     finally { setLoading(false) }
   }
 
   const flash = (m) => { setOk(m); setTimeout(() => setOk(''), 2500) }
-  const touch = () => setDirty(true)
+  const touch = () => { setDirty(true); markDirty() }
 
   // ── мутаторы каталога (все помечают dirty) ──
   const setPhase = (pk, patch) => { setPhases(ps => ps.map(p => p._k === pk ? { ...p, ...patch } : p)); touch() }

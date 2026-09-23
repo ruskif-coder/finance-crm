@@ -29,11 +29,10 @@ export const T = {
   mono: MONO, sans: UI,
   ease: 'cubic-bezier(0.22,1,0.36,1)',
 };
-const VAT = 0.22;
 // С НДС — до копеек, а не до рубля: цена услуги копейки имеет (см. lib/mpRow.rowNet),
 // и округление здесь возвращало бы их в целое уже на экране.
 const kop = v => Math.round(v * 100) / 100;
-const withVat = v => kop(v * (1 + VAT));
+// Ставка НДС — НЕ константа модуля: она у версии плана (см. `vatPct` в компоненте).
 
 /* ── справочники (заменить на API) ──────────────────────────────────── */
 export const CATALOG = [
@@ -99,8 +98,8 @@ const capTitle = { fontFamily: T.mono, fontSize: 13, fontWeight: 700, letterSpac
 const colHead = { fontFamily: T.mono, fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: T.t4 };
 const meta = { fontFamily: T.mono, fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: T.t4 };
 
-const Card = ({ delay = 0, pad = '14px 22px 12px', gap = 10, style, children }) => (
-  <section style={{
+const Card = ({ delay = 0, pad = '14px 22px 12px', gap = 10, style, className, children }) => (
+  <section className={className} style={{
     background: T.card, border: `1px solid ${T.border}`, boxShadow: T.shadow, borderRadius: 18,
     padding: pad, display: 'flex', flexDirection: 'column', gap,
     animation: `riseIn .4s ${T.ease} ${delay}s both`, ...style,
@@ -235,6 +234,18 @@ const Warn = ({ children }) => (
 
 // Отметка «проверено» у заголовка блока. Обе (размещения + прогноз) обязательны,
 // чтобы сохранить МП — чек-лист конкретного сохранения, а не свойство плана.
+// Зафиксированный план: поле вне открытых зон (.mp-open — даты запуска, бриф, шапка) не
+// принимает ни фокус, ни ввод. Навигация (Tab, стрелки, Esc) и копирование остаются.
+const roEditable = (el) => !!el && !el.closest('.mp-open')
+  && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
+const roGuardFocus = (e) => { if (roEditable(e.target)) e.target.blur(); };
+const RO_FREE_KEYS = new Set(['Tab', 'Shift', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End']);
+const roGuardKey = (e) => {
+  if (!roEditable(e.target)) return;
+  if (e.type === 'keydown' && (RO_FREE_KEYS.has(e.key) || ((e.ctrlKey || e.metaKey) && e.key === 'c'))) return;
+  e.preventDefault();
+};
+
 const VerifyBtn = ({ on, onClick, title, big, blocked }) => (
   <span onClick={blocked ? undefined : onClick} title={title}
     style={{
@@ -324,6 +335,15 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
   onAddTargeting, onAddGeo, onCreateBrand, onSave, onExportXlsx, onPreviewPdf, onEditBrief, onLinkDeal, onCreateDeal,
   dealBrief, onDealBriefSave, briefFilesBase, briefFilesReadOnly = false, ownCompany }) {
   const init = initial || {};
+  // Ставка НДС ВЕРСИИ ПЛАНА (правило владельца 23.09.2026: фиксируется на дату расчёта; до
+  // 2026 было 20 %, с 2026 — 22 %). Посчитанный план показывается по своей ставке, новый —
+  // по текущей ставке нашего юрлица; её же сервер и запишет при первом сохранении.
+  // `vat_current` — ставка нового расчёта от сервера (`vat.current`): пустая или нулевая
+  // ставка юрлица там уже заменена ставкой закона. 22 — только на первый кадр, пока
+  // ответ не пришёл; сохраняет план всё равно сервер, по своей ставке.
+  const vatPct = init.vat_rate ?? ownCompany?.vat_current ?? 22;
+  const VAT = vatPct / 100;
+  const withVat = v => kop(v * (1 + VAT));
   /* Раздельный прайс приходит в каталоге услуг (`separate`) — тем же признаком, по
      которому конструктор показывает две цены. Для имени он решает, дописывать ли
      WEB/APP к услуге. */
@@ -336,6 +356,11 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
   const [okMain, setOkMain] = useState(false);
   const [okFc, setOkFc] = useState(false);
   const verified = okMain && okFc;
+  // ЗАФИКСИРОВАН НА «СБОРКЕ» (решение владельца 23.09.2026): открыты только даты запуска.
+  // Признак считает сервер (`locked`, backend/app/sales/plan_lock.py) и он же отказывает
+  // при сохранении — здесь экран лишь не даёт начать правку, которую потом отклонят.
+  // Мастеру открыто всё, но плашка остаётся: его правка уходит в журнал.
+  const ro = !!init.locked && !init.can_edit_locked;
   // Комментарий о причинах изменений при отправке на согласование (необязательный).
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteText, setNoteText] = useState('');
@@ -446,7 +471,9 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
       agg.sov += parseN(f.sov); agg.freq = Math.max(agg.freq, freq);
     });
     return { net, filled, tNet, tVol, extrasNet, agg, grandNet: tNet + extrasNet };
-  }, [main.rows, extras.rows, fc]);
+    // VAT — в зависимостях: у нового плана ставка юрлица приходит ПОСЛЕ первого рендера,
+    // и без неё итог с НДС (ROI) оставался по ставке по умолчанию (ревью 23.09.2026).
+  }, [main.rows, extras.rows, fc, VAT]);
 
   const emptyMain = main.rows.length - calc.filled.length;
   const emptyExtra = extras.rows.filter(e => !e.name).length;
@@ -467,7 +494,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
   const summary = [
     { label: 'Размещение до НДС', value: dec(calc.tNet), color: T.t1 },
     { label: 'Доп. услуги', value: dec(calc.extrasNet), color: T.income },
-    { label: 'НДС 22 %', value: dec(kop(calc.grandNet * VAT)), color: T.t2 },
+    { label: `НДС ${vatPct} %`, value: dec(kop(calc.grandNet * VAT)), color: T.t2 },
     { label: 'Строк в плане', value: `${calc.filled.length} из ${main.rows.length}`, color: emptyMain ? T.warning : T.t1 },
     { label: 'Прогноз показов', value: num(calc.agg.imp), color: T.accent },
   ];
@@ -507,6 +534,12 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
         .mp-ghost:hover { border-color:${T.accent}; background:${T.tint} }
         .mp-del:hover { background:${T.dangerTint}; color:${T.danger} }
         .mp-primary:hover { background:${T.accentHover} }
+        /* Зафиксированный план: всё некликабельно, кроме зон .mp-open. Прокрутка
+           таблицы остаётся — контейнер ловит колесо, ячейки внутри — нет. */
+        #mp-desktop.mp-ro * { pointer-events:none }
+        #mp-desktop.mp-ro .mp-open, #mp-desktop.mp-ro .mp-open * { pointer-events:auto }
+        #mp-desktop.mp-ro .mp-scroll { pointer-events:auto }
+        #mp-desktop.mp-ro .mp-scroll * { pointer-events:none }
         .mp-outline:hover { background:${T.accentTint} }
         .mp-yellow:focus { border-color:${T.warning} }
         .mp-plain:focus { border-color:${T.accent}; background:${T.card} }
@@ -527,12 +560,19 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
         </span>
       </div>
 
-      <div id="mp-desktop" style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '26px 32px 40px', display: 'flex', justifyContent: 'center' }}>
+      {/* Фиксация с клавиатуры: `pointer-events` закрывает мышь, но Tab заводит в поле,
+          и напечатанное пропадало на отказе сервера (ревью 23.09.2026). Вне зон .mp-open
+          фокус снимается, ввод и вставка гасятся. */}
+      <div id="mp-desktop" className={ro ? 'mp-ro' : undefined}
+        onFocusCapture={ro ? roGuardFocus : undefined}
+        onKeyDownCapture={ro ? roGuardKey : undefined}
+        onPasteCapture={ro ? roGuardKey : undefined}
+        style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '26px 32px 40px', display: 'flex', justifyContent: 'center' }}>
         {/* Комментарий о причинах изменений. Спрашивается ТОЛЬКО когда план уже отдан
             клиенту (init.sealed) и сохранение родит новую версию: там объяснение нужно,
             а на правках черновика оно было бы лишним кликом. Поле необязательное. */}
         {noteOpen && (
-          <div {...overlayClose(() => setNoteOpen(false))} style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(20,22,28,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div {...overlayClose(() => setNoteOpen(false))} className="mp-open" style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(20,22,28,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div onClick={e => e.stopPropagation()} style={{ width: 460, maxWidth: '92vw', background: T.card, borderRadius: 16, padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 12, boxShadow: '0 16px 48px rgba(20,22,28,.3)' }}>
               <span style={{ fontSize: 16, fontWeight: 700 }}>Новая версия медиаплана</span>
               <span style={{ fontSize: 12.5, color: T.t3 }}>Предыдущую версию клиент уже видел, поэтому она сохраняется как есть. Оставьте комментарий о причинах изменений — он попадёт в историю. Поле необязательное.</span>
@@ -548,7 +588,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
         )}
         <div style={{ width: '100%', maxWidth: 1760, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* хлебные крошки + действия */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', animation: `riseIn .4s ${T.ease} both`, position: 'relative', zIndex: verOpen ? 5000 : undefined }}>
+          <div className="mp-open" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', animation: `riseIn .4s ${T.ease} both`, position: 'relative', zIndex: verOpen ? 5000 : undefined }}>
             <span onClick={onBack} style={{ fontSize: 13, fontWeight: 600, color: T.t3, cursor: onBack ? 'pointer' : 'default' }}>← {backLabel}</span>
             <span style={{ color: T.hoverBorder }}>/</span>
             <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.02em' }}>Конструктор медиаплана</span>
@@ -587,7 +627,9 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                 // Раньше кнопок было пять («Сохранить черновик», «На согласование»,
                 // «Согласовать», «Отклонить», «В архив»), и человек выбирал ими не
                 // действие, а состояние плана — параллельное стадии его сделки.
-                const okToSave = !blockedMain && calc.filled.length > 0 && verified;
+                // На зафиксированном плане меняются только даты — отметки «проверено»
+                // относятся к таблицам, которые здесь не правятся, и не спрашиваются.
+                const okToSave = ro || (!blockedMain && calc.filled.length > 0 && verified);
                 const hint = emptyExtra ? 'Выберите услугу в доп. услугах или удалите пустую строку'
                   : emptyMain ? 'Заполните все строки размещения'
                   : !calc.filled.length ? 'Добавьте хотя бы одну строку размещения'
@@ -606,6 +648,18 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
               })()}
             </span>
           </div>
+
+          {init.locked && (
+            <div role="note" className="mp-open" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, background: T.warningTint, border: `1px solid ${T.warning}`, borderRadius: 12, padding: '10px 14px', fontSize: 13, lineHeight: 1.45, color: T.t1 }}>
+              <span aria-hidden style={{ fontWeight: 800, color: T.warningText }}>!</span>
+              <span>
+                <b>Медиаплан зафиксирован</b> — сделка на стадии сборки или дальше.{' '}
+                {init.can_edit_locked
+                  ? 'Вы можете править его как мастер — правка будет записана в журнал.'
+                  : 'Меняются только даты старта и стопа РК; остальное может поправить мастер.'}
+              </span>
+            </div>
+          )}
 
           {/* ── БРИФ + СДЕЛКА ─────────────────────────────────────────── */}
           <div style={{ display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
@@ -641,7 +695,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                     )}
                     <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 12, fontWeight: 600, color: briefHas ? T.accent : T.t3 }}>{briefHas ? 'бриф есть' : 'брифа нет'}</span>
-                      <button type="button" onClick={() => setBriefPanel(o => !o)} title="Бриф сделки"
+                      <button type="button" className="mp-open" onClick={() => setBriefPanel(o => !o)} title="Бриф сделки"
                         style={{ width: 34, height: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${briefHas ? T.accent : T.border}`, background: briefHas ? T.accentTint : T.card, borderRadius: 9, color: briefHas ? T.accent : T.t3, cursor: 'pointer' }}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" /><path d="M9 12h6" /><path d="M9 16h4" /></svg>
                       </button>
@@ -803,9 +857,10 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                   {ownCompany?.name || 'юрлицо не определено'}
                 </span>
                 <span style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase',
-                  color: ownCompany?.vat_rate_income ? T.t4 : T.warningText }}>
-                  {ownCompany?.vat_rate_income
-                    ? `НДС ${ownCompany.vat_rate_income} %`
+                  color: (init.vat_rate != null || ownCompany?.vat_rate_income) ? T.t4 : T.warningText }}>
+                  {/* Ставка ПЛАНА, а не текущая юрлица: план 2025 года посчитан по 20 %. */}
+                  {(init.vat_rate != null || ownCompany?.vat_rate_income)
+                    ? `НДС ${vatPct} %${init.vat_rate != null ? ' · ставка плана' : ''}`
                     : 'ставка НДС не задана'}
                 </span>
               </span>
@@ -814,7 +869,8 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
 
           {/* ── БРИФ СДЕЛКИ (free-text, раскрывается иконкой в шапке брифа) ── */}
           {briefPanel && (
-            <Card delay={0.05} pad="16px 22px 16px" gap={10}>
+            // Бриф — СДЕЛКИ, а не плана: фиксация плана его не касается.
+            <Card className="mp-open" delay={0.05} pad="16px 22px 16px" gap={10}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 <span style={capTitle}>Бриф сделки</span>
                 {!briefHasDeal && <span style={{ fontSize: 12, color: T.t3 }}>привяжите сделку, чтобы сохранять и синхронизировать бриф</span>}
@@ -850,7 +906,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                   <span style={capTitle}>Медиаплан</span>
                   <span style={{ fontFamily: T.mono, fontSize: 10, color: T.t4 }}>{main.rows.length}</span>
                   {emptyMain > 0 && <Warn>{emptyMain} {plural(emptyMain)}</Warn>}
-                  <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <span className="mp-open" style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ ...meta, color: T.t3 }}>Старт — стоп РК</span>
                     <input type="date" value={bf.date_from || ''} onChange={e => setBf(s => ({ ...s, date_from: e.target.value }))} style={{ height: 30, boxSizing: 'border-box', padding: '0 9px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 9, fontFamily: T.mono, fontSize: 11.5, fontWeight: 600, color: T.t1, outline: 'none', cursor: 'pointer' }} />
                     <span style={{ color: T.hoverBorder }}>→</span>
