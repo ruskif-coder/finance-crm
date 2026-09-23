@@ -51,11 +51,27 @@ fi
 #     отсутствие любого пункта — явная ошибка с именем файла, а не обрыв на полуслове.
 NEXT_SRC="pages components styles public lib scripts next.config.js package.json"
 
+# Каталог ЗАМЕНЯЕТСЯ, а не сливается. `docker cp` в существующий каталог сливает его с
+# тем, что там лежит, — файл, удалённый в гите, оставался в контейнере навсегда: и во
+# временном (он из образа), и в рабочем. 23.09.2026 так сборка v2.6.27 встала на гейте
+# check-vat — он нашёл зашитую ставку в двух удалённых в релизе файлах, которых в гите уже
+# не было. Поэтому каталог копируется рядом под временным именем и подменяет старый одной
+# командой (в рабочем контейнере окно — доля секунды), а после — сверка числа файлов.
 copy_next_src() {
   SRC=$1; DST=$2
   for p in $NEXT_SRC; do
     [ -e "$SRC/$p" ] || { echo "ERROR: нет $SRC/$p — список NEXT_SRC разошёлся с репозиторием"; exit 1; }
-    docker cp "$SRC/$p" "$DST:/app/"
+    if [ -d "$SRC/$p" ]; then
+      docker exec "$DST" rm -rf "/app/$p.__new"
+      docker cp "$SRC/$p" "$DST:/app/$p.__new"
+      docker exec "$DST" sh -c "rm -rf '/app/$p' && mv '/app/$p.__new' '/app/$p'"
+      HOST_N=$(find "$SRC/$p" -type f | wc -l)
+      CONT_N=$(docker exec "$DST" sh -c "find '/app/$p' -type f | wc -l")
+      [ "$HOST_N" -eq "$CONT_N" ] || {
+        echo "ERROR: $p — на хосте $HOST_N файлов, в $DST $CONT_N: копия не совпала"; exit 1; }
+    else
+      docker cp "$SRC/$p" "$DST:/app/"
+    fi
   done
 }
 
