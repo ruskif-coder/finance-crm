@@ -172,3 +172,41 @@ export function Demo({ what }) {
 }
 
 export const btnPrimary = btn(true)
+
+// ─── Плашка сообщения, закреплённая у верха окна ────────────────────────
+//
+// ЗАЧЕМ ФИКСИРОВАННАЯ. Сообщение жило первой строкой в колонке содержимого.
+// Человек внизу длинного списка нажимает кнопку, система отказывает — и отказ
+// рисуется за экраном, там, куда он не смотрит. Со стороны это «нажал, и ничего
+// не произошло»: самый дорогой вид молчания, потому что нажимают ещё раз.
+//
+// ВЫШЕ МОДАЛОК (zIndex 10500 против 10000 у окон и подложек). Отказ чаще всего
+// приходит на действие ВНУТРИ окна, и спрятать его за этим же окном значит
+// повторить ту же ошибку на другом слое.
+//
+// НЕ ГАСНЕТ САМА. Показали и убрали по таймеру — это снова «не успел заметить».
+// Уходит либо по крестику, либо когда следующее действие её заменит.
+export function Toast({ text, onClose }) {
+  if (!text) return null
+  return (
+    <div role="alert" aria-live="assertive"
+      style={{
+        position: 'fixed', top: 12, left: 12, right: 12, zIndex: 10500,
+        maxWidth: 720, margin: '0 auto', boxSizing: 'border-box',
+        display: 'flex', alignItems: 'flex-start', gap: 10,
+        padding: '12px 14px', borderRadius: 12,
+        background: C.dangerBg, border: `1px solid ${C.dangerBorder}`,
+        color: C.danger, boxShadow: 'var(--shadow-float)',
+        fontSize: 13, lineHeight: 1.45,
+      }}>
+      <span style={{ flex: 1, minWidth: 0 }}>{text}</span>
+      <button onClick={onClose} aria-label="Закрыть сообщение"
+        style={{
+          flex: '0 0 auto', width: 22, height: 22, borderRadius: 6, padding: 0,
+          border: 'none', background: 'transparent', color: C.danger,
+          cursor: 'pointer', display: 'inline-flex', alignItems: 'center',
+          justifyContent: 'center', fontSize: 15, lineHeight: 1,
+        }}>×</button>
+    </div>
+  )
+}

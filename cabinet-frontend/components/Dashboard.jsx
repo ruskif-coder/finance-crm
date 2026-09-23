@@ -24,7 +24,7 @@ import Head from 'next/head'
 import api, { auth, signOut, TOKEN_KEY } from '../lib/http'
 import { PreviewModal } from '../lib/preview'
 import { overlayClose } from '../lib/overlay'
-import { Header, Side, Demo, WRAP } from './Shell'
+import { Header, Side, Demo, WRAP, Toast } from './Shell'
 import ActiveCampaigns, { billing } from './ActiveCampaigns'
 import CampaignsScreen from './CampaignsScreen'
 import { C, CAP, KPI_SIZE, MONO, UI, arrowBtn, btn, btnSm, card, chip, dm, inp, num, periodLabel,
@@ -1491,6 +1491,11 @@ export default function Dashboard({ name, onSignOut }) {
           {pageTitle((NAV.find(n => n.key === active) || {}).label || 'Дашборд')}
         </title>
       </Head>
+      {/* Плашка сообщения — ПЕРЕД шапкой и вне потока: она крепится к окну, а не к
+          месту в разметке. В потоке она стояла первой строкой колонки, и человек,
+          работающий внизу списка, отказа не видел вовсе. */}
+      <Toast text={err} onClose={() => setErr('')} />
+
       <Header profile={profile} name={name} account={me}
         nav={NAV.map(n => (n.key === 'queue'
           ? { ...n, badge: shownTasks.length } : n))}
@@ -1501,11 +1506,6 @@ export default function Dashboard({ name, onSignOut }) {
         padding: '20px 20px 60px' }}>
 
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
-
-          {!!err && (
-            <div style={{ ...card, padding: '12px 16px', color: C.danger,
-              borderColor: C.dangerBorder, background: C.dangerBg }}>{err}</div>
-          )}
 
           {/* РАЗДЕЛ «КАМПАНИИ» занимает всю левую колонку и заканчивает рендер.
 

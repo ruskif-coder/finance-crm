@@ -295,6 +295,10 @@
   --danger:#C93A3E; --danger-tint:#FBEAEA; --danger-border:#F0C9CA;
   --teal:#2FB8A8; --violet:#8B7BE8; --violet-fg:#7B62D6; --violet-tint:#F1EDFC;
   --shadow-card:0 1px 3px rgba(28,36,51,.05), 0 4px 16px rgba(28,36,51,.04);
+  /* Плавающий слой — плашка сообщения, закреплённая у верха окна. Тень карточки для
+     неё слаба: плашка висит над прокручивающимся содержимым и должна читаться как
+     отдельный слой, а не как часть списка под ней. */
+  --shadow-float:0 10px 34px rgba(28,36,51,.16);
   --overlay:rgba(28,36,51,.35);
   color-scheme: light;
 }
@@ -313,6 +317,7 @@
   --teal:#3FC7B6; --violet:#9B85EA; --violet-fg:#9B85EA; --violet-tint:#2A2444;
   /* Тени на тёмном почти не работают — глубину даёт рамка. Радиус не увеличиваем. */
   --shadow-card:0 1px 3px rgba(0,0,0,.5), 0 4px 16px rgba(0,0,0,.35);
+  --shadow-float:0 10px 34px rgba(0,0,0,.55);
   --overlay:rgba(0,0,0,.6);
   color-scheme: dark;
 }
