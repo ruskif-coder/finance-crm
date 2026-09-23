@@ -29,7 +29,7 @@
 файл и API обязаны называть одно и то же одинаково, иначе ответ менеджера не сойдётся с
 тем, что у нас уже заведено.
 """
-from datetime import datetime
+import time
 from io import BytesIO
 from typing import Tuple
 
@@ -258,7 +258,10 @@ def _checkable(tag):
     # `%system.random%` (сервер площадки). В проверочной ссылке вместо него — конкретное
     # число: с фигурными скобками адрес не откроется, а без кеш-бастера повторный запрос
     # вернётся из кеша и ничего не проверит.
-    stamp = str(int(datetime.utcnow().timestamp()))
+    # `time.time()`, а не `utcnow().timestamp()`: второе читает наивную дату как МЕСТНОЕ
+    # время, и после перевода процесса в Москву (23.09.2026) метка уехала бы на три часа
+    # назад. Для сброса кеша это безвредно, но настоящая метка честнее.
+    stamp = str(int(time.time()))
     return out.replace("{RND}", stamp).replace("%system.random%", stamp)
 
 

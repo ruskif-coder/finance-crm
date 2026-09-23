@@ -113,7 +113,12 @@ def _sort_key(row: dict):
     overdue = 0 if row["overdue"] else 1
     sev = SEVERITY_WEIGHT.get(row["severity"], 9)
     created = row["created_at"] or datetime.min
-    return (closed, overdue, sev, -created.timestamp())
+    # Секунды от datetime.min, а НЕ `.timestamp()`. У наивной даты `.timestamp()`
+    # читает её как МЕСТНОЕ время процесса, и с 23.09.2026, когда процесс перешёл на
+    # Москву, `datetime.min.timestamp()` падает: «year 0 is out of range» (сдвиг на три
+    # часа уводит нулевой год за границу календаря). Одна запись без `created_at` роняла
+    # бы весь экран «Бэклог отладки». Разность двух наивных дат пояса не знает вовсе.
+    return (closed, overdue, sev, -(created - datetime.min).total_seconds())
 
 
 def _serialize(item: BacklogItem, notes_count: int, created_name: Optional[str],

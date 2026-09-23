@@ -7,7 +7,8 @@ from app.permissions import require_permission
 from app.routers.auth import get_password_hash
 from pydantic import BaseModel
 from typing import Optional
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, time as dt_time
+from app.timez import MSK_OFFSET
 
 router = APIRouter()
 
@@ -405,10 +406,19 @@ def get_audit_log(
         query = query.filter(AuditLog.action == action)
     if user_id:
         query = query.filter(AuditLog.user_id == user_id)
+    # Человек выбирает МОСКОВСКИЙ календарный день, а `created_at` лежит в UTC. Прямое
+    # сравнение брало сутки по Гринвичу: события с 00:00 до 03:00 по Москве уезжали в
+    # следующий день, а вечерние с 21:00 приходили из предыдущего. Три часа журнала
+    # каждые сутки лежали не в той дате — и выглядело это не ошибкой, а затишьем.
+    # Поэтому границу сдвигаем на пояс, а не колонку: колонка остаётся UTC.
     if date_from:
-        query = query.filter(AuditLog.created_at >= date_from)
+        query = query.filter(
+            AuditLog.created_at >= datetime.combine(date_from, dt_time())
+            - timedelta(hours=MSK_OFFSET))
     if date_to:
-        query = query.filter(AuditLog.created_at < date_to + timedelta(days=1))
+        query = query.filter(
+            AuditLog.created_at < datetime.combine(date_to + timedelta(days=1), dt_time())
+            - timedelta(hours=MSK_OFFSET))
 
     total = query.count()
     rows = query.order_by(AuditLog.created_at.desc()).offset(skip).limit(limit).all()

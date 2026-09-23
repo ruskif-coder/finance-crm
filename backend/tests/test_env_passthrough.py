@@ -147,8 +147,15 @@ def _env_names_in(path: pathlib.Path) -> set:
                 )
                 if is_env and (name := resolve(n.args[0])):
                     found.add(name)
-        # os.environ["X"]
-        if isinstance(n, ast.Subscript):
+        # os.environ["X"] — но только ЧТЕНИЕ.
+        #
+        # У присваивания `os.environ["TZ"] = ...` тот же узел Subscript, и до 23.09.2026
+        # прибор считал его чтением: требовал прописать переменную в compose, хотя
+        # процесс её сам себе и задаёт (`timez.set_process_timezone`). Требование было
+        # не просто лишним — оно толкало добавить в compose строку, которой там быть не
+        # должно, то есть сторож уводил бы в сторону от верного решения. Отличает их
+        # контекст узла: Load у чтения, Store у записи.
+        if isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Load):
             v = n.value
             if isinstance(v, ast.Attribute) and v.attr == "environ":
                 if name := resolve(n.slice):

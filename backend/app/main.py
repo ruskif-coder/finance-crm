@@ -1,6 +1,16 @@
 import os
 import logging
 from logging.handlers import RotatingFileHandler
+
+# ПОЯС СТАВИТСЯ ПЕРВЫМ ДЕЛОМ — до настройки логирования ниже и до любого импорта,
+# который может посчитать «сегодня». `%(asctime)s` берёт местное время процесса, и
+# строка журнала, записанная после basicConfig, уже не переедет. Почему пояс задаётся
+# здесь, а не переменной в compose: правка прод-compose требует пересоздания
+# контейнера, а оно выбрасывает всё, что доставлено через docker cp. В коде пояс
+# приезжает обычной выкладкой бэкенда и не может быть забыт на новом сервере.
+from app.timez import set_process_timezone
+
+set_process_timezone()
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware

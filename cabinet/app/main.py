@@ -19,7 +19,7 @@
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -97,6 +97,24 @@ def sandbox_url(token, entry):
     if not token or not entry:
         return None
     return f"{SANDBOX_BASE_URL.rstrip('/')}/{token}/{entry.lstrip('/')}"
+
+
+
+# Пояс. Своя пара строк, а не `app.timez` из ядра: кабинет — отдельный процесс под
+# отдельной ролью БД и `app.*` не импортирует по построению (см. шапку файла). У Москвы
+# с 2014 года нет перехода на летнее время, смещение постоянное — поэтому число, а не
+# зависимость от базы часовых поясов в образе.
+MSK_OFFSET = 3
+
+
+def _to_msk(dt):
+    """Наивная метка из базы (UTC) → московская. Тот же перевод, что в ядре."""
+    return dt + timedelta(hours=MSK_OFFSET)
+
+
+def _msk_today():
+    """Сегодня по Москве. Для счёта суток, показываемого площадке."""
+    return (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=MSK_OFFSET)).date()
 
 
 class LoginIn(BaseModel):
@@ -318,7 +336,11 @@ def tasks(acc=Depends(current_account)):
                               if r.rights_letter_name else None),
             "url_request_text": r.url_request_text,
             "asked_at": r.asked_at,
-            "waiting_days": (datetime.now(timezone.utc).date() - r.asked_at.date()).days
+            # Сутки МОСКОВСКИЕ. Обе даты лежали в UTC, и счёт сходился сам с собой —
+            # но граница суток проходила на три часа позже: с полуночи до трёх ночи
+            # площадке показывалось на день меньше, чем она ждёт на самом деле. Число
+            # выглядело правдой, просто вчерашней.
+            "waiting_days": (_msk_today() - _to_msk(r.asked_at).date()).days
                             if r.asked_at else None,
             "files": by_task.get(r.task_id, [])})
 
