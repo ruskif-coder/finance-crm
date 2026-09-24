@@ -213,6 +213,11 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
                              LaunchPrepPairFile.kind == 'размещение')
                      .group_by(LaunchPrepPairFile.pair_id).all())
 
+    # Креативы, ни одна площадка которых не в нашей DSP: нацеливание им не покажет
+    # ничего. Правило — одной функцией с самой кнопкой, а не своей копией здесь.
+    from app.dsp.targeting_creative import blind_sets, targeting_miss
+    blind = blind_sets(db, set_ids)
+
     today = date.today()
     out = []
     for review, pair, s, target, pub, deal in rows:
@@ -232,7 +237,8 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
                      "brand": brands.get(deal.brand_id),
                      "account": reps.get(deal.account_manager_id)},
             "set": {"id": s.id, "no": s.no, "title": s.title, "form": s.form,
-                    "test_targeting_url": s.test_targeting_url},
+                    "test_targeting_url": s.test_targeting_url,
+                    "targeting_blind": s.id in blind},
             "publisher": {"id": target.publisher_id,
                           "name": pub.name if pub else None,
                           # Домен нормализован в справочнике — по нему и открываем сайт.
@@ -240,8 +246,14 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
                           # доменом, а домен обязан.
                           "domain": pub.domain if pub else None,
                           "code": pub.code if pub else None,
+                          # Не в нашей DSP — нацеливание этот сайт не покажет.
+                          "our_code": bool(pub.our_code) if pub else None,
                           "tech_requirements": pub.tech_requirements if pub else None},
             "surface_kind": target.surface_kind,
+            # Почему нацеливание на ЭТОЙ паре не покажет баннер — той же функцией, что
+            # решает про весь креатив. Пусто — покажет.
+            "targeting_miss": targeting_miss(target.surface_kind,
+                                             pub.our_code if pub else None),
             # Посадочная живёт на ПОЛУЧАТЕЛЕ, а не на паре: страница одна на всю кампанию
             # у этого сайта. Отдаём `target_id` и состояние запроса, чтобы трафик мог не
             # только увидеть дыру, но и закрыть её — той же ручкой, что аккаунт.

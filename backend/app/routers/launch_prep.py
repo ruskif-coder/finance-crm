@@ -1177,8 +1177,12 @@ def issue_targeting_link(set_id: int, db: Session = Depends(get_db),
     try:
         crid = tc_mod.ensure(db, row)
     except (tc_mod.TargetingCreativeError, MsError) as e:
-        raise HTTPException(status_code=400,
-                            detail=f"Креатив нацеливания не заведён: {e}")
+        # Отказ «не в нашей DSP» — не про заведение: креатив может и быть заведён,
+        # просто на этих сайтах он не покажется. Приставка там была бы неправдой.
+        text_ = str(e)
+        raise HTTPException(status_code=400, detail=(
+            text_ if text_ == tc_mod.BLIND_TEXT
+            else f"Креатив нацеливания не заведён: {text_}"))
     try:
         link = issue(crid)
     except TargetingLinkError as e:

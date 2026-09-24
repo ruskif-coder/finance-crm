@@ -656,6 +656,18 @@ export default function TrafficQueue() {
                       он уходит в DSP и заводит там креатив. Узнать, в какую кампанию он
                       поедет и жива ли она, человек обязан ДО нажатия (владелец
                       17.09.2026). */}
+                  {/* Нацеливание не покажет ни на одной паре креатива (владелец
+                      24.09.2026): площадки не в нашей DSP или это приложения — кука
+                      браузера туда не доходит, а страница ссылки выглядела бы как успех.
+                      Решает сервер (`targeting_blind`), той же функцией, что отказывает
+                      кнопке. */}
+                  {g.set.targeting_blind ? (
+                    <span style={{ ...pill(...TONE.neutral), fontSize: 11.5,
+                      whiteSpace: 'nowrap', cursor: 'default' }}
+                      title="Площадки этого креатива не в нашей DSP или это приложения — куку нацеливания там не поставить. Баннер проверяйте предпросмотром">
+                      нацеливание не покажет
+                    </span>
+                  ) : (
                   <TargetingCampaignHint state={tgt.state}>
                   <button style={iconBtn(mayEdit)} disabled={!mayEdit || aiming === g.set.id}
                     title="Нацелить на себя: откроется страница DSP, нажмите «Включить» — и увидите баннер на сайте площадки до старта"
@@ -668,9 +680,11 @@ export default function TrafficQueue() {
                     {aiming === g.set.id ? <Cube variant="spinner" size={14} /> : <Ico d={I_AIM} />}
                   </button>
                   </TargetingCampaignHint>
+                  )}
                   {/* Ручная ссылка, если её когда-то завели: поле заморожено, но то, что
-                      в нём лежит, остаётся доступным. Новых так не заводят. */}
-                  {!!g.set.test_targeting_url && (
+                      в нём лежит, остаётся доступным. Новых так не заводят. У креатива
+                      не в нашей DSP она так же бесполезна, как кнопка, — не показываем. */}
+                  {!!g.set.test_targeting_url && !g.set.targeting_blind && (
                     <a href={g.set.test_targeting_url} target="_blank" rel="noreferrer"
                        title={`Ручная ссылка · ${g.set.test_targeting_url}`}
                        style={{ ...iconBtn(true), color: 'var(--accent)',
@@ -679,7 +693,7 @@ export default function TrafficQueue() {
                       ↗
                     </a>
                   )}
-                  {!!g.set.test_targeting_url && mayEdit && (
+                  {!!g.set.test_targeting_url && !g.set.targeting_blind && mayEdit && (
                     <button style={iconBtn(true)} title="Изменить ручную ссылку"
                       onClick={() => setAim({ setId: g.set.id, no: g.set.no,
                                               url: g.set.test_targeting_url })}>
@@ -763,6 +777,15 @@ export default function TrafficQueue() {
                         color: 'var(--text-cap)', marginTop: 2, paddingLeft: 14 }}>
                         {r.pair_prefix || r.publisher.code || ''}
                       </div>
+                      {/* Кнопка нацеливания у креатива осталась, но на ЭТОЙ паре она баннер
+                          не покажет: площадка не в нашей DSP или это приложение. Причину
+                          называет сервер — той же функцией, что решает про креатив. */}
+                      {!g.set.targeting_blind && !!r.targeting_miss && (
+                        <div style={{ fontSize: 10.5, color: 'var(--warning-fg)',
+                          marginTop: 2, paddingLeft: 14 }}>
+                          {r.targeting_miss} — нацеливание не покажет
+                        </div>
+                      )}
                     </div>
 
                     <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>

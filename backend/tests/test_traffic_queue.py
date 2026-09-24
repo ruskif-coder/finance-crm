@@ -434,3 +434,138 @@ def test_closed_at_reads_the_ord_stage(env):  # noqa: F811
     # У свежей сделки выхода нет — и это None, а не «давно».
     assert retention.closed_at(env.db, env.deal.id) is None or isinstance(
         retention.closed_at(env.db, env.deal.id), datetime)
+
+
+# ── нацеливание и площадки не в нашей DSP ────────────────────────────────────
+#
+# Площадка без нашего кода крутится в ДРУГОЙ DSP (владелец 24.09.2026). Кука нацеливания
+# ставится нашей DSP, поэтому на таком сайте баннер не появится — а страница ссылки при
+# этом выглядит как успех, и трафик решает, что сломан баннер. Правило одно на систему:
+# креатив, ВСЕ площадки которого не в нашей DSP, нацеливания не получает ни по кнопке,
+# ни тихо при отправке; частично такой — получает, а чужие строки помечены.
+
+class _NoCalls:
+    """Клиент DSP, которого нельзя трогать: любой вызов — провал теста."""
+
+    def __getattr__(self, name):
+        raise AssertionError(f"поход в DSP ({name}) у комплекта, которому он бесполезен")
+
+
+def _our_code(env, *flags):  # noqa: F811
+    saved = [(p.id, p.our_code) for p in env.pubs]
+    for p, f in zip(env.pubs, flags):
+        p.our_code = f
+    env.db.commit()
+    return saved
+
+
+def _restore(env, saved):  # noqa: F811
+    from app.sales.models import SalesPublisher
+    for pid, f in saved:
+        env.db.query(SalesPublisher).filter(SalesPublisher.id == pid).update({"our_code": f})
+    env.db.commit()
+
+
+def _my_rows(env, pairs):  # noqa: F811
+    rows = traffic.queue('all', env.db, _ADMIN)["rows"]
+    return [r for r in rows if r["pair_id"] in {p.id for p in pairs}]
+
+
+def test_targeting_is_refused_when_no_publisher_runs_our_dsp(env, monkeypatch):  # noqa: F811
+    from app.dsp import targeting_creative as tc
+    from app.routers import traffic_catalog
+    # Кабинет задан НАРОЧНО: без него `ensure` отказывал бы и сам, «не задан кабинет», и
+    # проверка тихого пути прошла бы даже без правила (ревью 24.09.2026). С кабинетом
+    # единственное, что держит её от похода в DSP, — само правило.
+    monkeypatch.setattr(traffic_catalog, "targeting_cabinet",
+                        lambda db: ("PARTNER000000001", "CAMPAIGN00000001"))
+    saved = _our_code(env, False, False)
+    try:
+        pairs = _sent(env)
+        mine = _my_rows(env, pairs)
+        assert mine and all(r["set"]["targeting_blind"] is True for r in mine), (
+            "креатив без единой площадки в нашей DSP обязан прийти помеченным")
+        assert all(r["publisher"]["our_code"] is False for r in mine)
+        with pytest.raises(tc.TargetingCreativeError) as e:
+            tc.ensure(env.db, env.cset, client=_NoCalls())
+        assert "не в нашей DSP" in str(e.value)
+        # Тихий путь отправки тоже не ходит наружу и не падает.
+        assert tc.ensure_quietly(env.db, env.cset, client=_NoCalls()) is None
+        # И уже заведённую копию не отдаёт: на этих сайтах она не покажется так же.
+        env.cset.ms_targeting_creative_xxhash = "OLDCOPY000000001"
+        env.db.commit()
+        assert tc.ensure_quietly(env.db, env.cset, client=_NoCalls()) is None, (
+            "заведённая копия у креатива не в нашей DSP выдана как годная")
+    finally:
+        _restore(env, saved)
+
+
+def test_targeting_stays_when_at_least_one_publisher_runs_our_dsp(env, monkeypatch):  # noqa: F811
+    from app.dsp import targeting_creative as tc
+    # Комплект не слепой — значит отправка пошла бы заводить копию в настоящий DSP.
+    # Тестам туда нельзя: удаления в чужом кабинете нет.
+    monkeypatch.setattr(tc, "ensure_quietly", lambda *a, **k: None)
+    saved = _our_code(env, True, False)
+    try:
+        pairs = _sent(env)
+        mine = _my_rows(env, pairs)
+        assert mine and all(r["set"]["targeting_blind"] is False for r in mine), (
+            "хотя бы одна площадка в нашей DSP — кнопка нужна")
+        flags = {r["publisher"]["id"]: r["publisher"]["our_code"] for r in mine}
+        assert flags == {env.pubs[0].id: True, env.pubs[1].id: False}, (
+            "чужую площадку строка обязана назвать, иначе её не отличить")
+        assert tc.blind_sets(env.db, [env.cset.id]) == set()
+    finally:
+        _restore(env, saved)
+
+
+def test_set_without_pairs_is_not_called_blind(env):  # noqa: F811
+    """До отправки пар нет: «не знаем» не равно «не покажет» — кнопку не прячем."""
+    from app.dsp import targeting_creative as tc
+    assert tc.blind_sets(env.db, [env.cset.id]) == set()
+
+
+def test_refused_publisher_does_not_keep_the_button(env, monkeypatch):  # noqa: F811
+    """«Наша» площадка отказалась, осталась чужая — нацеливание уже не покажет ничего."""
+    from app.dsp import targeting_creative as tc
+    monkeypatch.setattr(tc, "ensure_quietly", lambda *a, **k: None)
+    saved = _our_code(env, True, False)
+    try:
+        _sent(env)
+        env.targets[0].state = 'отказ площадки'
+        env.db.commit()
+        assert tc.blind_sets(env.db, [env.cset.id]) == {env.cset.id}
+    finally:
+        _restore(env, saved)
+
+
+def test_app_surface_never_gets_targeting(env, monkeypatch):  # noqa: F811
+    """Кука нацеливания ставится БРАУЗЕРУ. Приложение её не видит — у него своё
+    хранилище, — поэтому пара на поверхности app нацеливания не получает, даже если код
+    на площадке наш (владелец 24.09.2026: у Максавита веб чужой, а приложение наше)."""
+    from app.dsp import targeting_creative as tc
+    monkeypatch.setattr(tc, "ensure_quietly", lambda *a, **k: None)
+    saved = _our_code(env, True, True)
+    try:
+        for t in env.targets:
+            t.surface_kind = 'app'
+        env.db.commit()
+        pairs = _sent(env)
+        assert tc.blind_sets(env.db, [env.cset.id]) == {env.cset.id}
+        mine = _my_rows(env, pairs)
+        assert mine and all(r["targeting_miss"] == "приложение" for r in mine), (
+            "строка обязана назвать причину — приложение, а не чужую DSP")
+    finally:
+        _restore(env, saved)
+
+
+def test_row_names_why_targeting_misses(env, monkeypatch):  # noqa: F811
+    from app.dsp import targeting_creative as tc
+    monkeypatch.setattr(tc, "ensure_quietly", lambda *a, **k: None)
+    saved = _our_code(env, True, False)
+    try:
+        pairs = _sent(env)
+        miss = {r["publisher"]["id"]: r["targeting_miss"] for r in _my_rows(env, pairs)}
+        assert miss == {env.pubs[0].id: None, env.pubs[1].id: "не в нашей DSP"}
+    finally:
+        _restore(env, saved)

@@ -93,6 +93,58 @@ class TargetingCreativeError(RuntimeError):
     """Креатив нацеливания завести нельзя, и причина называется человеку."""
 
 
+# ГДЕ НАЦЕЛИВАНИЕ НЕ ПОКАЖЕТ (владелец 24.09.2026). Ссылка ставит куку БРАУЗЕРУ, и
+# ставит её наша DSP. Отсюда два случая, когда баннер на площадке не появится, а
+# страница ссылки всё равно выглядит как успех — и трафик ищет поломку в баннере:
+#   · площадка без нашего кода крутится в другой DSP (`sales_publishers.our_code`);
+#   · поверхность — приложение: у него своё хранилище, браузерную куку оно не видит.
+# Признак «код наш» стоит на площадке, а не на поверхности; единственное исключение —
+# Максавит (веб чужой, приложение наше), — нацеливанию не мешает: приложение не годится
+# всё равно.
+BLIND_TEXT = ("Нацеливание этого креатива не покажет: его площадки не в нашей DSP или это "
+              "приложения. Проверяйте баннер предпросмотром")
+
+MISS_APP = "приложение"
+MISS_NOT_OURS = "не в нашей DSP"
+
+
+def targeting_miss(surface_kind: Optional[str], our_code: Optional[bool]) -> Optional[str]:
+    """Почему нацеливание на этой паре не покажет баннер. Пусто — покажет.
+
+    Одна точка на систему: из неё же собирается отметка креатива (`blind_sets`), и
+    строка конвейера называет ту же причину, что отказ кнопки.
+    """
+    if surface_kind != "web":
+        return MISS_APP
+    if not our_code:
+        return MISS_NOT_OURS
+    return None
+
+
+def blind_sets(db: Session, set_ids) -> set:
+    """Комплекты, у которых пары есть и НИ НА ОДНОЙ нацеливание не покажет.
+
+    Читают кнопка (через `ensure`), отправка трафику и конвейер. Комплект без пар
+    слепым не считается — «ещё не знаем» не равно «не покажет». Отказавшиеся и ушедшие
+    в архив площадки в расчёт не входят: крутить будут оставшиеся (ревью 24.09.2026).
+    """
+    ids = [int(i) for i in set_ids if i is not None]
+    if not ids:
+        return set()
+    rows = db.execute(text(
+        "SELECT pr.set_id, t.surface_kind, p.our_code FROM launch_prep_pair pr "
+        "JOIN launch_prep_target t ON t.id = pr.target_id "
+        "JOIN sales_publishers p ON p.id = t.publisher_id "
+        "WHERE pr.set_id = ANY(:ids) "
+        "AND t.state NOT IN ('отказ площадки', 'архив')"), {"ids": ids}).all()
+    seen, reachable = set(), set()
+    for set_id, surface, our in rows:
+        seen.add(set_id)
+        if targeting_miss(surface, our) is None:
+            reachable.add(set_id)
+    return seen - reachable
+
+
 def _client(partner: str) -> MsClient:
     return MsClient(partner_xxhash=partner)
 
@@ -174,6 +226,11 @@ def ensure(db: Session, s: LaunchPrepCreativeSet, *,
            client: Optional[MsClient] = None, wake: bool = True) -> str:
     """Хеш креатива нацеливания для комплекта; заводит его, если ещё нет."""
     from app.routers.traffic_catalog import targeting_cabinet, viewability_src
+
+    # Раньше кабинета и кампании: слепому комплекту в DSP ходить незачем вовсе, ни за
+    # копией, ни будить кампанию — и уже заведённая копия тоже ничего не покажет.
+    if s.id in blind_sets(db, [s.id]):
+        raise TargetingCreativeError(BLIND_TEXT)
 
     partner, campaign = targeting_cabinet(db)
     if not partner or not campaign:
@@ -418,6 +475,8 @@ def ensure_quietly(db: Session, s: LaunchPrepCreativeSet, *,
     """
     # Уже заведён — при отправке трафику в DSP не ходим вовсе: проверку кода делает
     # просьба о ссылке, а каждая повторная отправка комплекта иначе стучалась бы наружу.
+    if s.id in blind_sets(db, [s.id]):
+        return None
     if s.ms_targeting_creative_xxhash:
         return s.ms_targeting_creative_xxhash
     try:
