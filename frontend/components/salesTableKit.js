@@ -76,6 +76,8 @@ export function PortalPopover({ open, minWidth = 220, maxHeight = 320, offset = 
   const anchor = useRef(null)   // скрытый маркер на месте вызова: его parentElement — триггер
   const panel = useRef(null)    // сама панель: нужна, чтобы прижать её по ФАКТИЧЕСКОЙ ширине
   const [pos, setPos] = useState(null)
+  // Прижим к краю — ОДИН раз на каждую расстановку (см. второй проход).
+  const clamped = useRef(false)
   useLayoutEffect(() => {
     if (!open) { setPos(null); return }
     const trigger = anchor.current && anchor.current.parentElement
@@ -85,6 +87,7 @@ export function PortalPopover({ open, minWidth = 220, maxHeight = 320, offset = 
       const left = align === 'right'
         ? Math.max(EDGE_GAP, Math.min(r.right - minWidth, window.innerWidth - minWidth - EDGE_GAP))
         : Math.max(EDGE_GAP, Math.min(r.left, window.innerWidth - minWidth - EDGE_GAP))
+      clamped.current = false
       setPos({ top: r.bottom + offset, left })
     }
     place()
@@ -96,10 +99,17 @@ export function PortalPopover({ open, minWidth = 220, maxHeight = 320, offset = 
   // Второй проход — по ФАКТИЧЕСКОЙ ширине панели. Первый прижимает по `minWidth`, а это
   // всего лишь минимум: панель с двумя полями даты шире его на сотню пикселей, и у
   // триггера возле правого края она уезжала за экран вместе с кнопкой «показать».
-  // Мерить можно только после отрисовки, поэтому проход отдельный; повторно он не
-  // срабатывает — на втором вызове `left` уже равен пределу.
+  // Мерить можно только после отрисовки, поэтому проход отдельный.
+  //
+  // ОДИН РАЗ на расстановку (прод, 24.09.2026, React #185 — страница падала). Ширина
+  // фиксированного окна зависит от того, где оно стоит: у широкого содержимого сдвиг
+  // влево давал окну место — оно расширялось, снова вылезало за край и снова двигалось,
+  // по 16 px за проход, пока React не останавливал страницу на пятидесятом обновлении.
+  // Теперь ширина от положения НЕ зависит: окно по содержимому (`width: max-content`) с
+  // потолком в размер экрана — прижим точен с первого раза, и делается он один раз.
   useLayoutEffect(() => {
-    if (!open || !pos || !panel.current) return
+    if (!open || !pos || !panel.current || clamped.current) return
+    clamped.current = true
     const w = panel.current.offsetWidth
     const limit = Math.max(EDGE_GAP, window.innerWidth - w - EDGE_GAP)
     if (pos.left > limit) setPos(p => ({ ...p, left: limit }))
@@ -113,6 +123,7 @@ export function PortalPopover({ open, minWidth = 220, maxHeight = 320, offset = 
         // опции доходит до onClick родителя-триггера (напр. тумблера ячейки) и переключает его.
         <div ref={panel} data-pop-root onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{
           position: 'fixed', top: pos.top, left: pos.left, zIndex: Z.dropdown, minWidth, maxHeight,
+          width: 'max-content', maxWidth: `calc(100vw - ${EDGE_GAP * 2}px)`,
           overflowY: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border-card)',
           borderRadius: 12, boxShadow: 'var(--shadow-card, 0 8px 28px rgba(28,36,51,.14))',
           display: 'flex', flexDirection: 'column', padding: 6, ...style,

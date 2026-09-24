@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react'
 import Head from 'next/head'
+import Link from 'next/link'
 import { useRouter } from 'next/router'
 import Navbar, { firstAllowedHref } from '../../components/Navbar'
 import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsTabs'
-import { MONO, UI, card, sel, th, td } from '../../components/salesTableKit'
+import { MONO, UI, card, sel, th, td, LoadError } from '../../components/salesTableKit'
+import { errText, isAuth } from '@/lib/loadError'
+import useLatest from '@/lib/useLatest'
 import api, { auth } from '../../lib/http'
 import { grp0 as fmt } from '../../lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -44,8 +47,14 @@ export default function SettingsAudit() {
     } catch (e) { if (e.response?.status === 401) router.push('/login') }
   }
 
+  // Сбой фильтра НЕ оставляет прежний список под новым фильтром (аудит 23.09.2026, 6.M7):
+  // человек читал журнал за «вчера», думая, что видит «сегодня». Список очищается и
+  // причина называется; устаревший ответ не пишется поверх нового (lib/useLatest).
+  const [auditErr, setAuditErr] = useState('')
+  const latest = useLatest()
   const loadAuditLog = async (skip, filters) => {
-    setLoadingAudit(true)
+    setLoadingAudit(true); setAuditErr('')
+    const fresh = latest()
     try {
       const params = { skip, limit: AUDIT_LIMIT }
       if (filters.action) params.action = filters.action
@@ -53,15 +62,19 @@ export default function SettingsAudit() {
       if (filters.date_from) params.date_from = filters.date_from
       if (filters.date_to) params.date_to = filters.date_to
       const res = await api.get('/users/audit-log/', { ...auth(), params })
+      if (!fresh()) return
       if (skip === 0) setAuditItems(res.data.items)
       else setAuditItems(prev => [...prev, ...res.data.items])
       setAuditTotal(res.data.total)
       setActionLabels(res.data.actions)
       setAuditSkip(skip)
     } catch (e) {
-      if (e.response?.status === 401) router.push('/login')
+      if (!fresh()) return
+      if (e.response?.status === 401) { router.push('/login'); return }
+      if (skip === 0) { setAuditItems([]); setAuditTotal(0) }
+      if (!isAuth(e)) setAuditErr(errText(e))
     } finally {
-      setLoadingAudit(false)
+      if (fresh()) setLoadingAudit(false)
     }
   }
 
@@ -79,6 +92,8 @@ export default function SettingsAudit() {
       <Navbar active="settings" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SettingsTabs active="audit" />
+        {!!auditErr && <div style={{ margin: '12px 0' }}>
+          <LoadError text={auditErr} onRetry={() => loadAuditLog(0, auditFilters)} /></div>}
 
         {/* Фильтры */}
         <div style={{ ...card, padding: '14px 18px', marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -103,11 +118,12 @@ export default function SettingsAudit() {
             <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{fmt(auditTotal)}</span>
           </div>
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 960 }}>
               <thead><tr>
                 <th style={{ ...th, width: 180 }}>Дата и время</th>
                 <th style={{ ...th, width: 180 }}>Пользователь</th>
-                <th style={{ ...th, width: 200 }}>Действие</th>
+                <th style={{ ...th, width: 220 }}>Действие</th>
+                <th style={{ ...th, width: 260 }}>Объект</th>
                 <th style={th}>Детали</th>
               </tr></thead>
               <tbody>
@@ -116,16 +132,25 @@ export default function SettingsAudit() {
                     <td style={{ ...td, whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>{fmtDateTime(a.created_at)}</td>
                     <td style={td}>{a.user_name || '—'}</td>
                     <td style={td}>
-                      <span style={{ fontSize: 13, padding: '3px 10px', borderRadius: 20,
+                      <span style={{ display: 'inline-block', lineHeight: 1.35, fontSize: 13, padding: '3px 10px', borderRadius: 12,
                         background: a.action.includes('failed') ? 'var(--danger-tint)' : a.action.includes('delete') ? 'var(--warning-tint)' : 'var(--accent-tint)',
                         color: a.action.includes('failed') ? 'var(--danger)' : 'var(--text-secondary)' }}>
                         {a.action_label}
                       </span>
                     </td>
+                    {/* Что именно изменили — код и название сделки, имя площадки и т. п.
+                        (владелец, 24.09.2026): номер из базы человеку ничего не говорит. */}
+                    <td style={td}>
+                      {a.object
+                        ? (a.object.href
+                          ? <Link href={a.object.href} style={{ color: 'var(--accent)', textDecoration: 'none' }}>{a.object.label}</Link>
+                          : <span>{a.object.label}</span>)
+                        : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                    </td>
                     <td style={{ ...td, color: 'var(--text-muted)' }}>{a.details || ''}</td>
                   </tr>
                 ))}
-                {!auditItems.length && !loadingAudit && <tr><td colSpan={4} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Записей нет</td></tr>}
+                {!auditItems.length && !loadingAudit && <tr><td colSpan={5} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Записей нет</td></tr>}
               </tbody>
             </table>
           </div>

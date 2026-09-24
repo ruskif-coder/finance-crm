@@ -119,6 +119,25 @@ export const fmtDateOfMoment = (v, dash = DASH) => {
   return `${p.day}.${p.month}.${p.year}`
 }
 
+/** Момент → «14.09 · 22:31» по Москве — для лент событий, где год понятен.
+    Раньше лента кабинетов вырезала часы прямо из UTC-строки и отставала на три часа
+    (24.09.2026). */
+export const fmtDayTime = (v, dash = DASH) => {
+  const d = serverDate(v)
+  if (!d) return dash
+  const p = partsOf(d, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+    hour12: false })
+  return `${p.day}.${p.month} · ${p.hour}:${p.minute}`
+}
+
+/** Момент → «14.09» по Москве: день события без года и времени. */
+export const fmtDayOfMoment = (v, dash = DASH) => {
+  const d = serverDate(v)
+  if (!d) return dash
+  const p = partsOf(d, { day: '2-digit', month: '2-digit' })
+  return `${p.day}.${p.month}`
+}
+
 /** Календарный день «2026-09-14» → `Date` МЕСТНОЙ полуночи.
 
     Именно местной, а не UTC: дальше у него спрашивают день недели и месяц, и `new

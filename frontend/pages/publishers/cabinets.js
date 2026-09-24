@@ -36,6 +36,7 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { TONE, toneOf } from '@/lib/tone'
 import { CABINET_STATES, cabinetState } from '@/lib/cabinetState'
 import safeHref from '@/lib/safeHref'
+import { fmtDayTime, fmtDayOfMoment } from '@/lib/dates'
 
 /* ── мелкие части, все на модульном уровне ──────────────────────────────────
    Компонент, объявленный внутри рендера родителя, пересоздаётся на каждый ввод, и
@@ -112,7 +113,8 @@ const StateChip = ({ state }) => {
   )
 }
 
-const ddmm = (v) => (v ? `${String(v).slice(8, 10)}.${String(v).slice(5, 7)}` : null)
+// День последнего входа — по Москве: вырезка из UTC-строки ночью давала вчерашний день.
+const ddmm = (v) => (v ? fmtDayOfMoment(v) : null)
 const ddmmyy = (v) => (v ? `${ddmm(v)}.${String(v).slice(2, 4)}` : '')
 
 function CabinetSummary({ c, contacts }) {
@@ -152,8 +154,8 @@ const LogRow = ({ row }) => (
         {row.label}{row.subject ? ` · ${row.subject}` : ''}
       </span>
       <span style={{ fontFamily: MONO, fontSize: 9, color: 'var(--text-faint)' }}>
-        {row.actor} · {String(row.at || '').slice(8, 10)}.{String(row.at || '').slice(5, 7)}
-        {' · '}{String(row.at || '').slice(11, 16)}
+        {/* Время — по Москве через lib/dates: вырезка из UTC-строки отставала на 3 часа */}
+        {row.actor} · {fmtDayTime(row.at)}
       </span>
     </span>
   </div>

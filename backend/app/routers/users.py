@@ -312,89 +312,8 @@ def delete_user(
     return {"message": "Пользователь удалён"}
 
 
-ACTION_LABELS = {
-    # Приложения к договору (05–06.09.2026) и демо-стенд DSP. Без подписи журнал
-    # показывает сырой ключ вида `annex_confirm` — строка есть, а прочесть её нельзя.
-    "annex_create": "Черновик приложения к договору",
-    "annex_edit": "Черновик приложения изменён",
-    "annex_confirm": "Приложение к договору выпущено",
-    "annex_start_no": "Стартовый номер приложений по договору",
-    "annex_template_create": "Формулировка услуги заведена",
-    "annex_template_edit": "Формулировка услуги изменена",
-    # Админка трафика (каталог блоков) — тоже без подписей до 06.09.2026.
-    "traffic_catalog_code_edit": "Код площадки изменён",
-    "traffic_catalog_surface_add": "Поверхность площадки добавлена",
-    "traffic_catalog_surface_edit": "Поверхность площадки изменена",
-    "traffic_catalog_block_add": "Рекламный блок добавлен",
-    "traffic_catalog_block_edit": "Рекламный блок изменён",
-    "traffic_catalog_block_delete": "Рекламный блок удалён",
-    "counterparty_signer": "Подписант контрагента",
-    "traffic_creative_script": "Скрипт, вшиваемый в креатив",
-    "import_apply": "Импорт операций из файла",
-    "ord_resolve_submission": "Разбор зависшей отправки в ОРД",
-    "weborama_provision": "Пиксели Weborama по РК",
-    "dsp_provision": "Выгрузка креативов РК в DSP",
-    "external_resolve": "Сверка с кабинетом DSP/Weborama после попытки без ответа",
-    "dsp_demo_campaign": "DSP демо: кампания заведена",
-    "dsp_demo_creative": "DSP демо: креатив заведён",
-    "dsp_demo_status": "DSP демо: статус кампании",
-    "dsp_demo_plan": "DSP демо: план кампании",
-    "dsp_demo_targeting": "DSP демо: таргетинг",
-    "verify_media_plan": "МП проверен",
-    "traffic_dashboard_sync": "Обновление РК из сделок",
-    "deal_weborama_pixel": "Доп. параметр РК: пиксель Weborama",
-    "deal_verifier_shows": "Ручные показы Weborama на сверке",
-    "cabinet_notify_toggle": "Рассылка площадкам: вид включён или выключен",
-    "cabinet_delete": "Кабинет площадки удалён",
-    "cabinet_notify_hours": "Рассылка площадкам: тихие часы и час дайджеста",
-    "targeting_link": "Ссылка нацеливания выпущена",
-    "mail_settings": "Настройки почты изменены",
-    "mail_shell": "Правка оболочки письма",
-    "mail_card_text": "Правка текста карточки уведомления",
-    "mail_template": "Шаблон письма изменён",
-    "mail_test": "Проверочное письмо отправлено",
-    "ord_sync_kktu": "Заливка справочника ККТУ из ОРД",
-    "upload_deal_brief_file": "Файл прикреплён к брифу сделки",
-    "delete_deal_brief_file": "Файл брифа снят",
-    "ord_link_final": "Доходный ОРД привязан к нашему договору",
-    "ord_defer_final": "Доходный ОРД отложен на разбор",
-    "ord_reopen_final": "Доходный ОРД возвращён на разбор",
-    "set_advertiser_sales_rep": "Ответственный сейлз рекламодателя",
-    "ord_initial_delete": "Чистка зеркала: удаление изначальных договоров",
-    "bug_report_new": "Заявка о сбое принята",
-    "bug_report_status": "Заявка о сбое: смена статуса",
-    "bug_report_backlog": "Из заявки заведено наблюдение",
-    "maintenance_on": "Объявлено техобслуживание",
-    "maintenance_off": "Техобслуживание снято",
-    "ord_sync_clients": "Сверка юрлиц с ОРД",
-    "ord_sync_contracts": "Сверка договоров с ОРД",
-    "ord_register_final": "Договор зарегистрирован в ОРД",
-    "ord_register_initial": "Изначальный договор заведён в ОРД",
-    "ord_attach_initial": "Изначальный прикреплён к доходному",
-    "self_promo_on": "Присвоен статус «самореклама»",
-    "self_promo_off": "Снят статус «самореклама»",
-    "media_plan_change_note": "Причина изменений МП",
-    "deal_title_from_mp": "Название сделки из медиаплана",
-    "login_success": "Вход выполнен",
-    "login_failed": "Неудачный вход",
-    "create_user": "Создание пользователя",
-    "update_user": "Изменение пользователя",
-    "delete_user": "Удаление пользователя",
-    "create_operation": "Создание операции",
-    "update_operation": "Изменение операции",
-    "delete_operation": "Удаление операции",
-    # Цепочки частичных оплат и фиксация МП на «Сборке» (23.09.2026).
-    "partial_payment_operation": "Частичная оплата операции",
-    "unlink_operation_parent": "Отвязка частичной оплаты",
-    "force_delete_operation": "Принудительное удаление операции (с паролем)",
-    "media_plan_locked_edit": "Правка зафиксированного медиаплана мастером",
-    "create_role": "Создание роли",
-    "update_role": "Изменение роли",
-    "delete_role": "Удаление роли",
-    "update_counterparty": "Изменение контрагента",
-    "delete_counterparty": "Удаление контрагента",
-    "bulk_update_counterparty": "Массовое изменение контрагентов",
-}
+# Подписи действий — в `app/audit_labels.py` (одна точка на журнал).
+from app.audit_labels import ACTION_LABELS  # noqa: E402
 
 
 @router.get("/audit-log/")
@@ -429,6 +348,10 @@ def get_audit_log(
 
     total = query.count()
     rows = query.order_by(AuditLog.created_at.desc()).offset(skip).limit(limit).all()
+    # Что именно изменили — код и название сделки, имя площадки и т. п. (владелец,
+    # 24.09.2026): номер из базы человеку ничего не говорит. Считается при показе.
+    from app.audit_objects import describe
+    objects = describe(db, [(r.entity_type, r.entity_id) for r in rows])
 
     return {
         "total": total,
@@ -443,6 +366,7 @@ def get_audit_log(
                 "entity_type": r.entity_type,
                 "entity_id": r.entity_id,
                 "details": r.details,
+                "object": objects.get((r.entity_type, r.entity_id)),
                 "created_at": r.created_at,
             }
             for r in rows

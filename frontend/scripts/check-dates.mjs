@@ -45,6 +45,8 @@ const OWN_Z = /new Date\([^)]*\+\s*'Z'|\+\s*'Z'\s*\)/
 const UTC_TODAY = /new Date\(\)\.toISOString\(\)\.(slice|substring|split)\(/
 // «по месяц» = 28-е: терялись 29–31 числа (аудит 23.09.2026, 6.H4) — нужен monthEnd().
 const DAY_28 = /\+\s*'-28'/
+// Часы и минуты вырезкой из метки — это UTC, отставание на 3 часа (лента кабинетов, 24.09.2026).
+const TIME_SLICE = /\.slice\(\s*11\s*,\s*16\s*\)|\.substring\(\s*11\s*,\s*16\s*\)/
 
 const bad = []
 for (const dir of DIRS) {
@@ -58,6 +60,7 @@ for (const dir of DIRS) {
       else if (OWN_Z.test(line)) bad.push(`${rel}:${i + 1} — своя копия суффикса 'Z'`)
       else if (UTC_TODAY.test(line)) bad.push(`${rel}:${i + 1} — «сегодня» по Гринвичу (toISOString)`)
       else if (DAY_28.test(line)) bad.push(`${rel}:${i + 1} — конец месяца 28-м числом, нужен monthEnd()`)
+      else if (TIME_SLICE.test(line)) bad.push(`${rel}:${i + 1} — часы вырезаны из UTC-строки, нужен fmtDayTime/fmtTime`)
     })
   }
 }

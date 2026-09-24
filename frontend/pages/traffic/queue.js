@@ -308,6 +308,9 @@ export default function TrafficQueue() {
   async function aimAtMe(setId) {
     setErr(''); setAiming(setId)
     const tab = window.open('', '_blank')
+    // Новая вкладка не должна держать ссылку на нашу (аудит 23.09.2026, 7.L1): туда уходит
+    // страница DSP, и через `opener` она могла бы увести наш экран на подделку.
+    if (tab) tab.opener = null
     // Пустая вкладка на несколько секунд читается как «открылось битое». Пишем в неё
     // строку ожидания сразу: ждать придётся и здесь, и там, а объяснение должно быть в
     // том окне, куда человек смотрит.
@@ -547,9 +550,15 @@ export default function TrafficQueue() {
           </span>
         </div>
 
+        {/* Закреплена у верха окна: кнопки (нацеливание, отправка) стоят внизу длинного
+            списка, и полоса в начале страницы была не видна — отказ выглядел как «ничего
+            не произошло» (прод, 24.09.2026). Закрывается по клику. */}
         {err && (
-          <div style={{ ...card, padding: '10px 14px', marginBottom: 14, color: 'var(--danger-fg)',
-                        borderColor: ROW_TONE.overdue.border, background: ROW_TONE.overdue.bg }}>
+          <div onClick={() => setErr('')} title="Закрыть"
+            style={{ ...card, padding: '10px 14px', marginBottom: 14, color: 'var(--danger-fg)',
+                        borderColor: ROW_TONE.overdue.border, background: ROW_TONE.overdue.bg,
+                        position: 'sticky', top: 'calc(env(safe-area-inset-top, 0px) + 8px)',
+                        zIndex: 30, cursor: 'pointer', boxShadow: 'var(--shadow-card)' }}>
             {err}
           </div>
         )}
