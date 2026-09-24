@@ -19,7 +19,11 @@ from sqlalchemy.orm import sessionmaker
 
 DSP_DATABASE_URL = os.getenv("DSP_DATABASE_URL")
 
-_engine = (create_engine(DSP_DATABASE_URL, pool_pre_ping=True, future=True)
+# Таймаут соединения — не украшение: журнал этой базы читает дашборд трафика на каждой
+# загрузке (зависшие попытки DSP), и недоступный хост без таймаута подвешивал бы экран
+# на TCP-соединении вместо «нет данных» (ревью 23.09.2026).
+_engine = (create_engine(DSP_DATABASE_URL, pool_pre_ping=True, future=True,
+                         connect_args={"connect_timeout": 3})
            if DSP_DATABASE_URL else None)
 DspSessionLocal = (sessionmaker(bind=_engine, autoflush=False, autocommit=False)
                    if _engine else None)

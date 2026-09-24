@@ -55,6 +55,16 @@ class MailError(RuntimeError):
     """Письмо не ушло, и причина называется человеку."""
 
 
+class MailTemporary(MailError):
+    """Письмо ТОЧНО не ушло, и повтор имеет смысл: сервер недоступен или ответил 4xx.
+
+    Отдельно от прочих отказов (аудит 23.09.2026, 5.L3): раньше любой сбой делал письмо
+    окончательно «не ушло», и минутная недоступность ящика стоила площадке письма.
+    Обрыв посреди отправки сюда НЕ относится — письмо могло дойти, и повтор дал бы
+    второе.
+    """
+
+
 class MailNotConfigured(MailError):
     """Почта не настроена. Отдельным типом: это НЕ сбой отправки.
 
@@ -138,6 +148,72 @@ def configured() -> bool:
     return config().ok
 
 
+# Настройки экрана «Почта»: имя отправителя, приставка темы, подпись. До 24.09.2026 их
+# не читал никто — живое письмо брало имя из окружения, а приставки и подписи не было
+# вовсе (аудит 23.09.2026, 5.M1). Читаются ЗДЕСЬ, потому что через эту функцию проходит
+# каждое письмо: живое, досылка, дайджест, «Отправить себе».
+SCREEN_KEYS = ("mail_from_name", "mail_subject_prefix", "mail_signature")
+
+
+_SCREEN_CACHE: dict = {"at": 0.0, "value": None}
+SCREEN_TTL = 30.0
+
+
+def screen_cache_clear() -> None:
+    """Сбросить кэш настроек — после их сохранения на экране."""
+    _SCREEN_CACHE["value"] = None
+
+
+def screen_settings() -> dict:
+    """Настройки с экрана. База недоступна — пусто: письмо уйдёт с окружением, а не
+    упадёт из-за оформления.
+
+    С кэшем на полминуты (ревью 24.09.2026): без него каждое письмо открывало отдельное
+    соединение с базой, а досылка из пятисот строк — тысячу.
+    """
+    import time
+
+    now = time.monotonic()
+    if _SCREEN_CACHE["value"] is not None and now - _SCREEN_CACHE["at"] < SCREEN_TTL:
+        return _SCREEN_CACHE["value"]
+    value = _read_screen_settings()
+    _SCREEN_CACHE.update(at=now, value=value)
+    return value
+
+
+def _read_screen_settings() -> dict:
+    try:
+        from sqlalchemy import text
+
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            rows = db.execute(text("SELECT key, value FROM company_settings "
+                                   "WHERE key = ANY(:k)"), {"k": list(SCREEN_KEYS)}).all()
+        finally:
+            db.close()
+        return {k: (v or "").strip() for k, v in rows}
+    except Exception as e:                                  # noqa: BLE001
+        log.warning("Настройки письма не прочитаны, беру окружение: %s", e)
+        return {}
+
+
+def sender_name() -> str:
+    """Имя отправителя для шапки письма: с экрана «Почта», иначе из окружения."""
+    return (screen_settings().get("mail_from_name")
+            or (os.getenv(ENV_FROM_NAME) or "").strip() or "SIMB-AD")
+
+
+def _signed_html(html: str, signature: str) -> str:
+    """Подпись в конец разметки — перед закрытием тела, мелким текстом по центру."""
+    import html as html_mod
+    block = ('<div style="font-family:Arial,sans-serif;font-size:12px;color:#5b6475;'
+             'text-align:center;padding:14px 16px 0 16px;white-space:pre-line;">'
+             + html_mod.escape(signature) + '</div>')
+    i = html.lower().rfind("</body>")
+    return (html[:i] + block + html[i:]) if i >= 0 else (html + block)
+
+
 def build_message(*, to: str, subject: str, body: str, cfg: Optional[MailConfig] = None,
                   reply_to: Optional[str] = None, to_name: Optional[str] = None,
                   html: Optional[str] = None) -> EmailMessage:
@@ -153,10 +229,21 @@ def build_message(*, to: str, subject: str, body: str, cfg: Optional[MailConfig]
     # том, кто ошибся — человек в форме или человек в `.env`, — а последствие одинаковое.
     if not valid_address(cfg.sender):
         raise MailNotConfigured(cfg.problem or f"{ENV_FROM} задан неверно")
+    scr = screen_settings()
+    prefix = scr.get("mail_subject_prefix") or ""
+    signature = scr.get("mail_signature") or ""
+    subject = subject.strip()
+    if prefix and not subject.startswith(prefix):
+        subject = f"{prefix} {subject}"
+    if signature:
+        body = f"{body}\n\n-- \n{signature}"
+        if html:
+            html = _signed_html(html, signature)
     msg = EmailMessage()
-    msg["From"] = formataddr((cfg.sender_name or None, cfg.sender))
+    msg["From"] = formataddr((scr.get("mail_from_name") or cfg.sender_name or None,
+                              cfg.sender))
     msg["To"] = formataddr((to_name or None, to.strip()))
-    msg["Subject"] = subject.strip()
+    msg["Subject"] = subject
     # Ответ уходит СОТРУДНИКУ, а не в ящик системы (решение владельца 13.09.2026).
     # Некорректный адрес сотрудника не должен ронять письмо: без Reply-To оно всё равно
     # полезно, а вот неотправленное — нет.
@@ -207,10 +294,27 @@ def send(*, to: str, subject: str, body: str, reply_to: Optional[str] = None,
         return msg["Message-ID"]
     try:
         srv = _connect(cfg)
+    except (smtplib.SMTPAuthenticationError, ssl.SSLCertVerificationError) as e:
+        # Неверный пароль или чужой сертификат повтор не лечит — это настройка, и
+        # трижды стучаться с ней значит трижды получить тот же отказ (ревью 23.09.2026).
+        raise MailError(f"Почтовый сервер отказал во входе: {e!r}") from e
     except (smtplib.SMTPException, OSError, ssl.SSLError) as e:
-        raise MailError(f"Почтовый сервер недоступен: {e!r}") from e
+        # Соединения нет — письмо точно не ушло: повторять можно.
+        raise MailTemporary(f"Почтовый сервер недоступен: {e!r}") from e
     try:
         srv.send_message(msg)
+    except smtplib.SMTPRecipientsRefused as e:
+        # Серые списки отвечают получателю 450/451 — «попробуйте позже». Такой отказ
+        # приходит этим классом, а не ответом сервера, и раньше считался окончательным.
+        codes = [c for c, _ in (e.recipients or {}).values()]
+        if codes and all(400 <= c < 500 for c in codes):
+            raise MailTemporary(f"Получатель временно не принимает: {e!r}") from e
+        raise MailError(f"Письмо не принято: {e!r}") from e
+    except smtplib.SMTPResponseException as e:
+        # 4xx — «попробуйте позже» по самому протоколу; 5xx — окончательный отказ.
+        if 400 <= e.smtp_code < 500:
+            raise MailTemporary(f"Письмо отложено сервером: {e!r}") from e
+        raise MailError(f"Письмо не принято: {e!r}") from e
     except smtplib.SMTPException as e:
         raise MailError(f"Письмо не принято: {e!r}") from e
     finally:

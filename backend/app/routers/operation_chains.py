@@ -186,8 +186,11 @@ def force_delete(op_id: int, body: ForceDeleteIn, db: Session = Depends(get_db),
                 .filter(Operation.parent_operation_id == op.id).all()]
     details = (f"{op.status}, доход {op.income}, расход {op.expense}, банк {op.bank}; "
                f"части стали самостоятельными: {part_ids}")
+    from app.routers.operations import remove_scans, scan_paths
+    scans = scan_paths(db, [op.id])
     db.delete(op)
     db.commit()
+    remove_scans(scans)
     log_action(db, current_user, "force_delete_operation", entity_type="operation",
                entity_id=op_id, details=details)
     return {"message": "Операция удалена", "detached_parts": part_ids}

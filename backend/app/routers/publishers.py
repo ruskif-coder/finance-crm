@@ -21,10 +21,11 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import FileResponse
 from sqlalchemy import func, or_, case, and_
 from sqlalchemy.orm import Session, selectinload
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 
 from app.files_safe import existing_upload_path, remove_upload
+from app.links import safe_url
 from app.database import get_db
 from app.models import User, Counterparty, Contract, Operation, Article
 from app.permissions import require_any_permission
@@ -166,6 +167,12 @@ class PublisherIn(BaseModel):
     chat_url_max: Optional[str] = None
     messenger_note: Optional[str] = None
 
+    # Ссылки рисуются кликабельными — схема проверяется при приёме (аудит, 7.M1).
+    @field_validator('chat_url', 'chat_url_max')
+    @classmethod
+    def _links(cls, v):
+        return safe_url(v)
+
 
 class SurfaceIn(BaseModel):
     figma_url: Optional[str] = None
@@ -209,6 +216,12 @@ class ContactIn(BaseModel):
     # иначе правка телефона старого контакта молча включала бы ему рассылку.
     notify: Optional[bool] = None       # получает уведомления кабинета
     note: Optional[str] = None
+
+    # Ссылки рисуются кликабельными — схема проверяется при приёме (аудит, 7.M1).
+    @field_validator('max_url')
+    @classmethod
+    def _links(cls, v):
+        return safe_url(v)
 
 
 class KindIn(BaseModel):
@@ -572,6 +585,28 @@ class PublisherPatch(BaseModel):
     services: Optional[List[dict]] = None   # [{surface_kind, service_id}, ...] — весь набор
     traffic: Optional[dict] = None     # {"web": {value, depth}, ...} — замер текущего месяца
 
+    # Ссылки рисуются кликабельными — схема проверяется при приёме (аудит, 7.M1).
+    @field_validator('chat_url', 'chat_url_max')
+    @classmethod
+    def _links(cls, v):
+        return safe_url(v)
+
+
+def _figma(old, new):
+    """Ссылка на макет: схема проверяется у НОВОГО значения (аудит 23.09.2026, 7.M1).
+
+    Только у нового: на проде в этом поле лежат старые «нет» и адрес без `https://`.
+    Они не опасны, а строгая проверка запретила бы сохранять карточку целиком, пока их
+    не почистят руками. Неизменённое проходит как есть, новое — только с разрешённой
+    схемой.
+    """
+    if (new or "").strip() == (old or "").strip():
+        return old
+    try:
+        return safe_url(new)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Ссылка на макет: {e}")
+
 
 def _apply_surfaces(db, publisher_id, payload):
     for kind, body in (payload or {}).items():
@@ -602,7 +637,7 @@ def _apply_surfaces(db, publisher_id, payload):
         if "coverage_percent" in body:
             row.coverage_percent = body["coverage_percent"]
         if "figma_url" in body:
-            row.figma_url = (body["figma_url"] or "").strip() or None
+            row.figma_url = _figma(row.figma_url, body["figma_url"])
         if "note" in body:
             row.note = body["note"]
 
@@ -748,7 +783,7 @@ def upsert_surface(publisher_id: int, kind: str, data: SurfaceIn,
     if not s:
         s = SalesPublisherSurface(publisher_id=publisher_id, kind=kind)
         db.add(s)
-    s.figma_url = data.figma_url or None
+    s.figma_url = _figma(s.figma_url, data.figma_url)
     s.integration_status = status or "НЕТ"
     if data.we_work is not None:
         s.we_work = data.we_work
@@ -1119,11 +1154,14 @@ async def upload_contract_document(publisher_id: int, link_id: int, file: Upload
                   SalesPublisherContract.publisher_id == publisher_id).first())
     if not lk:
         raise HTTPException(status_code=404, detail="Договор не найден")
-    # Замена файла стирает прежний — через общую проверку границы, тем же корнем,
-    # каким его отдаёт скачивание.
-    if lk.document_filename:
-        remove_upload(lk.document_filename, root=UPLOADS_DIR)
+    # СНАЧАЛА новый, потом уборка старого. До 23.09.2026 порядок был обратный: новый
+    # отклонён (415/413) — старого уже нет, а ссылка на него осталась (аудит, 4.M8).
+    # Старый стирается через общую проверку границы, тем же корнем, каким его отдаёт
+    # скачивание, — и только если это ДРУГОЙ файл: одноимённый новый уже лёг на его место.
+    old = lk.document_filename
     stored = await _save_upload(file, link_id, "con")
+    if old and old != stored:
+        remove_upload(old, root=UPLOADS_DIR)
     lk.document_filename = stored
     lk.document_path = os.path.join(UPLOADS_DIR, stored)
     lk.document_source = "file"

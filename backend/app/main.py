@@ -297,6 +297,10 @@ def seed_stage_catalog():
             ("Архив успешных сделок", "archive", False),
         ]),
     ]
+    # Срок стадии сверх срока этапа. На свежей базе его ставит засев, а не миграция
+    # 2026-08-17_account_dashboard: её номера стадий верны только для базы, на которой
+    # её писали (аудит 23.09.2026, 7.6). 0 — «здесь срока нет».
+    SLA = {"МП Отправлено": 5, "В размещении": 0, "Итоговая сверка": 3, "Оплата": 0}
     layer_of = lambda key: (STAGE_BY_KEY[key]["money_layer"] if key in STAGE_BY_KEY else None)
     db = SessionLocal()
     try:
@@ -309,12 +313,21 @@ def seed_stage_catalog():
                     # рождается, МП там ещё нет. Признак позиционный, а не по имени:
                     # стадию переименуют, и правило по имени сломает создание сделок.
                     entry = (pi == 0 and si == 0)
+                    # Терминальная стадия без под-этапа — срыв; архив — терминален тоже,
+                    # положительный исход по определению дальше не двигается.
+                    lost = term and key is None
+                    final = term or key == "archive"
                     db.add(SalesStage(phase_id=ph.id, name=sname, sort_order=si,
-                                      stage_key=key, money_layer=layer_of(key), is_terminal=term,
+                                      stage_key=key, money_layer=layer_of(key),
+                                      is_terminal=final, is_lost=lost,
+                                      sla_days=0 if final else SLA.get(sname),
                                       requires_media_plan=(not term and not entry)))
             # этап «Услуги» — реализационный (воронка выбирается на сделке)
             for ph in db.query(SalesStagePhase).filter(SalesStagePhase.name == "Услуги").all():
                 ph.is_realization = True
+            # срок этапов: Песочница 2 дня, Услуги 5, Документооборот 5
+            for ph in db.query(SalesStagePhase).all():
+                ph.sla_days = {0: 2, 1: 5, 2: 5}.get(ph.sort_order)
             db.commit()
             logger.info("seed_stage_catalog: каталог стадий засеян из CSV")
             return

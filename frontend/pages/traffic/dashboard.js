@@ -33,6 +33,7 @@ import {
   VerifierStrip, WidgetsToggle, byCreative, num, pctTone,
 } from '@/components/traffic/dashboardKit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import HungAttempts from '@/components/traffic/HungAttempts'
 
 const DashIcon = ({ size = 21 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -280,10 +281,14 @@ export default function TrafficDashboard() {
         { status: s, with_placements: !!withPlacements }, auth())
       // Каскад называется вслух: решение над РК меняет 19 строк ниже, и молчаливое
       // изменение того, чего не видно, читается как сбой.
-      if (r.data.placements_raised) say(`Площадок поднято: ${r.data.placements_raised}`)
-      else if (r.data.placements_stopped) say(s === 'пауза'
+      // Кнопка управляет и кампанией в DSP — это тоже называется вслух.
+      const inDsp = { LAUNCHED: 'запущена', STOPPED: 'остановлена', ARCHIVE: 'в архиве' }[r.data.dsp_status]
+      const dspNote = inDsp ? `. В DSP кампания ${inDsp}` : ''
+      if (r.data.placements_raised) say(`Площадок поднято: ${r.data.placements_raised}${dspNote}`)
+      else if (r.data.placements_stopped) say((s === 'пауза'
         ? `РК на паузе, площадок приостановлено: ${r.data.placements_stopped}`
-        : `Площадок остановлено: ${r.data.placements_stopped}`)
+        : `Площадок остановлено: ${r.data.placements_stopped}`) + dspNote)
+      else if (dspNote) say(dspNote.slice(2))
       await load()
       if (open === row.id) {
         const d = await api.get(`/traffic-dashboard/campaign/${row.id}`, auth())
@@ -1239,6 +1244,11 @@ export default function TrafficDashboard() {
               </span>
             )}>
             <div style={{ fontSize: 13, lineHeight: 1.6, display: 'grid', gap: 10 }}>
+              {/* Зависшие попытки ЭТОЙ системы — первыми: пока они не сверены, повтор по
+                  ним заперт, и число «будет заведено» их не включает. */}
+              <HungAttempts campaignId={extAsk.row.id}
+                items={(extAsk.plan.unknown || []).filter(u => u.system === (wb ? 'weborama' : 'dsp'))}
+                onDone={(t) => { say(t); askExternal(extAsk.row, extAsk.kind) }} />
               {blocked && (
                 <div style={{ padding: '9px 12px', borderRadius: 9, fontSize: 12.5,
                   background: 'var(--warning-tint)', color: 'var(--warning-text)' }}>{blocked}</div>

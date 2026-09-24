@@ -100,7 +100,11 @@ def query(db: Session, *, limit: int = 100, offset: int = 0,
             "id": r.id, "created_at": r.created_at,
             "channel": r.channel, "channel_label": CHANNELS.get(r.channel, r.channel),
             "contour": r.contour, "addressee": r.addressee, "subject": r.subject,
-            "status": r.status, "status_label": STATUS.get(r.status, r.status),
+            "status": r.status,
+            # «В очереди» с ошибкой — письмо на повторной попытке, а не «ждёт канала».
+            "status_label": ("повтор по расписанию"
+                             if r.status == "queued" and r.error
+                             else STATUS.get(r.status, r.status)),
             "reason": r.reason, "error": r.error, "kind": r.kind,
         } for r in rows],
     }

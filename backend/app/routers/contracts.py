@@ -263,29 +263,42 @@ def update_contract(
     # свободный текст в этих двух полях для привязанных строк игнорируется). Если
     # counterparty_id не передан (None) — это правка исторической непривязанной строки,
     # counterparty_name/inn остаются обычным свободным текстом, как раньше.
-    if data.counterparty_id:
-        cp = _resolve_counterparty(db, data.counterparty_id)
-        resolved_name, resolved_inn, resolved_cp_id = cp.name, cp.inn, cp.id
-    else:
-        resolved_name, resolved_inn, resolved_cp_id = _clean(data.counterparty_name), _clean(data.inn), None
-
-    new_values = {
-        "contract_number": _clean(data.contract_number),
-        "contract_date": data.contract_date,
-        "inn": resolved_inn,
-        "counterparty_name": resolved_name,
-        "counterparty_id": resolved_cp_id,
-        "marketing_name": _clean(data.marketing_name),
-        "cooperation_format": _clean(data.cooperation_format),
-        "services": _clean(data.services),
-        "end_date_text": _clean(data.end_date_text),
-        "prolongation": _clean(data.prolongation),
-        "payment_form": _clean(data.payment_form),
-        "payment_term_days": data.payment_term_days,
-        "payment_term_condition": _clean(data.payment_term_condition),
-        "note": _clean(data.note),
-        "document_link": _validate_link(data.document_link),
+    #
+    # Меняются ТОЛЬКО присланные поля. Раньше запрос без `counterparty_id` молча
+    # отвязывал договор от реестра, а без остальных полей — стирал их (аудит 23.09.2026,
+    # 2.L11). Экран шлёт полный набор, поэтому для него поведение прежнее.
+    sent = data.dict(exclude_unset=True)
+    new_values = {}
+    if "counterparty_id" in sent:
+        if data.counterparty_id:
+            cp = _resolve_counterparty(db, data.counterparty_id)
+            new_values.update(counterparty_name=cp.name, inn=cp.inn, counterparty_id=cp.id)
+        else:
+            new_values.update(counterparty_name=_clean(data.counterparty_name),
+                              inn=_clean(data.inn), counterparty_id=None)
+    elif contract.counterparty_id is None:
+        # непривязанная историческая строка — имя и ИНН остаются свободным текстом
+        if "counterparty_name" in sent:
+            new_values["counterparty_name"] = _clean(data.counterparty_name)
+        if "inn" in sent:
+            new_values["inn"] = _clean(data.inn)
+    plain = {
+        "contract_number": lambda: _clean(data.contract_number),
+        "contract_date": lambda: data.contract_date,
+        "marketing_name": lambda: _clean(data.marketing_name),
+        "cooperation_format": lambda: _clean(data.cooperation_format),
+        "services": lambda: _clean(data.services),
+        "end_date_text": lambda: _clean(data.end_date_text),
+        "prolongation": lambda: _clean(data.prolongation),
+        "payment_form": lambda: _clean(data.payment_form),
+        "payment_term_days": lambda: data.payment_term_days,
+        "payment_term_condition": lambda: _clean(data.payment_term_condition),
+        "note": lambda: _clean(data.note),
+        "document_link": lambda: _validate_link(data.document_link),
     }
+    for key, value_of in plain.items():
+        if key in sent:
+            new_values[key] = value_of()
 
     changes = []
     labels = {
@@ -609,16 +622,26 @@ def _parse_import_file(content: bytes):
     return result
 
 
+# Значение в ячейке есть, но прочесть его нельзя. Раньше такое становилось пустотой и
+# ЗАТИРАЛО записанное: «30 дней» стирало срок оплаты (аудит 23.09.2026, 2.L12). Теперь
+# поле пропускается, и строка называет его в списке пропущенного.
+UNREADABLE = object()
+
+
 def _coerce_import_value(field: str, raw):
     """Приводит значение из Excel к типу поля модели."""
     import datetime as dt
+    import re
     if raw is None or raw == "":
         return None
     if field == "payment_term_days":
-        try:
-            return int(float(str(raw)))
-        except Exception:
-            return None
+        # Целое число дней, 0…3650. Дробное, отрицательное и «1e12» — нераспознанное:
+        # последнее иначе падало бы 500 на записи, когда предыдущие строки уже записаны.
+        if isinstance(raw, (int, float)):
+            return int(raw) if float(raw).is_integer() and 0 <= raw <= 3650 else UNREADABLE
+        m = re.match(r"^\s*(\d+)(?:[.,]0+)?\s*(?:дн\w*|д\.?|календарн\w*\s+дн\w*|рабоч\w*\s+дн\w*)?\s*$",
+                     str(raw), re.IGNORECASE)
+        return int(m.group(1)) if m and int(m.group(1)) <= 3650 else UNREADABLE
     if field == "contract_date":
         if isinstance(raw, (dt.date, dt.datetime)):
             return raw.date() if isinstance(raw, dt.datetime) else raw
@@ -628,7 +651,7 @@ def _coerce_import_value(field: str, raw):
                 return dt.datetime.strptime(str(raw).strip(), fmt).date()
             except Exception:
                 pass
-        return None
+        return UNREADABLE
     return str(raw).strip() if raw is not None else None
 
 
@@ -665,6 +688,10 @@ async def preview_import_contracts(
             if field not in rec:
                 continue
             new_val = _coerce_import_value(field, rec[field])
+            if new_val is UNREADABLE:
+                skipped.append({"row": row_num, "reason": f"{_FIELD_LABELS.get(field, field)}: "
+                                f"«{rec[field]}» не распознано — поле не меняется"})
+                continue
             if field == 'document_link':
                 new_val = _validate_link(new_val, raise_on_bad=False)  # обход формы: санируем и здесь
             old_val = getattr(contract, field)
@@ -723,6 +750,10 @@ async def apply_import_contracts(
             if field not in rec:
                 continue
             new_val = _coerce_import_value(field, rec[field])
+            if new_val is UNREADABLE:
+                skipped.append(f"Строка {row_num}: {_FIELD_LABELS.get(field, field)} "
+                               f"«{rec[field]}» не распознано — поле не изменено")
+                continue
             if field == 'document_link':
                 new_val = _validate_link(new_val, raise_on_bad=False)  # обход формы: санируем и здесь
             old_val = getattr(contract, field)

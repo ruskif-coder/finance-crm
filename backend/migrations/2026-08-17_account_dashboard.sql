@@ -52,13 +52,17 @@ CREATE INDEX IF NOT EXISTS ix_deal_snooze_return ON sales_deal_snooze (return_at
 
 -- ── Разметка существующих 16 стадий (согласована с владельцем 2026-08-17) ──
 -- По id, а не по имени: имена стадий в проекте меняются при кадровых перестановках.
+-- НО номер верен только для базы, на которой это писали: на свежей базе засев
+-- нумерует иначе (4 там — «Бронь»). Поэтому номер срабатывает, только если под ним
+-- та самая стадия; свежую базу размечает сам засев (app/main.py, аудит 23.09.2026, 7.6).
 
 -- Срывы: «Сделка не случилась» (Песочница), «Сделка сорвалась» (Услуги).
-UPDATE sales_stages SET is_lost = true WHERE id IN (4, 9);
+UPDATE sales_stages SET is_lost = true
+ WHERE (id = 4 AND name = 'Сделка не случилась') OR (id = 9 AND name = 'Сделка сорвалась');
 
 -- Архив успешных сделок был is_terminal = false — недоделка сида: положительный
 -- исход терминален по определению, иначе «Двинуть» ведёт сделку за архив.
-UPDATE sales_stages SET is_terminal = true WHERE id = 16;
+UPDATE sales_stages SET is_terminal = true WHERE id = 16 AND name = 'Архив успешных сделок';
 
 -- SLA на этапах: Песочница 2 дня, Услуги 5, Документооборот 5.
 UPDATE sales_stage_phases SET sla_days = 2 WHERE sort_order = 0;
@@ -66,10 +70,13 @@ UPDATE sales_stage_phases SET sla_days = 5 WHERE sort_order = 1;
 UPDATE sales_stage_phases SET sla_days = 5 WHERE sort_order = 2;
 
 -- Точечные переопределения на стадиях.
-UPDATE sales_stages SET sla_days = 5 WHERE id = 3;   -- МП Отправлено: ждём клиента
-UPDATE sales_stages SET sla_days = 0 WHERE id = 7;   -- В размещении: РК идёт, стоять нормально
-UPDATE sales_stages SET sla_days = 3 WHERE id = 8;   -- Предварительная сверка
-UPDATE sales_stages SET sla_days = 0 WHERE id = 15;  -- Оплата: срок от отсрочки, не от SLA
-UPDATE sales_stages SET sla_days = 0 WHERE id IN (4, 9, 16);  -- терминальные
+UPDATE sales_stages SET sla_days = 5 WHERE id = 3 AND name = 'МП Отправлено';   -- ждём клиента
+UPDATE sales_stages SET sla_days = 0 WHERE id = 7 AND name = 'В размещении';   -- РК идёт, стоять нормально
+UPDATE sales_stages SET sla_days = 3
+ WHERE id = 8 AND name IN ('Предварительная сверка', 'Итоговая сверка');
+UPDATE sales_stages SET sla_days = 0 WHERE id = 15 AND name = 'Оплата';  -- срок от отсрочки, не от SLA
+UPDATE sales_stages SET sla_days = 0  -- терминальные
+ WHERE (id = 4 AND name = 'Сделка не случилась') OR (id = 9 AND name = 'Сделка сорвалась')
+    OR (id = 16 AND name = 'Архив успешных сделок');
 
 COMMIT;

@@ -678,7 +678,9 @@ def scan(dry_run: bool = False, only: Optional[str] = None) -> Dict[str, int]:
     now = datetime.utcnow()
     run = NotificationScanRun(dry_run=dry_run)
     db.add(run)
-    db.flush()
+    # Строка прогона — СРАЗУ и своим коммитом: «сканер запускался» не должно зависеть
+    # от того, дойдёт ли прогон до конца (аудит 23.09.2026, 5.H3).
+    db.commit()
     stats = {"rules": 0, "matches": 0, "sent": 0, "skipped": 0, "closed": 0}
     try:
         for event_key, fn in RULES.items():
@@ -721,10 +723,26 @@ def scan(dry_run: bool = False, only: Optional[str] = None) -> Dict[str, int]:
                 # срочностью («скоро» → «просрочено»), и ровно ухудшение делает строку
                 # в панели снова непрочитанной. Тон события из реестра постоянен и на
                 # этот вопрос не отвечает.
-                got = emit(db, event_key, title=hit.title, body=hit.body, link=hit.link,
-                           entity_type=hit.entity_type, entity_id=hit.entity_id,
-                           ctx=hit.ctx, tone=STAGE_TONE.get(hit.stage),
-                           facts=hit.facts, code=hit.code)
+                try:
+                    got = emit(db, event_key, title=hit.title, body=hit.body,
+                               link=hit.link, entity_type=hit.entity_type,
+                               entity_id=hit.entity_id, ctx=hit.ctx,
+                               tone=STAGE_TONE.get(hit.stage), facts=hit.facts,
+                               code=hit.code)
+                except Exception as e:              # noqa: BLE001 — одна сработка
+                    # Рассылка упала НА СЕРЕДИНЕ: кому-то письмо могло уже уйти. Отметку
+                    # ставим всё равно — повтор придёт по обычному интервалу, а не через
+                    # 30 минут тем же людям (ревью 24.09.2026). Лишний пропуск здесь
+                    # дешевле, чем письмо, приходящее каждые полчаса.
+                    db.rollback()
+                    st = _state(db, event_key, hit)
+                    st.stage, st.last_sent_at = hit.stage, now
+                    st.sent_count = (st.sent_count or 0) + 1
+                    st.resolved_at = None
+                    db.commit()
+                    stats["failed"] = stats.get("failed", 0) + 1
+                    print(f"  ! {event_key}/{hit.entity_id}: {type(e).__name__}: {e}")
+                    continue
                 st.stage = hit.stage
                 st.due_date = hit.due_date
                 st.payload = hit.payload
@@ -733,12 +751,23 @@ def scan(dry_run: bool = False, only: Optional[str] = None) -> Dict[str, int]:
                 st.resolved_at = None
                 hook = AFTER_SEND.get(event_key)
                 if hook:
-                    hook(db, hit, now)
+                    # Хук — после отправки, и его сбой не должен ни стирать отметку, ни
+                    # обрывать прогон: письмо уже ушло (ревью 24.09.2026).
+                    try:
+                        with db.begin_nested():
+                            hook(db, hit, now)
+                    except Exception as e:          # noqa: BLE001 — хук одной сработки
+                        print(f"  ! {event_key}: хук после отправки: {type(e).__name__}: {e}")
+                # Отметку — СРАЗУ: письмо уже ушло, и откат из-за соседнего правила
+                # стёр бы `last_sent_at`, а следующий прогон разослал бы то же снова —
+                # каждые 30 минут, пока соседнее правило падает (аудит, 5.H3).
+                db.commit()
                 stats["sent"] += 1
                 print(f"    {hit.stage}: {hit.title} → получателей {len(got)}")
 
             for entity_type, ids in by_type.items():
                 stats["closed"] += _resolve_gone(db, event_key, ids, entity_type, now)
+            db.commit()
 
         run.finished_at = datetime.utcnow()
         run.rules_run = stats["rules"]

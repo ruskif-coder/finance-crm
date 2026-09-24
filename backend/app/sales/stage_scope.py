@@ -74,6 +74,13 @@ def next_for(deal, catalog, marks: dict):
         return catalog.by_id[chain[i + 1]] if i + 1 < len(chain) else None
     if cur is not None and getattr(catalog.by_id.get(cur), "is_terminal", False):
         return None
+    # Сделка стоит на стадии основной цепочки, неприменимой к её услуге: реестр так
+    # ставит сознательно (решение владельца 24.09.2026), и так выходит при смене услуги
+    # посреди пути. Следующая — ближайшая применимая ВПЕРЕДИ; первая стадия цепочки
+    # отправила бы сделку в начало обычной кнопкой (ревью этапа 7, 24.09.2026).
+    if cur in catalog.flow:
+        after = catalog.flow[catalog.flow.index(cur) + 1:]
+        return next((catalog.by_id[s] for s in after if s in chain), None)
     return catalog.by_id[chain[0]] if chain else None
 
 

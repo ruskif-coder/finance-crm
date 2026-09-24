@@ -12,6 +12,7 @@ import PublisherSummary from '@/components/publishers/PublisherSummary'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { downloadFile } from '@/lib/download'
 import { cabinetState } from '@/lib/cabinetState'
+import safeHref from '@/lib/safeHref'
 
 // Реестр площадок. Собран по экрану «Справочник паблишеров» из дизайн-хендоффа
 // (docs/паблишеры.zip): строка L1 — то, по чему площадку выбирают, не открывая;
@@ -624,8 +625,8 @@ export default function Publishers() {
                         </div>
 
                         <div style={{ ...cell, display: 'flex', gap: 5 }}>
-                          <ChatBtn href={p.chat_url} kind="tg" title="Телеграм" size={24} />
-                          <ChatBtn href={p.chat_url_max} kind="max" title="MAX" size={24} />
+                          <ChatBtn href={safeHref(p.chat_url)} kind="tg" title="Телеграм" size={24} />
+                          <ChatBtn href={safeHref(p.chat_url_max)} kind="max" title="MAX" size={24} />
                         </div>
 
                         <div style={{ ...cell, display: 'flex', justifyContent: 'flex-end' }}>

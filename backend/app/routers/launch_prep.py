@@ -2175,13 +2175,24 @@ def issue_erid(set_id: int, db: Session = Depends(get_db),
     urls = _target_urls(db, set_id)
 
     try:
-        out = ord_submit.register_creative(db, s, files, deal, brand, final_ord_id,
-                                           initial_ord_id, current_user,
-                                           advertiser_urls=urls)
+        # Регистрация — или опрос, если комплект уже зарегистрирован без маркера:
+        # повторная регистрация дала бы второй креатив в ЕРИР (аудит 23.09.2026, 4.H5).
+        out = ord_submit.issue_marker(db, s, files, deal, brand, final_ord_id,
+                                      initial_ord_id, current_user,
+                                      advertiser_urls=urls)
     except (ord_submit.OrdSubmitRefused, OrdPayloadError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     except OrdError as e:
         raise HTTPException(status_code=400, detail=e.message)
+
+    # Маркер ещё не пришёл — получателей не двигаем и никому не пишем. Иначе площадка
+    # получала «ЕРИД None» и ставила в эфир материал без маркировки.
+    if not out.get("erid"):
+        db.commit()
+        log_action(db, current_user, "issue_erid", "sales_deal", deal.id,
+                   f"комплект №{s.no}: зарегистрирован, маркер ещё не выдан "
+                   f"(статус {out.get('status')})")
+        return out
 
     _mark_targets_erid(db, set_id)
     db.commit()
@@ -2393,19 +2404,47 @@ def request_target_url(target_id: int, payload: UrlRequestIn, db: Session = Depe
 
 
 def _deal_brand_name(db: Session, deal) -> str:
-    """Бренд сделки для подстановки в письмо ПЛОЩАДКЕ. Пусто — название размещения:
+    """Бренд сделки для подстановки в письмо ПЛОЩАДКЕ. Нет бренда — рекламодатель:
     письмо «Готовим размещение  на Икс» читается как ошибка, а не как отсутствие бренда.
 
-    Запасная ветка НЕ отдаёт наш код и номер сделки (правило владельца 14.09.2026): это
-    письмо наружу, и внутренний идентификатор площадке бесполезен. Пустая строка честнее
-    кода — она хотя бы не выглядит осмысленной.
+    Запасная ветка НЕ отдаёт наш код, номер и НАЗВАНИЕ сделки (правило владельца
+    14.09.2026): это письмо наружу. До 23.09.2026 она откатывалась к `deal.title` — а
+    название сделки внутреннее, в нём бывают рабочие пометки и имя посредника, и им
+    собирался контекст всех писем площадке (аудит, 5.L10). Рекламодатель площадке и так
+    виден в кабинете. Имя — `short_name`, наш стандарт, а не битриксовское `name`.
     """
-    from app.sales.models import SalesBrand
+    from app.sales.models import SalesAdvertiser, SalesBrand
     if deal.brand_id:
         row = db.query(SalesBrand.name).filter(SalesBrand.id == deal.brand_id).first()
         if row and (row[0] or "").strip():
             return row[0].strip()
-    return (deal.title or "").strip()
+    if getattr(deal, "advertiser_id", None):
+        row = (db.query(SalesAdvertiser.short_name, SalesAdvertiser.name)
+               .filter(SalesAdvertiser.id == deal.advertiser_id).first())
+        if row:
+            return (row[0] or row[1] or "").strip()
+    return ""
+
+
+def _url_request_values(db: Session, deal, pub, user, body_text: str) -> dict:
+    """Подстановки письма-запроса посадочной ПЛОЩАДКЕ.
+
+    НАШИХ идентификаторов и названий в письме площадке нет (правило владельца
+    14.09.2026): ни кода сделки, ни номера, ни НАЗВАНИЯ. Поле «сделка» оставлено ради
+    шаблонов, где оно уже вписано, но несёт бренд и период — то, чем размещение видно
+    площадке. До 23.09.2026 здесь стоял `deal.title` (аудит, 5.L10).
+    """
+    brand = _deal_brand_name(db, deal)
+    period = deal_period_text(deal)
+    return {
+        "площадка": (pub.name if pub else "") or "",
+        "домен": (getattr(pub, "domain", "") or "") if pub else "",
+        "сделка": " · ".join(x for x in (brand, period) if x),
+        "бренд": brand,
+        "период": period,
+        "сотрудник": (user.full_name or user.email or ""),
+        "текст": body_text,
+    }
 
 
 def deal_period_text(deal) -> str:
@@ -2455,23 +2494,10 @@ def _mail_url_request(db: Session, t, deal, body_text: str, user: User) -> str:
     # записали как «что мы спросили», нельзя ни при какой правке шаблона.
     from app.mail import templates as mail_tpl
     from app.mail.models import MailTemplate
-    values = {
-        "площадка": (pub.name if pub else "") or "",
-        "домен": (getattr(pub, "domain", "") or "") if pub else "",
-        # НАШИХ идентификаторов в письме площадке нет (правило владельца 14.09.2026):
-        # ни кода сделки, ни её номера. Запасная ветка была именно такой и сработала
-        # бы у сделки без имени — площадка получила бы «7E2JWE» вместо понятного
-        # названия и не смогла бы ничего с ним сделать. Замена — бренд: он ей и так
-        # виден в кабинете, а пустая строка честнее нашего кода.
-        "сделка": (deal.title or "").strip() or _deal_brand_name(db, deal) or "",
-        "бренд": _deal_brand_name(db, deal),
-        "период": deal_period_text(deal),
-        "сотрудник": (user.full_name or user.email or ""),
-        "текст": body_text,
-    }
+    values = _url_request_values(db, deal, pub, user, body_text)
     tpl = db.query(MailTemplate).filter(MailTemplate.key == KIND_URL_REQUEST).first()
     subject = (mail_tpl.render(tpl.subject, values).strip() if tpl and tpl.subject
-               else f"Посадочная страница для размещения: {values['сделка']}")
+               else f"Посадочная страница для размещения: {values['бренд']}")
     if tpl and tpl.body and "текст" in mail_tpl.placeholders(tpl.body):
         body_text = mail_tpl.render(tpl.body, values)
     try:
@@ -2490,7 +2516,7 @@ def _mail_url_request(db: Session, t, deal, body_text: str, user: User) -> str:
         log.warning("Запрос ссылки: письмо не отправлено (%s): %s",
                     pub.name if pub else t.publisher_id, e)
         return "failed"
-    return sent.status
+    return gate.outcome(sent)
 
 
 @router.get("/refusal-reasons")
@@ -2572,6 +2598,10 @@ def _tell_publisher_erid(db: Session, cset, deal) -> None:
                 facts=[("комплект", f"№{cset.no}"),
                        ("ЕРИД", (getattr(cset, "erid", "") or "—"))],
                 context=context, link="/", entity_type="launch_prep_pair",
-                entity_id=pair.id)
+                entity_id=pair.id, values={"бренд": brand, "период": period})
         except Exception as e:                               # noqa: BLE001
+            # Сессию — в рабочее состояние: сбой базы внутри рассылки оставил бы её в
+            # упавшей транзакции, и следующая запись (журнал, другие площадки) дала бы 500
+            # при уже записанном действии (ревью 24.09.2026).
+            db.rollback()
             log.warning("Площадке %s не ушло «ерид выпущен»: %s", pub.id, e)

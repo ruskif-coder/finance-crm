@@ -18,7 +18,6 @@
 """
 from __future__ import annotations
 
-import os
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -148,6 +147,14 @@ def deliver_mail(db: Session, uid: int, ev: registry.Event, title: str,
     # открывают письмо не в нашей вкладке.
     link_abs = render.abs_url(link)
     facts = list(facts or [])
+    # Подпись кнопки и её показ — из «Шаблонов писем» (аудит 23.09.2026, 5.M1). Слова
+    # карточки уже применены шиной событий: там у события есть данные для подстановок.
+    # Считается ДО текстовой части: кнопку убрали — ссылки нет и в тексте письма.
+    from app.mail import live
+    look = live.card(db, "staff", ev.key,
+                     {"action": getattr(ev, "action", "") or "Открыть",
+                      "link_abs": link_abs}, {}, fields=live.LOOK)
+    link_abs = look["link_abs"]
     # ТЕМА И СЛОВЕСНАЯ ЧАСТЬ — ИЗ ШАБЛОНА, вёрстка остаётся кодовой. До 16.09.2026
     # шаблон `notify` лежал на экране, был доступен к правке и не влиял ни на что:
     # письмо собиралось здесь целиком. Правка текста молча ничего не меняла — худший
@@ -167,8 +174,8 @@ def deliver_mail(db: Session, uid: int, ev: registry.Event, title: str,
         title=title, body=body, link_abs=link_abs,
         tone=tone_of.norm(getattr(ev, "tone", None)),
         tag=getattr(ev, "group", "") or "", facts=facts, code=code or "",
-        action=getattr(ev, "action", "") or "Открыть",
-        brand=(os.getenv("MAIL_FROM_NAME") or "SIMB-AD").strip(),
+        action=look["action"],
+        brand=mail.sender_name(),
         logo_url=render.abs_url(render.LOGO_PATH),
         settings_url=render.abs_url(render.SETTINGS_PATH))
     try:

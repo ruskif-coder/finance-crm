@@ -91,6 +91,10 @@ def ensure_campaign(db: Session, camp: AdCampaign, client: MsClient,
         raise MsError(f"РК #{camp.id}: сделка {camp.deal_id} не найдена")
     params = build_campaign_params(camp, deal)
 
+    # Прошлый add ушёл без ответа (таймаут): кампания могла создаться. Тогда поиск по
+    # имени — не удобство, а условие: без списка повторять вслепую нельзя (4.L5).
+    unsure = client.unknown_outcome("Campaign.add", "campaign", camp.id)
+
     # 2) та же кампания по имени уже есть у партнёра (заведена руками или раньше).
     #    Тренировочные пропускаем: они живут в том же кабинете и настоящей РК не являются.
     try:
@@ -102,8 +106,13 @@ def ensure_campaign(db: Session, camp: AdCampaign, client: MsClient,
                 continue
             if title == params["title"]:
                 return _persist(db, camp, str(row["xxhash"]).upper(), commit)
-    except MsError:
-        pass  # список не критичен: без него просто идём в add
+    except MsError as e:
+        if unsure:
+            raise MsError(
+                "прошлая попытка завести кампанию осталась без ответа, а список кампаний "
+                f"сейчас недоступен ({e}). Кампания могла создаться — сверьтесь с "
+                "кабинетом DSP, повтор вслепую завёл бы вторую")
+        # без сомнений список не критичен: просто идём в add
 
     # 3) создаём
     xxhash = client.campaign_add(params, local_ref=camp.id)
@@ -124,6 +133,46 @@ def sync_campaign_plan(db: Session, camp: AdCampaign, client: MsClient,
     if commit:
         db.commit()
     return camp.ms_campaign_xxhash
+
+
+# ИТОГОВЫЙ статус РК → статус кампании в DSP. Обратимое у нас остаётся обратимым и там:
+# «остановлена» у нас можно снова запустить, а ARCHIVE в DSP назад не включается —
+# поэтому она STOPPED. В архив уходит только то, что закончилось и у нас. «Готова» и
+# «ожидает сборки» — ничего не крутит, значит и DSP стоит.
+DSP_STATUS_OF = {
+    "ожидает сборки": "STOPPED",
+    "готова": "STOPPED",
+    "запущена": "LAUNCHED",
+    "пауза": "STOPPED",
+    "остановлена": "STOPPED",
+    "окончена": "ARCHIVE",
+    "архив": "ARCHIVE",
+}
+
+
+def apply_status(db: Session, camp: AdCampaign, status: str,
+                 client: Optional[MsClient] = None) -> Optional[str]:
+    """Кнопка статуса РК → кампания в DSP. Возвращает выставленный статус DSP или None.
+
+    До 23.09.2026 кнопка меняла только наш статус: кампания в DSP стояла, какой её
+    завели, план туда не доезжал, а экран писал «крутится» (аудит, 4.M5). Крона нет —
+    решение владельца: запуск и план уходят в DSP ТОЛЬКО нажатием.
+
+    При запуске сначала ПОЛНЫЙ план, потом LAUNCHED: иначе кампания стартует со старым
+    объёмом и датами. Кампании в DSP нет (площадки крутят сами или выгрузки не было) —
+    трогать нечего, меняется только наш статус.
+
+    Ошибка DSP поднимается наверх: вызывающий НЕ меняет наш статус, иначе экран снова
+    говорил бы о кампании, которая в DSP в другом состоянии.
+    """
+    target = DSP_STATUS_OF.get(status)
+    if not target or not camp.ms_campaign_xxhash:
+        return None
+    c = client or MsClient()
+    if target == "LAUNCHED":
+        sync_campaign_plan(db, camp, c, commit=False)
+    c.campaign_set_status(camp.ms_campaign_xxhash, target, local_ref=camp.id)
+    return target
 
 
 def plan_total(delivered, remaining) -> int:
@@ -167,4 +216,4 @@ def build_plan_params(*, show_total=None, click_total=None, budget_total=None,
 
 
 __all__ = ["campaign_title", "build_campaign_params", "ensure_campaign",
-           "sync_campaign_plan", "plan_total", "build_plan_params", "date"]
+           "sync_campaign_plan", "apply_status", "DSP_STATUS_OF", "plan_total", "build_plan_params", "date"]

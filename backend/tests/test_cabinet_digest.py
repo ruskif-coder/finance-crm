@@ -108,7 +108,9 @@ def test_digest_html_has_a_caller():
     отличить от «не работает», и он копится годами — тот же урок, что с правилами
     сканера без подписчиков.
     """
-    assert 'digest_html' in inspect.getsource(digest.run)
+    # С 24.09.2026 пачка собирается оболочкой «Шаблонов писем» (аудит 5.M1) — тем же
+    # сборщиком, что рисует предпросмотр.
+    assert 'live.digest' in inspect.getsource(digest._run)
 
 
 def test_urgent_never_goes_into_the_digest():
@@ -206,7 +208,7 @@ def test_digest_groups_by_address_not_by_publisher():
     Один контакт ведёт несколько площадок, и три письма в девять утра — ровно то, от чего
     дайджест спасает. Площадка не теряется: она стоит в контексте карточки.
     """
-    src = inspect.getsource(digest.run)
+    src = inspect.getsource(digest._run)
     assert 'by_addr[r.email]' in src, 'группировка не по адресу'
 
 
@@ -217,7 +219,7 @@ def test_sent_rows_are_never_collected_twice():
     почта, тем длиннее письмо. Пометка ставится и при ОТКАЗЕ доставки: письмо уже лежит в
     журнале почты со своим статусом, разбирается неудача там.
     """
-    src = inspect.getsource(digest.run)
+    src = inspect.getsource(digest._run)
     assert 'sent_at IS NULL' in src
     assert 'SET sent_at = now()' in src
 

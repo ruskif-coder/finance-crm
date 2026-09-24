@@ -6,9 +6,10 @@
 
 ТРИ ПРАВИЛА, КАЖДОЕ ОПЛАЧЕНО.
 
-1. **Реестр перед вызовом.** Уже заведённое не заводится второй раз, и проверяется это
-   не «есть ли у нас id», а уникальным индексом в базе: два одновременных нажатия иначе
-   создадут две вставки, а удалить их у Weborama нечем.
+1. **Реестр перед вызовом.** Уже заведённое не заводится второй раз. Уникальный индекс
+   реестра ловит дубль только ПОСЛЕ внешнего вызова, поэтому одновременность держит
+   замок на сделку (`app/ext_lock.py`): два нажатия иначе создадут две вставки, а
+   удалить их у Weborama нечем.
 2. **Журнал ДО вызова, с коммитом.** Ответ может потеряться по таймауту. Строка с
    `finished_at IS NULL` означает «исход неизвестен» и БЛОКИРУЕТ повтор по этой площадке,
    пока человек не сверится с их кабинетом. Тот же порядок, что в ОРД.
@@ -20,12 +21,14 @@ import logging
 from typing import Optional
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.ad.build import pixel_setup
 from app.ad.models import AdCampaign, AdCampaignPlacement
 from app.weborama import enums, naming, tags
-from app.weborama.client import WcmClient, WcmError
+from app.ext_lock import WEBORAMA_PROVISION, only_one
+from app.weborama.client import WcmClient, WcmError, WcmUnknownOutcome
 from app.weborama.models import (KIND_CAMPAIGN, KIND_INSERTION, KIND_PROJECT,
                                  WeboramaRef, WeboramaSubmission)
 from app.sales.models import SalesDeal, SalesPublisher
@@ -107,6 +110,14 @@ def _ensure(db: Session, client: WcmClient, acc: str, kind: str, local_id: int,
     try:
         raw = client.call("POST", method, data={**data, "label": label})
         wid = client._created(raw, kind)
+    except WcmUnknownOutcome as e:
+        # Правило 2: исход неизвестен — попытка остаётся открытой и запирает повтор.
+        # До 23.09.2026 таймаут закрывался как отказ, и повтор заводил вторую вставку.
+        s.error = f"исход неизвестен: {e}"
+        db.commit()
+        raise ProvisionError(
+            f"Weborama не подтвердила заведение ({e}). Объект мог создаться — сверьтесь "
+            f"с кабинетом Weborama, повтор запрещён до сверки")
     except WcmError as e:
         _finish(db, s, error=str(e))
         raise ProvisionError(f"Weborama отказала: {e}")
@@ -114,7 +125,16 @@ def _ensure(db: Session, client: WcmClient, acc: str, kind: str, local_id: int,
 
     db.add(WeboramaRef(account_id=acc, kind=kind, local_id=local_id,
                        wcm_id=wid, label=label, created_by=user_id))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Замок на сделку не пускает два заведения разом, но у реестра есть и другие
+        # писатели. Проигравший гонку получает текст, а не 500, — и текст честный:
+        # в их кабинете этот объект теперь может быть дважды.
+        db.rollback()
+        raise ProvisionError(
+            f"Этот объект одновременно завёл другой запрос; наш вызов тоже прошёл "
+            f"(id {wid}) — в кабинете Weborama их может быть два, сверьтесь")
     return wid
 
 
@@ -179,7 +199,17 @@ def plan(db: Session, camp: AdCampaign) -> dict:
 def provision(db: Session, camp: AdCampaign, landing_url: str, user_id=None,
               client: Optional[WcmClient] = None) -> dict:
     """Завести всё недостающее и забрать пиксели. Идёт по площадкам, не падая целиком:
-    отказ по одной не должен отменять восемнадцать удачных."""
+    отказ по одной не должен отменять восемнадцать удачных.
+
+    Один проход на СДЕЛКУ за раз (4.H4): проект Weborama заводится на сделку, и две РК
+    одной сделки, нажатые разом, завели бы два проекта.
+    """
+    with only_one(WEBORAMA_PROVISION, camp.deal_id, ProvisionError, "Заведение в Weborama"):
+        return _provision(db, camp, landing_url, user_id, client)
+
+
+def _provision(db: Session, camp: AdCampaign, landing_url: str, user_id,
+               client: Optional[WcmClient]) -> dict:
     acc = account_id(db)
     deal = db.query(SalesDeal).filter(SalesDeal.id == camp.deal_id).first()
     if not deal:

@@ -23,8 +23,8 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-ENV = ("WEBORAMA_API_URL", "WEBORAMA_EMAIL", "WEBORAMA_PASSWORD",
-       "WEBORAMA_DEMO_ACCOUNT_ID")
+# Аккаунт сюда не входит: он настройка, а не переменная (см. `_account`).
+ENV = ("WEBORAMA_API_URL", "WEBORAMA_EMAIL", "WEBORAMA_PASSWORD")
 
 
 def _configured() -> bool:
@@ -37,9 +37,20 @@ def _configured() -> bool:
     return all((os.getenv(k) or "").strip() for k in ENV)
 
 
+def _account(db: Session) -> Optional[str]:
+    """Тот же аккаунт, что у заведения и съёма, — иначе экран описывал бы не тот."""
+    from app.weborama import provision
+
+    try:
+        return provision.account_id(db)
+    except provision.ProvisionError:
+        return None
+
+
 def stats_state(db: Session, account_id: Optional[str] = None) -> dict:
-    account_id = account_id or (os.getenv("WEBORAMA_DEMO_ACCOUNT_ID") or "").strip()
-    out = {"configured": _configured(), "account_id": account_id or None,
+    account_id = account_id or _account(db)
+    out = {"configured": _configured() and bool(account_id),
+           "account_id": account_id or None,
            "raw": None, "cursor": None, "mapped_insertions": 0,
            "verdict": None, "written_rows": 0}
 
@@ -51,7 +62,9 @@ def stats_state(db: Session, account_id: Optional[str] = None) -> dict:
         "SELECT count(*) FROM ad_campaign_stat WHERE source = 'weborama'")).scalar() or 0
 
     if not out["configured"]:
-        out["verdict"] = "не настроено — учётные данные Weborama не заданы"
+        out["verdict"] = ("не настроено — учётные данные Weborama не заданы"
+                          if not _configured() else
+                          "не настроено — не задан аккаунт Weborama (Каталог → Скрипты сайта)")
         return out
 
     try:

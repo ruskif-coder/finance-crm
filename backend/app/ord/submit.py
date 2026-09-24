@@ -131,6 +131,21 @@ def _break_label(e: Exception) -> str:
     return f"сбой отправки на нашей стороне: {type(e).__name__}: {e}"
 
 
+def _no_id(db: Session, row: OrdSubmission, status, what: str) -> None:
+    """Успех без идентификатора: попытка остаётся ОТКРЫТОЙ, повтор заперт.
+
+    До 23.09.2026 такой ответ закрывал попытку (аудит, 4.L7), и повтор был разрешён —
+    хотя запись в ЕРИР могла создаться. Это та же неизвестность, что у обрыва связи, и
+    выход из неё тот же: человек сверяется с кабинетом и закрывает попытку руками.
+    """
+    row.http_status = status
+    row.error = "ответ ОРД без идентификатора — исход неизвестен"
+    db.commit()
+    raise OrdSubmitRefused(
+        f"ОРД ответил успехом, но не вернул идентификатор {what} — запись могла "
+        f"создаться. Сверьтесь с кабинетом; повтор заперт до сверки.")
+
+
 def register_final_contract(db: Session, contract: Contract, user) -> dict:
     """Зарегистрировать доходный договор в ОРД и запомнить выданный идентификатор.
 
@@ -194,12 +209,9 @@ def register_final_contract(db: Session, contract: Contract, user) -> dict:
     answer = answer or {}
     ord_id = answer.get('id')
     ord_status = answer.get('status')
-    _finish(db, row, http_status=status, ord_id=ord_id, ord_status=ord_status)
-
     if not ord_id:
-        raise OrdSubmitRefused(
-            "ОРД ответил успехом, но не вернул идентификатор договора — "
-            "проверьте кабинет: запись могла создаться.")
+        _no_id(db, row, status, "договора")
+    _finish(db, row, http_status=status, ord_id=ord_id, ord_status=ord_status)
 
     # В колонку пишем ТОЛЬКО свой контур. Демовский идентификатор поверх боевого стёр
     # бы настоящую связь с ЕРИР ради песочницы; он остаётся в журнале отправок, откуда
@@ -289,11 +301,10 @@ def ensure_client(db: Session, inn: str, name: str, user,
         db.commit()
         raise
     answer = answer or {}
+    if not answer.get('id'):
+        _no_id(db, row, status, f"юрлица «{name}»")
     _finish(db, row, http_status=status, ord_id=answer.get('id'),
             ord_status=answer.get('status'))
-    if not answer.get('id'):
-        raise OrdSubmitRefused(
-            f"ОРД завёл юрлицо «{name}», но не вернул идентификатор — проверьте кабинет.")
     return answer['id']
 
 
@@ -334,10 +345,9 @@ def register_initial_contract(db: Session, initial, final_ord_id: str, user) -> 
 
     answer = answer or {}
     ord_id = answer.get('id')
-    _finish(db, row, http_status=status, ord_id=ord_id, ord_status=answer.get('status'))
     if not ord_id:
-        raise OrdSubmitRefused(
-            "ОРД ответил успехом, но не вернул идентификатор — проверьте кабинет.")
+        _no_id(db, row, status, "изначального договора")
+    _finish(db, row, http_status=status, ord_id=ord_id, ord_status=answer.get('status'))
 
     # Местная заглушка `local-<hex>` заменяется настоящим идентификатором. Ради этого
     # она и была: строка не теряет связей со сделкой, а `origin` перестаёт быть 'manual'
@@ -366,9 +376,14 @@ def attach_initial(db: Session, initial, final_ord_id: str, user) -> dict:
     привязаны к РАЗНЫМ доходным. Без этой операции такую цепочку в ОРД не собрать.
     """
     env = _assert_write_allowed()
-    if not initial.ord_id or str(initial.ord_id).startswith('local-'):
+    # Идентификатор ЭТОГО контура, а не колонки: на проде колонки держат демовские id, и
+    # прикрепление с ними ушло бы в боевой ЕРИР ссылкой на чужую запись (аудит, 4.M4).
+    initial_id = registry.known_id(db, 'initial_contract', initial.id, env,
+                                   initial.ord_id, initial.ord_env)
+    if not initial_id:
         raise OrdSubmitRefused(
-            "Договор ещё не заведён в ОРД — сначала регистрация, потом прикрепление.")
+            f"Договор ещё не заведён в ОРД на контуре {env} — сначала регистрация, "
+            f"потом прикрепление.")
     if not final_ord_id:
         raise OrdSubmitRefused("Не указан доходный договор")
 
@@ -378,7 +393,7 @@ def attach_initial(db: Session, initial, final_ord_id: str, user) -> dict:
     if existing is not None:
         raise OrdSubmitRefused("Эта связь уже есть — прикреплять второй раз нечего")
 
-    body = {'initialContractId': initial.ord_id, 'finalContractId': final_ord_id}
+    body = {'initialContractId': initial_id, 'finalContractId': final_ord_id}
     _assert_no_pending(db, 'attach_initial', initial.id, env)
     row = _start(db, 'attach_initial', initial.id, env, body, user)
     try:
@@ -415,16 +430,22 @@ def register_creative(db: Session, cset, files, deal, brand, final_ord_id,
     """
     env = _assert_write_allowed()
 
-    if cset.erid and (cset.ord_env or registry.ENV_WHEN_UNKNOWN) == env:
-        raise OrdSubmitRefused(
-            f"У комплекта уже есть маркер {cset.erid} на контуре {env}. "
-            f"Повторный выпуск дал бы там второй креатив, который не отозвать.")
+    _assert_no_marker(cset, env)
     if cset.erid_source != 'наш':
         # У саморекламы маркер выпускает площадка в своём ОРД: наша регистрация за ним
         # не стоит, и опрашивать его статус тоже нечем.
         raise OrdSubmitRefused(
             "Маркер этого комплекта выпускает площадка — вводится руками, "
             "а не запрашивается у нашего ОРД.")
+    # Зарегистрирован, а маркер ещё не пришёл: ОРД выдаёт `id` сразу, а `erid` — бывает,
+    # что позже. Проверка одной колонки маркера пропускала повтор, и в ЕРИР уходил второй
+    # креатив (аудит 23.09.2026, 4.H5). Такой комплект опрашивают, а не регистрируют.
+    known = registry.known_id(db, 'creative', cset.id, env,
+                              cset.ord_creative_id, cset.ord_env)
+    if known:
+        raise OrdSubmitRefused(
+            f"Комплект уже зарегистрирован на контуре {env} ({known}), маркер ещё не "
+            f"пришёл — обновите статус. Повторная регистрация дала бы второй креатив.")
 
     body = payloads.creative(cset, files, deal, brand, final_ord_id, initial_ord_id,
                              campaign_type, advertiser_urls)
@@ -448,12 +469,9 @@ def register_creative(db: Session, cset, files, deal, brand, final_ord_id,
     ord_id = answer.get('id')
     erid = answer.get('erid')
     ord_status = answer.get('status')
-    _finish(db, row, http_status=status, ord_id=ord_id, ord_status=ord_status)
-
     if not ord_id:
-        raise OrdSubmitRefused(
-            "ОРД ответил успехом, но не вернул идентификатор креатива — "
-            "проверьте кабинет: запись могла создаться.")
+        _no_id(db, row, status, "креатива")
+    _finish(db, row, http_status=status, ord_id=ord_id, ord_status=ord_status)
 
     if registry.own_contour(cset.ord_creative_id, cset.ord_env, env):
         cset.ord_creative_id = ord_id
@@ -466,25 +484,59 @@ def register_creative(db: Session, cset, files, deal, brand, final_ord_id,
     return {'ord_id': ord_id, 'erid': erid, 'status': ord_status, 'env': env}
 
 
+def _assert_no_marker(cset, env: str) -> None:
+    if cset.erid and (cset.ord_env or registry.ENV_WHEN_UNKNOWN) == env:
+        raise OrdSubmitRefused(
+            f"У комплекта уже есть маркер {cset.erid} на контуре {env}. "
+            f"Повторный выпуск дал бы там второй креатив, который не отозвать.")
+
+
+def issue_marker(db: Session, cset, files, deal, brand, final_ord_id, initial_ord_id,
+                 user, campaign_type=None, advertiser_urls=None) -> dict:
+    """Кнопка «выпустить ЕРИД»: регистрация — или опрос, если регистрация уже была.
+
+    Второе нажатие по комплекту, получившему `id` без маркера, — обычное дело: маркер
+    приходит позже. Регистрировать его заново значит завести второй креатив в ЕРИР;
+    правильный ход — спросить статус и забрать маркер, если он пришёл (4.H5).
+    """
+    env = _assert_write_allowed()
+    _assert_no_marker(cset, env)
+    if registry.known_id(db, 'creative', cset.id, env, cset.ord_creative_id, cset.ord_env):
+        got = refresh_creative_status(db, cset)
+        return {'ord_id': got['ord_id'], 'erid': got['erid'], 'status': got['status'],
+                'env': env, 'refreshed': True}
+    return register_creative(db, cset, files, deal, brand, final_ord_id, initial_ord_id,
+                             user, campaign_type=campaign_type,
+                             advertiser_urls=advertiser_urls)
+
+
 def refresh_creative_status(db: Session, cset) -> dict:
     """Опросить статус креатива. Маркер мог прийти позже — забираем и его.
 
-    Читать прод безопасно, поэтому отдельного разрешения на запись здесь не спрашиваем,
-    но контур обязан совпадать: идентификаторы контуров не общие.
+    Читать прод безопасно, поэтому отдельного разрешения на запись здесь не спрашиваем.
+    Идентификатор берётся ТЕКУЩЕГО контура — из колонки или из журнала отправок: контуры
+    не общие, и комплект, проверенный на демо, на проде зовётся иначе.
     """
-    if not cset.ord_creative_id:
-        raise OrdSubmitRefused("Комплект ещё не зарегистрирован в ОРД")
     env = client.env()
-    if cset.ord_env and cset.ord_env != env:
-        raise OrdSubmitRefused(
-            f"Креатив зарегистрирован на контуре {cset.ord_env}, а спрашиваем на {env}.")
+    cid = registry.known_id(db, 'creative', cset.id, env,
+                            cset.ord_creative_id, cset.ord_env)
+    if not cid:
+        raise OrdSubmitRefused(f"Комплект ещё не зарегистрирован в ОРД на контуре {env}")
 
-    answer = client.get(f"/webapi/v3/creatives/{cset.ord_creative_id}/status") or {}
+    answer = client.get(f"/webapi/v3/creatives/{cid}/status") or {}
     if isinstance(answer, list):
         answer = answer[0] if answer else {}
-    cset.ord_status = answer.get('status') or cset.ord_status
-    cset.erid = answer.get('erid') or cset.erid
-    cset.ord_error = answer.get('erirValidationError')
-    cset.ord_synced_at = datetime.utcnow()
-    db.commit()
-    return {'status': cset.ord_status, 'erid': cset.erid, 'error': cset.ord_error}
+    erid = answer.get('erid')
+    # В колонки — только свой контур, то же правило, что у регистрации.
+    if registry.own_contour(cset.ord_creative_id, cset.ord_env, env):
+        same = (cset.ord_env or registry.ENV_WHEN_UNKNOWN) == env
+        cset.ord_creative_id = cid
+        cset.ord_env = env
+        cset.ord_status = answer.get('status') or (cset.ord_status if same else None)
+        cset.erid = erid or (cset.erid if same else None)
+        cset.ord_error = answer.get('erirValidationError')
+        cset.ord_synced_at = datetime.utcnow()
+        db.commit()
+        erid = cset.erid
+    return {'status': answer.get('status') or cset.ord_status, 'erid': erid,
+            'error': answer.get('erirValidationError'), 'ord_id': cid, 'env': env}

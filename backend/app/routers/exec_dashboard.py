@@ -172,7 +172,13 @@ def _booking(db: Session, today: date) -> dict:
 
     prev_a, prev_b = start.replace(year=start.year - 1), end.replace(year=end.year - 1)
     now = by_month(start, end)
-    prev_same = by_month(prev_a, prev_b, created_before=today.replace(year=today.year - 1))
+    # «Тот же день год назад»: 29 февраля такого дня нет — берём 28-е, иначе экран
+    # падал раз в четыре года (аудит 23.09.2026, 2.L3).
+    try:
+        same_day = today.replace(year=today.year - 1)
+    except ValueError:
+        same_day = today.replace(year=today.year - 1, day=28)
+    prev_same = by_month(prev_a, prev_b, created_before=same_day)
     prev_total = by_month(prev_a, prev_b)
 
     months, cur = [], start

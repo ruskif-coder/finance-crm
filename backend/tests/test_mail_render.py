@@ -205,11 +205,25 @@ def test_sender_mark_degrades_to_a_word():
     assert "<img" not in without and "SIMB-AD" in without
 
 
+def _digest(items, name=""):
+    """Дайджест так, как его собирает живая отправка: оболочка «Шаблонов писем» поверх
+    карточек (с 24.09.2026 — `mail.live.digest`, аудит 5.M1). Правок в оболочке на стенде
+    нет, значит это умолчание — правило."""
+    from app.database import SessionLocal
+    from app.mail import live
+
+    db = SessionLocal()
+    try:
+        return live.digest(db, "staff", items, {"имя": name or "коллеги"},
+                           brand="SIMB-AD", logo_url=None, settings_url=None)[1]
+    finally:
+        db.close()
+
+
 def test_counters_are_outlined_not_filled():
     """Счётчики дайджеста контурные: залитые спорили бы с пилюлями карточек за
     внимание, а их работа — только сказать, чего сколько."""
-    html = render.digest_html(items=[{"title": "x", "tone": "bad"},
-                                     {"title": "y", "tone": "ok"}])
+    html = _digest([{"title": "x", "tone": "bad"}, {"title": "y", "tone": "ok"}])
     head = html[:html.index("padding:14px 22px 6px")]
     for bg, _, _, _ in render.PILLS.values():
         assert f"background-color:{bg}" not in head, "счётчик залит цветом тона"
@@ -227,7 +241,7 @@ def test_digest_counts_by_tone_and_orders_by_weight():
         {"title": "Внимание", "tone": "warn"},
         {"title": "Ещё плохо", "tone": "bad"},
     ]
-    html = render.digest_html(items=items, to_name="Валерия")
+    html = _digest(items, "Валерия")
     assert "Валерия, за сутки 4 события" in html
     assert "3 требуют действия сегодня, остальные — к сведению" in html
     assert html.index("Плохо") < html.index("Внимание") < html.index("Хорошо")
@@ -235,28 +249,29 @@ def test_digest_counts_by_tone_and_orders_by_weight():
 
 def test_digest_does_not_promise_a_remainder_that_is_not_there():
     """Когда действия требуют ВСЕ события, «остальные — к сведению» обещает остаток,
-    которого нет. Мелочь, но письмо на этом перестаёт читаться как правда."""
-    html = render.digest_html(items=[{"title": "a", "tone": "bad"},
-                                     {"title": "b", "tone": "warn"}])
+    которого нет. Мелочь, но письмо на этом перестаёт читаться как правда. Переезд
+    дайджеста на оболочку редактора (24.09.2026) чуть не вернул ровно эту ошибку:
+    подзаголовок по умолчанию дописывал «Остальное — к сведению» всегда."""
+    html = _digest([{"title": "a", "tone": "bad"}, {"title": "b", "tone": "warn"}])
     assert "Все требуют действия сегодня" in html
-    assert "остальные" not in html
+    assert "стальн" not in html
 
 
 def test_digest_says_it_plainly_when_nothing_needs_action():
     """Письмо из одних хороших новостей не должно пугать словом «требуют»."""
-    html = render.digest_html(items=[{"title": "ЕРИД выпущен", "tone": "ok"}],
-                              to_name="Пётр")
-    assert "Все — к сведению" in html
-    assert "требу" not in html.split("Все — к сведению")[0].split("Пётр")[1]
+    html = _digest([{"title": "ЕРИД выпущен", "tone": "ok"}], "Пётр")
+    assert "к сведению, действий не требуется" in html
+    assert "требуют" not in html
 
 
 def test_plural_agrees_with_the_number():
     """«1 событие», «2 события», «5 событий», «11 событий» — согласование своё, и
     одиннадцать здесь главная ловушка: по последней цифре оно было бы «событие»."""
+    from app.mail import editor
     for n, word in ((1, "событие"), (2, "события"), (5, "событий"), (11, "событий"),
                     (21, "событие"), (104, "события")):
-        html = render.digest_html(items=[{"title": "x", "tone": "info"}] * n)
-        assert f"{n} {word}" in html, f"{n} → ожидалось «{word}»"
+        got = editor.computed([{"title": "x", "tone": "info"}] * n)["всего"]
+        assert got == f"{n} {word}", f"{n} → {got}"
 
 
 def test_rounded_tables_declare_a_separate_border_model():
@@ -333,7 +348,8 @@ def test_digest_time_defaults_the_same_way():
 
     from app import timez
 
-    html = render.digest_html(items=[{"title": "x", "tone": "info"}])
+    html = render.composed_html(cards_data=[{"title": "x", "tone": "info"}], headline="h",
+                                sub="", preheader="", footer="")
     m = re.search(r"(\d\d)\.(\d\d)\.(\d{4}) · (\d\d):(\d\d)", html)
     shown = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)),
                      int(m.group(4)), int(m.group(5)))

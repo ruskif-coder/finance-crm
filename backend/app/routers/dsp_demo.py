@@ -328,6 +328,8 @@ def create_creative(payload: CreativeIn, db: Session = Depends(get_db),
         raise HTTPException(400, str(e))
     if not payload.html_code.strip():
         raise HTTPException(400, "Нет разметки креатива — сначала шаги 2 и 3")
+    # Креатив в ЧУЖУЮ кампанию — это демо-баннер в боевой РК (аудит 23.09.2026, 4.M2).
+    _assert_ours(payload.campaign_xxhash)
     c = demo_client()
     try:
         xxhash = c.creative_add(payload.campaign_xxhash, params, local_ref=payload.local_ref)
@@ -358,6 +360,8 @@ def set_targeting(payload: TargetingIn, db: Session = Depends(get_db),
                   user: User = Depends(EDIT)):
     """Шаг 5 — таргетинг. Для площадки это `source`: у него нет лимита, только
     включённость и ставка — поэтому суточный лимит на площадку у нас ОРИЕНТИР."""
+    # Таргетинг чужой кампании — выключенные площадки боевой РК (аудит 23.09.2026, 4.M2).
+    _assert_ours(payload.xxhash)
     c = demo_client()
     try:
         out = c.targeting_set(payload.xxhash, payload.target_key, payload.items,

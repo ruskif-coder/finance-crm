@@ -113,6 +113,9 @@ def account_queue(
     # сделками вычитывал бы sales_media_plans и sales_deal_files целиком на каждый
     # рефреш дашборда. Тот же приём, что page_ids в реестре.
     queue_ids = [d.id for d, _ in rows]
+    # Разметка стадий по услугам — один раз на очередь, а не на строку (аудит, 3.L2).
+    from app.sales import stage_scope
+    stage_marks = stage_scope.stage_services(db)
     mp_by_deal = {}
     if queue_ids:
         for did, mid in (db.query(SalesMediaPlan.deal_id, SalesMediaPlan.id)
@@ -169,7 +172,7 @@ def account_queue(
             # id — для фильтра «Незаполненные → нет стадии»: он смотрит `!r.our_stage_id`,
             # и без этого поля «пусто» было у КАЖДОЙ строки (аудит 23.09.2026).
             "our_stage_id": d.our_stage_id,
-            "our_next_stage": stage_public(stage_move.next_stage(db, d, cat)),
+            "our_next_stage": stage_public(stage_move.next_stage(db, d, cat, marks=stage_marks)),
             "urgency": v.urgency, "reason": v.reason, "cta": v.cta, "kind": v.kind,
             "due": v.due,
             "note": sn.note if sn else None,

@@ -1,6 +1,7 @@
 import { CAP, docCard } from '@/components/salesTableKit'
 import { MONO, UI, INTEG_TONE, TRAFFIC_ROWS, Pin, ChatBtn, ServiceChip, tgHref, fmtMoney as num }
   from '@/components/publishers/kit'
+import safeHref from '@/lib/safeHref'
 
 /**
  * Сводка строки реестра (уровень L2 из хендоффа «Справочник паблишеров»).
@@ -58,7 +59,7 @@ const SurfaceLine = ({ label, s, servicesCount, canEdit, onCycle, working }) => 
         ].filter(Boolean).join(' · ')}
       </span>
       {s.figma_url && (
-        <a href={s.figma_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+        <a href={safeHref(s.figma_url)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
           style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--accent)' }}>фигма</a>
       )}
     </div>
@@ -202,7 +203,7 @@ export default function PublisherSummary({ data, meta, canEdit, api }) {
               </span>
               <span style={{ display: 'inline-flex', gap: 4 }}>
                 <ChatBtn kind="tg" title="Телеграм" href={tgHref(c.telegram)} size={24} />
-                <ChatBtn kind="max" title="MAX" href={c.max_url} size={24} />
+                <ChatBtn kind="max" title="MAX" href={safeHref(c.max_url)} size={24} />
               </span>
             </div>
           ))}
@@ -240,7 +241,7 @@ export default function PublisherSummary({ data, meta, canEdit, api }) {
                 </div>
               </span>
               {c.document_source === 'edo' && c.document_url && (
-                <a href={c.document_url} target="_blank" rel="noreferrer" style={iconBtn} title="Открыть в ЭДО">↗</a>
+                <a href={safeHref(c.document_url)} target="_blank" rel="noreferrer" style={iconBtn} title="Открыть в ЭДО">↗</a>
               )}
               {c.document_source === 'file' && (
                 <button style={iconBtn} title="Скачать документ"

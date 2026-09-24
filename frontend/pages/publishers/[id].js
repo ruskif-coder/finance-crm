@@ -28,7 +28,14 @@ export default function PublisherCardPage() {
 
   const canEdit = can(perms, 'dir_publishers', 'edit')
   const flash = (m) => { setOk(m); setTimeout(() => setOk(''), 2500) }
-  const fail = (e, fallback) => setError(e.response?.data?.detail || fallback)
+  // 422 проверки полей приходит СПИСКОМ объектов, а не строкой: нарисованный как есть,
+  // он ронял экран в белый («Objects are not valid as a React child»). Список —
+  // сообщениями через точку с запятой.
+  const fail = (e, fallback) => {
+    const d = e.response?.data?.detail
+    setError(Array.isArray(d) ? d.map(x => x?.msg || String(x)).join('; ')
+      : (typeof d === 'string' ? d : fallback))
+  }
 
   const load = async () => {
     if (!id) return

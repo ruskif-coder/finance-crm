@@ -158,3 +158,15 @@ def test_подстановки_суммы_у_внешнего_контура_н
     assert "сумма" not in editor.fields_of(editor.PUB)
     assert "сделка" not in editor.fields_of(editor.PUB)
     assert "сумма" in editor.fields_of(editor.STAFF)
+
+
+def test_the_screen_cuts_money_not_words():
+    """Аудит 23.09.2026, 5.L1. Заслон искал подстроку: «ставк» в «Доставка креатива»,
+    «cpm» внутри ЕРИД — и из письма «ЕРИД выпущен» пропадал сам ЕРИД. Слово-деньги
+    ищется с НАЧАЛА слова; знак рубля — где угодно."""
+    kept = [("этап", "Доставка креатива"), ("ЕРИД", "Kra23cpmXyZ"),
+            ("ЕРИД", "2VtzqwCpcAb")]
+    assert strip_money(kept) == kept
+    for money in (("стоимость", "1 200 ₽"), ("ставка", "150 руб"),
+                  ("условия", "CPM 250"), ("итог", "1 200 ₽")):
+        assert strip_money([money]) == [], money

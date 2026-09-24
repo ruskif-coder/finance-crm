@@ -513,13 +513,16 @@ def create_deal_from_plan(plan_id: int, data: CreateDealIn, db: Session = Depend
         raise HTTPException(status_code=400, detail="У плана не заполнен период (ГГГГ-ММ)")
     if not (p.advertiser_id or p.agency_id):
         raise HTTPException(status_code=400, detail="Нужен рекламодатель или агентство")
-    if not p.amount_net:
+    # Пустой план — это план БЕЗ СТРОК, а не план с нулевой суммой: строки со 100 %
+    # скидкой дают ноль законно, и такая сделка создаётся — их потом собирают в
+    # мастер-сделку (владелец 24.09.2026; аудит 23.09.2026, 3.L5).
+    first_row = (db.query(SalesMediaPlanRow).filter(SalesMediaPlanRow.plan_id == p.id)
+                 .order_by(SalesMediaPlanRow.sort_order).first())
+    if first_row is None:
         raise HTTPException(status_code=400, detail="В плане нет ни одной строки размещения")
 
     n = _names(db)
-    first_row = (db.query(SalesMediaPlanRow).filter(SalesMediaPlanRow.plan_id == p.id)
-                 .order_by(SalesMediaPlanRow.sort_order).first())
-    product = first_row.position if first_row else None
+    product = first_row.position
     title = (data.title or "").strip() or " · ".join([x for x in [
         n["adv"].get(p.advertiser_id), n["agency"].get(p.agency_id),
         n["brand"].get(p.brand_id), product, p.period] if x])
@@ -852,7 +855,7 @@ def _advance_deal_on_link(db, current_user, p):
     # обязаны: иначе это ещё один путь, который завтра разойдётся с остальными.
     from app.sales import stage_move
     plan = stage_move.plan_move(db, deal, nxt, cat)
-    if plan.blockers:
+    if not stage_move.may_move(plan):
         return
     stage_move.apply_move(db, deal, nxt, current_user, catalog=cat,
                           reason="медиаплан прикреплён к сделке")

@@ -318,9 +318,11 @@ def _apply_verdict(db: Session, pair, s, target, pub, deal,
     Вынесено из ручки, потому что массовая отметка обязана вести себя ТАК ЖЕ: один баннер
     на восемь сайтов — восемь одинаковых «ок», и разойтись эти два пути не должны.
     """
+    # Строку — под блокировкой: два одновременных нажатия иначе оба видели пустой
+    # вердикт, и площадке уходило два письма (ревью 24.09.2026).
     rec = (db.query(LaunchPrepReview)
            .filter(LaunchPrepReview.pair_id == pair.id,
-                   LaunchPrepReview.kind == "трафики").first())
+                   LaunchPrepReview.kind == "трафики").with_for_update().first())
     if rec is None:
         raise HTTPException(status_code=400, detail="Эта пара трафику не отправлялась")
     if rec.verdict is not None:
@@ -343,7 +345,9 @@ def _apply_verdict(db: Session, pair, s, target, pub, deal,
             db.add(LaunchPrepReview(set_id=s.id, pair_id=pair.id, kind="площадка",
                                     source="аккаунт"))
         pair.sent_at = sa_func.now()
-        _tell_publisher(db, pair, s, target, pub, deal)
+        # Письмо площадке — НЕ здесь, а у вызывающего после коммита: отправка фиксирует
+        # базу сама, и письмо изнутри записывало бы вердикт раньше, чем решит ручка
+        # (аудит 23.09.2026, 5.M2).
     return f"{deal.code}-{pub.code if pub else '?'} комплект №{s.no}: {verdict}"
 
 
@@ -381,10 +385,15 @@ def _tell_publisher(db, pair, s, target, pub, deal) -> None:
             body="Материал прошёл нашу проверку и ждёт вашего решения. "
                  "Посмотрите дисклеймер, вес архива и соответствие техрегламенту.",
             facts=[("комплект", f"№{s.no}"), ("услуга", deal.product or "—")],
-            context=context, link="/", entity_type="launch_prep_pair", entity_id=pair.id)
+            context=context, link="/", entity_type="launch_prep_pair", entity_id=pair.id,
+            values={"бренд": brand, "период": period})
     except Exception as e:                                   # noqa: BLE001
         # Ошибка рассылки не должна ронять вердикт: он уже записан, и откат оставил бы
         # человека с ошибкой при выполненном действии.
+        # Сессию — в рабочее состояние: сбой базы внутри рассылки оставил бы её в
+        # упавшей транзакции, и следующая запись (журнал, другие площадки) дала бы 500
+        # при уже записанном действии (ревью 24.09.2026).
+        db.rollback()
         log.warning("Площадке %s не ушло «новый креатив»: %s", pub.id, e)
 
 
@@ -409,6 +418,8 @@ def pair_verdict(pair_id: int, payload: VerdictIn, db: Session = Depends(get_db)
     details = _apply_verdict(db, pair, s, target, pub, deal,
                              payload.verdict, payload.reason, current_user)
     db.commit()
+    if payload.verdict == "ок":
+        _tell_publisher(db, pair, s, target, pub, deal)
     log_action(db, current_user, "traffic_pair_verdict", "sales_deal", deal.id, details)
     if payload.verdict == "на переделку":
         emit(db, "traffic_rework",
@@ -443,9 +454,13 @@ def bulk_verdict(payload: BulkVerdictIn, db: Session = Depends(get_db),
     if not payload.pair_ids:
         raise HTTPException(status_code=400, detail="Не выбрано ни одной пары")
 
-    done, skipped, deals = 0, 0, {}
-    for pid in payload.pair_ids:
-        pair, s, target, pub, deal = _pair_in_scope(db, pid, current_user)
+    # СНАЧАЛА все пары проверяются на видимость, и только потом пишется хоть что-то:
+    # отказ на паре K (чужая, несуществующая) раньше оставлял записанными пары 1…K-1
+    # и ушедшими — их письма, а журнал пустым (аудит 23.09.2026, 5.M2).
+    scoped = [_pair_in_scope(db, pid, current_user) for pid in payload.pair_ids]
+
+    done, skipped, deals, applied = 0, 0, {}, []
+    for pair, s, target, pub, deal in scoped:
         try:
             _apply_verdict(db, pair, s, target, pub, deal,
                            payload.verdict, payload.reason, current_user)
@@ -453,8 +468,13 @@ def bulk_verdict(payload: BulkVerdictIn, db: Session = Depends(get_db),
             skipped += 1
             continue
         done += 1
+        applied.append((pair, s, target, pub, deal))
         deals.setdefault(deal.id, (deal, s))
     db.commit()
+    # Письма площадкам — ПОСЛЕ записи всех вердиктов.
+    if payload.verdict == "ок":
+        for pair, s, target, pub, deal in applied:
+            _tell_publisher(db, pair, s, target, pub, deal)
     for deal_id, (deal, s) in deals.items():
         log_action(db, current_user, "traffic_pair_verdict", "sales_deal", deal_id,
                    f"комплект №{s.no}: {payload.verdict} — пар {done}")
@@ -574,14 +594,24 @@ async def upload_shot(pair_id: int, file: UploadFile = File(...),
             detail=f"Файл больше {tfiles.MAX_UPLOAD_BYTES // 1024 // 1024} МБ")
 
     content, ext, ctype = tfiles.convert(content, ext)
-    stored = tfiles.traffic_file_name(deal.code, pub.code if pub else None,
-                                      s.no, count + 1, ext)
     os.makedirs(os.path.join(UPLOADS_ROOT, SHOTS_DIR), exist_ok=True)
-    # Пара в имени каталога не нужна — она уже в имени файла; а вот столкнуться двум
-    # одинаковым именам из разных пар нельзя, поэтому префикс пары остаётся в пути.
-    rel = f"{SHOTS_DIR}/p{pair_id}_{stored}"
-    with open(os.path.join(UPLOADS_ROOT, rel), "wb") as fh:
-        fh.write(content)
+    # Номер — первый СВОБОДНЫЙ, начиная с «сколько есть + 1», и файл создаётся
+    # исключительно (`xb`). Раньше номер брался как count + 1 и файл открывался на
+    # перезапись: удалили первый из двух — следующий ложился поверх второго; две
+    # загрузки разом — одна поверх другой (аудит 23.09.2026, 4.L1).
+    seq = count + 1
+    while True:
+        stored = tfiles.traffic_file_name(deal.code, pub.code if pub else None,
+                                          s.no, seq, ext)
+        # Пара в имени каталога не нужна — она уже в имени файла; а вот столкнуться двум
+        # одинаковым именам из разных пар нельзя, поэтому префикс пары остаётся в пути.
+        rel = f"{SHOTS_DIR}/p{pair_id}_{stored}"
+        try:
+            with open(os.path.join(UPLOADS_ROOT, rel), "xb") as fh:
+                fh.write(content)
+            break
+        except FileExistsError:
+            seq += 1
 
     rec = LaunchPrepPairFile(pair_id=pair_id, path=rel, original_name=original,
                              content_type=ctype, size_bytes=len(content),
@@ -613,7 +643,9 @@ def drop_shot(file_id: int, db: Session = Depends(get_db),
         raise HTTPException(status_code=404, detail="Файл не найден")
     # Что удалили — запоминаем ДО удаления: после `db.delete` объект уже не читается,
     # а в журнале нужно имя файла, а не голый id.
-    rel, what, pair_id = rec.path, rec.filename or rec.path, rec.pair_id
+    # `original_name`: поля `filename` у строки нет, и до 23.09.2026 удаление падало
+    # на этой строке всегда (аудит, 4.M1).
+    rel, what, pair_id = rec.path, rec.original_name or rec.path, rec.pair_id
     db.delete(rec)
     db.commit()
     # Уборка — через общую проверку границы: строки уже нет, и отказать некому, поэтому

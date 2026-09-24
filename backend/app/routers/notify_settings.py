@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 from app.audit import log_action, require_admin
@@ -25,6 +25,7 @@ from app.notify.models import (NotificationProfile, NotificationSubscription,
                                UserNotificationChannels)
 from app.notify.recipients import RESOLVER_LABELS
 from app.routers.auth import get_current_user
+from app.mail import client as mail_client
 
 router = APIRouter()
 logger = logging.getLogger("finance")
@@ -237,6 +238,17 @@ class ChannelsIn(BaseModel):
     digest_minute: Optional[int] = None
     mail_override: Optional[str] = None
     mute_until: Optional[str] = None
+
+    # Адрес-переадресация проверяется при сохранении: до 23.09.2026 здесь принималась
+    # любая строка, и с неё начинались застрявшие строки дайджеста (аудит, 5.M4).
+    # Пусто — законно: «слать на адрес учётки».
+    @field_validator("mail_override")
+    @classmethod
+    def _address(cls, v):
+        v = (v or "").strip()
+        if v and not mail_client.valid_address(v):
+            raise ValueError("Это не почтовый адрес")
+        return v or None
 
 
 @router.get("/me")

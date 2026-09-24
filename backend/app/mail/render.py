@@ -47,7 +47,8 @@ Gmail вырезает `<style>`, часть клиентов не понима�
 
 ## Одно письмо и дайджест — один сборщик
 
-`notification_html` — одно событие, `digest_html` — несколько со счётчиками в шапке.
+`notification_html` — одно событие, `composed_html` — несколько со счётчиками в шапке
+(оболочку задают «Шаблоны писем», см. `mail/live.py`).
 Карточка у них общая (`_card`), каркас общий (`_letter`). Держать их порознь значило бы
 получить два разных письма об одном событии в зависимости от того, пришло оно сразу или
 попало в утреннюю пачку — ровно то расхождение, которое мы уже чинили в досылке.
@@ -129,6 +130,32 @@ def abs_url(path: Optional[str]) -> Optional[str]:
     if not base or not path:
         return None
     return "https://" + base + path
+
+
+# Адрес кабинета площадки на проде — lk.simb-ad.com (владелец 24.09.2026). Умолчание,
+# а не отказ: прод-compose ведётся отдельно от гита, и переменная туда может не доехать —
+# ссылка в боевой кабинет тогда всё равно верна.
+CABINET_SITE_DEFAULT = "lk.simb-ad.com"
+
+
+def cabinet_url(path: Optional[str] = "/") -> Optional[str]:
+    """Абсолютный адрес в КАБИНЕТЕ площадки — для всего, что уходит наружу.
+
+    До 23.09.2026 письма, дайджест и бот площадке собирали ссылки от `DOMAIN`, адреса
+    нашей внутренней системы: «Открыть кабинет» открывал вход в финмодуль (аудит, 5.H2).
+    """
+    if path is None:
+        return None
+    base = (os.getenv("CABINET_SITE") or "").strip() or CABINET_SITE_DEFAULT
+    if not base.startswith("http"):
+        base = "https://" + base
+    return base.rstrip("/") + (path if path.startswith("/") else "/" + path)
+
+
+def link_for(publisher: bool, path: Optional[str]) -> Optional[str]:
+    """Адрес по адресату: площадке — в кабинет, сотруднику — во внутреннюю систему.
+    Одна точка на отправку и предпросмотр: предпросмотр обязан показывать то, что уйдёт."""
+    return cabinet_url("/") if publisher else abs_url(path)
 
 
 def _esc(v) -> str:
@@ -469,8 +496,8 @@ def composed_html(*, cards_data: Sequence[dict], headline: str, sub: str,
                   counters: bool = True) -> str:
     """Письмо, СОБРАННОЕ ИЗ ЗАДАННОЙ ОБОЛОЧКИ и произвольного набора карточек.
 
-    Отличается от `digest_html` одним: шапку здесь не сочиняет код, её задаёт человек в
-    редакторе шаблонов. Поэтому заголовок, подзаголовок, прехедер и подвал приходят
+    Шапку здесь не сочиняет код, её задаёт человек в редакторе шаблонов (по умолчанию —
+    правило, см. `editor.SHELL_DEFAULT`); этим же собираются оба живых дайджеста. Поэтому заголовок, подзаголовок, прехедер и подвал приходят
     готовыми строками — правила подстановки уже применены вызывающим.
 
     Карточки рисуются тем же `_card`, что и в живой отправке: другой рисовальщик
@@ -491,61 +518,3 @@ def composed_html(*, cards_data: Sequence[dict], headline: str, sub: str,
                    sub=sub, counters=counts, cards=cards, footer=footer,
                    settings_url=settings_url, preheader=preheader)
 
-
-def digest_html(*, items: Sequence[dict], to_name: str = "",
-                brand: str = "SIMB-AD", when: Optional[datetime] = None,
-                logo_url: Optional[str] = None,
-                settings_url: Optional[str] = None) -> str:
-    """Дайджест: несколько событий одним письмом со счётчиками в шапке.
-
-    Шапка называет ЧИСЛО событий и сколько из них требуют действия — это то, ради чего
-    письмо открывают. «У вас 6 уведомлений» без разбивки заставляет читать все шесть,
-    чтобы понять, есть ли срочное.
-
-    Порядок карточек — по тяжести тона, как в панели: сначала то, что блокирует работу.
-    """
-    when = when or msk_now()
-    order = {t: i for i, t in enumerate(TONE_ORDER)}
-    rows = sorted(items, key=lambda x: order.get(x.get("tone") or "info", 9))
-    counts = [(t, sum(1 for x in rows if (x.get("tone") or "info") == t))
-              for t in TONE_ORDER]
-    need = sum(n for t, n in counts if t in ("bad", "warn"))
-
-    who = f"{to_name}, за" if to_name else "За"
-    headline = (f"{who} сутки {len(rows)} "
-                f"{_plural(len(rows), 'событие', 'события', 'событий')}")
-    # Три разных предложения, а не одно с подстановкой: «6 требуют действия, остальные —
-    # к сведению» при шести событиях из шести обещает несуществующий остаток.
-    if not need:
-        sub = "Все — к сведению, действий не требуется."
-    elif need == len(rows):
-        sub = "Все требуют действия сегодня."
-    else:
-        sub = (f"{need} {_plural(need, 'требует', 'требуют', 'требуют')} действия сегодня, "
-               f"остальные — к сведению.")
-
-    cards = [_card(title=x.get("title") or "", body=x.get("body"),
-                   link_abs=x.get("link_abs"), tone=x.get("tone") or "info",
-                   tag=x.get("tag") or "", when=x.get("when") or "",
-                   action=x.get("action") or "Открыть", facts=x.get("facts") or (),
-                   context=x.get("context"), code=x.get("code") or "")
-             for x in rows]
-    return _letter(brand=brand, logo_url=logo_url, when=when, headline=headline, sub=sub,
-                   counters=counts, cards=cards,
-                   footer="Полная очередь всегда в дашборде. Состав и час дайджеста — "
-                          "в настройках уведомлений.",
-                   settings_url=settings_url, preheader=sub)
-
-
-def _plural(n: int, one: str, few: str, many: str) -> str:
-    """Согласование с числом. Одиннадцать — главная ловушка: по последней цифре оно
-    было бы «событие»."""
-    n = abs(int(n))
-    if 11 <= n % 100 <= 14:
-        return many
-    last = n % 10
-    if last == 1:
-        return one
-    if 2 <= last <= 4:
-        return few
-    return many

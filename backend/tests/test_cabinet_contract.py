@@ -534,7 +534,9 @@ def test_brand_fallback_never_returns_our_identifier():
     try:
         deal = SalesDeal(brand_id=None, title=None, code="7E2JWE", id=42)
         assert _deal_brand_name(db, deal) == ""
+        # Название сделки тоже внутреннее: без бренда и рекламодателя — пусто, а не
+        # название (аудит 23.09.2026, 5.L10; тест `test_no_deal_title_outward.py`).
         deal.title = "Эспумизан 09"
-        assert _deal_brand_name(db, deal) == "Эспумизан 09"
+        assert _deal_brand_name(db, deal) == ""
     finally:
         db.close()

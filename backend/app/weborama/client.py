@@ -58,6 +58,15 @@ class WcmAuthError(WcmError):
     """Отдельно от прочих: только на неё разрешён один автоматический повтор."""
 
 
+class WcmUnknownOutcome(WcmError):
+    """Запрос ушёл, а подтверждения нет: таймаут, обрыв, 5xx или успех без id.
+
+    Отличается от отказа по смыслу, а не по тексту: отказ значит «не создано», а здесь —
+    «неизвестно». Создающий вызов с таким исходом повторять нельзя, пока человек не
+    сверится с кабинетом (аудит 23.09.2026, 4.H3).
+    """
+
+
 # Сколько тела отказа показывать. 300 символов не хватало: на 406 они возвращают ВЕСЬ
 # объект с умолчаниями (`is_visible_in_wam`, `postview_tracking_days`, …), и настоящая
 # причина оказывается за обрезом. Та же ошибка, что была с загрузчиком архива в DSP:
@@ -141,9 +150,15 @@ class WcmClient:
             raise WcmAuthError(
                 f"Weborama не настроена: нет {ENV_EMAIL} или {ENV_PASSWORD}. "
                 f"Значения кладёт владелец в .env — из переписки они не переносятся")
-        raw = self._send("POST", AUTH_PATH, files={"email": (None, self.email),
-                                                   "password": (None, self.password)},
-                         with_auth=False)
+        try:
+            raw = self._send("POST", AUTH_PATH, files={"email": (None, self.email),
+                                                       "password": (None, self.password)},
+                             with_auth=False)
+        except WcmUnknownOutcome as e:
+            # Вход ничего не создаёт: его сбой — отказ, а не «исход неизвестен». Иначе
+            # таймаут входа запирал бы объект, до создания которого дело не дошло
+            # (ревью 23.09.2026).
+            raise WcmError(f"Вход в Weborama не удался: {e}") from e
         token = _dig(raw, TOKEN_KEYS)
         if not token:
             raise WcmAuthError(f"В ответе авторизации нет токена: {str(raw)[:200]}")
@@ -166,9 +181,13 @@ class WcmClient:
             r = httpx.request(method, self.url + path, params=params, data=data,
                               files=files, headers=headers, timeout=self.timeout)
         except httpx.HTTPError as e:
-            raise WcmError(f"Weborama недоступна: {e!r}") from e
+            raise WcmUnknownOutcome(f"Weborama не ответила: {e!r}") from e
         if r.status_code in (401, 403):
             raise WcmAuthError(f"Weborama отказала в доступе ({r.status_code})")
+        if r.status_code >= 500:
+            # Их сервер упал — но мог успеть обработать запрос. Это не отказ.
+            raise WcmUnknownOutcome(
+                f"Weborama ответила {r.status_code}: {_refusal(r.text)}")
         if r.status_code >= 400:
             raise WcmError(f"Weborama ответила {r.status_code}: {_refusal(r.text)}")
         try:
@@ -305,9 +324,11 @@ class WcmClient:
     def _created(self, result: Any, what: str) -> str:
         wid = _dig(result, ID_KEYS)
         if not wid:
-            raise WcmError(f"Weborama не вернула id на «{what}»: {str(result)[:300]}")
+            # Успех без идентификатора: объект мог создаться, но мы его не знаем.
+            raise WcmUnknownOutcome(
+                f"Weborama не вернула id на «{what}»: {str(result)[:300]}")
         return wid
 
 
-__all__ = ["WcmClient", "WcmError", "WcmAuthError", "DEFAULT_URL",
+__all__ = ["WcmClient", "WcmError", "WcmAuthError", "WcmUnknownOutcome", "DEFAULT_URL",
            "ENV_URL", "ENV_EMAIL", "ENV_PASSWORD"]

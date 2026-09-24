@@ -409,3 +409,57 @@ def test_the_fallback_link_is_our_own_site():
     """Посадочная, когда её ещё нет, — наш сайт: по такому баннеру не кликают, а если
     кликнут, видно, чей это тест (владелец 18.09.2026)."""
     assert P.FALLBACK_LINK == "https://simb-ad.com"
+
+
+# ── аудит 23.09.2026, 4.M7: отправка трафику не будит полигон и не даёт 500 ──
+
+def test_sending_to_traffic_does_not_wake_the_targeting_campaign():
+    """Кампания нацеливания просыпается от ПРОСЬБЫ о ссылке, а не от отправки комплекта:
+    проснувшаяся крутится настоящим людям двое суток. До правки каждая отправка будила
+    её заново."""
+    db = _db()
+    try:
+        s = _set_with(db)
+        c = FakeClient(campaign_status="STOPPED", campaign_end="2026-09-13 00:00:00")
+        P.ensure_quietly(db, s, client=c)
+        woke = [x for x in c.calls if x[0] in ("campaign_edit", "campaign_status")]
+        assert not woke, f"отправка трафику разбудила полигон: {woke}"
+    finally:
+        _drop(db, s)
+        db.close()
+
+
+def test_repeated_send_with_a_known_creative_goes_nowhere():
+    db = _db()
+    try:
+        s = _set_with(db, ms_targeting_creative_xxhash="ALREADY0000000002")
+        c = FakeClient()
+        assert P.ensure_quietly(db, s, client=c) == "ALREADY0000000002"
+        assert c.calls == [], f"повторная отправка ходила в DSP: {c.calls}"
+    finally:
+        _drop(db, s)
+        db.close()
+
+
+def test_a_broken_archive_is_a_refusal_not_a_500(monkeypatch):
+    """Дошивка кода в пустой креатив читает архив; битый архив бросал CreativeError,
+    которую тихий вариант не ловил, — и отправка комплекта, уже закоммиченная,
+    отвечала 500."""
+    from app.dsp import creatives as cr
+
+    def broken(*a, **kw):
+        raise cr.CreativeError("в архиве нет index.html")
+
+    monkeypatch.setattr(P, "_html_of", broken)
+    db = _db()
+    try:
+        s = _set_with(db, ms_targeting_creative_xxhash="EMPTY00000000002")
+        with pytest.raises(P.TargetingCreativeError):
+            P.ensure(db, s, client=FakeClient(info_html=""))
+        s.ms_targeting_creative_xxhash = None
+        db.commit()
+        monkeypatch.setattr(P, "_archive", lambda db, s: broken())
+        assert P.ensure_quietly(db, s, client=FakeClient()) is None
+    finally:
+        _drop(db, s)
+        db.close()

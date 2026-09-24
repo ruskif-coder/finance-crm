@@ -44,6 +44,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from typing import Iterable, Optional, Tuple
 
@@ -68,6 +69,23 @@ MONEY_WORDS = ("сумм", "цена", "стоим", "бюджет", "оплат
                "cpm", "cpc", "ставк", "тариф", "прайс")
 
 
+# Слово-деньги ищется с НАЧАЛА слова, а не подстрокой: «ставк» сидит внутри «Доставка
+# креатива», «cpm»/«cpc» — внутри ЕРИД, и из письма «ЕРИД выпущен» пропадал сам ЕРИД
+# (аудит 23.09.2026, 5.L1). Знак рубля — где угодно: у него нет «начала слова».
+#
+# Три исключения из «с начала слова», каждое — деньги внутри слова (ревью 23.09.2026):
+# «оплат» (предоплата, постоплата) и «стоим» (себестоимость) ищутся где угодно; CPM/CPC
+# — с приставкой v/e (vCPM, eCPM), но не внутри ЕРИД, где перед ними буква или цифра.
+# Перед словом-деньгами может стоять цифра: «150руб» — тоже сумма.
+_ANYWHERE = ("оплат", "стоим")
+_MONEY_RE = re.compile(
+    r"₽|" + "|".join(_ANYWHERE)
+    + r"|(?<![a-zа-яё0-9])[ve]?cp[mc](?![a-zа-яё])"
+    + r"|(?<![a-zа-яё])(?:"
+    + "|".join(re.escape(w) for w in MONEY_WORDS if w not in ("₽", "cpm", "cpc") + _ANYWHERE)
+    + ")", re.IGNORECASE)
+
+
 def strip_money(facts) -> list:
     """Убрать из плашек всё, что называет деньги. Ключ И значение: «за размещение» с
     значением «500 000 ₽» прошло бы проверку по одному ключу."""
@@ -75,7 +93,7 @@ def strip_money(facts) -> list:
     for f in (facts or []):
         k = str(f[0] if isinstance(f, (list, tuple)) else f).lower()
         v = str(f[1] if isinstance(f, (list, tuple)) and len(f) > 1 else "").lower()
-        if any(w in k or w in v for w in MONEY_WORDS):
+        if _MONEY_RE.search(k) or _MONEY_RE.search(v):
             log.warning("Из письма площадке убрана денежная плашка: %s", f)
             continue
         out.append(tuple(f) if isinstance(f, (list, tuple)) else (f, ""))
@@ -108,6 +126,11 @@ def _recipients(db: Session, publisher_id: int) -> list:
     rows = db.execute(text("""
         SELECT c.id, c.email, c.name FROM sales_publisher_contacts c
          WHERE c.publisher_id = :p AND c.notify AND coalesce(c.email, '') <> ''
+           -- Приостановка останавливает и письма, не только бота: «Открыть кабинет» в
+           -- письме вело бы в кабинет, который ничего не показывает (ревью 23.09.2026).
+           AND NOT EXISTS (
+               SELECT 1 FROM cabinet_publisher cp JOIN cabinet cab ON cab.id = cp.cabinet_id
+                WHERE cp.publisher_id = c.publisher_id AND cab.state = 'приостановлен')
          ORDER BY c.is_primary DESC, c.id"""), {"p": publisher_id}).fetchall()
     return [{"contact_id": r[0], "email": r[1], "name": r[2]} for r in rows]
 
@@ -183,6 +206,9 @@ def _to_bot(db: Session, kind, publisher_id: int, *, title: str, body: Optional[
         SELECT t.account_id, t.chat_id, t.mute_until
           FROM cabinet_account_tg t
           JOIN cabinet_account a ON a.id = t.account_id AND a.is_active
+          -- Приостановленный кабинет не видит ничего (`cabinet/scope.py`) — и бот ему
+          -- не пишет. До 23.09.2026 приостановка останавливала экран, но не бота (5.M6).
+          JOIN cabinet cab ON cab.id = a.cabinet_id AND cab.state = 'активен'
           JOIN cabinet_publisher cp ON cp.cabinet_id = a.cabinet_id
          WHERE cp.publisher_id = :p
            AND t.verified_at IS NOT NULL AND coalesce(t.chat_id, '') <> ''"""),
@@ -254,8 +280,12 @@ def notify_publisher(db: Session, kind_key: str, publisher_id: int, *,
                      context: Optional[str] = None,
                      link: Optional[str] = None,
                      entity_type: Optional[str] = None,
-                     entity_id: Optional[int] = None) -> dict:
+                     entity_id: Optional[int] = None,
+                     values: Optional[dict] = None) -> dict:
     """Отправить площадке уведомление вида `kind_key`.
+
+    `values` — подстановки для правок «Шаблонов писем» («бренд», «период»): отправитель
+    знает их точно, а разбирать строку контекста обратно значило бы угадывать.
 
     Возвращает `{"status": …, "why": …}`. Исключение НЕ поднимается: вызывающий делает
     своё дело (двигает пару, проводит платёж), и несостоявшееся письмо не должно это
@@ -327,20 +357,39 @@ def notify_publisher(db: Session, kind_key: str, publisher_id: int, *,
     due = schedule.due_at(now_utc, tz, immediate=urgent,
                           digest=d_hour, quiet_from=q_from, quiet_to=q_to)
 
-    import os
-    link_abs = render.abs_url(link)
+    # Всё, что площадка откроет из письма, — в её КАБИНЕТЕ, а не во внутренней системе.
+    link_abs = render.cabinet_url(link)
+    # Слова, подпись кнопки и её показ — с правками «Шаблонов писем» (аудит 23.09.2026,
+    # 5.M1): до этого письмо площадке собиралось только кодом, и правка на экране
+    # меняла предпросмотр, но не письмо.
+    from app.mail import live
+    pub = db.execute(text("SELECT name, domain FROM sales_publishers WHERE id = :p"),
+                     {"p": publisher_id}).first()
+    subst = {"площадка": (pub[0] if pub else "") or "", "домен": (pub[1] if pub else "") or "",
+             "имя": "коллеги", **(values or {})}
+    c = live.card(db, "pub", kind_key, {"title": title, "body": body,
+                                        "action": "Открыть кабинет", "link_abs": link_abs},
+                  {**subst, "ссылка": link_abs or ""})
+    # ДЕНЕГ ПЛОЩАДКЕ НЕТ И В ПРАВКАХ ШАБЛОНА: текст на экране пишет человек, и заслон
+    # фактов (`strip_money`) его не видит. Правка с деньгами не применяется — уходит
+    # текст из кода, а в лог пишется, что правку отбросили (ревью 24.09.2026).
+    for f in ("title", "body", "action"):
+        if c.get(f) and _MONEY_RE.search(str(c[f]).lower()):
+            log.warning("Правка шаблона «%s» (%s) содержит деньги — отброшена", kind_key, f)
+            c[f] = {"title": title, "body": body, "action": "Открыть кабинет"}[f]
+    title, body, link_abs = c["title"], c["body"], c["link_abs"]
     html = render.notification_html(
         title=title, body=body, link_abs=link_abs, tone=kind.tone,
         # Время в шапке — по часам ПЛОЩАДКИ, а не по нашим: письмо читает она, и
         # «получено в 04:12» у владивостокского контакта выглядит как ночная рассылка.
         when=schedule.publisher_now(now_utc, tz),
-        tag=kind.tag or kind.label, action="Открыть кабинет", facts=facts,
-        context=context, logo_url=render.abs_url(render.LOGO_PATH),
-        brand=(os.getenv("MAIL_FROM_NAME") or "SIMB-AD").strip(),
+        tag=kind.tag or kind.label, action=c["action"], facts=facts,
+        context=context, logo_url=render.cabinet_url(render.LOGO_PATH),
+        brand=mailc.sender_name(),
         # Адресат — вне компании: подпись и подвал письма говорят про КАБИНЕТ, а
         # ссылка «настроить уведомления» ведёт туда же. Наш /settings/notifications
         # площадке не открыть, и предлагать его — обещание, которого мы не держим.
-        audience="pub", settings_url=render.abs_url("/settings"))
+        audience="pub", settings_url=render.cabinet_url("/"))
     # Тема и словесная часть — ИЗ ШАБЛОНА «Уведомление площадке», правится на экране
     # почты. Вёрстка остаётся кодовой: тон, чип и плашки фактов — это дизайн письма, а
     # не текст, и править их текстом значило бы ломать его первым же переносом строки.
@@ -386,7 +435,9 @@ def notify_publisher(db: Session, kind_key: str, publisher_id: int, *,
         row = send_and_log(db, to=r["email"], to_name=r["name"], subject=subject[:200],
                            body=text_part, html=html, kind=KIND_PUB, send_after=due,
                            entity_type=entity_type, entity_id=entity_id)
-        if due is not None:
+        # Отложенное и поставленное на повтор (сервер был недоступен) — не «не ушло»:
+        # досылка отправит само, и человеку отправлять руками нечего.
+        if due is not None or row.status == "queued":
             held.append(r["email"])
             continue
         (sent if row.status == "sent" else failed).append(
@@ -402,8 +453,13 @@ def notify_publisher(db: Session, kind_key: str, publisher_id: int, *,
         return {"status": "digest", "why": "уйдёт в дайджесте",
                 "queued": queued, "intended_to": kind.to, **extra}
     if held:
-        return {"status": "held", "why": "тихие часы площадки",
-                "due": due.isoformat(), "held": held, "queued": queued,
+        # Днём срока тихих часов нет — письмо ждёт ПОВТОРА (сервер был недоступен), и
+        # причина другая. До ревью 24.09.2026 здесь форматировался пустой срок, и
+        # рассылка падала, а вызывающий писал в журнал «не ушло».
+        return {"status": "held",
+                "why": "тихие часы площадки" if due else "почта временно недоступна — "
+                                                         "письмо уйдёт повторной попыткой",
+                "due": due.isoformat() if due else None, "held": held, "queued": queued,
                 "intended_to": kind.to, **extra}
     return {"status": "sent" if sent else "failed",
             "why": "" if sent else (failed[0]["error"] if failed else ""),

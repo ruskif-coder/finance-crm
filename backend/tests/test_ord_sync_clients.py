@@ -22,7 +22,9 @@ from app.ord import client as ord_client
 from app.ord import sync
 
 SPEC = os.path.join(os.path.dirname(__file__), 'fixtures', 'mediascout_v3_schemas.json')
-TEST_INNS = ('7700000071', '7700000072', '7700000073', '7700000074')
+TEST_INNS = ('7700000071', '7700000072', '7700000073', '7700000074',
+             '7700000075', '7700000076', '7700000077', '7700000078',
+             '7700000079')
 PREFIX = 'CTsync'
 
 
@@ -159,3 +161,56 @@ def test_refusal_of_one_client_does_not_stop_the_rest(db, fake_ord):
     assert good.ord_client_id == 'CT-ord-ok', "исправный контрагент должен быть обработан"
     assert bad.ord_client_id is None
     assert any('некорректный ИНН' in f['why'] for f in report['failed'])
+
+
+def test_demo_run_never_touches_a_production_id(db, fake_ord):
+    """4.M3 аудита 23.09.2026. Сверка на демо брала в работу и боевые строки (и строки с
+    пустым контуром — они боевые по умолчанию) и либо писала поверх демо-id, либо
+    стирала боевой. «Песочница боевой не вытесняет никогда» — правило
+    `registry.own_contour`, и сверка обязана держать его так же, как отправка."""
+    prod = _make(db, TEST_INNS[4], 'Боевой')
+    prod.ord_client_id, prod.ord_env = 'CT-prod-1', 'prod'
+    legacy = _make(db, TEST_INNS[5], 'Без контура')
+    legacy.ord_client_id, legacy.ord_env = 'CT-prod-2', None
+    gone = _make(db, TEST_INNS[6], 'Нет на демо')
+    gone.ord_client_id, gone.ord_env = 'CT-prod-3', 'prod'
+    db.commit()
+    fake_ord.answers[TEST_INNS[4]] = [fake_ord.respond(fake_ord.schemas, 'CT-demo-1', TEST_INNS[4])]
+    fake_ord.answers[TEST_INNS[5]] = [fake_ord.respond(fake_ord.schemas, 'CT-demo-2', TEST_INNS[5])]
+
+    sync.sync_clients(db)
+
+    for cp, want in ((prod, 'CT-prod-1'), (legacy, 'CT-prod-2'), (gone, 'CT-prod-3')):
+        db.refresh(cp)
+        assert cp.ord_client_id == want, f"{cp.name}: демо-сверка переписала боевой id"
+
+
+def test_prod_run_still_replaces_a_demo_id(db, fake_ord, monkeypatch):
+    """Обратное направление обязано остаться: боевой вытесняет песочницу."""
+    cp = _make(db, TEST_INNS[7], 'С демо')
+    cp.ord_client_id, cp.ord_env = 'CT-demo-3', 'demo'
+    db.commit()
+    monkeypatch.setattr(ord_client, 'env', lambda: 'prod')
+    fake_ord.answers[TEST_INNS[7]] = [fake_ord.respond(fake_ord.schemas, 'CT-prod-4', TEST_INNS[7])]
+
+    sync.sync_clients(db)
+
+    db.refresh(cp)
+    assert (cp.ord_client_id, cp.ord_env) == ('CT-prod-4', 'prod')
+
+
+def test_prod_run_keeps_a_legacy_prod_id_it_could_not_confirm(db, fake_ord, monkeypatch):
+    """Ревью 23.09.2026. Пустой контур — боевой (`ENV_WHEN_UNKNOWN`), а ветка «снять
+    чужой» сравнивала его с пустой строкой: прогон на проде стирал настоящий боевой id,
+    стоило ОРД один раз не найти юрлицо."""
+    cp = _make(db, TEST_INNS[8], 'Боевой из выгрузки')
+    cp.ord_client_id, cp.ord_env = 'CT-prod-5', None
+    db.commit()
+    monkeypatch.setattr(ord_client, 'env', lambda: 'prod')
+    fake_ord.answers[TEST_INNS[8]] = []
+
+    report = sync.sync_clients(db)
+
+    db.refresh(cp)
+    assert cp.ord_client_id == 'CT-prod-5', "боевой id стёрт прогоном по проду"
+    assert not report['cleared']

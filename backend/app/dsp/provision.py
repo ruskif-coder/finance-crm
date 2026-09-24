@@ -31,6 +31,7 @@ from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.dsp import creatives as cr
 from app.dsp.campaigns import ensure_campaign
 from app.dsp.client import MsClient, MsError
+from app.ext_lock import DSP_PROVISION, only_one
 from app.files_safe import inside_uploads
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepPair,
                                     LaunchPrepTarget)
@@ -193,16 +194,18 @@ def _pixel_tag(row: dict, width, height, ext_tag: Optional[str] = None) -> str:
 
 def provision(db: Session, camp: AdCampaign, user_id=None,
               client: Optional[MsClient] = None) -> dict:
-    """Завести всё недостающее в DSP. Идёт по креативам, не падая целиком."""
+    """Завести всё недостающее в DSP. Идёт по креативам, не падая целиком.
+
+    Один проход на РК за раз: второй клик получает отказ «уже идёт», а не второй
+    комплект объектов в чужом кабинете (аудит 23.09.2026, 4.H2).
+    """
+    with only_one(DSP_PROVISION, camp.id, DspProvisionError, "Выгрузка в DSP"):
+        return _provision(db, camp, client or MsClient())
+
+
+def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
     from app.routers.traffic_catalog import creative_script, viewability_src
 
-    c = client or MsClient()
-    try:
-        camp_hash = ensure_campaign(db, camp, c)
-    except MsError as e:
-        raise DspProvisionError(f"Кампания в DSP не заведена: {e}")
-
-    vsrc = viewability_src(db)
     px = pixel_setup(db, camp.deal_id)
     want_pixel, ext_tag = px["needed"], px["tag"]
     if want_pixel and px["mode"] == "external" and not ext_tag:
@@ -211,34 +214,63 @@ def provision(db: Session, camp: AdCampaign, user_id=None,
             "карточка сделки, блок «Доп. параметры РК»")
     rows = [r for r in _rows(db, camp)
             if not r["creative"].ms_creative_xxhash and not _blocker(r, want_pixel, ext_tag)]
+    # Нечего заводить — не заводим и кампанию. Иначе в кабинете остаётся пустая
+    # STOPPED-кампания, которую по API не удалить (4.L4).
+    if not rows and not camp.ms_campaign_xxhash:
+        raise DspProvisionError(
+            "Нет ни одного креатива, готового к выгрузке, — кампания в DSP не заводится. "
+            "Причины — в плане выгрузки")
+
+    try:
+        camp_hash = ensure_campaign(db, camp, c)
+    except MsError as e:
+        raise DspProvisionError(f"Кампания в DSP не заведена: {e}")
+
+    vsrc = viewability_src(db)
     done, failed = [], []
     for r in rows:
         cre, pub = r["creative"], r["publisher"]
         name = f"{cre.ms_title or cre.id} · {pub.name if pub else '?'}"
+        ref = f"cr{cre.id}"
         try:
-            data = _read_archive(r["file"])
-            up = cr.upload_zip(c, data,
-                               filename=(r["file"].original_name or "creative.zip"),
-                               local_ref=f"cr{cre.id}")
-            # Наш счётчик выбирается ПО ПЛОЩАДКЕ — одной точкой на систему.
-            script = creative_script(db, bool(pub.our_code)) if pub else ""
-            html = cr.wrap_html(up["html"], erid=cre.erid, viewability_src=vsrc,
-                                extra_script=script)
-            # Пиксель показа — в конец разметки: у баннера от загрузчика собственный
-            # `<head>` может быть, а может и не быть, и хвост не зависит ни от того, ни
-            # от другого.
-            # Пиксель в разметку — только если он по этой РК заказан. Иначе тег
-            # верификатора уехал бы в сеть по кампании, которую он не считает.
-            if want_pixel:
-                html += "\n" + _pixel_tag(r, up.get("width"), up.get("height"), ext_tag)
-            params = cr.build_creative_params(
-                title=cre.ms_title or name, link=r["target"].advertiser_url,
-                erid=cre.erid, size=up.get("size"),
-                total_shows=(int(r["placement"].plan_show)
-                             if r["placement"].plan_show else None))
-            xxhash = c.creative_add(camp_hash, params, local_ref=f"cr{cre.id}")
-            c.creative_edit(xxhash, {"data": {"html_code": html}},
-                            local_ref=f"cr{cre.id}")
+            # Прошлый проход мог завести креатив и оборваться до кода (4.H1). Журнал
+            # помнит хеш — тогда смотрим, что лежит в кабинете, а не заводим второй.
+            known = c.last_ok_xxhash("Creative.add", "creative", ref)
+            # Прошлый add ушёл без ответа — креатив мог создаться, а хеша мы не знаем.
+            # Перечислить креативы кампании у DSP нечем, поэтому повтор заперт до сверки
+            # (ревью 23.09.2026): второй креатив в кабинете не удалить.
+            if not known and c.unknown_outcome("Creative.add", "creative", ref):
+                raise DspProvisionError(
+                    "прошлая попытка завести этот креатив осталась без ответа — он мог "
+                    "создаться. Сверьтесь с кабинетом DSP, повтор запрещён до сверки")
+            state = cr.html_state(c, known) if known else "gone"
+            if state == "ok":
+                xxhash = known
+            else:
+                data = _read_archive(r["file"])
+                up = cr.upload_zip(c, data,
+                                   filename=(r["file"].original_name or "creative.zip"),
+                                   local_ref=ref)
+                # Наш счётчик выбирается ПО ПЛОЩАДКЕ — одной точкой на систему.
+                script = creative_script(db, bool(pub.our_code)) if pub else ""
+                html = cr.wrap_html(up["html"], erid=cre.erid, viewability_src=vsrc,
+                                    extra_script=script)
+                # Пиксель показа — в конец разметки: у баннера от загрузчика собственный
+                # `<head>` может быть, а может и не быть, и хвост не зависит ни от того,
+                # ни от другого. И только если он по этой РК заказан: иначе тег
+                # верификатора уехал бы в сеть по кампании, которую он не считает.
+                if want_pixel:
+                    html += "\n" + _pixel_tag(r, up.get("width"), up.get("height"), ext_tag)
+                if state == "empty":
+                    xxhash = known
+                else:
+                    params = cr.build_creative_params(
+                        title=cre.ms_title or name, link=r["target"].advertiser_url,
+                        erid=cre.erid, size=up.get("size"),
+                        total_shows=(int(r["placement"].plan_show)
+                                     if r["placement"].plan_show else None))
+                    xxhash = c.creative_add(camp_hash, params, local_ref=ref)
+                c.creative_edit(xxhash, {"data": {"html_code": html}}, local_ref=ref)
         except (cr.CreativeError, MsError, DspProvisionError, ValueError) as e:
             failed.append({"creative_id": cre.id, "placement_id": r["placement"].id,
                            "name": name, "error": str(e)})

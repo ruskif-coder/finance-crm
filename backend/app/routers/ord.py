@@ -367,9 +367,22 @@ def ord_register_initial(deal_id: int, payload: RegisterInitial,
     if not client.is_configured():
         raise HTTPException(status_code=400, detail="Доступ к ОРД не настроен")
 
-    final_ord_id = payload.final_ord_id or resolve_final(db, deal).final_ord_id
+    # Идентификаторы ТОГО контура, на который отправляем, — как в `_ord_chain` сборки.
+    # До 23.09.2026 доходный брался из колонки, а ветка выбиралась по колонке
+    # изначального: на проде, где все 35 договоров помечены демовскими id, это ушло бы в
+    # боевой ЕРИР чужими ссылками, а регистрация изначального была бы недостижима (4.M4).
+    from app.ord import registry
+    env = client.env()
+    final_ord_id = payload.final_ord_id
+    if not final_ord_id:
+        fr = resolve_final(db, deal)
+        if fr.contract is not None:
+            final_ord_id = registry.known_id(db, 'final_contract', fr.contract.id, env,
+                                             fr.contract.ord_contract_id,
+                                             fr.contract.ord_env)
     try:
-        if initial.ord_id and not str(initial.ord_id).startswith('local-'):
+        if registry.known_id(db, 'initial_contract', initial.id, env,
+                             initial.ord_id, initial.ord_env):
             result = submit.attach_initial(db, initial, final_ord_id, current_user)
             action, what = "ord_attach_initial", f"прикреплён к {final_ord_id}"
         else:

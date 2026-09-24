@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -26,6 +26,34 @@ from app.mail import client as mail
 from app.mail.models import MailLog
 
 log = logging.getLogger("finance.mail")
+
+# Временный сбой (сервер недоступен, ответ 4xx) — не приговор: письмо встаёт в очередь
+# досылки через полчаса, и так до трёх попыток (аудит 23.09.2026, 5.L3). Досылка
+# (`mail.flush`) берёт его по `send_after`, как отложенное на тихие часы.
+MAX_ATTEMPTS = 3
+RETRY_AFTER = timedelta(minutes=30)
+
+
+def outcome(row) -> str:
+    """Исход письма словом для экрана: sent | retry | queued | failed.
+
+    `retry` — отдельно от `queued` (ревью 23.09.2026): у обоих статус в журнале «в
+    очереди», но «ждёт, когда настроят почту» и «сервер был недоступен, уйдёт само через
+    полчаса» — разные вещи для человека. Назвать повтор «не ушло» значит заставить его
+    отправить текст руками, а досылку — ещё раз.
+    """
+    if row.status == "queued" and row.error and row.send_after:
+        return "retry"
+    return row.status
+
+
+def _failed(row: MailLog, e: Exception) -> None:
+    """Записать неудачу: временную — в очередь досылки, прочую — окончательно."""
+    row.error = str(e)[:500]
+    if isinstance(e, mail.MailTemporary) and row.attempts < MAX_ATTEMPTS:
+        row.status, row.send_after = "queued", datetime.utcnow() + RETRY_AFTER
+    else:
+        row.status = "failed"
 
 
 def send_and_log(db: Session, *, to: str, subject: str, body: str, kind: str,
@@ -69,7 +97,7 @@ def send_and_log(db: Session, *, to: str, subject: str, body: str, kind: str,
     except mail.MailNotConfigured:
         row.status = "queued"
     except Exception as e:                                  # noqa: BLE001
-        row.status, row.error = "failed", str(e)[:500]
+        _failed(row, e)
         log.warning("Письмо не ушло (%s -> %s): %s", kind, row.to_email, e)
     db.commit()
     return row
@@ -88,14 +116,16 @@ def retry(db: Session, row_id: int, *, transport=None) -> Optional[MailLog]:
         return row
     row.attempts += 1
     try:
+        # С вёрсткой: до 23.09.2026 повтор терял `html`, и площадка получала голый текст.
         mid = mail.send(to=row.to_email, subject=row.subject, body=row.body,
-                        to_name=row.to_name, reply_to=row.reply_to, transport=transport)
+                        html=row.html, to_name=row.to_name, reply_to=row.reply_to,
+                        transport=transport)
         row.status, row.message_id, row.sent_at = "sent", mid, datetime.utcnow()
         row.error = None
     except Exception as e:                                  # noqa: BLE001
-        row.status, row.error = "failed", str(e)[:500]
+        _failed(row, e)
     db.commit()
     return row
 
 
-__all__ = ["send_and_log", "retry"]
+__all__ = ["send_and_log", "retry", "outcome", "MAX_ATTEMPTS", "RETRY_AFTER"]

@@ -71,7 +71,7 @@ def require_cabinet_service(x_cabinet_token: Optional[str] = Header(default=None
     return True
 
 
-def _actor(db: Session, account_id: int, publisher_id: int):
+def _actor(db: Session, account_id: int, publisher_id: int, approve: bool = False):
     """Кто действует и в чьей ленте это окажется.
 
     До 30.08.2026 шлюз не знал действующего вовсе: у вердикта проверялось только, что
@@ -87,6 +87,12 @@ def _actor(db: Session, account_id: int, publisher_id: int):
     if acc is None or not account_sees_publisher(db, acc, publisher_id):
         # 404 везде: 403 отвечал бы на вопрос «а есть ли такая связка».
         raise HTTPException(status_code=404, detail="Задание не найдено")
+    # Действие, меняющее что-то у площадки (вердикт, посадочная, медиакит, файл к
+    # доработке), — только учётке с правом ответа. Кабинет проверяет это у себя, но
+    # проверка на вызывающей стороне — это отсутствие проверки (аудит 23.09.2026, 1.L3).
+    if approve and not getattr(acc, "can_approve", True):
+        raise HTTPException(status_code=403,
+                            detail="У учётки доступ только на просмотр")
     return acc
 
 
@@ -135,7 +141,7 @@ def cabinet_verdict(pair_id: int, payload: CabinetVerdictIn,
     if not target or target.publisher_id != payload.publisher_id:
         raise HTTPException(status_code=404, detail="Задание не найдено")
 
-    acc = _actor(db, payload.account_id, payload.publisher_id)
+    acc = _actor(db, payload.account_id, payload.publisher_id, approve=True)
     out = apply_platform_verdict(db, pair_id, payload.verdict, payload.reason,
                                  payload.author_name, payload.author_email,
                                  "кабинет", actor=None)
@@ -181,7 +187,7 @@ def cabinet_target_url(target_id: int, payload: CabinetUrlIn,
     if len(url) > 512:
         raise HTTPException(status_code=400, detail="Ссылка длиннее 512 знаков")
 
-    acc = _actor(db, payload.account_id, payload.publisher_id)
+    acc = _actor(db, payload.account_id, payload.publisher_id, approve=True)
     target.advertiser_url = url
     journal.write(db, 'посадочная', cabinet_id=acc.cabinet_id, account_id=acc.id,
                   publisher_id=payload.publisher_id, actor_name=payload.author_name,
@@ -482,7 +488,7 @@ async def cabinet_media_kit(publisher_id: int, account_id: int,
     p = db.query(SalesPublisher).filter(SalesPublisher.id == publisher_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Площадка не найдена")
-    acc = _actor(db, account_id, publisher_id)
+    acc = _actor(db, account_id, publisher_id, approve=True)
 
     original = file.filename or "mediakit"
     ext = os.path.splitext(original)[1].lower()
@@ -546,7 +552,7 @@ async def cabinet_rework_file(pair_id: int, account_id: int,
         LaunchPrepTarget.id == pair.target_id).first()
     if target is None:
         raise HTTPException(status_code=404, detail="Задание не найдено")
-    acc = _actor(db, account_id, target.publisher_id)
+    acc = _actor(db, account_id, target.publisher_id, approve=True)
 
     n = (db.query(LaunchPrepPairFile)
          .filter(LaunchPrepPairFile.pair_id == pair_id,
@@ -650,8 +656,15 @@ def cabinet_bug_sent(report_id: int, account_id: int, db: Session = Depends(get_
         bug_models.BugReport.id == report_id).first()
     if not r or r.author_account_id != account_id:
         raise HTTPException(status_code=404, detail="Заявка не найдена")
-    bug_api.announce(db, r)
-    db.commit()
+    # Повторный вызов (двойной клик, повтор запроса кабинетом) не шлёт владельцу второе
+    # уведомление о той же заявке (аудит 23.09.2026, 5.L9). Признак — уже разосланное
+    # событие по этой заявке: своего поля «уведомлено» у заявки нет.
+    announced = db.execute(text(
+        "SELECT count(*) FROM notification_deliveries WHERE event_key = 'bug_report_new' "
+        "AND entity_type = 'bug_report' AND entity_id = :i"), {"i": r.id}).scalar()
+    if not announced:
+        bug_api.announce(db, r)
+        db.commit()
     return {"ok": True}
 
 

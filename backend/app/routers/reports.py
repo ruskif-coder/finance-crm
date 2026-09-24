@@ -124,7 +124,9 @@ def get_dds(
     # Стартовые остатки
     opening_rows = db.execute(text("SELECT bank, opening_balance FROM bank_balances")).fetchall()
     opening = {r.bank: r.opening_balance for r in opening_rows}
-    total_opening = sum(opening.values())
+    # С фильтром банка — только ЕГО стартовый остаток: накопительный остаток одного
+    # банка начинался с суммы всех четырёх (аудит 23.09.2026, этап 8.3).
+    total_opening = (opening.get(bank) or 0) if bank else sum(opening.values())
 
     # Разбиваем кварталы на месяцы при группировке по периоду
     if group_by == 'period':
@@ -134,6 +136,23 @@ def get_dds(
             'total_income': r.total_income or 0, 'total_expense': r.total_expense or 0,
             'income_count': r.income_count or 0, 'expense_count': r.expense_count or 0,
         } for r in rows]
+
+    # Остаток НА НАЧАЛО диапазона: стартовый + всё движение до `date_from`. Экран ДДС
+    # всегда шлёт `date_from`, и без этого накопительный остаток терял всё, что было
+    # раньше (ревью этапа 8, 24.09.2026). Движение до диапазона считается тем же
+    # способом, что и строки: по периоду — с разворотом кварталов, по дате — только
+    # оплаченное.
+    if date_from and group_by == 'period':
+        total_opening += sum(r['total_income'] - r['total_expense'] for r in expanded_rows
+                             if (r['period'] or '') < date_from)
+    elif date_from and group_by == 'date':
+        before = db.query(func.coalesce(func.sum(Operation.income), 0)
+                          - func.coalesce(func.sum(Operation.expense), 0)).filter(
+            Operation.status == 'ОПЛАЧЕНО', Operation.date.isnot(None),
+            func.to_char(Operation.date, 'YYYY-MM') < date_from)
+        if bank:
+            before = before.filter(Operation.bank == bank)
+        total_opening += before.scalar() or 0
 
     # Фильтр по диапазону для group_by='period' — на развёрнутых месяцах (YYYY-MM),
     # где лексическое сравнение корректно (см. комментарий к SQL-фильтру выше).
@@ -270,6 +289,9 @@ PL_LINE_TO_GROUP = {
     'profit_tax': 'НАЛОГИ',
     'tax_other': 'НАЛОГИ',
     'excluded': 'НЕ В P&L',
+    # Тело займа — не доход и не расход: финотчёт исключает его так же. Без этой строки
+    # погашение уходило в «Требует разметки» и уменьшало прибыль (аудит 23.09.2026, 2.M4).
+    'loan_body': 'НЕ В P&L',
 }
 
 
@@ -661,18 +683,30 @@ def get_balance(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("balance", "view"))
 ):
-    query = db.query(
-        Operation.bank,
-        func.sum(Operation.income).label("total_income"),
-        func.sum(Operation.expense).label("total_expense"),
-    ).filter(Operation.status == 'ОПЛАЧЕНО')\
-     .group_by(Operation.bank)
-
+    turnover = {}
     if date_to:
-        query = query.filter(Operation.period <= date_to)
-
-    results = query.all()
-    turnover = {r.bank: {'income': r.total_income or 0, 'expense': r.total_expense or 0} for r in results}
+        # Период сравнивается ПОСЛЕ разворота кварталов в месяцы: строкой «Q3 2026»
+        # больше «2026-08» (буква больше цифры), и квартальные операции выпадали из
+        # остатка целиком (аудит 23.09.2026, этап 8.2). Так же, как в /dds и /pl.
+        rows = (db.query(
+            Operation.period, Operation.bank,
+            func.sum(Operation.income).label("total_income"),
+            func.sum(Operation.expense).label("total_expense"),
+        ).filter(Operation.status == 'ОПЛАЧЕНО', Operation.period.isnot(None))
+            .group_by(Operation.period, Operation.bank).all())
+        for r in expand_quarter_rows(rows):
+            if (r['period'] or '') <= date_to:
+                t = turnover.setdefault(r['bank'], {'income': 0, 'expense': 0})
+                t['income'] += r['total_income']
+                t['expense'] += r['total_expense']
+    else:
+        results = db.query(
+            Operation.bank,
+            func.sum(Operation.income).label("total_income"),
+            func.sum(Operation.expense).label("total_expense"),
+        ).filter(Operation.status == 'ОПЛАЧЕНО').group_by(Operation.bank).all()
+        turnover = {r.bank: {'income': r.total_income or 0, 'expense': r.total_expense or 0}
+                    for r in results}
 
     opening_rows = db.execute(text("SELECT bank, opening_balance FROM bank_balances")).fetchall()
     opening = {r.bank: r.opening_balance for r in opening_rows}
@@ -683,7 +717,9 @@ def get_balance(
         ob = opening.get(bank, 0)
         inc = turnover.get(bank, {}).get('income', 0)
         exp = turnover.get(bank, {}).get('expense', 0)
-        balance = ob + inc - exp
+        # трети квартала дают хвосты вида 299999.99999999994
+        inc, exp = round(inc, 2), round(exp, 2)
+        balance = round(ob + inc - exp, 2)
         total_balance += balance
         banks.append({
             "bank": bank,
@@ -850,6 +886,23 @@ def _aging_bucket(due_date, today):
     return 'overdue'
 
 
+def _contracts_cells(contracts) -> tuple:
+    """(№ договора, дата) для строки контрагента в дебиторке.
+
+    ВРЕМЕННО, до привязки договора к каждой операции (решение владельца 24.09.2026:
+    появится, когда цикл сделки доведём до конца). До тех пор строка — это контрагент, и
+    договоров у него бывает несколько: один — печатаем номер и дату как есть; несколько —
+    перечисляем все в колонке номера, дату оставляем пустой. Раньше печатались
+    замороженные поля контрагента (аудит 23.09.2026, 2.L10)."""
+    if not contracts:
+        return None, None
+    if len(contracts) == 1:
+        return contracts[0].contract_number, contracts[0].contract_date
+    parts = [(c.contract_number or "б/н") + (f" от {c.contract_date:%d.%m.%Y}" if c.contract_date else "")
+             for c in contracts]
+    return "; ".join(parts), None
+
+
 def _compute_debt_grouped(db: Session, status: str, amount_field: str, group_by: str):
     """Общая логика дебиторки/кредиторки: операции со статусом `status` (где `amount_field` > 0),
     сгруппированные либо по контрагенту (group_by='counterparty'), либо по статье (group_by='article'),
@@ -866,6 +919,13 @@ def _compute_debt_grouped(db: Session, status: str, amount_field: str, group_by:
 
     counterparty_cache = {c.id: c for c in db.query(Counterparty).all()}
     article_cache = {a.id: a.name for a in db.query(Article).all()}
+    # Договоры контрагентов — одним запросом, а не на строку.
+    contracts_of = {}
+    if group_by == 'counterparty':
+        from app.models import Contract
+        for c in (db.query(Contract).filter(Contract.counterparty_id.isnot(None))
+                  .order_by(Contract.contract_date.desc().nullslast(), Contract.id).all()):
+            contracts_of.setdefault(c.counterparty_id, []).append(c)
 
     by_group = {}
     aging_summary = {
@@ -888,12 +948,13 @@ def _compute_debt_grouped(db: Session, status: str, amount_field: str, group_by:
         key = op.counterparty_id if group_by == 'counterparty' else op.article_id
         if key not in by_group:
             if group_by == 'counterparty':
+                c_num, c_date = _contracts_cells(contracts_of.get(key, []))
                 by_group[key] = {
                     'counterparty_id': key,
                     'counterparty': cp.name if cp else '—',
                     'inn': cp.inn if cp else None,
-                    'contract_number': cp.contract_number if cp else None,
-                    'contract_date': cp.contract_date if cp else None,
+                    'contract_number': c_num,
+                    'contract_date': c_date,
                     'note': cp.note if cp else None,
                     'term_days': term_days,
                     'amount': 0,

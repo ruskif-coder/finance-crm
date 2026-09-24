@@ -32,6 +32,7 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { saveResponse } from '@/lib/download'
 import { Cube } from '@/components/LogoLoader'
 import { TargetingCampaignHint, useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
+import safeHref from '@/lib/safeHref'
 
 /* Что сказать человеку про письмо. Ответ ручки различает пять исходов, и каждый значит
    для него РАЗНОЕ действие: отправлено — ничего не делать, не ушло — отправить самому.
@@ -40,6 +41,9 @@ const MAIL_SAID = {
   sent: 'Запрос записан, письмо ушло площадке',
   failed: 'Запрос записан, но письмо НЕ ушло — отправьте текст сами',
   queued: 'Запрос записан, письмо в очереди — уйдёт, когда настроят почту',
+  // Почтовый сервер был недоступен: письмо уйдёт само повторной попыткой. Сказать «не
+  // ушло» значило бы попросить отправить руками — и площадка получила бы два.
+  retry: 'Запрос записан; почта на минуту недоступна — письмо уйдёт само, отправлять не нужно',
   no_address: 'Запрос записан. У площадки не указана почта — отправьте текст сами',
   off: 'Запрос записан. Почта не настроена — отправьте текст сами',
 }
@@ -761,7 +765,7 @@ export default function TrafficQueue() {
                         поэтому здесь же и кнопка запроса — та же ручка, что у аккаунта. */}
                     <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 7 }}>
                       {r.advertiser_url ? (
-                        <a href={r.advertiser_url} target="_blank" rel="noreferrer"
+                        <a href={safeHref(r.advertiser_url)} target="_blank" rel="noreferrer"
                            title={r.advertiser_url}
                            style={{ ...pill('var(--bg-card)', 'var(--accent)', 'var(--accent-border)'),
                              textDecoration: 'none', fontSize: 11.5, maxWidth: '100%',

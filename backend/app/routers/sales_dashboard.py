@@ -64,12 +64,15 @@ def _short_fio(full):
         return parts[0]
     return f"{parts[0]} {parts[1][:1].upper()}."
 
-_PERIOD_RE = re.compile(r"^\d{4}-\d{2}$")
+# Месяц — 01…12 прямо в правиле: «2026-13» проходил проверку формата и падал 500 в
+# расчёте дат, и в фильтре, и в массовой правке (аудит 23.09.2026, 3.L4).
+_PERIOD_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 def _month_bounds(value: str, is_end: bool):
-    """'2026-03' -> первое или последнее число месяца. Формат тот же, что
-    в отчётах финмодуля (/api/reports/dds), чтобы фильтры выглядели одинаково."""
+    """'2026-03' -> первое число месяца (начало) или первое число СЛЕДУЮЩЕГО (конец —
+    граница исключающая). Формат тот же, что в отчётах финмодуля (/api/reports/dds),
+    чтобы фильтры выглядели одинаково."""
     if not value:
         return None
     if not _PERIOD_RE.match(value):
@@ -770,8 +773,21 @@ def deals_registry(
         ordering = column.desc().nullslast() if direction == "desc" else column.asc().nullslast()
     # Вторичная сортировка — по рекламодателю: в рамках одного ключа
     # сделки идут по алфавиту рекламодателя.
-    rows = (q.order_by(ordering, adv_a.name.asc().nullslast(), SalesDeal.id.desc())
-            .limit(limit).offset(offset).all())   # границы — в Query(ge=…, le=…) выше
+    if sort == "amount":
+        # «Сумма» в колонке — ПОКАЗАННАЯ: из медиаплана, если он посчитан (`eff_net`), а
+        # не поле сделки. Сортировка по полю давала порядок, не совпадающий с числами в
+        # столбце (аудит 23.09.2026, 3.L1). В SQL эта сумма не выражается, поэтому
+        # сортируем всю выборку здесь — реестр это сотни сделок, а не миллионы.
+        # Вторичный порядок (рекламодатель, новые выше) сохраняется устойчивой сортировкой.
+        # Сделка без суммы показывает 0 — и стоит среди нулей: порядок совпадает с колонкой.
+        every = q.order_by(adv_a.name.asc().nullslast(), SalesDeal.id.desc()).all()
+        mp_every = mp_amounts_by_deal(db, [r[0].id for r in every])
+        every.sort(key=lambda r: eff_net(r[0], mp_every), reverse=(direction == "desc"))
+        rows = every[offset:offset + limit]
+    else:
+        rows = (q.order_by(ordering, adv_a.name.asc().nullslast(), SalesDeal.id.desc())
+                .limit(limit).offset(offset).all())   # границы — в Query(ge=…, le=…) выше
+        mp_every = None
 
     adv = dict(db.query(SalesAdvertiser.id, func.coalesce(SalesAdvertiser.short_name, SalesAdvertiser.name)).all())
     reps = dict(db.query(SalesRep.id, SalesRep.name).all())
@@ -822,7 +838,11 @@ def deals_registry(
     # Какие поля на этой странице заполнены вручную — чтобы интерфейс их пометил
     # и было видно, что синхронизация их не тронет.
     page_ids = [d.id for d, _, _ in rows]
-    mp_amt = mp_amounts_by_deal(db, page_ids)
+    # Суммы всей выборки уже прочитаны сортировкой «по сумме» — второй раз не читаем.
+    mp_amt = mp_every if mp_every is not None else mp_amounts_by_deal(db, page_ids)
+    # Разметка стадий по услугам — один раз на страницу, а не на строку (аудит, 3.L2).
+    from app.sales import stage_scope
+    stage_marks = stage_scope.stage_services(db)
     manual = {}
     files_map = {}
     our_mp_map = {}
@@ -916,7 +936,8 @@ def deals_registry(
             # Через общую точку: у терминала следующей нет, неприменимые к услуге
             # стадии проскакиваются. Иначе реестр называет одну стадию, а кнопка
             # ведёт в другую.
-            "our_next_stage": stage_public(stage_move.next_stage(db, d, cat)),
+            "our_next_stage": stage_public(stage_move.next_stage(db, d, cat,
+                                                                 marks=stage_marks)),
             "realization_pipeline_id": d.realization_pipeline_id,
             "agency": agencies.get(d.agency_id),
             "agency_full": agency_full.get(d.agency_id),
@@ -1092,6 +1113,12 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
     _scope_deal_ids(db, current_user, payload.deal_ids)
 
     changes = payload.dict(exclude_unset=True, exclude={"deal_ids"})
+    # Причина обхода — слово к ДЕЙСТВИЮ, а не поле сделки; пустая стадия — «не менять».
+    # Обе оставались в наборе изменённых полей, и на каждую сделку ложилась мусорная
+    # пометка ручной правки (аудит 23.09.2026, 3.M8). Причину читаем из `payload`.
+    changes.pop("override_reason", None)
+    if not changes.get("our_stage_id"):
+        changes.pop("our_stage_id", None)
     if not changes:
         raise HTTPException(status_code=400, detail="Не задано ни одного поля")
 
@@ -1153,7 +1180,9 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
     # значит сделать разбор невозможным для тех, кто им занимается.
     #
     # Что ограничение всё-таки держит: область видимости (`_scope_deal_ids` выше — чужую
-    # сделку не тронуть) и ТРЕБОВАНИЯ цели (`plan.blockers` ниже). Обходит требования
+    # сделку не тронуть) и ТРЕБОВАНИЯ цели (`plan.blockers` ниже). РЕЕСТР СОЗНАТЕЛЬНО НЕ
+    # СПРАШИВАЕТ применимость к услуге и воронку — решение владельца 24.09.2026, временно,
+    # до разбора старых сделок (прибор `test_stage_move_obeys_rules`). Обходит требования
     # только мастер и только с причиной.
     #
     # Асимметрия закреплена прибором `test_bulk_allows_going_back_on_purpose`: если
@@ -2914,7 +2943,11 @@ def move_preview(
     _assert_deal_in_scope(db, current_user, deal)
 
     cat = Catalog(db)
-    target = cat.by_id.get(to_stage_id) if to_stage_id else cat.next_of(deal.our_stage_id)
+    # Цель по умолчанию — ТА ЖЕ, что называют реестр и карточка (`stage_move.next_stage`):
+    # `Catalog.next_of` с терминала отдаёт первую стадию, и предпросмотр предлагал
+    # воскрешение сорванной сделки (аудит 23.09.2026, 3.M2).
+    target = (cat.by_id.get(to_stage_id) if to_stage_id
+              else stage_move.next_stage(db, deal, cat))
     if target is None:
         return {"target": None, "lines": [], "allowed": True,
                 "reason": "Некуда двигать — сделка на последней стадии"}
@@ -2970,7 +3003,6 @@ def move_deal(
     cat = Catalog(db)
     if not cat.stages:
         raise HTTPException(status_code=400, detail="Каталог стадий пуст")
-    cur_id = deal.our_stage_id
     if payload.to_stage_id:
         # Неизвестный id раньше проваливался в общую ветку и отвечал «сделка на последней
         # стадии» — сообщение, по которому невозможно понять, что стадии просто нет.
@@ -2979,7 +3011,8 @@ def move_deal(
             raise HTTPException(status_code=404,
                                 detail=f"Стадия {payload.to_stage_id} не найдена в каталоге")
     else:
-        target = cat.next_of(cur_id)
+        # Одна «следующая стадия» на всех — см. `move_preview` (аудит, 3.M2).
+        target = stage_move.next_stage(db, deal, cat)
         if target is None:
             raise HTTPException(status_code=400, detail="Некуда двигать — сделка на последней стадии")
 
@@ -3000,6 +3033,11 @@ def move_deal(
     # сделок, которые до реализации не дошли.
     if plan.needs_pipeline:
         raise HTTPException(status_code=400, detail="Выберите воронку реализации под продукт")
+    # Стадия не относится к услуге сделки — отказ, и мастеру тоже: это не требование,
+    # которое можно обойти с причиной, а промах выбора. Карточка подчиняется правилам —
+    # решение владельца 24.09.2026, «чтобы привыкали ответственные» (аудит, 3.M1).
+    if plan.not_applicable:
+        raise HTTPException(status_code=400, detail=stage_move.refusal_text(plan))
 
     # Требования цели. Обход разрешён мастеру и ТОЛЬКО с причиной: иначе «в обход» стало
     # бы неотличимо от «правило не сработало», и разбирать было бы нечего.
@@ -3026,7 +3064,7 @@ def move_deal(
                f"{label}. Комментарий: {payload.comment.strip()}")
     return {"message": "Сделка перемещена",
             "our_stage": stage_public(target, cat),
-            "our_next_stage": stage_public(cat.next_of(target.id)),
+            "our_next_stage": stage_public(stage_move.next_stage(db, deal, cat)),
             "realization_pipeline_id": deal.realization_pipeline_id}
 
 

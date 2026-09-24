@@ -295,36 +295,16 @@ def sync_placements(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
             "without_weight": sum(1 for c in cands if not weights.get(c["publisher_id"]))}
 
 
-def root_set_map(db: Session, deal_id: int) -> dict:
-    """Комплект → корень его цепочки доработок.
-
-    Доработка рождает НОВЫЙ комплект со ссылкой `replaces_set_id` на предыдущий. Для нас
-    креатив — рекламное СООБЩЕНИЕ (владелец 04.09.2026), а правки технические, поэтому
-    личностью служит корень цепочки, а не конкретная версия.
-
-    Цикл в ссылках разорвать нечем, но и завестись ему неоткуда: замена всегда ссылается
-    на уже существующий комплект. Ограничитель на глубину всё равно стоит — бесконечный
-    цикл здесь означал бы висящий запрос, а не заметную ошибку.
-    """
-    rows = db.execute(text(
-        "SELECT id, replaces_set_id FROM launch_prep_creative_set WHERE deal_id = :d"),
-        {"d": deal_id}).mappings().all()
-    parent = {r["id"]: r["replaces_set_id"] for r in rows}
-    out = {}
-    for sid in parent:
-        cur, seen = sid, 0
-        while parent.get(cur) and seen < 20:
-            cur, seen = parent[cur], seen + 1
-        out[sid] = cur
-    return out
-
-
 def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
     """Заводит креативы РК по парам «креатив × площадка» и обновляет их состояние.
 
-    Строка на пару РЕКЛАМНОГО СООБЩЕНИЯ и площадки, а не на каждую отправку: доработка
-    переставляет `pair_id` у существующей строки, и ЕРИД с хешом МС переживают правку
-    (решение владельца 04.09.2026: «ерид на строку»).
+    Строка на пару КОМПЛЕКТА и площадки: доработка — НОВЫЙ порядковый креатив со своим
+    номером, маркером и файлом, а не подмена старого (владелец 23.09.2026: «правки не
+    перезаписываются, а уходят в новый порядковый»). До этого действовало решение
+    04.09.2026 — строка жила на корне цепочки, и доработка переставляла на ней пару, файл
+    и ЕРИД. Уехавший в DSP креатив так оставался со старым баннером при новом маркере, а
+    выгрузка его не перезаливала (аудит 23.09.2026, 4.M9). Колонка `root_set_id` с тех
+    пор держит комплект строки, а не корень цепочки: имя осталось от прежнего правила.
 
     Строка появляется в момент ОТПРАВКИ пары, а не схождения: счётчик в интерфейсе
     показывает «всего / согласовано / запущено», и без несогласованных «всего» равнялось
@@ -340,7 +320,6 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
     if not pls:
         return {"created": 0, "updated": 0}
 
-    roots = root_set_map(db, camp.deal_id)
     # Номер креатива = НОМЕР КОМПЛЕКТА В СДЕЛКЕ (владелец 18.09.2026). Раньше он считался
     # порядковым внутри площадки, и «Креатив №4» на карточке сделки уезжал в DSP под
     # именем `PFPYGX-MXV-cr1`. Два номера у одной вещи — гарантированная путаница при
@@ -373,53 +352,78 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
          ORDER BY pr.id
     """), {"d": camp.deal_id}).mappings().all()
 
+    # Комплекты, которые доработка ЗАМЕНИЛА на площадке: {(старый комплект, площадка)}.
+    # Их креатив в работе больше не числится — его место занял новый порядковый.
+    replaced = {(r["replaces_set_id"], r["publisher_id"]) for r in db.execute(text(
+        "SELECT replaces_set_id, publisher_id FROM launch_prep_creative_set "
+        "WHERE deal_id = :d AND replaces_set_id IS NOT NULL"),
+        {"d": camp.deal_id}).mappings().all()}
+
     have = {(c.placement_id, c.root_set_id): c for c in db.query(AdCampaignCreative)
             .filter(AdCampaignCreative.campaign_id == camp.id).all()}
     # Номера считаются в пределах ПЛОЩАДКИ и не переиспользуются: на них ссылается
-    # сквозное имя в DSP, и сдвиг номера означал бы переименование креатива.
-    next_no = {}
+    # сквозное имя в DSP, и сдвиг номера означал бы переименование креатива. Занятые —
+    # отдельным множеством: строка из DSP держит свой номер навсегда, и новый комплект
+    # с тем же номером получает следующий свободный, а не роняет уникальность
+    # «площадка × номер» на каждой сборке (ревью 23.09.2026).
+    next_no, taken = {}, set()
     for (pid, _), c in have.items():
         next_no[pid] = max(next_no.get(pid, 0), c.creative_no)
+        taken.add((pid, c.creative_no))
 
     created = updated = 0
     for r in pairs:
         pl = pls.get(r["publisher_id"])
         if pl is None:
             continue                      # площадки нет в этой РК — пара не наша
-        root = roots.get(r["set_id"], r["set_id"])
+        sid = r["set_id"]
         chain = chain_status(r["traffic_verdict"], r["platform_verdict"], has_pair=True)
         # Словари площадки и креатива различаются одним словом: у креатива согласованное
         # состояние зовётся «согласован», а не «ждёт запуска».
         chain = "согласован" if chain == PLACEMENT_READY else chain
+        # Заменённый доработкой — «отклонён»: иначе он висел бы «у площадки» вечно, как
+        # незакрытая работа. Ручной статус трафика (например, «запущен» у уже крутящего)
+        # это не перекрывает — `effective_status_creative` пропускает решение человека.
+        if (sid, pl.publisher_id) in replaced:
+            chain = "отклонён"
 
-        # Номер берём у КОРНЯ цепочки: доработка рождает новый комплект со своим номером,
-        # а креатив остаётся тем же рекламным сообщением — иначе после каждой правки он
-        # менял бы имя в чужой системе.
-        no = set_no.get(root) or set_no.get(r["set_id"]) or (next_no.get(pl.id, 0) + 1)
+        # Номер — номер СВОЕГО комплекта: доработка рождает комплект со следующим
+        # номером, и он же становится номером нового креатива.
+        no = set_no.get(sid) or (next_no.get(pl.id, 0) + 1)
 
-        row = have.get((pl.id, root))
+        row = have.get((pl.id, sid))
         if row is None:
+            if (pl.id, no) in taken:
+                no = next_no.get(pl.id, 0) + 1
             next_no[pl.id] = max(next_no.get(pl.id, 0), no)
+            taken.add((pl.id, no))
             row = AdCampaignCreative(
-                campaign_id=camp.id, placement_id=pl.id, root_set_id=root,
+                campaign_id=camp.id, placement_id=pl.id, root_set_id=sid,
                 creative_no=no, status=chain)
             db.add(row)
-            have[(pl.id, root)] = row
+            have[(pl.id, sid)] = row
             created += 1
-        elif row.creative_no != no and not (row.ms_creative_xxhash or "").strip():
-            # Перенумеровываем ТОЛЬКО то, что ещё не уехало в DSP: имя заведённого
-            # креатива там уже зафиксировано, переименовать его нечем, и расхождение
-            # «у нас cr4, в кабинете cr1» было бы хуже исходной путаницы. Такие строки
-            # остаются со старым номером осознанно.
-            row.creative_no = no
-            updated += 1
-        elif row.status != effective_status_creative(row.status, chain):
-            row.status = effective_status_creative(row.status, chain)
-            updated += 1
-        # Ссылка всегда на ПОСЛЕДНЮЮ пару цепочки: запрос отсортирован по id.
+        else:
+            if (row.creative_no != no and (pl.id, no) not in taken
+                    and not (row.ms_creative_xxhash or "").strip()):
+                # Перенумеровываем ТОЛЬКО то, что ещё не уехало в DSP: имя заведённого
+                # креатива там уже зафиксировано, переименовать его нечем, и расхождение
+                # «у нас cr4, в кабинете cr1» было бы хуже исходной путаницы.
+                taken.discard((pl.id, row.creative_no))
+                taken.add((pl.id, no))
+                row.creative_no = no
+                updated += 1
+            if row.status != effective_status_creative(row.status, chain):
+                row.status = effective_status_creative(row.status, chain)
+                updated += 1
+        # Уехавшее в DSP не переписываем: пара, маркер, файл и имя у такой строки — это
+        # то, что лежит в кабинете. По прежнему правилу строка корня несла данные
+        # доработки и с ними уехала; переписать её сейчас значило бы разойтись с DSP.
+        if (row.ms_creative_xxhash or "").strip():
+            continue
+        # Пара — своего комплекта на этой площадке; запрос отсортирован по id.
         row.pair_id = r["pair_id"]
-        # МАРКЕР переносим с комплекта, по которому пара согласована, а не с корня
-        # цепочки: корень мог быть отвергнут и заменён, а маркер выдан на действующий.
+        # МАРКЕР — со своего комплекта: у доработки он свой, и на чужую строку не ложится.
         #
         # Колонка `erid` читалась в двух местах — экран трафика и выгрузка в DSP — и НЕ
         # ЗАПОЛНЯЛАСЬ НИКЕМ (замер 17.09.2026: 0 из 1 на проде). Это не косметика:
@@ -430,9 +434,8 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
         # должно стирать уже перенесённое.
         if r["erid"]:
             row.erid = r["erid"]
-        # ФАЙЛ — С ТОГО ЖЕ КОМПЛЕКТА, ЧТО И МАРКЕР, а не с корня цепочки: в DSP должен
-        # уехать тот архив, который площадка согласовала, а корень мог быть отвергнут и
-        # заменён.
+        # ФАЙЛ — С ТОГО ЖЕ КОМПЛЕКТА, ЧТО И МАРКЕР: в DSP уезжает тот архив, который
+        # площадка согласовала.
         #
         # Колонка `file_id` — четвёртая за два дня с читателями и без писателя: выгрузка
         # в DSP берёт по ней zip и без неё отказывает словами «к креативу не привязан

@@ -324,3 +324,72 @@ def test_manual_mark_survives_in_the_journal(db, user):
     db.refresh(row)
     assert 'связь оборвалась' in row.error, "исходная причина не должна затираться"
     assert 'проверил' in row.error and 'смотрел вместе с ОРД' in row.error
+
+
+# ── аудит 23.09.2026: 4.L7 и 4.H5 ────────────────────────────────────────────
+
+def test_success_without_an_id_keeps_the_attempt_open(db, user, monkeypatch):
+    """4.L7. 200 без идентификатора — не «не создалось», а «не знаем»: запись в ЕРИР
+    могла появиться. Закрытая попытка разрешила бы повтор и дубль."""
+    cp, contract = _setup(db)
+    posts = []
+
+    def _post(path, body):
+        posts.append(path)
+        return (200, {'status': 'Created'})
+
+    monkeypatch.setattr(ord_client, 'post', _post)
+    with pytest.raises(submit.OrdSubmitRefused):
+        submit.register_final_contract(db, contract, user)
+    row = db.query(OrdSubmission).filter(OrdSubmission.local_id == contract.id).one()
+    assert row.finished_at is None, "ответ без id закрыл попытку — повтор разрешён"
+
+    with pytest.raises(submit.OrdSubmitRefused):
+        submit.register_final_contract(db, contract, user)
+    assert len(posts) == 1
+
+
+CSET_ID = 999460
+
+
+@pytest.fixture
+def cset(db):
+    from types import SimpleNamespace
+
+    def purge():
+        db.rollback()
+        db.query(OrdSubmission).filter(OrdSubmission.kind == 'creative',
+                                       OrdSubmission.local_id == CSET_ID
+                                       ).delete(synchronize_session=False)
+        db.commit()
+    purge()
+    yield SimpleNamespace(id=CSET_ID, no=1, erid=None, erid_source='наш',
+                          ord_creative_id=None, ord_env=None, ord_status=None,
+                          ord_error=None, ord_synced_at=None)
+    purge()
+
+
+def test_creative_registered_without_marker_is_not_registered_again(db, user, cset,
+                                                                    monkeypatch):
+    """4.H5. ОРД выдал id, а маркер ещё не пришёл. Второе нажатие обязано спрашивать
+    статус, а не регистрировать заново: второй креатив в ЕРИР не отозвать."""
+    from app.ord import payloads
+    monkeypatch.setattr(payloads, 'creative', lambda *a, **kw: {'body': 1})
+    posts, gets = [], []
+    monkeypatch.setattr(ord_client, 'post',
+                        lambda p, b: posts.append(p) or (200, {'id': 'CR-1', 'status': 'Created'}))
+    monkeypatch.setattr(ord_client, 'get',
+                        lambda p, params=None: gets.append(p) or {'status': 'Registering'})
+
+    first = submit.issue_marker(db, cset, [], None, None, 'CT-final-1', None, user)
+    assert first['erid'] is None and cset.ord_creative_id == 'CR-1'
+
+    second = submit.issue_marker(db, cset, [], None, None, 'CT-final-1', None, user)
+    assert len(posts) == 1, "маркер запрошен второй раз — в ЕРИР два креатива"
+    assert gets and 'CR-1' in gets[-1], "вместо регистрации должен идти опрос статуса"
+    assert second['erid'] is None
+
+    # И прямой вызов регистрации тоже не проходит: правило стоит в самой отправке.
+    with pytest.raises(submit.OrdSubmitRefused):
+        submit.register_creative(db, cset, [], None, None, 'CT-final-1', None, user)
+    assert len(posts) == 1

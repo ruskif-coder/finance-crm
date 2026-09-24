@@ -65,7 +65,7 @@ def env():
         db.close()
         pytest.skip('нужен бренд с рекламодателем, сейлз с учёткой и каталог стадий')
 
-    def _mk(**kw):
+    def _mk(_rows=True, **kw):
         """План без сделки: ровно то состояние, из которого жмут «Создать сделку»."""
         fields = dict(title=TITLE, version=1, advertiser_id=brand.advertiser_id,
                       brand_id=brand.id, period='2026-10', amount_net=500000,
@@ -75,8 +75,9 @@ def env():
         db.add(p)
         db.flush()
         p.group_id = p.id
-        db.add(SalesMediaPlanRow(plan_id=p.id, sort_order=0, position='Спецпроект',
-                                 model='CPM', volume=1000000, unit_price=500))
+        if _rows:
+            db.add(SalesMediaPlanRow(plan_id=p.id, sort_order=0, position='Спецпроект',
+                                     model='CPM', volume=1000000, unit_price=500))
         db.commit()
         return p
 
@@ -173,7 +174,9 @@ def test_a_second_deal_is_refused(env):
 @pytest.mark.parametrize('broken, code, why', [
     ({'period': None}, 400, 'без периода не посчитать ни старт, ни срочность'),
     ({'advertiser_id': None, 'brand_id': None}, 400, 'сделка без стороны сделки'),
-    ({'amount_net': None}, 400, 'план без строк — сделка на нулевую сумму'),
+    # Пустой план — это план БЕЗ СТРОК; нулевая сумма при строках законна (100 % скидка,
+    # владелец 24.09.2026) — её держит test_month_and_zero_plan.
+    ({'_rows': False}, 400, 'план без строк — сделка-призрак'),
 ])
 def test_incomplete_plans_are_refused(env, broken, code, why):
     """Пустой план не должен порождать сделку-призрак: её потом никто не опознает."""

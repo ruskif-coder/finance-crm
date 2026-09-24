@@ -26,24 +26,33 @@ from app.weborama import stats as S
 from app.weborama import store
 from app.weborama.client import WcmClient, WcmError
 
-ENV_ACCOUNT = "WEBORAMA_DEMO_ACCOUNT_ID"
 
 
 def _day(s: str) -> date:
     return datetime.strptime(s, "%Y-%m-%d").date()
 
 
-def run(account_id=None, *, start=None, end=None, dry_run: bool = False) -> dict:
-    import os
+def _account(db) -> str:
+    """Аккаунт — ТОТ ЖЕ, в котором заводятся вставки: настройка `weborama_account_id`.
 
+    До 23.09.2026 съём брал его из переменной `WEBORAMA_DEMO_ACCOUNT_ID`, а заведение —
+    из настройки. Разойдись они, съём шёл в чужой аккаунт и честно докладывал «легло 0»;
+    пустая переменная роняла крон (аудит, 4.M6). Место у аккаунта одно.
+    """
+    from app.weborama import provision
+
+    return provision.account_id(db)
+
+
+def run(account_id=None, *, start=None, end=None, dry_run: bool = False) -> dict:
     from app.dsp.db import DspSessionLocal
 
-    account_id = account_id or os.getenv(ENV_ACCOUNT) or ""
     if not account_id:
-        # Пустая строка, а не отсутствие ключа: compose подставляет умолчание, и
-        # переменная в процессе ЕСТЬ. Отличать обязательно — иначе «не настроено»
-        # читается как «сломалось».
-        raise RuntimeError(f"{ENV_ACCOUNT} не задан — аккаунт Weborama неизвестен")
+        probe = SessionLocal()
+        try:
+            account_id = _account(probe)
+        finally:
+            probe.close()
     if DspSessionLocal is None:
         raise RuntimeError("DSP_DATABASE_URL не задан — сырьё складывать некуда")
 

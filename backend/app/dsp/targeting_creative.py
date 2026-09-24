@@ -158,22 +158,8 @@ def _read(f: LaunchPrepCreativeFile) -> bytes:
         return fh.read()
 
 
-def _html_state(c: MsClient, xxhash: str) -> str:
-    """Что с креативом в кабинете: `ok` — код на месте, `empty` — объект без кода,
-    `gone` — такого нет.
-
-    Недоступность DSP отдельным исходом НЕ делаем: молчащая связь не должна выглядеть
-    как «всё хорошо», поэтому ошибка обмена поднимается наверх и человек видит её текстом.
-    """
-    try:
-        info = c.creative_get_info(xxhash) or {}
-    except MsError as e:
-        if "not found" in str(e).lower():
-            return "gone"
-        raise
-    data = info.get("data") if isinstance(info, dict) else None
-    html = (data or {}).get("html_code") if isinstance(data, dict) else None
-    return "ok" if (html or "").strip() else "empty"
+# Проверка «код на месте» общая с выгрузкой РК — одно правило в одном месте.
+_html_state = cr.html_state
 
 
 def _html_of(db: Session, s: LaunchPrepCreativeSet, c: MsClient, ref: str) -> str:
@@ -185,7 +171,7 @@ def _html_of(db: Session, s: LaunchPrepCreativeSet, c: MsClient, ref: str) -> st
 
 
 def ensure(db: Session, s: LaunchPrepCreativeSet, *,
-           client: Optional[MsClient] = None) -> str:
+           client: Optional[MsClient] = None, wake: bool = True) -> str:
     """Хеш креатива нацеливания для комплекта; заводит его, если ещё нет."""
     from app.routers.traffic_catalog import targeting_cabinet, viewability_src
 
@@ -200,7 +186,11 @@ def ensure(db: Session, s: LaunchPrepCreativeSet, *,
     # КАМПАНИЮ ГОТОВИМ ПО ХОДУ ДЕЛА, а не требуем готовой. Полигон нацеливания живёт
     # ровно столько, сколько нужно проверке, и продлевается в момент получения — так
     # решил владелец 17.09.2026.
-    wake_campaign(db, client=c)
+    # Будит ТОЛЬКО просьба о ссылке. Тихое заведение при отправке трафику кампанию не
+    # трогает: проснувшаяся крутится людям двое суток, а ссылку по этому комплекту могут
+    # и не попросить (аудит 23.09.2026, 4.M7).
+    if wake:
+        wake_campaign(db, client=c)
 
     # Уже заведённый креатив ПРОВЕРЯЕМ, а не берём на веру. Причина конкретная: объект
     # создаётся одним вызовом, а HTML вшивается вторым, и между ними связь может
@@ -215,9 +205,12 @@ def ensure(db: Session, s: LaunchPrepCreativeSet, *,
             return _persist(db, s, known)
         if state == "empty":
             # Объект есть, кода нет — дошиваем его, а не заводим второй: второй в чужом
-            # кабинете уже не удалить.
-            html = cr.wrap_html(_html_of(db, s, c, ref), erid=TEST_ERID,
-                                viewability_src=viewability_src(db))
+            # кабинете уже не удалить. Битый архив — отказ словами, а не 500.
+            try:
+                html = cr.wrap_html(_html_of(db, s, c, ref), erid=TEST_ERID,
+                                    viewability_src=viewability_src(db))
+            except (cr.CreativeError, ValueError) as e:
+                raise TargetingCreativeError(str(e))
             c.creative_edit(known, {"data": {"html_code": html}}, local_ref=ref)
             return _persist(db, s, known)
         # state == "gone" — креатив снесли в кабинете руками: заводим заново.
@@ -414,7 +407,8 @@ def campaign_state(db: Session, *, client: Optional[MsClient] = None) -> dict:
     return out
 
 
-def ensure_quietly(db: Session, s: LaunchPrepCreativeSet) -> Optional[str]:
+def ensure_quietly(db: Session, s: LaunchPrepCreativeSet, *,
+                   client: Optional[MsClient] = None) -> Optional[str]:
     """То же, но без исключения: для отправки трафику.
 
     Отправка на согласование НЕ должна зависеть от чужой системы. Если DSP недоступен или
@@ -422,9 +416,13 @@ def ensure_quietly(db: Session, s: LaunchPrepCreativeSet) -> Optional[str]:
     позже, по нажатию кнопки. Обратное означало бы, что недоступность DSP останавливает
     согласование, а это несоразмерно.
     """
+    # Уже заведён — при отправке трафику в DSP не ходим вовсе: проверку кода делает
+    # просьба о ссылке, а каждая повторная отправка комплекта иначе стучалась бы наружу.
+    if s.ms_targeting_creative_xxhash:
+        return s.ms_targeting_creative_xxhash
     try:
-        return ensure(db, s)
-    except (TargetingCreativeError, MsError) as e:
+        return ensure(db, s, client=client, wake=False)
+    except (TargetingCreativeError, MsError, cr.CreativeError, ValueError) as e:
         log.info("Креатив нацеливания для комплекта %s не заведён: %s", s.id, e)
         db.rollback()
         return None

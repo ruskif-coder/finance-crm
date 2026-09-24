@@ -174,6 +174,10 @@ def send_message(chat_id: str, text: str, link: Optional[str] = None,
         raise RuntimeError(f"{token_var(contour)} не задан")
     body = text
     if link:
+        # Площадке — адрес её кабинета, а не внутренней системы (аудит 23.09.2026, 5.H2).
+        if contour == PUB and not base_url:
+            from app.mail.render import cabinet_url
+            base_url = cabinet_url("/")
         domain = (base_url or os.getenv("DOMAIN") or "").strip()
         if domain and not domain.startswith("http"):
             domain = f"https://{domain}"

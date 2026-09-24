@@ -87,3 +87,13 @@ def test_dsp_skips_a_placement_that_rotates_on_its_own():
     row = _row(placement=NS(status="запущен", is_direct=True, weborama_pixel=None,
                             plan_show=None, id=1))
     assert "крутит сама" in (dsp_prov._blocker(row) or "")
+
+
+def test_a_hung_dsp_creative_shows_as_unknown():
+    """Креатив, чьё заведение ушло без ответа, — не «нет»: человек нажал бы «DSP» снова и
+    получил отказ, не понимая почему. Буква «D» говорит «неизвестно», как у Weborama."""
+    p = NS(id=1, is_direct=False, weborama_pixel=None, status="ждёт запуска")
+    cr = NS(id=7, ms_creative_xxhash=None)
+    st = ext._state_of(p, {}, set(), [cr], dsp_hung={"cr7"})
+    assert st["dsp"]["state"] == ext.UNKNOWN
+    assert ext._state_of(p, {}, set(), [cr], dsp_hung=set())["dsp"]["state"] == ext.MISSING

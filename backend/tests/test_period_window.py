@@ -137,9 +137,14 @@ def test_nothing_outranks_the_chosen_column():
     import inspect
     from app.routers import sales_dashboard as sd
     src = inspect.getsource(sd.deals_registry)
-    ob = src[src.index("q.order_by("):]
+    # Ветка «Сумма» сортирует в Python по показанной сумме (аудит 23.09.2026, 3.L1) —
+    # там первым ключом стоит сама сумма; проверяем её отдельно ниже.
+    ob = src[src.index("q.order_by(ordering"):]
     ob = ob[:ob.index(")\n")]
     head = ob[len("q.order_by("):].split(",")[0].strip()
     assert head == "ordering", (
         f"первым ключом сортировки стоит «{head}», а не выбранная колонка — "
         f"таблица распадётся на блоки, и человек прочтёт это как сбой сортировки")
+    amount = src[src.index('if sort == "amount":'):src.index("else:", src.index('if sort == "amount":'))]
+    assert "every.sort(key=" in amount and "eff_net" in amount, (
+        "«Сумма» сортируется не по показанной сумме")

@@ -249,3 +249,87 @@ def test_plan_total_is_never_a_remainder():
     camp.date_start = date.today() - timedelta(days=10)  # РК уже «крутится» — total тот же
     camp.date_end = date.today() + timedelta(days=10)
     assert build_campaign_params(camp, deal)["limits"]["show"]["total"] == a
+
+
+def test_a_definite_refusal_is_journaled_with_an_answer():
+    """Ревью 23.09.2026. Строка журнала без ответа значит «ушло, исход неизвестен», и
+    повтор создающего вызова по ней запирается. HTTP 4xx — это ответ: DSP отказал, объект
+    не создан. Без тела в журнале отказ выглядел бы неизвестностью и запирал зря."""
+    import httpx
+
+    from app.dsp.client import MsClient, MsError
+
+    seen = []
+
+    def refuse(method, body):
+        req = httpx.Request("POST", "https://dsp.test/")
+        raise httpx.HTTPStatusError("400", request=req,
+                                    response=httpx.Response(400, request=req, text="bad"))
+
+    def timeout(method, body):
+        raise httpx.ReadTimeout("timed out")
+
+    for transport, answered in ((refuse, True), (timeout, False)):
+        c = MsClient(url="https://dsp.test/", token="t", partner_xxhash="0" * 16,
+                     transport=transport, journal=False)
+        c._journal = lambda *a: seen.append(a)
+        with pytest.raises(MsError):
+            c.call("Campaign.add", {}, entity_type="campaign", local_ref=1)
+        resp = seen[-1][4]
+        assert (resp is not None) == answered, (transport.__name__, resp)
+
+
+@pytest.mark.skipif(not HAS_DSP, reason="нет DSP_DATABASE_URL — аналит. база не подключена")
+def test_unknown_outcome_reads_the_real_journal():
+    """Запрос `unknown_outcome` — по настоящему журналу, а не по подделке: таймаут и
+    «успех без хеша» запирают повтор, отказ с ответом и последующий успех — нет."""
+    import httpx
+
+    ref = "TEST-unknown-1"
+    _cleanup_journal(ref)
+    try:
+        def timeout(method, body):
+            raise httpx.ReadTimeout("timed out")
+
+        c, _ = _client({})
+        c._transport = timeout
+        with pytest.raises(MsError):
+            c.campaign_add({"title": "u"}, local_ref=ref)
+        assert c.unknown_outcome("Campaign.add", "campaign", ref) is True
+
+        ok, _ = _client({"Campaign.add": {"jsonrpc": "2.0", "result": XX, "id": 1}})
+        ok.campaign_add({"title": "u"}, local_ref=ref)
+        assert ok.unknown_outcome("Campaign.add", "campaign", ref) is False
+
+        nohash, _ = _client({"Campaign.add": {"jsonrpc": "2.0", "result": {"x": 1}, "id": 1}})
+        with pytest.raises(MsError):
+            nohash.campaign_add({"title": "u"}, local_ref=ref)
+        assert nohash.unknown_outcome("Campaign.add", "campaign", ref) is True
+    finally:
+        _cleanup_journal(ref)
+
+
+@pytest.mark.skipif(not HAS_DSP, reason="нет DSP_DATABASE_URL — аналит. база не подключена")
+def test_a_resolution_mark_resets_the_unknown_on_the_real_journal():
+    """Отметка «в кабинете нет» — точка сброса: после неё повтор снова разрешён, а
+    пакетный поиск для экрана видит то же, что поиск перед вызовом."""
+    import httpx
+
+    ref = "TEST-unknown-2"
+    _cleanup_journal(ref)
+    try:
+        def timeout(method, body):
+            raise httpx.ReadTimeout("timed out")
+
+        c, _ = _client({})
+        c._transport = timeout
+        with pytest.raises(MsError):
+            c.creative_add("C" * 16, {"title": "u"}, local_ref=ref)
+        assert c.unknown_refs("Creative.add", "creative", [ref, "TEST-other"]) == {ref}
+
+        c.journal_raw("Creative.add", "creative", ref, {"resolved_by": "тест"},
+                      {"resolved": "not_found"}, None, False, "сверено вручную")
+        assert c.unknown_outcome("Creative.add", "creative", ref) is False
+        assert c.unknown_refs("Creative.add", "creative", [ref]) == set()
+    finally:
+        _cleanup_journal(ref)

@@ -20,18 +20,35 @@ import sys
 from datetime import datetime
 
 from app.database import SessionLocal
+from app.ext_lock import MAIL_FLUSH, only_one
 from app.mail import client as mail
 from app.mail.models import MailLog
+from app.mail.send import _failed
 
 log = logging.getLogger("finance.mail.flush")
+
+
+class _Busy(RuntimeError):
+    pass
 
 
 def flush(dry_run: bool = False, limit: int = 500) -> dict:
     """Отправить всё, чей час настал. Возвращает счётчики.
 
-    Каждое письмо считается отдельно: отказ по одному не отменяет остальных — то же
-    правило, что в пакетной отправке, и по той же причине.
+    Один прогон за раз (аудит 23.09.2026, 5.L4): крон и ручной запуск, наложившись,
+    брали одни и те же строки, и письмо уходило дважды. Второй прогон ничего не шлёт.
     """
+    try:
+        with only_one(MAIL_FLUSH, 1, _Busy, "Досылка писем"):
+            return _flush(dry_run, limit)
+    except _Busy:
+        print("досылка: предыдущий прогон ещё идёт — этот пропускаю")
+        return {"due": 0, "sent": 0, "failed": 0, "skipped": 0, "busy": True}
+
+
+def _flush(dry_run: bool, limit: int) -> dict:
+    """Каждое письмо считается отдельно: отказ по одному не отменяет остальных — то же
+    правило, что в пакетной отправке, и по той же причине."""
     db = SessionLocal()
     stats = {"due": 0, "sent": 0, "failed": 0, "skipped": 0}
     try:
@@ -64,7 +81,7 @@ def flush(dry_run: bool = False, limit: int = 500) -> dict:
                 row.error = None
                 stats["sent"] += 1
             except Exception as e:                          # noqa: BLE001
-                row.status, row.error = "failed", str(e)[:500]
+                _failed(row, e)
                 stats["failed"] += 1
                 log.warning("Досылка не удалась (%s): %s", row.to_email, e)
             db.commit()

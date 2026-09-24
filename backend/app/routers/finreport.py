@@ -523,6 +523,12 @@ def export_finreport(
         ws['A3'] = (f"Выбрано было {date_from or '—'} — {date_to or '—'}; "
                     "в квартальном режиме диапазон расширен до целых кварталов")
         ws['A3'].font = Font(size=9, italic=True, color='B06000')
+    if not base_periods:
+        # Пустой диапазон — законный запрос: отдаём файл с шапкой и честной пометкой,
+        # а не 500 на формуле итога (аудит 23.09.2026, 2.L2).
+        note = "За выбранный период операций нет"
+        ws['A3'] = f"{ws['A3'].value}. {note}" if ws['A3'].value else note
+        ws['A3'].font = Font(size=10, italic=True, color='B06000')
 
     header_row = 4
     ws.cell(header_row, 1, 'Статья').font = Font(bold=True, color='FFFFFF')
@@ -545,7 +551,9 @@ def export_finreport(
     # получается вида SUM(B5:D5,F5:H5) — несколько диапазонов через запятую.
     _sum_cols = [2 + i for i, p in enumerate(periods) if p in set(base_periods)]
 
-    def total_formula(r: int) -> str:
+    def total_formula(r: int):
+        if not _sum_cols:
+            return 0
         parts, start, prev = [], _sum_cols[0], _sum_cols[0]
         for c in _sum_cols[1:]:
             if c == prev + 1:

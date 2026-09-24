@@ -17,8 +17,9 @@
 сжигать номер, а занятый номер не должен меняться задним числом.
 """
 import calendar
+import logging
 import os
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 from typing import Optional
 from urllib.parse import quote
@@ -29,6 +30,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func as sa_func
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.audit import log_action
@@ -43,6 +45,7 @@ from app.sales.models import (AnnexTemplate, SalesAdvertiser, SalesAnnex, SalesD
                               SalesDealAnnexAllocation as Alloc, SalesMediaPlan)
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 # Своя секция прав с 06.09.2026 (миграция 2026-09-06_annexes_permission.sql): реестр
 # приложений показывает суммы сделок и выпускает клиенту документы — это не то же самое,
@@ -433,12 +436,22 @@ def confirm_annex(annex_id: int, payload: ConfirmIn, db: Session = Depends(get_d
     a.number = f"Приложение № {no}"
     a.status = "подтверждён"
     a.confirmed_by = getattr(user, "id", None)
-    a.confirmed_at = date.today()
+    a.confirmed_at = datetime.utcnow()     # колонка — момент (в базе UTC), а не дата
     try:
         db.commit()
-    except Exception:
+    except IntegrityError as e:
         db.rollback()
-        raise HTTPException(409, f"Номер {no} по этому договору уже занят")
+        if "uq_annex_contract_no" in str(e.orig):
+            raise HTTPException(409, f"Номер {no} по этому договору уже занят")
+        log.warning("Подтверждение приложения #%s отклонено базой: %s", a.id, e.orig)
+        raise HTTPException(409, "Приложение не подтверждено: данные не прошли проверку "
+                                 "базы. Номер не занят — сообщите администратору")
+    except SQLAlchemyError:
+        # Любая ошибка базы раньше выдавалась за «номер занят» — человек выбирал другой
+        # номер вместо того, чтобы повторить (аудит 23.09.2026, 2.L9).
+        db.rollback()
+        raise HTTPException(503, "Приложение не подтверждено: база не ответила. "
+                                 "Номер не занят — повторите через минуту")
     db.refresh(a)
     log_action(db, user, "annex_confirm", "contract", c.id, f"{a.number}")
     return _out(a)

@@ -33,6 +33,7 @@ from app import retention
 from app.mail.models import KIND_LABELS, KIND_TEST, MailLog, MailTemplate
 from app.models import User
 from app.permissions import require_permission
+from app.mail import client as mail_client
 
 router = APIRouter()
 
@@ -117,6 +118,7 @@ def save_settings(payload: SettingsIn, db: Session = Depends(get_db),
         if val is not None:
             _save_setting(db, key, val.strip()[:500])
     db.commit()
+    mail_client.screen_cache_clear()     # сохранённое — сразу в следующем письме
     log_action(db, user, "mail_settings", "settings", None,
                f"имя отправителя: {(payload.from_name or '')[:60]}")
     return state(db, user)
@@ -170,7 +172,8 @@ def editor_preview(contour: str, keys: str = "", db: Session = Depends(get_db),
     """Собранное письмо — тем же рисовальщиком, что и живая отправка."""
     if contour not in (editor.STAFF, editor.PUB):
         raise HTTPException(404, "Нет такого контура")
-    brand = _setting(db, SET_FROM_NAME) or "SIMB-AD"
+    # То же имя, что уйдёт в живом письме: предпросмотр обязан совпадать с письмом.
+    brand = mail_client.sender_name()
     return HTMLResponse(editor.compose(db, contour,
                                        [k for k in keys.split("|") if k], brand=brand))
 
@@ -194,7 +197,8 @@ def editor_test(contour: str, keys: str = "", db: Session = Depends(get_db),
         raise HTTPException(400, "В письме нет ни одной карточки — отправлять нечего")
 
     from app.mail import send as gate
-    brand = _setting(db, SET_FROM_NAME) or "SIMB-AD"
+    # То же имя, что уйдёт в живом письме: предпросмотр обязан совпадать с письмом.
+    brand = mail_client.sender_name()
     html = editor.compose(db, contour, chosen, brand=brand)
     cards_list = [c for c in editor.cards(db, contour) if c["key"] in chosen]
     vals = editor.values(db, contour,

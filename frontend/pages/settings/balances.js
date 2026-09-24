@@ -118,7 +118,9 @@ export default function SettingsBalances() {
       }, auth())
       await loadBalances()
     } catch (e) {
-      alert('Ошибка при сохранении')
+      // Причину называет сервер (неизвестный банк и т. п.) — показываем её, а не общее «ошибка».
+      const detail = e?.response?.data?.detail
+      alert(typeof detail === 'string' ? detail : 'Ошибка при сохранении')
     } finally {
       setSaving(prev => ({ ...prev, [bank]: false }))
     }

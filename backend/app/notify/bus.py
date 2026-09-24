@@ -151,9 +151,22 @@ def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
     actor_id = getattr(actor, "id", None)
     targets = [u for u in dict.fromkeys(user_ids) if u and u != actor_id]
 
+    from app.mail import live
+    from app.models import User
+
     delivered: List[int] = []
     for uid in targets:
         chans = _channels_for(db, uid, ev)
+        # Слова ПИСЬМА — с правками «Шаблонов писем» (аудит 23.09.2026, 5.M1): здесь у
+        # события есть данные для подстановок, дальше они едут в журнале готовыми.
+        # Панель и бот говорят словами события: редактор правит письма.
+        m_title, m_body = title, body
+        if "mail" in chans or "digest" in chans:
+            u = db.query(User.name).filter(User.id == uid).first()
+            c = live.card(db, "staff", ev.key, {"title": title, "body": body},
+                          live.values(db, ctx, u[0] if u else None, link),
+                          fields=live.TEXT)
+            m_title, m_body = c["title"], c["body"]
         if not chans:
             db.add(NotificationDelivery(body=body, link=link, facts=facts, code=code,
                                         event_key=ev.key, entity_type=entity_type,
@@ -163,18 +176,21 @@ def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
             continue
         for ch in chans:
             if ch not in LIVE_CHANNELS:
-                db.add(NotificationDelivery(body=body, link=link, facts=facts, code=code,
+                letter = ch == "digest"
+                db.add(NotificationDelivery(body=m_body if letter else body, link=link,
+                                            facts=facts, code=code,
                                             event_key=ev.key, entity_type=entity_type,
                                             entity_id=entity_id, user_id=uid, channel=ch,
-                                            status="queued", title=title))
+                                            status="queued",
+                                            title=m_title if letter else title))
                 continue
             if ch == "mail":
                 status, _, reason = channels.deliver_mail(
-                    db, uid, ev, title, body, link, facts, code).partition("|")
+                    db, uid, ev, m_title, m_body, link, facts, code).partition("|")
                 db.add(NotificationDelivery(
-                    body=body, link=link, facts=facts, code=code,
+                    body=m_body, link=link, facts=facts, code=code,
                     event_key=ev.key, entity_type=entity_type, entity_id=entity_id,
-                    user_id=uid, channel="mail", status=status, title=title,
+                    user_id=uid, channel="mail", status=status, title=m_title,
                     suppress_reason=(reason or None) if status == "queued" else None,
                     error=(reason or None) if status == "failed" else None))
                 if status == "sent" and uid not in delivered:

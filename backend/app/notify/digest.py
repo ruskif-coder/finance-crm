@@ -39,12 +39,10 @@
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app import timez
@@ -130,15 +128,28 @@ def run(dry_run: bool = False) -> dict:
     Каждый получатель считается отдельно: отказ по одному не отменяет остальных — то же
     правило, что в гейте, в досылке и во внешнем дайджесте, и по той же причине.
     """
+    from app.ext_lock import only_one
+
+    # Замок — на ОТДЕЛЬНОМ соединении (`ext_lock`). Раньше он брался на соединении
+    # сессии, а сессия после первого `commit` отдаёт соединение в пул — вместе с замком;
+    # снятие шло уже на другом соединении, и замок «утекал»: следующий прогон в этом
+    # процессе считал себя занятым (всплыло 24.09.2026, когда прогон впервые дошёл до
+    # коммита внутри теста).
+    try:
+        with only_one(RUN_LOCK[0], RUN_LOCK[1], _Busy, "Дайджест сотрудникам"):
+            return _run(dry_run)
+    except _Busy:
+        print("дайджест: предыдущий прогон ещё идёт — этот пропускаю")
+        return {"queued": 0, "due": 0, "letters": 0, "sent": 0, "failed": 0, "busy": True}
+
+
+class _Busy(RuntimeError):
+    pass
+
+
+def _run(dry_run: bool) -> dict:
     db: Session = SessionLocal()
     stats = {"queued": 0, "due": 0, "letters": 0, "sent": 0, "failed": 0}
-    locked = bool(db.execute(sa_text("SELECT pg_try_advisory_lock(:a, :b)"),
-                             {"a": RUN_LOCK[0], "b": RUN_LOCK[1]}).scalar())
-    if not locked:
-        print("дайджест: предыдущий прогон ещё идёт — этот пропускаю")
-        db.close()
-        stats["busy"] = True
-        return stats
     try:
         if not mail.configured():
             print("почта не настроена — дайджест собирать некуда")
@@ -159,9 +170,17 @@ def run(dry_run: bool = False) -> dict:
         for r in rows:
             by_user[r.user_id].append(r)
 
-        brand = (os.getenv("MAIL_FROM_NAME") or "SIMB-AD").strip()
+        brand = mail.sender_name()
         for uid, all_rows in by_user.items():
             u = db.query(User).filter(User.id == uid).first()
+            # Отключённому — не шлём и не копим (аудит 23.09.2026, 5.L5): человек ушёл,
+            # а пачка про сделки шла бы ему дальше.
+            if u is None or not u.is_active:
+                if not dry_run:
+                    for r in all_rows:
+                        r.status, r.suppress_reason = "suppressed", "user_inactive"
+                    db.commit()
+                continue
             ch = (db.query(UserNotificationChannels)
                   .filter(UserNotificationChannels.user_id == uid).first())
             addr = (ch.mail_override if ch and ch.mail_override else (u.email if u else "")) or ""
@@ -177,13 +196,26 @@ def run(dry_run: bool = False) -> dict:
             if not mail.valid_address(addr):
                 log.warning("Дайджест для user_id=%s не собран: нет адреса", uid)
                 stats["failed"] += len(items)
+                # ПОМЕЧАЕМ, а не оставляем в очереди (аудит 23.09.2026, 5.M4): выборка
+                # берёт первые строки по времени, и набравшиеся «без адреса» однажды
+                # заняли бы её целиком — дайджест не ушёл бы никому.
+                if not dry_run:
+                    for r in items:
+                        r.status, r.error = "failed", "no_address"
+                    db.commit()
                 continue
 
-            cards = _cards(items)
-            html = render.digest_html(items=cards, to_name=getattr(u, "name", "") or "",
-                                      brand=brand, logo_url=render.abs_url(render.LOGO_PATH))
-            # Тема НАЗЫВАЕТ ЧИСЛО: «уведомления» без числа неотличимо от одного события.
-            subject = f"{len(items)} {plural(len(items))}"
+            # Шапка, тема и подвал — оболочка «Шаблонов писем», тем же сборщиком, что
+            # рисует предпросмотр (аудит 23.09.2026, 5.M1). Умолчание оболочки — правило:
+            # тема называет ЧИСЛО событий и темы, «уведомления» без числа неотличимо от
+            # одного события.
+            from app.mail import live
+            cards = [live.card(db, "staff", r.event_key, c, {}, fields=live.LOOK)
+                     for r, c in zip(items, _cards(items))]
+            subject, html = live.digest(
+                db, "staff", cards, {"имя": getattr(u, "name", "") or "коллеги"},
+                brand=brand, logo_url=render.abs_url(render.LOGO_PATH),
+                settings_url=render.abs_url(render.SETTINGS_PATH))
             body = "\n\n".join(
                 render.text_body(c["title"], c["body"], c["link_abs"], c["facts"])
                 for c in cards)
@@ -220,14 +252,7 @@ def run(dry_run: bool = False) -> dict:
               + (", сухой прогон" if dry_run else ""))
         return stats
     finally:
-        # Блокировка — на СОЕДИНЕНИИ, а `close()` возвращает его в пул живым: без явного
-        # снятия следующий прогон в этом процессе нашёл бы её занятой.
-        try:
-            db.rollback()
-            db.execute(sa_text("SELECT pg_advisory_unlock(:a, :b)"),
-                       {"a": RUN_LOCK[0], "b": RUN_LOCK[1]})
-        finally:
-            db.close()
+        db.close()
 
 
 def plural(n: int) -> str:

@@ -56,7 +56,7 @@ def totals(states) -> Dict[str, dict]:
 
 
 def _state_of(p: AdCampaignPlacement, refs: dict, hung: set,
-              crs: List[AdCampaignCreative]) -> dict:
+              crs: List[AdCampaignCreative], dsp_hung=frozenset()) -> dict:
     """Состояние ОДНОЙ площадки. Единственное место, где эти правила записаны."""
     if p.is_direct:
         # Крутит сама — внешние системы её не касаются вовсе.
@@ -77,7 +77,13 @@ def _state_of(p: AdCampaignPlacement, refs: dict, hung: set,
         wb = {"state": MISSING, "why": "вставка в Weborama не заведена"}
 
     with_hash = [c for c in crs if c.ms_creative_xxhash]
-    if p.status == "запущен" and with_hash:
+    # Заведение креатива ушло без ответа — не «нет»: повтор заперт до сверки с кабинетом,
+    # и без этой буквы человек жал бы «DSP» и получал отказ, не понимая почему.
+    if any(f"cr{c.id}" in dsp_hung for c in crs if not c.ms_creative_xxhash):
+        ds = {"state": UNKNOWN,
+              "why": "заведение креатива осталось без ответа — сверьтесь с кабинетом "
+                     "(окно кнопки «DSP»)"}
+    elif p.status == "запущен" and with_hash:
         ds = {"state": RUNNING, "why": f"креативов в кабинете DSP: {len(with_hash)}"}
     elif with_hash:
         ds = {"state": REGISTERED, "why": f"креативов заведено: {len(with_hash)}"}
@@ -116,9 +122,16 @@ def states_by_campaign(db: Session, campaign_ids: Iterable[int]) -> Dict[int, Di
               .filter(AdCampaignCreative.campaign_id.in_(ids)).all()):
         crs.setdefault(c.placement_id, []).append(c)
 
+    # Зависшие заведения креативов DSP — одним запросом к журналу на все РК. Журнал
+    # недоступен — пусто: экран не падает, а повтор запирает сама выгрузка.
+    from app.dsp.client import MsClient
+    no_hash = [f"cr{c.id}" for lst in crs.values() for c in lst
+               if not (c.ms_creative_xxhash or "").strip()]
+    dsp_hung = MsClient().unknown_refs("Creative.add", "creative", no_hash) if no_hash else set()
+
     out: Dict[int, Dict[int, dict]] = {i: {} for i in ids}
     for p in pls:
-        out[p.campaign_id][p.id] = _state_of(p, refs, hung, crs.get(p.id, []))
+        out[p.campaign_id][p.id] = _state_of(p, refs, hung, crs.get(p.id, []), dsp_hung)
     return out
 
 

@@ -80,3 +80,19 @@ def test_by_description_falls_back_to_directory_group():
     """ЕНП и кредиты здесь разложить нечем — текст платежа уже потерян в группировке."""
     assert _pl_group('by_description', 'НАЛОГИ') == 'НАЛОГИ'
     assert _pl_group('by_description', 'ОПЕРАЦИОННЫЕ') == 'ОПЕРАЦИОННЫЕ'
+
+
+# ---- тело займа — вне P&L во всех отчётах (аудит 23.09.2026, 2.M4) ----
+
+def test_loan_body_is_outside_pl():
+    """Финотчёт исключал тело займа, а /pl и /plan-fact отправляли его в «Требует
+    разметки»: погашение вычиталось из прибыли, получение не было видно."""
+    assert _pl_group('loan_body', 'КРЕДИТЫ') == 'НЕ В P&L'
+
+
+def test_every_markup_the_directory_offers_has_a_section():
+    """Ратчет: значение, которое можно выбрать в справочнике статей, обязано иметь
+    раздел здесь. `loan_body` было выбираемым и не имело — отсюда 2.M4."""
+    from app.routers.articles import PL_LINE_VALUES
+    missing = PL_LINE_VALUES - set(PL_LINE_TO_GROUP) - {'by_description'}
+    assert not missing, f"разметка без раздела в /pl: {missing}"

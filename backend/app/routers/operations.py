@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func, case, or_
 from app.files_safe import existing_upload_path, remove_upload
 from app.database import get_db
@@ -374,7 +374,11 @@ def get_operations(
 
     query = query.order_by(_order_by(sort_col, sort_dir))
 
-    operations = query.offset(skip).limit(limit).all()
+    # Статья и контрагент — пачкой на страницу, а не запросом на строку (аудит
+    # 23.09.2026, этап 8.6): страница в 300 операций давала до 600 лишних запросов.
+    operations = (query.options(selectinload(Operation.article),
+                                selectinload(Operation.counterparty))
+                  .offset(skip).limit(limit).all())
 
     # Приложенные файлы — ОДНИМ запросом на страницу, а не по строке: реестр отдаёт
     # до сотни операций за раз.
@@ -514,7 +518,9 @@ def export_operations(
             detail=(f"Под фильтры попало {total} операций, а выгрузка отдаёт не более "
                     f"{EXPORT_MAX_ROWS}. Сузьте период или добавьте фильтр — иначе файл "
                     f"пришлось бы обрезать, а обрезанную выгрузку от полной не отличить."))
-    operations = query.all()
+    # статья и контрагент — пачкой, а не на строку (этап 8.6)
+    operations = query.options(selectinload(Operation.article),
+                               selectinload(Operation.counterparty)).all()
 
     wb = Workbook()
     ws = wb.active
@@ -814,9 +820,11 @@ def bulk_delete_operations(
     operations.sort(key=lambda o: (o.parent_operation_id is None, o.id))
 
     count = len(operations)
+    scans = scan_paths(db, [o.id for o in operations])
     for operation in operations:
         db.delete(operation)
     db.commit()
+    remove_scans(scans)
 
     log_action(db, current_user, "bulk_delete_operation", entity_type="operation", entity_id=None,
                details=f"ids={payload.ids}; удалено {count}")
@@ -842,8 +850,10 @@ def delete_operation(
             detail=(f"У операции есть частичные оплаты ({parts}). Удалить её можно только "
                     "принудительно, с подтверждением паролем; части останутся самостоятельными."))
     details = f"{operation.status}, доход {operation.income}, расход {operation.expense}, банк {operation.bank}"
+    scans = scan_paths(db, [op_id])
     db.delete(operation)
     db.commit()
+    remove_scans(scans)
 
     log_action(db, current_user, "delete_operation", entity_type="operation", entity_id=op_id, details=details)
     return {"message": "Операция удалена"}
@@ -1997,6 +2007,23 @@ def export_to_alfa(
 
 UPLOADS_ROOT = "/app/uploads"
 OP_FILES_SUBDIR = "operations"
+
+
+# Сканы удаляемых операций. Строки `operation_files` база уносит каскадом, а файлы на
+# диске оставались сиротами навсегда (аудит 23.09.2026, этап 8.7). Порядок на всех трёх
+# путях удаления один: запомнить пути → удалить и записать в базу → убрать файлы. Не
+# раньше записи: откат оставил бы строку без файла, а это хуже сироты.
+def scan_paths(db: Session, op_ids) -> list:
+    from app.models import OperationFile
+    if not op_ids:
+        return []
+    return [p for (p,) in db.query(OperationFile.path)
+            .filter(OperationFile.operation_id.in_(list(op_ids))).all()]
+
+
+def remove_scans(paths) -> None:
+    for p in paths:
+        remove_upload(p, subdir=OP_FILES_SUBDIR)
 OP_FILE_MAX_BYTES = 20 * 1024 * 1024
 OP_FILE_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".jpeg",
                       ".png", ".tif", ".tiff", ".heic", ".zip"}

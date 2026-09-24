@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from app.audit import log_action
 from app.database import get_db
 from app.models import User, Operation
 from app.permissions import require_permission
@@ -92,10 +93,24 @@ def update_bank_balance(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("settings_balances", "edit"))
 ):
-    db.execute(text(
+    # Неизвестный банк раньше отвечал «Остаток обновлён», не записав ничего; и смена
+    # остатка, от которой зависят все балансы, не попадала в журнал (аудит 23.09.2026, 2.L7).
+    # Экран предлагает банки из BANKS; строки `bank_balances` при этом может не быть
+    # (таблица создаётся вне ORM) — тогда её заводим, а не молчим (ревью этапа 8).
+    if data.bank not in BANKS:
+        raise HTTPException(status_code=400, detail=f"Неизвестный банк: {data.bank}")
+    old = db.execute(text("SELECT opening_balance FROM bank_balances WHERE bank = :bank"),
+                     {'bank': data.bank}).scalar()
+    res = db.execute(text(
         "UPDATE bank_balances SET opening_balance = :balance, updated_at = NOW() WHERE bank = :bank"
     ), {'balance': data.opening_balance, 'bank': data.bank})
+    if not res.rowcount:
+        db.execute(text("INSERT INTO bank_balances (bank, opening_balance, updated_at) "
+                        "VALUES (:bank, :balance, NOW())"),
+                   {'balance': data.opening_balance, 'bank': data.bank})
     db.commit()
+    log_action(db, current_user, "update_bank_balance", "bank_balance", None,
+               f"{data.bank}: {old if old is not None else '—'} → {data.opening_balance}")
     return {"message": "Остаток обновлён"}
 
 

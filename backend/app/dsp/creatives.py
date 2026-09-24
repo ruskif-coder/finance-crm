@@ -242,6 +242,30 @@ TITLE_MAX = 150
 SIZE_RE = re.compile(r"^\d{1,5}x\d{1,5}$")
 
 
+def html_state(c, xxhash: str) -> str:
+    """Что с креативом в кабинете: `ok` — код на месте, `empty` — объект без кода,
+    `gone` — такого нет.
+
+    Нужна одна проверка: `Creative.add` заводит объект, а код вшивается ВТОРЫМ вызовом
+    `Creative.edit`, и между ними связь может оборваться. Тогда в кабинете остаётся
+    креатив без кода, и повторное заведение дало бы второй — первый по API не удалить.
+
+    Недоступность DSP отдельным исходом НЕ делаем: молчащая связь не должна выглядеть
+    как «всё хорошо», поэтому ошибка обмена поднимается наверх и человек видит её текстом.
+    """
+    from app.dsp.client import MsError
+
+    try:
+        info = c.creative_get_info(xxhash) or {}
+    except MsError as e:
+        if "not found" in str(e).lower():
+            return "gone"
+        raise
+    data = info.get("data") if isinstance(info, dict) else None
+    code = (data or {}).get("html_code") if isinstance(data, dict) else None
+    return "ok" if (code or "").strip() else "empty"
+
+
 def build_creative_params(*, title: str, link: str, erid: Optional[str] = None,
                           self_inn: Optional[str] = None, self_name: Optional[str] = None,
                           adomain: Optional[str] = None, size: Optional[str] = None,

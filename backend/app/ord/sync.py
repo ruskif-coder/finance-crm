@@ -27,7 +27,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models import Contract, Counterparty
-from app.ord import client, importer
+from app.ord import client, importer, registry
 from app.ord.models import OrdKktu
 
 
@@ -52,20 +52,28 @@ def sync_clients(db: Session, limit: Optional[int] = None) -> dict:
     # 17.09.2026: «сейчас с демо, а потом когда прод подключим и его прогоним»).
     rows = (db.query(Counterparty)
               .filter(or_(Counterparty.ord_client_id.is_(None),
-                          func.coalesce(Counterparty.ord_env, '') != env),
+                          func.coalesce(Counterparty.ord_env, registry.ENV_WHEN_UNKNOWN) != env),
                       Counterparty.inn.isnot(None), Counterparty.inn != '')
               .order_by(Counterparty.name).all())
     # Сколько из них размечены другим контуром — это число объясняет, почему прогон,
     # уже делавшийся вчера, снова нашёл работу.
-    requeued = sum(1 for cp in rows if cp.ord_client_id is not None)
+    requeued = sum(1 for cp in rows if cp.ord_client_id is not None
+                   and registry.own_contour(cp.ord_client_id, cp.ord_env, env))
     if limit:
         rows = rows[:limit]
 
     now = datetime.utcnow()
     report = {'env': env, 'looked': 0, 'matched': 0, 'requeued': requeued, 'cleared': 0,
-              'not_in_ord': [], 'ambiguous': [], 'failed': []}
+              'kept_other': 0, 'not_in_ord': [], 'ambiguous': [], 'failed': []}
 
     for cp in rows:
+        # Песочница боевой не вытесняет никогда — то же правило, что у отправки
+        # (`registry.own_contour`). До 23.09.2026 демо-прогон брал в работу и боевые
+        # строки, и строки с пустым контуром (они боевые по умолчанию): писал поверх
+        # демо-id или стирал боевой (аудит, 4.M3).
+        if not registry.own_contour(cp.ord_client_id, cp.ord_env, env):
+            report['kept_other'] += 1
+            continue
         inn = _digits(cp.inn)
         if len(inn) not in (10, 12):
             report['failed'].append({'name': cp.name, 'why': f'ИНН «{cp.inn}» не похож на ИНН'})
@@ -92,14 +100,17 @@ def sync_clients(db: Session, limit: Optional[int] = None) -> dict:
             # не значит ничего: оставить его — значит держать наготове чужой `clientId`,
             # который при регистрации договора уедет в ЕРИР и не отзовётся. Пустое поле
             # честно говорит «не сопоставлено», а чужое число выглядит как сопоставленное.
-            if cp.ord_client_id is not None and (cp.ord_env or '') != env:
+            # Пустой контур — БОЕВОЙ (`ENV_WHEN_UNKNOWN`), а не «никакой»: сравнение с
+            # пустой строкой стирало настоящий боевой id на прогоне по проду (ревью
+            # 23.09.2026).
+            if cp.ord_client_id is not None and (cp.ord_env or registry.ENV_WHEN_UNKNOWN) != env:
                 cp.ord_client_id, cp.ord_env, cp.ord_synced_at = None, None, now
                 report['cleared'] = report.get('cleared', 0) + 1
             report['not_in_ord'].append({'name': cp.name, 'inn': inn})
         else:
             # Неоднозначность на новом контуре — тоже повод снять чужой идентификатор:
             # выбирать за человека из нескольких юрлиц мы отказались сознательно.
-            if cp.ord_client_id is not None and (cp.ord_env or '') != env:
+            if cp.ord_client_id is not None and (cp.ord_env or registry.ENV_WHEN_UNKNOWN) != env:
                 cp.ord_client_id, cp.ord_env, cp.ord_synced_at = None, None, now
                 report['cleared'] = report.get('cleared', 0) + 1
             report['ambiguous'].append({

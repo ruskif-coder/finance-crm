@@ -191,10 +191,56 @@ def _creatives_all(db: Session, campaign_ids: List[int]) -> dict:
     return out
 
 
+def _chain_of(c, placements, creatives: dict) -> str:
+    """Цепной статус РК по её площадкам: `placements` — пары (id, сохранённый статус),
+    `creatives` — {placement_id: [строки креативов]}.
+
+    Статус площадки собирается из ЕЁ креативов (ручной перекрывает расчёт), РК — из
+    площадок. Одно место на расхлоп и на то, чему следует DSP: второй расчёт разошёлся
+    бы с первым, и экран говорил бы о кампании одно, а в DSP стояло бы другое.
+    """
+    running, can, n = 0, False, 0
+    for pid, stored in placements:
+        n += 1
+        mine = [x["status"] for x in creatives.get(pid, [])]
+        st = effective_status(stored, best_chain_status(_as_placement_scale(x) for x in mine))
+        running += st in PLACEMENT_RUNNING
+        can = can or can_start_placement(mine)
+    return campaign_chain_status(has_plan=bool(c.plan_show), placements=n,
+                                 running=running, can_start=can)
+
+
+def _campaign_chain(db: Session, c) -> str:
+    pls = db.query(AdCampaignPlacement).filter_by(campaign_id=c.id).all()
+    return _chain_of(c, [(p.id, p.status) for p in pls], _creatives_of(db, c.id))
+
+
+def _dsp_follow(db: Session, c) -> Optional[str]:
+    """Кампания в DSP следует нашему ИТОГОВОМУ статусу РК (владелец 23.09.2026: «кнопка
+    управляет»). Звать ПОСЛЕ своих изменений и ДО коммита.
+
+    Итоговому, а не нажатому: «запущена» у нас — факт (крутит хоть одна площадка), и
+    «Запустить» без запущенных площадок оставляет РК «готовой» — тогда DSP стоит.
+
+    Сбой DSP откатывает наши изменения: экран не должен говорить о кампании то, чего в
+    DSP нет. Крона нет — DSP узнаёт о плане и статусе только нажатием.
+    """
+    from app.dsp.campaigns import apply_status
+    from app.dsp.client import MsError
+
+    db.flush()
+    target = effective_campaign_status(c.status, _campaign_chain(db, c))
+    try:
+        return apply_status(db, c, target)
+    except MsError as e:
+        db.rollback()
+        raise HTTPException(502, f"DSP не принял смену статуса — изменения не сохранены: {e}")
+
+
 def _creatives_of(db: Session, campaign_id: int) -> dict:
     """Креативы РК по площадкам: {placement_id: [строки]}.
 
-    Имя человеческое берётся у КОМПЛЕКТА-корня (`launch_prep_creative_set.title`), полный
+    Имя человеческое берётся у КОМПЛЕКТА строки (`launch_prep_creative_set.title`), полный
     индекс — из `ms_title` (`<код сделки>-<код площадки>-cr<№>`). Два разных имени, и оба
     нужны: первое человек дал сам, второе видно в кабинете DSP.
     """
@@ -629,11 +675,7 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
     for row in out["rows"]:
         row["external"] = ext.get(row["id"])
 
-    by_pl = {p["id"]: [x["status"] for x in creatives.get(p["id"], [])] for p in pls}
-    chain_st = campaign_chain_status(
-        has_plan=bool(c.plan_show), placements=len(pls),
-        running=sum(1 for x in prepared if x["status"] in PLACEMENT_RUNNING),
-        can_start=any(can_start_placement(v) for v in by_pl.values()))
+    chain_st = _chain_of(c, [(p["id"], p["status"]) for p in pls], creatives)
 
     return {
         "id": c.id, "status": effective_campaign_status(c.status, chain_st),
@@ -820,6 +862,11 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
         raise HTTPException(400, f"Выбрать можно {CAMPAIGN_MANUAL + ('запущена',)}; "
                                  f"«ожидает сборки» и «готова» считаются сами")
     c, _deal = _campaign_in_scope(db, campaign_id, user)
+    # Из архива DSP назад не включается: вместо вечного «DSP не принял» — отказ сразу.
+    if (c.ms_campaign_xxhash and c.status in ("окончена", "архив")
+            and payload.status not in ("окончена", "архив")):
+        raise HTTPException(400, "Кампания в DSP в архиве и снова не запускается — "
+                                 "для продолжения нужна новая РК")
     old, c.status = c.status, payload.status
 
     raised = 0
@@ -838,6 +885,7 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
             build.recompute_shares(db, c.id)
 
     stopped = _cascade_placements(db, c.id, payload.status)
+    dsp_status = _dsp_follow(db, c)
 
     db.commit()
     # Площадкам — только о СТАРТЕ и только один раз: переход «не крутила → крутит»
@@ -848,9 +896,10 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
     log_action(db, user, "ad_campaign_status", "sales_deal", c.deal_id,
                f"РК #{c.id}: {old} → {c.status}"
                + (f"; поднято площадок {raised}" if raised else "")
-               + (f"; спущено на площадки {stopped}" if stopped else ""))
+               + (f"; спущено на площадки {stopped}" if stopped else "")
+               + (f"; в DSP {dsp_status}" if dsp_status else ""))
     return {"id": c.id, "status": c.status, "placements_raised": raised,
-            "placements_stopped": stopped}
+            "placements_stopped": stopped, "dsp_status": dsp_status}
 
 
 # Стадия, на которую «Завершить РК» двигает сделку. Резолвим ПО ИМЕНИ, потому что
@@ -904,11 +953,19 @@ def finish_campaign(campaign_id: int, db: Session = Depends(get_db), user: User 
     Назад не двигаем: если сделка уже прошла сверку, «завершить» ничего не меняет и
     молча откатывать её на предыдущий этап нельзя.
     """
+    from app.dsp.campaigns import apply_status
+    from app.dsp.client import MsError
     from app.sales import stage_move
-    from app.sales.catalog import Catalog
+    from app.sales import catalog as catalog_mod
 
     c, deal = _campaign_in_scope(db, campaign_id, user)
-    cat = Catalog(db)
+    # DSP — ПЕРВЫМ, до перевода сделки (он коммитит сам): не вышло — не меняем ничего.
+    # Без этого «окончена» у нас, а кампания в DSP крутила бы и тратила дальше.
+    try:
+        apply_status(db, c, "окончена")
+    except MsError as e:
+        raise HTTPException(502, f"DSP не принял завершение — РК не завершена: {e}")
+    cat = catalog_mod.Catalog(db)
     # Стадия ищется ПО ИМЕНИ, а имя правится на экране «Настройки → Стадии». Раньше её
     # отсутствие роняло ручку целиком — и тогда нельзя было завершить РК ВООБЩЕ:
     # статус кампании и остановка площадок стоят ниже, то есть площадки продолжали
@@ -926,10 +983,17 @@ def finish_campaign(campaign_id: int, db: Session = Depends(get_db), user: User 
                    "стадию переименовали. Переведите вручную и поправьте название.")
     elif deal.our_stage_id != target.id and cat.is_before(deal.our_stage_id, target.id):
         plan = stage_move.plan_move(db, deal, target, cat)
-        if plan.blockers:
+        if not stage_move.may_move(plan):
             # Кампанию всё равно закрываем — она действительно окончена. А сделку не
             # двигаем и ГОВОРИМ об этом: молчаливый неперевод человек примет за перевод.
-            refused = stage_move.refusal_text(plan)
+            if plan.not_applicable:
+                refused = (f"Сделка не переведена: стадия «{target.name}» не относится "
+                           "к услуге этой сделки — переведите вручную на карточке")
+            elif not plan.allowed:
+                refused = stage_move.refusal_text(plan)
+            else:
+                refused = ("Сделка не переведена: у неё не выбрана воронка реализации — "
+                           "выберите на карточке сделки")
         else:
             out = stage_move.apply_move(db, deal, target, user, catalog=cat,
                                         reason="РК завершена трафиком")
@@ -944,7 +1008,7 @@ def finish_campaign(campaign_id: int, db: Session = Depends(get_db), user: User 
                f"РК #{c.id}: {old} → окончена"
                + (f"; сделка {moved.name} → {target.name}" if moved else "")
                + (f"; остановлено площадок {stopped}" if stopped else "")
-            + ("; сделка НЕ переведена: требования" if refused else ""))
+               + (f"; {refused}" if refused else ""))
     return {"id": c.id, "status": c.status, "placements_stopped": stopped,
             "stage_refused": refused,
             "stage": (target.name if moved
@@ -972,6 +1036,8 @@ def set_placement_status(placement_id: int, payload: StatusIn,
     p = db.query(AdCampaignPlacement).get(placement_id)
     if not p:
         raise HTTPException(404, "Площадка в РК не найдена")
+    # Область видимости — та же, что у РК: до 23.09.2026 здесь её не спрашивали вовсе.
+    c, _deal = _campaign_in_scope(db, p.campaign_id, user)
     # «Площадка запущена только при хоть одном согласованном креативе» (владелец
     # 04.09.2026). Запрет НА СЕРВЕРЕ, а не серой кнопкой: спрятанная кнопка возвращается
     # первым же рефакторингом, а запущенная площадка без согласованного материала — это
@@ -989,6 +1055,9 @@ def set_placement_status(placement_id: int, payload: StatusIn,
     # площадке, которая ждёт запуска, при несобранной РК и ненаступившем сроке
     # (владелец 18.09.2026). Один факт — одно место записи.
     moved = build.mark_target_placed(db, p) if p.status == "запущен" else 0
+    # Площадка меняет и статус РК по факту: первая запущенная делает её «запущена»,
+    # последняя остановленная — «готова». DSP следует.
+    _dsp_follow(db, c)
     db.commit()
     log_action(db, user, "ad_placement_status", "sales_publisher", p.publisher_id,
                f"РК #{p.campaign_id}: площадка {old} → {p.status}"
@@ -1023,7 +1092,42 @@ def external_plan(campaign_id: int, db: Session = Depends(get_db),
         wb["landing"] = wb_prov.default_landing(db, c)
     except wb_prov.ProvisionError as e:
         wb = {"ready": 0, "todo": 0, "have": 0, "blocked": str(e)}
-    return {"weborama": wb, "dsp": dsp_prov.plan(db, c)}
+    # Зависшие попытки — в том же ответе: человек видит их там, где жмёт кнопку, и
+    # сверяется с кабинетом, не уходя с экрана (владелец 23.09.2026).
+    from app.ad import unknown
+    return {"weborama": wb, "dsp": dsp_prov.plan(db, c),
+            "unknown": unknown.list_unknown(db, c)}
+
+
+class ResolveIn(BaseModel):
+    system: str                        # 'dsp' | 'weborama'
+    ref: str                           # 'campaign' / 'cr<id>' у DSP, номер попытки у Weborama
+    found: bool
+    external_id: Optional[str] = None  # хеш DSP или id Weborama — когда «нашёл»
+
+
+@router.post("/campaign/{campaign_id}/external/resolve")
+def resolve_external(campaign_id: int, payload: ResolveIn, db: Session = Depends(get_db),
+                     user: User = Depends(EDIT)):
+    """Отметка после сверки с кабинетом: «нашёл» (с id) или «в кабинете нет».
+
+    Без неё попытка, ушедшая без ответа, запирала повтор навсегда — снять можно было
+    только запросом в базу. Право то же, что у кнопок «DSP» и «ПИКСЕЛЬ WR».
+    """
+    from app.ad import unknown
+
+    c, deal = _campaign_in_scope(db, campaign_id, user)
+    try:
+        out = unknown.resolve(db, c, payload.system, payload.ref, found=payload.found,
+                              external_id=payload.external_id, user=user)
+    except unknown.ResolveError as e:
+        raise HTTPException(400, str(e))
+    sys_name = "DSP" if payload.system == "dsp" else "Weborama"
+    log_action(db, user, "external_resolve", "sales_deal", deal.id,
+               f"РК #{c.id}: {sys_name}, попытка {payload.ref} — "
+               + (f"найден в кабинете: {out.get('id')}" if payload.found
+                  else "в кабинете нет, повтор разрешён"))
+    return out
 
 
 @router.post("/campaign/{campaign_id}/weborama")
@@ -1129,6 +1233,11 @@ def _tell_publishers_started(db: Session, camp) -> None:
                              title="Кампания стартовала",
                              body="Размещение вышло в эфир.",
                              facts=(), context=context, link="/",
-                             entity_type="ad_campaign_placement", entity_id=pl.id)
+                             entity_type="ad_campaign_placement", entity_id=pl.id,
+                             values={"бренд": brand, "период": period})
         except Exception as e:                               # noqa: BLE001
+            # Сессию — в рабочее состояние: сбой базы внутри рассылки оставил бы её в
+            # упавшей транзакции, и следующая запись (журнал, другие площадки) дала бы 500
+            # при уже записанном действии (ревью 24.09.2026).
+            db.rollback()
             log.warning("Площадке %s не ушло «старт рк»: %s", pub.id, e)

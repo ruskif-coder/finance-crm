@@ -559,3 +559,33 @@ def test_creative_title_is_cut_to_their_limit_not_ours():
     уезжало заведомо негодным, и узнали бы мы об этом отказом на их стороне."""
     p = cr.build_creative_params(title="я" * 400, link="https://x.ru")
     assert len(p["title"]) == 150
+
+
+def test_targeting_and_creative_also_touch_only_their_own(monkeypatch):
+    """4.M2 аудита 23.09.2026. Замок стоял на статусе и плане, а таргетинг и добавление
+    креатива шли мимо: чужой хеш в поле — и у боевой РК выключены площадки или в неё
+    добавлен демо-креатив. Отказ обязан наступать ДО обращения к кабинету."""
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+    from app.routers import dsp_demo as D
+    monkeypatch.delenv(D.ENV_TOKEN, raising=False)
+    monkeypatch.delenv(D.ENV_PARTNER, raising=False)
+    monkeypatch.setenv("DSP_ACCESS_TOKEN", "live-token")
+    monkeypatch.setenv("DSP_PARTNER_XXHASH", "0123456789ABCDEF")   # выдуманный
+    monkeypatch.setattr(D, "demo_client",
+                        lambda: pytest.fail("чужая кампания дошла до кабинета"))
+    monkeypatch.setattr(D, "log_action", lambda *a, **kw: None)
+    user = SimpleNamespace(id=1)
+
+    with pytest.raises(HTTPException) as e:
+        D.set_targeting(D.TargetingIn(xxhash="AAAAAAAAAAAAAAAA", items={"1": {}}),
+                        None, user)
+    assert e.value.status_code in (403, 503)
+
+    with pytest.raises(HTTPException) as e:
+        D.create_creative(D.CreativeIn(campaign_xxhash="AAAAAAAAAAAAAAAA", title="т",
+                                       link="https://example.test/", html_code="<b/>",
+                                       size="240x400"),
+                          None, user)
+    assert e.value.status_code in (403, 503)

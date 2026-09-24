@@ -401,7 +401,8 @@ export default function OrdDirectory() {
               неоднозначных {report.clients.ambiguous.length},
               отказов {report.clients.failed.length}
               {!!report.clients.requeued && `, перепроверено после смены контура ${report.clients.requeued}`}
-              {!!report.clients.cleared && `, снято чужих идентификаторов ${report.clients.cleared}`}.
+              {!!report.clients.cleared && `, снято чужих идентификаторов ${report.clients.cleared}`}
+              {!!report.clients.kept_other && `, не тронуто боевых на демо ${report.clients.kept_other}`}.
             </div>
             <div style={{ marginTop: 4, color: 'var(--text-muted)' }}>
               Договоры: прочитано доходных {report.contracts.read?.final ?? 0},

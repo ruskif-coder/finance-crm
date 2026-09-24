@@ -198,6 +198,7 @@ def test_attach_adds_second_final_to_the_same_initial(db, user, monkeypatch):
     """Второй конец M:N: один изначальный под двумя разными доходными."""
     initial = _initial(db, ord_id='CT-real-2')
     initial.origin = 'ord'
+    initial.ord_env = 'demo'
     db.add(OrdInitialFinalLink(initial_contract_id=initial.id, final_ord_id='CT-final-1'))
     db.commit()
     monkeypatch.setattr(ord_client, 'post', lambda p, b: (200, {'id': 'CT-real-2'}))
@@ -223,6 +224,7 @@ def test_attach_of_unregistered_initial_is_refused(db, user, monkeypatch):
 def test_duplicate_attach_is_refused(db, user, monkeypatch):
     initial = _initial(db, ord_id='CT-real-3')
     initial.origin = 'ord'
+    initial.ord_env = 'demo'
     db.add(OrdInitialFinalLink(initial_contract_id=initial.id, final_ord_id='CT-final-1'))
     db.commit()
     monkeypatch.setattr(ord_client, 'post',
@@ -231,3 +233,54 @@ def test_duplicate_attach_is_refused(db, user, monkeypatch):
     with pytest.raises(submit.OrdSubmitRefused) as e:
         submit.attach_initial(db, initial, 'CT-final-1', user)
     assert 'уже есть' in str(e.value)
+
+
+# ── аудит 23.09.2026, 4.M4: контур при регистрации изначального ─────────────
+
+def test_attach_never_sends_an_id_from_another_contour(db, user, monkeypatch):
+    """На проде все изначальные договоры — демовские. Прикрепление с демо-id ушло бы в
+    боевой ЕРИР ссылкой на чужую запись; вместо этого — отказ до сети."""
+    initial = _initial(db, ord_id='CT-demo-9')
+    initial.origin = 'ord'
+    initial.ord_env = 'demo'
+    db.commit()
+    monkeypatch.setattr(ord_client, 'env', lambda: 'prod')
+    monkeypatch.setenv('ORD_ALLOW_PROD_WRITE', '1')
+    monkeypatch.setattr(ord_client, 'post',
+                        lambda p, b: pytest.fail(f'на прод ушло {b}'))
+
+    with pytest.raises(submit.OrdSubmitRefused) as e:
+        submit.attach_initial(db, initial, 'CT-final-prod', user)
+    assert 'prod' in str(e.value)
+
+
+def test_register_route_uses_ids_of_the_contour_it_sends_to(db, user, monkeypatch):
+    """Ручка брала доходный прямо из колонки и выбирала ветку по колонке изначального.
+    На проде при демовских колонках обе ветки отправили бы демо-id в боевой ЕРИР."""
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from app.routers import ord as ord_router
+
+    initial = _initial(db, ord_id='CT-demo-10')
+    initial.origin = 'ord'
+    initial.ord_env = 'demo'
+    db.commit()
+    deal = SimpleNamespace(id=999470, ord_initial_contract_id=initial.id)
+    final = SimpleNamespace(id=999471, ord_contract_id='CT-demo-final', ord_env='demo')
+    monkeypatch.setattr(ord_router, '_deal_or_404', lambda db, u, i: deal)
+    monkeypatch.setattr(ord_router, 'resolve_final',
+                        lambda db, d: SimpleNamespace(contract=final,
+                                                      final_ord_id='CT-demo-final'))
+    monkeypatch.setattr(ord_client, 'is_configured', lambda: True)
+    monkeypatch.setattr(ord_client, 'env', lambda: 'prod')
+    monkeypatch.setenv('ORD_ALLOW_PROD_WRITE', '1')
+    sent = []
+    monkeypatch.setattr(ord_client, 'post', lambda p, b: sent.append(b) or (200, {'id': 'X'}))
+    monkeypatch.setattr(ord_client, 'get', lambda p, params=None: [{'id': 'CT-cli'}])
+
+    with pytest.raises(HTTPException) as e:
+        ord_router.ord_register_initial(deal.id, ord_router.RegisterInitial(), db, user)
+    assert e.value.status_code == 400
+    assert not sent, f"в боевой ОРД ушли демо-идентификаторы: {sent}"

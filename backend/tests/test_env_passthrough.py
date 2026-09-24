@@ -46,6 +46,7 @@ PASSED_THROUGH = {
     "DOMAIN": "compose",
     "PDF_SERVICE_URL": "runtime",
     "CABINET_SERVICE_TOKEN": "compose",
+    "CABINET_SITE": "compose",
     "DEBUG": "НЕ передаётся: true открывает Swagger/ReDoc без аутентификации. "
              "Недоступность переменной на проде держит документацию закрытой даже при "
              "ошибке в .env. Нужен локально — добавляйте строку временно.",

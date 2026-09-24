@@ -5,6 +5,7 @@ import { MONO, UI, INTEG_TONE, STATUS_TONE, TRAFFIC_ROWS, SURFACE_CYCLE, SURFACE
   tzLabel, localTime } from '@/components/publishers/kit'
 import ValuePopover from '@/components/ValuePopover'
 import { overlayClose } from '@/lib/overlay'
+import safeHref from '@/lib/safeHref'
 
 /**
  * Карточка площадки. Порт экрана «Карточка паблишера» из дизайн-хендоффа
@@ -460,7 +461,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
                         <span style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>не работаем</span>
                       )}
                       {s?.figma_url && !editing && (
-                        <a href={s.figma_url} target="_blank" rel="noreferrer"
+                        <a href={safeHref(s.figma_url)} target="_blank" rel="noreferrer"
                           style={{ marginLeft: 'auto', fontSize: 14, color: 'var(--accent)' }}>макет в фигме →</a>
                       )}
                       {editing && (
@@ -765,7 +766,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
                   {!c.linked && <span title="В реестре «Договора» такого номера нет">⚠</span>}
                   <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
                     {c.document_source === 'edo' && c.document_url && (
-                      <a href={c.document_url} target="_blank" rel="noreferrer" style={linkBtn}>ЭДО</a>
+                      <a href={safeHref(c.document_url)} target="_blank" rel="noreferrer" style={linkBtn}>ЭДО</a>
                     )}
                     {c.document_source === 'file' && (
                       <button style={linkBtn} onClick={() => api.downloadContractDoc(c.id)}>документ</button>
@@ -877,7 +878,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
                 </span>
                 <span style={{ display: 'inline-flex', gap: 5 }}>
                   <ChatBtn href={tgHref(c.telegram)} kind="tg" title="Телеграм" size={24} />
-                  <ChatBtn href={c.max_url} kind="max" title="MAX" size={24} />
+                  <ChatBtn href={safeHref(c.max_url)} kind="max" title="MAX" size={24} />
                 </span>
                 {canEdit && (
                   <span style={{ display: 'inline-flex', gap: 4 }}>
@@ -907,8 +908,8 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
                 ? <input style={inp} value={p.chat_title || ''} onChange={e => set('chat_title', e.target.value)} />
                 : <span style={{ fontSize: 15, fontWeight: 600 }}>{p.chat_title || '—'}</span>}
               <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, flex: '0 0 auto' }}>
-                <ChatBtn href={p.chat_url} kind="tg" title="Телеграм" />
-                <ChatBtn href={p.chat_url_max} kind="max" title="MAX" />
+                <ChatBtn href={safeHref(p.chat_url)} kind="tg" title="Телеграм" />
+                <ChatBtn href={safeHref(p.chat_url_max)} kind="max" title="MAX" />
               </span>
             </div>
             {editing && (
@@ -916,12 +917,12 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
                 <Cap big style={{ margin: '12px 0 5px' }}>ссылка в телеграме</Cap>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <input style={inp} value={p.chat_url || ''} onChange={e => set('chat_url', e.target.value)} />
-                  <ChatBtn href={p.chat_url} kind="tg" title="Телеграм" />
+                  <ChatBtn href={safeHref(p.chat_url)} kind="tg" title="Телеграм" />
                 </div>
                 <Cap big style={{ margin: '10px 0 5px' }}>ссылка в MAX</Cap>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <input style={inp} value={p.chat_url_max || ''} onChange={e => set('chat_url_max', e.target.value)} />
-                  <ChatBtn href={p.chat_url_max} kind="max" title="MAX" />
+                  <ChatBtn href={safeHref(p.chat_url_max)} kind="max" title="MAX" />
                 </div>
               </>
             )}

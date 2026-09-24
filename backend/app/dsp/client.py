@@ -83,8 +83,11 @@ class MsClient:
         self._id = 0
 
     # ── транспорт ──────────────────────────────────────────────────────────
+    def _configured(self) -> bool:
+        return bool(self.token) and self.url != "/"
+
     def _http(self, method: str, body: dict) -> dict:
-        if not self.token or self.url == "/":
+        if not self._configured():
             raise MsError("DSP_API_URL / DSP_ACCESS_TOKEN не заданы в окружении")
         r = httpx.post(f"{self.url}?method={method}",
                        headers={"Authorization": f"Bearer {self.token}",
@@ -144,9 +147,59 @@ class MsClient:
             log.warning("dsp_send_log: чтение не удалось (%s)", e)
             return None
 
+    # Строка «ушло, исход неизвестен»: без хеша и либо без ответа (таймаут, обрыв), либо
+    # с «успехом», в котором хеша не нашлось. Отказ с телом ответа сюда не попадает —
+    # он ответ. Считается только то, что позже последней ТОЧКИ СБРОСА: удачного вызова с
+    # хешом или отметки человека после сверки с кабинетом (`response.resolved`).
+    _UNKNOWN_SQL = (
+        "SELECT DISTINCT l.local_ref FROM dsp_send_log l "
+        "WHERE l.contour=:ct AND l.method=:m AND l.entity_type=:et "
+        "AND l.local_ref = ANY(:refs) AND l.ms_xxhash IS NULL "
+        "AND (l.response IS NULL OR l.ok) "
+        "AND l.ts > COALESCE((SELECT max(x.ts) FROM dsp_send_log x "
+        "WHERE x.contour=l.contour AND x.method=l.method AND x.entity_type=l.entity_type "
+        "AND x.local_ref=l.local_ref AND ((x.ok AND x.ms_xxhash IS NOT NULL) "
+        "OR x.response->>'resolved' IS NOT NULL)), '-infinity')")
+
+    def _unknown(self, method: str, entity_type: str, refs) -> set:
+        with self._engine().connect() as c:
+            return {r[0] for r in c.execute(text(self._UNKNOWN_SQL), dict(
+                ct=self.contour, m=method, et=entity_type,
+                refs=[str(r) for r in refs])).all()}
+
+    def unknown_outcome(self, method: str, entity_type: str, local_ref) -> bool:
+        """Был ли вызов, ушедший без ответа, после последней точки сброса.
+
+        DSP мог объект создать, а мы не узнали хеша. Такой вызов не повторяют вслепую
+        (аудит 23.09.2026, 4.L5). Журнал недоступен — считаем, что исход неизвестен:
+        лишняя осторожность видна отказом, лишняя смелость — дублем в чужом кабинете.
+        """
+        if not self._journal_on:
+            return False
+        try:
+            return str(local_ref) in self._unknown(method, entity_type, [local_ref])
+        except Exception as e:  # noqa: BLE001
+            log.warning("dsp_send_log: чтение не удалось (%s)", e)
+            return True
+
+    def unknown_refs(self, method: str, entity_type: str, refs) -> set:
+        """То же пачкой — для экрана. Журнал недоступен — пусто: экран не падает, а
+        запирает повтор всё равно `unknown_outcome` перед самим вызовом."""
+        if not self._journal_on or not refs:
+            return set()
+        try:
+            return self._unknown(method, entity_type, refs)
+        except Exception as e:  # noqa: BLE001
+            log.warning("dsp_send_log: чтение не удалось (%s)", e)
+            return set()
+
     # ── базовый вызов ──────────────────────────────────────────────────────
     def call(self, method: str, params: Dict[str, Any], *, entity_type: Optional[str] = None,
              local_ref=None) -> Any:
+        # Не настроено — отказ ДО журнала: запрос никуда не уходил, и строка «без ответа»
+        # заперла бы повтор создающего вызова как неизвестный исход.
+        if self._transport == self._http and not self._configured():
+            raise MsError("DSP_API_URL / DSP_ACCESS_TOKEN не заданы в окружении")
         self._id += 1
         body = {"jsonrpc": "2.0", "method": method, "params": params, "id": self._id}
         resp, result, ok, err = None, None, False, None
@@ -164,6 +217,11 @@ class MsClient:
             raise
         except Exception as e:
             err = repr(e)
+            # 4xx — это ОТВЕТ: DSP отказал, объект не создан. Кладём его в журнал, чтобы
+            # строка не читалась как «ушло без ответа» и не запирала повтор зря.
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500:
+                resp = {"http_status": e.response.status_code,
+                        "body": e.response.text[:500]}
             raise MsError(f"{method}: {err}") from e
         finally:
             self._journal(method, entity_type, local_ref, body, resp,

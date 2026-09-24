@@ -58,20 +58,36 @@ class Plan:
         return not self.blockers and not self.not_applicable
 
 
+def may_move(plan: Plan) -> bool:
+    """Можно ли перевести БЕЗ человека: требования выполнены, цель применима к услуге,
+    воронка на месте. Один вопрос для всей автоматики (привязка медиаплана, «Завершить
+    РК»): до 24.09.2026 она смотрела только на блокеры, а неприменимая цель возвращает
+    их пустыми (аудит 23.09.2026, 3.M1).
+
+    Реестр этим вопросом НЕ пользуется намеренно: он пропускает то, что нельзя, — решение
+    владельца 24.09.2026, временно, до разбора старых сделок."""
+    return plan.allowed and not plan.needs_pipeline
+
+
 def checks_for(db, stage_id) -> list:
     return (db.query(SalesStageCheck)
             .filter(SalesStageCheck.stage_id == stage_id)
             .order_by(SalesStageCheck.sort_order, SalesStageCheck.id).all())
 
 
-def next_stage(db, deal, catalog: Optional[Catalog] = None):
+def next_stage(db, deal, catalog: Optional[Catalog] = None, marks: Optional[dict] = None):
     """Следующая стадия ДЛЯ ЭТОЙ СДЕЛКИ: неприменимые к её услуге проскакиваются.
 
     Одна точка на всех: карточка, реестр, очередь аккаунта и кнопка «двинуть» обязаны
     называть одну и ту же стадию. Разойдутся — человек увидит «следующая: Бронь», нажмёт
-    «двинуть» и попадёт в другую."""
+    «двинуть» и попадёт в другую.
+
+    `marks` — разметку стадий по услугам списком страниц передают ОДИН раз: реестр звал
+    эту функцию на каждую строку, и каждая строка перечитывала разметку — до 500
+    одинаковых запросов на страницу (аудит 23.09.2026, 3.L2)."""
     cat = catalog or Catalog(db)
-    return stage_scope.next_for(deal, cat, stage_scope.stage_services(db))
+    return stage_scope.next_for(deal, cat,
+                                marks if marks is not None else stage_scope.stage_services(db))
 
 
 def plan_move(db, deal, target, catalog: Optional[Catalog] = None) -> Plan:

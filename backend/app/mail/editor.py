@@ -28,9 +28,11 @@
 Письмо про одну сверку и письмо про четыре срочных события обещают получателю разное,
 поэтому по умолчанию шапка собирается из подстановок и считается из состава письма:
 
-    {срочное}   «Два события требуют действия сегодня» либо «Ничего срочного — только
-                подтверждения»; согласование числительного обязательно, иначе письмо
-                пишет «2 событий»
+    {срочное}   три разных предложения, а не одно с подстановкой: «Все требуют
+                действия сегодня», «2 требуют действия сегодня, остальные — к сведению»,
+                «Все — к сведению, действий не требуется». «Остальные» при шести из шести
+                обещает несуществующий остаток (правило перенесено из прежнего сборщика
+                дайджеста 24.09.2026, когда дайджест переехал на эту оболочку)
     {темы}      перечень тегов карточек письма через запятую
     {всего}     сколько карточек в письме
 
@@ -80,7 +82,7 @@ SHELL_DEFAULT = {
         "subject": "{всего} · {темы}",
         "preheader": "{срочное} · {темы}",
         "headline": "{имя}, за сутки {всего}",
-        "subtitle": "{срочное} Остальное — к сведению.",
+        "subtitle": "{срочное}",
         "footer": "Полная очередь всегда в дашборде. Состав и час дайджеста — в настройках уведомлений.",
     },
     PUB: {
@@ -169,8 +171,7 @@ def sample(db: Session, contour: str) -> dict:
     if pub:
         out["площадка"] = pub.name or ""
         out["домен"] = pub.domain or ""
-    out["ссылка"] = render.abs_url("/campaigns" if contour == PUB
-                                   else "/accounts/dashboard") or ""
+    out["ссылка"] = render.link_for(contour == PUB, "/accounts/dashboard") or ""
     return out
 
 
@@ -200,11 +201,12 @@ def computed(cards: List[dict]) -> dict:
     if not n:
         urgent = "Письмо пустое."
     elif not need:
-        urgent = "Ничего срочного — только подтверждения."
+        urgent = "Все — к сведению, действий не требуется."
+    elif need == n:
+        urgent = "Все требуют действия сегодня."
     else:
-        word = plural(need, "Одно событие требует", f"{need} события требуют",
-                      f"{need} событий требуют")
-        urgent = f"{word} действия сегодня."
+        urgent = (f"{need} {plural(need, 'требует', 'требуют', 'требуют')} действия "
+                  f"сегодня, остальные — к сведению.")
     topics = []
     for c in cards:
         t = (c.get("tag") or "").strip()
@@ -354,7 +356,7 @@ def compose(db: Session, contour: str, keys: List[str], *, brand: str = "SIMB-AD
         # Кнопки нет — нет и ссылки: рисовальщик письма опирается именно на неё
         # (`render._button`). Подтверждению («ЕРИД выпущен», «оплата отправлена») кнопка
         # не нужна — идти по ней некуда, а синий прямоугольник требует действия.
-        "link_abs": (render.abs_url("/campaigns" if contour == PUB else "/accounts/dashboard")
+        "link_abs": (render.link_for(contour == PUB, "/accounts/dashboard")
                      if c.get("show_button", True) else None),
         "facts": facts_of(db, contour, c),
         "context": None if contour == STAFF else _context(db, contour),
@@ -367,9 +369,9 @@ def compose(db: Session, contour: str, keys: List[str], *, brand: str = "SIMB-AD
         cards_data=data, headline=text_of("headline"), sub=text_of("subtitle"),
         preheader=text_of("preheader"), footer=text_of("footer"),
         brand=brand, when=timez.msk_now(),
-        logo_url=render.abs_url(render.LOGO_PATH),
-        settings_url=render.abs_url(
-            render.SETTINGS_PATH if contour == STAFF else "/settings"))
+        logo_url=(render.cabinet_url(render.LOGO_PATH) if contour == PUB
+                  else render.link_for(False, render.LOGO_PATH)),
+        settings_url=render.link_for(contour == PUB, render.SETTINGS_PATH))
 
 
 def _context(db: Session, contour: str) -> str:
@@ -420,10 +422,17 @@ def subst(textv: str, vals: dict) -> str:
     """Подстановка теми же правилами, что и в шаблонах писем: незаполненное поле
     становится пустотой, а не скобками. Скобки в готовом письме читаются получателем
     как неисправность системы."""
+    import re
+
     from app.mail import templates as tpl
     out = tpl.render(textv or "", vals)
     while "  " in out:
         out = out.replace("  ", " ")
+    # Пустая подстановка рядом с разделителем оставляла висящую точку: «· 3 события» в
+    # теме письма сети сайтов (площадка не одна — её имя пусто). Разделитель без соседа
+    # с одной стороны убирается, два подряд сливаются (ревью 24.09.2026).
+    out = re.sub(r"(\s*·\s*){2,}", " · ", out)
+    out = re.sub(r"^\s*·\s*|\s*·\s*$", "", out)
     return out.strip()
 
 
