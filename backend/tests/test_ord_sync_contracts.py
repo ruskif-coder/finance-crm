@@ -171,3 +171,33 @@ def test_api_outer_row_goes_through_the_writer(schemas):
     finally:
         db.rollback()
         db.close()
+
+
+def test_only_income_contracts_are_tagged_in_our_directory(monkeypatch):
+    """С нашим справочником договоров связаны ТОЛЬКО доходные (владелец, 24.09.2026).
+
+    Первая боевая сверка пометила наш договор отметкой РАСХОДНОГО — сопоставление по
+    номеру и ИНН исполнителя нашло строку справочника. Расходный в зеркале читается, но
+    отметку ОРД на наш договор не ставит — ни из API, ни из файла выгрузки.
+    """
+    from types import SimpleNamespace
+    from app.database import SessionLocal
+
+    ours = SimpleNamespace(ord_contract_id=None, ord_env=None, ord_kind=None,
+                           ord_status=None, ord_synced_at=None)
+    monkeypatch.setattr(importer, '_match_contract',
+                        lambda *a, **kw: SimpleNamespace(contract=ours, warning=None))
+    row = {'ord_id': 'CT-outer-only-income', 'ord_cid': None, 'number': 'РМ-ТЕСТ',
+           'date': None, 'expiration_date': None, 'type': 'ServiceAgreement',
+           'subject_type': None, 'action_type': None,
+           'is_agent_acting_for_publisher': False, 'contractor_inn': '7700000009',
+           'contractor_name': 'ООО «Площадка»', 'status': 'Active', 'status_at': None,
+           'error_text': None, 'warnings': []}
+    db = SessionLocal()
+    try:
+        importer.upsert_rows(db, outer=[row], env='demo')
+        assert ours.ord_contract_id is None, "расходный пометил наш договор"
+        assert ours.ord_kind is None
+    finally:
+        db.rollback()
+        db.close()

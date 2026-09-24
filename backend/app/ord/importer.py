@@ -513,8 +513,10 @@ def upsert_rows(db: Session, *, initial: Optional[List[Dict[str, Any]]] = None,
 
     for r in final_rows:
         _mirror_final(r, _tag_contract(r, 'final', 'client_name', 'client_inn'))
-    for r in outer_rows:
-        _tag_contract(r, 'outer', 'contractor_name', 'contractor_inn')
+    # Расходные НЕ метят наш справочник договоров: с ним связаны только доходные
+    # (владелец, 24.09.2026). Первая боевая сверка пометила расходным наш договор,
+    # совпавший номером и ИНН исполнителя. Расходный читается — и только.
+    stat['read_outer'] = len(outer_rows)
 
     # ── 3. Изначальные + связи с доходными ──────────────────────────────────
     seen_initial: Dict[str, OrdInitialContract] = {}

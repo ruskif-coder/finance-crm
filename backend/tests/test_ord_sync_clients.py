@@ -122,6 +122,36 @@ def test_several_matches_are_reported_not_guessed(db, fake_ord):
     assert any(r['inn'] == TEST_INNS[1] for r in report['ambiguous'])
 
 
+def test_client_record_wins_over_the_agent_one(db, fake_ord):
+    """Одно юрлицо в ОРД бывает в двух ролях: `CL…` — клиент (заказчик), `AG…` — агент
+    (исполнитель). Замер на боевом контуре 24.09.2026: все 52 доходных договора ссылаются
+    на заказчика `CL…`, исполнитель у них — `AG…`. Агентство, которое бывает и тем и
+    другим, отдаёт по ИНН две записи — и 34 ИНН из 170 уходили в «неоднозначные».
+    Для `clientId` нужна клиентская запись: ровно одна `CL` среди найденных — берём её."""
+    cp = _make(db, TEST_INNS[7], 'Агентство в двух ролях')
+    fake_ord.answers[TEST_INNS[7]] = [
+        fake_ord.respond(fake_ord.schemas, 'AGrole-agent', TEST_INNS[7]),
+        fake_ord.respond(fake_ord.schemas, 'CLrole-client', TEST_INNS[7]),
+    ]
+    sync.sync_clients(db)
+    db.refresh(cp)
+    assert cp.ord_client_id == 'CLrole-client'
+
+
+def test_two_client_records_stay_ambiguous(db, fake_ord):
+    """Две клиентские записи на ИНН — это уже настоящая неоднозначность, не угадываем."""
+    cp = _make(db, TEST_INNS[8], 'Два клиента')
+    fake_ord.answers[TEST_INNS[8]] = [
+        fake_ord.respond(fake_ord.schemas, 'CLtwin-a', TEST_INNS[8]),
+        fake_ord.respond(fake_ord.schemas, 'CLtwin-b', TEST_INNS[8]),
+        fake_ord.respond(fake_ord.schemas, 'AGtwin-c', TEST_INNS[8]),
+    ]
+    report = sync.sync_clients(db)
+    db.refresh(cp)
+    assert cp.ord_client_id is None
+    assert any(r['inn'] == TEST_INNS[8] for r in report['ambiguous'])
+
+
 def test_absent_in_ord_is_work_list_not_error(db, fake_ord):
     """Юрлица нет в кабинете — это список работы, а не список ошибок."""
     cp = _make(db, TEST_INNS[2], 'Отсутствует')
