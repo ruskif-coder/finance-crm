@@ -39,7 +39,7 @@ export default function BugReport({ btnStyle }) {
     setWhere({
       page_url: window.location.pathname + window.location.search,
       page_title: (document.title || '').split('·')[0].trim(),
-      app_version: process.env.NEXT_PUBLIC_APP_VERSION || '',
+      app_version: process.env.NEXT_PUBLIC_CABINET_VERSION || '',   // та же, что в подвале; APP_VERSION кабинет не задаёт
       viewport: `${window.innerWidth}x${window.innerHeight}`,
     })
   }, [open])
