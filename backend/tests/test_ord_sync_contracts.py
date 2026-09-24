@@ -114,7 +114,18 @@ def test_outer_row_takes_contractor_not_client(schemas):
     })
     row = sync._outer_row(item, _Spy())
 
-    assert row['client_inn'] == '7700000009'
+    # Форма — как у разбора файла (`importer.parse_outer`): писатель зеркала общий и
+    # читает `contractor_inn`. Раньше здесь ИНН клали в `client_inn`, а прибор это
+    # закреплял — и первая же боевая сверка упала KeyError: на демо-контуре расходных
+    # договоров не было ни одного (24.09.2026).
+    expected = {'ord_id', 'ord_cid', 'number', 'date', 'expiration_date', 'type',
+                'subject_type', 'action_type', 'is_agent_acting_for_publisher',
+                'contractor_inn', 'contractor_name', 'status', 'status_at', 'error_text',
+                'warnings'}
+    assert expected <= set(row), f"не хватает полей писателя: {expected - set(row)}"
+    assert row['contractor_inn'] == '7700000009'
+    assert row['contractor_name'] == 'ООО «Площадка»'
+    assert 'client_inn' not in row, "у расходного стороны-заказчика в зеркале нет"
     assert 'CT-contractor-9' in seen, "сторона расходного берётся по contractorId"
 
 
@@ -135,3 +146,28 @@ def test_mirror_has_exactly_one_writer():
     assert hasattr(importer, 'upsert_rows') and hasattr(importer, 'upsert'), (
         "upsert по файлам обязан остаться: выгрузка — по-прежнему рабочий путь, "
         "пока доступа к API нет")
+
+
+def test_api_outer_row_goes_through_the_writer(schemas):
+    """Сквозной путь, который упал на первой боевой сверке 24.09.2026: строка расходного
+    из API → общий писатель зеркала. Своё чтение/запись в транзакции, откат в конце."""
+    from app.database import SessionLocal
+
+    class _Clients:
+        def get(self, ord_id):
+            return ('7700000009', 'ООО «Площадка»')
+
+    item = valid(schemas, 'OuterContractResponse', {
+        'id': 'CT-outer-test-writer', 'cid': None, 'number': 'РС-ТЕСТ-24-09',
+        'date': '2025-05-05T00:00:00', 'type': 'ServiceAgreement',
+        'status': 'Active', 'contractorId': 'CT-contractor-9',
+        'isAgentActingForPublisher': False, 'erirValidationError': None,
+    })
+    db = SessionLocal()
+    try:
+        stat = importer.upsert_rows(db, outer=[sync._outer_row(item, _Clients())],
+                                    env='demo')
+        assert 'contracts' in stat
+    finally:
+        db.rollback()
+        db.close()

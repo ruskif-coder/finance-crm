@@ -191,11 +191,22 @@ def _final_row(item: dict, clients: _Clients) -> dict:
 
 
 def _outer_row(item: dict, clients: _Clients) -> dict:
-    """Расходный: сторона — исполнитель (площадка), а не заказчик."""
+    """Расходный: сторона — исполнитель (площадка), а не заказчик.
+
+    Форма — как у `importer.parse_outer`: писатель зеркала общий и читает у расходного
+    `contractor_inn`/`contractor_name`. До 24.09.2026 ИНН площадки клался в `client_inn`
+    (форма доходного), и первая боевая сверка упала KeyError — на демо-контуре
+    расходных договоров не было ни одного, и расхождение ни разу не исполнялось.
+    """
     row = _final_row(item, clients)
+    row.pop('client_inn', None)
+    row.pop('client_name', None)
+    row.pop('parent_number', None)
     inn, name = clients.get(item.get('contractorId'))
-    row['client_inn'] = inn
-    row['client_name'] = name
+    row['contractor_inn'] = inn
+    row['contractor_name'] = name
+    row['subject_type'] = item.get('subjectType')
+    row['action_type'] = item.get('actionType')
     return row
 
 
