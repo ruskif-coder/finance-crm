@@ -317,7 +317,7 @@ export default function CampaignsScreen({ campaigns = DEMO, onOpen }) {
 
               <div style={{ display: 'flex', alignItems: 'stretch', gap: 24, flexWrap: 'wrap' }}>
                 {[
-                  [(!from && !to) ? 'Биллинг за всё время' : 'Биллинг за период', nf(total.sum), '₽', T.t1, 'до НДС · закрыто актом ' + rub(total.closed)],
+                  [(!from && !to) ? 'Биллинг за всё время' : 'Биллинг за период', nf(total.sum), '₽', T.t1, 'до НДС · по завершённым флайтам ' + rub(total.closed)],
                   ['Факт показов', nf(total.fact), '', T.accent, 'план ' + nf(total.plan) + ' · ' + Math.round(total.plan ? total.fact / total.plan * 100 : 0) + ' %'],
                   ['Запусков', String(scope.length), 'РК', T.t1, keys.length + ' периодов'],
                   ['Идёт сейчас', String(total.live), 'РК', T.income, 'в текущем месяце'],
@@ -424,7 +424,7 @@ export default function CampaignsScreen({ campaigns = DEMO, onOpen }) {
             })}
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '0 6px' }}>
-              <span style={{ ...colHead, fontSize: 9.5 }}>суммы до НДС · биллинг по факту показов · сверенные месяцы закрыты актом</span>
+              <span style={{ ...colHead, fontSize: 9.5 }}>суммы до НДС · биллинг по факту показов · окончательная сумма — после сверки за период</span>
               <span style={{ marginLeft: 'auto', ...colHead, fontSize: 9.5 }}>{scope.length} РК в списке · {keys.length} периодов</span>
             </div>
       </div>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import Head from 'next/head'
 import dynamic from 'next/dynamic'
-import api, { signOut, TOKEN_KEY } from '../lib/http'
+import api, { auth, signOut, TOKEN_KEY } from '../lib/http'
 import { C, btn, card, inp } from '../lib/ui'
 
 /* Кабинет грузится ОТДЕЛЬНЫМ чанком и только после входа: до авторизации по проводу не
@@ -11,6 +11,9 @@ import { C, btn, card, inp } from '../lib/ui'
 
    `ssr: false` — дашборд читает `localStorage`, на сервере его рендерить нельзя. */
 const Dashboard = dynamic(() => import('../components/Dashboard'),
+  { ssr: false, loading: () => null })
+// Согласие — тоже отдельным чанком: его тексты нужны только тем, кто уже вошёл.
+const Consent = dynamic(() => import('../components/Consent'),
   { ssr: false, loading: () => null })
 
 function Login({ onDone }) {
@@ -26,7 +29,7 @@ function Login({ onDone }) {
       const r = await api.post('/login', { email: email.trim(), password })
       localStorage.setItem(TOKEN_KEY, r.data.token)
       localStorage.setItem('cabinet_name', r.data.name || '')
-      onDone()
+      onDone(!!r.data.consent_required)
     } catch (e2) {
       setErr(e2.response?.data?.detail || 'Не удалось войти')
       setBusy(false)
@@ -79,6 +82,22 @@ export default function Cabinet() {
   const [ready, setReady] = useState(false)
   const [authed, setAuthed] = useState(false)
   const [name, setName] = useState('')
+  // Согласие на обработку ПДн (24.09.2026): null — ещё не знаем, true — нужно показать
+  // форму. Держит правило сервер; здесь только выбор экрана.
+  const [needConsent, setNeedConsent] = useState(null)
+
+  // Открытие с уже сохранённым токеном: спросить сервер, дано ли согласие. Токен мог
+  // быть выписан до того, как согласие появилось.
+  useEffect(() => {
+    if (!authed || needConsent !== null) return
+    api.get('/me', auth())
+      .then(r => setNeedConsent(!!r.data.consent_required))
+      .catch(e => {
+        if (e.response?.status === 401 || e.response?.status === 403) {
+          signOut(); setAuthed(false)
+        } else setNeedConsent(false)      // сеть — кабинет сам покажет ошибку
+      })
+  }, [authed, needConsent])
 
   // Токен читаем ОДИН раз после монтирования: `localStorage` на сервере нет, а чтение при
   // рендере дало бы разошедшуюся разметку. До этого чтения не рисуем ничего.
@@ -95,7 +114,8 @@ export default function Cabinet() {
     return (
       <>
         <Head><title>{pageTitle('Вход')}</title></Head>
-        <Login onDone={() => {
+        <Login onDone={(consentRequired) => {
+          setNeedConsent(consentRequired)
           setAuthed(true)
           setName(localStorage.getItem('cabinet_name') || '')
         }} />
@@ -104,5 +124,15 @@ export default function Cabinet() {
   }
   // Выход из кабинета возвращает привратника в состояние «не авторизован»: чанк дашборда
   // уже скачан, но данные из него уходят, и форма показывается снова.
-  return <Dashboard name={name} onSignOut={() => { signOut(); setAuthed(false) }} />
+  const exit = () => { signOut(); setAuthed(false); setNeedConsent(null) }
+  if (needConsent === null) return null
+  if (needConsent) {
+    return (
+      <>
+        <Head><title>{pageTitle('Согласие')}</title></Head>
+        <Consent onAccepted={() => setNeedConsent(false)} onDecline={exit} />
+      </>
+    )
+  }
+  return <Dashboard name={name} onSignOut={exit} />
 }

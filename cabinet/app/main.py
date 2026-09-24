@@ -27,7 +27,8 @@ from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, Up
 from pydantic import BaseModel
 from sqlalchemy import text
 
-from app.auth import (account_publishers, current_account, find_account, make_token,
+from app.auth import (account_publishers, current_account, current_account_any,
+                      find_account, make_token,
                       verify_password)
 from app.db import plain_session, scoped_session
 
@@ -263,17 +264,39 @@ def login(payload: LoginIn, request: Request = None):
 
     return {"token": make_token(row.id, row.email),
             "name": row.name, "email": row.email,
+            # Первый вход — экран покажет согласие до всего остального (24.09.2026).
+            "consent_required": getattr(row, "consent_accepted_at", None) is None,
             "publishers": [{"id": p.publisher_id, "name": p.name, "domain": p.domain}
                            for p in pubs]}
 
 
 @app.get("/api/me")
-def me(acc=Depends(current_account)):
+def me(acc=Depends(current_account_any)):
+    # Открыта и без согласия: экрану надо знать, что показывать. Отдаёт только своё.
     pubs = account_publishers(acc.id)
     return {"name": acc.name, "email": acc.email,
+            "consent_required": getattr(acc, "consent_accepted_at", None) is None,
             "can_approve": bool(getattr(acc, "can_approve", True)),
             "publishers": [{"id": p.publisher_id, "name": p.name, "domain": p.domain}
                            for p in pubs]}
+
+
+@app.post("/api/consent")
+def accept_consent(acc=Depends(current_account_any)):
+    """Принять согласие на обработку ПДн. Запись — функцией ядра `pub.accept_consent`:
+    у роли кабинета нет права менять учётку, и заводить его ради одного поля значило бы
+    расширить поверхность внешнего контура. Повторный вызов момент не сдвигает."""
+    db = plain_session()
+    try:
+        at = db.execute(text("SELECT pub.accept_consent(:i)"), {"i": acc.id}).scalar()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=503,
+                            detail="Не удалось сохранить согласие — попробуйте ещё раз")
+    finally:
+        db.close()
+    return {"consent_required": False, "accepted_at": at}
 
 
 @app.get("/api/tasks")
@@ -466,8 +489,8 @@ def campaigns(acc=Depends(current_account)):
         return {"campaigns": []}
     with scoped_session(ids) as db:
         rows = db.execute(text(
-            "SELECT brand, service, surface, date_from, date_to, plan, fact, cpm, "
-            "       status, erid, site, reconciled "
+            "SELECT publisher_id, brand, service, surface, date_from, date_to, plan, "
+            "       fact, cpm, status, erid, site, reconciled "
             "  FROM pub.campaign_v1")).all()
 
     out = []
@@ -476,6 +499,9 @@ def campaigns(acc=Depends(current_account)):
         flight = ('%s — %s' % (r.date_from.strftime('%d.%m'), r.date_to.strftime('%d.%m'))
                   if r.date_from and r.date_to else '—')
         out.append({
+            # Площадка — чтобы выбор площадки на дашборде сужал и денежные плитки, а не
+            # только список заданий (аудит 23.09.2026, 7.L5).
+            "publisher_id": r.publisher_id,
             "brand": r.brand, "service": r.service, "site": r.site,
             "surface": r.surface, "flight": flight,
             # Год — от НАЧАЛА флайта: у размещения, переходящего через новый год, период
@@ -599,6 +625,47 @@ def reasons(acc=Depends(current_account)):
     return out
 
 
+# Пределы — те же, что проверяет ядро (`cabinet_gateway.MEDIA_KIT_MAX`, `REWORK_MAX`,
+# `bugs.models.MAX_FILE_BYTES`). Решает ядро; здесь они нужны, чтобы кабинет не читал в
+# память то, что ядро всё равно отклонит (аудит 23.09.2026, 1.M2).
+MEDIA_KIT_MAX = 30 * 1024 * 1024
+ATTACH_MAX = 10 * 1024 * 1024
+CHUNK = 1024 * 1024
+
+
+async def read_capped(file: UploadFile, limit: int) -> bytes:
+    """Прочитать файл порциями и отказать 413 на первой порции сверх предела.
+
+    До 23.09.2026 файлы читались целиком одним вызовом, и учётка площадки,
+    прислав сотни мегабайт, роняла процесс кабинета по памяти — повторяемо.
+    """
+    parts, total = [], 0
+    while True:
+        chunk = await file.read(CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(status_code=413,
+                                detail=f"Файл больше {limit // 1024 // 1024} МБ")
+        parts.append(chunk)
+    return b"".join(parts)
+
+
+def require_approver(acc) -> None:
+    """«Только просмотр» — значит только просмотр (владелец 24.09.2026).
+
+    Роль внутри кабинета проверяет КАБИНЕТ: у ядра своя матрица прав, к этой отношения не
+    имеющая (шлюз ядра всё равно перепроверяет — проверка на одной стороне не проверка).
+    До 24.09 запрет стоял только на вердикте, а посадочную ссылку, медиакит и файл к
+    доработке «только просмотр» менял наравне с ответственным (аудит, 1.L3).
+    """
+    if not getattr(acc, "can_approve", True):
+        raise HTTPException(
+            status_code=403,
+            detail="У вас доступ только на просмотр — это делает ваш коллега")
+
+
 class VerdictIn(BaseModel):
     verdict: str                       # ок | на доработку | отказ
     reason: Optional[str] = None
@@ -618,13 +685,8 @@ def set_verdict(task_id: int, payload: VerdictIn, acc=Depends(current_account)):
     """
     if payload.verdict not in ("ок", "на доработку", "отказ"):
         raise HTTPException(status_code=400, detail="Неизвестный ответ")
-    # Роль внутри кабинета проверяет КАБИНЕТ: ядро о ней не знает и знать не должно —
-    # у него своя матрица прав, к этой отношения не имеющая. Технический специалист
-    # смотрит баннер, коммерческий отвечает за размещение.
-    if not getattr(acc, "can_approve", True):
-        raise HTTPException(
-            status_code=403,
-            detail="У вас доступ только на просмотр — ответ ставит ваш коллега")
+    # Технический специалист смотрит баннер, коммерческий отвечает за размещение.
+    require_approver(acc)
     t = my_task(acc, task_id)
     out = call_core("POST", f"/api/cabinet-gw/pair/{task_id}/verdict", {
         "publisher_id": t.publisher_id,
@@ -652,7 +714,8 @@ def set_url(task_id: int, payload: UrlIn, acc=Depends(current_account)):
     Живёт на РАЗМЕЩЕНИИ (сделка × площадка), а не на креативе: страница одна на всю
     кампанию у этого сайта. Поэтому у второго креатива той же сделки она появится сама.
     """
-    t = my_task(acc, task_id)
+    t = my_task(acc, task_id)          # сначала «есть ли такое задание» — 404 раньше 403
+    require_approver(acc)
     return call_core("PUT", f"/api/cabinet-gw/target/{t.target_id}/url", {
         "publisher_id": t.publisher_id,
         "account_id": acc.id,
@@ -804,6 +867,7 @@ async def media_kit(file: UploadFile = File(...), acc=Depends(current_account)):
     этой учётки. У учётки с несколькими площадками медиакит грузится в первую — выбор
     появится вместе с переключателем площадки в шапке.
     """
+    require_approver(acc)
     pubs = account_publishers(acc.id)
     if not pubs:
         raise HTTPException(status_code=404, detail="Площадка не найдена")
@@ -811,7 +875,7 @@ async def media_kit(file: UploadFile = File(...), acc=Depends(current_account)):
         raise HTTPException(status_code=503,
                             detail="Кабинет не настроен на связь с системой")
 
-    data = await file.read()
+    data = await read_capped(file, MEDIA_KIT_MAX)
     try:
         r = httpx.post(
             f"{CORE_API_URL}/api/cabinet-gw/publisher/{pubs[0].publisher_id}/media-kit",
@@ -888,7 +952,7 @@ async def bug_file(report_id: int, file: UploadFile = File(...),
     if not SERVICE_TOKEN:
         raise HTTPException(status_code=503,
                             detail="Кабинет не настроен на связь с системой")
-    data = await file.read()
+    data = await read_capped(file, ATTACH_MAX)
     try:
         r = httpx.post(f"{CORE_API_URL}/api/cabinet-gw/bug/{report_id}/file",
                        params={"account_id": acc.id},
@@ -918,11 +982,12 @@ def bug_sent(report_id: int, acc=Depends(current_account)):
 async def rework_file(task_id: int, file: UploadFile = File(...),
                       acc=Depends(current_account)):
     """Приложить картинку к доработке. Файл пишет ядро — том смонтирован только туда."""
-    t = my_task(acc, task_id)
+    t = my_task(acc, task_id)          # сначала «есть ли такое задание» — 404 раньше 403
+    require_approver(acc)
     if not SERVICE_TOKEN:
         raise HTTPException(status_code=503,
                             detail="Кабинет не настроен на связь с системой")
-    data = await file.read()
+    data = await read_capped(file, ATTACH_MAX)
     try:
         r = httpx.post(f"{CORE_API_URL}/api/cabinet-gw/pair/{t.task_id}/rework-file",
                        params={"account_id": acc.id},

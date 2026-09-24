@@ -21,6 +21,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import Head from 'next/head'
+import dynamic from 'next/dynamic'
 import api, { auth, signOut, TOKEN_KEY } from '../lib/http'
 import { PreviewModal } from '../lib/preview'
 import { overlayClose } from '../lib/overlay'
@@ -33,6 +34,11 @@ import { C, CAP, KPI_SIZE, MONO, UI, arrowBtn, btn, btnSm, card, chip, dm, inp, 
 import { daysTo, startNote, urgency } from '../lib/urgency'
 import { NEED, PAY_STATE, RK_STATE, SERVICE_DOT,
   SHOW_MONEY, billBlocked, blocking, camp, inBill, inPace, sum, useDemoNow } from '../lib/demo'
+import safeHref from '../lib/safeHref'
+import { guideSeen, markGuideSeen } from './guide/seen'
+
+// Руководство — отдельным чанком: слайды нужны только тому, кто открыл окно.
+const Guide = dynamic(() => import('./guide/Guide'), { ssr: false, loading: () => null })
 
 
 
@@ -197,7 +203,7 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
         </span>
         <span style={{ flex: 1 }} />
         {t.url_state === 'есть' && (
-          <a href={t.advertiser_url} target="_blank" rel="noreferrer"
+          <a href={safeHref(t.advertiser_url)} target="_blank" rel="noreferrer"
             style={{ ...btnSm(false), textDecoration: 'none', display: 'inline-flex',
               alignItems: 'center', gap: 6 }}>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -307,14 +313,25 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
             <span style={{ flex: '1 0 100%', fontSize: 12, color: C.secondary,
               whiteSpace: 'pre-line', lineHeight: 1.45 }}>{t.url_request_text}</span>
           )}
-          <input style={{ ...inp, flex: 1, minWidth: 260, background: C.card,
-            padding: '6px 11px', fontFamily: MONO, fontSize: 12 }}
-            title={t.url_request_text || undefined}
-            placeholder={longAsk ? 'https://…' : (t.url_request_text
-              || 'пришлите ссылку на посадочную — UTM подставим сами')}
-            value={url} onChange={e => setUrl(e.target.value)} />
-          <button style={{ ...btn(true), padding: '6px 14px' }}
-            disabled={busy || !url.trim()} onClick={sendUrl}>Собрать</button>
+          {/* Посадочную присылает тот, у кого есть право ответа (владелец 24.09.2026):
+              «только просмотр» видит запрос, но поле ему не даётся — сервер всё равно
+              откажет, и поле, которое нельзя сохранить, хуже его отсутствия. */}
+          {canApprove ? (
+            <>
+              <input style={{ ...inp, flex: 1, minWidth: 260, background: C.card,
+                padding: '6px 11px', fontFamily: MONO, fontSize: 12 }}
+                title={t.url_request_text || undefined}
+                placeholder={longAsk ? 'https://…' : (t.url_request_text
+                  || 'пришлите ссылку на посадочную — UTM подставим сами')}
+                value={url} onChange={e => setUrl(e.target.value)} />
+              <button style={{ ...btn(true), padding: '6px 14px' }}
+                disabled={busy || !url.trim()} onClick={sendUrl}>Собрать</button>
+            </>
+          ) : (
+            <span style={{ fontSize: 11.5, color: C.faint }}>
+              ссылку присылает коллега с правом ответа
+            </span>
+          )}
         </div>
       )}
 
@@ -1282,6 +1299,11 @@ export default function Dashboard({ name, onSignOut }) {
   const [reasons, setReasons] = useState(null)
   const [me, setMe] = useState(null)
   const [err, setErr] = useState('')
+  // Руководство открывается само ОДИН раз — при первом входе в этом браузере (владелец,
+  // 24.09.2026); дальше — пиктограммой «i» в шапке.
+  const [guide, setGuide] = useState(false)
+  useEffect(() => { if (!guideSeen()) setGuide(true) }, [])
+  const closeGuide = useCallback(() => { markGuideSeen(); setGuide(false) }, [])
   /* Кампании грузятся ЗДЕСЬ, а не внутри блока: из этого же массива считаются плитки
      шапки. Держи их два компонента по отдельности — шапка и таблица однажды показали бы
      разные деньги по одним размещениям, и спорить с экраном пришлось бы человеку. */
@@ -1345,9 +1367,12 @@ export default function Dashboard({ name, onSignOut }) {
     /* Задания с висящим запросом ссылки в пачку не идут: ядро отклонит такой «ок», а
        цикл рвётся на первой ошибке — одна заблокированная площадка оставила бы
        несогласованным весь хвост очереди. Их число называется вслух, иначе «согласовать
-       все» согласует не все и промолчит об этом. */
-    const list = allTasks.filter(t => t.url_state !== 'запрошена')
-    const held = allTasks.length - list.length
+       все» согласует не все и промолчит об этом.
+       Берётся ВИДИМЫЙ список, а не весь: при выбранной площадке «все» означает «все,
+       что на экране». До 23.09.2026 кнопка согласовывала и скрытые фильтром — необратимо
+       и с числом в подтверждении, не совпадавшим с экраном (аудит, 7.H2). */
+    const list = shownTasks.filter(t => t.url_state !== 'запрошена')
+    const held = shownTasks.length - list.length
     if (!list.length) {
       setErr('Все задания ждут посадочные страницы — согласовывать пока нечего')
       return
@@ -1453,7 +1478,9 @@ export default function Dashboard({ name, onSignOut }) {
   // не потому, что не нужны, а потому что считались из выдуманных строк `lib/demo.js`:
   // придуманные деньги на экране — хуже, чем их отсутствие. Теперь источник тот же
   // массив, что у таблицы ниже, и разойтись им нечем.
-  const k = campaignKpi(camps || [])
+  // Плитки считаются по ВЫБРАННОЙ площадке, как и «требует решения» ниже: иначе выбор
+  // меняет список, а деньги в шапке продолжают говорить про все сайты (аудит, 7.L5).
+  const k = campaignKpi((camps || []).filter(c => !pubFilter || c.publisher_id === pubFilter))
   const KPI = [
     ...((camps && camps.length) ? [
       ['расчётный биллинг', rub(k.billing), '', '', null,
@@ -1500,7 +1527,8 @@ export default function Dashboard({ name, onSignOut }) {
         nav={NAV.map(n => (n.key === 'queue'
           ? { ...n, badge: shownTasks.length } : n))}
         active={active} onNav={setActive} count={(dash?.publishers || []).length}
-        onExit={onSignOut} />
+        onExit={onSignOut} onGuide={() => setGuide(true)} />
+      {guide && <Guide onClose={closeGuide} />}
 
       <div style={{ ...WRAP, display: 'flex', gap: 14, alignItems: 'flex-start',
         padding: '20px 20px 60px' }}>
@@ -1633,7 +1661,7 @@ export default function Dashboard({ name, onSignOut }) {
                 ? <span style={{ fontSize: 11.5, color: C.faint }}>
                     у вас доступ только на просмотр
                   </span>
-                : !!allTasks.length && (
+                : !!shownTasks.length && (
                   <>
                     {/* «Согласовать все» — не украшение: один баннер уходит на несколько
                         сайтов, и площадка отвечает по каждому отдельно. Подтверждение
@@ -1641,7 +1669,9 @@ export default function Dashboard({ name, onSignOut }) {
                     <button style={{ ...soft(C.accent, C.accentBorder),
                       padding: '7px 14px', fontSize: 12.5 }} disabled={bulk}
                       onClick={approveAll}>
-                      {bulk ? 'Согласуем…' : 'Согласовать все'}
+                      {/* Число — то же, что в подтверждении: без заданий, ждущих ссылку. */}
+                      {bulk ? 'Согласуем…'
+                        : `Согласовать все · ${shownTasks.filter(t => t.url_state !== 'запрошена').length}`}
                     </button>
                   </>
                 )}
@@ -1775,12 +1805,12 @@ export default function Dashboard({ name, onSignOut }) {
                   {profile.chat_title || 'рабочий чат'}
                 </span>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <a href={profile.chat_url || '#'} target="_blank" rel="noreferrer"
+                  <a href={safeHref(profile.chat_url) || '#'} target="_blank" rel="noreferrer"
                     style={{ ...btnSm(false), flex: 1, textAlign: 'center',
                       textDecoration: 'none',
                       opacity: profile.chat_url ? 1 : .45,
                       pointerEvents: profile.chat_url ? 'auto' : 'none' }}>Телеграм</a>
-                  <a href={profile.chat_url_max || '#'} target="_blank" rel="noreferrer"
+                  <a href={safeHref(profile.chat_url_max) || '#'} target="_blank" rel="noreferrer"
                     style={{ ...btnSm(false), flex: 1, textAlign: 'center',
                       textDecoration: 'none',
                       opacity: profile.chat_url_max ? 1 : .45,

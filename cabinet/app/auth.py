@@ -75,7 +75,8 @@ def find_account(email: str):
     db = plain_session()
     try:
         return db.execute(text(
-            "SELECT id, email, name, hashed_password, is_active, can_approve "
+            "SELECT id, email, name, hashed_password, is_active, can_approve, "
+            "consent_accepted_at "
             "FROM pub.account_v1 WHERE lower(email) = lower(:e)"), {"e": email}).first()
     finally:
         db.close()
@@ -92,7 +93,24 @@ def account_publishers(account_id: int):
         db.close()
 
 
+# Отказ без согласия — строкой-ключом: экран узнаёт его и показывает форму согласия,
+# а не «ошибку» (владелец, 24.09.2026).
+CONSENT_REQUIRED = "consent_required"
+
+
 def current_account(creds: HTTPAuthorizationCredentials = Depends(bearer)):
+    """Учётка, ПРИНЯВШАЯ согласие на обработку ПДн, — для всех ручек с данными.
+
+    Проверку держит сервер: экран согласия обходится прямым вызовом API. Без согласия
+    открыты только две двери, и они берут `current_account_any`.
+    """
+    row = current_account_any(creds)
+    if getattr(row, "consent_accepted_at", None) is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=CONSENT_REQUIRED)
+    return row
+
+
+def current_account_any(creds: HTTPAuthorizationCredentials = Depends(bearer)):
     """Учётка из токена. Проверяем ЖИВОСТЬ на каждом запросе, а не только при входе.
 
     Отключение доступа обязано действовать сразу: иначе выданный на 12 часов токен
@@ -112,7 +130,7 @@ def current_account(creds: HTTPAuthorizationCredentials = Depends(bearer)):
     db = plain_session()
     try:
         row = db.execute(text(
-            "SELECT id, email, name, is_active, can_approve "
+            "SELECT id, email, name, is_active, can_approve, consent_accepted_at "
             "FROM pub.account_v1 WHERE id = :i"),
             {"i": int(data["sub"])}).first()
     finally:

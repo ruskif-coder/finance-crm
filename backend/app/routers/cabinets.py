@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.audit import log_action
+from app.audit import log_action, require_admin
 from app.cabinet import journal, overview
 from app.cabinet.models import (CABINET_STATES, Cabinet, CabinetAccount,
                                 CabinetPublisher)
@@ -292,6 +292,11 @@ def list_cabinets(db: Session = Depends(get_db), current_user: User = Depends(VI
             "services": [{"name": n, "surfaces": sorted(s)}
                          for n, s in sorted(svc.items())],
             "log": box["rows"], "log_total": box["total"],
+            "log_days": overview.LOG_WINDOW_DAYS,
+            "created_at": c.created_at,
+            # Правило удаления считается ЗДЕСЬ, одно на ручку и на экран: иначе кнопка
+            # показывалась бы там, где сервер откажет (владелец, 24.09.2026).
+            "deletable": deletable(c, own_ids),
         })
 
     taken = {lnk.publisher_id for lnk in links}
@@ -463,6 +468,46 @@ def update_cabinet(cabinet_id: int, payload: CabinetPatch, db: Session = Depends
         log_action(db, current_user, "cabinet_update", "cabinet", c.id,
                    f"{c.name}: {', '.join(changes)}")
     return {"id": c.id, "state": c.state}
+
+
+def deletable(c, publisher_ids) -> bool:
+    """Кабинет можно удалить: не служебный, не активный, без площадок."""
+    return c.kind != 'служебный' and c.state != 'активен' and not publisher_ids
+
+
+@router.delete("/{cabinet_id}")
+def delete_cabinet(cabinet_id: int, db: Session = Depends(get_db),
+                   current_user: User = Depends(require_admin)):
+    """Удалить кабинет, который никому не служит (владелец, 24.09.2026) — только админ.
+
+    Вместе с кабинетом уходят его учётки (без кабинета им некуда входить) и лента — база
+    уносит их каскадом (`cabinet_log`, настройки учёток). Запись об удалении остаётся в
+    журнале действий ядра: лента кабинета удаляется вместе с ним.
+    """
+    c = db.query(Cabinet).filter(Cabinet.id == cabinet_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Кабинет не найден")
+    links = [lnk.publisher_id for lnk in db.query(CabinetPublisher)
+             .filter(CabinetPublisher.cabinet_id == c.id).all()]
+    if c.kind == 'служебный':
+        raise HTTPException(status_code=400, detail="Служебный кабинет не удаляется")
+    if c.state == 'активен':
+        raise HTTPException(status_code=400,
+                            detail="Кабинет активен — сначала приостановите его")
+    if links:
+        raise HTTPException(status_code=400,
+                            detail=f"В кабинете площадок: {len(links)} — сначала открепите их")
+    name, state = c.name, c.state
+    accounts = [a.email for a in db.query(CabinetAccount)
+                .filter(CabinetAccount.cabinet_id == c.id).all()]
+    db.query(CabinetAccount).filter(CabinetAccount.cabinet_id == c.id).delete(
+        synchronize_session=False)
+    db.delete(c)
+    db.commit()
+    log_action(db, current_user, "cabinet_delete", "cabinet", cabinet_id,
+               f"{name} ({state}); учёток удалено: {len(accounts)}"
+               + (f" — {', '.join(accounts)}" if accounts else ""))
+    return {"message": "Кабинет удалён", "accounts_removed": len(accounts)}
 
 
 class PublishersIn(BaseModel):

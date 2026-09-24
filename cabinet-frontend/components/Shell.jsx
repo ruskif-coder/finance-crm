@@ -25,6 +25,12 @@ const Sun = () => (
   </svg>
 )
 
+// Квадратная кнопка-пиктограмма шапки — одна на три кнопки группы.
+const ICON_BTN = { width: 32, height: 32, borderRadius: 9, display: 'inline-flex',
+  alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+  background: C.card, border: `1px solid ${C.border}`, color: C.secondary,
+  transition: 'color 150ms ease, border-color 150ms ease' }
+
 export function ThemeToggle() {
   const [dark, setDark] = useState(false)
   useEffect(() => {
@@ -37,17 +43,23 @@ export function ThemeToggle() {
     try { localStorage.setItem('cabinet_theme', next ? 'dark' : 'light') } catch { /* приватный режим */ }
   }
   return (
-    <button onClick={flip} title={dark ? 'Светлая тема' : 'Тёмная тема'}
-      style={{ width: 32, height: 32, borderRadius: 9, display: 'inline-flex',
-        alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-        background: C.card, border: `1px solid ${C.border}`, color: C.secondary,
-        transition: 'color 150ms ease, border-color 150ms ease' }}>
+    <button onClick={flip} title={dark ? 'Светлая тема' : 'Тёмная тема'} style={ICON_BTN}>
       {dark ? <Sun /> : <Moon />}
     </button>
   )
 }
 
-export function Header({ profile, name, account, nav, active, onNav, onExit, count = 1 }) {
+/* «i» — руководство. Стоит ПЕРЕД переключателем темы (владелец, 24.09.2026). */
+const Info = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 16v-4M12 8h.01" />
+  </svg>
+)
+
+export function Header({ profile, name, account, nav, active, onNav, onExit, onGuide,
+  count = 1 }) {
   return (
     /* Плавающая карточка, а не полоса во всю ширину: кабинет — гостевой экран, и
        шапка на нём читается как панель приложения, а не как рамка сайта. Не липкая —
@@ -96,11 +108,19 @@ export function Header({ profile, name, account, nav, active, onNav, onExit, cou
         <span style={{ flex: 1 }} />
         {/* Кнопка сбоя стоит ПЕРЕД переключателем темы (владелец 17.09.2026): рядом с
             тем, что человек и так трогает, а не спрятана в профиле. */}
-        <BugReport btnStyle={{ width: 32, height: 32, borderRadius: 9, display: 'inline-flex',
-          alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-          background: C.card, border: `1px solid ${C.border}`, color: C.secondary,
-          marginRight: 8 }} />
-        <ThemeToggle />
+        {/* Сбой · руководство · тема — одной группой, 7 px между кнопками (владелец
+            24.09.2026): общий отступ шапки (gap 18) разносил их как три отдельных
+            элемента, а вплотную они сливались. */}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <BugReport btnStyle={ICON_BTN} />
+          {!!onGuide && (
+            <button onClick={onGuide} title="Руководство" aria-label="Руководство"
+              style={ICON_BTN}>
+              <Info />
+            </button>
+          )}
+          <ThemeToggle />
+        </span>
 
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
           <span style={{ width: 32, height: 32, borderRadius: 10, background: C.text,

@@ -35,6 +35,7 @@ import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { TONE, toneOf } from '@/lib/tone'
 import { CABINET_STATES, cabinetState } from '@/lib/cabinetState'
+import safeHref from '@/lib/safeHref'
 
 /* ── мелкие части, все на модульном уровне ──────────────────────────────────
    Компонент, объявленный внутри рендера родителя, пересоздаётся на каждый ввод, и
@@ -70,16 +71,77 @@ const ServiceChip = ({ name, surfaces }) => (
   </span>
 )
 
-const Metric = ({ label, value, color }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingRight: 18,
-    borderRight: '1px solid var(--border-card)', marginRight: 18 }}>
-    <span style={{ ...CAP, marginBottom: 0 }}>{label}</span>
-    <span style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700,
-      color: value ? (color || 'var(--text-primary)') : 'var(--text-disabled)' }}>
-      {value || '—'}
+/* ── Строка кабинета (макет владельца 24.09.2026) ──
+   Свёрнутая карточка — это шапка и полоса сводки: по ней видно, живёт ли кабинет, не
+   раскрывая его. Полоса одна и в свёрнутом, и в раскрытом виде — две разные сводки
+   одного кабинета разошлись бы при первой же правке.
+   Колонки полосы задаются одной сеткой: широкие — рабочие показатели, узкие справа —
+   состав кабинета. */
+const SUM_GRID = ('minmax(96px,.8fr) minmax(0,1.5fr) minmax(0,1.5fr) minmax(0,1.5fr) '
+  + 'minmax(0,1.5fr) minmax(0,1.5fr) minmax(0,.75fr) minmax(0,.6fr) minmax(0,.6fr)')
+
+// Ноль — это значение («креативов на согласовании нет»), а не пропуск: рисуем его, но
+// приглушённо, чтобы глаз цеплялся только за ненулевое.
+const SumCell = ({ label, value, unit, color, first }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0,
+    padding: '0 16px', borderLeft: first ? 0 : '1px solid var(--border-card)' }}>
+    <span style={{ ...CAP, marginBottom: 0, whiteSpace: 'nowrap', overflow: 'hidden',
+      textOverflow: 'ellipsis' }}>{label}</span>
+    <span style={{ display: 'flex', alignItems: 'baseline', gap: 5, whiteSpace: 'nowrap' }}>
+      {typeof value === 'object' && value !== null ? value : (
+        <span style={{ fontFamily: MONO, fontSize: 18, fontWeight: 700,
+          color: value == null ? 'var(--text-disabled)'
+            : value === 0 ? 'var(--text-faint)' : (color || 'var(--text-primary)') }}>
+          {value == null ? '—' : value}
+        </span>
+      )}
+      {!!unit && value != null && (
+        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{unit}</span>
+      )}
     </span>
   </div>
 )
+
+const StateChip = ({ state }) => {
+  const [bg, fg] = cabinetState(state).plashka
+  return (
+    <span style={{ ...chip(bg, fg, 'transparent'), width: 'max-content' }}>
+      <span style={{ width: 6, height: 6, borderRadius: 3, background: fg }} />
+      {state}
+    </span>
+  )
+}
+
+const ddmm = (v) => (v ? `${String(v).slice(8, 10)}.${String(v).slice(5, 7)}` : null)
+const ddmmyy = (v) => (v ? `${ddmm(v)}.${String(v).slice(2, 4)}` : '')
+
+function CabinetSummary({ c, contacts }) {
+  const withAcc = contacts.filter(x => x.has_account)
+  const full = withAcc.filter(x => x.level === 'все').length
+  const a = c.activity || {}
+  return (
+    <div style={{ background: 'var(--bg-tint)', borderRadius: 12, padding: '12px 0',
+      marginTop: 14, overflowX: 'auto' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: SUM_GRID, minWidth: 900 }}>
+        <SumCell first label="Статус" value={<StateChip state={c.state} />} />
+        <SumCell label="Креативов" value={a.creatives_pending ?? 0} unit="шт."
+          color="var(--danger)" />
+        <SumCell label="РК" value={a.campaigns_live ?? 0} unit="РК" color="var(--income)" />
+        <SumCell label="Сверок" value={a.recons_open ?? 0} unit="шт." color="var(--warning)" />
+        <SumCell label="Последний вход" value={ddmm(a.last_login)} />
+        {/* Кабинет без единой учётки нерабочий — площадка не может войти (правило 3). */}
+        <SumCell label="Учётки" unit="конт." value={
+          <span style={{ fontFamily: MONO, fontSize: 18, fontWeight: 700,
+            color: withAcc.length ? 'var(--income)' : 'var(--danger)' }}>
+            {withAcc.length} из {contacts.length}
+          </span>} />
+        <SumCell label="Полный доступ" value={full} unit="уч." />
+        <SumCell label="Площадок" value={(c.publishers || []).length} />
+        <SumCell label="Событий" value={c.log_total ?? 0} unit={`${c.log_days || 30} дн.`} />
+      </div>
+    </div>
+  )
+}
 
 const LogRow = ({ row }) => (
   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '7px 0',
@@ -763,7 +825,11 @@ export default function CabinetsPage() {
   const [fService, setFService] = useState('')
   const [fNoAcc, setFNoAcc] = useState(false)
 
-  const [folded, setFolded] = useState({})
+  // Раскрытые кабинеты. По умолчанию свёрнуты все (владелец, 24.09.2026): сводка в
+  // строке отвечает на «живёт ли кабинет», раскрывают — чтобы работать с людьми.
+  const [open, setOpen] = useState({})
+  const [delCab, setDelCab] = useState(null)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [allSites, setAllSites] = useState({})
   const [adding, setAdding] = useState(null)      // id кабинета с открытой формой
   const [editing, setEditing] = useState(null)    // account_id | c<contact_id>
@@ -775,7 +841,10 @@ export default function CabinetsPage() {
   const [vpop, setVpop] = useState(null)
 
   useRefreshOnReturn(() => load())
-  useEffect(() => { setMayEdit(can(getPermissions(), 'dir_publishers_cabinets', 'edit')) }, [])
+  useEffect(() => {
+    setMayEdit(can(getPermissions(), 'dir_publishers_cabinets', 'edit'))
+    try { setIsAdmin(localStorage.getItem('role') === 'admin') } catch { setIsAdmin(false) }
+  }, [])
 
   const load = useCallback(async () => {
     setErr('')
@@ -982,22 +1051,32 @@ export default function CabinetsPage() {
                 : c.state === 'черновик' ? 'var(--border-inner)' : 'var(--border-card)' }}>
 
               {/* ── шапка карточки ── */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <button onClick={() => setFolded(f => ({ ...f, [c.id]: !f[c.id] }))}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <button onClick={() => setOpen(f => ({ ...f, [c.id]: !f[c.id] }))}
+                  aria-label={open[c.id] ? 'Свернуть' : 'Раскрыть'}
                   style={{ border: 0, background: 'transparent', cursor: 'pointer',
-                    color: 'var(--text-faint)', fontSize: 13, padding: 0 }}>
-                  {folded[c.id] ? '▸' : '▾'}
+                    color: 'var(--text-faint)', fontSize: 11, padding: 0 }}>
+                  {open[c.id] ? '▾' : '▸'}
                 </button>
-                <span style={{ fontSize: 18, fontWeight: 700 }}>{c.name}</span>
+                <span style={{ fontSize: 20, fontWeight: 700, cursor: 'pointer' }}
+                  onClick={() => setOpen(f => ({ ...f, [c.id]: !f[c.id] }))}>{c.name}</span>
                 {service && <Chip text="служебный" tone="черновик" />}
-                <Chip text={c.state} />
                 <span style={{ ...CAP, marginBottom: 0 }}>
-                  {service ? 'видит все площадки · связей не хранит'
-                    : `кабинет площадки${c.manager ? ` · ведёт ${c.manager}` : ''}`}
+                  {service ? 'видит все площадки · связей не хранит' : 'кабинет площадки'}
+                  {c.manager ? ` · ведёт ${c.manager}` : ''}
+                  {c.created_at ? ` · создан ${ddmmyy(c.created_at)}` : ''}
                 </span>
                 <span style={{ flex: 1 }} />
+                {!!(c.services || []).length && (
+                  <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap',
+                    paddingRight: 12, borderRight: '1px solid var(--border-card)' }}>
+                    {c.services.map(s => (
+                      <ServiceChip key={s.name} name={s.name} surfaces={s.surfaces} />
+                    ))}
+                  </span>
+                )}
                 {mayEdit && (
-                  <button style={btnSm(false)} disabled={busy}
+                  <button style={btn(false)} disabled={busy}
                     title={c.state === 'активен'
                       ? 'Приостановить — люди кабинета сразу перестанут видеть задания'
                       : 'Активировать кабинет'}
@@ -1006,36 +1085,20 @@ export default function CabinetsPage() {
                     {c.state === 'активен' ? 'Приостановить' : 'Активировать'}
                   </button>
                 )}
+                {/* Удаление — только админу и только того, что никому не служит: правило
+                    считает сервер (`deletable`), экран его не повторяет. */}
+                {isAdmin && c.deletable && (
+                  <button style={{ ...btn(false), color: 'var(--danger-fg)' }} disabled={busy}
+                    title="Удалить неактивный кабинет без площадок"
+                    onClick={() => setDelCab(c)}>Удалить</button>
+                )}
               </div>
 
-              {!folded[c.id] && (
+              <CabinetSummary c={c} contacts={contacts} />
+
+              {!!open[c.id] && (
                 <>
-                  {/* ── полоса активности ── */}
-                  <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap',
-                    gap: 10, background: 'var(--bg-tint)', borderRadius: 12,
-                    padding: '12px 16px', margin: '14px 0 16px' }}>
-                    <Metric label="Креативов на согласовании" value={c.activity.creatives_pending}
-                      color="var(--danger)" />
-                    <Metric label="Запущенных РК" value={c.activity.campaigns_live}
-                      color="var(--income)" />
-                    <Metric label="Сверок открыто" value={c.activity.recons_open}
-                      color="var(--warning)" />
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <span style={{ ...CAP, marginBottom: 0 }}>Последний вход</span>
-                      <span style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700,
-                        color: c.activity.last_login ? 'var(--text-primary)' : 'var(--text-disabled)' }}>
-                        {c.activity.last_login
-                          ? `${String(c.activity.last_login).slice(8, 10)}.${String(c.activity.last_login).slice(5, 7)}`
-                          : '—'}
-                      </span>
-                    </div>
-                    <span style={{ flex: 1 }} />
-                    <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {(c.services || []).map(s => (
-                        <ServiceChip key={s.name} name={s.name} surfaces={s.surfaces} />
-                      ))}
-                    </span>
-                  </div>
+                  <div style={{ height: 16 }} />
 
                   {/* ── три колонки 60 / 20 / 20 (владелец 15.09.2026) ──
                       Задаются через flex-основу 0, а не calc(60% - 16px): с учётом gap
@@ -1284,11 +1347,32 @@ export default function CabinetsPage() {
               Вход: <b>{shown.email}</b>
             </div>
             {shown.chat && (
-              <a href={shown.chat.url} target="_blank" rel="noreferrer"
+              <a href={safeHref(shown.chat.url)} target="_blank" rel="noreferrer"
                 style={{ ...btnSm(false), textDecoration: 'none', width: 'max-content' }}>
                 Открыть чат · {shown.chat.name}
               </a>
             )}
+          </div>
+        </Modal>
+      )}
+
+      {delCab && (
+        <Modal title={`Удалить кабинет · ${delCab.name}`} width={520}
+          onClose={() => setDelCab(null)}
+          summary="Действие необратимо. Кабинет не активен и без площадок."
+          footer={(
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button style={btn(false)} onClick={() => setDelCab(null)}>Отмена</button>
+              <button style={{ ...btn(true), background: 'var(--danger)' }} disabled={busy}
+                onClick={() => run(async () => {
+                  await api.delete(`/cabinets/${delCab.id}`, auth()); setDelCab(null)
+                })}>Удалить кабинет</button>
+            </div>
+          )}>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            Вместе с кабинетом удаляются его учётки
+            {(delCab.accounts || []).length ? ` (${delCab.accounts.length})` : ' (их нет)'} и
+            лента событий. Запись об удалении останется в журнале действий.
           </div>
         </Modal>
       )}

@@ -27,6 +27,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import auth as cab_auth          # noqa: E402
 from app.db import plain_session          # noqa: E402
 
+# Токен и живость учётки проверяет `current_account_any`; согласие на обработку ПДн —
+# слой поверх него (`current_account`), его приборы в `test_consent.py`. Учётки стенда
+# согласия не давали, и проверка токена через верхний слой падала бы не на том.
+
 
 def _creds(token: str) -> HTTPAuthorizationCredentials:
     return HTTPAuthorizationCredentials(scheme='Bearer', credentials=token)
@@ -50,7 +54,7 @@ def account():
 
 def test_own_token_is_accepted(account):
     """Иначе все отказы ниже зелены и при вечно закрытом входе."""
-    got = cab_auth.current_account(_creds(cab_auth.make_token(account.id, account.email)))
+    got = cab_auth.current_account_any(_creds(cab_auth.make_token(account.id, account.email)))
     assert got.id == account.id
 
 
@@ -67,7 +71,7 @@ def test_token_signed_with_another_key_is_rejected(account):
                         'exp': datetime.now(timezone.utc) + timedelta(hours=1)},
                        'ключ-финмодуля-а-не-кабинета', algorithm='HS256')
     with pytest.raises(HTTPException) as e:
-        cab_auth.current_account(_creds(alien))
+        cab_auth.current_account_any(_creds(alien))
     assert e.value.status_code == 401
 
 
@@ -83,7 +87,7 @@ def test_token_from_another_realm_is_rejected(account):
                             'exp': datetime.now(timezone.utc) + timedelta(hours=1)},
                            cab_auth.SECRET_KEY, algorithm=cab_auth.ALGORITHM)
     with pytest.raises(HTTPException) as e:
-        cab_auth.current_account(_creds(core_like))
+        cab_auth.current_account_any(_creds(core_like))
     assert e.value.status_code == 401
 
 
@@ -94,13 +98,13 @@ def test_expired_token_is_rejected(account):
                       'exp': datetime.now(timezone.utc) - timedelta(minutes=1)},
                      cab_auth.SECRET_KEY, algorithm=cab_auth.ALGORITHM)
     with pytest.raises(HTTPException) as e:
-        cab_auth.current_account(_creds(old))
+        cab_auth.current_account_any(_creds(old))
     assert e.value.status_code == 401
 
 
 def test_no_credentials_is_rejected():
     with pytest.raises(HTTPException) as e:
-        cab_auth.current_account(None)
+        cab_auth.current_account_any(None)
     assert e.value.status_code == 401
 
 
@@ -108,7 +112,7 @@ def test_token_for_a_missing_account_is_rejected(account):
     """Учётку могли удалить — токен обязан перестать работать сразу."""
     ghost = cab_auth.make_token(10 ** 9, 'ghost@nowhere.test')
     with pytest.raises(HTTPException) as e:
-        cab_auth.current_account(_creds(ghost))
+        cab_auth.current_account_any(_creds(ghost))
     assert e.value.status_code in (401, 403)
 
 
@@ -127,7 +131,7 @@ def test_deactivated_account_loses_access_immediately(account, monkeypatch):
     границу.
     """
     token = cab_auth.make_token(account.id, account.email)
-    assert cab_auth.current_account(_creds(token)).id == account.id
+    assert cab_auth.current_account_any(_creds(token)).id == account.id
 
     class _Row:
         id, email, name = account.id, account.email, account.name
@@ -142,7 +146,7 @@ def test_deactivated_account_loses_access_immediately(account, monkeypatch):
 
     monkeypatch.setattr(cab_auth, 'plain_session', lambda: _Db())
     with pytest.raises(HTTPException) as e:
-        cab_auth.current_account(_creds(token))
+        cab_auth.current_account_any(_creds(token))
     assert e.value.status_code == 403
 
 

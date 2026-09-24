@@ -88,6 +88,9 @@ class CabinetAccount(Base):
     can_approve = Column(Boolean, nullable=False, default=True, server_default='true')
     created_at = Column(DateTime, server_default=func.now())
     last_login_at = Column(DateTime)
+    # Момент принятия согласия на обработку ПДн (миграция 2026-09-24_cabinet_consent.sql).
+    # Пишет его только функция `pub.accept_consent` — кабинет прав на UPDATE не имеет.
+    consent_accepted_at = Column(DateTime)
 
     cabinet = relationship("Cabinet", back_populates="accounts")
 
