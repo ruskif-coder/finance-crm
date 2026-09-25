@@ -119,8 +119,10 @@ def test_the_tag_carries_the_site_domain_not_the_placeholder(fixture):
     dsp = naming.final_tag(raw, "maksavit.ru", "dsp")
     adfox = naming.final_tag(raw, "maksavit.ru", "adfox")
     assert "[RANDOM]" not in dsp and dsp.endswith("https://maksavit.ru")
-    assert "%system.random%" in dsp, "у нашего DSP макрос %system.random%"
-    assert "{RND}" in adfox, "у Adfox макрос {RND}"
+    # Образец владельца (2), 25.09.2026: наш код → наш DSP → `{RND}`; не наш → Adfox →
+    # `%system.random%`.
+    assert "{RND}" in dsp, "у нашего DSP макрос {RND}"
+    assert "%system.random%" in adfox, "у Adfox макрос %system.random%"
 
 
 def test_a_placement_without_a_pixel_keeps_its_row(fixture):

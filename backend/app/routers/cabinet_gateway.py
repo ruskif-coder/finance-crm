@@ -162,19 +162,22 @@ class CabinetUrlIn(BaseModel):
     author_name: str
 
 
-@router.put("/target/{target_id}/url", dependencies=[Depends(require_cabinet_service)])
-def cabinet_target_url(target_id: int, payload: CabinetUrlIn,
-                       db: Session = Depends(get_db)):
+@router.put("/task/{pair_id}/url", dependencies=[Depends(require_cabinet_service)])
+def cabinet_task_url(pair_id: int, payload: CabinetUrlIn,
+                     db: Session = Depends(get_db)):
     """Посадочная страница, присланная площадкой в ответ на наш запрос.
 
-    Ссылка живёт на ПОЛУЧАТЕЛЕ (сделка × площадка), а не на креативе: страница одна на
-    всю кампанию у этого сайта, и у второго креатива она та же.
+    Адрес — ЗАДАНИЕ (пара «креатив × площадка»), и ссылка ложится в этот креатив
+    (владелец 25.09.2026): у разных креативов одной площадки в одной РК посадочные бывают
+    разные. До 25.09.2026 она ложилась на площадку сделки и появлялась у всех креативов.
 
     Схема проверяется, как у ссылки на документ договора: `javascript:` и `data:` в
     кликаемом поле — известный вектор, и то, что поле заполняет внешнее лицо, делает
     проверку не формальностью, а условием.
     """
-    target = db.query(LaunchPrepTarget).filter(LaunchPrepTarget.id == target_id).first()
+    pair = db.query(LaunchPrepPair).filter(LaunchPrepPair.id == pair_id).first()
+    target = (db.query(LaunchPrepTarget).filter(LaunchPrepTarget.id == pair.target_id).first()
+              if pair else None)
     if not target or target.publisher_id != payload.publisher_id:
         raise HTTPException(status_code=404, detail="Размещение не найдено")
 
@@ -188,12 +191,14 @@ def cabinet_target_url(target_id: int, payload: CabinetUrlIn,
         raise HTTPException(status_code=400, detail="Ссылка длиннее 512 знаков")
 
     acc = _actor(db, payload.account_id, payload.publisher_id, approve=True)
-    target.advertiser_url = url
+    from app.routers.launch_prep import _member
+    member = _member(db, pair.set_id, pair.target_id, create=True)
+    member.advertiser_url = url
     journal.write(db, 'посадочная', cabinet_id=acc.cabinet_id, account_id=acc.id,
                   publisher_id=payload.publisher_id, actor_name=payload.author_name,
                   entity_type='launch_prep_target', entity_id=target.id)
     db.commit()
-    return {"target_id": target.id, "url_state": url_state(target)}
+    return {"target_id": target.id, "url_state": url_state(member)}
 
 
 @router.get("/notify-kinds", dependencies=[Depends(require_cabinet_service)])
@@ -458,6 +463,32 @@ def cabinet_rights_letter(pair_id: int, account_id: int, publisher_id: int,
     # До 11.09.2026 она была ровно в одном месте из десяти.
     full = existing_upload_path(row.rights_letter_path)
     return FileResponse(full, filename=row.rights_letter_name or "rights-letter",
+                        media_type="application/octet-stream")
+
+
+@router.get("/task/{pair_id}/file/{file_id}",
+            dependencies=[Depends(require_cabinet_service)])
+def cabinet_creative_file(pair_id: int, file_id: int, account_id: int, publisher_id: int,
+                          db: Session = Depends(get_db)):
+    """Баннер задания файлом — кнопка «скачать» в кабинете (владелец 25.09.2026).
+
+    Тот же двойной замок, что у письма о правах: учётка вправе говорить за площадку, пара
+    принадлежит площадке — и третий, свой: файл принадлежит креативу ЭТОЙ пары. Без него
+    своя пара с подобранным номером файла отдавала бы баннеры чужих кампаний. На любой
+    отказ — 404: разные коды ответили бы, существует ли файл с таким номером.
+    """
+    from app.launch_prep.models import LaunchPrepCreativeFile
+    _actor(db, account_id, publisher_id)
+    f = (db.query(LaunchPrepCreativeFile)
+         .join(LaunchPrepPair, LaunchPrepPair.set_id == LaunchPrepCreativeFile.set_id)
+         .join(LaunchPrepTarget, LaunchPrepTarget.id == LaunchPrepPair.target_id)
+         .filter(LaunchPrepPair.id == pair_id,
+                 LaunchPrepCreativeFile.id == file_id,
+                 LaunchPrepTarget.publisher_id == publisher_id).first())
+    if f is None:
+        raise HTTPException(status_code=404, detail="Креатив не найден")
+    full = existing_upload_path(f.path)
+    return FileResponse(full, filename=f.original_name or "creative",
                         media_type="application/octet-stream")
 
 

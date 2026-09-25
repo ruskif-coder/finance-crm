@@ -41,7 +41,7 @@ def test_a_viewer_is_refused_where_approval_is_needed(monkeypatch):
 def test_every_changing_door_asks_for_approval():
     """Вердикт, посадочная, медиакит, файл доработки — все четыре двери с правом ответа."""
     src = io.open(SRC, encoding="utf-8").read()
-    for fn in ("cabinet_verdict", "cabinet_target_url", "cabinet_media_kit",
+    for fn in ("cabinet_verdict", "cabinet_task_url", "cabinet_media_kit",
                "cabinet_rework_file"):
         body = src[src.index(f"def {fn}("):]
         body = body[:body.index("\n@router")] if "\n@router" in body else body

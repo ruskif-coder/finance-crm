@@ -13,9 +13,9 @@
  * в проекте запрещены, а нужные оттенки уже заведены.
  */
 import Link from 'next/link'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { UI, MONO, card, btnSm } from '../salesTableKit'
-import BrandMarkingDialog, { saveBrandMarking } from './BrandMarking'
+import BrandMarkingDialog, { saveBrandMarking, BRAND_MARKING_SAVED } from './BrandMarking'
 import { fmtDateFull } from '../../lib/salesFormat'
 import api, { auth } from '../../lib/http'
 import InitialPicker from './InitialPicker'
@@ -179,6 +179,15 @@ export default function AssemblyOrd({ dealId, data, err, canEdit, onReload }) {
   const [bindErr, setBindErr] = useState('')
   const [marking, setMarking] = useState(null)   // бренд, чью маркировку правим
   const done = () => { setPicking(false); if (onReload) onReload() }
+  // Код ККТУ могли ввести из блока креативов — он общий для бренда, сводку перечитать.
+  // Колбэк держим в ссылке: родитель пересоздаёт его на каждой отрисовке.
+  const reloadRef = useRef(onReload)
+  reloadRef.current = onReload
+  useEffect(() => {
+    const h = () => { if (reloadRef.current) reloadRef.current() }
+    window.addEventListener(BRAND_MARKING_SAVED, h)
+    return () => window.removeEventListener(BRAND_MARKING_SAVED, h)
+  }, [])
 
   // force — осознанная привязка договора вне связей выгрузки ОРД; подтверждение
   // спрашивает сам выбор, здесь только передаём решение дальше.
@@ -297,9 +306,8 @@ export default function AssemblyOrd({ dealId, data, err, canEdit, onReload }) {
       {!!marking && (
         <BrandMarkingDialog brand={marking} onClose={() => setMarking(null)}
           onSave={async (payload) => {
-            await saveBrandMarking(marking.id, payload)
+            await saveBrandMarking(marking.id, payload)   // сводку перечитает событие
             setMarking(null)
-            if (onReload) onReload()
           }} />
       )}
     </div>

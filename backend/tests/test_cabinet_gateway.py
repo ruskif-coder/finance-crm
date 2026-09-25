@@ -131,7 +131,7 @@ def test_url_for_someone_elses_target_is_404(env):
                               url='https://example.test/x',
                               author_name='чужой')
     with pytest.raises(HTTPException) as e:
-        gw.cabinet_target_url(env.target.id, payload, env.db)
+        gw.cabinet_task_url(env.pair.id, payload, env.db)
     assert e.value.status_code == 404
 
 
@@ -144,7 +144,7 @@ def test_url_scheme_is_checked(env):
         payload = gw.CabinetUrlIn(publisher_id=env.own, account_id=env.acc, url=bad,
                                   author_name='площадка')
         with pytest.raises(HTTPException) as e:
-            gw.cabinet_target_url(env.target.id, payload, env.db)
+            gw.cabinet_task_url(env.pair.id, payload, env.db)
         assert e.value.status_code == 400, f'схема {bad} прошла'
 
 
@@ -152,8 +152,34 @@ def test_empty_url_is_refused(env):
     payload = gw.CabinetUrlIn(publisher_id=env.own, account_id=env.acc, url='   ',
                               author_name='площадка')
     with pytest.raises(HTTPException) as e:
-        gw.cabinet_target_url(env.target.id, payload, env.db)
+        gw.cabinet_task_url(env.pair.id, payload, env.db)
     assert e.value.status_code == 400
+
+
+
+def test_url_from_cabinet_lands_in_the_creative_of_the_task(env):
+    """Ссылка из кабинета ложится в креатив ЗАДАНИЯ, а не на площадку сделки
+    (владелец 25.09.2026): у других креативов той же площадки её быть не должно."""
+    from app.launch_prep.models import LaunchPrepSetTarget
+    from app.routers.launch_prep import _member
+    m = _member(env.db, env.pair.set_id, env.pair.target_id, create=True)
+    before = m.advertiser_url
+    others = {(x.set_id): x.advertiser_url for x in env.db.query(LaunchPrepSetTarget).filter(
+        LaunchPrepSetTarget.target_id == env.pair.target_id,
+        LaunchPrepSetTarget.set_id != env.pair.set_id).all()}
+    payload = gw.CabinetUrlIn(publisher_id=env.own, account_id=env.acc,
+                              url='https://landing.test/from-cabinet', author_name='площадка')
+    try:
+        gw.cabinet_task_url(env.pair.id, payload, env.db)
+        env.db.refresh(m)
+        assert m.advertiser_url == 'https://landing.test/from-cabinet'
+        for x in env.db.query(LaunchPrepSetTarget).filter(
+                LaunchPrepSetTarget.target_id == env.pair.target_id,
+                LaunchPrepSetTarget.set_id != env.pair.set_id).all():
+            assert x.advertiser_url == others[x.set_id], "ссылка легла и в чужой креатив"
+    finally:
+        m.advertiser_url = before
+        env.db.commit()
 
 
 # ── пределы загрузок ─────────────────────────────────────────────────────────
@@ -196,3 +222,45 @@ def test_upload_name_cannot_escape_the_directory():
         assert '/' not in safe and '\\' not in safe
         assert not safe.startswith('..') or '..' not in os.path.normpath(
             os.path.join('/app/uploads/mediakit', safe)).split('/')
+
+
+def _file_of(db, set_id, other=False):
+    from app.launch_prep.models import LaunchPrepCreativeFile
+    q = db.query(LaunchPrepCreativeFile)
+    q = q.filter(LaunchPrepCreativeFile.set_id != set_id) if other \
+        else q.filter(LaunchPrepCreativeFile.set_id == set_id)
+    return q.order_by(LaunchPrepCreativeFile.id).first()
+
+
+def test_creative_file_of_someone_elses_pair_is_404(env):
+    """Скачать баннер (владелец 25.09.2026) — только по своему заданию."""
+    f = _file_of(env.db, env.pair.set_id)
+    if f is None:
+        pytest.skip('у креатива пары нет файла')
+    with pytest.raises(HTTPException) as e:
+        gw.cabinet_creative_file(env.pair.id, f.id, env.acc, env.other, env.db)
+    assert e.value.status_code == 404
+
+
+def test_creative_file_of_another_creative_is_404(env):
+    """Номер файла подобран к своей паре, но файл от ЧУЖОГО креатива — отказ: иначе по
+    своей паре перебором скачивались бы баннеры всех кампаний."""
+    f = _file_of(env.db, env.pair.set_id, other=True)
+    if f is None:
+        pytest.skip('нет файла другого креатива')
+    with pytest.raises(HTTPException) as e:
+        gw.cabinet_creative_file(env.pair.id, f.id, env.acc, env.own, env.db)
+    assert e.value.status_code == 404
+
+
+def test_creative_file_is_served_as_attachment(env):
+    f = _file_of(env.db, env.pair.set_id)
+    if f is None:
+        pytest.skip('у креатива пары нет файла')
+    try:
+        r = gw.cabinet_creative_file(env.pair.id, f.id, env.acc, env.own, env.db)
+    except HTTPException as e:          # файла нет на диске стенда — это не про права
+        assert e.status_code == 404 and 'файл' in str(e.detail).lower()
+        return
+    assert 'attachment' in r.headers['content-disposition']
+    assert r.media_type == 'application/octet-stream'

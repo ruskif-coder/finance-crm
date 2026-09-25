@@ -38,6 +38,7 @@ NO_BASE = 9700
 CODES = ('ZZTA', 'ZZTB')
 
 _ADMIN = SimpleNamespace(role=SimpleNamespace(key='admin'), id=None, name='тест')
+_LANDING = 'https://site.test/tovar/1'
 
 
 def _pass_traffic(db, set_id, only=None):
@@ -107,8 +108,7 @@ def env():
         # требует либо ссылку, либо нажатый запрос — иначе согласованному креативу
         # некуда вести. Без неё фикстура проверяла бы путь, которого больше нет.
         t = LaunchPrepTarget(deal_id=deal.id, publisher_id=p.id, service_id=service.id,
-                             surface_kind='web',
-                             advertiser_url=f'https://{p.domain or "site.test"}/tovar/1')
+                             surface_kind='web')
         db.add(t)
         targets.append(t)
     db.flush()
@@ -119,7 +119,9 @@ def env():
     # Состав комплекта — ЧЛЕНСТВО, а не все площадки сделки (миграция
     # 2026-08-27_set_targets.sql): у второго креатива состав свой.
     for t in targets:
-        db.add(LaunchPrepSetTarget(set_id=cset.id, target_id=t.id))
+        # Посадочная — у пары «креатив × площадка» (с 25.09.2026), не у площадки сделки.
+        db.add(LaunchPrepSetTarget(set_id=cset.id, target_id=t.id,
+                                   advertiser_url=_LANDING))
     db.flush()
     db.add(LaunchPrepCreativeFile(set_id=cset.id, path='creatives/test.png',
                                   original_name='test.png', size_bytes=10))
@@ -303,12 +305,16 @@ def test_open_url_request_blocks_agreement(env):
     lp.send_set(env.cset.id, lp.SendIn(), env.db, _ADMIN)
     pairs = _pass_traffic(env.db, env.cset.id)
 
-    target = env.db.query(LaunchPrepTarget).filter(
-        LaunchPrepTarget.id == pairs[0].target_id).first()
-    # Ссылку СНИМАЕМ: фикстура с 18.09.2026 заполняет её всем получателям (без неё не
-    # проходит отправка), а здесь проверяется именно открытый запрос без ответа.
-    target.advertiser_url = None
-    target.url_requested_at = datetime.now()
+    def member(pair):
+        return env.db.query(LaunchPrepSetTarget).filter(
+            LaunchPrepSetTarget.set_id == pair.set_id,
+            LaunchPrepSetTarget.target_id == pair.target_id).first()
+
+    m = member(pairs[0])
+    # Ссылку СНИМАЕМ: фикстура заполняет её всем получателям (без неё не проходит
+    # отправка), а здесь проверяется именно открытый запрос без ответа.
+    m.advertiser_url = None
+    m.url_requested_at = datetime.now()
     env.db.commit()
 
     with pytest.raises(HTTPException) as e:
@@ -320,14 +326,13 @@ def test_open_url_request_blocks_agreement(env):
                     env.db, _ADMIN)
 
     # Ссылка пришла — «ок» проходит.
-    t2 = env.db.query(LaunchPrepTarget).filter(
-        LaunchPrepTarget.id == pairs[1].target_id).first()
-    t2.advertiser_url = None          # см. выше: фикстура заполняет её для отправки
-    t2.url_requested_at = datetime.now()
+    m2 = member(pairs[1])
+    m2.advertiser_url = None          # см. выше: фикстура заполняет её для отправки
+    m2.url_requested_at = datetime.now()
     env.db.commit()
     with pytest.raises(HTTPException):
         lp.pair_verdict(pairs[1].id, lp.PairVerdictIn(verdict='ок'), env.db, _ADMIN)
-    t2.advertiser_url = 'https://example.test/lp'
+    m2.advertiser_url = 'https://example.test/lp'
     env.db.commit()
     out = lp.pair_verdict(pairs[1].id, lp.PairVerdictIn(verdict='ок'), env.db, _ADMIN)
     assert out["code"], "с пришедшей ссылкой пара срастается как обычно"
@@ -350,7 +355,8 @@ def test_numbering_counts_agreed_pairs_not_iterations(env):
     env.db.flush()
     # Персональный комплект адресован своей площадке — это делает `create_set`,
     # а здесь комплект собран руками, поэтому членство заводим явно.
-    env.db.add(LaunchPrepSetTarget(set_id=second.id, target_id=env.targets[0].id))
+    env.db.add(LaunchPrepSetTarget(set_id=second.id, target_id=env.targets[0].id,
+                                   advertiser_url=_LANDING))
     env.db.add(LaunchPrepCreativeFile(set_id=second.id, path='creatives/t2.png',
                                       original_name='t2.png', size_bytes=10))
     env.db.add(LaunchPrepReview(set_id=second.id, kind='первичная_тт', verdict='ок',
@@ -400,7 +406,8 @@ def test_second_creative_does_not_inherit_the_first_ones_platforms(env):
     second = LaunchPrepCreativeSet(deal_id=env.deal.id, no=NO_BASE + 7)
     env.db.add(second)
     env.db.flush()
-    env.db.add(LaunchPrepSetTarget(set_id=second.id, target_id=env.targets[1].id))
+    env.db.add(LaunchPrepSetTarget(set_id=second.id, target_id=env.targets[1].id,
+                                   advertiser_url=_LANDING))
     env.db.commit()
 
     first_list = {t.id for t in lp._targets_for_set(env.db, env.cset)}
@@ -428,7 +435,8 @@ def test_removing_a_platform_leaves_it_in_the_other_creative(env):
     second = LaunchPrepCreativeSet(deal_id=env.deal.id, no=NO_BASE + 9)
     env.db.add(second)
     env.db.flush()
-    env.db.add(LaunchPrepSetTarget(set_id=second.id, target_id=env.targets[0].id))
+    env.db.add(LaunchPrepSetTarget(set_id=second.id, target_id=env.targets[0].id,
+                                   advertiser_url=_LANDING))
     env.db.commit()
 
     lp.drop_set_target(second.id, env.targets[0].id, env.db, _ADMIN)

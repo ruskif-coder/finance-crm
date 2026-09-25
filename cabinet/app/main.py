@@ -711,12 +711,13 @@ class UrlIn(BaseModel):
 def set_url(task_id: int, payload: UrlIn, acc=Depends(current_account)):
     """Посадочная страница в ответ на наш запрос.
 
-    Живёт на РАЗМЕЩЕНИИ (сделка × площадка), а не на креативе: страница одна на всю
-    кампанию у этого сайта. Поэтому у второго креатива той же сделки она появится сама.
+    Живёт у ЗАДАНИЯ — пары «креатив × площадка» (с 25.09.2026): у разных креативов одной
+    площадки в одной РК посадочные бывают разные, поэтому ссылка ложится ровно в этот
+    креатив, а не на площадку сделки.
     """
     t = my_task(acc, task_id)          # сначала «есть ли такое задание» — 404 раньше 403
     require_approver(acc)
-    return call_core("PUT", f"/api/cabinet-gw/target/{t.target_id}/url", {
+    return call_core("PUT", f"/api/cabinet-gw/task/{task_id}/url", {
         "publisher_id": t.publisher_id,
         "account_id": acc.id,
         "url": payload.url,
@@ -919,6 +920,29 @@ def rights_letter(task_id: int, acc=Depends(current_account)):
         raise HTTPException(status_code=404, detail="Письмо не найдено")
     return Response(content=r.content,
                     media_type=r.headers.get("content-type", "application/octet-stream"),
+                    headers={"Content-Disposition":
+                             r.headers.get("content-disposition", "attachment")})
+
+
+@app.get("/api/tasks/{task_id}/files/{file_id}")
+def creative_file(task_id: int, file_id: int, acc=Depends(current_account)):
+    """Скачать баннер задания (владелец 25.09.2026). Файл отдаёт ЯДРО и само проверяет,
+    что файл от креатива этого задания, — кабинет здесь лишь проверяет, что задание своё.
+    """
+    t = my_task(acc, task_id)
+    if not SERVICE_TOKEN:
+        raise HTTPException(status_code=503,
+                            detail="Кабинет не настроен на связь с системой")
+    try:
+        r = httpx.get(f"{CORE_API_URL}/api/cabinet-gw/task/{t.task_id}/file/{file_id}",
+                      params={"account_id": acc.id, "publisher_id": t.publisher_id},
+                      headers={"X-Cabinet-Token": SERVICE_TOKEN}, timeout=120.0)
+    except httpx.RequestError:
+        raise HTTPException(status_code=503,
+                            detail="Система временно недоступна — попробуйте позже")
+    if r.status_code >= 400:
+        raise HTTPException(status_code=404, detail="Креатив не найден")
+    return Response(content=r.content, media_type="application/octet-stream",
                     headers={"Content-Disposition":
                              r.headers.get("content-disposition", "attachment")})
 

@@ -400,8 +400,8 @@ class LaunchPrepSetTarget(Base):
 
     Список площадок принадлежит креативу, а не сделке: во втором креативе состав свой,
     и добавленная в него площадка не должна появляться в первом. Сама площадка при этом
-    остаётся сущностью сделки — там её состояние и посадочная страница, они про площадку
-    в кампании, а не про конкретный баннер. Разбор целиком — в шапке миграции.
+    остаётся сущностью сделки — там её состояние в кампании. Посадочная с 25.09.2026 —
+    здесь, у креатива: у разных креативов одной площадки она бывает разной.
     """
     __tablename__ = "launch_prep_set_target"
     __table_args__ = (UniqueConstraint("set_id", "target_id", name="uq_lp_set_target"),)
@@ -411,4 +411,14 @@ class LaunchPrepSetTarget(Base):
     target_id = Column(Integer, ForeignKey("launch_prep_target.id", ondelete="CASCADE"),
                        nullable=False)
     added_at = Column(DateTime, server_default=func.now(), default=datetime.utcnow)
+    # Посадочная, запрос ссылки и плановый объём — ЗДЕСЬ, у пары «креатив × площадка»
+    # (миграция 2026-09-25_set_target_landing_and_plan.sql, владелец 25.09.2026): у разных
+    # креативов одной площадки в одной РК посадочные бывают разные. Одноимённые поля у
+    # `LaunchPrepTarget` заморожены — код их больше не читает.
+    advertiser_url = Column(String(512))
+    url_requested_at = Column(DateTime)
+    url_request_text = Column(Text)
+    # Плановый объём показов площадки по этому креативу: задан — РК берёт его, остаток
+    # плана делит между остальными по весам.
+    plan_show = Column(Integer)
 

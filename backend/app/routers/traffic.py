@@ -218,9 +218,14 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
     from app.dsp.targeting_creative import blind_sets, targeting_miss
     blind = blind_sets(db, set_ids)
 
+    # Строки состава креативов — одним запросом: посадочная и запрос живут там.
+    from app.routers.launch_prep import _members_of
+    members = _members_of(db, set_ids)
+
     today = date.today()
     out = []
     for review, pair, s, target, pub, deal in rows:
+        member = members.get((s.id, target.id))
         mine = [f for f in files if f.set_id == s.id]
         v = urgency.evaluate(_facts(review, target, deal), today)
         out.append({
@@ -254,16 +259,18 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
             # решает про весь креатив. Пусто — покажет.
             "targeting_miss": targeting_miss(target.surface_kind,
                                              pub.our_code if pub else None),
-            # Посадочная живёт на ПОЛУЧАТЕЛЕ, а не на паре: страница одна на всю кампанию
-            # у этого сайта. Отдаём `target_id` и состояние запроса, чтобы трафик мог не
-            # только увидеть дыру, но и закрыть её — той же ручкой, что аккаунт.
+            # Посадочная — у пары «КРЕАТИВ × площадка» (с 25.09.2026): у разных креативов
+            # одной площадки она бывает разной. Отдаём `target_id` и состояние запроса,
+            # чтобы трафик мог не только увидеть дыру, но и закрыть её — той же ручкой,
+            # что аккаунт (адрес — креатив + площадка).
             "target_id": target.id,
-            "advertiser_url": target.advertiser_url,
+            "advertiser_url": member.advertiser_url if member else None,
             # Состояние ссылки — ОДНОЙ функцией на весь бэкенд. Здесь стояла своя копия
             # тех же трёх ответов; копия дешевле импорта ровно до первого изменения
             # правила, после которого один экран начинает врать.
-            "url_state": url_state(target),
-            "url_request_text": target.url_request_text,
+            "url_state": url_state(member),
+            "url_request_text": member.url_request_text if member else None,
+            "plan_show": member.plan_show if member else None,
             "period_from": target.period_from or deal.period_from,
             "period_to": target.period_to or deal.period_to,
             # Размер баннера — из самого баннера (`<meta name="ad.size">` при распаковке),

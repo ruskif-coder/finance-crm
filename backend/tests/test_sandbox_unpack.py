@@ -269,3 +269,45 @@ def test_click_state_is_reported():
     assert sandbox.click_problem(ok) is None
     assert sandbox.click_problem(none) == 'нет ссылки'
     assert sandbox.click_problem(real) == 'ссылка без макроса'
+
+
+# ── HTML в корне архива: загрузчик DSP ищет его только там (прод, 25.09.2026) ──
+#
+# Архив, упакованный на Mac, лежит во вложенной папке (с кириллическим именем, без
+# пометки кодировки) плюс `__MACOSX/` и `.DS_Store`. Песочница точку входа находит, а
+# загрузчик DSP отвечает «Html file not found» (код 2021). Готовя архив, поднимаем
+# содержимое папки точки входа в корень и отбрасываем служебный мусор Mac.
+
+def test_nested_banner_is_lifted_to_the_root():
+    folder = 'html_brand_АПТЕКА_dcp/'
+    src = _zbytes({folder + 'index.html': '<html><head><meta name="ad.size" content="width=0,height=0">'
+                                          '</head><body><a href="{LINK_UNESC}">b</a><img src="bg.jpg"></body></html>',
+                   folder + 'bg.jpg': b'\xff\xd8JPEG',
+                   '__MACOSX/' + folder + '._index.html': b'junk',
+                   folder + '.DS_Store': b'junk'})
+    out, changes = sandbox.prepare_for_dsp(src)
+    assert 'root' in changes
+    import io
+    with zipfile.ZipFile(io.BytesIO(out)) as z:
+        names = sorted(z.namelist())
+    assert names == ['bg.jpg', 'index.html'], names
+
+
+def test_banner_already_at_the_root_is_not_rebuilt_for_this():
+    src = _zbytes({'index.html': '<html><head><meta name="ad.size" content="width=0,height=0">'
+                                 '</head><body><a href="{LINK_UNESC}">b</a></body></html>',
+                   'img/pic.png': b'\x89PNG'})
+    out, changes = sandbox.prepare_for_dsp(src)
+    assert changes == [] and out == src
+
+
+def test_mac_junk_is_dropped_even_when_banner_is_at_the_root():
+    src = _zbytes({'index.html': '<html><head><meta name="ad.size" content="width=0,height=0"></head><body><a href="{LINK_UNESC}">b</a></body></html>',
+                   'bg.jpg': b'\xff\xd8JPEG',
+                   '__MACOSX/._index.html': b'junk',
+                   '.DS_Store': b'junk'})
+    out, changes = sandbox.prepare_for_dsp(src)
+    assert changes == ['mac']
+    import zipfile as _z
+    import io as _io
+    assert sorted(_z.ZipFile(_io.BytesIO(out)).namelist()) == ['bg.jpg', 'index.html']

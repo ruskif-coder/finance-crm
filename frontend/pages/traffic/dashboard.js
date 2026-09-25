@@ -34,6 +34,7 @@ import {
 } from '@/components/traffic/dashboardKit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import HungAttempts from '@/components/traffic/HungAttempts'
+import CopyCode from '@/components/CopyCode'
 
 const DashIcon = ({ size = 21 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -696,7 +697,7 @@ export default function TrafficDashboard() {
                     background: open === r.id ? 'var(--accent-tint)' : u.bg }}>
                   <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>{open === r.id ? '▾' : '▸'}</span>
                   <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: 'var(--accent)' }}>
-                    {r.deal_code}</span>
+                    <CopyCode text={r.deal_code} /></span>
 
                   <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
                     <span style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden',

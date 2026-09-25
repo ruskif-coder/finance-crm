@@ -33,6 +33,7 @@ import { saveResponse } from '@/lib/download'
 import { Cube } from '@/components/LogoLoader'
 import { TargetingCampaignHint, useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
 import safeHref from '@/lib/safeHref'
+import CopyCode from '@/components/CopyCode'
 import { openAimTab, aimTabGo, aimTabFail, aimToneFor, aimNotLive, aimExpired, RESTART_NOTE } from '@/lib/aimTab'
 
 /* Что сказать человеку про письмо. Ответ ручки различает пять исходов, и каждый значит
@@ -231,7 +232,7 @@ export default function TrafficQueue() {
   // Отдельно от ошибки: «письмо ушло» — не ошибка, а красная плашка на успехе учит
   // людей не читать плашки вовсе.
   const [note, setNote] = useState('')
-  const [urlAsk, setUrlAsk] = useState(null)   // { targetId, name, text }
+  const [urlAsk, setUrlAsk] = useState(null)   // { targetId, setId, name, text }
   const [phrases, setPhrases] = useState([])
   const [dragOver, setDragOver] = useState(false)
 
@@ -343,7 +344,8 @@ export default function TrafficQueue() {
   async function saveUrlAsk() {
     setBusy(true); setErr('')
     try {
-      const r = await api.post(`/launch-prep/target/${urlAsk.targetId}/url-request`,
+      // Запрос — у ЭТОГО креатива (владелец 25.09.2026).
+      const r = await api.post(`/launch-prep/set/${urlAsk.setId}/target/${urlAsk.targetId}/url-request`,
         { text: urlAsk.text }, auth())
       setUrlAsk(null)
       // Человеку важно знать, отправила ли система письмо или текст нужно слать самому.
@@ -591,7 +593,7 @@ export default function TrafficQueue() {
                     color: 'var(--text-muted)', fontFamily: UI, minWidth: 0 }}>
                   <Chevron open={!!open[g.set.id]} />
                   <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700,
-                                 color: 'var(--accent)' }}>{g.deal.code}</span>
+                                 color: 'var(--accent)' }}><CopyCode text={g.deal.code} /></span>
                   <span style={{ display: 'flex', flexDirection: 'column', gap: 1,
                     alignItems: 'flex-start', minWidth: 0, maxWidth: 300 }}>
                     <span title={g.set.title || ''}
@@ -769,7 +771,7 @@ export default function TrafficQueue() {
                       </div>
                       <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.04em',
                         color: 'var(--text-cap)', marginTop: 2, paddingLeft: 14 }}>
-                        {r.pair_prefix || r.publisher.code || ''}
+                        <CopyCode text={r.pair_prefix || r.publisher.code || ''} />
                       </div>
                       {/* Кнопка нацеливания у креатива осталась, но на ЭТОЙ паре она баннер
                           не покажет: площадка не в нашей DSP или это приложение. Причину
@@ -812,7 +814,7 @@ export default function TrafficQueue() {
                               title={r.url_state === 'запрошена'
                                 ? `Уже запрошена: ${r.url_request_text || ''}`
                                 : 'Запросить ссылку у площадки'}
-                              onClick={() => setUrlAsk({ targetId: r.target_id,
+                              onClick={() => setUrlAsk({ targetId: r.target_id, setId: r.set.id,
                                 name: r.publisher.name || r.publisher.domain,
                                 text: r.url_request_text || '' })}>
                               {r.url_state === 'запрошена' ? 'запрошена' : 'запросить'}

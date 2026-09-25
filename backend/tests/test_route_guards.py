@@ -219,3 +219,27 @@ def test_sales_role_keeps_the_dropdowns_it_needs():
         assert _passes(sales, stage), "продажи потеряли каталог стадий"
     finally:
         db.close()
+
+
+def _perm_sections_of(method, path):
+    """Разделы, по которым пускает ручка: метка `_perm_sections` фабрик прав."""
+    out = set()
+
+    def walk(dep):
+        call = getattr(dep, "call", None)
+        out.update(getattr(call, "_perm_sections", ()) or ())
+        for sub in getattr(dep, "dependencies", []):
+            walk(sub)
+    for r in app.routes:
+        if isinstance(r, APIRoute) and r.path == path and method in r.methods:
+            walk(r.dependant)
+    return out
+
+
+def test_traffic_reads_targeting_campaign_state_without_the_catalog():
+    """Рядовой трафик (роль без «Каталога трафика») получал 403 на состояние кампании
+    нацеливания, и подсказка у ◎ показывала отказ (прод, 25.09.2026). Состояние —
+    часть конвейера: его обязан читать каждый, кто работает в конвейере."""
+    got = _perm_sections_of("GET", "/api/traffic-catalog/targeting-campaign")
+    assert "traffic_queue" in got, got
+    assert "traffic_catalog" in got, "настройщикам каталога доступ оставить"

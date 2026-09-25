@@ -231,6 +231,21 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
         )}
         <button style={btnSm(false)} disabled={!preview?.preview_url}
           onClick={() => setShow(true)}>предпросмотр</button>
+        {/* Скачать баннер — пиктограммой рядом с предпросмотром (владелец 25.09.2026):
+            тот же файл, что открывает предпросмотр. Отдаёт ядро через кабинет, по
+            ссылке, а не из песочницы — песочница открыта без входа. */}
+        {!!preview?.id && (
+          <a href={`/api/tasks/${t.task_id}/files/${preview.id}`} download
+            title={`Скачать ${preview.name || 'креатив'}`} aria-label="Скачать креатив"
+            style={{ ...btnSm(false), textDecoration: 'none', display: 'inline-flex',
+              alignItems: 'center', justifyContent: 'center', padding: '5px 8px' }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <path d="M7 10l5 5 5-5M12 15V3" />
+            </svg>
+          </a>
+        )}
         {/* Три исхода, слева направо от мягкого к необратимому. Смысл несёт текст, а
             заливка — только у главного действия: несколько цветных плашек подряд
             превращают строку в светофор. */}

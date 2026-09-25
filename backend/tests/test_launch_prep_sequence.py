@@ -257,8 +257,18 @@ def test_prolonged_set_skips_the_traffic_step(prolonged):
     cset = (db.query(LaunchPrepCreativeSet)
             .filter(LaunchPrepCreativeSet.deal_id == out["id"])
             .order_by(LaunchPrepCreativeSet.id).first())
-    # Первичная проверка перенесена вместе с материалом — отправка проходит сразу.
+    # Первичная проверка перенесена вместе с материалом.
     assert _state(db, out["id"], cset.id) == 'готов к отправке'
+
+    # Посадочные продление НЕ переносит (владелец 25.09.2026): поля пустые, пока их не
+    # заполнит аккаунт, — и без них отправка не проходит.
+    with pytest.raises(HTTPException):
+        lp.send_set(cset.id, lp.SendIn(), db, _ADMIN)
+    from app.launch_prep.models import LaunchPrepSetTarget
+    for m in db.query(LaunchPrepSetTarget).filter(LaunchPrepSetTarget.set_id == cset.id).all():
+        assert m.advertiser_url is None, "посадочная перенеслась при продлении"
+        lp.set_member_url(cset.id, m.target_id, lp.TargetUrlIn(url='https://lp.test/new'),
+                          db, _ADMIN)
 
     lp.send_set(cset.id, lp.SendIn(), db, _ADMIN)
     rows = db.query(LaunchPrepReview).filter(LaunchPrepReview.set_id == cset.id).all()

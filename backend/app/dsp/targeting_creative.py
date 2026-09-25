@@ -203,17 +203,18 @@ def _landing(db: Session, s: LaunchPrepCreativeSet) -> str:
     Поэтому здесь нет ни одной ветки отказа: лестница предпочтений, последняя ступень
     которой всегда даёт адрес. Держит это прибор, проверяющий отсутствие `raise`.
     """
+    # Посадочные — у пары «креатив × площадка» (с 25.09.2026): сперва этого креатива,
+    # потом любого креатива той же сделки.
     url = db.execute(text("""
-        SELECT t.advertiser_url
-          FROM launch_prep_pair pr
-          JOIN launch_prep_target t ON t.id = pr.target_id
-         WHERE pr.set_id = :s AND coalesce(t.advertiser_url, '') <> ''
-         ORDER BY pr.id LIMIT 1"""), {"s": s.id}).scalar()
+        SELECT st.advertiser_url FROM launch_prep_set_target st
+         WHERE st.set_id = :s AND coalesce(st.advertiser_url, '') <> ''
+         ORDER BY st.id LIMIT 1"""), {"s": s.id}).scalar()
     if not url:
         url = db.execute(text("""
-            SELECT t.advertiser_url FROM launch_prep_target t
-             WHERE t.deal_id = :d AND coalesce(t.advertiser_url, '') <> ''
-             ORDER BY t.id LIMIT 1"""), {"d": s.deal_id}).scalar()
+            SELECT st.advertiser_url FROM launch_prep_set_target st
+              JOIN launch_prep_creative_set cs ON cs.id = st.set_id
+             WHERE cs.deal_id = :d AND coalesce(st.advertiser_url, '') <> ''
+             ORDER BY st.id LIMIT 1"""), {"d": s.deal_id}).scalar()
     if not url:
         url = db.execute(text("""
             SELECT a.website FROM sales_deals d

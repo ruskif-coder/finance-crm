@@ -158,5 +158,15 @@ export default function BrandMarkingDialog({ brand, onSave, onClose }) {
    карточка сделки просто перечитывает готовность к ЕРИД. */
 export async function saveBrandMarking(brandId, payload) {
   const r = await api.put(`/sales/directories/brands/${brandId}/marking`, payload, auth())
+  // Код ККТУ — свойство БРЕНДА, и его ждут все креативы сделки сразу. Перечитывала
+  // готовность только та строка, откуда код ввели: у остальных «не заполнен код ККТУ»
+  // висел до перезагрузки страницы, хотя код уже лежал в базе (прод 25.09.2026, у
+  // сделки 20 креативов). Поэтому сохранение объявляет себя всей странице.
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(BRAND_MARKING_SAVED, { detail: { brandId } }))
+  }
   return r.data
 }
+
+/* Событие «маркировка бренда сохранена» — его слушают строки ЕРИД креативов. */
+export const BRAND_MARKING_SAVED = 'brand-marking-saved'

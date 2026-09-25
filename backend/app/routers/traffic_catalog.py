@@ -25,13 +25,19 @@ from app.ad.models import PublisherBlock
 from app.audit import log_action
 from app.database import get_db
 from app.models import User
-from app.permissions import require_permission
+from app.permissions import require_any_permission, require_permission
 from app.sales.models import (PUBLISHER_ARCHIVE_STATUS, SalesPublisher,
                               SalesPublisherSurface)
 
 router = APIRouter()
 
 VIEW = require_permission("traffic_catalog", "view")
+# Состояние кампании нацеливания — часть КОНВЕЙЕРА: подсказка у ◎ и цвет «время
+# истекло». Рядовой трафик каталога не настраивает и права на него не имеет — и получал
+# 403, а подсказка показывала отказ (прод, 25.09.2026). Читать его может каждый, кто
+# работает в конвейере; настраивать — по-прежнему только каталог.
+CAMPAIGN_STATE_VIEW = require_any_permission((("traffic_catalog", "view"),
+                                              ("traffic_queue", "view")))
 CREATE = require_permission("traffic_catalog", "create")
 EDIT = require_permission("traffic_catalog", "edit")
 DELETE = require_permission("traffic_catalog", "delete")
@@ -344,7 +350,8 @@ def get_site_script(db: Session = Depends(get_db), user: User = Depends(VIEW)):
 
 
 @router.get("/targeting-campaign")
-def get_targeting_campaign(db: Session = Depends(get_db), user: User = Depends(VIEW)):
+def get_targeting_campaign(db: Session = Depends(get_db),
+                           user: User = Depends(CAMPAIGN_STATE_VIEW)):
     """Кампания нацеливания ЛИЦОМ: имя, статус, сроки — а не голый хеш.
 
     Настройка хранит хеш, и по нему человек не может сказать ничего: ни какая это

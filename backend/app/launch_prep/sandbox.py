@@ -245,7 +245,9 @@ def _fix_links(html: str) -> Tuple[str, bool]:
 
 
 def prepare_for_dsp(data: bytes) -> Tuple[bytes, list]:
-    """Архив, готовый для DSP. `(байты, что поправлено)` — список из 'ad.size' / 'link'.
+    """Архив, готовый для DSP. `(байты, что поправлено)` — список из 'ad.size' / 'link' /
+    'root' (точка входа поднята из вложенной папки в корень архива) / 'mac' (убран
+    мусор Mac-архиватора: `__MACOSX/`, `.DS_Store`; при 'root' он убирается тоже).
 
     ЗАЧЕМ. DSP не принимает архив без `<meta name="ad.size">` (код 2053), а клик ведёт
     через макрос `{LINK_UNESC}` в `<a href>`. Узнавали мы о нехватке при отправке — через
@@ -280,15 +282,34 @@ def prepare_for_dsp(data: bytes) -> Tuple[bytes, list]:
         html, linked = _fix_links(html)
         if linked:
             changes.append("link")
+        # HTML — В КОРЕНЬ (прод, 25.09.2026): загрузчик DSP ищет его только там и на
+        # архив с вложенной папкой отвечает «Html file not found» (код 2021). Так пакует
+        # Mac: папка с именем баннера, рядом `__MACOSX/` и `.DS_Store`. Песочница точку
+        # входа находит сама — поэтому предпросмотр работал, а загрузка в DSP нет.
+        prefix = entry.rsplit("/", 1)[0] + "/" if "/" in entry else ""
+        if prefix:
+            changes.append("root")
+        elif any(_mac_junk(i.filename) for i in infos):
+            changes.append("mac")         # баннер в корне, но с мусором Mac-архиватора
         if not changes:
             return data, []
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as out:
-            for info in src.infolist():
-                body = html.encode("utf-8") if info.filename == entry \
-                    else src.read(info.filename)
-                out.writestr(info, body, compress_type=info.compress_type)
+            for info in infos:
+                name = info.filename
+                if _mac_junk(name) or not name.startswith(prefix):
+                    continue          # служебное Mac и всё вне папки баннера
+                body = html.encode("utf-8") if name == entry else src.read(name)
+                zi = zipfile.ZipInfo(name[len(prefix):], date_time=info.date_time)
+                zi.external_attr = info.external_attr
+                out.writestr(zi, body, compress_type=info.compress_type)
     return buf.getvalue(), changes
+
+
+def _mac_junk(name: str) -> bool:
+    """Служебное Mac-архиватора: `__MACOSX/`, `.DS_Store`, `._*`. Баннеру не нужно."""
+    base = name.rsplit("/", 1)[-1]
+    return name.startswith("__MACOSX/") or base == ".DS_Store" or base.startswith("._")
 
 
 def read_size(uploads_root: str, token: str, entry: str) -> Optional[str]:

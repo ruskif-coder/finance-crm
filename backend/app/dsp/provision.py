@@ -34,7 +34,7 @@ from app.dsp.client import MsClient, MsError
 from app.ext_lock import DSP_PROVISION, only_one
 from app.files_safe import inside_uploads
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepPair,
-                                    LaunchPrepTarget)
+                                    LaunchPrepSetTarget)
 from app.sales.models import SalesPublisher
 from app.weborama import naming, tags as wtags
 
@@ -72,9 +72,12 @@ def _rows(db: Session, camp: AdCampaign) -> list:
     pairs = {p.id: p for p in db.query(LaunchPrepPair)
              .filter(LaunchPrepPair.id.in_(
                  {c.pair_id for c in crs if c.pair_id} or [0])).all()}
-    targets = {t.id: t for t in db.query(LaunchPrepTarget)
-               .filter(LaunchPrepTarget.id.in_(
-                   {p.target_id for p in pairs.values()} or [0])).all()}
+    # Посадочная — у пары «креатив × площадка» (с 25.09.2026), не у площадки сделки:
+    # у разных креативов одной площадки она бывает разной. Под ключом "target" строке
+    # отдаётся строка состава креатива — из неё берётся только `advertiser_url`.
+    members = {(m.set_id, m.target_id): m for m in db.query(LaunchPrepSetTarget)
+               .filter(LaunchPrepSetTarget.set_id.in_(
+                   {p.set_id for p in pairs.values()} or [0])).all()}
     pubs = {p.id: p for p in db.query(SalesPublisher)
             .filter(SalesPublisher.id.in_({p.publisher_id for p in pls.values()})).all()}
 
@@ -86,7 +89,7 @@ def _rows(db: Session, camp: AdCampaign) -> list:
         pair = pairs.get(c.pair_id) if c.pair_id else None
         out.append({"creative": c, "placement": p, "publisher": pubs.get(p.publisher_id),
                     "file": files.get(c.file_id),
-                    "target": targets.get(pair.target_id) if pair else None})
+                    "target": members.get((pair.set_id, pair.target_id)) if pair else None})
     return out
 
 

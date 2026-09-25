@@ -141,6 +141,7 @@ ACTION_LABELS = {
     "rights_letter_upload": "Письмо о правах приложено",
     "rights_letter_delete": "Письмо о правах удалено",
     "request_target_url": "Запрошена посадочная у площадки",
+    "set_target_plan": "Плановый объём показов площадки задан",
     "set_target_url": "Посадочная ссылка указана",
     "set_traffic_manager": "Назначен ответственный трафика",
     "ad_campaign_status": "Статус РК изменён",

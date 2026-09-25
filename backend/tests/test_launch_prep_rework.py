@@ -82,11 +82,12 @@ def env():
         # требует либо ссылку, либо нажатый запрос — иначе согласованному креативу
         # некуда вести. Без неё фикстура проверяла бы путь, которого больше нет.
         t = LaunchPrepTarget(deal_id=deal.id, publisher_id=p.id, service_id=service.id,
-                             surface_kind='web',
-                             advertiser_url=f'https://{p.domain or "site.test"}/tovar/1')
+                             surface_kind='web')
         db.add(t)
         db.flush()
-        db.add(LaunchPrepSetTarget(set_id=base.id, target_id=t.id))
+        # Посадочная — у пары «креатив × площадка» (с 25.09.2026).
+        db.add(LaunchPrepSetTarget(set_id=base.id, target_id=t.id,
+                                   advertiser_url=f'https://{p.domain or "site.test"}/tovar/1'))
         pair = LaunchPrepPair(set_id=base.id, target_id=t.id)
         db.add(pair)
         targets.append(t)

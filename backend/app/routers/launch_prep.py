@@ -215,7 +215,7 @@ AFTER_AGREEMENT_STATES = ("ерид получен", "заведён в DSP", "�
 
 
 def _recipient_out(target, pub, pair=None, review=None, traffic=None,
-                   files_count=0, moved_to_no=None, external=None) -> dict:
+                   files_count=0, moved_to_no=None, external=None, member=None) -> dict:
     """Строка получателя внутри комплекта.
 
     До отправки это кандидат, после — пара с вердиктом и кодом. Одна форма на оба случая
@@ -257,10 +257,13 @@ def _recipient_out(target, pub, pair=None, review=None, traffic=None,
         # Состояние во внешних системах — тем же расчётом, что у списка целей ниже.
         # Одна функция на оба места: второй расчёт разошёлся бы с первым.
         "external": external,
-        "advertiser_url": target.advertiser_url,
-        "url_state": url_state(target),
-        "url_requested_at": target.url_requested_at,
-        "url_request_text": target.url_request_text,
+        # Посадочная и запрос — ЭТОГО креатива (строка состава), не площадки сделки:
+        # у разных креативов одной площадки они бывают разные (владелец 25.09.2026).
+        "advertiser_url": member.advertiser_url if member else None,
+        "url_state": url_state(member),
+        "url_requested_at": member.url_requested_at if member else None,
+        "url_request_text": member.url_request_text if member else None,
+        "plan_show": member.plan_show if member else None,
         # Пара появляется в момент отправки; до неё эти поля пусты.
         "pair_id": pair.id if pair else None,
         "pair_code": pair.code if pair else None,
@@ -306,7 +309,8 @@ def moved_to_rework(db: Session, set_ids) -> dict:
 
 
 def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
-             pubs=None, candidates=(), file_counts=None, moved=None, external=None) -> dict:
+             pubs=None, candidates=(), file_counts=None, moved=None, external=None,
+             members=None) -> dict:
     """Комплект для экрана. Состояние ВЫЧИСЛЯЕТСЯ, а не читается из колонки.
 
     Площадки живут ВНУТРИ комплекта, а не отдельным списком сверху (решение владельца
@@ -321,6 +325,7 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
     file_counts = file_counts or {}
     moved = moved or {}
     external = external or {}
+    members = members or {}
 
     if pairs:
         recipients = []
@@ -331,10 +336,11 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
             recipients.append(_recipient_out(
                 t, pubs.get(t.publisher_id), p, by_pair.get(p.id), by_traffic.get(p.id),
                 file_counts.get(p.id, 0), (moved or {}).get((s.id, t.publisher_id)),
-                external.get(t.publisher_id)))
+                external.get(t.publisher_id), members.get((s.id, t.id))))
     else:
         recipients = [_recipient_out(t, pubs.get(t.publisher_id),
-                                     external=external.get(t.publisher_id))
+                                     external=external.get(t.publisher_id),
+                                     member=members.get((s.id, t.id)))
                       for t in candidates]
 
     return {
@@ -353,6 +359,7 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
                            "at": s.rights_letter_at} if s.rights_letter_path else None),
         "files": [{"id": f.id, "ratio": f.ratio, "name": f.original_name,
                    "size_bytes": f.size_bytes, "is_archive": f.is_archive,
+                   "uploaded_at": f.uploaded_at,
                    "content_type": f.content_type,
                    # Готовый адрес, а не токен: собрать его должен тот, кто знает домен
                    # песочницы, а знает его окружение бэкенда, не браузер.
@@ -505,6 +512,7 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
         pairs = db.query(LaunchPrepPair).filter(
             LaunchPrepPair.set_id.in_(set_ids)).order_by(LaunchPrepPair.id).all()
     by_target = {t.id: t for t in targets}
+    members = _members_of(db, set_ids)
     moved = moved_to_rework(db, set_ids)
     # Сколько скриншотов приложено к каждой паре — одним GROUP BY, а не запросом на строку.
     file_counts = {}
@@ -530,6 +538,8 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
         "service": ({"id": service.id, "name": service.name} if service else None),
         "service_reason": service_reason,
         "surfaces": _surfaces_from_plan(db, deal),
+        # План показов РК — предел для объёмов, заданных по площадкам креативов.
+        "rk_plan_show": _rk_plan(db, deal.id),
         # Состояние во внешних системах считается ОДНОЙ функцией на два экрана —
         # карточку сделки и дашборд трафика. Второй расчёт того же разошёлся бы с первым.
         "targets": [{"id": t.id, "publisher_id": t.publisher_id,
@@ -538,11 +548,9 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
                      "code": pubs[t.publisher_id].code if t.publisher_id in pubs else None,
                      "tech_requirements": (pubs[t.publisher_id].tech_requirements
                                            if t.publisher_id in pubs else None),
-                     "surface_kind": t.surface_kind, "state": t.state,
-                     "advertiser_url": t.advertiser_url,
-                     "url_state": url_state(t),
-                     "url_requested_at": t.url_requested_at,
-                     "url_request_text": t.url_request_text}
+                     # Посадочной здесь нет: с 25.09.2026 она у креатива, а не у
+                     # площадки сделки — смотреть её в строках креативов ниже.
+                     "surface_kind": t.surface_kind, "state": t.state}
                     for t in targets],
         "sets": [_set_out(s, [f for f in files if f.set_id == s.id],
                           [r for r in reviews if r.set_id == s.id],
@@ -552,7 +560,7 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
                           # отправленного список уже зафиксирован парами.
                           () if any(p.set_id == s.id for p in pairs)
                           else _targets_for_set(db, s),
-                          file_counts, moved, ext)
+                          file_counts, moved, ext, members)
                  for s in sets],
     }
 
@@ -916,10 +924,9 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
             # ВСЕ начинают с «согласование», включая тех, кто отказал в прошлой кампании:
             # отказ закрывал ТО размещение, а не отношения с площадкой.
             state="согласование",
-            period_from=pf, period_to=pt,
-            # Посадочная переносится: страница у площадки та же, и заново её просить —
-            # ровно та работа, ради экономии которой продление и делается.
-            advertiser_url=t.advertiser_url)
+            period_from=pf, period_to=pt)
+        # Посадочная НЕ переносится (владелец 25.09.2026): поля пустые, пока их не заполнит
+        # аккаунт, — и живут они теперь у креатива, а не у площадки сделки.
         db.add(nt)
         db.flush()
         old_to_new_target[t.id] = nt.id
@@ -1322,7 +1329,7 @@ async def upload_file(set_id: int, ratio: Optional[str] = None,
     row.form = _derive_form(files)
     db.commit()
     # `prepared` — что поправили в баннере при загрузке: 'ad.size' (вшит адаптивный
-    # размер) и/или 'link' (чужой макрос ссылки заменён на макрос DSP).
+    # размер), 'link' (чужой макрос ссылки заменён на макрос DSP), 'root' (баннер поднят в корень).
     return {"id": rec.id, "form": row.form, "prepared": prepared}
 
 
@@ -1622,8 +1629,11 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
     #
     # Проверка на ОТПРАВКЕ, а не на кнопке экрана: входов в отправку больше одного, и
     # правило, оставленное на кнопке, обошли бы соседним путём.
+    # Посадочная — ЭТОГО креатива (строка состава), а не площадки сделки: ссылка,
+    # введённая у креатива №1, креативу №2 не засчитывается (владелец 25.09.2026).
+    own = _members_of(db, [set_id])
     silent = [pubs[t.publisher_id].name if t.publisher_id in pubs else str(t.publisher_id)
-              for t in targets if url_state(t) == "нужна"]
+              for t in targets if url_state(own.get((set_id, t.id))) == "нужна"]
     if silent:
         raise HTTPException(
             status_code=400,
@@ -1771,9 +1781,10 @@ def apply_platform_verdict(db: Session, pair_id: int, verdict: str,
     # входов в эту функцию два (аккаунт и кабинет), и правило, оставленное на экранах,
     # существовало бы в двух экземплярах и разошлось бы.
     if verdict == "ок":
-        target = db.query(LaunchPrepTarget).filter(
-            LaunchPrepTarget.id == pair.target_id).first()
-        if target is not None and url_state(target) == "запрошена":
+        # Запрос — у ЭТОГО креатива: открытый запрос соседнего креатива той же площадки
+        # это согласование не держит (владелец 25.09.2026).
+        member = _member(db, pair.set_id, pair.target_id)
+        if member is not None and url_state(member) == "запрошена":
             raise HTTPException(
                 status_code=400,
                 detail="Мы ждём от этой площадки посадочную страницу — "
@@ -2095,9 +2106,11 @@ def _target_urls(db: Session, set_id: int) -> List[str]:
     Пустые ссылки не отсеиваются здесь: их убирает сборка тела (`ord/payloads.py`),
     и второе место с тем же правилом однажды разошлось бы с первым.
     """
-    return [t.advertiser_url for t in
-            db.query(LaunchPrepTarget)
-              .join(LaunchPrepPair, LaunchPrepPair.target_id == LaunchPrepTarget.id)
+    # С 25.09.2026 посадочная — у строки состава креатива, не у площадки сделки.
+    return [m.advertiser_url for m in
+            db.query(LaunchPrepSetTarget)
+              .join(LaunchPrepPair, (LaunchPrepPair.set_id == LaunchPrepSetTarget.set_id)
+                    & (LaunchPrepPair.target_id == LaunchPrepSetTarget.target_id))
               .filter(LaunchPrepPair.set_id == set_id).all()]
 
 
@@ -2336,8 +2349,37 @@ def move_target(target_id: int, payload: TargetStateIn, db: Session = Depends(ge
 
 # ============================== посадочные страницы ==============================
 
+def _member(db: Session, set_id: int, target_id: int,
+            create: bool = False) -> Optional[LaunchPrepSetTarget]:
+    """Строка состава «креатив × площадка» — там живут посадочная и запрос ссылки.
+
+    `create` — завести, если её нет: у пар креативов, собранных до состава (демо), строки
+    могло не быть, а положить ссылку надо.
+    """
+    m = (db.query(LaunchPrepSetTarget)
+         .filter(LaunchPrepSetTarget.set_id == set_id,
+                 LaunchPrepSetTarget.target_id == target_id).first())
+    if m is None and create:
+        m = LaunchPrepSetTarget(set_id=set_id, target_id=target_id)
+        db.add(m)
+        db.flush()
+    return m
+
+
+def _members_of(db: Session, set_ids) -> dict:
+    """{(set_id, target_id): строка состава} — одним запросом на весь экран."""
+    ids = list(set_ids or ())
+    if not ids:
+        return {}
+    return {(m.set_id, m.target_id): m for m in db.query(LaunchPrepSetTarget)
+            .filter(LaunchPrepSetTarget.set_id.in_(ids)).all()}
+
+
 def url_state(target) -> str:
     """Состояние ссылки — производное, а не колонка.
+
+    Принимает строку состава креатива (`LaunchPrepSetTarget`): с 25.09.2026 посадочная и
+    запрос живут у пары «креатив × площадка». Нет строки — ссылки нет.
 
     Три ответа на «где ссылка»: её не спрашивали, её ждут от площадки, она есть.
     Хранимый статус разъехался бы с самими полями при первой же правке руками.
@@ -2349,6 +2391,8 @@ def url_state(target) -> str:
     ответа, править надо оба места; вторая правка не забудется, если менять их одним
     заходом. Значения сравниваются буквально и в JS обоих фронтов.
     """
+    if target is None:
+        return "нужна"
     if target.advertiser_url:
         return "есть"
     return "запрошена" if target.url_requested_at else "нужна"
@@ -2358,35 +2402,114 @@ class TargetUrlIn(BaseModel):
     url: Optional[str] = None
 
 
-@router.put("/target/{target_id}/url")
-def set_target_url(target_id: int, payload: TargetUrlIn, db: Session = Depends(get_db),
-                   current_user: User = Depends(EDIT)):
-    """Посадочная страница этой площадки.
+def _member_in_scope(db: Session, set_id: int, target_id: int, user: User):
+    """Площадка креатива + сделка, с проверкой области видимости. 404 — нет такой пары.
+
+    Площадка должна принадлежать сделке креатива: иначе ссылку можно было бы положить
+    в чужой креатив, подобрав номера.
+    """
+    s = db.query(LaunchPrepCreativeSet).filter(LaunchPrepCreativeSet.id == set_id).first()
+    t = db.query(LaunchPrepTarget).filter(LaunchPrepTarget.id == target_id).first()
+    if not s or not t or t.deal_id != s.deal_id:
+        raise HTTPException(status_code=404, detail="Площадка креатива не найдена")
+    deal = _deal(db, s.deal_id, user)
+    return s, t, deal
+
+
+@router.put("/set/{set_id}/target/{target_id}/url")
+def set_member_url(set_id: int, target_id: int, payload: TargetUrlIn,
+                   db: Session = Depends(get_db), current_user: User = Depends(EDIT)):
+    """Посадочная ЭТОГО креатива на этой площадке (владелец 25.09.2026).
+
+    У разных креативов одной площадки в одной РК посадочные бывают разные, поэтому
+    адрес — пара «креатив × площадка», а не площадка сделки.
 
     Проверка схемы та же, что у ссылки на документ договора, и по той же причине:
     «javascript:» в поле, которое где-то отрисуется ссылкой, — это XSS, а не опечатка.
     """
-    t = db.query(LaunchPrepTarget).filter(LaunchPrepTarget.id == target_id).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Получатель не найден")
-    deal = _deal(db, t.deal_id, current_user)
+    s, t, deal = _member_in_scope(db, set_id, target_id, current_user)
     url = (payload.url or "").strip()
     if url and not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400,
                             detail="Ссылка должна начинаться с http:// или https://")
-    t.advertiser_url = url or None
+    m = _member(db, set_id, target_id, create=True)
+    m.advertiser_url = url or None
     db.commit()
     log_action(db, current_user, "set_target_url", "sales_deal", deal.id,
-               f"площадка {t.publisher_id}: {url or 'ссылка снята'}")
-    return {"advertiser_url": t.advertiser_url, "url_state": url_state(t)}
+               f"креатив №{s.no}, площадка {t.publisher_id}: {url or 'ссылка снята'}")
+    return {"advertiser_url": m.advertiser_url, "url_state": url_state(m)}
+
+
+class PlanIn(BaseModel):
+    plan_show: Optional[int] = None
+
+
+def _rk_plan(db: Session, deal_id: int):
+    """План показов РК — из последнего медиаплана сделки (тот же, что уходит в РК)."""
+    from app.ad import build as ad_build
+    v = (ad_build.deal_plan(db, deal_id) or {}).get("plan_show")
+    # Показы из медиаплана бывают с долями (CPC: клики через CTR) — план РК в целых.
+    return int(round(v)) if v else None
+
+
+def _fmt_int(n) -> str:
+    return f"{int(n):,}".replace(",", " ")
+
+
+@router.put("/set/{set_id}/target/{target_id}/plan")
+def set_member_plan(set_id: int, target_id: int, payload: PlanIn,
+                    db: Session = Depends(get_db), current_user: User = Depends(EDIT)):
+    """Плановый объём показов площадки по этому креативу (владелец 25.09.2026).
+
+    Уходит в РК как плановый: площадка с заданным объёмом получает его, остаток плана
+    делится между остальными по весам.
+
+    ПРОВЕРКА ПРОТИВ ПЛАНА РК — на сервере, не на экране: объём одной площадки и СУММА
+    заданных объёмов по всем креативам сделки не могут быть больше плана РК («напишут
+    миллион, а план 500 тысяч на всю РК»). Отказ называет, сколько ещё можно
+    распределить. Замена своего же значения не считается дважды. План РК неизвестен
+    (медиаплана нет) — сверять не с чем, значение принимается.
+    """
+    s, t, deal = _member_in_scope(db, set_id, target_id, current_user)
+    val = payload.plan_show
+    if val is not None and val < 0:
+        raise HTTPException(status_code=400, detail="Объём показов не может быть отрицательным")
+    val = val or None                     # ноль — то же, что «не задан»
+
+    plan = _rk_plan(db, deal.id)
+    if val and plan:
+        if val > plan:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Объём {_fmt_int(val)} больше плана РК ({_fmt_int(plan)} показов)")
+        others = db.execute(sa_text("""
+            SELECT COALESCE(SUM(st.plan_show), 0) FROM launch_prep_set_target st
+              JOIN launch_prep_creative_set cs ON cs.id = st.set_id
+             WHERE cs.deal_id = :d AND NOT (st.set_id = :s AND st.target_id = :t)"""),
+            {"d": deal.id, "s": set_id, "t": target_id}).scalar() or 0
+        if others + val > plan:
+            left = max(0, int(plan) - int(others))
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Сумма объёмов по креативам РК превысит план: уже распределено "
+                        f"{_fmt_int(others)} из {_fmt_int(plan)}, осталось {_fmt_int(left)}"))
+
+    m = _member(db, set_id, target_id, create=True)
+    m.plan_show = val
+    db.commit()
+    log_action(db, current_user, "set_target_plan", "sales_deal", deal.id,
+               f"креатив №{s.no}, площадка {t.publisher_id}: "
+               f"{_fmt_int(val) + ' показов' if val else 'объём снят'}")
+    return {"plan_show": m.plan_show}
 
 
 class UrlRequestIn(BaseModel):
     text: str
 
 
-@router.post("/target/{target_id}/url-request")
-def request_target_url(target_id: int, payload: UrlRequestIn, db: Session = Depends(get_db),
+@router.post("/set/{set_id}/target/{target_id}/url-request")
+def request_member_url(set_id: int, target_id: int, payload: UrlRequestIn,
+                       db: Session = Depends(get_db),
                        current_user: User = Depends(TARGETING_EDIT)):
     """Запросить ссылку у площадки: записать текст запроса и отметить время.
 
@@ -2407,26 +2530,27 @@ def request_target_url(target_id: int, payload: UrlRequestIn, db: Session = Depe
     Ответ честно говорит, что произошло: `mail` = sent | failed | queued | no_address |
     off. Делать вид, что письмо ушло, хуже, чем не отправлять его вовсе.
     """
-    t = db.query(LaunchPrepTarget).filter(LaunchPrepTarget.id == target_id).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Получатель не найден")
-    deal = _deal(db, t.deal_id, current_user)
+    s, t, deal = _member_in_scope(db, set_id, target_id, current_user)
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Пустой текст запроса")
-    if t.advertiser_url:
+    m = _member(db, set_id, target_id, create=True)
+    if m.advertiser_url:
         raise HTTPException(status_code=400, detail="Ссылка уже есть — запрашивать нечего")
 
     from sqlalchemy.sql import func as sa_func
-    t.url_request_text = text
-    t.url_requested_at = sa_func.now()
+    # Запрос — у ЭТОГО креатива (владелец 25.09.2026): он запирает «ок» только своего
+    # креатива, а ссылка из кабинета ляжет в него же.
+    m.url_request_text = text
+    m.url_requested_at = sa_func.now()
     db.commit()
+    db.refresh(m)
 
     mail_state = _mail_url_request(db, t, deal, text, current_user)
 
     log_action(db, current_user, "request_target_url", "sales_deal", deal.id,
-               f"площадка {t.publisher_id}: запрошена ссылка ({mail_state})")
-    return {"url_state": url_state(t), "text": text, "mail": mail_state}
+               f"креатив №{s.no}, площадка {t.publisher_id}: запрошена ссылка ({mail_state})")
+    return {"url_state": url_state(m), "text": text, "mail": mail_state}
 
 
 def _deal_brand_name(db: Session, deal) -> str:
