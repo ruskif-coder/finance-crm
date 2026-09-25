@@ -10,6 +10,7 @@ import { errText, isAuth } from '@/lib/loadError'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import useLatest from '@/lib/useLatest'
 const FinReportMobile = dynamic(() => import('@/components/mobile/FinReportMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // Финансовый отчёт — новый P&L рядом со старым (/pl). Старый намеренно оставлен
@@ -105,31 +106,47 @@ export default function FinReport() {
   // Возврат на экран = перечитать. Финмодуль был пропущен, когда механизм
   // актуальности заводили 13.09.2026: правка операции не появлялась здесь
   // никогда, а число на экране — утверждение о деньгах (lib/useRefreshOnReturn).
-  useRefreshOnReturn(() => load(localStorage.getItem('token')))
+  useRefreshOnReturn(() => load(localStorage.getItem('token'), { quiet: true }))
 
-  const load = async (token) => {
-    setLoading(true); setErr('')
+  // Устаревший ответ не пишется поверх нового (аудит, 6.M4): при открытии восстановление
+  // режима из localStorage и загрузка с умолчаниями шли одним проходом, и подпись «по
+  // оплате» оказывалась над цифрами «по начислению». lib/useLatest.
+  const latest = useLatest()
+  const load = async (token, { quiet = false } = {}) => {
+    // Фоновая перечитка при возврате — ТИХАЯ: без экрана «Загрузка…», иначе он
+    // размонтирует таблицу — и прокрутка с раскрытыми группами сбрасываются (аудит, 6.M6).
+    if (!quiet) setLoading(true)
+    setErr('')
+    const fresh = latest()
     try {
       const res = await api(token).get(
         `/finreport?basis=${basis}&vat=${vat}&granularity=${granularity}&date_from=${dateFrom}&date_to=${dateTo}`)
+      if (!fresh()) return
       setData(res.data)
       const e = {}
       res.data.groups.forEach(g => { e[g.key] = false })
-      setExpanded(e)
+      setExpanded(prev => (quiet ? { ...e, ...prev } : e))
     } catch (e) {
       // Сбой НЕ выдаём за пустоту: финотчёт без данных — это «не смогли спросить»,
       // а не «движений нет». Прежние данные не затираем.
-      if (!isAuth(e)) setErr(errText(e))
+      if (fresh() && !isAuth(e)) setErr(errText(e))
     } finally {
-      setLoading(false)
+      if (fresh()) setLoading(false)
     }
   }
 
   const exportXlsx = async () => {
     const token = localStorage.getItem('token')
-    const res = await api(token).get(
-      `/finreport/export?basis=${basis}&vat=${vat}&granularity=${granularity}&date_from=${dateFrom}&date_to=${dateTo}`,
-      { responseType: 'blob' })
+    let res
+    try {
+      res = await api(token).get(
+        `/finreport/export?basis=${basis}&vat=${vat}&granularity=${granularity}&date_from=${dateFrom}&date_to=${dateTo}`,
+        { responseType: 'blob' })
+    } catch (e) {
+      // Выгрузка молчала при сбое — человек ждал файл, которого не будет (аудит, 6.L4).
+      if (!isAuth(e)) setErr('Выгрузка не удалась: ' + errText(e))
+      return
+    }
     const url = URL.createObjectURL(new Blob([res.data]))
     const a = document.createElement('a')
     a.href = url

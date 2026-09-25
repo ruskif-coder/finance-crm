@@ -116,6 +116,7 @@ function DebtorRow({ r, open, onToggle, notes, setNotes, savedNotes, saveNote, c
             )}
             {noteStatus[key] === 'saving' && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>сохранение…</span>}
             {noteStatus[key] === 'saved' && <span style={{ fontSize: 11, color: 'var(--income)' }}>✓ сохранено</span>}
+            {noteStatus[key] === 'error' && <span style={{ fontSize: 11, color: 'var(--danger-fg)' }}>не сохранено</span>}
           </div>
         </div>
       )}

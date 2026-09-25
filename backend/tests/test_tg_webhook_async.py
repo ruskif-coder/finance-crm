@@ -118,3 +118,10 @@ class _DummyDB:
 
     def first(self):
         return None
+
+    def execute(self, *a, **kw):
+        # счётчик неверных кодов живёт в `company_settings` (аудит, 1.L4) — записи нет
+        return type('R', (), {'scalar': staticmethod(lambda: None)})()
+
+    def commit(self):
+        pass

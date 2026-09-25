@@ -2139,7 +2139,8 @@ def export_xlsx(plan_id: int, db: Session = Depends(get_db), current_user: User 
     tpl = os.path.abspath(TEMPLATE_PATH)
     wb = _render_from_template(full, p, tpl) if os.path.exists(tpl) else _wb_programmatic(full, p)
     buf = BytesIO()
-    wb.save(buf)
+    from app.xlsx_safe import save_workbook   # формулы только наши (аудит, 1.L7)
+    save_workbook(wb, buf)
     buf.seek(0)
     fname = f"MP_{plan_id}_v{p.version}.xlsx"
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

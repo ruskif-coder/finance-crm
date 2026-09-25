@@ -86,15 +86,8 @@ def sync_clients(db: Session, limit: Optional[int] = None) -> dict:
             continue
         if not isinstance(found, list):
             found = [found]
-        # Одно юрлицо в ОРД бывает в двух ролях: `CL…` — клиент (заказчик), `AG…` —
-        # агент (исполнитель). Для `clientId` нужна клиентская запись, и если среди
-        # нескольких она ровно одна — это не неоднозначность (замер на боевом контуре
-        # 24.09.2026: заказчик всех 52 доходных — `CL…`, исполнитель — `AG…`).
-        # Две и больше клиентских — по-прежнему не угадываем.
-        if len(found) > 1:
-            as_client = [f for f in found if str(f.get('id') or '').startswith('CL')]
-            if len(as_client) == 1:
-                found = as_client
+        # Клиентская запись из двух ролей юрлица — правило в `registry.pick_client`.
+        found = registry.pick_client(found)
 
         if len(found) == 1:
             cp.ord_client_id = found[0].get('id')

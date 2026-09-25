@@ -11,6 +11,7 @@ import { LoadError, LoadErrorScreen, NoAccessScreen } from '@/components/salesTa
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import useLatest from '@/lib/useLatest'
 const BalanceMobile = dynamic(() => import('@/components/mobile/BalanceMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 
@@ -456,10 +457,15 @@ export default function Balance() {
   // Возврат на экран = перечитать. Финмодуль был пропущен, когда механизм
   // актуальности заводили 13.09.2026: правка операции не появлялась здесь
   // никогда, а число на экране — утверждение о деньгах (lib/useRefreshOnReturn).
-  useRefreshOnReturn(() => loadBalance(localStorage.getItem('token')))
+  useRefreshOnReturn(() => loadBalance(localStorage.getItem('token'), { quiet: true }))
 
-  const loadBalance = async (token) => {
-    setLoading(true); setErr('')
+  const latest = useLatest()
+  const loadBalance = async (token, { quiet = false } = {}) => {
+    // Фоновая перечитка при возврате — ТИХАЯ: без экрана «Загрузка…», иначе он
+    // размонтирует таблицу — и прокрутка с раскрытыми группами сбрасываются (аудит, 6.M6).
+    if (!quiet) setLoading(true)
+    setErr('')
+    const fresh = latest()
     try {
       const a = api(token)
       const [fullRes, recRes, payRes] = await Promise.all([
@@ -467,6 +473,7 @@ export default function Balance() {
         a.get('/reports/balance/receivables'),
         a.get('/reports/balance/payables'),
       ])
+      if (!fresh()) return
       setData(fullRes.data)
       setReceivablesData(recRes.data)
       setPayablesData(payRes.data)
@@ -474,9 +481,9 @@ export default function Balance() {
       // Баланс складывается из ТРЁХ запросов, и падение любого делало страницу
       // белым листом без меню: `if (!data || !receivablesData || !payablesData)`
       // ниже возвращал null, а причину никто не называл (F5-03).
-      if (!isAuth(e)) setErr(errText(e))
+      if (fresh() && !isAuth(e)) setErr(errText(e))
     } finally {
-      setLoading(false)
+      if (fresh()) setLoading(false)
     }
   }
 

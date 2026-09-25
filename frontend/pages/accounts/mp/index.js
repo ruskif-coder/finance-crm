@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can, firstAllowedHref } from '@/components/Navbar'
-import { MONO, UI, card, primaryBtn, GenTitleBtn, MultiDrop } from '@/components/salesTableKit'
+import { MONO, UI, card, primaryBtn, GenTitleBtn, MultiDrop, LoadError } from '@/components/salesTableKit'
+import { errText, isAuth } from '@/lib/loadError'
 import api, { auth } from '@/lib/api'
 import { fmtFull, fmtMoney, grp } from '@/lib/salesFormat'
 import { downloadMp } from '@/lib/mpDownload'
@@ -74,15 +75,21 @@ export default function MpRegistry() {
   const canCreate = isAdmin || can(perms, 'media_plans_editor', 'edit')
   const canDelete = isAdmin || can(perms, 'media_plans', 'edit')
 
-  const load = useCallback(() => {
-    setLoading(true)
-    api.get('/sales/media-plans', auth()).then(r => setItems(r.data.items || [])).catch(() => { }).finally(() => setLoading(false))
+  // Сбой — не «Медиапланов нет» (аудит 23.09.2026, 7.M5): `.catch(() => {})` оставлял
+  // пустой список с приглашением создать первый медиаплан. Фоновая перечитка — тихая.
+  const [err, setErr] = useState('')
+  const load = useCallback(({ quiet = false } = {}) => {
+    if (!quiet) setLoading(true)
+    api.get('/sales/media-plans', auth())
+      .then(r => { setItems(r.data.items || []); setErr('') })
+      .catch(e => { if (!isAuth(e)) setErr(errText(e)) })
+      .finally(() => setLoading(false))
   }, [])
 
   // Вернулись на вкладку или пришли «Назад» из карточки — перечитать реестр. Без этого
   // экран показывает снимок, сделанный при открытии: переименовали медиаплан в карточке,
   // вернулись — и видите старое имя (13.09.2026).
-  useRefreshOnReturn(load)
+  useRefreshOnReturn(() => load({ quiet: true }))
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -283,6 +290,7 @@ export default function MpRegistry() {
           {activeFilters && <div onClick={resetFilters} title="Сбросить фильтры" style={{ border: '1px solid var(--border-card)', background: 'var(--bg-card)', borderRadius: 10, padding: '8px 10px', fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>Сбросить ✕</div>}
         </div>
 
+        {!!err && <div style={{ marginBottom: 12 }}><LoadError text={err} onRetry={() => load()} /></div>}
         {loading ? <div style={{ color: 'var(--text-muted)', padding: 20 }}>Загрузка…</div> : (
           <div style={{ ...card, padding: '12px 16px', overflowX: 'auto' }}>
             <div style={{ minWidth: 1180 }}>
@@ -333,7 +341,7 @@ export default function MpRegistry() {
                   </div>
                 )
               })}
-              {!view.length && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{items.length ? 'Ничего не найдено — измените фильтры' : 'Медиапланов нет — нажмите «+ Новый медиаплан»'}</div>}
+              {!view.length && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{err && !items.length ? 'Реестр не загрузился — см. сообщение выше' : items.length ? 'Ничего не найдено — измените фильтры' : 'Медиапланов нет — нажмите «+ Новый медиаплан»'}</div>}
             </div>
           </div>
         )}

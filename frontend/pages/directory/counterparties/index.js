@@ -13,6 +13,7 @@ import { grp0 as fmt } from '@/lib/salesFormat'
 import SectionTabs from '@/components/SectionTabs'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { fmtDate as fmtCalendarDate } from '@/lib/dates'
+import { csvCell } from '@/lib/csv'
 
 
 const fmtDate = (s) => fmtCalendarDate(s)
@@ -167,7 +168,8 @@ export default function Counterparties() {
   const exportCsv = () => {
     const head = ['ID', 'Название', 'ИНН', 'Договоров', 'Отсрочка', 'Тип', 'Группа', 'Вид', 'Операций', 'Дебиторка', 'Кредиторка', 'Поступления', 'Выплаты', 'Разница', 'Дата']
     const rows = filtered.map(c => [c.id, c.name, c.inn || '', c.contracts_count || 0, c.term_days_effective, relMeta(c.relation).label, c.group || '', c.status, c.op_count, c.receivable, c.payable, c.income_paid, c.expense_paid, c.diff, fmtDate(c.last_op_date)])
-    const csv = [head, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n')
+    // Формулы в ячейках — текстом (lib/csv): название вида «=HYPERLINK(…)» сработало бы в Excel.
+    const csv = [head, ...rows].map(r => r.map(csvCell).join(';')).join('\n')
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'counterparties.csv'; a.click()
   }

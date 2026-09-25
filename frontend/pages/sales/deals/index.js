@@ -20,6 +20,7 @@ import StageRequirements from '@/components/sales/StageRequirements'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { downloadFile } from '@/lib/download'
 import { fmtDateTime, todayMsk } from '@/lib/dates'
+import { csvCell } from '@/lib/csv'
 const DealCardList = dynamic(() => import('@/components/mobile/DealCardList'), { ssr: false })
 const DealsMobileControls = dynamic(() => import('@/components/sales/DealsMobileControls'), { ssr: false })
 const BottomSheet = dynamic(() => import('@/components/mobile/BottomSheet'), { ssr: false })
@@ -182,7 +183,7 @@ export default function SalesRegistry2() {
   // Выгрузка текущей выборки в CSV (клиентская).
   const exportCsv = () => {
     const head = ['Код', 'Агентство', 'Рекламодатель', 'Бренд', 'Услуга', 'Период', 'Стадия', 'Сумма', 'Аккаунт', 'Контрагент', 'Слой', 'Сделка']
-    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
+    const esc = csvCell   // формулы в ячейках — текстом (lib/csv)
     const lines = deals.map(d => [d.code || d.bitrix_id, d.agency, d.advertiser, d.brand, d.product, d.period, d.bitrix_stage, d.amount, d.account_manager, d.payer, d.money_layer, d.title].map(esc).join(';'))
     const csv = '﻿' + head.map(esc).join(';') + '\n' + lines.join('\n')
     const url = window.URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
@@ -433,7 +434,7 @@ export default function SalesRegistry2() {
   const SYNC_LABELS = { amount: 'Сумма до НДС', amount_with_vat: 'Сумма с НДС', sales_rep_id: 'Продавец', account_manager_id: 'Аккаунт', advertiser_id: 'Рекламодатель', brand_id: 'Бренд', period_from: 'Старт РК' }
   // Действия карточки-детализации (раскрытие строки). Открыть — в Битрикс; правка и
   // загрузка МП — заглушки (доработаем).
-  const openDeal = (d) => { if (d.bitrix_id && !String(d.bitrix_id).startsWith('local-')) window.open(BITRIX_DEAL_URL(d.bitrix_id), '_blank') }
+  const openDeal = (d) => { if (d.bitrix_id && !String(d.bitrix_id).startsWith('local-')) window.open(BITRIX_DEAL_URL(d.bitrix_id), '_blank', 'noopener') }
   const editDeal = () => alert('Редактирование сделки — скоро')
   const addMp = (d) => router.push(`/accounts/mp/new?deal=${d.id}`)
 

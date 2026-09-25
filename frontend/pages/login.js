@@ -123,7 +123,13 @@ export default function Login() {
         router.push('/')      // корень сам выберет первый доступный экран по правам
       }
     } catch (e) {
-      setError('Неверный email или пароль')
+      // Не всякий отказ — «неверный пароль» (аудит 23.09.2026, 6.M9): при блокировке
+      // человек повторял ввод и продлевал её, а сбой сервера выглядел его ошибкой.
+      const st = e.response?.status
+      const detail = e.response?.data?.detail
+      if (st === 429) setError(typeof detail === 'string' ? detail : 'Слишком много попыток — подождите')
+      else if (!st || st >= 500) setError('Сервер недоступен — попробуйте через минуту')
+      else setError(typeof detail === 'string' ? detail : 'Неверный email или пароль')
     } finally {
       setLoading(false)
     }

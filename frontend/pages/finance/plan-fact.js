@@ -11,6 +11,7 @@ import { LoadError, LoadErrorScreen, NoAccessScreen } from '@/components/salesTa
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import useLatest from '@/lib/useLatest'
 const PlanFactMobile = dynamic(() => import('@/components/mobile/PlanFactMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 
@@ -87,22 +88,29 @@ export default function PlanFact() {
   // Возврат на экран = перечитать. Финмодуль был пропущен, когда механизм
   // актуальности заводили 13.09.2026: правка операции не появлялась здесь
   // никогда, а число на экране — утверждение о деньгах (lib/useRefreshOnReturn).
-  useRefreshOnReturn(() => load(localStorage.getItem('token')))
+  useRefreshOnReturn(() => load(localStorage.getItem('token'), { quiet: true }))
 
-  const load = async (token) => {
-    setLoading(true); setErr('')
+  // Устаревший ответ не пишется поверх нового (аудит, 6.M4): lib/useLatest.
+  const latest = useLatest()
+  const load = async (token, { quiet = false } = {}) => {
+    // Фоновая перечитка при возврате — ТИХАЯ: без экрана «Загрузка…», иначе он
+    // размонтирует таблицу — и прокрутка с раскрытыми группами сбрасываются (аудит, 6.M6).
+    if (!quiet) setLoading(true)
+    setErr('')
+    const fresh = latest()
     try {
       const res = await api(token).get(`/reports/plan-fact?date_from=${dateFrom}&date_to=${dateTo}`)
+      if (!fresh()) return
       setData(res.data)
       const expanded = {}
       res.data.groups.forEach(g => { expanded[g.group] = true })
-      setExpandedGroups(expanded)
+      setExpandedGroups(prev => (quiet ? { ...expanded, ...prev } : expanded))
     } catch (e) {
       // Сбой НЕ выдаём за пустоту: план-факт без данных — это «не смогли спросить»,
       // а не «движений нет». Прежние данные не затираем.
-      if (!isAuth(e)) setErr(errText(e))
+      if (fresh() && !isAuth(e)) setErr(errText(e))
     } finally {
-      setLoading(false)
+      if (fresh()) setLoading(false)
     }
   }
 

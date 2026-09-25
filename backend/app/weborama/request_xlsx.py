@@ -157,7 +157,8 @@ def build(db: Session, set_id: int) -> Tuple[str, bytes]:
         ws.column_dimensions[col].width = width
 
     buf = BytesIO()
-    wb.save(buf)
+    from app.xlsx_safe import save_workbook   # формулы только наши (аудит, 1.L7)
+    save_workbook(wb, buf)
     return f"weborama-{meta['campaign']}.xlsx", buf.getvalue()
 
 

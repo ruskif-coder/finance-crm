@@ -199,3 +199,27 @@ def test_empty_scope_shows_nothing():
     with scoped_session([]) as db:
         n = db.execute(text("SELECT count(*) FROM pub.task_v1")).scalar()
     assert n == 0
+
+
+def test_a_token_dies_with_the_password(account, monkeypatch):
+    """Смена пароля выкидывает выданные сессии (аудит 23.09.2026, 9.2): токен жил 12 часов
+    и после сброса пароля менеджером. В токене — отпечаток хеша пароля."""
+    class _Row:
+        id, email, name = account.id, account.email, account.name
+        is_active, can_approve, consent_accepted_at = True, True, None
+        hashed_password = '$2b$12$old'
+
+    class _Db:
+        def execute(self, *a, **k):
+            return type('R', (), {'first': staticmethod(lambda: _Row())})()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cab_auth, 'plain_session', lambda: _Db())
+    token = cab_auth.make_token(account.id, account.email, '$2b$12$old')
+    assert cab_auth.current_account_any(_creds(token)).id == account.id
+    _Row.hashed_password = '$2b$12$new'
+    with pytest.raises(HTTPException) as e:
+        cab_auth.current_account_any(_creds(token))
+    assert e.value.status_code == 401

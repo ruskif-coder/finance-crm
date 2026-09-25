@@ -152,14 +152,76 @@ def link_url(code: str, contour: str = STAFF) -> Optional[str]:
     return f"https://t.me/{name}?start={code}" if name and code else None
 
 
-# Код привязки — три байта hex, то есть шесть знаков 0-9A-F. Формат записан здесь один
-# раз: по нему и выдаётся код, и узнаётся присланный голышом.
-_CODE_RE = re.compile(r"[0-9A-Fa-f]{6}")
+# Код привязки — пять байт hex, то есть десять знаков 0-9A-F (40 бит). Было три байта:
+# 24 бита при неограниченных попытках подбирались, и угадавший чат получал уведомления
+# сотрудника с суммами (аудит 23.09.2026, 1.L4). Формат записан здесь один раз: по нему
+# и выдаётся код, и узнаётся присланный голышом.
+CODE_BYTES = 5
+_CODE_RE = re.compile(r"[0-9A-Fa-f]{%d}" % (CODE_BYTES * 2))
 
 
 def new_link_code() -> Tuple[str, datetime]:
-    """Код привязки: короткий, одноразовый, живёт полчаса."""
-    return secrets.token_hex(3).upper(), datetime.utcnow() + timedelta(minutes=LINK_CODE_TTL_MIN)
+    """Код привязки: одноразовый, живёт полчаса."""
+    return (secrets.token_hex(CODE_BYTES).upper(),
+            datetime.utcnow() + timedelta(minutes=LINK_CODE_TTL_MIN))
+
+
+# Неверные коды с одного чата. MAX_BAD_CODES за окно BLOCK_MINUTES — чат на это окно не
+# принимается, ВЕРНЫЙ код тоже: иначе перебор просто продолжался бы.
+#
+# Счётчик — В БАЗЕ, в `company_settings` под ключом `tg_bad:<бот>:<чат>` (значение
+# `<ISO последней ошибки>|<число>`). Не в памяти: живой опрос бота идёт кроном раз в
+# минуту НОВЫМ процессом (`app.notify.tg_poll`), и счётчик в памяти обнулялся бы каждую
+# минуту (ревью 24.09.2026). Боты считаются раздельно: ошибки в боте площадок не должны
+# запирать тому же человеку бот сотрудников. Затухает сам: запись старше окна не считается
+# и вычищается при следующей ошибке любого чата.
+MAX_BAD_CODES = 5
+BLOCK_MINUTES = 30
+BLOCKED_TEXT = ("Слишком много неверных кодов. Попробуйте через полчаса "
+                "с новым кодом.")
+
+
+def _bad_key(contour: str, chat_id) -> str:
+    return f"tg_bad:{contour}:{chat_id}"
+
+
+def _bad_state(db, contour: str, chat_id):
+    from sqlalchemy import text
+    v = db.execute(text("SELECT value FROM company_settings WHERE key = :k"),
+                   {"k": _bad_key(contour, chat_id)}).scalar()
+    if not v or "|" not in v:
+        return 0, None
+    at, count = v.split("|", 1)
+    try:
+        at = datetime.fromisoformat(at)
+    except ValueError:
+        return 0, None
+    if datetime.utcnow() - at >= timedelta(minutes=BLOCK_MINUTES):
+        return 0, None                   # окно прошло — счёт с нуля
+    return int(count or 0), at
+
+
+def chat_blocked(db, contour: str, chat_id) -> bool:
+    return _bad_state(db, contour, chat_id)[0] >= MAX_BAD_CODES
+
+
+def note_bad_code(db, contour: str, chat_id) -> None:
+    from sqlalchemy import text
+    now = datetime.utcnow()
+    count, _ = _bad_state(db, contour, chat_id)
+    # вычистить протухшие записи всех чатов — ISO-строки сравниваются лексически
+    db.execute(text("DELETE FROM company_settings WHERE key LIKE 'tg_bad:%' AND value < :cut"),
+               {"cut": (now - timedelta(minutes=BLOCK_MINUTES)).isoformat()})
+    db.execute(text("INSERT INTO company_settings (key, value) VALUES (:k, :v) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
+               {"k": _bad_key(contour, chat_id), "v": f"{now.isoformat()}|{count + 1}"})
+    db.commit()
+
+
+def clear_bad_codes(db, contour: str, chat_id) -> None:
+    from sqlalchemy import text
+    db.execute(text("DELETE FROM company_settings WHERE key = :k AND key LIKE 'tg_bad:%'"),
+               {"k": _bad_key(contour, chat_id)})
 
 
 def send_message(chat_id: str, text: str, link: Optional[str] = None,

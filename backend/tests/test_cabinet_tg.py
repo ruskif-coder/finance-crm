@@ -82,13 +82,13 @@ def test_webhook_takes_only_code_and_chat_id():
     """Апдейт приходит СНАРУЖИ и доверять ему нельзя. Разбор общий с внутренним контуром
     — и это правильно: два разбора недоверенного ввода разошлись бы."""
     code, chat = telegram.parse_start_command(
-        {"message": {"text": "/start A1B2C3", "chat": {"id": 777},
+        {"message": {"text": "/start A1B2C3D4E5", "chat": {"id": 777},
                      "from": {"id": 1, "is_bot": False}, "entities": [{"type": "bot_command"}]}})
-    assert (code, chat) == ("A1B2C3", "777")
+    assert (code, chat) == ("A1B2C3D4E5", "777")
 
     # Не команда — код не выдаётся, что бы в сообщении ни было написано.
     assert telegram.parse_start_command(
-        {"message": {"text": "дайте код A1B2C3", "chat": {"id": 777}}})[0] is None
+        {"message": {"text": "дайте код A1B2C3D4E5", "chat": {"id": 777}}})[0] is None
 
 
 def test_relinking_drops_the_old_chat():
@@ -157,10 +157,10 @@ def test_a_bare_code_is_accepted_too():
     def upd(text):
         return {"message": {"text": text, "chat": {"id": 42}}}
 
-    assert parse(upd("/start A1B2C3")) == ("A1B2C3", "42")   # диплинк, как было
-    assert parse(upd("A1B2C3")) == ("A1B2C3", "42")          # голый код
-    assert parse(upd("a1b2c3")) == ("A1B2C3", "42")          # регистр не важен
-    assert parse(upd("  A1B2C3  ")) == ("A1B2C3", "42")      # с пробелами
+    assert parse(upd("/start A1B2C3D4E5")) == ("A1B2C3D4E5", "42")   # диплинк, как было
+    assert parse(upd("A1B2C3D4E5")) == ("A1B2C3D4E5", "42")          # голый код
+    assert parse(upd("a1b2c3d4e5")) == ("A1B2C3D4E5", "42")          # регистр не важен
+    assert parse(upd("  A1B2C3D4E5  ")) == ("A1B2C3D4E5", "42")      # с пробелами
 
 
 def test_chatter_is_not_mistaken_for_a_code():
@@ -171,7 +171,7 @@ def test_chatter_is_not_mistaken_for_a_code():
     def upd(text):
         return {"message": {"text": text, "chat": {"id": 42}}}
 
-    for text in ("привет", "A1B2C3 и ещё что-то", "ABCDEFG", "12345", "/help"):
+    for text in ("привет", "A1B2C3D4E5 и ещё что-то", "ABCDEFG", "12345", "/help"):
         assert parse(upd(text))[0] is None, text
     # chat_id возвращаем всегда: на любое сообщение бот обязан ответить, а для ответа
     # нужен адрес. Молчание человек читает как поломку.

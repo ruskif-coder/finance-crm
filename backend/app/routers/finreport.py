@@ -718,7 +718,8 @@ def export_finreport(
         ws4.column_dimensions['B'].width = 18
 
     buf = BytesIO()
-    wb.save(buf)
+    from app.xlsx_safe import save_workbook   # формулы только наши (аудит, 1.L7)
+    save_workbook(wb, buf)
     buf.seek(0)
     # Имя файла кириллицей: заголовок HTTP допускает только latin-1, поэтому
     # обязателен процент-энкодинг по RFC 5987, иначе starlette падает на .encode.

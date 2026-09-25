@@ -8,6 +8,8 @@
 23.08.2026). Внешний контур остаётся без почтового канала восстановления, а вместе с ним
 без всего класса атак на него.
 """
+import hashlib
+import hmac
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -64,8 +66,30 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-def make_token(account_id: int, email: str) -> str:
+def password_fingerprint(pw_hash) -> str:
+    """Отпечаток текущего хеша пароля. Сменился пароль — токены, выданные раньше, больше
+    не принимаются (аудит 23.09.2026, 9.2): до этого сброс пароля менеджером не выкидывал
+    сессию площадки ещё 12 часов. HMAC на ключе кабинета — по токену о хеше не узнать."""
+    return hmac.new(SECRET_KEY.encode(), (pw_hash or '').encode(),
+                    hashlib.sha256).hexdigest()[:16]
+
+
+def _current_hash(account_id: int):
+    db = plain_session()
+    try:
+        row = db.execute(text("SELECT hashed_password FROM pub.account_v1 WHERE id = :i"),
+                         {"i": account_id}).first()
+    finally:
+        db.close()
+    return getattr(row, "hashed_password", None) if row else None
+
+
+def make_token(account_id: int, email: str, pw_hash=None) -> str:
+    # Хеш передаёт вход (строка уже прочитана); без него — читаем сами.
+    if pw_hash is None:
+        pw_hash = _current_hash(account_id)
     payload = {"sub": str(account_id), "email": email, "realm": "cabinet",
+               "pwv": password_fingerprint(pw_hash),
                "exp": datetime.now(timezone.utc) + timedelta(hours=TOKEN_HOURS)}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -130,11 +154,16 @@ def current_account_any(creds: HTTPAuthorizationCredentials = Depends(bearer)):
     db = plain_session()
     try:
         row = db.execute(text(
-            "SELECT id, email, name, is_active, can_approve, consent_accepted_at "
-            "FROM pub.account_v1 WHERE id = :i"),
+            "SELECT id, email, name, is_active, can_approve, consent_accepted_at, "
+            "hashed_password FROM pub.account_v1 WHERE id = :i"),
             {"i": int(data["sub"])}).first()
     finally:
         db.close()
     if row is None or not row.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Доступ закрыт")
+    # Пароль сменился после выдачи токена — вход заново (9.2).
+    if not hmac.compare_digest(str(data.get("pwv") or ""),
+                               password_fingerprint(getattr(row, "hashed_password", None))):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Пароль сменился — войдите заново")
     return row

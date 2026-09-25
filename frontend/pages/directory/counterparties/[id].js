@@ -12,6 +12,7 @@ import { bankColor } from '@/lib/salesFormat'
 import { overlayClose } from '@/lib/overlay'
 import { fmtDate as fmtCalendarDate } from '@/lib/dates'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { errText } from '@/lib/loadError'
 
 const fmt = (n) => {
   if (!n && n !== 0) return '—'
@@ -121,7 +122,9 @@ export default function CounterpartyCard() {
           : [{ bank_name: '', bank_city: '', rs: '', ks: '', bik: '' }],
       })
     } catch (e) {
-      setError(e.response?.data?.detail || 'Ошибка загрузки')
+      // 422 приносит в `detail` СПИСОК объектов, и React падал, рисуя его, — белый экран
+      // по адресу с нечисловым id (аудит 23.09.2026, 6.L5). Текст — через общий разбор.
+      setError(e.response?.status === 422 ? 'Контрагент не найден — проверьте адрес' : errText(e))
     } finally { setLoading(false) }
   }, [id])
 

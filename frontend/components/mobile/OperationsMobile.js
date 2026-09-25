@@ -219,7 +219,7 @@ function OperationForm({ initial, editId, articles, counterparties, onClose, onS
       {/* липкий подвал */}
       <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 14px', background: 'var(--bg-card)', borderTop: '1px solid var(--border-inner)', display: 'flex', gap: 8, alignItems: 'center' }}>
         <button onClick={save} disabled={saving} style={{ flex: 1, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '14px', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Сохранение…' : editId ? 'Сохранить' : 'Добавить операцию'}</button>
-        {editId
+        {editId && onDelete
           ? <button onClick={async () => { if (window.confirm('Удалить операцию?')) { await onDelete(editId); onClose() } }} aria-label="Удалить" style={{ width: 52, borderRadius: 12, border: '1px solid #F3C9CC', background: 'var(--bg-card)', color: '#C93A3E', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={stroke}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>
           : <button onClick={onClose} style={{ flex: '0 0 auto', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>Отмена</button>}
       </div>
@@ -228,7 +228,7 @@ function OperationForm({ initial, editId, articles, counterparties, onClose, onS
 }
 
 export default function OperationsMobile({
-  total, rows, loading, articles, counterparties, canEdit,
+  total, rows, loading, articles, counterparties, canEdit, canCreate, canDelete,
   dateFrom, setDateFrom, dateTo, setDateTo, fStatus, setFStatus, fBank, setFBank,
   fArticle, setFArticle, fCp, setFCp, fOpType, setFOpType, fPeriod, setFPeriod, periodOptions = [], resetFilters,
   pageSize, setPageSize, onSave, onDelete, downloadExport, emptyForm,
@@ -292,8 +292,8 @@ export default function OperationsMobile({
         moreLabel={`Показать ещё · ${rows.length} из ${new Intl.NumberFormat('ru-RU').format(total)}`}
       />
 
-      {/* плавающая кнопка + */}
-      {canEdit && (
+      {/* плавающая кнопка + — по праву создания, которое спросит сервер (аудит, 6.L1) */}
+      {canCreate && (
         <button onClick={openCreate} aria-label="Новая операция" style={{ position: 'fixed', right: 18, bottom: 18, width: 56, height: 56, borderRadius: 18, background: 'var(--accent)', color: '#fff', border: 'none', boxShadow: '0 6px 20px rgba(79,108,230,.4)', fontSize: 30, lineHeight: 1, cursor: 'pointer', zIndex: 200 }}>+</button>
       )}
 
@@ -324,7 +324,9 @@ export default function OperationsMobile({
       {/* форма создания/редактирования */}
       {form && (
         <OperationForm initial={form.initial} editId={form.editId} articles={articles} counterparties={counterparties}
-          onClose={() => setForm(null)} onSave={onSave} onDelete={onDelete} />
+          onClose={() => setForm(null)} onSave={onSave}
+          /* удаление — по праву удаления, как на десктопе (аудит, 6.L1) */
+          onDelete={canDelete ? onDelete : undefined} />
       )}
     </>
   )

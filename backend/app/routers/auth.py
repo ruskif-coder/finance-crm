@@ -6,6 +6,8 @@ from app.database import get_db
 from app.models import User, LoginAttempt
 from pydantic import BaseModel
 from sqlalchemy import func
+import hashlib
+import hmac
 import jwt
 from jwt.exceptions import InvalidTokenError
 from datetime import datetime, timedelta
@@ -146,6 +148,27 @@ def _clear_login_attempts(db: Session, email: str):
 verify_password = _verify_password
 get_password_hash = _hash_password
 
+# Отказ без согласия на обработку ПДн — строкой-ключом: экран узнаёт его и ведёт на
+# форму согласия (аудит 23.09.2026, 9.7; решение владельца 24.09.2026 — как в кабинете).
+CONSENT_REQUIRED = "consent_required"
+
+
+def password_fingerprint(user) -> str:
+    """Отпечаток ТЕКУЩЕГО хеша пароля — для токена.
+
+    Смена пароля меняет хеш, а с ним отпечаток: все выданные раньше токены перестают
+    приниматься. До этого токен жил свои 8 часов и после сброса пароля, то есть сброс не
+    выкидывал украденную сессию (аудит 23.09.2026, 9.2). Схему базы не трогает. HMAC на
+    секрете ядра — чтобы по токену нельзя было ничего узнать о хеше.
+    """
+    return hmac.new(SECRET_KEY.encode(), (user.hashed_password or '').encode(),
+                    hashlib.sha256).hexdigest()[:16]
+
+
+def token_claims(user) -> dict:
+    return {"sub": user.email, "role": user.role.key, "pwv": password_fingerprint(user)}
+
+
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -153,6 +176,19 @@ def create_access_token(data: dict):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    """Пользователь, ПРИНЯВШИЙ согласие на обработку ПДн, — для всех ручек с данными.
+
+    Без согласия открыты только «кто я» и само принятие (`get_current_user_any`):
+    проверка на одном экране входа обходилась прямым вызовом API (аудит, 6.M8).
+    """
+    user = get_current_user_any(token, db)
+    if user.consent_accepted_at is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=CONSENT_REQUIRED)
+    return user
+
+
+def get_current_user_any(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    """Пользователь из токена — живой, с неизменившимся паролем. Согласие не проверяет."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Недействительный токен",
@@ -167,6 +203,10 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     user = db.query(User).filter(User.email == email).first()
     if user is None or not user.is_active:
+        raise credentials_exception
+    # Пароль сменился после выдачи токена — токен недействителен (9.2). Токен без
+    # отпечатка — выданный до этой правки: один повторный вход после выкладки.
+    if not hmac.compare_digest(str(payload.get("pwv") or ""), password_fingerprint(user)):
         raise credentials_exception
     return user
 
@@ -196,7 +236,7 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
                    details="Попытка входа деактивированного пользователя")
         raise HTTPException(status_code=400, detail="Учётная запись деактивирована")
     _clear_login_attempts(db, email)
-    token = create_access_token({"sub": user.email, "role": user.role.key})
+    token = create_access_token(token_claims(user))
     log_action(db, user, "login_success", entity_type="user", entity_id=user.id)
     return {
         "access_token": token,
@@ -210,7 +250,7 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
     }
 
 @router.get("/me")
-def get_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_me(current_user: User = Depends(get_current_user_any), db: Session = Depends(get_db)):
     from app.permissions import get_permissions_for_user
 
     return {
@@ -221,6 +261,7 @@ def get_me(current_user: User = Depends(get_current_user), db: Session = Depends
         "role_label": current_user.role.label,
         "is_admin": current_user.role.key == "admin",
         "permissions": get_permissions_for_user(db, current_user),
+        "consent_required": current_user.consent_accepted_at is None,
     }
 
 
@@ -230,18 +271,28 @@ class _PwdCheck(BaseModel):
 
 @router.post("/verify-password")
 def verify_current_password(body: _PwdCheck,
-                            current_user: User = Depends(get_current_user)):
+                            current_user: User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
     """Подтверждение действия повторным вводом пароля (напр. удаление строки плана).
-    Возвращает {ok: True} при совпадении, иначе 401 — фронт по этому гейту пропускает
-    деструктивное действие. Пароль проверяется, но не логируется и никуда не пишется."""
+    Возвращает {ok: True} при совпадении, иначе 403 — фронт по этому гейту пропускает
+    деструктивное действие. Пароль проверяется, но не логируется и никуда не пишется.
+
+    Попытки — общим со входом счётчиком (аудит 23.09.2026, 9.3): без него пароль учётки
+    подбирался здесь с чужим токеном в обход блокировки `/login`."""
+    email = _norm_email(current_user.email)
+    _check_login_lockout(db, email)
     if not verify_password(body.password or "", current_user.hashed_password):
-        raise HTTPException(status_code=401, detail="Неверный пароль")
+        _register_failed_login(db, email)
+        # 403, а не 401: 401 фронт читает как «сессия истекла» и выкидывает на вход после
+        # одной опечатки в окне подтверждения (ревью 24.09.2026).
+        raise HTTPException(status_code=403, detail="Неверный пароль")
+    _clear_login_attempts(db, email)
     return {"ok": True}
 
 
 @router.post("/accept-consent")
 def accept_consent(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_any),
     db: Session = Depends(get_db)
 ):
     """152-ФЗ: фиксирует момент принятия пользователем согласия на обработку персональных данных."""

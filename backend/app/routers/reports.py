@@ -1152,7 +1152,8 @@ def export_receivables(
         sum_cell.font = Font(bold=True)
 
     buf = io.BytesIO()
-    wb.save(buf)
+    from app.xlsx_safe import save_workbook   # формулы только наши (аудит, 1.L7)
+    save_workbook(wb, buf)
     buf.seek(0)
     filename = f"debitorka_{timez.msk_now().strftime('%Y%m%d_%H%M')}.xlsx"
     headers = {"Content-Disposition": f"attachment; filename={filename}"}

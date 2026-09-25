@@ -17,6 +17,7 @@ import { sanMoney, moneyNum } from '@/lib/money'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { ChainMark, ChainPanel, ForceDeleteDialog } from '@/components/operations/OperationChain'
 import { downloadFile } from '@/lib/download'
+import useLatest from '@/lib/useLatest'
 
 const STATUSES = ['ОПЛАЧЕНО', 'ПЛАН ОПЛАТ', 'ПЛАН ПОСТУПЛЕНИЙ']
 const BANKS = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
@@ -308,6 +309,10 @@ export default function Operations2() {
   const focusOp = router.query.op ? String(router.query.op) : null
   const [perms, setPerms] = useState({})
   const canEdit = can(perms, 'operations', 'edit')
+  // Кнопки — по тому праву, которое спросит сервер (аудит 23.09.2026, 6.L1): создание и
+  // удаление гейтились правом правки, и человек без них видел кнопки, отвечавшие 403.
+  const canCreate = can(perms, 'operations', 'create')
+  const canDelete = can(perms, 'operations', 'delete')
   const canImport = can(perms, 'import')
   const isMobile = useIsMobile()
   const [ops, setOps] = useState([])
@@ -388,15 +393,18 @@ export default function Operations2() {
   // Возврат на экран = перечитать. Реестр операций правят с других экранов и другие
   // люди; без этого список показывал состояние на момент открытия вкладки
   // (lib/useRefreshOnReturn, замер 13.09.2026 — финмодуль был пропущен целиком).
-  useRefreshOnReturn(() => { if (tok()) loadOps() })
+  useRefreshOnReturn(() => { if (tok()) loadOps({ quiet: true }) })
 
   // Номер запроса: ответ, пришедший после более нового, отбрасывается. Иначе при быстрой
   // смене фильтров старый ответ ложился поверх свежего, и под новым фильтром висел
   // список старого (аудит 23.09.2026, 6.M4).
-  const reqNo = useRef(0)
-  const loadOps = async () => {
-    const my = ++reqNo.current
-    setLoading(true); setErr('')
+  const latest = useLatest()
+  const loadOps = async ({ quiet = false } = {}) => {
+    const fresh = latest()
+    // Фоновая перечитка — тихая: «Загрузка…» вместо таблицы сбрасывала прокрутку и
+    // раскрытые строки (аудит, 6.M6).
+    if (!quiet) setLoading(true)
+    setErr('')
     try {
       const params = new URLSearchParams({ skip: page * pageSize, limit: pageSize, sort_col: sortCol, sort_dir: sortDir })
       fStatus.forEach(s => params.append('status', s)); fBank.forEach(b => params.append('bank', b))
@@ -408,7 +416,7 @@ export default function Operations2() {
       // Пока она в адресе, остальные фильтры не важны: показывается ровно эта строка.
       if (focusOp) params.append('ids', focusOp)
       const res = await api(tok()).get(`/operations/?${params}`)
-      if (my !== reqNo.current) return
+      if (!fresh()) return
       setOps(res.data?.items || []); setTotal(res.data?.total || 0)
       // Время последней загрузки данных (обновляется при любом изменении — add/edit/delete
       // зовут loadOps). Считаем на клиенте, не при рендере — без SSR-рассинхрона.
@@ -416,9 +424,9 @@ export default function Operations2() {
     } catch (e) {
       // Реестр операций — журнал денег. «Ничего не нашлось» и «не смогли спросить»
       // на нём выглядят одинаково пустой таблицей, и различать их обязан экран.
-      if (my === reqNo.current && !isAuth(e)) setErr(errText(e))
+      if (fresh() && !isAuth(e)) setErr(errText(e))
     }
-    finally { if (my === reqNo.current) setLoading(false) }
+    finally { if (fresh()) setLoading(false) }
   }
   // Смена ЛЮБОГО фильтра возвращает на первую страницу и снимает выделение. Раньше это
   // делал только фильтр «Незаполненные»: на третьей странице выбранный статус с сорока
@@ -658,10 +666,10 @@ export default function Operations2() {
         onToggle={() => setDocMenu(m => m === o.id ? null : o.id)}
         onOpenFile={openOpFile} />
       case 'description': return <span title={o.description} style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.description || '—'}</span>
-      case 'actions': return canEdit ? <span style={{ display: 'inline-flex', gap: 4 }}>
-        <span onClick={() => dupOp(o)} title="Дублировать" className="op-ico" style={{ color: 'var(--text-muted)' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg></span>
-        <span onClick={() => openEdit(o)} title="Редактировать" className="op-ico op-ico-w" style={{ color: 'var(--text-muted)' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></span>
-        <span onClick={() => delOp(o.id)} title="Удалить" className="op-ico op-ico-d" style={{ color: 'var(--text-muted)' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M6 6l12 12M18 6L6 18" /></svg></span>
+      case 'actions': return (canEdit || canCreate || canDelete) ? <span style={{ display: 'inline-flex', gap: 4 }}>
+        {canCreate && <span onClick={() => dupOp(o)} title="Дублировать" className="op-ico" style={{ color: 'var(--text-muted)' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg></span>}
+        {canEdit && <span onClick={() => openEdit(o)} title="Редактировать" className="op-ico op-ico-w" style={{ color: 'var(--text-muted)' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></span>}
+        {canDelete && <span onClick={() => delOp(o.id)} title="Удалить" className="op-ico op-ico-d" style={{ color: 'var(--text-muted)' }}><svg width="15" height="15" viewBox="0 0 24 24" style={IcoStroke}><path d="M6 6l12 12M18 6L6 18" /></svg></span>}
       </span> : null
       default: return null
     }
@@ -692,7 +700,7 @@ export default function Operations2() {
         <Head><title>Операции · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="operations" />
         <OperationsMobile
-          total={total} rows={rows} loading={loading} articles={articles} counterparties={counterparties} canEdit={canEdit}
+          total={total} rows={rows} loading={loading} articles={articles} counterparties={counterparties} canEdit={canEdit} canCreate={canCreate} canDelete={canDelete}
           dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo}
           fStatus={fStatus} setFStatus={setFStatus} fBank={fBank} setFBank={setFBank}
           fArticle={fArticle} setFArticle={setFArticle} fCp={fCp} setFCp={setFCp} fOpType={fOpType} setFOpType={setFOpType}
@@ -735,15 +743,15 @@ export default function Operations2() {
             <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{new Intl.NumberFormat('ru-RU').format(total)} записей{updatedAt ? ` · обновлено ${updatedAt}` : ''}</span>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            {canEdit && <button onClick={() => setCreateOpen(o => !o)} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '10px 16px', fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>+ Новая операция</button>}
-            {canEdit && <button onClick={downloadTemplate} style={{ background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 12, padding: '10px 16px', fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Шаблон</button>}
+            {canCreate && <button onClick={() => setCreateOpen(o => !o)} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 12, padding: '10px 16px', fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>+ Новая операция</button>}
+            {canCreate && <button onClick={downloadTemplate} style={{ background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 12, padding: '10px 16px', fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Шаблон</button>}
             {canImport && <IconBtn title="Импорт из файла" onClick={() => router.push('/finance/import')}><svg width="17" height="17" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 15V3" /><path d="M7 8l5-5 5 5" /><path d="M5 21h14" /></svg></IconBtn>}
             <IconBtn title="Выгрузить в Excel (с учётом фильтров)" onClick={downloadExport}><svg width="17" height="17" viewBox="0 0 24 24" style={IcoStroke}><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M5 21h14" /></svg></IconBtn>
           </div>
         </div>
 
         {/* Форма создания */}
-        {createOpen && canEdit && (
+        {createOpen && canCreate && (
           <div style={{ ...CARD, position: 'relative', zIndex: 30, border: '1px solid #D7DEFA', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 8px 28px rgba(79,108,230,.10)', animation: 'opRise .28s cubic-bezier(0.22,1,0.36,1) both' }}>
             <HeadCard title="Новая операция" iconBg="var(--accent-tint)" iconFg="var(--accent)" iconPath={<><path d="M12 5v14" /><path d="M5 12h14" /></>} onClose={() => setCreateOpen(false)} />
             <div style={{ padding: '20px 24px' }}><OpFields f={createForm} set={p => setCreateForm(s => ({ ...s, ...p }))} articles={articles} counterparties={counterparties} mode="create"
@@ -827,7 +835,7 @@ export default function Operations2() {
                 ))}
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
                   <button onClick={applyBulk} disabled={saving} style={{ height: 38, boxSizing: 'border-box', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '0 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>Применить к {selIds.length}</button>
-                  <button onClick={delBulk} disabled={saving} title={`Удалить ${selIds.length}`} aria-label="Удалить" style={{ width: 38, height: 38, flexShrink: 0, background: 'var(--bg-card)', border: '1px solid #F3C9CC', color: T.danger, borderRadius: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>
+                  {canDelete && <button onClick={delBulk} disabled={saving} title={`Удалить ${selIds.length}`} aria-label="Удалить" style={{ width: 38, height: 38, flexShrink: 0, background: 'var(--bg-card)', border: '1px solid #F3C9CC', color: T.danger, borderRadius: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>}
                   <button onClick={() => setSel({})} title="Снять выделение" aria-label="Снять выделение" style={{ width: 38, height: 38, flexShrink: 0, background: 'var(--bg-card)', border: '1px solid var(--border-card)', color: 'var(--text-secondary)', borderRadius: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><svg width="16" height="16" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M18 6L6 18" /><path d="M6 6l12 12" /></svg></button>
                 </div>
               </div>

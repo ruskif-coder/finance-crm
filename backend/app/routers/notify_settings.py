@@ -437,16 +437,21 @@ def handle_staff_update(db: Session, update: Dict[str, Any], reply) -> bool:
         # стороны выглядят одинаково, а ответ дешевле любого разбирательства.
         reply(chat_id,
               "Чтобы получать уведомления, пришлите код из портала — "
-              "раздел «Мои уведомления», кнопка «Подключить бота». Код из шести "
+              "раздел «Мои уведомления», кнопка «Подключить бота». Код из десяти "
               "знаков, живёт полчаса.")
         return False
 
+    if telegram.chat_blocked(db, telegram.STAFF, chat_id):
+        reply(chat_id, telegram.BLOCKED_TEXT)
+        return False
     row = (db.query(UserNotificationChannels)
            .filter(UserNotificationChannels.tg_link_code == code).first())
     if row is None or (row.tg_link_expires and row.tg_link_expires < datetime.utcnow()):
+        telegram.note_bad_code(db, telegram.STAFF, chat_id)          # перебор кодов (аудит 23.09.2026, 1.L4)
         reply(chat_id, "Код не найден или просрочен. "
                        "Получите новый в разделе «Мои уведомления».")
         return False
+    telegram.clear_bad_codes(db, telegram.STAFF, chat_id)
 
     # Привязка записывается СРАЗУ и синхронно: она и есть результат запроса. Ответное
     # сообщение отдельно — если оно не дойдёт, человек всё равно уже привязан.

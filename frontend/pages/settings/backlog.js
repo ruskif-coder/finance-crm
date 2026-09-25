@@ -17,6 +17,7 @@ import { UI, MONO, card, inp, sel, primaryBtn, th, td } from '../../components/s
 import api, { auth } from '../../lib/http'
 import { getPermissions, can } from '../../lib/auth'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import safeHref from '@/lib/safeHref'
 import { fmtDateTime, fmtDate as fmtDateOnly } from '@/lib/dates'
 
 const SEVERITIES = ['низкая', 'средняя', 'высокая']
@@ -268,7 +269,7 @@ function Detail({ item, mayEdit, onChanged, onErr }) {
         <span>Заведено: {fmtDT(item.created_at)} · {item.created_by_name || '—'}</span>
         {item.resolved_at && <span>Исход: {fmtDT(item.resolved_at)} · {item.resolved_by_name || '—'}</span>}
         {item.source_link && (
-          <a href={item.source_link} target="_blank" rel="noreferrer"
+          <a href={safeHref(item.source_link)} target="_blank" rel="noreferrer"
             style={{ color: 'var(--accent)' }}>Источник</a>
         )}
       </div>

@@ -551,7 +551,8 @@ def export_annexes(payload: ExportIn, db: Session = Depends(get_db),
             c.number_format = "# ##0.00"
     ws.freeze_panes = "A2"
     buf = BytesIO()
-    wb.save(buf)
+    from app.xlsx_safe import save_workbook   # формулы только наши (аудит, 1.L7)
+    save_workbook(wb, buf)
     buf.seek(0)
     human = f"Приложения к договорам {date.today():%d.%m.%Y}.xlsx"
     return StreamingResponse(

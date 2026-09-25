@@ -46,6 +46,9 @@ export default function App({ Component, pageProps }) {
         localStorage.setItem('is_admin', d.is_admin ? '1' : '0')
         localStorage.setItem('permissions', JSON.stringify(d.permissions || {}))
         if (d.name) localStorage.setItem('name', d.name)
+        // Согласие не принято (токен выдан, а форму закрыли) — сервер данных не отдаст;
+        // ведём на вход, там форма согласия (аудит 23.09.2026, 9.7).
+        if (d.consent_required) { localStorage.clear(); router.replace('/login') }
       })
       .catch(e => { if (e.response?.status === 401) { localStorage.clear(); router.replace('/login') } })
       .finally(() => setReady(true))

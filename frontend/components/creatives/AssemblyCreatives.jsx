@@ -723,6 +723,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
             <div style={{ width: wh ? Math.round(wh[0] * k) : '100%',
               height: wh ? Math.round(wh[1] * k) : 420, overflow: 'hidden' }}>
               <iframe key={curId} src={fresh(cur.sandbox_url)} title={'Креатив ' + (cur?.ratio || '')}
+                sandbox="allow-scripts"
                 style={{ border: 0, display: 'block', background: 'var(--bg-card)',
                   width: wh ? wh[0] : '100%', height: wh ? wh[1] : 420,
                   transform: `scale(${k})`, transformOrigin: 'top left' }} />

@@ -107,6 +107,16 @@ def test_several_clients_on_one_inn_are_refused(db, user, monkeypatch):
     assert 'несколько юрлиц' in str(e.value)
 
 
+def test_client_record_is_taken_when_the_inn_has_two_roles(db, user, monkeypatch):
+    """`CL…` — клиент, `AG…` — агент: одно юрлицо в двух ролях — не неоднозначность.
+    Правило то же, что у сверки юрлиц (`registry.pick_client`)."""
+    monkeypatch.setattr(ord_client, 'get', lambda p, params=None: [
+        {'id': 'AG-role', 'inn': ADV_INN}, {'id': 'CL-role', 'inn': ADV_INN}])
+    monkeypatch.setattr(ord_client, 'post',
+                        lambda p, b: pytest.fail('существующее юрлицо не заводится'))
+    assert submit.ensure_client(db, ADV_INN, 'CTtest', user) == 'CL-role'
+
+
 def test_absent_client_is_created_and_logged(db, user, monkeypatch):
     monkeypatch.setattr(ord_client, 'get', lambda p, params=None: [])
     monkeypatch.setattr(ord_client, 'post',

@@ -18,12 +18,15 @@
     "check-freshness": "node scripts/check-freshness.mjs",
     "check-unsaved": "node scripts/check-unsaved.mjs",
     "lint": "next lint --dir pages --dir components --dir lib",
-    "prebuild": "npm run check-nav && npm run check-money && npm run check-overlay && npm run check-inline && npm run check-perms && npm run check-login && npm run check-tokens && npm run check-dates && npm run check-tone && npm run check-cabinet-state && npm run check-style-fn && npm run check-notify && npm run check-freshness && npm run check-unsaved && npm run check-money-input && npm run check-vat && npm run check-hrefs",
+    "prebuild": "npm run check-nav && npm run check-money && npm run check-overlay && npm run check-inline && npm run check-perms && npm run check-login && npm run check-tokens && npm run check-dates && npm run check-tone && npm run check-cabinet-state && npm run check-style-fn && npm run check-notify && npm run check-freshness && npm run check-unsaved && npm run check-money-input && npm run check-vat && npm run check-hrefs && npm run check-embeds && npm run check-screens && npm run check-hooks-lint",
     "build": "next build",
     "start": "next start -p 3000",
     "check-inline": "node scripts/check-inline-components.mjs",
     "check-money-input": "node scripts/check-money-input.mjs",
     "check-hrefs": "node scripts/check-hrefs.mjs",
+    "check-embeds": "node scripts/check-embeds.mjs",
+    "check-screens": "node scripts/check-screens.mjs",
+    "check-hooks-lint": "node scripts/check-hooks-lint.mjs",
     "check-vat": "node scripts/check-vat.mjs"
   },
   "dependencies": {

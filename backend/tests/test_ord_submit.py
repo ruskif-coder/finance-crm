@@ -50,6 +50,10 @@ def _purge(session):
             OrdSubmission.kind == 'final_contract',
             OrdSubmission.local_id.in_(ids)).delete(synchronize_session=False)
         session.query(Contract).filter(Contract.id.in_(ids)).delete(synchronize_session=False)
+    # попытки заведения юрлица — ключ по ИНН (`registry.client_key`)
+    session.query(OrdSubmission).filter(
+        OrdSubmission.kind == 'client',
+        OrdSubmission.local_id == int(TEST_INN[:9])).delete(synchronize_session=False)
     session.query(Counterparty).filter(Counterparty.inn == TEST_INN
                                        ).delete(synchronize_session=False)
     session.commit()
@@ -185,30 +189,56 @@ def test_already_registered_contract_is_refused_without_touching_ord(db, user, m
         "отказ на входе не оставляет следов в журнале")
 
 
-def test_missing_client_id_is_refused_before_any_call(db, user, monkeypatch):
-    """Без идентификатора юрлица отправлять нечего — и это видно до запроса."""
+def test_missing_client_is_found_or_created_by_default(db, user, monkeypatch):
+    """Регистрация доходного из справочника по умолчанию сама находит или заводит
+    юрлицо плательщика — как регистрация изначального (владелец, 24.09.2026). Раньше
+    без идентификатора был отказ «сначала сверка юрлиц», и новый договор с новым
+    клиентом зарегистрировать было нельзя вовсе."""
     cp, contract = _setup(db, ord_client_id=None)
-    called = []
-    monkeypatch.setattr(ord_client, 'post', lambda p, b: called.append(1))
+    posted = []
 
-    with pytest.raises(submit.OrdSubmitRefused) as e:
-        submit.register_final_contract(db, contract, user)
+    def post(path, body):
+        posted.append(path)
+        if path == '/webapi/v3/clients':
+            return 200, {'id': 'CL-new-payer', 'status': 'Active'}
+        return 200, {'id': 'CT-final-88', 'status': 'Created'}
+    monkeypatch.setattr(ord_client, 'get', lambda p, params=None: [])
+    monkeypatch.setattr(ord_client, 'post', post)
 
-    assert 'идентификатора юрлица' in str(e.value)
-    assert not called
+    result = submit.register_final_contract(db, contract, user)
+
+    db.refresh(cp)
+    assert posted == ['/webapi/v3/clients', '/webapi/v3/contracts/final']
+    assert result['ord_id'] == 'CT-final-88'
+    assert cp.ord_client_id == 'CL-new-payer' and cp.ord_env == 'demo', (
+        "найденное или заведённое юрлицо запоминается у контрагента")
+    row = db.query(OrdSubmission).filter(OrdSubmission.kind == 'final_contract',
+                                         OrdSubmission.local_id == contract.id).one()
+    assert row.request.get('clientId') == 'CL-new-payer'
 
 
-def test_client_id_from_another_contour_is_refused(db, user, monkeypatch):
-    """Идентификатор с прода при отправке на демо — ссылка в никуда."""
+def test_client_id_from_another_contour_is_found_again_not_refused(db, user, monkeypatch):
+    """Идентификатор с другого контура — не отказ, а повод найти юрлицо на ЭТОМ (ревью
+    24.09.2026): после пробы в песочнице доходный с тем же плательщиком на проде иначе не
+    регистрировался вовсе. Чужой идентификатор в колонке при этом не затирается — как у
+    колонок договора (`registry.own_contour`)."""
     cp, contract = _setup(db, ord_client_id='CT-prod-1', client_env='prod')
-    called = []
-    monkeypatch.setattr(ord_client, 'post', lambda p, b: called.append(1))
+    sent = {}
 
-    with pytest.raises(submit.OrdSubmitRefused) as e:
-        submit.register_final_contract(db, contract, user)
+    def post(path, body):
+        if path == '/webapi/v3/clients':
+            return 200, {'id': 'CL-demo-payer', 'status': 'Active'}
+        sent.update(body)
+        return 200, {'id': 'CT-final-99', 'status': 'Created'}
+    monkeypatch.setattr(ord_client, 'get', lambda p, params=None: [])
+    monkeypatch.setattr(ord_client, 'post', post)
 
-    assert 'контуров не общие' in str(e.value)
-    assert not called
+    submit.register_final_contract(db, contract, user)
+
+    db.refresh(cp)
+    assert sent.get('clientId') == 'CL-demo-payer'
+    assert (cp.ord_client_id, cp.ord_env) == ('CT-prod-1', 'prod'), (
+        "демо-прогон затёр боевой идентификатор юрлица")
 
 
 def test_prod_write_needs_its_own_permission(db, user, monkeypatch):

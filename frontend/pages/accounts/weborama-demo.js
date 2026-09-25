@@ -14,7 +14,8 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import Head from 'next/head'
-import Navbar from '@/components/Navbar'
+import Navbar, { can } from '@/components/Navbar'
+import { getPermissions } from '@/lib/auth'
 import { MONO, UI, Modal, card, inp, btn, primaryBtn } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/http'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -143,6 +144,12 @@ export default function WeboramaDemo() {
 
   useRefreshOnReturn(() => load())
   useEffect(() => { load() }, [load])
+  // Шаги, которые сервер пускает только с правом правки (вход, проект, кампания, сеть,
+  // вставка), при одном просмотре неактивны и говорят почему — раньше они были видны и
+  // отвечали 403 (аудит 23.09.2026, 7.L4). Право читается в эффекте, не при рендере.
+  const [canEdit, setCanEdit] = useState(false)
+  useEffect(() => { setCanEdit(can(getPermissions(), 'weborama_demo', 'edit')) }, [])
+  const noEdit = canEdit ? undefined : 'Нужно право «Аккаунты · Weborama демо» — правка'
 
   const run = async (key, fn) => {
     setBusy(key); setErr(''); setStepErr(s => ({ ...s, [key]: '' }))
@@ -281,7 +288,7 @@ export default function WeboramaDemo() {
                   токен получен ({loginOut.token_length} символов).
                 </div>
               )}>
-          <button onClick={doLogin} disabled={!ready || !account || !!busy} style={primaryBtn}>
+          <button onClick={doLogin} title={noEdit} disabled={!canEdit || !ready || !account || !!busy} style={primaryBtn}>
             {busy === 'login' ? 'Вхожу…' : 'Войти'}
           </button>
         </Step>
@@ -355,7 +362,7 @@ export default function WeboramaDemo() {
                   <div style={{ ...CODE, marginTop: 8 }}>{JSON.stringify(projOut.raw, null, 2)}</div>
                 </>
               )}>
-          <button onClick={doProject} disabled={!loginOut || !names || !!busy} style={primaryBtn}>
+          <button onClick={doProject} title={noEdit} disabled={!canEdit || !loginOut || !names || !!busy} style={primaryBtn}>
             {busy === 'project' ? 'Завожу…' : 'Завести проект'}
           </button>
         </Step>
@@ -375,7 +382,7 @@ export default function WeboramaDemo() {
             <F label="landing_url" value={form.landing_url}
                onChange={v => setForm(f => ({ ...f, landing_url: v }))}
                placeholder="https://…" width={420} />
-            <button onClick={doCampaign} disabled={!projOut || !!busy} style={primaryBtn}>
+            <button onClick={doCampaign} title={noEdit} disabled={!canEdit || !projOut || !!busy} style={primaryBtn}>
               {busy === 'campaign' ? 'Завожу…' : 'Завести кампанию'}
             </button>
           </div>
@@ -392,7 +399,7 @@ export default function WeboramaDemo() {
               )}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
             <F label="ad_network_id" value={netId} onChange={setNetId} width={160} />
-            <button onClick={doNetwork} disabled={!loginOut || !!busy} style={btn(false)}>
+            <button onClick={doNetwork} title={noEdit} disabled={!canEdit || !loginOut || !!busy} style={btn(false)}>
               {busy === 'network' ? 'Завожу…' : 'Завести новую сеть'}
             </button>
           </div>
@@ -422,7 +429,7 @@ export default function WeboramaDemo() {
                 <option value="3">3 — показы и клики → пиксель a.A=im</option>
               </select>
             </div>
-            <button onClick={doInsertion} disabled={!campOut || !spaceId || !!busy} style={primaryBtn}>
+            <button onClick={doInsertion} title={noEdit} disabled={!canEdit || !campOut || !spaceId || !!busy} style={primaryBtn}>
               {busy === 'insertion' ? 'Завожу…' : 'Завести вставку'}
             </button>
           </div>

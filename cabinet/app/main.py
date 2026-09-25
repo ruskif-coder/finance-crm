@@ -262,7 +262,7 @@ def login(payload: LoginIn, request: Request = None):
 
     pubs = account_publishers(row.id)
 
-    return {"token": make_token(row.id, row.email),
+    return {"token": make_token(row.id, row.email, row.hashed_password),
             "name": row.name, "email": row.email,
             # Первый вход — экран покажет согласие до всего остального (24.09.2026).
             "consent_required": getattr(row, "consent_accepted_at", None) is None,

@@ -574,7 +574,8 @@ def export_contracts(
     dv_cnd.sqref = f"M2:M{max_dv}"
 
     buf = io.BytesIO()
-    wb.save(buf)
+    from app.xlsx_safe import save_workbook   # формулы только наши (аудит, 1.L7)
+    save_workbook(wb, buf)
     buf.seek(0)
     ts = timez.msk_now().strftime("%Y%m%d_%H%M")   # имя файла — по московским часам
     filename = f"dogovory_{ts}.xlsx"

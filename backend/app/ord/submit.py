@@ -170,23 +170,23 @@ def register_final_contract(db: Session, contract: Contract, user) -> dict:
     if payer is None:
         raise OrdSubmitRefused("У договора не указан контрагент — регистрировать не с кем")
 
-    # Идентификатор юрлица тоже свой у каждого контура: ищем его для ТОГО, куда
-    # отправляем. Заводить юрлицо отсюда молча нельзя — правило 3 в шапке модуля:
-    # чего не хватает, о том говорим до запроса, а не создаём попутно.
+    # Идентификатор юрлица свой у каждого контура: ищем его для ТОГО, куда отправляем.
+    # Нет его на этом контуре — по умолчанию находим юрлицо в ОРД по ИНН или заводим, как
+    # регистрация изначального (владелец, 24.09.2026). До этого был отказ «сначала сверка
+    # юрлиц», и договор с новым клиентом не регистрировался вовсе; а идентификатор с
+    # другого контура давал отказ даже после пробы в песочнице (ревью 24.09.2026).
+    # Поиск перед заведением и отказ на настоящей неоднозначности — в `ensure_client`.
     client_id = registry.known_id(db, 'client', registry.client_key(payer.inn), env,
                                   payer.ord_client_id, payer.ord_env)
     if not client_id:
-        if payer.ord_client_id and (payer.ord_env or registry.ENV_WHEN_UNKNOWN) != env:
-            # Идентификатор из другого контура — ссылка в никуда. Молча отправленный,
-            # он дал бы отказ ОРД в лучшем случае и чужой договор в худшем.
-            raise OrdSubmitRefused(
-                f"Идентификатор юрлица «{payer.name}» получен на контуре "
-                f"{payer.ord_env or registry.ENV_WHEN_UNKNOWN}, а отправляем на {env}. "
-                f"Идентификаторы контуров не общие.")
-        raise OrdSubmitRefused(
-            f"У «{payer.name}» нет идентификатора юрлица в ОРД на контуре {env}. "
-            f"Сначала сверка юрлиц (она проставляет его по ИНН), либо заведите "
-            f"юрлицо в кабинете.")
+        client_id = ensure_client(db, payer.inn, payer.name, user)
+        # В колонку — только свой контур: демо-прогон не затирает боевой идентификатор.
+        # Чужой остаётся в журнале попыток, откуда его достаёт `registry.known_id`.
+        if registry.own_contour(payer.ord_client_id, payer.ord_env, env):
+            payer.ord_client_id = client_id
+            payer.ord_env = env
+            payer.ord_synced_at = datetime.utcnow()
+        db.commit()
 
     body = payloads.final_contract(contract, client_id)
 
@@ -275,6 +275,7 @@ def ensure_client(db: Session, inn: str, name: str, user,
     found = client.get('/webapi/v3/clients', {'Inn': digits}) or []
     if not isinstance(found, list):
         found = [found]
+    found = registry.pick_client(found)      # CL из двух ролей юрлица — не двойник
     if len(found) == 1:
         return found[0].get('id')
     if len(found) > 1:

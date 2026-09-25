@@ -80,6 +80,11 @@ ALLOWED_DESTRUCTIVE = (
     # источник (`weborama_manual`) и только по своей кампании; ни факт, ни снятое через
     # API этим запросом не задеть.
     "DELETE FROM ad_campaign_stat WHERE campaign_id = :c AND placement_id IS NULL AND source = 'weborama_manual'",
+    # Счётчик неверных кодов привязки Телеграма (аудит 23.09.2026, 1.L4) — служебная
+    # отметка, а не учётные данные: протухшие записи вычищаются, верный код снимает свою.
+    # Область — только ключи `tg_bad:%`.
+    "DELETE FROM company_settings WHERE key LIKE 'tg_bad:%' AND value < :cut",
+    "DELETE FROM company_settings WHERE key = :k AND key LIKE 'tg_bad:%'",
 )
 
 DATA_MUTATING = (

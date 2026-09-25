@@ -704,6 +704,7 @@ export default function DealCard() {
   const [err, setErr] = useState('')
   const [phases, setPhases] = useState([])      // каталог стадий — для бара цепочки
   const [mp, setMp] = useState(null)            // последний медиаплан сделки (полные данные)
+  const [mpFailed, setMpFailed] = useState(false)   // медиаплан есть, но не загрузился
   const [moveOpen, setMoveOpen] = useState(false)
   // Требования СЛЕДУЮЩЕГО шага — на карточке, а не только в диалоге: человек должен
   // видеть, чего не хватает, ещё до того как нажмёт «Изменить стадию». Цель не задаём —
@@ -852,11 +853,14 @@ export default function DealCard() {
   // (строки/доп/таргетинг) — параметры кампании и размещение показываем из него.
   useEffect(() => {
     const list = (deal && deal.our_mps) || []
+    setMpFailed(false)
     if (!list.length) { setMp(null); return }
     const last = [...list].sort((a, b) => (b.version || 0) - (a.version || 0))[0]
     api.get(`/sales/media-plans/${last.id}`, auth())
       .then(r => setMp({ ...r.data, _head: last }))
-      .catch(() => setMp(null))
+      // Сбой — не «медиаплана нет» (аудит 23.09.2026, 6.M5): зона говорит, что план
+      // не загрузился, а не предлагает создать новый поверх существующего.
+      .catch(() => { setMp(null); setMpFailed(true) })
   }, [deal && deal.our_mps && deal.our_mps.map(x => x.id).join(',')])
 
   // Данные размещения/прогноза/доп/таргетинга — из ПОСЛЕДНЕГО медиаплана сделки.
@@ -1279,7 +1283,12 @@ export default function DealCard() {
 
               {/* Медиаплана нет — вся зона медиаплана становится кнопкой создания.
                   Есть МП — обычный блок размещения из его строк. */}
-              {!mp ? (
+              {!mp && mpFailed ? (
+                <div style={{ padding: '14px 0', color: 'var(--danger-fg)', fontSize: 13 }}>
+                  Медиаплан сделки не загрузился — обновите страницу. Создавать новый не нужно:
+                  он у сделки есть.
+                </div>
+              ) : !mp ? (
                 <div onClick={canEdit ? () => router.push(`/accounts/mp/new?deal=${d.id}`) : undefined}
                   title={canEdit ? 'Создать медиаплан — реквизиты и бриф подставятся из сделки' : 'Медиаплана нет'}
                   style={{

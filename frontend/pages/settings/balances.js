@@ -45,7 +45,13 @@ export default function SettingsBalances() {
   const [bankOwnCompany, setBankOwnCompany] = useState({})  // { "АльфаБанк": id|null }
   const [savingOwnCompany, setSavingOwnCompany] = useState({})
 
-  useRefreshOnReturn(() => loadBalances(), { enabled: !Object.keys(editing).length && !Object.keys(editingReq).length })
+  // «Правят» — это ОТЛИЧИЕ поля от данных сервера: `editing` и `editingReq` заполняются
+  // копией для всех банков сразу, и проверка на непустоту была истинной всегда — перечитка
+  // при возврате не срабатывала никогда (аудит 23.09.2026, 6.L3).
+  const balancesDirty = banks.some(b =>
+    String(editing[b.bank] ?? '') !== String(b.opening_balance ?? '')
+    || JSON.stringify(editingReq[b.bank] || {}) !== JSON.stringify(companyReq[b.bank] || {}))
+  useRefreshOnReturn(() => loadBalances(), { enabled: !balancesDirty })
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }

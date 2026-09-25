@@ -116,7 +116,9 @@ def _classify(route):
     names = _dep_names(route.dependant)
     if names & GUARD_DEPS:
         return "guarded"
-    if "get_current_user" not in names:
+    # `get_current_user_any` — тот же вход, только без проверки согласия на обработку
+    # ПДн: им закрыты «кто я» и само принятие согласия (аудит 23.09.2026, 9.7).
+    if not names & {"get_current_user", "get_current_user_any"}:
         return "open"
     try:
         src = inspect.getsource(route.endpoint)

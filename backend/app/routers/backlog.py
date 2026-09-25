@@ -11,11 +11,12 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, aliased
 
 from app.audit import log_action
+from app.links import safe_url
 from app.backlog_models import (CLOSED_STATUSES, SEVERITIES, STATUSES,
                                 BacklogItem, BacklogNote)
 from app.database import get_db
@@ -47,6 +48,13 @@ class BacklogIn(BaseModel):
     source_link: Optional[str] = None
     resolution: Optional[str] = None
 
+    # Ссылка рисуется кликабельной: чужая схема (`javascript:`) исполнилась бы у того,
+    # кто открыл запись (аудит 23.09.2026, 6.M10). Правило то же, что у ссылок площадок.
+    @field_validator('source_link')
+    @classmethod
+    def _link(cls, v):
+        return safe_url(v)
+
 
 class BacklogUpdate(BaseModel):
     """Частичное обновление тем же паттерном, что bulk-edit в operations.py:
@@ -61,6 +69,13 @@ class BacklogUpdate(BaseModel):
     watch_until: Optional[date] = None
     source_link: Optional[str] = None
     resolution: Optional[str] = None
+
+    # Ссылка рисуется кликабельной: чужая схема (`javascript:`) исполнилась бы у того,
+    # кто открыл запись (аудит 23.09.2026, 6.M10). Правило то же, что у ссылок площадок.
+    @field_validator('source_link')
+    @classmethod
+    def _link(cls, v):
+        return safe_url(v)
 
 
 class NoteIn(BaseModel):

@@ -38,7 +38,17 @@ export default function SettingsUsers() {
 
   // Под защитой: строка, которую сейчас правят, не должна перезаписаться
   // ответом сервера прямо под руками.
-  useRefreshOnReturn(() => loadUsers(), { enabled: !Object.keys(editingUsers).length })
+  // «Правят» — это ОТЛИЧИЕ формы от данных сервера. `editingUsers` заполняется копией для
+  // всех строк сразу, и проверка на непустоту была истинной всегда: перечитка при возврате
+  // не срабатывала никогда (аудит 23.09.2026, 6.L3).
+  const usersDirty = users.some(u => {
+    const ed = editingUsers[u.id]
+    return !!ed && (ed.password || ed.name !== u.name || ed.email !== u.email
+      || ed.role !== u.role || ed.is_active !== u.is_active
+      || String(ed.bitrix_user_id || '') !== String(u.bitrix_user_id || '')
+      || Number(ed.notification_profile_id || 0) !== Number(u.notification_profile_id || 0))
+  })
+  useRefreshOnReturn(() => loadUsers(), { enabled: !usersDirty })
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }
@@ -380,8 +390,12 @@ export default function SettingsUsers() {
                           onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, bitrix_user_id: e.target.value } }))}
                           disabled={bxLoading || (!!bxError && bitrixUsers.length === 0)}
                           title={bxError || ''}
-                          style={{ ...sel, minWidth: 200 }}>
-                          <option value="">{bxLoading ? 'загрузка…' : (bxError && bitrixUsers.length === 0 ? '⚠ ' + bxError : '— не привязан —')}</option>
+                          // Ширина фиксирована: <select> растягивается по самому длинному пункту,
+                          // и полный текст ошибки Битрикса в пункте раздувал колонку до 1300+ px —
+                          // «Новый пароль» и кнопки уезжали за край (24.09.2026). В пункте — коротко,
+                          // полный текст — во всплывающей подсказке.
+                          style={{ ...sel, width: 220, maxWidth: 220 }}>
+                          <option value="">{bxLoading ? 'загрузка…' : (bxError && bitrixUsers.length === 0 ? 'Битрикс недоступен' : '— не привязан —')}</option>
                           {cur && !known && <option value={cur}>ID {cur} (не в списке)</option>}
                           {[...bitrixUsers].sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1)).map(b =>
                             <option key={b.id} value={b.id}>{b.name}{b.active ? '' : ' (уволен)'} · #{b.id}</option>)}

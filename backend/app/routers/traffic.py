@@ -644,7 +644,17 @@ def get_shot(file_id: int, db: Session = Depends(get_db),
     # Путь из базы — через общую проверку границы хранилища (`app/files_safe`).
     # До 11.09.2026 она была ровно в одном месте из десяти.
     full = existing_upload_path(rec.path)
-    return FileResponse(full, media_type=rec.content_type or "application/octet-stream")
+    # Тип — из НАШЕГО списка, отдача — вложением (аудит 23.09.2026, 1.L8): тип брался у
+    # площадки как есть, и `text/html` открылся бы страницей на нашем адресе. Сейчас это
+    # не XSS (Bearer + скачивание), но станет им при переходе на cookie.
+    ctype = rec.content_type if rec.content_type in SHOT_TYPES else "application/octet-stream"
+    # Имя — от сохранённого файла: снимок перекодируется в WebP, и `original_name`
+    # «shot.png» пришёл бы с чужим расширением (ревью 24.09.2026).
+    return FileResponse(full, media_type=ctype, filename=os.path.basename(rec.path) or "file",
+                        content_disposition_type="attachment")
+
+
+SHOT_TYPES = {"image/png", "image/jpeg", "image/webp", "application/pdf"}
 
 
 @router.delete("/file/{file_id}")

@@ -188,6 +188,8 @@ export default function TemplateEditor({ mayEdit, onErr }) {
                     Ни одна карточка не добавлена в предпросмотр
                   </div>
                 : <iframe title="Письмо целиком" srcDoc={html} onLoad={fit}
+                    /* скриптов в письме нет; доступ к документу нужен подгонке высоты */
+                    sandbox="allow-same-origin"
                     style={{ width: '100%', height: hgt, border: '1px solid var(--border-card)',
                       borderRadius: 11, background: '#fff', display: 'block' }} />}
             </div>

@@ -10,6 +10,9 @@ import { getPermissions } from '@/lib/auth'
 import { grp0 as fmt } from '@/lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { fileStamp } from '@/lib/dates'
+import useLatest from '@/lib/useLatest'
+import { errText, isAuth } from '@/lib/loadError'
+import { LoadError, LoadErrorScreen } from '@/components/salesTableKit'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -122,7 +125,7 @@ export default function Receivables() {
   // Возврат на экран = перечитать. Финмодуль был пропущен, когда механизм
   // актуальности заводили 13.09.2026: правка операции не появлялась здесь
   // никогда, а число на экране — утверждение о деньгах (lib/useRefreshOnReturn).
-  useRefreshOnReturn(() => load(localStorage.getItem('token')))
+  useRefreshOnReturn(() => load(localStorage.getItem('token'), { quiet: true }))
 
   useEffect(() => {
     if (data && Array.isArray(data.rows)) {
@@ -131,14 +134,25 @@ export default function Receivables() {
     }
   }, [data])
 
-  const load = async (token) => {
-    setLoading(true); setDenied(false)
-    try { const res = await api(token).get('/reports/receivables'); setData(res.data) }
-    catch (e) {
+  // Сбой — это сбой, а не «Нет данных» (аудит 23.09.2026, 6.M5): 500 или обрыв раньше
+  // показывали пустой экран с «Нет данных», и человек видел отсутствие долгов там, где
+  // сервер просто не ответил. Фоновая перечитка — тихая (6.M6), устаревший ответ не
+  // пишется поверх нового (lib/useLatest).
+  const [err, setErr] = useState('')
+  const latest = useLatest()
+  const load = async (token, { quiet = false } = {}) => {
+    if (!quiet) setLoading(true)
+    setDenied(false); setErr('')
+    const fresh = latest()
+    try {
+      const res = await api(token).get('/reports/receivables')
+      if (fresh()) setData(res.data)
+    } catch (e) {
+      if (!fresh()) return
       if (e.response?.status === 401) router.push('/login')
       else if (e.response?.status === 403) setDenied(true)
-    }
-    finally { setLoading(false) }
+      else setErr(errText(e))
+    } finally { if (fresh()) setLoading(false) }
   }
 
   const saveNote = async (cid, value) => {
@@ -150,8 +164,10 @@ export default function Receivables() {
       setNoteStatus(prev => ({ ...prev, [cid]: 'saved' }))
       setTimeout(() => setNoteStatus(prev => ({ ...prev, [cid]: undefined })), 1500)
     } catch (e) {
-      setNotes(prev => ({ ...prev, [cid]: savedNotes[cid] ?? '' }))   // откат
-      setNoteStatus(prev => ({ ...prev, [cid]: undefined }))
+      // Введённый текст НЕ откатываем: раньше сбой молча стирал его, и человек думал,
+      // что сохранилось (аудит, 6.M5). Текст остаётся, поле помечено, причина названа.
+      setNoteStatus(prev => ({ ...prev, [cid]: 'error' }))
+      if (!isAuth(e)) setErr('Примечание не сохранено: ' + errText(e))
     }
   }
 
@@ -169,11 +185,19 @@ export default function Receivables() {
       const a = document.createElement('a'); a.href = url
       a.download = `debitorka_${fileStamp()}.xlsx`
       document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url)
-    } catch (e) { /* тихо */ }
+    } catch (e) {
+      // Выгрузка молчала при сбое — человек ждал файл, которого не будет (аудит, 6.M5).
+      if (!isAuth(e)) setErr('Выгрузка не удалась: ' + errText(e))
+    }
   }
 
   if (loading) return <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}><Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Загрузка дебиторской задолженности…</div></div>
   if (denied) return <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}><Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Нет доступа к разделу «Дебиторка».</div></div>
+  if ((!data || !Array.isArray(data.rows)) && err) return (
+    <LoadErrorScreen title="Дебиторка не загрузилась" text={err}
+      nav={<><Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head><Navbar active="receivables" /></>}
+      onRetry={() => load(localStorage.getItem('token'))} />
+  )
   if (!data || !Array.isArray(data.rows)) return <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}><Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head><Navbar active="receivables" /><div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>Нет данных.</div></div>
 
   const canEditNote = can(getPermissions(), 'receivables', 'edit')
@@ -259,6 +283,10 @@ export default function Receivables() {
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
         <Head><title>Дебиторка · Финансы | SIMB-AD ERP</title></Head>
         <Navbar active="receivables" />
+      {/* Цифры ниже — от прошлой удачной загрузки; полоса говорит, что обновление или
+          действие не прошло (аудит, 6.M5). */}
+      {!!err && <div style={{ padding: '12px 24px 0' }}>
+        <LoadError text={err} onRetry={() => { setErr(''); load(localStorage.getItem('token')) }} /></div>}
         <ReceivablesMobile
           asOf={data.as_of} onlyActual={onlyActual} setOnlyActual={setOnlyActual} downloadExport={downloadExport}
           kpi={{ total, cpCount, opCount, overdue: agg.overdue, current: agg.current, future: agg.future, pctOf }}
@@ -281,6 +309,10 @@ export default function Receivables() {
         <title>Дебиторка · Финансы | SIMB-AD ERP</title>
       </Head>
       <Navbar active="receivables" />
+      {/* Цифры ниже — от прошлой удачной загрузки; полоса говорит, что обновление или
+          действие не прошло (аудит, 6.M5). */}
+      {!!err && <div style={{ padding: '12px 24px 0' }}>
+        <LoadError text={err} onRetry={() => { setErr(''); load(localStorage.getItem('token')) }} /></div>}
 
       <style>{`
         @keyframes rcvRise { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
@@ -509,6 +541,7 @@ export default function Receivables() {
                             onBlurCapture={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent' }} />
                           {noteStatus[key] === 'saving' && <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>…</span>}
                           {noteStatus[key] === 'saved' && <span style={{ fontSize: 12, color: 'var(--income)' }}>✓</span>}
+                          {noteStatus[key] === 'error' && <span title="Не сохранено" style={{ fontSize: 12, color: 'var(--danger)' }}>!</span>}
                         </div>
                       ) : <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>{r.note || '—'}</span>}
                     </div>

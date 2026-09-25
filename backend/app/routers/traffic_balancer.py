@@ -135,7 +135,8 @@ def _xlsx(sheet_title: str, headers: List[str], rows: List[list]) -> bytes:
     for i, h in enumerate(headers, start=1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = max(10, min(38, len(str(h)) + 6))
     buf = io.BytesIO()
-    wb.save(buf)
+    from app.xlsx_safe import save_workbook   # формулы только наши (аудит, 1.L7)
+    save_workbook(wb, buf)
     return buf.getvalue()
 
 

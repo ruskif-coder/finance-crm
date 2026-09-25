@@ -123,6 +123,32 @@ def _guard_plan_owner(db: Session, plan, user: User):
         raise HTTPException(status_code=403, detail="Это план другого сейлза")
 
 
+def _guard_line_owners(master: bool, own: set, before, seller, manager) -> None:
+    """403, если не-мастер меняет ответственных строки или заводит строку не на себя.
+
+    Сохранение года берёт продавца и аккаунта из брифа строки — так и задумано (бриф —
+    источник истины). Но `update_plan` запрещал не-мастеру смену владельцев, а бриф
+    это обходил: чужой продавец в брифе — и строка уезжала в чужую корзину, пропадая с
+    экрана сохранившего (аудит 23.09.2026, 1.M3). Новую строку не-мастер заводит только
+    так, чтобы сам был продавцом или аккаунтом: иначе он её больше не увидит.
+
+    `before` — ответственные по СОХРАНЁННОМУ брифу строки (None у новой). Сравнение с
+    брифом, а не с колонками строки: на проде 4 из 12 строк уже расходятся с брифом
+    (24.09.2026), и сохранение, которое ничего не меняет, упиралось бы в отказ.
+    """
+    if master:
+        return
+    if before is not None:
+        if (seller, manager) != tuple(before):
+            raise HTTPException(status_code=403,
+                                detail="Ответственных строки меняет только мастер")
+        return
+    if not ({seller, manager} & set(own)):
+        raise HTTPException(
+            status_code=403,
+            detail="Новую строку можно завести только на себя — продавцом или аккаунтом")
+
+
 def _guard_deal_owner(db: Session, deal, user: User):
     """403, если роль не мастер и сделка не её.
 
@@ -439,7 +465,8 @@ def export_year_xlsx(year: int, advertiser_id: int, rep_id: Optional[int] = None
     if not data["months"]:
         raise HTTPException(status_code=400, detail="В плане нет месяцев с закупкой")
     buf = BytesIO()
-    wb.save(buf)
+    from app.xlsx_safe import save_workbook   # формулы только наши (аудит, 1.L7)
+    save_workbook(wb, buf)
     buf.seek(0)
     log_action(db, current_user, "year_plan_export", "year_plan", advertiser_id,
                f"{adv_name} · {year}, брендов: {len(data['brands'])}, месяцев: {len(data['months'])}")
@@ -563,11 +590,22 @@ def save_year_plan(payload: SaveIn, db: Session = Depends(get_db),
             detail=("Строки из другого плана (переключили сейлза, пока шло сохранение?). "
                     "Ничего не сохранено — обновите страницу."))
 
+    own = set(_own_rep_ids(db, current_user))
     for i, ln in enumerate(payload.lines):
         months = ((ln.months_on or [])[:12]) + [0] * (12 - len(ln.months_on or []))
         row = existing.get(ln.id) if ln.id else None
         seller, manager = _line_owners(db, ln.brief, row, ln.advertiser_id, eff_rep)
+        # Не-мастер не переносит строку в чужую корзину ни брифом, ни чужим планом
+        # (аудит 23.09.2026, 1.M3).
+        before = (None if row is None else
+                  _line_owners(db, row.brief, row, row.advertiser_id, eff_rep))
+        _guard_line_owners(master, own, before, seller, manager)
         plan_id = ln.plan_id
+        if plan_id and (row is None or plan_id != row.plan_id):
+            target = db.get(SalesYearPlan, plan_id)
+            if target is None:
+                raise HTTPException(status_code=404, detail="План не найден")
+            _guard_plan_owner(db, target, current_user)
         if not plan_id:  # без явного пакета — под дефолтный (find-or-create)
             plan_id = _default_plan(db, ln.advertiser_id, payload.year, seller,
                                     current_user, manager).id

@@ -23,6 +23,8 @@ import { overlayClose } from '@/lib/overlay'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { downloadFile } from '@/lib/download'
 import { todayMsk } from '@/lib/dates'
+import { csvCell } from '@/lib/csv'
+import useLatest from '@/lib/useLatest'
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 // Светофор вероятности сделки (наша ручная разметка): цвет лампы по вероятности.
@@ -93,6 +95,7 @@ export default function SalesDashboard2() {
   const [reps, setReps] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
+  const [dealsErr, setDealsErr] = useState('')
   const [perms, setPerms] = useState({})
   const canEdit = can(perms, 'sales_registry', 'edit')
   const canDirAg = can(perms, 'dir_agencies', 'edit')
@@ -186,7 +189,7 @@ export default function SalesDashboard2() {
   // Выгрузка текущей выборки в CSV (клиентская).
   const exportCsv = () => {
     const head = ['Код', 'Агентство', 'Рекламодатель', 'Бренд', 'Услуга', 'Период', 'Стадия', 'Сумма', 'Аккаунт', 'Контрагент', 'Слой', 'Сделка']
-    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
+    const esc = csvCell   // формулы в ячейках — текстом (lib/csv)
     const lines = deals.map(d => [d.code || d.bitrix_id, d.agency, d.advertiser, d.brand, d.product, d.period, d.bitrix_stage, d.amount, d.account_manager, d.payer, d.money_layer, d.title].map(esc).join(';'))
     const csv = '﻿' + head.map(esc).join(';') + '\n' + lines.join('\n')
     const url = window.URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
@@ -201,13 +204,18 @@ export default function SalesDashboard2() {
     api.get('/sales/brands-by-advertiser', auth()).then(r => setBrandsByAdv(r.data || {})).catch(() => {})
   }, [])
 
+  // Устаревший ответ не пишется поверх нового (аудит 23.09.2026, 7.M4): быстро сменил
+  // квартал или сотрудника — старый ответ ложился под новую подпись. lib/useLatest.
+  const latest = useLatest()
   const load = async () => {
     setLoading(true); setErr('')
+    const fresh = latest()
     try {
       const params = {}
       if (quarter) params.quarter = quarter
       if (repId) params.rep_id = repId
       const r = await api.get('/sales/dashboard/bonus', { ...auth(), params })
+      if (!fresh()) return
       setData(r.data)
       loadDeals(r.data.rep_ids)
       // РОП (is_head, звёздочка) — первым в списке; остальные в исходном порядке.
@@ -217,8 +225,12 @@ export default function SalesDashboard2() {
         setReps(items)
         if (!repId && items.length) setRepId(String(items[0].id))
       }).catch(() => {})
-    } catch (e) { if (e.response?.status === 401) return router.push('/login'); setErr(e.response?.data?.detail || 'Ошибка загрузки') }
-    finally { setLoading(false) }
+    } catch (e) {
+      if (!fresh()) return
+      if (e.response?.status === 401) return router.push('/login')
+      setErr(e.response?.data?.detail || 'Ошибка загрузки')
+    }
+    finally { if (fresh()) setLoading(false) }
   }
   const buildBase = (repIds) => {
     const b = new URLSearchParams()
@@ -246,8 +258,21 @@ export default function SalesDashboard2() {
     const base = buildBase(repIds)
     const dq = new URLSearchParams(base)
     dq.append('limit', String(pageSize)); dq.append('sort', sortKey); dq.append('direction', sortDir)
-    try { const r = await api.get('/sales/deals?' + dq.toString(), auth()); if (seq !== dealsSeq.current) return; setDeals(r.data.items || []); setDealsTotal(r.data.total || 0) }
-    catch (e) { if (seq !== dealsSeq.current) return; setDeals([]); setDealsTotal(0) }
+    try {
+      const r = await api.get('/sales/deals?' + dq.toString(), auth())
+      if (seq !== dealsSeq.current) return
+      setDeals(r.data.items || []); setDealsTotal(r.data.total || 0); setDealsErr('')
+    }
+    catch (e) {
+      if (seq !== dealsSeq.current) return
+      // Сбой — не «сделок нет» (аудит, 7.M4): прежний список не затираем пустым, а
+      // называем причину — иначе пустая таблица читается как «у сейлза ничего нет».
+      // Своя полоса, а не общая `err`: её снимает следующая удачная загрузка сделок, а
+      // общую — только смена квартала или сотрудника (ревью 24.09.2026). Список
+      // очищается — как в журнале действий: прежние сделки под новым фильтром — ложь.
+      setDeals([]); setDealsTotal(0)
+      if (e.response?.status !== 401) setDealsErr('Сделки не загрузились: ' + (e.response?.data?.detail || 'сервер не ответил'))
+    }
     api.get('/sales/dashboard?' + base.toString(), auth()).then(r => { if (seq === dealsSeq.current) setSummary(r.data) }).catch(() => { if (seq === dealsSeq.current) setSummary(null) })
   }
 
@@ -331,7 +356,7 @@ export default function SalesDashboard2() {
   // Ячейка строки по ключу колонки (для итерации по видимым колонкам).
   // Действия карточки-детализации (раскрытие строки). Открыть — в Битрикс; правка и
   // загрузка МП — заглушки (доработаем).
-  const openDeal = (d) => { if (d.bitrix_id && !String(d.bitrix_id).startsWith('local-')) window.open(BITRIX_DEAL_URL(d.bitrix_id), '_blank') }
+  const openDeal = (d) => { if (d.bitrix_id && !String(d.bitrix_id).startsWith('local-')) window.open(BITRIX_DEAL_URL(d.bitrix_id), '_blank', 'noopener') }
   const editDeal = () => alert('Редактирование сделки — скоро')
   const addMp = () => alert('Загрузка/создание МП — скоро')
 
@@ -532,6 +557,7 @@ export default function SalesDashboard2() {
         )}
 
         {err && <div style={{ color: 'var(--danger)', marginBottom: 12 }}>{err}</div>}
+        {dealsErr && <div style={{ color: 'var(--danger)', marginBottom: 12 }}>{dealsErr}</div>}
         {loading && !data && <div style={{ color: 'var(--text-muted)', padding: 40 }}>Загрузка…</div>}
 
         {data && (

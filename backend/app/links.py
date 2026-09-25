@@ -52,6 +52,8 @@ ALLOWED_CHAT_SCHEMES = ALLOWED_LINK_SCHEMES + ("tg://",)
 # исполняемую ссылку (`lib/safeHref`), а запрет его ронял сохранение карточки: форма
 # уходит целиком, и `t.me/чат` или `@чат`, давно лежащие в поле, давали 422 (ревью
 # 23.09.2026).
+_INVISIBLE = re.compile(r"[\t\n\r]")
+_LEADING = "".join(chr(c) for c in range(33))
 _SCHEME = re.compile(r"^\s*([a-z][a-z0-9+.\-]*):", re.IGNORECASE)
 
 
@@ -63,8 +65,12 @@ def safe_url(url) -> Optional[str]:
     u = str(url).strip()
     if not u:
         return None
-    m = _SCHEME.match(u)
-    if m and not u.lower().startswith(ALLOWED_CHAT_SCHEMES):
+    # Смотрим так, как посмотрит браузер: ведущие управляющие символы и пробелы он
+    # выбрасывает, табы и переводы строк внутри адреса — тоже. Иначе `\x01javascript:`
+    # и `java<TAB>script:` проходили как «без схемы» (ревью 24.09.2026).
+    probe = _INVISIBLE.sub("", u).lstrip(_LEADING)
+    m = _SCHEME.match(probe)
+    if m and not probe.lower().startswith(ALLOWED_CHAT_SCHEMES):
         raise ValueError(f"Схема «{m.group(1)}:» в ссылке запрещена — "
                          f"только http://, https:// или tg://")
     return u

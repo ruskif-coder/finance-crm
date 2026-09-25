@@ -35,9 +35,14 @@ const DIRS = ['pages', 'components', 'lib']
 // Имена функций-стилей — из самого кита. Берём только те, что возвращают объект
 // стиля (стрелка сразу к скобке), а не компоненты: у компонентов заглавная буква.
 const kitSrc = readFileSync(join(ROOT, KIT), 'utf8')
-const FN_STYLES = [...kitSrc.matchAll(/^export const ([a-z][A-Za-z0-9]*) = \(/gm)]
-  .map((m) => m[1])
-  .filter((name) => new RegExp(`export const ${name} = \\([^)]*\\) => \\(\\{`).test(kitSrc))
+// Любая экспортируемая функция кита с маленькой буквы — и `=> ({…})`, и с телом
+// `=> { … return {…} }`: фильтр по `=> ({` не видел `ctaStyle` (аудит 23.09.2026, 6.L6).
+// Ложных срабатываний это не даёт: ошибкой считается только передача функции туда, где
+// нужен объект (`style={f}` или `{...f}`), а не само наличие функции.
+const FN_STYLES = [
+  ...[...kitSrc.matchAll(/^export const ([a-z][A-Za-z0-9]*) = \(/gm)].map((m) => m[1]),
+  ...[...kitSrc.matchAll(/^export function ([a-z][A-Za-z0-9]*)\(/gm)].map((m) => m[1]),
+]
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {

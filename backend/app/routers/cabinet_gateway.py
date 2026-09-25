@@ -836,16 +836,21 @@ def handle_pub_update(db: Session, update: Dict[str, Any], reply) -> bool:
         # выглядят одинаково (18.09.2026). Ответ дешевле любого разбирательства.
         reply(chat_id,
               "Чтобы получать уведомления, пришлите код из кабинета — "
-              "блок «Уведомления», кнопка «Подключить бота». Код из шести знаков, "
+              "блок «Уведомления», кнопка «Подключить бота». Код из десяти знаков, "
               "живёт полчаса.")
         return False
 
+    if telegram.chat_blocked(db, telegram.PUB, chat_id):
+        reply(chat_id, telegram.BLOCKED_TEXT)
+        return False
     row = (db.query(CabinetAccountTg)
            .filter(CabinetAccountTg.link_code == code).first())
     if row is None or (row.link_expires and row.link_expires < datetime.utcnow()):
+        telegram.note_bad_code(db, telegram.PUB, chat_id)          # перебор кодов (аудит 23.09.2026, 1.L4)
         reply(chat_id, "Код не найден или просрочен. Получите новый в кабинете, "
                        "блок «Уведомления».")
         return False
+    telegram.clear_bad_codes(db, telegram.PUB, chat_id)
 
     # Привязка пишется СРАЗУ и синхронно: она и есть результат запроса. Ответное
     # сообщение отдельно — не дойдёт оно, человек всё равно уже привязан.

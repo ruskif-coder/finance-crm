@@ -579,7 +579,8 @@ def export_operations(
         ws.cell(row=row_idx, column=invoice_date_col_idx).number_format = 'DD.MM.YYYY'
 
     buf = io.BytesIO()
-    wb.save(buf)
+    from app.xlsx_safe import save_workbook   # формулы только наши (аудит, 1.L7)
+    save_workbook(wb, buf)
     buf.seek(0)
     filename = f"operacii_{timez.msk_now().strftime('%Y%m%d_%H%M')}.xlsx"
     headers = {"Content-Disposition": f"attachment; filename={filename}"}
@@ -1272,7 +1273,8 @@ async def download_import_template(
         instr.row_dimensions[i].height = 32
 
     buf = io.BytesIO()
-    wb.save(buf)
+    from app.xlsx_safe import save_workbook   # формулы только наши (аудит, 1.L7)
+    save_workbook(wb, buf)
     buf.seek(0)
     headers = {"Content-Disposition": "attachment; filename=shablon_operaciy.xlsx"}
     return StreamingResponse(

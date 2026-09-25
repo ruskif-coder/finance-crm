@@ -117,8 +117,10 @@ export default function YearPlanPage() {
     }
     if (v === 'all') {
       api.get(`/sales/year-plan/all?year=${y}`, auth())
-        .then(r => setAllData(r.data.reps || []))
-        .catch(() => setAllData([]))
+        .then(r => { setAllData(r.data.reps || []); setLoadErr('') })
+        // Сбой сводки — не «планов нет» (аудит 23.09.2026, 6.M5): прежние данные остаются,
+        // причина называется той же полосой, что у плана сейлза.
+        .catch(e => { if (!silent) setLoadErr(e.response?.data?.detail || 'Сводка планов не загрузилась — обновите страницу') })
         .finally(() => setLoading(false))
       return
     }

@@ -84,6 +84,8 @@ export default function Preview({ file }) {
         <div style={{ width: wh ? Math.round(wh[0] * k) : '100%',
           height: wh ? Math.round(wh[1] * k) : 420, overflow: 'hidden' }}>
           <iframe src={file.preview_url} title={`Баннер ${wh ? wh.join('×') : ''}`}
+            // Скрипты баннера — да, наше происхождение — нет (аудит 23.09.2026, 7.L2).
+            sandbox="allow-scripts"
             /* Белый ЖЁСТКО, а не из темы: это полотно чужой страницы, а не наш
                интерфейс. Баннер рисуют для белого сайта, и тёмный фон под ним показал
                бы не то размещение, которое будет на самом деле. Единственное
