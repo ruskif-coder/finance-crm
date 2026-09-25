@@ -487,7 +487,11 @@ def cabinet_creative_file(pair_id: int, file_id: int, account_id: int, publisher
                  LaunchPrepTarget.publisher_id == publisher_id).first())
     if f is None:
         raise HTTPException(status_code=404, detail="Креатив не найден")
-    full = existing_upload_path(f.path)
+    # ИСХОДНИК клиента, а не подготовленный под нашу DSP: наши вставки площадке не нужны,
+    # она крутит баннер своей системой (владелец 25.09.2026).
+    from app.launch_prep import originals
+    existing_upload_path(f.path)                  # запись цела и файл на месте
+    full = originals.path_for_publisher(f.path)
     return FileResponse(full, filename=f.original_name or "creative",
                         media_type="application/octet-stream")
 

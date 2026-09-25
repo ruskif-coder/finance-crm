@@ -42,7 +42,7 @@ from sqlalchemy.orm import Session
 from app.files_safe import existing_upload_path, inside_uploads, remove_upload
 from app.audit import log_action
 from app.database import get_db
-from app.launch_prep import sandbox
+from app.launch_prep import originals, sandbox
 from app.launch_prep.models import (SET_ORIGINS, TARGET_STATE_PUBLIC, TARGET_STATES,
                                     LaunchPrepCreativeFile, LaunchPrepCreativeSet,
                                     LaunchPrepPair, LaunchPrepPairFile, LaunchPrepReview,
@@ -972,6 +972,7 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
             dst_path = os.path.join(UPLOADS_ROOT, CREATIVES_DIR, stored)
             os.makedirs(os.path.join(UPLOADS_ROOT, CREATIVES_DIR), exist_ok=True)
             shutil.copyfile(src_path, dst_path)
+            originals.copy(f.path, f"{CREATIVES_DIR}/{stored}")
 
             token = entry = None
             if f.is_archive:
@@ -1247,6 +1248,7 @@ def _remove_file(rel_path: str, token: str = None):
     # отделяет уборку от `os.remove` за пределами хранилища. Файла нет — запись всё
     # равно уходит, иначе строка зависнет навсегда.
     remove_upload(rel_path)
+    originals.remove(rel_path)
     sandbox.remove(UPLOADS_ROOT, token)
 
 
@@ -1281,6 +1283,7 @@ async def upload_file(set_id: int, ratio: Optional[str] = None,
     # Только для баннера под НАШУ DSP на веб: под чужую он несёт её макросы, и подмена
     # сломала бы клик там.
     prepared = []
+    raw = content
     if ext in ARCHIVE_EXTENSIONS:
         from app.dsp.targeting_creative import for_our_web_dsp
         if for_our_web_dsp(db, set_id):
@@ -1293,6 +1296,10 @@ async def upload_file(set_id: int, ratio: Optional[str] = None,
     os.makedirs(os.path.join(UPLOADS_ROOT, CREATIVES_DIR), exist_ok=True)
     with open(os.path.join(UPLOADS_ROOT, CREATIVES_DIR, stored), "wb") as fh:
         fh.write(content)
+    # Подготовка вписала наши вставки — исходник клиента кладём рядом: его скачивает
+    # площадка в кабинете (`launch_prep/originals.py`).
+    if prepared:
+        originals.save(f"{CREATIVES_DIR}/{stored}", raw)
 
     # Архив разворачивается в песочницу СРАЗУ, а не при первом открытии предпросмотра:
     # негодный архив тогда обнаружился бы через неделю, когда его пошли смотреть, — и уже
@@ -1307,6 +1314,7 @@ async def upload_file(set_id: int, ratio: Optional[str] = None,
             # имя: правило «ни одного голого os.remove по пути хранилища» стоит
             # исключений дороже, чем они экономят, — его стережёт tests/test_file_paths.
             remove_upload(stored, subdir=CREATIVES_DIR)
+            originals.remove(f"{CREATIVES_DIR}/{stored}")
             raise HTTPException(status_code=400, detail=str(e))
 
     # Размер берём из самого баннера, если он там объявлен: имя файла врёт, а

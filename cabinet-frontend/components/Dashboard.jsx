@@ -35,6 +35,7 @@ import { daysTo, startNote, urgency } from '../lib/urgency'
 import { NEED, PAY_STATE, RK_STATE, SERVICE_DOT,
   SHOW_MONEY, billBlocked, blocking, camp, inBill, inPace, sum, useDemoNow } from '../lib/demo'
 import safeHref from '../lib/safeHref'
+import { downloadFile } from '../lib/download'
 import { guideSeen, markGuideSeen } from './guide/seen'
 
 // Руководство — отдельным чанком: слайды нужны только тому, кто открыл окно.
@@ -219,32 +220,32 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
             есть — пустая кнопка «письма нет» заставляла бы гадать, спросить его или так
             и задумано. */}
         {!!t.rights_letter && (
-          <a href={`/api/tasks/${t.task_id}/rights-letter`}
-            style={{ ...btnSm(false), textDecoration: 'none', display: 'inline-flex',
+          <button onClick={() => downloadFile(`/tasks/${t.task_id}/rights-letter`, t.rights_letter.name)}
+            style={{ ...btnSm(false), display: 'inline-flex',
               alignItems: 'center', gap: 6 }} title={t.rights_letter.name}>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21.4 11.05 12.25 20.2a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 1 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
             </svg>
             письмо о правах
-          </a>
+          </button>
         )}
         <button style={btnSm(false)} disabled={!preview?.preview_url}
           onClick={() => setShow(true)}>предпросмотр</button>
         {/* Скачать баннер — пиктограммой рядом с предпросмотром (владелец 25.09.2026):
-            тот же файл, что открывает предпросмотр. Отдаёт ядро через кабинет, по
-            ссылке, а не из песочницы — песочница открыта без входа. */}
+            тот же баннер, что открывает предпросмотр, но ИСХОДНЫЙ — без наших вставок
+            под DSP. Отдаёт ядро через кабинет, не песочница: она открыта без входа. */}
         {!!preview?.id && (
-          <a href={`/api/tasks/${t.task_id}/files/${preview.id}`} download
+          <button onClick={() => downloadFile(`/tasks/${t.task_id}/files/${preview.id}`, preview.name)}
             title={`Скачать ${preview.name || 'креатив'}`} aria-label="Скачать креатив"
-            style={{ ...btnSm(false), textDecoration: 'none', display: 'inline-flex',
+            style={{ ...btnSm(false), display: 'inline-flex',
               alignItems: 'center', justifyContent: 'center', padding: '5px 8px' }}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
               <path d="M7 10l5 5 5-5M12 15V3" />
             </svg>
-          </a>
+          </button>
         )}
         {/* Три исхода, слева направо от мягкого к необратимому. Смысл несёт текст, а
             заливка — только у главного действия: несколько цветных плашек подряд

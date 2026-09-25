@@ -132,8 +132,10 @@ export function PreviewModal({ file, title, onClose }) {
 
   return createPortal(
     <div style={OVERLAY} {...overlayClose(onClose)}>
+      {/* Ширина — под самый широкий типовой размер 1:1 (владелец 25.09.2026): 1200 баннера +
+          74 полей окна и сцены + 16 на полосу прокрутки. Уже экрана — вписывается, как раньше. */}
       <div style={{ background: C.card, borderRadius: 16, padding: '20px 22px',
-        width: 'min(1000px, 96vw)', maxHeight: '86vh', overflowY: 'auto',
+        width: 'min(1290px, 96vw)', maxHeight: '86vh', overflowY: 'auto',
         boxShadow: '0 20px 60px rgba(16,20,30,.25)', fontFamily: UI }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
           <span style={{ fontSize: 17, fontWeight: 700 }}>Предпросмотр креатива</span>

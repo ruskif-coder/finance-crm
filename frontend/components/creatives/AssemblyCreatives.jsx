@@ -623,7 +623,9 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
 
   return (
     <div style={OVERLAY} {...overlayClose(onClose)}>
-      <div style={{ ...SHEET, width: 'min(1000px, 96vw)' }}>
+      {/* Ширина — под самый широкий типовой размер 1:1 (владелец 25.09.2026): 1200 баннера +
+          74 полей окна и сцены + 16 на полосу прокрутки. Уже экрана — вписывается, как раньше. */}
+      <div style={{ ...SHEET, width: 'min(1290px, 96vw)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: 17, fontWeight: 700 }}>{title}</span>
           <button style={{ ...btn(false), marginLeft: 'auto' }} onClick={onClose}>Закрыть</button>

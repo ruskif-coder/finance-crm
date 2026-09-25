@@ -264,3 +264,25 @@ def test_creative_file_is_served_as_attachment(env):
         return
     assert 'attachment' in r.headers['content-disposition']
     assert r.media_type == 'application/octet-stream'
+
+
+def test_creative_file_serves_the_clients_original_when_prepared(env):
+    """Подготовленный под DSP архив несёт наши вставки — площадке уходит исходник."""
+    import os
+    from app.launch_prep import originals
+    f = _file_of(env.db, env.pair.set_id)
+    if f is None:
+        pytest.skip('у креатива пары нет файла')
+    orig = originals.original_abs(f.path)
+    if not orig or os.path.exists(orig):
+        pytest.skip('у файла уже есть исходник — не трогаем чужое')
+    try:
+        originals.save(f.path, b'PK-original')
+        try:
+            r = gw.cabinet_creative_file(env.pair.id, f.id, env.acc, env.own, env.db)
+        except HTTPException as e:      # самого файла нет на диске стенда
+            assert e.status_code == 404
+            return
+        assert r.path == orig
+    finally:
+        originals.remove(f.path)
