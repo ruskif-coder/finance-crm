@@ -25,7 +25,10 @@ class FakeClient:
     def __init__(self, journal_hash=None, add_hash="NEWHASH000000001",
                  info_html="<div>баннер</div>", campaign_status="LAUNCHED",
                  campaign_end="2999-01-01 00:00:00", creative_status="STOPPED",
-                 launch_sticks=True):
+                 launch_sticks=True, adomain=""):
+        self.adomain = adomain
+        self.edited = []
+        self.added = []
         self.creative_status = creative_status
         self.launch_sticks = launch_sticks
         self.journal_hash = journal_hash
@@ -64,10 +67,14 @@ class FakeClient:
         return self.journal_hash
 
     def creative_add(self, campaign_xxhash, params, local_ref=None):
+        self.added.append(params)
         self.calls.append(("add", campaign_xxhash, params.get("title"), local_ref))
         return self.add_hash
 
     def creative_edit(self, xxhash, params, local_ref=None):
+        self.edited.append(params)
+        if "adomain" in params:
+            self.adomain = params["adomain"]
         self.calls.append(("edit", xxhash, local_ref))
         return True
 
@@ -78,7 +85,8 @@ class FakeClient:
         if self.info_html is None:
             from app.dsp.client import MsError
             raise MsError("Creative.getInfo: Creative not found")
-        return {"data": {"html_code": self.info_html}, "status": self.creative_status}
+        return {"data": {"html_code": self.info_html}, "status": self.creative_status,
+                "adomain": self.adomain}
 
     def creative_set_status(self, xxhash, status, local_ref=None):
         self.calls.append(("creative_status", xxhash, status))
@@ -559,3 +567,55 @@ def test_link_response_says_whether_targeting_is_live(monkeypatch):
                    {"b": before})
         db.commit()
         _drop(db, s)
+
+
+
+# ── конечный домен (adomain): DSP без него креатив не крутит (владелец 25.09.2026) ─
+
+def test_live_fills_empty_adomain_with_our_site_before_launch():
+    """У заведённых раньше креативов поле пустое — дописываем при нажатии, до запуска."""
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="NOADOMAIN0000001")
+    c = FakeClient(creative_status="STOPPED", adomain="")
+    try:
+        out = P.ensure_live(db, s, client=c)
+        assert {"adomain": P.TARGETING_ADOMAIN} in c.edited
+        assert "simb-ad.com" in P.TARGETING_ADOMAIN
+        kinds = [k[0] for k in c.calls]
+        assert kinds.index("edit") < kinds.index("creative_status"), "домен — до запуска"
+        assert out["active"] is True
+    finally:
+        _drop(db, s)
+
+
+def test_filled_adomain_is_not_rewritten():
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="HASADOMAIN000001")
+    c = FakeClient(creative_status="LAUNCHED", adomain="https://simb-ad.com/")
+    try:
+        P.ensure_live(db, s, client=c)
+        assert not c.edited
+    finally:
+        _drop(db, s)
+
+
+def test_empty_adomain_that_did_not_stick_is_not_active():
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="ADOMAINSTUCK0001")
+    c = FakeClient(creative_status="LAUNCHED", adomain="")
+    c.creative_edit = lambda xxhash, params, local_ref=None: True   # DSP «принял», но не записал
+    try:
+        out = P.ensure_live(db, s, client=c)
+        assert out["active"] is False and "конечный URL" in out["reason"]
+    finally:
+        _drop(db, s)
+
+
+def test_new_targeting_creative_is_added_with_adomain():
+    """Новый креатив заводится сразу с доменом — дописывать потом не придётся."""
+    params = P.cr.build_creative_params(title="t", link="https://x.test", erid=P.TEST_ERID,
+                                        adomain=P.TARGETING_ADOMAIN)
+    assert params["adomain"] == P.TARGETING_ADOMAIN
+    import inspect
+    assert "adomain=TARGETING_ADOMAIN" in inspect.getsource(P.ensure).replace(" ", ""), (
+        "заведение креатива нацеливания обязано передавать домен")

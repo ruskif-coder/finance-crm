@@ -196,7 +196,7 @@ export default function ContractsMobile({
   return (
     <>
       <DirectoryMobile
-        title="Договора" total={total} shownCount={shown.length} loading={loading} canEdit={canEdit}
+        title="Договоры" total={total} shownCount={shown.length} loading={loading} canEdit={canEdit}
         search={search} setSearch={setSearch} searchPlaceholder="№, контрагент, ИНН…"
         filterChips={<FilterChip label={fmtLabel} active={!!formatFilter} onClick={() => setFmtSheet(true)} />}
         onAdd={openCreate}

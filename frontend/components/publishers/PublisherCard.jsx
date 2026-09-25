@@ -763,7 +763,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
               <div key={c.id} style={{ padding: '8px 0', borderTop: '1px solid var(--border-inner)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontFamily: MONO, fontSize: 14.5, fontWeight: 700 }}>{c.number}</span>
-                  {!c.linked && <span title="В реестре «Договора» такого номера нет">⚠</span>}
+                  {!c.linked && <span title="В реестре «Договоры» такого номера нет">⚠</span>}
                   <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
                     {c.document_source === 'edo' && c.document_url && (
                       <a href={safeHref(c.document_url)} target="_blank" rel="noreferrer" style={linkBtn}>ЭДО</a>

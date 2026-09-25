@@ -137,7 +137,7 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
   const TABS = [
     { key: 'analytics', label: 'Аналитика' },
     { key: 'requisites', label: 'Реквизиты' },
-    { key: 'contracts', label: 'Договора' },
+    { key: 'contracts', label: 'Договоры' },
     { key: 'operations', label: 'Операции' },
   ]
 
@@ -329,7 +329,7 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
         {tab === 'contracts' && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 2px' }}>
-              <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Договора <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)' }}>{(card.contracts || []).length}</span></span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Договоры <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)' }}>{(card.contracts || []).length}</span></span>
               {/* `next/link`, а не голый `<a>`: переход внутри приложения не должен
                   перезагружать страницу — это теряет снимок прав и состояние экрана.
                   Единственная ошибка `npm run lint` в проекте (F0-04), чинится строкой. */}

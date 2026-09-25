@@ -457,7 +457,7 @@ export default function Contracts() {
   if (isMobile) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)', fontFamily: UI }}>
-        <Head><title>Договора · Справочники | SIMB-AD ERP</title></Head>
+        <Head><title>Договоры · Справочники | SIMB-AD ERP</title></Head>
         <Navbar active="directories" />
         <ContractsMobile
           total={items.length} rows={filtered} loading={loading} canEdit={mayEdit} counterparties={counterparties}
@@ -476,7 +476,7 @@ export default function Contracts() {
 
   return (
     <>
-      <Head><title>Договора · Справочники | SIMB-AD ERP</title></Head>
+      <Head><title>Договоры · Справочники | SIMB-AD ERP</title></Head>
       <Navbar active="directories" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SectionTabs section="directory" />
@@ -489,7 +489,7 @@ export default function Contracts() {
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, padding: '18px 24px 14px' }}>
         {/* Строка фильтров */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-          <h1 style={{ fontSize: 17, fontWeight: 700, margin: '0 6px 0 0', color: 'var(--text-primary)' }}>Договора</h1>
+          <h1 style={{ fontSize: 17, fontWeight: 700, margin: '0 6px 0 0', color: 'var(--text-primary)' }}>Договоры</h1>
           <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginRight: 4 }}>показано {filtered.length} из {items.length}</span>
           <input style={{ ...inp, width: 260 }} placeholder="№ договора, контрагент, ИНН…"
             value={search} onChange={e => setSearch(e.target.value)} />

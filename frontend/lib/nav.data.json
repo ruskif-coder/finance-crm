@@ -192,7 +192,7 @@
         },
         {
           "key": "contracts",
-          "label": "Договора",
+          "label": "Договоры",
           "href": "/directory/contracts",
           "perm": "contracts"
         },

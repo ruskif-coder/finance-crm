@@ -321,10 +321,10 @@ export default function CounterpartyCard({ data, onBack, onEdit, onEditTerms, on
             </div>
           </section>
 
-          {/* Договора */}
+          {/* Договоры */}
           <section style={{ ...card(0.21), padding: '20px 26px 16px', gap: 10 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
-              <span style={h2}>Договора</span>
+              <span style={h2}>Договоры</span>
               <span style={{ fontFamily: T.mono, fontSize: 11, color: T.t4 }}>{contracts.length}</span>
               <span className="cc-link" onClick={onOpenContracts} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: T.accent, cursor: 'pointer' }}>В реестр →</span>
             </div>

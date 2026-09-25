@@ -71,6 +71,12 @@ TITLE_PREFIX = "НАЦЕЛИВАНИЕ · "
 # будет видно, чей это тест.
 FALLBACK_LINK = "https://simb-ad.com"
 
+# Конечный URL креатива (`adomain`) — «обязателен для ротации» по документации DSP: без
+# него креатив запущен, но не крутится, и кабинет DSP ругается на отсутствие конечного URL
+# (владелец 25.09.2026). У нацеливания это всегда наш сайт: баннер показывается только
+# нам, рекламодатель тут ни при чём. Полный URL, как в их примере, не голый домен.
+TARGETING_ADOMAIN = "https://simb-ad.com/"
+
 # МАРКЕР-ЗАГЛУШКА ДЛЯ НАЦЕЛИВАНИЯ (владелец 18.09.2026).
 #
 # На отправке трафику настоящего ЕРИД ещё нет и быть не может: маркер выпускается после
@@ -305,7 +311,7 @@ def ensure(db: Session, s: LaunchPrepCreativeSet, *,
                             viewability_src=viewability_src(db))
         params = cr.build_creative_params(
             title=f"{TITLE_PREFIX}{s.no} · {s.title or s.deal_id}",
-            link=link, erid=TEST_ERID, size=up.get("size"))
+            link=link, erid=TEST_ERID, size=up.get("size"), adomain=TARGETING_ADOMAIN)
         xxhash = c.creative_add(campaign, params, local_ref=ref)
         c.creative_edit(xxhash, {"data": {"html_code": html}}, local_ref=ref)
     except (cr.CreativeError, MsError, ValueError) as e:
@@ -334,17 +340,24 @@ def ensure_live(db: Session, s: LaunchPrepCreativeSet, *,
     xxhash = ensure(db, s, client=c)
     ref = f"tgt{s.id}"
 
-    def creative_status():
-        return ((c.creative_get_info(xxhash) or {}).get("status") or "").upper()
+    def read():
+        info = c.creative_get_info(xxhash) or {}
+        return (info.get("status") or "").upper(), (info.get("adomain") or "").strip()
 
-    st = creative_status()
+    st, adomain = read()
+    # Конечный URL — ДО запуска: без него запущенный креатив не крутится. У креативов,
+    # заведённых до 25.09.2026, поле пустое; правка принимает одно поле.
+    if not adomain:
+        c.creative_edit(xxhash, {"adomain": TARGETING_ADOMAIN}, local_ref=ref)
     if st != RUNNING:
         c.creative_set_status(xxhash, RUNNING, local_ref=ref)
-        st = creative_status()
+    st, adomain = read()
     camp = ((c.campaign_get_info(campaign) or {}).get("status") or "").upper()
 
     reason = None
-    if st != RUNNING:
+    if not adomain:
+        reason = "у креатива в DSP пустой конечный URL (adomain) — без него он не крутится"
+    elif st != RUNNING:
         reason = (f"креатив в DSP не запустился — статус {STATUS_RU.get(st, st or 'не прочитан')} "
                   f"({st or '—'})")
     elif camp != RUNNING:
