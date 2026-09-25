@@ -65,3 +65,19 @@ export function aimNotLive(data) {
     ? `Ссылка выпущена, но баннер на сайте не появится: ${data.reason || 'креатив в DSP не запущен'}`
     : ''
 }
+
+/* Кампания нацеливания живёт 48 часов и потом засыпает. Кнопка её перезапускает, но DSP
+   раскачивается до десяти минут — сказать это человеку, а не оставить гадать, почему
+   баннера нет (владелец 25.09.2026). */
+export const RESTART_NOTE = 'Нацеливание перезапущено — попробуйте поймать баннер через 10 минут'
+
+/** Кампания спит или остановлена — время нацеливания истекло. Ошибка связи — не «истекло». */
+export function aimExpired(campaign) {
+  return !!campaign && !campaign.error && !campaign.running && !!campaign.status
+}
+
+/** Цвет кнопки: ответ последнего нажатия важнее; до нажатия — истёкшее время жёлтым. */
+export function aimToneFor(active, campaign) {
+  if (active === true || active === false) return aimTone(active)
+  return aimExpired(campaign) ? aimTone(false) : {}
+}

@@ -127,6 +127,8 @@ def _blocker(row: dict, want_pixel: bool = True,
         return "у площадки не задан домен — в тег пикселя его подставить неоткуда"
     if not (tgt and (tgt.advertiser_url or "").strip()):
         return "нет посадочной ссылки площадки — DSP требует link у креатива"
+    if not cr.landing_domain(tgt.advertiser_url):
+        return "посадочная ссылка не похожа на адрес — не из чего взять домен для DSP"
     return None
 
 
@@ -266,6 +268,9 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
                 else:
                     params = cr.build_creative_params(
                         title=cre.ms_title or name, link=r["target"].advertiser_url,
+                        # Оба адреса — из реальной посадочной (владелец 25.09.2026): ссылка
+                        # целиком, конечный URL — её основной домен (у DSP ≤128 символов).
+                        adomain=cr.landing_domain(r["target"].advertiser_url),
                         erid=cre.erid, size=up.get("size"),
                         total_shows=(int(r["placement"].plan_show)
                                      if r["placement"].plan_show else None))

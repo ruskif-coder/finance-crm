@@ -91,6 +91,7 @@ class FakeMs:
     # креативы
     def creative_add(self, camp, params, local_ref=None):
         self.calls.append("Creative.add")
+        self.added = getattr(self, "added", []) + [params]
         xx = self._hash()
         self.cabinet[xx] = ""
         if self.creative_timeout:
@@ -286,3 +287,30 @@ def test_creative_timeout_is_not_retried_blindly(wired):
     out = prov.provision(_db(), camp, client=ms)
     assert ms.calls.count("Creative.add") == 1, "таймаут породил второй креатив"
     assert out["failed"] and "кабинет" in out["failed"][0]["error"]
+
+
+
+# ── ссылки боевого креатива (владелец 25.09.2026) ───────────────────────────
+#
+# Оба адреса — из РЕАЛЬНОЙ посадочной таблицы запуска: `link` — посадочная целиком,
+# `adomain` («конечный URL», у DSP обязателен для ротации и не длиннее 128) — только её
+# основной домен. На проде 18 посадочных из 138 длиннее 128 символов.
+
+def test_combat_creative_gets_landing_and_its_domain(wired):
+    ms = FakeMs()
+    long_url = "https://www.apteka.test/catalog/" + "x" * 300 + "?utm_source=simb"
+    wired["rows"][0]["target"] = SimpleNamespace(advertiser_url=long_url)
+    out = prov.provision(_db(), _camp(990501), client=ms)
+    assert out["done"], out
+    params = ms.added[-1]
+    assert params["link"] == long_url
+    assert params["adomain"] == "https://www.apteka.test/"
+    assert len(params["adomain"]) <= 128
+
+
+def test_landing_domain_helper():
+    assert cr.landing_domain("https://apteka.ru/tovar/1?x=2") == "https://apteka.ru/"
+    assert cr.landing_domain("apteka.ru/tovar") == "https://apteka.ru/"
+    assert cr.landing_domain("http://Sub.Apteka.ru:8080/a") == "http://sub.apteka.ru/"
+    assert cr.landing_domain("") is None and cr.landing_domain("не адрес") is None
+    assert cr.landing_domain("https://120на80.рф/catalog") == "https://xn--12080-6ve4g.xn--p1ai/"

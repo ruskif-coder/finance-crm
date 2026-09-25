@@ -337,8 +337,13 @@ def ensure_live(db: Session, s: LaunchPrepCreativeSet, *,
 
     partner, campaign = targeting_cabinet(db)
     c = client or _client(partner or "")
-    xxhash = ensure(db, s, client=c)
+    # Кампанию будим ЗДЕСЬ, а не внутри `ensure`: нам нужно знать, будили ли. Живёт она
+    # 48 часов; истёкшую перезапускаем, и DSP раскачивается до десяти минут — человеку
+    # надо сказать «поймайте через 10 минут», а не оставить гадать (владелец 25.09.2026).
+    woke = wake_campaign(db, client=c) if (partner and campaign) else {"changed": []}
+    xxhash = ensure(db, s, client=c, wake=False)
     ref = f"tgt{s.id}"
+    launched = False
 
     def read():
         info = c.creative_get_info(xxhash) or {}
@@ -351,6 +356,7 @@ def ensure_live(db: Session, s: LaunchPrepCreativeSet, *,
         c.creative_edit(xxhash, {"adomain": TARGETING_ADOMAIN}, local_ref=ref)
     if st != RUNNING:
         c.creative_set_status(xxhash, RUNNING, local_ref=ref)
+        launched = True
     st, adomain = read()
     camp = ((c.campaign_get_info(campaign) or {}).get("status") or "").upper()
 
@@ -363,8 +369,11 @@ def ensure_live(db: Session, s: LaunchPrepCreativeSet, *,
     elif camp != RUNNING:
         reason = (f"кампания нацеливания {STATUS_RU.get(camp, camp or 'не прочитана')} "
                   f"({camp or '—'})")
+    # `restarted` — кампанию или креатив только что запустили: DSP раскачивается до десяти
+    # минут, и баннер появится не сразу.
     return {"xxhash": xxhash, "creative_status": st or None, "campaign_status": camp or None,
-            "active": reason is None, "reason": reason}
+            "active": reason is None, "reason": reason,
+            "restarted": bool(woke.get("changed")) or launched}
 
 
 def _persist(db: Session, s: LaunchPrepCreativeSet, xxhash: str) -> str:
@@ -453,6 +462,7 @@ def wake_campaign(db: Session, *, client: Optional[MsClient] = None) -> dict:
 # Кампания, в которой лежат креативы нацеливания, — ЧУЖАЯ: её заводят и останавливают
 # руками в кабинете DSP, а не мы. Поэтому её состояние не хранится, а спрашивается.
 RUNNING = "LAUNCHED"
+STOPPED = "STOPPED"
 
 # Их словарь статусов по-русски. Нужен в текстах отказа: человек читает наше сообщение,
 # а видит в кабинете английское слово — поэтому в отказе стоят оба.
@@ -539,25 +549,54 @@ def campaign_state(db: Session, *, client: Optional[MsClient] = None) -> dict:
 
 def ensure_quietly(db: Session, s: LaunchPrepCreativeSet, *,
                    client: Optional[MsClient] = None) -> Optional[str]:
-    """То же, но без исключения: для отправки трафику.
+    """При отправке креатива на согласование — завести копию И ЗАПУСТИТЬ её, без исключений.
 
-    Отправка на согласование НЕ должна зависеть от чужой системы. Если DSP недоступен или
-    в комплекте нет архива, материал всё равно уходит — креатив нацеливания заведётся
-    позже, по нажатию кнопки. Обратное означало бы, что недоступность DSP останавливает
-    согласование, а это несоразмерно.
+    ПОЧЕМУ ЗАПУСК ЗДЕСЬ (владелец 25.09.2026). У DSP лаг запуска — до десяти минут. Если
+    запускать по кнопке, трафик ждёт у экрана; если при отправке — к тому времени, как он
+    дойдёт до креатива, всё уже крутится, и кнопка только выпускает куку. Прежнее правило
+    «отправка не будит кампанию» отменено этим решением.
+
+    Отправка на согласование по-прежнему НЕ зависит от DSP: любой сбой здесь — запись в
+    лог и None, креатив всё равно уходит, а довести его сможет кнопка.
     """
-    # Уже заведён — при отправке трафику в DSP не ходим вовсе: проверку кода делает
-    # просьба о ссылке, а каждая повторная отправка комплекта иначе стучалась бы наружу.
     if s.id in blind_sets(db, [s.id]):
         return None
-    if s.ms_targeting_creative_xxhash:
-        return s.ms_targeting_creative_xxhash
     try:
-        return ensure(db, s, client=client, wake=False)
+        return ensure_live(db, s, client=client)["xxhash"]
     except (TargetingCreativeError, MsError, cr.CreativeError, ValueError) as e:
-        log.info("Креатив нацеливания для комплекта %s не заведён: %s", s.id, e)
+        log.info("Нацеливание для комплекта %s не запущено при отправке: %s", s.id, e)
         db.rollback()
         return None
+
+
+def stop_when_done(db: Session, set_id: int, *, client: Optional[MsClient] = None) -> bool:
+    """Креатив ушёл из конвейера — остановить его копию нацеливания. True — остановили.
+
+    «Ушёл» — трафик ответил по ВСЕМ площадкам креатива (нет строки «трафики» без
+    вердикта). Дальше копию крутить незачем: кука трафику больше не нужна, а показы идут
+    настоящим людям (владелец 25.09.2026).
+
+    Решение трафика к этому моменту уже записано, поэтому любой сбой DSP здесь — лог, а
+    не ошибка: откатывать вердикт из-за чужой системы нельзя.
+    """
+    row = db.query(LaunchPrepCreativeSet).filter(LaunchPrepCreativeSet.id == set_id).first()
+    if not row or not row.ms_targeting_creative_xxhash:
+        return False
+    waiting = db.execute(text(
+        "SELECT count(*) FROM launch_prep_review WHERE set_id = :s AND kind = 'трафики' "
+        "AND verdict IS NULL"), {"s": set_id}).scalar()
+    if waiting:
+        return False
+    try:
+        from app.routers.traffic_catalog import targeting_cabinet
+        partner, _campaign = targeting_cabinet(db)
+        c = client or _client(partner or "")
+        c.creative_set_status(row.ms_targeting_creative_xxhash, STOPPED,
+                              local_ref=f"tgt{set_id}")
+    except (MsError, TargetingCreativeError, ValueError) as e:
+        log.info("Нацеливание комплекта %s не остановлено: %s", set_id, e)
+        return False
+    return True
 
 
 __all__ = ["ensure", "ensure_quietly", "campaign_state", "wake_campaign",

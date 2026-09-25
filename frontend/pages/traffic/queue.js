@@ -33,7 +33,7 @@ import { saveResponse } from '@/lib/download'
 import { Cube } from '@/components/LogoLoader'
 import { TargetingCampaignHint, useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
 import safeHref from '@/lib/safeHref'
-import { openAimTab, aimTabGo, aimTabFail, aimTone, aimNotLive } from '@/lib/aimTab'
+import { openAimTab, aimTabGo, aimTabFail, aimToneFor, aimNotLive, aimExpired, RESTART_NOTE } from '@/lib/aimTab'
 
 /* Что сказать человеку про письмо. Ответ ручки различает пять исходов, и каждый значит
    для него РАЗНОЕ действие: отправлено — ничего не делать, не ушло — отправить самому.
@@ -316,6 +316,7 @@ export default function TrafficQueue() {
       aimTabGo(tab, r.data.url)
       setAimLive(m => ({ ...m, [setId]: !!r.data.active }))
       setErr(aimNotLive(r.data))
+      if (r.data.restarted) { setNote(RESTART_NOTE); tgt.reload() }
     } catch (e) {
       const why = e.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания'
       aimTabFail(tab, why)
@@ -659,9 +660,11 @@ export default function TrafficQueue() {
                     </span>
                   ) : (
                   <TargetingCampaignHint state={tgt.state}>
-                  <button style={{ ...iconBtn(mayEdit), ...aimTone(aimLive[g.set.id]) }}
+                  <button style={{ ...iconBtn(mayEdit), ...aimToneFor(aimLive[g.set.id], tgt.state) }}
                     disabled={!mayEdit || aiming === g.set.id}
-                    title="Нацелить на себя: откроется страница DSP, нажмите «Включить» — и увидите баннер на сайте площадки до старта"
+                    title={aimExpired(tgt.state) && aimLive[g.set.id] === undefined
+                      ? 'Время нацеливания истекло (кампания живёт 48 часов) — нажмите, чтобы перезапустить; баннер появится минут через 10'
+                      : 'Нацелить на себя: откроется страница DSP, нажмите «Включить» — и увидите баннер на сайте площадки до старта'}
                     onClick={() => aimAtMe(g.set.id)}>
                     {/* Пока выпускается — фирменный кубик вместо значка. Кнопка уходит в
                         DSP, копирует туда баннер и заводит нацеливание: это секунды, а

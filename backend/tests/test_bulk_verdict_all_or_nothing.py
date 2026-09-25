@@ -31,7 +31,7 @@ def wired(monkeypatch):
     def in_scope(db, pid, user):
         if pid == 3:
             raise HTTPException(status_code=404, detail="Задание не найдено")
-        return (SimpleNamespace(id=pid), SimpleNamespace(no=1), None,
+        return (SimpleNamespace(id=pid), SimpleNamespace(id=11, no=1), None,
                 SimpleNamespace(id=7), SimpleNamespace(id=1, code="X"))
 
     def apply(db, pair, s, target, pub, deal, verdict, reason, user):
@@ -44,6 +44,8 @@ def wired(monkeypatch):
                         lambda db, pair, *a: trail.append(f"letter{pair.id}"))
     monkeypatch.setattr(T, "log_action", lambda *a, **kw: trail.append("log"))
     monkeypatch.setattr(T, "emit", lambda *a, **kw: trail.append("emit"))
+    # Остановка нацеливания после вердикта ходит в DSP — здесь только отмечаем её.
+    monkeypatch.setattr(T, "_stop_targeting", lambda ids, db: trail.append("stop"))
     return SimpleNamespace(trail=trail, db=_Db(trail), user=SimpleNamespace(name="т"))
 
 

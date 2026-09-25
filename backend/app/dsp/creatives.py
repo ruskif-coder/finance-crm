@@ -272,6 +272,32 @@ def html_state(c, xxhash: str) -> str:
     return "ok" if (code or "").strip() else "empty"
 
 
+def landing_domain(url: Optional[str]) -> Optional[str]:
+    """Основной домен посадочной — для `adomain` боевого креатива (владелец 25.09.2026).
+
+    `adomain` («конечный URL») у DSP обязателен для ротации и не длиннее 128 символов, а
+    посадочные бывают и по 376 (замер прода: 18 из 138 длиннее 128). Поэтому ссылка
+    перехода (`link`) — посадочная целиком, а сюда — только `схема://хост/`. Без схемы
+    считаем https; порт и регистр отбрасываем. Не адрес — None, и выгрузка откажет
+    словами, а не отправит пустое поле.
+    """
+    from urllib.parse import urlsplit
+    raw = (url or "").strip()
+    if not raw:
+        return None
+    parts = urlsplit(raw if "://" in raw else "https://" + raw)
+    host = (parts.hostname or "").lower()
+    if parts.scheme not in ("http", "https") or "." not in host or " " in host:
+        return None
+    # Кириллический домен (`120на80.рф`) — в латинской записи `xn--…`: у DSP требования к
+    # формату URL, и на проде такие домены уже встречаются в обоих видах.
+    try:
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+    return f"{parts.scheme}://{host}/"
+
+
 def build_creative_params(*, title: str, link: str, erid: Optional[str] = None,
                           self_inn: Optional[str] = None, self_name: Optional[str] = None,
                           adomain: Optional[str] = None, size: Optional[str] = None,

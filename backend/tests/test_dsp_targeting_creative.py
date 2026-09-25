@@ -430,34 +430,6 @@ def test_the_fallback_link_is_our_own_site():
 
 # ── аудит 23.09.2026, 4.M7: отправка трафику не будит полигон и не даёт 500 ──
 
-def test_sending_to_traffic_does_not_wake_the_targeting_campaign():
-    """Кампания нацеливания просыпается от ПРОСЬБЫ о ссылке, а не от отправки комплекта:
-    проснувшаяся крутится настоящим людям двое суток. До правки каждая отправка будила
-    её заново."""
-    db = _db()
-    try:
-        s = _set_with(db)
-        c = FakeClient(campaign_status="STOPPED", campaign_end="2026-09-13 00:00:00")
-        P.ensure_quietly(db, s, client=c)
-        woke = [x for x in c.calls if x[0] in ("campaign_edit", "campaign_status")]
-        assert not woke, f"отправка трафику разбудила полигон: {woke}"
-    finally:
-        _drop(db, s)
-        db.close()
-
-
-def test_repeated_send_with_a_known_creative_goes_nowhere():
-    db = _db()
-    try:
-        s = _set_with(db, ms_targeting_creative_xxhash="ALREADY0000000002")
-        c = FakeClient()
-        assert P.ensure_quietly(db, s, client=c) == "ALREADY0000000002"
-        assert c.calls == [], f"повторная отправка ходила в DSP: {c.calls}"
-    finally:
-        _drop(db, s)
-        db.close()
-
-
 def test_a_broken_archive_is_a_refusal_not_a_500(monkeypatch):
     """Дошивка кода в пустой креатив читает архив; битый архив бросал CreativeError,
     которую тихий вариант не ловил, — и отправка комплекта, уже закоммиченная,
@@ -525,19 +497,6 @@ def test_launch_that_did_not_stick_is_not_called_active():
         assert out["active"] is False
         assert out["creative_status"] == "STOPPED"
         assert out["reason"]
-    finally:
-        _drop(db, s)
-
-
-def test_quiet_creation_on_send_does_not_launch():
-    """Отправка трафику кампанию не будит — и креатив не запускает: крутиться людям
-    двое суток ради ссылки, которую могут и не попросить, незачем."""
-    db = _db()
-    s = _set_with(db, ms_targeting_creative_xxhash="QUIET00000000001")
-    c = FakeClient(creative_status="STOPPED")
-    try:
-        P.ensure_quietly(db, s, client=c)
-        assert not any(k[0] == "creative_status" for k in c.calls)
     finally:
         _drop(db, s)
 
@@ -619,3 +578,113 @@ def test_new_targeting_creative_is_added_with_adomain():
     import inspect
     assert "adomain=TARGETING_ADOMAIN" in inspect.getsource(P.ensure).replace(" ", ""), (
         "заведение креатива нацеливания обязано передавать домен")
+
+
+
+# ── запуск при отправке, остановка по выходу из конвейера (владелец 25.09.2026) ─
+#
+# У DSP лаг запуска — до десяти минут. Чтобы трафик не ждал у кнопки, копия заводится И
+# ЗАПУСКАЕТСЯ при отправке креатива на согласование, кампания будится там же; кнопка
+# только выпускает куку. Когда трафик ответил по всем площадкам креатива, показ копии
+# завершается: крутить её дальше незачем.
+
+def test_send_wakes_campaign_and_launches_the_creative():
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="SENDLAUNCH000001")
+    c = FakeClient(campaign_status="STOPPED", campaign_end="2026-09-13 00:00:00",
+                   creative_status="STOPPED", adomain="")
+    try:
+        assert P.ensure_quietly(db, s, client=c) == "SENDLAUNCH000001"
+        assert ("campaign_status", c.calls[0][1] if c.calls else None, "LAUNCHED") in c.calls             or any(x[0] == "campaign_status" and x[2] == "LAUNCHED" for x in c.calls)
+        assert ("creative_status", "SENDLAUNCH000001", "LAUNCHED") in c.calls
+        assert {"adomain": P.TARGETING_ADOMAIN} in c.edited
+    finally:
+        _drop(db, s)
+
+
+def test_resend_of_a_live_creative_only_reads():
+    """Повторная отправка: креатив уже крутится — не заводим второй и не дёргаем статус."""
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="ALREADY0000000002")
+    c = FakeClient(creative_status="LAUNCHED", adomain="https://simb-ad.com/")
+    try:
+        assert P.ensure_quietly(db, s, client=c) == "ALREADY0000000002"
+        assert not any(k[0] in ("add", "creative_status", "edit") for k in c.calls), c.calls
+    finally:
+        _drop(db, s)
+
+
+def test_quiet_send_swallows_a_dsp_failure():
+    """Отправка на согласование не зависит от DSP: сбой запуска — не сбой отправки."""
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="BROKEN0000000001")
+    c = FakeClient(creative_status="STOPPED")
+
+    def boom(*a, **k):
+        from app.dsp.client import MsError
+        raise MsError("Creative.setStatus: связь оборвалась")
+    c.creative_set_status = boom
+    try:
+        assert P.ensure_quietly(db, s, client=c) is None
+    finally:
+        _drop(db, s)
+
+
+def _review(db, s, verdict):
+    from app.launch_prep.models import LaunchPrepReview
+    db.add(LaunchPrepReview(set_id=s.id, kind="трафики", verdict=verdict,
+                            source="трафик", decided_by="тест"))
+    db.commit()
+
+
+def test_creative_is_stopped_when_traffic_answered_everything():
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="DONE000000000001")
+    _review(db, s, "ок")
+    c = FakeClient(creative_status="LAUNCHED")
+    try:
+        assert P.stop_when_done(db, s.id, client=c) is True
+        assert ("creative_status", "DONE000000000001", "STOPPED") in c.calls
+    finally:
+        _drop(db, s)
+
+
+def test_creative_keeps_running_while_something_waits_for_traffic():
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="WAIT000000000001")
+    _review(db, s, None)
+    c = FakeClient(creative_status="LAUNCHED")
+    try:
+        assert P.stop_when_done(db, s.id, client=c) is False
+        assert not any(k[0] == "creative_status" for k in c.calls)
+    finally:
+        _drop(db, s)
+
+
+def test_stop_without_a_targeting_creative_goes_nowhere():
+    db = _db()
+    s = _set_with(db)
+    _review(db, s, "ок")
+    c = FakeClient()
+    try:
+        assert P.stop_when_done(db, s.id, client=c) is False
+        assert c.calls == []
+    finally:
+        _drop(db, s)
+
+
+def test_stop_failure_is_swallowed():
+    """Решение трафика уже записано — сбой DSP на остановке его не откатывает."""
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="STOPFAIL00000001")
+    _review(db, s, "на переделку")
+    c = FakeClient()
+
+    def boom(*a, **k):
+        from app.dsp.client import MsError
+        raise MsError("нет связи")
+    c.creative_set_status = boom
+    try:
+        assert P.stop_when_done(db, s.id, client=c) is False
+    finally:
+        _drop(db, s)

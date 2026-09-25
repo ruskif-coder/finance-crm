@@ -409,6 +409,15 @@ def _tell_publisher(db, pair, s, target, pub, deal) -> None:
         log.warning("Площадке %s не ушло «новый креатив»: %s", pub.id, e)
 
 
+def _stop_targeting(set_ids, db: Session) -> None:
+    """Креатив ушёл из конвейера — остановить его копию нацеливания в DSP (владелец
+    25.09.2026). Решает `stop_when_done`: все ли площадки креатива отвечены. Сбой DSP
+    вердикт не откатывает — он уже записан."""
+    from app.dsp import targeting_creative as tc
+    for sid in set_ids:
+        tc.stop_when_done(db, sid)
+
+
 @router.post("/pair/{pair_id}/verdict")
 def pair_verdict(pair_id: int, payload: VerdictIn, db: Session = Depends(get_db),
                  current_user: User = Depends(APPROVE)):
@@ -441,6 +450,7 @@ def pair_verdict(pair_id: int, payload: VerdictIn, db: Session = Depends(get_db)
              entity_type="sales_deal", entity_id=deal.id, actor=current_user,
              ctx={"deal": deal})
     db.commit()
+    _stop_targeting([s.id], db)
     return {"verdict": payload.verdict}
 
 
@@ -498,6 +508,7 @@ def bulk_verdict(payload: BulkVerdictIn, db: Session = Depends(get_db),
                  entity_type="sales_deal", entity_id=deal_id, actor=current_user,
                  ctx={"deal": deal})
     db.commit()
+    _stop_targeting({s.id for _p, s, _t, _pub, _d in applied}, db)
     return {"done": done, "skipped": skipped}
 
 

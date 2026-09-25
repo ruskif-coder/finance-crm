@@ -569,3 +569,18 @@ def test_row_names_why_targeting_misses(env, monkeypatch):  # noqa: F811
         assert miss == {env.pubs[0].id: None, env.pubs[1].id: "не в нашей DSP"}
     finally:
         _restore(env, saved)
+
+
+def test_verdict_asks_to_stop_targeting_of_the_creative(env, monkeypatch):  # noqa: F811
+    """После решения трафика конвейер просит остановить копию нацеливания креатива —
+    остановит ли, решает `stop_when_done` (все ли площадки отвечены)."""
+    from app.dsp import targeting_creative as tc
+    monkeypatch.setattr(tc, "ensure_quietly", lambda *a, **k: None)
+    asked = []
+    monkeypatch.setattr(tc, "stop_when_done", lambda db, set_id, **k: asked.append(set_id) or True)
+    pairs = _sent(env)
+    traffic.pair_verdict(pairs[0].id, traffic.VerdictIn(verdict='ок'), env.db, _ADMIN)
+    assert asked == [env.cset.id]
+    traffic.bulk_verdict(traffic.BulkVerdictIn(pair_ids=[p.id for p in pairs[1:]], verdict='ок'),
+                         env.db, _ADMIN)
+    assert asked[-1] == env.cset.id and len(asked) == 2

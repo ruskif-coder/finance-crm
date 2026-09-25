@@ -22,7 +22,7 @@ import ValuePopover from '@/components/ValuePopover'
 import { overlayClose } from '@/lib/overlay'
 import { can, getPermissions } from '@/lib/auth'
 import { downloadFile } from '@/lib/download'
-import { openAimTab, aimTabGo, aimTabFail, aimTone, aimNotLive } from '@/lib/aimTab'
+import { openAimTab, aimTabGo, aimTabFail, aimTone, aimNotLive, RESTART_NOTE } from '@/lib/aimTab'
 
 const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
 const BOX = { border: '1px solid var(--border-card)', borderRadius: 14, padding: '14px 16px', background: 'var(--bg-card)' }
@@ -1051,6 +1051,7 @@ function TargetingUrl({ set, canEdit, onSave }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [live, setLive] = useState(undefined)   // крутится ли — по ответу последнего нажатия
+  const [aimNote, setAimNote] = useState('')    // «перезапущено — через 10 минут»
   useEffect(() => { setV(set.test_targeting_url || '') }, [set.test_targeting_url])
 
   // Вкладку открываем СИНХРОННО по клику, а адрес подставляем после ответа: окно,
@@ -1064,6 +1065,7 @@ function TargetingUrl({ set, canEdit, onSave }) {
       aimTabGo(tab, r.data.url)
       setLive(!!r.data.active)
       setErr(aimNotLive(r.data))
+      setAimNote(r.data.restarted ? RESTART_NOTE : '')
     } catch (e) {
       const why = e?.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания'
       aimTabFail(tab, why)
@@ -1085,6 +1087,7 @@ function TargetingUrl({ set, canEdit, onSave }) {
           </button>
         )}
         {!!err && <span style={{ fontSize: 12, color: 'var(--expense)' }}>{err}</span>}
+        {!!aimNote && !err && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{aimNote}</span>}
         {/* Пустое поле НЕ рисуем словом «не задана»: пока есть кнопка, пустота здесь
             означает «ручная ссылка не понадобилась», а не пробел в данных. */}
         {!!set.test_targeting_url && (
