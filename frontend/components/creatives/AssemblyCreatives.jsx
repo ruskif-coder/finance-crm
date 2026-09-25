@@ -22,6 +22,7 @@ import ValuePopover from '@/components/ValuePopover'
 import { overlayClose } from '@/lib/overlay'
 import { can, getPermissions } from '@/lib/auth'
 import { downloadFile } from '@/lib/download'
+import { openAimTab, aimTabGo, aimTabFail } from '@/lib/aimTab'
 
 const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
 const BOX = { border: '1px solid var(--border-card)', borderRadius: 14, padding: '14px 16px', background: 'var(--bg-card)' }
@@ -1052,15 +1053,15 @@ function TargetingUrl({ set, canEdit, onSave }) {
   // открытое из `await`, блокировщик всплывающих окон считает непрошеным и режет.
   const aim = async () => {
     setErr('')
-    const tab = window.open('', '_blank')
+    const tab = openAimTab()
     setBusy(true)
     try {
       const r = await api.post(`/launch-prep/set/${set.id}/targeting-link`, {}, auth())
-      if (tab) tab.location = r.data.url
-      else window.location.href = r.data.url
+      aimTabGo(tab, r.data.url)
     } catch (e) {
-      if (tab) tab.close()
-      setErr(e?.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания')
+      const why = e?.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания'
+      aimTabFail(tab, why)
+      setErr(why)
     } finally { setBusy(false) }
   }
 

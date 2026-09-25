@@ -589,3 +589,36 @@ def test_targeting_and_creative_also_touch_only_their_own(monkeypatch):
                                        size="240x400"),
                           None, user)
     assert e.value.status_code in (403, 503)
+
+
+def test_upload_to_dsp_sends_a_prepared_copy():
+    """В загрузчик DSP уходит ПОДГОТОВЛЕННАЯ копия (владелец 25.09.2026): архив,
+    загруженный раньше правила или креатив, чей состав поменяли после загрузки, тоже
+    доедет с размером и макросом ссылки. Хранимый файл при этом не трогается."""
+    import io
+    import zipfile
+    sent = {}
+
+    class _Client:
+        def upload_get_url(self, kind):
+            return "https://uploader.example.test/put"
+
+        def journal_raw(self, *a, **k):
+            pass
+
+    def fake_post(url, files=None, timeout=None):
+        sent["data"] = files["file"][1]
+        return type("R", (), {"status_code": 200, "raise_for_status": lambda self: None,
+                              "text": '{"result":{"size":"0x0","html":"<html>ok</html>"}}'})()
+
+    src = _zip_with('<a href="%banner.reference_mrc_user1%">b</a>')
+    import httpx as _httpx
+    real_post = _httpx.post
+    _httpx.post = fake_post
+    try:
+        cr.upload_zip(_Client(), src, "b.zip", local_ref="TESTREF")
+    finally:
+        _httpx.post = real_post
+    with zipfile.ZipFile(io.BytesIO(sent["data"])) as z:
+        html = z.read(z.namelist()[0]).decode("utf-8")
+    assert 'ad.size' in html and 'href="{LINK_UNESC}"' in html

@@ -121,6 +121,26 @@ def targeting_miss(surface_kind: Optional[str], our_code: Optional[bool]) -> Opt
     return None
 
 
+def for_our_web_dsp(db: Session, set_id: int) -> bool:
+    """Идёт ли баннер креатива в нашу DSP на веб: есть ли в его СОСТАВЕ веб-площадка с
+    нашим кодом. Правило то же, что у нацеливания (`targeting_miss`), но по составу, а не
+    по парам: при загрузке файла пар ещё нет.
+
+    Нужна подготовке архива (`sandbox.prepare_for_dsp`, владелец 25.09.2026): баннер под
+    чужую DSP несёт её макросы, и подменять их нельзя — сломается клик там.
+    """
+    # Состав, а если его строк нет — пары: у креативов, заведённых демо-скриптом, пары
+    # есть, а состава нет.
+    rows = db.execute(text(
+        "SELECT t.surface_kind, p.our_code FROM launch_prep_target t "
+        "JOIN sales_publishers p ON p.id = t.publisher_id "
+        "WHERE t.state NOT IN ('отказ площадки', 'архив') AND t.id IN ("
+        "  SELECT target_id FROM launch_prep_set_target WHERE set_id = :s "
+        "  UNION SELECT target_id FROM launch_prep_pair WHERE set_id = :s)"),
+        {"s": set_id}).all()
+    return any(targeting_miss(surface, our) is None for surface, our in rows)
+
+
 def blind_sets(db: Session, set_ids) -> set:
     """Комплекты, у которых пары есть и НИ НА ОДНОЙ нацеливание не покажет.
 

@@ -24,6 +24,7 @@
 Каталог называется СЛУЧАЙНЫМ токеном: раздача без авторизации (иначе баннер не откроется
 в кабинете паблишера), и единственная защита — неподбираемость адреса.
 """
+import io
 import os
 import re
 import secrets
@@ -206,6 +207,90 @@ def parse_ad_size(html: str) -> Optional[tuple]:
     return int(wh.group(1)), int(wh.group(2))
 
 
+# Что вшиваем баннеру без объявленного размера (владелец 25.09.2026): такой баннер
+# считаем АДАПТИВНЫМ. `0x0` — законное объявление адаптивного, DSP его принимает.
+ADAPTIVE_META = '<meta name="ad.size" content="width=0,height=0">'
+_HEAD_RE = re.compile(r"<head\b[^>]*>", re.I)
+_HTML_RE = re.compile(r"<html\b[^>]*>", re.I)
+
+# Макрос ссылки клика: вместо него DSP подставляет посадочную (владелец 25.09.2026).
+DSP_CLICK_MACRO = "{LINK_UNESC}"
+_HREF_RE = re.compile(r"""(<a\b[^>]*?\bhref\s*=\s*)(["'])(.*?)\2""", re.I | re.S)
+# Заглушка чужой рекламной системы (`%banner.reference_mrc_user1%`, `{CLICK_URL}`,
+# `[CLICKTAG]`), пустая ссылка или `#`. Настоящий адрес сюда не попадает — это может быть
+# ссылка на инструкцию, и молча подменять её нельзя.
+_PLACEHOLDER_RE = re.compile(r"^\s*(#?|%[^%]*%|\{[^}]*\}|\[[^\]]*\])\s*$")
+
+
+def click_problem(html: str) -> Optional[str]:
+    """Что не так со ссылкой клика: None — макрос DSP стоит; иначе причина словами."""
+    hrefs = [m.group(3) for m in _HREF_RE.finditer(html or "")]
+    if DSP_CLICK_MACRO in hrefs:
+        return None
+    return "ссылка без макроса" if hrefs else "нет ссылки"
+
+
+def _fix_links(html: str) -> Tuple[str, bool]:
+    changed = False
+
+    def sub(m):
+        nonlocal changed
+        val = m.group(3)
+        if val != DSP_CLICK_MACRO and _PLACEHOLDER_RE.match(val):
+            changed = True
+            return f"{m.group(1)}{m.group(2)}{DSP_CLICK_MACRO}{m.group(2)}"
+        return m.group(0)
+
+    return _HREF_RE.sub(sub, html), changed
+
+
+def prepare_for_dsp(data: bytes) -> Tuple[bytes, list]:
+    """Архив, готовый для DSP. `(байты, что поправлено)` — список из 'ad.size' / 'link'.
+
+    ЗАЧЕМ. DSP не принимает архив без `<meta name="ad.size">` (код 2053), а клик ведёт
+    через макрос `{LINK_UNESC}` в `<a href>`. Узнавали мы о нехватке при отправке — через
+    неделю после загрузки, когда баннер уже согласовывали площадки. Поэтому поправляем
+    ОДИН РАЗ, при загрузке: хранится уже исправленный архив, и предпросмотр, нацеливание
+    и боевая выгрузка берут один и тот же файл (владелец 25.09.2026).
+
+      · размер не объявлен — баннер считаем адаптивным, вшиваем `width=0,height=0`.
+        Ищем во ВСЁМ файле, а не в начале: второй тег поверх настоящего (стоящего дальше
+        восьми килобайт) подменил бы объявленный размер адаптивным;
+      · ссылка клика — заглушку чужой системы, пустую и `#` меняем на макрос DSP.
+
+    Правится та точка входа, которую показывает песочница (`_pick_entry`). Если править
+    нечего — архив не пересобирается вовсе, байт в байт.
+    """
+    try:
+        src = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        return data, []
+    with src:
+        infos = [i for i in src.infolist() if not i.is_dir()]
+        entry = _pick_entry([i.filename for i in infos])
+        if not entry:
+            return data, []
+        html = src.read(entry).decode("utf-8", "ignore")
+        changes = []
+        if parse_ad_size(html) is None:
+            m = _HEAD_RE.search(html) or _HTML_RE.search(html)
+            html = (html[:m.end()] + ADAPTIVE_META + html[m.end():]) if m \
+                else ADAPTIVE_META + html
+            changes.append("ad.size")
+        html, linked = _fix_links(html)
+        if linked:
+            changes.append("link")
+        if not changes:
+            return data, []
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as out:
+            for info in src.infolist():
+                body = html.encode("utf-8") if info.filename == entry \
+                    else src.read(info.filename)
+                out.writestr(info, body, compress_type=info.compress_type)
+    return buf.getvalue(), changes
+
+
 def read_size(uploads_root: str, token: str, entry: str) -> Optional[str]:
     """Размер баннера из него самого: `<meta name="ad.size" content="width=..,height=..">`.
 
@@ -217,7 +302,10 @@ def read_size(uploads_root: str, token: str, entry: str) -> Optional[str]:
     # `token` и `entry` приходят из базы, и читать по ним файл без проверки границы
     # значит доверять записи больше, чем можно: испорченная строка увела бы чтение за
     # пределы песочницы. Размер наружу отдаётся маленький, но путь — тот же класс.
-    path = inside_uploads(os.path.join(token, entry),
+    # Ключ считается ОТ КОРНЯ хранилища, а `subdir` лишь сужает границу. С 12.09.2026
+    # (v2.6.6) здесь стоял путь без `sandbox/`, граница его отвергала, и размер не
+    # читался НИ У ОДНОГО баннера: всё показывалось «адаптивным» (найдено 25.09.2026).
+    path = inside_uploads(os.path.join(SANDBOX_DIR, token, entry),
                           root=uploads_root, subdir=SANDBOX_DIR)
     if path is None:
         return None

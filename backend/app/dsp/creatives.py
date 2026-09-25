@@ -92,6 +92,12 @@ def upload_zip(client, data: bytes, filename: str = "creative.zip",
     не тем, чего ждали.
     """
     check_zip(data, filename)
+    # Сюда попадает только то, что едет в НАШУ DSP, — значит и подготовка к ней уместна
+    # всегда: архив, загруженный до 25.09.2026 или креатив, чей состав поменяли после
+    # загрузки, дойдёт до загрузчика с размером и макросом ссылки. Хранимый файл не
+    # меняется — правится отправляемая копия.
+    from app.launch_prep.sandbox import prepare_for_dsp
+    data, _ = prepare_for_dsp(data)
     require_ad_size(data)
     url = client.upload_get_url("zip")
     if not isinstance(url, str) or not url.startswith("http"):

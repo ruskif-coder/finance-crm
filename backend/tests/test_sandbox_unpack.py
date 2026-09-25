@@ -152,3 +152,120 @@ def test_url_is_built_from_the_environment(monkeypatch):
     monkeypatch.setenv('SANDBOX_BASE_URL', 'https://cr.example.com/')
     assert sandbox.public_url('tok', 'a/index.html') == 'https://cr.example.com/tok/a/index.html'
     assert sandbox.public_url(None, 'index.html') is None
+
+
+# ── размер баннера: вшиваем, если не объявлен (владелец 25.09.2026) ──────────
+#
+# DSP не принимает архив без `<meta name="ad.size">` (код 2053), а узнаём мы об этом
+# только при отправке — через неделю после загрузки. Баннер без тега считаем
+# адаптивным и вшиваем `width=0,height=0` при загрузке: хранится уже исправленный,
+# и предпросмотр, нацеливание и боевая выгрузка берут один и тот же готовый архив.
+
+def _zbytes(entries):
+    import io
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        for name, data in entries.items():
+            z.writestr(name, data)
+    return buf.getvalue()
+
+
+def _read(data, name):
+    import io
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        return z.read(name)
+
+
+def test_missing_ad_size_is_injected_as_adaptive():
+    from app.dsp.creatives import ad_size_in_zip
+    src = _zbytes({'index.html': '<!DOCTYPE html><html><head><title>b</title></head>'
+                                 '<body>баннер</body></html>',
+                   'bg.jpg': b'\xff\xd8JPEG'})
+    assert ad_size_in_zip(src) is None
+    out, changes = sandbox.prepare_for_dsp(src)
+    assert 'ad.size' in changes
+    assert ad_size_in_zip(out) == (0, 0), "DSP обязан найти тег в исправленном архиве"
+    html = _read(out, 'index.html').decode('utf-8')
+    assert html.index('ad.size') < html.index('<title>'), "тег в <head>, до всего прочего"
+    assert 'баннер' in html
+    assert _read(out, 'bg.jpg') == b'\xff\xd8JPEG', "остальные файлы не трогаем"
+
+
+def test_declared_ad_size_is_left_byte_for_byte():
+    src = _zbytes({'index.html': '<html><head><meta name="ad.size" '
+                                 'content="width=240,height=400"></head>'
+                                 '<body><a href="{LINK_UNESC}">x</a></body></html>'})
+    out, changes = sandbox.prepare_for_dsp(src)
+    assert changes == []
+    assert out == src, "объявленный размер — архив не пересобираем вовсе"
+
+
+def test_tag_goes_into_the_entry_the_sandbox_shows():
+    """Вшиваем туда же, откуда баннер показывает песочница: в корневой index.html."""
+    src = _zbytes({'extra/page.html': '<html><head></head></html>',
+                   'index.html': '<html><head></head><body>x</body></html>'})
+    out, changes = sandbox.prepare_for_dsp(src)
+    assert 'ad.size' in changes
+    assert b'ad.size' in _read(out, 'index.html')
+    assert b'ad.size' not in _read(out, 'extra/page.html')
+
+
+def test_html_without_head_still_gets_the_tag():
+    src = _zbytes({'index.html': '<div class="banner"></div>'})
+    out, changes = sandbox.prepare_for_dsp(src)
+    assert 'ad.size' in changes
+    from app.dsp.creatives import ad_size_in_zip
+    assert ad_size_in_zip(out) == (0, 0)
+
+
+def test_archive_without_html_is_returned_as_is():
+    """Без html чинить нечего: отказ скажет распаковка, а не вшивание."""
+    src = _zbytes({'pic.png': b'\x89PNG'})
+    assert sandbox.prepare_for_dsp(src) == (src, [])
+
+
+# ── ссылка клика: макрос DSP (владелец 25.09.2026) ───────────────────────────
+#
+# DSP подставляет посадочную вместо `{LINK_UNESC}` в `<a href>`. Баннер, собранный под
+# другую рекламную систему, несёт её макрос (`%banner.reference_mrc_user1%`), и клик в
+# нашей DSP не ведёт никуда — молча. Заглушки чужих систем, пустую ссылку и `#` меняем
+# на наш макрос; настоящий адрес не трогаем — это может быть ссылка на инструкцию.
+
+LINK = sandbox.DSP_CLICK_MACRO
+
+
+def test_foreign_click_macro_is_replaced():
+    src = _zbytes({'index.html': '<html><head></head><body>'
+                   '<a href="%banner.reference_mrc_user1%" target="%banner.target%">b</a>'
+                   '</body></html>'})
+    out, changes = sandbox.prepare_for_dsp(src)
+    html = _read(out, 'index.html').decode('utf-8')
+    assert 'link' in changes
+    assert f'href="{LINK}"' in html
+    assert '%banner.reference_mrc_user1%' not in html
+
+
+def test_empty_and_hash_links_become_the_macro():
+    src = _zbytes({'index.html': "<html><head></head><body><a href=''>1</a>"
+                   '<a href="#">2</a></body></html>'})
+    out, changes = sandbox.prepare_for_dsp(src)
+    html = _read(out, 'index.html').decode('utf-8')
+    assert html.count(LINK) == 2
+
+
+def test_real_url_and_our_macro_are_left_alone():
+    src = _zbytes({'index.html': '<html><head><meta name="ad.size" content="width=0,height=0">'
+                   '</head><body><a href="{LINK_UNESC}">b</a>'
+                   '<a href="https://brand.ru/instr.pdf">инструкция</a></body></html>'})
+    out, changes = sandbox.prepare_for_dsp(src)
+    assert changes == [] and out == src
+
+
+def test_click_state_is_reported():
+    """Чего вшиванием не исправить — называется, а не молчит."""
+    ok = '<html><head></head><body><a href="{LINK_UNESC}">b</a></body></html>'
+    none = '<html><head></head><body><div>без ссылки</div></body></html>'
+    real = '<html><head></head><body><a href="https://brand.ru">b</a></body></html>'
+    assert sandbox.click_problem(ok) is None
+    assert sandbox.click_problem(none) == 'нет ссылки'
+    assert sandbox.click_problem(real) == 'ссылка без макроса'

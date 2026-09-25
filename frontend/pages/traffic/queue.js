@@ -33,6 +33,7 @@ import { saveResponse } from '@/lib/download'
 import { Cube } from '@/components/LogoLoader'
 import { TargetingCampaignHint, useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
 import safeHref from '@/lib/safeHref'
+import { openAimTab, aimTabGo, aimTabFail } from '@/lib/aimTab'
 
 /* Что сказать человеку про письмо. Ответ ручки различает пять исходов, и каждый значит
    для него РАЗНОЕ действие: отправлено — ничего не делать, не ушло — отправить самому.
@@ -307,29 +308,14 @@ export default function TrafficQueue() {
      открытое из `await`, блокировщик всплывающих окон считает непрошеным и режет. */
   async function aimAtMe(setId) {
     setErr(''); setAiming(setId)
-    const tab = window.open('', '_blank')
-    // Новая вкладка не должна держать ссылку на нашу (аудит 23.09.2026, 7.L1): туда уходит
-    // страница DSP, и через `opener` она могла бы увести наш экран на подделку.
-    if (tab) tab.opener = null
-    // Пустая вкладка на несколько секунд читается как «открылось битое». Пишем в неё
-    // строку ожидания сразу: ждать придётся и здесь, и там, а объяснение должно быть в
-    // том окне, куда человек смотрит.
-    if (tab) {
-      try {
-        tab.document.write('<title>Нацеливание…</title>'
-          + '<body style="margin:0;display:flex;align-items:center;justify-content:center;'
-          + 'height:100vh;font:15px/1.5 system-ui,sans-serif;color:#5b6474">'
-          + 'Готовим нацеливание: копируем баннер в DSP и выпускаем ссылку…</body>')
-        tab.document.close()
-      } catch (e) { /* другое происхождение — не страшно, просто останется пустой */ }
-    }
+    const tab = openAimTab()
     try {
       const r = await api.post(`/launch-prep/set/${setId}/targeting-link`, {}, auth())
-      if (tab) tab.location = r.data.url
-      else window.location.href = r.data.url
+      aimTabGo(tab, r.data.url)
     } catch (e) {
-      if (tab) tab.close()
-      setErr(e.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания')
+      const why = e.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания'
+      aimTabFail(tab, why)
+      setErr(why)
     } finally { setAiming(null) }
   }
 

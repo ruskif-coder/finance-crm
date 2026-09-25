@@ -1259,6 +1259,18 @@ async def upload_file(set_id: int, ratio: Optional[str] = None,
         raise HTTPException(status_code=413,
                             detail=f"Файл слишком большой (максимум {MAX_UPLOAD_BYTES // 1024 // 1024} МБ)")
 
+    # Баннер без объявленного размера наша DSP не примет (код 2053), а без её макроса ссылки
+    # клик никуда не ведёт — и узнали бы мы это только при отправке. Правим СЕЙЧАС: хранится
+    # уже исправленный архив, и предпросмотр, нацеливание и боевая выгрузка берут один
+    # файл (владелец 25.09.2026).
+    # Только для баннера под НАШУ DSP на веб: под чужую он несёт её макросы, и подмена
+    # сломала бы клик там.
+    prepared = []
+    if ext in ARCHIVE_EXTENSIONS:
+        from app.dsp.targeting_creative import for_our_web_dsp
+        if for_our_web_dsp(db, set_id):
+            content, prepared = sandbox.prepare_for_dsp(content)
+
     safe = re.sub(r"[^\w.\-]", "_", original)
     # Имя несёт вид сущности: медиакит площадки №7 и файл комплекта №7 в общем каталоге
     # иначе затрут друг друга — это уже случалось с документами площадок.
@@ -1301,7 +1313,9 @@ async def upload_file(set_id: int, ratio: Optional[str] = None,
         LaunchPrepCreativeFile.set_id == set_id).all()
     row.form = _derive_form(files)
     db.commit()
-    return {"id": rec.id, "form": row.form}
+    # `prepared` — что поправили в баннере при загрузке: 'ad.size' (вшит адаптивный
+    # размер) и/или 'link' (чужой макрос ссылки заменён на макрос DSP).
+    return {"id": rec.id, "form": row.form, "prepared": prepared}
 
 
 # Что показываем прямо в браузере, а что отдаём файлом. Картинка безопасна: разметка её
