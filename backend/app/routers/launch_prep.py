@@ -1174,8 +1174,11 @@ def issue_targeting_link(set_id: int, db: Session = Depends(get_db),
         raise HTTPException(status_code=404, detail="Комплект не найден")
     deal = _deal(db, row.deal_id, current_user)
 
+    # Не только завести, но и ЗАПУСТИТЬ: креатив в DSP заводится остановленным, и кука
+    # ставилась бы на то, что не крутится (владелец 25.09.2026).
     try:
-        crid = tc_mod.ensure(db, row)
+        live = tc_mod.ensure_live(db, row)
+        crid = live["xxhash"]
     except (tc_mod.TargetingCreativeError, MsError) as e:
         # Отказ «не в нашей DSP» — не про заведение: креатив может и быть заведён,
         # просто на этих сайтах он не покажется. Приставка там была бы неправдой.
@@ -1190,9 +1193,14 @@ def issue_targeting_link(set_id: int, db: Session = Depends(get_db),
 
     until = f" до {link.expires_at:%d.%m %H:%M} UTC" if link.expires_at else ""
     log_action(db, current_user, "targeting_link", "sales_deal", deal.id,
-               f"Комплект №{row.no}: выпущена ссылка нацеливания{until}")
+               f"Комплект №{row.no}: выпущена ссылка нацеливания{until}"
+               + ("; креатив крутится" if live["active"] else f"; не крутится: {live['reason']}"))
+    # `active` — креатив и кампания ПЕРЕЧИТАНЫ запущенными; по нему экран красит ◎.
     return {"url": link.url, "targeting_xxhash": crid,
-            "expires_at": link.expires_at.isoformat() if link.expires_at else None}
+            "expires_at": link.expires_at.isoformat() if link.expires_at else None,
+            "active": live["active"], "reason": live["reason"],
+            "creative_status": live["creative_status"],
+            "campaign_status": live["campaign_status"]}
 
 
 @router.delete("/set/{set_id}")

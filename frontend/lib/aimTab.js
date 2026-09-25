@@ -43,3 +43,25 @@ export function aimTabFail(tab, why) {
     box.textContent = 'Нацеливание не выпущено: ' + why
   } catch (e) { tab.close() }
 }
+
+/* Цвет кнопки по ответу сервера (владелец 25.09.2026): зелёная — креатив и кампания
+   ПЕРЕЧИТАНЫ запущенными, то есть кука покажет баннер; жёлтая — ссылка выпущена, но
+   крутиться нечему. До нажатия — обычная: состояние не хранится, его знает только DSP. */
+export function aimTone(active) {
+  if (active === true) {
+    return { color: 'var(--income-fg)', borderColor: 'var(--income-border)',
+             background: 'var(--income-tint)' }
+  }
+  if (active === false) {
+    return { color: 'var(--warning-fg)', borderColor: 'var(--warning-border)',
+             background: 'var(--warning-tint)' }
+  }
+  return {}
+}
+
+/** Что сказать, если ссылка выпущена, а баннер крутиться не будет. Пусто — всё в порядке. */
+export function aimNotLive(data) {
+  return data && data.active === false
+    ? `Ссылка выпущена, но баннер на сайте не появится: ${data.reason || 'креатив в DSP не запущен'}`
+    : ''
+}

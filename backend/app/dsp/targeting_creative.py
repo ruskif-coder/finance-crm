@@ -314,6 +314,46 @@ def ensure(db: Session, s: LaunchPrepCreativeSet, *,
     return _persist(db, s, xxhash)
 
 
+def ensure_live(db: Session, s: LaunchPrepCreativeSet, *,
+                client: Optional[MsClient] = None) -> dict:
+    """Креатив нацеливания заведён, ЗАПУЩЕН и кампания его крутит — для просьбы о ссылке.
+
+    ЗАЧЕМ (владелец 25.09.2026). Креатив в DSP заводится со статусом STOPPED. Кампанию
+    мы будили, а креатив — нет: кука ставилась на то, что не крутится, страница ссылки
+    выглядела успешной, а на сайте было пусто. Теперь креатив запускается здесь же.
+
+    «Активно» говорим ТОЛЬКО по перечитанному статусу, а не по отправленной команде:
+    вызов, который не упал, ещё не значит, что статус поменялся.
+    Тихое заведение при отправке трафику (`ensure_quietly`) креатив не запускает — как и
+    кампанию не будит.
+    """
+    from app.routers.traffic_catalog import targeting_cabinet
+
+    partner, campaign = targeting_cabinet(db)
+    c = client or _client(partner or "")
+    xxhash = ensure(db, s, client=c)
+    ref = f"tgt{s.id}"
+
+    def creative_status():
+        return ((c.creative_get_info(xxhash) or {}).get("status") or "").upper()
+
+    st = creative_status()
+    if st != RUNNING:
+        c.creative_set_status(xxhash, RUNNING, local_ref=ref)
+        st = creative_status()
+    camp = ((c.campaign_get_info(campaign) or {}).get("status") or "").upper()
+
+    reason = None
+    if st != RUNNING:
+        reason = (f"креатив в DSP не запустился — статус {STATUS_RU.get(st, st or 'не прочитан')} "
+                  f"({st or '—'})")
+    elif camp != RUNNING:
+        reason = (f"кампания нацеливания {STATUS_RU.get(camp, camp or 'не прочитана')} "
+                  f"({camp or '—'})")
+    return {"xxhash": xxhash, "creative_status": st or None, "campaign_status": camp or None,
+            "active": reason is None, "reason": reason}
+
+
 def _persist(db: Session, s: LaunchPrepCreativeSet, xxhash: str) -> str:
     """Хеш коммитится СРАЗУ: объект в чужой системе уже есть, и потерять его нельзя."""
     s.ms_targeting_creative_xxhash = xxhash

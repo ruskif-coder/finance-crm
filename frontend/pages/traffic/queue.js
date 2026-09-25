@@ -33,7 +33,7 @@ import { saveResponse } from '@/lib/download'
 import { Cube } from '@/components/LogoLoader'
 import { TargetingCampaignHint, useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
 import safeHref from '@/lib/safeHref'
-import { openAimTab, aimTabGo, aimTabFail } from '@/lib/aimTab'
+import { openAimTab, aimTabGo, aimTabFail, aimTone, aimNotLive } from '@/lib/aimTab'
 
 /* Что сказать человеку про письмо. Ответ ручки различает пять исходов, и каждый значит
    для него РАЗНОЕ действие: отправлено — ничего не делать, не ушло — отправить самому.
@@ -222,6 +222,8 @@ export default function TrafficQueue() {
   // Какой комплект сейчас выпускает ссылку. Не общий `busy`: выпуск ходит наружу, и
   // гасить на это время вердикты по ВСЕЙ очереди значило бы останавливать работу.
   const [aiming, setAiming] = useState(null)
+  // Крутится ли нацеливание креатива — по ответу последнего нажатия ◎ (setId → true/false).
+  const [aimLive, setAimLive] = useState({})
   /* Кампания нацеливания — ОДИН запрос на экран, а не по строке: она у всех комплектов
      одна, и спрашивать её на каждую кнопку значило бы ходить в чужую систему десятки
      раз за открытие. */
@@ -312,6 +314,8 @@ export default function TrafficQueue() {
     try {
       const r = await api.post(`/launch-prep/set/${setId}/targeting-link`, {}, auth())
       aimTabGo(tab, r.data.url)
+      setAimLive(m => ({ ...m, [setId]: !!r.data.active }))
+      setErr(aimNotLive(r.data))
     } catch (e) {
       const why = e.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания'
       aimTabFail(tab, why)
@@ -655,7 +659,8 @@ export default function TrafficQueue() {
                     </span>
                   ) : (
                   <TargetingCampaignHint state={tgt.state}>
-                  <button style={iconBtn(mayEdit)} disabled={!mayEdit || aiming === g.set.id}
+                  <button style={{ ...iconBtn(mayEdit), ...aimTone(aimLive[g.set.id]) }}
+                    disabled={!mayEdit || aiming === g.set.id}
                     title="Нацелить на себя: откроется страница DSP, нажмите «Включить» — и увидите баннер на сайте площадки до старта"
                     onClick={() => aimAtMe(g.set.id)}>
                     {/* Пока выпускается — фирменный кубик вместо значка. Кнопка уходит в

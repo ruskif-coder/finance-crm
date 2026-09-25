@@ -22,7 +22,7 @@ import ValuePopover from '@/components/ValuePopover'
 import { overlayClose } from '@/lib/overlay'
 import { can, getPermissions } from '@/lib/auth'
 import { downloadFile } from '@/lib/download'
-import { openAimTab, aimTabGo, aimTabFail } from '@/lib/aimTab'
+import { openAimTab, aimTabGo, aimTabFail, aimTone, aimNotLive } from '@/lib/aimTab'
 
 const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
 const BOX = { border: '1px solid var(--border-card)', borderRadius: 14, padding: '14px 16px', background: 'var(--bg-card)' }
@@ -1050,6 +1050,7 @@ function TargetingUrl({ set, canEdit, onSave }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [live, setLive] = useState(undefined)   // крутится ли — по ответу последнего нажатия
   useEffect(() => { setV(set.test_targeting_url || '') }, [set.test_targeting_url])
 
   // Вкладку открываем СИНХРОННО по клику, а адрес подставляем после ответа: окно,
@@ -1061,6 +1062,8 @@ function TargetingUrl({ set, canEdit, onSave }) {
     try {
       const r = await api.post(`/launch-prep/set/${set.id}/targeting-link`, {}, auth())
       aimTabGo(tab, r.data.url)
+      setLive(!!r.data.active)
+      setErr(aimNotLive(r.data))
     } catch (e) {
       const why = e?.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания'
       aimTabFail(tab, why)
@@ -1076,7 +1079,7 @@ function TargetingUrl({ set, canEdit, onSave }) {
         {canEdit && (
           <button onClick={aim} disabled={busy}
             style={{ ...btn(false), padding: '4px 10px', fontSize: 12,
-              cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 }}
+              cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1, ...aimTone(live) }}
             title="Откроет страницу DSP: нажмите «Включить» и увидите баннер на сайте площадки. Ссылка живёт двое суток, поэтому выпускается заново при каждом нажатии">
             {busy ? 'выпускаю…' : 'нацелить на себя'}
           </button>
@@ -1380,11 +1383,25 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
 }
 
 /* ── креатив ────────────────────────────────────────────────────────────── */
+
+/* Что сервер поправил в баннере при загрузке (`prepared` в ответе ручки, владелец
+   25.09.2026). Правка делается сама — баннер под нашу DSP без неё не примут или клик
+   уйдёт в никуда, — но делается ВИДИМО: аккаунт должен знать, что лежит не байт в байт
+   то, что прислал клиент. */
+const PREPARED_SAID = {
+  'ad.size': 'в баннере не был объявлен размер — вшили адаптивный (ad.size 0×0), без него DSP архив не принимает',
+  'link': 'ссылка клика была под другую рекламную систему — заменили на макрос нашей DSP {LINK_UNESC}',
+}
+const preparedNote = (list) => {
+  const parts = (list || []).map(k => PREPARED_SAID[k]).filter(Boolean)
+  return parts.length ? 'Баннер подготовлен для DSP: ' + parts.join('; ') + '.' : null
+}
 function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded, handlers }) {
   const fileRef = useRef(null)
   const letterRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [prepNote, setPrepNote] = useState(null)   // что поправили в последнем загруженном баннере
   const [previewId, setPreviewId] = useState(null)
   const [naming, setNaming] = useState(false)
   const [name, setName] = useState(set.title || '')
@@ -1444,12 +1461,13 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
-    setBusy(true); setErr('')
+    setBusy(true); setErr(''); setPrepNote(null)
     const form = new FormData()
     form.append('file', file)
     try {
-      await api.post(`/launch-prep/set/${set.id}/files`, form,
+      const r = await api.post(`/launch-prep/set/${set.id}/files`, form,
         { ...auth(), headers: { ...auth().headers, 'Content-Type': 'multipart/form-data' } })
+      setPrepNote(preparedNote(r.data?.prepared))
       handlers.reload()
     } catch (e2) { setErr(e2.response?.data?.detail || 'Не удалось загрузить') }
     setBusy(false)
@@ -1655,6 +1673,17 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
       </div>
 
       {!!err && <div style={{ marginTop: 8, fontSize: 12.5, color: 'var(--dot-overdue)' }}>{err}</div>}
+      {!!prepNote && (
+        <div style={{ marginTop: 8, padding: '7px 10px', borderRadius: 8, fontSize: 12,
+          lineHeight: 1.45, display: 'flex', gap: 8, alignItems: 'flex-start',
+          background: 'var(--accent-tint)', border: '1px solid var(--accent-border)',
+          color: 'var(--text-secondary)' }}>
+          <span style={{ flex: 1 }}>{prepNote}</span>
+          <button onClick={() => setPrepNote(null)} title="Понятно, скрыть"
+            style={{ border: 0, background: 'transparent', cursor: 'pointer', padding: 0,
+              color: 'var(--text-muted)', fontSize: 14, lineHeight: 1 }}>×</button>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
         {canEdit && !sent && (

@@ -24,7 +24,10 @@ class FakeClient:
 
     def __init__(self, journal_hash=None, add_hash="NEWHASH000000001",
                  info_html="<div>баннер</div>", campaign_status="LAUNCHED",
-                 campaign_end="2999-01-01 00:00:00"):
+                 campaign_end="2999-01-01 00:00:00", creative_status="STOPPED",
+                 launch_sticks=True):
+        self.creative_status = creative_status
+        self.launch_sticks = launch_sticks
         self.journal_hash = journal_hash
         self.add_hash = add_hash
         self.info_html = info_html
@@ -75,7 +78,13 @@ class FakeClient:
         if self.info_html is None:
             from app.dsp.client import MsError
             raise MsError("Creative.getInfo: Creative not found")
-        return {"data": {"html_code": self.info_html}}
+        return {"data": {"html_code": self.info_html}, "status": self.creative_status}
+
+    def creative_set_status(self, xxhash, status, local_ref=None):
+        self.calls.append(("creative_status", xxhash, status))
+        if self.launch_sticks:
+            self.creative_status = status
+        return True
 
 
 def _db():
@@ -463,3 +472,90 @@ def test_a_broken_archive_is_a_refusal_not_a_500(monkeypatch):
     finally:
         _drop(db, s)
         db.close()
+
+
+
+# ── запуск креатива нацеливания (владелец 25.09.2026) ────────────────────────
+#
+# Креатив в DSP заводится со статусом STOPPED. Кампанию мы будили, а креатив — нет, и
+# кука ставилась на то, что не крутится: страница ссылки успешна, на сайте пусто.
+# По просьбе ссылки креатив ЗАПУСКАЕТСЯ и статус перечитывается — «активно» говорим
+# только по прочитанному, а не по отправленной команде.
+
+def test_request_launches_a_stopped_creative_and_confirms_it():
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="STOPPED000000001")
+    c = FakeClient(creative_status="STOPPED")
+    try:
+        out = P.ensure_live(db, s, client=c)
+        assert ("creative_status", "STOPPED000000001", "LAUNCHED") in c.calls
+        assert out["creative_status"] == "LAUNCHED"
+        assert out["active"] is True
+    finally:
+        _drop(db, s)
+
+
+def test_launched_creative_is_not_launched_again():
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="LIVE000000000001")
+    c = FakeClient(creative_status="LAUNCHED")
+    try:
+        out = P.ensure_live(db, s, client=c)
+        assert not any(k[0] == "creative_status" for k in c.calls)
+        assert out["active"] is True
+    finally:
+        _drop(db, s)
+
+
+def test_launch_that_did_not_stick_is_not_called_active():
+    """Команда ушла, а статус не поменялся — «активно» не говорим, причина словами."""
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="STUCK00000000001")
+    c = FakeClient(creative_status="STOPPED", launch_sticks=False)
+    try:
+        out = P.ensure_live(db, s, client=c)
+        assert out["active"] is False
+        assert out["creative_status"] == "STOPPED"
+        assert out["reason"]
+    finally:
+        _drop(db, s)
+
+
+def test_quiet_creation_on_send_does_not_launch():
+    """Отправка трафику кампанию не будит — и креатив не запускает: крутиться людям
+    двое суток ради ссылки, которую могут и не попросить, незачем."""
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="QUIET00000000001")
+    c = FakeClient(creative_status="STOPPED")
+    try:
+        P.ensure_quietly(db, s, client=c)
+        assert not any(k[0] == "creative_status" for k in c.calls)
+    finally:
+        _drop(db, s)
+
+
+def test_link_response_says_whether_targeting_is_live(monkeypatch):
+    """Экран красит ◎ в зелёный по ответу ручки — значит «активно» обязано в нём быть."""
+    from types import SimpleNamespace
+    from app.dsp import targeting_link
+    from app.routers import launch_prep as lp
+    db = _db()
+    s = _set_with(db)
+    monkeypatch.setattr(P, "ensure_live", lambda db, row: {
+        "xxhash": "LIVE000000000001", "creative_status": "LAUNCHED",
+        "campaign_status": "LAUNCHED", "active": True, "reason": None})
+    monkeypatch.setattr(targeting_link, "issue", lambda crid: targeting_link.TargetingLink(
+        crid=crid, url="https://dsp.example.test/t?exp=1", expires_at=None))
+    admin = SimpleNamespace(role=SimpleNamespace(key='admin'), id=None, name='тест')
+    from sqlalchemy import text as _t
+    before = db.execute(_t("SELECT COALESCE(max(id), 0) FROM audit_log")).scalar()
+    try:
+        out = lp.issue_targeting_link(s.id, db, admin)
+        assert out["active"] is True and out["targeting_xxhash"] == "LIVE000000000001"
+        assert "reason" in out
+    finally:
+        # Только свою строку журнала: сделка стенда настоящая, её записи не трогаем.
+        db.execute(_t("DELETE FROM audit_log WHERE id > :b AND action='targeting_link'"),
+                   {"b": before})
+        db.commit()
+        _drop(db, s)
