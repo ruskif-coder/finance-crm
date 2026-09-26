@@ -267,21 +267,8 @@ function PickTargets({ dealId, setId, onDone, onClose }) {
 
         {!!opts && (
           <>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10,
-              marginTop: 16, marginBottom: 8 }}>
-              <span style={CAP}>по услуге ({opts.proposed.length})</span>
-              {/* «Добавить всех» — обычный случай: состав по услуге аккаунт знает
-                  наизусть и берёт целиком, а вычёркивает уже в строке креатива. */}
-              {!!opts.proposed.length && (
-                <span onClick={() => setPicked(p => {
-                  const next = { ...p }
-                  opts.proposed.forEach(c => { next[c.publisher_id] = c.surface_kind })
-                  return next
-                })}
-                  style={{ cursor: 'pointer', fontSize: 11.5, color: 'var(--accent)' }}>
-                  добавить всех
-                </span>
-              )}
+            <div style={{ ...CAP, marginTop: 16, marginBottom: 8 }}>
+              по услуге ({opts.proposed.length})
             </div>
             {!opts.proposed.length && (
               <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 8 }}>
@@ -290,14 +277,43 @@ function PickTargets({ dealId, setId, onDone, onClose }) {
                   : 'Услуга не определена, поэтому предлагать нечего — выберите вручную ниже.'}
               </div>
             )}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-              {opts.proposed.map(c => (
-                <PubChip key={`${c.publisher_id}-${c.surface_kind}`} name={c.name} code={c.code}
-                  surface={c.surface_kind} on={picked[c.publisher_id] === c.surface_kind}
-                  status={c.status} warn={c.status_warn}
-                  onClick={() => toggle(c.publisher_id, c.surface_kind)} />
-              ))}
-            </div>
+            {/* Две подгруппы — «наш код / не наш код», у каждой своё «добавить всех»
+                (владелец 26.09.2026). Площадка без нашего кода крутит в другой DSP, и
+                баннер под нашу ей не подходит: обычно креатив собирают под одну группу,
+                и «добавить всех» по услуге целиком смешивал их. Смешать руками можно —
+                это выбор, а не запрет. */}
+            {[[true, 'наш код'], [false, 'не наш код']].map(([ours, label]) => {
+              const group = opts.proposed.filter(c => !!c.our_code === ours)
+              if (!group.length) return null
+              return (
+                <div key={label} style={{ marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 7 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700,
+                      color: ours ? 'var(--income-fg)' : 'var(--text-secondary)' }}>
+                      {label} · {group.length}
+                    </span>
+                    {/* «Добавить всех» — обычный случай: состав группы аккаунт знает
+                        наизусть и берёт целиком, а вычёркивает уже в строке креатива. */}
+                    <span onClick={() => setPicked(p => {
+                      const next = { ...p }
+                      group.forEach(c => { next[c.publisher_id] = c.surface_kind })
+                      return next
+                    })}
+                      style={{ cursor: 'pointer', fontSize: 11.5, color: 'var(--accent)' }}>
+                      добавить всех
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+                    {group.map(c => (
+                      <PubChip key={`${c.publisher_id}-${c.surface_kind}`} name={c.name} code={c.code}
+                        surface={c.surface_kind} on={picked[c.publisher_id] === c.surface_kind}
+                        status={c.status} warn={c.status_warn}
+                        onClick={() => toggle(c.publisher_id, c.surface_kind)} />
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
 
             <div style={{ ...CAP, marginTop: 18, marginBottom: 8 }}>весь справочник</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
@@ -1151,7 +1167,7 @@ function NotePeek({ who, text }) {
 
 /* ── строка площадки ───────────────────────────────────────────────────── */
 function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt, onUrl, onRequest,
-                        onVerdict, onRework, onMove, onShots, onPlan }) {
+                        onVerdict, onRework, onShots, onPlan }) {
   const [url, setUrl] = useState(r.advertiser_url || '')
   const [editing, setEditing] = useState(false)
   const [urlErr, setUrlErr] = useState('')
@@ -1337,11 +1353,9 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
             // ход для площадок без кабинета, а не обычный путь.
             <CbBtn onClick={() => onVerdict(r)} style={{ width: 98, justifyContent: 'center', height: 28,
               color: CB.accent, borderColor: CB.accentBorder }}>Ответ</CbBtn>
-          ) : isAdmin && canEdit && r.state === 'ерид получен' && !gone ? (
-            <CbBtn onClick={() => onMove(r.target_id, 'в размещении')} title="Кампания заведена и запущена"
-              style={{ width: 98, justifyContent: 'center', height: 28, color: CB.incomeFg,
-                borderColor: CB.incomeBorder }}>В эфир</CbBtn>
           ) : (
+            /* Кнопки «В эфир» здесь нет (26.09.2026): «в размещении» ставит только запуск
+               площадки в дашборде трафика (с 18.09), ручной перевод сервер отклоняет. */
             <span style={{ width: 98, textAlign: 'center', fontFamily: MONO, fontSize: 9,
               textTransform: 'uppercase', color: CB.t4 }}>
               {done ? 'готово' : status === 'отказ' ? 'отказ' : ''}
@@ -1734,7 +1748,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
                 isAdmin={isAdmin} sent={sent} onDrop={dropTarget}
                 onTt={handlers.tt} onUrl={handlers.url} onRequest={handlers.request}
                 onVerdict={handlers.verdict} onRework={(rec) => handlers.rework(set, rec)}
-                onMove={handlers.move} onShots={handlers.shots} onPlan={handlers.plan} />
+                onShots={handlers.shots} onPlan={handlers.plan} />
             ))}
           </div>
         </div>
@@ -1892,11 +1906,6 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
     rework,
     addTargets: (setId) => setPicking(setId),
     confirmDelete: setDeleteFor,
-    move: async (id, state) => {
-      setErr('')
-      try { await api.put(`/launch-prep/target/${id}/state`, { state }, auth()); load() }
-      catch (e) { setErr(e.response?.data?.detail || 'Не удалось сменить состояние') }
-    },
     /* Возвращает УСПЕХ: строка держит ввод открытым, пока ссылка не легла. И при отказе
        НЕ перезагружаем — перезагрузка стирала набранное вместе с ошибкой. */
     url: async (rec, url, setId) => {

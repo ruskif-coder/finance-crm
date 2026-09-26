@@ -433,8 +433,19 @@ def dashboard(
     safe_section = _resolve_scope_section(db, current_user, scope_section)
     _q = _apply_own_scope(_q, _own_rep_ids_or_all(db, current_user, safe_section))
     # те же фильтры, что и в списке реестра, чтобы статистика совпадала с выборкой
+    _q_all = _apply_extra_filters(_q, db, False, search, gaps)
     _q = _apply_extra_filters(_q, db, hide_archive, search, gaps)
     rows = _q.all()
+
+    # Успешный архив, скрытый фильтром «скрыть архив» (владелец 26.09.2026). Он — деньги,
+    # доведённые и оплаченные: «Доведено до результата» его считает, а полоса «Сделки в
+    # работе» без него расходилась с этим числом (8,79 против 8,64 у сейлза за Q3). В
+    # выборку и итоги не входит — сводка обязана совпадать с таблицей, — а отдаётся
+    # отдельно, для отметки на полосе. Проигранные («не случилась», «сорвалась») — не
+    # деньги, их тут нет. Без фильтра архив уже внутри слоёв и отдельно не повторяется.
+    archived_rows = (_q_all.filter(SalesStage.is_terminal.is_(True),
+                                   SalesStage.is_lost.isnot(True)).all()
+                     if hide_archive else [])
 
     adv_names = dict(db.query(SalesAdvertiser.id,
                               func.coalesce(SalesAdvertiser.short_name, SalesAdvertiser.name)).all())
@@ -445,7 +456,7 @@ def dashboard(
     excluded_adv = frozenset(x[0] for x in db.query(SalesAdvertiser.id)
                              .filter(SalesAdvertiser.exclude_from_revenue.is_(True)).all())
 
-    mp = mp_amounts_by_deal(db, [d.id for d, _, _ in rows])
+    mp = mp_amounts_by_deal(db, [d.id for d, _, _ in rows + archived_rows])
     total_amount = sum(eff_net(d, mp) for d, _, _ in rows)
 
     by_layer = _group(rows, lambda d, layer: layer, excluded_adv, mp)
@@ -476,6 +487,8 @@ def dashboard(
             "reconciles": round(layers_sum, 2) == round(total_amount, 2),
         },
         "by_layer": by_layer,
+        "archived": {"amount": round(sum(eff_net(d, mp) for d, _, _ in archived_rows), 2),
+                     "deals": len(archived_rows)},
         "by_pipeline": _group(rows, lambda d, layer: d.pipeline, excluded_adv, mp),
         "by_sales_rep": _group(rows, lambda d, layer: rep_names.get(d.sales_rep_id), excluded_adv, mp),
         "by_account_manager": _group(rows, lambda d, layer: rep_names.get(d.account_manager_id), excluded_adv, mp),

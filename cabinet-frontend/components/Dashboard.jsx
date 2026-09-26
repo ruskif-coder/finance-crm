@@ -25,9 +25,12 @@ import dynamic from 'next/dynamic'
 import api, { auth, signOut, TOKEN_KEY } from '../lib/http'
 import { PreviewModal } from '../lib/preview'
 import { overlayClose } from '../lib/overlay'
-import { Header, Side, Demo, WRAP, Toast } from './Shell'
+import { Header, MobileHeader, Side, Demo, WRAP, Toast } from './Shell'
 import ActiveCampaigns, { billing } from './ActiveCampaigns'
 import CampaignsScreen from './CampaignsScreen'
+import CampaignsMobile from './CampaignsMobile'
+import useIsMobile from '../lib/useIsMobile'
+import Sheet, { SHEET_BTN } from '../lib/sheet'
 import { C, CAP, KPI_SIZE, MONO, UI, arrowBtn, btn, btnSm, card, chip, dm, inp, num, periodLabel,
   rub, soft }
   from '../lib/ui'
@@ -62,6 +65,7 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
   const [files, setFiles] = useState([])     // приложения к доработке
   const [drag, setDrag] = useState(false)
   const [upBusy, setUpBusy] = useState(false)
+  const mobile = useIsMobile()
 
   /* Файлы уходят СРАЗУ, а не вместе с вердиктом: вердикт неизменяем, и приложить к нему
      что-то после отправки уже нельзя. Грузим по очереди — параллельные запросы получили
@@ -135,6 +139,21 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
       setUrl(''); onDone()
     } catch (e) { onErr(e.response?.data?.detail || 'Не удалось сохранить ссылку') }
     setBusy(false)
+  }
+
+  const download = () => downloadFile(`/tasks/${t.task_id}/files/${preview.id}`, preview.name)
+  const closeAsk = () => { setAsk(null); setReason(''); setFiles([]) }
+
+  if (mobile) {
+    return (
+      <TaskMobile t={t} late={late} soon={soon} stLabel={stLabel} toStart={toStart}
+        stTone={[stChipBg, stChipFg, stChipBd]} today={today} preview={preview}
+        canApprove={canApprove} busy={busy} urlPending={urlPending}
+        url={url} setUrl={setUrl} sendUrl={sendUrl} onErr={onErr}
+        show={show} setShow={setShow} download={download}
+        ask={ask} setAsk={setAsk} closeAsk={closeAsk} reason={reason} setReason={setReason}
+        reasons={reasons} files={files} addFiles={addFiles} upBusy={upBusy} answer={answer} />
+    )
   }
 
   /* Полоса-акцент слева ТОЛЬКО у сверки (эталон, 2.3): она одна отличается родом —
@@ -292,6 +311,7 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
 
       {show && (
         <PreviewModal file={preview} onClose={() => setShow(false)}
+          onDownload={preview?.id ? download : undefined}
           title={[t.brand, t.creative_title].filter(Boolean).join(' · ')} />
       )}
 
@@ -443,6 +463,236 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
             </button>
           </div>
         </div>
+      )}
+    </div>
+  )
+}
+
+/* ─────────────────── карточка задания · телефон ─────────────────── */
+
+/* Раскладка по хендоффу «моб версия кп» (п. 2): сверху вниз — чья кампания и статус,
+   плашка старта, строка креатива, материалы в ряд, запрос посадочной, ТТ, решение.
+   Состояние и все действия живут в `Task`: здесь только раскладка, иначе ответ по
+   креативу считался бы в двух местах и однажды разошёлся. */
+const M_BTN = { minHeight: 40, borderRadius: 10, fontSize: 13, display: 'inline-flex',
+  alignItems: 'center', justifyContent: 'center', gap: 6 }
+
+function TaskMobile({ t, late, soon, stLabel, toStart, stTone, today, preview, canApprove,
+  busy, urlPending, url, setUrl, sendUrl, onErr, show, setShow, download, ask, setAsk,
+  closeAsk, reason, setReason, reasons, files, addFiles, upBusy, answer }) {
+  const [stBg, stFg, stBd] = stTone
+  return (
+    <div className="rise" style={{ padding: '13px 14px', borderRadius: 16,
+      background: late ? C.dangerBg : soon ? C.warnBg : C.card,
+      border: `1px solid ${late ? C.dangerBorder : soon ? C.warningBorder : C.border}`,
+      display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+      {/* 1 — чья кампания; статус справа */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 9 }}>
+        <span style={{ width: 7, height: 7, borderRadius: 2, marginTop: 7, flex: '0 0 7px',
+          background: late ? C.danger : soon ? C.warning : C.accent }} />
+        <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <span style={{ fontSize: 14.5, fontWeight: 700 }}>
+            {[t.advertiser, t.brand].filter(Boolean).join(' · ') || 'Креатив'}
+          </span>
+          <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ ...CAP, marginBottom: 0 }}>
+              {[t.service, t.surface].filter(Boolean).join(' · ')}
+            </span>
+            {!!t.publisher && (
+              <span style={{ ...chip(C.subtle, C.secondary, C.border), fontSize: 10.5 }}>
+                {t.publisher}
+              </span>
+            )}
+          </span>
+        </span>
+        <span style={{ ...chip(stBg, stFg, stBd), flex: '0 0 auto' }}>{stLabel}</span>
+      </div>
+
+      {/* 2 — старт РК: дата и сколько до неё */}
+      <div style={{ ...chip(stBg, stFg, stBd), fontFamily: MONO, gap: 8,
+        justifyContent: 'flex-start', padding: '7px 10px', fontSize: 11.5 }}>
+        <span style={{ color: C.muted }}>старт рк</span>
+        <b>{dm(t.period_from)}</b>
+        {toStart !== null && (
+          <span style={{ borderLeft: `1px solid ${stBd}`, paddingLeft: 8 }}>
+            {startNote(t.period_from, today)}
+          </span>
+        )}
+      </div>
+
+      {/* 3 — креатив */}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+        <span style={{ width: 30, height: 30, borderRadius: 8, flex: '0 0 30px',
+          background: C.subtle, border: `1px solid ${C.border}`, color: C.muted,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" />
+          </svg>
+        </span>
+        <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>
+            Креатив №{t.creative_no}{t.creative_title ? ` — ${t.creative_title}` : ''}
+          </span>
+          <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.faint }}>
+            {[t.form === 'BannerHtml5' ? 'banner html5' : t.form, preview?.size,
+              `ждёт ${t.waiting_days} дн.`,
+              late ? 'старт уже прошёл · эскалация менеджеру' : null,
+            ].filter(Boolean).join(' · ')}
+          </span>
+        </span>
+      </div>
+
+      {/* 4 — материалы в ряд: посадочная · предпросмотр · скачать; письмо о правах ниже */}
+      <div style={{ display: 'flex', gap: 8 }}>
+        {t.url_state === 'есть' && (
+          <a href={safeHref(t.advertiser_url)} target="_blank" rel="noreferrer"
+            style={{ ...btn(false), ...M_BTN, flex: '1 1 0', textDecoration: 'none' }}>
+            посадочная
+          </a>
+        )}
+        <button style={{ ...btn(false), ...M_BTN, flex: '1 1 0' }}
+          disabled={!preview?.preview_url} onClick={() => setShow(true)}>предпросмотр</button>
+        {!!preview?.id && (
+          <button onClick={download} aria-label="Скачать креатив"
+            style={{ ...btn(false), ...M_BTN, width: 40, flex: '0 0 40px', padding: 0 }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 4v10" /><path d="M8 11l4 4 4-4" /><path d="M5 19h14" />
+            </svg>
+          </button>
+        )}
+      </div>
+      {!!t.rights_letter && (
+        <button onClick={() => downloadFile(`/tasks/${t.task_id}/rights-letter`, t.rights_letter.name)}
+          style={{ ...btn(false), ...M_BTN }}>
+          письмо о правах
+        </button>
+      )}
+
+      {/* 5 — запрос посадочной */}
+      {urlPending && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px',
+          background: C.accentTint, border: `1px solid ${C.accentBorder}`, borderRadius: 11 }}>
+          <span style={{ ...CAP, marginBottom: 0, color: C.accent }}>
+            запрос на сбор посадочной · без неё согласовать нельзя
+          </span>
+          {!!t.url_request_text && (
+            <span style={{ fontSize: 12.5, color: C.secondary, whiteSpace: 'pre-line',
+              lineHeight: 1.45 }}>{t.url_request_text}</span>
+          )}
+          {canApprove ? (
+            <>
+              <input style={{ ...inp, background: C.card, minHeight: 40, fontFamily: MONO,
+                fontSize: 13 }} inputMode="url" placeholder="https://…"
+                value={url} onChange={e => setUrl(e.target.value)} />
+              <button style={{ ...btn(true), ...M_BTN }} disabled={busy || !url.trim()}
+                onClick={sendUrl}>Собрать</button>
+            </>
+          ) : (
+            <span style={{ fontSize: 12, color: C.faint }}>
+              ссылку присылает коллега с правом ответа
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* 6 — ТТ */}
+      {!!t.tech_requirements && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 9,
+          borderTop: `1px solid ${C.row}` }}>
+          <span style={{ ...CAP, marginBottom: 0 }}>тт</span>
+          <span style={{ fontSize: 12.5, color: C.secondary }}>{t.tech_requirements}</span>
+        </div>
+      )}
+
+      {/* 7 — решение. «Согласовать» без посадочной не заперто кнопкой, а объясняет себя:
+          на телефоне подсказки по наведению нет, и серая кнопка молчала бы о причине. */}
+      {canApprove ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <button disabled={busy}
+            onClick={() => (urlPending
+              ? onErr('Без посадочной согласовать нельзя — пришлите ссылку в блоке выше')
+              : answer('ок'))}
+            style={{ ...btn(true), ...M_BTN, minHeight: 44, fontSize: 14,
+              background: urlPending ? C.subtle : C.incomeFg,
+              color: urlPending ? C.faint : C.onFill,
+              border: `1px solid ${urlPending ? C.border : 'transparent'}`,
+              cursor: urlPending ? 'not-allowed' : 'pointer' }}>
+            ✓ Согласовать
+          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button style={{ ...soft(C.warningFg, C.warningBorder), ...M_BTN, flex: 1 }}
+              disabled={busy} onClick={() => setAsk('на доработку')}>Доработать</button>
+            <button style={{ ...soft(C.danger, C.dangerBorder), ...M_BTN, flex: 1 }}
+              disabled={busy} onClick={() => setAsk('отказ')}>Отказать</button>
+          </div>
+        </div>
+      ) : (
+        <span style={{ fontSize: 12, color: C.faint }}>у вас доступ только на просмотр</span>
+      )}
+
+      {show && (
+        <PreviewModal file={preview} onClose={() => setShow(false)}
+          onDownload={preview?.id ? download : undefined}
+          title={[t.brand, t.creative_title].filter(Boolean).join(' · ')} />
+      )}
+
+      {/* Доработка и отказ — только с комментарием, в нижнем листе. */}
+      {!!ask && (
+        <Sheet title={ask === 'отказ' ? 'Отказать в размещении' : 'На доработку'}
+          meta={[t.brand, t.publisher].filter(Boolean).join(' · ')} onClose={closeAsk}
+          footer={(
+            <>
+              <button style={{ ...btn(false), ...SHEET_BTN }} onClick={closeAsk}>Отмена</button>
+              <button style={{ ...btn(true), ...(ask === 'отказ' ? { background: C.danger } : {}),
+                ...SHEET_BTN, flex: 1 }}
+                disabled={busy || !reason.trim()} onClick={() => answer(ask, reason)}>
+                {ask === 'отказ' ? 'Отказать' : 'Отправить на доработку'}
+              </button>
+            </>
+          )}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <span style={{ fontSize: 12.5, color: C.secondary }}>
+              {ask === 'отказ'
+                ? 'Отказ закрывает кампанию на этой площадке — она уйдёт в архив. Новая версия баннера сюда уже не придёт.'
+                : 'Комментарий уйдёт агентству и появится в «Обработано за неделю».'}
+            </span>
+            {!!(reasons?.[ask] || []).length && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {(reasons?.[ask] || []).map(r => (
+                  <span key={r} onClick={() => setReason(r)}
+                    style={{ cursor: 'pointer', fontSize: 12.5, padding: '8px 12px',
+                      borderRadius: 100, background: reason === r ? C.accent : C.card,
+                      color: reason === r ? C.onFill : C.secondary,
+                      border: `1px solid ${reason === r ? C.accent : C.border}` }}>{r}</span>
+                ))}
+              </div>
+            )}
+            <textarea style={{ ...inp, minHeight: 110, fontFamily: UI, fontSize: 14,
+              resize: 'vertical' }} placeholder="Своими словами — что именно не так"
+              value={reason} onChange={e => setReason(e.target.value)} />
+            {ask !== 'отказ' && (
+              <>
+                {files.map(f => (
+                  <span key={f.id} style={{ fontFamily: MONO, fontSize: 11,
+                    color: C.secondary, wordBreak: 'break-all' }}>▣ {f.name}</span>
+                ))}
+                {files.length < 5 && (
+                  <label style={{ ...btn(false), ...M_BTN,
+                    cursor: upBusy ? 'progress' : 'pointer' }}>
+                    {upBusy ? 'Грузим…' : 'Приложить скриншоты'}
+                    <input type="file" multiple accept=".png,.jpg,.jpeg,.webp,.pdf"
+                      style={{ display: 'none' }}
+                      onChange={e => { addFiles(e.target.files); e.target.value = '' }} />
+                  </label>
+                )}
+              </>
+            )}
+          </div>
+        </Sheet>
       )}
     </div>
   )
@@ -978,12 +1228,13 @@ const CHANNELS = [
   { key: 'дайджест', label: 'Дайджест', on: (d) => !!d?.mail?.enabled },
 ]
 
-function Cell({ on, locked, dim, onClick }) {
+function Cell({ on, locked, dim, onClick, big }) {
   /* Галочка, а не рубильник: здесь вопрос «выбрано ли», а рубильник отвечает на вопрос
      «включено ли» — им сделаны каналы целиком, строкой выше. */
   return (
     <span onClick={locked ? undefined : onClick}
-      style={{ width: 20, height: 20, borderRadius: 6, display: 'inline-flex',
+      style={{ width: big ? 34 : 20, height: big ? 34 : 20, borderRadius: big ? 9 : 6,
+        display: 'inline-flex',
         alignItems: 'center', justifyContent: 'center', margin: '0 auto',
         cursor: locked ? 'default' : 'pointer',
         opacity: dim ? 0.45 : 1,
@@ -1002,13 +1253,19 @@ function Cell({ on, locked, dim, onClick }) {
 function EventMatrix({ data, onSave, onReset, onClose, busy }) {
   const kinds = data?.kinds || []
   const chOn = Object.fromEntries(CHANNELS.map(c => [c.key, c.on(data)]))
+  // Телефон — нижний лист во всю ширину (хендофф «моб версия кп», п. 5).
+  const mobile = useIsMobile()
 
   return createPortal(
     <div style={{ position: 'fixed', inset: 0, background: 'var(--overlay)', zIndex: 10000,
-      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+      display: 'flex', alignItems: mobile ? 'flex-end' : 'center', justifyContent: 'center',
+      padding: mobile ? 0 : 20 }}
       {...overlayClose(onClose)}>
-      <div style={{ ...card, width: 'min(620px, 96vw)', maxHeight: '88vh', overflowY: 'auto',
-        padding: '20px 22px', fontFamily: UI }}>
+      <div style={{ ...card, width: mobile ? '100%' : 'min(620px, 96vw)',
+        maxHeight: mobile ? '90vh' : '88vh', overflowY: 'auto',
+        borderRadius: mobile ? '18px 18px 0 0' : card.borderRadius,
+        padding: mobile ? '16px 14px calc(16px + env(safe-area-inset-bottom))' : '20px 22px',
+        fontFamily: UI }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: 17, fontWeight: 700 }}>Какие события присылать</span>
           <span style={{ flex: 1 }} />
@@ -1034,7 +1291,7 @@ function EventMatrix({ data, onSave, onReset, onClose, busy }) {
                   Событие
                 </th>
                 {CHANNELS.map(c => (
-                  <th key={c.key} style={{ width: 84, padding: '0 0 8px' }}>
+                  <th key={c.key} style={{ width: mobile ? 62 : 84, padding: '0 0 8px' }}>
                     <div style={{ fontSize: 12, fontWeight: 700,
                       color: chOn[c.key] ? C.text : C.faint }}>{c.label}</div>
                     <div style={{ ...CAP, marginBottom: 0,
@@ -1069,7 +1326,7 @@ function EventMatrix({ data, onSave, onReset, onClose, busy }) {
                       {/* Срочный вид в пачку не уводится — «наше сразу не понижается».
                           Клетка дайджеста у него не нажимается, а причина написана
                           словами в строке слева, а не оставлена в виде молчания. */}
-                      <Cell on={!!k[c.key]}
+                      <Cell on={!!k[c.key]} big={mobile}
                         locked={busy || !k.can_mute || (c.key === 'дайджест' && k.urgent)}
                         dim={!chOn[c.key]}
                         onClick={() => onSave(k.key, c.key, !k[c.key])} />
@@ -1088,8 +1345,10 @@ function EventMatrix({ data, onSave, onReset, onClose, busy }) {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button style={btn(true)} onClick={onClose}>Готово</button>
-          <button style={btn(false)} disabled={busy} onClick={onReset}>
+          <button style={{ ...btn(true), ...(mobile ? { ...SHEET_BTN, flex: 1 } : {}) }}
+            onClick={onClose}>Готово</button>
+          <button style={{ ...btn(false), ...(mobile ? SHEET_BTN : {}) }} disabled={busy}
+            onClick={onReset}>
             Вернуть по умолчанию
           </button>
         </div>
@@ -1100,6 +1359,9 @@ function EventMatrix({ data, onSave, onReset, onClose, busy }) {
 
 function MailCard({ data, onMail, busy }) {
   const m = data?.mail || {}
+  // Тумблер на телефоне — 44×26 (хендофф «моб версия кп», п. 4): 34×19 пальцем не попасть.
+  const big = useIsMobile()
+  const [tw, th, knob] = big ? [44, 26, 20] : [34, 19, 13]
 
   return (
     <div style={{ border: `1px solid ${C.inner}`, borderRadius: 12, padding: '12px 13px',
@@ -1114,14 +1376,14 @@ function MailCard({ data, onMail, busy }) {
             связанного контакта или в карточке нет адреса — тогда и включать некуда. */}
         <span onClick={() => (m.address && !busy) ? onMail({ enabled: !m.enabled }) : null}
           title={m.why || ''}
-          style={{ width: 34, height: 19, borderRadius: 999, position: 'relative',
-            flex: '0 0 34px', cursor: m.address ? 'pointer' : 'not-allowed',
+          style={{ width: tw, height: th, borderRadius: 999, position: 'relative',
+            flex: `0 0 ${tw}px`, cursor: m.address ? 'pointer' : 'not-allowed',
             opacity: m.address ? 1 : 0.5,
             background: m.enabled ? C.income : C.subtle,
             border: `1px solid ${m.enabled ? C.income : C.border}`,
             transition: 'background 140ms ease' }}>
-          <span style={{ position: 'absolute', top: 2, left: m.enabled ? 17 : 2,
-            width: 13, height: 13, borderRadius: 999,
+          <span style={{ position: 'absolute', top: 2, left: m.enabled ? tw - knob - 4 : 2,
+            width: knob, height: knob, borderRadius: 999,
             background: m.enabled ? C.onFill : C.faint, transition: 'left 140ms ease' }} />
         </span>
       </div>
@@ -1299,6 +1561,9 @@ const NAV = [
   // вся история по месяцам, включая сверенные периоды.
   { key: 'campaigns', label: 'Кампании' },
 ]
+/* На телефоне правая колонка десктопа уходит в третью вкладку (хендофф «моб версия кп»,
+   п. 1): уведомления, команда, договоры. Лента событий остаётся на дашборде. */
+const NAV_MOBILE = [...NAV, { key: 'contact', label: 'Связь' }]
 
 /** Заголовок вкладки. Формат собран В ОДНОМ месте: разделов три, и написанный руками
  *  трижды он разойдётся на первом же переименовании — а видно это только во вкладке. */
@@ -1334,6 +1599,7 @@ export default function Dashboard({ name, onSignOut }) {
   /* Сегодня берётся один раз после монтирования: `new Date()` при рендере даёт на
      сервере и клиенте разные значения на границе суток и ошибку гидрации. */
   const [today, setToday] = useState(null)
+  const mobile = useIsMobile()
 
   /* Кампании грузятся ОТДЕЛЬНЫМ вызовом и один раз: от периода и выбранной площадки
      они не зависят, а от общего `load` их отделяет то, что блок должен появиться даже
@@ -1470,6 +1736,9 @@ export default function Dashboard({ name, onSignOut }) {
   // расчёты срочности не считались от пустой даты. Все хуки объявлены ВЫШЕ (ошибка 310).
   if (!today) return null
 
+  // «Связь» есть только на телефоне: вкладка, оставшаяся после поворота экрана, на
+  // десктопе означает дашборд, а не пустую страницу.
+  const tab = !mobile && active === 'contact' ? 'queue' : active
   const profile = dash?.profile
   const done = (dash?.done || []).filter(
     d => !pubFilter || d.publisher_id === pubFilter)
@@ -1531,7 +1800,7 @@ export default function Dashboard({ name, onSignOut }) {
     <>
       <Head>
         <title>
-          {pageTitle((NAV.find(n => n.key === active) || {}).label || 'Дашборд')}
+          {pageTitle((NAV_MOBILE.find(n => n.key === tab) || {}).label || 'Дашборд')}
         </title>
       </Head>
       {/* Плашка сообщения — ПЕРЕД шапкой и вне потока: она крепится к окну, а не к
@@ -1539,17 +1808,27 @@ export default function Dashboard({ name, onSignOut }) {
           работающий внизу списка, отказа не видел вовсе. */}
       <Toast text={err} onClose={() => setErr('')} />
 
-      <Header profile={profile} name={name} account={me}
-        nav={NAV.map(n => (n.key === 'queue'
-          ? { ...n, badge: shownTasks.length } : n))}
-        active={active} onNav={setActive} count={(dash?.publishers || []).length}
-        onExit={onSignOut} onGuide={() => setGuide(true)} />
+      {mobile ? (
+        <MobileHeader profile={profile} name={name} account={me}
+          nav={NAV_MOBILE.map(n => (n.key === 'queue'
+            ? { ...n, badge: shownTasks.length } : n))}
+          active={tab} onNav={setActive} onExit={onSignOut} onGuide={() => setGuide(true)} />
+      ) : (
+        <Header profile={profile} name={name} account={me}
+          nav={NAV.map(n => (n.key === 'queue'
+            ? { ...n, badge: shownTasks.length } : n))}
+          active={tab} onNav={setActive} count={(dash?.publishers || []).length}
+          onExit={onSignOut} onGuide={() => setGuide(true)} />
+      )}
       {guide && <Guide onClose={closeGuide} />}
 
-      <div style={{ ...WRAP, display: 'flex', gap: 14, alignItems: 'flex-start',
-        padding: '20px 20px 60px' }}>
+      <div style={{ ...WRAP, display: 'flex', gap: mobile ? 12 : 14,
+        flexDirection: mobile ? 'column' : 'row', alignItems: mobile ? 'stretch' : 'flex-start',
+        padding: mobile ? '12px 12px 40px' : '20px 20px 60px' }}>
 
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {!(mobile && tab === 'contact') && (
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column',
+          gap: mobile ? 12 : 14 }}>
 
           {/* РАЗДЕЛ «КАМПАНИИ» занимает всю левую колонку и заканчивает рендер.
 
@@ -1561,8 +1840,9 @@ export default function Dashboard({ name, onSignOut }) {
               `rows`, экран молча рисовал СВОИ демо-данные из умолчания: июнь и июль,
               которых у площадки нет. Выглядело правдоподобно, и поймал я это только
               потому, что сверил месяцы с настоящими. */}
-          {active === 'campaigns' ? (
-            <CampaignsScreen campaigns={camps || []} />
+          {tab === 'campaigns' ? (
+            mobile ? <CampaignsMobile campaigns={camps || []} />
+              : <CampaignsScreen campaigns={camps || []} />
           ) : (
           <>
 
@@ -1577,9 +1857,11 @@ export default function Dashboard({ name, onSignOut }) {
               Числа держатся в общем ките (`lib/ui.js::KPI_SIZE`), а не вписаны по месту:
               вторая копия размеров разъедется на первой же правке — ровно так это и
               случилось. */}
-          <div className="rise" style={{ ...card, padding: '18px 24px 16px' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
-              <span style={{ fontSize: 24, fontWeight: 800,
+          <div className="rise" style={{ ...card,
+            padding: mobile ? '14px 14px 12px' : '18px 24px 16px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: mobile ? 8 : 12,
+              flexWrap: mobile ? 'wrap' : 'nowrap' }}>
+              <span style={{ fontSize: mobile ? 20 : 24, fontWeight: 800,
                 letterSpacing: '-0.025em' }}>Мой период</span>
               <span style={{ fontFamily: MONO, fontSize: 11.5, color: C.faint,
                 letterSpacing: '.06em', textTransform: 'uppercase' }}>
@@ -1590,7 +1872,8 @@ export default function Dashboard({ name, onSignOut }) {
                   Поверхности внутри чипа, а не отдельными — у площадки это одна услуга
                   на двух экранах, и два чипа читались бы как две разные. */}
               <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flex: 1,
-                paddingLeft: 18 }}>
+                paddingLeft: mobile ? 0 : 18, flexBasis: mobile ? '100%' : 'auto',
+                order: mobile ? 3 : 0 }}>
                 {shownServices.map(sv => (
                   <span key={sv.name} style={{ ...chip(C.accentTint, C.accent,
                     C.accentBorder), display: 'inline-flex', alignItems: 'center',
@@ -1612,7 +1895,8 @@ export default function Dashboard({ name, onSignOut }) {
                 <select value={pubFilter}
                   onChange={e => setPubFilter(e.target.value ? Number(e.target.value) : '')}
                   style={{ ...soft(C.secondary, C.border), padding: '8px 12px',
-                    fontSize: 13, cursor: 'pointer' }}>
+                    fontSize: 13, cursor: 'pointer',
+                    ...(mobile ? { flexBasis: '100%', minHeight: 40, order: 2 } : {}) }}>
                   <option value="">Все площадки · {allTasks.length}</option>
                   {pubOptions.map(o => (
                     <option key={o.id} value={o.id}>
@@ -1625,16 +1909,21 @@ export default function Dashboard({ name, onSignOut }) {
 
             {/* Разделители, а не плитки: четыре значения читаются как один ряд, и рамка
                 вокруг каждого превращает сводку в четыре независимые карточки. */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
-              marginTop: 18 }}>
+            {/* Телефон — сетка 2×2 с разделителями (хендофф «моб версия кп», п. 2). */}
+            <div style={{ display: 'grid',
+              gridTemplateColumns: mobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)',
+              marginTop: mobile ? 14 : 18, rowGap: mobile ? 14 : 0 }}>
               {KPI.map(([label, value, unit, chipText, chipTone, hint], i) => (
-                <div key={label} style={{ padding: i ? '0 0 0 26px' : 0,
+                <div key={label} style={mobile ? {
+                  padding: i % 2 ? '0 0 0 12px' : '0 12px 0 0',
+                  borderLeft: i % 2 ? `1px solid ${C.row}` : 'none', minWidth: 0,
+                } : { padding: i ? '0 0 0 26px' : 0,
                   borderLeft: i ? `1px solid ${C.row}` : 'none', marginLeft: i ? 26 : 0 }}>
                   <div style={{ ...CAP, marginBottom: 0,
                     fontSize: KPI_SIZE.label, color: C.muted }}>{label}</div>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 7,
                     marginTop: 8 }}>
-                    <span style={{ fontFamily: MONO, fontSize: KPI_SIZE.value,
+                    <span style={{ fontFamily: MONO, fontSize: mobile ? 19 : KPI_SIZE.value,
                       fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1,
                       whiteSpace: 'nowrap', color: KPI_TONE[i] }}>{value}</span>
                     {!!unit && (
@@ -1663,15 +1952,18 @@ export default function Dashboard({ name, onSignOut }) {
           </div>
 
           {/* Очередь */}
-          <div className="rise" style={{ ...card, padding: '16px 18px' }}>
+          <div className="rise" style={{ ...card,
+            padding: mobile ? '14px 12px' : '16px 18px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14,
               flexWrap: 'wrap' }}>
               <span style={{ fontSize: 17, fontWeight: 800 }}>Требует вашего решения</span>
               <span style={{ ...chip(C.dangerTint, C.danger, C.dangerBorder),
                 fontFamily: MONO }}>{tasks?.total ?? 0}</span>
-              <span style={{ ...CAP, marginBottom: 0 }}>
-                креативы, пролонгации, сверки · дедлайн решения
-              </span>
+              {!mobile && (
+                <span style={{ ...CAP, marginBottom: 0 }}>
+                  креативы, пролонгации, сверки · дедлайн решения
+                </span>
+              )}
               <span style={{ flex: 1 }} />
               {me && !me.can_approve
                 ? <span style={{ fontSize: 11.5, color: C.faint }}>
@@ -1683,7 +1975,9 @@ export default function Dashboard({ name, onSignOut }) {
                         сайтов, и площадка отвечает по каждому отдельно. Подтверждение
                         спрашивается, потому что действие необратимо. */}
                     <button style={{ ...soft(C.accent, C.accentBorder),
-                      padding: '7px 14px', fontSize: 12.5 }} disabled={bulk}
+                      padding: '7px 14px', fontSize: 12.5,
+                      ...(mobile ? { flexBasis: '100%', minHeight: 44, fontSize: 14 } : {}) }}
+                      disabled={bulk}
                       onClick={approveAll}>
                       {/* Число — то же, что в подтверждении: без заданий, ждущих ссылку. */}
                       {bulk ? 'Согласуем…'
@@ -1716,7 +2010,42 @@ export default function Dashboard({ name, onSignOut }) {
                 {done.length}
               </span>
             </div>
-            {openDone && (
+            {openDone && mobile && (
+              /* Телефон — строками без таблицы; комментарий целиком (хендофф, п. 2). */
+              <div className="pop" style={{ marginTop: 10, display: 'flex',
+                flexDirection: 'column' }}>
+                {done.map(d => (
+                  <div key={d.task_id} style={{ padding: '10px 0',
+                    borderTop: `1px solid ${C.row}`, display: 'flex', flexDirection: 'column',
+                    gap: 4 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={chip(
+                        d.verdict === 'ок' ? C.incomeTint : C.dangerTint,
+                        d.verdict === 'ок' ? C.incomeFg : C.danger,
+                        d.verdict === 'ок' ? C.incomeBorder : C.dangerBorder)}>
+                        {d.verdict === 'ок' ? 'согласовано' : d.verdict}
+                      </span>
+                      <span style={{ fontSize: 13, fontWeight: 700 }}>
+                        {d.brand || d.advertiser || '—'}
+                      </span>
+                    </span>
+                    <span style={{ fontFamily: MONO, fontSize: 11, color: C.secondary }}>
+                      {d.publisher || '—'} · Креатив №{d.creative_no}
+                      {d.creative_title ? ` — ${d.creative_title}` : ''}
+                    </span>
+                    {!!d.reason && (
+                      <span style={{ fontSize: 12.5, color: C.muted }}>{d.reason}</span>
+                    )}
+                  </div>
+                ))}
+                {!done.length && (
+                  <div style={{ padding: '12px 0', fontSize: 12.5, color: C.faint }}>
+                    За неделю решений не было.
+                  </div>
+                )}
+              </div>
+            )}
+            {openDone && !mobile && (
               <div className="pop" style={{ marginTop: 12 }}>
                 <div style={{ display: 'grid',
                   gridTemplateColumns: '118px minmax(140px,0.8fr) minmax(120px,0.7fr) minmax(150px,0.85fr) minmax(260px,2fr)',
@@ -1766,7 +2095,9 @@ export default function Dashboard({ name, onSignOut }) {
           {/* На дашборде — только то, что ЕЩЁ В РАБОТЕ: размещение висит здесь до сверки
               за период, после неё уходит в раздел «Кампании». Отбор делает экран, а
               признак считает витрина — определение одно на оба раздела. */}
-          {(() => {
+          {/* Телефон: вместо таблицы кампаний — лента событий под очередью (хендофф,
+              п. 1); кампании целиком во вкладке «Кампании». */}
+          {mobile ? <Feed onErr={setErr} /> : (() => {
             const live = (camps || []).filter(c => !c.reconciled)
             return !!live.length && <ActiveCampaigns campaigns={live} />
           })()}
@@ -1774,10 +2105,12 @@ export default function Dashboard({ name, onSignOut }) {
           </>
           )}
         </div>
+        )}
 
-        {/* правая колонка */}
-        <div style={{ width: 280, flex: '0 0 280px', display: 'flex',
-          flexDirection: 'column', gap: 14 }}>
+        {/* правая колонка; на телефоне — вкладка «Связь» */}
+        {(!mobile || tab === 'contact') && (
+        <div style={{ width: mobile ? 'auto' : 280, flex: mobile ? '1 1 auto' : '0 0 280px',
+          display: 'flex', flexDirection: 'column', gap: mobile ? 12 : 14 }}>
 
           {/* ПОРЯДОК КОЛОНКИ ЗАДАН ВЛАДЕЛЬЦЕМ 15.09.2026: уведомления · команда ·
               договор · лента. Это не вкусовщина — порядок читается как убывание
@@ -1806,6 +2139,13 @@ export default function Dashboard({ name, onSignOut }) {
                   <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.secondary,
                     wordBreak: 'break-all' }}>{m.email || 'почта не указана'}</span>
                 </span>
+                {/* Телефон: письмо одним касанием (хендофф «моб версия кп», п. 4). */}
+                {mobile && !!m.email && (
+                  <a href={`mailto:${m.email}`} aria-label={`Написать ${m.name || ''}`}
+                    style={{ ...btn(false), marginLeft: 'auto', minHeight: 40, minWidth: 40,
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      textDecoration: 'none', padding: '0 12px' }}>✉</a>
+                )}
               </div>
             ))}
             {!(dash?.team || []).length && (
@@ -1884,8 +2224,9 @@ export default function Dashboard({ name, onSignOut }) {
             )}
           </Side>
 
-          <Feed onErr={setErr} />
+          {!mobile && <Feed onErr={setErr} />}
         </div>
+        )}
       </div>
 
       {/* Версия кабинета — внизу слева, отдельным контуром от финмодуля.

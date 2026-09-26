@@ -14,6 +14,8 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { overlayClose } from './overlay'
 import { C, MONO, UI, btn } from './ui'
+import Sheet, { SHEET_BTN } from './sheet'
+import useIsMobile from './useIsMobile'
 
 export const STOCK_SIZES = [[240, 400], [300, 600], [640, 100], [970, 250],
   [1000, 150], [1200, 150]]
@@ -30,16 +32,24 @@ export default function Preview({ file }) {
   const stageRef = useRef(null)
   const [avail, setAvail] = useState(720)
   const [idx, setIdx] = useState(0)
+  /* «По экрану / 1:1» (владелец 26.09.2026). На телефоне поле ~330 px, и 1200×150
+     вписывается в 28 % — полоска, на которой не прочитать текст. В режиме 1:1 баннер
+     показывается в настоящих пикселях, а сцена листается вбок. */
+  const [real, setReal] = useState(false)
 
   const own = RATIO_PX(file?.size)
   const sizes = own ? [own] : STOCK_SIZES
   const wh = sizes[Math.min(idx, sizes.length - 1)]
-  const k = wh ? Math.min(1, avail / wh[0]) : 1
+  const fitK = wh ? Math.min(1, avail / wh[0]) : 1
+  const k = real ? 1 : fitK
+  // Переключатель нужен, только когда хоть один размер не помещается целиком.
+  const canReal = sizes.some(([w]) => w > avail)
 
   /* Сцена держит высоту САМОГО ВЫСОКОГО из доступных размеров и не меняется при
      переключении: иначе окно прыгает на сотни пикселей между 300×600 и 1200×150, кнопки
      ответа уезжают из-под курсора, и сравнить два размера подряд невозможно. */
-  const stageH = Math.max(160, ...sizes.map(([w, h]) => Math.round(Math.min(1, avail / w) * h)))
+  const stageH = Math.max(160, ...sizes.map(([w, h]) =>
+    Math.round((real ? 1 : Math.min(1, avail / w)) * h)))
 
   useEffect(() => {
     const el = stageRef.current
@@ -74,10 +84,24 @@ export default function Preview({ file }) {
           textTransform: 'uppercase', color: C.faint, marginLeft: 4 }}>
           {own ? 'размер объявлен в баннере' : 'баннер адаптивный'}
         </span>
+        {canReal && (
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', borderRadius: 9,
+            border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+            {[[false, 'по экрану'], [true, '1:1']].map(([v, label]) => (
+              <span key={label} onClick={() => setReal(v)}
+                style={{ cursor: 'pointer', padding: '6px 12px', fontSize: 12, fontWeight: 700,
+                  background: real === v ? C.accentTint : C.card,
+                  color: real === v ? C.accent : C.secondary }}>{label}</span>
+            ))}
+          </span>
+        )}
       </div>
 
+      {/* Широкий баннер в 1:1 прижат к левому краю: при центрировании его левая часть
+          уходила бы за край сцены, куда прокрутка не достаёт. */}
       <div ref={stageRef} style={{ padding: 14, borderRadius: 12, background: C.subtle,
-        border: `1px solid ${C.border}`, display: 'flex', justifyContent: 'center',
+        border: `1px solid ${C.border}`, display: 'flex',
+        justifyContent: wh && wh[0] * k > avail ? 'flex-start' : 'center',
         alignItems: 'center', overflowX: 'auto', height: stageH + 28,
         boxSizing: 'border-box' }}>
         {/* Баннер крутится С ЧУЖОГО ДОМЕНА — из песочницы. Это не деталь раздачи:
@@ -101,6 +125,7 @@ export default function Preview({ file }) {
       <div style={{ fontSize: 11.5, color: C.muted }}>
         Баннер запущен в тестовой среде.
         {k < 1 && ` Масштаб ${Math.round(k * 100)} % — размер ${wh[0]}×${wh[1]} не помещается в окно.`}
+        {real && wh && wh[0] > avail && ' Настоящий размер — листайте баннер вбок.'}
         {/* Блокировщик принимает баннер типового размера за рекламу и режет его
             картинки: остаётся пустой фон, и выглядит это как поломка у нас (владелец
             25.09.2026 — сам поймал это на своём браузере). */}
@@ -120,7 +145,8 @@ const OVERLAY = {
   display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
 }
 
-export function PreviewModal({ file, title, onClose }) {
+export function PreviewModal({ file, title, onClose, onDownload }) {
+  const mobile = useIsMobile()
   /* Рисуется ПОРТАЛОМ в `body`, а не там, где вызвана. `position: fixed` считает свои
      координаты от ближайшего предка с `transform`/`filter`/`will-change`, а `z-index`
      живёт внутри стека родителя: карточка запроса с анимацией `riseIn` создаёт такой
@@ -129,6 +155,27 @@ export function PreviewModal({ file, title, onClose }) {
   const [ready, setReady] = useState(false)
   useEffect(() => { setReady(true) }, [])   // на сервере `document` не существует
   if (!ready) return null
+
+  // Телефон — нижний лист (хендофф «моб версия кп»): размеры, превью, «Скачать архив».
+  if (mobile) {
+    return (
+      <Sheet title="Предпросмотр креатива" meta={title} onClose={onClose}
+        footer={(
+          <>
+            {!!onDownload && (
+              <button style={{ ...btn(false), ...SHEET_BTN, flex: 1 }} onClick={onDownload}>
+                Скачать архив
+              </button>
+            )}
+            <button style={{ ...btn(true), ...SHEET_BTN, flex: 1 }} onClick={onClose}>
+              Закрыть
+            </button>
+          </>
+        )}>
+        <Preview file={file} />
+      </Sheet>
+    )
+  }
 
   return createPortal(
     <div style={OVERLAY} {...overlayClose(onClose)}>

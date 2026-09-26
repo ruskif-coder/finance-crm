@@ -271,3 +271,19 @@ def test_paused_publisher_is_offered_but_marked(db):
     finally:
         row.status = was
         db.commit()
+
+
+def test_candidates_carry_our_code_flag(db):
+    """Выбор площадок делится на «наш код / не наш код» (владелец 26.09.2026): у каждой
+    группы своё «добавить всех». Признак едет с кандидатом и совпадает со справочником —
+    иначе баннер под нашу DSP ушёл бы площадке, которая крутит в чужой."""
+    from app.sales.models import SalesPublisher
+    marked = db.query(SalesPublisherService).filter(
+        SalesPublisherService.is_active.is_(True)).first()
+    if marked is None:
+        pytest.skip("ни одна услуга не отмечена")
+    got = _candidates(db, marked.service_id, [])
+    assert got
+    for c in got:
+        pub = db.query(SalesPublisher).filter(SalesPublisher.id == c["publisher_id"]).one()
+        assert c["our_code"] is bool(pub.our_code), c["name"]

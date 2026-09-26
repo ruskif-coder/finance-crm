@@ -105,6 +105,15 @@ TARGETING_EDIT = require_any_permission((("creatives", "edit"), ("traffic_queue"
 
 # ============================== вспомогательное ==============================
 
+def _admin_only(user: User, detail: str) -> None:
+    """Действие вне зоны аккаунта (владелец 26.09.2026): у него в строке площадки только
+    «Доработка». Права «Креативы — согласование / правка» у аккаунтов есть — на них
+    первичная проверка и загрузка, — поэтому запрет по РОЛИ и первым шагом: до записи и
+    до проверки области сделки. Экран прячет кнопку, но спрятанная кнопка не запрет."""
+    if getattr(getattr(user, "role", None), "key", None) != "admin":
+        raise HTTPException(status_code=403, detail=detail)
+
+
 def _deal(db: Session, deal_id: int, user: User) -> SalesDeal:
     deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
     if not deal:
@@ -204,7 +213,10 @@ def _candidates(db: Session, service_id: int, surfaces: List[str]) -> List[dict]
              # Статус отдаётся ВСЕГДА, пометка — только когда есть о чём предупредить.
              # Так экран не гадает по названию статуса, а красит по флагу.
              "status": p.status,
-             "status_warn": p.status in PICKER_WARN_STATUSES}
+             "status_warn": p.status in PICKER_WARN_STATUSES,
+             # «Наш код / не наш код» — две группы выбора со своим «добавить всех»
+             # (владелец 26.09.2026): площадка без нашего кода крутит в другой DSP.
+             "our_code": bool(p.our_code)}
             for ps, p in sorted(rows, key=lambda r: r[1].name.lower())]
 
 
@@ -603,6 +615,7 @@ def target_options(deal_id: int, set_id: Optional[int] = None,
         "proposed": [c for c in proposed if c["publisher_id"] not in taken],
         "all": [{"publisher_id": p.id, "name": p.name, "domain": p.domain, "code": p.code,
                  "status": p.status, "status_warn": p.status in PICKER_WARN_STATUSES,
+                 "our_code": bool(p.our_code),
                  "already": p.id in taken} for p in all_pubs],
     }
 
@@ -1862,6 +1875,7 @@ def pair_verdict(pair_id: int, payload: PairVerdictIn, db: Session = Depends(get
     Второй вход в ту же запись — из кабинета, там площадка отвечает сама. Различает их
     `source`; правила у обоих одни и те же, потому что функция одна.
     """
+    _admin_only(current_user, "Ответ за площадку записывает только администратор")
     pair = db.query(LaunchPrepPair).filter(LaunchPrepPair.id == pair_id).first()
     if not pair:
         raise HTTPException(status_code=404, detail="Пара не найдена")
@@ -2322,6 +2336,7 @@ def move_target(target_id: int, payload: TargetStateIn, db: Session = Depends(ge
     проскакивается, поэтому переход из «ерид получен» сразу в «в размещении» законен.
     Наружу эти три состояния всё равно сворачиваются в одно.
     """
+    _admin_only(current_user, "Состояние площадки меняет только администратор")
     t = db.query(LaunchPrepTarget).filter(LaunchPrepTarget.id == target_id).first()
     if not t:
         raise HTTPException(status_code=404, detail="Получатель не найден")

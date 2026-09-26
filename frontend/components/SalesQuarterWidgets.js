@@ -18,7 +18,12 @@ const C = {
   warnBg: 'var(--warning-tint)', warnText: 'var(--warning-text)', ok: 'var(--success)', okText: 'var(--success)',
   errDot: 'var(--danger)', errText: 'var(--danger)', plan: 'var(--dot-wait)',
   hatch: 'repeating-linear-gradient(135deg,var(--text-faint) 0 3px,var(--bg-card) 3px 6px)',
+  // Успешный архив — тот же штрих, что «без группы», но зелёный: это факт, только
+  // уже закрытый (владелец 26.09.2026).
+  hatchDone: 'repeating-linear-gradient(135deg,var(--income) 0 3px,var(--bg-card) 3px 6px)',
 }
+// Подсказка к отметке архива: что это за деньги и почему их нет в таблице.
+const ARCHIVE_HINT = 'Доведено и оплачено: сделки в «Архиве успешных сделок». В таблице и в сумме «в работе» их нет — их скрывает фильтр «скрыть архив».'
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
 
@@ -55,7 +60,13 @@ export default function SalesQuarterWidgets({
   const layerAmt = (name) => (byLayer.find(b => b.name === name)?.amount) || 0
   const layerDeals = (name) => (byLayer.find(b => b.name === name)?.deals) || 0
   const portfolioAmt = totals?.amount || 0
-  const width = (name) => (portfolioAmt > 0 ? (layerAmt(name) / portfolioAmt) * 100 : 0)
+  // Успешный архив, скрытый фильтром: рисуется отдельной отметкой в конце полосы, но в
+  // «Сделки в работе» не входит — сводка совпадает с таблицей под ней.
+  const archAmt = summary?.archived?.amount || 0
+  const archDeals = summary?.archived?.deals || 0
+  const barBase = portfolioAmt + archAmt
+  const width = (name) => (barBase > 0 ? (layerAmt(name) / barBase) * 100 : 0)
+  const archW = barBase > 0 ? (archAmt / barBase) * 100 : 0
 
   const syncTime = lastSyncAt ? fmtTime(lastSyncAt, '') : null
   const recon = totals ? totals.reconciles : true
@@ -147,6 +158,7 @@ export default function SalesQuarterWidgets({
             </div>
             <div style={{ display: 'flex', gap: 2, height: 10 }}>
               {LAYERS.map(L => { const w = width(L.name); return w > 0 ? <div key={L.name} style={{ width: `${w}%`, background: L.bg }} /> : null })}
+              {archW > 0 && <div title={ARCHIVE_HINT} style={{ width: `${archW}%`, background: C.hatchDone }} />}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7, fontSize: 12.5, color: C.sec }}>
               {LAYERS.map(L => (
@@ -155,6 +167,12 @@ export default function SalesQuarterWidgets({
                   <span style={{ marginLeft: 'auto', ...strong }}>{mln(layerAmt(L.name))} млн · {layerDeals(L.name)}</span>
                 </div>
               ))}
+              {archDeals > 0 && (
+                <div title={ARCHIVE_HINT} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ width: 8, height: 8, background: C.hatchDone, flexShrink: 0 }} />в архиве · доведено и оплачено
+                  <span style={{ marginLeft: 'auto', ...strong }}>{mln(archAmt)} млн · {archDeals}</span>
+                </div>
+              )}
             </div>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 700, color: recon ? C.okText : C.errText }}>
               <span style={{ width: 7, height: 7, borderRadius: 999, background: recon ? C.ok : C.errDot }} />
@@ -291,6 +309,7 @@ export default function SalesQuarterWidgets({
                 return <div key={L.name} title={`${L.display}: ${mln(layerAmt(L.name))} млн · ${layerDeals(L.name)}`}
                   style={{ width: `${w}%`, background: L.bg }} />
               })}
+              {archW > 0 && <div title={ARCHIVE_HINT} style={{ width: `${archW}%`, background: C.hatchDone }} />}
             </div>
             <div style={{ display: 'flex', gap: 26, flexWrap: 'wrap', fontSize: 12, color: C.sec }}>
               {LAYERS.map(L => (
@@ -299,6 +318,12 @@ export default function SalesQuarterWidgets({
                   {L.display} <span style={strong}>{mln(layerAmt(L.name))} млн · {layerDeals(L.name)}</span>
                 </span>
               ))}
+              {archDeals > 0 && (
+                <span title={ARCHIVE_HINT} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, cursor: 'help' }}>
+                  <span style={{ width: 8, height: 8, background: C.hatchDone }} />
+                  в архиве · доведено и оплачено <span style={strong}>{mln(archAmt)} млн · {archDeals}</span>
+                </span>
+              )}
             </div>
           </div>
 

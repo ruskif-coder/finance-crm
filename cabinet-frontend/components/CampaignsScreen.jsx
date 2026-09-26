@@ -93,6 +93,23 @@ export const stateOf = list => {
   return list.every(c => c.status === 'завершён' || c.status === 'отказ') ? 'сверен' : 'в работе';
 };
 
+/** Что показывать: прошлое, текущее и СОГЛАСОВАННОЕ будущее (правило — ниже, в экране).
+    Вынесено функцией (26.09.2026): его же читает мобильный экран, и две копии отбора
+    однажды показали бы площадке на телефоне другие месяцы, чем на компьютере. */
+export const visibleCampaigns = (campaigns) => {
+  const byMonth = new Map();
+  for (const c of campaigns) {
+    const k = periodOf(c);
+    if (k <= NOW) continue;
+    if (!byMonth.has(k)) byMonth.set(k, []);
+    byMonth.get(k).push(c);
+  }
+  const futureOk = new Set([...byMonth.entries()]
+    .filter(([, list]) => !list.some(c => c.status === 'ждёт согласования'))
+    .map(([k]) => k));
+  return campaigns.filter(c => periodOf(c) <= NOW || futureOk.has(periodOf(c)));
+};
+
 /* ДВЕ СЕТКИ, а не одна с условной колонкой. У кабинета с одной площадкой столбец
    «Площадка» повторял бы один и тот же домен в каждой строке — это не данные, а шум,
    и он отъедает ширину у названия кампании. У кабинета с несколькими площадками без
@@ -137,22 +154,7 @@ export default function CampaignsScreen({ campaigns = DEMO, onOpen }) {
      Согласованность считается ПО МЕСЯЦУ ЦЕЛИКОМ, а не по строке: если в нём есть хоть
      одно размещение на согласовании, месяц ещё не решён, и показывать его как
      обязательство нельзя. */
-  const futureOk = useMemo(() => {
-    const byMonth = new Map();
-    for (const c of campaigns) {
-      const k = periodOf(c);
-      if (k <= NOW) continue;
-      if (!byMonth.has(k)) byMonth.set(k, []);
-      byMonth.get(k).push(c);
-    }
-    return new Set([...byMonth.entries()]
-      .filter(([, list]) => !list.some(c => c.status === 'ждёт согласования'))
-      .map(([k]) => k));
-  }, [campaigns]);
-
-  const all = useMemo(
-    () => campaigns.filter(c => periodOf(c) <= NOW || futureOk.has(periodOf(c))),
-    [campaigns, futureOk]);
+  const all = useMemo(() => visibleCampaigns(campaigns), [campaigns]);
 
   /* Площадки кабинета — из самих данных, а не отдельным запросом: список площадок и
      список кампаний обязаны сходиться, а два источника однажды разойдутся. */

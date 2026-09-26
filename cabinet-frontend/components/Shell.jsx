@@ -2,7 +2,8 @@
  * Оболочка кабинета: шапка и правая колонка.
  *
  * Вынесена из страницы, чтобы страница осталась про работу, а не про хром. Ширина 1600,
- * правая колонка фиксированные 280 — по хендоффу; мобильной версии нет.
+ * правая колонка фиксированные 280 — по хендоффу. На узком экране — `MobileHeader`
+ * (хендофф «моб версия кп»): липкая шапка и вкладки во всю ширину.
  */
 import { useState, useEffect } from 'react'
 import { C, CAP, MONO, UI, btn, btnSm, card, chip } from '../lib/ui'
@@ -32,6 +33,10 @@ const ICON_BTN = { width: 32, height: 32, borderRadius: 9, display: 'inline-flex
   transition: 'color 150ms ease, border-color 150ms ease' }
 
 export function ThemeToggle() {
+  return <ThemeToggleBtn style={ICON_BTN} />
+}
+
+function ThemeToggleBtn({ style }) {
   const [dark, setDark] = useState(false)
   useEffect(() => {
     setDark(document.documentElement.getAttribute('data-theme') === 'dark')
@@ -43,7 +48,8 @@ export function ThemeToggle() {
     try { localStorage.setItem('cabinet_theme', next ? 'dark' : 'light') } catch { /* приватный режим */ }
   }
   return (
-    <button onClick={flip} title={dark ? 'Светлая тема' : 'Тёмная тема'} style={ICON_BTN}>
+    <button onClick={flip} title={dark ? 'Светлая тема' : 'Тёмная тема'}
+      aria-label={dark ? 'Светлая тема' : 'Тёмная тема'} style={style}>
       {dark ? <Sun /> : <Moon />}
     </button>
   )
@@ -165,6 +171,75 @@ export function Header({ profile, name, account, nav, active, onNav, onExit, onG
         <button style={btnSm(false)} onClick={onExit}>Выйти</button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/** Шапка телефона: логотип · сбой · руководство · тема · аватар площадки, ниже вкладки.
+ *  Липкая, в отличие от десктопной: на телефоне экран длинный, а вкладки — единственный
+ *  способ перейти в «Кампании» и «Связь». «Выйти» и кто вошёл — в меню аватара: в строку
+ *  шириной 390 px они не помещаются. */
+export function MobileHeader({ profile, name, account, nav, active, onNav, onExit, onGuide }) {
+  const [menu, setMenu] = useState(false)
+  const mBtn = { ...ICON_BTN, width: 40, height: 40, borderRadius: 11 }
+  return (
+    <div style={{ position: 'sticky', top: 0, zIndex: 50, background: C.canvas,
+      padding: '10px 12px 8px', borderBottom: `1px solid ${C.row}` }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <img className="logo-light" src="/assets/logo-mediaplan.svg" alt="SIMB-AD" height="22" />
+        <img className="logo-dark" src="/assets/logo-mediaplan-dark.svg" alt="SIMB-AD" height="22" />
+        <span style={{ flex: 1 }} />
+        <BugReport btnStyle={mBtn} />
+        {!!onGuide && (
+          <button onClick={onGuide} aria-label="Руководство" style={mBtn}><Info /></button>
+        )}
+        <ThemeToggleBtn style={mBtn} />
+        <span style={{ position: 'relative' }}>
+          <button onClick={() => setMenu(!menu)} aria-label="Учётная запись"
+            style={{ width: 40, height: 40, borderRadius: 11, border: 0, cursor: 'pointer',
+              background: C.text, color: C.card, fontWeight: 800, fontSize: 11.5,
+              fontFamily: UI }}>
+            {(profile?.domain || name || '?').replace(/\..*$/, '').slice(0, 3).toUpperCase()}
+          </button>
+          {menu && (
+            <>
+              <span onClick={() => setMenu(false)}
+                style={{ position: 'fixed', inset: 0, zIndex: 60 }} />
+              <div style={{ ...card, position: 'absolute', right: 0, top: 46, zIndex: 61,
+                width: 250, padding: 12, display: 'flex', flexDirection: 'column', gap: 8,
+                boxShadow: 'var(--shadow-float)' }}>
+                <span style={{ fontSize: 13.5, fontWeight: 700 }}>{profile?.domain || name}</span>
+                <span style={{ ...CAP, marginBottom: 0 }}>
+                  {[profile?.kind, profile?.network].filter(Boolean).join(' · ') || 'площадка'}
+                </span>
+                {!!account?.name && (
+                  <span style={{ fontSize: 12.5, color: C.secondary, wordBreak: 'break-all' }}>
+                    {account.name}{account.email ? ` · ${account.email}` : ''}
+                  </span>
+                )}
+                <button style={{ ...btn(false), minHeight: 40 }} onClick={onExit}>Выйти</button>
+              </div>
+            </>
+          )}
+        </span>
+      </div>
+      <nav style={{ display: 'flex', gap: 4, marginTop: 10, background: C.card,
+        border: `1px solid ${C.border}`, borderRadius: 12, padding: 3 }}>
+        {nav.map(n => (
+          <button key={n.key} onClick={() => onNav(n.key)}
+            style={{ flex: 1, minHeight: 40, display: 'inline-flex', alignItems: 'center',
+              justifyContent: 'center', gap: 6, borderRadius: 9, border: 0, cursor: 'pointer',
+              fontFamily: UI, fontSize: 13.5, fontWeight: active === n.key ? 800 : 600,
+              background: active === n.key ? C.accentTint : 'transparent',
+              color: active === n.key ? C.accent : C.secondary }}>
+            {n.label}
+            {!!n.badge && (
+              <span style={{ ...chip(C.dangerTint, C.danger, C.dangerBorder),
+                padding: '1px 6px', fontSize: 10.5, fontFamily: MONO }}>{n.badge}</span>
+            )}
+          </button>
+        ))}
+      </nav>
     </div>
   )
 }
