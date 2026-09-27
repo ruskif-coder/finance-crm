@@ -2060,17 +2060,23 @@ def primary_review(set_id: int, payload: PrimaryReviewIn, db: Session = Depends(
 
 # ============================== маркер ==============================
 
-# Доля согласовавших, при которой выпускается ЕРИД. Величина того же рода, что SLA стадии:
-# её меняют по опыту, а не по коду, поэтому значение читается из настроек, а константа —
-# запасное дно. Место в «настройках сборки» на услуге, когда их состав закроют.
+# Доля согласовавших, при которой ЕРИД выпускается АВТОМАТИЧЕСКИ (`app.launch_prep.
+# erid_auto`, крон раз в полчаса) — решение владельца 27.09.2026: «20-процентный лимит».
+# Кнопку порог не запирает: человек вправе выпустить раньше (порог как запрет снят 31.08).
+# Значение читается из настроек, константа — запасное дно.
 ERID_THRESHOLD_KEY = "creatives_erid_threshold"
-ERID_THRESHOLD_DEFAULT = 0.25
+ERID_THRESHOLD_DEFAULT = 0.20
+
+
+def auto_need(sent: int, share: float) -> int:
+    """Сколько согласований нужно автовыпуску: доля от адресатов, вверх, минимум одно.
+    20 % от пяти — одно, от десяти — два, от одиннадцати — три."""
+    import math
+    return max(1, math.ceil(round(sent * share, 6))) if sent else 0
 
 
 def erid_threshold(db: Session) -> float:
-    """НЕ ИСПОЛЬЗУЕТСЯ с 31.08.2026: порог снят. Функция и строка настройки оставлены —
-    настройка это данные, их не удаляют вместе с кодом (то же правило, что у замороженных
-    колонок). Вернуть порог = вернуть проверку в `threshold_numbers`."""
+    """Доля для автовыпуска (`app.launch_prep.erid_auto`). Ручную кнопку не запирает."""
     row = db.execute(sa_text("SELECT value FROM company_settings WHERE key = :k"),
                      {"k": ERID_THRESHOLD_KEY}).first()
     try:
@@ -2308,27 +2314,34 @@ def issue_erid(set_id: int, db: Session = Depends(get_db),
     if not s:
         raise HTTPException(status_code=404, detail="Комплект не найден")
     deal = _deal(db, s.deal_id, current_user)
+    return issue_marker_for_set(db, s, deal, current_user)
 
-    # Порог согласовавших снят 31.08.2026: выпуск больше не ждёт доли ответов. Но дно
-    # осталось: маркер выпускается НА МАТЕРИАЛ, показанный хоть кому-то. Комплект без
-    # живых адресатов — это либо ещё не собранный, либо целиком ушедший в доработку;
-    # регистрировать его в ЕРИР нечем и незачем, а запись оттуда не отзывается.
-    if not active_pairs(db, set_id):
+
+def issue_marker_for_set(db: Session, s, deal, actor) -> dict:
+    """Выпуск маркера — одна функция на кнопку и на автовыпуск (`erid_auto`).
+
+    `actor` — пользователь у кнопки или None у автовыпуска: в журнале и уведомлениях это
+    видно как действие системы. Отказ — `HTTPException(400)` с текстом для человека.
+    """
+    # Порог согласовавших как ЗАПРЕТ кнопки снят 31.08.2026. Но дно осталось: маркер
+    # выпускается НА МАТЕРИАЛ, показанный хоть кому-то. Комплект без живых адресатов —
+    # либо ещё не собранный, либо целиком ушедший в доработку; регистрировать его в ЕРИР
+    # нечем и незачем, а запись оттуда не отзывается.
+    if not active_pairs(db, s.id):
         raise HTTPException(status_code=400,
                             detail="В комплекте нет ни одной площадки — маркер выпускать не на что")
-
 
     final_ord_id, initial_ord_id = _ord_chain(db, deal)
     brand = (db.query(SalesBrand).filter(SalesBrand.id == deal.brand_id).first()
              if deal.brand_id else None)
-    files = _files_with_content(db, set_id)
-    urls = _target_urls(db, set_id)
+    files = _files_with_content(db, s.id)
+    urls = _target_urls(db, s.id)
 
     try:
         # Регистрация — или опрос, если комплект уже зарегистрирован без маркера:
         # повторная регистрация дала бы второй креатив в ЕРИР (аудит 23.09.2026, 4.H5).
         out = ord_submit.issue_marker(db, s, files, deal, brand, final_ord_id,
-                                      initial_ord_id, current_user,
+                                      initial_ord_id, actor,
                                       advertiser_urls=urls)
     except (ord_submit.OrdSubmitRefused, OrdPayloadError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -2339,29 +2352,39 @@ def issue_erid(set_id: int, db: Session = Depends(get_db),
     # получала «ЕРИД None» и ставила в эфир материал без маркировки.
     if not out.get("erid"):
         db.commit()
-        log_action(db, current_user, "issue_erid", "sales_deal", deal.id,
+        log_action(db, actor, "issue_erid", "sales_deal", deal.id,
                    f"комплект №{s.no}: зарегистрирован, маркер ещё не выдан "
-                   f"(статус {out.get('status')})")
+                   f"(статус {out.get('status')})" + ("" if actor else " — автовыпуск"))
         return out
 
-    _mark_targets_erid(db, set_id)
+    announce_marker(db, s, deal, actor, out)
+    return out
+
+
+def announce_marker(db: Session, s, deal, actor, out: dict) -> None:
+    """Маркер получен: получатели — «ерид получен», маркер — в РК, журнал, уведомления.
+
+    Отдельно от выпуска, потому что маркер приходит и позже — при опросе статуса
+    автовыпуском. До 27.09.2026 такой поздний маркер оседал в комплекте молча: площадки
+    не переходили в «ерид получен» и в РК его не было.
+    """
+    _mark_targets_erid(db, s.id)
     db.commit()
     # Маркер обязан доехать до кампании СРАЗУ: без него выгрузка в DSP отказывает, и
     # человек, только что выпустивший ЕРИД, читал бы «нет ЕРИД» до следующего утра.
     from app.ad.build import sync_deal_quietly
     sync_deal_quietly(db, deal.id)
-    log_action(db, current_user, "issue_erid", "sales_deal", deal.id,
-               f"комплект №{s.no}: ЕРИД {out.get('erid')}")
+    log_action(db, actor, "issue_erid", "sales_deal", deal.id,
+               f"комплект №{s.no}: ЕРИД {out.get('erid')}" + ("" if actor else " — автовыпуск"))
     emit(db, "creative_erid_issued",
          title=f"ЕРИД выпущен · {deal_label(deal)}",
          body=f"Комплект №{s.no}: {out.get('erid')}. Статус регистрации: {out.get('status')}",
          link=f"/sales/deals/{deal.code or deal.id}",
-         entity_type="sales_deal", entity_id=deal.id, actor=current_user,
+         entity_type="sales_deal", entity_id=deal.id, actor=actor,
          ctx={"deal": deal})
     # И площадке: её материал принят и промаркирован — можно ставить в эфир.
     _tell_publisher_erid(db, s, deal)
     db.commit()
-    return out
 
 
 @router.post("/set/{set_id}/erid/refresh")

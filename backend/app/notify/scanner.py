@@ -547,6 +547,35 @@ def rule_creative_silence(db: Session, ev: registry.Event) -> List[Hit]:
     return hits
 
 
+ERID_AUTO_STALE_HOURS = 2
+
+
+def erid_auto_stale_hits(last_at, now: datetime) -> List[Hit]:
+    """Без базы — чтобы проверялось значениями. Прогона не было ни разу — молчим: на
+    стенде крона нет, и это норма; тревога — только когда он был и пропал."""
+    if last_at is None:
+        return []
+    hours = (now - last_at).total_seconds() / 3600
+    if hours <= ERID_AUTO_STALE_HOURS:
+        return []
+    return [Hit(entity_type="cron", entity_id=1, stage="stale",
+                title="Автовыпуск ЕРИД не запускается",
+                body=(f"Последний прогон {hours:.1f} ч назад при расписании раз в полчаса. "
+                      "Проверьте строку крона и контейнер backend."),
+                link="/settings/system")]
+
+
+def rule_cron_erid_auto_stale(db: Session, ev: registry.Event) -> List[Hit]:
+    import json
+    from sqlalchemy import text
+    raw = db.execute(text("SELECT value FROM company_settings WHERE key = 'erid_auto_last'")).scalar()
+    try:
+        at = datetime.fromisoformat(json.loads(raw)["at"]) if raw else None
+    except (TypeError, ValueError, KeyError):
+        at = None
+    return erid_auto_stale_hits(at, datetime.utcnow())
+
+
 def rule_creative_erid_failed(db: Session, ev: registry.Event) -> List[Hit]:
     """Регистрация креатива в реестре упала.
 
@@ -659,6 +688,7 @@ RULES = {
     "creative_silence": rule_creative_silence,
     "traffic_silence": rule_traffic_silence,
     "creative_erid_failed": rule_creative_erid_failed,
+    "cron_erid_auto_stale": rule_cron_erid_auto_stale,
     **{k: _deal_rule(k) for k in DEAL_QUEUE_EVENTS},
 }
 

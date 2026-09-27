@@ -402,6 +402,47 @@ def check_bitrix_sync(db: Session):
                   f"{hours:.0f} ч назад", (row.e or "")[:200] or None)
 
 
+def check_erid_auto(db: Session):
+    """Автовыпуск ЕРИД — крон раз в полчаса (владелец 27.09.2026).
+
+    Читает итог последнего боевого прогона (`erid_auto.record`). Пишет в ЕРИР без
+    человека, поэтому молчание крона и его ошибки должны быть видны здесь, а не в логе.
+    """
+    import json
+    title = "Автовыпуск ЕРИД"
+    try:
+        raw = db.execute(text("SELECT value FROM company_settings WHERE key = :k"),
+                         {"k": "erid_auto_last"}).scalar()
+    except Exception:                            # noqa: BLE001
+        db.rollback()
+        raw = None
+    try:
+        last = json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        last = None
+    if not last or not last.get("at"):
+        return _check("job_erid", "Фоновые задания", title, "idle", "ни одного прогона",
+                      "на стенде это норма — cron стоит только на сервере")
+    hours = _age(datetime.fromisoformat(last["at"]))
+    failed = last.get("failed") or []
+    blocked = last.get("blocked") or []
+    value = (f"{hours * 60:.0f} мин назад" if hours < 1 else f"{hours:.1f} ч назад") +         f" · выпущено {last.get('issued', 0)}"
+    if hours > 2:
+        return _check("job_erid", "Фоновые задания", title, "bad", value,
+                      "крон должен ходить раз в полчаса",
+                      consequence="Маркеры не выпускаются сами: согласованные креативы "
+                                  "ждут ЕРИД, пока кто-то не нажмёт кнопку")
+    if failed or last.get("refresh_failed"):
+        return _check("job_erid", "Фоновые задания", title, "bad", value,
+                      "; ".join(failed)[:400] or f"ошибок опроса статуса: {last['refresh_failed']}",
+                      consequence="ОРД отказывает в выпуске или опросе — маркер не выходит, "
+                                  "площадки не могут ставить материал в эфир")
+    if blocked:
+        return _check("job_erid", "Фоновые задания", title, "warn", value,
+                      "порог взят, но выпускать нельзя: " + "; ".join(blocked)[:400])
+    return _check("job_erid", "Фоновые задания", title, "ok", value)
+
+
 # ── внешние связи ────────────────────────────────────────────────────────────
 
 def check_external_config():
@@ -791,7 +832,8 @@ def collect(db: Session, live: bool = False) -> dict:
     checks += [_safe(check_pdf), _safe(check_cabinet),
                _safe(check_db_sizes, db), _safe(check_db_connections, db),
                _safe(check_disk), _safe(check_storage, db), _safe(check_orphans, db),
-               _safe(check_notify_dispatch, db), _safe(check_bitrix_sync, db)]
+               _safe(check_notify_dispatch, db), _safe(check_bitrix_sync, db),
+               _safe(check_erid_auto, db)]
     ext = _safe(check_external_config)
     checks += ext if isinstance(ext, list) else [ext]
     checks.append(_safe(check_dsp_journal, dsp["tone"] == "ok"))

@@ -253,7 +253,9 @@ def test_a_set_with_nobody_left_cannot_get_a_marker(env):
 
     # Сам запрет — в ручке выпуска, и он читается по коду, а не по формулировке:
     # для вызова эндпоинта нужна авторизация и живой ОРД, а проверка нужна здесь.
-    src = inspect.getsource(lp.issue_erid)
-    assert 'active_pairs(db, set_id)' in src, 'дно из выпуска ЕРИД пропало'
+    # С 27.09.2026 выпуск — общая функция кнопки и автовыпуска; ручка зовёт её.
+    assert 'issue_marker_for_set(' in inspect.getsource(lp.issue_erid)
+    src = inspect.getsource(lp.issue_marker_for_set)
+    assert 'active_pairs(db, s.id)' in src, 'дно из выпуска ЕРИД пропало'
     assert '"code": "empty"' in inspect.getsource(lp.erid_readiness), (
         'экран не узнает, почему кнопка не сработает')

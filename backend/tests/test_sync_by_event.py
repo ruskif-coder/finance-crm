@@ -28,7 +28,9 @@ def test_the_three_events_call_the_build():
     """
     from app.routers import launch_prep as lp
 
-    for fn in (lp.apply_platform_verdict, lp.issue_erid, lp.send_set):
+    # Выпуск ЕРИД с 27.09.2026 — общая функция кнопки и автовыпуска: пересборку зовёт
+    # объявление маркера (`announce_marker`), в том числе для маркера, пришедшего позже.
+    for fn in (lp.apply_platform_verdict, lp.announce_marker, lp.send_set):
         src = inspect.getsource(fn)
         assert "sync_deal_quietly" in src, f"{fn.__name__} не зовёт пересборку"
 

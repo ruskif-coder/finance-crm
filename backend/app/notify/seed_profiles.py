@@ -39,7 +39,11 @@ PLAN = {
     "account_master": {k: ["app"] for k in ("creative_erid_failed",)},
     "sales":          {k: ["app"] for k in ("mp_ready",)},
     "fin":            {},
-    "admin":          {k: ["app"] for k in ("mp_ready", "creative_erid_failed")},
+    "admin":          {**{k: ["app"] for k in ("mp_ready", "creative_erid_failed")},
+                       # Поломка фонового задания — срочно (владелец 27.09.2026): крон
+                       # ломается ночью, панель увидят только утром.
+                       **{k: ["app", "tg", "mail"] for k in ("cron_erid_auto_failed",
+                                                              "cron_erid_auto_stale")}},
 
     # Трафик (30.08.2026). Два события и ровно два: пришла работа и кто-то из своих
     # молчит. Всё остальное в реестре — про медиапланы и сделки, к материалу отношения
