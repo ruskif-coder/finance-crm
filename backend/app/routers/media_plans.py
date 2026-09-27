@@ -307,15 +307,16 @@ def _lock_guard(db, deal_id, user, what: str) -> bool:
     мастеру → True (вызывающий пишет это в журнал отдельным действием, «в обход фиксации»
     должно быть видно потом), остальным → 409 с объяснением, что осталось открытым.
     """
-    from app.sales import plan_lock, stage_move
+    from app.sales import plan_lock
     if not plan_lock.deal_locks_plan(db, deal_id):
         return False
-    if stage_move.is_master(user):
+    if plan_lock.may_edit_locked(user):
         return True
     raise HTTPException(
         status_code=409,
         detail=(f"{what}: медиаплан зафиксирован — сделка на стадии сборки или дальше. "
-                "Меняются только даты запуска. Остальное может поправить мастер."))
+                "Меняются только даты запуска. Остальное может поправить администратор "
+                "или мастер-аккаунт."))
 
 
 def _log_locked_edit(db, user, plan_id, what: str):
@@ -1097,6 +1098,12 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
         if _lock_guard(db, data.deal_id, current_user, "Новый медиаплан к сделке"):
             _log_locked_edit(db, current_user, None, f"новый план к сделке {data.deal_id}")
 
+    # Объёмы по площадкам против плана РК — ДО правки: уменьшенный план может сделать их
+    # больше плана, и тогда аккаунт с трафиком узнают об этом сразу (владелец 27.09.2026).
+    from app.launch_prep import volumes
+    vol_deal = existing.deal_id if existing is not None else data.deal_id
+    vol_before = volumes.check(db, vol_deal) if vol_deal else None
+
     if existing is not None:
         same = _content_sig(data, data.rows, data.extras) == _plan_content_sig(db, existing)
         if same or not _plan_is_sealed(db, existing):
@@ -1112,6 +1119,7 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
             # а сделка всё ещё на первой стадии — двинуть надо.
             _advance_deal_on_link(db, current_user, existing)
             db.commit()
+            volumes.notify_if_newly_blocked(db, vol_deal, vol_before, current_user)
             db.refresh(existing)
             return {"id": existing.id, "group_id": existing.group_id, "version": existing.version,
                     "unchanged": same}
@@ -1144,6 +1152,7 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
     _sync_deal_from_plan(db, p, current_user)
     _advance_deal_on_link(db, current_user, p)
     db.commit()
+    volumes.notify_if_newly_blocked(db, vol_deal, vol_before, current_user)
     db.refresh(p)
     return {"id": p.id, "group_id": p.group_id, "version": p.version, "unchanged": False}
 
@@ -1370,12 +1379,12 @@ def get_media_plan(plan_id: int, db: Session = Depends(get_db), current_user: Us
     if not p:
         raise HTTPException(status_code=404, detail="Медиаплан не найден")
     _guard_owned(db, p, current_user, "media_plans_editor")
-    from app.sales import plan_lock, stage_move
+    from app.sales import plan_lock
     out = _plan_full(db, p, _names(db))
     # Зафиксирован на «Сборке»: конструктор запирает всё, кроме дат запуска, и говорит
     # почему. Мастеру — открыто, но с той же плашкой: правка пойдёт в журнал.
     out["locked"] = plan_lock.deal_locks_plan(db, p.deal_id)
-    out["can_edit_locked"] = stage_move.is_master(current_user)
+    out["can_edit_locked"] = plan_lock.may_edit_locked(current_user)
     out["lock_notice"] = plan_lock.NOTICE
     return out
 

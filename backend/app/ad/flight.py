@@ -119,7 +119,8 @@ def effective_campaign_status(stored: Optional[str], chain: str) -> str:
 # ПЛОЩАДКЕ (уникальность `ad_campaign_creative` по паре «площадка × номер»), поэтому один
 # и тот же баннер на двух площадках — две единицы учёта со своим ЕРИД и своим хешом в МС.
 CREATIVE_CHAIN = ("у трафика", "у площадки", "согласован")
-CREATIVE_MANUAL = ("запущен", "пауза", "отклонён")
+CREATIVE_REJECTED = "отклонён"
+CREATIVE_MANUAL = ("запущен", "пауза", CREATIVE_REJECTED)
 CREATIVE_STATUSES = CREATIVE_CHAIN + CREATIVE_MANUAL
 
 CREATIVE_RUNNING = ("запущен",)
@@ -243,9 +244,19 @@ def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight
 
     `share_sum` возвращается наружу, чтобы экран мог показать недобор: сумма меньше
     единицы означает, что часть объёма стоит на площадках без индекса или выключенных.
+
+    ЗАДАННЫЙ ОБЪЁМ (`fixed`, владелец 25.09.2026): площадка в плане с объёмом, заданным
+    по её креативам в блоке креатива, получает РОВНО его; остаток плана РК делится по
+    весам между остальными. Выключенная площадка объём не держит — он возвращается в
+    остаток, как и её доля. Превысить план ввод не даёт (проверка при вводе), но и тут
+    остаток не уходит в минус.
     """
+    fixed_of = {id(p): float(p.get("fixed") or 0) for p in placements}
+    fixed_in = sum(v for p in placements for v in [fixed_of[id(p)]]
+                   if v and p.get("status") in PLACEMENT_IN_PLAN)
+    rest = max(0.0, float(plan) - fixed_in) if plan else 0.0
     live = [p for p in placements
-            if p.get("status") in PLACEMENT_IN_PLAN and p.get("weight")]
+            if p.get("status") in PLACEMENT_IN_PLAN and p.get("weight") and not fixed_of[id(p)]]
     w_sum = sum(float(p["weight"]) for p in live) or 0.0
 
     rows: List[dict] = []
@@ -253,8 +264,16 @@ def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight
         running = p.get("status") in PLACEMENT_RUNNING
         in_plan = p.get("status") in PLACEMENT_IN_PLAN
         no_weight = not p.get("weight")
-        share = (float(p["weight"]) / w_sum) if (in_plan and not no_weight and w_sum) else 0.0
-        p_plan = round(plan * share) if (plan and share) else None
+        fixed = fixed_of[id(p)] if in_plan else 0.0
+        if fixed:
+            p_plan = round(fixed)
+            share = (fixed / plan) if plan else 0.0
+        else:
+            w_share = (float(p["weight"]) / w_sum) if (in_plan and not no_weight and w_sum) else 0.0
+            p_plan = round(rest * w_share) if (rest and w_share) else None
+            # Без плана РК доля — по весам, как до объёмов: её показывают дашборд и
+            # карточка, и `recompute_shares` пишет её в площадку.
+            share = (rest * w_share / plan) if plan else w_share
         # Факт площадки приходит из среза с разрезом по placement_id. Пока среза нет,
         # вызывающий передаёт None — и здесь ничего не выдумывается: пропорция от факта
         # РК была бы правдоподобным числом, за которым не стоит ни одного замера.
@@ -271,6 +290,8 @@ def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight
             "no_weight": no_weight,
             "running": running,
             "in_plan": in_plan,
+            # Заданный объём — для подсветки на дашборде: «эта площадка на фиксе».
+            "fixed": round(fixed) if fixed else None,
         })
     return {"rows": rows, "share_sum": round(sum(r["share"] for r in rows), 6)}
 
@@ -292,13 +313,24 @@ def split_evenly(total, creatives):
     live = [c for c in rows if c.get("status") in CREATIVE_IN_PLAN]
     out = []
     if total and live:
-        base, rest = divmod(int(round(total)), len(live))
+        # Креатив с заданным объёмом получает его, остаток площадки — поровну остальным
+        # (владелец 25.09.2026).
+        fixed = {id(c): int(round(c.get("fixed") or 0)) for c in live}
+        free = [c for c in live if not fixed[id(c)]]
+        left = max(0, int(round(total)) - sum(fixed.values()))
+        base, rest = divmod(left, len(free)) if free else (0, 0)
+        free_ids = {id(c) for c in free}
         live_ids = {id(c) for c in live}
         given = 0
         for c in rows:
-            if id(c) in live_ids:
-                out.append({**c, "plan_show": base + (1 if given < rest else 0),
-                            "share": round(1 / len(live), 6), "in_plan": True,
+            if id(c) in live_ids and id(c) not in free_ids:
+                out.append({**c, "plan_show": fixed[id(c)],
+                            "share": round(fixed[id(c)] / total, 6), "in_plan": True,
+                            "running": c.get("status") in CREATIVE_RUNNING})
+            elif id(c) in free_ids:
+                val = base + (1 if given < rest else 0)
+                out.append({**c, "plan_show": val,
+                            "share": round(val / total, 6), "in_plan": True,
                             "running": c.get("status") in CREATIVE_RUNNING})
                 given += 1
             else:

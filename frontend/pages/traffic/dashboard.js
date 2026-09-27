@@ -27,9 +27,10 @@ import { MONO, UI, card, CAP, btnSm, btn, inp, sel, Modal, PortalPopover, ROW_TO
   EXT_TONE, ExtChip, ExtCover } from '@/components/salesTableKit'
 import { surfaceTag } from '@/lib/dealTitle'
 import api, { auth } from '@/lib/api'
+import { downloadDealCreatives } from '@/lib/dealDocs'
 import {
   CreativeCounts, CreativeRows, Culprits, DASH, DayWall, Dynamics, KpiRow, PaceBar, Pips,
-  GOAL_LABELS, Owners, PlaceActions, ServiceCell, StatusPill, TABLE_LEGEND, TaskDoc, WALL_LEGEND,
+  GOAL_LABELS, MISMATCH_FG, Owners, PlaceActions, ServiceCell, StatusPill, TABLE_LEGEND, TaskDoc, WALL_LEGEND,
   VerifierStrip, WidgetsToggle, byCreative, num, pctTone,
 } from '@/components/traffic/dashboardKit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -104,6 +105,20 @@ function flagsOf(r) {
       `Не откручено ${num(r.under)} показов из плана`])
   }
   return out
+}
+
+
+// Объём площадки против плана РК — тон и подсказка строки площадки (владелец 27.09.2026).
+const volOf = (vol, pid) => vol?.by_publisher?.[String(pid)]
+const volTint = (vol, pid) => {
+  const l = volOf(vol, pid)?.level
+  return l === 'over' ? 'var(--danger-tint)' : l === 'warn' ? 'var(--warning-tint)' : undefined
+}
+const volTitle = (vol, pid) => {
+  const v = volOf(vol, pid)
+  if (!v || v.level === 'ok') return undefined
+  return `На площадке заложено ${Math.round((v.share || 0) * 100)} % плана РК`
+    + (v.level === 'over' ? ' — больше плана, запуск заблокирован' : '')
 }
 
 export default function TrafficDashboard() {
@@ -669,7 +684,8 @@ export default function TrafficDashboard() {
             // Ответственный трафик из строки не пропал: он остался в подсказке строки и
             // отдельным полем в расхлопе. Он и не был срочностью — он свойство карточки.
             const live = r.status === 'запущена' || r.status === 'пауза'
-            const u = (r.under || 0) > 0 ? ROW_TONE.overdue
+            // Объёмы по площадкам больше плана РК — тоже «проблема» (владелец 27.09.2026).
+            const u = (r.volumes?.blocked || (r.under || 0) > 0) ? ROW_TONE.overdue
               : (live && (!r.plan_show || !r.placements)) ? ROW_TONE.today
                 : ROW_TONE.normal
             return (
@@ -703,6 +719,24 @@ export default function TrafficDashboard() {
                     <span style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden',
                       textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.deal_title}>
                       {r.deal_title}</span>
+                    {/* Большое расхождение с Weborama за период (владелец 27.09.2026). */}
+                    {r.wr_mismatch?.level === 'bad' && (
+                      <span title={r.wr_mismatch.hint} style={{ fontSize: 9.5, padding: '1px 6px',
+                        borderRadius: 6, background: 'var(--danger-tint)', color: 'var(--danger-fg)',
+                        border: '1px solid var(--danger-border)', whiteSpace: 'nowrap',
+                        alignSelf: 'flex-start', fontWeight: 700 }}>
+                        {r.wr_mismatch.reason === 'wr_higher' ? '⛔ WR больше нашего факта'
+                          : '⛔ Большое расхождение с WR'}</span>
+                    )}
+                    {/* Красная метка: объёмы по площадкам больше плана РК — запуск РК и
+                        площадок заблокирован, пока аккаунт их не уменьшит. */}
+                    {!!r.volumes?.blocked && (
+                      <span title={r.volumes.message} style={{ fontSize: 9.5, padding: '1px 6px',
+                        borderRadius: 6, background: 'var(--danger-tint)', color: 'var(--danger-fg)',
+                        border: '1px solid var(--danger-border)', whiteSpace: 'nowrap',
+                        alignSelf: 'flex-start', fontWeight: 700 }}>
+                        ⛔ объёмы больше плана РК</span>
+                    )}
                     {!!flags.length && (
                       <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
                         {flags.map(([t, hint]) => (
@@ -816,6 +850,21 @@ export default function TrafficDashboard() {
                           {[[false, 'по площадкам'], [true, 'по креативам']].map(([v, l]) => (
                             <button key={l} style={btnSm(byCr === v)} onClick={() => setByCr(v)}>{l}</button>
                           ))}
+                          {/* Архив чистых креативов сделки — тот же, что «Скачать» у
+                              документа «Креативы» в карточке (владелец 27.09.2026). */}
+                          {!!r.volumes?.blocked && (
+                            <span style={{ ...btnSm(false), whiteSpace: 'nowrap', cursor: 'default',
+                              color: 'var(--danger-fg)', borderColor: 'var(--danger-border)',
+                              background: 'var(--danger-tint)' }} title={r.volumes.message}>
+                              ⛔ объёмы больше плана РК
+                            </span>
+                          )}
+                          {!!r.creatives_ready && (
+                            <button style={{ ...btnSm(false), whiteSpace: 'nowrap' }} title="Архив с чистыми архивами всех креативов сделки"
+                              onClick={() => downloadDealCreatives(r.deal_id, setMsg)}>
+                              ↓ креативы · {r.creatives_ready}
+                            </button>
+                          )}
                         </span>
                         {d && (
                           <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
@@ -875,7 +924,10 @@ export default function TrafficDashboard() {
                                     <span style={{ fontFamily: MONO, fontSize: 10.5 }}>{pl.domain}</span>
                                     <StatusPill value={pl.status} />
                                     <span style={{ fontFamily: MONO, fontSize: 10,
-                                      color: 'var(--text-faint)' }}>{num(pl.plan_show)}</span>
+                                      color: pl.fixed ? 'var(--accent)' : 'var(--text-faint)',
+                                      fontWeight: pl.fixed ? 700 : undefined }}
+                                      title={pl.fixed ? 'Объём задан в блоке креатива' : undefined}>
+                                      {pl.fixed ? 'фикс ' : ''}{num(pl.plan_show)}</span>
                                   </span>
                                 ))}
                               </div>
@@ -905,10 +957,14 @@ export default function TrafficDashboard() {
                           </div>
                           {d.placements.map(p => (
                             <Fragment key={p.id}>
+                            {/* Объём площадки против плана РК (27.09.2026): > 50 % — жёлтым,
+                                > 100 % — красным; причина в подсказке. */}
                             <div onClick={() => setOpenPlace(x => (x === p.id ? null : p.id))}
+                              title={volTitle(d.volumes, p.publisher_id)}
                               style={{ display: 'grid', gap: 9, alignItems: 'center', cursor: 'pointer',
                               gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 52px 68px',
-                              padding: '7px 0', borderBottom: '1px solid var(--border-row)' }}>
+                              padding: '7px 0', borderBottom: '1px solid var(--border-row)',
+                              background: volTint(d.volumes, p.publisher_id) }}>
                               <span style={{ fontFamily: MONO, fontSize: 11.5, overflow: 'hidden',
                                 textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {p.domain || p.publisher}
@@ -929,7 +985,13 @@ export default function TrafficDashboard() {
                                 {p.no_weight ? 'нет индекса' : num(p.weight)}</span>
                               <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right' }}>
                                 {p.share ? `${(p.share * 100).toFixed(1)} %` : DASH}</span>
-                              <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right' }}>
+                              {/* Объём, заданный в блоке креатива (владелец 25.09.2026):
+                                  площадка получает ровно его, остаток РК — по весам. */}
+                              <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right',
+                                color: p.fixed ? 'var(--accent)' : undefined, fontWeight: p.fixed ? 700 : undefined }}
+                                title={p.fixed ? 'Объём задан в блоке креатива сделки — площадка получает ровно его, остаток плана РК делится по весам' : undefined}>
+                                {!!p.fixed && <span style={{ fontSize: 8.5, letterSpacing: '.06em', marginRight: 4,
+                                  padding: '1px 4px', borderRadius: 4, background: 'var(--accent-tint)' }}>ФИКС</span>}
                                 {num(p.plan_show)}</span>
                               <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right',
                                 color: p.fact_shows == null ? 'var(--text-faint)' : 'var(--text-primary)' }}>
@@ -1089,22 +1151,48 @@ export default function TrafficDashboard() {
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14,
                               marginTop: 12, borderTop: '1px solid var(--border-inner)' }}>
                               {[['сегодня', stat[r.id].totals.today], ['всего за период', stat[r.id].totals.period]]
-                                .map(([l, t]) => (
+                                .map(([l, t], i, _a, T = stat[r.id].totals,
+                                       cover = T.wr_placements && T.wr_placements < T.placements
+                                         ? `по ${T.wr_placements} из ${T.placements} площадок` : null) => (
                                   /* Верхний отступ равен отступу плашки цели: три
                                      заголовка обязаны стоять на одной линии, а плашку
                                      подтягивать вверх нельзя — она наезжает на строку
                                      над блоком. Значит опускаем соседей, а не поднимаем её. */
-                                  <span key={l} style={{ display: 'flex', flexDirection: 'column',
-                                    gap: 3, paddingTop: 10 }}>
+                                  /* «Факт | WR» и строка расхождения (владелец 27.09.2026):
+                                     Weborama — независимая сверка, в факт не входит. Цвет
+                                     расхождения — сервера: до порога зелёный, до двух
+                                     порогов жёлтый, дальше или WR больше нашего — красный. */
+                                  <span key={l} style={{ display: 'grid',
+                                    gridTemplateColumns: 'minmax(0,1fr) auto auto', columnGap: 12,
+                                    rowGap: 3, paddingTop: 10, alignContent: 'start' }}>
                                     <span style={{ ...CAP, marginBottom: 0 }}>{l}</span>
-                                    {[['Показы', num(t.shows)], ['Переходы', num(t.clicks)],
-                                      ['CTR', t.ctr == null ? DASH : `${t.ctr} %`]].map(([a, b]) => (
-                                        <span key={a} style={{ display: 'flex', justifyContent: 'space-between',
-                                          fontSize: 11.5 }}>
-                                          <span style={{ color: 'var(--text-muted)' }}>{a}</span>
-                                          <span style={{ fontFamily: MONO }}>{b}</span>
-                                        </span>
+                                    <span style={{ ...CAP, marginBottom: 0, textAlign: 'right' }}>факт</span>
+                                    <span style={{ ...CAP, marginBottom: 0, textAlign: 'right' }}>wr</span>
+                                    {[['Показы', num(t.shows), t.wr ? num(t.wr.shows) : DASH],
+                                      ['Переходы', num(t.clicks), t.wr ? num(t.wr.clicks) : DASH],
+                                      ['CTR', t.ctr == null ? DASH : `${t.ctr} %`,
+                                        t.wr?.ctr == null ? DASH : `${t.wr.ctr} %`]].map(([a, b, w]) => (
+                                        <Fragment key={a}>
+                                          <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{a}</span>
+                                          <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right' }}>{b}</span>
+                                          <span style={{ fontFamily: MONO, fontSize: 11.5, textAlign: 'right',
+                                            color: 'var(--text-secondary)' }}>{w}</span>
+                                        </Fragment>
                                       ))}
+                                    <span style={{ fontSize: 11.5, color: 'var(--text-muted)',
+                                      borderTop: '1px solid var(--border-inner)', paddingTop: 3 }}>Расхождение с WR</span>
+                                    <span title={t.mismatch?.hint || 'Weborama по этому периоду не измеряла'}
+                                      style={{ gridColumn: 'span 2', textAlign: 'right', fontFamily: MONO,
+                                        fontSize: 11.5, fontWeight: 700, borderTop: '1px solid var(--border-inner)',
+                                        paddingTop: 3, color: MISMATCH_FG[t.mismatch?.level] || 'var(--text-faint)' }}>
+                                      {t.mismatch ? `${String(t.mismatch.pct).replace('.', ',')} %` : DASH}
+                                    </span>
+                                    {/* Охват сверки: Weborama мерила часть площадок —
+                                        процент посчитан по ним, не по всей РК. */}
+                                    {!!t.mismatch && !!cover && (
+                                      <span style={{ gridColumn: '1 / -1', fontSize: 10.5,
+                                        color: 'var(--text-faint)', textAlign: 'right' }}>{cover}</span>
+                                    )}
                                   </span>
                                 ))}
                               {/* Цель выделена плашкой — тем же приёмом, что «Услуги от»

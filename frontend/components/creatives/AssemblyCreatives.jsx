@@ -1167,7 +1167,7 @@ function NotePeek({ who, text }) {
 
 /* ── строка площадки ───────────────────────────────────────────────────── */
 function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt, onUrl, onRequest,
-                        onVerdict, onRework, onShots, onPlan }) {
+                        onVerdict, onRework, onShots, onPlan, vol }) {
   const [url, setUrl] = useState(r.advertiser_url || '')
   const [editing, setEditing] = useState(false)
   const [urlErr, setUrlErr] = useState('')
@@ -1212,9 +1212,18 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
   const answerable = isAdmin && canApprove && sent && !r.verdict && r.traffic_verdict === 'ок' && !gone
   const done = ROW_GROUP[status] === 'ok'
 
+  // Объём площадки против плана РК (владелец 27.09.2026): > 50 % — жёлтым, > 100 % — красным.
+  const volLevel = vol?.by_publisher?.[String(r.publisher_id)]
+  const volTint = volLevel?.level === 'over' ? CB.dangerTint
+    : volLevel?.level === 'warn' ? CB.warnTint : undefined
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: CB_COLS, gap: 12, alignItems: 'center',
-      minHeight: 44, padding: '6px 8px', borderBottom: `1px solid ${CB.row}`, opacity: gone ? 0.5 : 1 }}>
+    <div title={volLevel && volLevel.level !== 'ok'
+      ? `На площадке заложено ${Math.round((volLevel.share || 0) * 100)} % плана РК`
+        + (volLevel.level === 'over' ? ' — больше плана, действия по сделке заблокированы' : '')
+      : undefined}
+      style={{ display: 'grid', gridTemplateColumns: CB_COLS, gap: 12, alignItems: 'center',
+      minHeight: 44, padding: '6px 8px', borderBottom: `1px solid ${CB.row}`, opacity: gone ? 0.5 : 1,
+      background: volTint }}>
 
       {/* Площадка: квадратный маркер статуса (до отправки — крестик «убрать»), домен,
           поверхность; код площадки второй строкой, если выдан. */}
@@ -1383,7 +1392,7 @@ const preparedNote = (list) => {
   return parts.length ? 'Баннер подготовлен для DSP: ' + parts.join('; ') + '.' : null
 }
 
-function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded, handlers, rkPlan }) {
+function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded, handlers, rkPlan, vol }) {
   const fileRef = useRef(null)
   const letterRef = useRef(null)
   const [busy, setBusy] = useState(false)
@@ -1395,6 +1404,12 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
   const [filter, setFilter] = useState('all')
   const [pixErr, setPixErr] = useState('')
   const [copied, setCopied] = useState(false)
+  /* Кто сделал баннер — спрашивается ПЕРЕД выбором файла (владелец 27.09.2026): «наш»
+     собран под наш код, «рекламодатель» может быть кривым, и трафик увидит плашку.
+     Ответ держим в ссылке: выбор файла приходит отдельным событием. */
+  const [askOrigin, setAskOrigin] = useState(false)
+  const originRef = useRef(null)
+  const pickOrigin = (v) => { originRef.current = v; setAskOrigin(false); fileRef.current?.click() }
   useEffect(() => { setName(set.title || '') }, [set.title])
 
   const saveName = async () => {
@@ -1410,7 +1425,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
 
   /* «Прикрепить креатив» создаёт версию и сразу открывает выбор файла. */
   useEffect(() => {
-    if (autoUpload && !set.files.length) { fileRef.current?.click(); onUploaded() }
+    if (autoUpload && !set.files.length) { setAskOrigin(true); onUploaded() }
   }, [autoUpload, set.files.length, onUploaded])
 
   /** Письмо о правах — ОДНО на креатив, своей ручкой: в общем списке файлов оно
@@ -1440,19 +1455,19 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
     setBusy(false)
   }
 
-  /* «Новая версия» до отправки — ЗАМЕНА материала: креатив это один материал, прежний
-     файл снимается, новый загружается. После отправки новая версия — доработка
-     отдельным креативом (кнопка «Доработка» в строке площадки). */
+  /* Креатив — ОДИН материал. «Новой версии» у загруженного нет (владелец 27.09.2026):
+     подмена под тем же креативом — потенциал для ошибок. Не тот файл — удалить креатив и
+     завести новый; после отправки новая версия — доработка («Доработка» в строке). */
   const upload = async (e) => {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
     setBusy(true); setErr(''); setPrepNote(null)
     try {
-      for (const f of set.files) await api.delete(`/launch-prep/file/${f.id}`, auth())
       const form = new FormData()
       form.append('file', file)
-      const r = await api.post(`/launch-prep/set/${set.id}/files`, form,
+      const r = await api.post(
+        `/launch-prep/set/${set.id}/files?origin=${encodeURIComponent(originRef.current || '')}`, form,
         { ...auth(), headers: { ...auth().headers, 'Content-Type': 'multipart/form-data' } })
       setPrepNote(preparedNote(r.data?.prepared))
     } catch (e2) { setErr(e2.response?.data?.detail || 'Не удалось загрузить') }
@@ -1592,6 +1607,10 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
                   {file.is_archive ? 'архив' : 'файл'} · {fileSize(file.size_bytes)}
                   {file.ratio ? ` · ${file.ratio}` : ''}
                   {file.uploaded_at ? ` · ${fmtDayOfMoment(file.uploaded_at)}` : ''}
+                  {file.origin === 'рекламодатель' && (
+                    <span style={{ color: CB.warnFg, fontWeight: 700 }}> · от рекламодателя</span>
+                  )}
+                  {file.origin === 'наш' && ' · наш баннер'}
                 </span>
               )}
             </span>
@@ -1601,11 +1620,9 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
                 <CbBtn title="Скачать файл"
                   onClick={() => downloadFile(`/launch-prep/file/${file.id}`, file.name, setErr)}>↓</CbBtn>
               )}
-              {canEdit && !sent && (
-                <CbBtn disabled={busy} onClick={() => fileRef.current?.click()}
-                  title={file ? 'Заменить материал: прежний файл снимется' : 'Загрузить материал креатива'}>
-                  {file ? 'Новая версия' : 'Загрузить'}
-                </CbBtn>
+              {canEdit && !sent && !file && (
+                <CbBtn disabled={busy} onClick={() => setAskOrigin(true)}
+                  title="Загрузить материал креатива">Загрузить</CbBtn>
               )}
             </span>
           </div>
@@ -1725,6 +1742,14 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
           <span style={{ color: CB.t4 }}> · заполнено {planFilled} из {set.recipients.length}</span>
         </span>
       </div>
+      {/* Объёмы больше плана РК: отправка трафику, смена стадии и запуск заблокированы на
+          сервере; здесь — почему и что делать (владелец 27.09.2026). */}
+      {!!vol?.blocked && (
+        <div role="alert" style={{ padding: '8px 12px', borderRadius: 10, fontSize: 12.5,
+          background: CB.dangerTint, border: `1px solid ${CB.dangerBorder}`, color: CB.danger }}>
+          ⛔ {vol.message}. Пока так, отправка трафику, «Изменить стадию» и запуск РК заблокированы.
+        </div>
+      )}
 
       {/* ── таблица: скроллится внутри блока, страница не едет ──
           Минимум 1000, а не 1300 из хендоффа: на экране 1500 таблица внутри карточки
@@ -1744,7 +1769,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
               <span style={{ textAlign: 'center' }}>Скрины</span><span style={{ textAlign: 'right' }}>Действие</span>
             </div>
             {rows.map(({ r }) => (
-              <RecipientRow key={r.target_id} r={r} set={set} canEdit={canEdit} canApprove={canApprove}
+              <RecipientRow key={r.target_id} r={r} set={set} canEdit={canEdit} canApprove={canApprove} vol={vol}
                 isAdmin={isAdmin} sent={sent} onDrop={dropTarget}
                 onTt={handlers.tt} onUrl={handlers.url} onRequest={handlers.request}
                 onVerdict={handlers.verdict} onRework={(rec) => handlers.rework(set, rec)}
@@ -1755,6 +1780,37 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
       )}
 
       {/* Вопрос о названии — перед самой отправкой; «отправить так» слева. */}
+      {askOrigin && (
+        <Modal width={480} title="Кто сделал баннер?" onClose={() => setAskOrigin(false)}
+          footer={(
+            <span style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button style={btn(false)} onClick={() => setAskOrigin(false)}>Отмена</button>
+            </span>
+          )}>
+          <div style={{ display: 'grid', gap: 10, fontSize: 13, lineHeight: 1.55 }}>
+            <div style={{ color: 'var(--text-secondary)' }}>
+              Баннер рекламодателя трафик проверит внимательнее: он не собран под наш код и может
+              быть с ошибками.
+            </div>
+            <button style={{ ...btn(false), padding: '12px 14px', textAlign: 'left' }}
+              onClick={() => pickOrigin('наш')}>
+              <b>Сделали мы</b>
+              <span style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)' }}>
+                собран под наш код и адаптацию
+              </span>
+            </button>
+            <button style={{ ...btn(false), padding: '12px 14px', textAlign: 'left',
+              borderColor: 'var(--warning-border)' }}
+              onClick={() => pickOrigin('рекламодатель')}>
+              <b>Прислал рекламодатель</b>
+              <span style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)' }}>
+                трафику — плашка «проверьте внимательнее»
+              </span>
+            </button>
+          </div>
+        </Modal>
+      )}
+
       {!!askName && (
         <Modal width={520} title={`Назвать креатив №${set.no}?`} onClose={() => setAskName(null)}
           footer={(
@@ -2014,7 +2070,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
       {data.sets.map(s => (
         <CreativeSet key={s.id} set={s} canEdit={canEdit} canApprove={canApprove} isAdmin={isAdmin}
           autoUpload={autoUploadFor === s.id} onUploaded={() => setAutoUploadFor(null)}
-          handlers={handlers} rkPlan={data.rk_plan_show} />
+          handlers={handlers} rkPlan={data.rk_plan_show} vol={data.volumes} />
       ))}
 
       {!!data.sets.length && canEdit && (

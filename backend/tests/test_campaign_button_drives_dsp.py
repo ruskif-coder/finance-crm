@@ -65,6 +65,14 @@ class _Db:
         self.rollbacks += 1
 
 
+
+@pytest.fixture(autouse=True)
+def _no_volume_guard(monkeypatch):
+    """Базы здесь нет — поддельная. Запрет по объёмам (27.09.2026) проверяется отдельно,
+    в tests/test_volume_check.py; здесь он не относится к делу."""
+    from app.launch_prep import volumes
+    monkeypatch.setattr(volumes, "guard", lambda db, deal_id: None)
+
 def _camp(xx=XX, status="готова"):
     return SimpleNamespace(id=5, deal_id=1, status=status, ms_campaign_xxhash=xx,
                            month=date(2026, 10, 1), date_start=date(2026, 10, 1),

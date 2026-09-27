@@ -22,6 +22,14 @@ import { overlayClose } from '@/lib/overlay'
 
    Незалитое зеркало (`synced:false`) оставляет ручной ввод: справочник — удобство,
    а отнимать единственный рабочий путь удобство не вправе. */
+// Базовый код ККТУ (владелец 27.09.2026): у нас почти все бренды — лекарства, и кнопка
+// «Подставить» ставит его одним нажатием вместо поиска по трёмстам кодам.
+export const BASE_KKTU = { code: '12.2.2', name: 'Лекарственные препараты' }
+
+const baseBtn = { marginLeft: 'auto', padding: '4px 10px', borderRadius: 8, cursor: 'pointer',
+  fontSize: 12, fontWeight: 600, border: '1px solid var(--accent-border)',
+  background: 'var(--accent-tint)', color: 'var(--accent)', fontFamily: UI, whiteSpace: 'nowrap' }
+
 export function KktuPicker({ value, onPick }) {
   const [q, setQ] = useState('')
   const [state, setState] = useState({ loading: true, synced: true, items: [], total: 0, shown: 0 })
@@ -42,7 +50,11 @@ export function KktuPicker({ value, onPick }) {
   if (!state.loading && !state.synced) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-        <div style={head}>{label}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={head}>{label}</div>
+          <button type="button" style={baseBtn} onClick={() => onPick(BASE_KKTU.code)}
+            title={`Подставить базовый код: ${BASE_KKTU.code} · ${BASE_KKTU.name}`}>Подставить {BASE_KKTU.code}</button>
+        </div>
         <input style={{ ...inp, width: 160, fontFamily: MONO }} placeholder="58.13.12"
           value={value} onChange={e => onPick(e.target.value)} />
         <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
@@ -54,15 +66,20 @@ export function KktuPicker({ value, onPick }) {
   }
 
   const chosen = state.items.find(i => i.code === value)
+    || (value === BASE_KKTU.code ? BASE_KKTU : null)
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={head}>{label}</div>
         {!!value && (
           <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
             {value}{chosen ? ` · ${chosen.name}` : ''}
           </span>
         )}
+        <button type="button" style={baseBtn} onClick={() => onPick(BASE_KKTU.code)}
+          title={`Подставить базовый код: ${BASE_KKTU.code} · ${BASE_KKTU.name}`}>
+          Подставить {BASE_KKTU.code}
+        </button>
       </div>
 
       <input style={{ ...inp, width: '100%' }} value={q} onChange={e => setQ(e.target.value)}
@@ -81,10 +98,17 @@ export function KktuPicker({ value, onPick }) {
               background: it.code === value ? 'var(--accent-soft)' : 'transparent' }}>
             <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, minWidth: 56,
               color: it.code === value ? 'var(--accent)' : 'var(--text-secondary)' }}>{it.code}</span>
-            <span style={{ fontSize: 12.5, lineHeight: 1.35 }}>
+            <span style={{ fontSize: 12.5, lineHeight: 1.35, flex: 1 }}>
               {it.name}
               {!!it.path && <span style={{ color: 'var(--text-faint)' }}> · {it.path}</span>}
             </span>
+            {/* Сколько брендов с этим кодом — по нему список и отсортирован. */}
+            {!!it.uses && (
+              <span title="Столько брендов в системе с этим кодом"
+                style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                {it.uses} бр.
+              </span>
+            )}
           </div>
         ))}
       </div>

@@ -46,7 +46,10 @@ OWN = ("demo", "dsp", "manual", "ms")
 # Два источника, а не один: складываются они одинаково, но доверие к ним разное — одно
 # измерено, другое перепечатано человеком с чужого файла. На экране числа выглядят
 # одинаково, и различить их потом можно будет только здесь.
-VERIFIER = ("weborama", "weborama_manual")
+# `weborama_demo` — демо-наполнение стенда (скрипт 2026-09-27_demo_weborama), как `demo`
+# у нашего счётчика: отдельный источник, чтобы демо-цифры не смешались с настоящими и
+# убирались одним DELETE по источнику.
+VERIFIER = ("weborama", "weborama_manual", "weborama_demo")
 
 KNOWN = tuple(sorted(set(OWN) | set(VERIFIER)))
 
@@ -82,3 +85,62 @@ def mismatch_pct(own, verifier):
     if not own or verifier is None:
         return None
     return round((own - verifier) / own * 100, 1)
+
+
+def comparable(own_total, own_by_placement, ver):
+    """Что с чем сверять: `(наш факт, WR, сколько площадок покрыто)`.
+
+    Верификатор покрывает не все площадки: соответствие «их вставка → наша площадка»
+    есть только у тех, что заводили мы. Делить их сумму на НАШ факт по всей РК —
+    арифметически верно и по смыслу ложно: замер 14.09.2026 дал «77 %» там, где по
+    единственной покрытой площадке было 10 %. Поэтому, если Weborama мерила площадки,
+    сравниваются ТОЛЬКО они; если замер есть лишь по РК целиком (строки без площадки —
+    ручной ввод с их отчёта), сравнение идёт по всей РК.
+
+    `own_by_placement` — {placement_id: наш факт} по площадкам РК; `ver` — ответ
+    `traffic_dashboard._verifier` для этой РК ({shows, by_placement}) или None.
+    Одно правило на карточку сделки, строку и график дашборда трафика (ревью 27.09.2026).
+    """
+    ver = ver or {}
+    by = ver.get("by_placement") or {}
+    covered = [pid for pid in by if pid in own_by_placement]
+    if covered:
+        return (sum(own_by_placement[pid] or 0 for pid in covered),
+                sum(by[pid] or 0 for pid in covered), len(covered))
+    return own_total, ver.get("shows"), 0
+
+
+# ── цвет расхождения с верификатором (владелец 27.09.2026) ─────────────────────
+#
+# Порог — из плановых показателей сделки (`goals.weborama`, поле свободного ввода: «до
+# 10 %», «7,5»); числа там нет — базовые 10 %. Шкала: до порога зелёный, до двух порогов
+# жёлтый (при 10 % — 10–20 %), дальше красный. Weborama больше нашего факта — красный
+# отдельно: «больше нашего не видел никогда», значит недосчитали МЫ — сбой съёма.
+# Одно правило на дашборд трафика и блок «Рекламная кампания» в карточке сделки.
+DEFAULT_MISMATCH_LIMIT = 10
+
+
+def goal_limit(goals) -> float:
+    import re
+    raw = str((goals or {}).get("weborama") or "").replace(",", ".")
+    m = re.search(r"\d+(?:\.\d+)?", raw)
+    return float(m.group(0)) if m else DEFAULT_MISMATCH_LIMIT
+
+
+def mismatch_level(pct, limit):
+    """{level: ok|warn|bad, reason, hint} по проценту расхождения; None — сверять нечем."""
+    if pct is None:
+        return None
+    lim = limit or DEFAULT_MISMATCH_LIMIT
+    if pct < 0:
+        return {"level": "bad", "reason": "wr_higher", "limit": lim,
+                "hint": "Weborama насчитала больше нашего факта — проблема со съёмом "
+                        "статистики на нашей стороне"}
+    if pct <= lim:
+        return {"level": "ok", "reason": None, "limit": lim,
+                "hint": f"в пределах допустимого ({lim:g} %)"}
+    if pct <= 2 * lim:
+        return {"level": "warn", "reason": "over_limit", "limit": lim,
+                "hint": f"больше допустимых {lim:g} %"}
+    return {"level": "bad", "reason": "over_double", "limit": lim,
+            "hint": f"больше {2 * lim:g} % — вдвое выше допустимого"}

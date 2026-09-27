@@ -11,7 +11,8 @@ import { dm, grp0 } from '@/lib/salesFormat'
 import { overlayClose } from '@/lib/overlay'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
 import StageRequirements from '@/components/sales/StageRequirements'
-import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc } from '@/lib/dealDocs'
+import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc, downloadDealCreatives,
+  creativesMeta } from '@/lib/dealDocs'
 import { downloadMp } from '@/lib/mpDownload'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
@@ -1214,23 +1215,11 @@ export default function DealCard() {
               </div>
               )}
 
-              {/* Чего не хватает для следующего шага — ДО нажатия кнопки. Показываем
-                  только невыполненное: полный список с галочками на каждой карточке
-                  превращается в шум, а «чего не хватает» читается за секунду. */}
-              {!isLost && !!(nextReq?.lines || []).some(l => l.state !== 'ok') && (
-                <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 10,
-                  background: nextReq.allowed ? 'var(--bg-subtle)' : 'var(--danger-tint)',
-                  border: `1px solid ${nextReq.allowed ? 'var(--border-card)' : 'var(--danger-border)'}` }}>
-                  <StageRequirements
-                    onCard
-                    lines={nextReq.lines.filter(l => l.state !== 'ok')}
-                    title={nextReq.allowed
-                      ? `Для перехода в «${nextReq.target?.name || '—'}»`
-                      : `Не пускает в «${nextReq.target?.name || '—'}»`} />
-                </div>
-              )}
               </div>
 
+              {/* Кнопка — в строке полосы стадий, а не рядом со всем блоком (владелец
+                  27.09.2026): когда ниже раскрыт список требований, она уезжала к его
+                  середине. */}
               {canEdit && (
                 <button onClick={() => setMoveOpen(true)} title="Двинуть сделку по каталогу стадий"
                   style={{ display: 'inline-flex', alignItems: 'center', height: 38, padding: '0 18px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: 'var(--bg-card)', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flex: '0 0 auto', fontFamily: UI }}>
@@ -1238,6 +1227,23 @@ export default function DealCard() {
                 </button>
               )}
             </div>
+
+            {/* Чего не хватает для следующего шага — ДО нажатия кнопки. Показываем
+                только невыполненное: полный список с галочками на каждой карточке
+                превращается в шум, а «чего не хватает» читается за секунду.
+                Во всю ширину карточки, пункты в две колонки. */}
+            {!isLost && !!(nextReq?.lines || []).some(l => l.state !== 'ok') && (
+              <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10,
+                background: nextReq.allowed ? 'var(--bg-subtle)' : 'var(--danger-tint)',
+                border: `1px solid ${nextReq.allowed ? 'var(--border-card)' : 'var(--danger-border)'}` }}>
+                <StageRequirements
+                  onCard columns={2}
+                  lines={nextReq.lines.filter(l => l.state !== 'ok')}
+                  title={nextReq.allowed
+                    ? `Для перехода в «${nextReq.target?.name || '—'}»`
+                    : `Не пускает в «${nextReq.target?.name || '—'}»`} />
+              </div>
+            )}
           </div>
 
           {/* ── Две колонки ── */}
@@ -1589,6 +1595,18 @@ export default function DealCard() {
                   // «Создать», проваливающее в сборку. Загрузку файла для неё оставлять
                   // нельзя: два источника одного документа разъедутся, и какой из них
                   // ушёл клиенту, будет не установить.
+                  // «Креативы» — не файл сделки, а архив прикреплённых на сборке: только
+                  // «Скачать», загрузки и замены здесь нет (владелец 27.09.2026).
+                  if (kind === 'creatives') {
+                    const n = d.creatives_ready || 0
+                    return (
+                      <DocRow key={kind} ok={n > 0} title={label} meta={creativesMeta(n)}
+                        right={n > 0 ? (
+                          <span onClick={() => downloadDealCreatives(d.id)} style={DOC_ACT}
+                            title="Архив с чистыми архивами всех креативов сделки">Скачать</span>
+                        ) : null} />
+                    )
+                  }
                   if (kind === 'ds') {
                     const ann = annex
                     return (

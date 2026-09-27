@@ -21,7 +21,7 @@
 import { useEffect, useState } from 'react'
 import { MONO, UI, PortalPopover, Z, btnSm } from '@/components/salesTableKit'
 import Section from '@/components/deal/Section'
-import { Dynamics, GOAL_LABELS, PaceBar, StatusPill, pctTone } from '@/components/traffic/dashboardKit'
+import { Dynamics, GOAL_LABELS, MISMATCH_FG, PaceBar, StatusPill, pctTone } from '@/components/traffic/dashboardKit'
 import { grp } from '@/lib/salesFormat'
 import api, { auth } from '@/lib/api'
 
@@ -80,25 +80,18 @@ const Numbers = ({ d }) => (
       hint={d.mismatch_pct == null
         ? (d.pixel_mode === 'external' ? 'внешний тег — внесите на сверке'
           : 'Weborama не измеряла')
-        : (d.verifier_placements < d.placements
-          ? `по ${d.verifier_placements} из ${d.placements} площадок`
-          : `Weborama ${num(d.verifier_shows)}`)} />
+        : d.mismatch?.reason === 'wr_higher' ? d.mismatch.hint
+          : (d.verifier_placements < d.placements
+            ? `по ${d.verifier_placements} из ${d.placements} площадок`
+            : `Weborama ${num(d.verifier_shows)}`)} />
   </div>
 )
 
-/** Порог из KPI приёмки, если он задан числом. «до 10 %» — тоже число, «по факту» — нет. */
-const goalLimit = (d) => {
-  const raw = String((d.goals && d.goals.weborama) || '').replace(',', '.')
-  const m = raw.match(/\d+(\.\d+)?/)
-  return m ? Number(m[0]) : null
-}
-
-const mismatchTone = (d) => {
-  if (d.mismatch_pct == null) return 'var(--text-cap)'
-  const lim = goalLimit(d)
-  if (lim == null) return null
-  return Math.abs(d.mismatch_pct) > lim ? 'var(--danger-fg)' : 'var(--income-fg)'
-}
+// Цвет считает сервер (`stat_sources.mismatch_level`, владелец 27.09.2026): порог — цель
+// сделки или базовые 10 %; до порога зелёный, до двух порогов жёлтый, дальше красный;
+// Weborama больше нашего факта — красный (сбой съёма у нас).
+const mismatchTone = (d) => (d.mismatch_pct == null ? 'var(--text-cap)'
+  : MISMATCH_FG[d.mismatch?.level] || null)
 
 /** Полоса выполнения с риской «где должны быть по календарю». */
 const Pace = ({ d }) => (

@@ -4,7 +4,8 @@ import { useRouter } from 'next/router'
 import api, { auth } from '../../lib/api'
 import { BITRIX_DEAL_URL } from '../../lib/salesLayers'
 import { MONO, UI, CAP, docCard, addBtn, iconSq, DocIcon, DownloadIcon, EditIcon, GenTitleBtn, StageLayerBar } from '../salesTableKit'
-import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc } from '../../lib/dealDocs'
+import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc, downloadDealCreatives,
+  creativesMeta } from '../../lib/dealDocs'
 import { downloadMp } from '../../lib/mpDownload'
 import { grp } from '@/lib/salesFormat'
 import { fmtDateTimeShort } from '@/lib/dates'
@@ -168,9 +169,20 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
         {/* Реальные документы сделки: загрузка/замена/скачивание/удаление.
             Список видов — общий с карточкой и доской (lib/dealDocs); битриксовые
             (договор) сюда не берём, они выше отдельными строками. */}
-        {DEAL_DOCS.filter(x => !x.bx).map(({ kind, label }) => {
+        {DEAL_DOCS.filter(x => !x.bx).map(({ kind, label, creatives }) => {
           const f = (d.files || []).find(x => x.kind === kind)
           const busy = docBusy === kind
+          // «Креативы» — архив прикреплённых на сборке, только «Скачать» (27.09.2026).
+          if (creatives) {
+            const n = d.creatives_ready || 0
+            return (
+              <DocLine key={kind} title={label} empty={!n} meta={creativesMeta(n)}
+                right={n > 0 ? (
+                  <button style={iconSq(false)} title="Скачать архив со всеми креативами"
+                    onClick={() => downloadDealCreatives(d.id)}><DownloadIcon /></button>
+                ) : undefined} />
+            )
+          }
           return (
             <DocLine key={kind} title={label} empty={!f}
               meta={busy ? 'загрузка…' : (f ? f.filename : '')}

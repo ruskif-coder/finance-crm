@@ -149,4 +149,16 @@ def no_network(monkeypatch):
         raise NetworkInTest("тест пытался открыть SMTP — подмените отправку в тесте")
     monkeypatch.setattr(smtplib, "SMTP", no_smtp)
     monkeypatch.setattr(smtplib, "SMTP_SSL", no_smtp)
+
+    # Отправка креатива трафику сама заводит копию нацеливания в DSP (`ensure_quietly`) и
+    # глушит любой сбой — поэтому заслон выше её ловил, но тест оставался зелёным, и
+    # попыток выйти наружу набиралось два десятка за прогон (замер 27.09.2026). Настоящий
+    # клиент DSP в тестах не создаётся вовсе: отказ с первого шага, как при недоступном
+    # DSP. Тесты нацеливания передают свой клиент явно — их это не касается.
+    from app.dsp import targeting_creative as _tc
+    from app.dsp.client import MsError as _MsError
+
+    def no_dsp_client(*a, **k):
+        raise _MsError("в тестах DSP недоступен — передайте клиент явно")
+    monkeypatch.setattr(_tc, "_client", no_dsp_client)
     yield

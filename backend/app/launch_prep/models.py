@@ -254,6 +254,9 @@ class LaunchPrepCreativeFile(Base):
     entry_path = Column(Text)
     uploaded_at = Column(DateTime, server_default=func.now())
     uploaded_by = Column(Integer, ForeignKey("users.id"))
+    # Кто сделал баннер: 'наш' / 'рекламодатель' (миграция 2026-09-27_creative_file_origin).
+    # От рекламодателя — трафику плашка «проверьте внимательнее». Пусто — загружено до 27.09.
+    origin = Column(String(16))
 
     creative_set = relationship("LaunchPrepCreativeSet", back_populates="files")
 

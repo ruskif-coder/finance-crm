@@ -27,6 +27,15 @@ APP = Path(__file__).resolve().parent.parent / "app"
 TARGET = SimpleNamespace(id=7, name="Бронь", phase=None, is_terminal=False)
 
 
+
+@pytest.fixture(autouse=True)
+def _no_volume_guard(monkeypatch):
+    """Базы здесь нет — поддельная. Запрет по объёмам (27.09.2026) проверяется отдельно,
+    в tests/test_volume_check.py; здесь он не относится к делу."""
+    from app.launch_prep import volumes
+    monkeypatch.setattr(volumes, "guard", lambda db, deal_id: None)
+    monkeypatch.setattr(volumes, "check", lambda db, deal_id: {"blocked": False})
+
 def _plan(**kw):
     return stage_move.Plan(target=TARGET, current=None, **kw)
 

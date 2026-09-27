@@ -286,3 +286,30 @@ def test_relinking_to_the_same_locked_deal_is_a_no_op(db, locked_plan, plain):
     got = mp.link_deal(locked_plan.id, mp.LinkDealIn(deal_id=locked_plan.deal_id), db=db,
                        current_user=plain)
     assert got["deal_id"] == locked_plan.deal_id and got.get("unchanged") is True
+
+
+def _role_user(master, *, key, is_master, group):
+    return SimpleNamespace(id=master.id, name="прибор фиксации", email=master.email,
+                           role=SimpleNamespace(key=key, is_master=is_master, staff_group=group),
+                           role_id=None)
+
+
+def test_only_admin_and_master_account_may_edit_a_locked_plan(db, locked_plan, master):
+    """Владелец 27.09.2026: после фиксации правка — только у админа или мастер-аккаунта.
+    Мастер сейлз и мастер трафика — тоже «мастера», но план им не открыт."""
+    for key, group in (("role_5", "seller"), ("role_12", "traffic")):
+        with pytest.raises(HTTPException) as e:
+            mp.save_media_plan(_payload(db, locked_plan, title=(locked_plan.title or "") + " x"),
+                               db=db, current_user=_role_user(master, key=key, is_master=True,
+                                                              group=group))
+        assert e.value.status_code == 409, key
+        assert "мастер-аккаунт" in e.value.detail
+    acc = _role_user(master, key="role_9", is_master=True, group="account")
+    mp.save_media_plan(_payload(db, locked_plan, title=(locked_plan.title or "") + " ✎"),
+                       db=db, current_user=acc)
+    assert plan_lock.may_edit_locked(acc) and plan_lock.may_edit_locked(master)
+
+
+def test_notice_says_what_to_do_now():
+    assert "сделайте это сейчас" in plan_lock.NOTICE
+    assert "администратор или мастер-аккаунт" in plan_lock.NOTICE

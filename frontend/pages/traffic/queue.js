@@ -617,6 +617,15 @@ export default function TrafficQueue() {
                     {g.set.form === 'BannerHtml5' ? 'Banner Html5' : g.set.form}
                   </span>
                 )}
+                {/* Баннер прислал рекламодатель (владелец 27.09.2026): он не собран под
+                    наш код и может быть с ошибками. Только плашка — шага «проверил» нет. */}
+                {!!g.set.from_advertiser && (
+                  <span style={{ ...pill(...TONE.warn), fontSize: 11.5, whiteSpace: 'nowrap',
+                    cursor: 'default' }}
+                    title="Баннер прислал рекламодатель, а не мы: он не собран под наш код и может быть с ошибками. Проверьте предпросмотр, размеры и клик особенно внимательно">
+                    ⚠ баннер рекламодателя · проверьте внимательнее
+                  </span>
+                )}
 
                 <FactLine rows={g.rows} />
 

@@ -118,9 +118,29 @@ def plan_move(db, deal, target, catalog: Optional[Catalog] = None) -> Plan:
                           and not target.is_terminal
                           and not deal.realization_pipeline_id)
     lines = sc.evaluate(db, deal, checks_for(db, target.id))
+    if not is_back and not target.is_terminal:
+        lines = lines + _volumes_line(db, deal)
     return Plan(target=target, current=cat.by_id.get(cur_id), is_back=is_back,
                 needs_pipeline=needs_pipeline, lines=lines,
                 blockers=sc.blockers(lines))
+
+
+def _volumes_line(db, deal) -> list:
+    """Объёмы по площадкам больше плана РК — вперёд не пускаем (владелец 27.09.2026).
+
+    Строкой-блокером здесь, а не отказом в диалоге: `plan_move` общий для карточки,
+    массовой правки и автоматики, и запрет обязан видеть каждый путь. Назад и в терминал
+    не запирает — сделку с превышением можно вернуть и объявить сорвавшейся. Мастер
+    проводит мимо с причиной, как любое требование. Пустой список, если превышения нет:
+    строка «в порядке» на каждой стадии была бы шумом."""
+    from app.launch_prep import volumes
+    st = volumes.check(db, deal.id)
+    if not st["blocked"]:
+        return []
+    return [sc.Line(key="volumes_within_plan", title="Объёмы по площадкам в пределах плана РК",
+                    hint="Уменьшите объёмы площадок в блоке креатива на «Сборке»",
+                    is_blocking=True, where="Сборка · креативы",
+                    result=sc.Result(sc.NOT_YET, st["message"] or ""))]
 
 
 def apply_move(db, deal, target, user, *, reason: str, catalog: Optional[Catalog] = None,

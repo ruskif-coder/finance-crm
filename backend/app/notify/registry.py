@@ -430,6 +430,21 @@ register(Event(
 ))
 
 register(Event(
+    key="volumes_over_plan", direction="account", group="Рекламная кампания",
+    title="Объёмы по площадкам превышают план РК",
+    description=("Владелец 27.09.2026. Аккаунт задал объёмы площадкам в блоке креатива, а "
+                 "план РК в медиаплане потом уменьшили — сумма объёмов стала больше плана. "
+                 "Пока так, заблокированы отправка трафику, «Изменить стадию», запуск РК и "
+                 "площадок: аккаунту — уменьшить объёмы, трафику — знать, почему не "
+                 "запускается. Уходит в момент, когда превышение ПОЯВИЛОСЬ, а не на каждом "
+                 "сохранении."),
+    tone="bad", action="Открыть сделку", widget_group="Сделки", scan=False,
+    recipients=[{"type": "resolver", "value": "account_manager"},
+                {"type": "staff_group", "value": "traffic"}],
+    channels={"app": True},
+))
+
+register(Event(
     key="weborama_pixel_needed", direction="traffic", group="Рекламная кампания",
     title="По сделке нужен пиксель Weborama",
     description=("Аккаунт включил доп. параметр РК «нужен пиксель Weborama» (владелец "

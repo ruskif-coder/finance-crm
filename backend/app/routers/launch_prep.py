@@ -42,7 +42,8 @@ from sqlalchemy.orm import Session
 from app.files_safe import existing_upload_path, inside_uploads, remove_upload
 from app.audit import log_action
 from app.database import get_db
-from app.launch_prep import originals, sandbox
+from app.launch_prep import banner_origin, originals, sandbox
+from app.launch_prep import volumes as volumes_mod
 from app.launch_prep.models import (SET_ORIGINS, TARGET_STATE_PUBLIC, TARGET_STATES,
                                     LaunchPrepCreativeFile, LaunchPrepCreativeSet,
                                     LaunchPrepPair, LaunchPrepPairFile, LaunchPrepReview,
@@ -96,6 +97,10 @@ APPROVE = require_permission("creatives", "approve")
 # самый компонент. Отдельного права на файл не заводим: у файла нет своей судьбы, он
 # часть комплекта, и второе право означало бы, что его можно выдать без комплекта.
 FILE_VIEW = require_any_permission((("creatives", "view"), ("traffic_queue", "view")))
+# Архив креативов сделки берут и аккаунты (документы сделки), и трафик (дашборд РК) —
+# владелец 27.09.2026. Область сделки проверяется отдельно, в `_deal`.
+ARCHIVE_VIEW = require_any_permission((("creatives", "view"), ("traffic_queue", "view"),
+                                       ("traffic_dashboard", "view")))
 # Тестовую ссылку нацеливания заводит ТРАФИК — это его инструмент проверки, — а
 # пользуются ей и аккаунты. Право общее по той же причине, что и у файла: у ссылки нет
 # своей судьбы, она свойство креатива, и второе право означало бы, что её можно выдать
@@ -367,12 +372,15 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
         "test_targeting_url": s.test_targeting_url,
         # Письмо о правах — отдельно от `files` намеренно: список файлов кормит
         # предпросмотр и вывод формы креатива для ОРД, и документу там не место.
+        # Баннер рекламодателя — трафику проверить внимательнее (владелец 27.09.2026).
+        "from_advertiser": banner_origin.from_advertiser(files),
         "rights_letter": ({"name": s.rights_letter_name, "size": s.rights_letter_size,
                            "at": s.rights_letter_at} if s.rights_letter_path else None),
         "files": [{"id": f.id, "ratio": f.ratio, "name": f.original_name,
                    "size_bytes": f.size_bytes, "is_archive": f.is_archive,
                    "uploaded_at": f.uploaded_at,
                    "content_type": f.content_type,
+                   "origin": f.origin,
                    # Готовый адрес, а не токен: собрать его должен тот, кто знает домен
                    # песочницы, а знает его окружение бэкенда, не браузер.
                    "sandbox_url": sandbox.public_url(f.sandbox_token, f.entry_path)}
@@ -552,6 +560,9 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
         "surfaces": _surfaces_from_plan(db, deal),
         # План показов РК — предел для объёмов, заданных по площадкам креативов.
         "rk_plan_show": _rk_plan(db, deal.id),
+        # Объёмы по площадкам против плана РК: > 50 % у площадки — предупреждение,
+        # > 100 % — блокировка дальнейших действий (владелец 27.09.2026).
+        "volumes": volumes_mod.check(db, deal.id),
         # Состояние во внешних системах считается ОДНОЙ функцией на два экрана —
         # карточку сделки и дашборд трафика. Второй расчёт того же разошёлся бы с первым.
         "targets": [{"id": t.id, "publisher_id": t.publisher_id,
@@ -998,7 +1009,7 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
                 set_id=ns.id, ratio=f.ratio, path=f"{CREATIVES_DIR}/{stored}",
                 original_name=f.original_name, content_type=f.content_type,
                 size_bytes=f.size_bytes, is_archive=f.is_archive,
-                sandbox_token=token, entry_path=entry))
+                sandbox_token=token, entry_path=entry, origin=f.origin))
 
         # Адресуется ВЕСЬ список площадок изначального плана, а не состав того комплекта
         # (владелец 28.08.2026) — включая тех, кто в прошлый раз отказал: обстоятельства
@@ -1268,7 +1279,13 @@ def _remove_file(rel_path: str, token: str = None):
 @router.post("/set/{set_id}/files")
 async def upload_file(set_id: int, ratio: Optional[str] = None,
                       file: UploadFile = File(...), db: Session = Depends(get_db),
-                      current_user: User = Depends(EDIT)):
+                      current_user: User = Depends(EDIT), origin: Optional[str] = None):
+    # Кто сделал баннер — обязательный выбор (владелец 27.09.2026). Проверка ЗДЕСЬ, а не
+    # только на экране: иной путь загрузки иначе молча оставил бы поле пустым, и баннер
+    # рекламодателя ушёл бы трафику без плашки «проверьте внимательнее».
+    if origin not in banner_origin.ORIGINS:
+        raise HTTPException(status_code=400,
+                            detail="Укажите, кто сделал баннер: мы или рекламодатель")
     row = db.query(LaunchPrepCreativeSet).filter(LaunchPrepCreativeSet.id == set_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Комплект не найден")
@@ -1278,6 +1295,14 @@ async def upload_file(set_id: int, ratio: Optional[str] = None,
         # ровно та дыра, ради которой доработка сделана новой итерацией.
         raise HTTPException(status_code=400,
                             detail="Комплект отправлен — материал меняется новой итерацией")
+    # «Новой версии» у загруженного креатива нет (владелец 27.09.2026): подмена материала
+    # под тем же креативом — потенциал для ошибок. Креатив — один материал; не тот файл —
+    # креатив удаляется и заводится новый.
+    if db.query(LaunchPrepCreativeFile).filter(
+            LaunchPrepCreativeFile.set_id == set_id).first():
+        raise HTTPException(status_code=400,
+                            detail="У креатива уже есть материал. Если загрузили не тот — "
+                                   "удалите креатив и создайте новый")
 
     original = file.filename or "file"
     ext = os.path.splitext(original)[1].lower()
@@ -1340,7 +1365,7 @@ async def upload_file(set_id: int, ratio: Optional[str] = None,
         path=f"{CREATIVES_DIR}/{stored}",          # относительный ключ, не абсолютный путь
         original_name=original, content_type=file.content_type,
         size_bytes=len(content), is_archive=ext in ARCHIVE_EXTENSIONS,
-        sandbox_token=token, entry_path=entry)
+        sandbox_token=token, entry_path=entry, origin=origin)
     db.add(rec)
     db.flush()
 
@@ -1359,6 +1384,67 @@ async def upload_file(set_id: int, ratio: Optional[str] = None,
 # origin, а не на домене, где живёт сессия пользователя.
 INLINE_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
                 ".gif": "image/gif", ".webp": "image/webp"}
+
+
+# Недопустимое в имени файла на любой из систем, куда архив скачают.
+_BAD_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
+
+
+def creative_file_name(no, title, ext: str) -> str:
+    """Имя креатива в архиве — как в системе: «Креатив №3 — Скидка.zip», без названия —
+    «Креатив №3.zip». Одно правило на все выгрузки креативов сделки."""
+    t = _BAD_NAME.sub(' ', (title or '').strip()).strip()
+    base = f"Креатив №{no}" + (f" — {t}" if t else "")
+    return base[:150] + (ext or '')
+
+
+@router.get("/deal/{deal_id}/creatives-archive")
+def deal_creatives_archive(deal_id: int, db: Session = Depends(get_db),
+                           current_user: User = Depends(ARCHIVE_VIEW)):
+    """«Скачать» у карточки «Креативы» в документах сделки (владелец 27.09.2026).
+
+    Один архив: внутри ЧИСТЫЕ архивы всех креативов, прикреплённых на сборке, — исходник
+    клиента (`originals.path_for_publisher`), без наших вставок под DSP. Имена — из
+    системы: номер креатива и название. Файл, которого нет на диске, пропускается, а не
+    роняет всю выгрузку.
+    """
+    import io
+    import zipfile
+    from urllib.parse import quote
+    from fastapi.responses import Response
+
+    deal = _deal(db, deal_id, current_user)
+    rows = (db.query(LaunchPrepCreativeFile, LaunchPrepCreativeSet)
+            .join(LaunchPrepCreativeSet, LaunchPrepCreativeSet.id == LaunchPrepCreativeFile.set_id)
+            .filter(LaunchPrepCreativeSet.deal_id == deal.id)
+            .order_by(LaunchPrepCreativeSet.no, LaunchPrepCreativeFile.id).all())
+    buf = io.BytesIO()
+    used = set()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for f, cs in rows:
+            full = originals.path_for_publisher(f.path)
+            if not full or not os.path.exists(full):
+                continue
+            ext = os.path.splitext(f.original_name or f.path)[1].lower()
+            name = creative_file_name(cs.no, cs.title, ext)
+            k = 2
+            while name in used:                    # два файла у одного номера — не затереть
+                name = creative_file_name(cs.no, cs.title, f" ({k}){ext}")
+                k += 1
+            used.add(name)
+            z.write(full, arcname=name)
+    if not used:
+        # Две разные причины — разными словами: «нечего скачивать» и «файлы пропали с
+        # диска» чинятся по-разному.
+        raise HTTPException(status_code=404, detail=(
+            "Файлы креативов не найдены на сервере — напишите в поддержку" if rows
+            else "Креативов с материалом у сделки нет"))
+    human = f"{deal.code or deal.id} креативы.zip"
+    ascii_name = f"{deal.code or deal.id}-creatives.zip"
+    return Response(content=buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition":
+                             f"attachment; filename=\"{ascii_name}\"; "
+                             f"filename*=UTF-8''{quote(human)}"})
 
 
 @router.get("/file/{file_id}")
@@ -1602,6 +1688,9 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
     if not s:
         raise HTTPException(status_code=404, detail="Комплект не найден")
     deal = _deal(db, s.deal_id, current_user)
+    # Объёмы по площадкам больше плана РК — дальше не идём (владелец 27.09.2026).
+    from app.launch_prep import volumes
+    volumes.guard(db, deal.id)
 
     primary = (db.query(LaunchPrepReview)
                .filter(LaunchPrepReview.set_id == set_id,
@@ -2500,16 +2589,17 @@ def set_member_plan(set_id: int, target_id: int, payload: PlanIn,
     val = val or None                     # ноль — то же, что «не задан»
 
     plan = _rk_plan(db, deal.id)
-    if val and plan:
+    # Уменьшение пропускается всегда: оно положение только исправляет. Иначе при
+    # урезанном плане (объёмы уже больше него) снять превышение можно было бы лишь
+    # очисткой поля — ввод отказывал, пока ОСТАЛЬНЫЕ сами превышали план.
+    cur = _member(db, set_id, target_id)
+    reducing = bool(val and cur and cur.plan_show and val <= cur.plan_show)
+    if val and plan and not reducing:
         if val > plan:
             raise HTTPException(
                 status_code=400,
                 detail=f"Объём {_fmt_int(val)} больше плана РК ({_fmt_int(plan)} показов)")
-        others = db.execute(sa_text("""
-            SELECT COALESCE(SUM(st.plan_show), 0) FROM launch_prep_set_target st
-              JOIN launch_prep_creative_set cs ON cs.id = st.set_id
-             WHERE cs.deal_id = :d AND NOT (st.set_id = :s AND st.target_id = :t)"""),
-            {"d": deal.id, "s": set_id, "t": target_id}).scalar() or 0
+        others = volumes_mod.others_total(db, deal.id, set_id, target_id)
         if others + val > plan:
             left = max(0, int(plan) - int(others))
             raise HTTPException(
@@ -2520,6 +2610,11 @@ def set_member_plan(set_id: int, target_id: int, payload: PlanIn,
     m = _member(db, set_id, target_id, create=True)
     m.plan_show = val
     db.commit()
+    # Объём уходит в РК сразу: площадка получает его, остаток — по весам остальным
+    # (`ad/flight.distribute`). Пересборка по событию, как у вердикта и отправки: её
+    # сбой не отменяет уже сохранённый объём.
+    from app.ad import build as ad_build
+    ad_build.sync_deal_quietly(db, deal.id)
     log_action(db, current_user, "set_target_plan", "sales_deal", deal.id,
                f"креатив №{s.no}, площадка {t.publisher_id}: "
                f"{_fmt_int(val) + ' показов' if val else 'объём снят'}")

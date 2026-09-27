@@ -519,6 +519,10 @@ const CARD_SKIN = {
 /* Содержимое карточки — ОДНО на два места: график динамики в расхлопе и стена дней в
    виджете. Различается только способ поставить её на экран, поэтому разведены обёртки,
    а не две карточки: две разошлись бы по числу строк на первой же правке. */
+// Цвет расхождения с Weborama — одна карта на дашборд трафика и карточку сделки.
+// Уровень считает сервер (`stat_sources.mismatch_level`), экран только красит.
+export const MISMATCH_FG = { ok: 'var(--income-fg)', warn: 'var(--warning-fg)', bad: 'var(--danger-fg)' }
+
 const DayCardBody = ({ b, label }) => {
   const past = !!b.days_past
   const ctr = past && b.shows ? (b.clicks / b.shows * 100) : null
@@ -528,6 +532,13 @@ const DayCardBody = ({ b, label }) => {
     ['Клики', past ? num(b.clicks) : DASH, past ? 'var(--text-primary)' : 'var(--text-faint)'],
     ['CTR', ctr == null ? DASH : `${ctr.toFixed(2).replace('.', ',')} %`,
       past ? 'var(--text-primary)' : 'var(--text-faint)'],
+    // Weborama за день — рядом с фактом (владелец 27.09.2026), когда её статистика есть.
+    ...(b.wr_shows != null ? [
+      ['Показы WR', num(b.wr_shows), 'var(--text-secondary)'],
+      ['Расхождение с WR', b.mismatch ? `${String(b.mismatch.pct).replace('.', ',')} %` : DASH,
+        MISMATCH_FG[b.mismatch?.level]
+          || 'var(--text-faint)'],
+    ] : []),
   ]
   return (
     <>

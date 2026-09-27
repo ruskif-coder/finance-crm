@@ -402,6 +402,24 @@ def _group(rows, key_fn, excluded_adv=frozenset(), mp=None):
     return sorted(acc.values(), key=lambda x: (-x["fact"], -x["amount"]))
 
 
+def creatives_ready_by_deal(db: Session, deal_ids) -> dict:
+    """Сколько креативов с материалом прикреплено к сделке на сборке — {deal_id: n}.
+
+    По нему карточка «Креативы» в документах показывает «Скачать» (владелец 27.09.2026):
+    один архив со всеми креативами. Одним запросом на страницу реестра, а не на строку.
+    """
+    if not deal_ids:
+        return {}
+    from app.launch_prep.models import LaunchPrepCreativeFile, LaunchPrepCreativeSet
+    rows = (db.query(LaunchPrepCreativeSet.deal_id,
+                     func.count(func.distinct(LaunchPrepCreativeSet.id)))
+            .join(LaunchPrepCreativeFile,
+                  LaunchPrepCreativeFile.set_id == LaunchPrepCreativeSet.id)
+            .filter(LaunchPrepCreativeSet.deal_id.in_(list(deal_ids)))
+            .group_by(LaunchPrepCreativeSet.deal_id).all())
+    return {d: n for d, n in rows}
+
+
 @router.get("/dashboard")
 def dashboard(
     date_from: Optional[str] = None,
@@ -858,6 +876,7 @@ def deals_registry(
     stage_marks = stage_scope.stage_services(db)
     manual = {}
     files_map = {}
+    creatives_ready = {}
     our_mp_map = {}
     annex_map = {}
     if page_ids:
@@ -868,6 +887,7 @@ def deals_registry(
         for frec in (db.query(SalesDealFile)
                      .filter(SalesDealFile.deal_id.in_(page_ids)).all()):
             files_map.setdefault(frec.deal_id, []).append({"kind": frec.kind, "filename": frec.filename})
+        creatives_ready = creatives_ready_by_deal(db, page_ids)
         # Наши медиапланы, привязанные к сделке (последняя версия каждого group_id).
         for p in (db.query(SalesMediaPlan)
                   .filter(SalesMediaPlan.deal_id.in_(page_ids))
@@ -988,6 +1008,7 @@ def deals_registry(
             "account_manager_id": d.account_manager_id,
             "manual_fields": manual.get(d.id, []),
             "files": files_map.get(d.id, []),
+            "creatives_ready": creatives_ready.get(d.id, 0),
             "our_mps": list(our_mp_map.get(d.id, {}).values()),
             "annexes": annex_map.get(d.id, []),
             # состояние брифа для иконки: none — ещё не подгружали, empty — пусто,
@@ -2061,7 +2082,7 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
     from app.ad import build as ad_build
     from app.ad.flight import (PLACEMENT_RUNNING, best_chain_status, distribute,
                                effective_campaign_status, flight_of, progress)
-    from app.ad.stat_sources import mismatch_pct
+    from app.ad.stat_sources import comparable, goal_limit, mismatch_level, mismatch_pct
     from app.ad.models import AdCampaign
     from app.routers import traffic_dashboard as td
 
@@ -2119,12 +2140,9 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
     # Поэтому итог считается по ПОКРЫТЫМ площадкам, а рядом отдаётся охват — сколько из
     # скольких. Строки верификатора без площадки (замер по РК целиком) сопоставлять
     # не с чем по частям, и тогда сравнение идёт по всей РК.
-    covered = [r for r in rows if r.get("id") in ver_by_pl]
-    if covered:
-        own_cmp = sum(r.get("fact_shows") or 0 for r in covered)
-        ver_cmp = sum(ver_by_pl[r["id"]] for r in covered)
-    else:
-        own_cmp, ver_cmp = fact_shows, ver_shows
+    # Правило — `stat_sources.comparable`, одно на карточку и дашборд трафика.
+    own_cmp, ver_cmp, n_covered = comparable(
+        fact_shows, {r["id"]: r.get("fact_shows") or 0 for r in rows if r.get("id")}, ver)
 
     return {
         "has": True,
@@ -2150,9 +2168,13 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
         # разные утверждения, и ноль подменил бы второе первым.
         "verifier_shows": ver_shows,
         "mismatch_pct": mismatch_pct(own_cmp, ver_cmp),
+        # Цвет — тем же правилом, что на дашборде трафика (`stat_sources.mismatch_level`,
+        # владелец 27.09.2026): до порога зелёный, до двух порогов жёлтый, дальше красный.
+        "mismatch": mismatch_level(mismatch_pct(own_cmp, ver_cmp),
+                                   goal_limit(ad_build.deal_goals(db, deal.id))),
         # Охват верификатора: без него процент выглядит приговором всей РК, хотя
         # посчитан по части площадок. Экран подписывает «по N из M».
-        "verifier_placements": len(covered),
+        "verifier_placements": n_covered,
         "pixel_mode": px["mode"] if px["needed"] else None,
         "verifier_manual": ({"shows": manual[0], "period_to": manual[1].isoformat()}
                             if manual else None),
@@ -2719,6 +2741,7 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
     sk_pct = dict(db.query(SalesAgency.id, SalesAgency.sk_percent).all()).get(deal.agency_id, SALES_AGENCY_SK * 100) if deal.agency_id else 0
     files = [{"kind": f.kind, "filename": f.filename, "size": f.size} for f in
              db.query(SalesDealFile).filter(SalesDealFile.deal_id == deal.id).all()]
+    creatives_ready = creatives_ready_by_deal(db, [deal.id]).get(deal.id, 0)
     # Наши медиапланы сделки — последняя версия каждой группы (как в реестре).
     from app.sales.models import SalesMediaPlan
     our_mps = {}
@@ -2784,7 +2807,8 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         # а не по текущей ставке юрлица (правило 23.09.2026, mp_amounts.vat_pct_of).
         "vat_rate": vat_pct_of(deal, _mp_amt),
         "our_sum": round(eff_net(deal, _mp_amt) * (1 - (sk_pct or 0) / 100)),
-        "currency": deal.currency, "files": files, "date_create": deal.date_create,
+        "currency": deal.currency, "files": files, "creatives_ready": creatives_ready,
+        "date_create": deal.date_create,
         "plan_month": deal.plan_month, "year_plan_line_id": deal.year_plan_line_id,
         "year_plan": _year_plan_of_deal(db, deal),
         # Ставка НДС по нашим услугам — от нашего юрлица, не из константы во фронте.
@@ -3012,6 +3036,9 @@ def move_deal(
     if not deal:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
     _assert_deal_in_scope(db, current_user, deal)
+    # Превышение объёмов над планом РК запирает переход строкой-блокером в
+    # `stage_move.plan_move` (владелец 27.09.2026) — там его видят все пути, а назад и в
+    # «сорвалась» он не мешает.
 
     cat = Catalog(db)
     if not cat.stages:

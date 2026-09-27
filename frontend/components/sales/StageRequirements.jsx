@@ -62,7 +62,7 @@ function Where({ line, onCard }) {
 }
 
 export default function StageRequirements({ lines, title, empty = 'Требований нет',
-                                            onCard = false }) {
+                                            onCard = false, columns = 1 }) {
   if (!lines) return null
   if (!lines.length) {
     return <div style={{ fontFamily: UI, fontSize: 12.5, color: 'var(--text-muted)' }}>{empty}</div>
@@ -73,6 +73,13 @@ export default function StageRequirements({ lines, title, empty = 'Требов�
         <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '.04em',
                       textTransform: 'uppercase', color: 'var(--text-faint)' }}>{title}</div>
       )}
+      {/* Карточка сделки кладёт список в две колонки во всю ширину блока (владелец
+          27.09.2026): в одну он вытягивался вниз, а справа пустовало. Диалог движения и
+          модалка отказа остаются в одну — там ширины на две нет. */}
+      <div style={columns > 1
+        ? { display: 'grid', gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+            gap: '10px 28px' }
+        : { display: 'flex', flexDirection: 'column', gap: 7 }}>
       {lines.map(ln => {
         const t = TONE[ln.state] || TONE.unknown
         return (
@@ -109,6 +116,7 @@ export default function StageRequirements({ lines, title, empty = 'Требов�
           </div>
         )
       })}
+      </div>
     </div>
   )
 }

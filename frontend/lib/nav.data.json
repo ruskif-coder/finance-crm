@@ -166,7 +166,7 @@
         },
         {
           "key": "catalog",
-          "label": "Админка",
+          "label": "Админ панель",
           "href": "/traffic/catalog",
           "perm": "traffic_catalog"
         },

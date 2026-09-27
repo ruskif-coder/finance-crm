@@ -45,8 +45,12 @@ def _zip(html):
 
 
 def _upload(env, data):  # noqa: F811
+    # У креатива один материал (27.09.2026): файл фикстуры снимаем, как это делает удаление.
+    env.db.query(LaunchPrepCreativeFile).filter(
+        LaunchPrepCreativeFile.set_id == env.cset.id).delete()
+    env.db.commit()
     up = UploadFile(filename='banner.zip', file=io.BytesIO(data))
-    asyncio.run(lp.upload_file(env.cset.id, None, up, env.db, _ADMIN))
+    asyncio.run(lp.upload_file(env.cset.id, None, up, env.db, _ADMIN, origin='наш'))
     return (env.db.query(LaunchPrepCreativeFile)
             .filter(LaunchPrepCreativeFile.set_id == env.cset.id,
                     LaunchPrepCreativeFile.is_archive.is_(True))

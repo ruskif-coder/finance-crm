@@ -1806,11 +1806,20 @@ def list_kktu(q: Optional[str] = None, db: Session = Depends(get_db),
                 if text in r.code.lower() or text in (r.name or "").lower()
                 or text in (names.get(r.parent_code or "") or "").lower()]
 
+    # Сверху — самые используемые в системе коды (владелец 27.09.2026): почти все бренды
+    # — лекарства, и искать свой код среди трёхсот незачем. Частота — число брендов с
+    # этим кодом; при равенстве — по коду.
+    uses = dict(db.query(SalesBrand.kktu_code, func.count())
+                .filter(SalesBrand.kktu_code.isnot(None))
+                .group_by(SalesBrand.kktu_code).all())
+    rows = sorted(rows, key=lambda r: (-uses.get(r.code, 0), r.code))
+
     LIMIT = 60
     items = [{"code": r.code, "name": r.name,
               # Путь — подпись под кодом: «12.2 Лекарства» рядом с «12.2.2 Лекарственные
               # препараты». Без него пять похожих названий фармы неразличимы.
-              "path": names.get(r.parent_code or "") or ""}
+              "path": names.get(r.parent_code or "") or "",
+              "uses": uses.get(r.code, 0)}
              for r in rows[:LIMIT]]
     return {"synced": True, "total": len(rows), "shown": len(items), "items": items}
 

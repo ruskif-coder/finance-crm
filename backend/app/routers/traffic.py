@@ -36,7 +36,7 @@ from app import timez
 from app.files_safe import existing_upload_path, inside_uploads, remove_upload
 from app.audit import log_action
 from app.database import get_db
-from app.launch_prep import sandbox
+from app.launch_prep import banner_origin, sandbox
 from app.routers.launch_prep import url_state
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepCreativeSet,
                                     LaunchPrepPair, LaunchPrepPairFile, LaunchPrepReview,
@@ -243,7 +243,9 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
                      "account": reps.get(deal.account_manager_id)},
             "set": {"id": s.id, "no": s.no, "title": s.title, "form": s.form,
                     "test_targeting_url": s.test_targeting_url,
-                    "targeting_blind": s.id in blind},
+                    "targeting_blind": s.id in blind,
+                    # Баннер прислал рекламодатель — плашка «проверьте внимательнее».
+                    "from_advertiser": banner_origin.from_advertiser(mine)},
             "publisher": {"id": target.publisher_id,
                           "name": pub.name if pub else None,
                           # Домен нормализован в справочнике — по нему и открываем сайт.

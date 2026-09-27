@@ -143,3 +143,19 @@ def test_our_string_fields_are_kept_apart_from_boolean_ones():
     assert not set(EDITABLE_OURS) & set(EDITABLE_OURS_STR)
     assert 'advertiser_url' not in EDITABLE_OURS, (
         "ссылка живёт на получателе, а в булевом списке молча стала бы True")
+
+
+def test_kktu_list_starts_with_the_codes_used_most(db):
+    """Список ККТУ — сверху самые используемые в системе коды (владелец 27.09.2026):
+    почти все бренды — лекарства, и искать свой код среди трёхсот незачем."""
+    from sqlalchemy import func
+    from app.routers.sales_directories import list_kktu
+    out = list_kktu(q=None, db=db, current_user=SimpleNamespace(id=1))
+    if not out["synced"]:
+        pytest.skip("справочник ККТУ не залит")
+    uses = [i["uses"] for i in out["items"]]
+    assert uses == sorted(uses, reverse=True), "самые частые — не сверху"
+    top = (db.query(SalesBrand.kktu_code, func.count()).filter(SalesBrand.kktu_code.isnot(None))
+           .group_by(SalesBrand.kktu_code).order_by(func.count().desc()).first())
+    if top:
+        assert out["items"][0]["code"] == top[0] and out["items"][0]["uses"] == top[1]

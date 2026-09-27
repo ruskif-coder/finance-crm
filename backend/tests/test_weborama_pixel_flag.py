@@ -88,6 +88,23 @@ def _row(pixel=None):
 
 # ── Признак на сделке ────────────────────────────────────────────────────────
 
+
+def _campaign_without_verifier(db):
+    """РК с наибольшим фактом, у которой в ЭТОЙ сессии нет замеров верификатора.
+
+    На стенде у демо-РК лежит демо-WR (`weborama_demo`), а тесты проверяют переход
+    «замеров нет → замер появился». Замеры снимаются без commit — откат фикстуры `db`
+    возвращает их на место, стенд не меняется."""
+    from app.ad.stat_sources import VERIFIER
+    camp = db.execute(text("""
+        SELECT campaign_id FROM ad_campaign_stat GROUP BY campaign_id
+         HAVING sum(shows) > 0 ORDER BY sum(shows) DESC LIMIT 1""")).scalar()
+    if camp is not None:
+        db.execute(text("DELETE FROM ad_campaign_stat WHERE campaign_id = :c "
+                        "AND source = ANY(:v)"), {"c": camp, "v": list(VERIFIER)})
+    return camp
+
+
 def test_default_is_off(db):
     """Умолчание — «не заказан» (решение владельца 14.09.2026).
 
@@ -218,9 +235,7 @@ def test_campaign_mismatch_compares_only_covered_placements(db):
     user = db.query(User).filter(User.email == "d.makarov@simb-ad.com").first()
     if user is None:
         pytest.skip("на стенде нет админской учётки")
-    camp = db.execute(text("""
-        SELECT campaign_id FROM ad_campaign_stat GROUP BY campaign_id
-         HAVING sum(shows) > 0 ORDER BY sum(shows) DESC LIMIT 1""")).scalar()
+    camp = _campaign_without_verifier(db)
     if camp is None:
         pytest.skip("на стенде нет РК с фактом")
     c = db.query(AdCampaign).filter(AdCampaign.id == camp).first()
@@ -262,9 +277,7 @@ def test_placement_row_carries_its_own_mismatch(db):
     from app.routers import sales_dashboard as sd
 
     user = db.query(User).filter(User.email == "d.makarov@simb-ad.com").first()
-    camp = db.execute(text("""
-        SELECT campaign_id FROM ad_campaign_stat GROUP BY campaign_id
-         HAVING sum(shows) > 0 ORDER BY sum(shows) DESC LIMIT 1""")).scalar()
+    camp = _campaign_without_verifier(db)
     if user is None or camp is None:
         pytest.skip("нет учётки или РК с фактом")
     c = db.query(AdCampaign).filter(AdCampaign.id == camp).first()

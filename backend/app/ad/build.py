@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 from app.sales import mp_row
 
 from app.ad.balance import SCOPES, SCOPE_SURFACE
-from app.ad.flight import (PLACEMENT_READY, PLACEMENT_WAIT, as_placement_scale,
+from app.ad.flight import (CREATIVE_REJECTED, PLACEMENT_READY, PLACEMENT_WAIT, as_placement_scale,
                            best_chain_status, chain_status, distribute, effective_status,
                            effective_status_creative)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
@@ -78,6 +78,17 @@ def assembly_stage_ids(db: Session) -> list:
 LATEST_PLAN_SQL = ("SELECT id FROM sales_media_plans "
                    "WHERE deal_id = :d AND status <> 'rejected' "
                    "ORDER BY version DESC, id DESC LIMIT 1")
+
+
+def deal_goals_many(db: Session, deal_ids) -> dict:
+    """`deal_goals` пачкой: {deal_id: goals} — одним запросом на страницу реестра."""
+    if not deal_ids:
+        return {}
+    rows = db.execute(text(
+        "SELECT DISTINCT ON (deal_id) deal_id, goals FROM sales_media_plans "
+        "WHERE deal_id = ANY(:d) AND status <> 'rejected' "
+        "ORDER BY deal_id, version DESC, id DESC"), {"d": list(deal_ids)}).all()
+    return {d: {k: v for k, v in (g or {}).items() if str(v or "").strip()} for d, g in rows}
 
 
 def deal_plan(db: Session, deal_id: int) -> dict:
@@ -238,6 +249,18 @@ def publisher_weights(db: Session, surfaces: list) -> dict:
     return out
 
 
+# Заданный объём площадки — сумма объёмов её креативов, введённых в блоке креатива на
+# паре «креатив × площадка» (`launch_prep_set_target.plan_show`, владелец 25.09.2026).
+# Отклонённый креатив объём не держит. ОДНО выражение на все сборщики площадок РК
+# (сохранение долей, реестр и раскрытие дашборда трафика, карточка сделки): три копии
+# подзапроса разошлись бы на первой правке. Ожидает алиас площадки `p`.
+PLACEMENT_FIXED_SQL = (
+    "(SELECT sum(st.plan_show) FROM ad_campaign_creative cc "
+    " JOIN launch_prep_pair pr ON pr.id = cc.pair_id "
+    " JOIN launch_prep_set_target st ON st.set_id = pr.set_id AND st.target_id = pr.target_id "
+    f" WHERE cc.placement_id = p.id AND cc.status <> '{CREATIVE_REJECTED}')")
+
+
 def recompute_shares(db: Session, campaign_id: int) -> None:
     """Доли и планы площадок — снимок текущего распределения.
 
@@ -254,8 +277,12 @@ def recompute_shares(db: Session, campaign_id: int) -> None:
     pls = (db.query(AdCampaignPlacement)
            .filter(AdCampaignPlacement.campaign_id == campaign_id).all())
     camp = db.query(AdCampaign).get(campaign_id)
+    fixed = dict(db.execute(text(
+        f"SELECT p.id, {PLACEMENT_FIXED_SQL} FROM ad_campaign_placement p "
+        "WHERE p.campaign_id = :c"), {"c": campaign_id}).all())
     out = distribute(camp.plan_show if camp else None, None, None,
-                     [{"id": p.id, "status": p.status, "weight": p.weight} for p in pls])
+                     [{"id": p.id, "status": p.status, "weight": p.weight,
+                       "fixed": fixed.get(p.id)} for p in pls])
     by_id = {r["id"]: r for r in out["rows"]}
     for p in pls:
         r = by_id[p.id]

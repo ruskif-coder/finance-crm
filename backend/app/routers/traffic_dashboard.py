@@ -27,7 +27,8 @@ import logging
 from app import timez
 from app.ad import build
 from app.ad import external as ext_mod
-from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_STATUSES,
+from app.launch_prep import volumes
+from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_REJECTED, CREATIVE_STATUSES,
                            GRAIN_DAYS, campaign_chain_status, effective_campaign_status,
                            PLACEMENT_CHAIN, PLACEMENT_MANUAL, PLACEMENT_RUNNING,
                            PLACEMENT_STATUSES, PLACEMENT_OFF, PLACEMENT_READY,
@@ -35,7 +36,8 @@ from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_STATUSES,
                            creative_counts, culprits, daily_buckets,
                            distribute, effective_status, flight_of, progress, split_evenly)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
-from app.ad.stat_sources import VERIFIER, fact_sources
+from app.ad.stat_sources import (VERIFIER, comparable, fact_sources, goal_limit, mismatch_level,
+                                 mismatch_pct)
 from app.traffic import urgency
 from app.audit import log_action
 from app.database import get_db
@@ -154,6 +156,12 @@ def _verifier(db: Session, campaign_ids: List[int]) -> dict:
     return out
 
 
+def _wr_mismatch(own, wr, goals):
+    """Расхождение факта с Weborama за период и его цвет — `stat_sources.mismatch_level`."""
+    pct = mismatch_pct(own, wr)
+    return {"pct": pct, "wr": wr, **mismatch_level(pct, goal_limit(goals))} if pct is not None else None
+
+
 def _campaign_in_scope(db: Session, campaign_id: int, user: User):
     """РК вместе со сделкой, пропущенная через область видимости раздела.
 
@@ -249,14 +257,17 @@ def _creatives_of(db: Session, campaign_id: int) -> dict:
                c.ms_creative_xxhash, c.root_set_id, c.pair_id,
                s.title AS name, s.no AS set_no,
                pr.code AS pair_code,
-               cur.no AS version_no, cur.origin
+               cur.no AS version_no, cur.origin,
+               CASE WHEN c.status <> :rej THEN st.plan_show END AS fixed
           FROM ad_campaign_creative c
           LEFT JOIN launch_prep_creative_set s ON s.id = c.root_set_id
           LEFT JOIN launch_prep_pair pr ON pr.id = c.pair_id
           LEFT JOIN launch_prep_creative_set cur ON cur.id = pr.set_id
+          LEFT JOIN launch_prep_set_target st
+                 ON st.set_id = pr.set_id AND st.target_id = pr.target_id
          WHERE c.campaign_id = :c
          ORDER BY c.placement_id, c.creative_no
-    """), {"c": campaign_id}).mappings().all()
+    """), {"c": campaign_id, "rej": CREATIVE_REJECTED}).mappings().all()
     out: dict = {}
     for r in rows:
         out.setdefault(r["placement_id"], []).append(dict(r))
@@ -283,7 +294,8 @@ def _placements_of(db: Session, campaign_ids: List[int]) -> dict:
         SELECT p.campaign_id, p.id, p.publisher_id, p.status, p.weight,
                pub.code, pub.domain, pub.name AS publisher,
                (SELECT sum(s.shows) FROM ad_campaign_stat s
-                 WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact
+                 WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact,
+               """ + build.PLACEMENT_FIXED_SQL + """ AS fixed
           FROM ad_campaign_placement p
           JOIN sales_publishers pub ON pub.id = p.publisher_id
          WHERE p.campaign_id = ANY(:i)
@@ -510,6 +522,17 @@ def dashboard(scope: Optional[str] = None,
                                         fl, pls)["rows"]
         culprit_rows += dist_by_camp[c.id]
 
+    # Креативы с материалом по сделкам страницы — для «↓ креативы» в раскрытии РК
+    # (владелец 27.09.2026): одним запросом, тем же счётом, что и документы сделки.
+    from app.routers.sales_dashboard import creatives_ready_by_deal
+    cr_ready = creatives_ready_by_deal(db, {d.id for _, d in pairs})
+    # Объёмы по площадкам против плана РК — пачкой; план берём у самой РК (его и
+    # раскладывают), чтобы строка не спорила с раскрытием (владелец 27.09.2026).
+    vol_by_deal = volumes.volumes_by_deal(db, {d.id for _, d in pairs})
+    # Расхождение с Weborama за период — для метки «Большое расхождение с WR» в строке
+    # РК (владелец 27.09.2026). Показы верификатора и цели сделок — пачкой.
+    ver_all = _verifier(db, [c.id for c, _ in pairs])
+    goals_by_deal = build.deal_goals_many(db, {d.id for _, d in pairs})
     rows = []
     for c, d in pairs:
         f = facts.get(c.id, {})
@@ -522,6 +545,13 @@ def dashboard(scope: Optional[str] = None,
             can_start=any(can_start_placement(by_pl.get(p["id"], [])) for p in pls))
         rows.append({
             "id": c.id, "deal_id": d.id, "deal_code": d.code, "deal_title": d.title,
+            "creatives_ready": cr_ready.get(d.id, 0),
+            "volumes": volumes.evaluate(c.plan_show, vol_by_deal.get(d.id, {})),
+            # Сверяются только площадки, которые Weborama мерила (`comparable`).
+            "wr_mismatch": _wr_mismatch(*comparable(
+                f.get("shows"),
+                {r["id"]: r.get("fact_shows") or 0 for r in dist_by_camp.get(c.id, [])},
+                ver_all.get(c.id))[:2], goals_by_deal.get(d.id)),
             # Ответственный трафик — прямо в строке: по нему подсвечивается
             # нераспределённое, и он же объясняет, почему РК видно в «Моих».
             "traffic": traf_name.get(d.traffic_manager_id),
@@ -640,7 +670,8 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
                (SELECT sum(s.shows) FROM ad_campaign_stat s
                  WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact,
                (SELECT sum(s.clicks) FROM ad_campaign_stat s
-                 WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact_clicks
+                 WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact_clicks,
+               """ + build.PLACEMENT_FIXED_SQL + """ AS fixed
         FROM ad_campaign_placement p
         JOIN sales_publishers pub ON pub.id = p.publisher_id
         WHERE p.campaign_id = :c
@@ -691,6 +722,7 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         "placement_statuses": list(PLACEMENT_STATUSES),
         "placement_manual": list(PLACEMENT_MANUAL),
         "deal_id": deal.id,
+        "volumes": volumes.evaluate(c.plan_show, volumes.deal_volumes(db, deal.id)),
         "owners": _owners(db, deal, user),
         # KPI приёмки из медиаплана — рядом с фактом, чтобы трафик видел, к чему его
         # открутку будут принимать, не открывая карточку сделки (владелец 05.09.2026).
@@ -794,6 +826,82 @@ def campaign_stat(campaign_id: int, grain: str = "day",
         "period": {"shows": all_shows, "clicks": all_clicks,
                    "ctr": round(all_clicks / all_shows * 100, 2) if all_shows else None},
     }
+    # Weborama рядом с фактом: «факт | WR» и строка расхождения с цветом (владелец
+    # 27.09.2026). Верификатор в факт не входит никогда — он только сверка. Нет его
+    # данных — поле пустое, и экран пишет прочерк, а не ноль.
+    #
+    # Сверяется СОПОСТАВИМОЕ (`stat_sources.comparable`, ревью 27.09.2026): мерила
+    # Weborama площадки — сравниваются только они, и по дням тоже; замер лишь по РК
+    # целиком — вся РК. Ручной итог за период (`weborama_manual`) — одно число на весь
+    # период, датированное его концом: в итог «за период» входит, в дни и «сегодня» нет.
+    ver_rows = db.execute(text(
+        "SELECT date, placement_id, source, sum(shows) AS shows, sum(clicks) AS clicks "
+        "FROM ad_campaign_stat WHERE campaign_id = :c AND source = ANY(:src) "
+        "GROUP BY date, placement_id, source"),
+        {"c": c.id, "src": list(VERIFIER)}).mappings().all()
+    own_rows = db.execute(text(
+        "SELECT date, placement_id, sum(shows) AS shows FROM ad_campaign_stat "
+        "WHERE campaign_id = :c AND source = ANY(:src) AND placement_id IS NOT NULL "
+        "GROUP BY date, placement_id"), {"c": c.id, "src": fact_sources()}).mappings().all()
+    own_by_pl: dict = {}
+    for r in own_rows:
+        own_by_pl[r["placement_id"]] = own_by_pl.get(r["placement_id"], 0) + (r["shows"] or 0)
+    for (pid,) in db.execute(text("SELECT id FROM ad_campaign_placement WHERE campaign_id = :c"),
+                             {"c": c.id}).all():
+        own_by_pl.setdefault(pid, 0)
+    ver = _verifier(db, [c.id]).get(c.id)
+    own_cmp, wr_cmp, n_covered = comparable(all_shows, own_by_pl, ver)
+    covered = set((ver or {}).get("by_placement", {})) & set(own_by_pl) if n_covered else set()
+
+    # По дням: {дата: (наш, WR показы, WR клики)} — тем же правилом, что итог.
+    daily: dict = {}
+    if covered:
+        for r in own_rows:
+            if r["placement_id"] in covered:
+                o, w, k = daily.get(r["date"], (0, 0, 0))
+                daily[r["date"]] = (o + (r["shows"] or 0), w, k)
+        for r in ver_rows:
+            if r["placement_id"] in covered:
+                o, w, k = daily.get(r["date"], (0, 0, 0))
+                daily[r["date"]] = (o, w + (r["shows"] or 0), k + (r["clicks"] or 0))
+    else:
+        for r in ver_rows:
+            if r["placement_id"] is None and r["source"] != "weborama_manual":
+                o, w, k = daily.get(r["date"], (by_day.get(r["date"], (0, 0))[0] or 0, 0, 0))
+                daily[r["date"]] = (o, w + (r["shows"] or 0), k + (r["clicks"] or 0))
+    daily = {d: v for d, v in daily.items() if v[1]}
+
+    limit = goal_limit(build.deal_goals(db, _deal.id))
+
+    def _mm(own, wr):
+        pct = mismatch_pct(own, wr)
+        return {"pct": pct, **mismatch_level(pct, limit)} if pct is not None else None
+
+    # Тот же WR — в каждый столбец «Динамики показов»: карточка дня показывает его рядом
+    # с фактом (владелец 27.09.2026). Нет данных за даты столбца — поле пустое.
+    if daily:
+        from datetime import timedelta as _td
+        for b in out["buckets"]:
+            days = [b["date_from"] + _td(days=i) for i in range(b["days"])]
+            got = [daily[d] for d in days if d in daily]
+            if got and b["days_past"]:
+                b["wr_shows"], b["wr_clicks"] = sum(g[1] for g in got), sum(g[2] for g in got)
+                b["mismatch"] = _mm(sum(g[0] for g in got), b["wr_shows"])
+
+    wr_period_clicks = (sum(r["clicks"] or 0 for r in ver_rows
+                            if not covered or r["placement_id"] in covered)
+                        if wr_cmp is not None else None)
+    t = daily.get(today)
+    for key, own, (w_shows, w_clicks) in (
+            ("today", t[0] if t else None, (t[1], t[2]) if t else (None, None)),
+            ("period", own_cmp, (wr_cmp, wr_period_clicks))):
+        out["totals"][key]["wr"] = {
+            "shows": w_shows, "clicks": w_clicks,
+            "ctr": round(w_clicks / w_shows * 100, 2) if w_shows else None}
+        out["totals"][key]["mismatch"] = _mm(own, w_shows)
+    # Охват сверки — «по N из M площадок»: без него процент читается приговором всей РК.
+    out["totals"]["wr_placements"] = n_covered
+    out["totals"]["placements"] = len(own_by_pl)
     return out
 
 
@@ -862,6 +970,9 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
         raise HTTPException(400, f"Выбрать можно {CAMPAIGN_MANUAL + ('запущена',)}; "
                                  f"«ожидает сборки» и «готова» считаются сами")
     c, _deal = _campaign_in_scope(db, campaign_id, user)
+    # Объёмы по площадкам больше плана РК — РК не запускаем (владелец 27.09.2026).
+    if payload.status == "запущена":
+        volumes.guard(db, _deal.id)
     # Из архива DSP назад не включается: вместо вечного «DSP не принял» — отказ сразу.
     if (c.ms_campaign_xxhash and c.status in ("окончена", "архив")
             and payload.status not in ("окончена", "архив")):
@@ -919,8 +1030,12 @@ def set_creative_status(creative_id: int, payload: StatusIn,
     отклонение отдаёт объём остальным креативам этой площадки.
 
     Доли креативов нигде не хранятся: они считаются при чтении делением плана площадки
-    поровну между работающими (`flight.split_evenly`). Пересчитывать после смены статуса
-    нечего — потому и нет второго места, где эта арифметика могла бы разойтись.
+    поровну между работающими (`flight.split_evenly`).
+
+    А планы ПЛОЩАДОК хранятся, и с 27.09.2026 зависят от креативов: площадка на фиксе
+    получает сумму объёмов своих креативов, кроме отклонённых (`build.PLACEMENT_FIXED_SQL`).
+    Поэтому отклонение и его отмена пересчитывают площадки РК сразу — иначе DSP и
+    дашборд крутили бы по устаревшему фиксу до следующей сборки.
     """
     if payload.status not in CREATIVE_MANUAL:
         raise HTTPException(400, f"Выбрать можно {CREATIVE_MANUAL}; "
@@ -930,6 +1045,9 @@ def set_creative_status(creative_id: int, payload: StatusIn,
         raise HTTPException(404, "Креатив не найден")
     _campaign_in_scope(db, cr.campaign_id, user)   # область видимости — та же
     old, cr.status = cr.status, payload.status
+    db.flush()
+    if (old == CREATIVE_REJECTED) != (cr.status == CREATIVE_REJECTED):
+        build.recompute_shares(db, cr.campaign_id)
     db.commit()
     log_action(db, user, "ad_creative_status", "sales_publisher", None,
                f"креатив {cr.ms_title}: {old} → {cr.status}")
@@ -1043,6 +1161,7 @@ def set_placement_status(placement_id: int, payload: StatusIn,
     # первым же рефакторингом, а запущенная площадка без согласованного материала — это
     # показ несогласованного баннера.
     if payload.status == "запущен":
+        volumes.guard(db, _deal.id)       # объёмы больше плана РК (27.09.2026)
         mine = [r["status"] for r in
                 _creatives_of(db, p.campaign_id).get(p.id, [])]
         if not can_start_placement(mine):
@@ -1192,6 +1311,7 @@ def run_dsp(campaign_id: int, db: Session = Depends(get_db),
     from app.dsp import provision as dsp_prov
 
     c, deal = _campaign_in_scope(db, campaign_id, user)
+    volumes.guard(db, deal.id)            # объёмы больше плана РК (27.09.2026)
     try:
         out = dsp_prov.provision(db, c, user_id=user.id)
     except dsp_prov.DspProvisionError as e:

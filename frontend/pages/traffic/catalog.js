@@ -237,7 +237,7 @@ export default function TrafficCatalog() {
 
   return (
     <>
-      <Head><title>Админка · Трафики | SIMB-AD ERP</title></Head>
+      <Head><title>Админ панель · Трафики | SIMB-AD ERP</title></Head>
       <Navbar />
       <div style={{ maxWidth: 1600, margin: '0 auto', padding: '18px 24px 60px', fontFamily: UI }}>
         {/* шапка: пиктограмма + заголовок */}
@@ -249,7 +249,7 @@ export default function TrafficCatalog() {
           }}><CatalogIcon size={21} /></span>
           <div>
             <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: 'var(--text-primary)' }}>
-              Админка трафика</h1>
+              Админ панель трафика</h1>
             <div style={{ ...CAP, marginBottom: 0, marginTop: 2 }}>
               Трафики · площадки, блоки и балансировка</div>
           </div>
