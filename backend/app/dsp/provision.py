@@ -25,7 +25,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.ad.build import pixel_setup
+from app.ad.build import creative_plans, pixel_setup
 from app.ad.flight import PLACEMENT_IN_PLAN, PLACEMENT_READY
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.dsp import creatives as cr
@@ -232,6 +232,8 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
         raise DspProvisionError(f"Кампания в DSP не заведена: {e}")
 
     vsrc = viewability_src(db)
+    # Лимит креатива — ЕГО доля плана площадки, а не план площадки целиком (27.09.2026).
+    plans = creative_plans(db, camp)
     done, failed = [], []
     for r in rows:
         cre, pub = r["creative"], r["publisher"]
@@ -269,14 +271,20 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
                 if state == "empty":
                     xxhash = known
                 else:
+                    # Нулевая доля — это «не крутить», а лимит 0 в DSP значит «без лимита»:
+                    # креатив ушёл бы откручивать без ограничения. Так бывает, когда соседний
+                    # креатив площадки забрал весь её объём заданным (ревью 27.09.2026).
+                    if plans.get(cre.id) == 0:
+                        raise DspProvisionError(
+                            "У креатива нулевой объём на площадке — весь её план отдан другому "
+                            "креативу. Уменьшите заданный объём соседа или отключите креатив")
                     params = cr.build_creative_params(
                         title=cre.ms_title or name, link=r["target"].advertiser_url,
                         # Оба адреса — из реальной посадочной (владелец 25.09.2026): ссылка
                         # целиком, конечный URL — её основной домен (у DSP ≤128 символов).
                         adomain=cr.landing_domain(r["target"].advertiser_url),
                         erid=cre.erid, size=up.get("size"),
-                        total_shows=(int(r["placement"].plan_show)
-                                     if r["placement"].plan_show else None))
+                        total_shows=(int(plans[cre.id]) if plans.get(cre.id) else None))
                     xxhash = c.creative_add(camp_hash, params, local_ref=ref)
                 c.creative_edit(xxhash, {"data": {"html_code": html}}, local_ref=ref)
         except (cr.CreativeError, MsError, DspProvisionError, ValueError) as e:

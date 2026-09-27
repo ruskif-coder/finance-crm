@@ -18,7 +18,7 @@ import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import Navbar from '@/components/Navbar'
 import Section from '@/components/deal/Section'
-import CreativesSummary, { creativesSummary } from '@/components/creatives/CreativesSummary'
+import CreativesSummary, { CreativesAlert, creativesSummary } from '@/components/creatives/CreativesSummary'
 import AssemblyOrd, { OrdPips } from '@/components/ord/AssemblyOrd'
 import AssemblyCreatives from '@/components/creatives/AssemblyCreatives'
 import CampaignSummary from '@/components/campaign/CampaignSummary'
@@ -1515,11 +1515,16 @@ export default function DealCard() {
               {showBlock('creatives') && (
               <div style={{ ...CARD, padding: '20px 26px 18px' }}>
               <Section id="creatives" dealId={id} title="Креативы" defaultOpen={false}
-                summary={creativesSummary(creatives).text}
+                summary={creativesSummary(creatives).chips ? null : creativesSummary(creatives).text}
                 tone={creativesSummary(creatives).tone}
                 right={creatives && creatives.sets && creatives.sets.length ? (
-                  <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700,
-                    color: 'var(--text-secondary)' }}>{creatives.sets.length} в работе</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 12 }}>
+                    {(creativesSummary(creatives).chips || []).map(c => (
+                      <CreativesAlert key={c.text} text={c.text} tone={c.tone} />
+                    ))}
+                    <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700,
+                      color: 'var(--text-secondary)' }}>{creatives.sets.length} в работе</span>
+                  </span>
                 ) : null}
                 collapsed={<CreativesSummary data={creatives} canApprove={canApprove}
                   onReviewed={onCreativesChanged} />}>

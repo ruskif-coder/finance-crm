@@ -9,6 +9,7 @@
 Монтируется тем же префиксом `/api/traffic-catalog`.
 """
 import io
+import logging
 from typing import List, Optional
 from urllib.parse import quote
 
@@ -18,7 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.ad import balance
+from app.ad import balance, build
 from app.audit import log_action
 from app.database import get_db
 from app.models import User
@@ -26,6 +27,23 @@ from app.permissions import require_permission
 from app.sales.models import PUBLISHER_ARCHIVE_STATUS, SalesPublisher
 
 router = APIRouter()
+log = logging.getLogger(__name__)
+
+
+def _push_to_campaigns(db):
+    """Индекс — сразу в незавершённые РК: веса площадок и их объёмы (владелец 27.09.2026).
+
+    Зовётся ПОСЛЕ коммита индекса и после записи в журнал: сбой пересчёта РК не должен
+    выглядеть как «индекс не сохранён» (он сохранён) и не должен терять запись журнала.
+    Не пересчиталось сейчас — догонит ночной `app.ad.daily_shares`.
+    """
+    try:
+        build.refresh_weights(db)
+        return True
+    except Exception:  # noqa: BLE001 — индекс сохранён, РК догонит ночной пересчёт
+        db.rollback()
+        log.exception("балансировщик: пересчёт РК после правки индекса не удался")
+        return False
 
 VIEW = require_permission("traffic_catalog", "view")
 EDIT = require_permission("traffic_catalog", "edit")
@@ -80,7 +98,8 @@ def balancer_save_row(publisher_id: int, scope: str, payload: BalanceRowIn,
     log_action(db, user, "balancer_row_edit", "sales_publisher", publisher_id,
                f"{scope}: объём={payload.volume} глубина={payload.depth} "
                f"запросы={payload.requests} индекс_рука={payload.index_manual}")
-    return {"ok": True, "rows": balance.rows(db)}
+    pushed = _push_to_campaigns(db)
+    return {"ok": True, "campaigns_updated": pushed, "rows": balance.rows(db)}
 
 
 @router.post("/balancer/recalc")
@@ -89,7 +108,8 @@ def balancer_recalc(db: Session = Depends(get_db), user: User = Depends(EDIT)):
     log_action(db, user, "balancer_recalc", "sales_publisher", None,
                f"пересчёт индексов: {res['updated']}, заперто {res['locked_skipped']}, "
                f"без данных {res['no_data']}")
-    return {**res, "rows": balance.rows(db)}
+    pushed = _push_to_campaigns(db)
+    return {**res, "campaigns_updated": pushed, "rows": balance.rows(db)}
 
 
 @router.put("/balancer/settings")
@@ -219,7 +239,9 @@ def balancer_import(file: UploadFile = File(...), db: Session = Depends(get_db),
     db.commit()
     log_action(db, user, "balancer_import", "sales_publisher", None,
                f"импорт балансировщика: применено {applied}, пропущено {skipped}")
-    return {"applied": applied, "skipped": skipped, "rows": balance.rows(db)}
+    pushed = _push_to_campaigns(db)
+    return {"applied": applied, "skipped": skipped, "campaigns_updated": pushed,
+            "rows": balance.rows(db)}
 
 
 @router.get("/blocks/export")

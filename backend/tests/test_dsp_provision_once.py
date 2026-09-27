@@ -158,6 +158,10 @@ def wired(monkeypatch):
 
     state = {"rows": [_row(1)]}
     monkeypatch.setattr(prov, "_rows", lambda db, camp: state["rows"])
+    # Доля креатива (`build.creative_plans`) читает базу — здесь она поддельная; доля
+    # 250 на креатив, чтобы было видно, что лимитом уходит ОНА, а не план площадки.
+    monkeypatch.setattr(prov, "creative_plans",
+                        lambda db, camp: {r["creative"].id: 250 for r in state["rows"]})
     monkeypatch.setattr(prov, "pixel_setup",
                         lambda db, deal_id: {"needed": False, "mode": None, "tag": None})
     monkeypatch.setattr(prov, "_read_archive", lambda f: b"PK")
@@ -306,6 +310,8 @@ def test_combat_creative_gets_landing_and_its_domain(wired):
     assert params["link"] == long_url
     assert params["adomain"] == "https://www.apteka.test/"
     assert len(params["adomain"]) <= 128
+    # Лимит — доля креатива (250), а не план площадки (500): 27.09.2026.
+    assert params["limits"]["show"]["total"] == 250
 
 
 def test_landing_domain_helper():

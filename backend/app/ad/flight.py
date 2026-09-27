@@ -60,6 +60,15 @@ PLACEMENT_STATUSES = PLACEMENT_CHAIN + PLACEMENT_MANUAL
 PLACEMENT_RUNNING = ("запущен",)
 PLACEMENT_IN_PLAN = ("запущен", "пауза")
 
+# УДЕРЖАНИЕ ДОЛЕЙ (владелец 27.09.2026): до старта РК и первые `HOLD_DAYS` дней флайта
+# объём делят ВСЕ площадки в работе — от «ждёт сборки» до «запущен» и «пауза», выпадает
+# только «завершена». Трафик видит объём каждой площадки до запуска, и креативы уезжают
+# в DSP с лимитом. С шестого дня — «перерасчёт по факту запущенного»: делят только
+# `PLACEMENT_IN_PLAN`. Раньше делили только запущенные с первого дня, и до запуска у
+# всех 1506 площадок прода объём был пуст.
+HOLD_DAYS = 5
+PLACEMENT_IN_WORK = PLACEMENT_CHAIN + PLACEMENT_IN_PLAN
+
 # Отдельные значения ИМЕНАМИ. Набор жил здесь и раньше, а его члены набирались строкой в
 # каждом потребителе: «ждёт запуска» встречалось литералом в трёх местах роутера плюс
 # перевод в сборке. Русские строки сравниваются буквально — опечатка не падает, она тихо
@@ -125,6 +134,14 @@ CREATIVE_STATUSES = CREATIVE_CHAIN + CREATIVE_MANUAL
 
 CREATIVE_RUNNING = ("запущен",)
 CREATIVE_IN_PLAN = ("запущен", "пауза")   # пауза долю сохраняет — как у площадки
+# Удержание у креативов то же, что у площадок: делят все, кроме отклонённого.
+CREATIVE_IN_WORK = CREATIVE_CHAIN + CREATIVE_IN_PLAN
+# После удержания делят креативы, готовые крутиться: согласованный, запущенный, на паузе.
+# «Запущен» у креатива ставится только руками трафика — запуск площадки его не
+# переключает, и согласованный креатив запущенной площадки уже крутится в DSP. Считай
+# мы долю только у «запущен», с шестого дня у обычной РК доля креативов была бы пустой и
+# в DSP уходили бы креативы без лимита (ревью 27.09.2026).
+CREATIVE_SHARES = ("согласован",) + CREATIVE_IN_PLAN
 
 
 @dataclass(frozen=True)
@@ -162,6 +179,13 @@ def flight_of(date_start: Optional[date], date_end: Optional[date],
     length = (date_end - date_start).days + 1
     done = (min(date_end, today) - date_start).days + 1
     return Flight(date_start, date_end, length, max(0, min(done, length)))
+
+
+def holds(fl: Optional[Flight]) -> bool:
+    """Держат ли долю площадки, ещё не запущенные: до старта и первые `HOLD_DAYS` дней.
+
+    Без дат — да: предварительное распределение лучше пустого, а флайт ещё не задан."""
+    return fl is None or fl.done <= HOLD_DAYS
 
 
 def forecast_of(plan: Optional[float], fact: Optional[float],
@@ -233,9 +257,9 @@ def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight
                placements: Sequence[dict]) -> dict:
     """Доли, планы и прогнозы площадок РК.
 
-    Доля = вес площадки ÷ сумма весов тех, кто УЧАСТВУЕТ В ПЛАНЕ (`PLACEMENT_IN_PLAN`,
-    то есть запущенные И на паузе). Отключили площадку — доля пересчитывается по
-    оставшимся; нет веса (не заведён индекс в балансировщике) — доля 0, и это отдельный
+    Доля = вес площадки ÷ сумма весов тех, кто УЧАСТВУЕТ В ПЛАНЕ: в удержание (`holds`,
+    до старта и первые пять дней) — все площадки в работе, дальше — запущенные И на
+    паузе. Отключили площадку — доля пересчитывается по оставшимся; нет веса (не заведён индекс в балансировщике) — доля 0, и это отдельный
     признак `no_weight`, а не «выключена»: площадка подключена, просто не участвует
     в раскладке.
 
@@ -251,18 +275,19 @@ def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight
     остаток, как и её доля. Превысить план ввод не даёт (проверка при вводе), но и тут
     остаток не уходит в минус.
     """
+    in_plan_set = PLACEMENT_IN_WORK if holds(fl) else PLACEMENT_IN_PLAN
     fixed_of = {id(p): float(p.get("fixed") or 0) for p in placements}
     fixed_in = sum(v for p in placements for v in [fixed_of[id(p)]]
-                   if v and p.get("status") in PLACEMENT_IN_PLAN)
+                   if v and p.get("status") in in_plan_set)
     rest = max(0.0, float(plan) - fixed_in) if plan else 0.0
     live = [p for p in placements
-            if p.get("status") in PLACEMENT_IN_PLAN and p.get("weight") and not fixed_of[id(p)]]
+            if p.get("status") in in_plan_set and p.get("weight") and not fixed_of[id(p)]]
     w_sum = sum(float(p["weight"]) for p in live) or 0.0
 
     rows: List[dict] = []
     for p in placements:
         running = p.get("status") in PLACEMENT_RUNNING
-        in_plan = p.get("status") in PLACEMENT_IN_PLAN
+        in_plan = p.get("status") in in_plan_set
         no_weight = not p.get("weight")
         fixed = fixed_of[id(p)] if in_plan else 0.0
         if fixed:
@@ -296,8 +321,12 @@ def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight
     return {"rows": rows, "share_sum": round(sum(r["share"] for r in rows), 6)}
 
 
-def split_evenly(total, creatives):
+def split_evenly(total, creatives, hold: bool = False):
     """План площадки → поровну между работающими креативами.
+
+    `hold` — удержание (`holds(флайт)`): до старта и первые пять дней РК делят все
+    креативы, кроме отклонённого, дальше — согласованные, запущенные и на паузе
+    (`CREATIVE_SHARES`).
 
     «Объём площадки от веса делится РАВНОМЕРНО по работающим креативам» (владелец
     04.09.2026): креативы равнозначны, весов у них нет.
@@ -310,7 +339,8 @@ def split_evenly(total, creatives):
     ноль показов», а ему не планировали ничего.
     """
     rows = sorted(creatives, key=lambda c: (c.get("creative_no") or 0, c.get("id") or 0))
-    live = [c for c in rows if c.get("status") in CREATIVE_IN_PLAN]
+    in_plan_set = CREATIVE_IN_WORK if hold else CREATIVE_SHARES
+    live = [c for c in rows if c.get("status") in in_plan_set]
     out = []
     if total and live:
         # Креатив с заданным объёмом получает его, остаток площадки — поровну остальным
@@ -339,7 +369,7 @@ def split_evenly(total, creatives):
         return out
     for c in rows:
         out.append({**c, "plan_show": None, "share": 0.0,
-                    "in_plan": c.get("status") in CREATIVE_IN_PLAN,
+                    "in_plan": c.get("status") in in_plan_set,
                     "running": c.get("status") in CREATIVE_RUNNING})
     return out
 
@@ -359,7 +389,7 @@ def creative_counts(creatives):
     держал бы её оранжевой — тревога, которую нечем снять. Заодно новый статус теперь не
     станет «согласованным» молча, просто оттого что его забыли внести в исключения.
     """
-    agreed_statuses = ("согласован",) + CREATIVE_IN_PLAN
+    agreed_statuses = CREATIVE_SHARES
     return {
         "total": len(creatives),
         "agreed": sum(1 for c in creatives if c.get("status") in agreed_statuses),

@@ -48,6 +48,10 @@ from app.sales import stage_move
 from app.sales import stage_scope
 from app.sales.row_context import load_row_context
 from app.sales.mp_amounts import mp_amounts_by_deal, eff_net, gross_of, vat_pct_of
+# Область «свои / все» живёт в app/sales/scope.py: её же зовёт глобальный поиск, и
+# условие одно на реестр и поиск (правило спецификации поиска 27.09.2026).
+from app.sales.scope import own_rep_ids_or_all as _own_rep_ids_or_all
+from app.sales.scope import apply_own_scope as _apply_own_scope
 import logging
 
 router = APIRouter()
@@ -91,53 +95,6 @@ def _in(column, values):
     """Фильтр «одно из списка». Пустой список означает «без ограничения»,
     а не «ничего не подходит» — иначе снятие всех галочек обнуляло бы выборку."""
     return column.in_(values) if values else None
-
-
-def _own_rep_ids_or_all(db: Session, user: User, section: str = "sales_registry"):
-    """Видимость сделок роли для конкретной страницы продаж. None — «все» (без
-    ограничения). Список id — «только свои»: сделки, где пользователь сейлз или
-    аккаунт (SalesRep.user_id). Пустой список у 'own' без привязки → ничего.
-    section — какая страница спрашивает (у каждой свой deals_scope)."""
-    if user.role.key == "admin":
-        return None
-    from app.models import RolePermission
-    row = (db.query(RolePermission)
-           .filter(RolePermission.role_id == user.role_id,
-                   RolePermission.section == section).first())
-    if row is None:
-        # ⚠ АСИММЕТРИЯ УМОЛЧАНИЯ, из-за которой это и написано.
-        #
-        # ОТСУТСТВИЕ той же самой строки `role_permissions` означает в двух местах
-        # ПРОТИВОПОЛОЖНОЕ: в `require_permission` — «запрещено», здесь — «все сделки».
-        # То есть роль, которой выдали `creatives`, но не завели строку `sales_registry`,
-        # получала доступ ко ВСЕМ чужим сделкам в сборке запуска — молча и по умолчанию
-        # (F1-05 внешнего аудита 11.09.2026).
-        #
-        # Сегодня не стреляет: строка `sales_registry` есть у всех одиннадцати
-        # неадминских ролей (замер 11.09.2026), а `own` встречается дважды и обе — у
-        # годового плана. Но это свойство ДАННЫХ, а не кода: первая же новая роль,
-        # заведённая без неё, откроет чужие сделки.
-        #
-        # Отказываем ВСЛУХ, а не сужаем до «своих»: сужение дало бы второй тихий отказ —
-        # человек с правом видел бы пустой экран и не понимал почему. Текст говорит
-        # администратору, что именно настроить.
-        raise HTTPException(
-            status_code=403,
-            detail=(f"Для роли «{user.role.label}» не настроена видимость сделок в "
-                    f"разделе «{section}». Пока её нет, показывать чужие сделки нельзя. "
-                    f"Откройте Настройки → Роли и задайте область («свои» или «все»)."))
-    if (row.deals_scope or "all") != "own":
-        return None
-    return [r.id for r in db.query(SalesRep.id).filter(SalesRep.user_id == user.id).all()]
-
-
-def _apply_own_scope(q, own_ids):
-    """Ограничивает выборку своими сделками, если роль — 'own'."""
-    if own_ids is None:
-        return q
-    ids = own_ids or [-1]   # нет привязки к сейлзу → пустая выдача, а не «все»
-    return q.filter(or_(SalesDeal.sales_rep_id.in_(ids),
-                        SalesDeal.account_manager_id.in_(ids)))
 
 
 def _deal_owned(deal_rep_id, deal_acct_id, own_ids) -> bool:

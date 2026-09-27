@@ -36,7 +36,7 @@ from app.sales import mp_row
 from app.ad.balance import SCOPES, SCOPE_SURFACE
 from app.ad.flight import (CREATIVE_REJECTED, PLACEMENT_READY, PLACEMENT_WAIT, as_placement_scale,
                            best_chain_status, chain_status, distribute, effective_status,
-                           effective_status_creative)
+                           effective_status_creative, flight_of)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.sales.models import PUBLISHER_ARCHIVE_STATUS
 
@@ -280,7 +280,10 @@ def recompute_shares(db: Session, campaign_id: int) -> None:
     fixed = dict(db.execute(text(
         f"SELECT p.id, {PLACEMENT_FIXED_SQL} FROM ad_campaign_placement p "
         "WHERE p.campaign_id = :c"), {"c": campaign_id}).all())
-    out = distribute(camp.plan_show if camp else None, None, None,
+    # Флайт обязателен: удержание долей решается по дню РК (`flight.holds`). Без него
+    # сохранённые планы считались бы «до старта» и на шестой день не сменились бы.
+    fl = flight_of(camp.date_start, camp.date_end) if camp else None
+    out = distribute(camp.plan_show if camp else None, None, fl,
                      [{"id": p.id, "status": p.status, "weight": p.weight,
                        "fixed": fixed.get(p.id)} for p in pls])
     by_id = {r["id"]: r for r in out["rows"]}
@@ -288,6 +291,85 @@ def recompute_shares(db: Session, campaign_id: int) -> None:
         r = by_id[p.id]
         p.share = r["share"] or None
         p.plan_show = r["plan_show"]
+
+
+def creative_plans(db: Session, camp: AdCampaign) -> dict:
+    """План каждого креатива РК: {creative_id: показы или None}.
+
+    Тем же правилом, что раскрытие дашборда трафика: сохранённый план площадки делится
+    между её креативами (`flight.split_evenly`) с заданными на паре объёмами и
+    удержанием первых пяти дней. Нужен выгрузке в DSP (лимит креатива) и ночному
+    подтягиванию лимитов (`app/dsp/limits`). До 27.09.2026 лимитом креатива уходил ВЕСЬ
+    план площадки — три креатива получали трижды её объём.
+    """
+    from app.ad.flight import holds, split_evenly
+    rows = db.execute(text("""
+        SELECT c.id, c.placement_id, c.creative_no, c.status,
+               CASE WHEN c.status <> :rej THEN st.plan_show END AS fixed
+          FROM ad_campaign_creative c
+          LEFT JOIN launch_prep_pair pr ON pr.id = c.pair_id
+          LEFT JOIN launch_prep_set_target st
+                 ON st.set_id = pr.set_id AND st.target_id = pr.target_id
+         WHERE c.campaign_id = :c"""),
+        {"c": camp.id, "rej": CREATIVE_REJECTED}).mappings().all()
+    by_pl: dict = {}
+    for r in rows:
+        by_pl.setdefault(r["placement_id"], []).append(dict(r))
+    plan_of = {p.id: p.plan_show for p in db.query(AdCampaignPlacement).filter(
+        AdCampaignPlacement.campaign_id == camp.id).all()}
+    hold = holds(flight_of(camp.date_start, camp.date_end))
+    out = {}
+    for pid, crs in by_pl.items():
+        for r in split_evenly(plan_of.get(pid), crs, hold=hold):
+            out[r["id"]] = r["plan_show"]
+    return out
+
+
+# РК, которые не пересчитываем: завершённую перекраивать задним числом нельзя — её план
+# уже отработан и сверен.
+CAMPAIGN_CLOSED = ("окончена", "архив")
+
+
+def refresh_weights(db: Session, commit: bool = True, campaign_ids=None) -> dict:
+    """Индексы балансировщика → веса площадок во всех незавершённых РК → пересчёт объёмов.
+
+    До 27.09.2026 правка индекса доходила до РК только на «Обновить из сделок» или на
+    событии сделки — между ними РК жила по старым весам (владелец: «индекс есть, а
+    перерасчёта объёма нет»). Теперь её зовут ручки балансировщика и ночной пересчёт
+    (`app/ad/daily_shares`), который заодно переключает удержание долей на шестой день.
+
+    Вес ставится таким, какой он в балансировщике сейчас, включая пустой: снятый индекс
+    означает «площадка в раскладке не участвует», а не «оставить прошлый».
+
+    `campaign_ids` — ограничить набор РК (тесты: прогон по всем РК стенда с подменённым
+    балансировщиком 27.09.2026 затёр веса демо-кампаний).
+    """
+    q = db.query(AdCampaign).filter(
+        (AdCampaign.status.is_(None)) | (~AdCampaign.status.in_(CAMPAIGN_CLOSED)))
+    if campaign_ids is not None:
+        q = q.filter(AdCampaign.id.in_(list(campaign_ids)))
+    camps = q.all()
+    changed = 0
+    for camp in camps:
+        surfaces = deal_plan(db, camp.deal_id)["surfaces"]
+        if not surfaces:
+            # У сделки нет годного медиаплана (отклонён, без строк) — поверхностей не знаем,
+            # и пустой набор весов не «индекс снят», а «спросить не у чего». Веса оставляем
+            # прежними, как `sync_placements` (ревью 27.09.2026: иначе РК теряла все объёмы).
+            recompute_shares(db, camp.id)
+            continue
+        weights = publisher_weights(db, surfaces)
+        for p in db.query(AdCampaignPlacement).filter(
+                AdCampaignPlacement.campaign_id == camp.id).all():
+            w = weights.get(p.publisher_id)
+            if p.weight != w:
+                p.weight = w
+                changed += 1
+        recompute_shares(db, camp.id)
+    db.flush()
+    if commit:
+        db.commit()
+    return {"campaigns": len(camps), "weights_changed": changed}
 
 
 def sync_placements(db: Session, camp: AdCampaign, commit: bool = True) -> dict:

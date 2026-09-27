@@ -147,6 +147,28 @@ class MsClient:
             log.warning("dsp_send_log: чтение не удалось (%s)", e)
             return None
 
+    def last_sent_show_limit(self, local_ref) -> Optional[int]:
+        """Последний лимит показов, удачно отправленный креативу (`Creative.add` / `edit`).
+
+        Нужен ночному подтягиванию лимитов (`app/dsp/limits`): слать правку только туда,
+        где план разошёлся с тем, что уже стоит в DSP. Журнал — единственное место, где
+        это записано: `Creative.getInfo` на каждый креатив каждую ночь был бы лишним обходом."""
+        if not self._journal_on:
+            return None
+        try:
+            with self._engine().connect() as c:
+                v = c.execute(text(
+                    "SELECT request->'params'->'limits'->'show'->>'total' FROM dsp_send_log "
+                    "WHERE contour=:ct AND method IN ('Creative.add','Creative.edit') "
+                    "AND local_ref=:lr AND ok "
+                    "AND request->'params'->'limits'->'show' ? 'total' "
+                    "ORDER BY ts DESC LIMIT 1"),
+                    dict(ct=self.contour, lr=str(local_ref))).scalar()
+            return int(float(v)) if v not in (None, "") else None
+        except Exception as e:  # noqa: BLE001
+            log.warning("dsp_send_log: чтение лимита не удалось (%s)", e)
+            return None
+
     # Строка «ушло, исход неизвестен»: без хеша и либо без ответа (таймаут, обрыв), либо
     # с «успехом», в котором хеша не нашлось. Отказ с телом ответа сюда не попадает —
     # он ответ. Считается только то, что позже последней ТОЧКИ СБРОСА: удачного вызова с

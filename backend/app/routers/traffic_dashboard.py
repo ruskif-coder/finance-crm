@@ -32,7 +32,7 @@ from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_REJECTED, 
                            GRAIN_DAYS, campaign_chain_status, effective_campaign_status,
                            PLACEMENT_CHAIN, PLACEMENT_MANUAL, PLACEMENT_RUNNING,
                            PLACEMENT_STATUSES, PLACEMENT_OFF, PLACEMENT_READY,
-                           as_placement_scale, best_chain_status, can_start_placement,
+                           as_placement_scale, best_chain_status, can_start_placement, holds,
                            creative_counts, culprits, daily_buckets,
                            distribute, effective_status, flight_of, progress, split_evenly)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
@@ -698,7 +698,8 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
 
     # Третий этаж: план площадки делится ПОРОВНУ между её работающими креативами.
     for row in out["rows"]:
-        row["creatives"] = split_evenly(row.get("plan_show"), creatives.get(row["id"], []))
+        row["creatives"] = split_evenly(row.get("plan_show"), creatives.get(row["id"], []),
+                                        hold=holds(fl))
 
     # Состояние во внешних системах — ТОЙ ЖЕ функцией, что на карточке сделки. Второй
     # расчёт разошёлся бы с первым, и спорить было бы нечем.

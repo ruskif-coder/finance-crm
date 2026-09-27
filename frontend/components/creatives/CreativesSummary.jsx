@@ -12,19 +12,19 @@
  * разворачивания — ровно то, ради чего сворачивание делали, не работало.
  */
 import { useState } from 'react'
+import { downloadFile } from '@/lib/download'
 import { CreativePreview, FORM_LABEL } from './AssemblyCreatives'
 import { CreativesBrief, derive } from './CreativesSection'
 
 const fileSize = (n) => !n ? '' : n > 1048576 ? `${(n / 1048576).toFixed(1)} МБ` : `${Math.round(n / 1024)} КБ`
 
-/* Статус площадки в словарь хендоффа. У него четыре значения, отказа среди них нет —
-   он появился у нас позже (владелец, 27.08.2026). Отказ кладём в «правки»: обе группы
-   отвечают на один вопрос «эта площадка требует действия и точно не согласована», а
-   завести пятый цвет — правка дизайна, а не подключение данных. */
+/* Статус площадки в словарь сводки. Отказ — отдельным значением (макет владельца
+   27.09.2026: «доработка» и «отказ» разными цветами). До того отказ лежал в «правках»:
+   в хендоффе пятого значения не было. */
 function siteStatus(r) {
   if (r.verdict === 'ок') return 'принято'
-  if (r.verdict === 'на доработку' || r.verdict === 'отказ'
-      || r.state === 'отказ площадки'
+  if (r.verdict === 'отказ' || r.state === 'отказ площадки') return 'отказ'
+  if (r.verdict === 'на доработку'
       // Трафик завернул материал (28.08.2026) — площадка о нём не узнала, но для
       // аккаунта это то же самое: собрать новую версию.
       || r.traffic_verdict === 'на переделку') return 'правки'
@@ -42,6 +42,7 @@ export function toCreative(s) {
       s.form ? (FORM_LABEL[s.form] || s.form).toLowerCase() : null].filter(Boolean).join(' · '),
     tech: s.form ? (FORM_LABEL[s.form] || s.form) : '—',
     file: f ? f.name : 'файла нет',
+    fileId: f ? f.id : null,
     size: f ? fileSize(f.size_bytes) : '',
     erid: s.erid || '',
     // Скриншоты размещения по всем площадкам креатива: в свёрнутой сводке нужен факт
@@ -84,6 +85,15 @@ function extCount(recipients, key, doneStates) {
   return { done, need }
 }
 
+/** 1 площадка, 3 площадки, 5 площадок (и 11–14 — «площадок»). */
+function plural(n, one, few, many) {
+  const m10 = n % 10
+  const m100 = n % 100
+  if (m10 === 1 && m100 !== 11) return one
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few
+  return many
+}
+
 /** Итог секции — строка `summary` в заголовке. Считается тем же `derive`, что и таблица:
  *  два счёта, посчитанные каждый по-своему, однажды разойдутся. */
 export function creativesSummary(data) {
@@ -91,7 +101,18 @@ export function creativesSummary(data) {
   if (!sets.length) return { text: 'креативов нет', tone: 'off' }
   const d = sets.map(s => derive(toCreative(s)))
   const fix = d.reduce((a, x) => a + x.fix, 0)
-  if (fix) return { text: `правки по ${fix}`, tone: 'warn' }
+  // «правки: 3 площадки в 1 креативе» — плашкой в шапке секции (макет 27.09.2026).
+  // Отказ — своей красной плашкой рядом, а не вместо: одна плашка на двоих прятала бы
+  // отказы, пока есть хоть одна доработка (ревью 27.09.2026).
+  const rej = d.reduce((a, x) => a + x.rej, 0)
+  const chip = (label, n, key, tone) => {
+    const inSets = d.filter(x => x[key]).length
+    return { text: `${label}: ${n} ${plural(n, 'площадка', 'площадки', 'площадок')} в ${inSets} `
+      + plural(inSets, 'креативе', 'креативах', 'креативах'), tone }
+  }
+  const chips = [fix ? chip('правки', fix, 'fix', 'warn') : null,
+    rej ? chip('отказ', rej, 'rej', 'danger') : null].filter(Boolean)
+  if (chips.length) return { text: chips.map(c => c.text).join(' · '), tone: 'warn', chips }
   const marked = sets.filter(s => s.erid).length
   if (marked === sets.length) return { text: 'все маркированы', tone: 'ok' }
   const ok = d.reduce((a, x) => a + x.ok, 0)
@@ -104,8 +125,26 @@ export function creativesSummary(data) {
   return { text: `согласовано ${ok} из ${total}`, tone: ok && ok === total ? 'ok' : null }
 }
 
+const ALERT_TONE = {
+  warn:   { bg: 'var(--warning-tint)', bd: 'var(--warning-border)', fg: 'var(--warning-text)', dot: 'var(--warning)' },
+  danger: { bg: 'var(--danger-tint)',  bd: 'var(--danger-border)',  fg: 'var(--danger-fg)',    dot: 'var(--danger)' },
+}
+
+/** Плашка «правки» (оранжевая) или «отказ» (красная) в шапке секции — тон как в таблице. */
+export function CreativesAlert({ text, tone = 'warn' }) {
+  const t = ALERT_TONE[tone] || ALERT_TONE.warn
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 26, padding: '0 11px',
+      background: t.bg, border: `1px solid ${t.bd}`, borderRadius: 8,
+      color: t.fg, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>
+      <span style={{ width: 7, height: 7, borderRadius: 2, background: t.dot }} />{text}
+    </span>
+  )
+}
+
 export default function CreativesSummary({ data, canApprove, onReviewed }) {
   const [preview, setPreview] = useState(null)
+  const [err, setErr] = useState('')
   const sets = (data && data.sets) || []
 
   if (!sets.length) {
@@ -122,7 +161,12 @@ export default function CreativesSummary({ data, canApprove, onReviewed }) {
         onPreview={(c) => {
           const f = (c._set.files || [])[0]
           if (f) setPreview({ set: c._set, fileId: f.id })
+        }}
+        onDownload={(c) => {
+          const f = (c._set.files || [])[0]
+          if (f) { setErr(''); downloadFile(`/launch-prep/file/${f.id}`, f.name, setErr) }
         }} />
+      {!!err && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--danger-fg)' }}>{err}</div>}
 
       {!!preview && (
         <CreativePreview files={preview.set.files} startId={preview.fileId}

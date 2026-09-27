@@ -13,7 +13,9 @@ from app.ad.flight import distribute, split_evenly
 from tests.test_launch_prep_pairs import _ADMIN, env  # noqa: F401
 
 ON = "запущен"
-OFF = "ждёт сборки"
+# Выключенная — «завершена»: с 27.09.2026 «ждёт сборки» держит долю первые 5 дней РК
+# (удержание, tests/test_hold_distribution.py).
+OFF = "завершена"
 
 
 def _rows(out):

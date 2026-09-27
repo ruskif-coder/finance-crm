@@ -17,6 +17,7 @@ import { ago } from '@/lib/dates'
 import { TONE, toneOf, toneWeight } from '@/lib/tone'
 import { allowedSections, allowedItems, findByPath, entryHref, firstAllowedHref, resolveLegacy } from '@/lib/nav'
 import BugReport from './BugReport'
+import SearchBar, { SearchPill } from './search/SearchBar'
 import { useMaintenance, MaintenanceBar, MaintenanceStub } from './Maintenance'
 
 /* Сброс дефолтов <button>: вся навигация — настоящие кнопки (фокус с клавиатуры,
@@ -597,6 +598,21 @@ export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGea
   const closeNow = () => { clearTimeout(timer.current); setHover(null) }
   useEffect(() => () => clearTimeout(timer.current), [])
 
+  /* Глобальный поиск: свёрнут — последняя «вкладка» ряда, развёрнут — поле на месте
+     ряда вкладок. Ctrl+K (Cmd+K на маке) открывает с любого экрана. */
+  const [searchOpen, setSearchOpen] = useState(false)
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'k' || e.key === 'K' || e.code === 'KeyK')) {
+        e.preventDefault()
+        closeNow()
+        setSearchOpen(true)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   /* `Section` живёт на уровне модуля (ниже по файлу) — НЕ здесь.
 
      Объявленный внутри рендера, он пересоздавался как новый тип компонента на каждый
@@ -627,12 +643,19 @@ export function NavDesktop({ sections, active, perms, isAdmin, onNavigate, onGea
           style={{ height: 22, width: 'auto', display: 'block' }} />
       </button>
 
-      <span style={{ display: 'flex', gap: 2, flex: '1 1 auto', minWidth: 0, flexWrap: 'wrap' }}>
-        {/* «Справочники» — не пункт строки контуров, а контурная кнопка справа (как в макете). */}
-        {sections.filter(s => s.key !== 'directory').map(s => (
-          <Section key={s.key} s={s} hover={hover} open={open} close={close} closeNow={closeNow}
-            perms={perms} isAdmin={isAdmin} active={active} onNavigate={onNavigate} />
-        ))}
+      <span style={{ display: 'flex', gap: 2, flex: '1 1 auto', minWidth: 0, flexWrap: 'wrap', alignItems: 'center' }}>
+        {searchOpen ? (
+          <SearchBar onClose={() => setSearchOpen(false)} onNavigate={href => onNavigate?.({ href })} />
+        ) : (
+          <>
+            {/* «Справочники» — не пункт строки контуров, а контурная кнопка справа (как в макете). */}
+            {sections.filter(s => s.key !== 'directory').map(s => (
+              <Section key={s.key} s={s} hover={hover} open={open} close={close} closeNow={closeNow}
+                perms={perms} isAdmin={isAdmin} active={active} onNavigate={onNavigate} />
+            ))}
+            <span style={{ marginLeft: 6 }}><SearchPill onOpen={() => { closeNow(); setSearchOpen(true) }} /></span>
+          </>
+        )}
       </span>
 
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>

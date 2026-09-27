@@ -27,12 +27,9 @@ export const SITE_STATUS = {
   'черновик':    [T.card, T.t3, T.border],
   'на проверке': [T.accentTint, T.accent, T.accentBorder],
   'принято':     [T.incomeTint, T.incomeFg, T.incomeBorder],
-  'правки':      [T.dangerTint, T.danger, T.dangerBorder],
+  'правки':      [T.warningTint, T.warningFg, T.warningBorder],
+  'отказ':       [T.dangerTint, T.danger, T.dangerBorder],
 };
-/** Цвет площадки в баре готовности. */
-const BAR_COLOR = { 'принято': T.income, 'на проверке': T.accent, 'правки': T.dangerSoft, 'черновик': T.inner };
-/** Порог: до 12 площадок — отдельные пипсы, дальше — пропорциональные сегменты. */
-export const PIPS_LIMIT = 12;
 
 /* сетки: одна на шапку, строки и итог каждой таблицы */
 /* ⚠ Полный `CreativesSection` (со своей таблицей площадок) НИКЕМ не рендерится —
@@ -52,7 +49,12 @@ function ExtCount({ letter, done, need, title }) {
   );
 }
 
-const BRIEF_COLS = 'minmax(150px,1.2fr) 116px 96px minmax(150px,1fr) minmax(210px,1.15fr) minmax(180px,0.9fr)';
+/* Свёрнутая сводка (правка владельца 27.09.2026 по макету): тип ушёл под название,
+   «Статус» (W/D) — своей колонкой справа от маркировки. */
+// Минимумы подобраны под карточку сделки на окне 1280 (≈850 px под таблицу рядом с колонкой
+// документов): сумма минимумов с зазорами ≈ 760. До 27.09 таблица требовала ≈ 970–1010 px и
+// на ноутбуке наезжала на колонку документов. Длинное внутри ячеек обрезается многоточием.
+const BRIEF_COLS = 'minmax(120px,1.1fr) 70px minmax(140px,1.25fr) minmax(200px,1.7fr) minmax(96px,0.8fr) 52px';
 const SITE_COLS = '18px minmax(150px,1.25fr) 26px minmax(190px,1.5fr) 128px minmax(120px,0.9fr)';
 
 const capTitle = { fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: T.t3 };
@@ -64,40 +66,40 @@ export function derive(c) {
   const total = c.sites.length;
   const ok = c.sites.filter(s => s.status === 'принято').length;
   const fix = c.sites.filter(s => s.status === 'правки').length;
-  const wait = total - ok - fix;
+  // Отказ — отдельно от доработки (макет владельца 27.09.2026): доработка ждёт новую
+  // версию, отказ — решение площадки, и сливать их в одно «правки» значило прятать отказы.
+  const rej = c.sites.filter(s => s.status === 'отказ').length;
+  const wait = total - ok - fix - rej;
   const pct = total ? Math.round(ok / total * 100) : 0;
   return {
-    total, ok, fix, wait, pct,
+    total, ok, fix, rej, wait, pct,
     okFg: ok === total && ok ? T.income : ok ? T.warning : T.t4,
-    usePips: total <= PIPS_LIMIT,
-    /* сегменты в порядке ок → правки → ждём, нулевые не рисуем */
-    segments: [[T.income, ok, 'согласовано'], [T.warning, fix, 'ждёт правок'], [T.inner, wait, 'ждём']]
+    /* сегменты в порядке ок → доработка → отказ → ждём, нулевые не рисуем */
+    segments: [[T.income, ok, 'согласовано'], [T.warning, fix, 'доработка'], [T.dangerSoft, rej, 'отказ'], [T.inner, wait, 'ждём']]
       .filter(([, n]) => n > 0)
       .map(([bg, n, label]) => ({ bg, title: `${label} — ${n}`, width: (n / total * 100).toFixed(1) + '%' })),
-    legend: [[T.income, T.incomeFg, ok, 'ок'], [T.warning, T.warningFg, fix, 'правки'], [T.t5, T.t3, wait, 'ждём']]
+    /* «отказ» в легенде — только когда он есть: у большинства креативов его нет */
+    legend: [[T.income, T.incomeFg, ok, 'ок'], [T.warning, T.warningFg, fix, 'доработка'], [T.dangerSoft, T.danger, rej, 'отказ'], [T.t5, T.t3, wait, 'ждём']]
+      .filter(([, , n, label]) => label !== 'отказ' || n > 0)
       .map(([dot, fg, n, label]) => ({ dot, fg: n ? fg : T.t5, text: `${n} ${label}` })),
-    barTitle: `${total} площадок: согласовано ${ok}, правки ${fix}, ждём ${wait}`,
+    barTitle: `${total} площадок: согласовано ${ok}, доработка ${fix}, отказ ${rej}, ждём ${wait}`,
   };
 }
 
 /* ── бар готовности ─────────────────────────────────────────────────── */
-const ReadinessBar = ({ c, d }) => (
-  <span style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-    <span style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
-      {d.usePips ? (
-        <span style={{ flex: '1 1 auto', minWidth: 40, display: 'flex', gap: 2 }}>
-          {c.sites.map(s => (
-            <span key={s.site} title={`${s.site} — ${s.status}`} style={{ flex: 1, minWidth: 0, height: 8, borderRadius: 2, background: BAR_COLOR[s.status] }} />
-          ))}
-        </span>
-      ) : (
-        <span title={d.barTitle} style={{ flex: '1 1 auto', minWidth: 40, display: 'flex', gap: 2 }}>
-          {d.segments.map(g => <span key={g.title} title={g.title} style={{ width: g.width, height: 8, borderRadius: 2, background: g.bg }} />)}
-        </span>
-      )}
+/* Сегментами по группам всегда (макет 27.09.2026): полоса отвечает «сколько в каком
+   состоянии», а поштучные пипсы на 12 площадках читались как штрихкод. Кто есть кто —
+   в раскрытом виде. */
+const ReadinessBar = ({ d }) => (
+  <span style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
+    <span style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+      <span title={d.barTitle} style={{ flex: '1 1 auto', minWidth: 40, height: 8, display: 'flex', gap: 2,
+        borderRadius: 3, overflow: 'hidden', background: d.total ? 'transparent' : T.inner }}>
+        {d.segments.map(g => <span key={g.title} title={g.title} style={{ width: g.width, height: 8, borderRadius: 2, background: g.bg }} />)}
+      </span>
       <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, color: d.okFg, flex: '0 0 34px', textAlign: 'right' }}>{d.pct} %</span>
     </span>
-    <span style={{ display: 'flex', gap: 10, fontFamily: T.mono, fontSize: 9, letterSpacing: '.04em', whiteSpace: 'nowrap' }}>
+    <span style={{ display: 'flex', gap: 12, fontFamily: T.mono, fontSize: 9.5, letterSpacing: '.02em', whiteSpace: 'nowrap', overflow: 'hidden' }}>
       {d.legend.map(l => (
         <span key={l.text} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: l.fg }}>
           <span style={{ width: 6, height: 6, borderRadius: 2, background: l.dot }} />{l.text}
@@ -107,13 +109,27 @@ const ReadinessBar = ({ c, d }) => (
   </span>
 );
 
+/* Маркировка: плашка с точкой, ЕРИД — второй строкой (макет 27.09.2026). */
+const PILL = { display: 'inline-flex', alignItems: 'center', gap: 6, height: 22, padding: '0 9px', borderRadius: 7,
+  fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, letterSpacing: '.02em', whiteSpace: 'nowrap' };
 const MarkBadge = ({ c }) => (c.erid ? (
-  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: T.incomeTint, color: T.incomeFg, borderRadius: 7, padding: '4px 10px', fontFamily: T.mono, fontSize: 9, fontWeight: 700, letterSpacing: '.06em', whiteSpace: 'nowrap' }}>
-    Маркирован <span style={{ color: T.incomeSoft }}>|</span> ERID {c.erid}
+  <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+    <span style={{ ...PILL, background: T.incomeTint, color: T.incomeFg, border: `1px solid ${T.incomeBorder}` }}>
+      <span style={{ width: 6, height: 6, borderRadius: 3, background: T.income }} />Маркирован
+    </span>
+    <span title="ЕРИД" style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.incomeFg }}>{c.erid}</span>
   </span>
 ) : (
-  <span style={{ display: 'inline-flex', alignItems: 'center', background: T.subtle, color: T.t3, borderRadius: 7, padding: '4px 10px', fontFamily: T.mono, fontSize: 9, fontWeight: 700, letterSpacing: '.06em', whiteSpace: 'nowrap' }}>Черновик</span>
+  <span style={{ ...PILL, background: T.subtle, color: T.t3, border: `1px solid ${T.border}` }}>
+    <span style={{ width: 6, height: 6, borderRadius: 3, background: T.t5 }} />Черновик
+  </span>
 ));
+
+/* Квадратные кнопки строки: предпросмотр и скачать. */
+const ICON_BTN = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34,
+  flex: '0 0 34px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, color: T.t2, cursor: 'pointer', padding: 0 };
+const EyeIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>;
+const DownIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></svg>;
 
 const PlusIcon = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>;
 const CrossIcon = ({ size = 11 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>;
@@ -127,7 +143,7 @@ const CrossIcon = ({ size = 11 }) => <svg width={size} height={size} viewBox="0 
    отдельный экспорт, без изменения хотя бы одного стиля. Понадобилось это потому, что
    в нашей карточке сворачиванием управляет общий компонент `components/deal/Section`,
    а он ждёт УЗЕЛ для свёрнутого состояния, а не секцию со своим состоянием внутри. */
-export function CreativesBrief({ creatives = [], onPreview }) {
+export function CreativesBrief({ creatives = [], onPreview, onDownload }) {
   const items = creatives.map(c => ({ c, d: derive(c) }));
   const sumTotal = items.reduce((a, x) => a + x.d.total, 0);
   const sumOk = items.reduce((a, x) => a + x.d.ok, 0);
@@ -139,6 +155,7 @@ export function CreativesBrief({ creatives = [], onPreview }) {
     { done: 0, need: 0 });
   const sumW = sumExt('extW');
   const sumD = sumExt('extD');
+  const alignRight = { textAlign: 'right' };
 
   return (
     <div style={{ fontFamily: T.sans, color: T.t1 }}>
@@ -150,76 +167,79 @@ export function CreativesBrief({ creatives = [], onPreview }) {
       `}</style>
 
         <div style={{ display: 'flex', flexDirection: 'column', animation: `popIn .2s ${T.ease} both` }}>
-          <div style={{ display: 'grid', gridTemplateColumns: BRIEF_COLS, gap: 14, padding: '0 4px 8px', borderBottom: `1px solid ${T.border}`, ...colHead }}>
-            <span>Креатив</span><span>Тип</span><span style={{ textAlign: 'right' }}>Согласовано</span>
-            <span>Готовность площадок</span><span>Материалы</span><span style={{ textAlign: 'right' }}>Маркировка</span>
+          <div style={{ display: 'grid', gridTemplateColumns: BRIEF_COLS, gap: 16, padding: '0 6px 8px', borderBottom: `1px solid ${T.border}`, ...colHead }}>
+            <span>Креатив</span><span style={alignRight}>Согласовано</span>
+            <span>Готовность площадок</span><span>Материалы</span>
+            <span style={alignRight}>Маркировка</span><span style={alignRight}>Статус</span>
           </div>
 
           {items.map(({ c, d }) => (
-            <div key={c.num} className="cs-row" style={{ display: 'grid', gridTemplateColumns: BRIEF_COLS, gap: 14, alignItems: 'center', padding: '9px 4px', borderBottom: `1px solid ${T.row}`, minWidth: 0 }}>
-              <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent, flex: '0 0 24px' }}>{c.num}</span>
-                <span style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+            <div key={c.num} className="cs-row" style={{ display: 'grid', gridTemplateColumns: BRIEF_COLS, gap: 16, alignItems: 'center', padding: '12px 6px', borderBottom: `1px solid ${T.row}`, minWidth: 0 }}>
+              {/* номер · название, тип — строкой ниже (макет 27.09.2026: колонки «Тип» нет) */}
+              <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 10, minWidth: 0 }}>
+                <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: T.accent, flex: '0 0 26px' }}>{c.num}</span>
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+                  <span style={{ fontSize: 14.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase', color: T.t4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.tech}</span>
+                </span>
               </span>
 
-              <span style={{ fontFamily: T.mono, fontSize: 9.5, letterSpacing: '.06em', textTransform: 'uppercase', color: T.t3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.tech}</span>
-
-              <span style={{ display: 'inline-flex', alignItems: 'baseline', justifyContent: 'flex-end', gap: 4, whiteSpace: 'nowrap' }}>
-                <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, letterSpacing: '-0.02em', color: d.okFg }}>{d.ok}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'baseline', justifyContent: 'flex-end', gap: 5, whiteSpace: 'nowrap' }}>
+                <span style={{ fontFamily: T.mono, fontSize: 18, fontWeight: 700, letterSpacing: '-0.02em', color: d.okFg }}>{d.ok}</span>
                 <span style={{ fontFamily: T.mono, fontSize: 11, color: T.t4 }}>из {d.total}</span>
               </span>
 
-              <ReadinessBar c={c} d={d} />
+              <ReadinessBar d={d} />
 
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.t2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.file}</span>
-                  <span style={{ fontFamily: T.mono, fontSize: 9, color: T.t4, whiteSpace: 'nowrap' }}>{c.size}</span>
+                <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8, minWidth: 0, flex: '1 1 auto' }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.t2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{c.file}</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T.t4, whiteSpace: 'nowrap', flex: '0 0 auto' }}>{c.size}</span>
                 </span>
-                {/* Вторая правка хендоффа, названная владельцем явно: «есть скриншоты»
-                    в свёрнутой сводке. Значок в идиоме соседнего «ТТ» — факт наличия
-                    доказательств, без разбивки по площадкам. */}
+                {/* «есть скриншоты» в свёрнутой сводке — факт наличия доказательств, без
+                    разбивки по площадкам (правка владельца). */}
                 {!!c.shots && (
-                  <span title={`Скриншоты размещения: ${c.shots}`} style={{ display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 8px', background: T.incomeTint, color: T.incomeFg, border: `1px solid ${T.incomeBorder}`, borderRadius: 8, fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, whiteSpace: 'nowrap', flex: '0 0 auto' }}>скрины · {c.shots}</span>
+                  <span title={`Скриншоты размещения: ${c.shots}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 11px', background: T.incomeTint, color: T.incomeFg, border: `1px solid ${T.incomeBorder}`, borderRadius: 9, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', flex: '0 0 auto' }}>
+                    скрины <span style={{ fontFamily: T.mono }}>{c.shots}</span>
+                  </span>
                 )}
-                <span className="cs-ghost" onClick={() => onPreview?.(c)} style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 10px', background: T.card, border: `1px solid ${T.border}`, color: T.t2, borderRadius: 8, fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer', flex: '0 0 auto' }}>предпросмотр</span>
+                <button type="button" className="cs-ghost" title="Предпросмотр" aria-label="Предпросмотр"
+                  onClick={() => onPreview?.(c)} style={ICON_BTN}><EyeIcon /></button>
+                <button type="button" className="cs-ghost" title="Скачать файл креатива" aria-label="Скачать файл креатива"
+                  disabled={!c.fileId} onClick={() => onDownload?.(c)}
+                  style={{ ...ICON_BTN, opacity: c.fileId ? 1 : 0.4, cursor: c.fileId ? 'pointer' : 'default' }}><DownIcon /></button>
               </span>
 
-              {/* Маркировка и внешние системы одной колонкой: три разных «где мы»
-                  читаются одним взглядом, и колонка не растёт. Знаменатель считает
-                  только те площадки, которым это нужно. */}
-              <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, minWidth: 0 }}>
+              <span style={{ display: 'flex', justifyContent: 'flex-end', minWidth: 0 }}>
                 <MarkBadge c={c} />
-                <span style={{ display: 'inline-flex', gap: 10 }}>
-                  <ExtCount letter="W" done={c.extW?.done || 0} need={c.extW?.need || 0}
-                    title="Weborama: у скольких площадок креатива есть пиксель" />
-                  <ExtCount letter="D" done={c.extD?.done || 0} need={c.extD?.need || 0}
-                    title="DSP: у скольких площадок креатива заведён креатив" />
-                </span>
+              </span>
+
+              {/* Внешние системы: знаменатель — только площадки, которым это нужно. */}
+              <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                <ExtCount letter="W" done={c.extW?.done || 0} need={c.extW?.need || 0}
+                  title="Weborama: у скольких площадок креатива есть пиксель" />
+                <ExtCount letter="D" done={c.extD?.done || 0} need={c.extD?.need || 0}
+                  title="DSP: у скольких площадок креатива заведён креатив" />
               </span>
             </div>
           ))}
 
-          {/* итог: согласовано площадок по всем креативам + маркировка */}
-          <div style={{ display: 'grid', gridTemplateColumns: BRIEF_COLS, gap: 14, alignItems: 'center', padding: '11px 4px 0' }}>
+          {/* итог: согласовано площадок по всем креативам, маркировка, внешние системы */}
+          <div style={{ display: 'grid', gridTemplateColumns: BRIEF_COLS, gap: 16, alignItems: 'center', padding: '12px 6px 0' }}>
             <span style={{ ...colHead, fontWeight: 700, color: T.t3 }}>Итого</span>
-            <span />
-            <span style={{ display: 'inline-flex', alignItems: 'baseline', justifyContent: 'flex-end', gap: 4, whiteSpace: 'nowrap' }}>
-              <span style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 700, letterSpacing: '-0.02em', color: sumOk === sumTotal && sumOk ? T.income : sumOk ? T.warning : T.t4 }}>{sumOk}</span>
+            <span style={{ display: 'inline-flex', alignItems: 'baseline', justifyContent: 'flex-end', gap: 5, whiteSpace: 'nowrap' }}>
+              <span style={{ fontFamily: T.mono, fontSize: 18, fontWeight: 700, letterSpacing: '-0.02em', color: sumOk === sumTotal && sumOk ? T.income : sumOk ? T.warning : T.t4 }}>{sumOk}</span>
               <span style={{ fontFamily: T.mono, fontSize: 11, color: T.t4 }}>из {sumTotal}</span>
             </span>
-            <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.t3 }}>площадок согласовано по всем креативам</span>
-            <span />
-            <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
-              <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: marked === creatives.length ? T.income : T.warning, whiteSpace: 'nowrap' }}>
-                {marked} из {creatives.length} маркировано
-              </span>
-              <span style={{ display: 'inline-flex', gap: 10 }}>
-                <ExtCount letter="W" done={sumW.done} need={sumW.need}
-                  title="Weborama: пикселей получено по всем креативам" />
-                <ExtCount letter="D" done={sumD.done} need={sumD.need}
-                  title="DSP: креативов заведено по всем креативам" />
-              </span>
+            <span style={{ gridColumn: '3 / 5', fontFamily: T.mono, fontSize: 10.5, color: T.t3 }}>площадок согласовано по всем креативам</span>
+            <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, color: marked === creatives.length ? T.income : T.warning, whiteSpace: 'nowrap', textAlign: 'right' }}>
+              {marked} из {creatives.length} маркировано
+            </span>
+            <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+              <ExtCount letter="W" done={sumW.done} need={sumW.need}
+                title="Weborama: пикселей получено по всем креативам" />
+              <ExtCount letter="D" done={sumD.done} need={sumD.need}
+                title="DSP: креативов заведено по всем креативам" />
             </span>
           </div>
         </div>

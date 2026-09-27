@@ -23,7 +23,7 @@ from app.routers import (auth, operations, reports, counterparties, articles, se
                          publishers, diadoc, ord, launch_prep, traffic, cabinets,
                          cabinet_gateway, traffic_catalog, traffic_balancer,
                          dsp_demo, weborama_demo, traffic_dashboard, annexes, directory_add,
-                         exec_dashboard, system_status, mail_admin)
+                         exec_dashboard, system_status, mail_admin, search)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -624,6 +624,8 @@ app.include_router(directory_add.router, prefix="/api/directory-add", tags=["dir
 # Дашборд руководителя. Закрыт require_admin, а не правом: экран сквозной и для одного
 # человека, а секция в конструкторе ролей могла бы быть выдана по неосторожности.
 app.include_router(exec_dashboard.router, prefix="/api/exec", tags=["exec_dashboard"])
+# Глобальный поиск в шапке: своего права нет, каждая группа закрыта правом своего типа.
+app.include_router(search.router, prefix="/api/search", tags=["search"])
 # Состояние системы. Тоже require_admin: показывает инфраструктуру, а не бизнес-данные.
 app.include_router(system_status.router, prefix="/api/system", tags=["system_status"])
 # Почтовый гейт: журнал писем наружу, шаблоны, проверка канала (13.09.2026).
