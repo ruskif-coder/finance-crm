@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Head from 'next/head'
 import Navbar, { can, getPermissions } from '@/components/Navbar'
-import { MONO, UI, card, CAP, btn, btnSm, inp, sel, th, td, chip }
+import { MONO, UI, card, CAP, btn, btnSm, inp, sel, chip, cell, SortHead }
   from '@/components/salesTableKit'
 import ValuePopover from '@/components/ValuePopover'
 import Balancer from '@/components/traffic/Balancer'
@@ -57,6 +57,21 @@ const NET_TONE = {
   'x-simb': ['var(--warning-tint)', 'var(--warning-text)'],
 }
 
+// Колонки таблицы блоков: подпись, ширина и значение для сортировки одним описанием.
+// У последней колонки (удаление) сортировки нет.
+const BLOCK_COLS = [
+  { key: 'ms_block_id', label: 'ID блока', w: '110px', get: (b) => b.ms_block_id },
+  { key: 'name', label: 'Название (xoalt)', w: 'minmax(200px,1fr)', get: (b) => b.name },
+  { key: 'page_type', label: 'Раздел', w: '180px', get: (b) => b.page_type },
+  { key: 'network', label: 'Сеть', w: '160px', get: (b) => b.network },
+  { key: 'is_active', label: 'Актив.', w: '64px', get: (b) => (b.is_active ? 1 : 0) },
+  { key: 'del', label: '', w: '34px' },
+]
+const BLOCK_GRID = BLOCK_COLS.map((c) => c.w).join(' ')
+// Пустое — всегда в конце, в какую сторону ни сортируй.
+const blockBlank = (v) => v === null || v === undefined || v === ''
+const blockCmp = (va, vb) => String(va).localeCompare(String(vb), 'ru', { numeric: true, sensitivity: 'base' })
+
 export default function TrafficCatalog() {
   const [pubs, setPubs] = useState([])
   const [q, setQ] = useState('')
@@ -69,6 +84,7 @@ export default function TrafficCatalog() {
   const [codeErr, setCodeErr] = useState('')   // отказ по коду — строкой рядом с полем
   const [types, setTypes] = useState([])        // типовые разделы (накопитель)
   const [vpop, setVpop] = useState(null)         // {rect, blockId, value} — выбор раздела
+  const [blockSort, setBlockSort] = useState({ key: null, dir: 'asc', order: [], surfaceId: null })
   const [adminTab, setAdminTab] = useState('blocks')   // вкладка админки: blocks | balancer | script
 
   /* Права читаются ИЗ СНИМКА в localStorage, поэтому только после монтирования:
@@ -157,6 +173,21 @@ export default function TrafficCatalog() {
   }
 
   const surface = detail?.surfaces?.find((s) => s.id === tab) || null
+  const sortBlocks = (col) => {
+    if (!surface) return
+    const dir = blockSort.key === col.key && blockSort.surfaceId === surface.id && blockSort.dir === 'asc' ? 'desc' : 'asc'
+    const order = [...surface.blocks].sort((x, y) => {
+      const va = col.get(x), vb = col.get(y)
+      if (blockBlank(va) || blockBlank(vb)) return blockBlank(va) - blockBlank(vb)
+      return (dir === 'asc' ? 1 : -1) * blockCmp(va, vb)
+    }).map((x) => x.id)
+    setBlockSort({ key: col.key, dir, order, surfaceId: surface.id })
+  }
+  const sortedHere = !!surface && !!blockSort.key && blockSort.surfaceId === surface.id
+  const orderedBlocks = !surface ? [] : !sortedHere ? surface.blocks : [...surface.blocks].sort((x, y) => {
+    const ix = blockSort.order.indexOf(x.id), iy = blockSort.order.indexOf(y.id)
+    return (ix < 0 ? Infinity : ix) - (iy < 0 ? Infinity : iy)
+  })
 
   // локальная правка поля поверхности/блока — правим detail в состоянии, пишем по действию
   const patchSurface = (patch) => setDetail((d) => ({
@@ -239,7 +270,8 @@ export default function TrafficCatalog() {
     <>
       <Head><title>Админ панель · Трафики | SIMB-AD ERP</title></Head>
       <Navbar />
-      <div style={{ maxWidth: 1600, margin: '0 auto', padding: '18px 24px 60px', fontFamily: UI }}>
+      {/* Под экран 1920, как остальные широкие рабочие экраны (финансы, план-факт) */}
+      <div style={{ maxWidth: 1920, margin: '0 auto', padding: '18px 24px 60px', fontFamily: UI }}>
         {/* шапка: пиктограмма + заголовок */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 13, marginBottom: 16 }}>
           <span style={{
@@ -435,64 +467,70 @@ export default function TrafficCatalog() {
                       <span style={{ flex: 1 }} />
                       <button style={btnSm(false)} onClick={exportBlocks}>Выгрузить в Excel</button>
                     </div>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
-                      <thead><tr>
-                        <th style={{ ...th, width: 100 }}>ID блока</th>
-                        <th style={th}>Название (xoalt)</th>
-                        <th style={{ ...th, width: 170 }}>Раздел</th>
-                        <th style={{ ...th, width: 150 }}>Сеть</th>
-                        <th style={{ ...th, width: 60 }}>Актив.</th>
-                        <th style={{ ...th, width: 34 }}></th>
-                      </tr></thead>
-                      <tbody>
-                        {surface.blocks.map((b) => (
-                          <tr key={b.id}>
-                            <td style={{ ...td, fontFamily: MONO, fontWeight: 600, color: 'var(--text-secondary)' }}>
-                              <input style={{ ...inp, width: 88, fontFamily: MONO, padding: '5px 7px' }} disabled={!mayEdit}
-                                value={b.ms_block_id || ''} onChange={(e) => patchBlock(b.id, { ms_block_id: e.target.value })}
-                                onBlur={() => mayEdit && saveBlock(b)} />
-                            </td>
-                            <td style={td}>
-                              <input style={{ ...inp, width: '100%', padding: '5px 8px' }} disabled={!mayEdit}
-                                value={b.name || ''} onChange={(e) => patchBlock(b.id, { name: e.target.value })}
-                                onBlur={() => mayEdit && saveBlock(b)} />
-                            </td>
-                            <td style={td}>
-                              {mayEdit ? (
-                                <span data-pop-root onClick={(e) => setVpop({
-                                  rect: e.currentTarget.getBoundingClientRect(), blockId: b.id, value: b.page_type || '',
-                                })} style={{
-                                  display: 'inline-block', minWidth: 120, padding: '4px 8px', cursor: 'pointer',
-                                  borderBottom: '1px dashed var(--border-card)',
-                                  color: b.page_type ? 'var(--text-primary)' : 'var(--text-faint)',
-                                }}>{b.page_type || '— не задан —'}</span>
-                              ) : (
-                                <span style={{ padding: '4px 2px' }}>{b.page_type || '—'}</span>
-                              )}
-                            </td>
-                            <td style={td}>
-                              <select style={{ ...sel, width: '100%', padding: '5px 8px', fontFamily: MONO, fontSize: 12 }} disabled={!mayEdit}
-                                value={b.network || ''} onChange={(e) => { patchBlock(b.id, { network: e.target.value }); }}
-                                onBlur={() => mayEdit && saveBlock(b)}>
-                                <option value=""></option>
-                                {NETWORKS.map((n) => <option key={n} value={n}>{n}</option>)}
-                              </select>
-                            </td>
-                            <td style={{ ...td, textAlign: 'center' }}>
-                              <input type="checkbox" checked={!!b.is_active} disabled={!mayEdit}
-                                onChange={(e) => { patchBlock(b.id, { is_active: e.target.checked }); saveBlock({ ...b, is_active: e.target.checked }) }} />
-                            </td>
-                            <td style={{ ...td, textAlign: 'center' }}>
-                              {mayDelete && <span onClick={() => delBlock(b.id)}
-                                style={{ cursor: 'pointer', color: 'var(--text-faint)', fontWeight: 700 }} title="Удалить">✕</span>}
-                            </td>
-                          </tr>
+                    {/* Блоки — по шаблону реестра: одна сетка на шапку и строки, шапка с
+                        сортировкой. Порядок фиксируется в момент клика по заголовку, а не
+                        пересчитывается на каждом символе: иначе строка уезжала бы из-под
+                        курсора. Новые блоки встают в конец. */}
+                    <div style={{ minWidth: 720 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: BLOCK_GRID, gap: 10,
+                        borderBottom: '1px solid var(--border-card)' }}>
+                        {BLOCK_COLS.map((c) => (
+                          <SortHead key={c.key} label={c.label} right={c.right}
+                            active={sortedHere && blockSort.key === c.key} dir={blockSort.dir}
+                            onClick={c.get ? () => sortBlocks(c) : undefined} />
                         ))}
-                        {!surface.blocks.length && (
-                          <tr><td style={{ ...td, color: 'var(--text-faint)' }} colSpan={6}>Блоков пока нет</td></tr>
-                        )}
-                      </tbody>
-                    </table>
+                      </div>
+                      {orderedBlocks.map((b) => (
+                        <div key={b.id} style={{ display: 'grid', gridTemplateColumns: BLOCK_GRID, gap: 10,
+                          alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border-row)',
+                          borderRadius: 10 }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card)' }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
+                          <div style={cell}>
+                            <input style={{ ...inp, width: '100%', fontFamily: MONO, padding: '5px 7px' }} disabled={!mayEdit}
+                              value={b.ms_block_id || ''} onChange={(e) => patchBlock(b.id, { ms_block_id: e.target.value })}
+                              onBlur={() => mayEdit && saveBlock(b)} />
+                          </div>
+                          <div style={cell}>
+                            <input style={{ ...inp, width: '100%', padding: '5px 8px' }} disabled={!mayEdit}
+                              value={b.name || ''} onChange={(e) => patchBlock(b.id, { name: e.target.value })}
+                              onBlur={() => mayEdit && saveBlock(b)} />
+                          </div>
+                          <div style={cell}>
+                            {mayEdit ? (
+                              <span data-pop-root onClick={(e) => setVpop({
+                                rect: e.currentTarget.getBoundingClientRect(), blockId: b.id, value: b.page_type || '',
+                              })} style={{
+                                display: 'inline-block', minWidth: 120, padding: '4px 8px', cursor: 'pointer',
+                                borderBottom: '1px dashed var(--border-card)',
+                                color: b.page_type ? 'var(--text-primary)' : 'var(--text-faint)',
+                              }}>{b.page_type || '— не задан —'}</span>
+                            ) : (
+                              <span style={{ padding: '4px 2px' }}>{b.page_type || '—'}</span>
+                            )}
+                          </div>
+                          <div style={cell}>
+                            <select style={{ ...sel, width: '100%', padding: '5px 8px', fontFamily: MONO, fontSize: 12 }} disabled={!mayEdit}
+                              value={b.network || ''} onChange={(e) => { patchBlock(b.id, { network: e.target.value }); }}
+                              onBlur={() => mayEdit && saveBlock(b)}>
+                              <option value=""></option>
+                              {NETWORKS.map((n) => <option key={n} value={n}>{n}</option>)}
+                            </select>
+                          </div>
+                          <div style={{ ...cell, textAlign: 'center' }}>
+                            <input type="checkbox" checked={!!b.is_active} disabled={!mayEdit}
+                              onChange={(e) => { patchBlock(b.id, { is_active: e.target.checked }); saveBlock({ ...b, is_active: e.target.checked }) }} />
+                          </div>
+                          <div style={{ ...cell, textAlign: 'center' }}>
+                            {mayDelete && <span onClick={() => delBlock(b.id)}
+                              style={{ cursor: 'pointer', color: 'var(--text-faint)', fontWeight: 700 }} title="Удалить">✕</span>}
+                          </div>
+                        </div>
+                      ))}
+                      {!surface.blocks.length && (
+                        <div style={{ padding: '12px 8px', fontSize: 13, color: 'var(--text-faint)' }}>Блоков пока нет</div>
+                      )}
+                    </div>
                     {mayCreate && <button style={{ ...btnSm(false), marginTop: 10 }} onClick={addBlock}>+ Добавить блок</button>}
                   </div>
                 )}

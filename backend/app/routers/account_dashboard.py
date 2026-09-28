@@ -143,6 +143,17 @@ def account_queue(
     # где оно было пропущено; строкой выше у рекламодателей всё верно.
     agencies = {a.id: (a.short_name or a.name) for a in db.query(SalesAgency).all()}
     repnames = {r.id: r.name for r in db.query(SalesRep).all()}
+
+    # «Что сделать» по стадии — факты и кнопка строки (макет «акки 3», 28.09.2026).
+    # Считается пачкой на всю очередь: app/sales/queue_state.py.
+    from app.sales import queue_state
+    open_rows = [(d, v) for d, v in rows
+                 if not ((st := cat.by_id.get(d.our_stage_id)) is not None
+                         and (st.is_terminal or st.is_lost))]
+    row_state = queue_state.build(
+        db, [d for d, _ in open_rows], {d.id: v for d, v in open_rows}, today,
+        amounts={d.id: (eff_net(d, mp_amt), gross_of(d, mp_amt)) for d, _ in open_rows})
+
     def row_public(d, v, sn):
         return row_ctx.apply({
             "id": d.id, "code": d.code, "title": d.title,
@@ -177,6 +188,11 @@ def account_queue(
             "due": v.due,
             "note": sn.note if sn else None,
             "return_at": sn.return_at if sn else None,
+            # slot · stage_days · state · action · note (подпись без кнопки) · tail · calm.
+            # Подпись без кнопки уходит под своим именем: «note» здесь уже занят
+            # заметкой будильника.
+            **{("action_note" if k == "note" else k): val
+               for k, val in (row_state.get(d.id) or {}).items()},
         }, d)
 
     groups = {k: [] for k, _ in QUEUE_GROUPS}

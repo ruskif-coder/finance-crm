@@ -179,25 +179,28 @@ function rowFact(facts, title) {
     Вынесена отдельно не ради красоты: панель живёт за логином, и посмотреть на неё
     глазами иначе нельзя — а две правки подряд «применились» только на бумаге.
     Компонент чистый, всё приходит пропсами. */
-export function NotifyRow({ n, onOpen }) {
+export function NotifyRow({ n, onOpen, onDismiss }) {
   const fact = rowFact(n.facts, n.title)
   const meta = [n.where, fact, ago(n.created_at)].filter(Boolean)
+  const [hover, setHover] = useState(false)
   return (
     /* СТРОКА, А НЕ КАРТОЧКА. Пилюля важности, заголовок, под ним одна служебная
-       строка. Ни текста события, ни плашек, ни кнопки: строка целиком нажимаема и
-       ведёт на объект, а кнопка действия вела бы туда же — второй элемент управления
-       с той же целью только отнимает место и внимание. */
+       строка. Ни текста события, ни плашек, ни кнопки действия: строка целиком
+       нажимаема и ведёт на объект.
+       Крестик (владелец 27.09.2026) — единственный второй элемент: он не ведёт туда
+       же, а убирает строку. Поэтому строка — обёртка, а не кнопка: кнопку в кнопку
+       вложить нельзя. Крестик виден при наведении, чтобы не шуметь в списке. */
+    <div onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'flex', alignItems: 'flex-start', borderRadius: 12, marginBottom: 1,
+        background: hover ? 'var(--bg-subtle)' : (n.is_read ? 'transparent' : 'var(--bg-tint)'),
+        borderBottom: `1px solid ${T.inner}`,
+      }}>
     <button type="button" onClick={() => onOpen(n)}
-      onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-subtle)' }}
-      onMouseLeave={e => {
-        e.currentTarget.style.background = n.is_read ? 'transparent' : 'var(--bg-tint)'
-      }}
       style={{
         ...btnReset, textAlign: 'left', cursor: n.link ? 'pointer' : 'default',
-        display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 11px',
-        borderRadius: 12, marginBottom: 1,
-        background: n.is_read ? 'transparent' : 'var(--bg-tint)',
-        borderBottom: `1px solid ${T.inner}`,
+        display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 4px 9px 11px',
+        flex: 1, minWidth: 0,
       }}>
       <span style={{ display: 'flex', flexDirection: 'column', gap: 3,
         minWidth: 0, flex: 1 }}>
@@ -231,6 +234,16 @@ export function NotifyRow({ n, onOpen }) {
           marginTop: 5, flex: '0 0 7px', background: T.accent }} />
       )}
     </button>
+    {onDismiss && (
+      <button type="button" onClick={() => onDismiss(n)} title="Убрать уведомление"
+        aria-label="Убрать уведомление" style={{
+          ...btnReset, width: 24, height: 24, margin: '6px 6px 0 0', flex: '0 0 24px',
+          borderRadius: 6, display: 'inline-flex', alignItems: 'center',
+          justifyContent: 'center', cursor: 'pointer', color: T.t4, fontSize: 15,
+          lineHeight: 1, opacity: hover ? 1 : 0, transition: 'opacity .12s',
+        }}>×</button>
+    )}
+    </div>
   )
 }
 
@@ -284,7 +297,17 @@ function useNotifications() {
       })
       .catch(() => {})
   }
-  return { notifs, unread, markRead, fresh, markSeen }
+  /** Крестик: строка уходит из списка сразу, сервер гасит её у себя. Непрочитанная
+      уменьшает счётчик — иначе он разошёлся бы со списком до следующей подгрузки. */
+  const dismiss = (n) => {
+    axios.post(`/api/notifications/${n.id}/dismiss`, {}, authHdr())
+      .then(() => {
+        setNotifs(ns => ns.filter(x => x.id !== n.id))
+        if (!n.is_read) setUnread(u => Math.max(0, u - 1))
+      })
+      .catch(() => {})
+  }
+  return { notifs, unread, markRead, fresh, markSeen, dismiss }
 }
 
 // Число креативов, ждущих проверки трафика, — для значка на пункте меню. Отдельная
@@ -308,7 +331,7 @@ function useTrafficWaiting(enabled) {
 }
 
 function Bell({ onGoto, size = 32 }) {
-  const { notifs, unread, markRead, fresh, markSeen } = useNotifications()
+  const { notifs, unread, markRead, fresh, markSeen, dismiss } = useNotifications()
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState('')          // '' — «Все»
   const ref = useRef(null)
@@ -406,7 +429,7 @@ function Bell({ onGoto, size = 32 }) {
               </span>
             )}
             {shown.map(n => (
-              <NotifyRow key={n.id} n={n} onOpen={openRow} />
+              <NotifyRow key={n.id} n={n} onOpen={openRow} onDismiss={dismiss} />
             ))}
           </span>
         </span>

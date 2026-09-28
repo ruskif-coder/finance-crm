@@ -40,6 +40,11 @@ STALE_START_DAYS = 30
 # отдельный от SLA стадии: SLA считает «сколько стоим», а здесь важна дата старта.
 BOOKING_CONFIRM_DAYS = 15
 
+# Отставание открутки, при котором сделка в размещении горит (владелец 27.09.2026).
+# Считается ОТНОСИТЕЛЬНО плана на сегодня, а не пунктами от всего плана: в начале флайта
+# план на сегодня мал, и пять пунктов там — половина нормы. См. delivery_lag_pct.
+LAG_ALARM_PCT = 15
+
 
 @dataclass
 class DealFacts:
@@ -76,6 +81,16 @@ class DealFacts:
     # просроченной и заслоняла настоящие причины.
     is_paid: Optional[bool] = None
     term_days: Optional[int] = None          # отсрочка плательщика (Counterparty.term_days)
+    # Открутка — только у сделки на стадии «В размещении» (`is_placement_stage`). Та же
+    # позиция 2/2/2 (launch) у «Итоговой сверки», поэтому признак отдельный, а не по
+    # stage_key. Числа — из того же расчёта флайта, что у дашборда трафика
+    # (`ad/flight.progress`): done_pct — процент плана, pace — доля флайта по ЗАКРЫТЫМ
+    # дням (`deal_delivery.closed_pace`, 0..1): статистики за сегодня ещё нет.
+    # None — «не знаем» (РК не собрана, статистики нет), и правило тогда молчит.
+    is_placement_stage: bool = False
+    delivery_done_pct: Optional[float] = None
+    delivery_pace: Optional[float] = None
+    flight_over: Optional[bool] = None
 
 
 @dataclass
@@ -110,6 +125,17 @@ def payment_due(f: DealFacts) -> Optional[date]:
     from datetime import timedelta
     days = f.term_days if f.term_days is not None else DEFAULT_TERM_DAYS
     return f.period_to + timedelta(days=days)
+
+
+def delivery_lag_pct(f: DealFacts) -> Optional[float]:
+    """На сколько процентов открутка отстаёт от плана на сегодня; перекрут — не отставание.
+
+    План на сегодня = pace × 100 % плана. Отставание 22,5 % значит «открутили на 22,5 %
+    меньше, чем полагалось к сегодняшнему дню». До старта (pace 0) и без факта — None."""
+    if f.delivery_done_pct is None or not f.delivery_pace:
+        return None
+    due = f.delivery_pace * 100
+    return round(max(0.0, (due - f.delivery_done_pct) / due * 100), 1)
 
 
 def _days_until(d: Optional[date], today: date) -> Optional[int]:
@@ -240,6 +266,25 @@ def evaluate(f: DealFacts, today: date) -> Verdict:
         if stood > sla:
             return Verdict(SOON, f"На стадии {stood} дн. (норма {sla})",
                            "Двинуть", "stage_stuck", f.stage_since)
+
+    # «В размещении» (владелец 27.09.2026). После правила 5, а не раньше: сканер
+    # уведомлений читает те же вердикты, и новые виды не должны отнимать сработку у
+    # «стадия зависла» (ревью 28.09.2026). Кнопки у обоих правил нет: РК ведёт трафик,
+    # аккаунту показываем, что происходит, но действие не его. Уведомлений по этим
+    # видам нет (их нет в DEAL_QUEUE_EVENTS сканера) — заводить ли, решает владелец.
+    if f.is_placement_stage:
+        end_in = _days_until(f.period_to, today)
+        if f.flight_over or (end_in is not None and end_in < 0):
+            if end_in is not None and end_in < 0:
+                return Verdict(SOON, f"Период закончился {-end_in} дн. назад, стадия не сдвинута",
+                               "", "placement_ended", f.period_to)
+        else:
+            lag = delivery_lag_pct(f)
+            if lag is not None and lag >= LAG_ALARM_PCT:
+                return Verdict(OVERDUE,
+                               f"Отставание открутки {str(lag).replace('.', ',').removesuffix(',0')} % "
+                               "от плана на сегодня",
+                               "", "delivery_lag", f.period_to)
 
     # Дедлайн сегодня / на подходе — по ближайшей известной дате.
     for d in (f.period_from, f.period_to):

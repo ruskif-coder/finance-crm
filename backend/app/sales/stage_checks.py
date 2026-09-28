@@ -98,6 +98,45 @@ class Ctx:
             self._cache[key] = fn()
         return self._cache[key]
 
+    def preload(self, **values) -> "Ctx":
+        """Подложить уже загруженное окружение — для очереди аккаунта, где сделок сотни
+        (`app/sales/queue_state.py` грузит каждое свойство одним запросом на всех).
+        Ключи — те же, что у свойств ниже; проверки о подложке не знают и считают
+        ровно так же, как на карточке. Равенство двух путей держит тест."""
+        self._cache.update(values)
+        return self
+
+    @property
+    def first_reviews(self) -> list:
+        """Вердикты первичной проверки трафика по комплектам сделки."""
+        def load():
+            if not self.sets:
+                return []
+            return self.db.execute(text("""
+                SELECT set_id, verdict FROM launch_prep_review
+                 WHERE kind = 'первичная_тт' AND pair_id IS NULL AND set_id = ANY(:s)
+            """), {"s": [s.id for s in self.sets]}).mappings().all()
+        return self._once("first_reviews", load)
+
+    @property
+    def annex_count(self) -> int:
+        def load():
+            from app.sales.models import SalesDealAnnexAllocation
+            return (self.db.query(SalesDealAnnexAllocation)
+                    .filter(SalesDealAnnexAllocation.deal_id == self.deal.id).count())
+        return self._once("annex_count", load)
+
+    @property
+    def payer(self):
+        """Плательщик сделки (или контрагент, если плательщик не выбран)."""
+        def load():
+            from app.models import Counterparty
+            cp_id = self.deal.payer_counterparty_id or self.deal.counterparty_id
+            if not cp_id:
+                return None
+            return self.db.query(Counterparty).filter(Counterparty.id == cp_id).first()
+        return self._once("payer", load)
+
     @property
     def file_kinds(self) -> set:
         def load():
@@ -128,8 +167,10 @@ class Ctx:
     def sets(self) -> list:
         def load():
             from app.launch_prep.models import LaunchPrepCreativeSet
+            # По id — чтобы «мешающие №…» шли в одном порядке на карточке и в очереди.
             return (self.db.query(LaunchPrepCreativeSet)
-                    .filter(LaunchPrepCreativeSet.deal_id == self.deal.id).all())
+                    .filter(LaunchPrepCreativeSet.deal_id == self.deal.id)
+                    .order_by(LaunchPrepCreativeSet.id).all())
         return self._once("sets", load)
 
     @property
@@ -327,11 +368,7 @@ def _creatives_accepted(c: Ctx) -> Result:
     # среди них корень стало бы труднее, чем при одной.
     if not c.sets:
         return _not_yet("комплектов нет")
-    rows = c.db.execute(text("""
-        SELECT set_id, verdict FROM launch_prep_review
-         WHERE kind = 'первичная_тт' AND pair_id IS NULL AND set_id = ANY(:s)
-    """), {"s": [s.id for s in c.sets]}).mappings().all()
-    passed = {r["set_id"] for r in rows if r["verdict"] == "ок"}
+    passed = {r["set_id"] for r in c.first_reviews if r["verdict"] == "ок"}
     bad = [f"№{s.no}" for s in c.sets if s.id not in passed]
     return _fan(len(passed), len(c.sets), bad, "комплектов")
 
@@ -439,9 +476,7 @@ def _annex_generated(c: Ctx) -> Result:
     «Согласование ДС» оставалось закрытым для всех, кроме мастера (аудит 23.09.2026, 3.H2).
     На согласование уходит черновик, поэтому годится и неподтверждённое приложение.
     """
-    from app.sales.models import SalesDealAnnexAllocation
-    n = (c.db.query(SalesDealAnnexAllocation)
-         .filter(SalesDealAnnexAllocation.deal_id == c.deal.id).count())
+    n = c.annex_count
     return _ok(f"приложений: {n}") if n else _not_yet("приложения нет")
 
 
@@ -452,13 +487,10 @@ def _signatory_filled(c: Ctx) -> Result:
 
     Своя вторая проверка того же дала бы два расходящихся ответа на один вопрос: здесь
     «всё заполнено», а при выгрузке документа — отказ со списком недостающего."""
-    from app.models import Counterparty
     from app.sales.annex import party
-    cp_id = c.deal.payer_counterparty_id or c.deal.counterparty_id
-    if not cp_id:
+    if not (c.deal.payer_counterparty_id or c.deal.counterparty_id):
         return _not_yet("плательщик не определён")
-    cp = c.db.query(Counterparty).filter(Counterparty.id == cp_id).first()
-    miss = party(cp).get("missing") or []
+    miss = party(c.payer).get("missing") or []
     return _ok() if not miss else _not_yet(", ".join(miss))
 
 

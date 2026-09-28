@@ -522,6 +522,25 @@ export const th = { padding: '0 10px 10px', textAlign: 'left', fontFamily: MONO,
 export const td = { padding: '10px 10px', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-row)', verticalAlign: 'middle' }
 
 // ячейка/заголовок CSS-grid реестра (advertisers/agencies)
+// Ячейка шапки реестра-сетки (канон «Контрагентов»): MONO 10, активная сортировка — акцентом
+// со стрелкой. Объявлена здесь, а не в странице: на двух эталонах она жила копией внутри
+// тела страницы, и третья копия начала бы расходиться. `onClick` не передан — колонка
+// без сортировки. `wrap` — подпись в две строки: у широких таблиц с узкими числовыми
+// колонками длинная подпись иначе раздвигает колонку шире её содержимого.
+export function SortHead({ label, active, dir, right, wrap, onClick }) {
+  return (
+    <div onClick={onClick} title={onClick ? 'Сортировать' : undefined} style={{
+      padding: '0 8px 10px', fontFamily: MONO, fontSize: 10, letterSpacing: '.08em',
+      textTransform: 'uppercase', color: active ? 'var(--accent)' : 'var(--text-faint)',
+      textAlign: right ? 'right' : 'left', cursor: onClick ? 'pointer' : 'default',
+      userSelect: 'none', whiteSpace: wrap ? 'normal' : 'nowrap', lineHeight: wrap ? 1.35 : undefined,
+      alignSelf: 'end',
+    }}>
+      {label}{active && <span> {dir === 'asc' ? '↑' : '↓'}</span>}
+    </div>
+  )
+}
+
 export const cell = { padding: '0 8px', fontSize: 13, color: 'var(--text-primary)', minWidth: 0 }
 export const headCell = (label, right) => <div style={{ padding: '0 8px 10px', fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-faint)', textAlign: right ? 'right' : 'left', whiteSpace: 'nowrap' }}>{label}</div>
 

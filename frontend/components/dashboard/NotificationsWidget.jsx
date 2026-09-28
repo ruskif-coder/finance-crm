@@ -112,7 +112,9 @@ function Row({ n, onOpen, onAction }) {
   )
 }
 
-export default function NotificationsWidget({ items = [], onOpen, onAction, onReadAll }) {
+// dense — карточка дашборда аккаунта по макету «акки 3»: радиус и отступы как у соседних
+// карточек ряда, заголовок 17. Содержимое то же.
+export default function NotificationsWidget({ items = [], onOpen, onAction, onReadAll, dense, onClose, onShowAll }) {
   const [tab, setTab] = useState('Все')
   const listRef = useRef(null)
 
@@ -130,8 +132,8 @@ export default function NotificationsWidget({ items = [], onOpen, onAction, onRe
   return (
     <div style={{
       position: 'absolute', inset: 0, boxSizing: 'border-box',
-      background: T.card, border: `1px solid ${T.border}`, borderRadius: 28, boxShadow: T.shadow,
-      padding: '24px 22px 18px', display: 'flex', flexDirection: 'column', gap: 12, overflow: 'hidden',
+      background: T.card, border: `1px solid ${T.border}`, borderRadius: dense ? 18 : 28, boxShadow: T.shadow,
+      padding: dense ? '18px 20px 14px' : '24px 22px 18px', display: 'flex', flexDirection: 'column', gap: 12, overflow: 'hidden',
       fontFamily: T.sans, color: T.t1, animation: `riseIn .4s ${T.ease} both`,
     }}>
       <style>{`
@@ -140,12 +142,22 @@ export default function NotificationsWidget({ items = [], onOpen, onAction, onRe
       `}</style>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 19, fontWeight: 700, letterSpacing: '-0.02em' }}>Уведомления</span>
+        <span style={{ fontSize: dense ? 17 : 19, fontWeight: 700, letterSpacing: '-0.02em' }}>Уведомления</span>
         {unread > 0 && (
           <span style={{ minWidth: 20, height: 20, padding: '0 6px', borderRadius: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: T.dangerTint, color: T.danger, fontFamily: T.mono, fontSize: 11, fontWeight: 700 }}>{unread}</span>
         )}
         {unread > 0 && onReadAll && (
           <span onClick={onReadAll} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: T.accent, cursor: 'pointer', whiteSpace: 'nowrap' }}>Прочитать все</span>
+        )}
+        {/* «Показать все» — список целиком в модалке (дашборд аккаунта, владелец 28.09.2026). */}
+        {onShowAll && (
+          <span onClick={onShowAll} style={{ marginLeft: unread > 0 && onReadAll ? 12 : 'auto', fontSize: 12, fontWeight: 600, color: T.accent, cursor: 'pointer', whiteSpace: 'nowrap' }}>Показать все</span>
+        )}
+        {/* Крестик — когда виджет открыт модалкой (компактный вид дашборда аккаунта). */}
+        {onClose && (
+          <span onClick={onClose} title="Закрыть" style={{ marginLeft: (unread > 0 && onReadAll) || onShowAll ? 4 : 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 9, color: T.t2, cursor: 'pointer' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </span>
         )}
       </div>
 

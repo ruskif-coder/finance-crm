@@ -59,6 +59,7 @@ OWN_DATA = {
     ("GET", "/api/notifications"),
     ("GET", "/api/notifications/count"),
     ("POST", "/api/notifications/read"),
+    ("POST", "/api/notifications/{notification_id}/dismiss"),  # крестик: только своя строка, чужая — 404
     ("GET", "/api/notifications/settings/catalog"),
     ("GET", "/api/notifications/settings/me"),
     ("PUT", "/api/notifications/settings/me/subscriptions"),

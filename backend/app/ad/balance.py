@@ -174,6 +174,7 @@ def rows(db: Session) -> list:
                 "index_effective": manual if manual is not None else (i.get("index_auto") if i else auto),
                 "source": ("manual" if manual is not None else (i.get("source") or src)),
                 "is_locked": bool(i.get("is_locked")), "note": i.get("note"),
+                "external_score": i.get("external_score"),
             })
     return out
 

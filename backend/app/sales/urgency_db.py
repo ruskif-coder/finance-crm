@@ -80,11 +80,19 @@ def facts_for_deals(db: Session, deals, today: date = None):
     # по ним не считается, и это честнее, чем принять дату создания за вход в стадию.
     since = stage_since(db, ids)
 
+    # Открутка — только сделкам «В размещении»: правило отставания живёт там одном, и
+    # тянуть статистику РК на всю очередь (и на сканер уведомлений) ради него незачем.
+    from app.sales.deal_delivery import campaigns_by_deal, delivery_by_deal
+    from app.sales.stage_slots import slot_of
+    live_ids = [d.id for d in deals if slot_of(stages.get(d.our_stage_id)) == "live"]
+    delivery = delivery_by_deal(db, campaigns_by_deal(db, live_ids), today) if live_ids else {}
+
     out = []
     for d in deals:
         st = stages.get(d.our_stage_id)
         ph = phases.get(st.phase_id) if st else None
         kinds = docs.get(d.id, set())
+        dl = delivery.get(d.id) or {}
         f = DealFacts(
             stage_key=st.stage_key if st else None,
             money_layer=st.money_layer if st else None,
@@ -100,6 +108,10 @@ def facts_for_deals(db: Session, deals, today: date = None):
             has_closing_docs=bool({"upd", "invoice", "act"} & kinds),
             # is_paid не заполняем: на уровне сделки факт оплаты не читается (см. urgency.py).
             term_days=terms.get(d.payer_counterparty_id or d.counterparty_id),
+            is_placement_stage=slot_of(st) == "live",
+            delivery_done_pct=dl.get("done_pct"),
+            delivery_pace=dl.get("closed_pace"),
+            flight_over=dl.get("flight_over"),
         )
         out.append((d, evaluate(f, today)))
     return out

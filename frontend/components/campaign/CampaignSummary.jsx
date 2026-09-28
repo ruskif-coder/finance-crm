@@ -272,65 +272,105 @@ const Report = ({ d, dealId }) => {
   )
 }
 
-export default function CampaignSummary({ dealId, title = 'Рекламная кампания', cardStyle }) {
-  const [data, setData] = useState(null)
+/** Цели приёмки — из медиаплана, теми же пятью и в том же порядке, что в конструкторе.
+ * Значения свободного ввода, поэтому показываем как есть и вердикта «уложились / нет» не
+ * выносим: сверяет человек. На модульном уровне — у неё своё состояние (поповер). */
+const Goals = ({ d }) => {
   const [pop, setPop] = useState(false)
+  const goals = GOAL_LABELS.filter(([k]) => d.goals && d.goals[k])
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+      background: 'var(--bg-subtle)', border: '1px solid var(--border-card)',
+      borderRadius: 12, padding: '9px 12px' }}>
+      <span style={CAP}>цель · kpi приёмки</span>
+      {goals.length ? goals.map(([k, label]) => (
+        <span key={k} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5,
+          fontSize: 12 }}>
+          <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+          <span style={{ fontFamily: MONO, fontWeight: 700 }}>
+            {String(d.goals[k]).trim()}</span>
+        </span>
+      )) : (
+        <span data-pop-root style={{ position: 'relative', display: 'inline-block' }}>
+          <span onClick={() => setPop(v => !v)}
+            style={{ fontSize: 11.5, color: 'var(--warning-text)', cursor: 'pointer',
+              borderBottom: '1px dashed var(--warning-text)' }}>
+            в медиаплане не заданы
+          </span>
+          <PortalPopover open={pop} minWidth={280} style={{ padding: 12, zIndex: Z.dropdown }}>
+            <span style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-secondary)' }}>
+              KPI приёмки заполняются в конструкторе медиаплана — блок «Целевые
+              показатели». Пока их нет, принимать размещение не по чему.
+            </span>
+          </PortalPopover>
+        </span>
+      )}
+    </div>
+  )
+}
 
+/** Сводка РК: шесть чисел, полоса выполнения, цели приёмки. Одна на карточку сделки и на
+ * раскрытую строку дашборда аккаунта — вторая копия разошлась бы с первой. */
+const Headline = ({ d }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <Numbers d={d} />
+    <Pace d={d} />
+    <Goals d={d} />
+  </div>
+)
+
+/** Загрузка сводки РК сделки. `null` — ещё грузится. */
+function useCampaign(dealId) {
+  const [data, setData] = useState(null)
   useEffect(() => {
     let alive = true
+    setData(null)
     api.get(`/sales/deals/${dealId}/campaign`, auth())
       .then(r => { if (alive) setData(r.data) })
       .catch(() => { if (alive) setData({ has: false, reason: '' }) })
     return () => { alive = false }
   }, [dealId])
+  return data
+}
+
+/**
+ * «Рекламная кампания» в раскрытой строке дашборда аккаунта (макет «акки 3»): та же
+ * сводка, что на карточке, без отчёта по площадкам. В отличие от карточки блок есть
+ * всегда — строка раскрыта ради сделки целиком, и пустое место читалось бы как «не
+ * загрузилось»; когда показывать нечего, сервер говорит словами почему.
+ */
+export function CampaignBrief({ dealId }) {
+  const data = useCampaign(dealId)
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ ...CAP, fontWeight: 700, color: 'var(--text-cap)' }}>Рекламная кампания</span>
+        {data?.has && (
+          <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)' }}>
+            {data.date_start} — {data.date_end}</span>
+        )}
+      </div>
+      {data === null ? (
+        <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>Загрузка…</span>
+      ) : data.has ? <Headline d={data} /> : (
+        <span style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>
+          {data.reason || 'Сводки по кампании нет'}</span>
+      )}
+    </div>
+  )
+}
+
+export default function CampaignSummary({ dealId, title = 'Рекламная кампания', cardStyle }) {
+  const data = useCampaign(dealId)
 
   // Блока нет, пока нет статистики. Не «пустой блок», а отсутствие блока: место на
   // карточке дорогое, и рамка вокруг пяти прочерков ничего не сообщает.
   if (!data || !data.has) return null
 
-  const goals = GOAL_LABELS.filter(([k]) => data.goals && data.goals[k])
-
   /* Сводка видна В ОБОИХ состояниях — и свёрнутом, и раскрытом: это не подробности,
      а то, ради чего блок существует. Поэтому она отдаётся секции и как `collapsed`,
      и первой строкой раскрытого вида. */
-  const head = (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <Numbers d={data} />
-      <Pace d={data} />
-
-      {/* Цели приёмки — из медиаплана, теми же пятью и в том же порядке, что в
-          конструкторе. Значения свободного ввода, поэтому показываем как есть и
-          вердикта «уложились / нет» не выносим: сверяет человек. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
-        background: 'var(--bg-subtle)', border: '1px solid var(--border-card)',
-        borderRadius: 12, padding: '9px 12px' }}>
-        <span style={CAP}>цель · kpi приёмки</span>
-        {goals.length ? goals.map(([k, label]) => (
-          <span key={k} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5,
-            fontSize: 12 }}>
-            <span style={{ color: 'var(--text-muted)' }}>{label}</span>
-            <span style={{ fontFamily: MONO, fontWeight: 700 }}>
-              {String(data.goals[k]).trim()}</span>
-          </span>
-        )) : (
-          <span data-pop-root style={{ position: 'relative', display: 'inline-block' }}>
-            <span onClick={() => setPop(v => !v)}
-              style={{ fontSize: 11.5, color: 'var(--warning-text)', cursor: 'pointer',
-                borderBottom: '1px dashed var(--warning-text)' }}>
-              в медиаплане не заданы
-            </span>
-            <PortalPopover open={pop} minWidth={280} style={{ padding: 12, zIndex: Z.dropdown }}>
-              <span style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-secondary)' }}>
-                KPI приёмки заполняются в конструкторе медиаплана — блок «Целевые
-                показатели». Пока их нет, принимать размещение не по чему.
-              </span>
-            </PortalPopover>
-          </span>
-        )}
-
-      </div>
-    </div>
-  )
+  const head = <Headline d={data} />
 
   /* Заголовок и стрелка — из общей `Section` карточки сделки, а не свои: у соседних
      блоков («Медиаплан», «ОРД», «Креативы») шрифт, капс и шеврон слева, и вторая

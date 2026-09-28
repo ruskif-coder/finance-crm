@@ -149,3 +149,26 @@ def mark_read(data: ReadIn, db: Session = Depends(get_db), current_user: User = 
     q.update({Notification.is_read: True}, synchronize_session=False)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/{notification_id}/dismiss")
+def dismiss(notification_id: int, db: Session = Depends(get_db),
+            current_user: User = Depends(get_current_user)):
+    """Крестик у одной строки (владелец 27.09.2026). Строка гаснет так же, как при снятой
+    причине, и уходит из базы по сроку жизни (`notify/lifecycle.py`).
+
+    Если причина жива, правило сканера напомнит снова в свой срок повтора новой строкой:
+    закрыть можно уведомление, но не проблему."""
+    from fastapi import HTTPException
+    from datetime import datetime
+    n = (db.query(Notification)
+         .filter(Notification.id == notification_id,
+                 Notification.user_id == current_user.id).first())
+    if n is None:
+        # Чужое и несуществующее отвечают одинаково: не подтверждаем чужие id.
+        raise HTTPException(status_code=404, detail="Уведомление не найдено")
+    if n.resolved_at is None:
+        n.resolved_at = datetime.utcnow()
+    n.is_read = True
+    db.commit()
+    return {"ok": True}

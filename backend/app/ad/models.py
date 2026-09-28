@@ -179,6 +179,9 @@ class PublisherBalanceIndex(Base):
     is_locked = Column(Boolean, nullable=False, default=False)
     source = Column(String(16))                     # ad_requests | estimate | manual
     note = Column(Text)
+    # Внешняя оценка (миграция 2026-09-28_balance_external_score.sql): число рукой по
+    # сведениям извне. Справочное — в индекс и доли не входит; NULL = не оценивали.
+    external_score = Column(Float)
     calculated_at = Column(DateTime)
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
     updated_by = Column(Integer, ForeignKey("users.id"))

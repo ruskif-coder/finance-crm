@@ -156,13 +156,20 @@ export const KpiRow = ({ items }) => (
  * список). Иконка меняется, а не только цвет: по цвету одной и той же картинки нельзя
  * понять, что будет по нажатию.
  */
-export const WidgetsToggle = ({ open, onToggle }) => (
-  <button onClick={onToggle} title={open ? 'Свернуть аналитику' : 'Развернуть аналитику'}
+// tone — цвет раздела: у трафика свой, у аккаунтов акцентный (дашборд аккаунта берёт
+// этот же переключатель — владелец 28.09.2026: «по примеру трафиков»).
+const TOGGLE_TONE = {
+  traffic: ['var(--traffic-tint)', 'var(--traffic)'],
+  accent: ['var(--accent-tint)', 'var(--accent)'],
+}
+export const WidgetsToggle = ({ open, onToggle, tone = 'traffic', titles }) => (
+  <button onClick={onToggle}
+    title={open ? (titles?.[0] || 'Свернуть аналитику') : (titles?.[1] || 'Развернуть аналитику')}
     style={{ width: 34, height: 34, display: 'inline-flex', alignItems: 'center',
       justifyContent: 'center', borderRadius: 10, cursor: 'pointer',
-      background: open ? 'var(--traffic-tint)' : 'var(--bg-card)',
-      border: `1px solid ${open ? 'var(--traffic)' : 'var(--border-card)'}`,
-      color: open ? 'var(--traffic)' : 'var(--text-secondary)' }}>
+      background: open ? TOGGLE_TONE[tone][0] : 'var(--bg-card)',
+      border: `1px solid ${open ? TOGGLE_TONE[tone][1] : 'var(--border-card)'}`,
+      color: open ? TOGGLE_TONE[tone][1] : 'var(--text-secondary)' }}>
     {open ? (
       <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
         <path d="M4 5h16v6H4zM4 15h7v4H4zM15 15h5v4h-5z" />

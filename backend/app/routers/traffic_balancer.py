@@ -56,6 +56,7 @@ class BalanceRowIn(BaseModel):
     index_manual: Optional[float] = None    # ручная правка индекса
     is_locked: Optional[bool] = None        # не перетирать пересчётом
     note: Optional[str] = None
+    external_score: Optional[float] = None  # внешняя оценка; справочная, в индекс не входит
 
 
 class CoefficientsIn(BaseModel):
@@ -86,18 +87,22 @@ def balancer_save_row(publisher_id: int, scope: str, payload: BalanceRowIn,
 
     db.execute(text("""
         INSERT INTO publisher_balance_index
-            (publisher_id, scope, index_manual, is_locked, note, updated_at, updated_by)
-        VALUES (:p, :s, :im, COALESCE(:lk, FALSE), :n, now(), :u)
+            (publisher_id, scope, index_manual, is_locked, note, external_score,
+             updated_at, updated_by)
+        VALUES (:p, :s, :im, COALESCE(:lk, FALSE), :n, :es, now(), :u)
         ON CONFLICT (publisher_id, scope) DO UPDATE
         SET index_manual = EXCLUDED.index_manual,
             is_locked = COALESCE(:lk, publisher_balance_index.is_locked),
-            note = EXCLUDED.note, updated_at = now(), updated_by = EXCLUDED.updated_by
+            note = EXCLUDED.note, external_score = EXCLUDED.external_score,
+            updated_at = now(), updated_by = EXCLUDED.updated_by
     """), {"p": publisher_id, "s": scope, "im": payload.index_manual,
-           "lk": payload.is_locked, "n": payload.note, "u": user.id})
+           "lk": payload.is_locked, "n": payload.note, "es": payload.external_score,
+           "u": user.id})
     db.commit()
     log_action(db, user, "balancer_row_edit", "sales_publisher", publisher_id,
                f"{scope}: объём={payload.volume} глубина={payload.depth} "
-               f"запросы={payload.requests} индекс_рука={payload.index_manual}")
+               f"запросы={payload.requests} индекс_рука={payload.index_manual} "
+               f"внешняя_оценка={payload.external_score}")
     pushed = _push_to_campaigns(db)
     return {"ok": True, "campaigns_updated": pushed, "rows": balance.rows(db)}
 
@@ -130,9 +135,11 @@ BALANCE_COLS = [
     ("volume", "Объём"), ("depth", "Глубина"), ("requests", "Запросы кода"),
     ("index_auto", "Индекс расчётный"), ("index_manual", "Индекс ручной"),
     ("source", "Источник"), ("is_locked", "Заперт"), ("note", "Примечание"),
+    ("external_score", "Внешняя оценка"),
 ]
 # Импортом правятся только эти; остальные колонки справочные (из каталога паблишеров).
-BALANCE_EDITABLE = ("volume", "depth", "requests", "index_manual", "is_locked", "note")
+BALANCE_EDITABLE = ("volume", "depth", "requests", "index_manual", "is_locked", "note",
+                    "external_score")
 
 BLOCK_COLS = [("publisher", "Площадка"), ("code", "Наш код"), ("surface", "Поверхность"),
               ("ms_publisher_id", "ID паблишера в МС"), ("ms_block_id", "ID блока"),
@@ -227,14 +234,21 @@ def balancer_import(file: UploadFile = File(...), db: Session = Depends(get_db),
         locked_raw = str(cell("is_locked") or "").strip().lower()
         db.execute(text("""
             INSERT INTO publisher_balance_index
-                (publisher_id, scope, index_manual, is_locked, note, updated_at, updated_by)
-            VALUES (:p, :s, :im, :lk, :n, now(), :u)
+                (publisher_id, scope, index_manual, is_locked, note, external_score,
+                 updated_at, updated_by)
+            VALUES (:p, :s, :im, :lk, :n, :es, now(), :u)
             ON CONFLICT (publisher_id, scope) DO UPDATE
             SET index_manual = EXCLUDED.index_manual, is_locked = EXCLUDED.is_locked,
-                note = EXCLUDED.note, updated_at = now(), updated_by = EXCLUDED.updated_by
+                note = EXCLUDED.note,
+                -- Файл без колонки «Внешняя оценка» (выгружен до 28.09.2026) оценки не
+                -- стирает: отсутствие колонки — не «пусто», а «не про это».
+                external_score = CASE WHEN :has_es THEN EXCLUDED.external_score
+                                      ELSE publisher_balance_index.external_score END,
+                updated_at = now(), updated_by = EXCLUDED.updated_by
         """), {"p": pid, "s": scope, "im": _num(cell("index_manual")),
                "lk": locked_raw in ("да", "yes", "true", "1", "y"),
-               "n": (cell("note") or None), "u": user.id})
+               "n": (cell("note") or None), "es": _num(cell("external_score")),
+               "has_es": "external_score" in pos, "u": user.id})
         applied += 1
     db.commit()
     log_action(db, user, "balancer_import", "sales_publisher", None,
