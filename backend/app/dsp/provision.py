@@ -135,18 +135,42 @@ def _blocker(row: dict, want_pixel: bool = True,
     return None
 
 
+AD_LABEL_MISSING = ("у сделки не выбран изначальный договор ОРД — ИНН и название "
+                    "рекламодателя для рекламной метки взять неоткуда")
+
+
+def ad_label(db: Session, deal_id) -> Optional[tuple]:
+    """(ИНН, название) рекламодателя для рекламной метки — `self_inn` / `self_name` креатива.
+
+    Владелец 28.09.2026: слать всегда — эти данные идут в подсказку рекламной метки рядом
+    с ЕРИД. Источник — изначальный договор ОРД сделки: с ним маркер и зарегистрирован в
+    ЕРИР, и метка обязана говорить то же, что реестр. Нет договора или в нём пусто — None,
+    и креатив не выгружается: без полей боевой кабинет отказывает всем креативам сразу."""
+    from app.ord.models import OrdInitialContract
+    from app.sales.models import SalesDeal
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal or not getattr(deal, "ord_initial_contract_id", None):
+        return None
+    ic = (db.query(OrdInitialContract)
+          .filter(OrdInitialContract.id == deal.ord_initial_contract_id).first())
+    inn = "".join(ch for ch in (getattr(ic, "advertiser_inn", "") or "") if ch.isdigit())
+    name = (getattr(ic, "advertiser_name", "") or "").strip()
+    return (inn, name) if inn and name else None
+
+
 def plan(db: Session, camp: AdCampaign) -> dict:
     """Что произойдёт при нажатии. Показывается ДО подтверждения — цифра в вопросе
     «завести N креативов?» и есть то, что отличает осознанное действие от случайного."""
     rows = _rows(db, camp)
     px = pixel_setup(db, camp.deal_id)
     want_pixel, ext_tag = px["needed"], px["tag"]
+    label = ad_label(db, camp.deal_id)
     done = [r for r in rows if r["creative"].ms_creative_xxhash]
     todo, blocked = [], {}
     for r in rows:
         if r["creative"].ms_creative_xxhash:
             continue
-        why = _blocker(r, want_pixel, ext_tag)
+        why = _blocker(r, want_pixel, ext_tag) or (None if label else AD_LABEL_MISSING)
         if why:
             blocked[why] = blocked.get(why, 0) + 1
         else:
@@ -168,7 +192,22 @@ def plan(db: Session, camp: AdCampaign) -> dict:
         "placements": len({r["placement"].id for r in todo}),
         # Причины отказа с числами — их и показываем в подтверждении.
         "blocked": [{"why": k, "count": v} for k, v in sorted(blocked.items())],
+        # Что уйдёт в рекламную метку (`self_inn` / `self_name`).
+        "ad_label": {"inn": label[0], "name": label[1]} if label else None,
+        # Таргетинги — что уйдёт кампании и креативам (app/dsp/targeting.py). Показываются
+        # всегда; ставятся, только когда включена настройка `dsp_targeting_enabled`.
+        "targeting": _targeting_preview(db, camp, rows),
     }
+
+
+def _targeting_preview(db: Session, camp: AdCampaign, rows: list) -> dict:
+    from app.dsp import targeting as tg
+    try:
+        p = tg.plan_for(db, camp, rows)
+    except Exception as e:  # noqa: BLE001 — сводка не должна ронять окно выгрузки
+        log.warning("таргетинг РК %s: сводка не собралась (%s)", camp.id, e)
+        return {"enabled": False, "error": str(e)}
+    return {"enabled": p["enabled"], **p["summary"]}
 
 
 def _read_archive(f: LaunchPrepCreativeFile) -> bytes:
@@ -219,6 +258,11 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
             "карточка сделки, блок «Доп. параметры РК»")
     rows = [r for r in _rows(db, camp)
             if not r["creative"].ms_creative_xxhash and not _blocker(r, want_pixel, ext_tag)]
+    label = ad_label(db, camp.deal_id)
+    if rows and not label:
+        # Отказ ДО кампании и загрузок: без метки боевой кабинет откажет каждому креативу,
+        # а кампания и архивы остались бы пустыми хвостами (28.09.2026, DLMBGB).
+        raise DspProvisionError(AD_LABEL_MISSING[0].upper() + AD_LABEL_MISSING[1:])
     # Нечего заводить — не заводим и кампанию. Иначе в кабинете остаётся пустая
     # STOPPED-кампания, которую по API не удалить (4.L4).
     if not rows and not camp.ms_campaign_xxhash:
@@ -284,6 +328,7 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
                         # целиком, конечный URL — её основной домен (у DSP ≤128 символов).
                         adomain=cr.landing_domain(r["target"].advertiser_url),
                         erid=cre.erid, size=up.get("size"),
+                        self_inn=label[0], self_name=label[1],
                         total_shows=(int(plans[cre.id]) if plans.get(cre.id) else None))
                     xxhash = c.creative_add(camp_hash, params, local_ref=ref)
                 c.creative_edit(xxhash, {"data": {"html_code": html}}, local_ref=ref)
@@ -297,7 +342,22 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
         db.commit()
         done.append({"creative_id": cre.id, "placement_id": r["placement"].id,
                      "name": name, "xxhash": xxhash})
-    return {"campaign_xxhash": camp_hash, "done": done, "failed": failed}
+    return {"campaign_xxhash": camp_hash, "done": done, "failed": failed,
+            "targeting": _apply_targeting(db, camp, c, camp_hash)}
+
+
+def _apply_targeting(db: Session, camp: AdCampaign, c: MsClient, camp_hash: str):
+    """Таргеты кампании и блоки заведённых креативов — если включено. Ставятся каждый
+    проход целиком: вызов идемпотентен, а креатив, заведённый в прошлый раз, иначе
+    остался бы без блоков."""
+    from app.dsp import targeting as tg
+    if not tg.enabled(db):
+        return {"skipped": "таргетинги не отправляются — выключатель dsp_targeting_enabled"}
+    rows = _rows(db, camp)
+    plan = tg.plan_for(db, camp, rows)
+    hashes = {r["creative"].id: r["creative"].ms_creative_xxhash for r in rows
+              if r["creative"].ms_creative_xxhash}
+    return tg.apply(c, plan, camp_hash, hashes)
 
 
 __all__ = ["plan", "provision", "DspProvisionError", "PLACEMENT_OK", "CREATIVE_OK"]

@@ -187,7 +187,13 @@ def plan(db: Session, camp: AdCampaign) -> dict:
             .filter(WeboramaRef.account_id == acc, WeboramaRef.kind == KIND_INSERTION,
                     WeboramaRef.local_id.in_([p.id for p in ready] or [0])).all()}
     have_pixel = [p for p in ready if p.weborama_pixel]
+    proj = _ref(db, acc, KIND_PROJECT, camp.deal_id)
+    wcamp = _ref(db, acc, KIND_CAMPAIGN, camp.id)
     return {"account": acc,
+            # Привязка к уже заведённым в их кабинете (владелец 28.09.2026) — экран
+            # показывает, что уже связано, и предлагает связать недостающее.
+            "project_id": proj.wcm_id if proj else None,
+            "campaign_id": wcamp.wcm_id if wcamp else None,
             "ready": len(ready),
             "have": len(have_pixel),
             "todo": len([p for p in ready if not p.weborama_pixel]),
@@ -319,3 +325,54 @@ def _fetch_pixel(db: Session, client: WcmClient, acc: str, placement_id: int,
 
 
 __all__ = ["plan", "provision", "account_id", "ProvisionError", "READY_STATUSES"]
+
+
+def attach_existing(db: Session, camp: AdCampaign, project_id, campaign_id,
+                    user_id=None) -> dict:
+    """Привязать к РК проект и кампанию, УЖЕ заведённые в кабинете Weborama (владелец
+    28.09.2026: «дать возможность повесить на заведённую уже»).
+
+    Случай 54ZYCH: проект и кампанию завели 18.09 с демо-экрана, реестр о них не знал, и
+    кнопка W упиралась в «label must be unique». После привязки W берёт их из реестра и
+    заводит только вставки.
+
+    Номера вводит человек из кабинета Weborama; прочитать их список по API нам нечем.
+    Защиты: номер — число; уже связанное с ЭТОЙ РК другим номером не перезаписывается;
+    номер, связанный с ДРУГОЙ сделкой или РК, не принимается — два наших объекта на
+    одной их кампании сложили бы чужие показы в одну строку.
+    """
+    acc = account_id(db)
+    pairs = ((KIND_PROJECT, camp.deal_id, project_id, "проект"),
+             (KIND_CAMPAIGN, camp.id, campaign_id, "кампания"))
+    todo = []
+    for kind, local_id, wid, what in pairs:
+        wid = str(wid or "").strip()
+        if not wid:
+            continue
+        if not wid.isdigit():
+            raise ProvisionError(f"{what}: номер Weborama — только цифры, а не «{wid}»")
+        have = _ref(db, acc, kind, local_id)
+        if have:
+            if have.wcm_id == wid:
+                continue
+            raise ProvisionError(f"{what} уже связан с номером {have.wcm_id} — "
+                                 f"перепривязка не делается, сверьтесь с кабинетом")
+        other = (db.query(WeboramaRef)
+                 .filter(WeboramaRef.account_id == acc, WeboramaRef.kind == kind,
+                         WeboramaRef.wcm_id == wid, WeboramaRef.local_id != local_id).first())
+        if other:
+            raise ProvisionError(f"{what} {wid} уже связан с другой "
+                                 f"{'сделкой' if kind == KIND_PROJECT else 'РК'} "
+                                 f"(#{other.local_id})")
+        todo.append((kind, local_id, wid, what))
+    if not todo:
+        raise ProvisionError("Нечего привязывать: номера не указаны или уже связаны")
+    if any(k == KIND_CAMPAIGN for k, *_ in todo) and not (
+            _ref(db, acc, KIND_PROJECT, camp.deal_id)
+            or any(k == KIND_PROJECT for k, *_ in todo)):
+        raise ProvisionError("Кампания Weborama живёт внутри проекта — укажите и проект")
+    for kind, local_id, wid, what in todo:
+        db.add(WeboramaRef(account_id=acc, kind=kind, local_id=local_id, wcm_id=wid,
+                           label=f"привязан вручную: {what} {wid}", created_by=user_id))
+    db.commit()
+    return {"attached": [{"kind": k, "wcm_id": w} for k, _l, w, _ in todo]}

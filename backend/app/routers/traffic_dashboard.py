@@ -1268,6 +1268,29 @@ def run_weborama(campaign_id: int, db: Session = Depends(get_db),
     return out
 
 
+class WeboramaAttachIn(BaseModel):
+    project_id: Optional[str] = None
+    campaign_id: Optional[str] = None
+
+
+@router.post("/campaign/{campaign_id}/weborama/attach")
+def attach_weborama(campaign_id: int, payload: WeboramaAttachIn,
+                    db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Связать РК с проектом и кампанией, уже заведёнными в Weborama (28.09.2026)."""
+    from app.weborama import provision as wb_prov
+
+    c, deal = _campaign_in_scope(db, campaign_id, user)
+    try:
+        out = wb_prov.attach_existing(db, c, payload.project_id, payload.campaign_id,
+                                      user_id=user.id)
+    except wb_prov.ProvisionError as e:
+        raise HTTPException(400, str(e))
+    log_action(db, user, "weborama_attach", "sales_deal", deal.id,
+               f"РК #{c.id}: привязано к Weborama — "
+               + ", ".join(f"{a['kind']} {a['wcm_id']}" for a in out["attached"]))
+    return out
+
+
 @router.get("/weborama/stats")
 def weborama_stats_state(db: Session = Depends(get_db), user: User = Depends(VIEW)):
     """Состояние съёма статистики верификатора: когда забирали и что доехало.

@@ -569,7 +569,9 @@ def can_start_placement(creative_statuses):
     спрятанная кнопка возвращается первым же рефакторингом, а запущенная площадка без
     согласованного материала — это показ несогласованного баннера.
     """
-    return any(x not in ("у трафика", "у площадки") for x in creative_statuses)
+    # «Отклонён» — тоже не согласованный: до 28.09.2026 он проходил проверку, и площадку,
+    # у которой креатив отозван или заменён, можно было запустить без материала.
+    return any(x not in ("у трафика", "у площадки", "отклонён") for x in creative_statuses)
 
 
 def effective_status_creative(stored: Optional[str], chain: str) -> str:

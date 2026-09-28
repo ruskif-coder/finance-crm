@@ -11,7 +11,7 @@ import api, { auth } from '@/lib/api'
 import { fmtMoney, fmtFull, fmtDate } from '@/lib/salesFormat'
 import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
 import { buildTitle, productWithSurface, separatePriceSet, surfaceTag, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
-import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, firstSortDir, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z, DealCodeLink } from '@/components/salesTableKit'
+import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, firstSortDir, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z, DealCodeLink, UnitPriceCell, PlanFactCell } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const DealsMobileControls = dynamic(() => import('@/components/sales/DealsMobileControls'), { ssr: false })
@@ -411,6 +411,8 @@ export default function SalesDashboard2() {
       case 'pipeline': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.pipeline}>{d.pipeline ?? '—'}</span>
       case 'sales_rep': return <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.sales_rep ?? '—'}</span>
       case 'period_from': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{d.period_from ? fmtDate(d.period_from) : '—'}</span>
+      case 'unit_price': return <UnitPriceCell u={d.units} />
+      case 'plan_fact': return <PlanFactCell u={d.units} />
       case 'period_to': return <span style={{ fontFamily: MONO, color: 'var(--text-secondary)' }}>{d.period_to ? fmtDate(d.period_to) : '—'}</span>
       case 'title': {
         if (editTitleId === d.id) return <input autoFocus value={titleDraft} onChange={e => setTitleDraft(e.target.value)} onBlur={() => { saveTitle(d.id, titleDraft); setEditTitleId(null) }} onKeyDown={e => { if (e.key === 'Enter') { saveTitle(d.id, titleDraft); setEditTitleId(null) } else if (e.key === 'Escape') setEditTitleId(null) }} style={{ width: '100%', minWidth: 0, padding: '3px 6px', fontSize: 12, border: '1px solid var(--accent)', borderRadius: 6, outline: 'none', fontFamily: UI }} />

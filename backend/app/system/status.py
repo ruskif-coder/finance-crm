@@ -443,6 +443,48 @@ def check_erid_auto(db: Session):
     return _check("job_erid", "Фоновые задания", title, "ok", value)
 
 
+def check_dsp_stats(db: Session):
+    """Сбор статистики DSP — крон раз в сутки, 04:30 МСК (владелец 27.09.2026).
+
+    Читает итог последнего планового прогона (`app.dsp.stat_daily.record`). Молчание
+    крона здесь дороже, чем выглядит: факт РК не растёт, темп и недокрут считаются по
+    старым суткам, а экран трафика при этом ничем не отличается от «площадки не крутят».
+    """
+    import json
+    title = "Сбор статистики DSP"
+    try:
+        raw = db.execute(text("SELECT value FROM company_settings WHERE key = :k"),
+                         {"k": "dsp_stat_last"}).scalar()
+    except Exception:                            # noqa: BLE001
+        db.rollback()
+        raw = None
+    try:
+        last = json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        last = None
+    if not last or not last.get("at"):
+        return _check("job_dsp_stat", "Фоновые задания", title, "idle", "ни одного прогона",
+                      "на стенде это норма — cron стоит только на сервере")
+    hours = _age(datetime.fromisoformat(last["at"]))
+    value = (f"{hours:.0f} ч назад" if hours >= 1 else f"{hours * 60:.0f} мин назад") +         f" · РК {last.get('campaigns', 0)} · показов {last.get('shows', 0)}"
+    if hours > 30:
+        return _check("job_dsp_stat", "Фоновые задания", title, "bad", value,
+                      "крон должен ходить раз в сутки",
+                      consequence="Факт показов РК не обновляется: темп и недокрут считаются "
+                                  "по старым суткам")
+    if last.get("error") or last.get("failed"):
+        return _check("job_dsp_stat", "Фоновые задания", title, "bad", value,
+                      (last.get("error") or "не вернулись кампании: "
+                       + "; ".join(last["failed"]))[:400],
+                      consequence="Часть суток не забрана — следующий прогон попробует снова")
+    if last.get("unassigned"):
+        return _check("job_dsp_stat", "Фоновые задания", title, "warn", value,
+                      "показы без площадки по РК " + ", ".join(
+                          f"{k}: {v}" for k, v in last["unassigned"].items())[:300],
+                      consequence="В кампании DSP крутится креатив, заведённый мимо системы")
+    return _check("job_dsp_stat", "Фоновые задания", title, "ok", value)
+
+
 # ── внешние связи ────────────────────────────────────────────────────────────
 
 def check_external_config():
@@ -833,7 +875,7 @@ def collect(db: Session, live: bool = False) -> dict:
                _safe(check_db_sizes, db), _safe(check_db_connections, db),
                _safe(check_disk), _safe(check_storage, db), _safe(check_orphans, db),
                _safe(check_notify_dispatch, db), _safe(check_bitrix_sync, db),
-               _safe(check_erid_auto, db)]
+               _safe(check_erid_auto, db), _safe(check_dsp_stats, db)]
     ext = _safe(check_external_config)
     checks += ext if isinstance(ext, list) else [ext]
     checks.append(_safe(check_dsp_journal, dsp["tone"] == "ok"))

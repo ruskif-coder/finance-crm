@@ -89,6 +89,8 @@ function rowStatus(r, set) {
   // Отказ — боковой выход, и он старше всех прочих признаков: площадка выпала из
   // кампании, и новая версия ей не поможет.
   if (r.state === 'отказ площадки' || r.verdict === 'отказ') return 'отказ'
+  // Отозван нами до запуска (владелец 28.09.2026): площадке его размещать не нужно.
+  if (r.withdrawn_at) return 'отозван'
   if (r.state === 'в размещении') return 'в размещении'
   if (r.state === 'заведён в DSP') return 'ожидает старта'
   if (r.state === 'ерид получен') return 'ерид получен'
@@ -407,6 +409,77 @@ function PrimaryReviewDialog({ set, onDone, onClose }) {
 }
 
 /* ── вердикт площадки ───────────────────────────────────────────────────── */
+/* Отзыв креатива у площадки (владелец 28.09.2026). Причина обязательна — её получит
+   площадка. Итог DSP и уведомления показываем, а не прячем: отзыв записан, даже если DSP
+   или почта отказали, и человек должен знать, что осталось доделать руками. */
+// Исход письма площадке — словами (`notify_publisher`). Панель кабинета пишется всегда.
+const MAIL_SAID = {
+  sent: 'площадке ушло письмо с причиной',
+  digest: 'письмо уйдёт в дайджест',
+  held: 'письмо уйдёт после тихих часов',
+  quiet_hours: 'письмо уйдёт после тихих часов',
+  muted: 'площадка выключила такие письма — видно только в кабинете',
+  no_address: 'у площадки нет почты — видно только в кабинете и в боте',
+  no_channel: 'у площадки нет канала для писем',
+  off: 'почта не отправлена (выключена)',
+}
+function WithdrawDialog({ rec, onDone, onClose }) {
+  const [reason, setReason] = useState('')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [res, setRes] = useState(null)
+
+  const send = async () => {
+    setBusy(true); setErr('')
+    try {
+      const r = await api.post(`/launch-prep/pair/${rec.pair_id}/withdraw`, { reason: reason.trim() }, auth())
+      setRes(r.data); onDone(r.data)
+    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось отозвать') }
+    setBusy(false)
+  }
+
+  const dspState = res?.dsp?.state
+  const dspSaid = dspState === 'archived' ? 'Креатив в DSP переведён в архив.'
+    : dspState === 'error'
+      ? `DSP не принял архивирование (${res.dsp.why || 'без ответа'}) — креатив ${res.dsp.xxhash} остался в кабинете DSP, переведите его в архив там.`
+      : 'В DSP креатив не заводился — там ничего не менялось.'
+  const mailSaid = `Уведомление: ${MAIL_SAID[res?.publisher_notified] || 'не ушло'}.`
+
+  return (
+    <div style={OVERLAY} {...overlayClose(onClose)}>
+      <div style={{ ...SHEET, width: 'min(520px, 96vw)' }}>
+        <div style={{ fontSize: 17, fontWeight: 700 }}>Отозвать креатив · {rec.name}</div>
+        {!res ? (<>
+          <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.55 }}>
+            Задача уйдёт из кабинета площадки, креатив перестанет считаться в объёме и в
+            пороге ЕРИД; если он уже в DSP — уйдёт там в архив. Вернуть отозванный нельзя:
+            замена — новой загрузкой креатива по обычной процедуре.
+          </div>
+          <div style={{ ...CAP, marginTop: 16, marginBottom: 6 }}>причина — её увидит площадка</div>
+          <textarea value={reason} maxLength={500} rows={3} autoFocus
+            onChange={e => { setReason(e.target.value); if (err) setErr('') }}
+            style={{ ...inp, width: '100%', boxSizing: 'border-box', height: 'auto', padding: 9,
+              resize: 'vertical', fontSize: 13 }} />
+          {!!err && <div style={{ marginTop: 12, fontSize: 12.5, color: 'var(--dot-overdue)' }}>{err}</div>}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
+            <button style={btn(false)} onClick={onClose}>Отмена</button>
+            <button style={btn(true)} onClick={send} disabled={busy || !reason.trim()}>
+              {busy ? 'Отзываем…' : 'Отозвать'}
+            </button>
+          </div>
+        </>) : (<>
+          <div style={{ fontSize: 13, marginTop: 10, lineHeight: 1.6 }}>
+            Креатив отозван.<br />{dspSaid}<br />{mailSaid}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
+            <button style={btn(true)} onClick={onClose}>Закрыть</button>
+          </div>
+        </>)}
+      </div>
+    </div>
+  )
+}
+
 function PairVerdictDialog({ rec, onDone, onClose }) {
   /* Три исхода, а не два. «Правки» просят новую версию и оставляют площадку в кампании;
      «отказ» закрывает её для этой кампании совсем — нет товара, ограничения по бренду.
@@ -883,18 +956,19 @@ const ROW_LOOK = {
   'ожидает старта': { bg: CB.incomeTint, border: CB.incomeBorder, fg: CB.incomeFg, dot: CB.income },
   'в размещении':  { bg: CB.incomeTint, border: CB.incomeBorder, fg: CB.incomeFg, dot: CB.income },
   'отказ':         { bg: CB.dangerTint, border: CB.dangerBorder, fg: CB.danger, dot: CB.danger },
+  'отозван':       { bg: CB.subtle, border: CB.border, fg: CB.t3, dot: CB.t5 },
 }
 /* Группы фильтра и порядок строк: сверху то, что требует действия (хендофф). */
 const ROW_GROUP = {
   'правки': 'fix', 'у трафика': 'traffic', 'у площадки': 'wait', 'черновик': 'draft',
   'согласовано': 'ok', 'ерид получен': 'ok', 'ожидает старта': 'ok', 'в размещении': 'ok',
-  'отказ': 'refused',
+  'отказ': 'refused', 'отозван': 'refused',
 }
 const GROUP_ORDER = { fix: 0, traffic: 1, wait: 2, draft: 3, ok: 4, refused: 5 }
 const FILTERS = [
   ['all', 'Все', CB.t4], ['fix', 'Правки', CB.warn], ['traffic', 'У трафика', CB.warn],
   ['wait', 'У площадки', CB.accent], ['draft', 'Черновик', CB.t5],
-  ['ok', 'Согласовано', CB.income], ['refused', 'Отказ', CB.danger],
+  ['ok', 'Согласовано', CB.income], ['refused', 'Отказ, отзыв', CB.danger],
 ]
 /* Сетка таблицы хендоффа: одна на шапку и строки; статус и действие фиксированной
    ширины — плашки и кнопки стоят ровно в столбик во всех строках. */
@@ -1185,7 +1259,7 @@ function NotePeek({ who, text }) {
 
 /* ── строка площадки ───────────────────────────────────────────────────── */
 function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt, onUrl, onRequest,
-                        onVerdict, onRework, onShots, onPlan, vol }) {
+                        onVerdict, onRework, onShots, onPlan, onWithdraw, vol }) {
   const [url, setUrl] = useState(r.advertiser_url || '')
   const [editing, setEditing] = useState(false)
   const [urlErr, setUrlErr] = useState('')
@@ -1195,8 +1269,9 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
   useEffect(() => { setPlan(r.plan_show || 0) }, [r.plan_show])
   // Площадка ушла в доработку — работает теперь в другом креативе, здесь только след.
   const gone = r.moved_to_no || null
-  const note = r.reason || r.traffic_reason || ''
-  const noteWho = r.reason ? (r.decided_by || 'площадка') : (r.traffic_reason ? 'трафик' : '')
+  const note = r.withdraw_reason || r.reason || r.traffic_reason || ''
+  const noteWho = r.withdraw_reason ? 'отозван нами'
+    : r.reason ? (r.decided_by || 'площадка') : (r.traffic_reason ? 'трафик' : '')
   const status = rowStatus(r, set)
   const look = ROW_LOOK[status] || ROW_LOOK['черновик']
   // Маркер у строки есть, когда она прошла его ступень, — а не когда он есть у креатива.
@@ -1228,6 +1303,10 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
   const reworkable = canEdit && !gone && (r.verdict === 'на доработку' || r.traffic_verdict === 'на переделку')
     && r.state !== 'отказ площадки'
   const answerable = isAdmin && canApprove && sent && !r.verdict && r.traffic_verdict === 'ок' && !gone
+  // Отзыв у площадки — мастер аккаунтов, пока размещение не запущено (владелец 28.09.2026).
+  // Запуск проверяет сервер ещё и по статусу площадки в РК; здесь — чтобы не звать зря.
+  const withdrawable = !!onWithdraw && !!r.pair_id && !!r.sent_at && !r.withdrawn_at && !gone
+    && !['отказ', 'в размещении', 'отозван'].includes(status)
   const done = ROW_GROUP[status] === 'ok'
 
   // Объём площадки против плана РК (владелец 27.09.2026): > 50 % — жёлтым, > 100 % — красным.
@@ -1380,6 +1459,9 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
             // ход для площадок без кабинета, а не обычный путь.
             <CbBtn onClick={() => onVerdict(r)} style={{ width: 98, justifyContent: 'center', height: 28,
               color: CB.accent, borderColor: CB.accentBorder }}>Ответ</CbBtn>
+          ) : withdrawable ? (
+            <CbBtn onClick={() => onWithdraw(r)} style={{ width: 98, justifyContent: 'center', height: 28 }}
+              title="Отозвать креатив у площадки до запуска размещения">Отозвать</CbBtn>
           ) : (
             /* Кнопки «В эфир» здесь нет (26.09.2026): «в размещении» ставит только запуск
                площадки в дашборде трафика (с 18.09), ручной перевод сервер отклоняет. */
@@ -1791,7 +1873,8 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
                 isAdmin={isAdmin} sent={sent} onDrop={dropTarget}
                 onTt={handlers.tt} onUrl={handlers.url} onRequest={handlers.request}
                 onVerdict={handlers.verdict} onRework={(rec) => handlers.rework(set, rec)}
-                onShots={handlers.shots} onPlan={handlers.plan} />
+                onShots={handlers.shots} onPlan={handlers.plan}
+                onWithdraw={handlers.canWithdraw ? handlers.withdraw : null} />
             ))}
           </div>
         </div>
@@ -1876,6 +1959,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
   const [urlFor, setUrlFor] = useState(null)
   const [reviewFor, setReviewFor] = useState(null)
   const [verdictFor, setVerdictFor] = useState(null)
+  const [withdrawFor, setWithdrawFor] = useState(null)
   const [autoUploadFor, setAutoUploadFor] = useState(null)
   const [deleteFor, setDeleteFor] = useState(null)
 
@@ -1973,6 +2057,8 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
 
   const handlers = {
     reload: load,
+    canWithdraw: !!data?.can_withdraw,
+    withdraw: setWithdrawFor,
     tt: setTtFor,
     request: setUrlFor,
     review: setReviewFor,
@@ -2109,6 +2195,8 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
         onDone={() => { setReviewFor(null); load() }} />}
       {!!verdictFor && <PairVerdictDialog rec={verdictFor} onClose={() => setVerdictFor(null)}
         onDone={() => { setVerdictFor(null); load() }} />}
+      {!!withdrawFor && <WithdrawDialog rec={withdrawFor} onClose={() => setWithdrawFor(null)}
+        onDone={() => load()} />}
       {!!deleteFor && <ConfirmDelete set={deleteFor} onClose={() => setDeleteFor(null)}
         onYes={async () => {
           await api.delete(`/launch-prep/set/${deleteFor.id}`, auth())

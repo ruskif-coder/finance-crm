@@ -289,13 +289,22 @@ def landing_domain(url: Optional[str]) -> Optional[str]:
     host = (parts.hostname or "").lower()
     if parts.scheme not in ("http", "https") or "." not in host or " " in host:
         return None
-    # Кириллический домен (`120на80.рф`) — в латинской записи `xn--…`: у DSP требования к
-    # формату URL, и на проде такие домены уже встречаются в обоих видах.
+    # Кириллический домен (`120на80.рф`) DSP в `adomain` НЕ принимает ни в какой записи —
+    # ни латиницей `xn--…`, ни кириллицей, ни полным адресом (демо-проверка 28.09.2026,
+    # восемь вариантов, все «Invalid adomain format»). Ссылку перехода с таким доменом он
+    # берёт. Поэтому `adomain` тогда — наш сайт, как у креатива нацеливания (владелец
+    # 28.09.2026: «подставить simb-ad»); DSP его принял.
     try:
         host = host.encode("idna").decode("ascii")
     except UnicodeError:
-        return None
+        return ADOMAIN_FALLBACK
+    if any(label.startswith("xn--") for label in host.split(".")):
+        return ADOMAIN_FALLBACK
     return f"{parts.scheme}://{host}/"
+
+
+# `adomain` для посадочной, чей домен DSP не принимает (кириллический, зона .рф).
+ADOMAIN_FALLBACK = "https://simb-ad.com/"
 
 
 def build_creative_params(*, title: str, link: str, erid: Optional[str] = None,

@@ -87,6 +87,26 @@ def _extract_xxhash(result: Any) -> Optional[str]:
     return None
 
 
+# Поля, которые в журнал не пишутся никогда. Ответ `User.getInfo` несёт токен
+# администратора кабинета (`auth_token`, замер 27.09.2026), а клиент кладёт в журнал
+# ответ КАЖДОГО вызова целиком — токен лёг бы в аналитическую базу открытым текстом и
+# уехал бы в каждый её дамп. Вырезается при записи, а не при чтении: прочитать журнал
+# может кто угодно с доступом к базе.
+SECRET_KEYS = frozenset({"auth_token", "access_token", "refresh_token", "password"})
+REDACTED = "***"
+
+
+def _redact(v: Any) -> Any:
+    """Копия с затёртыми секретами на любой глубине. Исходник не трогается: ответ
+    отдаётся вызывающему как пришёл, затирается только то, что уходит в журнал."""
+    if isinstance(v, dict):
+        return {k: (REDACTED if k in SECRET_KEYS and val not in (None, "") else _redact(val))
+                for k, val in v.items()}
+    if isinstance(v, list):
+        return [_redact(x) for x in v]
+    return v
+
+
 class MsClient:
     def __init__(self, url: Optional[str] = None, token: Optional[str] = None,
                  partner_xxhash: Optional[str] = None,
@@ -133,6 +153,7 @@ class MsClient:
     def _journal(self, method, entity_type, local_ref, body, resp, ms_xxhash, ok, error):
         if not self._journal_on:
             return
+        body, resp = _redact(body), _redact(resp)
         try:
             with self._engine().begin() as c:
                 c.execute(text(
@@ -354,6 +375,23 @@ class MsClient:
     def creative_set_status(self, xxhash: str, status: str, local_ref=None) -> Any:
         return self.call("Creative.setStatus", {"xxhash": xxhash, "status": status},
                          entity_type="creative", local_ref=local_ref)
+
+    # ── статистика ─────────────────────────────────────────────────────────
+    def statistic_get_period(self, hashes, day_from, day_to) -> dict:
+        """Сумма показов / кликов / расхода по каждому хешу за период `[from, to]`.
+
+        Хеши кампаний и креативов в ОДНОМ вызове не смешивать: кампании молча выпадают
+        из ответа (замер 27.09.2026). Период обязателен — без него DSP считает за всё
+        время жизни объекта и не укладывается в таймаут."""
+        if not hashes:
+            return {}
+        r = self.call("Statistic.getPeriod",
+                      {"xxhash_list": list(hashes),
+                       "period": {"from": str(day_from), "to": str(day_to)}},
+                      entity_type="stat")
+        if not isinstance(r, dict):
+            raise MsError(f"Statistic.getPeriod: ожидали словарь, получили {str(r)[:200]}")
+        return r
 
     # ── таргетинг / загрузка ───────────────────────────────────────────────
     def targeting_get(self, xxhash: str, target_key: str) -> Any:

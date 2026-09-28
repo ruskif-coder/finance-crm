@@ -279,6 +279,12 @@ class LaunchPrepPair(Base):
                        nullable=False, index=True)
     sent_at = Column(DateTime)      # ушла площадке — после отмашки трафиков
     agreed_at = Column(DateTime)    # момент схождения, тогда же выдаётся code
+    # Отзыв у площадки до запуска её размещения (миграция 2026-09-28_pair_withdrawn).
+    # Не вердикт: вердикт пишет площадка, отзываем мы. Вернуть нельзя — только новым
+    # комплектом (`app/launch_prep/withdraw.py`).
+    withdrawn_at = Column(DateTime)
+    withdrawn_by = Column(Integer, ForeignKey("users.id"))
+    withdraw_reason = Column(Text)
     created_at = Column(DateTime, server_default=func.now())
 
     creative_set = relationship("LaunchPrepCreativeSet", back_populates="pairs")

@@ -447,7 +447,7 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
          ORDER BY f.set_id, f.id
     """), {"d": camp.deal_id}).mappings().all()}
     pairs = db.execute(text("""
-        SELECT pr.id AS pair_id, pr.code AS pair_code, pr.sent_at,
+        SELECT pr.id AS pair_id, pr.code AS pair_code, pr.sent_at, pr.withdrawn_at,
                cs.id AS set_id, cs.no AS set_no, cs.title, cs.erid,
                t.publisher_id,
                tr.verdict AS traffic_verdict,
@@ -493,7 +493,8 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
         # Заменённый доработкой — «отклонён»: иначе он висел бы «у площадки» вечно, как
         # незакрытая работа. Ручной статус трафика (например, «запущен» у уже крутящего)
         # это не перекрывает — `effective_status_creative` пропускает решение человека.
-        if (sid, pl.publisher_id) in replaced:
+        # Отозванный у площадки (владелец 28.09.2026) — тоже: в работе его больше нет.
+        if (sid, pl.publisher_id) in replaced or r.get("withdrawn_at"):
             chain = "отклонён"
 
         # Номер — номер СВОЕГО комплекта: доработка рождает комплект со следующим

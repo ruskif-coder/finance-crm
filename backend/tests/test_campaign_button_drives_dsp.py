@@ -72,6 +72,10 @@ def _no_volume_guard(monkeypatch):
     в tests/test_volume_check.py; здесь он не относится к делу."""
     from app.launch_prep import volumes
     monkeypatch.setattr(volumes, "guard", lambda db, deal_id: None)
+    # Креативы проверяются своим прибором (test_dsp_creatives_follow): поддельная база
+    # здесь запросов к ним не умеет.
+    from app.dsp import campaigns as _camps
+    monkeypatch.setattr(_camps, "follow_creatives", lambda *a, **k: {})
 
 def _camp(xx=XX, status="готова"):
     return SimpleNamespace(id=5, deal_id=1, status=status, ms_campaign_xxhash=xx,

@@ -86,6 +86,7 @@ ACTIONS: Tuple[LogAction, ...] = (
     LogAction('увед_запрос_ссылки', 'Запрошена посадочная страница', 'warn', SIDE_US),
     LogAction('увед_ерид', 'Выпущен ЕРИД', 'ok', SIDE_US),
     LogAction('увед_старт_рк', 'Кампания стартовала', 'ok', SIDE_US),
+    LogAction('увед_креатив_отозван', 'Креатив отозван', 'warn', SIDE_US),
 )
 
 BY_KEY = {a.key: a for a in ACTIONS}

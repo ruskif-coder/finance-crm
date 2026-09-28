@@ -232,6 +232,11 @@ export const DEAL_COLS = [
   { key: 'period', w: '78px', label: 'Период', sortable: true },
   { key: 'bitrix_stage', w: '1.25fr', label: 'Стадия', sortable: true },
   { key: 'amount', w: '88px', label: 'Сумма', sortable: true, right: true },
+  // Цена единицы из медиаплана и план/факт закупленной метрики (владелец 28.09.2026).
+  // Новые ключи у тех, кто уже настроил колонки, встают в конец списка — порядок и
+  // видимость остаются за пользователем.
+  { key: 'unit_price', w: '96px', label: 'Цена ед.', right: true },
+  { key: 'plan_fact', w: '132px', label: 'План / факт', right: true },
   { key: 'sales_rep', w: '92px', label: 'Продавец', sortable: true },
   { key: 'account_manager', w: '88px', label: 'Аккаунт', sortable: true },
   { key: 'payer', w: '1.15fr', label: 'Контрагент', sortable: true },
@@ -242,6 +247,44 @@ export const DEAL_COLS = [
   { key: 'files', w: '120px', label: 'Файлы' },
 ]
 export const DEAL_DEFAULT_HIDDEN = ['pipeline', 'period_from', 'period_to']
+
+/* Ячейки двух колонок медиаплана — одни на реестр и дашборд (`units` из /sales/deals,
+   бэкенд `app/sales/deal_units.py`). Пусто — прочерк: медиаплана нет или закуплены штуки. */
+const unitsNum = (v) => (v == null ? '—' : v >= 1e6 ? (v / 1e6).toFixed(2).replace('.', ',') + ' млн'
+  : v >= 1e4 ? Math.round(v / 1e3) + ' тыс' : new Intl.NumberFormat('ru-RU').format(Math.round(v)))
+const priceNum = (v) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(v)
+export function UnitPriceCell({ u }) {
+  if (!u || u.price_min == null) return <span style={{ color: 'var(--text-faint)' }}>—</span>
+  const one = u.price_min === u.price_max
+  const txt = one ? priceNum(u.price_min) : `${priceNum(u.price_min)}–${priceNum(u.price_max)}`
+  const per = u.model === 'CPM' ? 'за 1000 показов' : u.model === 'CPC' ? 'за клик' : 'за единицу'
+  return (
+    <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.2 }}
+      title={`${txt} ₽ ${per} (${u.model})` + (one ? '' : ' — у строк медиаплана разные цены')
+        + (u.mixed ? '; в плане несколько моделей закупки, показана основная по бюджету' : '')}>
+      <span style={{ fontFamily: MONO, fontWeight: 700, whiteSpace: 'nowrap' }}>{txt}</span>
+      <span style={{ fontFamily: MONO, fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase' }}>
+        {u.model}{u.mixed ? ' +' : ''}
+      </span>
+    </span>
+  )
+}
+export function PlanFactCell({ u }) {
+  if (!u || !u.metric || !u.plan) return <span style={{ color: 'var(--text-faint)' }}>—</span>
+  const what = u.metric === 'clicks' ? 'клики' : 'показы'
+  const pctv = u.fact != null ? Math.round(u.fact / u.plan * 100) : null
+  // Две строки, как рекламодатель и бренд: сверху план, под ним факт.
+  return (
+    <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.25, minWidth: 0 }}
+      title={`${what}: план ${new Intl.NumberFormat('ru-RU').format(u.plan)}, факт `
+        + (u.fact == null ? 'ещё не пришёл' : new Intl.NumberFormat('ru-RU').format(u.fact))}>
+      <span style={{ fontFamily: MONO, whiteSpace: 'nowrap' }}>{unitsNum(u.plan)}</span>
+      <span style={{ fontFamily: MONO, whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
+        {u.fact == null ? '—' : unitsNum(u.fact)}{pctv != null ? ` · ${pctv} %` : ''}
+      </span>
+    </span>
+  )
+}
 
 // Направление ПЕРВОГО клика по заголовку. Везде «по убыванию» (у суммы и даты создания
 // это верно: сначала крупное и свежее), а у дат размещения — «по возрастанию»: период

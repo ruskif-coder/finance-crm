@@ -60,7 +60,7 @@ from app.ord.matching import resolve_final
 from app.ord.models import OrdInitialContract, OrdKktu
 from app.ord.payloads import OrdPayloadError
 from app.permissions import require_any_permission, require_permission
-from app.routers.sales_dashboard import _assert_deal_in_scope
+from app.routers.sales_dashboard import _assert_deal_in_scope, _is_account_master
 from app.sales import mp_row
 from app.sales.models import (SalesBrand, SalesDeal, SalesMediaPlan, SalesMediaPlanExtra,
                               SalesMediaPlanRow,
@@ -285,6 +285,9 @@ def _recipient_out(target, pub, pair=None, review=None, traffic=None,
         "pair_id": pair.id if pair else None,
         "pair_code": pair.code if pair else None,
         "sent_at": pair.sent_at if pair else None,
+        # Отзыв у площадки (владелец 28.09.2026) — наше решение, а не её вердикт.
+        "withdrawn_at": getattr(pair, "withdrawn_at", None),
+        "withdraw_reason": getattr(pair, "withdraw_reason", None),
         "verdict": review.verdict if review else None,
         "reason": review.reason if review else None,
         "decided_by": review.decided_by if review else None,
@@ -548,6 +551,8 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
     ext = external_states(db, deal.id)
 
     return {
+        # Отзыв креатива у площадки — мастер аккаунтов и админ (владелец 28.09.2026).
+        "can_withdraw": _is_account_master(current_user),
         "deal": {"id": deal.id, "code": deal.code, "title": deal.title,
                  "is_self_promo": bool(deal.is_self_promo),
                  # Ответственный трафик показывается здесь же: без него материал не
@@ -1660,7 +1665,8 @@ def _recompute_target_state(db: Session, target: LaunchPrepTarget):
         return
     agreed = (db.query(LaunchPrepPair)
               .filter(LaunchPrepPair.target_id == target.id,
-                      LaunchPrepPair.agreed_at.isnot(None)).first())
+                      LaunchPrepPair.agreed_at.isnot(None),
+                      LaunchPrepPair.withdrawn_at.is_(None)).first())
     if agreed:
         target.state = "согласован"
 
@@ -1905,6 +1911,11 @@ def apply_platform_verdict(db: Session, pair_id: int, verdict: str,
                    LaunchPrepReview.kind == "площадка").first())
     if rec is None:
         raise HTTPException(status_code=400, detail="Комплект этой площадке не отправляли")
+    # Отозванный креатив ответа не принимает: площадка могла держать открытой страницу
+    # задачи, а ответ по отозванному снова сделал бы пару согласованной (28.09.2026).
+    if pair.withdrawn_at is not None:
+        raise HTTPException(status_code=409,
+                            detail="Креатив отозван — отвечать по нему не нужно")
     if rec.verdict is not None:
         raise HTTPException(status_code=400,
                             detail="Вердикт уже выставлен. Доработка — это новый комплект")
@@ -1954,6 +1965,33 @@ def apply_platform_verdict(db: Session, pair_id: int, verdict: str,
          ctx={"deal": deal})
     db.commit()
     return {"verdict": rec.verdict, "code": code, "deal_id": deal.id}
+
+
+class WithdrawIn(BaseModel):
+    reason: str
+
+
+@router.post("/pair/{pair_id}/withdraw")
+def withdraw_pair(pair_id: int, payload: WithdrawIn, db: Session = Depends(get_db),
+                  current_user: User = Depends(EDIT)):
+    """Отозвать креатив у площадки до запуска её размещения (владелец 28.09.2026).
+
+    Только мастер аккаунтов или админ — проверка по роли первой, до записи. Правила и
+    последствия — `app/launch_prep/withdraw.py`."""
+    from app.launch_prep import withdraw as W
+
+    if not _is_account_master(current_user):
+        raise HTTPException(status_code=403,
+                            detail="Отозвать креатив у площадки может мастер аккаунтов")
+    pair = db.query(LaunchPrepPair).filter(LaunchPrepPair.id == pair_id).first()
+    if not pair:
+        raise HTTPException(status_code=404, detail="Пара не найдена")
+    t = db.query(LaunchPrepTarget).filter(LaunchPrepTarget.id == pair.target_id).first()
+    _deal(db, t.deal_id, current_user)
+    try:
+        return W.withdraw(db, pair_id, current_user, payload.reason)
+    except W.WithdrawError as e:
+        raise HTTPException(status_code=409, detail=f"Отозвать нельзя: {e}")
 
 
 @router.post("/pair/{pair_id}/verdict")
@@ -2123,7 +2161,9 @@ def active_pairs(db: Session, set_id: int):
     по другому комплекту, и ждать её здесь значит ждать вечно. До этой правки счётчик
     показывал «согласовали 0 из 3» там, где спрашивать осталось двоих.
     """
-    pairs = db.query(LaunchPrepPair).filter(LaunchPrepPair.set_id == set_id).all()
+    # Отозванные у площадки (28.09.2026) не ждут ничего — как и ушедшие в доработку.
+    pairs = db.query(LaunchPrepPair).filter(LaunchPrepPair.set_id == set_id,
+                                            LaunchPrepPair.withdrawn_at.is_(None)).all()
     gone = moved_to_rework(db, [set_id])
     if not gone or not pairs:
         return pairs

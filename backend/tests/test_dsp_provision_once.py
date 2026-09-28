@@ -165,6 +165,9 @@ def wired(monkeypatch):
     monkeypatch.setattr(prov, "pixel_setup",
                         lambda db, deal_id: {"needed": False, "mode": None, "tag": None})
     monkeypatch.setattr(prov, "_read_archive", lambda f: b"PK")
+    # Метка рекламодателя (`self_inn` / `self_name`) — из договора ОРД, в поддельной базе
+    # его нет; её правило проверяет test_dsp_ad_label.py.
+    monkeypatch.setattr(prov, "ad_label", lambda db, deal_id: ("7700000000", "ООО Тест"))
     monkeypatch.setattr(cr, "upload_zip", lambda c, data, filename=None, local_ref=None:
                         {"html": "<div>баннер</div>", "width": 300, "height": 250,
                          "size": "300x250"})
@@ -319,4 +322,6 @@ def test_landing_domain_helper():
     assert cr.landing_domain("apteka.ru/tovar") == "https://apteka.ru/"
     assert cr.landing_domain("http://Sub.Apteka.ru:8080/a") == "http://sub.apteka.ru/"
     assert cr.landing_domain("") is None and cr.landing_domain("не адрес") is None
-    assert cr.landing_domain("https://120на80.рф/catalog") == "https://xn--12080-6ve4g.xn--p1ai/"
+    # Кириллический домен DSP в `adomain` не принимает ни в какой записи (демо 28.09.2026) —
+    # тогда наш сайт; прежде здесь стояла латинская запись xn--, которую DSP отверг.
+    assert cr.landing_domain("https://120на80.рф/catalog") == "https://simb-ad.com/"

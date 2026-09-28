@@ -46,6 +46,7 @@ def test_built_kinds_really_have_a_sender():
         "новый креатив": ("app/routers/traffic.py", '"новый креатив"'),
         "ерид выпущен": ("app/routers/launch_prep.py", '"ерид выпущен"'),
         "старт рк": ("app/routers/traffic_dashboard.py", '"старт рк"'),
+        "креатив отозван": ("app/launch_prep/withdraw.py", '"креатив отозван"'),
     }
     for k in nk.KINDS:
         if not k.built:

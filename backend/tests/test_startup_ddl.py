@@ -91,6 +91,11 @@ ALLOWED_DESTRUCTIVE = (
     # Область — только ключи `tg_bad:%`.
     "DELETE FROM company_settings WHERE key LIKE 'tg_bad:%' AND value < :cut",
     "DELETE FROM company_settings WHERE key = :k AND key LIKE 'tg_bad:%'",
+    # Суточный срез DSP (28.09.2026): DSP досчитал сутки до нуля — прежнее число снимается,
+    # иначе на экране остался бы показ, которого не было. Строка с нулём вместо удаления
+    # читалась бы днём открутки. Ровно одна ячейка «РК × площадка × сутки» и только свой
+    # источник `dsp`: ручной факт и верификатор этим запросом не задеть.
+    "DELETE FROM ad_campaign_stat WHERE campaign_id = :c AND placement_id IS NOT DISTINCT FROM :p AND date = :d AND source = 'dsp'",
 )
 
 DATA_MUTATING = (

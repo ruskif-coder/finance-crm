@@ -172,7 +172,44 @@ def apply_status(db: Session, camp: AdCampaign, status: str,
     if target == "LAUNCHED":
         sync_campaign_plan(db, camp, c, commit=False)
     c.campaign_set_status(camp.ms_campaign_xxhash, target, local_ref=camp.id)
+    follow_creatives(db, camp, target, c)
     return target
+
+
+# Креатив в РК крутится, только если запущена его ПЛОЩАДКА и сам он согласован (владелец
+# 28.09.2026: «общий старт — всё, что согласовано и получено, или кнопкой против каждой
+# площадки»). До этого креативы жили в DSP в том статусе, в каком их завели, — STOPPED, и
+# запуск включал только кампанию.
+CREATIVE_LIVE = ("согласован", "запущен")
+
+
+def creative_targets(rows, campaign_target: str) -> dict:
+    """{хеш: LAUNCHED|STOPPED} по строкам (хеш, статус площадки, статус креатива).
+
+    Кампания в архиве — креативы не трогаем (они уходят вместе с ней). «Отклонён» —
+    тоже: отозванный уже в архиве DSP, а STOPPED вернул бы его оттуда."""
+    if campaign_target == "ARCHIVE":
+        return {}
+    out = {}
+    for xx, pl_status, cr_status in rows:
+        if not (xx or "").strip() or cr_status == "отклонён":
+            continue
+        live = (campaign_target == "LAUNCHED" and pl_status == "запущен"
+                and cr_status in CREATIVE_LIVE)
+        out[xx.strip()] = "LAUNCHED" if live else "STOPPED"
+    return out
+
+
+def follow_creatives(db: Session, camp: AdCampaign, campaign_target: str, client) -> dict:
+    from app.ad.models import AdCampaignCreative, AdCampaignPlacement
+    rows = (db.query(AdCampaignCreative.ms_creative_xxhash, AdCampaignPlacement.status,
+                     AdCampaignCreative.status)
+            .join(AdCampaignPlacement, AdCampaignPlacement.id == AdCampaignCreative.placement_id)
+            .filter(AdCampaignCreative.campaign_id == camp.id).all())
+    want = creative_targets(rows, campaign_target)
+    for xx, st in want.items():
+        client.creative_set_status(xx, st, local_ref=camp.id)
+    return want
 
 
 def plan_total(delivered, remaining) -> int:

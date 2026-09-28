@@ -518,6 +518,8 @@ def rule_creative_silence(db: Session, ev: registry.Event) -> List[Hit]:
             .join(LaunchPrepTarget, LaunchPrepTarget.id == LaunchPrepPair.target_id)
             .filter(LaunchPrepReview.kind == "площадка",
                     LaunchPrepReview.verdict.is_(None),
+                    # Отозванное у площадки ответа не ждёт (28.09.2026).
+                    LaunchPrepPair.withdrawn_at.is_(None),
                     LaunchPrepReview.asked_at < edge).all())
     if not rows:
         return []

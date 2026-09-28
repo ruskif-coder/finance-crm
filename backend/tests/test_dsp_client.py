@@ -240,10 +240,28 @@ def test_source_key_setting_single_point():
     db = SessionLocal()
     try:
         assert source_key(db, "web") == "x-simb-web"
-        assert source_key(db, "app") in ("x-simb", "xoalt_simb")  # значение — решение владельца
-        assert DEFAULT_SOURCE_KEYS["app"] == "x-simb"
+        assert source_key(db, "app") == "xoalt_simb"   # подтверждено DSP 28.09.2026
+        assert DEFAULT_SOURCE_KEYS["app"] == "xoalt_simb"
     finally:
         db.close()
+
+
+def test_legacy_app_key_reads_as_real_one(monkeypatch):
+    """`x-simb` лежит в настройке прода; в DSP такого источника нет."""
+    from app.dsp import sources
+
+    class _Db:
+        def __init__(self, v):
+            self.v = v
+
+        def execute(self, *a, **k):
+            return self
+
+        def scalar(self):
+            return self.v
+    for stored, want in (("x-simb", "xoalt_simb"), (" x-simb ", "xoalt_simb"),
+                         (None, "xoalt_simb"), ("", "xoalt_simb"), ("other_key", "other_key")):
+        assert sources.source_key(_Db(stored), "app") == want
 
 
 def test_plan_total_is_never_a_remainder():

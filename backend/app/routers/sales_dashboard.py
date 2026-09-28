@@ -901,8 +901,12 @@ def deals_registry(
     # Цвет услуги и документы — общие для реестра и очереди аккаунта, поэтому берутся
     # одним контекстом (app/sales/row_context.py), а не считаются здесь на месте.
     row_ctx = load_row_context(db, page_ids)
+    # Цена единицы и план/факт закупленной метрики (владелец 28.09.2026) — страницей.
+    from app.sales import deal_units
+    units = deal_units.load(db, page_ids)
 
     def _row_extra(item, deal):
+        item["units"] = units.get(deal.id) or None
         return row_ctx.apply(item, deal)
 
     return {

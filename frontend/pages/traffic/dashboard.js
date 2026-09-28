@@ -121,6 +121,40 @@ const volTitle = (vol, pid) => {
     + (v.level === 'over' ? ' — больше плана, запуск заблокирован' : '')
 }
 
+// Таргетинги, которые уйдут в DSP вместе с выгрузкой (app/dsp/targeting.py). Показываются
+// всегда: решение о настройках принимается по живым числам этой РК. Пока выключатель
+// `dsp_targeting_enabled` не включён, в DSP они не отправляются — и это сказано словами.
+const TargetingPreview = ({ t }) => {
+  if (!t) return null
+  if (t.error) {
+    return <div style={{ fontSize: 12, color: 'var(--danger-fg)' }}>Таргетинги не собрались: {t.error}</div>
+  }
+  const line = (label, value) => (
+    <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr', gap: 10, fontSize: 12.5 }}>
+      <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+      <span style={{ fontFamily: MONO, fontSize: 11.5 }}>{value}</span>
+    </div>
+  )
+  return (
+    <div style={{ display: 'grid', gap: 5, padding: '10px 12px', borderRadius: 9,
+      background: 'var(--bg-subtle)', border: '1px solid var(--border-inner)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+        <span style={{ ...CAP, marginBottom: 0 }}>Таргетинги</span>
+        <span style={{ fontSize: 11.5, fontWeight: 700,
+          color: t.enabled ? 'var(--income-fg)' : 'var(--warning-text)' }}>
+          {t.enabled ? 'будут поставлены' : 'выключены настройкой dsp_targeting_enabled'}</span>
+      </div>
+      {line('Источники', `${(t.sources || []).join(', ')} · ставка ${t.source_bid}`)}
+      {line('Регион', (t.geo || []).join(' + '))}
+      {line('Частота', `${(t.frequency || []).join(', ')}${t.frequency_from_plan != null
+        ? ` · из МП: ${t.frequency_from_plan}` : ' · в МП нет — по умолчанию 5'}`)}
+      {line('Соцдем', `${(t.socdem || []).join(', ')} · ${t.socdem_from_plan ? `из МП: ${t.socdem_from_plan}` : 'по умолчанию М/Ж 25–55'}`)}
+      {line('Блоки площадок', `${t.blocks} блоков у ${t.creatives_with_blocks} креативов`
+        + (t.creatives_without_blocks?.length ? ` · без блоков: ${t.creatives_without_blocks.length}` : ''))}
+    </div>
+  )
+}
+
 // Обмен с внешней системой идёт десятки секунд: без признака жизни окно выглядит
 // зависшим, и человек жмёт повторно или закрывает (владелец 28.09.2026).
 const ExtProgress = ({ wb, n }) => (
@@ -145,9 +179,17 @@ const ExtResult = ({ wb, result }) => {
         color: 'var(--danger-fg)' }}>Не выполнено: {result.error}</div>
     )
   }
-  const { done, failed } = result
+  const { done, failed, targeting: tg } = result
   return (
     <div style={{ display: 'grid', gap: 10, fontSize: 13 }}>
+      {!!tg && (
+        <div style={{ fontSize: 12.5, color: tg.skipped ? 'var(--text-muted)'
+          : (tg.failed?.length ? 'var(--warning-text)' : 'var(--income-fg)') }}>
+          Таргетинги: {tg.skipped ? 'не отправлялись (ждут решения по настройкам)'
+            : `поставлено ${tg.done?.length || 0}${tg.failed?.length
+              ? ` · отказов ${tg.failed.length}: ${tg.failed.map(f => `${f.what} — ${f.error}`).join('; ')}` : ''}`}
+        </div>
+      )}
       <div style={{ padding: '10px 12px', borderRadius: 9, fontWeight: 700,
         background: failed.length ? 'var(--warning-tint)' : 'var(--income-tint)',
         color: failed.length ? 'var(--warning-text)' : 'var(--income-fg)' }}>
@@ -163,6 +205,49 @@ const ExtResult = ({ wb, result }) => {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+/* Привязка РК к проекту и кампании, уже заведённым в кабинете Weborama (владелец
+   28.09.2026). Номера — из их кабинета: список по API нам не прочитать. После привязки
+   кнопка W заводит только вставки, а не второй проект с тем же именем. */
+function WrAttach({ campaignId, pl, onDone }) {
+  const [open, setOpen] = useState(false)
+  const [proj, setProj] = useState(pl.project_id || '')
+  const [camp, setCamp] = useState(pl.campaign_id || '')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const send = async () => {
+    setBusy(true); setErr('')
+    try {
+      await api.post(`/traffic-dashboard/campaign/${campaignId}/weborama/attach`,
+        { project_id: pl.project_id ? null : proj.trim(), campaign_id: camp.trim() }, auth())
+      onDone('РК привязана к проекту и кампании Weborama')
+    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось привязать') }
+    setBusy(false)
+  }
+  if (!open) return (
+    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+      Проект и кампания уже заведены в Weborama?{' '}
+      <span onClick={() => setOpen(true)} style={{ color: 'var(--accent)', cursor: 'pointer' }}>Привязать</span>
+    </div>
+  )
+  const box = { ...inp, width: 150, fontFamily: MONO }
+  return (
+    <div style={{ display: 'grid', gap: 8, padding: '10px 12px', borderRadius: 9, border: '1px solid var(--border-card)' }}>
+      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+        Номера из кабинета Weborama. Связь перезаписать нельзя — сверьтесь с кабинетом.
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12 }}>проект</span>
+        <input value={proj} disabled={!!pl.project_id} onChange={e => setProj(e.target.value.replace(/\D/g, ''))} style={box} />
+        <span style={{ fontSize: 12 }}>кампания</span>
+        <input value={camp} onChange={e => setCamp(e.target.value.replace(/\D/g, ''))} style={box} />
+        <button style={btn(true)} disabled={busy || !camp || (!pl.project_id && !proj)} onClick={send}>
+          {busy ? '…' : 'Привязать'}</button>
+      </div>
+      {!!err && <div style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</div>}
     </div>
   )
 }
@@ -422,7 +507,8 @@ export default function TrafficDashboard() {
     // поимённо: «заведено 14 из 19» без причин заставляет разбираться заново.
     try {
       const r = await api.post(`/traffic-dashboard/campaign/${row.id}/${kind}`, {}, auth())
-      setExtAsk(x => x && ({ ...x, result: { done: r.data.done || [], failed: r.data.failed || [] } }))
+      setExtAsk(x => x && ({ ...x, result: { done: r.data.done || [], failed: r.data.failed || [],
+        targeting: r.data.targeting || null } }))
       const d = await api.get(`/traffic-dashboard/campaign/${row.id}`, auth())
       setDetail(x => ({ ...x, [row.id]: d.data }))
       await load()
@@ -1395,6 +1481,10 @@ export default function TrafficDashboard() {
                 <div style={{ padding: '9px 12px', borderRadius: 9, fontSize: 12.5,
                   background: 'var(--warning-tint)', color: 'var(--warning-text)' }}>{blocked}</div>
               )}
+              {wb && !!pl.account && !(pl.project_id && pl.campaign_id) && (
+                <WrAttach campaignId={extAsk.row.id} pl={pl}
+                  onDone={(t) => { say(t); askExternal(extAsk.row, extAsk.kind) }} />
+              )}
               {wb ? (
                 <>
                   {/* ПРИ ЗАСЛОНЕ ЧИСЛА НЕ ПОКАЗЫВАЕМ. «Площадок готово: 1» рядом с
@@ -1451,6 +1541,15 @@ export default function TrafficDashboard() {
                       ))}
                     </div>
                   )}
+                  {/* Рекламная метка — ИНН и название рекламодателя из изначального договора ОРД
+                      (владелец 28.09.2026: слать всегда, идёт в подсказку метки рядом с ЕРИД). */}
+                  <div style={{ fontSize: 12.5 }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Рекламная метка: </span>
+                    {pl.ad_label
+                      ? <b>{pl.ad_label.name}, ИНН {pl.ad_label.inn}</b>
+                      : <span style={{ color: 'var(--danger-fg)' }}>нет изначального договора ОРД — креативы не пойдут</span>}
+                  </div>
+                  <TargetingPreview t={pl.targeting} />
                   <div style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>
                     В каждый креатив вшиваются пиксель Weborama, счётчик площадки и скрипт
                     видимости. Заведённый креатив удалить по API нечем.</div>
