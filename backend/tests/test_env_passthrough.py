@@ -87,6 +87,8 @@ PASSED_THROUGH = {
     "DSP_API_URL": "compose",
     "DSP_ACCESS_TOKEN": "compose",
     "DSP_PARTNER_XXHASH": "compose",
+    "DSP_TARGETING_PARTNER_XXHASH": "compose",
+    "DSP_TARGETING_CAMPAIGN_XXHASH": "compose",
     "DSP_DEMO_API_URL": "compose",
     "DSP_DEMO_TOKEN": "compose",
     "DSP_DEMO_PARTNER_XXHASH": "compose",

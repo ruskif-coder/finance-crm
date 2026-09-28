@@ -911,6 +911,8 @@ function EridRow({ set, sent, onChanged }) {
   // Подтверждение выпуска маркера — окном, а не window.confirm: надо показать КОНТУР и
   // слово «необратимо» (боевую запись в ЕРИР не отозвать).
   const [askErid, setAskErid] = useState(false)
+  // Выпуск до порога автовыпуска — только с отметкой (владелец 28.09.2026).
+  const [earlyOk, setEarlyOk] = useState(false)
   // Право на отправку в ОРД — тот же ключ, что гейтит ручку на сервере. `null` — «ещё не
   // знаю»: снимок прав живёт в localStorage, и `false` с первого кадра прятал бы кнопку.
   const [maySubmit, setMaySubmit] = useState(null)
@@ -968,7 +970,7 @@ function EridRow({ set, sent, onChanged }) {
       ) : (
         <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
           {!!st && !st.blockers?.length && maySubmit !== false && (
-            <CbBtn primary disabled={busy || maySubmit !== true} onClick={() => setAskErid(true)}>
+            <CbBtn primary disabled={busy || maySubmit !== true} onClick={() => { setEarlyOk(false); setAskErid(true) }}>
               Выпустить ЕРИД
             </CbBtn>
           )}
@@ -1021,8 +1023,8 @@ function EridRow({ set, sent, onChanged }) {
             footer={(
               <span style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <button style={btn(false)} onClick={() => setAskErid(false)}>Отмена</button>
-                <button style={btn(true)} disabled={busy}
-                  onClick={() => { setAskErid(false); call(() => api.post(`/launch-prep/set/${set.id}/erid`, {}, auth())) }}>
+                <button style={btn(true)} disabled={busy || (st?.early && !earlyOk)}
+                  onClick={() => { setAskErid(false); call(() => api.post(`/launch-prep/set/${set.id}/erid`, { early_ok: !!(st?.early && earlyOk) }, auth())) }}>
                   {prod ? 'Выпустить в БОЕВОЙ реестр' : 'Выпустить на демо-контуре'}
                 </button>
               </span>
@@ -1036,6 +1038,22 @@ function EridRow({ set, sent, onChanged }) {
                   ? 'Запись уходит в реестр НАВСЕГДА — отозвать её нельзя.'
                   : 'Это тренировочный контур: объект создастся у оператора и останется там мусором.'}
               </div>
+              {/* Площадки ещё не согласовали — выпуск раньше порога автовыпуска. Не запрет
+                  (человек вправе выпустить раньше), а осознанное решение: без отметки
+                  кнопка не нажимается, и сервер без неё откажет сам. */}
+              {!!st?.early && (
+                <div style={{ padding: '10px 12px', borderRadius: 9, fontSize: 12.5, display: 'grid', gap: 8,
+                  background: 'var(--warning-tint)', border: '1px solid var(--warning-border)', color: 'var(--warning-text)' }}>
+                  <span>
+                    Площадки ещё не согласовали креатив: <b>{st.agreed} из {st.sent}</b>.
+                    Автовыпуск сработает, когда согласуют {st.need_auto}.
+                  </span>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: 'var(--text-primary)', fontWeight: 600 }}>
+                    <input type="checkbox" checked={earlyOk} onChange={e => setEarlyOk(e.target.checked)} />
+                    Выпустить ЕРИД до согласования площадок
+                  </label>
+                </div>
+              )}
               <div>Маркер выпускается на весь креатив сразу и проставляется всем площадкам,
                 которые его получили. Повторный выпуск сервер отклонит.</div>
               <div style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>

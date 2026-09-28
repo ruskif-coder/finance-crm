@@ -84,6 +84,7 @@ export default function SiteScript({ mayEdit }) {
   const [withCode, setWithCode] = useState('')
   const [noCode, setNoCode] = useState('')
   const [vsrc, setVsrc] = useState('')
+  const [pPartner, setPPartner] = useState('')
   const [tPartner, setTPartner] = useState('')
   const [tCamp, setTCamp] = useState('')
   const [wbAcc, setWbAcc] = useState('')
@@ -100,6 +101,7 @@ export default function SiteScript({ mayEdit }) {
       setWithCode(r.data.with_code.script || '')
       setNoCode(r.data.without_code.script || '')
       setVsrc(r.data.viewability || '')
+      setPPartner(r.data.prod_partner || '')
       setTPartner(r.data.targeting_partner || '')
       setTCamp(r.data.targeting_campaign || '')
       setWbAcc(r.data.weborama_account || '')
@@ -113,7 +115,7 @@ export default function SiteScript({ mayEdit }) {
     try {
       await api.put('/traffic-catalog/site-script',
         { with_code: withCode, without_code: noCode, viewability: vsrc,
-          targeting_partner: tPartner, targeting_campaign: tCamp,
+          prod_partner: pPartner, targeting_partner: tPartner, targeting_campaign: tCamp,
           weborama_account: wbAcc }, auth())
       await load()
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить') }
@@ -128,9 +130,13 @@ export default function SiteScript({ mayEdit }) {
   const dirtyV = vsrc !== (data.viewability || '')
   const vEmpty = !String(vsrc || '').trim()
   const dirtyTgt = tPartner !== (data.targeting_partner || '') || tCamp !== (data.targeting_campaign || '')
+    || pPartner !== (data.prod_partner || '')
+  // Одинаковые боевой и демо-кабинет — РК ушли бы в кабинет нацеливания (28.09.2026).
+  const sameCab = !!pPartner.trim() && pPartner.trim().toUpperCase() === tPartner.trim().toUpperCase()
   const dirtyWb = wbAcc !== (data.weborama_account || '')
   const wbEmpty = !String(wbAcc || '').trim()
-  const tgtEmpty = !String(tPartner || '').trim() || !String(tCamp || '').trim()
+  const tgtEmpty = (!String(tPartner || '').trim() && !data.targeting_partner_env)
+    || (!String(tCamp || '').trim() && !data.targeting_campaign_env)
 
   return (
     <div style={{ fontFamily: UI }}>
@@ -178,38 +184,52 @@ export default function SiteScript({ mayEdit }) {
         </div>
       </div>
 
-      {/* Куда заводится креатив нацеливания. Два значения, потому что в DSP «клиент» — это
-          отдельный КАБИНЕТ со своим хешем, а кампания внутри него своя. Стоит здесь же,
-          хотя в креатив ничего не вшивает: это вторая настройка стороны DSP, и прятать
-          две строки в отдельной вкладке значило бы плодить экраны. */}
+      {/* Кабинеты DSP — три хеша с подписями (владелец 28.09.2026). В DSP «клиент» — это
+          отдельный КАБИНЕТ со своим хешем. Боевые РК идут в кабинет боевого клиента,
+          нацеливание — в кабинет демоклиента и запущенную кампанию в нём. До этого дня
+          поле боевого клиента было только в окружении сервера, а два хеша здесь оба
+          относились к нацеливанию — и боевые РК однажды ушли в кабинет демоклиента. */}
       <div style={{ ...BOX, marginBottom: 14 }}>
-        <div style={{ ...LBL, marginBottom: 4, color: tgtEmpty ? 'var(--warning-text)' : 'var(--text-faint)' }}>
-          Нацеливание креатива{tgtEmpty ? ' · не настроено' : ''}
-        </div>
-        <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 8 }}>
-          Кабинет демоклиента и запущенная кампания в нём. На отправке трафику туда
-          заводится копия баннера, и кнопка ◎ в очереди показывает на площадке именно её —
-          боевого креатива в DSP до согласования площадки ещё нет. Это не предпросмотр:
-          тот открывается глазом и живёт у нас. Кампания должна быть ЗАПУЩЕНА —
-          остановленная не покажет ничего.
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <input value={tPartner || ''} onChange={e => setTPartner(e.target.value)} readOnly={!mayEdit}
-            placeholder="хеш кабинета демоклиента"
-            style={{ ...inp, flex: '1 1 220px', fontFamily: MONO, fontSize: 12.5,
-              borderColor: tPartner ? 'var(--border-card)' : 'var(--warning)',
-              background: tPartner ? 'var(--bg-card)' : 'var(--warning-tint)' }} />
-          <input value={tCamp || ''} onChange={e => setTCamp(e.target.value)} readOnly={!mayEdit}
-            placeholder="хеш демокампании"
-            style={{ ...inp, flex: '1 1 220px', fontFamily: MONO, fontSize: 12.5,
-              borderColor: tCamp ? 'var(--border-card)' : 'var(--warning)',
-              background: tCamp ? 'var(--bg-card)' : 'var(--warning-tint)' }} />
-          {mayEdit && dirtyTgt && (
-            <button onClick={save} disabled={saving} style={primaryBtn}>
+        <div style={{ ...LBL, marginBottom: 10 }}>Кабинеты DSP</div>
+        {[
+          ['Боевой клиент — выгрузка РК', pPartner, setPPartner, 'хеш кабинета боевого клиента',
+            pPartner ? 'По нему заводятся кампании и креативы кнопкой «D» на дашборде трафика.'
+              : (data.prod_partner_env
+                ? 'Пусто — берётся из настроек сервера (.env). Впишите хеш, чтобы видеть, куда уходят РК.'
+                : 'Не задан ни здесь, ни на сервере — выгрузка РК в DSP откажет.'),
+            !pPartner && !data.prod_partner_env],
+          ['Демоклиент — нацеливание', tPartner, setTPartner, 'хеш кабинета демоклиента',
+            'Кабинет, куда на отправке трафику заводится копия баннера для кнопки ◎ в очереди. '
+            + 'Боевого креатива в DSP до согласования площадки ещё нет.'
+            + (!tPartner && data.targeting_partner_env ? ' Пусто — берётся из настроек сервера (.env).' : ''),
+            !tPartner && !data.targeting_partner_env],
+          ['Демокампания — нацеливание', tCamp, setTCamp, 'хеш демокампании',
+            'Кампания внутри кабинета демоклиента. Должна быть ЗАПУЩЕНА — остановленная не покажет ничего.'
+            + (!tCamp && data.targeting_campaign_env ? ' Пусто — берётся из настроек сервера (.env).' : ''),
+            !tCamp && !data.targeting_campaign_env],
+        ].map(([label, val, set, ph, hint, warn]) => (
+          <div key={label} style={{ display: 'grid', gridTemplateColumns: '240px minmax(220px, 340px) 1fr', gap: 12,
+            alignItems: 'center', padding: '7px 0', borderTop: '1px solid var(--border-row)' }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: warn ? 'var(--warning-text)' : 'var(--text-primary)' }}>{label}</span>
+            <input value={val || ''} onChange={e => set(e.target.value)} readOnly={!mayEdit} placeholder={ph}
+              style={{ ...inp, width: '100%', fontFamily: MONO, fontSize: 12.5,
+                borderColor: warn ? 'var(--warning)' : 'var(--border-card)',
+                background: warn ? 'var(--warning-tint)' : 'var(--bg-card)' }} />
+            <span style={{ fontSize: 11.5, color: 'var(--text-faint)', lineHeight: 1.45 }}>{hint}</span>
+          </div>
+        ))}
+        {sameCab && (
+          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--danger)' }}>
+            Боевой клиент и демоклиент совпадают — РК и нацеливание ушли бы в один кабинет.
+          </div>
+        )}
+        {mayEdit && dirtyTgt && (
+          <div style={{ marginTop: 10 }}>
+            <button onClick={save} disabled={saving || sameCab} style={primaryBtn}>
               {saving ? 'Сохраняю…' : 'Сохранить'}
             </button>
-          )}
-        </div>
+          </div>
+        )}
         {!tgtEmpty && <TargetingCampaignCard state={tgt.state} />}
       </div>
 

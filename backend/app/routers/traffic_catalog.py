@@ -14,6 +14,7 @@ ios/android (платформы `sales_publisher_surface_platforms`) — на б
 Право — `traffic_catalog` (view/create/edit/delete), доступ по умолчанию мастера + админ.
 Миграция `2026-09-01_traffic_catalog.sql`.
 """
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -24,6 +25,7 @@ from sqlalchemy.orm import Session
 from app.ad.models import PublisherBlock
 from app.audit import log_action
 from app.database import get_db
+from app.dsp.client import PARTNER_SETTING
 from app.models import User
 from app.permissions import require_any_permission, require_permission
 from app.sales.models import (PUBLISHER_ARCHIVE_STATUS, SalesPublisher,
@@ -277,6 +279,9 @@ SCRIPT_VIEWABILITY = "dsp_viewability_src"
 # В настройке, а не в коде: демокампанию меняют в кабинете, и смена не должна требовать
 # выкладки. Пусто — кнопка честно скажет «не настроено».
 TARGETING_PARTNER = "dsp_targeting_partner_xxhash"
+# Кабинет БОЕВОГО клиента — по нему выгружаются РК (владелец 28.09.2026). Ключ — у
+# клиента DSP, единственного, кто его читает.
+PROD_PARTNER = PARTNER_SETTING
 TARGETING_CAMPAIGN = "dsp_targeting_campaign_xxhash"
 # Аккаунт WCM — он адресует ВЕСЬ обмен с верификатором. Жил в двух местах и ни одно из
 # них не было рабочим: переменная `WEBORAMA_DEMO_ACCOUNT_ID` — всего лишь подсказка в
@@ -319,8 +324,10 @@ def targeting_cabinet(db: Session) -> tuple:
     ЕДИНСТВЕННАЯ точка чтения — как у счётчика колонок и скрипта видимости. Возвращает
     пару, а не два вызова: по отдельности они бессмысленны, и разъехаться им нельзя.
     """
-    return (_setting(db, TARGETING_PARTNER).strip(),
-            _setting(db, TARGETING_CAMPAIGN).strip())
+    # Настройка админки главнее; пусто — окружение сервера (владелец 28.09.2026: все
+    # три хеша должны задаваться и в .env).
+    return (_setting(db, TARGETING_PARTNER).strip() or os.getenv("DSP_TARGETING_PARTNER_XXHASH", "").strip(),
+            _setting(db, TARGETING_CAMPAIGN).strip() or os.getenv("DSP_TARGETING_CAMPAIGN_XXHASH", "").strip())
 
 
 @router.get("/site-script")
@@ -341,6 +348,12 @@ def get_site_script(db: Session = Depends(get_db), user: User = Depends(VIEW)):
         "without_code": {"script": _setting(db, SCRIPT_NO_CODE),
                          "publishers": [out(p) for p in rows if not p.our_code]},
         "viewability": _setting(db, SCRIPT_VIEWABILITY),
+        "prod_partner": _setting(db, PROD_PARTNER),
+        # Пусто в настройке — выгрузка берёт клиента из окружения сервера. Значение
+        # окружения не отдаём: экрану достаточно знать, что запасной путь есть.
+        "prod_partner_env": bool(os.getenv("DSP_PARTNER_XXHASH")),
+        "targeting_partner_env": bool(os.getenv("DSP_TARGETING_PARTNER_XXHASH")),
+        "targeting_campaign_env": bool(os.getenv("DSP_TARGETING_CAMPAIGN_XXHASH")),
         "targeting_partner": _setting(db, TARGETING_PARTNER),
         "targeting_campaign": _setting(db, TARGETING_CAMPAIGN),
         "weborama_account": _setting(db, WEBORAMA_ACCOUNT),
@@ -372,6 +385,8 @@ class SiteScriptIn(BaseModel):
     # Адрес, а не тег: тег собирает `wrap_html`, и хранить его дважды значило бы
     # позволить им разойтись.
     viewability: Optional[str] = None
+    # Кабинет боевого клиента — по нему идут РК.
+    prod_partner: Optional[str] = None
     # Куда заводить креатив нацеливания — хеши, не адреса.
     targeting_partner: Optional[str] = None
     targeting_campaign: Optional[str] = None
@@ -410,7 +425,25 @@ def set_site_script(payload: SiteScriptIn, db: Session = Depends(get_db),
             "INSERT INTO company_settings (key, value) VALUES (:k, :v) "
             "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
             {"k": SCRIPT_VIEWABILITY, "v": v})
-    for key, val in ((TARGETING_PARTNER, payload.targeting_partner),
+    # Боевой и демо-кабинет обязаны различаться: 28.09.2026 боевые РК ушли в кабинет
+    # демоклиента, и разбирать это пришлось руками. Сверяем с тем, что станет после записи.
+    new_prod = (payload.prod_partner if payload.prod_partner is not None
+                else _setting(db, PROD_PARTNER)).strip()
+    new_demo = (payload.targeting_partner if payload.targeting_partner is not None
+                else _setting(db, TARGETING_PARTNER)).strip()
+    # Пустое поле — действует значение из окружения: сверяем то, что реально пойдёт в DSP.
+    new_prod = new_prod or os.getenv("DSP_PARTNER_XXHASH", "").strip()
+    new_demo = new_demo or os.getenv("DSP_TARGETING_PARTNER_XXHASH", "").strip()
+    # Отказываем, только когда МЕНЯЮТ хеши кабинетов: иначе уже сложившееся совпадение
+    # (например, в .env) запирало бы сохранение любых скриптов на этом экране.
+    touches = any(v is not None and v.strip() != _setting(db, k).strip()
+                  for k, v in ((PROD_PARTNER, payload.prod_partner),
+                               (TARGETING_PARTNER, payload.targeting_partner)))
+    if touches and new_prod and new_prod.upper() == new_demo.upper():
+        raise HTTPException(400, "Кабинет боевого клиента и кабинет демоклиента совпадают — "
+                                 "РК и нацеливание ушли бы в один кабинет")
+    for key, val in ((PROD_PARTNER, payload.prod_partner),
+                     (TARGETING_PARTNER, payload.targeting_partner),
                      (TARGETING_CAMPAIGN, payload.targeting_campaign)):
         if val is None:
             continue

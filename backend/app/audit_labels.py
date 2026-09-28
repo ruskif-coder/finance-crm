@@ -137,6 +137,7 @@ ACTION_LABELS = {
     "auto_creative_targets": "Площадки комплекта подставлены автоматически",
     "move_creative_target": "Площадка перенесена в другой комплект",
     "issue_erid": "ЕРИД выпущен",
+    "issue_erid_early": "ЕРИД выпущен до согласования площадок",
     "set_foreign_erid": "Внесён чужой ЕРИД",
     "rights_letter_upload": "Письмо о правах приложено",
     "rights_letter_delete": "Письмо о правах удалено",

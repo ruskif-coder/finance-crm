@@ -114,6 +114,10 @@ services:
       DSP_API_URL: ${DSP_API_URL:-}
       DSP_ACCESS_TOKEN: ${DSP_ACCESS_TOKEN:-}
       DSP_PARTNER_XXHASH: ${DSP_PARTNER_XXHASH:-}
+      # Нацеливание: кабинет демоклиента и кампания в нём. Запасной путь — главнее
+      # настройка «Кабинеты DSP» в админке трафика (28.09.2026).
+      DSP_TARGETING_PARTNER_XXHASH: ${DSP_TARGETING_PARTNER_XXHASH:-}
+      DSP_TARGETING_CAMPAIGN_XXHASH: ${DSP_TARGETING_CAMPAIGN_XXHASH:-}
       DSP_ADMIN_URL: ${DSP_ADMIN_URL:-}
       MAIL_SMTP_HOST: ${MAIL_SMTP_HOST:-}
       MAIL_SMTP_PORT: ${MAIL_SMTP_PORT:-}

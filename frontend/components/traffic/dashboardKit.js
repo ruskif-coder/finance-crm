@@ -728,7 +728,9 @@ export const CreativeCounts = ({ counts }) => {
   )
 }
 
-const CR_GRID = 'minmax(0,1.6fr) 96px 110px 96px 96px 132px 68px'
+// Два хеша DSP — РК и креатива — раздельно (владелец 28.09.2026): по хешу РК ищут
+// кампанию в кабинете, по хешу креатива — сам баннер, и путать их нельзя.
+const CR_GRID = 'minmax(0,1.6fr) 96px 128px 128px 80px 90px 132px 68px'
 
 /**
  * Строки креативов внутри площадки. Имя человеческое — первой строкой, полный индекс
@@ -738,7 +740,7 @@ const CR_GRID = 'minmax(0,1.6fr) 96px 110px 96px 96px 132px 68px'
  * Версия комплекта показывается подписью там, где креатив дорабатывали: сообщение одно,
  * но знать, какая правка сейчас в эфире, нужно.
  */
-export const CreativeRows = ({ rows, manual, mayEdit, onStatus }) => {
+export const CreativeRows = ({ rows, manual, mayEdit, onStatus, campaignHash }) => {
   if (!rows || !rows.length) {
     return (
       <div style={{ fontSize: 11.5, color: 'var(--text-faint)', padding: '8px 0 2px' }}>
@@ -750,10 +752,10 @@ export const CreativeRows = ({ rows, manual, mayEdit, onStatus }) => {
     <div style={{ padding: '6px 0 2px' }}>
       <div style={{ display: 'grid', gridTemplateColumns: CR_GRID, gap: 9, padding: '0 0 5px',
         borderBottom: '1px solid var(--border-inner)' }}>
-        {['Креатив', 'ЕРИД', 'Хеш в МС', 'Доля', 'План', 'Статус', ''].map((h, i) => (
+        {['Креатив', 'ЕРИД', 'Хеш РК в DSP', 'Хеш креатива в DSP', 'Доля', 'План', 'Статус', ''].map((h, i) => (
           <span key={h + i} style={{ fontFamily: MONO, fontSize: 8.5, letterSpacing: '.08em',
             textTransform: 'uppercase', color: 'var(--text-faint)',
-            textAlign: i >= 3 && i <= 4 ? 'right' : 'left' }}>{h}</span>
+            textAlign: i >= 4 && i <= 5 ? 'right' : 'left' }}>{h}</span>
         ))}
       </div>
       {rows.map(c => (
@@ -777,6 +779,12 @@ export const CreativeRows = ({ rows, manual, mayEdit, onStatus }) => {
           </span>
           <span style={{ fontFamily: MONO, fontSize: 10, color: c.erid ? 'var(--text-secondary)' : 'var(--text-faint)' }}>
             {c.erid || DASH}</span>
+          {/* Хеш РК — у креатива он тот же, что у всей кампании; показывается, когда
+              сам креатив в DSP заведён: до того кампания может быть, а баннера в ней нет. */}
+          <span style={{ fontFamily: MONO, fontSize: 10,
+            color: campaignHash ? 'var(--blue)' : 'var(--text-faint)' }}
+            title={campaignHash ? 'Кампания в DSP' : 'Кампания в DSP не заведена'}>
+            {campaignHash || 'не заведена'}</span>
           <span style={{ fontFamily: MONO, fontSize: 10,
             color: c.ms_creative_xxhash ? 'var(--blue)' : 'var(--text-faint)' }}>
             {c.ms_creative_xxhash || 'не заведён'}</span>

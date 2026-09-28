@@ -2075,6 +2075,17 @@ def auto_need(sent: int, share: float) -> int:
     return max(1, math.ceil(round(sent * share, 6))) if sent else 0
 
 
+def early_state(st: dict, share: float) -> dict:
+    """Ранний ли сейчас выпуск: согласовавших меньше, чем нужно автовыпуску.
+
+    Порог кнопку не запирает (27.09.2026), но выпуск до него требует подтверждения
+    (владелец 28.09.2026: на проде маркер выпустили через десять секунд после отправки,
+    площадка ещё ничего не согласовала). Одна функция на экран и на ручку — иначе окно
+    предупреждало бы по одному счёту, а ручка отказывала бы по другому."""
+    need = auto_need(st["sent"], share)
+    return {"need_auto": need, "early": st["agreed"] < need}
+
+
 def erid_threshold(db: Session) -> float:
     """Доля для автовыпуска (`app.launch_prep.erid_auto`). Ручную кнопку не запирает."""
     row = db.execute(sa_text("SELECT value FROM company_settings WHERE key = :k"),
@@ -2294,7 +2305,8 @@ def erid_readiness(set_id: int, db: Session = Depends(get_db),
     # именно уйдёт запрос, ДО нажатия, а не узнавать об этом из журнала (F2-01 внешнего
     # аудита 11.09.2026: подтверждения не было вовсе, и контур на экране не показывался).
     from app.ord import client as ord_client
-    return {**st, "threshold": erid_threshold(db), "blockers": blockers,
+    return {**st, **early_state(st, erid_threshold(db)),
+            "threshold": erid_threshold(db), "blockers": blockers,
             # Бренд отдаётся всегда, а не только когда он мешает: тем же ответом
             # живёт справочная строка «что проставлено», а не только отказ.
             "brand": _brand_marking_out(db, brand),
@@ -2302,18 +2314,44 @@ def erid_readiness(set_id: int, db: Session = Depends(get_db),
             "erid": s.erid, "erid_source": s.erid_source, "ord_status": s.ord_status}
 
 
+class EridIssueIn(BaseModel):
+    # Выпуск до порога автовыпуска подтверждён человеком (окно «Выпустить ЕРИД»).
+    early_ok: bool = False
+
+
 @router.post("/set/{set_id}/erid")
 def issue_erid(set_id: int, db: Session = Depends(get_db),
-               current_user: User = Depends(require_permission("ord_submit", "create"))):
+               current_user: User = Depends(require_permission("ord_submit", "create")),
+               payload: Optional[EridIssueIn] = None):
     """Выпустить маркер на комплект.
 
     Право `ord_submit`, а не `creatives.edit`: запись в ЕРИР необратима, и за одним
     правом стоит одна необратимость — то же, что у регистрации договоров.
+
+    До порога автовыпуска — только с `early_ok` (владелец 28.09.2026). Проверка здесь, а
+    не только в окне: иначе любой другой вызов прошёл бы мимо подтверждения. Крон
+    автовыпуска зовёт `issue_marker_for_set` напрямую и выпускает только при взятом пороге.
+    Уже зарегистрированный на этом контуре комплект не спрашиваем: повторное нажатие лишь
+    забирает маркер, выпуск уже состоялся.
     """
+    from app.ord import client as ord_client
     s = db.query(LaunchPrepCreativeSet).filter(LaunchPrepCreativeSet.id == set_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Комплект не найден")
     deal = _deal(db, s.deal_id, current_user)
+    registered = bool(s.ord_creative_id) and (s.ord_env or "") == ord_client.env()
+    if not registered:
+        st = threshold_numbers(active_pairs(db, set_id))
+        early = early_state(st, erid_threshold(db))
+        if early["early"]:
+            if not (payload and payload.early_ok):
+                raise HTTPException(status_code=409, detail=(
+                    f"Площадки ещё не согласовали креатив: {st['agreed']} из {st['sent']} "
+                    f"(для автовыпуска нужно {early['need_auto']}). Выпуск до согласования "
+                    "нужно подтвердить — отозвать ЕРИД нельзя."))
+            log_action(db, current_user, "issue_erid_early", "sales_deal", deal.id,
+                       f"комплект №{s.no}: согласовали {st['agreed']} из {st['sent']}, "
+                       f"автовыпуску нужно {early['need_auto']}")
     return issue_marker_for_set(db, s, deal, current_user)
 
 

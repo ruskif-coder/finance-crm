@@ -89,7 +89,23 @@ def domain_of(site: str) -> str:
     s = (site or "").strip().lower()
     s = re.sub(r"^[a-z]+://", "", s)
     s = s.split("/")[0].split("?")[0]
-    return s.strip(". ")
+    return _idna(s.strip(". "))
+
+
+def _idna(host: str) -> str:
+    """Кириллический домен — в латинскую запись IDNA (`009.рф` → `009.xn--p1ai`).
+
+    Weborama и DSP кириллицу в домене не принимают (владелец 28.09.2026: отказали
+    `009.рф` и `120на80.рф`). У нас домен хранится как ввели — по-русски, потому что так
+    его читают люди; переводится он на выходе, здесь, одной точкой на обе системы.
+    Неразборчивое (пустая метка, слишком длинная) отдаём как было: отказ получателя
+    покажет, что не так, а молча подменить адрес было бы хуже."""
+    if host.isascii():
+        return host
+    try:
+        return host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return host
 
 
 def row_name(channel: str, campaign: str, site: str) -> str:

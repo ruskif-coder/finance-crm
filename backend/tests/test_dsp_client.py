@@ -218,8 +218,13 @@ def test_ensure_campaign_reuses_journal_when_our_commit_was_lost():
         _cleanup_journal(ref)
         from app.dsp.db import dsp_engine
         with dsp_engine().begin() as conn:  # «МС создал, наш коммит не дошёл»
-            conn.execute(text("INSERT INTO dsp_send_log (method, entity_type, local_ref, ms_xxhash, ok) "
-                              "VALUES ('Campaign.add','campaign',:lr,:xx,true)"), {"lr": str(ref), "xx": XX})
+            # Строка такая, какой её пишет клиент: с телом запроса и клиентом кабинета в нём —
+            # защита от дублей ищет хеш только своего клиента (28.09.2026).
+            conn.execute(text("INSERT INTO dsp_send_log (method, entity_type, local_ref, ms_xxhash, ok, request) "
+                              "VALUES ('Campaign.add','campaign',:lr,:xx,true, "
+                              "CAST(:rq AS jsonb))"),
+                         {"lr": str(ref), "xx": XX,
+                          "rq": '{"params": {"partner_xxhash": "%s"}}' % TEST_PARTNER})
         c, t = _client({})
         assert ensure_campaign(db, camp, c, commit=False) == XX
         assert t.calls == []  # ни списка, ни add — хеш взят из журнала

@@ -41,6 +41,37 @@ def test_contours_do_not_see_each_other_in_the_journal():
             c.execute(text("DELETE FROM dsp_send_log WHERE local_ref = :r"), {"r": ref})
 
 
+def test_partners_do_not_see_each_other_in_the_journal():
+    """Один контур, два клиента кабинета (`partner_xxhash`). 28.09.2026 боевые РК ушли под
+    демо-клиентом, клиента сменили в настройках — и защита от дублей должна перестать
+    видеть хеши прежнего: иначе повторная выгрузка «нашла» бы чужую кампанию и завела
+    креативы в неё. Так же и «исход неизвестен» прежнего клиента не запирает нового."""
+    from app.dsp.db import dsp_engine
+    try:
+        dsp_engine()
+    except Exception:
+        pytest.skip('аналитическая база недоступна')
+    ref = "TEST-partner"
+    old = MsClient(url="http://x/", token="t", partner_xxhash="A" * 16, contour=PROD,
+                   transport=lambda m, b: {"jsonrpc": "2.0", "result": "D" * 16, "id": 1})
+    new = MsClient(url="http://x/", token="t", partner_xxhash="B" * 16, contour=PROD)
+    try:
+        assert old.campaign_add({"title": "t"}, local_ref=ref) == "D" * 16
+        assert old.last_ok_xxhash("Campaign.add", "campaign", ref) == "D" * 16
+        assert new.last_ok_xxhash("Campaign.add", "campaign", ref) is None
+        # У старого клиента — «ушло без хеша»: исход неизвестен, но только для него.
+        old_nohash = MsClient(url="http://x/", token="t", partner_xxhash="A" * 16, contour=PROD,
+                              transport=lambda m, b: {"jsonrpc": "2.0", "result": {}, "id": 1})
+        with pytest.raises(Exception):
+            old_nohash.campaign_add({"title": "t"}, local_ref=ref + "-u")
+        assert old.unknown_outcome("Campaign.add", "campaign", ref + "-u") is True
+        assert new.unknown_outcome("Campaign.add", "campaign", ref + "-u") is False
+    finally:
+        from sqlalchemy import text
+        with dsp_engine().begin() as c:
+            c.execute(text("DELETE FROM dsp_send_log WHERE local_ref LIKE :r"), {"r": ref + "%"})
+
+
 def test_unknown_contour_is_refused_at_construction():
     """Опечатка в контуре не должна тихо превратиться в боевой вызов."""
     with pytest.raises(ValueError):

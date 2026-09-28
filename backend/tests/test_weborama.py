@@ -60,6 +60,21 @@ def test_domain_is_normalised_because_the_tail_url_must_be_bare():
         assert naming.domain_of(raw) == "maksavit.ru"
 
 
+def test_cyrillic_domain_goes_out_in_punycode():
+    """Weborama и DSP не приняли площадки с кириллическим доменом (владелец 28.09.2026:
+    `009.рф`, `120на80.рф`). Наружу домен уходит латинской записью IDNA — той же, что
+    браузер отправляет в DNS. Имя строки Weborama и хвост пикселя DSP идут через эту
+    функцию, поэтому кириллица не должна доезжать ни туда, ни туда."""
+    assert naming.domain_of("009.рф") == "009.xn--p1ai"
+    assert naming.domain_of("https://120на80.РФ/каталог") == "xn--12080-6ve4g.xn--p1ai"
+    assert not naming.has_cyrillic(naming.row_name("Desktop", "кампания", "009.рф"))
+    tag = naming.final_tag("https://x.weborama-tech.ru/p?a=1&r=[RANDOM]", "120на80.рф")
+    assert tag.endswith("https://xn--12080-6ve4g.xn--p1ai") and not naming.has_cyrillic(tag)
+    # Латинский домен не меняется, а неразборчивый не роняет выгрузку — отдаётся как был.
+    assert naming.domain_of("aptechestvo.ru") == "aptechestvo.ru"
+    assert naming.domain_of("a..b") == "a..b"
+
+
 # ── сборка тега ──────────────────────────────────────────────────────────────
 
 def test_final_tag_substitutes_the_platform_macro():

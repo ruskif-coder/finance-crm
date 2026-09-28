@@ -46,7 +46,11 @@ def wired(monkeypatch):
         return {"ord_id": "CR-1", "erid": None, "status": "Registering", "env": "demo"}
 
     monkeypatch.setattr(lp, "_deal", lambda db, deal_id, user: deal)
-    monkeypatch.setattr(lp, "active_pairs", lambda db, set_id: [1])
+    # Одна пара, и она согласована: порог автовыпуска взят, ранний выпуск тут ни при чём
+    # (его проверяет test_erid_issue_early.py).
+    monkeypatch.setattr(lp, "active_pairs",
+                        lambda db, set_id: [SimpleNamespace(agreed_at="2026-09-28")])
+    monkeypatch.setattr(lp, "erid_threshold", lambda db: 0.2)
     monkeypatch.setattr(lp, "_ord_chain", lambda db, d: ("F-1", None))
     monkeypatch.setattr(lp, "_files_with_content", lambda db, set_id: [])
     monkeypatch.setattr(lp, "_target_urls", lambda db, set_id: [])

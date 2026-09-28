@@ -33,6 +33,33 @@ CAMPAIGN_STATUSES = ("STOPPED", "LAUNCHED", "DELETED", "ARCHIVE")
 TRAFFIC_DISTRIBUTION = ("uniform_basic", "uniform_pro", "accelerated")
 
 
+# Клиент кабинета DSP для БОЕВЫХ РК. Настройка админки (владелец 28.09.2026: «рк идут по
+# хешу боевого, нацеливание по демо»), иначе переменная окружения, как было до этого.
+# Нацеливание живёт в отдельном кабинете-демоклиенте — своя настройка
+# (`traffic_catalog.TARGETING_PARTNER`) и явный `partner_xxhash` у его клиента.
+PARTNER_SETTING = "dsp_partner_xxhash"
+
+
+def configured_partner() -> Optional[str]:
+    """Клиент кабинета для боевых РК: настройка админки → `DSP_PARTNER_XXHASH`.
+
+    Читается при создании клиента, а не при старте: смена в админке действует со
+    следующего вызова, без перезапуска. База недоступна — окружение, чтобы выгрузка не
+    падала из-за настройки, у которой есть запасное значение."""
+    v = None
+    try:
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            v = db.execute(text("SELECT value FROM company_settings WHERE key = :k"),
+                           {"k": PARTNER_SETTING}).scalar()
+        finally:
+            db.close()
+    except Exception as e:  # noqa: BLE001 — запасное значение есть
+        log.warning("dsp: настройка клиента кабинета не прочиталась (%s) — беру окружение", e)
+    return (v or "").strip() or os.getenv("DSP_PARTNER_XXHASH")
+
+
 class MsError(RuntimeError):
     """Ошибка вызова МС: JSON-RPC error, HTTP-ошибка или неожиданный формат ответа."""
 
@@ -76,7 +103,7 @@ class MsClient:
         self.contour = contour
         self.url = (url or os.getenv("DSP_API_URL") or "").rstrip("/") + "/"
         self.token = token or os.getenv("DSP_ACCESS_TOKEN")
-        self.partner_xxhash = partner_xxhash or os.getenv("DSP_PARTNER_XXHASH")
+        self.partner_xxhash = partner_xxhash or configured_partner()
         self._transport = transport or self._http
         self._journal_engine = journal_engine
         self._timeout = timeout
@@ -127,12 +154,27 @@ class MsClient:
         Такой ровно один — multipart-загрузка архива креатива на выданный URL. Без этой
         записи в журнале был бы разрыв: `getUploadFileUrl` есть, креатив есть, а чем их
         связали — не видно.
+
+        Сюда же пишутся ручные отметки сверки с кабинетом (`app/ad/unknown.py`). Клиент
+        кабинета дописывается в запрос сам: защита от дублей ищет строки своего клиента
+        (`_PARTNER_SQL`), и отметка без него не сняла бы запрет повтора и не нашлась бы.
         """
+        if isinstance(request, dict):
+            params = request.get("params") if isinstance(request.get("params"), dict) else {}
+            if "partner_xxhash" not in params:
+                request = {**request, "params": {**params, "partner_xxhash": self.partner_xxhash}}
         self._journal(method, entity_type, local_ref, request, response, ms_xxhash, ok, error)
+
+    # Клиент кабинета (`partner_xxhash`) — второй признак, кроме контура. 28.09.2026 боевые
+    # РК ушли под демо-клиентом, клиента сменили в настройках, и защита от дублей
+    # «находила» хеши прежнего: повторная выгрузка брала чужую кампанию. Хеш, заведённый
+    # под другим клиентом, для этого клиента не существует. `IS NOT DISTINCT FROM` — чтобы
+    # клиент без партнёра (тесты, старые строки) находил строки без партнёра.
+    _PARTNER_SQL = "(request->'params'->>'partner_xxhash') IS NOT DISTINCT FROM :px"
 
     def last_ok_xxhash(self, method: str, entity_type: str, local_ref) -> Optional[str]:
         """Последний удачный хеш по нашему local_ref — защита от повторного add, если
-        МС создал объект, а наш коммит не дошёл."""
+        МС создал объект, а наш коммит не дошёл. Только своего контура и своего клиента."""
         if not self._journal_on:
             return None
         try:
@@ -140,9 +182,9 @@ class MsClient:
                 return c.execute(text(
                     "SELECT ms_xxhash FROM dsp_send_log WHERE contour=:ct AND method=:m "
                     "AND entity_type=:et AND local_ref=:lr AND ok AND ms_xxhash IS NOT NULL "
-                    "ORDER BY ts DESC LIMIT 1"),
+                    "AND " + self._PARTNER_SQL + " ORDER BY ts DESC LIMIT 1"),
                     dict(ct=self.contour, m=method, et=entity_type,
-                         lr=str(local_ref))).scalar()
+                         lr=str(local_ref), px=self.partner_xxhash)).scalar()
         except Exception as e:  # noqa: BLE001
             log.warning("dsp_send_log: чтение не удалось (%s)", e)
             return None
@@ -178,15 +220,18 @@ class MsClient:
         "WHERE l.contour=:ct AND l.method=:m AND l.entity_type=:et "
         "AND l.local_ref = ANY(:refs) AND l.ms_xxhash IS NULL "
         "AND (l.response IS NULL OR l.ok) "
+        "AND (l.request->'params'->>'partner_xxhash') IS NOT DISTINCT FROM :px "
         "AND l.ts > COALESCE((SELECT max(x.ts) FROM dsp_send_log x "
         "WHERE x.contour=l.contour AND x.method=l.method AND x.entity_type=l.entity_type "
-        "AND x.local_ref=l.local_ref AND ((x.ok AND x.ms_xxhash IS NOT NULL) "
+        "AND x.local_ref=l.local_ref "
+        "AND (x.request->'params'->>'partner_xxhash') IS NOT DISTINCT FROM :px "
+        "AND ((x.ok AND x.ms_xxhash IS NOT NULL) "
         "OR x.response->>'resolved' IS NOT NULL)), '-infinity')")
 
     def _unknown(self, method: str, entity_type: str, refs) -> set:
         with self._engine().connect() as c:
             return {r[0] for r in c.execute(text(self._UNKNOWN_SQL), dict(
-                ct=self.contour, m=method, et=entity_type,
+                ct=self.contour, m=method, et=entity_type, px=self.partner_xxhash,
                 refs=[str(r) for r in refs])).all()}
 
     def unknown_outcome(self, method: str, entity_type: str, local_ref) -> bool:

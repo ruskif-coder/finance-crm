@@ -121,6 +121,52 @@ const volTitle = (vol, pid) => {
     + (v.level === 'over' ? ' — больше плана, запуск заблокирован' : '')
 }
 
+// Обмен с внешней системой идёт десятки секунд: без признака жизни окно выглядит
+// зависшим, и человек жмёт повторно или закрывает (владелец 28.09.2026).
+const ExtProgress = ({ wb, n }) => (
+  <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '18px 4px' }}>
+    <style>{'@keyframes extSpin { to { transform: rotate(360deg) } }'}</style>
+    <span style={{ width: 22, height: 22, borderRadius: '50%', flex: '0 0 22px',
+      border: '3px solid var(--accent-tint)', borderTopColor: 'var(--accent)',
+      animation: 'extSpin .8s linear infinite' }} />
+    <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <span style={{ fontSize: 13.5, fontWeight: 700 }}>
+        {wb ? `Заводим вставки в Weborama (${n})…` : `Выгружаем креативы в DSP (${n} площадок)…`}</span>
+      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+        Идёт обмен — не закрывайте окно. Итог появится здесь же.</span>
+    </span>
+  </div>
+)
+
+const ExtResult = ({ wb, result }) => {
+  if (result.error) {
+    return (
+      <div style={{ padding: '10px 12px', borderRadius: 9, fontSize: 13, background: 'var(--danger-tint)',
+        color: 'var(--danger-fg)' }}>Не выполнено: {result.error}</div>
+    )
+  }
+  const { done, failed } = result
+  return (
+    <div style={{ display: 'grid', gap: 10, fontSize: 13 }}>
+      <div style={{ padding: '10px 12px', borderRadius: 9, fontWeight: 700,
+        background: failed.length ? 'var(--warning-tint)' : 'var(--income-tint)',
+        color: failed.length ? 'var(--warning-text)' : 'var(--income-fg)' }}>
+        {wb ? 'Пикселей получено' : 'Креативов заведено'}: {done.length}
+        {failed.length ? ` · отказов: ${failed.length}` : ' · без отказов'}
+      </div>
+      {!!failed.length && (
+        <div style={{ display: 'grid', gap: 6 }}>
+          {failed.map((x, i) => (
+            <div key={i} style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+              <b>{x.name}</b> — <span style={{ color: 'var(--danger-fg)' }}>{x.error}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function TrafficDashboard() {
   const router = useRouter()
   const [data, setData] = useState(null)
@@ -371,20 +417,18 @@ export default function TrafficDashboard() {
     if (!extAsk) return
     const { row, kind } = extAsk
     setExtBusy(true)
+    // Итог остаётся В ОКНЕ, а не строкой над таблицей (владелец 28.09.2026): обмен идёт
+    // десятки секунд, и человек должен видеть и что он идёт, и чем закончился. Отказы —
+    // поимённо: «заведено 14 из 19» без причин заставляет разбираться заново.
     try {
       const r = await api.post(`/traffic-dashboard/campaign/${row.id}/${kind}`, {}, auth())
-      const done = r.data.done?.length || 0
-      const bad = r.data.failed?.length || 0
-      // Отказы называем поимённо: «заведено 14 из 19» без причин заставляет разбираться
-      // заново, а причина у каждой своя и уже посчитана сервером.
-      say((kind === 'weborama' ? `Пикселей получено: ${done}` : `Креативов заведено: ${done}`)
-        + (bad ? `; отказов ${bad} — ${r.data.failed.map(x => `${x.name}: ${x.error}`).join('; ')}` : ''))
-      setExtAsk(null)
+      setExtAsk(x => x && ({ ...x, result: { done: r.data.done || [], failed: r.data.failed || [] } }))
       const d = await api.get(`/traffic-dashboard/campaign/${row.id}`, auth())
       setDetail(x => ({ ...x, [row.id]: d.data }))
       await load()
-    } catch (e) { fail(e?.response?.data?.detail || 'Не удалось выполнить') }
-    finally { setExtBusy(false) }
+    } catch (e) {
+      setExtAsk(x => x && ({ ...x, result: { error: e?.response?.data?.detail || 'Не удалось выполнить' } }))
+    } finally { setExtBusy(false) }
   }
 
   const setCreativeStatus = async (campId, cr, s) => {
@@ -1037,7 +1081,7 @@ export default function TrafficDashboard() {
                               <div style={{ padding: '0 0 10px 18px',
                                 borderBottom: '1px solid var(--border-row)' }}>
                                 <CreativeRows rows={p.creatives} manual={d.creative_manual}
-                                  mayEdit={mayEdit}
+                                  mayEdit={mayEdit} campaignHash={r.ms_campaign_xxhash}
                                   onStatus={(cr, st) => setCreativeStatus(r.id, cr, st)} />
                               </div>
                             )}
@@ -1321,12 +1365,17 @@ export default function TrafficDashboard() {
         // нажатие ради 400-го ответа.
         const n = wb ? (pl.blocked ? 0 : pl.todo) : pl.placements
         return (
-          <Modal width={620} onClose={() => setExtAsk(null)}
+          <Modal width={620} onClose={() => { if (!extBusy) setExtAsk(null) }}
             title={wb ? 'Получить пиксели Weborama' : 'Выгрузить креативы в DSP'}
             summary={`РК ${extAsk.row.deal_code} · ${extAsk.row.deal_title}`}
-            footer={(
+            footer={extAsk.result ? (
+              <span style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button style={btn(true)} onClick={() => setExtAsk(null)}>Готово</button>
+              </span>
+            ) : (
               <span style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                <button style={btn(false)} onClick={() => setExtAsk(null)}>Отмена</button>
+                <button style={{ ...btn(false), opacity: extBusy ? 0.5 : 1 }} disabled={extBusy}
+                  onClick={() => setExtAsk(null)}>Отмена</button>
                 <button style={{ ...btn(true), opacity: (!n || extBusy) ? 0.5 : 1,
                   cursor: (!n || extBusy) ? 'not-allowed' : 'pointer' }}
                   disabled={!n || extBusy} onClick={runExternal}>
@@ -1334,6 +1383,8 @@ export default function TrafficDashboard() {
                 </button>
               </span>
             )}>
+            {extBusy ? <ExtProgress wb={wb} n={n} />
+              : extAsk.result ? <ExtResult wb={wb} result={extAsk.result} /> : (
             <div style={{ fontSize: 13, lineHeight: 1.6, display: 'grid', gap: 10 }}>
               {/* Зависшие попытки ЭТОЙ системы — первыми: пока они не сверены, повтор по
                   ним заперт, и число «будет заведено» их не включает. */}
@@ -1406,6 +1457,7 @@ export default function TrafficDashboard() {
                 </>
               )}
             </div>
+            )}
           </Modal>
         )
       })()}
