@@ -21,6 +21,8 @@
    зарегистрирован, контур боевой без явного разрешения — всё это отказ на входе,
    без единой строки в журнале и без обращения к ОРД.
 """
+import base64
+import hashlib
 import os
 from datetime import datetime
 from types import SimpleNamespace
@@ -76,6 +78,25 @@ def _assert_no_pending(db: Session, kind: str, local_id: int, env: str) -> None:
             f"({env}) прежде чем повторять, иначе в ЕРИР появится дубль.")
 
 
+def _file_stub(b64: str) -> dict:
+    """Вместо base64 файла в журнал — размер и sha256 (аудит 29.09.2026).
+
+    В ОРД уходит полный запрос, в журнал — только след: баннер весит 1–3 МБ, и за три
+    дня автовыпуска ЕРИД журнал вырос до 24 МБ из 59 МБ базы, раздув ночной дамп
+    вчетверо. Чтобы сказать, ЧТО отправили, хватает суммы."""
+    raw = base64.b64decode(b64, validate=False) if b64 else b""
+    return {"omitted": True, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def _strip(body):
+    if isinstance(body, dict):
+        return {k: (_file_stub(v) if k == "fileContentBase64" and isinstance(v, str)
+                    else _strip(v)) for k, v in body.items()}
+    if isinstance(body, list):
+        return [_strip(v) for v in body]
+    return body
+
+
 def _start(db: Session, kind: str, local_id: int, env: str, body: dict,
            user) -> OrdSubmission:
     """Завести строку журнала и ЗАФИКСИРОВАТЬ её до запроса.
@@ -87,7 +108,7 @@ def _start(db: Session, kind: str, local_id: int, env: str, body: dict,
     же случай — «уже отправляется, подождите», — и он не должен зависеть от того,
     выиграл его запрос гонку или нет.
     """
-    row = OrdSubmission(kind=kind, local_id=local_id, env=env, request=body,
+    row = OrdSubmission(kind=kind, local_id=local_id, env=env, request=_strip(body),
                         started_at=datetime.utcnow(),
                         user_id=getattr(user, 'id', None))
     db.add(row)

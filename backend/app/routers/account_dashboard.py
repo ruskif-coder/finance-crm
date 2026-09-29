@@ -90,6 +90,17 @@ def _queue_deals(db: Session, current_user: User, rep_id=None, all_reps: bool = 
     return q.all(), my_rep, own is None
 
 
+def deal_events(d) -> list:
+    """События сделки для полосы «События» — одно правило на полосу и на фильтр очереди
+    по дню. Раньше очередь сверяла только старт и конец периода, и клик по дню, где было
+    одно событие «дедлайн документов», давал пустой список (прод, 29.09.2026)."""
+    events = [("start", d.period_from), ("closing", d.period_to)]
+    if d.period_to:
+        # Дедлайн закрывающих — тот же порог, по которому срабатывает act_missing.
+        events.append(("docs", d.period_to + timedelta(days=5)))
+    return [(k, w) for k, w in events if w]
+
+
 @router.get("/account-queue")
 def account_queue(
     rep_id: Optional[int] = None,
@@ -201,7 +212,7 @@ def account_queue(
         st = cat.by_id.get(d.our_stage_id)
         if st is not None and (st.is_terminal or st.is_lost):
             continue                      # закрытые исходы в рабочей очереди не нужны
-        if day and d.period_from != day and d.period_to != day:
+        if day and not any(when == day for _, when in deal_events(d)):
             continue
         sn = snoozes.get(d.id)
         # Отложенная уходит из очереди, пока дата возврата в будущем. Заметка без даты
@@ -271,11 +282,7 @@ def account_calendar(
         st = cat.by_id.get(d.our_stage_id)
         if st is not None and (st.is_terminal or st.is_lost):
             continue
-        events = [("start", d.period_from), ("closing", d.period_to)]
-        if d.period_to:
-            # Дедлайн закрывающих — тот же порог, по которому срабатывает act_missing.
-            events.append(("docs", d.period_to + timedelta(days=5)))
-        for kind, when in events:
+        for kind, when in deal_events(d):
             if not when or not (today <= when <= horizon):
                 continue
             b = buckets.setdefault(when, {"total": 0, "kinds": {}, "brands": set()})
