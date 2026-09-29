@@ -1022,7 +1022,7 @@ export default function TrafficDashboard() {
                               ПИКСЕЛЬ WR</button>
                             <button style={{ ...btnSm(false), whiteSpace: 'nowrap' }} onClick={() => askExternal(r, 'dsp')}
                               title="Выгрузить креативы согласованных площадок в DSP">
-                              выгрузить в DSP</button>
+                              В DSP</button>
                             </>)}
                           </span>
                         )}
@@ -1378,18 +1378,25 @@ export default function TrafficDashboard() {
                                   кнопки зависит от статуса: пауза и возобновление — одно
                                   состояние, а не два действия. */}
                               <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
-                                <button onClick={() => setCampaignStatus(r,
+                                {/* До выкладки в DSP запуск и стоп заперты (владелец 29.09.2026):
+                                    иначе меняется только наша пометка, а в сети — ничего.
+                                    Причина — с сервера, тем же правилом, что у ручки. */}
+                                <button disabled={!!r.dsp_block} title={r.dsp_block || undefined}
+                                  onClick={() => setCampaignStatus(r,
                                   r.status === 'запущена' ? 'пауза' : 'запущена')}
-                                  style={{ padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
-                                    border: '1px solid var(--blue)', background: 'var(--blue)',
-                                    color: 'var(--on-accent)', fontFamily: UI, fontSize: 12.5, fontWeight: 700 }}>
+                                  style={{ padding: '7px 14px', borderRadius: 10, cursor: r.dsp_block ? 'not-allowed' : 'pointer',
+                                    border: `1px solid ${r.dsp_block ? 'var(--border-card)' : 'var(--blue)'}`,
+                                    background: r.dsp_block ? 'var(--bg-subtle)' : 'var(--blue)',
+                                    color: r.dsp_block ? 'var(--text-faint)' : 'var(--on-accent)', fontFamily: UI, fontSize: 12.5, fontWeight: 700 }}>
                                   {r.status === 'запущена' ? 'Пауза РК'
                                     : r.status === 'пауза' ? 'Возобновить' : 'Принудительный старт'}
                                 </button>
-                                <button onClick={() => setCampaignStatus(r, 'остановлена')}
-                                  style={{ padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
-                                    border: '1px solid var(--danger-border)', background: 'var(--bg-card)',
-                                    color: 'var(--danger)', fontFamily: UI, fontSize: 12.5, fontWeight: 700 }}>
+                                <button disabled={!!r.dsp_block} title={r.dsp_block || undefined}
+                                  onClick={() => setCampaignStatus(r, 'остановлена')}
+                                  style={{ padding: '7px 14px', borderRadius: 10, cursor: r.dsp_block ? 'not-allowed' : 'pointer',
+                                    border: `1px solid ${r.dsp_block ? 'var(--border-card)' : 'var(--danger-border)'}`,
+                                    background: r.dsp_block ? 'var(--bg-subtle)' : 'var(--bg-card)',
+                                    color: r.dsp_block ? 'var(--text-faint)' : 'var(--danger)', fontFamily: UI, fontSize: 12.5, fontWeight: 700 }}>
                                   Стоп
                                 </button>
                                 <button onClick={() => finish(r)}
@@ -1402,6 +1409,11 @@ export default function TrafficDashboard() {
                               {/* Подпись называет НАШУ стадию: в макете стоит «Предварительная
                                   сверка», но в каталоге такой стадии нет — после размещения
                                   идёт «Итоговая сверка». */}
+                              {!!r.dsp_block && (
+                                <div style={{ fontSize: 11.5, color: 'var(--warning-text)', marginTop: 8, lineHeight: 1.45 }}>
+                                  Запуск и остановка станут доступны после выгрузки в DSP — кнопка «В DSP» выше.
+                                </div>
+                              )}
                               <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8,
                                 lineHeight: 1.45 }}>
                                 «Завершить РК» двигает сделку на стадию «Итоговая сверка» —
@@ -1411,7 +1423,7 @@ export default function TrafficDashboard() {
                             </div>
                             {/* Послание аккаунта — между кнопками и ответственными:
                                 читают его перед тем, как что-то нажать. */}
-                            <TaskDoc text={d.traffic_brief} deal={r.deal_code}
+                            <TaskDoc text={d.traffic_brief} brief={d.mp_brief} deal={r.deal_code}
                               title={r.deal_title} />
                             <Owners owners={d.owners} reps={data?.reps}
                               onPick={uid => setTraffic(r, uid)} />

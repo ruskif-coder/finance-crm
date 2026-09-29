@@ -912,19 +912,59 @@ export const GOAL_LABELS = [
  * Только чтение: текст писал аккаунт на своей карточке, и правка отсюда означала бы,
  * что задачу можно молча переписать за него.
  */
-export const TaskDoc = ({ text, deal, title }) => {
+/** Бриф медиаплана для трафика: гео и таргетинг (владелец 29.09.2026). Только чтение. */
+function MpBrief({ brief }) {
+  if (!brief) {
+    return <div style={{ fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.5, padding: '10px 0 14px' }}>
+      У сделки нет медиаплана в конструкторе — брифа нет.</div>
+  }
+  const cap = { fontFamily: MONO, fontSize: 9.5, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-faint)' }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '4px 0 10px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {/* Трафику нужно только это (владелец 29.09.2026): гео первой строкой, дальше
+            таргетинг; рекламодатель, юр. лицо и прочая шапка ему лишние. */}
+        {[{ key: 'geo', label: 'Гео', values: brief.geo ? [brief.geo] : [] }, ...(brief.targeting || [])].map(g => (
+          <div key={g.key} style={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: 10, padding: '8px 0',
+            borderTop: '1px solid var(--border-inner)', alignItems: 'start' }}>
+            <span style={{ ...cap, paddingTop: 4 }}>{g.label}</span>
+            <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {g.values.length ? g.values.map((v, i) => (
+                <span key={i} style={{ fontSize: 12.5, lineHeight: 1.45, padding: '3px 9px', borderRadius: 8,
+                  background: 'var(--accent-tint)', color: 'var(--accent)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{v}</span>
+              )) : <span style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>—</span>}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/* Две вкладки (владелец 29.09.2026): первая — задача аккаунта трафику (`traffic_brief`
+   с карточки сделки), вторая — шапка брифа из медиаплана: рекламодатель, юр. лицо,
+   бренд, период, агентство, гео и таргетинг. */
+export const TaskDoc = ({ text, brief, deal, title }) => {
   const [open, setOpen] = useState(false)
+  const [tab, setTab] = useState('task')
   const has = !!(text || '').trim()
-  const fg = has ? 'var(--accent)' : 'var(--text-faint)'
+  const any = has || !!brief
+  const fg = any ? 'var(--accent)' : 'var(--text-faint)'
+  const tabBtn = (k, label) => (
+    <span key={k} onClick={() => setTab(k)} style={{ padding: '7px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 700,
+      color: tab === k ? 'var(--text-primary)' : 'var(--text-faint)',
+      borderBottom: `2px solid ${tab === k ? 'var(--accent)' : 'transparent'}`, marginBottom: -1 }}>{label}</span>
+  )
   return (
     <>
-      <span onClick={() => setOpen(true)} title={has ? 'Задачи РК от аккаунта'
-        : 'Аккаунт не заполнил «Цели и особенности РК»'}
+      <span onClick={() => { setTab(has || !brief ? 'task' : 'brief'); setOpen(true) }}
+        title={has ? 'Задачи РК от аккаунта и бриф медиаплана'
+          : brief ? 'Задачи от аккаунта нет — есть бриф медиаплана' : 'Аккаунт не заполнил «Цели и особенности РК»'}
         style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center',
           gap: 5, cursor: 'pointer', padding: '2px 8px' }}>
         <span style={{ display: 'grid', placeItems: 'center', width: 44, height: 44,
-          borderRadius: 13, background: has ? 'var(--accent-tint)' : 'var(--bg-subtle)',
-          border: `1px solid ${has ? 'var(--accent-border)' : 'var(--border-card)'}` }}>
+          borderRadius: 13, background: any ? 'var(--accent-tint)' : 'var(--bg-subtle)',
+          border: `1px solid ${any ? 'var(--accent-border)' : 'var(--border-card)'}` }}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={fg}
             strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
             <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
@@ -936,9 +976,12 @@ export const TaskDoc = ({ text, deal, title }) => {
           textTransform: 'uppercase', color: fg, whiteSpace: 'nowrap' }}>задачи рк</span>
       </span>
       {open && (
-        <Modal title="Задачи РК" width={620} onClose={() => setOpen(false)}
+        <Modal title="Задачи РК" width={760} onClose={() => setOpen(false)}
           summary={`${deal || ''}${title ? ` · ${title}` : ''}`.trim() || null}>
-          {has
+          <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border-card)', marginBottom: 12 }}>
+            {tabBtn('task', 'Задача от аккаунта')}{tabBtn('brief', 'Бриф медиаплана')}
+          </div>
+          {tab === 'task' && (has
             ? (
               <div style={{ fontSize: 13, lineHeight: 1.55, whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word', color: 'var(--text-primary)', padding: '4px 0 10px' }}>
@@ -949,9 +992,10 @@ export const TaskDoc = ({ text, deal, title }) => {
               <div style={{ fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.5,
                 padding: '10px 0 14px' }}>
                 Аккаунт не заполнил блок «Цели и особенности РК» на карточке сделки.
-                Пока его нет, цели размещения известны только из медиаплана.
+                Бриф из медиаплана — на соседней вкладке.
               </div>
-            )}
+            ))}
+          {tab === 'brief' && <MpBrief brief={brief} />}
         </Modal>
       )}
     </>

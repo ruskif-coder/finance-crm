@@ -91,6 +91,9 @@ def press(monkeypatch):
                         lambda db, cid, u: (state["camp"], SimpleNamespace(id=1, our_stage_id=None)))
     monkeypatch.setattr(td, "log_action", lambda *a, **kw: None)
     monkeypatch.setattr(td, "_tell_publishers_started", lambda db, c: None)
+    # Готовность к DSP (29.09.2026): РК с хешем выгружена, без хеша — нет; DSP нужна.
+    monkeypatch.setattr(td, "dsp_not_ready",
+                        lambda db, c: None if c.ms_campaign_xxhash else td.DSP_NOT_READY)
     monkeypatch.setattr(td, "_campaign_chain", lambda db, c: state["chain"])
     monkeypatch.setattr(dc, "MsClient", lambda *a, **kw: state["ms"])
 
@@ -132,11 +135,22 @@ def test_dsp_failure_rolls_our_change_back(press):
         "экран скажет «крутится», а в DSP стоит")
 
 
-def test_campaign_not_in_dsp_changes_only_our_status(press):
+def test_campaign_not_in_dsp_cannot_be_started_or_stopped(press):
+    """До выгрузки в DSP запуск и стоп заперты (владелец 29.09.2026): иначе меняется только
+    наша пометка, а в сети — ничего. Раньше тут менялся один наш статус."""
     press["camp"] = _camp(xx=None)
-    press["go"]("запущена")
+    for st in ("запущена", "пауза", "остановлена"):
+        with pytest.raises(HTTPException) as e:
+            press["go"](st)
+        assert e.value.status_code == 409 and "В DSP" in e.value.detail
     assert press["ms"].calls == []
-    assert press["camp"].status == "запущена"
+
+
+def test_block_reason_rule():
+    need = {"dsp": {"need": 2, "done": 0}}
+    assert td.dsp_block_reason(need, None) == td.DSP_NOT_READY
+    assert td.dsp_block_reason({"dsp": {"need": 2, "done": 1}}, "ABC") is None
+    assert td.dsp_block_reason({"dsp": {"need": 0, "done": 0}}, None) is None, "крутят сами — не запираем"
 
 
 def test_an_archived_campaign_is_not_relaunched(press):

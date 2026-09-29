@@ -567,6 +567,8 @@ def dashboard(scope: Optional[str] = None,
             "plan_show": c.plan_show, "plan_budget": c.plan_budget,
             "fact_shows": f.get("shows"), "fact_clicks": f.get("clicks"),
             "ms_campaign_xxhash": c.ms_campaign_xxhash,
+            # Кнопки запуска/остановки заперты до выкладки в DSP — причина словами.
+            "dsp_block": dsp_block_reason(ext_totals.get(c.id), c.ms_campaign_xxhash),
             # Покрытие внешними системами прямо в строке: серый — нет, жёлтый — не все,
             # зелёный — все (решение владельца 09.09.2026). Цвет считает экран, числа —
             # сервер, и оба берут их из одного расчёта.
@@ -732,6 +734,8 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         # Здесь оно ЧИТАЕТСЯ, а не правится: писал аккаунт, и правка из чужого экрана
         # означала бы, что задачу можно молча переписать за него.
         "traffic_brief": (deal.traffic_brief or "").strip(),
+        # Шапка брифа медиаплана — вторая вкладка «Задач РК» (владелец 29.09.2026).
+        "mp_brief": build.deal_mp_brief(db, deal.id),
     }
 
 
@@ -961,6 +965,24 @@ def _cascade_placements(db: Session, campaign_id: int, campaign_status: str) -> 
     return n
 
 
+DSP_NOT_READY = ("РК ещё не выгружена в DSP — сначала «В DSP». Запуск и остановка "
+                 "управляют кампанией в DSP; до выгрузки им нечем управлять")
+
+
+def dsp_block_reason(totals: Optional[dict], ms_campaign_xxhash) -> Optional[str]:
+    """Почему запуск/остановка РК пока бессмысленны, или None (владелец 29.09.2026).
+    Одно правило на строку дашборда и на ручку статуса. DSP не нужна ни одной
+    площадке (крутят сами) — не запираем."""
+    dsp = (totals or {}).get("dsp") or {}
+    if not dsp.get("need"):
+        return None
+    return None if (ms_campaign_xxhash and dsp.get("done")) else DSP_NOT_READY
+
+
+def dsp_not_ready(db: Session, c) -> Optional[str]:
+    return dsp_block_reason(ext_mod.totals(ext_mod.states_by_placement(db, c.id)), c.ms_campaign_xxhash)
+
+
 @router.put("/campaign/{campaign_id}/status")
 def set_campaign_status(campaign_id: int, payload: StatusIn,
                         db: Session = Depends(get_db), user: User = Depends(EDIT)):
@@ -979,6 +1001,12 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
             and payload.status not in ("окончена", "архив")):
         raise HTTPException(400, "Кампания в DSP в архиве и снова не запускается — "
                                  "для продолжения нужна новая РК")
+    # ЗАПУСК И ОСТАНОВКА — ПОСЛЕ ВЫКЛАДКИ В DSP (владелец 29.09.2026): до неё кнопки
+    # меняли бы только нашу пометку, а в сети ничего бы не менялось — это вводит в
+    # заблуждение. Исключение — РК, где DSP не нужна ни одной площадке (крутят сами).
+    blocked = dsp_not_ready(db, c)
+    if blocked and payload.status in ("запущена", "пауза", "остановлена"):
+        raise HTTPException(409, blocked)
     old, c.status = c.status, payload.status
 
     raised = 0

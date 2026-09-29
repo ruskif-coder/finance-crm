@@ -117,6 +117,31 @@ def deal_plan(db: Session, deal_id: int) -> dict:
             "has_plan": bool(rows)}
 
 
+TG_GROUPS = (("audience", "Аудитория"), ("buys", "Покупают"), ("interests", "Интересы"),
+             ("behavior", "Поведение"), ("competitors", "Конкуренты"))
+
+
+def deal_mp_brief(db: Session, deal_id: int) -> Optional[dict]:
+    """Бриф для трафика из ТОГО ЖЕ медиаплана, что дал план показов и цели (владелец
+    29.09.2026): гео и таргетинг — вторая вкладка окна «Задачи РК». Только чтение; нет
+    плана — None."""
+    row = db.execute(text(f"""
+        SELECT mp.targeting, g.name AS geo
+          FROM sales_media_plans mp
+          LEFT JOIN sales_geo g ON g.id = mp.geo_id
+         WHERE mp.id = ({LATEST_PLAN_SQL})"""), {"d": deal_id}).mappings().first()
+    if not row:
+        return None
+    tg = row["targeting"] or {}
+    # Трафику нужны только гео и таргетинг (владелец 29.09.2026) — остальное не отдаём.
+    return {
+        "geo": row["geo"],
+        "targeting": [{"key": k, "label": label,
+                       "values": [str(v) for v in (tg.get(k) or []) if str(v or "").strip()]}
+                      for k, label in TG_GROUPS],
+    }
+
+
 def deal_goals(db: Session, deal_id: int) -> dict:
     """KPI приёмки размещения из ТОГО ЖЕ медиаплана, что дал план показов.
 
