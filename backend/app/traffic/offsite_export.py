@@ -8,7 +8,8 @@
 Состав архива:
 
     <СДЕЛКА>_не_наши/
-      паспорт_<СДЕЛКА>.xlsx                  одна строка = креатив × площадка
+      паспорт_<СДЕЛКА>.xlsx                  одна строка = креатив × площадка;
+                                             «Название РК в Adfox» = имя архива + инициалы трафика
       <КОДПЛОЩАДКИ>_<домен>/<СДЕЛКА>-<КОДПЛОЩАДКИ>-cr<№>-<nn>.zip
 
 Баннер — ИСХОДНИК КЛИЕНТА, без наших вставок (`originals.path_for_publisher`); площадке
@@ -33,15 +34,41 @@ from app.sales.models import SalesDeal, SalesPublisher
 from app.traffic.files import _ascii_code, traffic_file_name
 from app.xlsx_safe import save_workbook
 
-HEAD = ["Площадка", "Домен", "Поверхность", "Канал", "Креатив №", "Название креатива",
-        "Файл клиента", "Имя архива в выгрузке", "Путь в архиве", "Размер", "Статус у площадки",
+# Статус согласования площадкой — ПЕРВОЙ колонкой (владелец 29.09.2026): трафик
+# сначала смотрит, можно ли заводить, и только потом — что именно.
+HEAD = ["Статус у площадки", "Площадка", "Домен", "Поверхность", "Канал", "Креатив №", "Название креатива",
+        "Файл клиента", "Имя архива в выгрузке", "Название РК в Adfox", "Путь в архиве", "Размер",
         "Код пары", "ЕРИД", "Посадочная", "Диплинк", "Старт", "Конец", "План показов",
         "Пиксель Weborama"]
-WIDTH = [22, 22, 10, 12, 9, 26, 28, 34, 52, 10, 16, 16, 16, 40, 30, 11, 11, 12, 40]
+WIDTH = [16, 22, 22, 10, 12, 9, 26, 28, 34, 38, 52, 10, 16, 16, 16, 40, 30, 11, 11, 12, 40]
 
 
 class NothingToExport(LookupError):
     """В РК нет площадок без нашего кода с отправленными креативами."""
+
+
+_SURNAME_ENDS = ("ов", "ова", "ев", "ева", "ёв", "ёва", "ин", "ина", "ын", "ына", "ский", "ская",
+                 "цкий", "цкая", "ой", "ая", "ых", "их", "ко", "ук", "юк", "ич", "ян", "енко")
+
+
+def traffic_initials(name) -> str:
+    """Инициалы трафика латиницей в порядке ИМЯ + ФАМИЛИЯ (владелец 29.09.2026):
+    «Дарья Гресева» → «DG». В справочнике сотрудников порядок разный («Гресева Дарья» у
+    трафиков, «Жанна Смирнова» у аккаунтов), поэтому фамилия узнаётся по окончанию: если
+    первое слово похоже на фамилию, а второе нет — слова меняются местами."""
+    from app.weborama.naming import translit
+    parts = [p for p in (name or "").split() if p][:2]
+    if len(parts) == 2:
+        sur = [p.lower().endswith(_SURNAME_ENDS) for p in parts]
+        if sur[0] and not sur[1]:
+            parts = [parts[1], parts[0]]
+    return "".join(translit(p)[:1].upper() for p in parts if translit(p))
+
+
+def adfox_name(archive_name: str, initials: str) -> str:
+    """Название РК в Adfox (владелец 29.09.2026): имя архива без расширения + инициалы трафика."""
+    stem = os.path.splitext(archive_name)[0]
+    return f"{stem}_{initials}" if initials else stem
 
 
 def _status(pair, verdict) -> str:
@@ -81,6 +108,9 @@ def build(db: Session, deal: SalesDeal) -> Tuple[bytes, str]:
                   .filter(AdCampaign.deal_id == deal.id)}
     rules = pub_rules.rules_for(db, {(t.publisher_id, t.surface_kind) for _, _, t, _ in rows})
 
+    from app.sales.models import SalesRep
+    rep = db.get(SalesRep, deal.traffic_manager_id) if deal.traffic_manager_id else None
+    initials = traffic_initials(rep.name if rep else None)
     deal_code = _ascii_code(deal.code, "deal")
     root = f"{deal_code}_offsite"
     wb = Workbook()
@@ -118,20 +148,27 @@ def build(db: Session, deal: SalesDeal) -> Tuple[bytes, str]:
                 else:
                     path = f"(файл не найден в хранилище) {path}"
                 ws.append([
-                    pub.name, pub.domain, t.surface_kind, pub_rules.CHANNELS.get(rule.get("channel"), "—"),
-                    s.no, s.title, f.original_name, name, path, f.ratio,
-                    _status(pair, verdicts.get(pair.id)), pair.code, s.erid,
+                    _status(pair, verdicts.get(pair.id)), pub.name, pub.domain, t.surface_kind, pub_rules.CHANNELS.get(rule.get("channel"), "—"),
+                    s.no, s.title, f.original_name, name, adfox_name(name, initials), path, f.ratio,
+                    pair.code,
+                    # ЕРИД выпускается на комплект после согласований — пустая ячейка
+                    # выглядела бы ошибкой выгрузки, поэтому причина словами (29.09.2026).
+                    s.erid or ("ещё не выпущен" if verdicts.get(pair.id) == "ок"
+                               else "нет — креатив не согласован"),
                     member.advertiser_url if member else None,
                     getattr(member, "deeplink_url", None) if member else None,
                     t.period_from or deal.period_from, t.period_to or deal.period_to,
                     (member.plan_show if member and member.plan_show else (pl.plan_show if pl else None)),
                     pl.weborama_pixel if pl else None])
-        for col, w in zip("ABCDEFGHIJKLMNOPQRS", WIDTH):
+        for col, w in zip("ABCDEFGHIJKLMNOPQRST", WIDTH):
             ws.column_dimensions[col].width = w
         for row in ws.iter_rows(min_row=2):
-            for c in (row[15], row[16]):
+            for c in (row[16], row[17]):
                 c.number_format = "DD.MM.YYYY"
-            row[17].number_format = "# ##0"
+            row[18].number_format = "# ##0"
+            # Согласовано — зелёным, всё остальное — жёлтым: заводить можно только зелёное.
+            row[0].fill = PatternFill("solid", fgColor="E3F5EC" if row[0].value == "согласован" else "FCF3DC")
+            row[0].font = Font(bold=True)
         ws.freeze_panes = "B2"
         ws.auto_filter.ref = ws.dimensions
         x = io.BytesIO()
