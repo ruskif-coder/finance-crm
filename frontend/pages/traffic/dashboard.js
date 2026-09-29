@@ -28,6 +28,7 @@ import { MONO, UI, card, CAP, btnSm, btn, inp, sel, Modal, PortalPopover, ROW_TO
 import { surfaceTag } from '@/lib/dealTitle'
 import api, { auth } from '@/lib/api'
 import { downloadDealCreatives } from '@/lib/dealDocs'
+import OffsiteButton from '@/components/traffic/OffsiteButton'
 import {
   CreativeCounts, CreativeRows, Culprits, DASH, DayWall, Dynamics, KpiRow, PaceBar, Pips,
   GOAL_LABELS, MISMATCH_FG, Owners, PlaceActions, ServiceCell, StatusPill, TABLE_LEGEND, TaskDoc, WALL_LEGEND,
@@ -1010,14 +1011,19 @@ export default function TrafficDashboard() {
                             пиксель показа вшивается в креатив, поэтому Weborama идёт
                             первой, а DSP без пикселя площадку не берёт. Обе спрашивают
                             подтверждение с числами — см. `askExternal`. */}
-                        {d && mayEdit && (
+                        {d && (
                           <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
-                            <button style={btnSm(false)} onClick={() => askExternal(r, 'weborama')}
+                            {/* Архив для площадок без нашего кода: баннеры по папкам площадок +
+                                Excel-паспорт (владелец 29.09.2026, app/traffic/offsite_export.py). */}
+                            <OffsiteButton dealId={r.deal_id} />
+                            {mayEdit && (<>
+                            <button style={{ ...btnSm(false), whiteSpace: 'nowrap' }} onClick={() => askExternal(r, 'weborama')}
                               title="Завести вставки в Weborama и забрать пиксели показа">
                               ПИКСЕЛЬ WR</button>
-                            <button style={btnSm(false)} onClick={() => askExternal(r, 'dsp')}
+                            <button style={{ ...btnSm(false), whiteSpace: 'nowrap' }} onClick={() => askExternal(r, 'dsp')}
                               title="Выгрузить креативы согласованных площадок в DSP">
                               выгрузить в DSP</button>
+                            </>)}
                           </span>
                         )}
                       </div>

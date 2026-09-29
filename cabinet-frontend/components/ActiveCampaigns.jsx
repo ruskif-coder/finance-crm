@@ -77,7 +77,9 @@ export const SORT_KEYS = {
   state:   c => STATUS_ORDER.indexOf(c.status),
 };
 
-const COLS = 'minmax(190px,1.3fr) 110px minmax(104px,0.7fr) 84px 104px minmax(120px,0.8fr) 118px 100px 130px';
+// Ужато 29.09.2026 под колонку действий (глаз · скачать · отзыв): таблица целиком входит
+// в ширину блока, прокрутка вбок — только на узком экране.
+const COLS = 'minmax(140px,1.3fr) minmax(90px,0.8fr) minmax(84px,0.7fr) 68px 88px minmax(92px,0.8fr) 104px 90px 112px';
 const HEAD = [
   ['title', 'Кампания', 'flex-start'], ['site', 'Площадка', 'flex-start'],
   ['service', 'Услуга', 'flex-start'], ['period', 'Период', 'flex-start'],
@@ -95,7 +97,11 @@ const colHead = { fontFamily: T.mono, fontSize: 9, letterSpacing: '.08em', textT
    означал бы «Актуальные кампании» под подписью «сентябрь 2026». `null` прячет шапку.
    Вторая копия таблицы ради заголовка разошлась бы с первой на первой же правке. */
 export default function ActiveCampaigns({ campaigns = DEMO, onOpen,
-  title = 'Актуальные кампании' }) {
+  title = 'Актуальные кампании', onPreview, onRevoke, onDownload, canApprove }) {
+  /* Колонка действий (владелец 29.09.2026): глаз — предпросмотр согласованного креатива,
+     «Отозвать» — запрос на переделку до запуска. Без обработчиков колонки нет. */
+  const acts = !!(onPreview || onRevoke)
+  const GRID = acts ? COLS + ' 102px' : COLS
   /* по умолчанию новые периоды сверху */
   const [sort, setSort] = useState({ key: 'period', dir: -1 });
 
@@ -137,10 +143,12 @@ export default function ActiveCampaigns({ campaigns = DEMO, onOpen,
       )}
 
       <div style={{ overflowX: 'auto' }}>
-        <div style={{ minWidth: 1180, display: 'flex', flexDirection: 'column' }}>
+        {/* Строка — во всю ширину СЕТКИ, а не контейнера: иначе колонка, не влезшая в
+            контейнер, рисуется за подсветкой и чертой строки (владелец 29.09.2026). */}
+        <div style={{ minWidth: acts ? 1060 : 1180, display: 'flex', flexDirection: 'column' }}>
 
           {/* шапка: каждая колонка сортирует */}
-          <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 12, padding: '0 6px 9px', borderBottom: `1px solid ${T.border}`, ...colHead, color: T.t4 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12, padding: '0 6px 9px', borderBottom: `1px solid ${T.border}`, ...colHead, color: T.t4 }}>
             {HEAD.map(([key, label, justify]) => {
               const on = sort.key === key;
               return (
@@ -152,6 +160,7 @@ export default function ActiveCampaigns({ campaigns = DEMO, onOpen,
                 </span>
               );
             })}
+            {acts && <span />}
           </div>
 
           {rows.map(c => {
@@ -167,7 +176,7 @@ export default function ActiveCampaigns({ campaigns = DEMO, onOpen,
                  перемешиваются на глазах. Ключ обязан быть уникален по строке. */
               <div key={[c.site, c.brand, period, c.surface, c.flight].join('|')}
                 className="ac-row" onClick={() => onOpen?.(c)}
-                style={{ display: 'grid', gridTemplateColumns: COLS, gap: 12, alignItems: 'center', padding: '9px 6px', borderRadius: 10, borderBottom: `1px solid ${T.row}`, minWidth: 0, cursor: 'pointer' }}>
+                style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12, alignItems: 'center', padding: '9px 6px', borderRadius: 10, borderBottom: `1px solid ${T.row}`, minWidth: 0, cursor: 'pointer' }}>
 
                 {/* 1. кампания: рекламодатель · бренд, второй строкой поверхность и флайт */}
                 <span style={{ display: 'inline-flex', alignItems: 'flex-start', gap: 8, minWidth: 0 }}>
@@ -215,12 +224,43 @@ export default function ActiveCampaigns({ campaigns = DEMO, onOpen,
                 <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: stBg, color: stFg, border: `1px solid ${stBorder}`, borderRadius: 7, padding: '4px 0', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
                   {c.status}
                 </span>
+                {acts && (() => {
+                  const has = (c.creatives || []).some(x => (x.files || []).length)
+                  const agreed = (c.creatives || []).length > 0
+                  const can = (c.creatives || []).some(x => x.revocable)
+                  // Значок отзыва виден всегда, когда есть согласованное и право отвечать;
+                  // после старта размещения — серый, с объяснением (владелец 29.09.2026).
+                  const tip = can ? 'Отозвать согласование — запросить переделку баннера'
+                    : 'Отзыв уже невозможен — размещение запущено'
+                  const sq = { width: 30, height: 28, borderRadius: 8, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: T.card }
+                  return (
+                    <span style={{ display: 'inline-flex', gap: 4, justifyContent: 'flex-end' }}>
+                      <button type="button" disabled={!has} onClick={() => onPreview && onPreview(c)}
+                        title={has ? 'Посмотреть баннер' : 'Согласованного креатива нет'} aria-label="Предпросмотр"
+                        style={{ ...sq, border: `1px solid ${T.border}`, color: has ? T.accent : T.t5, cursor: has ? 'pointer' : 'default' }}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" /><circle cx="12" cy="12" r="3" /></svg>
+                      </button>
+                      <button type="button" disabled={!has} onClick={() => onDownload && onDownload(c)}
+                        title={has ? 'Скачать креатив — исходник, как прислал клиент' : 'Согласованного креатива нет'} aria-label="Скачать креатив"
+                        style={{ ...sq, border: `1px solid ${T.border}`, color: has ? T.t2 : T.t5, cursor: has ? 'pointer' : 'default' }}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg>
+                      </button>
+                      {canApprove && agreed && (
+                        <button type="button" disabled={!can} onClick={() => can && onRevoke && onRevoke(c)}
+                          title={tip} aria-label="Отозвать согласование"
+                          style={{ ...sq, border: `1px solid ${can ? T.dangerBorder : T.border}`, background: can ? T.dangerTint : T.card, color: can ? T.danger : T.t5, cursor: can ? 'pointer' : 'not-allowed' }}>
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg>
+                        </button>
+                      )}
+                    </span>
+                  )
+                })()}
               </div>
             );
           })}
 
           {/* итог по видимым строкам */}
-          <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 12, alignItems: 'center', padding: '13px 6px 0' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12, alignItems: 'center', padding: '13px 6px 0' }}>
             <span style={{ ...colHead, fontWeight: 700, color: T.t3 }}>Итого</span>
             <span /><span /><span />
             <span style={{ fontFamily: T.mono, fontSize: 12.5, fontWeight: 700, textAlign: 'right' }}>{nf(total.fact)}</span>
@@ -228,6 +268,7 @@ export default function ActiveCampaigns({ campaigns = DEMO, onOpen,
             <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, textAlign: 'right' }}>{rub(total.sum)}</span>
             <span style={{ fontFamily: T.mono, fontSize: 10, color: T.t4 }}>{total.erid} из {rows.length} ЕРИД</span>
             <span />
+            {acts && <span />}
           </div>
         </div>
       </div>

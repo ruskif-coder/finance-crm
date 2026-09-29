@@ -68,6 +68,12 @@ export default function Section({ id, dealId, title, subtitle, summary, tone, fa
       const v = saved[`${dealId}:${id}`]
       if (typeof v === 'boolean') setOpen(v)
     } catch { /* повреждённое значение не должно ронять карточку */ }
+    // Ссылка вида /sales/deals/<id>#sec-creatives (матрица согласований паблишеров)
+    // раскрывает блок и подводит к нему — свёрнутая секция по ссылке ответом не считается.
+    if (window.location.hash === `#sec-${id}`) {
+      setOpen(true)
+      setTimeout(() => document.getElementById(`sec-${id}`)?.scrollIntoView({ block: 'start' }), 300)
+    }
     setReady(true)
   }, [dealId, id])
 

@@ -75,8 +75,12 @@ def call_core(method: str, path: str, body: dict) -> dict:
     return r.json()
 
 
-def my_task(acc, task_id: int):
+def my_task(acc, task_id: int, agreed: bool = False):
     """Задание, если оно ЭТОЙ учётки. Иначе 404 — не 403.
+
+    `agreed` — искать и среди уже согласованных креативов размещения
+    (`pub.campaign_creative_v1`): предпросмотр, скачивание и отзыв согласования в
+    «Актуальных кампаниях» (владелец 29.09.2026).
 
     Разница существенная: 403 подтверждает, что такое задание есть, и превращает
     перебор идентификаторов в способ узнать, кто с кем работает.
@@ -88,6 +92,10 @@ def my_task(acc, task_id: int):
         row = db.execute(text(
             "SELECT task_id, publisher_id, target_id FROM pub.task_v1 "
             "WHERE task_id = :t"), {"t": task_id}).first()
+        if row is None and agreed:
+            row = db.execute(text(
+                "SELECT task_id, publisher_id, placement_id AS target_id, revocable "
+                "  FROM pub.campaign_creative_v1 WHERE task_id = :t"), {"t": task_id}).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Задание не найдено")
     return row
@@ -489,9 +497,28 @@ def campaigns(acc=Depends(current_account)):
         return {"campaigns": []}
     with scoped_session(ids) as db:
         rows = db.execute(text(
-            "SELECT publisher_id, brand, service, surface, date_from, date_to, plan, "
+            "SELECT placement_id, publisher_id, brand, service, surface, date_from, date_to, plan, "
             "       fact, cpm, status, erid, site, reconciled "
             "  FROM pub.campaign_v1")).all()
+        # Согласованные креативы размещения — для глаза и «Отозвать» (29.09.2026).
+        crs = db.execute(text(
+            "SELECT task_id, placement_id, creative_no, creative_title, form, revocable "
+            "  FROM pub.campaign_creative_v1 ORDER BY creative_no")).all()
+        tids = [c.task_id for c in crs]
+        cfiles = db.execute(text(
+            "SELECT * FROM pub.task_file_v1 WHERE task_id = ANY(:t) ORDER BY file_id"),
+            {"t": tids}).all() if tids else []
+
+    files_of = {}
+    for f in cfiles:
+        files_of.setdefault(f.task_id, []).append({
+            "id": f.file_id, "name": f.name, "size": f.size, "is_archive": f.is_archive,
+            "preview_url": sandbox_url(f.sandbox_token, f.entry_path)})
+    creatives_of = {}
+    for c in crs:
+        creatives_of.setdefault(c.placement_id, []).append({
+            "task_id": c.task_id, "no": c.creative_no, "title": c.creative_title,
+            "form": c.form, "revocable": bool(c.revocable), "files": files_of.get(c.task_id, [])})
 
     out = []
     for r in rows:
@@ -517,8 +544,27 @@ def campaigns(acc=Depends(current_account)):
             # группировка по месяцам на экране «Кампании» и период в строке обязаны
             # совпадать, а два вычисления одного месяца однажды разошлись бы.
             "period": r.date_from.strftime('%Y-%m') if r.date_from else None,
+            "creatives": creatives_of.get(r.placement_id, []),
         })
     return {"campaigns": out}
+
+
+class RevokeIn(BaseModel):
+    reason: str
+
+
+@app.post("/api/campaign-creatives/{task_id}/revoke")
+def revoke_agreement(task_id: int, payload: RevokeIn, acc=Depends(current_account)):
+    """Отозвать своё согласование до запуска размещения — запрос аккаунту на переделку
+    баннера по стандартной процедуре (владелец 29.09.2026). Граница и последствия — в
+    ядре (app/launch_prep/revoke.py); здесь только «задание своё» и право согласовывать."""
+    require_approver(acc)
+    t = my_task(acc, task_id, agreed=True)
+    if not (payload.reason or "").strip():
+        raise HTTPException(status_code=400, detail="Напишите, что поправить в баннере")
+    return call_core("POST", f"/api/cabinet-gw/pair/{task_id}/revoke", {
+        "publisher_id": t.publisher_id, "account_id": acc.id,
+        "reason": payload.reason, "author_name": acc.name, "author_email": acc.email})
 
 
 # ─────────────────────────── Лента событий ───────────────────────────
@@ -928,8 +974,9 @@ def rights_letter(task_id: int, acc=Depends(current_account)):
 def creative_file(task_id: int, file_id: int, acc=Depends(current_account)):
     """Скачать баннер задания (владелец 25.09.2026). Файл отдаёт ЯДРО и само проверяет,
     что файл от креатива этого задания, — кабинет здесь лишь проверяет, что задание своё.
+    Согласованные креативы «Актуальных кампаний» — тоже (29.09.2026).
     """
-    t = my_task(acc, task_id)
+    t = my_task(acc, task_id, agreed=True)
     if not SERVICE_TOKEN:
         raise HTTPException(status_code=503,
                             detail="Кабинет не настроен на связь с системой")

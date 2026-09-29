@@ -544,7 +544,10 @@ def test_app_surface_never_gets_targeting(env, monkeypatch):  # noqa: F811
     хранилище, — поэтому пара на поверхности app нацеливания не получает, даже если код
     на площадке наш (владелец 24.09.2026: у Максавита веб чужой, а приложение наше)."""
     from app.dsp import targeting_creative as tc
+    from app.launch_prep import pub_rules
     monkeypatch.setattr(tc, "ensure_quietly", lambda *a, **k: None)
+    # Особенности площадок (диплинк у Максавит-app) здесь ни при чём — тест про нацеливание.
+    monkeypatch.setattr(pub_rules, "rules_for", lambda db, keys: {})
     saved = _our_code(env, True, True)
     try:
         for t in env.targets:
@@ -584,3 +587,16 @@ def test_verdict_asks_to_stop_targeting_of_the_creative(env, monkeypatch):  # no
     traffic.bulk_verdict(traffic.BulkVerdictIn(pair_ids=[p.id for p in pairs[1:]], verdict='ок'),
                          env.db, _ADMIN)
     assert asked[-1] == env.cset.id and len(asked) == 2
+
+
+def test_send_is_blocked_when_publisher_needs_deeplink(env, monkeypatch):  # noqa: F811
+    """Режим ссылок app «обе»: без диплинка пара трафику не уходит (владелец 29.09.2026)."""
+    from fastapi import HTTPException
+    from app.dsp import targeting_creative as tc
+    from app.launch_prep import pub_rules
+    monkeypatch.setattr(tc, "ensure_quietly", lambda *a, **k: None)
+    monkeypatch.setattr(pub_rules, "rules_for",
+                        lambda db, keys: {k: {"app_links": "both"} for k in keys})
+    with pytest.raises(HTTPException) as e:
+        _sent(env)
+    assert e.value.status_code == 400 and "диплинк" in e.value.detail

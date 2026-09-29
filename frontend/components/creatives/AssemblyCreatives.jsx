@@ -23,6 +23,8 @@ import { overlayClose } from '@/lib/overlay'
 import { can, getPermissions } from '@/lib/auth'
 import { downloadFile } from '@/lib/download'
 import safeHref from '@/lib/safeHref'
+import DeeplinkChip from './DeeplinkChip'
+import { CreativePreview } from './CreativePreview'
 import { fmtDayOfMoment } from '@/lib/dates'
 import { openAimTab, aimTabGo, aimTabFail, aimTone, aimNotLive, RESTART_NOTE } from '@/lib/aimTab'
 
@@ -615,260 +617,9 @@ function PairVerdictDialog({ rec, onDone, onClose }) {
        относительными путями, а blob-ссылки такие пути не разрешают. Предпросмотр
        архива приедет вместе с песочницей на отдельном домене — там же, где баннер
        будет раздаваться паблишеру. */
-/* Пять типовых пропорций — те же, что на демо-стенде. Адаптивный баннер (а таких
-   большинство: `ad.size` у них «0,0») смотрят именно так — прикладывая к местам, куда он
-   поедет. Баннер с ОБЪЯВЛЕННЫМ размером показывается только в своём: класть фикс в чужую
-   рамку — значит смотреть на то, чего в размещении не будет. */
-/* ВТОРАЯ КОПИЯ ЭТОГО СПИСКА — `cabinet-frontend/lib/preview.js`, и она обязана
-   совпадать. Кабинет отдельный пакет и отдельный контейнер, общего сборщика с нами у
-   него нет по построению внешнего контура: свести списки в один модуль нельзя, а
-   сверить автоматически негде — контейнер нашего фронта кабинета не видит.
-   Расхождение выглядит как спор «у нас всё ровно / у вас баннер обрезан», в котором
-   обе стороны правы. Правя список — правь оба файла одним заходом.
-   Сверено 30.08.2026: совпадают. */
-const STOCK_SIZES = [[240, 400], [300, 600], [640, 100], [970, 250],
-  [1000, 150], [1200, 150]]
-// Порядок (владелец 25.09.2026): сначала вертикальные, потом горизонтальные, в каждой
-// группе по возрастанию ширины; 320×50 убран. Правя список — правь оба файла.
-
-const RATIO_PX = (ratio) => {
-  const m = /^(\d{2,4})\s*[x×]\s*(\d{2,4})$/i.exec((ratio || '').trim())
-  return m ? [Number(m[1]), Number(m[2])] : null
-}
-
-/** `htmlSource` — готовая разметка вместо файла из хранилища.
- *
- *  Понадобилось демо-стенду DSP (06.09.2026): там баннер ещё не файл в нашей базе, а
- *  строка, только что вернувшаяся от загрузчика DSP. Компонент один на все
- *  места: вторая реализация предпросмотра означала бы, что проверяющий и трафик смотрят
- *  на баннер по-разному, а спор «у меня всё ровно» разрешить нечем. Отличается только
- *  источник разметки — не показ. */
-export function CreativePreview({ files, startId, set, canApprove, onReviewed, onClose,
-                                  htmlSource = null, sandboxUrl = null,
-                                  title = 'Предпросмотр креатива' }) {
-  const [curId, setCurId] = useState(startId)
-  /* СВЕЖИЙ ДОКУМЕНТ НА КАЖДЫЙ ПОКАЗ. Баннер играет свою анимацию ОДИН раз
-     (`animation: … 1` + `animation-fill-mode: forwards`) и застывает на последнем
-     кадре — это его собственное устройство, не наше. Пока адрес рамки не менялся,
-     браузер переиспользовал уже отработавший документ, и со второго-третьего открытия
-     человек видел застывшую картинку. Выглядит это как «предпросмотр сломался».
-     Метка времени берётся на КАЖДОЕ открытие и на каждое переключение файла. */
-  const [nonce] = useState(() => Date.now())
-  const fresh = (u) => (u ? u + (u.includes('?') ? '&' : '?') + 'v=' + nonce + '-' + curId : u)
-  const [blob, setBlob] = useState(null)
-  const [html, setHtml] = useState(null)
-  const [err, setErr] = useState('')
-  const stageRef = useRef(null)
-  const [avail, setAvail] = useState(720)
-  const [sizeIdx, setSizeIdx] = useState(0)
-  const [reviewBusy, setReviewBusy] = useState(false)
-  const [reviewErr, setReviewErr] = useState('')
-
-  const review = async (verdict) => {
-    if (verdict === 'на доработку') { onReviewed(verdict); return }   // причина обязательна — спросим в форме
-    setReviewBusy(true); setReviewErr('')
-    try {
-      await api.post(`/launch-prep/set/${set.id}/primary-review`, { verdict, reason: '' }, auth())
-      onReviewed(verdict)
-    } catch (e) { setReviewErr(e.response?.data?.detail || 'Не удалось сохранить'); setReviewBusy(false) }
-  }
-
-  const cur = (files || []).find(f => f.id === curId) || (files || [])[0]
-  const ext = (cur?.name || '').toLowerCase().split('.').pop()
-  const isImg = !htmlSource && ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
-  const isHtml = !!htmlSource || ext === 'html'
-
-  useEffect(() => {
-    let alive = true
-    let url = null
-    setBlob(null); setHtml(null); setErr('')
-    // Разметку передали прямо — тянуть нечего.
-    if (htmlSource) { setHtml(htmlSource); return }
-    if (!cur || (!isImg && !isHtml)) return
-    api.get(`/launch-prep/file/${cur.id}`, { ...auth(), responseType: 'blob' })
-      .then(async r => {
-        if (!alive) return
-        if (isHtml) setHtml(await r.data.text())
-        else { url = URL.createObjectURL(r.data); setBlob(url) }
-      })
-      .catch(() => { if (alive) setErr('Не удалось загрузить файл') })
-    return () => { alive = false; if (url) URL.revokeObjectURL(url) }
-  }, [cur, isImg, isHtml, htmlSource])
-
-  useEffect(() => {
-    const el = stageRef.current
-    if (el) setAvail(Math.max(240, el.clientWidth - 28))
-  }, [curId, sizeIdx])
-
-  const own = RATIO_PX(cur?.ratio)
-  const sizes = own ? [own] : STOCK_SIZES
-  const wh = sizes[Math.min(sizeIdx, sizes.length - 1)]
-  const k = wh ? Math.min(1, avail / wh[0]) : 1
-  /* Сцена держит высоту САМОГО ВЫСОКОГО из доступных размеров и не меняется при
-     переключении: иначе окно прыгает на сотни пикселей между 300×600 и 1200×150, кнопки
-     проверки уезжают из-под курсора, и сравнить два размера подряд невозможно —
-     страница под ними ходит. */
-  const stageH = Math.max(160, ...sizes.map(([w, h]) => Math.round(Math.min(1, avail / w) * h)))
-
-  return (
-    <div style={OVERLAY} {...overlayClose(onClose)}>
-      {/* Ширина — под самый широкий типовой размер 1:1 (владелец 25.09.2026): 1200 баннера +
-          74 полей окна и сцены + 16 на полосу прокрутки. Уже экрана — вписывается, как раньше. */}
-      <div style={{ ...SHEET, width: 'min(1290px, 96vw)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 17, fontWeight: 700 }}>{title}</span>
-          <button style={{ ...btn(false), marginLeft: 'auto' }} onClick={onClose}>Закрыть</button>
-        </div>
-
-        {/* Вкладки — ПРОПОРЦИИ, как на стенде, а не файлы: у креатива файл один, а
-            посмотреть его надо в тех местах, куда он поедет. */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 12,
-          alignItems: 'center' }}>
-          {sizes.map(([w, h], i) => {
-            const on = i === Math.min(sizeIdx, sizes.length - 1)
-            return (
-              <span key={`${w}x${h}`} onClick={() => setSizeIdx(i)}
-                style={{ cursor: 'pointer', fontFamily: MONO, fontSize: 11.5, fontWeight: 700,
-                  padding: '5px 12px', borderRadius: 100,
-                  border: `1px solid ${on ? 'var(--accent)' : 'var(--border-card)'}`,
-                  background: on ? 'var(--accent)' : 'var(--bg-subtle)',
-                  color: on ? 'var(--bg-card)' : 'var(--text-secondary)' }}>
-                {w}×{h}
-              </span>
-            )
-          })}
-          <span style={{ ...CAP, marginLeft: 6 }}>
-            {own ? 'размер объявлен в баннере' : 'баннер адаптивный'}
-          </span>
-          {files.length > 1 && (
-            <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
-              {files.map(f => (
-                <span key={f.id} onClick={() => setCurId(f.id)}
-                  title={f.name}
-                  style={{ cursor: 'pointer', fontSize: 10.5, padding: '4px 9px',
-                    borderRadius: 8, border: '1px solid var(--border-card)',
-                    background: f.id === cur?.id ? 'var(--bg-subtle)' : 'transparent',
-                    color: f.id === cur?.id ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {f.name.length > 18 ? f.name.slice(0, 17) + '…' : f.name}
-                </span>
-              ))}
-            </span>
-          )}
-        </div>
-
-        <div ref={stageRef} style={{ marginTop: 14, padding: 14, borderRadius: 12,
-          background: 'var(--bg-subtle)', border: '1px solid var(--border-card)',
-          display: 'flex', justifyContent: 'center', alignItems: 'center',
-          overflowX: 'auto', height: stageH + 28, boxSizing: 'border-box' }}>
-          {!!err && <span style={{ fontSize: 12.5, color: 'var(--dot-overdue)' }}>{err}</span>}
-
-          {!err && isImg && !blob && (
-            <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>загрузка…</span>
-          )}
-          {!err && isImg && !!blob && (
-            <img src={blob} alt={cur?.name || 'креатив'} style={{ maxWidth: '100%', display: 'block', background: 'var(--bg-card)' }} />
-          )}
-
-          {!err && isHtml && html === null && (
-            <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>загрузка…</span>
-          )}
-          {!err && isHtml && html !== null && (
-            <div style={{ width: wh ? Math.round(wh[0] * k) : '100%',
-              height: wh ? Math.round(wh[1] * k) : 420, overflow: 'hidden' }}>
-              {/* Чужой исполняемый код — только в изолированной рамке и без
-                  allow-same-origin: тогда у неё свой origin, и до нашей сессии не дотянуться.
-
-                  Если разметка положена в ПЕСОЧНИЦУ — берём её оттуда, а не через srcdoc.
-                  Разница не косметическая: srcdoc наследует НАШ CSP, а баннер после
-                  загрузчика DSP ссылается на его CDN, и `base-uri 'self'` вместе с
-                  `img-src 'self'` показали бы пустую рамку. У домена песочницы таких
-                  ограничений нет — она ровно для чужого кода и заведена. */}
-              <iframe {...(sandboxUrl ? { src: fresh(sandboxUrl) } : { srcDoc: html })}
-                sandbox="allow-scripts" title={'Креатив ' + (cur?.ratio || '')}
-                style={{ border: 0, display: 'block', background: 'var(--bg-card)',
-                  width: wh ? wh[0] : '100%', height: wh ? wh[1] : 420,
-                  transform: `scale(${k})`, transformOrigin: 'top left' }} />
-            </div>
-          )}
-
-          {/* Архив крутится ИЗ ПЕСОЧНИЦЫ — с отдельного домена, где нет ни нашей
-              сессии, ни нашего API. Через blob он бы не заработал: внутри баннер
-              ссылается на свои файлы относительными путями. */}
-          {!err && !isImg && !isHtml && !!cur?.sandbox_url && (
-            <div style={{ width: wh ? Math.round(wh[0] * k) : '100%',
-              height: wh ? Math.round(wh[1] * k) : 420, overflow: 'hidden' }}>
-              <iframe key={curId} src={fresh(cur.sandbox_url)} title={'Креатив ' + (cur?.ratio || '')}
-                sandbox="allow-scripts"
-                style={{ border: 0, display: 'block', background: 'var(--bg-card)',
-                  width: wh ? wh[0] : '100%', height: wh ? wh[1] : 420,
-                  transform: `scale(${k})`, transformOrigin: 'top left' }} />
-            </div>
-          )}
-
-          {!err && !isImg && !isHtml && !cur?.sandbox_url && (
-            <span style={{ fontSize: 12.5, color: 'var(--text-muted)', maxWidth: 520, textAlign: 'center', lineHeight: 1.55 }}>
-              {ext === 'zip'
-                ? 'Архив не распакован в песочницу. Так бывает у файлов, загруженных до её появления: перезалейте архив — распаковка идёт при загрузке, и негодный архив отклоняется сразу.'
-                : 'Для этого типа файла предпросмотра пока нет — скачайте его, чтобы посмотреть.'}
-            </span>
-          )}
-        </div>
-
-        {/* АДРЕС РАМКИ — ССЫЛКОЙ. Белая рамка выглядит одинаково при трёх разных
-            причинах: баннер не загрузился, загрузился и ничего не рисует, или его не
-            пустил браузер. Различает их один клик — открыть ровно то же в отдельной
-            вкладке, — но до 18.09.2026 адрес был спрятан внутри iframe, и добыть его
-            можно было только через инструменты разработчика. */}
-        {!err && !!(cur?.sandbox_url || sandboxUrl) && (
-          <div style={{ marginTop: 8, fontSize: 11, fontFamily: MONO }}>
-            <a href={fresh(cur?.sandbox_url || sandboxUrl)} target="_blank" rel="noreferrer"
-              style={{ color: 'var(--accent)', textDecoration: 'none' }}>
-              открыть баннер в отдельной вкладке ↗
-            </a>
-            <span style={{ color: 'var(--text-faint)', marginLeft: 8 }}>
-              рисуется там, а здесь пусто — дело в рамке, а не в баннере
-            </span>
-          </div>
-        )}
-
-        <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-          {isHtml
-            ? 'Баннер крутится в изолированной рамке без доступа к странице.'
-              + (k < 1 ? ` Масштаб ${Math.round(k * 100)} % — размер ${wh[0]}×${wh[1]} не помещается в окно.` : '')
-            : cur?.sandbox_url
-              ? 'Баннер запущен в тестовой среде.'
-              : 'Файл тянется с авторизацией и живёт только в этой вкладке.'}
-          {/* Блокировщик принимает баннер типового размера за рекламу и режет его
-              картинки: остаётся пустой фон, и выглядит это как поломка у нас (владелец
-              25.09.2026 — поймал на своём браузере). Та же подпись в кабинете площадки. */}
-          {(isHtml || !!cur?.sandbox_url) && (
-            <><br />Если баннер не отображается, проверьте блокировщики рекламы или VPN.</>
-          )}
-        </div>
-
-        {/* Первичная проверка стоит ЗДЕСЬ, а не отдельной кнопкой в блоке (владелец,
-            27.08.2026): подтверждать материал, не посмотрев на него, слишком легко, и
-            так в отправку уезжает не тот архив. Кнопка «Всё работает» доступна ровно
-            там, где на креатив только что посмотрели.
-
-            Честная граница: у архива предпросмотр пока показывает лишь то, что это
-            архив, — до песочницы «работает» подтверждается глазами вне системы. */}
-        {!!(canApprove && set && !set.primary_review) && (
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14,
-            paddingTop: 12, borderTop: '1px solid var(--border-card)' }}>
-            {!!reviewErr && (
-              <span style={{ marginRight: 'auto', fontSize: 12, color: 'var(--dot-overdue)' }}>{reviewErr}</span>
-            )}
-            <button style={{ ...btn(false), color: 'var(--dot-overdue)', borderColor: 'var(--dot-overdue)' }}
-              disabled={reviewBusy} onClick={() => review('на доработку')}>На доработку</button>
-            <button style={btn(true)} disabled={reviewBusy}
-              onClick={() => review('ок')}>Всё работает</button>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
+/* Предпросмотр креатива вынесен в ./CreativePreview.jsx (29.09.2026); реэкспорт — ради
+   прежних импортов из этого файла. */
+export { CreativePreview } from './CreativePreview'
 
 /* ── подтверждение удаления ─────────────────────────────────────────────── */
 function ConfirmDelete({ set, onYes, onClose }) {
@@ -1259,7 +1010,7 @@ function NotePeek({ who, text }) {
 
 /* ── строка площадки ───────────────────────────────────────────────────── */
 function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt, onUrl, onRequest,
-                        onVerdict, onRework, onShots, onPlan, onWithdraw, vol }) {
+                        onDeeplink, onVerdict, onRework, onShots, onPlan, onWithdraw, vol }) {
   const [url, setUrl] = useState(r.advertiser_url || '')
   const [editing, setEditing] = useState(false)
   const [urlErr, setUrlErr] = useState('')
@@ -1405,6 +1156,8 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
             <span onClick={() => setEditing(true)} title="Изменить посадочную"
               style={{ cursor: 'pointer', color: CB.t4, fontSize: 11, flex: '0 0 auto' }}>✎</span>
           )}
+          {/* Диплинк — только у app-площадок с режимом ссылок «обе» (29.09.2026). */}
+          <DeeplinkChip r={r} setId={set.id} canEdit={canEdit && !gone} onSave={onDeeplink} />
           {canEdit && !r.advertiser_url && (
             <span onClick={e => { e.stopPropagation(); onRequest({ ...r, set_id: set.id }) }}
               title={r.url_state === 'запрошена' ? 'Запрос уже записан — открыть текст' : 'Запросить ссылку у площадки'}
@@ -1872,6 +1625,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
               <RecipientRow key={r.target_id} r={r} set={set} canEdit={canEdit} canApprove={canApprove} vol={vol}
                 isAdmin={isAdmin} sent={sent} onDrop={dropTarget}
                 onTt={handlers.tt} onUrl={handlers.url} onRequest={handlers.request}
+                onDeeplink={handlers.deeplink}
                 onVerdict={handlers.verdict} onRework={(rec) => handlers.rework(set, rec)}
                 onShots={handlers.shots} onPlan={handlers.plan}
                 onWithdraw={handlers.canWithdraw ? handlers.withdraw : null} />
@@ -2078,6 +1832,16 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
       } catch (e) {
         setErr(e.response?.data?.detail || 'Не удалось сохранить ссылку')
         return false
+      }
+    },
+    /* Диплинк пары — возвращает текст ошибки или null (владелец 29.09.2026). */
+    deeplink: async (rec, url, setId) => {
+      try {
+        await api.put(`/launch-prep/set/${setId}/target/${rec.target_id}/deeplink`, { url }, auth())
+        load()
+        return null
+      } catch (e) {
+        return e.response?.data?.detail || 'Не удалось сохранить диплинк'
       }
     },
     /* Скриншоты размещения снимает трафик, а нужны они аккаунту — как доказательство

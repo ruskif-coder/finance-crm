@@ -34,7 +34,9 @@ from app.dsp.client import MsClient, MsError
 from app.ext_lock import DSP_PROVISION, only_one
 from app.files_safe import inside_uploads
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepPair,
-                                    LaunchPrepSetTarget)
+                                    LaunchPrepSetTarget, LaunchPrepTarget)
+from app.launch_prep import pub_rules
+from app.launch_prep.sandbox import prepare_for_dsp, set_click_href
 from app.sales.models import SalesPublisher
 from app.weborama import naming, tags as wtags
 
@@ -80,6 +82,11 @@ def _rows(db: Session, camp: AdCampaign) -> list:
                    {p.set_id for p in pairs.values()} or [0])).all()}
     pubs = {p.id: p for p in db.query(SalesPublisher)
             .filter(SalesPublisher.id.in_({p.publisher_id for p in pls.values()})).all()}
+    # Поверхность пары (web/app) — у получателя сделки; по ней берётся правило площадки
+    # (ссылки в app, канал размещения — app/launch_prep/pub_rules.py).
+    lp_targets = {t.id: t for t in db.query(LaunchPrepTarget).filter(LaunchPrepTarget.id.in_(
+        {p.target_id for p in pairs.values()} or [0])).all()}
+    rules = pub_rules.rules_for(db, {(t.publisher_id, t.surface_kind) for t in lp_targets.values()})
 
     out = []
     for c in crs:
@@ -87,9 +94,11 @@ def _rows(db: Session, camp: AdCampaign) -> list:
         if not p:
             continue
         pair = pairs.get(c.pair_id) if c.pair_id else None
+        lpt = lp_targets.get(pair.target_id) if pair else None
         out.append({"creative": c, "placement": p, "publisher": pubs.get(p.publisher_id),
                     "file": files.get(c.file_id),
-                    "target": members.get((pair.set_id, pair.target_id)) if pair else None})
+                    "target": members.get((pair.set_id, pair.target_id)) if pair else None,
+                    "rule": rules.get((lpt.publisher_id, lpt.surface_kind)) if lpt else None})
     return out
 
 
@@ -132,6 +141,9 @@ def _blocker(row: dict, want_pixel: bool = True,
         return "нет посадочной ссылки площадки — DSP требует link у креатива"
     if not cr.landing_domain(tgt.advertiser_url):
         return "посадочная ссылка не похожа на адрес — не из чего взять домен для DSP"
+    rule = row.get("rule")
+    if pub_rules.needs_deeplink(rule) and not (getattr(tgt, "deeplink_url", None) or "").strip():
+        return "площадка требует диплинк в коде креатива, а у пары его нет"
     return None
 
 
@@ -299,6 +311,13 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
                 xxhash = known
             else:
                 data = _read_archive(r["file"])
+                # Правило площадки (владелец 29.09.2026): в app-режимах «веб» / «обе» в
+                # <a href> встаёт прямая ссылка вместо макроса DSP; url/adomain — веб всегда.
+                href = pub_rules.click_href(r.get("rule"), r["target"].advertiser_url,
+                                            getattr(r["target"], "deeplink_url", None))
+                if href:
+                    data, _ = prepare_for_dsp(data)
+                    data, _ = set_click_href(data, href)
                 up = cr.upload_zip(c, data,
                                    filename=(r["file"].original_name or "creative.zip"),
                                    local_ref=ref)

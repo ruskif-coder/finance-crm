@@ -44,6 +44,7 @@ from app.audit import log_action
 from app.database import get_db
 from app.launch_prep import banner_origin, originals, sandbox
 from app.launch_prep import volumes as volumes_mod
+from app.launch_prep import pub_rules
 from app.launch_prep.models import (SET_ORIGINS, TARGET_STATE_PUBLIC, TARGET_STATES,
                                     LaunchPrepCreativeFile, LaunchPrepCreativeSet,
                                     LaunchPrepPair, LaunchPrepPairFile, LaunchPrepReview,
@@ -232,7 +233,8 @@ AFTER_AGREEMENT_STATES = ("ерид получен", "заведён в DSP", "�
 
 
 def _recipient_out(target, pub, pair=None, review=None, traffic=None,
-                   files_count=0, moved_to_no=None, external=None, member=None) -> dict:
+                   files_count=0, moved_to_no=None, external=None, member=None,
+                   rule=None) -> dict:
     """Строка получателя внутри комплекта.
 
     До отправки это кандидат, после — пара с вердиктом и кодом. Одна форма на оба случая
@@ -280,6 +282,12 @@ def _recipient_out(target, pub, pair=None, review=None, traffic=None,
         "url_state": url_state(member),
         "url_requested_at": member.url_requested_at if member else None,
         "url_request_text": member.url_request_text if member else None,
+        # Особенности площадки (владелец 29.09.2026, app/launch_prep/pub_rules.py):
+        # режим «обе» требует диплинк рядом с посадочной — он встанет в <a href>.
+        "deeplink_url": getattr(member, "deeplink_url", None) if member else None,
+        "needs_deeplink": pub_rules.needs_deeplink(rule),
+        "placement_channel": (rule or {}).get("channel"),
+        "rule_label": pub_rules.applied_label(rule),
         "plan_show": member.plan_show if member else None,
         # Пара появляется в момент отправки; до неё эти поля пусты.
         "pair_id": pair.id if pair else None,
@@ -330,7 +338,7 @@ def moved_to_rework(db: Session, set_ids) -> dict:
 
 def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
              pubs=None, candidates=(), file_counts=None, moved=None, external=None,
-             members=None) -> dict:
+             members=None, rules=None) -> dict:
     """Комплект для экрана. Состояние ВЫЧИСЛЯЕТСЯ, а не читается из колонки.
 
     Площадки живут ВНУТРИ комплекта, а не отдельным списком сверху (решение владельца
@@ -346,6 +354,7 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
     moved = moved or {}
     external = external or {}
     members = members or {}
+    rules = rules or {}
 
     if pairs:
         recipients = []
@@ -356,11 +365,13 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
             recipients.append(_recipient_out(
                 t, pubs.get(t.publisher_id), p, by_pair.get(p.id), by_traffic.get(p.id),
                 file_counts.get(p.id, 0), (moved or {}).get((s.id, t.publisher_id)),
-                external.get(t.publisher_id), members.get((s.id, t.id))))
+                external.get(t.publisher_id), members.get((s.id, t.id)),
+                rules.get((t.publisher_id, t.surface_kind))))
     else:
         recipients = [_recipient_out(t, pubs.get(t.publisher_id),
                                      external=external.get(t.publisher_id),
-                                     member=members.get((s.id, t.id)))
+                                     member=members.get((s.id, t.id)),
+                                     rule=rules.get((t.publisher_id, t.surface_kind)))
                       for t in candidates]
 
     return {
@@ -536,6 +547,7 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
             LaunchPrepPair.set_id.in_(set_ids)).order_by(LaunchPrepPair.id).all()
     by_target = {t.id: t for t in targets}
     members = _members_of(db, set_ids)
+    rules = pub_rules.rules_for(db, {(t.publisher_id, t.surface_kind) for t in targets})
     moved = moved_to_rework(db, set_ids)
     # Сколько скриншотов приложено к каждой паре — одним GROUP BY, а не запросом на строку.
     file_counts = {}
@@ -588,7 +600,7 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
                           # отправленного список уже зафиксирован парами.
                           () if any(p.set_id == s.id for p in pairs)
                           else _targets_for_set(db, s),
-                          file_counts, moved, ext, members)
+                          file_counts, moved, ext, members, rules)
                  for s in sets],
     }
 
@@ -1750,6 +1762,19 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
     own = _members_of(db, [set_id])
     silent = [pubs[t.publisher_id].name if t.publisher_id in pubs else str(t.publisher_id)
               for t in targets if url_state(own.get((set_id, t.id))) == "нужна"]
+    # Площадка требует диплинк (режим ссылок app «обе», владелец 29.09.2026) — без него
+    # пара не уходит: в коде креатива ему будет не на что встать.
+    rules = pub_rules.rules_for(db, {(t.publisher_id, t.surface_kind) for t in targets})
+    no_deeplink = [pubs[t.publisher_id].name if t.publisher_id in pubs else str(t.publisher_id)
+                   for t in targets
+                   if pub_rules.needs_deeplink(rules.get((t.publisher_id, t.surface_kind)))
+                   and not getattr(own.get((set_id, t.id)), "deeplink_url", None)]
+    if no_deeplink:
+        raise HTTPException(
+            status_code=400,
+            detail="Площадка требует диплинк, а он не вписан: " + ", ".join(sorted(no_deeplink))
+                   + ". Впишите диплинк рядом с посадочной — он встанет в код креатива, "
+                     "а веб-ссылка уйдёт в DSP как url и домен")
     if silent:
         raise HTTPException(
             status_code=400,
@@ -2651,6 +2676,24 @@ def set_member_url(set_id: int, target_id: int, payload: TargetUrlIn,
     log_action(db, current_user, "set_target_url", "sales_deal", deal.id,
                f"креатив №{s.no}, площадка {t.publisher_id}: {url or 'ссылка снята'}")
     return {"advertiser_url": m.advertiser_url, "url_state": url_state(m)}
+
+
+@router.put("/set/{set_id}/target/{target_id}/deeplink")
+def set_member_deeplink(set_id: int, target_id: int, payload: TargetUrlIn,
+                        db: Session = Depends(get_db), current_user: User = Depends(EDIT)):
+    """Диплинк этого креатива на этой площадке — для app-площадок с режимом ссылок «обе»
+    (владелец 29.09.2026). Встаёт в <a href> при выгрузке; url/adomain DSP — веб-посадочная."""
+    s, t, deal = _member_in_scope(db, set_id, target_id, current_user)
+    try:
+        link = pub_rules.validate_deeplink(payload.url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    m = _member(db, set_id, target_id, create=True)
+    m.deeplink_url = link
+    db.commit()
+    log_action(db, current_user, "set_target_deeplink", "sales_deal", deal.id,
+               f"креатив №{s.no}, площадка {t.publisher_id}: {link or 'диплинк снят'}")
+    return {"deeplink_url": m.deeplink_url}
 
 
 class PlanIn(BaseModel):

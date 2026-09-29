@@ -585,6 +585,9 @@ app.include_router(roles.router, prefix="/api/roles", tags=["roles"])
 app.include_router(contracts.router, prefix="/api/contracts", tags=["contracts"])
 app.include_router(sales_directories.router, prefix="/api/sales/directories", tags=["sales"])
 app.include_router(publishers.router, prefix="/api/publishers", tags=["publishers"])
+# Матрица согласований площадка × РК — свой файл и своё право (29.09.2026).
+from app.routers import publisher_matrix  # noqa: E402
+app.include_router(publisher_matrix.router, prefix="/api/publisher-approvals", tags=["publishers"])
 app.include_router(media_plans.router, prefix="/api/sales/media-plans", tags=["sales"])
 # Настройки монтируются ПЕРЕД колокольчиком: у notifications есть @router.get(""),
 # и вложенный префикс не должен им перехватываться.
@@ -613,6 +616,9 @@ app.include_router(launch_prep.router, prefix="/api/launch-prep", tags=["creativ
 app.include_router(traffic.router, prefix="/api/traffic", tags=["traffic"])
 app.include_router(traffic_catalog.router, prefix="/api/traffic-catalog", tags=["traffic_catalog"])
 app.include_router(traffic_balancer.router, prefix="/api/traffic-catalog", tags=["traffic_balancer"])
+# Особенности площадок — своё право «трафик админ» (29.09.2026).
+from app.routers import traffic_pub_rules  # noqa: E402
+app.include_router(traffic_pub_rules.router, prefix="/api/traffic-catalog", tags=["traffic_catalog"])
 app.include_router(traffic_dashboard.router, prefix="/api/traffic-dashboard", tags=["traffic_dashboard"])
 app.include_router(dsp_demo.router, prefix="/api/dsp-demo", tags=["dsp_demo"])
 app.include_router(weborama_demo.router, prefix="/api/weborama-demo", tags=["weborama_demo"])

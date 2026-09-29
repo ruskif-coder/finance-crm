@@ -1,5 +1,6 @@
 /**
- * Админка трафика — три вкладки: «Настройка блоков», «Балансировщик» и «Скрипт».
+ * Админка трафика — вкладки «Настройка блоков», «Балансировщик», «Скрипт» и (по своему
+ * праву) «Особенности площадок».
  *
  * Вкладка 1 (этот файл): каталог площадок и блоков для DSP.
  * Вкладка 2 (components/traffic/Balancer): расчётная ёмкость площадки на поверхность.
@@ -23,6 +24,7 @@ import { MONO, UI, card, CAP, btn, btnSm, inp, sel, chip, cell, SortHead }
 import ValuePopover from '@/components/ValuePopover'
 import Balancer from '@/components/traffic/Balancer'
 import SiteScript from '@/components/traffic/SiteScript'
+import PublisherRules from '@/components/traffic/PublisherRules'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
@@ -97,7 +99,9 @@ export default function TrafficCatalog() {
     const p = getPermissions()
     setRights({ edit: can(p, 'traffic_catalog', 'edit'),
                 create: can(p, 'traffic_catalog', 'create'),
-                del: can(p, 'traffic_catalog', 'delete') })
+                del: can(p, 'traffic_catalog', 'delete'),
+                rulesView: can(p, 'traffic_publisher_rules', 'view'),
+                rulesEdit: can(p, 'traffic_publisher_rules', 'edit') })
   }, [])
   const mayEdit = !!rights.edit
   const mayCreate = !!rights.create
@@ -290,7 +294,9 @@ export default function TrafficCatalog() {
         {/* вкладки админки */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 18,
           borderBottom: '1px solid var(--border-card)' }}>
-          {[['blocks', 'Настройка блоков'], ['balancer', 'Балансировщик'], ['script', 'Скрипт']].map(([k, l]) => (
+          {[['blocks', 'Настройка блоков'], ['balancer', 'Балансировщик'], ['script', 'Скрипт'],
+            // «Особенности площадок» — своё право («трафик админ», 29.09.2026).
+            ...(rights.rulesView ? [['rules', 'Особенности площадок']] : [])].map(([k, l]) => (
             <div key={k} onClick={() => setAdminTab(k)} style={{
               padding: '9px 16px', cursor: 'pointer', fontWeight: 700, fontSize: 13.5,
               color: adminTab === k ? 'var(--text-primary)' : 'var(--text-faint)',
@@ -302,6 +308,7 @@ export default function TrafficCatalog() {
 
         {adminTab === 'balancer' && <Balancer mayEdit={mayEdit} />}
         {adminTab === 'script' && <SiteScript mayEdit={mayEdit} />}
+        {adminTab === 'rules' && rights.rulesView && <PublisherRules mayEdit={!!rights.rulesEdit} />}
 
         {adminTab === 'blocks' && (<>
         {/* виджеты */}

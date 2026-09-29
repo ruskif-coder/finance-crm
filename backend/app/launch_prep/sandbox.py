@@ -24,6 +24,7 @@
 Каталог называется СЛУЧАЙНЫМ токеном: раздача без авторизации (иначе баннер не откроется
 в кабинете паблишера), и единственная защита — неподбираемость адреса.
 """
+import html as html_lib
 import io
 import os
 import re
@@ -304,6 +305,72 @@ def prepare_for_dsp(data: bytes) -> Tuple[bytes, list]:
                 zi.external_attr = info.external_attr
                 out.writestr(zi, body, compress_type=info.compress_type)
     return buf.getvalue(), changes
+
+
+def _rewrite_entry(data: bytes, fn) -> Tuple[bytes, bool]:
+    """Переписать точку входа архива функцией `fn(html) -> html`; остальное — байт в байт.
+    Не архив, нет точки входа или правка ничего не меняет — возвращается исходник."""
+    try:
+        src = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        return data, False
+    with src:
+        infos = [i for i in src.infolist() if not i.is_dir()]
+        entry = _pick_entry([i.filename for i in infos])
+        if not entry:
+            return data, False
+        raw = src.read(entry)
+        # Кодировку сохраняем: баннер в cp1251 (у русских клиентов бывает), прочитанный как
+        # UTF-8 с «ignore», терял бы всю кириллицу при первой же правке (ревью 29.09.2026).
+        for enc in ("utf-8", "cp1251"):
+            try:
+                html = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            return data, False
+        new = fn(html)
+        if new == html:
+            return data, False
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as out:
+            for info in infos:
+                body = new.encode(enc) if info.filename == entry else src.read(info.filename)
+                zi = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+                zi.external_attr = info.external_attr
+                out.writestr(zi, body, compress_type=info.compress_type)
+    return buf.getvalue(), True
+
+
+def set_click_href(data: bytes, href: str) -> Tuple[bytes, bool]:
+    """Макрос клика DSP в `<a href>` → прямая ссылка (веб или диплинк) — для app-площадок
+    с режимом ссылок (владелец 27–29.09.2026, `pub_rules.click_href`). Клики DSP считает и
+    без своего редиректа (ответ владельца). Правится копия, уходящая в DSP; хранимый файл
+    и предпросмотр остаются с макросом."""
+    safe = html_lib.escape(href, quote=True)
+
+    def sub(m):
+        if m.group(3) != DSP_CLICK_MACRO:
+            return m.group(0)
+        return f"{m.group(1)}{m.group(2)}{safe}{m.group(2)}"
+    return _rewrite_entry(data, lambda h: _HREF_RE.sub(sub, h))
+
+
+ADFOX_MACRO = "%user6%"
+_BODY_RE = re.compile(r"<body\b[^>]*>", re.I)
+
+
+def insert_adfox_macro(data: bytes) -> Tuple[bytes, bool]:
+    """`%user6%` сразу после `<body>` — архив для Adfox (ответ владельца 29.09.2026).
+    Только в скачиваемый архив: в коде предпросмотра браузер показал бы макрос текстом.
+    Повторно не вставляется; без `<body>` — в самое начало разметки."""
+    def fn(h):
+        if ADFOX_MACRO in h:
+            return h
+        m = _BODY_RE.search(h)
+        return h[:m.end()] + ADFOX_MACRO + h[m.end():] if m else ADFOX_MACRO + h
+    return _rewrite_entry(data, fn)
 
 
 def _mac_junk(name: str) -> bool:

@@ -30,6 +30,11 @@ export { downloadFile as downloadBlob } from './download'
 
 // Архив креативов сделки: внутри чистые исходники всех прикреплённых на сборке, под
 // именами из системы («Креатив №3 — Скидка.zip»). Имя архива даёт сервер.
+// Архив по РК для площадок без нашего кода: баннеры + Excel-паспорт (29.09.2026).
+export function downloadOffsite(dealId, onError) {
+  return downloadFile(`/traffic/deal/${dealId}/offsite-archive`, '', onError)
+}
+
 export function downloadDealCreatives(dealId, onError) {
   return downloadFile(`/launch-prep/deal/${dealId}/creatives-archive`, '', onError)
 }

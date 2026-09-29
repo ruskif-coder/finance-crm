@@ -45,6 +45,7 @@ ACTIONS: Tuple[LogAction, ...] = (
               SIDE_PUB),
     LogAction('креатив_ок', 'Согласован креатив', 'ok', SIDE_PUB),
     LogAction('креатив_доработка', 'Креатив отправлен на правки', 'warn', SIDE_PUB),
+    LogAction('креатив_отзыв_согласования', 'Согласование отозвано — нужна переделка', 'warn', SIDE_PUB),
     LogAction('креатив_отказ', 'Отказ по креативу', 'bad', SIDE_PUB),
     LogAction('посадочная', 'Указана посадочная страница', 'ok', SIDE_PUB),
     LogAction('медиакит', 'Загружен медиакит', 'info', SIDE_PUB),

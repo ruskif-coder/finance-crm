@@ -19,6 +19,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Head from 'next/head'
 import Navbar, { can, getPermissions } from '@/components/Navbar'
+import RuleBadges from '@/components/traffic/RuleBadges'
 import { MONO, UI, card, CAP, btn, btnSm, chip as pill, inp, ROW_TONE, Modal }
   from '@/components/salesTableKit'
 // Предпросмотр — ТОТ ЖЕ компонент, что на карточке сделки: сетка типовых размеров,
@@ -831,6 +832,7 @@ export default function TrafficQueue() {
                           )}
                         </>
                       )}
+                      <RuleBadges r={r} onDownload={(url) => download(url)} />
                     </div>
 
                     <div>

@@ -143,6 +143,12 @@
           "label": "Кабинеты",
           "href": "/publishers/cabinets",
           "perm": "dir_publishers_cabinets"
+        },
+        {
+          "key": "approvals",
+          "label": "Согласования",
+          "href": "/publishers/approvals",
+          "perm": "dir_publishers_approvals"
         }
       ]
     },

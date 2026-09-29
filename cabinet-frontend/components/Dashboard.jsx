@@ -27,6 +27,7 @@ import { PreviewModal } from '../lib/preview'
 import { overlayClose } from '../lib/overlay'
 import { Header, MobileHeader, Side, Demo, WRAP, Toast } from './Shell'
 import ActiveCampaigns, { billing } from './ActiveCampaigns'
+import { CampaignPreview, CampaignRevoke, downloadCampaign } from './CampaignCreatives'
 import CampaignsScreen from './CampaignsScreen'
 import CampaignsMobile from './CampaignsMobile'
 import useIsMobile from '../lib/useIsMobile'
@@ -1589,6 +1590,8 @@ export default function Dashboard({ name, onSignOut }) {
      шапки. Держи их два компонента по отдельности — шапка и таблица однажды показали бы
      разные деньги по одним размещениям, и спорить с экраном пришлось бы человеку. */
   const [camps, setCamps] = useState(null)
+  // Креативы строки «Актуальных кампаний»: { c, mode: 'preview' | 'revoke' } (29.09.2026).
+  const [campAct, setCampAct] = useState(null)
   const [active, setActive] = useState('queue')
   const [openDone, setOpenDone] = useState(false)
   // Пусто = все площадки. Выбор живёт на СТРАНИЦЕ, а не в каждом списке: от него
@@ -2099,8 +2102,18 @@ export default function Dashboard({ name, onSignOut }) {
               п. 1); кампании целиком во вкладке «Кампании». */}
           {mobile ? <Feed onErr={setErr} /> : (() => {
             const live = (camps || []).filter(c => !c.reconciled)
-            return !!live.length && <ActiveCampaigns campaigns={live} />
+            return !!live.length && <ActiveCampaigns campaigns={live} canApprove={!!me?.can_approve}
+              onPreview={c => setCampAct({ c, mode: 'preview' })}
+              onRevoke={c => setCampAct({ c, mode: 'revoke' })}
+              onDownload={c => downloadCampaign(c, () => setCampAct({ c, mode: 'download' }))} />
           })()}
+          {(campAct?.mode === 'preview' || campAct?.mode === 'download') && (
+            <CampaignPreview campaign={campAct.c} mode={campAct.mode} onClose={() => setCampAct(null)} />
+          )}
+          {campAct?.mode === 'revoke' && (
+            <CampaignRevoke campaign={campAct.c} onClose={() => setCampAct(null)}
+              onDone={(msg) => { setCampAct(null); setErr(msg); loadCamps(); load() }} />
+          )}
 
           </>
           )}

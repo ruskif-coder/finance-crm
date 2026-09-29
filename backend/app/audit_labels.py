@@ -147,6 +147,8 @@ ACTION_LABELS = {
     "request_target_url": "Запрошена посадочная у площадки",
     "set_target_plan": "Плановый объём показов площадки задан",
     "set_target_url": "Посадочная ссылка указана",
+    "set_target_deeplink": "Диплинк указан",
+    "publisher_rules_update": "Особенности площадки изменены",
     "set_traffic_manager": "Назначен ответственный трафика",
     "ad_campaign_status": "Статус РК изменён",
     "ad_campaign_finish": "РК завершена",

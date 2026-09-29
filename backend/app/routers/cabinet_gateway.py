@@ -155,6 +155,37 @@ def cabinet_verdict(pair_id: int, payload: CabinetVerdictIn,
     return {"verdict": out["verdict"], "code": out["code"]}
 
 
+class CabinetRevokeIn(BaseModel):
+    publisher_id: int
+    account_id: int
+    reason: str
+    author_name: str
+    author_email: Optional[str] = None
+
+
+@router.post("/pair/{pair_id}/revoke", dependencies=[Depends(require_cabinet_service)])
+def cabinet_revoke(pair_id: int, payload: CabinetRevokeIn, db: Session = Depends(get_db)):
+    """Площадка отзывает своё согласование до запуска размещения — запрос на переделку
+    баннера по стандартной процедуре (владелец 29.09.2026, app/launch_prep/revoke.py)."""
+    from app.launch_prep import revoke as RV
+    pair = db.query(LaunchPrepPair).filter(LaunchPrepPair.id == pair_id).first()
+    target = (db.query(LaunchPrepTarget).filter(LaunchPrepTarget.id == pair.target_id).first()
+              if pair else None)
+    if not target or target.publisher_id != payload.publisher_id:
+        raise HTTPException(status_code=404, detail="Задание не найдено")
+    acc = _actor(db, payload.account_id, payload.publisher_id, approve=True)
+    try:
+        out = RV.revoke(db, pair_id, payload.reason, payload.author_name, payload.author_email)
+    except RV.RevokeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    journal.write(db, 'креатив_отзыв_согласования', cabinet_id=acc.cabinet_id, account_id=acc.id,
+                  publisher_id=payload.publisher_id, actor_name=payload.author_name,
+                  subject=_creative_subject(db, pair),
+                  entity_type='launch_prep_pair', entity_id=pair_id)
+    db.commit()
+    return {"verdict": out["verdict"]}
+
+
 class CabinetUrlIn(BaseModel):
     publisher_id: int
     account_id: int

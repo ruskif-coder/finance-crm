@@ -36,7 +36,7 @@ from app import timez
 from app.files_safe import existing_upload_path, inside_uploads, remove_upload
 from app.audit import log_action
 from app.database import get_db
-from app.launch_prep import banner_origin, sandbox
+from app.launch_prep import banner_origin, originals, pub_rules, sandbox
 from app.routers.launch_prep import url_state
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepCreativeSet,
                                     LaunchPrepPair, LaunchPrepPairFile, LaunchPrepReview,
@@ -221,6 +221,9 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
     # Строки состава креативов — одним запросом: посадочная и запрос живут там.
     from app.routers.launch_prep import _members_of
     members = _members_of(db, set_ids)
+    # Особенности площадки (владелец 29.09.2026) — пачкой на весь экран.
+    rules = pub_rules.rules_for(db, {(t.publisher_id, t.surface_kind)
+                                     for _r, _p, _s, t, _pub, _d in rows})
 
     today = date.today()
     out = []
@@ -272,6 +275,15 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
             # правила, после которого один экран начинает врать.
             "url_state": url_state(member),
             "url_request_text": member.url_request_text if member else None,
+            # Правило площадки и то, что по нему встанет в код креатива.
+            "deeplink_url": getattr(member, "deeplink_url", None) if member else None,
+            "placement_channel": (rules.get((target.publisher_id, target.surface_kind)) or {}).get("channel"),
+            "rule_label": pub_rules.applied_label(rules.get((target.publisher_id, target.surface_kind))),
+            "adfox_code": (rules.get((target.publisher_id, target.surface_kind)) or {}).get("adfox_code"),
+            "rule_problem": pub_rules.pair_problem(
+                rules.get((target.publisher_id, target.surface_kind)),
+                member.advertiser_url if member else None,
+                getattr(member, "deeplink_url", None) if member else None),
             "plan_show": member.plan_show if member else None,
             "period_from": target.period_from or deal.period_from,
             "period_to": target.period_to or deal.period_to,
@@ -568,6 +580,63 @@ def creative_archive(pair_id: int, db: Session = Depends(get_db),
             z.write(full, arcname=f.original_name or os.path.basename(f.path))
     name = tfiles.creative_download_name(deal.code, s.no, ".zip")
     return Response(content=buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/deal/{deal_id}/offsite-archive")
+def offsite_archive(deal_id: int, db: Session = Depends(get_db),
+                    current_user: User = Depends(require_any_permission(
+                        ["traffic_queue", "traffic_dashboard"], "view"))):
+    """Архив по РК для площадок без нашего кода: баннеры (исходник клиента, Adfox — с
+    %user6%) по папкам площадок + Excel-паспорт (владелец 29.09.2026,
+    app/traffic/offsite_export.py). Очередь общая — видно всем с правом очереди."""
+    from app.traffic import offsite_export as OX
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    try:
+        body, name = OX.build(db, deal)
+    except OX.NothingToExport as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return Response(content=body, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/pair/{pair_id}/adfox-archive")
+def adfox_archive(pair_id: int, db: Session = Depends(get_db),
+                  current_user: User = Depends(VIEW)):
+    """Архив для Adfox: исходник клиента + `%user6%` сразу после `<body>` (владелец
+    27–29.09.2026). Креатив в Adfox заводит наш трафик; доп. код для `%user6%` он копирует
+    из карточки. Только для поверхности с каналом Adfox — остальным кнопка не нужна."""
+    pair, s, target, pub, deal = _pair_in_scope(db, pair_id, current_user)
+    rule = pub_rules.rules_for(db, {(target.publisher_id, target.surface_kind)}).get(
+        (target.publisher_id, target.surface_kind))
+    if (rule or {}).get("channel") != "adfox":
+        raise HTTPException(status_code=409, detail="Площадка размещается не через Adfox")
+    rows = [f for f in (db.query(LaunchPrepCreativeFile)
+                        .filter(LaunchPrepCreativeFile.set_id == s.id)
+                        .order_by(LaunchPrepCreativeFile.id).all()) if f.is_archive]
+    if not rows:
+        raise HTTPException(status_code=404, detail="В комплекте нет архива баннера")
+    built = []
+    for f in rows:
+        # Исходник клиента, если подготовка под нашу DSP его меняла (originals.py):
+        # в Adfox макрос нашей DSP не нужен.
+        src = originals.original_abs(f.path)
+        full = src if src and os.path.exists(src) else existing_upload_path(f.path)
+        with open(full, "rb") as fh:
+            data, _ = sandbox.insert_adfox_macro(fh.read())
+        built.append((f.original_name or os.path.basename(f.path), data))
+    if len(built) == 1:
+        body = built[0][1]
+    else:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for name, data in built:
+                z.writestr(name, data)
+        body = buf.getvalue()
+    name = tfiles.creative_download_name(deal.code, s.no, ".zip").replace(".zip", "_adfox.zip")
+    return Response(content=body, media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 

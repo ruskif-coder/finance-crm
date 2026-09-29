@@ -1133,6 +1133,12 @@ class SalesPublisherSurface(Base):
                           nullable=False)
     kind = Column(String, nullable=False)   # web | app
     figma_url = Column(String)
+    # Особенности для трафика (миграция 2026-09-29_publisher_surface_rules.sql):
+    # канал размещения dsp | adfox | outside; ссылки app web | both; доп. код Adfox.
+    # Правила применения — app/launch_prep/pub_rules.py.
+    placement_channel = Column(String(16))
+    app_links = Column(String(16))
+    adfox_extra_code = Column(Text)
     # МС-реквизиты DSP на поверхность (миграция 2026-09-01_traffic_catalog.sql): id паблишера
     # в DSP и блок по умолчанию «кукуха2» (авто-цепляется к креативу, скрыт из
     # статистики кабинета). На каждую web/app — свои; ios/android (платформы) — на будущее.

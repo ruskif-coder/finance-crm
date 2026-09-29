@@ -427,6 +427,9 @@ class LaunchPrepSetTarget(Base):
     advertiser_url = Column(String(512))
     url_requested_at = Column(DateTime)
     url_request_text = Column(Text)
+    # Диплинк пары — для app-площадки с режимом ссылок «обе» он встаёт в <a href>, а
+    # веб-посадочная остаётся в url / adomain DSP (2026-09-29_publisher_surface_rules.sql).
+    deeplink_url = Column(String(1024))
     # Плановый объём показов площадки по этому креативу: задан — РК берёт его, остаток
     # плана делит между остальными по весам.
     plan_show = Column(Integer)
