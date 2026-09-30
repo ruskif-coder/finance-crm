@@ -2068,7 +2068,9 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
     for p_ in pls:
         p_["status"] = td.effective_status(p_["status"], best_chain_status(
             td._as_placement_scale(x) for x in by_pl.get(p_["id"], [])))
-    rows = distribute(c.plan_show, fact_shows, fl, pls)["rows"]
+    from app.ad import balance
+    balance.mark_capless(db, pls)
+    rows = distribute(c.plan_show, fact_shows, fl, pls, cap=balance.share_cap(db))["rows"]
     fc = progress(c.plan_show, fact_shows, c.date_start, c.date_end, today)
 
     by_day = td._stat_by_day(db, [c.id]).get(c.id, {})

@@ -56,19 +56,23 @@ class BalanceRowIn(BaseModel):
     index_manual: Optional[float] = None    # ручная правка индекса
     is_locked: Optional[bool] = None        # не перетирать пересчётом
     note: Optional[str] = None
-    external_score: Optional[float] = None  # внешняя оценка; справочная, в индекс не входит
+    # SimilarWeb (только web, владелец 30.09.2026) — заменили «Внешнюю оценку»;
+    # колонка `external_score` заморожена: не читается и не пишется.
+    sw_visits: Optional[float] = None
+    sw_ppv: Optional[float] = None
+    sw_br: Optional[float] = None
 
 
 class CoefficientsIn(BaseModel):
-    k: Optional[float] = None
-    depth_default: Optional[float] = None
+    share_cap_pct: Optional[float] = None   # потолок доли одной площадки в РК, %
 
 
 # ── чтение и правка ───────────────────────────────────────────────────────
 
 @router.get("/balancer")
 def balancer_rows(db: Session = Depends(get_db), user: User = Depends(VIEW)):
-    return {"rows": balance.rows(db), "coefficients": balance.get_coefficients(db),
+    raw = balance._raw_rows(db)
+    return {"rows": balance.rows(db, raw), "coefficients": balance.get_coefficients(db, raw),
             "month": balance.month_start().isoformat()}
 
 
@@ -84,25 +88,23 @@ def balancer_save_row(publisher_id: int, scope: str, payload: BalanceRowIn,
         balance.upsert_measurement(db, publisher_id, scope, payload.volume, payload.depth)
     if payload.requests is not None:
         balance.upsert_measurement(db, publisher_id, balance.REQ_SCOPE[scope], payload.requests)
+    _save_sw(db, publisher_id, scope, payload.sw_visits, payload.sw_ppv, payload.sw_br)
 
     db.execute(text("""
         INSERT INTO publisher_balance_index
-            (publisher_id, scope, index_manual, is_locked, note, external_score,
-             updated_at, updated_by)
-        VALUES (:p, :s, :im, COALESCE(:lk, FALSE), :n, :es, now(), :u)
+            (publisher_id, scope, index_manual, is_locked, note, updated_at, updated_by)
+        VALUES (:p, :s, :im, COALESCE(:lk, FALSE), :n, now(), :u)
         ON CONFLICT (publisher_id, scope) DO UPDATE
         SET index_manual = EXCLUDED.index_manual,
             is_locked = COALESCE(:lk, publisher_balance_index.is_locked),
-            note = EXCLUDED.note, external_score = EXCLUDED.external_score,
-            updated_at = now(), updated_by = EXCLUDED.updated_by
+            note = EXCLUDED.note, updated_at = now(), updated_by = EXCLUDED.updated_by
     """), {"p": publisher_id, "s": scope, "im": payload.index_manual,
-           "lk": payload.is_locked, "n": payload.note, "es": payload.external_score,
-           "u": user.id})
+           "lk": payload.is_locked, "n": payload.note, "u": user.id})
     db.commit()
     log_action(db, user, "balancer_row_edit", "sales_publisher", publisher_id,
                f"{scope}: объём={payload.volume} глубина={payload.depth} "
                f"запросы={payload.requests} индекс_рука={payload.index_manual} "
-               f"внешняя_оценка={payload.external_score}")
+               f"SW={payload.sw_visits}/{payload.sw_ppv}/{payload.sw_br}")
     pushed = _push_to_campaigns(db)
     return {"ok": True, "campaigns_updated": pushed, "rows": balance.rows(db)}
 
@@ -120,10 +122,27 @@ def balancer_recalc(db: Session = Depends(get_db), user: User = Depends(EDIT)):
 @router.put("/balancer/settings")
 def balancer_settings(payload: CoefficientsIn, db: Session = Depends(get_db),
                       user: User = Depends(EDIT)):
-    coef = balance.set_coefficients(db, payload.k, payload.depth_default)
+    if payload.share_cap_pct is not None and not (0 <= payload.share_cap_pct <= 100):
+        raise HTTPException(400, "Потолок доли — от 0 до 100 %; 0 — без потолка")
+    coef = balance.set_coefficients(db, payload.share_cap_pct)
     log_action(db, user, "balancer_settings", "sales_publisher", None,
-               f"K={coef['k']} глубина_по_умолчанию={coef['depth_default']}")
-    return {"coefficients": coef, "rows": balance.rows(db)}
+               f"потолок доли площадки в РК = {coef['share_cap_pct']} %")
+    pushed = _push_to_campaigns(db)
+    return {"coefficients": coef, "campaigns_updated": pushed, "rows": balance.rows(db)}
+
+
+def _save_sw(db, publisher_id: int, scope: str, visits, ppv, br, source: str = "manual") -> None:
+    """SimilarWeb — замеры web-поверхности месяца; у app их нет по природе источника."""
+    vals = {"visits": visits, "ppv": ppv, "br": br}
+    if all(v is None for v in vals.values()):
+        return
+    if scope != "web":
+        raise HTTPException(400, "SimilarWeb бывает только у web-поверхности")
+    for k, v in vals.items():
+        if v is not None:
+            if v < 0 or (k == "br" and v > 100):
+                raise HTTPException(400, "SW: визиты и PpV ≥ 0, BR — от 0 до 100")
+            balance.upsert_measurement(db, publisher_id, balance.SW_SCOPES[k], v, source=source)
 
 
 # ── Excel: выгрузка и загрузка ────────────────────────────────────────────
@@ -133,13 +152,14 @@ BALANCE_COLS = [
     ("name", "Площадка"), ("domain", "Домен"), ("ms_publisher_id", "ID в МС"),
     ("scope_label", "Поверхность"), ("services", "Услуги"),
     ("volume", "Объём"), ("depth", "Глубина"), ("requests", "Запросы кода"),
+    ("sw_visits", "SW visits"), ("sw_ppv", "PpV"), ("sw_br", "BR"), ("swtraffic", "Swtraffic"),
     ("index_auto", "Индекс расчётный"), ("index_manual", "Индекс ручной"),
-    ("source", "Источник"), ("is_locked", "Заперт"), ("note", "Примечание"),
-    ("external_score", "Внешняя оценка"),
+    ("source", "Источник"), ("confidence", "Доверие"), ("is_locked", "Заперт"),
+    ("note", "Примечание"),
 ]
 # Импортом правятся только эти; остальные колонки справочные (из каталога паблишеров).
-BALANCE_EDITABLE = ("volume", "depth", "requests", "index_manual", "is_locked", "note",
-                    "external_score")
+BALANCE_EDITABLE = ("volume", "depth", "requests", "sw_visits", "sw_ppv", "sw_br",
+                    "index_manual", "is_locked", "note")
 
 BLOCK_COLS = [("publisher", "Площадка"), ("code", "Наш код"), ("surface", "Поверхность"),
               ("ms_publisher_id", "ID паблишера в МС"), ("ms_block_id", "ID блока"),
@@ -231,24 +251,20 @@ def balancer_import(file: UploadFile = File(...), db: Session = Depends(get_db),
             balance.upsert_measurement(db, pid, scope, vol, dep, source="import")
         if req is not None:
             balance.upsert_measurement(db, pid, balance.REQ_SCOPE[scope], req, source="import")
+        if scope == "web":
+            _save_sw(db, pid, scope, _num(cell("sw_visits")), _num(cell("sw_ppv")),
+                     _num(cell("sw_br")), source="import")
         locked_raw = str(cell("is_locked") or "").strip().lower()
         db.execute(text("""
             INSERT INTO publisher_balance_index
-                (publisher_id, scope, index_manual, is_locked, note, external_score,
-                 updated_at, updated_by)
-            VALUES (:p, :s, :im, :lk, :n, :es, now(), :u)
+                (publisher_id, scope, index_manual, is_locked, note, updated_at, updated_by)
+            VALUES (:p, :s, :im, :lk, :n, now(), :u)
             ON CONFLICT (publisher_id, scope) DO UPDATE
             SET index_manual = EXCLUDED.index_manual, is_locked = EXCLUDED.is_locked,
-                note = EXCLUDED.note,
-                -- Файл без колонки «Внешняя оценка» (выгружен до 28.09.2026) оценки не
-                -- стирает: отсутствие колонки — не «пусто», а «не про это».
-                external_score = CASE WHEN :has_es THEN EXCLUDED.external_score
-                                      ELSE publisher_balance_index.external_score END,
-                updated_at = now(), updated_by = EXCLUDED.updated_by
+                note = EXCLUDED.note, updated_at = now(), updated_by = EXCLUDED.updated_by
         """), {"p": pid, "s": scope, "im": _num(cell("index_manual")),
                "lk": locked_raw in ("да", "yes", "true", "1", "y"),
-               "n": (cell("note") or None), "es": _num(cell("external_score")),
-               "has_es": "external_score" in pos, "u": user.id})
+               "n": (cell("note") or None), "u": user.id})
         applied += 1
     db.commit()
     log_action(db, user, "balancer_import", "sales_publisher", None,

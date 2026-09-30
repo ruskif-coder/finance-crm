@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 import logging
 
 from app import timez
-from app.ad import build
+from app.ad import balance, build
 from app.ad import external as ext_mod
 from app.launch_prep import volumes
 from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_REJECTED, CREATIVE_STATUSES,
@@ -505,6 +505,8 @@ def dashboard(scope: Optional[str] = None,
     ext_totals = ext_mod.totals_by_campaign(db, ids)
     culprit_rows = []
     dist_by_camp: dict = {}
+    cap = balance.share_cap(db)   # один раз на запрос, а не на каждую РК
+    manual = balance.manual_publishers(db)
     for c, d in pairs:
         pls = places.get(c.id, [])
         by_pl = cr_all.get(c.id, {})
@@ -518,8 +520,9 @@ def dashboard(scope: Optional[str] = None,
         fl = flight_of(c.date_start, c.date_end, today)
         # Одно распределение на РК — и виновникам, и пипсам строки. Считать его дважды
         # значило бы завести два ответа на вопрос «сколько эта площадка недокрутила».
+        balance.mark_capless(db, pls, manual)
         dist_by_camp[c.id] = distribute(c.plan_show, facts.get(c.id, {}).get("shows"),
-                                        fl, pls)["rows"]
+                                        fl, pls, cap=cap)["rows"]
         culprit_rows += dist_by_camp[c.id]
 
     # Креативы с материалом по сделкам страницы — для «↓ креативы» в раскрытии РК
@@ -701,7 +704,8 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         d["can_start"] = can_start_placement(x["status"] for x in mine)
         d["creative_counts"] = creative_counts(mine)
         prepared.append(d)
-    out = distribute(c.plan_show, fact_total, fl, prepared)
+    balance.mark_capless(db, prepared)
+    out = distribute(c.plan_show, fact_total, fl, prepared, cap=balance.share_cap(db))
 
     # Третий этаж: план площадки делится ПОРОВНУ между её работающими креативами.
     for row in out["rows"]:

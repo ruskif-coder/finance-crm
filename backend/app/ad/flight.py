@@ -253,8 +253,46 @@ def progress(plan: Optional[float], fact: Optional[float],
 
 # ── распределение объёма по площадкам ────────────────────────────────────────
 
+def capped_shares(weights: dict, cap: Optional[float], capless=frozenset()) -> dict:
+    """Доли по весам с потолком (владелец 30.09.2026, балансировщик вариант «A + D»).
+
+    `weights` — {ключ: вес}, `cap` — предел доли одной площадки в тех же единицах (0…1),
+    `capless` — ключи, которых потолок не касается (ручной индекс перекрывает всё).
+    Излишек сверх потолка уходит остальным пропорционально их весам («заливка»), пока
+    никто не выше потолка. Невыполнимый потолок (площадок меньше, чем 1/cap) поднимается
+    до равной доли — иначе часть объёма повисла бы ни на ком.
+    """
+    total = sum(float(w) for w in weights.values() if w) or 0.0
+    if not total:
+        return {k: 0.0 for k in weights}
+    share = {k: (float(w) / total if w else 0.0) for k, w in weights.items()}
+    if not cap or cap >= 1:
+        return share
+    live = [k for k, w in weights.items() if w]
+    # Невыполнимый потолок поднимаем до равной доли СРЕДИ ПОДЧИНЁННЫХ ему: площадки с
+    # ручным индексом держат свою долю по весу и в подъёме не участвуют.
+    capped = [k for k in live if k not in capless]
+    free_share = 1.0 - sum(share[k] for k in live if k in capless)
+    c = max(float(cap), free_share / len(capped)) if capped else 1.0
+    out = {k: 0.0 for k in weights}
+    for _ in range(len(live) + 1):
+        free = [k for k in live if k not in out or out[k] == 0.0]
+        placed = sum(v for v in out.values())
+        w_free = sum(float(weights[k]) for k in free)
+        if not free or not w_free:
+            break
+        cur = {k: (1.0 - placed) * float(weights[k]) / w_free for k in free}
+        over = [k for k in free if k not in capless and cur[k] > c + 1e-12]
+        if not over:
+            out.update(cur)
+            break
+        for k in over:
+            out[k] = c
+    return out
+
+
 def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight],
-               placements: Sequence[dict]) -> dict:
+               placements: Sequence[dict], cap: Optional[float] = None) -> dict:
     """Доли, планы и прогнозы площадок РК.
 
     Доля = вес площадки ÷ сумма весов тех, кто УЧАСТВУЕТ В ПЛАНЕ: в удержание (`holds`,
@@ -283,6 +321,11 @@ def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight
     live = [p for p in placements
             if p.get("status") in in_plan_set and p.get("weight") and not fixed_of[id(p)]]
     w_sum = sum(float(p["weight"]) for p in live) or 0.0
+    # Потолок — от ПЛАНА РК, а делится остаток после заданных объёмов: переводим предел
+    # в доли остатка. Площадка с ручным индексом (`capless`) потолку не подчиняется.
+    cap_rest = (cap * float(plan) / rest) if (cap and plan and rest) else cap
+    w_of = capped_shares({id(p): p["weight"] for p in live}, cap_rest,
+                         frozenset(id(p) for p in live if p.get("capless")))
 
     rows: List[dict] = []
     for p in placements:
@@ -294,7 +337,7 @@ def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight
             p_plan = round(fixed)
             share = (fixed / plan) if plan else 0.0
         else:
-            w_share = (float(p["weight"]) / w_sum) if (in_plan and not no_weight and w_sum) else 0.0
+            w_share = w_of.get(id(p), 0.0) if (in_plan and not no_weight and w_sum) else 0.0
             p_plan = round(rest * w_share) if (rest and w_share) else None
             # Без плана РК доля — по весам, как до объёмов: её показывают дашборд и
             # карточка, и `recompute_shares` пишет её в площадку.

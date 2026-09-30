@@ -291,7 +291,7 @@ PLACEMENT_FIXED_SQL = (
     f" WHERE cc.placement_id = p.id AND cc.status <> '{CREATIVE_REJECTED}')")
 
 
-def recompute_shares(db: Session, campaign_id: int) -> None:
+def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = None) -> None:
     """Доли и планы площадок — снимок текущего распределения.
 
     Считает НЕ здесь: правило живёт в `app/ad/flight.distribute` вместе с тем, что
@@ -313,9 +313,15 @@ def recompute_shares(db: Session, campaign_id: int) -> None:
     # Флайт обязателен: удержание долей решается по дню РК (`flight.holds`). Без него
     # сохранённые планы считались бы «до старта» и на шестой день не сменились бы.
     fl = flight_of(camp.date_start, camp.date_end) if camp else None
+    # `cap_ctx` = (потолок, площадки с ручным индексом) — пакетные вызовы читают их один раз.
+    if cap_ctx is None:
+        from app.ad.balance import manual_publishers, share_cap
+        cap_ctx = (share_cap(db), manual_publishers(db))
+    cap, manual = cap_ctx
     out = distribute(camp.plan_show if camp else None, None, fl,
                      [{"id": p.id, "status": p.status, "weight": p.weight,
-                       "fixed": fixed.get(p.id)} for p in pls])
+                       "fixed": fixed.get(p.id), "capless": p.publisher_id in manual}
+                      for p in pls], cap=cap)
     by_id = {r["id"]: r for r in out["rows"]}
     for p in pls:
         r = by_id[p.id]
@@ -380,13 +386,15 @@ def refresh_weights(db: Session, commit: bool = True, campaign_ids=None) -> dict
         q = q.filter(AdCampaign.id.in_(list(campaign_ids)))
     camps = q.all()
     changed = 0
+    from app.ad.balance import manual_publishers, share_cap
+    cap_ctx = (share_cap(db), manual_publishers(db))
     for camp in camps:
         surfaces = deal_plan(db, camp.deal_id)["surfaces"]
         if not surfaces:
             # У сделки нет годного медиаплана (отклонён, без строк) — поверхностей не знаем,
             # и пустой набор весов не «индекс снят», а «спросить не у чего». Веса оставляем
             # прежними, как `sync_placements` (ревью 27.09.2026: иначе РК теряла все объёмы).
-            recompute_shares(db, camp.id)
+            recompute_shares(db, camp.id, cap_ctx)
             continue
         weights = publisher_weights(db, surfaces)
         for p in db.query(AdCampaignPlacement).filter(
@@ -395,7 +403,7 @@ def refresh_weights(db: Session, commit: bool = True, campaign_ids=None) -> dict
             if p.weight != w:
                 p.weight = w
                 changed += 1
-        recompute_shares(db, camp.id)
+        recompute_shares(db, camp.id, cap_ctx)
     db.flush()
     if commit:
         db.commit()
