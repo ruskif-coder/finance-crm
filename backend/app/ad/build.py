@@ -38,6 +38,7 @@ from app.ad.flight import (CREATIVE_REJECTED, PLACEMENT_READY, PLACEMENT_WAIT, a
                            best_chain_status, chain_status, distribute, effective_status,
                            effective_status_creative, flight_of)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
+from app.launch_prep import pub_rules
 from app.sales.models import PUBLISHER_ARCHIVE_STATUS
 
 ASSEMBLY_STAGE_KEY = "launch_prep"      # «Готовятся к старту» = Сборка
@@ -242,7 +243,10 @@ def sync_campaigns(db: Session, commit: bool = True) -> dict:
 # ── разворот площадок ─────────────────────────────────────────────────────
 
 def candidates(db: Session, services: list, surfaces: list) -> list:
-    """Площадки под услугу+поверхность: активные, не архив, поверхность заведена в блоках."""
+    """Площадки под услугу+поверхность: активные, не архив, поверхность заведена в блоках —
+    либо ведётся вне нашей DSP (Adfox / вне контура) и мы с ней работаем. Блоков у такой
+    поверхности нет по определению, и без этой ветки она молча выпадала из РК (Polza, 30.09.2026);
+    в РК она получает метку «не наш код» (`pub_rules.placement_modes`)."""
     if not services or not surfaces:
         return []
     return db.execute(text("""
@@ -254,8 +258,9 @@ def candidates(db: Session, services: list, surfaces: list) -> list:
         WHERE ps.is_active AND sv.name = ANY(:svc) AND ps.surface_kind = ANY(:surf)
           AND p.is_active AND p.status <> :arch
           AND (s.ms_publisher_id IS NOT NULL
-               OR EXISTS (SELECT 1 FROM publisher_block b WHERE b.surface_id = s.id))
-    """), {"svc": services, "surf": surfaces,
+               OR EXISTS (SELECT 1 FROM publisher_block b WHERE b.surface_id = s.id)
+               OR (s.we_work AND s.placement_channel = ANY(:ext)))
+    """), {"svc": services, "surf": surfaces, "ext": list(pub_rules.EXTERNAL_CHANNELS),
            "arch": PUBLISHER_ARCHIVE_STATUS}).mappings().all()
 
 

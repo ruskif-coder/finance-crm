@@ -1,6 +1,6 @@
 {
   "name": "finance-frontend",
-  "version": "2.6.48",
+  "version": "2.6.49",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
