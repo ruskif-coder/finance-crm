@@ -120,6 +120,11 @@ def _blocker(row: dict, want_pixel: bool = True,
     pub = row["publisher"]
     if p.is_direct:
         return "площадка крутит сама — в DSP не заводится"
+    # Поверхность этого креатива идёт не через нашу DSP (Adfox / вне контура) — у Максавита
+    # так web, а app — через DSP (владелец 30.09.2026). Решает канал ПОВЕРХНОСТИ, не
+    # признак площадки «наш код».
+    if (row.get("rule") or {}).get("channel") in pub_rules.EXTERNAL_CHANNELS:
+        return "поверхность площадки во внешней DSP — в нашу DSP не заводится, креатив заводят там"
     if p.status not in PLACEMENT_OK:
         return f"площадка в статусе «{p.status}» — рано"
     if c.status not in CREATIVE_OK:

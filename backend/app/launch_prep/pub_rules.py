@@ -85,3 +85,64 @@ def validate_deeplink(value: Optional[str]) -> Optional[str]:
     if not scheme or scheme in ("javascript", "data", "vbscript", "file") or len(v) > 1024:
         raise ValueError("Диплинк — адрес вида app://… или https://…, не длиннее 1024 символов")
     return v
+
+
+# ── Площадка в РК: наша DSP / внешняя / смешанная (владелец 30.09.2026) ─────────────────
+#
+# Строка размещения РК — одна на площадку, без деления на web и app, а канал задаётся у
+# ПОВЕРХНОСТИ: у Максавита web через Adfox, app — через нашу DSP. Поэтому режим площадки
+# в РК считается по тем её поверхностям, по которым в сделке ОТПРАВЛЯЛИСЬ креативы (нет
+# отправленных — по всем выбранным в сделке); канал поверхности — из «Особенностей
+# площадок». Признак «наш код» — только запасной, когда поверхностей в сделке нет вовсе.
+EXTERNAL_CHANNELS = ("adfox", "outside")
+MODE_DSP, MODE_EXTERNAL, MODE_MIXED = "dsp", "external", "mixed"
+
+
+def placement_modes(db: Session, keys) -> Dict[Tuple[int, int], dict]:
+    """{(deal_id, publisher_id): {"mode", "external": [поверхности вне нашей DSP]}} пачкой."""
+    from sqlalchemy import text
+    keys = {(d, p) for d, p in keys if d and p}
+    if not keys:
+        return {}
+    deals = list({d for d, _ in keys})
+    pubs = list({p for _, p in keys})
+    rows = db.execute(text("""
+        SELECT t.deal_id, t.publisher_id, t.surface_kind,
+               bool_or(p.sent_at IS NOT NULL) AS sent
+          FROM launch_prep_target t
+          LEFT JOIN launch_prep_pair p ON p.target_id = t.id AND p.withdrawn_at IS NULL
+         WHERE t.deal_id = ANY(:d) AND t.publisher_id = ANY(:p)
+         GROUP BY 1, 2, 3
+    """), {"d": deals, "p": pubs}).all()
+    surf = {}
+    for d, p, kind, sent in rows:
+        surf.setdefault((d, p), []).append((kind, bool(sent)))
+    chan, kinds_of, working_of = {}, {}, {}
+    for r in db.query(SalesPublisherSurface).filter(SalesPublisherSurface.publisher_id.in_(pubs)):
+        chan[(r.publisher_id, r.kind)] = r.placement_channel
+        kinds_of.setdefault(r.publisher_id, []).append(r.kind)
+        if r.we_work:
+            working_of.setdefault(r.publisher_id, []).append(r.kind)
+    our = dict(db.execute(text("SELECT id, our_code FROM sales_publishers WHERE id = ANY(:p)"),
+                          {"p": pubs}).all())
+    out = {}
+    for key in keys:
+        d, p = key
+        lst = surf.get(key, [])
+        # Поверхности сделки: отправленные → выбранные → все поверхности площадки. Последнее —
+        # для РК без сборки запуска по этой площадке (замер 30.09 на копии прода: так у
+        # Максавита в большинстве сентябрьских РК). «Наш код» — лишь если поверхностей нет.
+        # Запасной вариант — поверхности, с которыми мы РАБОТАЕМ (`we_work`): у трёх
+        # Adfox-площадок app в реестре есть, но «не работаем» (владелец 30.09.2026:
+        # Adfox — только web на трёх площадках), и считать его значило бы звать DSP зря.
+        kinds = ([k for k, sent in lst if sent] or [k for k, _ in lst]
+                 or working_of.get(p) or kinds_of.get(p, []))
+        if not kinds:
+            ext = our.get(p) is False
+            out[key] = {"mode": MODE_EXTERNAL if ext else MODE_DSP, "external": []}
+            continue
+        external = sorted({k for k in kinds if chan.get((p, k)) in EXTERNAL_CHANNELS})
+        mode = (MODE_EXTERNAL if len(external) == len(set(kinds))
+                else MODE_MIXED if external else MODE_DSP)
+        out[key] = {"mode": mode, "external": external}
+    return out

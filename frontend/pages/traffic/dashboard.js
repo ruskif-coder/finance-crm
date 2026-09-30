@@ -29,6 +29,7 @@ import { surfaceTag } from '@/lib/dealTitle'
 import api, { auth } from '@/lib/api'
 import { downloadDealCreatives } from '@/lib/dealDocs'
 import OffsiteButton from '@/components/traffic/OffsiteButton'
+import ExternalLaunch from '@/components/traffic/ExternalLaunch'
 import {
   CreativeCounts, CreativeRows, Culprits, DASH, DayWall, Dynamics, KpiRow, PaceBar, Pips,
   GOAL_LABELS, MISMATCH_FG, Owners, PlaceActions, ServiceCell, StatusPill, TABLE_LEGEND, TaskDoc, WALL_LEGEND,
@@ -1101,12 +1102,28 @@ export default function TrafficDashboard() {
                               gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 52px 68px',
                               padding: '7px 0', borderBottom: '1px solid var(--border-row)',
                               background: volTint(d.volumes, p.publisher_id) }}>
-                              <span style={{ fontFamily: MONO, fontSize: 11.5, overflow: 'hidden',
-                                textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {p.domain || p.publisher}
+                              {/* Обрезается НАЗВАНИЕ, а метки остаются целыми: «не на…» не читается. */}
+                              <span style={{ display: 'flex', alignItems: 'center', minWidth: 0,
+                                fontFamily: MONO, fontSize: 11.5, whiteSpace: 'nowrap' }}>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}
+                                  title={p.domain || p.publisher}>{p.domain || p.publisher}</span>
+                                {/* Режим по поверхностям в сделке (30.09.2026): внешняя — все её
+                                    поверхности не через нашу DSP; смешанная — часть. */}
+                                {p.ext_mode === 'external' && (
+                                  <span title="Не наш код: площадка во внешней DSP — в нашу DSP её не завести, креатив заводится там вручную"
+                                    style={{ marginLeft: 6, fontSize: 9, padding: '1px 5px', flex: '0 0 auto',
+                                      borderRadius: 5, background: 'var(--warning-tint)',
+                                      color: 'var(--warning-text)' }}>не наш код</span>
+                                )}
+                                {p.ext_mode === 'mixed' && (
+                                  <span title={`${(p.ext_surfaces || []).join('/')} — во внешней DSP, остальное — через нашу DSP`}
+                                    style={{ marginLeft: 6, fontSize: 9, padding: '1px 5px', flex: '0 0 auto',
+                                      borderRadius: 5, background: 'var(--warning-tint)',
+                                      color: 'var(--warning-text)' }}>{(p.ext_surfaces || []).join('/')} вне DSP</span>
+                                )}
                                 {p.is_direct && (
                                   <span title="Площадка крутит сама — факт вводится руками"
-                                    style={{ marginLeft: 6, fontSize: 9, padding: '1px 5px',
+                                    style={{ marginLeft: 6, fontSize: 9, padding: '1px 5px', flex: '0 0 auto',
                                       borderRadius: 5, background: 'var(--bg-subtle)',
                                       color: 'var(--text-muted)' }}>сама</span>
                                 )}
@@ -1161,7 +1178,11 @@ export default function TrafficDashboard() {
                                     + (p.external?.dsp?.why ? ` — ${p.external.dsp.why}` : '')} />
                               </span>
                               <span style={{ justifySelf: 'end' }} onClick={e => e.stopPropagation()}>
-                                {mayEdit && (
+                                {mayEdit && p.ext_mode === 'external' && (
+                                  <ExternalLaunch status={p.status} canStart={p.can_start}
+                                    onChange={st => setPlacementStatus(r.id, p, st)} />
+                                )}
+                                {mayEdit && p.ext_mode !== 'external' && (
                                   <PlaceActions status={p.status} canStart={p.can_start}
                                     onStart={() => setPlacementStatus(r.id, p, 'запущен')}
                                     onPause={() => setPlacementStatus(r.id, p, 'пауза')}

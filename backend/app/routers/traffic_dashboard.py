@@ -684,9 +684,14 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
     fact_total = _facts(db, [c.id]).get(c.id, {}).get("shows")
     creatives = _creatives_of(db, c.id)
 
+    # Режим площадки: наша DSP / внешняя / смешанная — по поверхностям в сделке (30.09.2026).
+    from app.launch_prep.pub_rules import placement_modes
+    modes = placement_modes(db, {(c.deal_id, p["publisher_id"]) for p in pls})
     prepared = []
     for p in pls:
         d = dict(p)
+        m = modes.get((c.deal_id, p["publisher_id"])) or {}
+        d["ext_mode"], d["ext_surfaces"] = m.get("mode"), m.get("external", [])
         mine = creatives.get(p["id"], [])
         # Статус площадки собирается из ЕЁ КРЕАТИВОВ — самый продвинутый из них
         # (владелец 04.09.2026: «площадка запущена только при хоть одном согласованном

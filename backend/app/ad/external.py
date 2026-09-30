@@ -55,8 +55,12 @@ def totals(states) -> Dict[str, dict]:
     return out
 
 
+OFFSITE_WHY = "площадка во внешней DSP — креатив заводится и запускается там вручную"
+
+
 def _state_of(p: AdCampaignPlacement, refs: dict, hung: set,
-              crs: List[AdCampaignCreative], dsp_hung=frozenset()) -> dict:
+              crs: List[AdCampaignCreative], dsp_hung=frozenset(), offsite: bool = False,
+              external_surfaces=()) -> dict:
     """Состояние ОДНОЙ площадки. Единственное место, где эти правила записаны."""
     if p.is_direct:
         # Крутит сама — внешние системы её не касаются вовсе.
@@ -76,6 +80,12 @@ def _state_of(p: AdCampaignPlacement, refs: dict, hung: set,
     else:
         wb = {"state": MISSING, "why": "вставка в Weborama не заведена"}
 
+    # ВНЕШНЯЯ ПЛОЩАДКА (владелец 29–30.09.2026): все её поверхности в сделке идут не через
+    # нашу DSP (Adfox / вне контура) — креатив трафик заводит там руками. DSP ей «не
+    # нужна», пиксель Weborama — да. Режим считает `pub_rules.placement_modes`.
+    if offsite:
+        return {"weborama": wb, "dsp": {"state": NOT_NEEDED, "why": OFFSITE_WHY}}
+
     with_hash = [c for c in crs if c.ms_creative_xxhash]
     # Заведение креатива ушло без ответа — не «нет»: повтор заперт до сверки с кабинетом,
     # и без этой буквы человек жал бы «DSP» и получал отказ, не понимая почему.
@@ -91,6 +101,9 @@ def _state_of(p: AdCampaignPlacement, refs: dict, hung: set,
         ds = {"state": MISSING, "why": f"креативов в очереди: {len(crs)}, ни одного в DSP"}
     else:
         ds = {"state": MISSING, "why": "креативов на площадке нет"}
+    if external_surfaces:
+        # Смешанная: часть поверхностей (обычно web) во внешней DSP, остальное — в нашей.
+        ds = {**ds, "why": f"{ds['why']}; {'/'.join(external_surfaces)} — во внешней DSP"}
     return {"weborama": wb, "dsp": ds}
 
 
@@ -129,9 +142,16 @@ def states_by_campaign(db: Session, campaign_ids: Iterable[int]) -> Dict[int, Di
                if not (c.ms_creative_xxhash or "").strip()]
     dsp_hung = MsClient().unknown_refs("Creative.add", "creative", no_hash) if no_hash else set()
 
+    from app.launch_prep.pub_rules import MODE_EXTERNAL, MODE_MIXED, placement_modes
+    deal_of = dict(db.query(AdCampaign.id, AdCampaign.deal_id).filter(AdCampaign.id.in_(ids)).all())
+    modes = placement_modes(db, {(deal_of.get(p.campaign_id), p.publisher_id) for p in pls})
     out: Dict[int, Dict[int, dict]] = {i: {} for i in ids}
     for p in pls:
-        out[p.campaign_id][p.id] = _state_of(p, refs, hung, crs.get(p.id, []), dsp_hung)
+        m = modes.get((deal_of.get(p.campaign_id), p.publisher_id)) or {}
+        out[p.campaign_id][p.id] = _state_of(
+            p, refs, hung, crs.get(p.id, []), dsp_hung,
+            offsite=m.get("mode") == MODE_EXTERNAL,
+            external_surfaces=m.get("external", []) if m.get("mode") == MODE_MIXED else ())
     return out
 
 
