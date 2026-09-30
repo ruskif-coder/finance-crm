@@ -523,7 +523,10 @@ def cabinet_creative_file(pair_id: int, file_id: int, account_id: int, publisher
     from app.launch_prep import originals
     existing_upload_path(f.path)                  # запись цела и файл на месте
     full = originals.path_for_publisher(f.path)
-    return FileResponse(full, filename=f.original_name or "creative",
+    # Имя — нормализованное латиницей: РК-бренд-площадка-период-услуга-название
+    # (владелец 30.09.2026), а не то, как файл назвал клиент.
+    from app.launch_prep.download_name import for_pair
+    return FileResponse(full, filename=for_pair(db, pair_id, f.original_name or ""),
                         media_type="application/octet-stream")
 
 

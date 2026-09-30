@@ -35,6 +35,11 @@ export function downloadOffsite(dealId, onError) {
   return downloadFile(`/traffic/deal/${dealId}/offsite-archive`, '', onError)
 }
 
+// Паспорт по всей РК (.xlsx, без креативов) — владелец 30.09.2026.
+export function downloadPassport(dealId, onError) {
+  return downloadFile(`/traffic/deal/${dealId}/passport`, '', onError)
+}
+
 export function downloadDealCreatives(dealId, onError) {
   return downloadFile(`/launch-prep/deal/${dealId}/creatives-archive`, '', onError)
 }

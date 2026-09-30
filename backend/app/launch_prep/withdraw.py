@@ -46,6 +46,10 @@ AGREED_STATES = ("согласован", "ерид получен", "завед�
 REASON_MAX = 500
 
 
+KIND_WITHDRAW = "отзыв"
+KIND_DECLINE = "отказ в правках"
+
+
 class WithdrawError(ValueError):
     """Отзыв невозможен — текст для человека."""
 
@@ -144,7 +148,8 @@ def _tell_publisher(db: Session, pair, s, target, reason: str) -> dict:
         return {"status": "error", "why": str(e)[:200]}
 
 
-def withdraw(db: Session, pair_id: int, user, reason: str, dsp_client=None) -> dict:
+def withdraw(db: Session, pair_id: int, user, reason: str, dsp_client=None,
+             kind: str = KIND_WITHDRAW) -> dict:
     """Отозвать. Порядок: запись у нас → коммит → DSP → площадке.
 
     Своё записываем ПЕРВЫМ: отказ DSP или почты не должен оставить креатив «у площадки»,
@@ -167,10 +172,16 @@ def withdraw(db: Session, pair_id: int, user, reason: str, dsp_client=None) -> d
     why = blocker(db, pair, target)
     if why:
         raise WithdrawError(why)
+    # Отказ в правках (владелец 30.09.2026) — ответ на ЗАПРОС ПРАВОК площадки: без него
+    # отказывать не в чем. Последствия — те же, что у отзыва: из ротации РК, из порога
+    # ЕРИД, из DSP; площадке — то же письмо с нашим ответом.
+    if kind == KIND_DECLINE and _platform_verdict(db, pair.id) != "на доработку":
+        raise WithdrawError("площадка не просила правок — отказывать не в чем")
 
     pair.withdrawn_at = datetime.utcnow()
     pair.withdrawn_by = getattr(user, "id", None)
     pair.withdraw_reason = reason
+    pair.withdraw_kind = kind
     row = _creative_row(db, pair, target)
     xxhash = (row.ms_creative_xxhash or "").strip() if row is not None else ""
     if row is not None:
@@ -182,8 +193,10 @@ def withdraw(db: Session, pair_id: int, user, reason: str, dsp_client=None) -> d
     dsp = (_archive_in_dsp(xxhash, f"cr{row.id}", dsp_client) if xxhash
            else {"state": "none"})
     mail = _tell_publisher(db, pair, s, target, reason)
-    log_action(db, user, "creative_withdrawn", "launch_prep_pair", pair.id,
-               f"комплект №{s.no} отозван у площадки #{target.publisher_id}: {reason}"
+    action = "creative_rework_declined" if kind == KIND_DECLINE else "creative_withdrawn"
+    verb = "правки площадки не приняты" if kind == KIND_DECLINE else "отозван у площадки"
+    log_action(db, user, action, "launch_prep_pair", pair.id,
+               f"комплект №{s.no} {verb} #{target.publisher_id}: {reason}"
                + (f"; DSP: {dsp['state']}" if xxhash else ""))
     return {"pair_id": pair.id, "withdrawn_at": pair.withdrawn_at, "dsp": dsp,
             "publisher_notified": (mail or {}).get("status")}

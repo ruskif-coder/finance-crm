@@ -50,6 +50,21 @@ def by_role(db: Session, role_key: str) -> List[int]:
     return [u.id for u in db.query(User).filter(User.role_id == role.id, User.is_active == 1).all()]
 
 
+def traffic_admins(db: Session, ctx: dict) -> List[int]:
+    """Трафик-админы: люди, чьей роли выдано право «Трафики · Особенности площадок» на
+    правку (`traffic_publisher_rules`) — это и есть админское право трафика (29.09.2026).
+
+    Не роль по ключу: `roles.key` вида `role_14` генерируется и между установками разный
+    (прибор `test_no_event_is_addressed_to_a_generated_role_key`)."""
+    from app.models import RolePermission
+    ids = [r.role_id for r in db.query(RolePermission).filter(
+        RolePermission.section == "traffic_publisher_rules", RolePermission.can_edit == 1).all()]
+    if not ids:
+        return []
+    return [u.id for u in db.query(User).filter(User.role_id.in_(ids),
+                                                User.is_active == 1).all()]
+
+
 # Резолверы `mp_approvers` (роли с правом media_plans:approve) и `mp_stakeholders`
 # (автор + ответственные) удалены 30.08.2026 вместе со стейт-машиной согласования МП:
 # согласующих больше нет как роли в процессе. Автор плана по-прежнему адресуем —
@@ -164,6 +179,7 @@ RESOLVERS = {
     "sales_head": sales_head,
     "year_plan_owner": year_plan_owner,
     "master_of_responsible": master_of_responsible,
+    "traffic_admins": traffic_admins,
 }
 
 # Что резолвер ждёт в `ctx`. Объявлено списком, а не только в теле функции, потому что
@@ -198,6 +214,7 @@ RESOLVER_LABELS = {
     "sales_head": "Руководитель отдела продаж",
     "year_plan_owner": "Сейлз годового плана",
     "master_of_responsible": "Мастер ответственного",
+    "traffic_admins": "Трафик-админы (право «Особенности площадок»)",
 }
 
 

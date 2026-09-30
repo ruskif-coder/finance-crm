@@ -41,6 +41,24 @@ SETTING_ACCOUNT = "weborama_account_id"
 # рано (её ещё могут снять), позже — поздно (креатив уедет в DSP без пикселя и не начнёт
 # крутиться).
 READY_STATUSES = ("ждёт запуска", "запущен", "пауза")
+# И ЕЩЁ ЕРИД (владелец 30.09.2026): пиксель — только размещению, у которого есть
+# согласованный креатив с ЕРИД. Случай с прода: 54ZYCH / Максавит — пиксель в 10:44, ЕРИД
+# автовыпуском в 11:00; по журналу так же ещё 8 размещений. Вставку в их кабинете не
+# удалить, поэтому запираем ДО вызова, а не проверяем после.
+ERID_CREATIVE_OK = ("согласован", "запущен", "пауза")
+NO_ERID = ("нет ЕРИД у согласованного креатива — пиксель Weborama заводится после выпуска "
+           "ЕРИД (автовыпуск раз в 30 минут)")
+
+
+def erid_ready(db: Session, placement_ids) -> set:
+    """Размещения, у которых есть согласованный креатив с ЕРИД."""
+    ids = list(placement_ids)
+    if not ids:
+        return set()
+    return {r[0] for r in db.execute(text("""
+        SELECT DISTINCT placement_id FROM ad_campaign_creative
+         WHERE placement_id = ANY(:p) AND erid IS NOT NULL AND status = ANY(:ok)
+    """), {"p": ids, "ok": list(ERID_CREATIVE_OK)})}
 
 
 class ProvisionError(RuntimeError):
@@ -187,6 +205,7 @@ def plan(db: Session, camp: AdCampaign) -> dict:
             .filter(WeboramaRef.account_id == acc, WeboramaRef.kind == KIND_INSERTION,
                     WeboramaRef.local_id.in_([p.id for p in ready] or [0])).all()}
     have_pixel = [p for p in ready if p.weborama_pixel]
+    with_erid = erid_ready(db, [p.id for p in ready])
     proj = _ref(db, acc, KIND_PROJECT, camp.deal_id)
     wcamp = _ref(db, acc, KIND_CAMPAIGN, camp.id)
     return {"account": acc,
@@ -196,7 +215,9 @@ def plan(db: Session, camp: AdCampaign) -> dict:
             "campaign_id": wcamp.wcm_id if wcamp else None,
             "ready": len(ready),
             "have": len(have_pixel),
-            "todo": len([p for p in ready if not p.weborama_pixel]),
+            # Без ЕРИД заводить нельзя — такие не считаются к заведению, а ждут автовыпуска.
+            "todo": len([p for p in ready if not p.weborama_pixel and p.id in with_erid]),
+            "wait_erid": len([p for p in ready if not p.weborama_pixel and p.id not in with_erid]),
             "registered": len(done),
             "skipped_direct": len([p for p in pls if p.is_direct]),
             "not_ready": len([p for p in pls if p.status not in READY_STATUSES])}
@@ -259,8 +280,13 @@ def _provision(db: Session, camp: AdCampaign, landing_url: str, user_id,
            .filter(AdCampaignPlacement.campaign_id == camp.id).all()
            if p.status in READY_STATUSES and not p.is_direct and not p.weborama_pixel]
     done, failed = [], []
+    with_erid = erid_ready(db, [p.id for p in pls])
     for p in pls:
         pub = db.query(SalesPublisher).filter(SalesPublisher.id == p.publisher_id).first()
+        if p.id not in with_erid:
+            failed.append({"placement_id": p.id, "name": pub.name if pub else "?",
+                           "error": NO_ERID})
+            continue
         domain = naming.domain_of(pub.domain if pub else "")
         if not domain:
             failed.append({"placement_id": p.id, "name": pub.name if pub else "?",
@@ -324,7 +350,7 @@ def _fetch_pixel(db: Session, client: WcmClient, acc: str, placement_id: int,
     return pixel
 
 
-__all__ = ["plan", "provision", "account_id", "ProvisionError", "READY_STATUSES"]
+__all__ = ["plan", "provision", "account_id", "ProvisionError", "READY_STATUSES", "erid_ready"]
 
 
 def attach_existing(db: Session, camp: AdCampaign, project_id, campaign_id,

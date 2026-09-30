@@ -92,6 +92,23 @@ def deal_goals_many(db: Session, deal_ids) -> dict:
     return {d: {k: v for k, v in (g or {}).items() if str(v or "").strip()} for d, g in rows}
 
 
+def surfaces_by_deal(db: Session, deal_ids) -> dict:
+    """Поверхности последнего медиаплана пачкой: {deal_id: [web/app]} — для реестров."""
+    ids = list(deal_ids)
+    if not ids:
+        return {}
+    out: dict = {}
+    for d, inv in db.execute(text("""
+        SELECT DISTINCT mp.deal_id, lower(trim(r.inventory))
+          FROM sales_media_plan_rows r JOIN sales_media_plans mp ON mp.id = r.plan_id
+         WHERE mp.id IN (SELECT DISTINCT ON (deal_id) id FROM sales_media_plans
+                          WHERE deal_id = ANY(:d) AND status <> 'rejected'
+                          ORDER BY deal_id, version DESC, id DESC)"""), {"d": ids}):
+        for s in INVENTORY_SURFACES.get(inv or "", ()):
+            out.setdefault(d, set()).add(s)
+    return {d: sorted(v) for d, v in out.items()}
+
+
 def deal_plan(db: Session, deal_id: int) -> dict:
     """Услуги, поверхности и план показов сделки — из строк последнего медиаплана."""
     rows = db.execute(text(f"""
@@ -314,13 +331,15 @@ def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = N
     # сохранённые планы считались бы «до старта» и на шестой день не сменились бы.
     fl = flight_of(camp.date_start, camp.date_end) if camp else None
     # `cap_ctx` = (потолок, площадки с ручным индексом) — пакетные вызовы читают их один раз.
+    from app.ad.balance import is_capless, manual_scopes, share_cap
     if cap_ctx is None:
-        from app.ad.balance import manual_publishers, share_cap
-        cap_ctx = (share_cap(db), manual_publishers(db))
+        cap_ctx = (share_cap(db), manual_scopes(db))
     cap, manual = cap_ctx
+    surfaces = deal_plan(db, camp.deal_id)["surfaces"] if camp else []
     out = distribute(camp.plan_show if camp else None, None, fl,
                      [{"id": p.id, "status": p.status, "weight": p.weight,
-                       "fixed": fixed.get(p.id), "capless": p.publisher_id in manual}
+                       "fixed": fixed.get(p.id),
+                       "capless": is_capless(manual, p.publisher_id, surfaces)}
                       for p in pls], cap=cap)
     by_id = {r["id"]: r for r in out["rows"]}
     for p in pls:
@@ -386,8 +405,8 @@ def refresh_weights(db: Session, commit: bool = True, campaign_ids=None) -> dict
         q = q.filter(AdCampaign.id.in_(list(campaign_ids)))
     camps = q.all()
     changed = 0
-    from app.ad.balance import manual_publishers, share_cap
-    cap_ctx = (share_cap(db), manual_publishers(db))
+    from app.ad.balance import manual_scopes, share_cap
+    cap_ctx = (share_cap(db), manual_scopes(db))
     for camp in camps:
         surfaces = deal_plan(db, camp.deal_id)["surfaces"]
         if not surfaces:
@@ -410,22 +429,51 @@ def refresh_weights(db: Session, commit: bool = True, campaign_ids=None) -> dict
     return {"campaigns": len(camps), "weights_changed": changed}
 
 
+def deal_publishers(db: Session, deal_id: int) -> set:
+    """Площадки РК — те, кого аккаунт завёл получателями в сделке (владелец 30.09.2026),
+    без архивных. Раньше РК наполнялась всеми площадками услуги из справочника, и в ней
+    стояли площадки, которых аккаунт в сделку не брал (в т.ч. ушедший в архив dialog.ru):
+    доли и индекс делились на площадки, которые крутить не будут."""
+    return {r[0] for r in db.execute(text("""
+        SELECT DISTINCT t.publisher_id FROM launch_prep_target t
+          JOIN sales_publishers p ON p.id = t.publisher_id
+         WHERE t.deal_id = :d AND p.status <> :arch
+    """), {"d": deal_id, "arch": PUBLISHER_ARCHIVE_STATUS})}
+
+
+# Площадка РК «без следа»: ни креативов, ни статистики, ни пикселя, статус не трогали.
+# Такую можно убрать из РК, когда аккаунт её в сделке не держит, — ничего не теряется.
+_UNTOUCHED_SQL = """
+    SELECT p.id FROM ad_campaign_placement p
+     WHERE p.campaign_id = :c AND NOT (p.publisher_id = ANY(:keep))
+       AND p.status = :wait AND p.weborama_pixel IS NULL
+       AND NOT EXISTS (SELECT 1 FROM ad_campaign_creative c WHERE c.placement_id = p.id)
+       AND NOT EXISTS (SELECT 1 FROM ad_campaign_stat s  -- любой source: и факт, и верификатор
+                        WHERE s.placement_id = p.id)
+       AND NOT EXISTS (SELECT 1 FROM weborama_refs w
+                        WHERE w.kind = 'insertion' AND w.local_id = p.id)
+"""
+
+
 def sync_placements(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
-    """Добавляет недостающих кандидатов в РК. Существующие не трогает (статусы — за трафиком)."""
+    """Площадки РК = получатели сделки (`deal_publishers`). Недостающих добавляет,
+    лишних «без следа» убирает; площадку с креативами, статистикой или ручным статусом
+    не трогает никогда — её судьбу решает трафик."""
     plan = deal_plan(db, camp.deal_id)
-    cands = candidates(db, plan["services"], plan["surfaces"])
+    keep = deal_publishers(db, camp.deal_id)
     weights = publisher_weights(db, plan["surfaces"])
+    drop = [r[0] for r in db.execute(text(_UNTOUCHED_SQL),
+                                     {"c": camp.id, "keep": list(keep) or [0], "wait": PLACEMENT_WAIT})]
+    if drop:
+        db.query(AdCampaignPlacement).filter(AdCampaignPlacement.id.in_(drop)).delete(
+            synchronize_session=False)
     have = {p.publisher_id for p in db.query(AdCampaignPlacement)
             .filter(AdCampaignPlacement.campaign_id == camp.id).all()}
 
     added = 0
-    for c in cands:
-        pid = c["publisher_id"]
-        if pid in have:
-            continue
+    for pid in sorted(keep - have):
         db.add(AdCampaignPlacement(campaign_id=camp.id, publisher_id=pid,
                                    weight=weights.get(pid), status=PLACEMENT_WAIT))
-        have.add(pid)
         added += 1
     db.flush()
     # вес мог появиться у уже заведённых (балансировщик наполняется) — обновляем и пересчитываем
@@ -438,8 +486,8 @@ def sync_placements(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
     db.flush()
     if commit:
         db.commit()
-    return {"candidates": len(cands), "added": added,
-            "without_weight": sum(1 for c in cands if not weights.get(c["publisher_id"]))}
+    return {"candidates": len(keep), "added": added, "removed": len(drop),
+            "without_weight": sum(1 for pid in keep if not weights.get(pid))}
 
 
 def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
@@ -532,7 +580,17 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
         # незакрытая работа. Ручной статус трафика (например, «запущен» у уже крутящего)
         # это не перекрывает — `effective_status_creative` пропускает решение человека.
         # Отозванный у площадки (владелец 28.09.2026) — тоже: в работе его больше нет.
-        if (sid, pl.publisher_id) in replaced or r.get("withdrawn_at"):
+        # Возвращённый на переделку (трафиком или площадкой) — тоже «отклонён», 30.09.2026:
+        # синк понимал только «ок» и любой другой вердикт читал как «ещё не ответили»,
+        # поэтому 20 креативов стояли «у трафика», которых в конвейере, правильно, нет.
+        # Мяч после переделки у аккаунта: новый комплект даст новый креатив.
+        rework = any(v is not None and v != "ок"
+                     for v in (r["traffic_verdict"], r["platform_verdict"]))
+        # Уже заведённый в DSP креатив синк в «отклонён» НЕ переводит: он там крутит, и
+        # снимать его — решение трафика, а не пересчёта (ревью 30.09.2026).
+        in_dsp = bool((have.get((pl.id, sid)) and
+                       (have[(pl.id, sid)].ms_creative_xxhash or "").strip()))
+        if (sid, pl.publisher_id) in replaced or r.get("withdrawn_at") or (rework and not in_dsp):
             chain = "отклонён"
 
         # Номер — номер СВОЕГО комплекта: доработка рождает комплект со следующим
@@ -645,20 +703,25 @@ def creative_title(db: Session, camp: AdCampaign, pl: AdCampaignPlacement, no: i
 def sync_all(db: Session, commit: bool = True) -> dict:
     """Полный прогон: РК по сделкам + площадки-кандидаты. Идемпотентно."""
     res = sync_campaigns(db, commit=False)
-    added = cands = no_w = cr_new = cr_upd = 0
+    added = removed = cands = no_w = cr_new = cr_upd = 0
     for camp in db.query(AdCampaign).all():
         r = sync_placements(db, camp, commit=False)
         added += r["added"]
+        removed += r["removed"]
         cands += r["candidates"]
         no_w += r["without_weight"]
         # Креативы — ПОСЛЕ площадок: строка креатива живёт под площадкой, и до её
         # появления привязывать пару не к чему.
         c = sync_creatives(db, camp, commit=False)
+        # Синк креативов мог снять последние креативы площадки, которую аккаунт из сделки
+        # убрал, — доубираем сразу, иначе синк сходился бы только со второго прогона.
+        removed += sync_placements(db, camp, commit=False)["removed"]
         cr_new += c["created"]
         cr_upd += c["updated"]
     if commit:
         db.commit()
-    return {**res, "placements_added": added, "placement_candidates": cands,
+    return {**res, "placements_added": added, "placements_removed": removed,
+            "placement_candidates": cands,
             "placements_without_weight": no_w,
             "creatives_added": cr_new, "creatives_updated": cr_upd}
 
@@ -723,6 +786,7 @@ def sync_deal(db: Session, deal_id: int, commit: bool = True) -> dict:
         return {"skipped": "нет РК"}
     p = sync_placements(db, camp, commit=False)
     c = sync_creatives(db, camp, commit=False)
+    sync_placements(db, camp, commit=False)   # доуборка — см. `sync_all`
     if commit:
         db.commit()
     return {"placements_added": p["added"], "creatives_added": c["created"],

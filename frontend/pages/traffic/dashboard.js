@@ -29,6 +29,7 @@ import { surfaceTag } from '@/lib/dealTitle'
 import api, { auth } from '@/lib/api'
 import { downloadDealCreatives } from '@/lib/dealDocs'
 import OffsiteButton from '@/components/traffic/OffsiteButton'
+import PassportButton from '@/components/traffic/PassportButton'
 import ExternalLaunch from '@/components/traffic/ExternalLaunch'
 import {
   CreativeCounts, CreativeRows, Culprits, DASH, DayWall, Dynamics, KpiRow, PaceBar, Pips,
@@ -253,6 +254,34 @@ function WrAttach({ campaignId, pl, onDone }) {
     </div>
   )
 }
+
+// Цвет кнопок «ПИКСЕЛЬ WR» / «В DSP» (владелец 30.09.2026): зелёная — есть что сделать
+// сейчас, жёлтая — всё готовое уже сделано, серая — ещё нечего (ни один комплект не дошёл).
+const BTN_TONE = {
+  go: { background: 'var(--income-tint)', color: 'var(--income-fg)', borderColor: 'var(--income)' },
+  done: { background: 'var(--warning-tint)', color: 'var(--warning-fg)', borderColor: 'var(--warning)' },
+  idle: { background: 'var(--bg-subtle)', color: 'var(--text-faint)', borderColor: 'var(--border-card)' },
+  off: { background: 'var(--bg-subtle)', color: 'var(--text-faint)', borderColor: 'var(--border-card)' },
+}
+// Счётчик незаведённого — тот же вид, что счётчики в меню (Nav.Badge): красная плашка
+// с числом сразу после названия. Нуля не показываем.
+const CountBadge = ({ n }) => (n > 0 ? (
+  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    minWidth: 16, height: 16, padding: '0 5px', marginLeft: 6, borderRadius: 6,
+    background: 'var(--danger-tint)', color: 'var(--danger)', fontFamily: MONO,
+    fontSize: 9.5, fontWeight: 700 }}>{n}</span>
+) : null)
+
+const btnTitle = (base, b, what) => {
+  if (!b) return base
+  if (b.state === 'off') return b.external ? 'Пиксель — внешний тег сделки: вставки в Weborama не заводятся, у всех площадок пиксель уже есть' : `${base}. По этой РК свой пиксель Weborama не заказан`
+  if (b.state === 'go') return `${base}. Готово к действию площадок: ${b.go}; уже сделано: ${b.done}`
+  if (b.state === 'done') return `${base}. Всё готовое уже сделано (${b.done}); новое появится после согласования и ЕРИД`
+  return `${base}. Пока нечего: ни у одной площадки нет согласованного креатива с ЕРИД — ${what} ждёт`
+}
+
+// Порядок в «площадки и распределение»: не наш код → смешанные → наша DSP.
+const EXT_ORDER = (p) => (p.ext_mode === 'external' ? 0 : p.ext_mode === 'mixed' ? 1 : 2)
 
 export default function TrafficDashboard() {
   const router = useRouter()
@@ -561,7 +590,7 @@ export default function TrafficDashboard() {
     if (tab === 'noplan' && r.plan_show) return false
     if (tab === 'noplaces' && r.placements) return false
     const s = q.trim().toLowerCase()
-    return !s || [r.deal_code, r.deal_title, r.stage, r.product].some(
+    return !s || [r.deal_code, r.deal_title, r.brand, r.product, r.stage].some(
       v => String(v || '').toLowerCase().includes(s))
   })
   if (sortKey) {
@@ -639,8 +668,6 @@ export default function TrafficDashboard() {
                 </button>
               </span>
             )}
-            <input style={{ ...inp, width: 250 }} value={q} onChange={e => setQ(e.target.value)}
-              placeholder="Сделка, РК, услуга, стадия…" />
             {/* Выбор трафика — у всех, а не только у мастера: очередь общая, и «чьи РК»
                 здесь фильтр экрана, а не право. В списке ВСЕ активные учётки трафика,
                 мастера сверху и со звёздочкой. */}
@@ -722,6 +749,9 @@ export default function TrafficDashboard() {
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 19, fontWeight: 700, letterSpacing: '-0.02em',
               color: 'var(--text-primary)' }}>Рекламные кампании</span>
+            {/* Поиск — сразу за заголовком реестра, как на других реестрах (владелец 30.09.2026). */}
+            <input style={{ ...inp, width: 280 }} value={q} onChange={e => setQ(e.target.value)}
+              placeholder="Номер, название, бренд, услуга…" />
             <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-faint)' }}>
               {rows.length} из {all.length}</span>
             <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
@@ -1016,14 +1046,18 @@ export default function TrafficDashboard() {
                           <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
                             {/* Архив для площадок без нашего кода: баннеры по папкам площадок +
                                 Excel-паспорт (владелец 29.09.2026, app/traffic/offsite_export.py). */}
+                            <PassportButton dealId={r.deal_id} />
                             <OffsiteButton dealId={r.deal_id} />
                             {mayEdit && (<>
-                            <button style={{ ...btnSm(false), whiteSpace: 'nowrap' }} onClick={() => askExternal(r, 'weborama')}
-                              title="Завести вставки в Weborama и забрать пиксели показа">
-                              ПИКСЕЛЬ WR</button>
-                            <button style={{ ...btnSm(false), whiteSpace: 'nowrap' }} onClick={() => askExternal(r, 'dsp')}
-                              title="Выгрузить креативы согласованных площадок в DSP">
-                              В DSP</button>
+                            <button style={{ ...btnSm(false), ...BTN_TONE[d.buttons?.weborama?.state], whiteSpace: 'nowrap' }}
+                              disabled={d.buttons?.weborama?.state === 'off'}
+                              onClick={() => askExternal(r, 'weborama')}
+                              title={btnTitle('Завести вставки в Weborama и забрать пиксели показа', d.buttons?.weborama, 'пиксель')}>
+                              ПИКСЕЛЬ WR<CountBadge n={d.buttons?.weborama?.go} /></button>
+                            <button style={{ ...btnSm(false), ...BTN_TONE[d.buttons?.dsp?.state], whiteSpace: 'nowrap' }}
+                              onClick={() => askExternal(r, 'dsp')}
+                              title={btnTitle('Выгрузить креативы согласованных площадок в DSP', d.buttons?.dsp, 'выгрузка')}>
+                              В DSP<CountBadge n={d.buttons?.dsp?.go} /></button>
                             </>)}
                           </span>
                         )}
@@ -1081,7 +1115,7 @@ export default function TrafficDashboard() {
                       {d && !!d.placements.length && !byCr && (
                         <>
                           <div style={{ display: 'grid', gap: 9, padding: '0 0 6px',
-                            gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 52px 68px',
+                            gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 62px 68px',
                             borderBottom: '1px solid var(--border-inner)' }}>
                             {['Площадка', 'Креативы', 'Код', 'Вес', 'Доля', 'План', 'Факт', 'Недокрут', 'Статус', 'WR·DSP', '']
                               .map((h, i) => (
@@ -1092,14 +1126,16 @@ export default function TrafficDashboard() {
                                     : (i === 8 || i === 9) ? 'center' : 'left' }}>{h}</span>
                               ))}
                           </div>
-                          {d.placements.map(p => (
+                          {/* Площадки «не наш код» — всегда сверху (владелец 30.09.2026): их запуск
+                              ручной, галочкой, и они не должны теряться среди DSP-площадок. */}
+                          {[...d.placements].sort((a, b) => EXT_ORDER(a) - EXT_ORDER(b)).map(p => (
                             <Fragment key={p.id}>
                             {/* Объём площадки против плана РК (27.09.2026): > 50 % — жёлтым,
                                 > 100 % — красным; причина в подсказке. */}
                             <div onClick={() => setOpenPlace(x => (x === p.id ? null : p.id))}
                               title={volTitle(d.volumes, p.publisher_id)}
                               style={{ display: 'grid', gap: 9, alignItems: 'center', cursor: 'pointer',
-                              gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 52px 68px',
+                              gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 62px 68px',
                               padding: '7px 0', borderBottom: '1px solid var(--border-row)',
                               background: volTint(d.volumes, p.publisher_id) }}>
                               {/* Обрезается НАЗВАНИЕ, а метки остаются целыми: «не на…» не читается. */}
@@ -1168,6 +1204,12 @@ export default function TrafficDashboard() {
                                   состояние не должно называться на двух экранах
                                   по-разному. */}
                               <span style={{ justifySelf: 'center', display: 'inline-flex', gap: 3 }}>
+                                {/* ЕРИД — перед Weborama и DSP: без него нельзя ни то, ни другое.
+                                    Серый — ни у одного креатива, жёлтый — у части, зелёный — у всех. */}
+                                <ExtChip letter="Е" size={17}
+                                  tone={{ all: 'ok', part: 'wait' }[p.erid?.state] || 'none'}
+                                  title={`ЕРИД: ${p.erid ? `${p.erid.got} из ${p.erid.total} креативов` : 'нет данных'}`
+                                    + (p.erid?.state === 'part' ? ' — у части креативов ещё нет, их пиксель и выгрузка ждут' : '')} />
                                 <ExtChip letter="W" size={17}
                                   tone={EXT_TONE[p.external?.weborama?.state] || 'none'}
                                   title={`Weborama: ${p.external?.weborama?.state || 'нет данных'}`
@@ -1184,6 +1226,7 @@ export default function TrafficDashboard() {
                                 )}
                                 {mayEdit && p.ext_mode !== 'external' && (
                                   <PlaceActions status={p.status} canStart={p.can_start}
+                                    uploaded={p.dsp_uploaded}
                                     onStart={() => setPlacementStatus(r.id, p, 'запущен')}
                                     onPause={() => setPlacementStatus(r.id, p, 'пауза')}
                                     onOff={() => setPlacementStatus(r.id, p, 'завершена')} />
@@ -1539,6 +1582,11 @@ export default function TrafficDashboard() {
                   ) : (
                   <div>Площадок готово к заведению: <b>{pl.ready ?? 0}</b>.
                     Пиксель уже есть у <b>{pl.have ?? 0}</b>, будет получено ещё <b>{pl.todo ?? 0}</b>.</div>
+                  )}
+                  {!!pl.wait_erid && (
+                    <div style={{ color: 'var(--warning-fg)' }}>
+                      {pl.wait_erid} площадок ждут ЕРИД — пиксель им заведётся после выпуска ЕРИД
+                      (автовыпуск раз в 30 минут), без ЕРИД заводить нельзя.</div>
                   )}
                   {!!pl.not_ready && (
                     <div style={{ color: 'var(--text-muted)' }}>

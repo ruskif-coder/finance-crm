@@ -60,14 +60,19 @@ OFFSITE_WHY = "площадка во внешней DSP — креатив за�
 
 def _state_of(p: AdCampaignPlacement, refs: dict, hung: set,
               crs: List[AdCampaignCreative], dsp_hung=frozenset(), offsite: bool = False,
-              external_surfaces=()) -> dict:
-    """Состояние ОДНОЙ площадки. Единственное место, где эти правила записаны."""
+              external_surfaces=(), ext_tag: bool = False) -> dict:
+    """Состояние ОДНОЙ площадки. Единственное место, где эти правила записаны.
+
+    `ext_tag` — по сделке внешний тег пикселя (один на кампанию, карточка сделки): вставки
+    по площадкам не заводятся, пиксель у всех уже есть (владелец 30.09.2026)."""
     if p.is_direct:
         # Крутит сама — внешние системы её не касаются вовсе.
         return {"weborama": {"state": NOT_NEEDED, "why": "площадка крутит сама"},
                 "dsp": {"state": NOT_NEEDED, "why": "площадка крутит сама"}}
 
-    if p.id in hung:
+    if ext_tag:
+        wb = {"state": READY, "why": "пиксель получен — внешний тег сделки"}
+    elif p.id in hung:
         wb = {"state": UNKNOWN,
               "why": "попытка не завершилась — исход неизвестен, повторять нельзя"}
     elif p.weborama_pixel:
@@ -145,13 +150,17 @@ def states_by_campaign(db: Session, campaign_ids: Iterable[int]) -> Dict[int, Di
     from app.launch_prep.pub_rules import MODE_EXTERNAL, MODE_MIXED, placement_modes
     deal_of = dict(db.query(AdCampaign.id, AdCampaign.deal_id).filter(AdCampaign.id.in_(ids)).all())
     modes = placement_modes(db, {(deal_of.get(p.campaign_id), p.publisher_id) for p in pls})
+    from app.ad.build import pixel_setup
+    ext_of = {d: bool(px["tag"]) for d in set(deal_of.values()) if d
+              for px in [pixel_setup(db, d)]}
     out: Dict[int, Dict[int, dict]] = {i: {} for i in ids}
     for p in pls:
         m = modes.get((deal_of.get(p.campaign_id), p.publisher_id)) or {}
         out[p.campaign_id][p.id] = _state_of(
             p, refs, hung, crs.get(p.id, []), dsp_hung,
             offsite=m.get("mode") == MODE_EXTERNAL,
-            external_surfaces=m.get("external", []) if m.get("mode") == MODE_MIXED else ())
+            external_surfaces=m.get("external", []) if m.get("mode") == MODE_MIXED else (),
+            ext_tag=ext_of.get(deal_of.get(p.campaign_id), False))
     return out
 
 

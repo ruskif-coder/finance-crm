@@ -96,6 +96,10 @@ ALLOWED_DESTRUCTIVE = (
     # читалась бы днём открутки. Ровно одна ячейка «РК × площадка × сутки» и только свой
     # источник `dsp`: ручной факт и верификатор этим запросом не задеть.
     "DELETE FROM ad_campaign_stat WHERE campaign_id = :c AND placement_id IS NOT DISTINCT FROM :p AND date = :d AND source = 'dsp'",
+    # История проверок доступности сайтов (30.09.2026): хранится 30 дней, старше —
+    # вычищается тем же прогоном. Журнал наблюдений, не учётные данные; область — только
+    # строки старше отсечки.
+    "DELETE FROM site_checks WHERE checked_at < :t",
 )
 
 DATA_MUTATING = (

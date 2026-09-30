@@ -271,6 +271,7 @@ PLACES = {
     "campaign_ready":       ("Трафик — дашборд кампаний", "/traffic/dashboard"),
     "weborama_pixel":       ("Трафик — дашборд кампаний", "/traffic/dashboard"),
     "fact_collected":       ("Трафик — дашборд кампаний", "/traffic/dashboard"),
+    "mp_one_surface":       ("Карточка сделки — Медиаплан", "#mp"),
     "annex_generated":      ("Справочники — Приложения к договорам", "/directory/annexes"),
     "signatory_filled":     ("Справочники — Контрагенты", "/directory/counterparties"),
     "ds_signed":            ("Карточка сделки — Документы", "#docs"),
@@ -329,6 +330,29 @@ def _period_set(c: Ctx) -> Result:
 
 
 # ── Бронь ────────────────────────────────────────────────────────────────────
+
+@register("mp_one_surface", "Медиаплан: одна поверхность на услугу",
+          "Web и app одной услуги — две отдельные сделки: разделите медиаплан")
+def _mp_one_surface(c: Ctx) -> Result:
+    """Web и app одной услуги в одной сделке — это ДВЕ сделки (владелец 30.09.2026).
+
+    Получатель сборки уникален по паре «сделка × площадка», и поверхность у него одна:
+    если медиаплан просит у площадки и web, и app, вторая половина размещения адресата
+    не получит. Прибор `tests/test_surface_uniqueness` сработал на 9HT4V9 — отсюда
+    алерт на карточке, а не только красный тест.
+    """
+    from sqlalchemy import text as _t
+    from app.ad.build import LATEST_PLAN_SQL
+    rows = c.db.execute(_t(f"""
+        SELECT r.position FROM sales_media_plan_rows r
+         WHERE r.plan_id = ({LATEST_PLAN_SQL}) AND lower(trim(r.inventory)) IN ('web', 'app')
+         GROUP BY r.position HAVING count(DISTINCT lower(trim(r.inventory))) > 1
+    """), {"d": c.deal.id}).all()
+    if not rows:
+        return _ok()
+    names = ", ".join(sorted(r[0] for r in rows if r[0]))
+    return _not_yet(f"web и app в одной сделке: {names} — разделите на две сделки")
+
 
 @register("realization_pipeline", "Воронка реализации выбрана",
           "Выберите воронку под продукт в диалоге движения")

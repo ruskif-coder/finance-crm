@@ -23,6 +23,7 @@ import { MONO, UI, card, CAP, btn, btnSm, inp, sel, chip, cell, SortHead }
   from '@/components/salesTableKit'
 import ValuePopover from '@/components/ValuePopover'
 import Balancer from '@/components/traffic/Balancer'
+import SiteMonitor from '@/components/traffic/SiteMonitor'
 import SiteScript from '@/components/traffic/SiteScript'
 import PublisherRules from '@/components/traffic/PublisherRules'
 import api, { auth } from '@/lib/api'
@@ -295,6 +296,7 @@ export default function TrafficCatalog() {
         <div style={{ display: 'flex', gap: 6, marginBottom: 18,
           borderBottom: '1px solid var(--border-card)' }}>
           {[['blocks', 'Настройка блоков'], ['balancer', 'Балансировщик'], ['script', 'Скрипт'],
+            ['sites', 'Доступность сайтов'],
             // «Особенности площадок» — своё право («трафик админ», 29.09.2026).
             ...(rights.rulesView ? [['rules', 'Особенности площадок']] : [])].map(([k, l]) => (
             <div key={k} onClick={() => setAdminTab(k)} style={{
@@ -307,6 +309,7 @@ export default function TrafficCatalog() {
         </div>
 
         {adminTab === 'balancer' && <Balancer mayEdit={mayEdit} />}
+        {adminTab === 'sites' && <SiteMonitor mayEdit={mayEdit} />}
         {adminTab === 'script' && <SiteScript mayEdit={mayEdit} />}
         {adminTab === 'rules' && rights.rulesView && <PublisherRules mayEdit={!!rights.rulesEdit} />}
 

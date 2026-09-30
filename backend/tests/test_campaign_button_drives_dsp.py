@@ -176,9 +176,53 @@ def test_placement_launch_makes_dsp_follow(press, monkeypatch):
     """Площадка запущена — РК стала «запущена» по факту, и DSP это видит."""
     pl = SimpleNamespace(id=9, campaign_id=5, status="ждёт запуска", publisher_id=3)
     press["db"] = _Db(placement=pl)
-    monkeypatch.setattr(td, "_creatives_of", lambda db, cid: {9: [{"status": "согласован"}]})
+    monkeypatch.setattr(td, "_creatives_of", lambda db, cid: {
+        9: [{"status": "согласован", "ms_creative_xxhash": "cr-hash"}]})
+    from app.launch_prep import pub_rules
+    monkeypatch.setattr(pub_rules, "placement_modes", lambda db, keys: {})
     monkeypatch.setattr(td.build, "recompute_shares", lambda db, cid: None)
     monkeypatch.setattr(td.build, "mark_target_placed", lambda db, p: 0)
     td.set_placement_status(9, td.StatusIn(status="запущен"), press["db"],
                             SimpleNamespace(id=1))
     assert ("status", XX, "LAUNCHED") in press["ms"].calls
+
+
+def test_placement_start_before_dsp_upload_is_409(press, monkeypatch):
+    """Площадку нашей DSP нельзя запустить до выгрузки (владелец 30.09.2026)."""
+    pl = SimpleNamespace(id=9, campaign_id=5, status="ждёт запуска", publisher_id=3)
+    press["db"] = _Db(placement=pl)
+    monkeypatch.setattr(td, "_creatives_of", lambda db, cid: {9: [{"status": "согласован"}]})
+    from app.launch_prep import pub_rules
+    monkeypatch.setattr(pub_rules, "placement_modes", lambda db, keys: {})
+    with pytest.raises(td.HTTPException) as e:
+        td.set_placement_status(9, td.StatusIn(status="запущен"), press["db"],
+                                SimpleNamespace(id=1))
+    assert e.value.status_code == 409 and "не выгружена" in e.value.detail
+
+
+def test_external_placement_starts_without_dsp_upload(press, monkeypatch):
+    """Внешняя площадка в нашу DSP не выгружается — её галочку запрет не касается."""
+    pl = SimpleNamespace(id=9, campaign_id=5, status="ждёт запуска", publisher_id=3)
+    press["db"] = _Db(placement=pl)
+    monkeypatch.setattr(td, "_creatives_of", lambda db, cid: {9: [{"status": "согласован"}]})
+    from app.launch_prep import pub_rules
+    monkeypatch.setattr(pub_rules, "placement_modes",
+                        lambda db, keys: {k: {"mode": pub_rules.MODE_EXTERNAL} for k in keys})
+    monkeypatch.setattr(td.build, "recompute_shares", lambda db, cid: None)
+    monkeypatch.setattr(td.build, "mark_target_placed", lambda db, p: 0)
+    td.set_placement_status(9, td.StatusIn(status="запущен"), press["db"], SimpleNamespace(id=1))
+    assert pl.status == "запущен"
+
+
+def test_running_placement_can_be_paused_without_dsp_hash(press, monkeypatch):
+    """Крутящую площадку остановить можно всегда (ревью 30.09.2026): её креатив могли
+    вернуть на переделку, а хеш у нового ещё не появился."""
+    pl = SimpleNamespace(id=9, campaign_id=5, status="запущен", publisher_id=3)
+    press["db"] = _Db(placement=pl)
+    monkeypatch.setattr(td, "_creatives_of", lambda db, cid: {9: [{"status": "согласован"}]})
+    from app.launch_prep import pub_rules
+    monkeypatch.setattr(pub_rules, "placement_modes", lambda db, keys: {})
+    monkeypatch.setattr(td.build, "recompute_shares", lambda db, cid: None)
+    monkeypatch.setattr(td.build, "mark_target_placed", lambda db, p: 0)
+    td.set_placement_status(9, td.StatusIn(status="пауза"), press["db"], SimpleNamespace(id=1))
+    assert pl.status == "пауза"

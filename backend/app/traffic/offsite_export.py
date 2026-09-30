@@ -78,19 +78,34 @@ def _status(pair, verdict) -> str:
         verdict, "ждёт ответа")
 
 
-def build(db: Session, deal: SalesDeal) -> Tuple[bytes, str]:
+def pixel_for(deal: SalesDeal, placement) -> str:
+    """Пиксель Weborama для паспорта. Внешний тег (принесли готовым, один на кампанию —
+    `weborama_pixel_mode = 'external'`) стоит в СДЕЛКЕ, а не в размещении: до 30.09.2026
+    паспорт брал только пиксель размещения, и у РК с внешним тегом колонка была пустой."""
+    if not deal.weborama_pixel:
+        return "не нужен"
+    if (deal.weborama_pixel_mode or "own") == "external":
+        return deal.weborama_pixel_tag or "внешний тег не загружен"
+    return (placement.weborama_pixel if placement else None) or "ещё не получен"
+
+
+def build(db: Session, deal: SalesDeal, whole: bool = False) -> Tuple[bytes, str]:
+    """whole=False — архив для площадок без нашего кода (баннеры + паспорт);
+    whole=True — только паспорт .xlsx по ВСЕЙ РК, без креативов (владелец 30.09.2026)."""
     from app.ad.models import AdCampaign, AdCampaignPlacement
 
-    rows = (db.query(LaunchPrepPair, LaunchPrepCreativeSet, LaunchPrepTarget, SalesPublisher)
+    q = (db.query(LaunchPrepPair, LaunchPrepCreativeSet, LaunchPrepTarget, SalesPublisher)
             .join(LaunchPrepCreativeSet, LaunchPrepCreativeSet.id == LaunchPrepPair.set_id)
             .join(LaunchPrepTarget, LaunchPrepTarget.id == LaunchPrepPair.target_id)
             .join(SalesPublisher, SalesPublisher.id == LaunchPrepTarget.publisher_id)
             .filter(LaunchPrepCreativeSet.deal_id == deal.id,
-                    LaunchPrepPair.sent_at.isnot(None),
-                    SalesPublisher.our_code.isnot(True))
-            .order_by(SalesPublisher.name, LaunchPrepCreativeSet.no).all())
+                    LaunchPrepPair.sent_at.isnot(None)))
+    if not whole:
+        q = q.filter(SalesPublisher.our_code.isnot(True))
+    rows = q.order_by(SalesPublisher.name, LaunchPrepCreativeSet.no).all()
     if not rows:
-        raise NothingToExport("В РК нет площадок без нашего кода, которым отправлялись креативы")
+        raise NothingToExport("В РК нет площадок, которым отправлялись креативы" if whole else
+                              "В РК нет площадок без нашего кода, которым отправлялись креативы")
 
     pair_ids = [p.id for p, *_ in rows]
     verdicts = dict(db.query(LaunchPrepReview.pair_id, LaunchPrepReview.verdict)
@@ -138,8 +153,10 @@ def build(db: Session, deal: SalesDeal) -> Tuple[bytes, str]:
                 ext = os.path.splitext(f.original_name or f.path)[1].lower() or ".bin"
                 name = traffic_file_name(deal.code, pub.code, s.no, seq, ext)
                 path = f"{root}/{folder}/{name}"
-                full = originals.path_for_publisher(f.path)
-                if full and os.path.exists(full):
+                full = None if whole else originals.path_for_publisher(f.path)
+                if whole:
+                    path = f"{folder}/{name}"
+                elif full and os.path.exists(full):
                     with open(full, "rb") as fh:
                         data = fh.read()
                     if f.is_archive and rule.get("channel") == "adfox":
@@ -159,7 +176,7 @@ def build(db: Session, deal: SalesDeal) -> Tuple[bytes, str]:
                     getattr(member, "deeplink_url", None) if member else None,
                     t.period_from or deal.period_from, t.period_to or deal.period_to,
                     (member.plan_show if member and member.plan_show else (pl.plan_show if pl else None)),
-                    pl.weborama_pixel if pl else None])
+                    pixel_for(deal, pl)])
         for col, w in zip("ABCDEFGHIJKLMNOPQRST", WIDTH):
             ws.column_dimensions[col].width = w
         for row in ws.iter_rows(min_row=2):
@@ -173,5 +190,7 @@ def build(db: Session, deal: SalesDeal) -> Tuple[bytes, str]:
         ws.auto_filter.ref = ws.dimensions
         x = io.BytesIO()
         save_workbook(wb, x)   # щит от формул: имена от клиента могут начинаться с «=»
+        if whole:
+            return x.getvalue(), f"pasport_{deal_code}_{date.today():%Y%m%d}.xlsx"
         z.writestr(f"{root}/pasport_{deal_code}.xlsx", x.getvalue())
     return buf.getvalue(), f"{deal_code}_offsite_{date.today():%Y%m%d}.zip"

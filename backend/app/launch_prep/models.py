@@ -285,6 +285,9 @@ class LaunchPrepPair(Base):
     withdrawn_at = Column(DateTime)
     withdrawn_by = Column(Integer, ForeignKey("users.id"))
     withdraw_reason = Column(Text)
+    # Вид снятия (2026-09-30_rework_decline.sql): «отзыв» | «отказ в правках». Отказ в
+    # правках остаётся виден площадке со статусом «отказ» до сверки месяца.
+    withdraw_kind = Column(String(24))
     created_at = Column(DateTime, server_default=func.now())
 
     creative_set = relationship("LaunchPrepCreativeSet", back_populates="pairs")
@@ -389,6 +392,16 @@ class SalesUrlRequestPhrase(Base):
     в запрос фраза не должна меняться задним числом вместе со справочником.
     """
     __tablename__ = "sales_url_request_phrases"
+    id = Column(Integer, primary_key=True)
+    text = Column(Text, nullable=False, unique=True)
+    sort_order = Column(Integer, nullable=False, default=0, server_default='0')
+    is_active = Column(Boolean, nullable=False, default=True, server_default='true')
+
+
+class SalesReworkDeclinePhrase(Base):
+    """Готовые ответы площадке, когда её правки не приняты (30.09.2026). Накопитель того
+    же вида, что фразы запроса ссылки: хранится текстом, набранный ответ пополняет список."""
+    __tablename__ = "sales_rework_decline_phrases"
     id = Column(Integer, primary_key=True)
     text = Column(Text, nullable=False, unique=True)
     sort_order = Column(Integer, nullable=False, default=0, server_default='0')

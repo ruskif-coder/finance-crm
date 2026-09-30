@@ -94,20 +94,33 @@ def share_cap(db: Session) -> Optional[float]:
     return (pct / 100.0) if pct and pct > 0 else None
 
 
-def manual_publishers(db: Session) -> set:
-    """Площадки с ручным индексом — потолок доли их не касается.
-    По ПЛОЩАДКЕ, а не по поверхности: строка РК одна на площадку, её вес — сумма весов
-    поверхностей, и ручной индекс любой из них делает вес площадки ручным."""
-    return {r[0] for r in db.execute(text(
-        "SELECT DISTINCT publisher_id FROM publisher_balance_index WHERE index_manual IS NOT NULL"))}
+def manual_scopes(db: Session) -> dict:
+    """{площадка: {поверхности с ручным индексом}} — потолок снимается ПО ПОВЕРХНОСТИ
+    (владелец 30.09.2026): ручной индекс на app не освобождает web той же площадки."""
+    out: dict = {}
+    for pid, scope in db.execute(text(
+            "SELECT publisher_id, scope FROM publisher_balance_index "
+            "WHERE index_manual IS NOT NULL")):
+        out.setdefault(pid, set()).add(scope)
+    return out
 
 
-def mark_capless(db: Session, placements, manual: Optional[set] = None) -> None:
+def is_capless(manual: dict, publisher_id, surfaces) -> bool:
+    """Свободна ли площадка от потолка в РК с поверхностями `surfaces` (web / app).
+    Поверхности сделки неизвестны (нет медиаплана) — смотрим на любую ручную."""
+    mine = manual.get(publisher_id) or set()
+    if not surfaces:
+        return bool(mine)
+    return bool(mine & {sc for sc in SCOPES if SCOPE_SURFACE[sc] in set(surfaces)})
+
+
+def mark_capless(db: Session, placements, surfaces, manual: Optional[dict] = None) -> None:
     """Проставить `capless` строкам размещений (dict с `publisher_id`) перед `distribute`.
-    `manual` — заранее прочитанный `manual_publishers`, чтобы цикл по РК не ходил в базу."""
-    manual = manual_publishers(db) if manual is None else manual
+    `surfaces` — поверхности сделки РК; `manual` — заранее прочитанный `manual_scopes`,
+    чтобы цикл по РК не ходил в базу."""
+    manual = manual_scopes(db) if manual is None else manual
     for p in placements:
-        p["capless"] = p.get("publisher_id") in manual
+        p["capless"] = is_capless(manual, p.get("publisher_id"), surfaces)
 
 
 # ── замеры ────────────────────────────────────────────────────────────────

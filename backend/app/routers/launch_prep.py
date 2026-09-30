@@ -296,6 +296,7 @@ def _recipient_out(target, pub, pair=None, review=None, traffic=None,
         # Отзыв у площадки (владелец 28.09.2026) — наше решение, а не её вердикт.
         "withdrawn_at": getattr(pair, "withdrawn_at", None),
         "withdraw_reason": getattr(pair, "withdraw_reason", None),
+        "withdraw_kind": getattr(pair, "withdraw_kind", None),
         "verdict": review.verdict if review else None,
         "reason": review.reason if review else None,
         "decided_by": review.decided_by if review else None,
@@ -1678,9 +1679,16 @@ def _recompute_target_state(db: Session, target: LaunchPrepTarget):
     agreed = (db.query(LaunchPrepPair)
               .filter(LaunchPrepPair.target_id == target.id,
                       LaunchPrepPair.agreed_at.isnot(None),
-                      LaunchPrepPair.withdrawn_at.is_(None)).first())
+                      LaunchPrepPair.withdrawn_at.is_(None)).all())
     if agreed:
-        target.state = "согласован"
+        # ЕРИД — свойство КОМПЛЕКТА (владелец 30.09.2026): согласие по комплекту, у
+        # которого маркер уже есть, сразу даёт «ерид получен». До этого отметку ставил
+        # только сам выпуск (`_mark_targets_erid`) — тем, кто согласовал до него, и
+        # опоздавшие площадки навсегда оставались «согласован» (на проде 68 в 9 сделках).
+        with_erid = (db.query(LaunchPrepCreativeSet.id)
+                     .filter(LaunchPrepCreativeSet.id.in_([p.set_id for p in agreed]),
+                             LaunchPrepCreativeSet.erid.isnot(None)).first())
+        target.state = "ерид получен" if with_erid else "согласован"
 
 
 class SendIn(BaseModel):
@@ -2017,6 +2025,28 @@ def withdraw_pair(pair_id: int, payload: WithdrawIn, db: Session = Depends(get_d
         return W.withdraw(db, pair_id, current_user, payload.reason)
     except W.WithdrawError as e:
         raise HTTPException(status_code=409, detail=f"Отозвать нельзя: {e}")
+
+
+@router.post("/pair/{pair_id}/decline-rework")
+def decline_rework(pair_id: int, payload: WithdrawIn, db: Session = Depends(get_db),
+                   current_user: User = Depends(EDIT)):
+    """Отказать площадке в правках (владелец 30.09.2026): площадка просила доработку,
+    рекламодатель правки не принял. Креатив/площадка — вне ротации РК, у площадки —
+    «отказ» с нашим ответом до сверки месяца.
+
+    Кто: аккаунт сделки, мастер аккаунтов, админ — то есть все, кому сделка видна по
+    области (`_deal`), а не только мастер, как у отзыва."""
+    from app.launch_prep import withdraw as W
+
+    pair = db.query(LaunchPrepPair).filter(LaunchPrepPair.id == pair_id).first()
+    if not pair:
+        raise HTTPException(status_code=404, detail="Пара не найдена")
+    t = db.query(LaunchPrepTarget).filter(LaunchPrepTarget.id == pair.target_id).first()
+    _deal(db, t.deal_id, current_user)
+    try:
+        return W.withdraw(db, pair_id, current_user, payload.reason, kind=W.KIND_DECLINE)
+    except W.WithdrawError as e:
+        raise HTTPException(status_code=409, detail=f"Отказать нельзя: {e}")
 
 
 @router.post("/pair/{pair_id}/verdict")
@@ -2954,6 +2984,33 @@ def add_refusal_reason(payload: ReasonIn, db: Session = Depends(get_db),
         db.commit()
         db.refresh(row)
     return {"id": row.id, "name": row.text}
+
+
+@router.get("/rework-decline-phrases")
+def rework_decline_phrases(db: Session = Depends(get_db), current_user: User = Depends(VIEW)):
+    from app.launch_prep.models import SalesReworkDeclinePhrase as P
+    rows = db.query(P).filter(P.is_active.is_(True)).order_by(P.sort_order, P.id).all()
+    return {"items": [{"id": r.id, "text": r.text} for r in rows]}
+
+
+@router.post("/rework-decline-phrases")
+def add_rework_decline_phrase(payload: UrlRequestIn, db: Session = Depends(get_db),
+                              current_user: User = Depends(EDIT)):
+    """Накопитель ответов «правки не приняты»: набранный уходит в общий список."""
+    from app.launch_prep.models import SalesReworkDeclinePhrase as P
+    text_ = (payload.text or "").strip()
+    if not text_:
+        raise HTTPException(status_code=400, detail="Пустой ответ")
+    if len(text_) > 500:
+        raise HTTPException(status_code=400, detail="Ответ длиннее 500 символов")
+    row = db.query(P).filter(P.text == text_).first()
+    if row is None:
+        last = db.query(P.sort_order).order_by(P.sort_order.desc()).first()
+        row = P(text=text_, sort_order=((last[0] if last else 0) + 10))
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+    return {"id": row.id, "text": row.text}
 
 
 @router.get("/url-request-phrases")

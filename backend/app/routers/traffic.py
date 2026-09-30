@@ -217,6 +217,10 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
     # ничего. Правило — одной функцией с самой кнопкой, а не своей копией здесь.
     from app.dsp.targeting_creative import blind_sets, targeting_miss
     blind = blind_sets(db, set_ids)
+    # Сайт площадки сейчас недоступен (проверка раз в час, app/traffic/site_monitor.py) —
+    # алерт «Доступность сайта!!» в строке (владелец 30.09.2026). Одним запросом на экран.
+    from app.traffic.site_monitor import down_publishers
+    site_down = down_publishers(db)
 
     # Строки состава креативов — одним запросом: посадочная и запрос живут там.
     from app.routers.launch_prep import _members_of
@@ -258,6 +262,7 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
                           "code": pub.code if pub else None,
                           # Не в нашей DSP — нацеливание этот сайт не покажет.
                           "our_code": bool(pub.our_code) if pub else None,
+                          "site_down": target.publisher_id in site_down,
                           "tech_requirements": pub.tech_requirements if pub else None},
             "surface_kind": target.surface_kind,
             # Почему нацеливание на ЭТОЙ паре не покажет баннер — той же функцией, что
@@ -599,6 +604,25 @@ def offsite_archive(deal_id: int, db: Session = Depends(get_db),
     except OX.NothingToExport as e:
         raise HTTPException(status_code=404, detail=str(e))
     return Response(content=body, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/deal/{deal_id}/passport")
+def deal_passport(deal_id: int, db: Session = Depends(get_db),
+                  current_user: User = Depends(require_any_permission(
+                      ["traffic_queue", "traffic_dashboard"], "view"))):
+    """Паспорт по всей РК — .xlsx того же вида, что в архиве ADFOX, по всем площадкам,
+    без файлов креативов (владелец 30.09.2026)."""
+    from app.traffic import offsite_export as OX
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    try:
+        body, name = OX.build(db, deal, whole=True)
+    except OX.NothingToExport as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return Response(content=body,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 

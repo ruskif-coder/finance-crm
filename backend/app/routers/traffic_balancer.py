@@ -13,7 +13,7 @@ import logging
 from typing import List, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -288,3 +288,145 @@ def blocks_export(db: Session = Depends(get_db), user: User = Depends(VIEW)):
     out = [[("да" if r["is_active"] else "") if k == "is_active" else r[k]
             for k, _ in BLOCK_COLS] for r in rows]
     return _xlsx_response(_xlsx("Блоки", [t for _, t in BLOCK_COLS], out), "Каталог блоков.xlsx")
+
+
+# ── Доступность сайтов площадок (владелец 30.09.2026) ────────────────────────
+# Вкладка админки трафика; правила и проверка — `app/traffic/site_monitor.py`.
+
+class SiteSettingsIn(BaseModel):
+    extra: Optional[str] = None          # доп. сайты: строка — адрес [browser]
+    dsp_exclude: Optional[str] = None    # исключения «пропали из показов», строка — домен
+
+
+class SiteModeIn(BaseModel):
+    site_check: str                      # http | browser | off
+
+
+class SiteRunIn(BaseModel):
+    url: Optional[str] = None            # один адрес; пусто — все
+
+
+def _site_rows(db: Session) -> list:
+    from app.traffic import site_monitor as sm
+    last, hist = sm.latest(db), sm.history(db)
+    rows = []
+    for t in sm.targets(db):
+        c = last.get(t["url"]) or {}
+        rows.append({**t, "status": c.get("status"), "http_status": c.get("http_status"),
+                     "method": c.get("method"), "final_url": c.get("final_url"),
+                     "message": c.get("message"), "checked_at": c.get("checked_at"),
+                     "since": c.get("since"), "streak": c.get("streak"),
+                     "history": hist.get(t["url"], [])})
+    # Выключенные из проверки площадки реестра — тоже строкой, чтобы их можно было включить.
+    off = db.execute(text("""
+        SELECT DISTINCT ON (p.id) p.id, p.name, p.domain FROM sales_publisher_surfaces s
+          JOIN sales_publishers p ON p.id = s.publisher_id
+         WHERE s.kind = 'web' AND s.site_check = 'off' AND p.status <> :arch
+         ORDER BY p.id"""), {"arch": PUBLISHER_ARCHIVE_STATUS}).mappings().all()
+    for r in off:
+        rows.append({"url": sm.site_url(r["domain"]), "mode": "off", "publisher_id": r["id"],
+                     "name": r["name"], "status": None, "history": []})
+    for line in sm._setting(db, sm.SETTING_EXTRA).splitlines():
+        raw = line.split()
+        if line.strip().startswith("#") and len(raw) > 1 and sm.site_url(raw[1]):
+            rows.append({"url": sm.site_url(raw[1]), "mode": "off", "publisher_id": None,
+                         "name": raw[1].split("://")[-1], "status": None, "history": []})
+    return rows
+
+
+@router.get("/site-monitor")
+def site_monitor_rows(db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    from app.traffic import site_monitor as sm
+    return {"rows": _site_rows(db), "dsp": sm.dsp_state(db),
+            "extra": sm._setting(db, sm.SETTING_EXTRA),
+            "dsp_exclude": sm._setting(db, sm.SETTING_DSP_EXCLUDE)}
+
+
+@router.post("/site-monitor/run")
+def site_monitor_run(payload: SiteRunIn, background: BackgroundTasks,
+                     db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Проверить сейчас. Один адрес — сразу; все — в фоне (проверка браузером медленная,
+    на три десятка сайтов уходят минуты), экран перечитает список."""
+    from app.traffic import site_monitor as sm
+    if payload.url:
+        if payload.url not in {t["url"] for t in sm.targets(db)}:
+            raise HTTPException(404, "Такого сайта в списке проверки нет")
+        res = sm.run(db, only_url=payload.url)
+        return {"counts": res, "rows": _site_rows(db)}
+
+    def _bg():
+        from app.database import SessionLocal
+        s = SessionLocal()
+        try:
+            sm.run(s)
+        finally:
+            s.close()
+    background.add_task(_bg)
+    log_action(db, user, "site_monitor_run", "sales_publisher", None, "проверка всех сайтов")
+    return {"started": True}
+
+
+@router.put("/site-monitor/settings")
+def site_monitor_settings(payload: SiteSettingsIn, db: Session = Depends(get_db),
+                          user: User = Depends(EDIT)):
+    from app.traffic import site_monitor as sm
+    for key, val in ((sm.SETTING_EXTRA, payload.extra), (sm.SETTING_DSP_EXCLUDE, payload.dsp_exclude)):
+        if val is None:
+            continue
+        if len(val) > 5000:
+            raise HTTPException(400, "Список длиннее 5000 символов")
+        db.execute(text("INSERT INTO company_settings (key, value) VALUES (:k, :v) "
+                        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
+                   {"k": key, "v": val.strip()})
+    db.commit()
+    log_action(db, user, "site_monitor_settings", "sales_publisher", None,
+               "списки доп. сайтов / исключений обновлены")
+    return site_monitor_rows(db=db, user=user)
+
+
+class SiteExtraModeIn(BaseModel):
+    url: str
+    site_check: str                      # http | browser | off
+
+
+@router.put("/site-monitor/extra-mode")
+def site_monitor_extra_mode(payload: SiteExtraModeIn, db: Session = Depends(get_db),
+                            user: User = Depends(EDIT)):
+    """Режим доп. сайта вне реестра: переписываем его строку в списке настроек
+    («адрес» / «адрес browser»; «не проверять» — строка закомментирована `#`)."""
+    from app.traffic import site_monitor as sm
+    if payload.site_check not in ("http", "browser", "off"):
+        raise HTTPException(400, "Режим проверки: http, browser или off")
+    lines, hit = [], False
+    for line in sm._setting(db, sm.SETTING_EXTRA).splitlines():
+        raw = line.lstrip("#").split()
+        if raw and sm.site_url(raw[0]) == payload.url:
+            hit = True
+            line = ("# " if payload.site_check == "off" else "") + raw[0] + (
+                " browser" if payload.site_check == "browser" else "")
+        lines.append(line)
+    if not hit:
+        raise HTTPException(404, "Такого доп. сайта в списке нет")
+    db.execute(text("INSERT INTO company_settings (key, value) VALUES (:k, :v) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
+               {"k": sm.SETTING_EXTRA, "v": chr(10).join(lines)})
+    db.commit()
+    log_action(db, user, "site_monitor_mode", "sales_publisher", None,
+               f"доп. сайт {payload.url}: {payload.site_check}")
+    return site_monitor_rows(db=db, user=user)
+
+
+@router.put("/site-monitor/publisher/{publisher_id}")
+def site_monitor_mode(publisher_id: int, payload: SiteModeIn, db: Session = Depends(get_db),
+                      user: User = Depends(EDIT)):
+    if payload.site_check not in ("http", "browser", "off"):
+        raise HTTPException(400, "Режим проверки: http, browser или off")
+    n = db.execute(text("""UPDATE sales_publisher_surfaces SET site_check = :m
+                            WHERE publisher_id = :p AND kind = 'web'"""),
+                   {"m": payload.site_check, "p": publisher_id}).rowcount
+    if not n:
+        raise HTTPException(404, "У площадки нет web-поверхности")
+    db.commit()
+    log_action(db, user, "site_monitor_mode", "sales_publisher", publisher_id,
+               f"проверка сайта: {payload.site_check}")
+    return {"rows": _site_rows(db)}

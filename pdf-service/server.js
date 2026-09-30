@@ -57,4 +57,25 @@ app.post('/render', async (req, res) => {
   }
 });
 
+// Проверка доступности сайта настоящим браузером (владелец 30.09.2026): сайты с антиботом
+// режут простой запрос бэкенда 401/403, а браузер проходит. Бэкенд зовёт сюда только
+// адреса из своего списка площадок; принимаем лишь http(s).
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+app.post('/probe', async (req, res) => {
+  const { url, timeout_ms = 30000, wait_until = 'domcontentloaded' } = req.body || {};
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'url http(s) required' });
+  let ctx;
+  try {
+    const b = await getBrowser();
+    ctx = await b.newContext({ userAgent: UA, locale: 'ru-RU', ignoreHTTPSErrors: false });
+    const page = await ctx.newPage();
+    const resp = await page.goto(url, { waitUntil: wait_until, timeout: Math.min(Number(timeout_ms) || 30000, 60000) });
+    res.json({ status: resp ? resp.status() : null, final_url: page.url(), title: (await page.title()).slice(0, 200) });
+  } catch (e) {
+    res.json({ status: null, error: String(e && e.message || e).slice(0, 300) });
+  } finally {
+    if (ctx) await ctx.close().catch(() => {});
+  }
+});
+
 app.listen(PORT, () => console.log(`pdf-service listening on ${PORT}, frontend=${FRONTEND}`));

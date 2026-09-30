@@ -5,6 +5,7 @@
  *
  * Зависимость только React. Токены — из дизайн-системы финмодуля.
  */
+import { declinedOf, declinedTitle } from './CampaignCreatives'
 import React, { useMemo, useState } from 'react';
 
 /* ── токены ──────────────────────────────────────────────────────────
@@ -221,8 +222,12 @@ export default function ActiveCampaigns({ campaigns = DEMO, onOpen,
                   {c.erid || 'не выпущен'}
                 </span>
 
-                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: stBg, color: stFg, border: `1px solid ${stBorder}`, borderRadius: 7, padding: '4px 0', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                <span title={declinedTitle(c) || undefined} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: stBg, color: stFg, border: `1px solid ${stBorder}`, borderRadius: 7, padding: '4px 0', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
                   {c.status}
+                  {declinedOf(c).length > 0 && c.status !== 'отказ' && (
+                  <span title={declinedTitle(c)} style={{ marginLeft: 4, fontSize: 9.5, fontWeight: 700, padding: '2px 5px', borderRadius: 5, background: T.dangerTint, color: T.danger, whiteSpace: 'nowrap' }}>
+                    отказ №{declinedOf(c).map(cr => cr.no).join(', ')}</span>
+                )}
                 </span>
                 {acts && (() => {
                   const has = (c.creatives || []).some(x => (x.files || []).length)

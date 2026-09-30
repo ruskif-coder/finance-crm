@@ -65,14 +65,24 @@ def test_a_deal_does_not_need_both_surfaces_at_one_publisher():
     finally:
         db.close()
 
-    new = [r for r in rows if r.deal_id not in KNOWN]
-    assert not new, (
-        "Сделка просит у одной площадки ОБЕ поверхности: "
-        + "; ".join(f"сделка {r.deal_id} · {r.name} · {r.service}" for r in new)
-        + ". Получатель уникален по паре «сделка × площадка», и поверхность у него одна — "
-          "второй половине размещения адресата не достанется. Решите, как её описывать, "
-          "прежде чем отправлять задание."
-    )
+    # Решение владельца 30.09.2026 (сработало на 9HT4V9): web и app одной услуги — ДВЕ
+    # отдельные сделки. Такие сделки больше не «невозможны», а обязаны быть ПОМЕЧЕНЫ:
+    # проверка стадии `mp_one_surface` выводит алерт на карточке и в очереди аккаунта.
+    # Прибор теперь держит это: каждая такая сделка ловится алертом.
+    from app.sales import stage_checks as sc
+    from app.sales.models import SalesDeal
+    db = SessionLocal()
+    try:
+        missed = []
+        for deal_id in {r.deal_id for r in rows if r.deal_id not in KNOWN}:
+            deal = db.query(SalesDeal).get(deal_id)
+            res = sc.REGISTRY["mp_one_surface"].fn(sc.Ctx(db, deal))
+            if res.state == sc.OK:
+                missed.append(deal.code)
+    finally:
+        db.close()
+    assert not missed, ("Сделки с web и app у одной площадки без алерта «разделите на две "
+                        "сделки»: " + ", ".join(missed))
 
 
 def test_the_directory_still_says_which_surfaces_a_publisher_has():

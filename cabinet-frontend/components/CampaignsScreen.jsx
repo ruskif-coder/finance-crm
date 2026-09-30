@@ -6,6 +6,7 @@
  * Зависимость только React. Правая колонка (уведомления, команда, договоры, медиакит)
  * переиспользуется с дашборда — здесь не дублируется.
  */
+import { declinedOf, declinedTitle } from './CampaignCreatives'
 import React, { useMemo, useRef, useState } from 'react';
 import Pop from '../lib/pop';
 /* Размеры плиток — из общего кита, одни на оба экрана. В хендоффе они вписаны по месту,
@@ -402,7 +403,10 @@ export default function CampaignsScreen({ campaigns = DEMO, onOpen }) {
                               style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: c.erid ? 700 : 400, color: c.erid ? T.accent : T.t5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {c.erid || 'не выпущен'}
                             </span>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: stBg, color: stFg, border: `1px solid ${stBorder}`, borderRadius: 7, padding: '4px 0', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>{c.status}</span>
+                            <span title={declinedTitle(c) || undefined} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: stBg, color: stFg, border: `1px solid ${stBorder}`, borderRadius: 7, padding: '4px 0', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>{c.status}{declinedOf(c).length > 0 && c.status !== 'отказ' && (
+                  <span title={declinedTitle(c)} style={{ marginLeft: 4, fontSize: 9.5, fontWeight: 700, padding: '2px 5px', borderRadius: 5, background: T.dangerTint, color: T.danger, whiteSpace: 'nowrap' }}>
+                    отказ №{declinedOf(c).map(cr => cr.no).join(', ')}</span>
+                )}</span>
                           </div>
                         );
                       })}

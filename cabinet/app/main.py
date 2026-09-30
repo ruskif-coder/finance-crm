@@ -502,7 +502,8 @@ def campaigns(acc=Depends(current_account)):
             "  FROM pub.campaign_v1")).all()
         # Согласованные креативы размещения — для глаза и «Отозвать» (29.09.2026).
         crs = db.execute(text(
-            "SELECT task_id, placement_id, creative_no, creative_title, form, revocable "
+            "SELECT task_id, placement_id, creative_no, creative_title, form, revocable, "
+            "       status, decline_reason "
             "  FROM pub.campaign_creative_v1 ORDER BY creative_no")).all()
         tids = [c.task_id for c in crs]
         cfiles = db.execute(text(
@@ -518,7 +519,9 @@ def campaigns(acc=Depends(current_account)):
     for c in crs:
         creatives_of.setdefault(c.placement_id, []).append({
             "task_id": c.task_id, "no": c.creative_no, "title": c.creative_title,
-            "form": c.form, "revocable": bool(c.revocable), "files": files_of.get(c.task_id, [])})
+            "form": c.form, "revocable": bool(c.revocable), "files": files_of.get(c.task_id, []),
+            # «отказ» — мы не приняли правки площадки (30.09.2026); подсказка — наш ответ.
+            "status": c.status, "decline_reason": c.decline_reason})
 
     out = []
     for r in rows:

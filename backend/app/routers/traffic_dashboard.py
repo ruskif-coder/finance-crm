@@ -245,6 +245,65 @@ def _dsp_follow(db: Session, c) -> Optional[str]:
         raise HTTPException(502, f"DSP не принял смену статуса — изменения не сохранены: {e}")
 
 
+def erid_state(creatives) -> dict:
+    """ЕРИД площадки по её живым креативам (владелец 30.09.2026): серый — ни у одного,
+    жёлтый — у части (несколько креативов на площадке), зелёный — у всех."""
+    live = [c for c in creatives if c.get("status") != CREATIVE_REJECTED]
+    got = sum(1 for c in live if c.get("erid"))
+    state = "none" if not got else "all" if got == len(live) else "part"
+    return {"state": state, "got": got, "total": len(live)}
+
+
+def dsp_uploaded(creatives) -> bool:
+    """Выгружена ли площадка в DSP: хоть один креатив получил хеш DSP. Статус не
+    фильтруем: креатив, отклонённый уже после выгрузки, в DSP всё равно заведён."""
+    return any((c.get("ms_creative_xxhash") or "").strip() for c in creatives)
+
+
+def button_states(rows: list, creatives: dict, pixels: dict, px: dict) -> dict:
+    """Цвет кнопок «ПИКСЕЛЬ WR» и «В DSP» (владелец 30.09.2026):
+    go — есть что сделать сейчас (зелёная), done — всё готовое уже сделано (жёлтая),
+    idle — делать ещё нечего, ни один комплект не дошёл (серая).
+
+    Готово к действию — ровно то, что пропустят сами кнопки: пиксель — площадке «ждёт
+    запуска»/«запущен»/«пауза» с согласованным креативом с ЕРИД; выгрузка — площадке нашей
+    DSP с таким креативом без хеша DSP и с пикселем, если он заказан свой."""
+    from app.weborama.provision import ERID_CREATIVE_OK, READY_STATUSES
+    own_px = px.get("needed") and px.get("mode") != "external"
+    n = {"wr_go": 0, "wr_done": 0, "dsp_go": 0, "dsp_done": 0}
+    for r in rows:
+        live = [x for x in creatives.get(r["id"], []) if x.get("status") != CREATIVE_REJECTED]
+        ready = [x for x in live if x.get("status") in ERID_CREATIVE_OK and x.get("erid")]
+        stored, px_val = pixels.get(r["id"], (None, None))
+        has_px = bool(px_val)
+        # Прямые площадки исключены только из Weborama (как в `provision`), не из DSP.
+        # Статус — сохранённый, тот же, по которому отбирает заведение пикселя.
+        if own_px and not r.get("is_direct"):
+            if has_px:
+                n["wr_done"] += 1
+            elif ready and stored in READY_STATUSES:
+                n["wr_go"] += 1
+        if r.get("ext_mode") == "external":
+            continue
+        if dsp_uploaded(creatives.get(r["id"], [])):
+            n["dsp_done"] += 1
+        if (not own_px or has_px) and any(not (x.get("ms_creative_xxhash") or "").strip()
+                                          for x in ready):
+            n["dsp_go"] += 1
+
+    def tone(go, done):
+        return "go" if go else "done" if done else "idle"
+    return {"weborama": {"state": tone(n["wr_go"], n["wr_done"]) if own_px else "off",
+                         "go": n["wr_go"], "done": n["wr_done"],
+                         "external": bool(px.get("needed") and px.get("mode") == "external")},
+            "dsp": {"state": tone(n["dsp_go"], n["dsp_done"]),
+                    "go": n["dsp_go"], "done": n["dsp_done"]}}
+
+
+DSP_NOT_UPLOADED = ("Площадка ещё не выгружена в DSP — сначала «В DSP», потом запуск и "
+                    "пауза: иначе кнопка меняет статус у нас, а в DSP нечего включать")
+
+
 def _creatives_of(db: Session, campaign_id: int) -> dict:
     """Креативы РК по площадкам: {placement_id: [строки]}.
 
@@ -485,6 +544,8 @@ def dashboard(scope: Optional[str] = None,
     facts = _facts(db, ids)
     today = date.today()
     stages = dict(db.execute(text("SELECT id, name FROM sales_stages")).all())
+    # Бренд — для поиска в реестре (владелец 30.09.2026: номер, название, бренд, услуга).
+    brands = dict(db.execute(text("SELECT id, name FROM sales_brands")).all())
     # Услуга и её поверхность — тем же общим контекстом, что в реестре сделок и в
     # очереди аккаунта: трафик подбирает площадки по паре «услуга + поверхность», и
     # WEB-кампания от APP-кампании в списке иначе неотличима.
@@ -506,7 +567,8 @@ def dashboard(scope: Optional[str] = None,
     culprit_rows = []
     dist_by_camp: dict = {}
     cap = balance.share_cap(db)   # один раз на запрос, а не на каждую РК
-    manual = balance.manual_publishers(db)
+    manual = balance.manual_scopes(db)
+    surf_of = build.surfaces_by_deal(db, {c.deal_id for c, _d in pairs})
     for c, d in pairs:
         pls = places.get(c.id, [])
         by_pl = cr_all.get(c.id, {})
@@ -520,7 +582,7 @@ def dashboard(scope: Optional[str] = None,
         fl = flight_of(c.date_start, c.date_end, today)
         # Одно распределение на РК — и виновникам, и пипсам строки. Считать его дважды
         # значило бы завести два ответа на вопрос «сколько эта площадка недокрутила».
-        balance.mark_capless(db, pls, manual)
+        balance.mark_capless(db, pls, surf_of.get(c.deal_id, []), manual)
         dist_by_camp[c.id] = distribute(c.plan_show, facts.get(c.id, {}).get("shows"),
                                         fl, pls, cap=cap)["rows"]
         culprit_rows += dist_by_camp[c.id]
@@ -560,6 +622,7 @@ def dashboard(scope: Optional[str] = None,
             "traffic": traf_name.get(d.traffic_manager_id),
             "traffic_rep_id": d.traffic_manager_id,
             "product": d.product, "inventory": row_ctx.inventory(d.id, d.product),
+            "brand": brands.get(d.brand_id),
             # Цвет услуги — из справочника, тем же контекстом, что в реестре сделок и в
             # очереди аккаунта. Маркер перед услугой опознаётся быстрее слова, и цвет у
             # одной услуги обязан совпадать на всех экранах.
@@ -703,8 +766,12 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
             p["status"], best_chain_status(_as_placement_scale(x["status"]) for x in mine))
         d["can_start"] = can_start_placement(x["status"] for x in mine)
         d["creative_counts"] = creative_counts(mine)
+        d["erid"] = erid_state(mine)
+        # Кнопки старт/пауза — только после выгрузки в DSP; внешняя площадка в нашу DSP
+        # не идёт, у неё галочка, и запрет её не касается.
+        d["dsp_uploaded"] = dsp_uploaded(mine)
         prepared.append(d)
-    balance.mark_capless(db, prepared)
+    balance.mark_capless(db, prepared, build.deal_plan(db, c.deal_id)["surfaces"])
     out = distribute(c.plan_show, fact_total, fl, prepared, cap=balance.share_cap(db))
 
     # Третий этаж: план площадки делится ПОРОВНУ между её работающими креативами.
@@ -719,9 +786,13 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         row["external"] = ext.get(row["id"])
 
     chain_st = _chain_of(c, [(p["id"], p["status"]) for p in pls], creatives)
+    pixels = {r[0]: (r[1], r[2]) for r in db.execute(text(
+        "SELECT id, status, weborama_pixel FROM ad_campaign_placement WHERE campaign_id = :c"),
+        {"c": c.id}).all()}
 
     return {
         "id": c.id, "status": effective_campaign_status(c.status, chain_st),
+        "buttons": button_states(out["rows"], creatives, pixels, build.pixel_setup(db, c.deal_id)),
         "status_chain": chain_st, "plan_show": c.plan_show,
         "external_totals": ext_mod.totals(ext),
         "date_start": c.date_start, "date_end": c.date_end,
@@ -1205,6 +1276,17 @@ def set_placement_status(placement_id: int, payload: StatusIn,
         if not can_start_placement(mine):
             raise HTTPException(400, "Нет ни одного согласованного креатива — "
                                      "площадку нельзя запустить")
+    # Пауза КРУТЯЩЕЙ площадки не держится никогда: остановить то, что тратит, важнее
+    # проверки (ревью 30.09.2026 — креатив вернули на переделку, а площадка крутит).
+    if payload.status == "запущен" or (payload.status == "пауза" and p.status != "запущен"):
+        # Для площадок нашей DSP — только после выгрузки (владелец 30.09.2026). Внешняя
+        # (Adfox / вне контура) в нашу DSP не выгружается, её галочку это не запирает.
+        from app.launch_prep import pub_rules
+        mode = pub_rules.placement_modes(db, {(c.deal_id, p.publisher_id)}).get(
+            (c.deal_id, p.publisher_id), {}).get("mode")
+        if mode != pub_rules.MODE_EXTERNAL and not dsp_uploaded(
+                _creatives_of(db, p.campaign_id).get(p.id, [])):
+            raise HTTPException(409, DSP_NOT_UPLOADED)
     old, p.status = p.status, payload.status
     build.recompute_shares(db, p.campaign_id)
     # ЗАПУСК — ЕДИНСТВЕННЫЙ ПИСАТЕЛЬ «в размещении» у пары в сборе запуска. Раньше эту

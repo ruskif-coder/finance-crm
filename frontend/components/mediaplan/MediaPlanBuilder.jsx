@@ -494,6 +494,13 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
   // Доп. услуги считаются здесь же, а не отдельно: визуально они внутри того же блока,
   // что и размещения, и отметка у них общая.
   const blockedMain = emptyMain > 0 || emptyExtra > 0;
+  // Web и app одной услуги — две отдельные сделки (владелец 30.09.2026): получатель сборки
+  // один на площадку в сделке, и вторая поверхность размещения до площадки не дойдёт.
+  // Не запрет, а предупреждение — то же правило стоит проверкой стадии на карточке сделки.
+  const twoSurfaces = [...new Set(main.rows.filter(r => r.position.trim()
+    && main.rows.some(o => o.position.trim() === r.position.trim()
+      && ((o.inventory === 'web' && r.inventory === 'app') || (o.inventory === 'app' && r.inventory === 'web'))))
+    .map(r => r.position.trim()))];
   // Отметку снимаем, если строку добавили или опустошили УЖЕ ПОСЛЕ проверки. Иначе
   // «проверено» осталось бы от прошлого состояния плана и подтверждало бы то, чего
   // человек не видел: нажал, потом добавил ряд — и галочка всё ещё стоит.
@@ -658,6 +665,12 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
             </span>
           </div>
 
+          {twoSurfaces.length > 0 && (
+            <div role="alert" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, background: T.warningTint, border: `1px solid ${T.warning}`, borderRadius: 12, padding: '10px 14px', fontSize: 12.5, color: 'var(--warning-fg)' }}>
+              <b>Web и app в одной сделке: {twoSurfaces.join(', ')}.</b>
+              <span>Это две отдельные сделки — разделите медиаплан, иначе площадка получит задание только на одну поверхность.</span>
+            </div>
+          )}
           {init.locked && (
             <div role="note" className="mp-open" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, background: T.warningTint, border: `1px solid ${T.warning}`, borderRadius: 12, padding: '10px 14px', fontSize: 13, lineHeight: 1.45, color: T.t1 }}>
               <span aria-hidden style={{ fontWeight: 800, color: T.warningText }}>!</span>

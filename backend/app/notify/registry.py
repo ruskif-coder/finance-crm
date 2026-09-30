@@ -536,3 +536,43 @@ register(Event(
     channels={"app": True},
     params={"repeat_days": 1},
 ))
+
+# ── Доступность сайтов площадок (владелец 30.09.2026) ────────────────────────
+# Перенос внешнего скрипта трафика в систему (app/traffic/site_monitor.py). Тревога — на
+# СМЕНЕ состояния, не каждый час. Антибот (сайт режет робота, людям открывается) —
+# только на экране, без события. Адресаты — трафик-админ и менеджер паблишеров.
+register(Event(
+    key="site_down", direction="traffic", group="Площадки",
+    title="Сайт площадки недоступен",
+    description=("Проверка раз в час: сайт не открылся ни простым запросом, ни браузером. "
+                 "Сообщение одно — на переходе в «недоступен»; следующее придёт, когда "
+                 "сайт восстановится. Пока сайт лежит, в конвейере согласования у его "
+                 "площадки стоит алерт «Доступность сайта!!»."),
+    tone="bad", action="Открыть админку трафика", widget_group="Площадки",
+    recipients=[{"type": "resolver", "value": "traffic_admins"},
+                {"type": "staff_group", "value": "publishers"}],
+    channels={"app": True, "tg": True},
+))
+
+register(Event(
+    key="site_recovered", direction="traffic", group="Площадки",
+    title="Сайт площадки снова доступен",
+    description="Пара к «Сайт площадки недоступен»: сайт снова открывается.",
+    tone="ok", action="Открыть админку трафика", widget_group="Площадки",
+    recipients=[{"type": "resolver", "value": "traffic_admins"},
+                {"type": "staff_group", "value": "publishers"}],
+    channels={"app": True, "tg": True},
+))
+
+register(Event(
+    key="dsp_sites_missing", direction="traffic", group="Площадки",
+    title="Сайты пропали из показов DSP",
+    description=("Раз в час: сайты, у которых вчера были показы в DSP, а сегодня нет "
+                 "(исключения — списком во вкладке «Доступность сайтов»). Сообщение — только "
+                 "когда список пропавших изменился, и отдельное — когда показы восстановились. "
+                 "Работает, когда в .env сервера заданы доступы админ-кабинета DSP."),
+    tone="warn", action="Открыть админку трафика", widget_group="Площадки",
+    recipients=[{"type": "resolver", "value": "traffic_admins"},
+                {"type": "staff_group", "value": "publishers"}],
+    channels={"app": True, "tg": True},
+))

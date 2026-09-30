@@ -14,6 +14,13 @@ import Sheet, { SHEET_BTN } from '../lib/sheet'
 import { C, MONO, btn, inp } from '../lib/ui'
 
 const label = (cr) => `Креатив №${cr.no}${cr.title ? ` · ${cr.title}` : ''}`
+
+/** Креативы, по которым мы отказали площадке в правках (30.09.2026), и подсказка с ответом.
+    Такой креатив не крутится; он виден до сверки месяца, как и остальные. */
+export const declinedOf = (c) => (c.creatives || []).filter(cr => cr.status === 'отказ')
+export const declinedTitle = (c) => declinedOf(c)
+  .map(cr => `${label(cr)} — правки не приняты${cr.decline_reason ? `: ${cr.decline_reason}` : ''}`)
+  .join('\n')
 const fileOf = (cr) => (cr.files || []).find(f => f.preview_url) || (cr.files || [])[0] || null
 
 export const download = (cr) => {

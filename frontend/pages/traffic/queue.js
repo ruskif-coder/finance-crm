@@ -586,12 +586,15 @@ export default function TrafficQueue() {
                   креативов нижние уходили за экран. Клик по левой части разворачивает
                   список площадок; кнопки справа — СОСЕДИ переключателя, а не его
                   содержимое, иначе «Все ок» заодно сворачивало бы карточку. */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              {/* Позиции закреплены (владелец 30.09.2026): название и плашки — в слотах
+                  фиксированной ширины, строка не переносится, и кнопки справа не прыгают
+                  от того, есть ли плашка «баннер рекламодателя». */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'nowrap' }}>
                 <button type="button" onClick={() => toggle(g.set.id)}
                   title={open[g.set.id] ? 'Свернуть площадки' : 'Показать площадки'}
                   style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'none',
                     border: 0, padding: 0, cursor: 'pointer', textAlign: 'left',
-                    color: 'var(--text-muted)', fontFamily: UI, minWidth: 0 }}>
+                    color: 'var(--text-muted)', fontFamily: UI, minWidth: 0, flex: '0 1 380px' }}>
                   <Chevron open={!!open[g.set.id]} />
                   <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700,
                                  color: 'var(--accent)' }}><CopyCode text={g.deal.code} /></span>
@@ -613,29 +616,40 @@ export default function TrafficQueue() {
                   </span>
                 </button>
 
-                {g.set.form && (
-                  <span style={{ ...pill(...TONE.neutral), fontFamily: MONO }}>
-                    {g.set.form === 'BannerHtml5' ? 'Banner Html5' : g.set.form}
-                  </span>
-                )}
+                <span style={{ flex: '0 0 104px', display: 'inline-flex' }}>
+                  {g.set.form && (
+                    <span style={{ ...pill(...TONE.neutral), fontFamily: MONO, whiteSpace: 'nowrap' }}>
+                      {g.set.form === 'BannerHtml5' ? 'Banner Html5' : g.set.form}
+                    </span>
+                  )}
+                </span>
                 {/* Баннер прислал рекламодатель (владелец 27.09.2026): он не собран под
                     наш код и может быть с ошибками. Только плашка — шага «проверил» нет. */}
-                {!!g.set.from_advertiser && (
-                  <span style={{ ...pill(...TONE.warn), fontSize: 11.5, whiteSpace: 'nowrap',
-                    cursor: 'default' }}
-                    title="Баннер прислал рекламодатель, а не мы: он не собран под наш код и может быть с ошибками. Проверьте предпросмотр, размеры и клик особенно внимательно">
-                    ⚠ баннер рекламодателя · проверьте внимательнее
-                  </span>
-                )}
+                <span style={{ flex: '0 0 178px', display: 'inline-flex', gap: 6 }}>
+                  {g.rows.some(r => r.publisher?.site_down) && !g.set.from_advertiser && (
+                    <span style={{ ...pill(...TONE.rework), fontSize: 11, whiteSpace: 'nowrap', cursor: 'default' }}
+                      title={'Сайт не открывается: ' + g.rows.filter(r => r.publisher?.site_down).map(r => r.publisher.domain || r.publisher.name).join(', ')}>
+                      Доступность сайта!!</span>
+                  )}
+                  {!!g.set.from_advertiser && (
+                    <span style={{ ...pill(...TONE.warn), fontSize: 11, whiteSpace: 'nowrap',
+                      cursor: 'default', letterSpacing: '.03em' }}
+                      title="Баннер прислал рекламодатель, а не мы: он не собран под наш код и может быть с ошибками. Проверьте предпросмотр, размеры и клик особенно внимательно">
+                      ⚠ ПРОВЕРЬ ВНИМАТЕЛЬНЕЙ
+                    </span>
+                  )}
+                </span>
 
-                <FactLine rows={g.rows} />
+                <span style={{ flex: '1 1 0', minWidth: 0, overflow: 'hidden' }}>
+                  <FactLine rows={g.rows} />
+                </span>
 
                 <span style={{ flex: 1 }} />
 
                 {/* Три служебных действия — иконками, вплотную: они однотипны («открой,
                     посмотри, забери») и опознаются формой. Решение отделено промежутком,
                     потому что оно другого рода и необратимо. */}
-                <span style={{ display: 'inline-flex', gap: 4, marginRight: 6 }}>
+                <span style={{ display: 'inline-flex', gap: 4, marginRight: 6, flex: '0 0 250px', justifyContent: 'flex-end' }}>
                   <button style={iconBtn(!!g.rows[0]?.files?.length)}
                     disabled={!g.rows[0]?.files?.length} title="Предпросмотр баннера"
                     onClick={() => setPreview({ files: g.rows[0].files,
@@ -777,6 +791,12 @@ export default function TrafficQueue() {
                                          overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {r.publisher.name || '—'}
                           </span>
+                        )}
+                        {/* Сайт площадки сейчас не открывается (владелец 30.09.2026). */}
+                        {!!r.publisher.site_down && (
+                          <span title="Сайт площадки не открывается по последней проверке (раз в час) — подробности в админке трафика, вкладка «Доступность сайтов»"
+                            style={{ ...pill(...TONE.rework), fontSize: 10.5, whiteSpace: 'nowrap', flex: '0 0 auto' }}>
+                            Доступность сайта!!</span>
                         )}
                       </div>
                       <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.04em',

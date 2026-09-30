@@ -76,3 +76,14 @@ def test_distribute_applies_cap_to_campaign_plan():
     assert rows[0]["plan_show"] == 300 and sum(r["plan_show"] or 0 for r in rows) == 1000
     free = distribute(1000, None, None, pls)["rows"]
     assert free[0]["plan_show"] == 600, "без потолка — как раньше"
+
+
+def test_manual_index_frees_only_its_surface():
+    """Ручной индекс снимает потолок ПО ПОВЕРХНОСТИ (владелец 30.09.2026): ручной на app
+    не освобождает площадку в web-РК."""
+    from app.ad.balance import is_capless
+    manual = {7: {"app_android"}}
+    assert is_capless(manual, 7, ["app"]) is True
+    assert is_capless(manual, 7, ["web"]) is False
+    assert is_capless(manual, 7, ["web", "app"]) is True
+    assert is_capless(manual, 8, ["web"]) is False

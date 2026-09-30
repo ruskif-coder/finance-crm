@@ -92,7 +92,8 @@ function rowStatus(r, set) {
   // кампании, и новая версия ей не поможет.
   if (r.state === 'отказ площадки' || r.verdict === 'отказ') return 'отказ'
   // Отозван нами до запуска (владелец 28.09.2026): площадке его размещать не нужно.
-  if (r.withdrawn_at) return 'отозван'
+  // Отказ площадке в правках (владелец 30.09.2026) — наш ответ на её запрос доработки.
+  if (r.withdrawn_at) return r.withdraw_kind === 'отказ в правках' ? 'отказано' : 'отозван'
   if (r.state === 'в размещении') return 'в размещении'
   if (r.state === 'заведён в DSP') return 'ожидает старта'
   if (r.state === 'ерид получен') return 'ерид получен'
@@ -425,6 +426,110 @@ const MAIL_SAID = {
   no_channel: 'у площадки нет канала для писем',
   off: 'почта не отправлена (выключена)',
 }
+/* Обработать запрос правок площадки (владелец 30.09.2026): доработать — как раньше, или
+   отказать в правках, если рекламодатель их не принял. Отказ — тот же путь, что отзыв
+   (из ротации РК, из порога ЕРИД, из DSP, то же письмо площадке), но у площадки креатив
+   остаётся виден со статусом «отказ» и нашим ответом до сверки месяца. */
+function ProcessReworkDialog({ rec, onRework, onDone, onClose }) {
+  const [mode, setMode] = useState(null)          // null — выбор; 'decline' — форма
+  const [phrases, setPhrases] = useState([])
+  const [reason, setReason] = useState('')
+  const [save, setSave] = useState(false)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [res, setRes] = useState(null)
+
+  useEffect(() => {
+    if (mode !== 'decline') return
+    api.get('/launch-prep/rework-decline-phrases', auth())
+      .then(r => setPhrases(r.data.items || []))
+      .catch(() => setErr('Шаблоны не загрузились — впишите ответ вручную'))
+  }, [mode])
+
+  const send = async () => {
+    setBusy(true); setErr('')
+    try {
+      const text = reason.trim()
+      if (save && !phrases.some(p => p.text === text)) {
+        await api.post('/launch-prep/rework-decline-phrases', { text }, auth()).catch(() => null)
+      }
+      const r = await api.post(`/launch-prep/pair/${rec.pair_id}/decline-rework`, { reason: text }, auth())
+      setRes(r.data); onDone(r.data)
+    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось отказать') }
+    setBusy(false)
+  }
+
+  const choice = { ...btn(false), display: 'block', height: 'auto', padding: '10px 12px', textAlign: 'left', width: '100%' }
+  return (
+    <div style={OVERLAY} {...overlayClose(onClose)}>
+      <div style={{ ...SHEET, width: 'min(560px, 96vw)' }}>
+        <div style={{ fontSize: 17, fontWeight: 700 }}>Запрос правок · {rec.name}</div>
+        {!mode && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+            <button style={choice} onClick={onRework}>
+              <b>Отправить на доработку</b>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400 }}>
+                Собрать новую версию креатива для этой площадки</div>
+            </button>
+            <button style={choice} onClick={() => setMode('decline')}>
+              <b>Отказать площадке в правках</b>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400 }}>
+                Рекламодатель правки не принял — креатив у этой площадки выходит из ротации РК</div>
+            </button>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
+              <button style={btn(false)} onClick={onClose}>Отмена</button>
+            </div>
+          </div>
+        )}
+        {mode === 'decline' && !res && (<>
+          <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.55 }}>
+            Площадка получит ответ письмом, в кабинете креатив будет «отказ» с этим текстом.
+            Креатив перестанет считаться в объёме и в пороге ЕРИД; если он уже в DSP — уйдёт там
+            в архив. Отменить отказ нельзя.
+          </div>
+          {!!phrases.length && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>
+              {phrases.map(p => (
+                <span key={p.id} onClick={() => { setReason(p.text); setErr('') }}
+                  style={{ fontSize: 12, lineHeight: 1.35, padding: '5px 9px', borderRadius: 8, cursor: 'pointer',
+                    border: '1px solid var(--border-card)',
+                    background: reason === p.text ? 'var(--accent-tint)' : 'var(--bg-card)',
+                    color: reason === p.text ? 'var(--accent-fg)' : 'var(--text-secondary)' }}>{p.text}</span>
+              ))}
+            </div>
+          )}
+          <div style={{ ...CAP, marginTop: 14, marginBottom: 6 }}>ответ площадке</div>
+          <textarea value={reason} maxLength={500} rows={3} autoFocus
+            onChange={e => { setReason(e.target.value); if (err) setErr('') }}
+            style={{ ...inp, width: '100%', boxSizing: 'border-box', height: 'auto', padding: 9,
+              resize: 'vertical', fontSize: 13 }} />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginTop: 8,
+            color: 'var(--text-secondary)' }}>
+            <input type="checkbox" checked={save} onChange={e => setSave(e.target.checked)} />
+            сохранить ответ в шаблоны
+          </label>
+          {!!err && <div style={{ marginTop: 12, fontSize: 12.5, color: 'var(--dot-overdue)' }}>{err}</div>}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
+            <button style={btn(false)} onClick={() => setMode(null)}>Назад</button>
+            <button style={btn(true)} onClick={send} disabled={busy || !reason.trim()}>
+              {busy ? 'Отправляем…' : 'Отказать в правках'}
+            </button>
+          </div>
+        </>)}
+        {!!res && (<>
+          <div style={{ fontSize: 13, marginTop: 10, lineHeight: 1.6 }}>
+            Правки не приняты, креатив у площадки выведен из ротации.<br />
+            Уведомление: {MAIL_SAID[res?.publisher_notified] || 'не ушло'}.
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
+            <button style={btn(true)} onClick={onClose}>Закрыть</button>
+          </div>
+        </>)}
+      </div>
+    </div>
+  )
+}
+
 function WithdrawDialog({ rec, onDone, onClose }) {
   const [reason, setReason] = useState('')
   const [err, setErr] = useState('')
@@ -708,12 +813,13 @@ const ROW_LOOK = {
   'в размещении':  { bg: CB.incomeTint, border: CB.incomeBorder, fg: CB.incomeFg, dot: CB.income },
   'отказ':         { bg: CB.dangerTint, border: CB.dangerBorder, fg: CB.danger, dot: CB.danger },
   'отозван':       { bg: CB.subtle, border: CB.border, fg: CB.t3, dot: CB.t5 },
+  'отказано':      { bg: CB.dangerTint, border: CB.dangerBorder, fg: CB.danger, dot: CB.danger },
 }
 /* Группы фильтра и порядок строк: сверху то, что требует действия (хендофф). */
 const ROW_GROUP = {
   'правки': 'fix', 'у трафика': 'traffic', 'у площадки': 'wait', 'черновик': 'draft',
   'согласовано': 'ok', 'ерид получен': 'ok', 'ожидает старта': 'ok', 'в размещении': 'ok',
-  'отказ': 'refused', 'отозван': 'refused',
+  'отказ': 'refused', 'отозван': 'refused', 'отказано': 'refused',
 }
 const GROUP_ORDER = { fix: 0, traffic: 1, wait: 2, draft: 3, ok: 4, refused: 5 }
 const FILTERS = [
@@ -1010,7 +1116,7 @@ function NotePeek({ who, text }) {
 
 /* ── строка площадки ───────────────────────────────────────────────────── */
 function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt, onUrl, onRequest,
-                        onDeeplink, onVerdict, onRework, onShots, onPlan, onWithdraw, vol }) {
+                        onDeeplink, onVerdict, onRework, onProcess, onShots, onPlan, onWithdraw, vol }) {
   const [url, setUrl] = useState(r.advertiser_url || '')
   const [editing, setEditing] = useState(false)
   const [urlErr, setUrlErr] = useState('')
@@ -1021,7 +1127,8 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
   // Площадка ушла в доработку — работает теперь в другом креативе, здесь только след.
   const gone = r.moved_to_no || null
   const note = r.withdraw_reason || r.reason || r.traffic_reason || ''
-  const noteWho = r.withdraw_reason ? 'отозван нами'
+  const noteWho = r.withdraw_reason
+    ? (r.withdraw_kind === 'отказ в правках' ? 'правки не приняты' : 'отозван нами')
     : r.reason ? (r.decided_by || 'площадка') : (r.traffic_reason ? 'трафик' : '')
   const status = rowStatus(r, set)
   const look = ROW_LOOK[status] || ROW_LOOK['черновик']
@@ -1051,13 +1158,15 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
     if (why) { setPlanErr(why); setPlan(r.plan_show || 0) } else setPlanErr('')
   }
 
-  const reworkable = canEdit && !gone && (r.verdict === 'на доработку' || r.traffic_verdict === 'на переделку')
+  // Снятая пара (отзыв, отказ в правках) не дорабатывается — её нет в ротации (ревью 30.09.2026).
+  const reworkable = canEdit && !gone && !r.withdrawn_at
+    && (r.verdict === 'на доработку' || r.traffic_verdict === 'на переделку')
     && r.state !== 'отказ площадки'
   const answerable = isAdmin && canApprove && sent && !r.verdict && r.traffic_verdict === 'ок' && !gone
   // Отзыв у площадки — мастер аккаунтов, пока размещение не запущено (владелец 28.09.2026).
   // Запуск проверяет сервер ещё и по статусу площадки в РК; здесь — чтобы не звать зря.
   const withdrawable = !!onWithdraw && !!r.pair_id && !!r.sent_at && !r.withdrawn_at && !gone
-    && !['отказ', 'в размещении', 'отозван'].includes(status)
+    && !['отказ', 'в размещении', 'отозван', 'отказано'].includes(status)
   const done = ROW_GROUP[status] === 'ok'
 
   // Объём площадки против плана РК (владелец 27.09.2026): > 50 % — жёлтым, > 100 % — красным.
@@ -1204,7 +1313,12 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
 
         <span style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6 }}>
           {!!note && <NotePeek who={noteWho} text={note} />}
-          {reworkable ? (
+          {reworkable && r.verdict === 'на доработку' && !r.withdrawn_at && onProcess ? (
+            // Запрос правок площадки — «Обработать» (владелец 30.09.2026): доработать
+            // или отказать в правках, если рекламодатель их не принял.
+            <CbBtn danger onClick={() => onProcess(r)} style={{ width: 98, justifyContent: 'center', height: 28 }}
+              title="Площадка просит правки: отправить на доработку или отказать">Обработать</CbBtn>
+          ) : reworkable ? (
             <CbBtn danger onClick={() => onRework(r)} style={{ width: 98, justifyContent: 'center', height: 28 }}
               title="Собрать новую версию для этой площадки">Доработка</CbBtn>
           ) : answerable ? (
@@ -1627,6 +1741,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
                 onTt={handlers.tt} onUrl={handlers.url} onRequest={handlers.request}
                 onDeeplink={handlers.deeplink}
                 onVerdict={handlers.verdict} onRework={(rec) => handlers.rework(set, rec)}
+                onProcess={(rec) => handlers.process(set, rec)}
                 onShots={handlers.shots} onPlan={handlers.plan}
                 onWithdraw={handlers.canWithdraw ? handlers.withdraw : null} />
             ))}
@@ -1714,6 +1829,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
   const [reviewFor, setReviewFor] = useState(null)
   const [verdictFor, setVerdictFor] = useState(null)
   const [withdrawFor, setWithdrawFor] = useState(null)
+  const [processFor, setProcessFor] = useState(null)   // { set, rec } — запрос правок
   const [autoUploadFor, setAutoUploadFor] = useState(null)
   const [deleteFor, setDeleteFor] = useState(null)
 
@@ -1813,6 +1929,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
     reload: load,
     canWithdraw: !!data?.can_withdraw,
     withdraw: setWithdrawFor,
+    process: (set, rec) => setProcessFor({ set, rec }),
     tt: setTtFor,
     request: setUrlFor,
     review: setReviewFor,
@@ -1960,6 +2077,9 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
       {!!verdictFor && <PairVerdictDialog rec={verdictFor} onClose={() => setVerdictFor(null)}
         onDone={() => { setVerdictFor(null); load() }} />}
       {!!withdrawFor && <WithdrawDialog rec={withdrawFor} onClose={() => setWithdrawFor(null)}
+        onDone={() => load()} />}
+      {!!processFor && <ProcessReworkDialog rec={processFor.rec} onClose={() => setProcessFor(null)}
+        onRework={() => { const x = processFor; setProcessFor(null); handlers.rework(x.set, x.rec) }}
         onDone={() => load()} />}
       {!!deleteFor && <ConfirmDelete set={deleteFor} onClose={() => setDeleteFor(null)}
         onYes={async () => {
