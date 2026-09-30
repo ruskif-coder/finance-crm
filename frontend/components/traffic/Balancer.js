@@ -38,7 +38,8 @@ const SCOPE_TONE = {
   app_ios: ['var(--warning-tint)', 'var(--warning-fg)'],
 }
 
-const num = (v) => (v === '' || v === null || v === undefined ? null : Number(String(v).replace(',', '.')))
+const num = (v) => (v === '' || v === null || v === undefined ? null
+  : Number(String(v).replace(/[\s  ]/g, '').replace(',', '.')))
 // Поле ввода числа в клетке сетки: кит + прижатие вправо, как у чисел в соседних колонках.
 const NUM_INP = { ...inp, width: '100%', padding: '5px 7px', fontFamily: MONO, textAlign: 'right' }
 
@@ -61,10 +62,10 @@ const COLS = [
   { key: 'depth', label: 'Глубина', w: 'minmax(56px,.6fr)', num: true, grp: 'pub', get: (r) => r.depth },
   { key: 'requests', label: 'Запросы кода', w: 'minmax(92px,1fr)', num: true, grp: 'pub', get: (r) => r.requests },
   { key: 'sw_visits', label: 'SW visits', w: 'minmax(84px,1fr)', num: true, grp: 'sw', get: (r) => r.sw_visits },
-  { key: 'sw_ppv', label: 'PpV', w: 'minmax(66px,.6fr)', num: true, grp: 'sw', get: (r) => r.sw_ppv },
-  { key: 'sw_br', label: 'BR, %', w: 'minmax(66px,.6fr)', num: true, grp: 'sw', get: (r) => r.sw_br },
+  { key: 'sw_ppv', label: 'PpV', w: 'minmax(76px,.6fr)', num: true, grp: 'sw', get: (r) => r.sw_ppv },
+  { key: 'sw_br', label: 'BR, %', w: 'minmax(76px,.6fr)', num: true, grp: 'sw', get: (r) => r.sw_br },
   { key: 'swtraffic', label: 'Swtraffic', w: 'minmax(84px,.9fr)', num: true, grp: 'sw', get: (r) => r.swtraffic },
-  { key: 'index_auto', label: 'Индекс расчётный', w: 'minmax(150px,1.2fr)', num: true, grp: 'idx', get: (r) => r.index_auto },
+  { key: 'index_auto', label: 'Индекс расчётный', w: 'minmax(178px,1.4fr)', num: true, grp: 'idx', get: (r) => r.index_auto },
   { key: 'index_manual', label: 'Индекс ручной', w: 'minmax(92px,1fr)', num: true, grp: 'idx', get: (r) => r.index_manual },
   { key: 'is_locked', label: 'Заперт', w: '50px', num: true, center: true, grp: 'idx', get: (r) => (r.is_locked ? 1 : 0) },
   { key: 'note', label: 'Примечание', w: 'minmax(90px,1.4fr)', grp: 'idx', get: (r) => r.note },
@@ -80,6 +81,23 @@ const GROUPS = [
   return { ...g, from: idx[0] + 1, to: idx[idx.length - 1] + 2 }
 })
 const SW_FIELDS = ['sw_visits', 'sw_ppv', 'sw_br']
+// Сколько знаков после запятой показывать: доли (PpV, BR, глубина) — два, остальное — целые.
+const DIGITS = { depth: 2, sw_ppv: 2, sw_br: 2 }
+
+// Числовая клетка: вне фокуса — с разделителями по три знака (цифры не сливаются, владелец
+// 30.09.2026), в фокусе — сырое число для правки. Объявлена на уровне модуля: компонент
+// внутри тела другого компонента терял бы фокус на каждом символе.
+function NumCell({ value, digits = 0, disabled, placeholder, title, onChange, onBlur }) {
+  const [focus, setFocus] = useState(false)
+  const shown = focus ? (value ?? '') : (value === '' || value === null || value === undefined
+    ? '' : Number.isFinite(num(value)) ? dec(num(value), digits) : value)
+  return (
+    <input style={NUM_INP} disabled={disabled} value={shown} placeholder={placeholder} title={title}
+      onFocus={() => setFocus(true)}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={() => { setFocus(false); onBlur() }} />
+  )
+}
 
 // Пустое — всегда в конце, в какую сторону ни сортируй: «нет замера» не меньше и не
 // больше любого числа, и в начале списка оно заслоняло бы строки с данными.
@@ -335,16 +353,16 @@ export default function Balancer({ mayEdit }) {
                   </div>
                   {['volume', 'depth', 'requests'].map((f) => (
                     <div key={f} style={cell}>
-                      <input style={NUM_INP} disabled={!mayEdit} value={r[f] ?? ''}
+                      <NumCell value={r[f]} digits={DIGITS[f]} disabled={!mayEdit}
                         title={f === 'depth' ? 'Справочно: в формулу индекса не входит — глубина учтена в калибровке k объёма' : undefined}
-                        onChange={(e) => patch(r, { [f]: e.target.value })} onBlur={() => save(r)} />
+                        onChange={(v) => patch(r, { [f]: v })} onBlur={() => save(r)} />
                     </div>
                   ))}
                   {SW_FIELDS.map((f) => (
                     <div key={f} style={cell}>
                       {r.scope === 'web'
-                        ? <input style={NUM_INP} disabled={!mayEdit} value={r[f] ?? ''} placeholder="—"
-                            onChange={(e) => patch(r, { [f]: e.target.value })} onBlur={() => save(r)} />
+                        ? <NumCell value={r[f]} digits={DIGITS[f]} disabled={!mayEdit} placeholder="—"
+                            onChange={(v) => patch(r, { [f]: v })} onBlur={() => save(r)} />
                         : <span title="У приложений данных SimilarWeb нет" style={{ display: 'block',
                             textAlign: 'right', color: 'var(--text-faint)', fontFamily: MONO }}>—</span>}
                     </div>
@@ -353,18 +371,19 @@ export default function Balancer({ mayEdit }) {
                     title="SW visits × PpV × (100 − BR) / 100">
                     {r.swtraffic ? grp(r.swtraffic) : <span style={{ color: 'var(--text-faint)' }}>—</span>}
                   </div>
-                  <div style={{ ...cell, fontFamily: MONO, fontWeight: 700, textAlign: 'right',
-                    whiteSpace: 'nowrap' }}>
-                    {!!r.source && (
-                      <span title={SRC_HINT[r.source]}
-                        style={{ ...chip(sbg, sfg, 'transparent'), marginRight: 6, fontSize: 10 }}>
-                        {SRC_LABEL[r.source] || r.source}</span>
-                    )}
+                  {/* метка источника — к левому краю колонки, число — к правому (владелец 30.09.2026) */}
+                  <div style={{ ...cell, fontFamily: MONO, fontWeight: 700, whiteSpace: 'nowrap',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                    {r.source
+                      ? <span title={SRC_HINT[r.source]}
+                          style={{ ...chip(sbg, sfg, 'transparent'), fontSize: 10 }}>
+                          {SRC_LABEL[r.source] || r.source}</span>
+                      : <span />}
                     {r.index_auto ? grp(r.index_auto) : <span style={{ color: 'var(--text-faint)' }}>—</span>}
                   </div>
                   <div style={cell}>
-                    <input style={NUM_INP} disabled={!mayEdit} value={r.index_manual ?? ''} placeholder="—"
-                      onChange={(e) => patch(r, { index_manual: e.target.value })} onBlur={() => save(r)} />
+                    <NumCell value={r.index_manual} disabled={!mayEdit} placeholder="—"
+                      onChange={(v) => patch(r, { index_manual: v })} onBlur={() => save(r)} />
                   </div>
                   <div style={{ ...cell, textAlign: 'center' }}>
                     <input type="checkbox" checked={!!r.is_locked} disabled={!mayEdit}
