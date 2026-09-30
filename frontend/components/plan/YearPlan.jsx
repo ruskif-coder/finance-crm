@@ -1109,18 +1109,18 @@ export default function YearPlan({
                                                   )}
                                                   {it.type === 'addon' && (
                                                     <span style={{ display: 'inline-flex', flex: '0 0 auto', border: `1px solid ${T.addonBorder}`, borderRadius: 6, overflow: 'hidden' }}>
-                                                      {[['full', '100%', 1], ['half', '50%', 0.5], ['bonus', 'Бонус', 0]].map(([m, lbl, rate]) => {
+                                                      {[['full', '100%', 1], ['half', '50%', 0.5], ['bonus', 'Бонус', 0], ['fix', '₽', null]].map(([m, lbl, rate]) => {
                                                         const act = (it.mode || 'full') === m;
                                                         const base = (addonById[it.ref_id] && addonById[it.ref_id].unit_price) || 0;
                                                         return (
-                                                          <span key={m} title={`Режим цены: ${lbl}`} onClick={e => { stop(e); setMonthProducts(g.id, b.id, i, items.map((x, j) => (j === idx ? { ...x, mode: m, amount: Math.round(base * rate) } : x))); }}
+                                                          <span key={m} title={m === 'fix' ? 'Фикс в рублях — впишите сумму в поле ₽' : `Режим цены: ${lbl}`} onClick={e => { stop(e); setMonthProducts(g.id, b.id, i, items.map((x, j) => (j === idx ? { ...x, mode: m, amount: rate == null ? (x.amount || 0) : Math.round(base * rate) } : x))); }}
                                                             style={{ padding: '3px 6px', fontSize: 9, fontWeight: 700, cursor: 'pointer', background: act ? T.addon : 'transparent', color: act ? 'var(--bg-card)' : T.t3 }}>{lbl}</span>
                                                         );
                                                       })}
                                                     </span>
                                                   )}
                                                   <input value={it.amount || ''} placeholder="₽" onClick={stop}
-                                                    onChange={e => setMonthProducts(g.id, b.id, i, items.map((x, j) => (j === idx ? { ...x, amount: parseN(e.target.value) } : x)))}
+                                                    onChange={e => setMonthProducts(g.id, b.id, i, items.map((x, j) => (j === idx ? { ...x, amount: parseN(e.target.value), ...(x.type === 'addon' ? { mode: 'fix' } : {}) } : x)))}
                                                     style={{ width: 64, boxSizing: 'border-box', height: 22, padding: '0 5px', border: `1px solid ${T.border}`, borderRadius: 6, fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, textAlign: 'right', outline: 'none' }} />
                                                   <input value={it.units || ''} placeholder="ед" onClick={stop}
                                                     onChange={e => setMonthProducts(g.id, b.id, i, items.map((x, j) => (j === idx ? { ...x, units: parseN(e.target.value) } : x)))}

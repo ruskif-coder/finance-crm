@@ -58,8 +58,17 @@ export const EXTRA_CATALOG = [
   { name: 'Post-buy аналитика', period: 'по итогам РК', price: 120000 },
   { name: 'Креативная адаптация', period: 'разово', price: 60000 },
 ];
-export const MODES = ['Полная цена', 'Скидка 50 %', 'Бонус'];
+// «Фикс, ₽» (владелец 30.09.2026): итог доп. услуги — произвольная сумма в рублях, а не доля
+// прайса. Скидка в Excel и ДС считается из пары «цена — итог», режим — только подпись.
+export const MODE_FIX = 'Фикс, ₽';
+export const MODES = ['Полная цена', 'Скидка 50 %', 'Бонус', MODE_FIX];
 const MODE_RATE = { 'Полная цена': 1, 'Скидка 50 %': 0.5, 'Бонус': 0 };
+// Годовой план хранит режим кодом (full/half/bonus/fix) и передаёт его в конструктор как есть.
+const MODE_OF_CODE = { full: 'Полная цена', half: 'Скидка 50 %', bonus: 'Бонус', fix: MODE_FIX };
+const modeLabel = m => MODE_OF_CODE[m] || m || 'Полная цена';
+// Итог по режиму; у фикса и у неизвестного режима итог не пересчитывается.
+const totalFor = (mode, price, prevTotal) =>
+  MODE_RATE[mode] == null ? (prevTotal || 0) : Math.round((price || 0) * MODE_RATE[mode]);
 const TG_GROUPS = [['audience', 'Аудитория'], ['buys', 'Покупают'], ['interests', 'Интересы'], ['behavior', 'Поведение'], ['competitors', 'Конкуренты']];
 // Ответственные приходят из справочника «Сотрудники» (рабочие группы seller/account).
 // Каждый элемент — { id, name, is_master }. Демо-значения ниже — фолбэк без API.
@@ -369,7 +378,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
   const main = useAnimatedRows((init.rows && init.rows.length)
     ? init.rows.map((r, i) => ({ id: i + 1, position: r.position || '', format: r.format || '', model: r.model || 'CPM', inventory: r.inventory || 'cross', volume: r.volume || 0, unit: r.unit_price || 0, discount: r.discount || 0 }))
     : [{ id: 1, position: '', format: '', model: 'CPM', inventory: 'cross', volume: 0, unit: 0, discount: 0 }]);
-  const extras = useAnimatedRows((init.extras || []).map((e, i) => ({ id: i + 1, name: e.name || '', period: e.period || '', mode: e.mode || 'Полная цена', price: e.price || 0, total: e.total || 0 })));
+  const extras = useAnimatedRows((init.extras || []).map((e, i) => ({ id: i + 1, name: e.name || '', period: e.period || '', mode: modeLabel(e.mode), price: e.price || 0, total: e.total || 0 })));
   const [fc, setFc] = useState(() => { const o = {}; (init.rows || []).forEach((r, i) => { o[i + 1] = r.forecast || {}; }); return o; });
   const [goals, setGoals] = useState(init.goals || { freq: '', ctr: '', cr: '', volume: '', weborama: '' });
   // owners: роль → id сотрудника (или null). Префилл из сохранённого МП по ids —
@@ -1083,7 +1092,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                             {extraCatalog.map(c => (
                               <Option key={c.name} active={c.name === e.name} label={c.name}
                                 hint={`${c.price.toLocaleString('ru-RU')} ₽ · ${c.period}`}
-                                onPick={() => { extras.patch(e.id, { name: c.name, period: c.period, price: c.price, total: Math.round(c.price * MODE_RATE[e.mode]) }); setSel(null); }} />
+                                onPick={() => { extras.patch(e.id, { name: c.name, period: c.period, price: c.price, total: totalFor(e.mode, c.price, e.total) }); setSel(null); }} />
                             ))}
                           </Popover>
                         </span>
@@ -1095,13 +1104,16 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                         <span data-pop-root style={{ position: 'relative', minWidth: 0 }}>
                           <span onClick={() => toggle('extras', e.id, 'mode')} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: 32, boxSizing: 'border-box', padding: '0 8px', borderRadius: 9, background: modeBg, color: modeFg, fontSize: 10.5, fontWeight: 700, cursor: 'pointer' }}>{e.mode}</span>
                           <Popover open={isOpen('extras', e.id, 'mode')} minWidth={150}>
-                            {modes.map(m => <Option key={m} active={m === e.mode} label={m} onPick={() => { extras.patch(e.id, { mode: m, total: Math.round(e.price * MODE_RATE[m]) }); setSel(null); }} />)}
+                            {modes.map(m => <Option key={m} active={m === e.mode} label={m} onPick={() => { extras.patch(e.id, { mode: m, total: totalFor(m, e.price, e.total) }); setSel(null); }} />)}
                           </Popover>
                         </span>
 
                         <span />
                         <span style={{ fontFamily: T.mono, fontSize: 11, color: T.t4, textAlign: 'right', whiteSpace: 'nowrap', textDecoration: e.total < e.price ? 'line-through' : 'none' }}>{dec(e.price)}</span>
-                        <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: e.total ? T.t1 : T.income, textAlign: 'right', whiteSpace: 'nowrap' }}>{dec(e.total)}</span>
+                        {e.mode === MODE_FIX
+                          ? <NumInput value={e.total} format={dec} placeholder="₽"
+                              onChange={v => extras.patch(e.id, { total: Math.max(0, Math.round(Number(String(v).replace(/\s/g, '').replace(',', '.')) || 0)) })} />
+                          : <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: e.total ? T.t1 : T.income, textAlign: 'right', whiteSpace: 'nowrap' }}>{dec(e.total)}</span>}
                         {/* цена с НДС — от «Итого» (что реально в счёте), а не от прайса */}
                         <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: T.accent, textAlign: 'right', whiteSpace: 'nowrap' }}>{dec(withVat(e.total || 0))}</span>
                         <DeleteBtn onClick={() => extras.remove(e.id)} />

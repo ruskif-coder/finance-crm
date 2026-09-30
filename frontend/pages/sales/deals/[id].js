@@ -920,7 +920,7 @@ export default function DealCard() {
   const tNet = lines.reduce((a, r) => a + r.net, 0)
   const mpExtras = (mp && mp.extras) || []
   const extrasTotal = mpExtras.reduce((a, e) => a + (e.total || 0), 0)
-  const MODE_LBL = { full: '100 %', half: '50 %', bonus: 'бонус' }
+  const MODE_LBL = { full: '100 %', half: '50 %', bonus: 'бонус', fix: 'фикс ₽' }
   // Таргетинг МП: {группа: [значения]} → плоские строки для вывода
   const TG_TITLES = { audience: 'Аудитория', buys: 'Покупают', interests: 'Интересы', behavior: 'Поведение', competitors: 'Конкуренты' }
   const mpTargeting = Object.entries((mp && mp.targeting) || {})
