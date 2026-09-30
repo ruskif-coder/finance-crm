@@ -71,3 +71,16 @@ def test_rk_holds_only_deal_recipients_not_archived():
     finally:
         db.rollback()
         db.close()
+
+
+def test_passport_pixel_macro_follows_channel():
+    """Итоговый тег — под канал площадки: DSP — {RND}, Adfox — %system.random% (30.09.2026)."""
+    raw = "https://wcm.weborama-tech.ru/fcgi-bin/dispatch.fcgi?a.A=im&a.wi=~WIDTH~&a.he=~HEIGHT~&g.lu=[RANDOM]"
+    deal = NS(weborama_pixel=True, weborama_pixel_mode="own", weborama_pixel_tag=None)
+    pl = NS(weborama_pixel=raw)
+    dsp = OX.pixel_for(deal, pl, NS(domain="a.ru", our_code=True), "dsp", "240x400")
+    adf = OX.pixel_for(deal, pl, NS(domain="b.ru", our_code=False), "adfox", "240x400")
+    assert "{RND}&a.ycp=https://a.ru" in dsp and "a.wi=240" in dsp
+    assert "%system.random%&a.ycp=https://b.ru" in adf
+    assert "[RANDOM]" not in dsp + adf
+    assert dsp != adf

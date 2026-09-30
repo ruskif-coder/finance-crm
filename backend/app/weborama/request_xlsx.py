@@ -199,36 +199,7 @@ def pixels_for_set(db: Session, set_id: int) -> list:
         # `our_code` — БУЛЕВ признак, а не строка кода: прежняя проверка
         # `(... or "").strip()` на значении True упала бы с AttributeError.
         kind = "dsp" if r["our_code"] else "adfox"
-        tag, why = None, None
-        try:
-            tag = naming.final_tag(r["weborama_pixel"], r["domain"] or "", kind)
-        except ValueError as e:
-            why = str(e)
-            if "Пустой пиксель" in why:
-                # Причина бытовая, и ответ на неё — не «почему», а «что нажать».
-                why = ("пиксель ещё не получен: сначала «ПИКСЕЛЬ WR» в дашборде "
-                       "трафика (а до неё — заказать пиксель в карточке сделки)")
-
-        # ССЫЛКА СОБИРАЕТСЯ ДО КОНЦА (владелец 18.09.2026). Файл существует для того,
-        # чтобы тег можно было ПРОВЕРИТЬ — открыть, вставить, сверить. Тег с
-        # недоподставленными макросами проверить нельзя: он уедет как есть, и в счётчик
-        # попадёт мусор вместо размера.
-        if tag:
-            w, h = _wh(r["ratio"])
-            if w and h:
-                tag = wtags.fill_size(tag, w, h)
-            if r["erid"]:
-                # Маркер в теге, если их формат его просит. Подставляем НАСТОЯЩИЙ: файл
-                # уходит человеку для сверки, и заглушка в нём означала бы проверку не
-                # того, что поедет в эфир.
-                tag = (tag.replace("[ERID_VALUE]", r["erid"])
-                          .replace("[ERID_ID]", r["erid"]))
-            # Оставшееся называем вслух. Молчать нельзя: тег выглядит рабочим, а DSP
-            # чужих макросов не знает и подставлять их не будет (замер 09.09.2026).
-            left = wtags.leftovers(tag)
-            if left:
-                why = ("подставляет сервер показа: " + ", ".join(left))
-
+        tag, why = build_tag(r["weborama_pixel"], r["domain"], kind, r["ratio"], r["erid"])
         out.append({"publisher": r["name"], "domain": r["domain"],
                     "kind": "наш DSP" if kind == "dsp" else "Adfox",
                     "tag": tag, "check": _checkable(tag), "why": why})
@@ -264,6 +235,36 @@ def _checkable(tag):
     # назад. Для сброса кеша это безвредно, но настоящая метка честнее.
     stamp = str(int(time.time()))
     return out.replace("{RND}", stamp).replace("%system.random%", stamp)
+
+
+def build_tag(pixel, domain, kind: str, ratio=None, erid=None):
+    """Итоговый тег пикселя под площадку: макрос рандомизатора канала (`kind` — dsp |
+    adfox), адрес площадки, размер баннера, ЕРИД. → (тег | None, причина | None).
+    Одно правило на все выгрузки — заявку Weborama и паспорт РК (30.09.2026: паспорт
+    отдавал сырой пиксель, одинаковый для нашей DSP и Adfox)."""
+    tag, why = None, None
+    try:
+        tag = naming.final_tag(pixel, domain or "", kind)
+    except ValueError as e:
+        why = str(e)
+        if "Пустой пиксель" in why:
+            # Причина бытовая, и ответ на неё — не «почему», а «что нажать».
+            why = ("пиксель ещё не получен: сначала «ПИКСЕЛЬ WR» в дашборде "
+                   "трафика (а до неё — заказать пиксель в карточке сделки)")
+    # ССЫЛКА СОБИРАЕТСЯ ДО КОНЦА (владелец 18.09.2026): тег с недоподставленными
+    # макросами проверить нельзя, и в счётчик попадёт мусор вместо размера.
+    if tag:
+        w, h = _wh(ratio)
+        if w and h:
+            tag = wtags.fill_size(tag, w, h)
+        if erid:
+            # Маркер — НАСТОЯЩИЙ: заглушка означала бы проверку не того, что уйдёт в эфир.
+            tag = tag.replace("[ERID_VALUE]", erid).replace("[ERID_ID]", erid)
+        # Оставшееся называем вслух: DSP чужих макросов не знает (замер 09.09.2026).
+        left = wtags.leftovers(tag)
+        if left:
+            why = "подставляет сервер показа: " + ", ".join(left)
+    return tag, why
 
 
 def _wh(ratio):

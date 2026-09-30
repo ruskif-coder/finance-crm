@@ -78,15 +78,29 @@ def _status(pair, verdict) -> str:
         verdict, "ждёт ответа")
 
 
-def pixel_for(deal: SalesDeal, placement) -> str:
-    """Пиксель Weborama для паспорта. Внешний тег (принесли готовым, один на кампанию —
-    `weborama_pixel_mode = 'external'`) стоит в СДЕЛКЕ, а не в размещении: до 30.09.2026
-    паспорт брал только пиксель размещения, и у РК с внешним тегом колонка была пустой."""
+def pixel_for(deal: SalesDeal, placement, pub=None, channel=None, ratio=None, erid=None) -> str:
+    """ИТОГОВЫЙ тег Weborama для строки паспорта — под канал площадки (владелец 30.09.2026):
+    наша DSP — `{RND}`, Adfox — `%system.random%`, плюс адрес площадки, размер, ЕРИД.
+    Сборка — `request_xlsx.build_tag`, та же, что в заявке Weborama. Внешний тег
+    (один на кампанию) лежит в сделке, свой — в размещении."""
     if not deal.weborama_pixel:
         return "не нужен"
     if (deal.weborama_pixel_mode or "own") == "external":
-        return deal.weborama_pixel_tag or "внешний тег не загружен"
-    return (placement.weborama_pixel if placement else None) or "ещё не получен"
+        raw = deal.weborama_pixel_tag
+        if not raw:
+            return "внешний тег не загружен"
+    else:
+        raw = placement.weborama_pixel if placement else None
+        if not raw:
+            return "ещё не получен"
+    if pub is None:
+        return raw
+    from app.weborama.request_xlsx import build_tag
+    # Канал площадки главнее признака «наш код»: наша DSP — `dsp`, Adfox и «вне контура» —
+    # `adfox` (так же, как заявка Weborama решает по `our_code` для площадок без правила).
+    kind = "dsp" if channel == "dsp" or (channel is None and pub.our_code) else "adfox"
+    tag, why = build_tag(raw, pub.domain, kind, ratio, erid)
+    return tag or f"не собран: {why}"
 
 
 def build(db: Session, deal: SalesDeal, whole: bool = False) -> Tuple[bytes, str]:
@@ -176,7 +190,7 @@ def build(db: Session, deal: SalesDeal, whole: bool = False) -> Tuple[bytes, str
                     getattr(member, "deeplink_url", None) if member else None,
                     t.period_from or deal.period_from, t.period_to or deal.period_to,
                     (member.plan_show if member and member.plan_show else (pl.plan_show if pl else None)),
-                    pixel_for(deal, pl)])
+                    pixel_for(deal, pl, pub, rule.get("channel"), f.ratio, s.erid)])
         for col, w in zip("ABCDEFGHIJKLMNOPQRST", WIDTH):
             ws.column_dimensions[col].width = w
         for row in ws.iter_rows(min_row=2):
