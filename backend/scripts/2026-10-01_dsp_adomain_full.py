@@ -27,12 +27,14 @@ def main():
     deal = sys.argv[sys.argv.index("--deal") + 1].upper() if "--deal" in sys.argv else ""
     db = SessionLocal()
     rows = db.execute(text("""
-        SELECT cr.id, cr.ms_creative_xxhash, d.code, t.advertiser_url
+        SELECT cr.id, cr.ms_creative_xxhash, d.code, st.advertiser_url
           FROM ad_campaign_creative cr
           JOIN ad_campaign a ON a.id = cr.campaign_id
           JOIN sales_deals d ON d.id = a.deal_id
           LEFT JOIN launch_prep_pair pr ON pr.id = cr.pair_id
-          LEFT JOIN launch_prep_target t ON t.id = pr.target_id
+          -- Посадочная — из состава креатива (пара «креатив × площадка»), как у выгрузки
+          -- (`provision._rows`), а не у получателя сделки: там её у части сделок нет.
+          LEFT JOIN launch_prep_set_target st ON st.set_id = pr.set_id AND st.target_id = pr.target_id
          WHERE cr.ms_creative_xxhash IS NOT NULL AND (:deal = '' OR upper(d.code) = :deal)
          ORDER BY d.code, cr.id
     """), {"deal": deal}).all()
