@@ -89,12 +89,14 @@ def remember(dsp_db, account_id: str, *, pull: Optional[S.WcmPull] = None,
 def _mapping(db, account_id: str) -> dict:
     """их вставка → (наша площадка, её РК). Только из реестра, без догадок."""
     rows = db.execute(text("""
-        SELECT r.wcm_id, p.id AS placement_id, p.campaign_id
+        SELECT r.wcm_id, p.id AS placement_id, p.campaign_id, a.date_start, a.date_end
           FROM weborama_refs r
           JOIN ad_campaign_placement p ON p.id = r.local_id
+          JOIN ad_campaign a ON a.id = p.campaign_id
          WHERE r.kind = 'insertion' AND r.account_id = :acc
     """), {"acc": str(account_id)}).mappings().all()
-    return {str(r["wcm_id"]): (r["placement_id"], r["campaign_id"]) for r in rows}
+    return {str(r["wcm_id"]): (r["placement_id"], r["campaign_id"], r["date_start"], r["date_end"])
+            for r in rows}
 
 
 def push_daily(db, dsp_db, account_id: str, start: date, end: date) -> dict:
@@ -111,7 +113,7 @@ def push_daily(db, dsp_db, account_id: str, start: date, end: date) -> dict:
          WHERE account_id = :acc AND day BETWEEN :a AND :b
     """), {"acc": str(account_id), "a": start, "b": end}).mappings().all()
 
-    written = skipped = 0
+    written = skipped = off_flight = 0
     unmatched_imp = 0
     sql = text("""
         INSERT INTO ad_campaign_stat (campaign_id, placement_id, date, shows, clicks,
@@ -126,13 +128,19 @@ def push_daily(db, dsp_db, account_id: str, start: date, end: date) -> dict:
             skipped += 1
             unmatched_imp += r["impression"] or 0
             continue
-        placement_id, campaign_id = hit
+        placement_id, campaign_id, d_from, d_to = hit
+        # Только дни ВНУТРИ флайта РК (владелец 01.10.2026): показы до старта — это
+        # проверки баннеров и нацеливание, а не размещение. 30.09 на проде так легли 44
+        # показа в шесть РК со стартом 01.10, и экран поднял по ним тревогу.
+        if (d_from and r["day"] < d_from) or (d_to and r["day"] > d_to):
+            off_flight += 1
+            continue
         db.execute(sql, {"c": campaign_id, "p": placement_id, "d": r["day"],
                          "shows": r["impression"] or 0, "clicks": r["click"] or 0,
                          "src": SOURCE})
         written += 1
     db.commit()
-    return {"written": written, "skipped": skipped,
+    return {"written": written, "skipped": skipped, "off_flight": off_flight,
             "unmatched_impressions": unmatched_imp, "mapped_insertions": len(mapping)}
 
 

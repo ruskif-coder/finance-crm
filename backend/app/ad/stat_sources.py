@@ -54,6 +54,17 @@ VERIFIER = ("weborama", "weborama_manual", "weborama_demo")
 
 KNOWN = tuple(sorted(set(OWN) | set(VERIFIER)))
 
+# Боевой факт — из кабинета DSP. Всё прочее в OWN (демо, ручная правка) экран обязан
+# подписать «факт не боевой». Верификаторы сюда не относятся вовсе: они не факт.
+# До 01.10.2026 экран сверял список источников с одним `ms` — и Weborama-сверка, и
+# настоящий `dsp` давали алерт «факт не боевой» на проде.
+COMBAT = ("dsp", "ms")
+
+
+def non_combat(sources) -> list:
+    """Из источников, найденных у РК, — те, из-за которых факт нельзя считать боевым."""
+    return sorted(s for s in sources if s in OWN and s not in COMBAT)
+
 
 def fact_sources() -> list:
     """Список для `source = ANY(:src)` в запросах факта.

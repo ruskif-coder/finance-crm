@@ -182,3 +182,10 @@ def test_no_base_is_not_zero_mismatch():
     assert mismatch_pct(1000, None) is None
     assert mismatch_pct(0, 0) is None
     assert mismatch_pct(None, 100) is None
+
+
+def test_non_combat_flags_only_demo_and_manual():
+    """Алерт «факт не боевой» — только на демо и ручной ввод, не на Weborama и не на DSP."""
+    from app.ad.stat_sources import non_combat
+    assert non_combat(["weborama", "dsp", "ms", "weborama_manual"]) == []
+    assert non_combat(["demo", "dsp", "manual", "weborama"]) == ["demo", "manual"]

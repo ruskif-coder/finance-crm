@@ -38,8 +38,11 @@ def _main():
 
 
 def _some_placement(db):
+    # Площадка РК, чей флайт включает тестовый день: съём кладёт только дни флайта (01.10.2026).
     row = db.execute(text(
-        "SELECT id, campaign_id FROM ad_campaign_placement ORDER BY id LIMIT 1")).first()
+        "SELECT p.id, p.campaign_id FROM ad_campaign_placement p JOIN ad_campaign a ON a.id = p.campaign_id "
+        "WHERE (a.date_start IS NULL OR a.date_start <= :d) AND (a.date_end IS NULL OR a.date_end >= :d) "
+        "ORDER BY p.id LIMIT 1"), {"d": DAY}).first()
     if not row:
         pytest.skip("на стенде нет ни одной площадки РК")
     return row[0], row[1]
@@ -209,4 +212,26 @@ def test_sync_reports_enough_to_judge_without_opening_the_database():
         assert got["unmatched_impressions"] == 500
     finally:
         _cleanup(dsp_db, db)
+        dsp_db.close(); db.close()
+
+
+def test_day_outside_flight_is_not_written():
+    """Показы до старта РК (проверки, нацеливание) в факт РК не ложатся (01.10.2026)."""
+    dsp_db, db = _dsp(), _main()
+    row = db.execute(text(
+        "SELECT p.id FROM ad_campaign_placement p JOIN ad_campaign a ON a.id = p.campaign_id "
+        "WHERE a.date_start > :d ORDER BY p.id LIMIT 1"), {"d": DAY}).first()
+    if not row:
+        pytest.skip("нет РК со стартом позже тестового дня")
+    placement_id = row[0]
+    try:
+        db.execute(text("INSERT INTO weborama_refs (account_id, kind, local_id, wcm_id, label) "
+                        "VALUES (:a,'insertion',:l,:w,'TEST')"),
+                   {"a": ACC, "l": placement_id, "w": INS_KNOWN})
+        db.commit()
+        store.save_raw(dsp_db, ACC, _pull([_row(INS_KNOWN, 100)]))
+        out = store.push_daily(db, dsp_db, ACC, DAY, DAY)
+        assert out["written"] == 0 and out["off_flight"] == 1
+    finally:
+        _cleanup(dsp_db, db, placement_id)
         dsp_db.close(); db.close()

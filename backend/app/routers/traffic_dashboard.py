@@ -96,7 +96,8 @@ def _fact_sources(db: Session, campaign_ids: List[int]) -> list:
     rows = db.execute(text(
         "SELECT DISTINCT source FROM ad_campaign_stat WHERE campaign_id = ANY(:i)"),
         {"i": campaign_ids}).all()
-    return sorted(r[0] for r in rows if r[0])
+    from app.ad.stat_sources import non_combat
+    return non_combat(r[0] for r in rows if r[0])
 
 
 def _fact_last_ingest(db: Session, campaign_ids: List[int]):

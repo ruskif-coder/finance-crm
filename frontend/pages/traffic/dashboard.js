@@ -819,14 +819,16 @@ export default function TrafficDashboard() {
           {/* Факт бывает НЕ настоящим. На стенде он весь из демо-скрипта, а тянучка
               статистики ещё не написана — то есть боевому факту пока взяться неоткуда.
               Молчать об этом нельзя: по этим числам перераспределяют объём. */}
-          {!!(data?.fact_sources || []).filter(s => s !== 'ms').length && (
+          {/* Сервер отдаёт ТОЛЬКО небоевые источники факта (демо, ручной ввод) — Weborama-сверка
+              и DSP сюда не попадают (`stat_sources.non_combat`, 01.10.2026). */}
+          {!!(data?.fact_sources || []).length && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap',
               padding: '9px 13px', marginBottom: 10, borderRadius: 10,
               background: 'var(--warning-tint)', color: 'var(--warning-text)', fontSize: 12.5 }}>
               <b>Факт не боевой</b>
               <span>
-                источник данных: {data.fact_sources.join(', ')}. Эти показы и клики
-                не приходили из кабинета — выводы по ним делать нельзя.
+                источник данных: {data.fact_sources.join(', ')} — не из кабинета DSP,
+                выводы по этим цифрам делать нельзя.
               </span>
             </div>
           )}
