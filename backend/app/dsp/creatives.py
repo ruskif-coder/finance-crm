@@ -303,6 +303,24 @@ def landing_domain(url: Optional[str]) -> Optional[str]:
     return f"{parts.scheme}://{host}/"
 
 
+ADOMAIN_MAX = 1024   # предел «конечного URL» — вводные DSP 01.10.2026 (в доке 128, устарело)
+
+
+def landing_adomain(url: Optional[str]) -> Optional[str]:
+    """«Конечный URL» (`adomain`) — посадочная креатива целиком (владелец 01.10.2026).
+
+    Посадочная — та, что пришла с креативом от аккаунтов или от площадки при запросе, а
+    не кликовая ссылка Weborama. Домен остаётся только там, где целиком нельзя: длиннее
+    предела DSP; кириллический домен — наш сайт, как и раньше (`landing_domain`).
+    """
+    domain = landing_domain(url)
+    if domain is None or domain == ADOMAIN_FALLBACK:
+        return domain
+    raw = url.strip()
+    full = raw if "://" in raw else "https://" + raw
+    return full if len(full) <= ADOMAIN_MAX else domain
+
+
 # `adomain` для посадочной, чей домен DSP не принимает (кириллический, зона .рф).
 ADOMAIN_FALLBACK = "https://simb-ad.com/"
 

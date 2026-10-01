@@ -71,3 +71,16 @@ def test_cyrillic_landing_gets_our_site_as_adomain():
     assert cr.landing_domain("https://120на80.рф/catalog") == "https://simb-ad.com/"
     assert cr.landing_domain("https://farmakopeika.ru/tovar/1") == "https://farmakopeika.ru/"
     assert cr.landing_domain("not a url") is None
+
+
+def test_adomain_is_full_landing():
+    """Конечный URL — посадочная из креатива целиком (владелец 01.10.2026, вводные DSP: ≤1024)."""
+    url = "https://economapteka.ru/catalog/share_viferon/?clear_cache=Y"
+    assert cr.landing_adomain(url) == url
+    assert cr.landing_adomain("  " + url + " ") == url
+    long = "https://farmakopeika.ru/catalog/" + "x" * 300
+    assert cr.landing_adomain(long) == long
+    assert cr.landing_adomain("https://farmakopeika.ru/" + "x" * 1100) == "https://farmakopeika.ru/"
+    assert cr.landing_adomain("economapteka.ru/a") == "https://economapteka.ru/a"
+    assert cr.landing_adomain("https://120на80.рф/catalog") == "https://simb-ad.com/"
+    assert cr.landing_adomain("not a url") is None

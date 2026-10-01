@@ -1,5 +1,5 @@
 // Вкладка «Логи» админки трафика (владелец 01.10.2026): обмен с DSP и с Weborama, каждая
-// строка — сделка + площадка + креатив. Сводит сервер (`/traffic-balancer/logs`,
+// строка — сделка + площадка + креатив. Сводит сервер (`/traffic-catalog/logs`,
 // app/traffic/logs.py); здесь только показ, фильтры и раскрытие тела запроса/ответа.
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import { MONO, btnSm, card, inp, th } from '@/components/salesTableKit'
@@ -23,7 +23,7 @@ export default function ExchangeLogs() {
       const q = new URLSearchParams({ system: sys, limit: '300', only_errors: String(onlyErr),
         prod_only: String(prodOnly) })
       if (deal.trim()) q.set('deal', deal.trim())
-      const r = await api.get(`/traffic-balancer/logs?${q}`, auth())
+      const r = await api.get(`/traffic-catalog/logs?${q}`, auth())
       setRows(r.data.rows)
     } catch (e) {
       setErr(e?.response?.data?.detail || 'Не удалось загрузить лог'); setRows([])

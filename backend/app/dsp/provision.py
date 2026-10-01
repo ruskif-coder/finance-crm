@@ -370,9 +370,8 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
                         link=(click_link(r, r["target"].advertiser_url, cre.erid)
                               if want_pixel and not ext_tag else r["target"].advertiser_url),
                         pixel=pix,
-                        # Оба адреса — из реальной посадочной (владелец 25.09.2026): ссылка
-                        # целиком, конечный URL — её основной домен (у DSP ≤128 символов).
-                        adomain=cr.landing_domain(r["target"].advertiser_url),
+                        # Конечный URL — посадочная креатива целиком (владелец 01.10.2026).
+                        adomain=cr.landing_adomain(r["target"].advertiser_url),
                         erid=cre.erid, size=up.get("size"),
                         self_inn=label[0], self_name=label[1],
                         total_shows=(int(plans[cre.id]) if plans.get(cre.id) else None))

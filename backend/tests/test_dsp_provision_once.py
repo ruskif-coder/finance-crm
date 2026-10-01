@@ -311,8 +311,8 @@ def test_combat_creative_gets_landing_and_its_domain(wired):
     assert out["done"], out
     params = ms.added[-1]
     assert params["link"] == long_url
-    assert params["adomain"] == "https://www.apteka.test/"
-    assert len(params["adomain"]) <= 128
+    # Конечный URL — посадочная целиком, не домен (владелец 01.10.2026, вводные DSP ≤1024).
+    assert params["adomain"] == long_url
     # Лимит — доля креатива (250), а не план площадки (500): 27.09.2026.
     assert params["limits"]["show"]["total"] == 250
 
