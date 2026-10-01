@@ -241,6 +241,11 @@ def _by_slot(b: Bundle):
             state.append(_alert("период закончился", "warn"))
         if dl is not None:
             state.append(_fact("площадок", f"{dl.get('placements_on', 0)} / {dl.get('placements', 0)}"))
+            # Скрины запуска — за площадками, только когда есть что снимать: креативы на
+            # запущенных площадках (владелец 01.10.2026).
+            sc = dl.get("screens") or {}
+            if sc.get("total"):
+                state.append(_fact("скрины", f"{sc.get('got', 0)} / {sc['total']}"))
             # РК реально крутится — первой плашкой, зелёной (владелец 01.10.2026): аккаунт
             # видит запуск, не открывая дашборд трафика.
             if dl.get("placements_on"):

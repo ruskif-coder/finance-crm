@@ -299,3 +299,20 @@ def test_unknown_slot_falls_back_to_reason():
                                                    "stage_stuck")))
     assert st["state"] == [{"type": "fact", "k": "", "v": "На стадии 9 дн. (норма 5)"}]
     assert st["action"]["do"] == "move"
+
+
+def test_live_shows_screens_after_placements():
+    """«Скрины x / y» — так же, как «площадок», только у запущенной РК (владелец 01.10.2026)."""
+    st = qs.row_state(bundle("live", delivery={"done_pct": 50.0, "closed_pace": 0.5, "fact_shows": 10,
+                                               "placements": 5, "placements_on": 4,
+                                               "screens": {"got": 2, "total": 6}}))
+    facts = [(e.get("k"), e.get("v")) for e in st["state"] if e["type"] == "fact"]
+    assert ("скрины", "2 / 6") in facts
+    assert facts.index(("скрины", "2 / 6")) == facts.index(("площадок", "4 / 5")) + 1
+
+
+def test_live_without_running_creatives_has_no_screens_chip():
+    st = qs.row_state(bundle("live", delivery={"done_pct": None, "fact_shows": None,
+                                               "placements": 3, "placements_on": 0,
+                                               "screens": {"got": 0, "total": 0}}))
+    assert not [e for e in st["state"] if e.get("k") == "скрины"]

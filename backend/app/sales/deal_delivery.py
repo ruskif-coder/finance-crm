@@ -40,6 +40,21 @@ def campaigns_by_deal(db: Session, deal_ids: Iterable[int]) -> Dict[int, object]
     return out
 
 
+def _screens(db: Session, cids: list) -> Dict[int, dict]:
+    """{РК: {got, total}} — «скрины запуска сняты» по креативам ЗАПУЩЕННЫХ площадок, кроме
+    отклонённых (владелец 01.10.2026: актуально только для запущенных). Одним запросом."""
+    from sqlalchemy import text
+    from app.ad.flight import CREATIVE_REJECTED, PLACEMENT_RUNNING
+    rows = db.execute(text("""
+        SELECT c.campaign_id, count(*) AS total, count(c.screens_done_at) AS got
+          FROM ad_campaign_creative c
+          JOIN ad_campaign_placement p ON p.id = c.placement_id
+         WHERE c.campaign_id = ANY(:c) AND p.status = ANY(:on) AND c.status <> :rej
+         GROUP BY c.campaign_id"""),
+        {"c": cids, "on": list(PLACEMENT_RUNNING), "rej": CREATIVE_REJECTED}).all()
+    return {cid: {"got": got, "total": total} for cid, total, got in rows}
+
+
 def delivery_by_deal(db: Session, campaigns: Dict[int, object], today: date) -> Dict[int, dict]:
     """{сделка: открутка} для сделок, у которых есть РК.
 
@@ -55,6 +70,7 @@ def delivery_by_deal(db: Session, campaigns: Dict[int, object], today: date) -> 
     facts = td._facts(db, cids)
     pls = td._placements_of(db, cids)
     creatives = td._creatives_all(db, cids)
+    screens = _screens(db, cids)
 
     out = {}
     for deal_id, c in campaigns.items():
@@ -68,6 +84,7 @@ def delivery_by_deal(db: Session, campaigns: Dict[int, object], today: date) -> 
             "plan_show": c.plan_show, "plan_budget": c.plan_budget, "fact_shows": fact,
             "placements": len(statuses),
             "placements_on": sum(1 for s in statuses if s in PLACEMENT_RUNNING),
+            "screens": screens.get(c.id, {"got": 0, "total": 0}),
             **progress(c.plan_show, fact, c.date_start, c.date_end, today),
         }
         out[deal_id]["closed_pace"] = closed_pace(out[deal_id])

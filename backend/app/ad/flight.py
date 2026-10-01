@@ -636,3 +636,11 @@ def effective_status(stored: Optional[str], chain: str) -> str:
     запущенная площадка возвращалась бы в «ждёт запуска» при каждом чтении.
     """
     return stored if stored in PLACEMENT_MANUAL else chain
+
+
+def screens_tone(got: int, total: int) -> dict:
+    """Скрины запуска «сняты из скольких» → индикатор «С» (владелец 01.10.2026): серый — ни
+    по одному, жёлтый — по части, зелёный — по всем. Одно правило для дашборда трафика,
+    карточки сделки и матрицы согласований."""
+    state = "none" if not got else "all" if got == total else "part"
+    return {"state": state, "got": got, "total": total}

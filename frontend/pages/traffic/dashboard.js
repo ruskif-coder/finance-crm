@@ -34,7 +34,7 @@ import StartRkModal from '@/components/traffic/StartRkModal'
 import AimButton from '@/components/traffic/AimButton'
 import safeHref from '@/lib/safeHref'
 import { useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
-import { todayMsk } from '@/lib/dates'
+import { fmtDateTime, todayMsk } from '@/lib/dates'
 import ExternalLaunch from '@/components/traffic/ExternalLaunch'
 import {
   CreativeCounts, CreativeRows, Culprits, DASH, DayWall, Dynamics, KpiRow, PaceBar, Pips,
@@ -575,6 +575,15 @@ export default function TrafficDashboard() {
       const r = await api.get(`/traffic-dashboard/campaign/${campId}`, auth())
       setDetail(d => ({ ...d, [campId]: r.data }))
     } catch (e) { fail(e?.response?.data?.detail || 'Не удалось сменить статус креатива') }
+  }
+
+  // «Скрины запуска сняты» на паре «креатив × площадка» (владелец 01.10.2026).
+  const setCreativeScreens = async (campId, cr, done) => {
+    try {
+      await api.put(`/traffic-dashboard/creative/${cr.id}/screens`, { done }, auth())
+      const r = await api.get(`/traffic-dashboard/campaign/${campId}`, auth())
+      setDetail(d => ({ ...d, [campId]: r.data }))
+    } catch (e) { fail(e?.response?.data?.detail || 'Не удалось отметить скрины') }
   }
 
   const setPlacementStatus = async (campId, p, s) => {
@@ -1135,6 +1144,14 @@ export default function TrafficDashboard() {
                                       fontWeight: pl.fixed ? 700 : undefined }}
                                       title={pl.fixed ? 'Объём задан в блоке креатива' : undefined}>
                                       {pl.fixed ? 'фикс ' : ''}{num(pl.plan_show)}</span>
+                                    <input type="checkbox" checked={!!pl.screens_done_at}
+                                      disabled={!mayEdit} aria-label="Скрины запуска сняты"
+                                      title={pl.screens_done_at
+                                        ? `Скрины запуска сняты · ${fmtDateTime(pl.screens_done_at)}${pl.screens_by ? ` · ${pl.screens_by}` : ''}`
+                                        : 'Скрины запуска сняты?'}
+                                      style={{ width: 14, height: 14, margin: 0,
+                                        cursor: mayEdit ? 'pointer' : 'not-allowed' }}
+                                      onChange={e => setCreativeScreens(r.id, pl, e.target.checked)} />
                                   </span>
                                 ))}
                               </div>
@@ -1151,9 +1168,9 @@ export default function TrafficDashboard() {
                       {d && !!d.placements.length && !byCr && (
                         <>
                           <div style={{ display: 'grid', gap: 9, padding: '0 0 6px',
-                            gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 62px 68px',
+                            gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 82px 68px',
                             borderBottom: '1px solid var(--border-inner)' }}>
-                            {['Площадка', 'Креативы', 'Код', 'Вес', 'Доля', 'План', 'Факт', 'Недокрут', 'Статус', 'WR·DSP', '']
+                            {['Площадка', 'Креативы', 'Код', 'Вес', 'Доля', 'План', 'Факт', 'Недокрут', 'Статус', 'Е·W·D·С', '']
                               .map((h, i) => (
                                 <span key={h} style={{ fontFamily: MONO, fontSize: 9,
                                   letterSpacing: '.08em', textTransform: 'uppercase',
@@ -1171,7 +1188,7 @@ export default function TrafficDashboard() {
                             <div onClick={() => setOpenPlace(x => (x === p.id ? null : p.id))}
                               title={volTitle(d.volumes, p.publisher_id)}
                               style={{ display: 'grid', gap: 9, alignItems: 'center', cursor: 'pointer',
-                              gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 62px 68px',
+                              gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 82px 68px',
                               padding: '7px 0', borderBottom: '1px solid var(--border-row)',
                               background: volTint(d.volumes, p.publisher_id) }}>
                               {/* Обрезается НАЗВАНИЕ, а метки остаются целыми: «не на…» не читается. */}
@@ -1254,6 +1271,12 @@ export default function TrafficDashboard() {
                                   tone={EXT_TONE[p.external?.dsp?.state] || 'none'}
                                   title={`DSP: ${p.external?.dsp?.state || 'нет данных'}`
                                     + (p.external?.dsp?.why ? ` — ${p.external.dsp.why}` : '')} />
+                                {/* Скрины запуска (01.10.2026) — после DSP: снимают их уже по
+                                    крутящемуся креативу. Отметка — в виде «по креативам». */}
+                                <ExtChip letter="С" size={17}
+                                  tone={{ all: 'ok', part: 'wait' }[p.screens?.state] || 'none'}
+                                  title={`Скрины запуска: ${p.screens ? `${p.screens.got} из ${p.screens.total} креативов` : 'нет данных'}`
+                                    + ' — отметка в виде «по креативам»'} />
                               </span>
                               <span style={{ justifySelf: 'end' }} onClick={e => e.stopPropagation()}>
                                 {mayEdit && p.ext_mode === 'external' && (

@@ -97,9 +97,21 @@ TARGETING_ADOMAIN = "https://simb-ad.com/"
 TEST_ERID = "TEST00000"
 
 
+# Статусы ОРД, при которых маркер уже выдан (владелец 01.10.2026): Registering — маркер
+# есть, регистрация просто асинхронная. RegistrationRequired и прочие — ещё нет.
+ERID_READY_STATUSES = ("Active", "Registering")
+
+
 def erid_of(s: LaunchPrepCreativeSet) -> str:
-    """Маркер копии нацеливания: ЕРИД комплекта, а пока его нет — заглушка."""
-    return (s.erid or "").strip() or TEST_ERID
+    """Маркер копии нацеливания: ЕРИД комплекта, когда ОРД его выдал, иначе заглушка.
+    Маркер не нашего ОРД (саморекламу маркирует площадка) нашего статуса не имеет и
+    готов сразу."""
+    erid = (getattr(s, "erid", None) or "").strip()
+    if not erid:
+        return TEST_ERID
+    if (getattr(s, "erid_source", None) or "наш") != "наш":
+        return erid
+    return erid if getattr(s, "ord_status", None) in ERID_READY_STATUSES else TEST_ERID
 
 
 class TargetingCreativeError(RuntimeError):

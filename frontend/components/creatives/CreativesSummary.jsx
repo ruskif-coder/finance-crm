@@ -71,7 +71,20 @@ export function toCreative(s) {
     // никогда не сойдётся и перестанет что-либо значить.
     extW: extCount(s.recipients, 'weborama', ['есть']),
     extD: extCount(s.recipients, 'dsp', ['заведён', 'крутится']),
+    extS: screensCount(s.recipients),
   }
+}
+
+/** Скрины запуска (01.10.2026): отмечено трафиком из площадок, где креатив в размещении. */
+function screensCount(recipients) {
+  let done = 0
+  let need = 0
+  for (const r of recipients || []) {
+    if (r.state !== 'в размещении' && !r.screens_done_at) continue
+    need += 1
+    if (r.screens_done_at) done += 1
+  }
+  return { done, need }
 }
 
 /** «Сделано из нужных» по одной внешней системе. */

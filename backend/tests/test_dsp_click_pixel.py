@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Пиксель и кликовая ссылка Weborama в DSP (владелец 01.10.2026): пиксель — ТОЛЬКО полем
-`pixel`; конечный URL — кликовый счётчик с посадочной в `g.lu`; домен в `a.ycp` — кириллицей."""
+`pixel`; домен в `a.ycp` — кириллицей. Кликовый счётчик в DSP не ставим (01.10.2026)."""
 from types import SimpleNamespace as NS
 from urllib.parse import unquote
 
@@ -10,11 +10,9 @@ from app.weborama import naming
 
 IMP = ("https://wcm.weborama-tech.ru/fcgi-bin/dispatch.fcgi?a.A=im&a.si=10419&a.te=643"
        "&a.he=~HEIGHT~&a.wi=~WIDTH~&a.hr=p&a.ra=[RANDOM]")
-CLICK = ("https://wcm.weborama-tech.ru/fcgi-bin/dispatch.fcgi?a.A=cl&a.si=10419&a.te=643"
-         "&erid=[ERID_ID]&er=[ERID_VALUE]&a.ra=[RANDOM]&g.lu=")
 
 
-def _row(domain, click=CLICK):
+def _row(domain, click=None):
     return {"placement": NS(weborama_pixel=IMP, weborama_click=click),
             "publisher": NS(domain=domain)}
 
@@ -28,18 +26,6 @@ def test_pixel_has_cyrillic_domain_size_and_erid():
 
 def test_latin_domain_unchanged():
     assert naming.final_tag(IMP, "farmakopeika.ru").endswith("a.ycp=https://farmakopeika.ru")
-
-
-def test_click_link_wraps_landing_and_erid():
-    land = "https://009.xn--p1ai/search/x?region=false&a=1"
-    link = P.click_link(_row("009.рф"), land, "ERID1")
-    assert link.startswith(CLICK.split("&erid")[0]) and "a.A=cl" in link
-    assert "erid=ERID1&er=ERID1" in link and "a.ra={RND}" in link
-    assert unquote(link.split("&g.lu=")[1]) == land, "посадочная целиком, закодирована"
-
-
-def test_no_click_stays_landing():
-    assert P.click_link(_row("a.ru", click=None), "https://a.ru/p", "E") == "https://a.ru/p"
 
 
 def test_pixel_goes_to_field():

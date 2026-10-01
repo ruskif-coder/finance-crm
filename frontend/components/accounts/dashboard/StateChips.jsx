@@ -42,7 +42,8 @@ const look = (e) => {
 
 export default function StateChips({ row }) {
   const all = row.state || []
-  const shown = all.slice(0, 3)
+  // Четыре: у запущенной РК — «запущена · открутка · площадок · скрины» (01.10.2026).
+  const shown = all.slice(0, 4)
   const more = all.length - shown.length
   const title = [row.reason, ...all.map(text)].filter(Boolean).join(' · ')
   return (

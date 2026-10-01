@@ -260,19 +260,6 @@ def pixel_url(row: dict, width, height, ext_tag: Optional[str] = None,
     return tag
 
 
-def click_link(row: dict, landing: str, erid: Optional[str] = None) -> str:
-    """Конечный URL креатива (владелец 01.10.2026): кликовая ссылка Weborama, ведущая на
-    посадочную (`…&g.lu=<посадочная>`), если её получили при заведении пикселя; иначе —
-    сама посадочная, как раньше. Посадочная — последним параметром и закодирована
-    целиком: в ней свои `?` и `&`, без кодирования они стали бы параметрами счётчика."""
-    from urllib.parse import quote
-    click = (getattr(row["placement"], "weborama_click", None) or "").strip()
-    if not click or not landing:
-        return landing
-    click = click.replace("[RANDOM]", "{RND}")
-    return wtags.fill_erid(click, erid) + quote(landing.strip(), safe="")
-
-
 def provision(db: Session, camp: AdCampaign, user_id=None,
               client: Optional[MsClient] = None) -> dict:
     """Завести всё недостающее в DSP. Идёт по креативам, не падая целиком.
@@ -367,8 +354,9 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
                             "креативу. Уменьшите заданный объём соседа или отключите креатив")
                     params = cr.build_creative_params(
                         title=cre.ms_title or name,
-                        link=(click_link(r, r["target"].advertiser_url, cre.erid)
-                              if want_pixel and not ext_tag else r["target"].advertiser_url),
+                        # Обычная посадочная: кликовый счётчик Weborama сняли, клики не
+                        # считаем (владелец 01.10.2026).
+                        link=r["target"].advertiser_url,
                         pixel=pix,
                         # Конечный URL — посадочная креатива целиком (владелец 01.10.2026).
                         adomain=cr.landing_adomain(r["target"].advertiser_url),

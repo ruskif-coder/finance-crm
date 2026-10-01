@@ -103,6 +103,25 @@ def pixel_for(deal: SalesDeal, placement, pub=None, channel=None, ratio=None, er
     return tag or f"не собран: {why}"
 
 
+def pair_volumes(db: Session, deal: SalesDeal) -> dict:
+    """Объём каждой пары «креатив × площадка» РК: {pair_id: показы} (владелец 01.10.2026).
+
+    Правило одно с лимитом креатива в DSP — `ad/build.creative_plans`: план площадки
+    делится между её креативами с заданными объёмами и удержанием. Раньше паспорт ставил
+    каждой строке весь план площадки, и у площадки с тремя креативами сумма выходила втрое.
+    """
+    from app.ad.build import creative_plans
+    from app.ad.models import AdCampaign, AdCampaignCreative
+    out = {}
+    for camp in db.query(AdCampaign).filter(AdCampaign.deal_id == deal.id):
+        plans = creative_plans(db, camp)
+        for cid, pair_id in (db.query(AdCampaignCreative.id, AdCampaignCreative.pair_id)
+                             .filter(AdCampaignCreative.campaign_id == camp.id)):
+            if pair_id and plans.get(cid) is not None:
+                out[pair_id] = round(plans[cid])
+    return out
+
+
 def build(db: Session, deal: SalesDeal, whole: bool = False) -> Tuple[bytes, str]:
     """whole=False — архив для площадок без нашего кода (баннеры + паспорт);
     whole=True — только паспорт .xlsx по ВСЕЙ РК, без креативов (владелец 30.09.2026)."""
@@ -136,6 +155,7 @@ def build(db: Session, deal: SalesDeal, whole: bool = False) -> Tuple[bytes, str
                   .join(AdCampaign, AdCampaign.id == AdCampaignPlacement.campaign_id)
                   .filter(AdCampaign.deal_id == deal.id)}
     rules = pub_rules.rules_for(db, {(t.publisher_id, t.surface_kind) for _, _, t, _ in rows})
+    volumes = pair_volumes(db, deal)
 
     from app.sales.models import SalesRep
     rep = db.get(SalesRep, deal.traffic_manager_id) if deal.traffic_manager_id else None
@@ -189,7 +209,9 @@ def build(db: Session, deal: SalesDeal, whole: bool = False) -> Tuple[bytes, str
                     member.advertiser_url if member else None,
                     getattr(member, "deeplink_url", None) if member else None,
                     t.period_from or deal.period_from, t.period_to or deal.period_to,
-                    (member.plan_show if member and member.plan_show else (pl.plan_show if pl else None)),
+                    # Объём пары; пара ещё не в РК — заданный на ней руками, иначе пусто
+                    # (весь план площадки здесь был бы неверен при нескольких креативах).
+                    volumes.get(pair.id, member.plan_show if member else None),
                     pixel_for(deal, pl, pub, rule.get("channel"), f.ratio, s.erid)])
         for col, w in zip("ABCDEFGHIJKLMNOPQRST", WIDTH):
             ws.column_dimensions[col].width = w

@@ -155,6 +155,7 @@ ACTION_LABELS = {
     "ad_campaign_finish": "РК завершена",
     "ad_placement_status": "Статус размещения изменён",
     "ad_creative_status": "Статус креатива изменён",
+    "ad_creative_screens": "Скрины запуска креатива",
     "weborama_stats_pull": "Статистика Weborama снята",
     "balancer_import": "Балансировщик: загружен файл",
     "balancer_recalc": "Балансировщик: пересчёт",

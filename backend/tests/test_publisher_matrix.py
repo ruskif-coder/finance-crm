@@ -82,3 +82,46 @@ def test_rework_is_not_waiting():
     """Площадка вернула на доработку (или отозвала согласование) — ждать от неё нечего."""
     assert M.look("согласование", 1, 1, 0, None, TODAY, rework=1)["tone"] == "rework"
     assert M.look("согласование", 2, 2, 0, datetime(2026, 9, 28, 9), TODAY, rework=1)["tone"] == "waiting"
+
+
+def test_deals_launched_first_then_in_order_of_creation():
+    """РК — в порядке добавления, запущенные впереди (владелец 01.10.2026)."""
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        seen = 0
+        for m in M.months(db):
+            ds = M.load(db, m)["deals"]
+            assert all("launched" in d for d in ds)
+            key = [(not d["launched"], d["added_at"], d["id"]) for d in ds]
+            assert key == sorted(key), m
+            seen += len(ds)
+        if not seen:
+            pytest.skip("нет РК на стенде")
+    finally:
+        db.close()
+
+
+def test_launched_deal_comes_first_and_cells_carry_screens():
+    from sqlalchemy import text
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        for m in M.months(db):
+            ds = M.load(db, m)["deals"]
+            if len(ds) > 1:
+                break
+        else:
+            pytest.skip("нет месяца с двумя РК")
+        last = ds[-1]["id"]
+        db.execute(text("UPDATE ad_campaign SET status = 'запущена' WHERE deal_id = :d"), {"d": last})
+        out = M.load(db, m)
+        has_rk = db.execute(text("SELECT 1 FROM ad_campaign WHERE deal_id = :d"), {"d": last}).first()
+        if has_rk:
+            assert out["deals"][0]["id"] == last and out["deals"][0]["launched"] is True
+        for c in out["cells"]:
+            sc = c["screens"]
+            assert set(sc) == {"state", "got", "total"} and sc["got"] <= sc["total"]
+    finally:
+        db.rollback()
+        db.close()

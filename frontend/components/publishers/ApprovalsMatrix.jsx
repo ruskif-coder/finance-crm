@@ -6,7 +6,7 @@
 // всю оставшуюся высоту, шапка и итог прилипают, площадка и итог — липкие колонки.
 // Сетка — CSS-grid по шаблону реестра (правило 28.09), шапка площадки — SortHead из кита.
 import { useState } from 'react'
-import { MONO, SortHead } from '@/components/salesTableKit'
+import { ExtChip, MONO, SortHead } from '@/components/salesTableKit'
 import { tgHref } from '@/components/publishers/kit'
 import safeHref from '@/lib/safeHref'
 
@@ -71,9 +71,17 @@ function Light({ c }) {
   const txt = c.tone === 'late' ? `${c.days} дн` : c.tone === 'refused' ? 'отказ' : c.tone === 'rework' ? 'правки'
     : c.tone === 'withdrawn' ? 'отозв' : c.tone === 'unsent' ? '—' : `${c.agreed}/${c.sent}`
   return (
-    <div className="mx-dot" style={{ width: 62, height: 28, margin: 'auto', borderRadius: 8, display: 'flex',
-      alignItems: 'center', justifyContent: 'center', fontFamily: MONO, fontSize: 10.5, fontWeight: 700,
-      background: t.bg, color: t.fg, boxShadow: `inset 0 0 0 1px ${t.bd}` }}>{txt}</div>
+    <div className="mx-dot" style={{ width: 74, height: 28, margin: 'auto', borderRadius: 8, display: 'flex',
+      alignItems: 'center', justifyContent: 'center', gap: 5, fontFamily: MONO, fontSize: 10.5, fontWeight: 700,
+      background: t.bg, color: t.fg, boxShadow: `inset 0 0 0 1px ${t.bd}` }}>
+      {txt}
+      {/* Скрины запуска — внутри плашки (владелец 01.10.2026). Не сняты — «С» нет вовсе;
+          сняты все — синяя: зелёная на зелёной плашке сливалась; часть — жёлтая. */}
+      {!!c.screens?.got && (
+        <ExtChip letter="С" size={15} tone={c.screens.state === 'all' ? 'info' : 'wait'}
+          title={`Скрины запуска: ${c.screens.got} из ${c.screens.total} креативов`} />
+      )}
+    </div>
   )
 }
 
@@ -106,7 +114,8 @@ const totCell = { fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(-
 export default function ApprovalsMatrix({ view, deals, pubs, cell, lateDays, pend, sort, onSort }) {
   const [tip, setTip] = useState(null)
   const plan = view === 'plan'
-  const colW = plan ? 98 : 80
+  // В светофоре рядом с «1/1» — плашка скринов «С» (01.10.2026), отсюда ширина.
+  const colW = plan ? 98 : 84
   const GRID = `${PUB_W}px ${TOT_W}px repeat(${deals.length}, ${colW}px)`
   const row = { display: 'grid', gridTemplateColumns: GRID }
   const colTot = deals.map(d => totalsOf(pubs.map(p => cell[`${d.id}:${p.id}`]), pend))
@@ -125,9 +134,12 @@ export default function ApprovalsMatrix({ view, deals, pubs, cell, lateDays, pen
           <div style={{ ...stick(PUB_W, 4, 'var(--bg-subtle)'), padding: '9px 0 0', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', borderRight: '1px solid var(--border-card)' }}>
             <SortHead label={plan ? 'Итого' : 'Согл.'} active={sort.key === 'total'} dir={sort.dir} onClick={() => onSort('total')} />
           </div>
+          {/* Запущенная РК — зелёной шапкой (владелец 01.10.2026); они же идут первыми. */}
           {deals.map(d => (
-            <div key={d.id} title={`${d.brand} · ${d.advertiser || ''} · ${d.account || ''}`}
-              style={{ padding: '9px 6px', textAlign: 'center', minWidth: 0, borderRight: LINE, alignSelf: 'end' }}>
+            <div key={d.id} title={`${d.brand} · ${d.advertiser || ''} · ${d.account || ''}${d.launched ? ' · РК запущена' : ''}`}
+              style={{ padding: '9px 6px', textAlign: 'center', minWidth: 0, borderRight: LINE, alignSelf: 'stretch',
+                display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+                ...(d.launched ? { background: 'var(--income-tint)', boxShadow: 'inset 0 3px 0 var(--income)' } : {}) }}>
               <div style={{ fontWeight: 700, fontSize: 11.5, lineHeight: 1.25, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{d.brand}</div>
               <a href={`/sales/deals/${d.id}`} target="_blank" rel="noreferrer"
                 style={{ display: 'block', paddingTop: 2, fontFamily: MONO, fontSize: 9.5, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>{d.code}</a>
@@ -155,7 +167,8 @@ export default function ApprovalsMatrix({ view, deals, pubs, cell, lateDays, pen
                   ? [`План: ${nf.format(c.plan_show)} показов`, c.plan_cost == null ? 'CPM площадки в реестре не заполнен'
                     : `Себестоимость: ${nf.format(Math.round(c.plan_cost))} ₽ (CPM ${p.cpm} ₽ до НДС)`,
                     ...(counted(c.tone, pend) ? [] : ['В итог не входит'])]
-                  : ['Плана у площадки в РК нет (доля не назначена)']) : []
+                  : ['Плана у площадки в РК нет (доля не назначена)'])
+                  : (c.screens?.total ? [`Скрины запуска: ${c.screens.got} из ${c.screens.total} креативов`] : [])
                 const t = tipOf(c, p, d, lateDays, extra)
                 return (
                   <div key={d.id} style={{ ...base, cursor: 'pointer' }} onClick={() => openDeal(d)}

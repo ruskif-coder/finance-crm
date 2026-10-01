@@ -84,3 +84,45 @@ def test_passport_pixel_macro_follows_channel():
     assert "%system.random%&a.ycp=https://b.ru" in adf
     assert "[RANDOM]" not in dsp + adf
     assert dsp != adf
+
+
+
+def test_passport_volume_is_per_pair_not_whole_placement():
+    """«План показов» — объём пары «креатив × площадка» (владелец 01.10.2026), тот же, что
+    уходит лимитом креатива в DSP (`build.creative_plans`), а не весь план площадки.
+    Замер 01.10: у Maksavit.ru в DLMBGB два креатива, а в строке стоял весь план — 214 836."""
+    from app.ad.build import creative_plans
+    from app.ad.models import AdCampaign
+    from app.sales.models import SalesDeal
+    db = SessionLocal()
+    try:
+        did = db.execute(text("""
+            SELECT a.deal_id FROM ad_campaign_creative c JOIN ad_campaign a ON a.id = c.campaign_id
+              JOIN ad_campaign_placement pl ON pl.id = c.placement_id
+             WHERE c.pair_id IS NOT NULL AND pl.plan_show > 0
+             GROUP BY a.deal_id, c.placement_id HAVING count(*) > 1 LIMIT 1""")).scalar()
+        if not did:
+            import pytest
+            pytest.skip("нет площадки с несколькими креативами и планом")
+        want = {}
+        for camp in db.query(AdCampaign).filter(AdCampaign.deal_id == did):
+            plans = creative_plans(db, camp)
+            for cid, pair_id in db.execute(text(
+                    "SELECT id, pair_id FROM ad_campaign_creative WHERE campaign_id = :c"), {"c": camp.id}):
+                if pair_id and plans.get(cid) is not None:
+                    want[pair_id] = round(plans[cid])
+        got = OX.pair_volumes(db, db.get(SalesDeal, did))
+        assert want and all(got.get(k) == v for k, v in want.items()), (want, got)
+        # И паспорт берёт именно их: строк с целым планом площадки при двух креативах нет.
+        whole = {r[0] for r in db.execute(text("""
+            SELECT pl.plan_show FROM ad_campaign_placement pl JOIN ad_campaign a ON a.id = pl.campaign_id
+             WHERE a.deal_id = :d AND pl.plan_show > 0
+               AND (SELECT count(*) FROM ad_campaign_creative c WHERE c.placement_id = pl.id) > 1
+        """), {"d": did})}
+        body, _ = OX.build(db, db.get(SalesDeal, did), whole=True)
+        ws = load_workbook(io.BytesIO(body)).active
+        pi = [c.value for c in ws[1]].index("План показов")
+        vals = [r[pi] for r in ws.iter_rows(min_row=2, values_only=True)]
+        assert not ({round(w) for w in whole} & set(vals) - set(want.values()))
+    finally:
+        db.close()

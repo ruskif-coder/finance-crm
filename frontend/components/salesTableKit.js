@@ -700,6 +700,8 @@ export const EXT_STYLE = {
   ok:   { color: 'var(--income-fg)', border: 'var(--income)', bg: 'var(--income-tint)' },
   wait: { color: 'var(--warning-fg)', border: 'var(--warning)', bg: 'var(--warning-tint)' },
   bad:  { color: 'var(--danger-fg)', border: 'var(--danger)', bg: 'var(--danger-tint)' },
+  // Синий — «готово» поверх зелёной подложки, где зелёный слился бы (матрица согласований).
+  info: { color: 'var(--accent-fg)', border: 'var(--accent)', bg: 'var(--accent-tint)' },
   none: { color: 'var(--text-muted)', border: 'var(--border-card)', bg: 'transparent' },
   off:  { color: 'var(--text-faint)', border: 'transparent', bg: 'transparent' },
 }

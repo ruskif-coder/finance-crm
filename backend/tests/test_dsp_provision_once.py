@@ -325,3 +325,20 @@ def test_landing_domain_helper():
     # Кириллический домен DSP в `adomain` не принимает ни в какой записи (демо 28.09.2026) —
     # тогда наш сайт; прежде здесь стояла латинская запись xn--, которую DSP отверг.
     assert cr.landing_domain("https://120на80.рф/catalog") == "https://simb-ad.com/"
+
+
+def test_link_is_plain_landing_even_with_weborama_click(wired, monkeypatch):
+    """Кликовую ссылку Weborama в DSP не ставим — клики не считаем (владелец 01.10.2026):
+    `link` — обычная посадочная, даже когда счётчик кликов у размещения получен."""
+    monkeypatch.setattr(prov, "pixel_setup",
+                        lambda db, deal_id: {"needed": True, "mode": "own", "tag": None})
+    monkeypatch.setattr(prov, "pixel_url", lambda *a, **k: "https://px.test/im")
+    row = wired["rows"][0]
+    row["placement"].weborama_pixel = "https://px.test/im"
+    row["placement"].weborama_click = "https://wcm.test/dispatch.fcgi?a.A=cl&g.lu="
+    ms = FakeMs()
+    out = prov.provision(_db(), _camp(990601), client=ms)
+    assert out["done"], out
+    params = ms.added[-1]
+    assert params["link"] == "https://landing.test"
+    assert params["pixel"] == "https://px.test/im", "пиксель показа остаётся"

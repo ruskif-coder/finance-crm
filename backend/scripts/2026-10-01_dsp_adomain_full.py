@@ -7,6 +7,9 @@
 площадки при запросе, не кликовая ссылка Weborama. Вводные DSP 01.10.2026: предел 1024.
 Правило одно с выгрузкой — `creatives.landing_adomain`.
 
+Дополнено 01.10 вечером: кликовая ссылка (`link`) — с кликового счётчика Weborama обратно на
+обычную посадочную: клики не считаем (владелец 01.10.2026).
+
 По умолчанию — пробный прогон: только читает из DSP и показывает план. Запись — `--apply`.
 Повтор безопасен: совпадающее не шлётся.
 
@@ -46,19 +49,26 @@ def main():
             skipped.append(f"{code} cr{cid}: нет посадочной")
             continue
         try:
-            have = (c.creative_get_info(h) or {}).get("adomain")
+            info = c.creative_get_info(h) or {}
         except MsError as e:
             failed.append(f"{code} cr{cid}: getInfo — {e}")
             continue
-        if have == want:
+        edit = {}
+        if info.get("adomain") != want:
+            edit["adomain"] = want
+        if (info.get("link") or "") != landing.strip():
+            edit["link"] = landing.strip()
+        if not edit:
             same += 1
             continue
         plan += 1
         if plan <= 5:
-            print(f"  {code} cr{cid} {h}\n    {have} → {want}")
+            print(f"  {code} cr{cid} {h}")
+            for k, v in edit.items():
+                print(f"    {k}: {(info.get(k) or '—')[:90]} → {v}")
         if apply:
             try:
-                c.creative_edit(h, {"adomain": want}, local_ref=f"cr{cid}")
+                c.creative_edit(h, edit, local_ref=f"cr{cid}")
                 sent += 1
             except MsError as e:
                 failed.append(f"{code} cr{cid}: Creative.edit — {e}")

@@ -68,10 +68,16 @@ def env():
     _purge(db)
 
     busy = {d for (d,) in db.query(LaunchPrepTarget.deal_id).distinct().all()}
+    # И без РК: отправка комплекта дособирает РК сделки (`ad/build.sync_deal`), и площадки
+    # тестовых паблишеров оседали в НАСТОЯЩЕЙ кампании — уборка их не видит, а следующий
+    # прогон, попав на ту же сделку, падал на уникальности «РК × площадка» (01.10.2026:
+    # восемь таких строк за день в РК 7, 14, 21, 86). Порядок — чтобы сделка не скакала.
+    from app.ad.models import AdCampaign
+    busy |= {d for (d,) in db.query(AdCampaign.deal_id).distinct().all()}
     q = db.query(SalesDeal).filter(SalesDeal.code.isnot(None))
     if busy:
         q = q.filter(~SalesDeal.id.in_(busy))
-    deal = q.first()
+    deal = q.order_by(SalesDeal.id).first()
     service = db.query(SalesService).filter(SalesService.is_active.is_(True)).first()
     # Не архивные: архивная площадка не попадает в список выбора вовсе, и прибор,
     # который её ждёт, падал бы по причине, к правилу отношения не имеющей. Условие

@@ -705,7 +705,7 @@ REAL = "2SDnjdg8wQw"
 
 def test_set_with_erid_gets_it_not_the_placeholder():
     db = _db()
-    s = _set_with(db, erid=REAL)
+    s = _set_with(db, ord_status="Active", erid=REAL)
     try:
         assert P.erid_of(s) == REAL
         from types import SimpleNamespace
@@ -718,7 +718,7 @@ def test_start_rewrites_placeholder_to_the_sets_erid_before_launch():
     """Старая копия с заглушкой: при старте поле и разметка получают ЕРИД комплекта —
     ДО запуска, чтобы первый же показ шёл с боевым маркером."""
     db = _db()
-    s = _set_with(db, erid=REAL, ms_targeting_creative_xxhash="OLDTEST000000001")
+    s = _set_with(db, ord_status="Active", erid=REAL, ms_targeting_creative_xxhash="OLDTEST000000001")
     html = '<meta name="erid" content="TEST00000"><div>Реклама. erid: TEST00000</div>'
     c = FakeClient(creative_status="STOPPED", adomain="https://simb-ad.com/", info_html=html)
     try:
@@ -734,7 +734,7 @@ def test_start_rewrites_placeholder_to_the_sets_erid_before_launch():
 
 def test_copy_already_with_erid_is_not_touched():
     db = _db()
-    s = _set_with(db, erid=REAL, ms_targeting_creative_xxhash="HASERID000000001")
+    s = _set_with(db, ord_status="Active", erid=REAL, ms_targeting_creative_xxhash="HASERID000000001")
     c = FakeClient(creative_status="LAUNCHED", adomain="https://simb-ad.com/", erid=REAL,
                    info_html=f'<meta name="erid" content="{REAL}">')
     try:
@@ -760,12 +760,37 @@ def test_replaced_erid_is_rewritten_in_html_too():
     """ЕРИД комплекта сменили: старый боевой маркер уходит и из поля, и из разметки —
     иначе поле и надпись «Реклама» разошлись бы."""
     db = _db()
-    s = _set_with(db, erid=REAL, ms_targeting_creative_xxhash="OLDREAL000000001")
+    s = _set_with(db, ord_status="Active", erid=REAL, ms_targeting_creative_xxhash="OLDREAL000000001")
     old = "2SDnjOLD000"
     c = FakeClient(creative_status="LAUNCHED", adomain="https://simb-ad.com/", erid=old,
                    info_html=f'<meta name="erid" content="{old}"><div>erid: {old}</div>')
     try:
         P.ensure_live(db, s, client=c)
         assert c.erid == REAL and old not in c.info_html and c.info_html.count(REAL) == 2
+    finally:
+        _drop(db, s)
+
+
+
+def test_erid_only_once_ord_has_it():
+    """ЕРИД — при Active и Registering (маркер выдан, регистрация асинхронная); до того
+    заглушка (владелец 01.10.2026). Маркер не нашего ОРД (агентский) — готов сразу."""
+    from types import SimpleNamespace as N
+    for st in ("Active", "Registering"):
+        assert P.erid_of(N(erid=REAL, ord_status=st, erid_source="наш")) == REAL
+    for st in ("RegistrationRequired", "Created", None, ""):
+        assert P.erid_of(N(erid=REAL, ord_status=st, erid_source="наш")) == P.TEST_ERID
+    assert P.erid_of(N(erid=REAL, ord_status=None, erid_source="агентства")) == REAL
+
+
+def test_unregistered_erid_does_not_replace_the_placeholder():
+    db = _db()
+    s = _set_with(db, erid=REAL, ord_status="RegistrationRequired",
+                  ms_targeting_creative_xxhash="UNREG00000000001")
+    c = FakeClient(creative_status="LAUNCHED", adomain="https://simb-ad.com/",
+                   info_html='<meta name="erid" content="TEST00000">')
+    try:
+        P.ensure_live(db, s, client=c)
+        assert not c.edited and c.erid == "TEST00000"
     finally:
         _drop(db, s)

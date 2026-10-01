@@ -90,14 +90,20 @@ def load(db: Session, month: str, service_id: Optional[int] = None,
 
     deals = db.execute(text("""
         SELECT d.id, d.code, coalesce(b.name, d.title) AS brand,
-               coalesce(a.short_name, a.name) AS advertiser, r.name AS account
+               coalesce(a.short_name, a.name) AS advertiser, r.name AS account,
+               EXISTS (SELECT 1 FROM ad_campaign c WHERE c.deal_id = d.id
+                                                    AND c.status = 'запущена') AS launched,
+               (SELECT min(t.created_at) FROM launch_prep_target t WHERE t.deal_id = d.id) AS added_at
           FROM sales_deals d
           LEFT JOIN sales_brands b ON b.id = d.brand_id
           LEFT JOIN sales_advertisers a ON a.id = d.advertiser_id
           LEFT JOIN sales_reps r ON r.id = d.account_manager_id
          WHERE d.period_from >= :s AND d.period_from < :e
            AND EXISTS (SELECT 1 FROM launch_prep_target t WHERE t.deal_id = d.id)
-         ORDER BY brand, d.code
+         -- Запущенные РК впереди, внутри — в порядке добавления, ранние слева (владелец
+         -- 01.10.2026). «Добавлена» — первый получатель сделки: номер сделки старше
+         -- запуска (сделки из Битрикса), и по нему ранние оказывались справа.
+         ORDER BY launched DESC, added_at, d.id
     """), {"s": start, "e": end}).mappings().all()
     ids = [d["id"] for d in deals]
 
@@ -133,6 +139,19 @@ def load(db: Session, month: str, service_id: Optional[int] = None,
         key = (r["deal_id"], r["publisher_id"])
         cells[key] = _merge(cells[key], c) if key in cells else c
 
+    # Скрины запуска по паре сделка × площадка — по креативам РК, кроме отклонённых
+    # (владелец 01.10.2026; правило то же, что у индикатора «С» дашборда трафика).
+    shots = {}
+    if ids:
+        from app.ad.flight import CREATIVE_REJECTED, screens_tone
+        for d, p, total, got in db.execute(text("""
+            SELECT c.deal_id, pl.publisher_id, count(cr.id), count(cr.screens_done_at)
+              FROM ad_campaign c JOIN ad_campaign_placement pl ON pl.campaign_id = c.id
+              JOIN ad_campaign_creative cr ON cr.placement_id = pl.id
+             WHERE c.deal_id = ANY(:ids) AND cr.status <> :rej GROUP BY 1, 2
+        """), {"ids": ids, "rej": CREATIVE_REJECTED}).all():
+            shots[(d, p)] = screens_tone(got, total)
+
     plan = defaultdict(int)
     if ids:
         for d, p, shows in db.execute(text("""
@@ -157,7 +176,8 @@ def load(db: Session, month: str, service_id: Optional[int] = None,
         shows = plan.get((d, p), 0)
         cost = round(shows * cpm[p] / 1000, 2) if shows and cpm.get(p) else None
         out_cells.append({"deal_id": d, "publisher_id": p, **c, "plan_show": shows,
-                          "plan_cost": cost})
+                          "plan_cost": cost,
+                          "screens": shots.get((d, p), {"state": "none", "got": 0, "total": 0})})
     return {
         "month": month, "today": today, "late_workdays": LATE_WORKDAYS,
         # План размещения ведётся на пару сделка × площадка, без разбивки по услугам:

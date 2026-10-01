@@ -60,6 +60,10 @@ CAMPAIGN_STATUSES = ("ожидает сборки", "готова", "запущ�
 RUNNING = ("запущена", "пауза")
 
 
+class ScreensIn(BaseModel):
+    done: bool
+
+
 class StatusIn(BaseModel):
     status: str
     # Только для запуска РК: поднять заодно отключённые и поставленные на паузу площадки.
@@ -350,6 +354,14 @@ def erid_state(creatives) -> dict:
     return {"state": state, "got": got, "total": len(live)}
 
 
+def screens_state(creatives) -> dict:
+    """Скрины запуска площадки по её живым креативам (владелец 01.10.2026) — тем же
+    правилом, что ЕРИД: серый — ни по одному, жёлтый — по части, зелёный — по всем."""
+    from app.ad.flight import screens_tone
+    live = [c for c in creatives if c.get("status") != CREATIVE_REJECTED]
+    return screens_tone(sum(1 for c in live if c.get("screens_done_at")), len(live))
+
+
 def dsp_uploaded(creatives) -> bool:
     """Выгружена ли площадка в DSP: хоть один креатив получил хеш DSP. Статус не
     фильтруем: креатив, отклонённый уже после выгрузки, в DSP всё равно заведён."""
@@ -413,8 +425,10 @@ def _creatives_of(db: Session, campaign_id: int) -> dict:
                s.title AS name, s.no AS set_no,
                pr.code AS pair_code,
                cur.no AS version_no, cur.origin,
-               CASE WHEN c.status <> :rej THEN st.plan_show END AS fixed
+               CASE WHEN c.status <> :rej THEN st.plan_show END AS fixed,
+               c.screens_done_at, u.name AS screens_by
           FROM ad_campaign_creative c
+          LEFT JOIN users u ON u.id = c.screens_done_by
           LEFT JOIN launch_prep_creative_set s ON s.id = c.root_set_id
           LEFT JOIN launch_prep_pair pr ON pr.id = c.pair_id
           LEFT JOIN launch_prep_creative_set cur ON cur.id = pr.set_id
@@ -863,6 +877,7 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         d["can_start"] = can_start_placement(x["status"] for x in mine)
         d["creative_counts"] = creative_counts(mine)
         d["erid"] = erid_state(mine)
+        d["screens"] = screens_state(mine)
         # Кнопки старт/пауза — только после выгрузки в DSP; внешняя площадка в нашу DSP
         # не идёт, у неё галочка, и запрет её не касается.
         d["dsp_uploaded"] = dsp_uploaded(mine)
@@ -1271,6 +1286,24 @@ def set_creative_status(creative_id: int, payload: StatusIn,
     log_action(db, user, "ad_creative_status", "sales_publisher", None,
                f"креатив {cr.ms_title}: {old} → {cr.status}")
     return {"id": cr.id, "status": cr.status}
+
+
+@router.put("/creative/{creative_id}/screens")
+def set_creative_screens(creative_id: int, payload: ScreensIn,
+                         db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """«Скрины запуска сняты» на паре «креатив × площадка» (владелец 01.10.2026). Просто
+    отметка трафика: ничего за собой не тянет, снимается так же."""
+    from datetime import datetime
+    cr = db.query(AdCampaignCreative).get(creative_id)
+    if not cr:
+        raise HTTPException(404, "Креатив не найден")
+    _campaign_in_scope(db, cr.campaign_id, user)
+    cr.screens_done_at = datetime.utcnow() if payload.done else None
+    cr.screens_done_by = user.id if payload.done else None
+    db.commit()
+    log_action(db, user, "ad_creative_screens", "sales_publisher", None,
+               f"креатив {cr.ms_title}: скрины запуска {'сняты' if payload.done else 'не сняты'}")
+    return {"id": cr.id, "screens_done_at": cr.screens_done_at, "screens_done_by": cr.screens_done_by}
 
 
 @router.put("/campaign/{campaign_id}/finish")

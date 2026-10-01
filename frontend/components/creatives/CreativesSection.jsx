@@ -155,6 +155,7 @@ export function CreativesBrief({ creatives = [], onPreview, onDownload, renderAi
     { done: 0, need: 0 });
   const sumW = sumExt('extW');
   const sumD = sumExt('extD');
+  const sumS = sumExt('extS');
   const alignRight = { textAlign: 'right' };
 
   return (
@@ -222,6 +223,8 @@ export function CreativesBrief({ creatives = [], onPreview, onDownload, renderAi
                   title="Weborama: у скольких площадок креатива есть пиксель" />
                 <ExtCount letter="D" done={c.extD?.done || 0} need={c.extD?.need || 0}
                   title="DSP: у скольких площадок креатива заведён креатив" />
+                <ExtCount letter="С" done={c.extS?.done || 0} need={c.extS?.need || 0}
+                  title="Скрины запуска: у скольких запущенных площадок креатива сняты (отмечает трафик)" />
               </span>
             </div>
           ))}
@@ -242,6 +245,8 @@ export function CreativesBrief({ creatives = [], onPreview, onDownload, renderAi
                 title="Weborama: пикселей получено по всем креативам" />
               <ExtCount letter="D" done={sumD.done} need={sumD.need}
                 title="DSP: креативов заведено по всем креативам" />
+              <ExtCount letter="С" done={sumS.done} need={sumS.need}
+                title="Скрины запуска: сняты по всем креативам" />
             </span>
           </div>
         </div>

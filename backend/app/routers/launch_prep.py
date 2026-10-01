@@ -520,6 +520,18 @@ def set_traffic_manager(deal_id: int, payload: TrafficManagerIn,
             "traffic_manager_user_id": payload.user_id, "name": who}
 
 
+def _screens_of_pairs(db: Session, pair_ids: list) -> dict:
+    """{пара: когда сняты скрины запуска} — одним запросом. Креативов РК на одну пару
+    бывает несколько (пересборка) — берётся последняя отметка."""
+    if not pair_ids:
+        return {}
+    from sqlalchemy import func as sa_f
+    from app.ad.models import AdCampaignCreative
+    return dict(db.query(AdCampaignCreative.pair_id, sa_f.max(AdCampaignCreative.screens_done_at))
+                .filter(AdCampaignCreative.pair_id.in_(pair_ids))
+                .group_by(AdCampaignCreative.pair_id).all())
+
+
 @router.get("/deal/{deal_id}")
 def deal_creatives(deal_id: int, db: Session = Depends(get_db),
                    current_user: User = Depends(VIEW)):
@@ -563,7 +575,7 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
     from app.ad.external import external_states
     ext = external_states(db, deal.id)
 
-    return {
+    out = {
         # Отзыв креатива у площадки — мастер аккаунтов и админ (владелец 28.09.2026).
         "can_withdraw": _is_account_master(current_user),
         "deal": {"id": deal.id, "code": deal.code, "title": deal.title,
@@ -604,6 +616,13 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
                           file_counts, moved, ext, members, rules)
                  for s in sets],
     }
+    # «Скрины запуска сняты» — отметка трафика на креативе РК этой пары (владелец
+    # 01.10.2026). Карточка показывает её у аккаунта; ставится в дашборде трафика.
+    shots = _screens_of_pairs(db, [p.id for p in pairs])
+    for s in out["sets"]:
+        for r in s["recipients"]:
+            r["screens_done_at"] = shots.get(r.get("pair_id"))
+    return out
 
 
 @router.get("/deal/{deal_id}/target-options")

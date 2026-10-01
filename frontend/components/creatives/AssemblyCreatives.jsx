@@ -25,7 +25,7 @@ import { downloadFile } from '@/lib/download'
 import safeHref from '@/lib/safeHref'
 import DeeplinkChip from './DeeplinkChip'
 import { CreativePreview } from './CreativePreview'
-import { fmtDayOfMoment } from '@/lib/dates'
+import { fmtDateTime, fmtDayOfMoment } from '@/lib/dates'
 import { aimTone, issueAim, RESTART_NOTE } from '@/lib/aimTab'
 
 const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
@@ -829,7 +829,7 @@ const FILTERS = [
 ]
 /* Сетка таблицы хендоффа: одна на шапку и строки; статус и действие фиксированной
    ширины — плашки и кнопки стоят ровно в столбик во всех строках. */
-const CB_COLS = 'minmax(160px,1.1fr) 104px 40px minmax(190px,2.2fr) 124px 84px 60px 136px'
+const CB_COLS = 'minmax(160px,1.1fr) 104px 40px minmax(190px,2.2fr) 124px 92px 60px 136px'
 
 /* ── маркировка: строка «Маркировка» блока настроек ────────────────────── */
 function EridRow({ set, sent, onChanged }) {
@@ -1292,6 +1292,10 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
           <ExtChip letter="D" tone={EXT_TONE[r.external?.dsp?.state] || 'none'}
             title={`DSP: ${r.external?.dsp?.state || 'нет данных'}` +
                    (r.external?.dsp?.why ? ` — ${r.external.dsp.why}` : '')} />
+          {/* Скрины запуска — отметка трафика в дашборде трафика (01.10.2026). */}
+          <ExtChip letter="С" tone={r.screens_done_at ? 'ok' : 'none'}
+            title={r.screens_done_at ? `Скрины запуска сняты · ${fmtDateTime(r.screens_done_at)}`
+              : 'Скрины запуска не сняты — отмечает трафик'} />
         </span>
 
         <span style={{ display: 'flex', justifyContent: 'center' }}>
