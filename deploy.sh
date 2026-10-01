@@ -417,6 +417,92 @@ EOF
     ls -lh "$DEST"
     ;;
 
+  restore)
+    # Восстановление из бэкапа (владелец 01.10.2026). Тренировка на чистом Postgres
+    # показала, что голый `psql < дамп` падает на `role "cabinet" does not exist`: роли
+    # кластера в дамп не попадают. Порядок шагов поэтому живёт здесь, а не в головах.
+    #
+    # По умолчанию НЕ трогает рабочую базу: дамп разворачивается в НОВУЮ базу рядом
+    # (`<база>_restore_<время>`), её можно осмотреть и сверить. Подмена рабочей — только
+    # флагом --replace: бэкап текущей → остановка бэкендов → текущая ПЕРЕИМЕНОВЫВАЕТСЯ
+    # (не удаляется) → восстановленная получает её имя → запуск. Откат — обратным rename.
+    #
+    #   deploy.sh restore <файл .sql|.dump> [finance|dsp_analytics] [--replace]
+    FILE=${2:-}; WHICH=finance; REPLACE=""
+    for a in "${@:3}"; do
+      case "$a" in
+        finance|dsp_analytics) WHICH=$a ;;
+        --replace) REPLACE=1 ;;
+        *) echo "ERROR: unknown argument '$a'"; exit 1 ;;
+      esac
+    done
+    [ -n "$FILE" ] && [ -f "$FILE" ] || { echo "ERROR: specify an existing dump file"; exit 1; }
+    case "$WHICH" in
+      finance)       R_C=finance_db;     R_U=finance_user; R_N=finance ;;
+      dsp_analytics) R_C=finance_dsp_db; R_U=dsp;          R_N=dsp_analytics ;;
+    esac
+    TS=$(date +%Y%m%d_%H%M%S)
+    TARGET="${R_N}_restore_${TS}"
+    adm() { docker exec -i "$R_C" psql -v ON_ERROR_STOP=1 -q -U "$R_U" -d postgres "$@"; }
+    # Формат — по содержимому, а не по расширению: custom-дамп начинается с «PGDMP».
+    if head -c 5 "$FILE" | grep -q "PGDMP"; then FMT=custom; else FMT=plain
+      head -c 300 "$FILE" | grep -q "PostgreSQL database dump" \
+        || { echo "ERROR: $FILE не похож на дамп PostgreSQL"; exit 1; }
+    fi
+    echo "[1/5] Роли кластера (backend/migrations/2026-10-01_db_roles.sql)..."
+    if [ "$R_N" = "finance" ]; then
+      adm < "$PROJECT/backend/migrations/2026-10-01_db_roles.sql"
+    fi
+    echo "[2/5] Новая база $TARGET, разворот ($FMT, строгий режим)..."
+    adm -c "CREATE DATABASE \"$TARGET\""
+    if [ "$FMT" = "custom" ]; then
+      docker cp "$FILE" "$R_C:/tmp/restore.dump"
+      docker exec "$R_C" pg_restore -U "$R_U" -d "$TARGET" --exit-on-error /tmp/restore.dump \
+        || { docker exec "$R_C" rm -f /tmp/restore.dump
+             echo "ABORT: pg_restore не прошёл. База $TARGET оставлена для разбора; рабочая не тронута"; exit 1; }
+      docker exec "$R_C" rm -f /tmp/restore.dump
+    else
+      docker exec -i "$R_C" psql -v ON_ERROR_STOP=1 -q -U "$R_U" -d "$TARGET" < "$FILE" >/dev/null \
+        || { echo "ABORT: разворот не прошёл. База $TARGET оставлена для разбора; рабочая не тронута"; exit 1; }
+    fi
+    echo "[3/5] Вход роли кабинета..."
+    if [ "$R_N" = "finance" ]; then
+      if [ -n "${CABINET_DB_PASSWORD:-}" ]; then
+        # Пароль — через stdin, не аргументом: аргумент виден в списке процессов хоста.
+        printf "ALTER ROLE cabinet WITH LOGIN PASSWORD %s;\n" \
+          "'$(printf %s "$CABINET_DB_PASSWORD" | sed "s/'/''/g")'" | adm
+      else
+        echo "ВНИМАНИЕ: CABINET_DB_PASSWORD не задан в .env — у cabinet нет входа, кабинет будет отдавать 500"
+      fi
+    fi
+    echo "[4/5] Сверка..."
+    docker exec "$R_C" psql -U "$R_U" -d "$TARGET" -tAc "
+      SELECT 'таблиц: ' || count(*) || ', строк: ' || coalesce(sum((xpath('/row/c/text()',
+             query_to_xml(format('select count(*) as c from %I.%I', table_schema, table_name),
+             false, true, '')))[1]::text::bigint), 0)
+        FROM information_schema.tables
+       WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('pg_catalog','information_schema')
+         AND table_schema NOT LIKE '\_timescaledb%'"
+    [ "$R_N" = "finance" ] && docker exec "$R_C" psql -U "$R_U" -d postgres -tAc \
+      "SELECT 'роль cabinet: вход ' || CASE WHEN rolcanlogin THEN 'есть' ELSE 'НЕТ' END FROM pg_roles WHERE rolname='cabinet'"
+    if [ -z "$REPLACE" ]; then
+      echo "[5/5] Готово: дамп развёрнут в $TARGET, рабочая $R_N не тронута."
+      echo "      Подменить рабочую: deploy.sh restore $FILE $WHICH --replace"
+      echo "      Убрать проверочную: docker exec $R_C psql -U $R_U -d postgres -c 'DROP DATABASE \"$TARGET\"'"
+      exit 0
+    fi
+    echo "[5/5] Подмена рабочей базы $R_N..."
+    "$SELF" backup "$R_N" || { echo "ABORT: бэкап текущей не снят — подмена отменена"; exit 1; }
+    if [ "$R_N" = "finance" ]; then SVC="backend cabinet_backend"; else SVC="backend"; fi
+    docker compose stop $SVC
+    adm -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$R_N' AND pid <> pg_backend_pid()" >/dev/null
+    adm -c "ALTER DATABASE \"$R_N\" RENAME TO \"${R_N}_old_${TS}\"" \
+        -c "ALTER DATABASE \"$TARGET\" RENAME TO \"$R_N\""
+    docker compose start $SVC
+    echo "Готово: $R_N восстановлена из $(basename "$FILE"). Прежняя — ${R_N}_old_${TS}."
+    echo "Откат: stop $SVC → RENAME $R_N → ${R_N}_bad, ${R_N}_old_${TS} → $R_N → start."
+    ;;
+
   retention)
     # Уборка файлов по срокам хранения (скриншоты 30 дней, песочница 60, архивы 730).
     # Правила живут в app/traffic/retention.py, скрипт только обходит хранилище.
@@ -460,7 +546,7 @@ EOF
     ;;
 
   help|*)
-    echo "Usage: deploy.sh {pull|backend|frontend|cabinet-backend|cabinet-frontend|full|migrate <script>|migrate-status|backup [db]|retention [apply]|status|logs [service]}"
+    echo "Usage: deploy.sh {pull|backend|frontend|cabinet-backend|cabinet-frontend|full|migrate <script>|migrate-status|backup [db]|restore <file> [db] [--replace]|retention [apply]|status|logs [service]}"
     echo ""
     echo "  pull              - git pull only"
     echo "  backend           - git pull + copy backend files + restart backend"
@@ -471,6 +557,8 @@ EOF
     echo "  migrate <script>  - backup, apply SQL script (all-or-nothing), record in ledger"
     echo "  migrate-status    - compare migration files on disk against the ledger"
     echo "  backup [db]       - pg_dump to BACKUPS_DIR, keep last 14 (db: finance | dsp_analytics)"
+    echo "  restore <file> [db] [--replace] - roles + strict restore into a NEW db, verify;"
+    echo "                      --replace swaps it in (backup first, old db renamed, not dropped)"
     echo "  retention [apply] - delete stored files past their retention (dry run without apply)"
     echo "  status            - show container status"
     echo "  logs [service]    - follow logs (service: backend/frontend/db/caddy)"

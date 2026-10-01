@@ -65,9 +65,9 @@ export const MONTH_RU = {
 export const RK_STATUS = {
   'ждёт согласования': [T.accentTint, T.accent, T.accentBorder],
   'ждёт старта':       [T.subtle, T.t3, T.border],
-  'в размещении':      [T.accentTint, T.accent, T.accentBorder],
+  'в размещении':      [T.incomeTint, T.incomeFg, T.incomeBorder],
   'пауза':             [T.warnTint, T.warnFg, T.warnBorder],
-  'завершён':          [T.incomeTint, T.incomeFg, T.incomeBorder],
+  'завершён':          [T.subtle, T.t2, T.border],
   'отказ':             [T.dangerTint, T.danger, T.dangerBorder],
 };
 /* состояние месяца выводится из статусов его РК */

@@ -269,6 +269,8 @@ PLACES = {
     "placements_approved":  ("Трафик — очередь согласования", "/traffic/queue"),
     "erid_issued":          ("Карточка сделки — блок «ОРД»", "#ord"),
     "campaign_ready":       ("Трафик — дашборд кампаний", "/traffic/dashboard"),
+    "one_pair_ready":       ("Трафик — дашборд кампаний", "/traffic/dashboard"),
+    "campaign_finished":    ("Трафик — дашборд кампаний, «Завершить РК»", "/traffic/dashboard"),
     "weborama_pixel":       ("Трафик — дашборд кампаний", "/traffic/dashboard"),
     "fact_collected":       ("Трафик — дашборд кампаний", "/traffic/dashboard"),
     "mp_one_surface":       ("Карточка сделки — Медиаплан", "#mp"),
@@ -428,6 +430,66 @@ def _campaign_ready(c: Ctx) -> Result:
     if not (c.campaign.ms_campaign_xxhash or "").strip():
         return _not_yet("РК есть, но в DSP не создана")
     return _ok()
+
+
+@register("one_pair_ready", "Хотя бы одна площадка собрана к запуску",
+          "Нужна площадка, у которой комплект прошёл проверку трафика, площадка "
+          "согласовала, у комплекта есть ЕРИД и креатив выгружен в DSP (внешней — не нужно)")
+def _one_pair_ready(c: Ctx) -> Result:
+    """Правило перехода «В размещении» (владелец 01.10.2026): «хоть одна площадка полностью
+    собрана и готова к запуску — запуск и перевод стадии». Раньше вход запирали веера «все
+    из всех» (все площадки согласовали, у всех комплектов ЕРИД) — и сделка с запущенной
+    РК стояла в сборке из-за площадок, которые ещё не ответили. Веера остались
+    подсказками: «18 из 22» по-прежнему видно, но перехода не держит."""
+    if not c.sets:
+        return _not_yet("комплектов нет")
+    rows = c.db.execute(text("""
+        SELECT p.id, t.publisher_id, coalesce(pub.name, 'без имени') AS publisher,
+               EXISTS (SELECT 1 FROM launch_prep_review r WHERE r.set_id = s.id
+                        AND r.kind = 'первичная_тт' AND r.verdict = 'ок') AS checked,
+               EXISTS (SELECT 1 FROM ad_campaign_creative cr WHERE cr.pair_id = p.id
+                        AND coalesce(cr.ms_creative_xxhash, '') <> '') AS in_dsp
+          FROM launch_prep_pair p
+          JOIN launch_prep_creative_set s ON s.id = p.set_id
+          JOIN launch_prep_target t ON t.id = p.target_id
+          LEFT JOIN sales_publishers pub ON pub.id = t.publisher_id
+         WHERE s.deal_id = :d AND p.agreed_at IS NOT NULL AND p.withdrawn_at IS NULL
+           AND coalesce(s.erid, '') <> ''
+    """), {"d": c.deal.id}).mappings().all()
+    if not rows:
+        return _not_yet("ни одной согласованной площадки с ЕРИД")
+    from app.launch_prep import pub_rules
+    modes = pub_rules.placement_modes(c.db, {(c.deal.id, r["publisher_id"]) for r in rows})
+    ready = sorted({r["publisher"] for r in rows if r["checked"] and (
+        r["in_dsp"] or (modes.get((c.deal.id, r["publisher_id"])) or {}).get("mode")
+        == pub_rules.MODE_EXTERNAL)})
+    if ready:
+        return _ok(f"собрано площадок: {len(ready)}")
+    return _not_yet("согласованные площадки с ЕРИД есть, но креатив не выгружен в DSP "
+                    "или комплект не прошёл проверку трафика")
+
+
+@register("campaign_finished", "РК завершена трафиком",
+          "Сделку дальше размещения двигает трафик кнопкой «Завершить РК»; до этого "
+          "аккаунт может добавлять баннеры, но не переводить сделку")
+def _campaign_finished(c: Ctx) -> Result:
+    """Владелец 01.10.2026: «аккаунт ещё может добавлять баннеры, но не может двигать
+    сделку до того, как трафик нажмёт „Завершить РК“». Без РК — неприменимо: двигать
+    нечего держать (услуги без кампании)."""
+    if not c.campaign:
+        return _na("РК нет")
+    # Держит только ВЫХОД ИЗ РАЗМЕЩЕНИЯ. Сделка, уже стоящая в «Итоговой сверке» или в
+    # документообороте, этот рубеж прошла: на копии прода 01.10 таких 68, и их РК
+    # «ожидает сборки» — они старше кнопки. Запереть их значило бы остановить документы.
+    cur = c.db.execute(text("""
+        SELECT s.name, ph.name FROM sales_stages s
+          LEFT JOIN sales_stage_phases ph ON ph.id = s.phase_id WHERE s.id = :i
+    """), {"i": c.deal.our_stage_id}).first()
+    if cur and (cur[0] == "Итоговая сверка" or (cur[1] or "").startswith("Документ")):
+        return _na("сделка уже прошла размещение")
+    if c.campaign.status in ("окончена", "архив"):
+        return _ok()
+    return _not_yet(f"РК «{c.campaign.status}» — завершает трафик")
 
 
 @register("weborama_pixel", "Пиксель Weborama получен по площадкам",

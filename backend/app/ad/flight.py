@@ -469,7 +469,10 @@ def daily_buckets(plan: Optional[float], fact: Optional[float], fl: Optional[Fli
         return None
 
     per_day = plan / fl.length
-    need = need_per_day(plan, fact, fl) or 0.0
+    # Факта ещё нет («нет данных», а не ноль) — для плана на остаток это ноль показов:
+    # иначе `need` пустой, и в первый день запуска все будущие столбцы рисовались с
+    # планом 0 — «план не рисуется до конца размещения» (владелец 01.10.2026, 54ZYCH).
+    need = need_per_day(plan, fact if fact is not None else 0, fl) or 0.0
 
     buckets = []
     start = lo

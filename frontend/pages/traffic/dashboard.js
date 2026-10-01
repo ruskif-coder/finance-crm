@@ -30,6 +30,8 @@ import api, { auth } from '@/lib/api'
 import { downloadDealCreatives } from '@/lib/dealDocs'
 import OffsiteButton from '@/components/traffic/OffsiteButton'
 import PassportButton from '@/components/traffic/PassportButton'
+import StartRkModal from '@/components/traffic/StartRkModal'
+import { todayMsk } from '@/lib/dates'
 import ExternalLaunch from '@/components/traffic/ExternalLaunch'
 import {
   CreativeCounts, CreativeRows, Culprits, DASH, DayWall, Dynamics, KpiRow, PaceBar, Pips,
@@ -438,18 +440,20 @@ export default function TrafficDashboard() {
     }
   }
 
-  /* Запуск РК. Если в ней есть ОТКЛЮЧЁННЫЕ площадки — спрашиваем, поднимать ли их:
-     «остановлена» могла быть осознанным решением, и включить её молча значит отменить
-     чужое решение, ничего об этом не сказав. */
-  const startCampaign = async (row) => {
-    let withPlaces = false
-    if (row.placements_off) {
-      withPlaces = window.confirm(
-        `В РК ${row.placements_off} отключённых площадок. `
-        + 'Включить все, включая остановленные?\n\n'
-        + 'Отмена — запустить РК, оставив их выключенными.')
-    }
-    await setCampaignStatus(row, 'запущена', withPlaces)
+  /* Запуск РК — окном с планом по каждой площадке (владелец 01.10.2026): что поднимется,
+     что уже крутит, что не поднимется и почему. Прежний confirm спрашивал только про
+     отключённые и не поднимал «ждёт запуска» вовсе. */
+  const startCampaign = (row) => { setPop(null); setStartAsk(row) }
+
+  const wk = (id) => (grain[id] || 'day') === 'week'
+  // Итог текущей недели — столбец, в который попадает сегодняшний день. WR и
+  // расхождения у недели нет: сервер сверяет за день и за период.
+  const weekTotals = (st) => {
+    const today = todayMsk()
+    const b = (st.buckets || []).find(x => String(x.date_from) <= today && today <= String(x.date_to))
+    if (!b) return { shows: 0, clicks: 0, ctr: null }
+    return { shows: b.shows, clicks: b.clicks,
+      ctr: b.shows ? Math.round(b.clicks / b.shows * 10000) / 100 : null }
   }
 
   /* Сверка с DSP после нажатия (владелец 30.09.2026): статусы перечитываются из DSP,
@@ -532,6 +536,7 @@ export default function TrafficDashboard() {
      отправляем. Подтверждение без цифры «19 площадок» ничем не отличается от случайного
      нажатия, а откатывать нечем. */
   const [extAsk, setExtAsk] = useState(null)     // { row, kind, plan }
+  const [startAsk, setStartAsk] = useState(null) // строка РК в окне запуска
   const [extBusy, setExtBusy] = useState(false)
 
   const askExternal = async (row, kind) => {
@@ -572,7 +577,9 @@ export default function TrafficDashboard() {
     setPop(null)
     try {
       const w = await api.put(`/traffic-dashboard/placement/${p.id}/status`, { status: s }, auth())
-      const note = dspCheckNote(w.data?.dsp_check)
+      const st = w.data?.stage
+      const stageNote = st?.moved ? `. Сделка переведена в «${st.stage}»` : st?.refused ? `. ⚠ ${st.refused}` : ''
+      const note = dspCheckNote(w.data?.dsp_check) + stageNote
       if (note) say(`Площадка: ${s}${note}`)
       const r = await api.get(`/traffic-dashboard/campaign/${campId}`, auth())
       setDetail(d => ({ ...d, [campId]: r.data }))
@@ -1344,10 +1351,15 @@ export default function TrafficDashboard() {
                         <>
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10,
                             marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-inner)' }}>
-                            {[['средний темп', stat[r.id].speed == null ? DASH : `${num(stat[r.id].speed)} / дн`],
-                              ['нужно в день', stat[r.id].need_per_day == null
+                            {/* В режиме недель — недельные величины (владелец 01.10.2026: «переключил
+                                на недели, а суммы всё равно суточные»). Сервер отдаёт темп в день,
+                                неделя — тот же темп × 7. */}
+                            {[['средний темп', stat[r.id].speed == null ? DASH
+                                : wk(r.id) ? `${num(stat[r.id].speed * 7)} / нед` : `${num(stat[r.id].speed)} / дн`],
+                              [wk(r.id) ? 'нужно в неделю' : 'нужно в день', stat[r.id].need_per_day == null
                                 ? (r.flight_over ? 'флайт закончен' : DASH)
-                                : `${num(stat[r.id].need_per_day)} / дн`],
+                                : wk(r.id) ? `${num(stat[r.id].need_per_day * 7)} / нед`
+                                  : `${num(stat[r.id].need_per_day)} / дн`],
                               ['дней осталось', stat[r.id].days_left == null ? DASH : String(stat[r.id].days_left)],
                             ].map(([l, v]) => (
                               <span key={l} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -1366,7 +1378,8 @@ export default function TrafficDashboard() {
                                выдуманное соответствие врало бы про то, что сверено. */
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14,
                               marginTop: 12, borderTop: '1px solid var(--border-inner)' }}>
-                              {[['сегодня', stat[r.id].totals.today], ['всего за период', stat[r.id].totals.period]]
+                              {[[wk(r.id) ? 'эта неделя' : 'сегодня', wk(r.id) ? weekTotals(stat[r.id]) : stat[r.id].totals.today],
+                                ['всего за период', stat[r.id].totals.period]]
                                 .map(([l, t], i, _a, T = stat[r.id].totals,
                                        cover = T.wr_placements && T.wr_placements < T.placements
                                          ? `по ${T.wr_placements} из ${T.placements} площадок` : null) => (
@@ -1535,6 +1548,17 @@ export default function TrafficDashboard() {
         </div>
       </div>
 
+      {startAsk && (
+        <StartRkModal row={startAsk} auth={auth} note={(r) => dspCheckNote(r.dsp_check)}
+          onClose={() => setStartAsk(null)}
+          onDone={async () => {
+            await load()
+            if (open === startAsk.id) {
+              const d = await api.get(`/traffic-dashboard/campaign/${startAsk.id}`, auth())
+              setDetail(x => ({ ...x, [startAsk.id]: d.data }))
+            }
+          }} />
+      )}
       {/* Подтверждение внешнего действия. Числа берутся с СЕРВЕРА (`external-plan`), а не
           пересчитываются здесь: экран ничего не считает, и второй счёт разошёлся бы с
           тем, что действительно уйдёт наружу. */}

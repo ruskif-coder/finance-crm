@@ -47,14 +47,22 @@ def test_automatic_moves_ask_one_question():
     assert stage_move.may_move(_plan(blockers=["не выполнено"])) is False
 
 
+def _body(path, fn):
+    src = io.open(APP / path, encoding="utf-8").read()
+    body = src[src.index(f"def {fn}("):]
+    body = body[:body.index("\n@router") if "\n@router" in body else len(body)]
+    return body[:body.index("\ndef ", 10)] if "\ndef " in body[10:] else body
+
+
 def test_both_automatic_moves_use_it():
+    # Автоматических переводов три (01.10.2026): привязка плана, запуск РК, завершение РК.
+    # Два последних идут через общую `advance_deal`, и уже она спрашивает правила стадии.
     for path, fn in (("routers/media_plans.py", "_advance_deal_on_link"),
-                     ("routers/traffic_dashboard.py", "finish_campaign")):
-        src = io.open(APP / path, encoding="utf-8").read()
-        body = src[src.index(f"def {fn}("):]
-        body = body[:body.index("\n@router") if "\n@router" in body else len(body)]
-        body = body[:body.index("\ndef ", 10)] if "\ndef " in body[10:] else body
-        assert "stage_move.may_move(plan)" in body, f"{fn}: решает по одним блокерам"
+                     ("routers/traffic_dashboard.py", "advance_deal")):
+        assert "stage_move.may_move(plan)" in _body(path, fn), f"{fn}: решает по одним блокерам"
+    for fn in ("finish_campaign", "set_campaign_status", "set_placement_status"):
+        assert "advance_deal(" in _body("routers/traffic_dashboard.py", fn), \
+            f"{fn}: двигает сделку мимо общей точки (или не двигает вовсе)"
 
 
 def test_the_card_refuses_a_stage_that_does_not_apply(monkeypatch):

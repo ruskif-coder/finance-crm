@@ -245,6 +245,61 @@ def _dsp_follow(db: Session, c) -> Optional[str]:
         raise HTTPException(502, f"DSP не принял смену статуса — изменения не сохранены: {e}")
 
 
+# Что можно поднять массовым стартом РК (владелец 01.10.2026): согласованные и ещё не
+# включённые («ждёт запуска»), а также выключенные и на паузе — их человек видит в окне
+# и подтверждает. До 01.10 «ждёт запуска» сюда не входил, и «Запустить» на 54ZYCH не
+# поднял ни одной из 19 готовых площадок.
+START_RAISABLE = (PLACEMENT_READY, PLACEMENT_OFF, "пауза")
+
+
+def start_block(db: Session, c, p, creatives: list, mode: Optional[str] = None) -> Optional[str]:
+    """Почему площадку НЕЛЬЗЯ запустить — словами, или None. Одно правило на кнопку
+    площадки и на массовый старт РК: разойдясь, они пускали бы разное."""
+    if not can_start_placement(x["status"] for x in creatives):
+        return "нет согласованного креатива"
+    if mode is None:
+        from app.launch_prep import pub_rules
+        mode = pub_rules.placement_modes(db, {(c.deal_id, p.publisher_id)}).get(
+            (c.deal_id, p.publisher_id), {}).get("mode")
+    from app.launch_prep import pub_rules
+    if mode != pub_rules.MODE_EXTERNAL and not dsp_uploaded(creatives):
+        return "креатив не выгружен в DSP — сначала «В DSP»"
+    return None
+
+
+RUNNING_STAGE = "В размещении"
+
+
+def advance_deal(db: Session, deal, stage_name: str, user, reason: str) -> dict:
+    """Перевести сделку ВПЕРЁД на стадию по имени — через общую точку
+    (`stage_move`), с её требованиями и историей. Назад не ведёт никогда.
+    → {"moved": bool, "stage": имя, "refused": текст | None}. Отказ не роняет
+    вызывающего: РК запущена/окончена — это факт, от лестницы он не зависит."""
+    from app.sales import catalog as catalog_mod
+    from app.sales import stage_move
+    cat = catalog_mod.Catalog(db)
+    target = next((st for st in cat.stages if st.name == stage_name), None)
+    cur = cat.by_id.get(deal.our_stage_id)
+    if target is None:
+        return {"moved": False, "stage": cur.name if cur else None,
+                "refused": (f"Сделка не переведена: в каталоге стадий нет «{stage_name}» — "
+                            "стадию переименовали. Переведите вручную и поправьте название.")}
+    if deal.our_stage_id == target.id or not cat.is_before(deal.our_stage_id, target.id):
+        return {"moved": False, "stage": cur.name if cur else None, "refused": None}
+    plan = stage_move.plan_move(db, deal, target, cat)
+    if not stage_move.may_move(plan):
+        if plan.not_applicable:
+            why = (f"Сделка не переведена: стадия «{target.name}» не относится к услуге "
+                   "этой сделки — переведите вручную на карточке")
+        elif not plan.allowed:
+            why = stage_move.refusal_text(plan)
+        else:
+            why = "Сделка не переведена: у неё не выбрана воронка реализации — выберите на карточке сделки"
+        return {"moved": False, "stage": cur.name if cur else None, "refused": why}
+    stage_move.apply_move(db, deal, target, user, catalog=cat, reason=reason)
+    return {"moved": True, "stage": target.name, "refused": None}
+
+
 def erid_state(creatives) -> dict:
     """ЕРИД площадки по её живым креативам (владелец 30.09.2026): серый — ни у одного,
     жёлтый — у части (несколько креативов на площадке), зелёный — у всех."""
@@ -1096,16 +1151,24 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
         # поштучно (`can_start_placement`). Молча обойти его здесь значило бы завести
         # чёрный ход в обход собственной проверки.
         creatives = _creatives_of(db, c.id)
-        for p in db.query(AdCampaignPlacement).filter_by(campaign_id=c.id).all():
-            if p.status in (PLACEMENT_OFF, "пауза") and can_start_placement(
-                    x["status"] for x in creatives.get(p.id, [])):
+        from app.launch_prep import pub_rules
+        pls = db.query(AdCampaignPlacement).filter_by(campaign_id=c.id).all()
+        modes = pub_rules.placement_modes(db, {(c.deal_id, p.publisher_id) for p in pls})
+        for p in pls:
+            if p.status in START_RAISABLE and not start_block(
+                    db, c, p, creatives.get(p.id, []),
+                    (modes.get((c.deal_id, p.publisher_id)) or {}).get("mode")):
                 p.status = "запущен"
+                build.mark_target_placed(db, p)
                 raised += 1
         if raised:
             build.recompute_shares(db, c.id)
 
     stopped = _cascade_placements(db, c.id, payload.status)
     dsp_status = _dsp_follow(db, c)
+    # РК крутит — сделка «В размещении» (владелец 01.10.2026), с требованиями стадии.
+    stage = (advance_deal(db, _deal, RUNNING_STAGE, user, "РК запущена трафиком")
+             if dsp_status == "LAUNCHED" else None)
 
     db.commit()
     # Площадкам — только о СТАРТЕ и только один раз: переход «не крутила → крутит»
@@ -1120,7 +1183,7 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
                + (f"; в DSP {dsp_status}" if dsp_status else ""))
     return {"id": c.id, "status": c.status, "placements_raised": raised,
             "placements_stopped": stopped, "dsp_status": dsp_status,
-            "dsp_check": getattr(c, "_dsp_check", None)}
+            "dsp_check": getattr(c, "_dsp_check", None), "stage": stage}
 
 
 # Стадия, на которую «Завершить РК» двигает сделку. Резолвим ПО ИМЕНИ, потому что
@@ -1183,8 +1246,6 @@ def finish_campaign(campaign_id: int, db: Session = Depends(get_db), user: User 
     """
     from app.dsp.campaigns import apply_status
     from app.dsp.client import MsError
-    from app.sales import stage_move
-    from app.sales import catalog as catalog_mod
 
     c, deal = _campaign_in_scope(db, campaign_id, user)
     # DSP — ПЕРВЫМ, до перевода сделки (он коммитит сам): не вышло — не меняем ничего.
@@ -1193,56 +1254,65 @@ def finish_campaign(campaign_id: int, db: Session = Depends(get_db), user: User 
         apply_status(db, c, "окончена")
     except MsError as e:
         raise HTTPException(502, f"DSP не принял завершение — РК не завершена: {e}")
-    cat = catalog_mod.Catalog(db)
     # Стадия ищется ПО ИМЕНИ, а имя правится на экране «Настройки → Стадии». Раньше её
     # отсутствие роняло ручку целиком — и тогда нельзя было завершить РК ВООБЩЕ:
     # статус кампании и остановка площадок стоят ниже, то есть площадки продолжали
     # крутить из-за переименования стадии. Теперь ненайденная стадия только лишает
     # перевода: РК окончена — это факт, он от нашей лестницы не зависит.
-    target = next((st for st in cat.stages if st.name == RECON_STAGE), None)
-
-    # Только ВПЕРЁД: РК, завершённая после ухода сделки в документооборот, не должна
-    # тащить её назад. Сам перевод — через общую точку (`app/sales/stage_move.py`),
-    # иначе это ещё один путь записи стадии мимо требований и истории.
-    moved = None
-    refused = None
-    if target is None:
-        refused = (f"Сделка не переведена: в каталоге стадий нет «{RECON_STAGE}» — "
-                   "стадию переименовали. Переведите вручную и поправьте название.")
-    elif deal.our_stage_id != target.id and cat.is_before(deal.our_stage_id, target.id):
-        plan = stage_move.plan_move(db, deal, target, cat)
-        if not stage_move.may_move(plan):
-            # Кампанию всё равно закрываем — она действительно окончена. А сделку не
-            # двигаем и ГОВОРИМ об этом: молчаливый неперевод человек примет за перевод.
-            if plan.not_applicable:
-                refused = (f"Сделка не переведена: стадия «{target.name}» не относится "
-                           "к услуге этой сделки — переведите вручную на карточке")
-            elif not plan.allowed:
-                refused = stage_move.refusal_text(plan)
-            else:
-                refused = ("Сделка не переведена: у неё не выбрана воронка реализации — "
-                           "выберите на карточке сделки")
-        else:
-            out = stage_move.apply_move(db, deal, target, user, catalog=cat,
-                                        reason="РК завершена трафиком")
-            moved = out["from_stage"]
-
+    # Статус — ДО перевода сделки: вход в «Итоговую сверку» требует завершённой РК
+    # (проверка `campaign_finished`, 01.10.2026), и иначе кнопка заперла бы сама себя.
     old, c.status = c.status, "окончена"
+    db.flush()
+    adv = advance_deal(db, deal, RECON_STAGE, user, "РК завершена трафиком")
+    refused, moved = adv["refused"], adv["moved"]
+
     # Завершение — тот же каскад: РК окончена, а площадки продолжают крутить, это не
     # состояние, а рассогласование.
     stopped = _cascade_placements(db, c.id, "окончена")
     db.commit()
     log_action(db, user, "ad_campaign_finish", "sales_deal", deal.id,
                f"РК #{c.id}: {old} → окончена"
-               + (f"; сделка {moved.name} → {target.name}" if moved else "")
+               + (f"; сделка → {adv['stage']}" if moved else "")
                + (f"; остановлено площадок {stopped}" if stopped else "")
                + (f"; {refused}" if refused else ""))
     return {"id": c.id, "status": c.status, "placements_stopped": stopped,
-            "stage_refused": refused,
-            "stage": (target.name if moved
-                      else (cat.by_id.get(deal.our_stage_id) or target or c).name
-                      if (cat.by_id.get(deal.our_stage_id) or target) else None),
-            "moved": bool(moved)}
+            "stage_refused": refused, "stage": adv["stage"], "moved": bool(moved)}
+
+
+@router.get("/campaign/{campaign_id}/start-plan")
+def start_plan(campaign_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Окно «Запустить РК» (владелец 01.10.2026): по каждой площадке — статус, поднимет
+    ли её массовый старт и почему нет. Правило — то же `start_block`, что у кнопок."""
+    from app.launch_prep import pub_rules
+    from app.sales.models import SalesPublisher
+    c, _deal = _campaign_in_scope(db, campaign_id, user)
+    creatives = _creatives_of(db, c.id)
+    pls = db.query(AdCampaignPlacement).filter_by(campaign_id=c.id).all()
+    pubs = {x.id: x for x in db.query(SalesPublisher).filter(
+        SalesPublisher.id.in_([p.publisher_id for p in pls] or [0]))}
+    modes = pub_rules.placement_modes(db, {(c.deal_id, p.publisher_id) for p in pls})
+    rows = []
+    for p in pls:
+        pub = pubs.get(p.publisher_id)
+        mode = (modes.get((c.deal_id, p.publisher_id)) or {}).get("mode")
+        why = start_block(db, c, p, creatives.get(p.id, []), mode)
+        if p.status == "запущен":
+            act = "running"
+        elif p.status in START_RAISABLE and not why:
+            act = "start"
+        else:
+            act = "skip"
+            why = why or f"статус «{p.status}» — поднимает только согласование"
+        rows.append({"placement_id": p.id, "publisher": pub.name if pub else "?",
+                     "domain": pub.domain if pub else None, "status": p.status,
+                     "external": mode == pub_rules.MODE_EXTERNAL,
+                     "action": act, "why": None if act != "skip" else why})
+    order = {"start": 0, "running": 1, "skip": 2}
+    rows.sort(key=lambda r: (order[r["action"]], r["publisher"]))
+    return {"campaign_id": c.id, "status": c.status, "dsp_block": dsp_not_ready(db, c),
+            "rows": rows, "start": sum(r["action"] == "start" for r in rows),
+            "running": sum(r["action"] == "running" for r in rows),
+            "skip": sum(r["action"] == "skip" for r in rows)}
 
 
 @router.put("/placement/{placement_id}/status")
@@ -1272,21 +1342,14 @@ def set_placement_status(placement_id: int, payload: StatusIn,
     # показ несогласованного баннера.
     if payload.status == "запущен":
         volumes.guard(db, _deal.id)       # объёмы больше плана РК (27.09.2026)
-        mine = [r["status"] for r in
-                _creatives_of(db, p.campaign_id).get(p.id, [])]
-        if not can_start_placement(mine):
-            raise HTTPException(400, "Нет ни одного согласованного креатива — "
-                                     "площадку нельзя запустить")
     # Пауза КРУТЯЩЕЙ площадки не держится никогда: остановить то, что тратит, важнее
     # проверки (ревью 30.09.2026 — креатив вернули на переделку, а площадка крутит).
     if payload.status == "запущен" or (payload.status == "пауза" and p.status != "запущен"):
-        # Для площадок нашей DSP — только после выгрузки (владелец 30.09.2026). Внешняя
-        # (Adfox / вне контура) в нашу DSP не выгружается, её галочку это не запирает.
-        from app.launch_prep import pub_rules
-        mode = pub_rules.placement_modes(db, {(c.deal_id, p.publisher_id)}).get(
-            (c.deal_id, p.publisher_id), {}).get("mode")
-        if mode != pub_rules.MODE_EXTERNAL and not dsp_uploaded(
-                _creatives_of(db, p.campaign_id).get(p.id, [])):
+        why = start_block(db, c, p, _creatives_of(db, p.campaign_id).get(p.id, []))
+        if why == "нет согласованного креатива":
+            raise HTTPException(400, "Нет ни одного согласованного креатива — "
+                                     "площадку нельзя запустить")
+        if why:
             raise HTTPException(409, DSP_NOT_UPLOADED)
     old, p.status = p.status, payload.status
     build.recompute_shares(db, p.campaign_id)
@@ -1297,13 +1360,15 @@ def set_placement_status(placement_id: int, payload: StatusIn,
     moved = build.mark_target_placed(db, p) if p.status == "запущен" else 0
     # Площадка меняет и статус РК по факту: первая запущенная делает её «запущена»,
     # последняя остановленная — «готова». DSP следует.
-    _dsp_follow(db, c)
+    dsp_status = _dsp_follow(db, c)
+    stage = (advance_deal(db, _deal, RUNNING_STAGE, user, "РК запущена трафиком")
+             if dsp_status == "LAUNCHED" else None)
     db.commit()
     log_action(db, user, "ad_placement_status", "sales_publisher", p.publisher_id,
                f"РК #{p.campaign_id}: площадка {old} → {p.status}"
                + (f"; получателей переведено в размещение: {moved}" if moved else ""))
     return {"id": p.id, "status": p.status, "targets_placed": moved,
-            "dsp_check": getattr(c, "_dsp_check", None)}
+            "dsp_check": getattr(c, "_dsp_check", None), "stage": stage}
 
 
 # ── внешние системы: пиксель Weborama и выгрузка в DSP ───────────────────────

@@ -76,6 +76,9 @@ def _no_volume_guard(monkeypatch):
     # здесь запросов к ним не умеет.
     from app.dsp import campaigns as _camps
     monkeypatch.setattr(_camps, "follow_creatives", lambda *a, **k: {})
+    # Перевод сделки по стадии проверяется в tests/test_rk_start_plan.py: каталога
+    # стадий у поддельной базы нет.
+    monkeypatch.setattr(td, "advance_deal", lambda *a, **k: {"moved": False, "stage": None, "refused": None})
 
 def _camp(xx=XX, status="готова"):
     return SimpleNamespace(id=5, deal_id=1, status=status, ms_campaign_xxhash=xx,
