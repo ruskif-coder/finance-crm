@@ -25,6 +25,30 @@ CR_REF = re.compile(r"^cr(\d+)$")
 MAX_BODY = 4000      # тело запроса/ответа в ленте — обрезаем: экран, а не архив
 
 
+def _full(v) -> Optional[str]:
+    if v is None:
+        return None
+    return v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, indent=2)
+
+
+def as_text(system: str, rows: list) -> str:
+    """Скачиваемый лог (владелец 01.10.2026): по порядку, старые сверху — «1. вызвали
+    такой запрос с таким телом, 2. …», как просит поддержка DSP."""
+    out = [f"Лог обмена с {'DSP' if system == 'dsp' else 'Weborama'}: {len(rows)} записей, "
+           f"старые сверху. Время UTC."]
+    for n, r in enumerate(reversed(rows), 1):
+        ts = r["ts"].strftime("%d.%m.%Y %H:%M:%S") if r.get("ts") else "—"
+        head = [f"{n}. {ts}", r.get("method") or "—", "успех" if r.get("ok") else "ОШИБКА"]
+        head += [f"{k} {r[k]}" for k in ("deal", "publisher", "creative", "ref", "hash") if r.get(k)]
+        out.append("\n===== " + " · ".join(str(x) for x in head))
+        if r.get("error"):
+            out.append("Ошибка: " + str(r["error"]))
+        out.append("Запрос:\n" + (r.get("request") or "—"))
+        if system == "dsp":
+            out.append("Ответ:\n" + (r.get("response") or "—"))
+    return "\n".join(out) + "\n"
+
+
 def _short(v) -> Optional[str]:
     if v is None:
         return None
@@ -100,10 +124,11 @@ def _resolve(r, crs: dict, camps: dict) -> dict:
     return hit or {}
 
 
-def dsp_rows(db: Session, limit: int = 200, only_errors: bool = False,
-             deal: Optional[str] = None, engine=None, prod_only: bool = True) -> list:
+def dsp_rows(db: Session, limit: Optional[int] = 200, only_errors: bool = False,
+             deal: Optional[str] = None, engine=None, prod_only: bool = True,
+             full: bool = False) -> list:
     """Лента DSP, новые сверху. `deal` — код сделки (фильтр после сведения: журнал
-    сделок не знает)."""
+    сделок не знает). `limit=None` — все строки; `full` — тела целиком (скачивание)."""
     if engine is None:
         from app.dsp.db import dsp_engine
         engine = dsp_engine()
@@ -114,7 +139,7 @@ def dsp_rows(db: Session, limit: int = 200, only_errors: bool = False,
             + "WHERE true "
             + ("AND contour = 'prod' " if prod_only else "")
             + ("AND ok IS NOT TRUE " if only_errors else "")
-            + "ORDER BY id DESC LIMIT :n"), {"n": limit * (5 if deal else 1)}).mappings().all()
+            + "ORDER BY id DESC LIMIT :n"), {"n": None if limit is None else limit * (5 if deal else 1)}).mappings().all()
 
     cr_ids, camp_ids, hashes = set(), set(), set()
     for r in rows:
@@ -128,6 +153,7 @@ def dsp_rows(db: Session, limit: int = 200, only_errors: bool = False,
         for h in (r["ms_xxhash"], p.get("xxhash"), p.get("campaign_xxhash")):
             if isinstance(h, str) and h.strip():
                 hashes.add(h.strip())
+    body = _full if full else _short
     crs = _creatives(db, cr_ids, hashes)
     camps = _campaigns(db, camp_ids, hashes)
 
@@ -143,14 +169,14 @@ def dsp_rows(db: Session, limit: int = 200, only_errors: bool = False,
                     "contour": r["contour"], "deal_id": hit.get("deal_id"),
                     "deal": hit.get("deal"), "publisher": hit.get("publisher"),
                     "creative": hit.get("creative"),
-                    "request": _short(r["request"]), "response": _short(r["response"])})
-        if len(out) >= limit:
+                    "request": body(r["request"]), "response": body(r["response"])})
+        if limit is not None and len(out) >= limit:
             break
     return out
 
 
-def wr_rows(db: Session, limit: int = 200, only_errors: bool = False,
-            deal: Optional[str] = None) -> list:
+def wr_rows(db: Session, limit: Optional[int] = 200, only_errors: bool = False,
+            deal: Optional[str] = None, full: bool = False) -> list:
     """Лента Weborama, новые сверху. Успех — завершена и без ошибки; «без ответа» —
     вызов ушёл, ответа нет (`finished_at` пуст): такие показываем как ошибку."""
     rows = db.execute(text(f"""
@@ -177,4 +203,4 @@ def wr_rows(db: Session, limit: int = 200, only_errors: bool = False,
              "error": r["error"] or (None if r["finished_at"] else "вызов ушёл, ответа нет"),
              "http_status": r["http_status"], "deal_id": r["deal_id"], "deal": r["deal"],
              "publisher": r["publisher"], "creative": None,
-             "request": _short(r["request"]), "response": None} for r in rows]
+             "request": (_full if full else _short)(r["request"]), "response": None} for r in rows]

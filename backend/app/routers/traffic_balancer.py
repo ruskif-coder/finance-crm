@@ -334,25 +334,47 @@ def _site_rows(db: Session) -> list:
     return rows
 
 
+def _log_rows(db: Session, system: str, limit: int, only_errors: bool, deal: Optional[str],
+              prod_only: bool, full: bool = False) -> list:
+    """Строки лога для экрана и для скачивания. `limit` 0 — все (владелец 01.10.2026:
+    «500 / 1000 / все»)."""
+    from app.traffic import logs
+    lim = None if int(limit) <= 0 else int(limit)
+    deal = (deal or "").strip() or None
+    if system == "dsp":
+        try:
+            return logs.dsp_rows(db, lim, only_errors, deal, prod_only=prod_only, full=full)
+        except Exception as e:  # noqa: BLE001 — журнал в другой базе; её недоступность не 500
+            raise HTTPException(503, f"Журнал DSP недоступен: {e.__class__.__name__}")
+    if system == "weborama":
+        return logs.wr_rows(db, lim, only_errors, deal, full=full)
+    raise HTTPException(400, "system: dsp | weborama")
+
+
 @router.get("/logs")
-def exchange_logs(system: str = "dsp", limit: int = 200, only_errors: bool = False,
+def exchange_logs(system: str = "dsp", limit: int = 500, only_errors: bool = False,
                   deal: Optional[str] = None, prod_only: bool = True, db: Session = Depends(get_db),
                   user: User = Depends(VIEW)):
     """Вкладка «Логи» (владелец 01.10.2026): обмен с DSP или Weborama, каждая строка —
     сделка + площадка + креатив. Право — то же, что у админки трафика."""
+    return {"system": system,
+            "rows": _log_rows(db, system, limit, only_errors, deal, prod_only)}
+
+
+@router.get("/logs/download")
+def exchange_logs_download(system: str = "dsp", limit: int = 500, only_errors: bool = False,
+                           deal: Optional[str] = None, prod_only: bool = True,
+                           db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Тот же отбор, что на экране, — текстом, тела целиком, старые сверху."""
+    import re
+    from datetime import datetime
+    from fastapi.responses import Response
     from app.traffic import logs
-    limit = max(1, min(int(limit), 1000))
-    if system == "dsp":
-        try:
-            rows = logs.dsp_rows(db, limit, only_errors, (deal or "").strip() or None,
-                                 prod_only=prod_only)
-        except Exception as e:  # noqa: BLE001 — журнал в другой базе; её недоступность не 500
-            raise HTTPException(503, f"Журнал DSP недоступен: {e.__class__.__name__}")
-    elif system == "weborama":
-        rows = logs.wr_rows(db, limit, only_errors, (deal or "").strip() or None)
-    else:
-        raise HTTPException(400, "system: dsp | weborama")
-    return {"system": system, "rows": rows}
+    rows = _log_rows(db, system, limit, only_errors, deal, prod_only, full=True)
+    tag = re.sub(r"[^A-Z0-9]", "", (deal or "").upper())[:12] or "all"
+    name = f"log_{system}_{tag}_{datetime.utcnow():%Y-%m-%d_%H%M}.txt"
+    return Response(logs.as_text(system, rows), media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.get("/site-monitor")

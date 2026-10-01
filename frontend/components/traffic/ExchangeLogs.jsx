@@ -4,8 +4,11 @@
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import { MONO, btnSm, card, inp, th } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
+import { downloadFile } from '@/lib/download'
 import { fmtDateTime } from '@/lib/dates'
 
+// Сколько строк брать (владелец 01.10.2026): 0 — все.
+const LIMITS = [[500, '500'], [1000, '1000'], [0, 'все']]
 const GRID = '138px 82px 150px minmax(0,1fr) minmax(0,1.1fr) 70px'
 
 export default function ExchangeLogs() {
@@ -16,21 +19,33 @@ export default function ExchangeLogs() {
   const [onlyErr, setOnlyErr] = useState(false)
   const [prodOnly, setProdOnly] = useState(true)
   const [open, setOpen] = useState(null)
+  const [limit, setLimit] = useState(500)
+  const [saving, setSaving] = useState(false)
+
+  const query = useCallback(() => {
+    const q = new URLSearchParams({ system: sys, limit: String(limit), only_errors: String(onlyErr),
+      prod_only: String(prodOnly) })
+    if (deal.trim()) q.set('deal', deal.trim())
+    return q
+  }, [sys, limit, onlyErr, prodOnly, deal])
+
+  const save = async () => {
+    setSaving(true)
+    await downloadFile(`/traffic-catalog/logs/download?${query()}`, null, setErr)
+    setSaving(false)
+  }
 
   const load = useCallback(async () => {
     setErr(''); setRows(null)
     try {
-      const q = new URLSearchParams({ system: sys, limit: '300', only_errors: String(onlyErr),
-        prod_only: String(prodOnly) })
-      if (deal.trim()) q.set('deal', deal.trim())
-      const r = await api.get(`/traffic-catalog/logs?${q}`, auth())
+      const r = await api.get(`/traffic-catalog/logs?${query()}`, auth())
       setRows(r.data.rows)
     } catch (e) {
       setErr(e?.response?.data?.detail || 'Не удалось загрузить лог'); setRows([])
     }
-  }, [sys, onlyErr, prodOnly, deal])
+  }, [query])
 
-  useEffect(() => { load() }, [sys, onlyErr, prodOnly]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [sys, onlyErr, prodOnly, limit]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Подпись колонки — стиль заголовка из кита, без его отступов и линии (сетка, не таблица).
   const head = { ...th, padding: 0, borderBottom: 'none' }
@@ -53,6 +68,16 @@ export default function ExchangeLogs() {
             <input type="checkbox" checked={prodOnly} onChange={e => setProdOnly(e.target.checked)} /> только боевые
           </label>
         )}
+        <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', fontSize: 12, color: 'var(--text-secondary)' }}>
+          строк:
+          {LIMITS.map(([v, l]) => (
+            <button key={v} style={btnSm(limit === v)} onClick={() => setLimit(v)}>{l}</button>
+          ))}
+        </span>
+        <button style={btnSm(false)} disabled={saving} onClick={save}
+          title="Тот же отбор, что на экране: тела целиком, старые сверху">
+          {saving ? 'скачиваю…' : '↓ скачать'}
+        </button>
         <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--text-faint)' }}>
           {rows ? `${rows.length} записей, новые сверху` : 'загрузка…'}
         </span>

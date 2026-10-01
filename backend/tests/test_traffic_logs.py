@@ -82,3 +82,40 @@ def test_wake_targeting_never_fails_launch(monkeypatch):
         assert r["woken"] == 0 and r["errors"] and "кабинет не задан" in r["errors"][0]
     finally:
         db.close()
+
+
+def test_dsp_rows_all_when_no_limit():
+    """Ограничение ленты 500 / 1000 / все (владелец 01.10.2026): None — без предела."""
+    db = SessionLocal()
+    try:
+        rows = [_row(id=i, local_ref=f"probe-{i}") for i in range(1200, 0, -1)]
+        assert len(logs.dsp_rows(db, limit=500, engine=_Eng(rows))) == 500
+        assert len(logs.dsp_rows(db, limit=None, engine=_Eng(rows))) == 1200
+    finally:
+        db.close()
+
+
+def test_download_keeps_full_bodies():
+    """Скачанный лог — архив, а не экран: тело запроса не обрезается."""
+    db = SessionLocal()
+    try:
+        big = "x" * (logs.MAX_BODY + 500)
+        out = logs.dsp_rows(db, engine=_Eng([_row(local_ref="probe-1", request=big)]), full=True)
+        assert out[0]["request"] == big
+        text_ = logs.as_text("dsp", out)
+        assert big in text_ and "Creative.add" in text_
+    finally:
+        db.close()
+
+
+def test_download_endpoint_gives_text_file():
+    from app.routers import traffic_balancer as TB
+    db = SessionLocal()
+    try:
+        r = TB.exchange_logs_download(system="weborama", limit=5, only_errors=False,
+                                      deal="ab/../c", prod_only=True, db=db, user=None)
+        cd = r.headers["content-disposition"]
+        assert cd.startswith("attachment;") and "log_weborama_ABC_" in cd and ".txt" in cd
+        assert r.body.decode("utf-8").startswith("Лог обмена с Weborama")
+    finally:
+        db.close()
