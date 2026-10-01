@@ -59,13 +59,10 @@ def backfill_clicks(db, apply: bool, deal: str = None) -> dict:
             continue
         if click:
             got += 1
-            if apply:
-                db.execute(text("UPDATE ad_campaign_placement SET weborama_click = :c WHERE id = :p"),
-                           {"c": click, "p": pid})
-            elif got <= 1:
-                # пробный прогон — в память сессии, чтобы шаг 2 показал итоговую ссылку
-                db.execute(text("UPDATE ad_campaign_placement SET weborama_click = :c WHERE id = :p"),
-                           {"c": click, "p": pid})
+            # И в пробном прогоне пишем в сессию: шаг 2 должен показать ИТОГОВУЮ ссылку,
+            # а в конце пробного прогона всё откатывается.
+            db.execute(text("UPDATE ad_campaign_placement SET weborama_click = :c WHERE id = :p"),
+                       {"c": click, "p": pid})
     return {"нужно": len(rows), "получено": got}
 
 
@@ -95,7 +92,7 @@ def fix_creatives(db, apply: bool, deal: str = None) -> dict:
             failed.append(f"{code} {pub.name}: getInfo — {e}")
             continue
         m = SIZE.match(str(info.get("size") or ""))
-        w, h = (m.group(1), m.group(2)) if m else (None, None)
+        w, h = (int(m.group(1)), int(m.group(2))) if m else (None, None)
         row = {"placement": pl, "publisher": pub}
         try:
             pix = P.pixel_url(row, w, h, px["tag"], cre.erid)

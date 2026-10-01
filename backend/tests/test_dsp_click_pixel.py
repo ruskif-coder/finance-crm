@@ -46,3 +46,9 @@ def test_pixel_goes_to_field():
     p = cr.build_creative_params(title="t", link="https://a.ru", pixel="https://px")
     assert p["pixel"] == "https://px"
     assert "pixel" not in cr.build_creative_params(title="t", link="https://a.ru")
+
+
+def test_adaptive_banner_gets_zero_size_not_placeholder():
+    """0×0 адаптивного — в теге `a.wi=0&a.he=0`, не `~WIDTH~` (регрессия v2.6.57)."""
+    url = P.pixel_url(_row("a.ru"), 0, 0, None, None)
+    assert "a.wi=0" in url and "a.he=0" in url and "~WIDTH~" not in url

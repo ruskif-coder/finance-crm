@@ -247,11 +247,16 @@ def pixel_url(row: dict, width, height, ext_tag: Optional[str] = None,
     паспорт (`request_xlsx.build_tag`): макрос DSP, домен, размер, ЕРИД. Внешний тег один
     на кампанию, свой — у каждого размещения; дальше путь общий."""
     from app.weborama.request_xlsx import build_tag
-    ratio = f"{width}x{height}" if width and height else None
     tag, why = build_tag(ext_tag or row["placement"].weborama_pixel,
-                         row["publisher"].domain or "", "dsp", ratio, erid)
+                         row["publisher"].domain or "", "dsp", None, erid)
     if not tag:
         raise ValueError(why or "пиксель не собран")
+    # Размер — тот, что объявил загрузчик DSP, ВКЛЮЧАЯ 0×0 адаптивного баннера: в теге
+    # должно стоять `a.wi=0`, а не заготовка `~WIDTH~` (её DSP не подставит). У заявки и
+    # паспорта своё правило для адаптивного (там проверочная ссылка), поэтому размер
+    # здесь, а не в `build_tag` (регрессия v2.6.57, найдена пробным прогоном 01.10).
+    if width is not None and height is not None:
+        tag = wtags.fill_size(tag, width, height)
     return tag
 
 
