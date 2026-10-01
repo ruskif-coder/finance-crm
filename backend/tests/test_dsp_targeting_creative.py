@@ -25,8 +25,9 @@ class FakeClient:
     def __init__(self, journal_hash=None, add_hash="NEWHASH000000001",
                  info_html="<div>баннер</div>", campaign_status="LAUNCHED",
                  campaign_end="2999-01-01 00:00:00", creative_status="STOPPED",
-                 launch_sticks=True, adomain=""):
+                 launch_sticks=True, adomain="", erid="TEST00000"):
         self.adomain = adomain
+        self.erid = erid
         self.edited = []
         self.added = []
         self.creative_status = creative_status
@@ -75,6 +76,10 @@ class FakeClient:
         self.edited.append(params)
         if "adomain" in params:
             self.adomain = params["adomain"]
+        if "erid" in params:
+            self.erid = params["erid"]
+        if "data" in params:
+            self.info_html = params["data"]["html_code"]
         self.calls.append(("edit", xxhash, local_ref))
         return True
 
@@ -86,7 +91,7 @@ class FakeClient:
             from app.dsp.client import MsError
             raise MsError("Creative.getInfo: Creative not found")
         return {"data": {"html_code": self.info_html}, "status": self.creative_status,
-                "adomain": self.adomain}
+                "adomain": self.adomain, "erid": self.erid}
 
     def creative_set_status(self, xxhash, status, local_ref=None):
         self.calls.append(("creative_status", xxhash, status))
@@ -402,8 +407,9 @@ def test_the_targeting_creative_carries_a_placeholder_marker():
         c = FakeClient()
         # Заглушка уезжает и в параметры креатива, и в тело разметки.
         src = __import__("inspect").getsource(P.ensure)
-        assert "erid=TEST_ERID" in src
-        assert src.count("erid=TEST_ERID") >= 2, "маркер нужен и в параметрах, и в html"
+        assert src.count("erid=erid") >= 2, "маркер нужен и в параметрах, и в html"
+        # Заглушка — только у комплекта без ЕРИД (владелец 01.10.2026).
+        assert P.erid_of(s) == P.TEST_ERID
         assert c is not None
     finally:
         _drop(db, s)
@@ -686,5 +692,80 @@ def test_stop_failure_is_swallowed():
     c.creative_set_status = boom
     try:
         assert P.stop_when_done(db, s.id, client=c) is False
+    finally:
+        _drop(db, s)
+
+
+# ── ЕРИД нацеливания боевой (владелец 01.10.2026) ────────────────────────────────────
+# «боевое нацеливание делай по еридам, обновляя старые нацеливания при необходимости по
+# старту размещения». Заглушка остаётся только у комплекта, которому маркер ещё не выдан.
+
+REAL = "2SDnjdg8wQw"
+
+
+def test_set_with_erid_gets_it_not_the_placeholder():
+    db = _db()
+    s = _set_with(db, erid=REAL)
+    try:
+        assert P.erid_of(s) == REAL
+        from types import SimpleNamespace
+        assert P.erid_of(SimpleNamespace(erid="  ")) == P.TEST_ERID
+    finally:
+        _drop(db, s)
+
+
+def test_start_rewrites_placeholder_to_the_sets_erid_before_launch():
+    """Старая копия с заглушкой: при старте поле и разметка получают ЕРИД комплекта —
+    ДО запуска, чтобы первый же показ шёл с боевым маркером."""
+    db = _db()
+    s = _set_with(db, erid=REAL, ms_targeting_creative_xxhash="OLDTEST000000001")
+    html = '<meta name="erid" content="TEST00000"><div>Реклама. erid: TEST00000</div>'
+    c = FakeClient(creative_status="STOPPED", adomain="https://simb-ad.com/", info_html=html)
+    try:
+        out = P.ensure_live(db, s, client=c)
+        assert c.erid == REAL
+        assert "TEST00000" not in c.info_html and c.info_html.count(REAL) == 2
+        kinds = [k[0] for k in c.calls]
+        assert kinds.index("edit") < kinds.index("creative_status"), "маркер — до запуска"
+        assert out["active"] is True
+    finally:
+        _drop(db, s)
+
+
+def test_copy_already_with_erid_is_not_touched():
+    db = _db()
+    s = _set_with(db, erid=REAL, ms_targeting_creative_xxhash="HASERID000000001")
+    c = FakeClient(creative_status="LAUNCHED", adomain="https://simb-ad.com/", erid=REAL,
+                   info_html=f'<meta name="erid" content="{REAL}">')
+    try:
+        P.ensure_live(db, s, client=c)
+        assert not c.edited
+    finally:
+        _drop(db, s)
+
+
+def test_set_without_erid_keeps_placeholder_and_is_not_edited():
+    db = _db()
+    s = _set_with(db, ms_targeting_creative_xxhash="NOERID0000000001")
+    c = FakeClient(creative_status="LAUNCHED", adomain="https://simb-ad.com/",
+                   info_html='<meta name="erid" content="TEST00000">')
+    try:
+        P.ensure_live(db, s, client=c)
+        assert not c.edited and c.erid == "TEST00000"
+    finally:
+        _drop(db, s)
+
+
+def test_replaced_erid_is_rewritten_in_html_too():
+    """ЕРИД комплекта сменили: старый боевой маркер уходит и из поля, и из разметки —
+    иначе поле и надпись «Реклама» разошлись бы."""
+    db = _db()
+    s = _set_with(db, erid=REAL, ms_targeting_creative_xxhash="OLDREAL000000001")
+    old = "2SDnjOLD000"
+    c = FakeClient(creative_status="LAUNCHED", adomain="https://simb-ad.com/", erid=old,
+                   info_html=f'<meta name="erid" content="{old}"><div>erid: {old}</div>')
+    try:
+        P.ensure_live(db, s, client=c)
+        assert c.erid == REAL and old not in c.info_html and c.info_html.count(REAL) == 2
     finally:
         _drop(db, s)

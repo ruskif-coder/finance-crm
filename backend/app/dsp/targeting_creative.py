@@ -32,10 +32,12 @@
     верификатора кладётся именно туда. Его показы попали бы в сверку с верификатором и
     испортили бы её. Пометка «обязателен для ротации» в их доке относится к боевой
     выдаче: **на демо пиксель не нужен** (владелец 12.09.2026);
-  · **настоящего ЕРИД** — на отправке трафику маркера ещё нет: он выпускается после
-    согласования площадки. Вместо него стоит одна общая заглушка `TEST_ERID` — без
-    маркера DSP не запускает креатив, и проверка не состоялась бы вовсе. Подставлять
-    ЧУЖОЙ настоящий маркер нельзя ни при каких обстоятельствах.
+  · **заглушки ЕРИД там, где маркер есть.** Нацеливание боевое и попадает на скриншоты
+    запуска, поэтому маркер — ЕРИД своего комплекта (`erid_of`, владелец 01.10.2026).
+    На отправке трафику маркера ещё нет: он выпускается после согласования площадки, и
+    до тех пор стоит общая заглушка `TEST_ERID` — без маркера DSP не запускает креатив.
+    Копия, заведённая с заглушкой, получает ЕРИД при старте размещения (`ensure_live`).
+    ЧУЖОЙ маркер не подставляется никогда — только ЕРИД этого же комплекта.
 
 Скрипт видимости оставлен: его требует сам DSP, и на внешний вид он не влияет.
 
@@ -93,6 +95,11 @@ TARGETING_ADOMAIN = "https://simb-ad.com/"
 #     отдельный заслон `dsp.provision._blocker`, который отказывает при пустом маркере,
 #     и подменять его заглушкой нельзя — это была бы реклама без маркировки.
 TEST_ERID = "TEST00000"
+
+
+def erid_of(s: LaunchPrepCreativeSet) -> str:
+    """Маркер копии нацеливания: ЕРИД комплекта, а пока его нет — заглушка."""
+    return (s.erid or "").strip() or TEST_ERID
 
 
 class TargetingCreativeError(RuntimeError):
@@ -291,7 +298,7 @@ def ensure(db: Session, s: LaunchPrepCreativeSet, *,
             # Объект есть, кода нет — дошиваем его, а не заводим второй: второй в чужом
             # кабинете уже не удалить. Битый архив — отказ словами, а не 500.
             try:
-                html = cr.wrap_html(_html_of(db, s, c, ref), erid=TEST_ERID,
+                html = cr.wrap_html(_html_of(db, s, c, ref), erid=erid_of(s),
                                     viewability_src=viewability_src(db))
             except (cr.CreativeError, ValueError) as e:
                 raise TargetingCreativeError(str(e))
@@ -303,16 +310,17 @@ def ensure(db: Session, s: LaunchPrepCreativeSet, *,
 
     f = _archive(db, s)
     link = _landing(db, s)
+    erid = erid_of(s)
     try:
         up = cr.upload_zip(c, _read(f), filename=(f.original_name or "creative.zip"),
                            local_ref=ref)
         # Маркер и в ТЕЛЕ креатива, не только в поле: DSP показывает плашку по разметке,
         # и креатив без неё на демо-показе выглядит иначе, чем будет выглядеть боевой.
-        html = cr.wrap_html(up["html"], erid=TEST_ERID,
+        html = cr.wrap_html(up["html"], erid=erid,
                             viewability_src=viewability_src(db))
         params = cr.build_creative_params(
             title=f"{TITLE_PREFIX}{s.no} · {s.title or s.deal_id}",
-            link=link, erid=TEST_ERID, size=up.get("size"), adomain=TARGETING_ADOMAIN)
+            link=link, erid=erid, size=up.get("size"), adomain=TARGETING_ADOMAIN)
         xxhash = c.creative_add(campaign, params, local_ref=ref)
         c.creative_edit(xxhash, {"data": {"html_code": html}}, local_ref=ref)
     except (cr.CreativeError, MsError, ValueError) as e:
@@ -348,17 +356,18 @@ def ensure_live(db: Session, s: LaunchPrepCreativeSet, *,
 
     def read():
         info = c.creative_get_info(xxhash) or {}
-        return (info.get("status") or "").upper(), (info.get("adomain") or "").strip()
+        return (info.get("status") or "").upper(), (info.get("adomain") or "").strip(), info
 
-    st, adomain = read()
+    st, adomain, info = read()
     # Конечный URL — ДО запуска: без него запущенный креатив не крутится. У креативов,
     # заведённых до 25.09.2026, поле пустое; правка принимает одно поле.
     if not adomain:
         c.creative_edit(xxhash, {"adomain": TARGETING_ADOMAIN}, local_ref=ref)
+    _upgrade_erid(c, xxhash, s, info, ref)
     if st != RUNNING:
         c.creative_set_status(xxhash, RUNNING, local_ref=ref)
         launched = True
-    st, adomain = read()
+    st, adomain, _ = read()
     camp = ((c.campaign_get_info(campaign) or {}).get("status") or "").upper()
 
     reason = None
@@ -375,6 +384,33 @@ def ensure_live(db: Session, s: LaunchPrepCreativeSet, *,
     return {"xxhash": xxhash, "creative_status": st or None, "campaign_status": camp or None,
             "active": reason is None, "reason": reason,
             "restarted": bool(woke.get("changed")) or launched}
+
+
+def _upgrade_erid(c: MsClient, xxhash: str, s: LaunchPrepCreativeSet, info: dict,
+                  ref: str) -> bool:
+    """Копия с заглушкой получает ЕРИД комплекта — до запуска, чтобы первый же показ шёл
+    с боевым маркером (владелец 01.10.2026). Маркер живёт в поле и в разметке (метатег и
+    надпись «Реклама»), поэтому правятся оба; в разметке меняется только прежний маркер
+    (заглушка или сменённый ЕРИД), остальной код баннера не трогается. Нет ЕРИД у комплекта — оставляем как есть."""
+    erid = erid_of(s)
+    if erid == TEST_ERID:
+        return False
+    html = ((info.get("data") or {}).get("html_code") or "")
+    have = (info.get("erid") or "").strip()
+    edit = {}
+    if have != erid:
+        edit["erid"] = erid
+    # В разметке меняется прежний маркер копии: заглушка или сменённый ЕРИД комплекта.
+    new_html = html
+    for old in {TEST_ERID, have} - {"", erid}:
+        new_html = new_html.replace(old, erid)
+    if new_html != html:
+        edit["data"] = {"html_code": new_html}
+    if not edit:
+        return False
+    c.creative_edit(xxhash, edit, local_ref=ref)
+    log.info("DSP: копия нацеливания %s получила ЕРИД комплекта %s", xxhash, s.id)
+    return True
 
 
 def _persist(db: Session, s: LaunchPrepCreativeSet, xxhash: str) -> str:
