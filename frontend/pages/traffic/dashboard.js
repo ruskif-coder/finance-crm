@@ -452,6 +452,18 @@ export default function TrafficDashboard() {
     await setCampaignStatus(row, 'запущена', withPlaces)
   }
 
+  /* Сверка с DSP после нажатия (владелец 30.09.2026): статусы перечитываются из DSP,
+     лимиты креативов при запуске уходят сразу. Расхождение или сбой сверки — вслух. */
+  const dspCheckNote = (chk) => {
+    if (!chk) return ''
+    if (chk.error) return ` ⚠ ${chk.error}`
+    if (chk.mismatch?.length) return ' ⚠ DSP в другом состоянии: '
+      + chk.mismatch.map(m => `${m.what} — ждали ${m.want}, в DSP ${m.got || 'нет ответа'}`).join('; ')
+    const lim = chk.limits
+    return ' · сверено с DSP' + (lim?.updated ? `, лимитов обновлено: ${lim.updated}` : '')
+      + (lim?.failed?.length ? `, лимит не ушёл: ${lim.failed.length}` : '')
+  }
+
   const setCampaignStatus = async (row, s, withPlacements) => {
     setPop(null)
     try {
@@ -461,7 +473,7 @@ export default function TrafficDashboard() {
       // изменение того, чего не видно, читается как сбой.
       // Кнопка управляет и кампанией в DSP — это тоже называется вслух.
       const inDsp = { LAUNCHED: 'запущена', STOPPED: 'остановлена', ARCHIVE: 'в архиве' }[r.data.dsp_status]
-      const dspNote = inDsp ? `. В DSP кампания ${inDsp}` : ''
+      const dspNote = inDsp ? `. В DSP кампания ${inDsp}${dspCheckNote(r.data.dsp_check)}` : ''
       if (r.data.placements_raised) say(`Площадок поднято: ${r.data.placements_raised}${dspNote}`)
       else if (r.data.placements_stopped) say((s === 'пауза'
         ? `РК на паузе, площадок приостановлено: ${r.data.placements_stopped}`
@@ -559,7 +571,9 @@ export default function TrafficDashboard() {
   const setPlacementStatus = async (campId, p, s) => {
     setPop(null)
     try {
-      await api.put(`/traffic-dashboard/placement/${p.id}/status`, { status: s }, auth())
+      const w = await api.put(`/traffic-dashboard/placement/${p.id}/status`, { status: s }, auth())
+      const note = dspCheckNote(w.data?.dsp_check)
+      if (note) say(`Площадка: ${s}${note}`)
       const r = await api.get(`/traffic-dashboard/campaign/${campId}`, auth())
       setDetail(d => ({ ...d, [campId]: r.data }))
       await load()

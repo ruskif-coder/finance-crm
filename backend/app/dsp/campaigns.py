@@ -172,8 +172,35 @@ def apply_status(db: Session, camp: AdCampaign, status: str,
     if target == "LAUNCHED":
         sync_campaign_plan(db, camp, c, commit=False)
     c.campaign_set_status(camp.ms_campaign_xxhash, target, local_ref=camp.id)
-    follow_creatives(db, camp, target, c)
+    want = follow_creatives(db, camp, target, c)
+    # Отчёт после нажатия (владелец 30.09.2026): лимиты и сверка — не повод отменять уже
+    # принятый DSP статус, поэтому их сбой пишется в отчёт, а не поднимается наверх.
+    camp._dsp_check = after_status(db, camp, target, want, c)
     return target
+
+
+def after_status(db: Session, camp: AdCampaign, target: str, want: dict, client) -> dict:
+    """После смены статуса: (1) при запуске — лимиты креативов догоняют их долю сразу, а не
+    ночью (`dsp.limits.sync_limits`): доли пересчитаны по весам и запущенным площадкам в
+    момент нажатия; (2) «отбивка» — статусы кампании и креативов ПЕРЕЧИТЫВАЮТСЯ из DSP.
+    Ответ без ошибки ещё не значит, что DSP в том состоянии, о котором говорит экран.
+
+    → {"limits": {...} | None, "mismatch": [{"what", "want", "got"}], "error": str | None}"""
+    out = {"limits": None, "mismatch": [], "error": None}
+    try:
+        if target == "LAUNCHED":
+            from app.dsp.limits import sync_limits
+            out["limits"] = sync_limits(db, camp, client)
+        got = (client.campaign_get_info(camp.ms_campaign_xxhash) or {}).get("status")
+        if got != target:
+            out["mismatch"].append({"what": "кампания", "want": target, "got": got})
+        for xx, st in (want or {}).items():
+            g = (client.creative_get_info(xx) or {}).get("status")
+            if g != st:
+                out["mismatch"].append({"what": f"креатив {xx}", "want": st, "got": g})
+    except Exception as e:  # noqa: BLE001 — отчёт, а не отказ: статус DSP уже принял
+        out["error"] = f"сверка с DSP не прошла: {e}"
+    return out
 
 
 # Креатив в РК крутится, только если запущена его ПЛОЩАДКА и сам он согласован (владелец

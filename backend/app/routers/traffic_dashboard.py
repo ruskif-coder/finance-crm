@@ -1119,7 +1119,8 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
                + (f"; спущено на площадки {stopped}" if stopped else "")
                + (f"; в DSP {dsp_status}" if dsp_status else ""))
     return {"id": c.id, "status": c.status, "placements_raised": raised,
-            "placements_stopped": stopped, "dsp_status": dsp_status}
+            "placements_stopped": stopped, "dsp_status": dsp_status,
+            "dsp_check": getattr(c, "_dsp_check", None)}
 
 
 # Стадия, на которую «Завершить РК» двигает сделку. Резолвим ПО ИМЕНИ, потому что
@@ -1301,7 +1302,8 @@ def set_placement_status(placement_id: int, payload: StatusIn,
     log_action(db, user, "ad_placement_status", "sales_publisher", p.publisher_id,
                f"РК #{p.campaign_id}: площадка {old} → {p.status}"
                + (f"; получателей переведено в размещение: {moved}" if moved else ""))
-    return {"id": p.id, "status": p.status, "targets_placed": moved}
+    return {"id": p.id, "status": p.status, "targets_placed": moved,
+            "dsp_check": getattr(c, "_dsp_check", None)}
 
 
 # ── внешние системы: пиксель Weborama и выгрузка в DSP ───────────────────────
