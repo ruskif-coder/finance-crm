@@ -31,6 +31,9 @@ import { downloadDealCreatives } from '@/lib/dealDocs'
 import OffsiteButton from '@/components/traffic/OffsiteButton'
 import PassportButton from '@/components/traffic/PassportButton'
 import StartRkModal from '@/components/traffic/StartRkModal'
+import AimButton from '@/components/traffic/AimButton'
+import safeHref from '@/lib/safeHref'
+import { useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
 import { todayMsk } from '@/lib/dates'
 import ExternalLaunch from '@/components/traffic/ExternalLaunch'
 import {
@@ -537,6 +540,7 @@ export default function TrafficDashboard() {
      нажатия, а откатывать нечем. */
   const [extAsk, setExtAsk] = useState(null)     // { row, kind, plan }
   const [startAsk, setStartAsk] = useState(null) // строка РК в окне запуска
+  const tgt = useTargetingCampaign()              // демо-кампания нацеливания: «протухла» ли
   const [extBusy, setExtBusy] = useState(false)
 
   const askExternal = async (row, kind) => {
@@ -1102,6 +1106,9 @@ export default function TrafficDashboard() {
                                   {g.name || 'без названия'}</span>
                                 <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)' }}>
                                   {g.ms_title || DASH}</span>
+                                {/* Нацеливание для скриншотов после старта (01.10.2026) — на
+                                    текущую версию комплекта этого креатива. */}
+                                {!!g.set_id && <AimButton setId={g.set_id} tgtState={tgt.state} compact />}
                                 <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11 }}>
                                   план {num(g.plan)}</span>
                                 <span style={{ fontFamily: MONO, fontSize: 11,
@@ -1113,6 +1120,12 @@ export default function TrafficDashboard() {
                                   <span key={pl.id} style={{ display: 'inline-flex', alignItems: 'center',
                                     gap: 6, padding: '3px 9px', borderRadius: 8,
                                     border: '1px solid var(--border-card)', background: 'var(--bg-card)' }}>
+                                    {/* Сайт площадки в новой вкладке — как в других реестрах (01.10.2026). */}
+                                    {!!pl.domain && (
+                                      <a href={safeHref(`https://${pl.domain}`)} target="_blank" rel="noreferrer"
+                                        title={`Открыть ${pl.domain} в новой вкладке`}
+                                        style={{ color: 'var(--accent)', textDecoration: 'none', fontSize: 12 }}>↗</a>
+                                    )}
                                     <span style={{ fontFamily: MONO, fontSize: 10.5 }}>{pl.domain}</span>
                                     <StatusPill value={pl.status} />
                                     <span style={{ fontFamily: MONO, fontSize: 10,
@@ -1473,8 +1486,12 @@ export default function TrafficDashboard() {
                                     иначе меняется только наша пометка, а в сети — ничего.
                                     Причина — с сервера, тем же правилом, что у ручки. */}
                                 <button disabled={!!r.dsp_block} title={r.dsp_block || undefined}
-                                  onClick={() => setCampaignStatus(r,
-                                  r.status === 'запущена' ? 'пауза' : 'запущена')}
+                                  onClick={() => (r.status === 'запущена'
+                                    ? setCampaignStatus(r, 'пауза')
+                                    /* Старт и возобновление — через окно с планом по площадкам
+                                       (01.10.2026): голое «запущена» не поднимало площадки, и
+                                       РК «стартовала» с 19 площадками в «ждёт запуска». */
+                                    : startCampaign(r))}
                                   style={{ padding: '7px 14px', borderRadius: 10, cursor: r.dsp_block ? 'not-allowed' : 'pointer',
                                     border: `1px solid ${r.dsp_block ? 'var(--border-card)' : 'var(--blue)'}`,
                                     background: r.dsp_block ? 'var(--bg-subtle)' : 'var(--blue)',

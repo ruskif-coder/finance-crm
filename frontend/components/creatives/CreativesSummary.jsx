@@ -15,6 +15,8 @@ import { useState } from 'react'
 import { downloadFile } from '@/lib/download'
 import { CreativePreview, FORM_LABEL } from './AssemblyCreatives'
 import { CreativesBrief, derive } from './CreativesSection'
+import AimButton from '@/components/traffic/AimButton'
+import { useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
 
 const fileSize = (n) => !n ? '' : n > 1048576 ? `${(n / 1048576).toFixed(1)} МБ` : `${Math.round(n / 1024)} КБ`
 
@@ -145,6 +147,8 @@ export function CreativesAlert({ text, tone = 'warn' }) {
 export default function CreativesSummary({ data, canApprove, onReviewed }) {
   const [preview, setPreview] = useState(null)
   const [err, setErr] = useState('')
+  // Состояние демо-кампании нацеливания — одно на блок: «протухла» ли (кнопки жёлтые).
+  const tgt = useTargetingCampaign()
   const sets = (data && data.sets) || []
 
   if (!sets.length) {
@@ -158,6 +162,7 @@ export default function CreativesSummary({ data, canApprove, onReviewed }) {
   return (
     <div style={{ paddingLeft: 21 }}>
       <CreativesBrief creatives={sets.map(toCreative)}
+        renderAim={(c) => c._set?.id ? <AimButton setId={c._set.id} tgtState={tgt.state} compact /> : null}
         onPreview={(c) => {
           const f = (c._set.files || [])[0]
           if (f) setPreview({ set: c._set, fileId: f.id })

@@ -21,6 +21,7 @@ def wired(monkeypatch):
     monkeypatch.setattr(td, "_campaign_in_scope",
                         lambda db, cid, u: (camp, SimpleNamespace(id=1)))
     monkeypatch.setattr(td, "log_action", lambda *a, **kw: logged.append(a))
+    monkeypatch.setattr(td, "rk_label", lambda db, cid: f"РК #{cid}")
     return SimpleNamespace(camp=camp, logged=logged, user=SimpleNamespace(id=1, name="т"))
 
 

@@ -64,6 +64,9 @@ class AdCampaignPlacement(Base):
     # Хранить производное значит завести вторую правду, которая разойдётся с первой.
     # Миграция 2026-09-09_weborama.sql.
     weborama_pixel = Column(Text)
+    # Сырой кликовый счётчик Weborama (`a.A=cl … &g.lu=`) — конечный URL креатива в DSP
+    # с посадочной в `g.lu`. Миграция 2026-10-01_placement_weborama_click.sql.
+    weborama_click = Column(Text)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(),
                         onupdate=func.now())

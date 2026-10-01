@@ -143,7 +143,7 @@ const CrossIcon = ({ size = 11 }) => <svg width={size} height={size} viewBox="0 
    отдельный экспорт, без изменения хотя бы одного стиля. Понадобилось это потому, что
    в нашей карточке сворачиванием управляет общий компонент `components/deal/Section`,
    а он ждёт УЗЕЛ для свёрнутого состояния, а не секцию со своим состоянием внутри. */
-export function CreativesBrief({ creatives = [], onPreview, onDownload }) {
+export function CreativesBrief({ creatives = [], onPreview, onDownload, renderAim }) {
   const items = creatives.map(c => ({ c, d: derive(c) }));
   const sumTotal = items.reduce((a, x) => a + x.d.total, 0);
   const sumOk = items.reduce((a, x) => a + x.d.ok, 0);
@@ -208,6 +208,8 @@ export function CreativesBrief({ creatives = [], onPreview, onDownload }) {
                 <button type="button" className="cs-ghost" title="Скачать файл креатива" aria-label="Скачать файл креатива"
                   disabled={!c.fileId} onClick={() => onDownload?.(c)}
                   style={{ ...ICON_BTN, opacity: c.fileId ? 1 : 0.4, cursor: c.fileId ? 'pointer' : 'default' }}><DownIcon /></button>
+                {/* Нацеливание для скриншотов (владелец 01.10.2026) — кнопку даёт родитель. */}
+                {renderAim ? renderAim(c) : null}
               </span>
 
               <span style={{ display: 'flex', justifyContent: 'flex-end', minWidth: 0 }}>

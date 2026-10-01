@@ -11,6 +11,7 @@ const base = {
 }
 
 const text = (e) => {
+  if (e.type === 'status') return e.v
   if (e.type === 'check') return `${e.ok ? '✓' : '✗'} ${e.v}`
   if (e.type === 'progress') return `${e.k} ${e.unit ? `${e.x} ${e.unit}` : `${e.x} / ${e.y}`}`
   if (e.type === 'fact') return e.k ? `${e.k} ${e.v}` : e.v
@@ -18,6 +19,10 @@ const text = (e) => {
 }
 
 const look = (e) => {
+  // Состояние РК («запущена») — зелёной плашкой, как статус РК в дашборде трафика.
+  if (e.type === 'status') {
+    return { background: 'var(--income)', color: 'var(--on-accent)', fontWeight: 700 }
+  }
   if (e.type === 'check') {
     if (e.ok) return { background: 'var(--income-tint)', color: 'var(--income-fg)', fontWeight: 600 }
     // Не запирает переход этой сделки — серым, без тревоги.

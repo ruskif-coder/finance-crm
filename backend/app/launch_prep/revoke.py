@@ -84,8 +84,10 @@ def revoke(db: Session, pair_id: int, reason: str, author_name: str,
         dsp = W._archive_in_dsp(row.ms_creative_xxhash, f"cr{row.id}", dsp_client)
 
     deal = db.get(SalesDeal, target.deal_id)
+    from app.launch_prep.cabinet_label import verdict_prefix
     log_action(db, None, "creative_pair_verdict", "sales_deal", deal.id,
-               f"комплект №{s.no}: отзыв согласования площадкой ({author_name}): {reason}")
+               f"{verdict_prefix(db, target.publisher_id)}комплект №{s.no}: "
+               f"отзыв согласования площадкой ({author_name}): {reason}")
     from app.sales.deal_label import deal_label
     emit(db, "creative_verdict",
          title=f"Площадка отозвала согласование · {deal_label(deal)}",

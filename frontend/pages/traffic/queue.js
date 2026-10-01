@@ -35,7 +35,7 @@ import { Cube } from '@/components/LogoLoader'
 import { TargetingCampaignHint, useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
 import safeHref from '@/lib/safeHref'
 import CopyCode from '@/components/CopyCode'
-import { openAimTab, aimTabGo, aimTabFail, aimToneFor, aimNotLive, aimExpired, RESTART_NOTE } from '@/lib/aimTab'
+import { aimToneFor, aimExpired, issueAim, RESTART_NOTE } from '@/lib/aimTab'
 
 /* Что сказать человеку про письмо. Ответ ручки различает пять исходов, и каждый значит
    для него РАЗНОЕ действие: отправлено — ничего не делать, не ушло — отправить самому.
@@ -136,13 +136,14 @@ const FACT_BD = { ok: 'var(--income-border)', warn: 'var(--warning-border)',
 
 function FactLine({ rows }) {
   return (
-    /* Свой перенос: если плашки перестают помещаться, на второй ряд уезжают ОНИ, а не
-       кнопки решения — иначе «Все ок» прыгало бы под карточку. */
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
-      minWidth: 0 }}>
+    /* ОДНА строка (владелец 01.10.2026): перенос на второй ряд ломал высоту карточки, когда
+       рядом встала плашка «ПРОВЕРЬ ВНИМАТЕЛЬНЕЙ». Плашки компактные и не сжимаются; место
+       отдаёт название креатива — у него многоточие. */
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap',
+      flex: '0 0 auto' }}>
       {setFacts(rows).map((f, i) => (
-        <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
-          padding: '4px 9px', borderRadius: 8, background: FACT_BG[f.tone],
+        <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4,
+          padding: '3px 6px', borderRadius: 7, background: FACT_BG[f.tone],
           border: `1px solid ${FACT_BD[f.tone]}`, whiteSpace: 'nowrap' }}>
           <span style={{ width: 6, height: 6, borderRadius: 999, background: DOT[f.tone],
             flex: '0 0 6px' }} />
@@ -312,17 +313,10 @@ export default function TrafficQueue() {
      открытое из `await`, блокировщик всплывающих окон считает непрошеным и режет. */
   async function aimAtMe(setId) {
     setErr(''); setAiming(setId)
-    const tab = openAimTab()
     try {
-      const r = await api.post(`/launch-prep/set/${setId}/targeting-link`, {}, auth())
-      aimTabGo(tab, r.data.url)
-      setAimLive(m => ({ ...m, [setId]: !!r.data.active }))
-      setErr(aimNotLive(r.data))
-      if (r.data.restarted) { setNote(RESTART_NOTE); tgt.reload() }
-    } catch (e) {
-      const why = e.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания'
-      aimTabFail(tab, why)
-      setErr(why)
+      const r = await issueAim(api, auth, setId)
+      setAimLive(m => ({ ...m, [setId]: r.active }))
+      if (r.restarted) { setNote(RESTART_NOTE); tgt.reload() } else setErr(r.message || '')
     } finally { setAiming(null) }
   }
 
@@ -640,7 +634,7 @@ export default function TrafficQueue() {
                   )}
                 </span>
 
-                <span style={{ flex: '1 1 0', minWidth: 0, overflow: 'hidden' }}>
+                <span style={{ flex: '1 1 auto', minWidth: 'max-content' }}>
                   <FactLine rows={g.rows} />
                 </span>
 

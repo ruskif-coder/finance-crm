@@ -300,6 +300,46 @@ def advance_deal(db: Session, deal, stage_name: str, user, reason: str) -> dict:
     return {"moved": True, "stage": target.name, "refused": None}
 
 
+def rk_label(db: Session, campaign_id: int) -> str:
+    """Подпись РК в журнале действий — ПОЛНЫМ кодом сделки (владелец 01.10.2026): «РК #45»
+    человеку ничего не говорит, а по коду сделку находят поиском."""
+    code = db.execute(text("SELECT d.code FROM ad_campaign a JOIN sales_deals d ON d.id = a.deal_id "
+                           "WHERE a.id = :c"), {"c": campaign_id}).scalar()
+    return f"РК {code}" if code else f"РК #{campaign_id}"
+
+
+def publisher_name(db: Session, publisher_id) -> str:
+    """Имя площадки для журнала — «площадка <имя>», а не безымянное «площадка»."""
+    return db.execute(text("SELECT name FROM sales_publishers WHERE id = :i"),
+                      {"i": publisher_id}).scalar() or ""
+
+
+def wake_targeting(db: Session, deal_id: int) -> dict:
+    """Нацеливание для скриншотов после старта РК (владелец 01.10.2026): «по умолчанию
+    заводится в момент старта РК свежая — на 2 дня». Будим демо-кампанию нацеливания и
+    запускаем копии креативов нацеливания у комплектов сделки с ЕРИД (`ensure_live`, тот
+    же путь, что у кнопки). Только комплекты, где нацеливание вообще покажет.
+
+    Запуск РК уже состоялся и сохранён: любой сбой здесь — итог словами, не отказ."""
+    from app.dsp import targeting_creative as tc
+    from app.dsp.client import MsError
+    from app.launch_prep.models import LaunchPrepCreativeSet
+    sets = (db.query(LaunchPrepCreativeSet)
+            .filter(LaunchPrepCreativeSet.deal_id == deal_id,
+                    LaunchPrepCreativeSet.erid.isnot(None)).all())
+    blind = tc.blind_sets(db, [x.id for x in sets])
+    woken, errors = 0, []
+    for x in sets:
+        if x.id in blind:
+            continue
+        try:
+            if tc.ensure_live(db, x).get("active"):
+                woken += 1
+        except (tc.TargetingCreativeError, MsError) as e:
+            errors.append(f"№{x.no}: {e}")
+    return {"woken": woken, "errors": errors[:5]}
+
+
 def erid_state(creatives) -> dict:
     """ЕРИД площадки по её живым креативам (владелец 30.09.2026): серый — ни у одного,
     жёлтый — у части (несколько креативов на площадке), зелёный — у всех."""
@@ -368,7 +408,7 @@ def _creatives_of(db: Session, campaign_id: int) -> dict:
     """
     rows = db.execute(text("""
         SELECT c.id, c.placement_id, c.creative_no, c.status, c.ms_title, c.erid,
-               c.ms_creative_xxhash, c.root_set_id, c.pair_id,
+               c.ms_creative_xxhash, c.root_set_id, c.pair_id, pr.set_id,
                s.title AS name, s.no AS set_no,
                pr.code AS pair_code,
                cur.no AS version_no, cur.origin,
@@ -1090,7 +1130,9 @@ def _cascade_placements(db: Session, campaign_id: int, campaign_status: str) -> 
     n = 0
     for p in db.query(AdCampaignPlacement).filter_by(campaign_id=campaign_id).all():
         if p.status in PLACEMENT_MANUAL and p.status not in (target, PLACEMENT_OFF):
-            p.status = target
+            was, p.status = p.status, target
+            if was == "запущен":
+                build.unmark_target_placed(db, p)
             n += 1
     if n:
         # Доли считаются по крутящим: снятая площадка отдаёт объём остальным, а при
@@ -1171,19 +1213,22 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
              if dsp_status == "LAUNCHED" else None)
 
     db.commit()
+    targeting = (wake_targeting(db, c.deal_id)
+                 if dsp_status == "LAUNCHED" and old != "запущена" else None)
     # Площадкам — только о СТАРТЕ и только один раз: переход «не крутила → крутит»
     # бывает у РК однажды, а «пауза → запущена» повторяется, и письмо «кампания
     # стартовала» на третий раз перестают читать.
     if payload.status == "запущена" and old in ("ожидает сборки", "готова"):
         _tell_publishers_started(db, c)
     log_action(db, user, "ad_campaign_status", "sales_deal", c.deal_id,
-               f"РК #{c.id}: {old} → {c.status}"
+               f"{rk_label(db, c.id)}: {old} → {c.status}"
                + (f"; поднято площадок {raised}" if raised else "")
                + (f"; спущено на площадки {stopped}" if stopped else "")
                + (f"; в DSP {dsp_status}" if dsp_status else ""))
     return {"id": c.id, "status": c.status, "placements_raised": raised,
             "placements_stopped": stopped, "dsp_status": dsp_status,
-            "dsp_check": getattr(c, "_dsp_check", None), "stage": stage}
+            "dsp_check": getattr(c, "_dsp_check", None), "stage": stage,
+            "targeting": targeting}
 
 
 # Стадия, на которую «Завершить РК» двигает сделку. Резолвим ПО ИМЕНИ, потому что
@@ -1271,7 +1316,7 @@ def finish_campaign(campaign_id: int, db: Session = Depends(get_db), user: User 
     stopped = _cascade_placements(db, c.id, "окончена")
     db.commit()
     log_action(db, user, "ad_campaign_finish", "sales_deal", deal.id,
-               f"РК #{c.id}: {old} → окончена"
+               f"{rk_label(db, c.id)}: {old} → окончена"
                + (f"; сделка → {adv['stage']}" if moved else "")
                + (f"; остановлено площадок {stopped}" if stopped else "")
                + (f"; {refused}" if refused else ""))
@@ -1358,14 +1403,18 @@ def set_placement_status(placement_id: int, payload: StatusIn,
     # площадке, которая ждёт запуска, при несобранной РК и ненаступившем сроке
     # (владелец 18.09.2026). Один факт — одно место записи.
     moved = build.mark_target_placed(db, p) if p.status == "запущен" else 0
+    # Сняли, не открутив ни показа, — пара возвращается из «в размещении» (01.10.2026).
+    if old == "запущен" and p.status != "запущен":
+        build.unmark_target_placed(db, p)
     # Площадка меняет и статус РК по факту: первая запущенная делает её «запущена»,
     # последняя остановленная — «готова». DSP следует.
     dsp_status = _dsp_follow(db, c)
     stage = (advance_deal(db, _deal, RUNNING_STAGE, user, "РК запущена трафиком")
              if dsp_status == "LAUNCHED" else None)
     db.commit()
+    pub_name = publisher_name(db, p.publisher_id)
     log_action(db, user, "ad_placement_status", "sales_publisher", p.publisher_id,
-               f"РК #{p.campaign_id}: площадка {old} → {p.status}"
+               f"{rk_label(db, p.campaign_id)}: площадка {pub_name} {old} → {p.status}"
                + (f"; получателей переведено в размещение: {moved}" if moved else ""))
     return {"id": p.id, "status": p.status, "targets_placed": moved,
             "dsp_check": getattr(c, "_dsp_check", None), "stage": stage}
@@ -1430,7 +1479,7 @@ def resolve_external(campaign_id: int, payload: ResolveIn, db: Session = Depends
         raise HTTPException(400, str(e))
     sys_name = "DSP" if payload.system == "dsp" else "Weborama"
     log_action(db, user, "external_resolve", "sales_deal", deal.id,
-               f"РК #{c.id}: {sys_name}, попытка {payload.ref} — "
+               f"{rk_label(db, c.id)}: {sys_name}, попытка {payload.ref} — "
                + (f"найден в кабинете: {out.get('id')}" if payload.found
                   else "в кабинете нет, повтор разрешён"))
     return out
@@ -1449,7 +1498,7 @@ def run_weborama(campaign_id: int, db: Session = Depends(get_db),
     except wb_prov.ProvisionError as e:
         raise HTTPException(400, str(e))
     log_action(db, user, "weborama_provision", "sales_deal", deal.id,
-               f"РК #{c.id}: пикселей получено {len(out['done'])}, "
+               f"{rk_label(db, c.id)}: пикселей получено {len(out['done'])}, "
                f"отказов {len(out['failed'])}")
     return out
 
@@ -1472,7 +1521,7 @@ def attach_weborama(campaign_id: int, payload: WeboramaAttachIn,
     except wb_prov.ProvisionError as e:
         raise HTTPException(400, str(e))
     log_action(db, user, "weborama_attach", "sales_deal", deal.id,
-               f"РК #{c.id}: привязано к Weborama — "
+               f"{rk_label(db, c.id)}: привязано к Weborama — "
                + ", ".join(f"{a['kind']} {a['wcm_id']}" for a in out["attached"]))
     return out
 
@@ -1527,7 +1576,7 @@ def run_dsp(campaign_id: int, db: Session = Depends(get_db),
     except dsp_prov.DspProvisionError as e:
         raise HTTPException(400, str(e))
     log_action(db, user, "dsp_provision", "sales_deal", deal.id,
-               f"РК #{c.id}: креативов заведено {len(out['done'])}, "
+               f"{rk_label(db, c.id)}: креативов заведено {len(out['done'])}, "
                f"отказов {len(out['failed'])}")
     return out
 

@@ -97,3 +97,36 @@ def test_plan_reaches_end_of_flight_before_first_fact():
     assert len(r["buckets"]) == 31 and all(b["plan"] > 0 for b in r["buckets"])
     w = daily_buckets(310000, None, fl, {}, grain="week", today=date(2026, 10, 1))
     assert len(w["buckets"]) == 5 and w["buckets"][1]["plan"] > 7 * 10000
+
+
+def test_paused_before_any_show_returns_pair_from_placed():
+    """EDUYRT 01.10.2026: отметили запущенной и сразу сняли — пара не остаётся «в размещении».
+    С показами — остаётся: размещение состоялось."""
+    from sqlalchemy import text
+    from app.ad import build
+    from app.ad.models import AdCampaignPlacement
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        row = db.execute(text("""
+            SELECT p.id, t.id AS tid FROM ad_campaign_placement p
+              JOIN ad_campaign a ON a.id = p.campaign_id
+              JOIN launch_prep_target t ON t.deal_id = a.deal_id AND t.publisher_id = p.publisher_id
+             WHERE t.archived_at IS NULL
+               AND NOT EXISTS (SELECT 1 FROM ad_campaign_stat s WHERE s.placement_id = p.id AND s.shows > 0)
+             LIMIT 1""")).first()
+        if not row:
+            import pytest
+            pytest.skip("нет площадки с получателем без показов")
+        pl = db.get(AdCampaignPlacement, row.id)
+        db.execute(text("UPDATE launch_prep_target SET state = 'в размещении' WHERE id = :t"), {"t": row.tid})
+        assert build.unmark_target_placed(db, pl) >= 1
+        assert db.execute(text("SELECT state FROM launch_prep_target WHERE id = :t"),
+                          {"t": row.tid}).scalar() == build.TARGET_ERID
+        db.execute(text("UPDATE launch_prep_target SET state = 'в размещении' WHERE id = :t"), {"t": row.tid})
+        db.execute(text("INSERT INTO ad_campaign_stat (campaign_id, placement_id, date, shows, clicks, source) "
+                        "VALUES (:c, :p, current_date, 10, 0, 'demo')"), {"c": pl.campaign_id, "p": pl.id})
+        assert build.unmark_target_placed(db, pl) == 0, "были показы — размещение состоялось"
+    finally:
+        db.rollback()
+        db.close()

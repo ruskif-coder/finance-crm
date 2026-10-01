@@ -311,7 +311,8 @@ def build_creative_params(*, title: str, link: str, erid: Optional[str] = None,
                           self_inn: Optional[str] = None, self_name: Optional[str] = None,
                           adomain: Optional[str] = None, size: Optional[str] = None,
                           total_shows: Optional[int] = None,
-                          total_clicks: Optional[int] = None) -> dict:
+                          total_clicks: Optional[int] = None,
+                          pixel: Optional[str] = None) -> dict:
     """Тело креатива по плану.
 
     `size` — «240x400» либо «0x0» у адаптивного. Берётся из ОТВЕТА загрузчика (он его
@@ -349,4 +350,8 @@ def build_creative_params(*, title: str, link: str, erid: Optional[str] = None,
         limits["click"] = {"total": int(total_clicks)}
     if limits:
         params["limits"] = limits
+    # Пиксель показа верификатора — ОТДЕЛЬНЫМ полем `pixel`, не тегом в HTML (владелец
+    # 01.10.2026): в кабинете DSP его видно, и показ не считается дважды.
+    if pixel:
+        params["pixel"] = pixel.strip()
     return params

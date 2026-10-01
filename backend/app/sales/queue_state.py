@@ -20,6 +20,7 @@
 Элементы колонки «Что сделать» — четыре типа из ТЗ §3.2:
   {"type": "fact", "k", "v"} · {"type": "progress", "k", "x", "y", "unit"?}
   {"type": "check", "v", "ok", "optional"} · {"type": "alert", "tone": bad|warn, "v"}
+  · {"type": "status", "tone": "good", "v"} — состояние РК плашкой (01.10.2026)
 Кнопка — {"label", "do", "url"?, "hint"}; `do` понимает страница: mp · move · confirm ·
 prep · link · expand. Нет кнопки — `action: None` и подпись `note` («ведёт трафик»).
 """
@@ -240,6 +241,10 @@ def _by_slot(b: Bundle):
             state.append(_alert("период закончился", "warn"))
         if dl is not None:
             state.append(_fact("площадок", f"{dl.get('placements_on', 0)} / {dl.get('placements', 0)}"))
+            # РК реально крутится — первой плашкой, зелёной (владелец 01.10.2026): аккаунт
+            # видит запуск, не открывая дашборд трафика.
+            if dl.get("placements_on"):
+                state.insert(0, {"type": "status", "tone": "good", "v": "запущена"})
         return state, None, "ведёт трафик"
 
     if s == "recon":

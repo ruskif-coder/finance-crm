@@ -240,8 +240,8 @@ def _checkable(tag):
 def build_tag(pixel, domain, kind: str, ratio=None, erid=None):
     """Итоговый тег пикселя под площадку: макрос рандомизатора канала (`kind` — dsp |
     adfox), адрес площадки, размер баннера, ЕРИД. → (тег | None, причина | None).
-    Одно правило на все выгрузки — заявку Weborama и паспорт РК (30.09.2026: паспорт
-    отдавал сырой пиксель, одинаковый для нашей DSP и Adfox)."""
+    Одно правило на ВСЕ выгрузки — заявку Weborama, паспорт РК и поле `pixel` креатива
+    DSP (30.09.2026: паспорт отдавал сырой пиксель, одинаковый для нашей DSP и Adfox)."""
     tag, why = None, None
     try:
         tag = naming.final_tag(pixel, domain or "", kind)
@@ -257,9 +257,7 @@ def build_tag(pixel, domain, kind: str, ratio=None, erid=None):
         w, h = _wh(ratio)
         if w and h:
             tag = wtags.fill_size(tag, w, h)
-        if erid:
-            # Маркер — НАСТОЯЩИЙ: заглушка означала бы проверку не того, что уйдёт в эфир.
-            tag = tag.replace("[ERID_VALUE]", erid).replace("[ERID_ID]", erid)
+        tag = wtags.fill_erid(tag, erid)
         # Оставшееся называем вслух: DSP чужих макросов не знает (замер 09.09.2026).
         left = wtags.leftovers(tag)
         if left:

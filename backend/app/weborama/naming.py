@@ -92,6 +92,14 @@ def domain_of(site: str) -> str:
     return _idna(s.strip(". "))
 
 
+def unicode_domain(host: str) -> str:
+    """`009.xn--p1ai` → `009.рф`; латинский домен — как есть."""
+    try:
+        return host.encode("ascii").decode("idna") if "xn--" in host else host
+    except (UnicodeError, ValueError):
+        return host
+
+
 def _idna(host: str) -> str:
     """Кириллический домен — в латинскую запись IDNA (`009.рф` → `009.xn--p1ai`).
 
@@ -178,6 +186,12 @@ def final_tag(pixel: str, site: str, kind: str = "dsp") -> str:
     dom = domain_of(site)
     if not dom:
         raise ValueError("Пустой домен площадки — тег без адреса бессмыслен")
+    # В `a.ycp` — домен КИРИЛЛИЦЕЙ (владелец 01.10.2026: «009.xn--p1ai» в пикселе выглядел
+    # криво), но в ПРОЦЕНТНОЙ КОДИРОВКЕ: 28.09 Weborama и DSP не приняли голую кириллицу,
+    # а `009.%D1%80%D1%84` — обычная ASCII-строка, которую Weborama при разборе ссылки
+    # читает как `009.рф`. Punycode остаётся в метках вставок и adomain DSP.
+    from urllib.parse import quote
+    dom = quote(unicode_domain(dom), safe=".-")
     if RANDOM_PLACEHOLDER not in pixel:
         # Отказываем: тег без кеш-бастера считает показы неверно, а выяснится это по
         # расхождению цифр через месяц. Если окажется, что Weborama законно присылает

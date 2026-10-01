@@ -96,6 +96,12 @@ def leftovers(tag: str) -> list:
     return sorted(set(_LEFTOVER_RE.findall(tag or "")))
 
 
+def fill_erid(tag: str, erid) -> str:
+    """Подставить НАСТОЯЩИЙ ЕРИД вместо `[ERID_ID]` / `[ERID_VALUE]` — в пиксель показа и в
+    кликовый счётчик. Заглушка означала бы проверку не того, что уйдёт в эфир."""
+    return tag.replace("[ERID_VALUE]", erid).replace("[ERID_ID]", erid) if erid else tag
+
+
 def fill_size(tag: str, width, height) -> str:
     """Подставить размер вместо `~WIDTH~` / `~HEIGHT~`. Размер мы ЗНАЕМ — он объявлен в
     самом баннере (`ad.size`), поэтому выдумывать ничего не нужно."""
@@ -103,5 +109,5 @@ def fill_size(tag: str, width, height) -> str:
     return out
 
 
-__all__ = ["parse", "impression_pixel", "leftovers", "fill_size",
+__all__ = ["parse", "impression_pixel", "leftovers", "fill_size", "fill_erid",
            "ACTION_IMPRESSION", "ACTION_CLICK", "PLACEHOLDERS"]

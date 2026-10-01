@@ -78,6 +78,10 @@ def _no_volume_guard(monkeypatch):
     monkeypatch.setattr(_camps, "follow_creatives", lambda *a, **k: {})
     # Перевод сделки по стадии проверяется в tests/test_rk_start_plan.py: каталога
     # стадий у поддельной базы нет.
+    monkeypatch.setattr(td.build, "unmark_target_placed", lambda db, p: 0)
+    monkeypatch.setattr(td, "wake_targeting", lambda db, deal_id: None)
+    monkeypatch.setattr(td, "rk_label", lambda db, cid: f"РК #{cid}")
+    monkeypatch.setattr(td, "publisher_name", lambda db, pid: "площадка")
     monkeypatch.setattr(td, "advance_deal", lambda *a, **k: {"moved": False, "stage": None, "refused": None})
 
 def _camp(xx=XX, status="готова"):

@@ -81,3 +81,23 @@ export function aimToneFor(active, campaign) {
   if (active === true || active === false) return aimTone(active)
   return aimExpired(campaign) ? aimTone(false) : {}
 }
+
+/** ВЕСЬ выпуск ссылки нацеливания одним вызовом (01.10.2026): вкладка синхронно по клику,
+    запрос, адрес во вкладку или причина в неё. Кнопок стало четыре — конвейер, блок
+    креатива, дашборд трафика по креативам, свёрнутые креативы сделки, — и копии этой
+    последовательности уже расходились (25.09). Каждая кнопка держит своё состояние,
+    а путь один. → { active: true|false, message: '' | текст для человека, restarted }.
+    `api` и `auth` передаёт вызывающий: модуль остаётся без зависимостей. */
+export async function issueAim(api, auth, setId) {
+  const tab = openAimTab()
+  try {
+    const r = await api.post(`/launch-prep/set/${setId}/targeting-link`, {}, auth())
+    aimTabGo(tab, r.data.url)
+    return { active: !!r.data.active, restarted: !!r.data.restarted,
+             message: r.data.restarted ? RESTART_NOTE : aimNotLive(r.data) }
+  } catch (e) {
+    const why = e?.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания'
+    aimTabFail(tab, why)
+    return { active: false, restarted: false, message: why, failed: true }
+  }
+}

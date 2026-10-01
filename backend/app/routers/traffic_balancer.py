@@ -334,6 +334,27 @@ def _site_rows(db: Session) -> list:
     return rows
 
 
+@router.get("/logs")
+def exchange_logs(system: str = "dsp", limit: int = 200, only_errors: bool = False,
+                  deal: Optional[str] = None, prod_only: bool = True, db: Session = Depends(get_db),
+                  user: User = Depends(VIEW)):
+    """Вкладка «Логи» (владелец 01.10.2026): обмен с DSP или Weborama, каждая строка —
+    сделка + площадка + креатив. Право — то же, что у админки трафика."""
+    from app.traffic import logs
+    limit = max(1, min(int(limit), 1000))
+    if system == "dsp":
+        try:
+            rows = logs.dsp_rows(db, limit, only_errors, (deal or "").strip() or None,
+                                 prod_only=prod_only)
+        except Exception as e:  # noqa: BLE001 — журнал в другой базе; её недоступность не 500
+            raise HTTPException(503, f"Журнал DSP недоступен: {e.__class__.__name__}")
+    elif system == "weborama":
+        rows = logs.wr_rows(db, limit, only_errors, (deal or "").strip() or None)
+    else:
+        raise HTTPException(400, "system: dsp | weborama")
+    return {"system": system, "rows": rows}
+
+
 @router.get("/site-monitor")
 def site_monitor_rows(db: Session = Depends(get_db), user: User = Depends(VIEW)):
     from app.traffic import site_monitor as sm

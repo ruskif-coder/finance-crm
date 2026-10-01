@@ -347,6 +347,11 @@ def _fetch_pixel(db: Session, client: WcmClient, acc: str, placement_id: int,
     pixel = tags.impression_pixel(raw)
     _finish(db, s, wcm_id=insertion_id,
             error=None if pixel else "в ответе нет пикселя показа")
+    # Кликовый счётчик — из того же ответа (01.10.2026): конечный URL креатива в DSP.
+    click = tags.parse(raw).get("click")
+    if click:
+        db.execute(text("UPDATE ad_campaign_placement SET weborama_click = :c WHERE id = :p"),
+                   {"c": click, "p": placement_id})
     return pixel
 
 

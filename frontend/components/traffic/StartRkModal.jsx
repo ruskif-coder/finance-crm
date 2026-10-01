@@ -5,7 +5,8 @@
 // площадки), человек видит, что поднимется и что нет и почему, а после запуска — итог:
 // статус в DSP, сверку, перевод сделки по стадии.
 import { useEffect, useState } from 'react'
-import { Modal, btnSm, primaryBtn, MONO } from '@/components/salesTableKit'
+import { Modal, btnSm, primaryBtn, MONO, th, td } from '@/components/salesTableKit'
+import { Cube } from '@/components/LogoLoader'
 import api from '@/lib/api'
 
 const ACT = {
@@ -34,6 +35,10 @@ export default function StartRkModal({ row, auth, onClose, onDone, note }) {
       const r = await api.put(`/traffic-dashboard/campaign/${row.id}/status`,
         { status: 'запущена', with_placements: true }, auth())
       setRes(r.data)
+      // План перечитываем: окно должно показать, что площадки действительно «запущен»,
+      // а не то, что мы надеялись поднять.
+      const p = await api.get(`/traffic-dashboard/campaign/${row.id}/start-plan`, auth())
+      setPlan(p.data)
       onDone && onDone()
     } catch (e) {
       setErr(e?.response?.data?.detail || 'Не удалось запустить РК')
@@ -48,9 +53,11 @@ export default function StartRkModal({ row, auth, onClose, onDone, note }) {
       {err && <span style={{ fontSize: 12.5, color: 'var(--danger-fg)', marginRight: 'auto' }}>⚠ {err}</span>}
       <button style={btnSm(false)} onClick={onClose} disabled={busy}>{res ? 'Закрыть' : 'Отмена'}</button>
       {!res && (
-        <button style={{ ...primaryBtn, opacity: busy || !plan || plan.dsp_block ? 0.6 : 1 }}
+        <button style={{ ...primaryBtn, display: 'inline-flex', alignItems: 'center', gap: 8,
+          cursor: busy ? 'progress' : 'pointer', opacity: !plan || plan.dsp_block ? 0.6 : 1 }}
           disabled={busy || !plan || !!plan.dsp_block} onClick={go}>
-          {busy ? 'запускаю…' : plan?.start ? `Запустить РК и ${plan.start} площ.` : 'Запустить РК'}
+          {busy && <Cube variant="spinner" size={14} />}
+          {busy ? 'запускаю площадки…' : plan?.start ? `Запустить РК и ${plan.start} площ.` : 'Запустить РК'}
         </button>
       )}
     </div>
@@ -70,28 +77,39 @@ export default function StartRkModal({ row, auth, onClose, onDone, note }) {
           {note ? note(res) : ''}
           {res.stage?.moved && <div>Сделка переведена в «{res.stage.stage}».</div>}
           {res.stage?.refused && <div style={{ color: 'var(--warning-text)' }}>⚠ {res.stage.refused}</div>}
+          {res.targeting && (res.targeting.woken
+            ? <div>Нацеливание для скриншотов включено на 2 дня: комплектов {res.targeting.woken}.</div>
+            : null)}
+          {!!res.targeting?.errors?.length && (
+            <div style={{ color: 'var(--warning-text)' }}>⚠ Нацеливание: {res.targeting.errors.join('; ')}</div>
+          )}
+        </div>
+      )}
+      {busy && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', color: 'var(--accent)', fontSize: 13 }}>
+          <Cube variant="spinner" size={14} /> Запускаю РК и площадки в DSP, сверяю статусы — это несколько секунд
         </div>
       )}
       {plan && (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
           <thead>
-            <tr style={{ color: 'var(--text-faint)', textAlign: 'left' }}>
-              <th style={{ padding: '6px 4px', fontWeight: 600 }}>Площадка</th>
-              <th style={{ padding: '6px 4px', fontWeight: 600 }}>Сейчас</th>
-              <th style={{ padding: '6px 4px', fontWeight: 600 }}>При запуске</th>
+            <tr>
+              <th style={th}>Площадка</th>
+              <th style={th}>Сейчас</th>
+              <th style={th}>При запуске</th>
             </tr>
           </thead>
           <tbody>
             {plan.rows.map(r => {
               const [label, fg, bg] = ACT[r.action]
               return (
-                <tr key={r.placement_id} style={{ borderTop: '1px solid var(--border-card)' }}>
-                  <td style={{ padding: '7px 4px' }}>
+                <tr key={r.placement_id}>
+                  <td style={{ ...td, padding: '7px 10px' }}>
                     <div style={{ fontWeight: 600 }}>{r.publisher}</div>
                     {r.external && <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>не наш код — заводится вручную</div>}
                   </td>
-                  <td style={{ padding: '7px 4px', fontFamily: MONO, fontSize: 11.5, color: 'var(--text-secondary)' }}>{r.status}</td>
-                  <td style={{ padding: '7px 4px' }}>
+                  <td style={{ ...td, padding: '7px 10px', fontFamily: MONO, fontSize: 11.5, color: 'var(--text-secondary)' }}>{r.status}</td>
+                  <td style={{ ...td, padding: '7px 10px' }}>
                     <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 6, color: fg, background: bg }}>{label}</span>
                     {r.why && <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 3 }}>{r.why}</div>}
                   </td>

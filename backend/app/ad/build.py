@@ -767,6 +767,33 @@ def mark_target_placed(db: Session, pl: AdCampaignPlacement, commit: bool = Fals
     return n
 
 
+# Куда возвращается пара, если площадку сняли, не дав ей открутить ни одного показа.
+TARGET_ERID = "ерид получен"
+
+
+def unmark_target_placed(db: Session, pl: AdCampaignPlacement) -> int:
+    """Обратный ход к `mark_target_placed` (владелец 01.10.2026, EDUYRT): площадку
+    отметили запущенной и тут же сняли — пара осталась «в размещении», и кабинет
+    площадки показывал размещение, которого не было. Откатываем, ТОЛЬКО если у площадки
+    нет ни одного показа: размещение, которое хоть что-то открутило, — состоявшийся факт,
+    и пауза его не отменяет. → число откаченных строк."""
+    camp = db.query(AdCampaign).filter(AdCampaign.id == pl.campaign_id).first()
+    if not camp:
+        return 0
+    from app.ad.stat_sources import fact_sources
+    # Показы — наш ФАКТ (DSP и др.), не измерение верификатора: Weborama сверяет, а не крутит.
+    shown = db.execute(text(
+        "SELECT 1 FROM ad_campaign_stat WHERE placement_id = :p AND shows > 0 "
+        "AND source = ANY(:src) LIMIT 1"), {"p": pl.id, "src": list(fact_sources())}).first()
+    if shown:
+        return 0
+    return db.execute(text("""
+        UPDATE launch_prep_target SET state = :back
+         WHERE deal_id = :d AND publisher_id = :p AND archived_at IS NULL AND state = :placed
+    """), {"back": TARGET_ERID, "placed": TARGET_PLACED, "d": camp.deal_id,
+           "p": pl.publisher_id}).rowcount
+
+
 def sync_deal(db: Session, deal_id: int, commit: bool = True) -> dict:
     """Пересобрать кампанию ОДНОЙ сделки: площадки и креативы.
 

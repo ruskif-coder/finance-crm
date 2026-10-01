@@ -24,7 +24,7 @@ export default function SettingsAudit() {
   const [auditItems, setAuditItems] = useState([])
   const [auditTotal, setAuditTotal] = useState(0)
   const [actionLabels, setActionLabels] = useState({})
-  const [auditFilters, setAuditFilters] = useState({ action: '', user_id: '', date_from: '', date_to: '' })
+  const [auditFilters, setAuditFilters] = useState({ action: '', user_id: '', date_from: '', date_to: '', q: '' })
   const [loadingAudit, setLoadingAudit] = useState(false)
   const [auditSkip, setAuditSkip] = useState(0)
 
@@ -61,6 +61,7 @@ export default function SettingsAudit() {
       if (filters.user_id) params.user_id = filters.user_id
       if (filters.date_from) params.date_from = filters.date_from
       if (filters.date_to) params.date_to = filters.date_to
+      if (filters.q && filters.q.trim()) params.q = filters.q.trim()
       const res = await api.get('/users/audit-log/', { ...auth(), params })
       if (!fresh()) return
       if (skip === 0) setAuditItems(res.data.items)
@@ -97,6 +98,12 @@ export default function SettingsAudit() {
 
         {/* Фильтры */}
         <div style={{ ...card, padding: '14px 18px', marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* Поиск по тексту — детали и имя пользователя (владелец 01.10.2026): код сделки,
+              площадка, ЕРИД. Ищется по Enter, чтобы не дёргать сервер на каждую букву. */}
+          <input type="search" placeholder="Поиск: код сделки, площадка, текст…" value={auditFilters.q}
+            onChange={e => setAuditFilters(f => ({ ...f, q: e.target.value }))}
+            onKeyDown={e => { if (e.key === 'Enter') loadAuditLog(0, auditFilters) }}
+            style={{ ...sel, width: 260 }} />
           <select value={auditFilters.action} onChange={e => handleAuditFilterChange({ action: e.target.value })} style={sel}>
             <option value="">Все действия</option>
             {Object.entries(actionLabels).map(([v, l]) => <option key={v} value={v}>{l}</option>)}

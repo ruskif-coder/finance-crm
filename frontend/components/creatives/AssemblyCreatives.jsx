@@ -26,7 +26,7 @@ import safeHref from '@/lib/safeHref'
 import DeeplinkChip from './DeeplinkChip'
 import { CreativePreview } from './CreativePreview'
 import { fmtDayOfMoment } from '@/lib/dates'
-import { openAimTab, aimTabGo, aimTabFail, aimTone, aimNotLive, RESTART_NOTE } from '@/lib/aimTab'
+import { aimTone, issueAim, RESTART_NOTE } from '@/lib/aimTab'
 
 const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
 const BOX = { border: '1px solid var(--border-card)', borderRadius: 14, padding: '14px 16px', background: 'var(--bg-card)' }
@@ -1021,19 +1021,12 @@ function TargetingRow({ set, canEdit, onSave }) {
   // Вкладку открываем СИНХРОННО по клику, адрес подставляем после ответа: окно из
   // `await` блокировщик всплывающих окон считает непрошеным и режет.
   const aim = async () => {
-    setErr('')
-    const tab = openAimTab()
-    setBusy(true)
+    setErr(''); setBusy(true)
     try {
-      const r = await api.post(`/launch-prep/set/${set.id}/targeting-link`, {}, auth())
-      aimTabGo(tab, r.data.url)
-      setLive(!!r.data.active)
-      setErr(aimNotLive(r.data))
-      setAimNote(r.data.restarted ? RESTART_NOTE : '')
-    } catch (e) {
-      const why = e?.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания'
-      aimTabFail(tab, why)
-      setErr(why)
+      const r = await issueAim(api, auth, set.id)
+      setLive(r.active)
+      setErr(r.restarted ? '' : (r.message || ''))
+      setAimNote(r.restarted ? RESTART_NOTE : '')
     } finally { setBusy(false) }
   }
 

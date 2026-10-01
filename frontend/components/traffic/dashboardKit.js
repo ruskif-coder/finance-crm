@@ -828,8 +828,10 @@ export function byCreative(placements) {
     for (const c of p.creatives || []) {
       const key = c.root_set_id || `no${c.creative_no}`
       const acc = map.get(key) || {
-        key, name: c.name, ms_title: c.ms_title, places: [], plan: 0, live: 0,
+        key, name: c.name, ms_title: c.ms_title, places: [], plan: 0, live: 0, set_id: null,
       }
+      // Нацеливание — на САМУЮ свежую версию комплекта (доработка = новый комплект).
+      if (c.set_id && (!acc.set_id || c.set_id > acc.set_id)) acc.set_id = c.set_id
       acc.places.push({ ...c, domain: p.domain || p.publisher, code: p.code })
       acc.plan += c.plan_show || 0
       if (c.ms_creative_xxhash) acc.live += 1

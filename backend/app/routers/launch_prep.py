@@ -1988,8 +1988,12 @@ def apply_platform_verdict(db: Session, pair_id: int, verdict: str,
     from app.ad.build import sync_deal_quietly
     sync_deal_quietly(db, deal.id)
     who = f" ({author_name})" if source == "кабинет" else ""
+    from app.launch_prep.cabinet_label import verdict_prefix
+    tgt_pub = db.query(LaunchPrepTarget.publisher_id).filter(
+        LaunchPrepTarget.id == pair.target_id).scalar()
     log_action(db, actor, "creative_pair_verdict", "sales_deal", deal.id,
-               f"комплект №{s.no}: {verdict}{who}" + (f", код {code}" if code else ""))
+               f"{verdict_prefix(db, tgt_pub)}комплект №{s.no}: {verdict}{who}"
+               + (f", код {code}" if code else ""))
     emit(db, "creative_verdict",
          title=f"Площадка ответила: {verdict} · {deal_label(deal)}",
          body=(rec.reason or f"Комплект №{s.no}" + (f", код {code}" if code else "")),

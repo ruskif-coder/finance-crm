@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { btnSm } from '@/components/salesTableKit'
 import { downloadOffsite } from '@/lib/dealDocs'
+import { Cube } from '@/components/LogoLoader'
 
 export default function OffsiteButton({ dealId }) {
   const [state, setState] = useState('idle')      // idle | busy | done | error
@@ -26,7 +27,6 @@ export default function OffsiteButton({ dealId }) {
   const busy = state === 'busy'
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-      <style>{'@keyframes offsite-spin{to{transform:rotate(360deg)}}'}</style>
       {state === 'error' && (
         <span title={why} style={{ fontSize: 11.5, color: 'var(--danger-fg)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           ⚠ {why}</span>
@@ -36,12 +36,7 @@ export default function OffsiteButton({ dealId }) {
         cursor: busy ? 'progress' : 'pointer', opacity: busy ? 0.75 : 1 }}
         disabled={busy} onClick={run}
         title="Баннеры и паспорт для площадок без нашего кода — заводить у них вручную">
-        {busy && (
-          <svg width="12" height="12" viewBox="0 0 24 24" style={{ animation: 'offsite-spin .8s linear infinite' }}>
-            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" strokeOpacity=".25" />
-            <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-          </svg>
-        )}
+        {busy && <Cube variant="spinner" size={12} />}
         {busy ? 'собираю архив…' : '↓ ADFOX'}
       </button>
     </span>

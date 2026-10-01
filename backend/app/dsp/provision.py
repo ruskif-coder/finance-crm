@@ -240,17 +240,32 @@ def _read_archive(f: LaunchPrepCreativeFile) -> bytes:
         return fh.read()
 
 
-def _pixel_tag(row: dict, width, height, ext_tag: Optional[str] = None) -> str:
-    """Тег пикселя Weborama под ЭТОТ креатив: макрос рандомизатора DSP, домен площадки,
-    размеры из ответа загрузчика. Собирается на лету — хранить производное значит завести
-    вторую правду, которая разойдётся с первой."""
-    # Внешний тег один на кампанию, свой — у каждого размещения. Дальше путь общий:
-    # сборщик подставляет макрос рандомизатора и дописывает `&a.ycp=https://<домен>`,
-    # поэтому даже фиксированный тег уезжает в каждую площадку СО СВОИМ адресом.
-    url = naming.final_tag(ext_tag or row["placement"].weborama_pixel,
-                           row["publisher"].domain or "", kind="dsp")
-    url = wtags.fill_size(url, width, height)
-    return f'<img src="{url}" width="1" height="1" alt="" style="display:none">'
+def pixel_url(row: dict, width, height, ext_tag: Optional[str] = None,
+              erid: Optional[str] = None) -> str:
+    """Пиксель показа Weborama под ЭТОТ креатив — для поля `pixel` DSP (владелец 01.10.2026:
+    только полем, не тегом в HTML). Собирается ТЕМ ЖЕ правилом, что заявка Weborama и
+    паспорт (`request_xlsx.build_tag`): макрос DSP, домен, размер, ЕРИД. Внешний тег один
+    на кампанию, свой — у каждого размещения; дальше путь общий."""
+    from app.weborama.request_xlsx import build_tag
+    ratio = f"{width}x{height}" if width and height else None
+    tag, why = build_tag(ext_tag or row["placement"].weborama_pixel,
+                         row["publisher"].domain or "", "dsp", ratio, erid)
+    if not tag:
+        raise ValueError(why or "пиксель не собран")
+    return tag
+
+
+def click_link(row: dict, landing: str, erid: Optional[str] = None) -> str:
+    """Конечный URL креатива (владелец 01.10.2026): кликовая ссылка Weborama, ведущая на
+    посадочную (`…&g.lu=<посадочная>`), если её получили при заведении пикселя; иначе —
+    сама посадочная, как раньше. Посадочная — последним параметром и закодирована
+    целиком: в ней свои `?` и `&`, без кодирования они стали бы параметрами счётчика."""
+    from urllib.parse import quote
+    click = (getattr(row["placement"], "weborama_click", None) or "").strip()
+    if not click or not landing:
+        return landing
+    click = click.replace("[RANDOM]", "{RND}")
+    return wtags.fill_erid(click, erid) + quote(landing.strip(), safe="")
 
 
 def provision(db: Session, camp: AdCampaign, user_id=None,
@@ -330,12 +345,11 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
                 script = creative_script(db, bool(pub.our_code)) if pub else ""
                 html = cr.wrap_html(up["html"], erid=cre.erid, viewability_src=vsrc,
                                     extra_script=script)
-                # Пиксель показа — в конец разметки: у баннера от загрузчика собственный
-                # `<head>` может быть, а может и не быть, и хвост не зависит ни от того,
-                # ни от другого. И только если он по этой РК заказан: иначе тег
+                # Пиксель показа — полем `pixel`, а не тегом в разметке (владелец
+                # 01.10.2026). И только если он по этой РК заказан: иначе тег
                 # верификатора уехал бы в сеть по кампании, которую он не считает.
-                if want_pixel:
-                    html += "\n" + _pixel_tag(r, up.get("width"), up.get("height"), ext_tag)
+                pix = (pixel_url(r, up.get("width"), up.get("height"), ext_tag, cre.erid)
+                       if want_pixel else None)
                 if state == "empty":
                     xxhash = known
                 else:
@@ -347,7 +361,10 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
                             "У креатива нулевой объём на площадке — весь её план отдан другому "
                             "креативу. Уменьшите заданный объём соседа или отключите креатив")
                     params = cr.build_creative_params(
-                        title=cre.ms_title or name, link=r["target"].advertiser_url,
+                        title=cre.ms_title or name,
+                        link=(click_link(r, r["target"].advertiser_url, cre.erid)
+                              if want_pixel and not ext_tag else r["target"].advertiser_url),
+                        pixel=pix,
                         # Оба адреса — из реальной посадочной (владелец 25.09.2026): ссылка
                         # целиком, конечный URL — её основной домен (у DSP ≤128 символов).
                         adomain=cr.landing_domain(r["target"].advertiser_url),

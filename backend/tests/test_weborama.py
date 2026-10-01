@@ -68,8 +68,11 @@ def test_cyrillic_domain_goes_out_in_punycode():
     assert naming.domain_of("009.рф") == "009.xn--p1ai"
     assert naming.domain_of("https://120на80.РФ/каталог") == "xn--12080-6ve4g.xn--p1ai"
     assert not naming.has_cyrillic(naming.row_name("Desktop", "кампания", "009.рф"))
+    # Хвост пикселя (`a.ycp`) с 01.10.2026 — кириллица в процентной кодировке (владелец:
+    # punycode «криво»). Строка остаётся ASCII — голая кириллица наружу не уходит.
     tag = naming.final_tag("https://x.weborama-tech.ru/p?a=1&r=[RANDOM]", "120на80.рф")
-    assert tag.endswith("https://xn--12080-6ve4g.xn--p1ai") and not naming.has_cyrillic(tag)
+    from urllib.parse import unquote
+    assert unquote(tag).endswith("https://120на80.рф") and not naming.has_cyrillic(tag)
     # Латинский домен не меняется, а неразборчивый не роняет выгрузку — отдаётся как был.
     assert naming.domain_of("aptechestvo.ru") == "aptechestvo.ru"
     assert naming.domain_of("a..b") == "a..b"

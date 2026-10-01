@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from app.database import get_db
 from app.models import RolePermission, User, Role, AuditLog
 from app.audit import log_action, require_admin
@@ -324,10 +325,17 @@ def get_audit_log(
     user_id: Optional[int] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    q: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("settings_audit", "view"))
 ):
     query = db.query(AuditLog)
+    # Поиск по тексту (владелец 01.10.2026): детали и имя пользователя, без учёта
+    # регистра. Спецсимволы LIKE экранируются — «%» в запросе ищется как знак.
+    if q and q.strip():
+        pat = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        query = query.filter(or_(AuditLog.details.ilike(pat, escape="\\"),
+                                 AuditLog.user_name.ilike(pat, escape="\\")))
     if action:
         query = query.filter(AuditLog.action == action)
     if user_id:
