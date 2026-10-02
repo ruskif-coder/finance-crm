@@ -14,7 +14,22 @@ from sqlalchemy.orm import Session
 from app.sales.models import SalesPublisherSurface
 
 CHANNELS = {"dsp": "наша DSP", "adfox": "Adfox", "outside": "вне контура"}
-APP_LINKS = {"web": "веб-ссылка в href", "both": "диплинк в href + веб в url/adomain"}
+APP_LINKS = {"web": "веб-ссылка в href", "both": "диплинк в href + веб в url/adomain",
+             # Площадка принимает диплинк SDK прямо в посадочной (владелец 02.10.2026).
+             "sdk": "диплинк SDK (deeplink+://) в посадочной"}
+
+# Что подсказать человеку у поля посадочной — по режиму площадки. Подсказка, не запрет
+# (владелец 02.10.2026: «пока без жёсткой проверки»).
+LANDING_HINTS = {
+    "web": "Площадка принимает веб-ссылку: https://… на товар на сайте",
+    "both": "Здесь — веб-ссылка https://…, диплинк приложения — в поле рядом",
+    "sdk": ("Площадка принимает диплинк SDK: deeplink+://navigate?primaryUrl=<ссылка https "
+            "в base64>&primaryTrackingUrl={LINK_ESC}"),
+}
+
+
+def landing_hint(rule: Optional[dict]) -> Optional[str]:
+    return LANDING_HINTS.get((rule or {}).get("app_links"))
 
 
 def rules_for(db: Session, keys: Iterable[Tuple[int, str]]) -> Dict[Tuple[int, str], dict]:
@@ -35,6 +50,71 @@ def rule_of(s) -> dict:
             "adfox_code": s.adfox_extra_code if s.placement_channel == "adfox" else None}
 
 
+# ── Посадочная app-площадки в формате диплинка SDK (владелец 02.10.2026) ─────────────
+#
+# `deeplink+://navigate?primaryUrl=<base64 https>&primaryTrackingUrl={LINK_ESC}` — так
+# площадки присылают ссылку для приложения. SDK открывает внутри приложения `primaryUrl`,
+# а `primaryTrackingUrl` дёргает фоном — это кликовая ссылка DSP, засчитывает клик.
+# `{LINK_ESC}` DSP подставляет ТОЛЬКО в коде баннера, поэтому строка целиком встаёт в
+# `<a href>`; в `link`/`adomain` DSP, ОРД и прочее, где нужен веб-адрес, — `web_url()`.
+APP_LINK_PREFIX = "deeplink+://"
+
+
+def app_link_web(url: Optional[str]) -> Optional[str]:
+    """Веб-адрес из `primaryUrl` диплинка SDK; None — это не диплинк или он битый."""
+    import base64
+    import binascii
+    from urllib.parse import unquote
+    u = (url or "").strip()
+    if not u.lower().startswith(APP_LINK_PREFIX) or "?" not in u:
+        return None
+    for part in u.split("?", 1)[1].split("&"):
+        key, _, val = part.partition("=")
+        if key != "primaryUrl" or not val:
+            continue
+        raw = unquote(val)          # не unquote_plus: «+» — законный символ base64
+        try:
+            web = base64.b64decode(raw + "=" * (-len(raw) % 4),
+                                   altchars=b"-_" if ("-" in raw or "_" in raw) else None,
+                                   validate=True).decode("utf-8").strip()
+        except (binascii.Error, ValueError, UnicodeDecodeError):
+            return None
+        return web if web.lower().startswith(("https://", "http://")) else None
+    return None
+
+
+def is_app_link(url: Optional[str]) -> bool:
+    return (url or "").strip().lower().startswith(APP_LINK_PREFIX)
+
+
+def web_url(url: Optional[str]) -> Optional[str]:
+    """Веб-адрес посадочной: у диплинка SDK — раскодированный `primaryUrl`, иначе как есть."""
+    u = (url or "").strip()
+    if not u:
+        return None
+    return app_link_web(u) if is_app_link(u) else u
+
+
+def validate_landing(value: Optional[str], surface_kind: Optional[str]) -> Optional[str]:
+    """Посадочная пары: http(s) везде, диплинк SDK — только на app-поверхности.
+    Ошибка — `ValueError` с текстом для человека."""
+    v = (value or "").strip()
+    if not v:
+        return None
+    if is_app_link(v):
+        if surface_kind != "app":
+            raise ValueError("Диплинк приложения принимается только для app-площадки, "
+                             "для сайта — ссылка http(s)://")
+        if not app_link_web(v):
+            raise ValueError("В диплинке нет веб-адреса: primaryUrl должен быть base64 "
+                             "от ссылки https://…")
+        return v
+    if not v.lower().startswith(("http://", "https://")):
+        raise ValueError("Ссылка должна начинаться с http:// или https://"
+                         + (" (или deeplink+://… для приложения)" if surface_kind == "app" else ""))
+    return v
+
+
 def needs_deeplink(rule: Optional[dict]) -> bool:
     return bool(rule and rule.get("app_links") == "both")
 
@@ -43,17 +123,20 @@ def click_href(rule: Optional[dict], advertiser_url: Optional[str],
                deeplink_url: Optional[str]) -> Optional[str]:
     """Что поставить в `<a href>` вместо макроса DSP. None — оставить макрос, как было."""
     mode = (rule or {}).get("app_links")
-    if mode == "web":
+    if mode in ("web", "sdk"):
         return (advertiser_url or "").strip() or None
     if mode == "both":
-        return (deeplink_url or "").strip() or None
-    return None
+        return ((deeplink_url or "").strip()
+                or ((advertiser_url or "").strip() if is_app_link(advertiser_url) else None))
+    # Диплинк SDK в посадочной работает только из баннера: без правила площадки он иначе
+    # потерялся бы — в `link` уходит веб-адрес (02.10.2026).
+    return (advertiser_url or "").strip() if is_app_link(advertiser_url) else None
 
 
 def pair_problem(rule: Optional[dict], advertiser_url: Optional[str],
                  deeplink_url: Optional[str]) -> Optional[str]:
     """Чего не хватает паре по правилу площадки. None — всё есть."""
-    if needs_deeplink(rule) and not (deeplink_url or "").strip():
+    if needs_deeplink(rule) and not (deeplink_url or "").strip() and not is_app_link(advertiser_url):
         return "площадка требует диплинк — впишите его рядом с посадочной"
     if (rule or {}).get("channel") == "adfox" and not ((rule or {}).get("adfox_code") or "").strip():
         return "площадка в Adfox, а доп. код для %user6% не задан — заполните в админке трафика"
@@ -72,6 +155,8 @@ def applied_label(rule: Optional[dict]) -> Optional[str]:
         return "в href — веб-ссылка"
     if rule.get("app_links") == "both":
         return "в href — диплинк, в url/adomain — веб"
+    if rule.get("app_links") == "sdk":
+        return "в href — диплинк SDK из посадочной, в url/adomain — его веб-адрес"
     return None
 
 

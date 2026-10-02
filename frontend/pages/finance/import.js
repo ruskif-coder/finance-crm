@@ -3,11 +3,11 @@ import { useRouter } from 'next/router'
 import Navbar from '@/components/Navbar'
 import Head from 'next/head'
 import { makeApi } from '@/lib/http'
-import { getPermissions, can } from '@/lib/auth'
+import { getPermissions, can, isAdmin } from '@/lib/auth'
 import { firstAllowedHref } from '@/lib/nav'
 import DiadocImport from '@/components/DiadocImport'
 import { card, btn, inp, CAP, MONO, UI } from '@/components/salesTableKit'
-import { fmtFull, fmtDateShort } from '@/lib/salesFormat'
+import { fmtFull, fmtDateShort, grpDash as fmt } from '@/lib/salesFormat'
 
 const FIELD_LABELS = {
   date: 'Дата', status: 'Статус', income: 'Доход', expense: 'Расход', bank: 'Банк',
@@ -16,7 +16,6 @@ const FIELD_LABELS = {
   document_link: 'Ссылка на документ'
 }
 
-const fmt = (n) => n ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) : '—'
 
 const STATUS_COLORS = {
   'ОПЛАЧЕНО': { bg: '#dcfce7', color: '#16a34a' },
@@ -118,7 +117,7 @@ export default function Import() {
     const token = localStorage.getItem('token')
     if (!token) { router.push('/login'); return }
     const perms = getPermissions()
-    if (!can(perms, 'import', 'view')) { router.push(firstAllowedHref(perms, localStorage.getItem('role') === 'admin')); return }
+    if (!can(perms, 'import', 'view')) { router.push(firstAllowedHref(perms, isAdmin())); return }
     setMayApply(can(perms, 'operations', 'edit'))
   }, [])
 

@@ -5,7 +5,7 @@
  */
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { GenTitleBtn, MONO, UI } from '../salesTableKit';
+import { GenTitleBtn, MONO, UI, Z } from '../salesTableKit';
 import BriefFiles from '../deal/BriefFiles';
 import { overlayClose } from '@/lib/overlay'
 import { buildTitle, separatePriceSet } from '@/lib/dealTitle'
@@ -135,7 +135,7 @@ const Popover = ({ open, minWidth = 240, children }) => {
       <span ref={anchor} style={{ display: 'none' }} />
       {open && pos && typeof document !== 'undefined' && createPortal(
         <span data-pop-root style={{
-          position: 'fixed', top: pos.top, left: pos.left, zIndex: 3000, minWidth,
+          position: 'fixed', top: pos.top, left: pos.left, zIndex: Z.dropdown, minWidth,
           background: T.card, border: `1px solid ${T.border}`, boxShadow: T.pop, borderRadius: 12,
           padding: 6, display: 'flex', flexDirection: 'column', maxHeight: 320, overflowY: 'auto',
           animation: `popIn .18s ${T.ease} both`,
@@ -588,7 +588,7 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
             клиенту (init.sealed) и сохранение родит новую версию: там объяснение нужно,
             а на правках черновика оно было бы лишним кликом. Поле необязательное. */}
         {noteOpen && (
-          <div {...overlayClose(() => setNoteOpen(false))} className="mp-open" style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(20,22,28,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div {...overlayClose(() => setNoteOpen(false))} className="mp-open" style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(20,22,28,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div onClick={e => e.stopPropagation()} style={{ width: 460, maxWidth: '92vw', background: T.card, borderRadius: 16, padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 12, boxShadow: '0 16px 48px rgba(20,22,28,.3)' }}>
               <span style={{ fontSize: 16, fontWeight: 700 }}>Новая версия медиаплана</span>
               <span style={{ fontSize: 12.5, color: T.t3 }}>Предыдущую версию клиент уже видел, поэтому она сохраняется как есть. Оставьте комментарий о причинах изменений — он попадёт в историю. Поле необязательное.</span>

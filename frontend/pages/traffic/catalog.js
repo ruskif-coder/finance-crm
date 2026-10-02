@@ -65,6 +65,9 @@ const NET_TONE = {
 // У последней колонки (удаление) сортировки нет.
 const BLOCK_COLS = [
   { key: 'ms_block_id', label: 'ID блока', w: '110px', get: (b) => b.ms_block_id },
+  // Платформа — только у блоков приложения (владелец 02.10.2026): Android и iOS в DSP
+  // разные блоки. У сайта колонка пустая.
+  { key: 'platform', label: 'Платформа', w: '110px', get: (b) => b.platform },
   { key: 'name', label: 'Название (xoalt)', w: 'minmax(200px,1fr)', get: (b) => b.name },
   { key: 'page_type', label: 'Раздел', w: '180px', get: (b) => b.page_type },
   { key: 'network', label: 'Сеть', w: '160px', get: (b) => b.network },
@@ -221,7 +224,7 @@ export default function TrafficCatalog() {
     await api.put(`/traffic-catalog/block/${b.id}`, {
       ms_block_id: b.ms_block_id || null, name: b.name || null,
       page_type: b.page_type || null, network: b.network || null,
-      is_active: b.is_active,
+      is_active: b.is_active, platform: b.platform || null,
     }, auth())
     loadPubs()
   }
@@ -480,6 +483,15 @@ export default function TrafficCatalog() {
                       <span style={{ flex: 1 }} />
                       <button style={btnSm(false)} onClick={exportBlocks}>Выгрузить в Excel</button>
                     </div>
+                    {surface.kind === 'app' && (() => {
+                      const n = (p) => surface.blocks.filter((b) => (b.platform || '') === p).length
+                      return (
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                          Android {n('android')} · iOS {n('ios')}
+                          {!!n('') && <span style={{ color: 'var(--warning-text)', fontWeight: 700 }}> · не разнесено {n('')}</span>}
+                        </div>
+                      )
+                    })()}
                     {/* Блоки — по шаблону реестра: одна сетка на шапку и строки, шапка с
                         сортировкой. Порядок фиксируется в момент клика по заголовку, а не
                         пересчитывается на каждом символе: иначе строка уезжала бы из-под
@@ -503,6 +515,17 @@ export default function TrafficCatalog() {
                             <input style={{ ...inp, width: '100%', fontFamily: MONO, padding: '5px 7px' }} disabled={!mayEdit}
                               value={b.ms_block_id || ''} onChange={(e) => patchBlock(b.id, { ms_block_id: e.target.value })}
                               onBlur={() => mayEdit && saveBlock(b)} />
+                          </div>
+                          <div style={cell}>
+                            {surface.kind === 'app' ? (
+                              <select style={{ ...sel, width: '100%', padding: '5px 8px', fontSize: 12 }} disabled={!mayEdit}
+                                value={b.platform || ''}
+                                onChange={(e) => { const v = e.target.value || null; patchBlock(b.id, { platform: v }); saveBlock({ ...b, platform: v }) }}>
+                                <option value="">— не задана —</option>
+                                <option value="android">Android</option>
+                                <option value="ios">iOS</option>
+                              </select>
+                            ) : <span style={{ color: 'var(--text-faint)' }}>—</span>}
                           </div>
                           <div style={cell}>
                             <input style={{ ...inp, width: '100%', padding: '5px 8px' }} disabled={!mayEdit}

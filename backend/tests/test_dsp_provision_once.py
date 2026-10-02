@@ -342,3 +342,12 @@ def test_link_is_plain_landing_even_with_weborama_click(wired, monkeypatch):
     params = ms.added[-1]
     assert params["link"] == "https://landing.test"
     assert params["pixel"] == "https://px.test/im", "пиксель показа остаётся"
+
+
+def test_creative_without_publisher_blocks_is_not_provisioned(wired, monkeypatch):
+    """Аудит 01.10.2026, В-7: креатив без блоков площадки крутился бы по всей сети."""
+    monkeypatch.setattr(prov, "_without_blocks", lambda db, camp, rows: {r["creative"].id for r in rows})
+    ms = FakeMs()
+    with pytest.raises(prov.DspProvisionError):
+        prov.provision(_db(), _camp(990701), client=ms)
+    assert "Creative.add" not in ms.calls

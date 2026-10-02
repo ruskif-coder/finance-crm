@@ -33,8 +33,11 @@ def test_weborama_above_our_fact_is_our_collection_problem():
     assert "на нашей стороне" in v["hint"]
 
 
-def test_campaign_stat_puts_weborama_next_to_our_fact():
-    """Итоги под графиком РК: «факт | WR» и расхождение с цветом — на живой базе."""
+def test_campaign_stat_puts_weborama_next_to_our_fact(monkeypatch):
+    """Итоги под графиком РК: «факт | WR» и расхождение с цветом — на живой базе.
+
+    Дата среза зафиксирована на сегодня: тест про раскладку сверки, а срез проверяет
+    `test_stat_as_of` (на боевой копии срез — вчера, и сегодняшний факт отрезался бы)."""
     from datetime import date, timedelta
     from types import SimpleNamespace
     import pytest
@@ -42,6 +45,7 @@ def test_campaign_stat_puts_weborama_next_to_our_fact():
     from app.database import SessionLocal
     from app.ad.models import AdCampaign
     from app.routers import traffic_dashboard as td
+    monkeypatch.setattr(td, "fact_as_of", lambda db_, t=None: date.today())
     db = SessionLocal()
     deal_id = db.execute(text("SELECT id FROM sales_deals ORDER BY id LIMIT 1")).scalar()
     if not deal_id:

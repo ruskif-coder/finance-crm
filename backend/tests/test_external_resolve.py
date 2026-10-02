@@ -158,6 +158,7 @@ def _timed_out_creative(wired):  # noqa: F811
 
 def test_dsp_hung_creative_is_listed(wired, monkeypatch):  # noqa: F811
     ms, camp = _timed_out_creative(wired)
+    monkeypatch.setattr(U, "_tgt_client", lambda db: None)     # копии — отдельный тест
     monkeypatch.setattr(U, "_creatives", lambda db, c: [wired["rows"][0]["creative"]])
     items = [x for x in U.list_unknown(_db(), camp, dsp_client=ms, systems=("dsp",)) if x["system"] == "dsp"]
     assert [x["ref"] for x in items] == ["cr1"]
@@ -221,3 +222,53 @@ def test_dsp_campaign_must_carry_our_name(wired, monkeypatch):  # noqa: F811
     U.resolve(_db(), camp, "dsp", "campaign", found=True, external_id=ours,
               user=USER, dsp_client=ms)
     assert camp.ms_campaign_xxhash == ours
+
+
+# ── копии нацеливания (аудит 01.10.2026, В-5; владелец 02.10.2026 «доделывай») ──────
+# Копия живёт в кабинете НАЦЕЛИВАНИЯ — другой клиент DSP. Попытка `Creative.add` без
+# ответа запирает повтор (защита от дубля), и снять отметку должно быть где: на том же
+# экране сверки РК, что и креативы.
+
+def _tgt(monkeypatch, *, cabinet_hash=None):
+    tms = FakeMs()
+    tms.unknown = {("Creative.add", "tgt7")}
+    if cabinet_hash:
+        tms.cabinet[cabinet_hash] = "<div>копия</div>"
+    s = SimpleNamespace(id=7, no=1, title="баннер", deal_id=1, ms_targeting_creative_xxhash=None,
+                        ms_targeting_at=None)
+    monkeypatch.setattr(U, "_tgt_client", lambda db: tms)
+    monkeypatch.setattr(U, "_tgt_sets", lambda db, camp: [s])
+    return tms, s
+
+
+def test_targeting_copy_hung_attempt_is_listed(wired, monkeypatch):  # noqa: F811
+    tms, s = _tgt(monkeypatch)
+    monkeypatch.setattr(U, "_creatives", lambda db, c: [])
+    items = U.list_unknown(_db(), _camp(990801), dsp_client=FakeMs(), systems=("dsp",))
+    assert [(x["ref"], x["what"]) for x in items] == [("tgt7", "копия нацеливания")]
+
+
+def test_targeting_copy_not_found_reopens_the_retry(wired, monkeypatch):  # noqa: F811
+    tms, s = _tgt(monkeypatch)
+    U.resolve(_db(), _camp(990802), "dsp", "tgt7", found=False, external_id=None, user=USER)
+    assert not tms.unknown_outcome("Creative.add", "creative", "tgt7")
+
+
+def test_targeting_copy_found_hash_is_kept(wired, monkeypatch):  # noqa: F811
+    tms, s = _tgt(monkeypatch, cabinet_hash="ABCDEF0123456789")
+    monkeypatch.setattr(U, "_hash_taken", lambda db, xx: False)
+    U.resolve(_db(), _camp(990803), "dsp", "tgt7", found=True,
+              external_id="abcdef0123456789", user=USER)
+    assert s.ms_targeting_creative_xxhash == "ABCDEF0123456789"
+    assert not tms.unknown_outcome("Creative.add", "creative", "tgt7")
+
+
+
+def test_targeting_copy_with_stale_hash_is_still_listed(wired, monkeypatch):  # noqa: F811
+    """Ревью В-5: копию удалили в кабинете, повтор ушёл без ответа — в базе старый хеш.
+    Комплект обязан быть в списке сверки, иначе его не разблокировать."""
+    tms, s = _tgt(monkeypatch)
+    s.ms_targeting_creative_xxhash = "OLDHASH000000001"
+    monkeypatch.setattr(U, "_creatives", lambda db, c: [])
+    items = U.list_unknown(_db(), _camp(990804), dsp_client=FakeMs(), systems=("dsp",))
+    assert [x["ref"] for x in items] == ["tgt7"]

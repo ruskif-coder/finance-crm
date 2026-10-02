@@ -4,10 +4,12 @@ import { useRouter } from 'next/router'
 import Head from 'next/head'
 import dynamic from 'next/dynamic'
 import { motion, useMotionValue, useTransform, animate, useReducedMotion } from 'framer-motion'
+import { isAdmin } from '@/lib/auth'
 import { MONO, UI, IconBtn } from '@/components/salesTableKit'
-import { bankColor, signRub } from '@/lib/salesFormat'
+import { bankColor, signRub, grp0 as RUB } from '@/lib/salesFormat'
 import { makeApi as api } from '@/lib/http'
 import { T } from '@/lib/tokens'
+import { monthMsk, monthsAgoMsk } from '@/lib/dates'
 import { errText, isAuth } from '@/lib/loadError'
 import { LoadError } from '@/components/salesTableKit'
 import useIsMobile from '@/components/mobile/useIsMobile'
@@ -18,7 +20,6 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 const CashflowMobile = dynamic(() => import('@/components/mobile/CashflowMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // ── Форматтеры ───────────────────────────────────────────────────
-const RUB = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0))
 const fmtRub = (n) => `${RUB(n)} ₽`
 // «40,37 млн»
 const mln2 = (n) => (n / 1e6).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -315,16 +316,15 @@ export default function DashboardV2() {
   const [expanded, setExpanded] = useState(null)
   const [selectedBank, setSelectedBank] = useState('all')
   const [groupBy, setGroupBy] = useState('period')
-  const [dateFrom, setDateFrom] = useState(() => { const d = new Date(); d.setMonth(d.getMonth() - 11); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` })
-  const [dateTo, setDateTo] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` })
+  const [dateFrom, setDateFrom] = useState(() => monthsAgoMsk(11))
+  const [dateTo, setDateTo] = useState(() => monthMsk())
 
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (!token) { router.push('/login'); return }
     // Нет доступа к ДДС → уводим на первый доступный экран пользователя
     let perms = {}; try { perms = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}
-    const role = localStorage.getItem('role') || ''
-    if (!can(perms, 'dashboard')) { router.replace(firstAllowedHref(perms, role)); return }
+    if (!can(perms, 'dashboard')) { router.replace(firstAllowedHref(perms, isAdmin())); return }
     loadAll(token)
   }, [])
 
@@ -385,7 +385,7 @@ export default function DashboardV2() {
   const periods = ddsData?.periods || []
 
   // ── Производные данные ──
-  const nowKey = useMemo(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }, [])
+  const nowKey = useMemo(() => monthMsk(), [])
 
   const months = useMemo(() => periods.map(p => ({
     period: p.period, income: p.total_income || 0, expense: p.total_expense || 0,

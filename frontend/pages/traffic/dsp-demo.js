@@ -320,7 +320,7 @@ export default function DspDemo() {
           <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-card)' }} />
           <div>
             <div style={LBL}>Адрес API</div>
-            <div style={{ fontFamily: MONO, fontSize: 12 }}>{state?.url || '—'}</div>
+            <div style={{ fontFamily: MONO, fontSize: 12 }}>{state?.url_set ? 'задан' : '—'}</div>
           </div>
           <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-card)' }} />
           <div>

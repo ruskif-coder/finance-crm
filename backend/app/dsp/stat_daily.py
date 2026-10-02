@@ -137,7 +137,8 @@ if __name__ == "__main__":
     except Exception as e:  # noqa: BLE001 — любой отказ обязан дойти до экрана состояния
         if planned:
             try:
-                record(error=str(e) if isinstance(e, (MsError, RuntimeError)) else repr(e))
+                from app.dsp.client import safe_error
+                record(error=str(e) if isinstance(e, (MsError, RuntimeError)) else safe_error(e))
             except Exception:  # noqa: BLE001 — база недоступна: останется «нет прогона 30 ч»
                 pass
         print(f"Съём DSP не состоялся: {e!r}", file=sys.stderr)

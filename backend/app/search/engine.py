@@ -141,13 +141,24 @@ def run(db, user, q, types=None, per_type=5, offset=0, perms=None):
                 out.append({"type": t, "items": rows[:per_type], "more": len(rows) > per_type})
         return out
 
-    groups = collect(first)
-    # Шаблон — догадка: шесть заглавных могут быть словом («PFIZER»), десять цифр — не
-    # ИНН, а номером договора. Если среди ВИДИМОГО по подсказанным типам пусто — ищем как
-    # текст по всем разрешённым. Проверка по видимым, а не по всем: иначе разница в ответе
-    # выдала бы, что чужой объект с таким кодом существует.
-    if not groups and first != full:
-        groups = collect([t for t in full if t not in first])
+    from sqlalchemy.exc import OperationalError
+    try:
+        groups = collect(first)
+        # Шаблон — догадка: шесть заглавных могут быть словом («PFIZER»), десять цифр —
+        # не ИНН, а номером договора. Если среди ВИДИМОГО по подсказанным типам пусто —
+        # ищем как текст по всем разрешённым. Проверка по видимым, а не по всем: иначе
+        # разница в ответе выдала бы, что чужой объект с таким кодом существует.
+        if not groups and first != full:
+            groups = collect([t for t in full if t not in first])
+    except OperationalError as e:
+        # Предел времени запроса — пустой частичный ответ, а не 500 (аудит 01.10.2026,
+        # С-12): строка поиска набирается по букве, следующая буква спросит снова.
+        # Только отмена по пределу (57014): потерянная связь — настоящая ошибка.
+        if getattr(e.orig, "pgcode", None) != "57014":
+            raise
+        db.rollback()
+        log.warning("поиск: превышен предел %s мс", STATEMENT_TIMEOUT_MS)
+        return {"groups": [], "partial": True}
 
     ms = (time.monotonic() - started) * 1000
     if ms > SLOW_MS:

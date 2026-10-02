@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { MONO, UI, MultiDrop } from '../salesTableKit'
+import { MONO, UI, Z, MultiDrop } from '../salesTableKit'
 import { grp, signRub, fmtDateShort, bankColor } from '../../lib/salesFormat'
 import { CARD, monoLbl, Marker, PeriodSelect, rise } from './kit'
 import BottomSheet from './BottomSheet'
@@ -139,9 +139,9 @@ function OperationForm({ initial, editId, articles, counterparties, onClose, onS
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 500, background: 'var(--bg-canvas)', overflowY: 'auto', fontFamily: UI, paddingBottom: 96 }}>
+    <div style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'var(--bg-canvas)', overflowY: 'auto', fontFamily: UI, paddingBottom: 96 }}>
       {/* шапка */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--border-inner)', position: 'sticky', top: 0, background: 'var(--bg-card)', zIndex: 3 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--border-inner)', position: 'sticky', top: 0, background: 'var(--bg-card)', zIndex: Z.sticky }}>
         <button onClick={onClose} aria-label="Закрыть" style={{ width: 32, height: 32, borderRadius: 9, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 16, lineHeight: 1 }}>✕</button>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{editId ? `Операция #${editId}` : 'Новая операция'}</div>
@@ -294,7 +294,7 @@ export default function OperationsMobile({
 
       {/* плавающая кнопка + — по праву создания, которое спросит сервер (аудит, 6.L1) */}
       {canCreate && (
-        <button onClick={openCreate} aria-label="Новая операция" style={{ position: 'fixed', right: 18, bottom: 18, width: 56, height: 56, borderRadius: 18, background: 'var(--accent)', color: '#fff', border: 'none', boxShadow: '0 6px 20px rgba(79,108,230,.4)', fontSize: 30, lineHeight: 1, cursor: 'pointer', zIndex: 200 }}>+</button>
+        <button onClick={openCreate} aria-label="Новая операция" style={{ position: 'fixed', right: 18, bottom: 18, width: 56, height: 56, borderRadius: 18, background: 'var(--accent)', color: '#fff', border: 'none', boxShadow: '0 6px 20px rgba(79,108,230,.4)', fontSize: 30, lineHeight: 1, cursor: 'pointer', zIndex: Z.sticky }}>+</button>
       )}
 
       {/* шторка фильтров */}

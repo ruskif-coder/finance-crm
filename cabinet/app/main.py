@@ -222,7 +222,21 @@ def _check_ip_rate_limit(ip: str) -> None:
             raise HTTPException(
                 status_code=429,
                 detail="Слишком много попыток входа. Попробуйте позже.")
+
+
+def _note_ip_failure(ip: str) -> None:
+    """Счётчик адреса — только НЕУДАЧНЫЕ попытки (аудит 01.10.2026, Н-11): общий офисный
+    выход в сеть с двумя десятками удачных входов за 15 минут упирался в 429."""
+    now = time.time()
+    with _ip_lock:
+        window = [x for x in _ip_attempts.get(ip, []) if now - x < LOGIN_IP_WINDOW_SECONDS]
         window.append(now)
+        _ip_attempts[ip] = window
+        # Словарь адресов подрезается и здесь: теперь его пополняет только неудача, и
+        # перебор адресов без подрезки раздувал бы его без предела.
+        if len(_ip_attempts) > MAX_TRACKED_IPS:
+            _prune_ip_attempts(now)
+            _ip_attempts.setdefault(ip, window)
 
 
 @app.post("/api/login")
@@ -254,6 +268,7 @@ def login(payload: LoginIn, request: Request = None):
         # Счётчик ведётся и для несуществующего адреса — иначе «этот заблокировали, а
         # этот нет» снова отвечает на вопрос о существовании учётки.
         _note_login(email, ok=False)
+        _note_ip_failure(client_ip(request))
         raise HTTPException(status_code=401, detail="Неверная почта или пароль")
     _note_login(email, ok=True)
 

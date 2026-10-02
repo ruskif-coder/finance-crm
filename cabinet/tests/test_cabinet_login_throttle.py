@@ -55,6 +55,7 @@ def test_spoofed_left_part_does_not_create_a_second_counter():
     spoofed = "9.9.9.9, 203.0.113.9"
     for _ in range(cab_main.MAX_LOGIN_PER_IP):
         cab_main._check_ip_rate_limit(cab_main.client_ip(_req(spoofed)))
+        cab_main._note_ip_failure(cab_main.client_ip(_req(spoofed)))
     assert list(cab_main._ip_attempts) == ["203.0.113.9"]
     with pytest.raises(HTTPException) as e:
         cab_main._check_ip_rate_limit(cab_main.client_ip(_req(spoofed)))
@@ -78,12 +79,21 @@ def test_tracked_addresses_stay_bounded():
 def test_limit_survives_the_overflow():
     """Главное свойство: переполнение не превращается в снятие лимита."""
     for i in range(cab_main.MAX_TRACKED_IPS + 100):
-        cab_main._check_ip_rate_limit(f"198.51.100.{i}")
+        cab_main._note_ip_failure(f"198.51.100.{i}")
+    assert len(cab_main._ip_attempts) <= cab_main.MAX_TRACKED_IPS + 1, "словарь не растёт"
     victim = "203.0.113.9"
     for _ in range(cab_main.MAX_LOGIN_PER_IP):
         cab_main._check_ip_rate_limit(victim)
+        cab_main._note_ip_failure(victim)
     with pytest.raises(HTTPException):
         cab_main._check_ip_rate_limit(victim)
+
+
+def test_successful_logins_do_not_count():
+    """Н-11: двадцать удачных входов из одного офиса не упираются в 429."""
+    office = "198.51.100.200"
+    for _ in range(cab_main.MAX_LOGIN_PER_IP * 2):
+        cab_main._check_ip_rate_limit(office)       # удача — без _note_ip_failure
 
 
 def test_stale_addresses_are_forgotten():

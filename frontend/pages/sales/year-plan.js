@@ -9,12 +9,12 @@ import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { hasUnsaved } from '@/lib/unsaved'
-import { nowTime } from '@/lib/dates'
+import { nowTime, todayMsk } from '@/lib/dates'
 const NotOnMobile = dynamic(() => import('@/components/mobile/NotOnMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // Годовой план продаж: план по рекламодателям/брендам × 12 месяцев, персональный по сейлзам.
 // Мастер (year_plan:edit scope=all / admin) выбирает чей план смотреть + режим «Показать все».
-const CUR_YEAR = new Date().getFullYear()
+const CUR_YEAR = Number(todayMsk().slice(0, 4))
 
 const linesToGroups = (lines, advertisers) => {
   const advById = Object.fromEntries(advertisers.map(a => [a.id, a]))

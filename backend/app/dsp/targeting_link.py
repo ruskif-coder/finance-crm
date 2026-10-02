@@ -119,7 +119,8 @@ def issue(crid: str, *, url: Optional[str] = None,
             r = httpx.post(target, data={"crid": crid}, timeout=timeout,
                            follow_redirects=False)
         except httpx.HTTPError as e:
-            raise TargetingLinkError(f"Генератор недоступен: {e!r}") from e
+            from app.dsp.client import safe_error
+            raise TargetingLinkError(f"Генератор недоступен: {safe_error(e)}") from e
         if r.status_code >= 400:
             raise TargetingLinkError(f"Генератор ответил {r.status_code}")
         body = r.text

@@ -170,7 +170,7 @@ export default function AdvertisersMobile({
         renderCard={(a, open, toggle) => <AdvCard a={a} open={open} onToggle={toggle} onEdit={openEdit} onDeals={openDeals} canEdit={canEdit} />}
         hasMore={rows.length > shown.length}
         onMore={() => setLimit(l => (l || 50) + 50)}
-        moreLabel={`Показать ещё · ${shown.length} из ${new Intl.NumberFormat('ru-RU').format(rows.length)}`}
+        moreLabel={`Показать ещё · ${shown.length} из ${grp(rows.length)}`}
       />
 
       {form && <AdvForm initial={form.initial} editId={form.editId} saving={saving} onClose={() => setForm(null)} onSave={save} />}

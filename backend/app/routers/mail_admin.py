@@ -82,7 +82,7 @@ def _seed(db: Session) -> None:
 def state(db: Session = Depends(get_db), user: User = Depends(VIEW)):
     """Состояние канала одним ответом: настроен ли, чем правится, что в очереди."""
     cfg = mail.config()
-    stuck = db.query(MailLog).filter(MailLog.status != "sent").count()
+    stuck = db.query(MailLog).filter(MailLog.status.notin_(("sent", "suppressed"))).count()
     return {
         # Пароль и логин НЕ отдаём — см. шапку модуля. Отдаём только факт настроенности
         # и адрес отправителя: он и так виден каждому получателю письма.
@@ -311,7 +311,7 @@ def channels(db: Session = Depends(get_db), user: User = Depends(VIEW)):
         "mail": {
             "configured": cfg.ok, "problem": cfg.problem,
             "sender": cfg.sender or None, "host": cfg.host or None, "mode": cfg.mode,
-            "queued": db.query(MailLog).filter(MailLog.status != "sent").count(),
+            "queued": db.query(MailLog).filter(MailLog.status.notin_(("sent", "suppressed"))).count(),
             "from_name": _setting(db, SET_FROM_NAME) or cfg.sender_name,
             "subject_prefix": _setting(db, SET_SUBJECT_PREFIX),
             "signature": _setting(db, SET_SIGNATURE),

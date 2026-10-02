@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { firstAllowedHref } from '../../components/Navbar'
+import { isAdmin } from '../../lib/auth'
 import SettingsTabs from '../../components/SettingsTabs'
 import { MONO, UI, card, inp, sel, primaryBtn, th } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
@@ -67,7 +68,7 @@ export default function SettingsRoles() {
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }
-    if (localStorage.getItem('role') !== 'admin') { let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}; router.push(firstAllowedHref(p, localStorage.getItem('role'))); return }
+    if (!isAdmin()) { let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}; router.push(firstAllowedHref(p, isAdmin())); return }
     loadRoles()
   }, [])
 

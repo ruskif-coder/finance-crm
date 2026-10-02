@@ -3,7 +3,7 @@ import Head from 'next/head'
 import { useRouter } from 'next/router'
 import { pageAccess } from '@/lib/pageGuard'
 import Navbar, { can } from '@/components/Navbar'
-import { MONO, UI, MultiDrop, IconBtn, LoadError, NoAccessScreen, PortalPopover } from '@/components/salesTableKit'
+import { MONO, UI, MultiDrop, IconBtn, LoadError, NoAccessScreen, PortalPopover, Z } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const OperationsMobile = dynamic(() => import('@/components/mobile/OperationsMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
@@ -80,7 +80,7 @@ function SingleSelect({ value, onChange, options, placeholder, emptyLabel }) {
     <div ref={ref} style={{ position: 'relative' }}>
       <div onClick={() => setOpen(o => !o)} style={{ ...inp, cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: selO ? 'var(--text-primary)' : 'var(--text-faint)' }}>{selO ? selO.label : placeholder} ▾</div>
       {open && (
-        <div style={{ position: 'absolute', top: '110%', left: 0, right: 0, minWidth: 210, zIndex: 50, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', maxHeight: 300, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ position: 'absolute', top: '110%', left: 0, right: 0, minWidth: 210, zIndex: Z.dropdown, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', maxHeight: 300, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: 8 }}><input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="поиск" style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} /></div>
           <div style={{ overflowY: 'auto', padding: 5 }}>
             <div onClick={() => { onChange(''); setOpen(false); setQ('') }} style={{ padding: '6px 8px', borderRadius: 7, fontSize: 12, cursor: 'pointer', color: 'var(--text-muted)' }}>{emptyLabel || '— не выбрано —'}</div>

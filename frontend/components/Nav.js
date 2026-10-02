@@ -8,10 +8,9 @@
 import React, { Fragment, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/router'
-// Уровень выпадашек из общей шкалы `Z` кита: одна лестница на весь проект.
-const Z_DROPDOWN = 3000
 import axios from 'axios'
-import { getPermissions, can } from '@/lib/auth'
+import { getPermissions, can, isAdmin as isAdminNow } from '@/lib/auth'
+import { Z } from '@/components/salesTableKit'
 import { freshMark, hasFresh } from '@/lib/notify.mjs'
 import { ago } from '@/lib/dates'
 import { TONE, toneOf, toneWeight } from '@/lib/tone'
@@ -383,7 +382,7 @@ function Bell({ onGoto, size = 32 }) {
 
       {open && (
         <span style={{
-          position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 3000,
+          position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: Z.dropdown,
           width: 420, maxWidth: '92vw', maxHeight: '78vh',
           background: T.card, border: `1px solid ${T.border}`, borderRadius: 16,
           boxShadow: T.pop, display: 'flex', flexDirection: 'column', overflow: 'hidden',
@@ -489,7 +488,7 @@ function Profile({ onGoto, canSettings, compact = false }) {
       </button>
       {open && (
         <span style={{
-          position: 'absolute', top: 'calc(100% + 10px)', right: 0, minWidth: 180, zIndex: 3000,
+          position: 'absolute', top: 'calc(100% + 10px)', right: 0, minWidth: 180, zIndex: Z.dropdown,
           background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: T.pop,
           overflow: 'hidden', display: 'flex', flexDirection: 'column', animation: `popIn .15s ${T.ease} both`,
         }}>
@@ -580,7 +579,7 @@ function Section({ s, variant = 'tab', align = 'left', hover, open, close, close
             position: 'fixed', top: rect.bottom, minWidth: 212, paddingTop: 6,
             ...(align === 'right' ? { right: Math.max(8, window.innerWidth - rect.right) }
               : { left: rect.left }),
-            zIndex: Z_DROPDOWN,
+            zIndex: Z.dropdown,
             display: 'flex', flexDirection: 'column', animation: `popIn .18s ${T.ease} both`,
           }}>
           <span style={{
@@ -888,7 +887,7 @@ export default function Nav({ children, onSearch }) {
   const [mounted, setMounted] = useState(false)
   const [session, setSession] = useState({ perms: null, isAdmin: false })
   useEffect(() => {
-    setSession({ perms: getPermissions(), isAdmin: localStorage.getItem('role') === 'admin' })
+    setSession({ perms: getPermissions(), isAdmin: isAdminNow() })
     setMounted(true)
   }, [])
   const { perms, isAdmin } = session

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { card, inp as kitInp, docCard } from '@/components/salesTableKit'
+import { card, inp as kitInp, docCard, Z } from '@/components/salesTableKit'
 import { MONO, UI, INTEG_TONE, STATUS_TONE, TRAFFIC_ROWS, SURFACE_CYCLE, SURFACE_LABEL,
   PLATFORM_LABEL, ChatBtn, ServiceChip, tgHref, fmtMoney, fmtCompact, fmtUnit,
   tzLabel, localTime } from '@/components/publishers/kit'
@@ -942,7 +942,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
           заводится в четыре захода, и половина остаётся незаполненной. */}
       {contactDraft && (
         <div {...overlayClose(() => setContactDraft(null))}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: 10000,
+          style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: Z.overlay,
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
           <div onClick={e => e.stopPropagation()}
             style={{ ...card, width: 480, maxWidth: '100%', padding: '20px 22px' }}>
@@ -1019,7 +1019,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
       {/* Форма загрузки документа: тип из общего каталога, новый тип заводится тут же. */}
       {docDraft && (
         <div {...overlayClose(() => setDocDraft(null))}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: 10000,
+          style={{ position: 'fixed', inset: 0, background: 'rgba(28,36,51,.35)', zIndex: Z.overlay,
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
           <div onClick={e => e.stopPropagation()}
             style={{ ...card, width: 440, maxWidth: '100%', padding: '20px 22px' }}>

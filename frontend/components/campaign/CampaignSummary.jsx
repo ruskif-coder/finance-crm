@@ -83,7 +83,8 @@ const Numbers = ({ d }) => (
         : d.mismatch?.reason === 'wr_higher' ? d.mismatch.hint
           : (d.verifier_placements < d.placements
             ? `по ${d.verifier_placements} из ${d.placements} площадок`
-            : `Weborama ${num(d.verifier_shows)}`)} />
+            : `Weborama ${num(d.verifier_shows)}`)
+          + (d.verifier_outside ? ` · вне DSP: WR ${num(d.verifier_outside)}` : '')} />
   </div>
 )
 

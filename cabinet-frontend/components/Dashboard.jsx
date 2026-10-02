@@ -39,6 +39,7 @@ import { daysTo, startNote, urgency } from '../lib/urgency'
 import { NEED, PAY_STATE, RK_STATE, SERVICE_DOT,
   SHOW_MONEY, billBlocked, blocking, camp, inBill, inPace, sum, useDemoNow } from '../lib/demo'
 import safeHref from '../lib/safeHref'
+import { isAppLink, landingWeb } from '../lib/landing'
 import { downloadFile } from '../lib/download'
 import { guideSeen, markGuideSeen } from './guide/seen'
 
@@ -56,6 +57,26 @@ const Guide = dynamic(() => import('./guide/Guide'), { ssr: false, loading: () =
    суток и ошибку гидрации. */
 // `daysTo`, `urgency`, `startNote` — в lib/urgency.js: правило было в двух местах
 // и разошлось (см. шапку модуля).
+
+/* Посадочная — диплинк приложения (02.10.2026): кнопка «посадочная» открывает его
+   веб-версию, и площадка должна это знать. Исходную строку можно развернуть и
+   скопировать — ровно её мы поставим в баннер. */
+function AppLinkNote({ u, full }) {
+  const [open, setOpen] = useState(false)
+  if (!isAppLink(u)) return null
+  return (
+    <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 6,
+      flex: full ? '1 0 100%' : '0 1 auto', fontSize: 11.5, color: C.faint }}>
+      <span>диплинк приложения — «посадочная» открывает его веб-версию</span>
+      <button style={{ ...btnSm(false), padding: '2px 8px' }} onClick={() => setOpen(v => !v)}>
+        {open ? 'скрыть' : 'показать диплинк'}</button>
+      {open && (
+        <span style={{ flex: '1 0 100%', fontFamily: MONO, fontSize: 11.5, color: C.secondary,
+          wordBreak: 'break-all', userSelect: 'all' }}>{u}</span>
+      )}
+    </span>
+  )
+}
 
 function Task({ t, reasons, canApprove, today, onDone, onErr }) {
   const [busy, setBusy] = useState(false)
@@ -224,7 +245,7 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
         </span>
         <span style={{ flex: 1 }} />
         {t.url_state === 'есть' && (
-          <a href={safeHref(t.advertiser_url)} target="_blank" rel="noreferrer"
+          <a href={safeHref(landingWeb(t.advertiser_url))} target="_blank" rel="noreferrer"
             style={{ ...btnSm(false), textDecoration: 'none', display: 'inline-flex',
               alignItems: 'center', gap: 6 }}>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -235,6 +256,7 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
             посадочная
           </a>
         )}
+        {t.url_state === 'есть' && <AppLinkNote u={t.advertiser_url} />}
         {/* Письмо о правах на изображения — рядом с креативом, а не в отдельном разделе:
             смотрят его, отвечая по этому же материалу. Показываем только когда оно
             есть — пустая кнопка «письма нет» заставляла бы гадать, спросить его или так
@@ -549,7 +571,7 @@ function TaskMobile({ t, late, soon, stLabel, toStart, stTone, today, preview, c
       {/* 4 — материалы в ряд: посадочная · предпросмотр · скачать; письмо о правах ниже */}
       <div style={{ display: 'flex', gap: 8 }}>
         {t.url_state === 'есть' && (
-          <a href={safeHref(t.advertiser_url)} target="_blank" rel="noreferrer"
+          <a href={safeHref(landingWeb(t.advertiser_url))} target="_blank" rel="noreferrer"
             style={{ ...btn(false), ...M_BTN, flex: '1 1 0', textDecoration: 'none' }}>
             посадочная
           </a>
@@ -566,6 +588,7 @@ function TaskMobile({ t, late, soon, stLabel, toStart, stTone, today, preview, c
           </button>
         )}
       </div>
+      {t.url_state === 'есть' && <AppLinkNote u={t.advertiser_url} full />}
       {!!t.rights_letter && (
         <button onClick={() => downloadFile(`/tasks/${t.task_id}/rights-letter`, t.rights_letter.name)}
           style={{ ...btn(false), ...M_BTN }}>

@@ -29,7 +29,9 @@ def creatives_pending(db: Session) -> Dict[int, int]:
     Пустая область у `pub.allowed_publisher_ids()` означает «ничего не видно»
     (защита закрывается, а не открывается), поэтому для сводки её надо выставить явно.
     """
-    ids = [str(i) for (i,) in db.execute(text("SELECT id FROM sales_publishers"))]
+    # Архивные не считаем — правило проекта (аудит 01.10.2026, В-8).
+    ids = [str(i) for (i,) in db.execute(text(
+        "SELECT id FROM sales_publishers WHERE status <> 'АРХИВ'"))]
     if not ids:
         return {}
     db.execute(text("SELECT set_config('app.publisher_ids', :v, true)"),
@@ -51,6 +53,7 @@ def campaigns_live(db: Session) -> Dict[int, int]:
         "  FROM launch_prep_target t "
         "  JOIN sales_deals d ON d.id = t.deal_id "
         "  JOIN sales_stages s ON s.id = d.our_stage_id "
+        "  JOIN sales_publishers p ON p.id = t.publisher_id AND p.status <> 'АРХИВ' "
         " WHERE s.stage_key = 'launch' "
         " GROUP BY t.publisher_id"))}
 
@@ -58,8 +61,9 @@ def campaigns_live(db: Session) -> Dict[int, int]:
 def recons_open(db: Session) -> Dict[int, int]:
     """Открытые сверки. Открытая — та, по которой площадка ещё не ответила."""
     return {p: n for p, n in db.execute(text(
-        "SELECT publisher_id, count(*) FROM publisher_request "
-        " WHERE kind = 'сверка' AND verdict IS NULL GROUP BY publisher_id"))}
+        "SELECT r.publisher_id, count(*) FROM publisher_request r "
+        "  JOIN sales_publishers p ON p.id = r.publisher_id AND p.status <> 'АРХИВ' "
+        " WHERE r.kind = 'сверка' AND r.verdict IS NULL GROUP BY r.publisher_id"))}
 
 
 def services_by_publisher(db: Session) -> Dict[int, List[dict]]:

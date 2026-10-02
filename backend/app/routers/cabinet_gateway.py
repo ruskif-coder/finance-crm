@@ -215,9 +215,12 @@ def cabinet_task_url(pair_id: int, payload: CabinetUrlIn,
     url = (payload.url or "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="Укажите ссылку")
-    if not url.lower().startswith(("http://", "https://")):
-        raise HTTPException(status_code=400,
-                            detail="Ссылка должна начинаться с http:// или https://")
+    # Схема — одним правилом с нашей сборкой: на app — ещё и диплинк SDK (02.10.2026).
+    from app.launch_prep import pub_rules
+    try:
+        url = pub_rules.validate_landing(url, target.surface_kind if target else None)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if len(url) > 512:
         raise HTTPException(status_code=400, detail="Ссылка длиннее 512 знаков")
 
@@ -876,7 +879,7 @@ def cabinet_tg_webhook(secret: str, update: Dict[str, Any], bg: BackgroundTasks,
     правильная, и когда сеть починят, её можно вернуть одной командой `setWebhook`.
     """
     expected = os.getenv("TELEGRAM_PUB_WEBHOOK_SECRET") or ""
-    if not expected or secret != expected:
+    if not expected or not hmac.compare_digest(secret.encode(), expected.encode()):   # Н-9: без утечки по времени
         raise HTTPException(status_code=404, detail="Not found")
 
     handle_pub_update(db, update, lambda cid, txt: bg.add_task(_tg_reply_later, cid, txt))

@@ -36,7 +36,7 @@ from app.files_safe import inside_uploads
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepPair,
                                     LaunchPrepSetTarget, LaunchPrepTarget)
 from app.launch_prep import pub_rules
-from app.launch_prep.sandbox import prepare_for_dsp, set_click_href
+from app.launch_prep.sandbox import SandboxError, prepare_for_dsp, set_click_href
 from app.sales.models import SalesPublisher
 from app.weborama import naming, tags as wtags
 
@@ -144,12 +144,26 @@ def _blocker(row: dict, want_pixel: bool = True,
         return "у площадки не задан домен — в тег пикселя его подставить неоткуда"
     if not (tgt and (tgt.advertiser_url or "").strip()):
         return "нет посадочной ссылки площадки — DSP требует link у креатива"
-    if not cr.landing_domain(tgt.advertiser_url):
+    if not cr.landing_domain(pub_rules.web_url(tgt.advertiser_url)):
         return "посадочная ссылка не похожа на адрес — не из чего взять домен для DSP"
     rule = row.get("rule")
-    if pub_rules.needs_deeplink(rule) and not (getattr(tgt, "deeplink_url", None) or "").strip():
+    if (pub_rules.needs_deeplink(rule) and not (getattr(tgt, "deeplink_url", None) or "").strip()
+            and not pub_rules.is_app_link(tgt.advertiser_url)):
         return "площадка требует диплинк в коде креатива, а у пары его нет"
     return None
+
+
+NO_BLOCKS = ("у площадки нет ни одного блока DSP — креатив крутился бы по всей сети, а не "
+             "у неё; заведите блоки в реестре площадки")
+
+
+def _without_blocks(db: Session, camp: AdCampaign, rows: list) -> set:
+    """Креативы, которым нечем ограничить показ своей площадкой (аудит 01.10.2026, В-7).
+    Таргеты выключены — ограничений не ставим никому, и отказ был бы лишним."""
+    from app.dsp import targeting as tg
+    if not rows or not tg.enabled(db):
+        return set()
+    return set(tg.plan_for(db, camp, rows)["summary"]["creatives_without_blocks"])
 
 
 AD_LABEL_MISSING = ("у сделки не выбран изначальный договор ОРД — ИНН и название "
@@ -183,11 +197,14 @@ def plan(db: Session, camp: AdCampaign) -> dict:
     want_pixel, ext_tag = px["needed"], px["tag"]
     label = ad_label(db, camp.deal_id)
     done = [r for r in rows if r["creative"].ms_creative_xxhash]
+    nob = _without_blocks(db, camp, rows)
     todo, blocked = [], {}
     for r in rows:
         if r["creative"].ms_creative_xxhash:
             continue
-        why = _blocker(r, want_pixel, ext_tag) or (None if label else AD_LABEL_MISSING)
+        why = (_blocker(r, want_pixel, ext_tag)
+               or (NO_BLOCKS if r["creative"].id in nob else None)
+               or (None if label else AD_LABEL_MISSING))
         if why:
             blocked[why] = blocked.get(why, 0) + 1
         else:
@@ -280,8 +297,11 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
         raise DspProvisionError(
             "По РК заказан внешний пиксель Weborama, но тег не загружен — "
             "карточка сделки, блок «Доп. параметры РК»")
-    rows = [r for r in _rows(db, camp)
-            if not r["creative"].ms_creative_xxhash and not _blocker(r, want_pixel, ext_tag)]
+    all_rows = _rows(db, camp)
+    nob = _without_blocks(db, camp, all_rows)
+    rows = [r for r in all_rows
+            if not r["creative"].ms_creative_xxhash and not _blocker(r, want_pixel, ext_tag)
+            and r["creative"].id not in nob]
     label = ad_label(db, camp.deal_id)
     if rows and not label:
         # Отказ ДО кампании и загрузок: без метки боевой кабинет откажет каждому креативу,
@@ -356,16 +376,18 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
                         title=cre.ms_title or name,
                         # Обычная посадочная: кликовый счётчик Weborama сняли, клики не
                         # считаем (владелец 01.10.2026).
-                        link=r["target"].advertiser_url,
+                        # Диплинк SDK в посадочной — в `<a href>` баннера, сюда — его
+                        # веб-адрес (`pub_rules.web_url`, владелец 02.10.2026).
+                        link=pub_rules.web_url(r["target"].advertiser_url),
                         pixel=pix,
                         # Конечный URL — посадочная креатива целиком (владелец 01.10.2026).
-                        adomain=cr.landing_adomain(r["target"].advertiser_url),
+                        adomain=cr.landing_adomain(pub_rules.web_url(r["target"].advertiser_url)),
                         erid=cre.erid, size=up.get("size"),
                         self_inn=label[0], self_name=label[1],
                         total_shows=(int(plans[cre.id]) if plans.get(cre.id) else None))
                     xxhash = c.creative_add(camp_hash, params, local_ref=ref)
                 c.creative_edit(xxhash, {"data": {"html_code": html}}, local_ref=ref)
-        except (cr.CreativeError, MsError, DspProvisionError, ValueError) as e:
+        except (cr.CreativeError, MsError, DspProvisionError, ValueError, SandboxError) as e:
             failed.append({"creative_id": cre.id, "placement_id": r["placement"].id,
                            "name": name, "error": str(e)})
             continue
@@ -386,11 +408,21 @@ def _apply_targeting(db: Session, camp: AdCampaign, c: MsClient, camp_hash: str)
     from app.dsp import targeting as tg
     if not tg.enabled(db):
         return {"skipped": "таргетинги не отправляются — выключатель dsp_targeting_enabled"}
-    rows = _rows(db, camp)
-    plan = tg.plan_for(db, camp, rows)
-    hashes = {r["creative"].id: r["creative"].ms_creative_xxhash for r in rows
-              if r["creative"].ms_creative_xxhash}
-    return tg.apply(c, plan, camp_hash, hashes)
+    # Таргеты — ПОСЛЕ необратимого: кампания и креативы уже заведены, хеши записаны. Сбой
+    # здесь — строка отчёта, а не 500 вместо него (аудит 01.10.2026, С-2): иначе человек не
+    # видит, что заведено, и жмёт снова.
+    try:
+        rows = _rows(db, camp)
+        plan = tg.plan_for(db, camp, rows)
+        hashes = {r["creative"].id: r["creative"].ms_creative_xxhash for r in rows
+                  if r["creative"].ms_creative_xxhash}
+        return tg.apply(c, plan, camp_hash, hashes)
+    except Exception as e:  # noqa: BLE001 — отчёт после заведения не должен падать
+        # Откат: после SQL-ошибки сессия сломана, и запись в журнал действий следом снова
+        # дала бы 500. Хеши креативов уже закоммичены выше — откат их не трогает.
+        db.rollback()
+        log.warning("таргетинг РК %s не поставлен: %s", camp.id, e, exc_info=True)
+        return {"error": f"таргеты не поставлены: {e}"}
 
 
 __all__ = ["plan", "provision", "DspProvisionError", "PLACEMENT_OK", "CREATIVE_OK"]

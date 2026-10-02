@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import api, { auth } from '@/lib/http'
-import { MONO, UI, inp, btn } from '@/components/salesTableKit'
+import { MONO, UI, inp, btn, Z } from '@/components/salesTableKit'
 import { overlayClose } from '@/lib/overlay'
 
 /* Маркировка бренда — ОДИН диалог на два места.
@@ -144,7 +144,7 @@ export default function BrandMarkingDialog({ brand, onSave, onClose }) {
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(16,20,30,.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(16,20,30,.45)', zIndex: Z.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
       {...overlayClose(onClose)}>
       <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-card)', padding: '22px 24px', width: 'min(560px, 96vw)', boxShadow: 'var(--shadow-card)', display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div>

@@ -23,7 +23,9 @@ def _serve(tmp_path, monkeypatch, ctype, name):
     f = tmp_path / "x.bin"
     f.write_bytes(b"x")
     monkeypatch.setattr(traffic, "existing_upload_path", lambda p: str(f))
-    rec = SimpleNamespace(path="x.bin", content_type=ctype, original_name=name)
+    # Область видимости здесь не предмет проверки (её держит test_shot_scope.py).
+    monkeypatch.setattr(traffic, "_pair_for_files", lambda db, pid, u: None)
+    rec = SimpleNamespace(path="x.bin", content_type=ctype, original_name=name, pair_id=1)
     return traffic.get_shot(1, _Db(rec), SimpleNamespace(id=1))
 
 

@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { isAdmin as isAdminFn } from '@/lib/auth'
 import { num as mpNum, rowClicks, rowImp, rowNet } from '@/lib/mpRow'
 import Head from 'next/head'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
-import { MONO, UI, HATCH_RED, Modal } from '@/components/salesTableKit'
+import { MONO, UI, HATCH_RED, Modal, Z } from '@/components/salesTableKit'
 import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
 import BriefFiles from '@/components/deal/BriefFiles'
 import { dm, grp0 } from '@/lib/salesFormat'
@@ -102,7 +103,7 @@ function plDays(n) {
 }
 
 const OVERLAY = {
-  position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(28,36,51,.4)',
+  position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(28,36,51,.4)',
   display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
   overflowY: 'auto', padding: '60px 20px', fontFamily: UI,
 }
@@ -835,7 +836,7 @@ export default function DealCard() {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     try {
       const p = JSON.parse(localStorage.getItem('permissions') || '{}')
-      setIsAdmin(localStorage.getItem('role') === 'admin')
+      setIsAdmin(isAdminFn())
       setCanEdit(localStorage.getItem('is_admin') === 'true' || !!(p.sales_registry || {}).edit)
       // Вердикт первичной проверки — отдельное действие: его можно развести с
       // ведением комплектов, чтобы подписывался не тот, кто грузил материал.

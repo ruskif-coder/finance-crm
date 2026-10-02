@@ -40,7 +40,8 @@ log = logging.getLogger("finance.launch_prep")
 # Дальше этих состояний получатель уже в эфире или позади — отзывать поздно.
 PLACED_STATES = ("в размещении", "завершён", "сверка завершена", "архив")
 # Ручные статусы размещения в РК — запуск или то, что бывает только после него.
-PLACEMENT_STARTED = ("запущен", "пауза", "завершена")
+# Площадка уже запускалась — это ручные статусы площадки (Н-2: копия расходилась бы).
+from app.ad.flight import PLACEMENT_MANUAL as PLACEMENT_STARTED  # noqa: E402
 # Состояния получателя, которые держались на согласованной паре.
 AGREED_STATES = ("согласован", "ерид получен", "заведён в DSP")
 REASON_MAX = 500
@@ -164,6 +165,12 @@ def withdraw(db: Session, pair_id: int, user, reason: str, dsp_client=None,
         raise WithdrawError("укажите причину — её увидит площадка")
     if len(reason) > REASON_MAX:
         raise WithdrawError(f"причина длиннее {REASON_MAX} символов")
+    from app.notify.outward.send import has_amount
+    if has_amount(reason):
+        # Причину увидит площадка; наших сумм ей не пишем никогда (правило 16.09.2026,
+        # аудит 01.10.2026, К-1). Отказ, а не молчаливая подмена: человек должен знать,
+        # что именно уйдёт.
+        raise WithdrawError("в причине сумма — площадке деньги не пишем, сформулируйте без неё")
     pair = db.get(LaunchPrepPair, pair_id)
     if pair is None:
         raise LookupError("пара не найдена")

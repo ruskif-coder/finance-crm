@@ -11,6 +11,7 @@
   · защита от дублей в три ступени: хеш уже у нас → хеш в журнале по нашему local_ref
     (МС создал, наш коммит не дошёл) → совпадение по title в getListByPartner → только тогда add.
 """
+import logging
 from datetime import date, datetime
 from typing import Optional
 
@@ -19,6 +20,8 @@ from sqlalchemy.orm import Session
 from app.ad.models import AdCampaign
 from app.dsp.client import MsClient, MsError
 from app.sales.models import SalesDeal
+
+log = logging.getLogger(__name__)
 
 TITLE_MAX = 254
 
@@ -162,8 +165,11 @@ def apply_status(db: Session, camp: AdCampaign, status: str,
     объёмом и датами. Кампании в DSP нет (площадки крутят сами или выгрузки не было) —
     трогать нечего, меняется только наш статус.
 
-    Ошибка DSP поднимается наверх: вызывающий НЕ меняет наш статус, иначе экран снова
-    говорил бы о кампании, которая в DSP в другом состоянии.
+    Отказ DSP по КАМПАНИИ поднимается наверх: вызывающий НЕ меняет наш статус, иначе
+    экран снова говорил бы о кампании, которая в DSP в другом состоянии. Отказ по
+    отдельному КРЕАТИВУ — нет (аудит 01.10.2026, К-6): кампания уже принята, и откат
+    нашего статуса сказал бы «не сохранено», когда в DSP крутится. Такой отказ уходит в
+    отчёт (`refused`).
     """
     target = DSP_STATUS_OF.get(status)
     if not target or not camp.ms_campaign_xxhash:
@@ -172,10 +178,10 @@ def apply_status(db: Session, camp: AdCampaign, status: str,
     if target == "LAUNCHED":
         sync_campaign_plan(db, camp, c, commit=False)
     c.campaign_set_status(camp.ms_campaign_xxhash, target, local_ref=camp.id)
-    want = follow_creatives(db, camp, target, c)
+    want, refused = follow_creatives(db, camp, target, c)
     # Отчёт после нажатия (владелец 30.09.2026): лимиты и сверка — не повод отменять уже
     # принятый DSP статус, поэтому их сбой пишется в отчёт, а не поднимается наверх.
-    camp._dsp_check = after_status(db, camp, target, want, c)
+    camp._dsp_check = {**after_status(db, camp, target, want, c), "refused": refused}
     return target
 
 
@@ -234,9 +240,18 @@ def follow_creatives(db: Session, camp: AdCampaign, campaign_target: str, client
             .join(AdCampaignPlacement, AdCampaignPlacement.id == AdCampaignCreative.placement_id)
             .filter(AdCampaignCreative.campaign_id == camp.id).all())
     want = creative_targets(rows, campaign_target)
+    refused = []
     for xx, st in want.items():
-        client.creative_set_status(xx, st, local_ref=camp.id)
-    return want
+        # Поштучно (аудит 01.10.2026, К-6): кампания уже принята DSP, и отказ на одном
+        # креативе не должен ни бросать остальные, ни откатывать наш статус — тогда
+        # экран говорил бы «не сохранено», а в DSP крутилось бы. Несогласие DSP видно в
+        # сверке `after_status`: она перечитывает статус каждого креатива.
+        try:
+            client.creative_set_status(xx, st, local_ref=camp.id)
+        except MsError as e:
+            log.warning("DSP не принял статус %s креатива %s: %s", st, xx, e)
+            refused.append({"what": f"креатив {xx}", "want": st, "error": str(e)[:300]})
+    return want, refused
 
 
 def plan_total(delivered, remaining) -> int:

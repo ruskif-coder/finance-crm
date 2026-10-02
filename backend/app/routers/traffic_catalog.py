@@ -72,11 +72,26 @@ class BlockIn(BaseModel):
     page_type: Optional[str] = None
     network: Optional[str] = None
     is_active: Optional[bool] = True
+    platform: Optional[str] = None
+
+
+PLATFORMS = ("android", "ios")
+
+
+def _platform_for(surface: Optional[str], platform: Optional[str]) -> Optional[str]:
+    """Платформа блока (владелец 02.10.2026): только у app и только android | ios."""
+    p = (platform or "").strip().lower() or None
+    if p is None:
+        return None
+    if surface != "app" or p not in PLATFORMS:
+        raise HTTPException(400, "Платформа бывает только у блока приложения: android или ios")
+    return p
 
 
 def _block_out(b: PublisherBlock) -> dict:
     return dict(id=b.id, ms_block_id=b.ms_block_id, name=b.name, page_type=b.page_type,
-               network=b.network, is_active=bool(b.is_active))
+               network=b.network, is_active=bool(b.is_active),
+               platform=getattr(b, "platform", None))
 
 
 def _surface_out(db: Session, s: SalesPublisherSurface) -> dict:
@@ -202,7 +217,8 @@ def add_block(surface_id: int, payload: BlockIn,
     b = PublisherBlock(surface_id=surface_id, publisher_id=s.publisher_id, surface=s.kind,
                        ms_block_id=payload.ms_block_id, name=payload.name,
                        page_type=payload.page_type, network=payload.network,
-                       is_active=bool(payload.is_active))
+                       is_active=bool(payload.is_active),
+                       platform=_platform_for(s.kind, payload.platform))
     db.add(b)
     db.commit()
     log_action(db, user, "traffic_catalog_block_add", "sales_publisher", s.publisher_id,
@@ -220,6 +236,11 @@ def edit_block(block_id: int, payload: BlockIn,
     b.name = payload.name
     b.page_type = payload.page_type
     b.network = payload.network
+    # Вид — с поверхности (источник истины), не с денормализованной `surface` (ревью
+    # 02.10.2026); платформу не трогаем, если клиент её не прислал.
+    if "platform" in payload.__fields_set__:
+        surf = db.get(SalesPublisherSurface, b.surface_id) if b.surface_id else None
+        b.platform = _platform_for(surf.kind if surf else b.surface, payload.platform)
     if payload.is_active is not None:
         b.is_active = bool(payload.is_active)
     db.commit()

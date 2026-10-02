@@ -42,6 +42,7 @@ import {
   VerifierStrip, WidgetsToggle, byCreative, num, pctTone,
 } from '@/components/traffic/dashboardKit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { isAdmin as isAdminNow } from '@/lib/auth'
 import HungAttempts from '@/components/traffic/HungAttempts'
 import CopyCode from '@/components/CopyCode'
 
@@ -340,7 +341,7 @@ export default function TrafficDashboard() {
   /* Роль читаем В useEffect, а не при рендере: `localStorage` на сервере не существует,
      и обращение к нему в теле компонента роняет страницу при SSR. */
   const [isAdmin, setIsAdmin] = useState(false)
-  useEffect(() => { setIsAdmin(localStorage.getItem('role') === 'admin') }, [])
+  useEffect(() => { setIsAdmin(isAdminNow()) }, [])
 
   const load = useCallback(async () => {
     const p = new URLSearchParams()
@@ -452,7 +453,9 @@ export default function TrafficDashboard() {
   // Итог текущей недели — столбец, в который попадает сегодняшний день. WR и
   // расхождения у недели нет: сервер сверяет за день и за период.
   const weekTotals = (st) => {
-    const today = todayMsk()
+    // Неделя — та, где последний отчитанный день (дата среза), а не календарное сегодня:
+    // факт приходит за вчера (владелец 02.10.2026).
+    const today = String(st.totals?.as_of || todayMsk())
     const b = (st.buckets || []).find(x => String(x.date_from) <= today && today <= String(x.date_to))
     if (!b) return { shows: 0, clicks: 0, ctr: null }
     return { shows: b.shows, clicks: b.clicks,
@@ -463,9 +466,13 @@ export default function TrafficDashboard() {
      лимиты креативов при запуске уходят сразу. Расхождение или сбой сверки — вслух. */
   const dspCheckNote = (chk) => {
     if (!chk) return ''
-    if (chk.error) return ` ⚠ ${chk.error}`
+    // Отказ DSP по отдельному креативу (К-6, 01.10.2026) — видно всегда, даже когда
+    // перечитать статусы не вышло: кампания принята, а этот креатив не переключился.
+    const refused = chk.refused?.length
+      ? ' ⚠ DSP не принял: ' + chk.refused.map(r => `${r.what} → ${r.want}`).join('; ') : ''
+    if (chk.error) return ` ⚠ ${chk.error}` + refused
     if (chk.mismatch?.length) return ' ⚠ DSP в другом состоянии: '
-      + chk.mismatch.map(m => `${m.what} — ждали ${m.want}, в DSP ${m.got || 'нет ответа'}`).join('; ')
+      + chk.mismatch.map(m => `${m.what} — ждали ${m.want}, в DSP ${m.got || 'нет ответа'}`).join('; ') + refused
     const lim = chk.limits
     return ' · сверено с DSP' + (lim?.updated ? `, лимитов обновлено: ${lim.updated}` : '')
       + (lim?.failed?.length ? `, лимит не ушёл: ${lim.failed.length}` : '')
@@ -684,7 +691,9 @@ export default function TrafficDashboard() {
               Дашборд трафика</h1>
             <div style={{ ...CAP, marginBottom: 0, marginTop: 2 }}>
               Трафики · открутка рекламных кампаний
-              {data?.today ? ` · на ${dm(data.today)}` : ''}
+              {data?.as_of && <span style={data.as_of_stale ? { color: 'var(--danger)', fontWeight: 700 } : undefined}
+                title={data.as_of_stale ? 'Статистика DSP не обновлялась больше суток — проверьте ночной съём' : undefined}>
+                {` · данные на ${dm(data.as_of)}`}{data.as_of_stale ? ' — устарели' : ''}</span>}
             </div>
           </div>
 
@@ -1416,11 +1425,15 @@ export default function TrafficDashboard() {
                                выдуманное соответствие врало бы про то, что сверено. */
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14,
                               marginTop: 12, borderTop: '1px solid var(--border-inner)' }}>
-                              {[[wk(r.id) ? 'эта неделя' : 'сегодня', wk(r.id) ? weekTotals(stat[r.id]) : stat[r.id].totals.today],
+                              {[[wk(r.id) ? 'эта неделя' : (stat[r.id].totals.as_of ? `за ${dm(stat[r.id].totals.as_of)}` : 'сегодня'), wk(r.id) ? weekTotals(stat[r.id]) : stat[r.id].totals.today],
                                 ['всего за период', stat[r.id].totals.period]]
                                 .map(([l, t], i, _a, T = stat[r.id].totals,
-                                       cover = T.wr_placements && T.wr_placements < T.placements
-                                         ? `по ${T.wr_placements} из ${T.placements} площадок` : null) => (
+                                       cover = [T.wr_placements && T.wr_placements < T.placements
+                                         ? `по ${T.wr_placements} из ${T.placements} площадок` : null,
+                                       /* Площадки вне DSP мерит одна Weborama — в сверку не идут,
+                                          справочно (владелец 02.10.2026). */
+                                       i === 1 && T.wr_outside ? `вне DSP: WR ${num(T.wr_outside)}` : null]
+                                         .filter(Boolean).join(' · ') || null) => (
                                   /* Верхний отступ равен отступу плашки цели: три
                                      заголовка обязаны стоять на одной линии, а плашку
                                      подтягивать вверх нельзя — она наезжает на строку
@@ -1456,7 +1469,7 @@ export default function TrafficDashboard() {
                                     </span>
                                     {/* Охват сверки: Weborama мерила часть площадок —
                                         процент посчитан по ним, не по всей РК. */}
-                                    {!!t.mismatch && !!cover && (
+                                    {!!cover && (
                                       <span style={{ gridColumn: '1 / -1', fontSize: 10.5,
                                         color: 'var(--text-faint)', textAlign: 'right' }}>{cover}</span>
                                     )}

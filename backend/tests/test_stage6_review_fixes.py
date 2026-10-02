@@ -42,7 +42,7 @@ def settings_snapshot():
 
 
 def _publisher(db):
-    row = db.execute(text("SELECT id FROM sales_publishers ORDER BY id LIMIT 1")).first()
+    row = db.execute(text("SELECT id FROM sales_publishers WHERE status <> 'АРХИВ' ORDER BY id LIMIT 1")).first()
     if not row:
         pytest.skip("на стенде нет площадок")
     return row[0]

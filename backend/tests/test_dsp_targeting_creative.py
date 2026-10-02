@@ -63,6 +63,11 @@ class FakeClient:
                 "date_start": {"date": "2026-01-01 00:00:00"},
                 "date_end": {"date": self.campaign_end}}
 
+    unknown = False
+
+    def unknown_outcome(self, method, entity_type, local_ref):
+        return self.unknown
+
     def last_ok_xxhash(self, method, entity_type, local_ref):
         self.calls.append(("journal", method, local_ref))
         return self.journal_hash
@@ -792,5 +797,21 @@ def test_unregistered_erid_does_not_replace_the_placeholder():
     try:
         P.ensure_live(db, s, client=c)
         assert not c.edited and c.erid == "TEST00000"
+    finally:
+        _drop(db, s)
+
+
+
+def test_unanswered_add_is_not_repeated_blindly():
+    """Аудит 01.10.2026, В-5: прошлый `Creative.add` без ответа — копия могла создаться;
+    второй вызов завёл бы дубль, который в DSP не удалить."""
+    db = _db()
+    s = _set_with(db)
+    c = FakeClient()
+    c.unknown = True
+    try:
+        with pytest.raises(P.TargetingCreativeError, match="без ответа"):
+            P.ensure(db, s, client=c, wake=False)
+        assert not c.added
     finally:
         _drop(db, s)

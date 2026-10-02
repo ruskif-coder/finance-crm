@@ -6,9 +6,10 @@
 // всю оставшуюся высоту, шапка и итог прилипают, площадка и итог — липкие колонки.
 // Сетка — CSS-grid по шаблону реестра (правило 28.09), шапка площадки — SortHead из кита.
 import { useState } from 'react'
-import { ExtChip, MONO, SortHead } from '@/components/salesTableKit'
+import { ExtChip, MONO, SortHead, Z } from '@/components/salesTableKit'
 import { tgHref } from '@/components/publishers/kit'
 import safeHref from '@/lib/safeHref'
+import { grp0, grp } from '@/lib/salesFormat'
 
 // Цвет ячейки — токены палитры; подпись легенды — здесь же, одна на экран.
 export const TONE = {
@@ -24,7 +25,7 @@ export const counted = (tone, pend) => tone === 'agreed' || (pend && (tone === '
 
 const nf = new Intl.NumberFormat('ru-RU')
 export const short = (v) => (v >= 1e6 ? `${(v / 1e6).toFixed(2).replace('.', ',')} млн`
-  : v >= 1e3 ? `${Math.round(v / 1e3)} тыс` : nf.format(Math.round(v || 0)))
+  : v >= 1e3 ? `${Math.round(v / 1e3)} тыс` : grp0(v))
 
 /** Итоги строки/колонки — одно правило на строки, подвал и KPI страницы. */
 export function totalsOf(cells, pend) {
@@ -165,7 +166,7 @@ export default function ApprovalsMatrix({ view, deals, pubs, cell, lateDays, pen
                 if (!c) return <div key={d.id} style={base} />
                 const extra = plan ? (c.plan_show
                   ? [`План: ${nf.format(c.plan_show)} показов`, c.plan_cost == null ? 'CPM площадки в реестре не заполнен'
-                    : `Себестоимость: ${nf.format(Math.round(c.plan_cost))} ₽ (CPM ${p.cpm} ₽ до НДС)`,
+                    : `Себестоимость: ${grp(c.plan_cost)} ₽ (CPM ${p.cpm} ₽ до НДС)`,
                     ...(counted(c.tone, pend) ? [] : ['В итог не входит'])]
                   : ['Плана у площадки в РК нет (доля не назначена)'])
                   : (c.screens?.total ? [`Скрины запуска: ${c.screens.got} из ${c.screens.total} креативов`] : [])
@@ -193,7 +194,7 @@ export default function ApprovalsMatrix({ view, deals, pubs, cell, lateDays, pen
       </div>
 
       {tip && (
-        <div style={{ position: 'fixed', left: tip.x, top: tip.y, zIndex: 9, pointerEvents: 'none', maxWidth: 300,
+        <div style={{ position: 'fixed', left: tip.x, top: tip.y, zIndex: Z.tooltip, pointerEvents: 'none', maxWidth: 300,
           background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-card)',
           boxShadow: '0 10px 30px rgba(28,36,51,.16)', padding: '10px 12px', borderRadius: 12, fontSize: 12, lineHeight: 1.55 }}>
           <b>{tip.head}</b>

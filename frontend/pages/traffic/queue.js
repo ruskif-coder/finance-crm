@@ -29,6 +29,7 @@ import { MONO, UI, card, CAP, btn, btnSm, chip as pill, inp, ROW_TONE, Modal }
 import { CreativePreview } from '@/components/creatives/AssemblyCreatives'
 import api, { auth } from '@/lib/api'
 import { dm } from '@/lib/salesFormat'
+import { daysUntil } from '@/lib/dates'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { saveResponse } from '@/lib/download'
 import { Cube } from '@/components/LogoLoader'
@@ -450,8 +451,7 @@ export default function TrafficQueue() {
      мнении о том, что горит, нельзя. */
   const daysTo = (d) => {
     if (!d || !today) return null
-    const t = new Date(`${d}T00:00:00`)
-    return Math.round((t - new Date(today.getFullYear(), today.getMonth(), today.getDate())) / 864e5)
+    return daysUntil(d)
   }
   const startNote = (d) => {
     const n = daysTo(d)

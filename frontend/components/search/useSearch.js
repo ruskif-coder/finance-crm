@@ -20,7 +20,10 @@ export default function useSearch(query, { perType = 5, enabled = true } = {}) {
     setState(s => ({ ...s, q: '', loading: true, error: '' }))
     const t = setTimeout(() => {
       searchApi(q, { perType, signal: ctl.signal })
-        .then(d => setState({ q, groups: d.groups || [], loading: false, error: '' }))
+        // Частичный ответ — сервер упёрся в предел времени (С-12, 01.10.2026): это не
+        // «ничего не найдено», а «не успел», и человек должен это знать.
+        .then(d => setState({ q, groups: d.groups || [], loading: false,
+          error: d.partial ? 'Поиск не уложился во время — уточните запрос' : '' }))
         .catch(e => { if (!isAbort(e)) setState({ q, groups: [], loading: false, error: searchError(e) }) })
     }, SEARCH_DELAY_MS)
     return () => { clearTimeout(t); ctl.abort() }

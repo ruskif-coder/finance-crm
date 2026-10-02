@@ -46,6 +46,23 @@ def flush(dry_run: bool = False, limit: int = 500) -> dict:
         return {"due": 0, "sent": 0, "failed": 0, "skipped": 0, "busy": True}
 
 
+def _still_wanted(db, email: str, publisher_id=None) -> bool:
+    """Жив ли ещё получатель уведомлений площадке — тем же отбором, что
+    `notify.outward.send._recipients`. Площадка известна (строки с 02.10.2026) — ровно её
+    контакт: тот же адрес бывает живым контактом другой площадки; старые строки — по адресу."""
+    from sqlalchemy import text
+    return bool(db.execute(text("""
+        SELECT 1 FROM sales_publisher_contacts c
+         WHERE lower(c.email) = lower(:e) AND c.notify
+           AND (CAST(:p AS integer) IS NULL OR c.publisher_id = :p)
+           AND EXISTS (SELECT 1 FROM sales_publishers sp
+                        WHERE sp.id = c.publisher_id AND sp.status <> 'АРХИВ')
+           AND NOT EXISTS (
+               SELECT 1 FROM cabinet_publisher cp JOIN cabinet cab ON cab.id = cp.cabinet_id
+                WHERE cp.publisher_id = c.publisher_id AND cab.state = 'приостановлен')
+         LIMIT 1"""), {"e": email, "p": publisher_id}).first())
+
+
 def _flush(dry_run: bool, limit: int) -> dict:
     """Каждое письмо считается отдельно: отказ по одному не отменяет остальных — то же
     правило, что в пакетной отправке, и по той же причине."""
@@ -66,6 +83,14 @@ def _flush(dry_run: bool, limit: int) -> dict:
             if dry_run:
                 print(f"  (сухой прогон) {row.to_email} ← {row.subject[:60]}")
                 stats["skipped"] += 1
+                continue
+            if row.kind == "pub_notify" and not _still_wanted(db, row.to_email, row.publisher_id):
+                # Отложено на тихие часы, а за это время контакт снял отметку, удалён или
+                # кабинет приостановлен — то же правило, что при постановке (аудит
+                # 01.10.2026, С-6). Письмо не уходит; в журнале остаётся причина.
+                row.status, row.error = "suppressed", "получатель больше не принимает уведомления"
+                stats["skipped"] += 1
+                db.commit()
                 continue
             row.attempts += 1
             try:

@@ -3,7 +3,7 @@ import Head from 'next/head'
 import api, { auth } from '@/lib/http'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '@/components/Navbar'
-import { MONO, UI, IconBtn, inp, btn, cell, headCell } from '@/components/salesTableKit'
+import { MONO, UI, Z, IconBtn, inp, btn, cell, headCell } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const AgenciesMobile = dynamic(() => import('@/components/mobile/AgenciesMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
@@ -391,7 +391,7 @@ export default function Agencies() {
                               <input autoFocus style={{ ...inp, width: 280 }} placeholder="поиск контрагента"
                                 value={cpQuery} onChange={e => setCpQuery(e.target.value)} />
                               {cpQuery.trim() && (
-                                <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 10, marginTop: 2,
+                                <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: Z.dropdown, marginTop: 2,
                                   background: 'var(--bg-card)', border: '1px solid var(--border-card)',
                                   borderRadius: 12, boxShadow: 'var(--shadow-card)',
                                   maxHeight: 240, overflowY: 'auto', minWidth: 280 }}>
@@ -436,7 +436,7 @@ export default function Agencies() {
         {/* Плавающая панель склейки выбранных агентств */}
         {selAgIds.length > 0 && (
           <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)',
-            zIndex: 50, background: 'var(--bg-card)', border: '1px solid var(--accent)',
+            zIndex: Z.dropdown, background: 'var(--bg-card)', border: '1px solid var(--accent)',
             borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-card)',
             padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 13, fontWeight: 600 }}>Выбрано агентств: {selAgIds.length}</span>

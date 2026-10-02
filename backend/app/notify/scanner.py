@@ -642,13 +642,18 @@ def rule_traffic_silence(db: Session, ev: registry.Event) -> List[Hit]:
     from app.launch_prep.models import LaunchPrepPair, LaunchPrepReview, LaunchPrepTarget
     from app.sales.models import SalesDeal, SalesPublisher
 
-    days = _param(ev, "days", 3)
+    # Порог — тот же, что у очереди трафика (Н-4): одно правило «трафик молчит», а не два.
+    from app.traffic.urgency import STALE_DAYS
+    days = _param(ev, "days", STALE_DAYS)
     edge = datetime.utcnow() - timedelta(days=days)
     rows = (db.query(LaunchPrepReview, LaunchPrepPair, LaunchPrepTarget)
             .join(LaunchPrepPair, LaunchPrepPair.id == LaunchPrepReview.pair_id)
             .join(LaunchPrepTarget, LaunchPrepTarget.id == LaunchPrepPair.target_id)
             .filter(LaunchPrepReview.kind == "трафики",
                     LaunchPrepReview.verdict.is_(None),
+                    # Отозванная пара проверять нечего (аудит 01.10.2026, С-4) — как в
+                    # соседнем правиле про молчание площадки.
+                    LaunchPrepPair.withdrawn_at.is_(None),
                     LaunchPrepReview.asked_at < edge).all())
     if not rows:
         return []
@@ -742,8 +747,16 @@ def scan(dry_run: bool = False, only: Optional[str] = None) -> Dict[str, int]:
             for hit in hits:
                 by_type.setdefault(hit.entity_type, set()).add(hit.entity_id)
                 st = _state(db, event_key, hit)
-                if st.resolved_at and st.stage == hit.stage:
-                    continue                       # уже закрывали и ничего не изменилось
+                if st.resolved_at and not dry_run:
+                    # Закрыто сканером («объект больше не подпадает»), а теперь подпадает
+                    # снова — это НОВАЯ проблема, а не старая (аудит 01.10.2026, В-2):
+                    # счёт просрочили второй раз. Руками состояние не закрывает никто.
+                    # Вернулась быстрее суток — считаем «миганием» данных, а не новой
+                    # проблемой: переоткрываем, но повтор письма — по обычному интервалу.
+                    flap = (now - st.resolved_at) < timedelta(days=1)
+                    st.resolved_at, st.resolve_note = None, None
+                    if not flap:
+                        st.last_sent_at, st.stage = None, None
                 if not _should_send(st, hit, repeat_days, now):
                     stats["skipped"] += 1
                     continue
@@ -797,8 +810,14 @@ def scan(dry_run: bool = False, only: Optional[str] = None) -> Dict[str, int]:
                 stats["sent"] += 1
                 print(f"    {hit.stage}: {hit.title} → получателей {len(got)}")
 
-            for entity_type, ids in by_type.items():
-                stats["closed"] += _resolve_gone(db, event_key, ids, entity_type, now)
+            # Закрываем и по тем типам, которых в этом прогоне не было вовсе: правило
+            # вернуло ноль — значит, всё открытое по нему ушло (аудит 01.10.2026, В-1).
+            open_types = {t for (t,) in db.query(NotificationAlertState.entity_type)
+                          .filter(NotificationAlertState.event_key == event_key,
+                                  NotificationAlertState.resolved_at.is_(None)).distinct()}
+            for entity_type in (open_types | set(by_type)) if not dry_run else ():
+                stats["closed"] += _resolve_gone(db, event_key, by_type.get(entity_type, set()),
+                                                 entity_type, now)
             db.commit()
 
         run.finished_at = datetime.utcnow()

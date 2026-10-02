@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
+import { grp } from '../../lib/salesFormat'
 import { CARD, Marker, rise } from './kit'
 import BottomSheet from './BottomSheet'
 import DirectoryMobile from './DirectoryMobile'
@@ -105,7 +106,7 @@ export default function AgenciesMobile({
         renderCard={(a, open, toggle) => <AgCard a={a} open={open} onToggle={toggle} onEdit={openEdit} canEdit={canEdit} />}
         hasMore={rows.length > shown.length}
         onMore={() => setLimit(l => (l || 50) + 50)}
-        moreLabel={`Показать ещё · ${shown.length} из ${new Intl.NumberFormat('ru-RU').format(rows.length)}`}
+        moreLabel={`Показать ещё · ${shown.length} из ${grp(rows.length)}`}
       />
       {form && <AgForm initial={form.initial} editId={form.editId} saving={saving} onClose={() => setForm(null)} onSave={save} />}
     </>

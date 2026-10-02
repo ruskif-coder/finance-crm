@@ -36,7 +36,8 @@ from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_REJECTED, 
                            creative_counts, culprits, daily_buckets,
                            distribute, effective_status, flight_of, progress, split_evenly)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
-from app.ad.stat_sources import (VERIFIER, comparable, fact_sources, goal_limit, mismatch_level,
+from app.dsp.client import MsClient
+from app.ad.stat_sources import (VERIFIER, comparable, fact_as_of, fact_sources, is_stale, wr_outside, goal_limit, mismatch_level,
                                  mismatch_pct)
 from app.traffic import urgency
 from app.audit import log_action
@@ -131,7 +132,7 @@ def _facts(db: Session, campaign_ids: List[int]) -> dict:
     return {r["campaign_id"]: dict(r) for r in rows}
 
 
-def _verifier(db: Session, campaign_ids: List[int]) -> dict:
+def _verifier(db: Session, campaign_ids: List[int], until: Optional[date] = None) -> dict:
     """Показы ВЕРИФИКАТОРА по РК и по каждой площадке — одним запросом на оба уровня.
 
     Отдельной функцией от `_facts`, а не параметром к ней, СОЗНАТЕЛЬНО. `_facts` отдаёт
@@ -145,11 +146,14 @@ def _verifier(db: Session, campaign_ids: List[int]) -> dict:
     """
     if not campaign_ids:
         return {}
+    # `until` — дата среза (`fact_as_of`): WR позже последнего дня нашего факта в сверку
+    # не идёт. Ручной итог за период датирован концом периода — его срез не режет.
     rows = db.execute(text(
         "SELECT campaign_id, placement_id, sum(shows) AS shows "
         "FROM ad_campaign_stat WHERE campaign_id = ANY(:i) AND source = ANY(:src) "
+        "AND (CAST(:u AS date) IS NULL OR date <= :u OR source = 'weborama_manual') "
         "GROUP BY campaign_id, placement_id"),
-        {"i": campaign_ids, "src": list(VERIFIER)}).mappings().all()
+        {"i": campaign_ids, "src": list(VERIFIER), "u": until}).mappings().all()
     out: dict = {}
     for r in rows:
         slot = out.setdefault(r["campaign_id"], {"shows": 0, "by_placement": {}})
@@ -317,6 +321,19 @@ def publisher_name(db: Session, publisher_id) -> str:
     """Имя площадки для журнала — «площадка <имя>», а не безымянное «площадка»."""
     return db.execute(text("SELECT name FROM sales_publishers WHERE id = :i"),
                       {"i": publisher_id}).scalar() or ""
+
+
+def _wake_quietly(db: Session, deal_id: int) -> dict:
+    """Нацеливание после старта — уже ПОСЛЕ коммита статуса. Любой сбой здесь — итог
+    словами, не 500: статус принят и DSP запущен, а 500 ещё и терял запись в журнал
+    действий (аудит 01.10.2026, С-3)."""
+    try:
+        return wake_targeting(db, deal_id)
+    except Exception as e:  # noqa: BLE001 — после коммита отказывать уже нечем
+        db.rollback()      # сессия после SQL-ошибки сломана, а следом — журнал действий
+        log.warning("нацеливание после старта сделки %s не разбудилось: %s", deal_id, e,
+                    exc_info=True)
+        return {"woken": 0, "errors": [f"нацеливание не разбудилось: {e}"]}
 
 
 def wake_targeting(db: Session, deal_id: int) -> dict:
@@ -652,7 +669,9 @@ def dashboard(scope: Optional[str] = None,
 
     ids = [c.id for c, _ in pairs]
     facts = _facts(db, ids)
-    today = date.today()
+    # План, темп и стена дней — по дате среза, а не по сегодня: факт приходит за вчера
+    # (владелец 02.10.2026, `stat_sources.fact_as_of`).
+    today = fact_as_of(db)
     stages = dict(db.execute(text("SELECT id, name FROM sales_stages")).all())
     # Бренд — для поиска в реестре (владелец 30.09.2026: номер, название, бренд, услуга).
     brands = dict(db.execute(text("SELECT id, name FROM sales_brands")).all())
@@ -706,13 +725,13 @@ def dashboard(scope: Optional[str] = None,
     vol_by_deal = volumes.volumes_by_deal(db, {d.id for _, d in pairs})
     # Расхождение с Weborama за период — для метки «Большое расхождение с WR» в строке
     # РК (владелец 27.09.2026). Показы верификатора и цели сделок — пачкой.
-    ver_all = _verifier(db, [c.id for c, _ in pairs])
+    ver_all = _verifier(db, [c.id for c, _ in pairs], until=today)
     goals_by_deal = build.deal_goals_many(db, {d.id for _, d in pairs})
     rows = []
     for c, d in pairs:
         f = facts.get(c.id, {})
         pls = places.get(c.id, [])
-        fc = progress(c.plan_show, f.get("shows"), c.date_start, c.date_end, today)
+        fc = progress(c.plan_show, f.get("shows"), c.date_start, c.date_end, today, now=date.today())
         by_pl = cr_all.get(c.id, {})
         chain_st = campaign_chain_status(
             has_plan=bool(c.plan_show), placements=len(pls),
@@ -797,7 +816,11 @@ def dashboard(scope: Optional[str] = None,
         # подписано: «19 из 19 крутят» на выдуманных числах читается как настоящее.
         "fact_sources": _fact_sources(db, ids),
         "fact_last_ingest": _fact_last_ingest(db, ids),
+        # `today` — дата среза (последний день с фактом DSP), подписью «данные на»;
+        # `as_of_stale` — срез старше вчерашнего: съём встал, экран подсвечивает это.
         "today": today,
+        "as_of": today,
+        "as_of_stale": is_stale(today),
         "kpi": {
             "campaigns": len(rows),
             "running": sum(1 for r in rows if r["status"] in RUNNING),
@@ -856,7 +879,8 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         ORDER BY p.weight DESC NULLS LAST, lower(pub.name)
     """), {"c": campaign_id, "src": fact_sources()}).mappings().all()
 
-    fl = flight_of(c.date_start, c.date_end)
+    as_of = fact_as_of(db)
+    fl = flight_of(c.date_start, c.date_end, as_of)
     fact_total = _facts(db, [c.id]).get(c.id, {}).get("shows")
     creatives = _creatives_of(db, c.id)
 
@@ -910,7 +934,7 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         "placements": out["rows"], "share_sum": out["share_sum"],
         "creative_manual": list(CREATIVE_MANUAL),
         "creative_statuses": list(CREATIVE_STATUSES),
-        **progress(c.plan_show, fact_total, c.date_start, c.date_end),
+        **progress(c.plan_show, fact_total, c.date_start, c.date_end, as_of, now=date.today()),
         # Словарь целиком + какие значения можно ВЫБРАТЬ: экран не должен предлагать
         # в поповере то, что ставит конвейер.
         "placement_statuses": list(PLACEMENT_STATUSES),
@@ -1002,9 +1026,13 @@ def campaign_stat(campaign_id: int, grain: str = "day",
     c, _deal = _campaign_in_scope(db, campaign_id, user)
     by_day = _stat_by_day(db, [c.id]).get(c.id, {})
     fact = _facts(db, [c.id]).get(c.id, {}).get("shows")
-    fl = flight_of(c.date_start, c.date_end)
+    today = fact_as_of(db)    # дата среза: «день» сводки — последний отчитанный
+    # Наш факт режется тем же срезом, что WR: ручная правка или демо позже среза сделали
+    # бы сверку несимметричной с другой стороны (ревью 02.10.2026).
+    by_day = {d: v for d, v in by_day.items() if d <= today}
+    fl = flight_of(c.date_start, c.date_end, today)
     out = daily_buckets(c.plan_show, fact, fl, by_day, grain=grain,
-                        date_from=date_from, date_to=date_to)
+                        date_from=date_from, date_to=date_to, today=today)
     if out is None:
         # Ни плана, ни дат — рисовать нечего, и это не ошибка, а состояние экрана.
         return {"buckets": [], "grain": grain, "need_per_day": None,
@@ -1012,11 +1040,11 @@ def campaign_stat(campaign_id: int, grain: str = "day",
 
     # Сводка под графиком: «сегодня» и «за период». Клики отдаются вместе с показами —
     # CTR считается от них, и второй запрос ради него был бы лишним.
-    today = date.today()
     t_shows, t_clicks = by_day.get(today, (0, 0))
     all_shows = sum(v[0] or 0 for v in by_day.values())
     all_clicks = sum(v[1] or 0 for v in by_day.values())
     out["totals"] = {
+        "as_of": today,
         "today": {"shows": t_shows, "clicks": t_clicks,
                   "ctr": round(t_clicks / t_shows * 100, 2) if t_shows else None},
         "period": {"shows": all_shows, "clicks": all_clicks,
@@ -1033,21 +1061,24 @@ def campaign_stat(campaign_id: int, grain: str = "day",
     ver_rows = db.execute(text(
         "SELECT date, placement_id, source, sum(shows) AS shows, sum(clicks) AS clicks "
         "FROM ad_campaign_stat WHERE campaign_id = :c AND source = ANY(:src) "
+        "AND (date <= :u OR source = 'weborama_manual') "
         "GROUP BY date, placement_id, source"),
-        {"c": c.id, "src": list(VERIFIER)}).mappings().all()
+        {"c": c.id, "src": list(VERIFIER), "u": today}).mappings().all()
     own_rows = db.execute(text(
         "SELECT date, placement_id, sum(shows) AS shows FROM ad_campaign_stat "
         "WHERE campaign_id = :c AND source = ANY(:src) AND placement_id IS NOT NULL "
-        "GROUP BY date, placement_id"), {"c": c.id, "src": fact_sources()}).mappings().all()
+        "AND date <= :u GROUP BY date, placement_id"),
+        {"c": c.id, "src": fact_sources(), "u": today}).mappings().all()
     own_by_pl: dict = {}
     for r in own_rows:
         own_by_pl[r["placement_id"]] = own_by_pl.get(r["placement_id"], 0) + (r["shows"] or 0)
     for (pid,) in db.execute(text("SELECT id FROM ad_campaign_placement WHERE campaign_id = :c"),
                              {"c": c.id}).all():
         own_by_pl.setdefault(pid, 0)
-    ver = _verifier(db, [c.id]).get(c.id)
+    ver = _verifier(db, [c.id], until=today).get(c.id)
     own_cmp, wr_cmp, n_covered = comparable(all_shows, own_by_pl, ver)
-    covered = set((ver or {}).get("by_placement", {})) & set(own_by_pl) if n_covered else set()
+    covered = ({p for p in (ver or {}).get("by_placement", {}) if own_by_pl.get(p)}
+               if n_covered else set())
 
     # По дням: {дата: (наш, WR показы, WR клики)} — тем же правилом, что итог.
     daily: dict = {}
@@ -1097,6 +1128,7 @@ def campaign_stat(campaign_id: int, grain: str = "day",
         out["totals"][key]["mismatch"] = _mm(own, w_shows)
     # Охват сверки — «по N из M площадок»: без него процент читается приговором всей РК.
     out["totals"]["wr_placements"] = n_covered
+    out["totals"]["wr_outside"] = wr_outside(own_by_pl, ver) or None
     out["totals"]["placements"] = len(own_by_pl)
     return out
 
@@ -1190,8 +1222,8 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
     if payload.status == "запущена":
         volumes.guard(db, _deal.id)
     # Из архива DSP назад не включается: вместо вечного «DSP не принял» — отказ сразу.
-    if (c.ms_campaign_xxhash and c.status in ("окончена", "архив")
-            and payload.status not in ("окончена", "архив")):
+    if (c.ms_campaign_xxhash and c.status in build.CAMPAIGN_CLOSED
+            and payload.status not in build.CAMPAIGN_CLOSED):
         raise HTTPException(400, "Кампания в DSP в архиве и снова не запускается — "
                                  "для продолжения нужна новая РК")
     # ЗАПУСК И ОСТАНОВКА — ПОСЛЕ ВЫКЛАДКИ В DSP (владелец 29.09.2026): до неё кнопки
@@ -1203,6 +1235,7 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
     old, c.status = c.status, payload.status
 
     raised = 0
+    started = []        # площадки, запущенные ВПЕРВЫЕ — им письмо «стартовала» (В-4)
     if payload.status == "запущена" and payload.with_placements:
         # Поднимаем и отключённые, и стоящие на паузе — но только те, которым ЕСТЬ ЧЕМ
         # крутить: без согласованного креатива запуск запрещён тем же правилом, что и
@@ -1217,6 +1250,8 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
                     db, c, p, creatives.get(p.id, []),
                     (modes.get((c.deal_id, p.publisher_id)) or {}).get("mode")):
                 p.status = "запущен"
+                if _mark_first_start(p):
+                    started.append(p.id)
                 build.mark_target_placed(db, p)
                 raised += 1
         if raised:
@@ -1224,18 +1259,19 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
 
     stopped = _cascade_placements(db, c.id, payload.status)
     dsp_status = _dsp_follow(db, c)
+    started = _keep_first_starts(db, started, dsp_status)
     # РК крутит — сделка «В размещении» (владелец 01.10.2026), с требованиями стадии.
     stage = (advance_deal(db, _deal, RUNNING_STAGE, user, "РК запущена трафиком")
              if dsp_status == "LAUNCHED" else None)
 
     db.commit()
-    targeting = (wake_targeting(db, c.deal_id)
+    targeting = (_wake_quietly(db, c.deal_id)
                  if dsp_status == "LAUNCHED" and old != "запущена" else None)
-    # Площадкам — только о СТАРТЕ и только один раз: переход «не крутила → крутит»
-    # бывает у РК однажды, а «пауза → запущена» повторяется, и письмо «кампания
-    # стартовала» на третий раз перестают читать.
-    if payload.status == "запущена" and old in ("ожидает сборки", "готова"):
-        _tell_publishers_started(db, c)
+    # Площадкам — только о СТАРТЕ и только один раз: письмо получает площадка, которую
+    # эта кнопка запустила ВПЕРВЫЕ (аудит 01.10.2026, В-4). «Пауза → запущен»
+    # повторяется, и письмо «кампания стартовала» на третий раз перестают читать.
+    if started:
+        _tell_publishers_started(db, c, started)
     log_action(db, user, "ad_campaign_status", "sales_deal", c.deal_id,
                f"{rk_label(db, c.id)}: {old} → {c.status}"
                + (f"; поднято площадок {raised}" if raised else "")
@@ -1277,15 +1313,59 @@ def set_creative_status(creative_id: int, payload: StatusIn,
     cr = db.query(AdCampaignCreative).get(creative_id)
     if not cr:
         raise HTTPException(404, "Креатив не найден")
-    _campaign_in_scope(db, cr.campaign_id, user)   # область видимости — та же
+    c, _ = _campaign_in_scope(db, cr.campaign_id, user)   # область видимости — та же
+    # «Запущен» и «пауза» — только тому, что согласовано (или уже крутилось): иначе кнопка
+    # — чёрный ход мимо согласования, в том числе через «пауза → запущен» (аудит
+    # 01.10.2026, В-3).
+    if payload.status in ("запущен", "пауза") and cr.status not in ("согласован", "пауза", "запущен"):
+        raise HTTPException(400, "Креатив не согласован — запускать и ставить на паузу нечего")
     old, cr.status = cr.status, payload.status
     db.flush()
     if (old == CREATIVE_REJECTED) != (cr.status == CREATIVE_REJECTED):
         build.recompute_shares(db, cr.campaign_id)
+    # DSP следует за ЭТИМ креативом — одним вызовом (В-3). Раньше пауза и отклонение
+    # меняли только нашу пометку, и в DSP креатив продолжал крутиться. Полный проход по
+    # РК (план, все креативы, лимиты) здесь не нужен: меняется один креатив.
+    dsp = _creative_to_dsp(db, c, cr, old)
     db.commit()
     log_action(db, user, "ad_creative_status", "sales_publisher", None,
-               f"креатив {cr.ms_title}: {old} → {cr.status}")
-    return {"id": cr.id, "status": cr.status}
+               f"креатив {cr.ms_title}: {old} → {cr.status}" + (f"; в DSP {dsp}" if dsp else ""))
+    return {"id": cr.id, "status": cr.status, "dsp_status": dsp}
+
+
+def _creative_to_dsp(db: Session, c, cr, old: str) -> Optional[str]:
+    """Статус одного креатива в DSP по нашему. Правило выбора — то же, что у кнопки РК
+    (`campaigns.creative_targets`): крутит, только когда крутят и РК, и площадка, и
+    креатив. Отклонённый — останавливаем сами (общее правило его не трогает: отозванные
+    уже в архиве DSP), но архивный не трогаем: STOPPED вернул бы его оттуда.
+    Сбой DSP — откат нашего изменения: вызов один, полусостояния не остаётся."""
+    from app.dsp.campaigns import DSP_STATUS_OF, creative_targets
+    from app.dsp.client import MsError
+    xx = (cr.ms_creative_xxhash or "").strip()
+    if not (xx and c.ms_campaign_xxhash):
+        return None
+    pl = db.query(AdCampaignPlacement).get(cr.placement_id)
+    camp_target = DSP_STATUS_OF.get(effective_campaign_status(c.status, _campaign_chain(db, c)))
+    ms = MsClient()
+    try:
+        cur = ((ms.creative_get_info(xx) or {}).get("status") or "").upper()
+        if cur == "ARCHIVE":
+            if old == CREATIVE_REJECTED and cr.status != CREATIVE_REJECTED:
+                db.rollback()
+                raise HTTPException(400, "Креатив отозван и в DSP в архиве — вернуть его нельзя, "
+                                         "нужен новый креатив")
+            return cur
+        if cr.status == CREATIVE_REJECTED:
+            want = "STOPPED"
+        else:
+            want = creative_targets([(xx, pl.status if pl else None, cr.status)],
+                                    camp_target or "STOPPED").get(xx)
+        if want and want != cur:
+            ms.creative_set_status(xx, want, local_ref=c.id)
+        return want or cur
+    except MsError as e:
+        db.rollback()
+        raise HTTPException(502, f"DSP не принял статус креатива — изменения не сохранены: {e}")
 
 
 @router.put("/creative/{creative_id}/screens")
@@ -1431,6 +1511,7 @@ def set_placement_status(placement_id: int, payload: StatusIn,
         if why:
             raise HTTPException(409, DSP_NOT_UPLOADED)
     old, p.status = p.status, payload.status
+    first = _mark_first_start(p)
     build.recompute_shares(db, p.campaign_id)
     # ЗАПУСК — ЕДИНСТВЕННЫЙ ПИСАТЕЛЬ «в размещении» у пары в сборе запуска. Раньше эту
     # строку ставили кнопкой на карточке сделки, и карточка говорила «в размещении» о
@@ -1443,9 +1524,13 @@ def set_placement_status(placement_id: int, payload: StatusIn,
     # Площадка меняет и статус РК по факту: первая запущенная делает её «запущена»,
     # последняя остановленная — «готова». DSP следует.
     dsp_status = _dsp_follow(db, c)
+    first = bool(_keep_first_starts(db, [p.id] if first else [], dsp_status))
     stage = (advance_deal(db, _deal, RUNNING_STAGE, user, "РК запущена трафиком")
              if dsp_status == "LAUNCHED" else None)
     db.commit()
+    # Первый запуск площадки её кнопкой — то же письмо, что с кнопки РК (В-4).
+    if first:
+        _tell_publishers_started(db, c, [p.id])
     pub_name = publisher_name(db, p.publisher_id)
     log_action(db, user, "ad_placement_status", "sales_publisher", p.publisher_id,
                f"{rk_label(db, p.campaign_id)}: площадка {pub_name} {old} → {p.status}"
@@ -1615,7 +1700,30 @@ def run_dsp(campaign_id: int, db: Session = Depends(get_db),
     return out
 
 
-def _tell_publishers_started(db: Session, camp) -> None:
+def _keep_first_starts(db: Session, ids: list, dsp_status: Optional[str]) -> list:
+    """Первый запуск засчитывается, только если РК в DSP и правда пошла — или DSP этой
+    РК не нужен (`dsp_status` пуст: кампании в DSP нет). Иначе отметку снимаем: письмо
+    «стартовала» уйдёт при настоящем запуске, а не о кампании, которая не крутит."""
+    if not ids or dsp_status in (None, "LAUNCHED"):
+        return ids
+    for pl in db.query(AdCampaignPlacement).filter(AdCampaignPlacement.id.in_(ids)):
+        pl.first_started_at = None
+    return []
+
+
+def _mark_first_start(p) -> bool:
+    """Площадка запущена ВПЕРВЫЕ — отметить и вернуть True. Признак — отметка в базе, а
+    не статус «было до»: площадку могли поставить на паузу или завершить, ни разу не
+    запустив, и по статусу первый настоящий старт не отличить от возобновления
+    (владелец 02.10.2026). Письмо «стартовала» уходит по этой отметке один раз."""
+    if p.status != "запущен" or getattr(p, "first_started_at", None) is not None:
+        return False
+    from datetime import datetime
+    p.first_started_at = datetime.utcnow()
+    return True
+
+
+def _tell_publishers_started(db: Session, camp, placement_ids) -> None:
     """Сказать площадкам РК, что размещение вышло в эфир.
 
     Веером по площадкам: у каждой свой план показов и своя цена, и «кампания стартовала»
@@ -1635,7 +1743,10 @@ def _tell_publishers_started(db: Session, camp) -> None:
     rows = (db.query(AdCampaignPlacement, SalesPublisher)
             .join(SalesPublisher, SalesPublisher.id == AdCampaignPlacement.publisher_id)
             .filter(AdCampaignPlacement.campaign_id == camp.id).all())
+    wanted = set(placement_ids)
     for pl, pub in rows:
+        if pl.id not in wanted:
+            continue
         context = " · ".join(x for x in ((pub.domain or pub.name), brand, period) if x)
         # ПЛАШЕК У ЭТОГО ПИСЬМА НЕТ (владелец 16.09.2026). План показов убран: письмо
         # сообщает площадке факт выхода в эфир, а наши плановые числа ей не адресованы.

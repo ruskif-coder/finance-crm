@@ -12,7 +12,7 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { fileStamp } from '@/lib/dates'
 import useLatest from '@/lib/useLatest'
 import { errText, isAuth } from '@/lib/loadError'
-import { LoadError, LoadErrorScreen } from '@/components/salesTableKit'
+import { LoadError, LoadErrorScreen, Z } from '@/components/salesTableKit'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -633,7 +633,7 @@ function FilterDrop({ label, items, selected, onToggle, onClear, fmtItem }) {
         {active ? `${label.replace('Все ', '')}: ${selected.length}` : label} ▾
       </button>
       {open && (
-        <div style={{ position: 'absolute', top: '110%', right: 0, marginTop: 4, zIndex: 300, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', minWidth: 230, maxHeight: 300, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ position: 'absolute', top: '110%', right: 0, marginTop: 4, zIndex: Z.dropdown, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', minWidth: 230, maxHeight: 300, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: 8 }}>
             <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Поиск…"
               style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 13, outline: 'none', fontFamily: UI }} />

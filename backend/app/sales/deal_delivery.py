@@ -62,11 +62,15 @@ def delivery_by_deal(db: Session, campaigns: Dict[int, object], today: date) -> 
     Без статистики `fact_shows` = None и `done_pct` = None: «ещё не пришло», а не «ноль»."""
     from app.ad.flight import (PLACEMENT_RUNNING, as_placement_scale, best_chain_status,
                                effective_status, progress)
+    from app.ad.stat_sources import fact_as_of
     from app.routers import traffic_dashboard as td
 
     cids = [c.id for c in campaigns.values()]
     if not cids:
         return {}
+    # Отставание считается на дату среза, а не на сегодня: факт приходит за вчера, и
+    # иначе каждая РК «отстаёт» на день (владелец 02.10.2026).
+    calendar, today = today, fact_as_of(db, today)
     facts = td._facts(db, cids)
     pls = td._placements_of(db, cids)
     creatives = td._creatives_all(db, cids)
@@ -85,7 +89,7 @@ def delivery_by_deal(db: Session, campaigns: Dict[int, object], today: date) -> 
             "placements": len(statuses),
             "placements_on": sum(1 for s in statuses if s in PLACEMENT_RUNNING),
             "screens": screens.get(c.id, {"got": 0, "total": 0}),
-            **progress(c.plan_show, fact, c.date_start, c.date_end, today),
+            **progress(c.plan_show, fact, c.date_start, c.date_end, today, now=calendar),
         }
         out[deal_id]["closed_pace"] = closed_pace(out[deal_id])
     return out

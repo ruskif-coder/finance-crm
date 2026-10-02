@@ -7,7 +7,7 @@ import { makeApi as api } from '@/lib/http'
 import { getPermissions, can } from '@/lib/auth'
 import { grp0 as fmt } from '@/lib/salesFormat'
 import { errText, isAuth } from '@/lib/loadError'
-import { LoadError, LoadErrorScreen, NoAccessScreen } from '@/components/salesTableKit'
+import { LoadError, LoadErrorScreen, NoAccessScreen, Z } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -84,7 +84,7 @@ function MultiDropdown({ label, items, selected, onToggle, onClear, placeholder,
         {selected.length === 0 ? `${placeholder} ▾` : `Выбрано: ${selected.length} ▾`}
       </div>
       {open && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 'var(--radius-badge)', boxShadow: 'var(--shadow-card)', zIndex: 300, minWidth: '220px', maxHeight: '280px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 'var(--radius-badge)', boxShadow: 'var(--shadow-card)', zIndex: Z.dropdown, minWidth: '220px', maxHeight: '280px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '8px' }}>
             <input autoFocus placeholder="Поиск..." value={search} onChange={e => setSearch(e.target.value)}
               style={{ width: '100%', padding: '5px 8px', borderRadius: '6px', border: '1px solid var(--border-card)', fontSize: '14px', outline: 'none' }} />

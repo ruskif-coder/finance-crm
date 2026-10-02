@@ -6,11 +6,12 @@ import Head from 'next/head'
 import { makeApi as api } from '@/lib/http'
 import { grpDash as fmt, pctDot as fmtPct } from '@/lib/salesFormat'
 import { errText, isAuth } from '@/lib/loadError'
-import { LoadError, LoadErrorScreen, NoAccessScreen } from '@/components/salesTableKit'
+import { LoadError, LoadErrorScreen, NoAccessScreen, Z } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import useLatest from '@/lib/useLatest'
+import { monthMsk, monthsAgoMsk } from '@/lib/dates'
 const PnlMobile = dynamic(() => import('@/components/mobile/PnlMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 
@@ -54,14 +55,8 @@ export default function PL() {
   // что «данных нет», и именно смешение двух состояний и было дефектом.
   const [err, setErr] = useState('')
   const [expandedGroups, setExpandedGroups] = useState({})
-  const [dateFrom, setDateFrom] = useState(() => {
-    const d = new Date(); d.setMonth(d.getMonth() - 11)
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
-  })
-  const [dateTo, setDateTo] = useState(() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
-  })
+  const [dateFrom, setDateFrom] = useState(() => monthsAgoMsk(11))
+  const [dateTo, setDateTo] = useState(() => monthMsk())
 
   useEffect(() => {
     const token = localStorage.getItem('token')
@@ -137,7 +132,7 @@ export default function PL() {
     padding: '8px 12px', fontSize: '10.5px', fontWeight: '700', color: 'var(--text-faint)',
     whiteSpace: 'nowrap', textAlign: 'right', background: 'var(--bg-subtle)',
     letterSpacing: '.04em', textTransform: 'uppercase',
-    borderBottom: '2px solid var(--border-card)', position: 'sticky', top: 0, zIndex: 10
+    borderBottom: '2px solid var(--border-card)', position: 'sticky', top: 0, zIndex: Z.sticky - 10
   }
 
   const SummaryRow = ({ label, field, isProfit, isMargin, marginField, bold }) => (
@@ -205,7 +200,7 @@ export default function PL() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '15px' }}>
             <thead>
               <tr>
-                <th style={{ ...thStyle, textAlign: 'left', position: 'sticky', left: 0, zIndex: 20, minWidth: '220px' }}>Статья</th>
+                <th style={{ ...thStyle, textAlign: 'left', position: 'sticky', left: 0, zIndex: Z.sticky, minWidth: '220px' }}>Статья</th>
                 {periods.map(p => (
                   <th key={p} style={{ ...thStyle, minWidth: colWidth }}>{formatPeriod(p)}</th>
                 ))}

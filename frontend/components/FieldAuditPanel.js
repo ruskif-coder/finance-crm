@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { MONO, UI } from './salesTableKit'
+import { MONO, UI, Z } from './salesTableKit'
 import { makeApi } from '../lib/http'
 import { T } from '../lib/tokens'
 
@@ -89,7 +89,7 @@ function AuditCard({ mode }) {                       // mode: 'deal' | 'company'
         <input value={q} onChange={e => { setQ(e.target.value); setOpen(true) }} onFocus={() => setOpen(true)}
           placeholder={mode === 'deal' ? 'начните вводить…' : 'поиск…'} style={inp} />
         {open && opts.length > 0 && (
-          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 4, maxHeight: 260, overflowY: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 5 }}>
+          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: Z.dropdown, marginTop: 4, maxHeight: 260, overflowY: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 5 }}>
             {opts.map(o => (
               <div key={o.id} onClick={() => pick(o)} style={{ padding: '7px 9px', borderRadius: 7, fontSize: 12.5, cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                 onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-subtle)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>{o.label}</div>

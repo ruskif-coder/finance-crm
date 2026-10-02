@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
-import { getPermissions } from '@/lib/auth'
+import { getPermissions, isAdmin as isAdminNow } from '@/lib/auth'
 import { NAV, allowedItems } from '@/lib/nav'
 
 /**
@@ -40,7 +40,7 @@ export default function SectionTabs({ section, actions }) {
   if (!s) return null
 
   const perms = mounted ? getPermissions() : {}
-  const isAdmin = mounted && localStorage.getItem('role') === 'admin'
+  const isAdmin = mounted && isAdminNow()
   const items = mounted ? allowedItems(s, perms, isAdmin) : []
   const path = router.asPath.split('?')[0]
 

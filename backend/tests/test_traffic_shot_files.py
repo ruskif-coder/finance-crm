@@ -64,6 +64,9 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setattr(T, "_pair_in_scope",
                         lambda db, pid, u: (SimpleNamespace(id=pid), s, None, pub, deal))
     monkeypatch.setattr(T, "UPLOADS_ROOT", str(tmp_path))
+    # Поддельный пользователь — трафик: очередь общая, сделка не проверяется (К-4).
+    monkeypatch.setattr(T, "get_permissions_for_user",
+                        lambda db, u: {"traffic_queue": {"view": True}})
     monkeypatch.setattr(T, "log_action", lambda *a, **kw: None)
     monkeypatch.setattr(T, "_shot_out", lambda rec: {"path": rec.path})
     return SimpleNamespace(root=tmp_path, user=SimpleNamespace(id=1, name="трафик"))

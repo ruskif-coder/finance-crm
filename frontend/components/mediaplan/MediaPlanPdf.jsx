@@ -5,6 +5,7 @@
  * (Manrope + JetBrains Mono из globals.css), Google Fonts НЕ используем (режет CSP).
  */
 import React, { useRef, useEffect } from 'react';
+import { grp0 } from '@/lib/salesFormat'
 
 /* ── токены (печатное подмножество дизайн-системы) ──────────────────── */
 export const T = {
@@ -16,7 +17,7 @@ export const T = {
 };
 
 /* ── формат чисел ───────────────────────────────────────────────────── */
-const num = v => Math.round(v || 0).toLocaleString('ru-RU');
+const num = grp0;
 const rub = v => (v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
 const dec = v => (Number.isFinite(v) ? v : 0).toFixed(2).replace('.', ',');
 const sd = (a, b) => (b ? a / b : 0);   // безопасное деление (пустой прогноз → 0, не Infinity)

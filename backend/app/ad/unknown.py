@@ -75,6 +75,27 @@ def _dsp_label(db: Session, camp) -> Optional[str]:
     return campaign_title(camp, deal) if deal else None
 
 
+def _tgt_client(db: Session) -> Optional[MsClient]:
+    """Клиент кабинета НАЦЕЛИВАНИЯ — копии живут там, а не в боевом."""
+    from app.dsp import targeting_creative as tc
+    from app.routers.traffic_catalog import targeting_cabinet
+    partner, _ = targeting_cabinet(db)
+    return tc._client(partner) if partner else None
+
+
+def _tgt_sets(db: Session, camp) -> list:
+    """Комплекты сделки РК. Без фильтра «хеш пуст»: копию могли удалить в кабинете, и при
+    старом хеше в базе повторное заведение без ответа запирало бы комплект, а на экране
+    сверки его бы не было (ревью В-5). Кого показать, точно решает журнал попыток."""
+    from app.launch_prep.models import LaunchPrepCreativeSet as S
+    return db.query(S).filter(S.deal_id == camp.deal_id).all()
+
+
+def _tgt_title(s) -> str:
+    from app.dsp.targeting_creative import title_of
+    return title_of(s)
+
+
 def list_unknown(db: Session, camp, *, dsp_client: Optional[MsClient] = None,
                  systems=SYSTEMS) -> list:
     """Зависшие попытки по РК — с тем, что искать в чужом кабинете."""
@@ -102,14 +123,26 @@ def list_unknown(db: Session, camp, *, dsp_client: Optional[MsClient] = None,
             if f"cr{x.id}" in hung:
                 out.append({"system": "dsp", "ref": f"cr{x.id}", "what": "креатив",
                             "label": x.ms_title, "since": None, "checked": True})
+        # Копии нацеливания этой сделки (аудит 01.10.2026, В-5): их `Creative.add` без
+        # ответа запирает повтор, а снять отметку больше негде.
+        tcl = _tgt_client(db)
+        sets = _tgt_sets(db, camp) if tcl else []
+        if sets:
+            hung_t = tcl.unknown_refs("Creative.add", "creative", [f"tgt{s.id}" for s in sets])
+            for s in sets:
+                if f"tgt{s.id}" in hung_t:
+                    out.append({"system": "dsp", "ref": f"tgt{s.id}", "what": "копия нацеливания",
+                                "label": _tgt_title(s), "since": None, "checked": True})
     return out
 
 
 def _hash_taken(db: Session, xx: str) -> bool:
     """Хеш уже записан за какой-то нашей РК или креативом."""
+    from app.launch_prep.models import LaunchPrepCreativeSet as S
     return bool(db.query(AdCampaign.id).filter(AdCampaign.ms_campaign_xxhash == xx).first()
                 or db.query(AdCampaignCreative.id)
-                .filter(AdCampaignCreative.ms_creative_xxhash == xx).first())
+                .filter(AdCampaignCreative.ms_creative_xxhash == xx).first()
+                or db.query(S.id).filter(S.ms_targeting_creative_xxhash == xx).first())
 
 
 def resolve(db: Session, camp, system: str, ref: str, *, found: bool,
@@ -125,6 +158,9 @@ def resolve(db: Session, camp, system: str, ref: str, *, found: bool,
     if system == "weborama":
         with only_one(WEBORAMA_PROVISION, camp.deal_id, ResolveError, "Заведение в Weborama"):
             return _resolve_wb(db, camp, ref, found, external_id, user, who, wcm_client)
+    if system == "dsp" and ref.startswith("tgt"):
+        with only_one(DSP_PROVISION, camp.id, ResolveError, "Выгрузка в DSP"):
+            return _resolve_tgt(db, camp, ref, found, external_id, who)
     if system == "dsp":
         with only_one(DSP_PROVISION, camp.id, ResolveError, "Выгрузка в DSP"):
             return _resolve_dsp(db, camp, ref, found, external_id, who,
@@ -235,6 +271,45 @@ def _resolve_dsp(db, camp, ref, found, external_id, who, c: MsClient) -> dict:
     if c.unknown_outcome(method, et, local):
         raise ResolveError("Отметка не записалась в журнал DSP — попробуйте ещё раз")
     return {"system": "dsp", "ref": ref, "found": bool(found), "id": xx}
+
+
+def _resolve_tgt(db, camp, ref, found, external_id, who) -> dict:
+    """Сверка копии нацеливания — по образцу `_resolve_dsp`, но в кабинете нацеливания."""
+    c = _tgt_client(db)
+    s = next((x for x in _tgt_sets(db, camp) if f"tgt{x.id}" == ref), None) if c else None
+    if s is None:
+        raise ResolveError("Такой копии нацеливания без хеша у этой сделки нет — обновите экран")
+    method, et = "Creative.add", "creative"
+    if ref not in c.unknown_refs(method, et, [ref]):
+        raise ResolveError("По этой копии нет незавершённой попытки — обновите экран")
+    if found:
+        xx = (external_id or "").strip().upper()
+        if not XXHASH_RE.match(xx):
+            raise ResolveError("Хеш из кабинета DSP — 16 знаков: цифры и буквы A–F")
+        if _hash_taken(db, xx):
+            raise ResolveError(f"Хеш {xx} уже записан за другим нашим объектом")
+        try:
+            info = c.creative_get_info(xx)
+        except MsError as e:
+            raise ResolveError(f"DSP не знает объект {xx} — проверьте хеш: {e}")
+        got = info.get("title") if isinstance(info, dict) else None
+        # Сверяем начало имени — «НАЦЕЛИВАНИЕ · №комплекта ·»: название комплекта могли
+        # поменять после заведения, и настоящую находку из-за этого не отклоняем.
+        from app.dsp.targeting_creative import TITLE_PREFIX
+        head = f"{TITLE_PREFIX}{s.no} · "
+        if got and not got.startswith(head):
+            raise ResolveError(f"В DSP под хешом {xx} — «{got}», а мы заводили «{_tgt_title(s)}»")
+        c.journal_raw(method, et, ref, {"resolved_by": who}, {"resolved": "found"}, xx, True, None)
+        if c.unknown_outcome(method, et, ref):
+            raise ResolveError("Отметка не записалась в журнал DSP — попробуйте ещё раз")
+        s.ms_targeting_creative_xxhash, s.ms_targeting_at = xx, datetime.utcnow()
+        db.commit()
+        return {"system": "dsp", "ref": ref, "found": True, "id": xx}
+    c.journal_raw(method, et, ref, {"resolved_by": who}, {"resolved": "not_found"},
+                  None, False, f"сверено вручную ({who}): в кабинете нет")
+    if c.unknown_outcome(method, et, ref):
+        raise ResolveError("Отметка не записалась в журнал DSP — попробуйте ещё раз")
+    return {"system": "dsp", "ref": ref, "found": False, "id": None}
 
 
 __all__ = ["list_unknown", "resolve", "ResolveError"]

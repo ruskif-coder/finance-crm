@@ -16,7 +16,7 @@ import Link from 'next/link'
 import { overlayClose } from '@/lib/overlay'
 import Navbar from '../../components/Navbar'
 import SettingsTabs from '../../components/SettingsTabs'
-import { UI, MONO, card, inp, btn, btnSm, primaryBtn, th, td } from '../../components/salesTableKit'
+import { UI, MONO, card, inp, btn, btnSm, primaryBtn, th, td, Z } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import { can, getPermissions } from '../../lib/auth'
 import { fmtDateTime } from '../../lib/dates'
@@ -28,6 +28,37 @@ const TONE = {
   'исправлено': ['var(--income-tint)', 'var(--income)'],
   'не воспроизводится': ['var(--bg-subtle)', 'var(--text-muted)'],
   'не баг': ['var(--bg-subtle)', 'var(--text-muted)'],
+}
+
+// Снимок к баг-репорту. Голые <img>/<a> не несут заголовок авторизации, и ручка отвечала
+// 401 — снимки показывались битыми (аудит 01.10.2026, С-8). Грузим запросом с токеном и
+// показываем из памяти; щелчок открывает в новой вкладке тот же объект.
+// Снимок показываем, а не даём ссылкой: разбор начинается с того, что человек смотрит
+// на картинку, а не скачивает её.
+function BugShot({ url, name }) {
+  const [src, setSrc] = useState(null)
+  const [err, setErr] = useState(false)
+  useEffect(() => {
+    let href = null
+    let alive = true
+    api.get(url, { ...auth(), responseType: 'blob' })
+      .then(r => {
+        const u = URL.createObjectURL(r.data)
+        if (!alive) { URL.revokeObjectURL(u); return }   // окно закрыли, пока грузилось
+        href = u
+        setSrc(u)
+      })
+      .catch(() => { if (alive) setErr(true) })
+    return () => { alive = false; if (href) URL.revokeObjectURL(href) }
+  }, [url])
+  const box = { height: 120, minWidth: 90, borderRadius: 8, border: '1px solid var(--border-card)' }
+  if (err) return <span style={{ ...box, display: 'inline-flex', alignItems: 'center', padding: '0 12px', fontSize: 12, color: 'var(--text-muted)' }}>снимок не открылся</span>
+  if (!src) return <span style={{ ...box, display: 'inline-block', background: 'var(--bg-subtle)' }} />
+  return (
+    <a href={src} target="_blank" rel="noreferrer" style={{ display: 'block' }}>
+      <img src={src} alt={name || 'снимок'} style={box} onError={() => setErr(true)} />
+    </a>
+  )
 }
 
 export default function BugsPage() {
@@ -168,7 +199,7 @@ export default function BugsPage() {
 
         {open && (
           <div {...overlayClose(() => setOpen(null))}
-            style={{ position: 'fixed', inset: 0, background: 'rgba(20,26,38,.45)', zIndex: 200,
+            style={{ position: 'fixed', inset: 0, background: 'rgba(20,26,38,.45)', zIndex: Z.overlay,
               display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
               padding: '40px 16px', overflowY: 'auto' }}>
             <div style={{ ...card, width: 760, maxWidth: '100%', padding: 20 }}>
@@ -201,13 +232,7 @@ export default function BugsPage() {
               {(open.file_list || []).length > 0 && (
                 <div style={{ marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                   {open.file_list.map(f => (
-                    <a key={f.id} href={`/api/bugs/${open.id}/file/${f.id}`} target="_blank"
-                      rel="noreferrer" style={{ display: 'block' }}>
-                      {/* Снимок показываем, а не даём ссылкой: разбор начинается с того,
-                          что человек смотрит на картинку, а не скачивает её. */}
-                      <img src={`/api/bugs/${open.id}/file/${f.id}`} alt={f.name || 'снимок'}
-                        style={{ height: 120, borderRadius: 8, border: '1px solid var(--border-card)' }} />
-                    </a>
+                    <BugShot key={f.id} url={`/bugs/${open.id}/file/${f.id}`} name={f.name} />
                   ))}
                 </div>
               )}

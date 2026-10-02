@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { Z } from '@/components/salesTableKit'
 import api, { auth } from '../lib/api'
 import { overlayClose } from '@/lib/overlay'
 import { fmtDateTime } from '@/lib/dates'
@@ -82,7 +83,7 @@ export default function DealBriefCell({ deal, canEdit, v2, controlledOpen, onClo
 
       {open && (
         <div {...overlayClose(() => setOpen(false))}
-          style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(15,23,42,0.45)',
+          style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(15,23,42,0.45)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div onClick={(e) => e.stopPropagation()}
             style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)',

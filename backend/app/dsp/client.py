@@ -107,6 +107,18 @@ def _redact(v: Any) -> Any:
     return v
 
 
+_URL_RE = re.compile(r"https?://[^\s'\"<>]+")
+
+
+def safe_error(e: Exception) -> str:
+    """Текст сбоя без адреса DSP (аудит 01.10.2026, К-2). `repr` ошибки httpx несёт полный
+    URL — с именем поставщика, а у загрузки ещё и с токеном, — и уходил в журнал обмена и
+    в ответ «DSP отказал: …» на экран. Оставляем вид сбоя и код ответа."""
+    if isinstance(e, httpx.HTTPStatusError):
+        return f"HTTP {e.response.status_code}"
+    return _URL_RE.sub("<адрес DSP>", f"{e.__class__.__name__}: {e}")
+
+
 class MsClient:
     def __init__(self, url: Optional[str] = None, token: Optional[str] = None,
                  partner_xxhash: Optional[str] = None,
@@ -220,13 +232,20 @@ class MsClient:
             return None
         try:
             with self._engine().connect() as c:
+                # Только после последнего `Creative.add` ТЕКУЩЕГО клиента (аудит 01.10.2026,
+                # Н-6): у `edit` клиента в теле нет, а после смены клиента та же ссылка
+                # `cr<id>` несла бы лимит старого кабинета, и правка в новый не ушла бы.
                 v = c.execute(text(
                     "SELECT request->'params'->'limits'->'show'->>'total' FROM dsp_send_log "
                     "WHERE contour=:ct AND method IN ('Creative.add','Creative.edit') "
                     "AND local_ref=:lr AND ok "
                     "AND request->'params'->'limits'->'show' ? 'total' "
+                    "AND ts >= (SELECT max(a.ts) FROM dsp_send_log a "
+                    "            WHERE a.method = 'Creative.add' AND a.local_ref = :lr AND a.ok "
+                    "              AND a.contour = :ct "
+                    "              AND a.request->'params'->>'partner_xxhash' IS NOT DISTINCT FROM :px) "
                     "ORDER BY ts DESC LIMIT 1"),
-                    dict(ct=self.contour, lr=str(local_ref))).scalar()
+                    dict(ct=self.contour, lr=str(local_ref), px=self.partner_xxhash)).scalar()
             return int(float(v)) if v not in (None, "") else None
         except Exception as e:  # noqa: BLE001
             log.warning("dsp_send_log: чтение лимита не удалось (%s)", e)
@@ -296,7 +315,7 @@ class MsClient:
             if not isinstance(resp, dict):
                 raise MsError(f"{method}: ответ не JSON-объект: {str(resp)[:200]}")
             if resp.get("error"):
-                err = json.dumps(resp["error"], ensure_ascii=False)
+                err = _URL_RE.sub("<адрес DSP>", json.dumps(resp["error"], ensure_ascii=False))
                 raise MsError(f"{method}: {err}")
             result = resp.get("result")
             ok = True
@@ -304,14 +323,22 @@ class MsClient:
         except MsError:
             raise
         except Exception as e:
-            err = repr(e)
+            err = safe_error(e)
             # 4xx — это ОТВЕТ: DSP отказал, объект не создан. Кладём его в журнал, чтобы
             # строка не читалась как «ушло без ответа» и не запирала повтор зря.
             if isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500:
                 resp = {"http_status": e.response.status_code,
-                        "body": e.response.text[:500]}
+                        "body": _URL_RE.sub("<адрес DSP>", e.response.text[:500])}
             raise MsError(f"{method}: {err}") from e
         finally:
+            # Ответ `getUploadFileUrl` — сам адрес загрузки с токеном (аудит 01.10.2026,
+            # К-3): в журнал — без него, он виден во вкладке «Логи».
+            if method == "Upload.getUploadFileUrl" and isinstance(resp, dict) and "result" in resp:
+                resp = {**resp, "result": "<адрес загрузки DSP>"}
+            # Текст отказа DSP лежит и в сохранённом ответе — под ту же маску адреса.
+            if isinstance(resp, dict) and resp.get("error"):
+                resp = {**resp, "error": json.loads(_URL_RE.sub(
+                    "<адрес DSP>", json.dumps(resp["error"], ensure_ascii=False)))}
             self._journal(method, entity_type, local_ref, body, resp,
                           _extract_xxhash(result) if ok else None, ok, err)
 

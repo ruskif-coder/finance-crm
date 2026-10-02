@@ -97,16 +97,7 @@ def unpack(archive_path: str, uploads_root: str) -> Tuple[str, str]:
         infos = [i for i in zf.infolist() if not i.is_dir()]
         if not infos:
             raise SandboxError("Архив пуст")
-        if len(infos) > MAX_FILES:
-            raise SandboxError(
-                f"В архиве {len(infos)} файлов — это больше похоже на проект, "
-                f"чем на баннер (предел {MAX_FILES})")
-
-        declared = sum(i.file_size for i in infos)
-        if declared > MAX_TOTAL_BYTES:
-            raise SandboxError(
-                f"Распакованный архив занял бы {declared // 1024 // 1024} МБ "
-                f"(предел {MAX_TOTAL_BYTES // 1024 // 1024} МБ)")
+        _check_limits(infos)
 
         keep = [i for i in infos
                 if os.path.splitext(i.filename)[1].lower() in ALLOWED_INNER]
@@ -245,6 +236,24 @@ def _fix_links(html: str) -> Tuple[str, bool]:
     return _HREF_RE.sub(sub, html), changed
 
 
+def _check_limits(infos) -> None:
+    """Пределы распаковки — одни для песочницы и для подготовки к DSP (аудит 01.10.2026,
+    Н-5: демо-экран DSP читал архив целиком без предела — zip-бомба съела бы память)."""
+    if len(infos) > MAX_FILES:
+        raise SandboxError(
+            f"В архиве {len(infos)} файлов — это больше похоже на проект, "
+            f"чем на баннер (предел {MAX_FILES})")
+    declared = sum(i.file_size for i in infos)
+    if declared > MAX_TOTAL_BYTES:
+        raise SandboxError(
+            f"Распакованный архив занял бы {declared // 1024 // 1024} МБ "
+            f"(предел {MAX_TOTAL_BYTES // 1024 // 1024} МБ)")
+    big = next((i for i in infos if i.file_size > MAX_SINGLE_BYTES), None)
+    if big:
+        raise SandboxError(f"Файл {big.filename} внутри архива больше "
+                           f"{MAX_SINGLE_BYTES // 1024 // 1024} МБ")
+
+
 def prepare_for_dsp(data: bytes) -> Tuple[bytes, list]:
     """Архив, готовый для DSP. `(байты, что поправлено)` — список из 'ad.size' / 'link' /
     'root' (точка входа поднята из вложенной папки в корень архива) / 'mac' (убран
@@ -270,6 +279,7 @@ def prepare_for_dsp(data: bytes) -> Tuple[bytes, list]:
         return data, []
     with src:
         infos = [i for i in src.infolist() if not i.is_dir()]
+        _check_limits(infos)
         entry = _pick_entry([i.filename for i in infos])
         if not entry:
             return data, []

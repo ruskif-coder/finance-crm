@@ -9,8 +9,10 @@ const CounterpartyCardMobile = dynamic(() => import('@/components/mobile/Counter
 import CounterpartyCardDesktop, { T as CT } from '@/components/counterparty/CounterpartyCard'
 import { makeApi as api } from '@/lib/http'
 import { bankColor } from '@/lib/salesFormat'
+import { Z } from '@/components/salesTableKit'
+import { isAdmin as isAdminRole } from '@/lib/auth'
 import { overlayClose } from '@/lib/overlay'
-import { fmtDate as fmtCalendarDate } from '@/lib/dates'
+import { fmtDate as fmtCalendarDate, daysUntil } from '@/lib/dates'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { errText } from '@/lib/loadError'
 
@@ -31,9 +33,9 @@ const fmtMonth = (p) => {
 function parseEndDate(s) {
   if (!s) return null
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
-  if (m) return new Date(+m[1], +m[2] - 1, +m[3])
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`
   m = /^(\d{2})\.(\d{2})\.(\d{4})/.exec(s)
-  if (m) return new Date(+m[3], +m[2] - 1, +m[1])
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`
   return null
 }
 
@@ -41,7 +43,7 @@ function parseEndDate(s) {
 function contractExpiry(endDateText) {
   const d = parseEndDate(endDateText)
   if (!d) return null
-  const days = Math.ceil((d - new Date()) / 86400000)
+  const days = daysUntil(d)
   if (days < 0) return { label: 'истёк', bg: 'var(--danger-tint)', color: 'var(--dot-overdue)' }
   if (days <= 30) return { label: `${days} дн.`, bg: '#FEF3C7', color: '#D97706' }
   return null
@@ -93,7 +95,7 @@ export default function CounterpartyCard() {
 
   useEffect(() => {
     const isAdmin = localStorage.getItem('is_admin') === '1'
-      || localStorage.getItem('role') === 'admin'
+      || isAdminRole()
     if (isAdmin) { setCanEdit(true); setCanViewOps(true); return }
     try {
       const perms = JSON.parse(localStorage.getItem('permissions') || '{}')
@@ -432,7 +434,7 @@ export default function CounterpartyCard() {
           const lbl = { fontSize: 11, color: CT.t3, marginBottom: 3 }
           const opts = (type) => (articles || []).filter(a => a.type === type)
           return (
-            <div {...overlayClose(() => setDefEdit(false))} style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(28,36,51,.4)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '40px 20px', fontFamily: CT.sans }}>
+            <div {...overlayClose(() => setDefEdit(false))} style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(28,36,51,.4)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '40px 20px', fontFamily: CT.sans }}>
               <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 520, background: CT.card, borderRadius: 18, boxShadow: CT.shadow }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 24px', borderBottom: `1px solid ${CT.border}` }}>
                   <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.02em', color: CT.t1 }}>Условия по умолчанию</span>
@@ -496,7 +498,7 @@ export default function CounterpartyCard() {
             </div>
           )
           return (
-            <div {...overlayClose(() => { setEditMode(false); setSaveErr('') })} style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(28,36,51,.4)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '40px 20px', fontFamily: CT.sans }}>
+            <div {...overlayClose(() => { setEditMode(false); setSaveErr('') })} style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(28,36,51,.4)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '40px 20px', fontFamily: CT.sans }}>
               <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 620, background: CT.card, borderRadius: 18, boxShadow: CT.shadow }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 24px', borderBottom: `1px solid ${CT.border}` }}>
                   <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.02em', color: CT.t1 }}>Редактирование реквизитов</span>

@@ -7,6 +7,7 @@
 Страница строится ИЗ реестра (app/notify/registry.py) — новое событие появляется
 в интерфейсе само, без правки фронта. См. docs/mockup_notifications.html.
 """
+import hmac
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -408,7 +409,7 @@ def tg_webhook(secret: str, update: Dict[str, Any], bg: BackgroundTasks,
     накопилось 13 неотданных обновлений.
     """
     expected = os.getenv("TELEGRAM_WEBHOOK_SECRET") or ""
-    if not expected or secret != expected:
+    if not expected or not hmac.compare_digest(secret.encode(), expected.encode()):   # Н-9: без утечки по времени
         raise HTTPException(status_code=404, detail="Not found")
 
     handle_staff_update(db, update, lambda cid, txt: bg.add_task(_reply_later, cid, txt))

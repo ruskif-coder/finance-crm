@@ -3,6 +3,7 @@ import Head from 'next/head'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import Navbar, { firstAllowedHref } from '../../components/Navbar'
+import { isAdmin } from '../../lib/auth'
 import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsTabs'
 import { MONO, UI, card, sel, th, td, LoadError } from '../../components/salesTableKit'
 import { errText, isAuth } from '@/lib/loadError'
@@ -34,7 +35,7 @@ export default function SettingsAudit() {
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }
-    if (!settingsSectionAllowed('audit')) { let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}; router.push(firstAllowedHref(p, localStorage.getItem('role'))); return }
+    if (!settingsSectionAllowed('audit')) { let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}; router.push(firstAllowedHref(p, isAdmin())); return }
     // При маунте грузим и журнал, и список пользователей (для фильтра «по пользователю»).
     loadUsers()
     loadAuditLog(0, auditFilters)

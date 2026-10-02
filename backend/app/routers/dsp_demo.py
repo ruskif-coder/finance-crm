@@ -180,7 +180,9 @@ def state(db: Session = Depends(get_db), user: User = Depends(VIEW)):
         # Экран обязан сказать это первым: в боевом кабинете кампании создаются настоящие.
         "cabinet": creds["cabinet"] if creds else None,
         "title_prefix": dsp_campaigns.DEMO_TITLE_PREFIX,
-        "url": creds["url"] if creds else None,
+        # Сам адрес не отдаём: в нём имя поставщика (аудит 01.10.2026, К-2). Экрану
+        # достаточно знать, задан ли он.
+        "url_set": bool(creds and creds.get("url")),
         "partner": _mask(creds["partner"] if creds else None),
         "env": {"token": ENV_TOKEN, "partner": ENV_PARTNER, "url": ENV_URL},
         "source_keys": {"web": source_key(db, "web"), "app": source_key(db, "app")},

@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
+import { isAdmin } from '@/lib/auth'
+import { Z } from '@/components/salesTableKit'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
@@ -67,7 +69,7 @@ export default function MpEditor() {
   useEffect(() => {
     if (typeof window === 'undefined' || !id) return
     if (!localStorage.getItem('token')) { router.push('/login'); return }
-    const _isAdm = localStorage.getItem('role') === 'admin'
+    const _isAdm = isAdmin()
     if (!_isAdm) {
       let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}
       if (!can(p, 'media_plans_editor', 'view')) { router.replace('/accounts/mp'); return }
@@ -272,7 +274,7 @@ export default function MpEditor() {
         const money = grp   // общий форматтер, не своя копия
         const pgBtn = (off) => ({ padding: '5px 11px', borderRadius: 8, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: off ? 'var(--text-faint)' : 'var(--text-primary)', cursor: off ? 'default' : 'pointer', fontSize: 14, fontWeight: 700, lineHeight: 1 })
         return (
-        <div {...overlayClose(() => setLinkOpen(false))} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        <div {...overlayClose(() => setLinkOpen(false))} style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, width: 'min(1040px, 97vw)', padding: '20px 22px', boxShadow: '0 24px 64px rgba(28,36,51,.22)', display: 'flex', flexDirection: 'column', maxHeight: '88vh' }}>
             <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>Привязать к сделке</div>
             <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 12 }}>

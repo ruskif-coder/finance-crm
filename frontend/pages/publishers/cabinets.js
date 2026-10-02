@@ -33,6 +33,7 @@ import { MONO, UI, card, CAP, btn, btnSm, inp, sel, chip, ROW_TONE, Modal, PickV
 import ValuePopover from '@/components/ValuePopover'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { isAdmin as isAdminNow } from '@/lib/auth'
 import { TONE, toneOf } from '@/lib/tone'
 import { CABINET_STATES, cabinetState } from '@/lib/cabinetState'
 import safeHref from '@/lib/safeHref'
@@ -845,7 +846,7 @@ export default function CabinetsPage() {
   useRefreshOnReturn(() => load())
   useEffect(() => {
     setMayEdit(can(getPermissions(), 'dir_publishers_cabinets', 'edit'))
-    try { setIsAdmin(localStorage.getItem('role') === 'admin') } catch { setIsAdmin(false) }
+    try { setIsAdmin(isAdminNow()) } catch { setIsAdmin(false) }
   }, [])
 
   const load = useCallback(async () => {

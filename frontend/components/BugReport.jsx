@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from 'react'
 import api, { auth } from '../lib/http'
 import { overlayClose } from '../lib/overlay'
-import { UI, MONO, card, inp, primaryBtn, btn } from './salesTableKit'
+import { UI, MONO, card, inp, primaryBtn, btn, Z } from './salesTableKit'
 
 const MAX_FILES = 5
 const MAX_MB = 10
@@ -108,7 +108,7 @@ export default function BugReport({ size = 32 }) {
       {open && (
         <div {...overlayClose(close)}
           style={{
-            position: 'fixed', inset: 0, background: 'rgba(20,26,38,.45)', zIndex: 300,
+            position: 'fixed', inset: 0, background: 'rgba(20,26,38,.45)', zIndex: Z.overlay,
             display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
             padding: '60px 16px', fontFamily: UI,
           }}>

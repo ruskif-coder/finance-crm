@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { can } from './Navbar'
+import { isAdmin } from '@/lib/auth'
 
 // Брейкпоинт мобильного вида — как в Nav.js.
 const BP = 1024
@@ -41,7 +42,7 @@ function readPerms() {
   if (typeof window === 'undefined') return { perms: {}, isAdmin: false }
   let perms = {}
   try { perms = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}
-  return { perms, isAdmin: localStorage.getItem('role') === 'admin' }
+  return { perms, isAdmin: isAdmin() }
 }
 
 // Видимость раздела: adminOnly → только админ; иначе по праву settings_* (can байпасит admin).

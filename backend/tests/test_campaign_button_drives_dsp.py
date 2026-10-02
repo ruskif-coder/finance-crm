@@ -75,7 +75,7 @@ def _no_volume_guard(monkeypatch):
     # Креативы проверяются своим прибором (test_dsp_creatives_follow): поддельная база
     # здесь запросов к ним не умеет.
     from app.dsp import campaigns as _camps
-    monkeypatch.setattr(_camps, "follow_creatives", lambda *a, **k: {})
+    monkeypatch.setattr(_camps, "follow_creatives", lambda *a, **k: ({}, []))
     # Перевод сделки по стадии проверяется в tests/test_rk_start_plan.py: каталога
     # стадий у поддельной базы нет.
     monkeypatch.setattr(td.build, "unmark_target_placed", lambda db, p: 0)
@@ -97,7 +97,7 @@ def press(monkeypatch):
     monkeypatch.setattr(td, "_campaign_in_scope",
                         lambda db, cid, u: (state["camp"], SimpleNamespace(id=1, our_stage_id=None)))
     monkeypatch.setattr(td, "log_action", lambda *a, **kw: None)
-    monkeypatch.setattr(td, "_tell_publishers_started", lambda db, c: None)
+    monkeypatch.setattr(td, "_tell_publishers_started", lambda *a, **k: None)
     # Готовность к DSP (29.09.2026): РК с хешем выгружена, без хеша — нет; DSP нужна.
     monkeypatch.setattr(td, "dsp_not_ready",
                         lambda db, c: None if c.ms_campaign_xxhash else td.DSP_NOT_READY)

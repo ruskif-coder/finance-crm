@@ -3,7 +3,7 @@ import Head from 'next/head'
 import api, { auth } from '@/lib/http'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '@/components/Navbar'
-import { MONO, UI, IconBtn, inp, inpSm, selSm, btn, btnSm } from '@/components/salesTableKit'
+import { MONO, UI, Z, IconBtn, inp, inpSm, selSm, btn, btnSm } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const ContractsMobile = dynamic(() => import('@/components/mobile/ContractsMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
@@ -83,7 +83,7 @@ function CounterpartySearch({ counterparties, value, onChange, onCreateNew }) {
         {selected ? selected.name : '— выберите контрагента —'}
       </div>
       {open && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, minWidth: '260px', marginTop: '4px', background: 'white', border: '1px solid #d1d5db', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', zIndex: 500, maxHeight: '280px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ position: 'absolute', top: '100%', left: 0, minWidth: '260px', marginTop: '4px', background: 'white', border: '1px solid #d1d5db', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', zIndex: Z.dropdown, maxHeight: '280px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '8px', borderBottom: '1px solid #f3f4f6' }}>
             <input autoFocus placeholder="Поиск контрагента…" value={search} onChange={e => setSearch(e.target.value)}
               style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '13px', outline: 'none' }} />
@@ -604,7 +604,7 @@ export default function Contracts() {
 
         {/* Превью импорта */}
         {importPreview && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: Z.overlay,
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
             <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-card)',
               padding: 24, maxWidth: 820, width: '100%', maxHeight: '80vh', overflow: 'auto',

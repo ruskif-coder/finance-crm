@@ -162,7 +162,7 @@ BALANCE_EDITABLE = ("volume", "depth", "requests", "sw_visits", "sw_ppv", "sw_br
                     "index_manual", "is_locked", "note")
 
 BLOCK_COLS = [("publisher", "Площадка"), ("code", "Наш код"), ("surface", "Поверхность"),
-              ("ms_publisher_id", "ID паблишера в МС"), ("ms_block_id", "ID блока"),
+              ("platform", "Платформа"), ("ms_publisher_id", "ID паблишера в МС"), ("ms_block_id", "ID блока"),
               ("name", "Название в xoalt"), ("page_type", "Раздел"),
               ("network", "Сеть"), ("is_active", "Активен")]
 
@@ -236,6 +236,7 @@ def balancer_import(file: UploadFile = File(...), db: Session = Depends(get_db),
                                  "загружайте файл, полученный выгрузкой")
 
     applied = skipped = 0
+    valid_ids = {r[0] for r in db.execute(text("SELECT id FROM sales_publishers"))}
     for row in ws.iter_rows(min_row=2, values_only=True):
         def cell(key, _row=row):
             i = pos.get(key)
@@ -245,7 +246,16 @@ def balancer_import(file: UploadFile = File(...), db: Session = Depends(get_db),
         if not pid or scope not in balance.SCOPES:
             skipped += 1
             continue
-        pid = int(pid)
+        # Текст, дробь, «inf», ноль или чужой id в колонке ID — ряд пропускаем, а не роняем
+        # весь файл 500-й и не пишем в чужую площадку (аудит 01.10.2026, С-11).
+        try:
+            f = float(str(pid).strip())
+        except (ValueError, OverflowError):
+            f = 0.0
+        if not f.is_integer() or f <= 0 or int(f) not in valid_ids:
+            skipped += 1
+            continue
+        pid = int(f)
         vol, dep, req = _num(cell("volume")), _num(cell("depth")), _num(cell("requests"))
         if vol is not None or dep is not None:
             balance.upsert_measurement(db, pid, scope, vol, dep, source="import")
@@ -277,13 +287,13 @@ def balancer_import(file: UploadFile = File(...), db: Session = Depends(get_db),
 @router.get("/blocks/export")
 def blocks_export(db: Session = Depends(get_db), user: User = Depends(VIEW)):
     rows = db.execute(text("""
-        SELECT p.name AS publisher, p.code, s.kind AS surface, s.ms_publisher_id,
+        SELECT p.name AS publisher, p.code, s.kind AS surface, b.platform, s.ms_publisher_id,
                b.ms_block_id, b.name, b.page_type, b.network, b.is_active
         FROM publisher_block b
         JOIN sales_publisher_surfaces s ON s.id = b.surface_id
         JOIN sales_publishers p ON p.id = b.publisher_id
         WHERE p.status <> :arch
-        ORDER BY lower(p.name), s.kind, b.page_type, b.ms_block_id
+        ORDER BY lower(p.name), s.kind, b.platform NULLS LAST, b.page_type, b.ms_block_id
     """), {"arch": PUBLISHER_ARCHIVE_STATUS}).mappings().all()
     out = [[("да" if r["is_active"] else "") if k == "is_active" else r[k]
             for k, _ in BLOCK_COLS] for r in rows]

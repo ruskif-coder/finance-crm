@@ -1,3 +1,4 @@
+import { Z } from './salesTableKit'
 /**
  * Техобслуживание на стороне экрана: полоса предупреждения и заглушка.
  *
@@ -112,7 +113,7 @@ export function MaintenanceStub({ state }) {
   if (!state || state.mode !== 'active' || state.passes) return null
   return (
     <div style={{
-      position: 'fixed', inset: 0, zIndex: 900, background: 'var(--bg-canvas)',
+      position: 'fixed', inset: 0, zIndex: Z.toast - 1, background: 'var(--bg-canvas)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
       textAlign: 'center',
     }}>

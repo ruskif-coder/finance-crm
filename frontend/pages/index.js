@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { firstAllowedHref } from '../lib/nav'
+import { isAdmin as isAdminNow } from '../lib/auth'
 
 export default function Home() {
   const router = useRouter()
@@ -8,7 +9,7 @@ export default function Home() {
     const token = localStorage.getItem('token')
     if (token) {
       let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}
-      const isAdmin = localStorage.getItem('role') === 'admin'
+      const isAdmin = isAdminNow()
       router.push(firstAllowedHref(p, isAdmin))
     } else {
       router.push('/login')

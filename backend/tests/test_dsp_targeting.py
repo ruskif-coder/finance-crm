@@ -43,10 +43,12 @@ def test_geo_default_is_russia_plus_crimea():
     }
 
 
-def test_source_uses_bid_start_like_the_document_sample():
+def test_source_carries_bid_rate_1_and_bid_start():
+    """Правка DSP 02.10.2026: без `bid_rate` DSP читает его как 0 — источник отдаёт
+    `bid_rate: 1`, как все остальные таргетинги, а ставку по-прежнему в `bid_start`."""
     assert tg.source_items(["x-simb-web", "xoalt_simb", "x-simb-web"], 100) == {
-        "x-simb-web": {"is_checked": True, "bid_start": 100},
-        "xoalt_simb": {"is_checked": True, "bid_start": 100},
+        "x-simb-web": {"is_checked": True, "bid_rate": 1, "bid_start": 100},
+        "xoalt_simb": {"is_checked": True, "bid_rate": 1, "bid_start": 100},
     }
 
 

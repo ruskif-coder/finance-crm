@@ -16,7 +16,7 @@
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api, { auth } from '@/lib/api'
-import { MONO, UI, inp, btn, PickValue, EXT_TONE, ExtChip, Modal, PortalPopover } from '@/components/salesTableKit'
+import { MONO, UI, Z, inp, btn, PickValue, EXT_TONE, ExtChip, Modal, PortalPopover } from '@/components/salesTableKit'
 import BrandMarkingDialog, { saveBrandMarking, BRAND_MARKING_SAVED } from '../ord/BrandMarking'
 import ValuePopover from '@/components/ValuePopover'
 import { overlayClose } from '@/lib/overlay'
@@ -31,7 +31,7 @@ import { aimTone, issueAim, RESTART_NOTE } from '@/lib/aimTab'
 const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
 const BOX = { border: '1px solid var(--border-card)', borderRadius: 14, padding: '14px 16px', background: 'var(--bg-card)' }
 const SHEET = { background: 'var(--bg-card)', borderRadius: 'var(--radius-card)', padding: '20px 22px', width: 'min(680px, 96vw)', maxHeight: '86vh', overflowY: 'auto', boxShadow: 'var(--shadow-card)' }
-const OVERLAY = { position: 'fixed', inset: 0, background: 'rgba(16,20,30,.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }
+const OVERLAY = { position: 'fixed', inset: 0, background: 'rgba(16,20,30,.45)', zIndex: Z.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }
 
 /* Форма распространения — значения ОРД. На экране они читаются как есть, кроме одного:
    «BannerHtml5» слипается в одно слово, а это две вещи — баннер и его формат. */
@@ -142,9 +142,24 @@ function TechRequirements({ target, onClose }) {
   )
 }
 
+/* Посадочная для глаз: у диплинка SDK — его веб-адрес из primaryUrl с пометкой, иначе
+   адрес без схемы (02.10.2026). Целиком строка — в подсказке ссылки. */
+const landingLabel = (u) => {
+  const m = /^deeplink\+:\/\/[^?]*\?(?:.*&)?primaryUrl=([^&]+)/i.exec(u || '')
+  if (m) {
+    try {
+      const b = decodeURIComponent(m[1]).replace(/-/g, '+').replace(/_/g, '/')
+      return `диплинк · ${new TextDecoder().decode(Uint8Array.from(atob(b), (c) => c.charCodeAt(0))).replace(/^https?:\/\//, '')}`
+    } catch { return 'диплинк SDK' }
+  }
+  return String(u || '').replace(/^https?:\/\//, '')
+}
+
 /* ── запрос ссылки у площадки ───────────────────────────────────────────── */
 function UrlRequestDialog({ target, onDone, onClose }) {
-  const [text, setText] = useState(target.url_request_text || '')
+  // Какую ссылку принимает площадка — сразу в текст запроса (владелец 02.10.2026): его
+  // увидит площадка в письме и в кабинете, у поля, куда вставляет ссылку.
+  const [text, setText] = useState(target.url_request_text || target.landing_hint || '')
   const [phrases, setPhrases] = useState([])
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -1227,7 +1242,9 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
       {editing ? (
         <span style={{ gridColumn: '4 / -1', display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
           <input autoFocus value={url}
-            placeholder={r.url_state === 'запрошена' ? 'ждём ответа площадки' : 'https://…'}
+            placeholder={r.url_state === 'запрошена' ? 'ждём ответа площадки'
+              : (r.landing_hint && r.landing_hint.includes('deeplink+') ? 'deeplink+://navigate?primaryUrl=…' : 'https://…')}
+            title={r.landing_hint || undefined}
             onChange={e => { setUrl(e.target.value); if (urlErr) setUrlErr('') }}
             onBlur={commit}
             onKeyDown={e => {
@@ -1238,6 +1255,11 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
               border: `1px solid ${CB.border}`, borderRadius: 8, background: CB.card, color: CB.t1,
               fontFamily: MONO, fontSize: 11.5, outline: 'none' }} />
           {!!urlErr && <span style={{ fontSize: 10.5, color: CB.danger, whiteSpace: 'nowrap' }}>{urlErr}</span>}
+          {/* Подсказка формата площадки — не запрет (владелец 02.10.2026). */}
+          {!urlErr && !!r.landing_hint && (
+            <span title={r.landing_hint} style={{ fontSize: 10.5, color: CB.t4, whiteSpace: 'nowrap',
+              overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260 }}>{r.landing_hint}</span>
+          )}
         </span>
       ) : (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
@@ -1245,7 +1267,7 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
             <a href={safeHref(r.advertiser_url)} target="_blank" rel="noreferrer" title={r.advertiser_url}
               style={{ fontFamily: MONO, fontSize: 11, color: CB.t2, minWidth: 0, overflow: 'hidden',
                 textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'none' }}>
-              {r.advertiser_url.replace(/^https?:\/\//, '')}
+              {landingLabel(r.advertiser_url)}
             </a>
           ) : (
             <span onClick={() => { if (canEdit) setEditing(true) }}

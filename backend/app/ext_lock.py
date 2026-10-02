@@ -26,10 +26,11 @@ WEBORAMA_PROVISION = 7304
 MAIL_FLUSH = 7305          # досылка писем — один прогон за раз
 OUTWARD_DIGEST = 7306      # дайджест площадкам — один прогон за раз
 STAFF_DISPATCH = 7307      # досылка уведомлений сотрудникам — один прогон за раз
+WEBORAMA_DEMO = 7308       # демо Weborama: создание объекта — по одному (аудит 01.10.2026, С-7)
 
 
 @contextmanager
-def only_one(kind: int, obj_id: int, busy_error, what: str):
+def only_one(kind: int, obj_id: int, busy_error, what: str, where: str = "по этой РК"):
     """Пропустить внутрь один проход на `(kind, obj_id)`; второму — `busy_error`."""
     from app.database import engine
 
@@ -39,7 +40,7 @@ def only_one(kind: int, obj_id: int, busy_error, what: str):
                            {"a": kind, "b": int(obj_id)}).scalar()
         conn.commit()
         if not got:
-            raise busy_error(f"{what} по этой РК уже идёт — дождитесь окончания "
+            raise busy_error(f"{what} {where} уже идёт — дождитесь окончания "
                              f"и обновите экран")
         try:
             yield

@@ -3,7 +3,7 @@ import Head from 'next/head'
 import api, { auth } from '@/lib/http'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '@/components/Navbar'
-import { MONO, UI, IconBtn, inp, btn, cell, headCell } from '@/components/salesTableKit'
+import { MONO, UI, Z, IconBtn, inp, btn, cell, headCell } from '@/components/salesTableKit'
 import { overlayClose } from '@/lib/overlay'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
@@ -563,7 +563,7 @@ export default function Advertisers() {
                           <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--muted)', cursor: 'pointer' }}
                             onClick={() => setMoveBrand(null)}>отмена</span>
                           {moveQuery.trim() && (
-                            <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 10, marginTop: 2,
+                            <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: Z.dropdown, marginTop: 2,
                               background: 'var(--bg-card)', border: '1px solid var(--border-card)',
                               borderRadius: 'var(--radius-card-sm)', boxShadow: 'var(--shadow-card)',
                               maxHeight: 260, overflowY: 'auto', minWidth: 300 }}>
@@ -610,7 +610,7 @@ export default function Advertisers() {
                           <input autoFocus style={{ ...inp, width: 280 }} placeholder="поиск контрагента"
                             value={cpQueryAdv} onChange={e => setCpQueryAdv(e.target.value)} />
                           {cpQueryAdv.trim() && (
-                            <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 10, marginTop: 2,
+                            <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: Z.dropdown, marginTop: 2,
                               background: 'var(--bg-card)', border: '1px solid var(--border-card)',
                               borderRadius: 'var(--radius-card-sm)', boxShadow: 'var(--shadow-card)',
                               maxHeight: 240, overflowY: 'auto', minWidth: 280 }}>
@@ -681,7 +681,7 @@ export default function Advertisers() {
         {/* Плавающая панель действий над выбранными брендами */}
         {selAdvIds.length > 0 && (
           <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)',
-            zIndex: 50, background: 'var(--bg-card)', border: '1px solid var(--accent)',
+            zIndex: Z.dropdown, background: 'var(--bg-card)', border: '1px solid var(--accent)',
             borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-card)',
             padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 13, fontWeight: 600 }}>Выбрано производителей: {selAdvIds.length}</span>
@@ -705,7 +705,7 @@ export default function Advertisers() {
 
         {selIds.length > 0 && (
           <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)',
-            zIndex: 50, background: 'var(--bg-card)', border: '1px solid var(--accent)',
+            zIndex: Z.dropdown, background: 'var(--bg-card)', border: '1px solid var(--accent)',
             borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-card)',
             padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 13, fontWeight: 600 }}>Выбрано брендов: {selIds.length}</span>
@@ -720,7 +720,7 @@ export default function Advertisers() {
                 <input autoFocus style={{ ...inp, width: 300 }} placeholder="перенести к рекламодателю — поиск"
                   value={bulkQuery} onChange={e => setBulkQuery(e.target.value)} />
                 {bulkQuery.trim() && (
-                  <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 2, zIndex: 60,
+                  <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 2, zIndex: Z.dropdown,
                     background: 'var(--bg-card)', border: '1px solid var(--border-card)',
                     borderRadius: 'var(--radius-card-sm)', boxShadow: 'var(--shadow-card)',
                     maxHeight: 240, overflowY: 'auto', minWidth: 300 }}>

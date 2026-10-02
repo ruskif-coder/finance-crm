@@ -16,7 +16,7 @@
    нет по построению внешнего контура. Правя список — правь оба файла одним заходом. */
 import { useEffect, useRef, useState } from 'react'
 import api, { auth } from '@/lib/api'
-import { MONO, btn } from '@/components/salesTableKit'
+import { MONO, Z, btn } from '@/components/salesTableKit'
 import { overlayClose } from '@/lib/overlay'
 
 export const STOCK_SIZES = [[240, 400], [300, 600], [640, 100], [970, 250],
@@ -30,7 +30,7 @@ const RATIO_PX = (ratio) => {
   return m ? [Number(m[1]), Number(m[2])] : null
 }
 const CAP = { fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }
-const OVERLAY = { position: 'fixed', inset: 0, background: 'rgba(16,20,30,.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }
+const OVERLAY = { position: 'fixed', inset: 0, background: 'rgba(16,20,30,.45)', zIndex: Z.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center' }
 const PILL = (on) => ({ cursor: 'pointer', fontFamily: MONO, fontSize: 11.5, fontWeight: 700,
   padding: '5px 12px', borderRadius: 100, textDecoration: 'none',
   border: `1px solid ${on ? 'var(--accent)' : 'var(--border-card)'}`,

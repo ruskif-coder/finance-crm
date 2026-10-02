@@ -66,6 +66,9 @@ class MailLog(Base):
     # как `ord_submissions.local_id` и `weborama_refs.local_id`.
     entity_type = Column(String(32))
     entity_id = Column(Integer)
+    # Площадка-адресат уведомления (С-6): отложенное письмо перепроверяет получателя
+    # именно этой площадки. Миграция 2026-10-02_first_start_and_mail_publisher.sql.
+    publisher_id = Column(Integer, ForeignKey("sales_publishers.id", ondelete="SET NULL"))
     user_id = Column(Integer, ForeignKey("users.id"))
     # Тихие часы площадки: письмо ждёт своего часа в журнале, а не теряется и не
     # будит ночью (миграция 2026-09-14_mail_send_after.sql). NULL — сразу.

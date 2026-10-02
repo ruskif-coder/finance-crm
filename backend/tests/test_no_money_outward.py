@@ -170,3 +170,63 @@ def test_the_screen_cuts_money_not_words():
     for money in (("стоимость", "1 200 ₽"), ("ставка", "150 руб"),
                   ("условия", "CPM 250"), ("итог", "1 200 ₽")):
         assert strip_money([money]) == [], money
+
+
+
+def _built_kind():
+    return next(k for k in kinds.KINDS if k.built)
+
+
+def test_деньги_в_свободном_тексте_не_уходят_ни_в_один_канал(monkeypatch):
+    """Аудит 01.10.2026, К-1: причина отзыва — свободный текст сотрудника — шла в тело
+    письма, бота и ленту мимо заслона: тот смотрел только плашки."""
+    from app.notify.outward import send
+    from app.mail import client as mailc
+    seen = {}
+    monkeypatch.setattr(send, "_enabled", lambda db, k: True)
+    monkeypatch.setattr(send, "_is_archived", lambda db, p: False)
+    monkeypatch.setattr(send, "_to_panel", lambda db, k, p, **kw: seen.setdefault("panel", kw))
+    monkeypatch.setattr(send, "_to_bot", lambda db, kind, p, **kw: seen.setdefault("tg", kw))
+    monkeypatch.setattr(mailc, "configured", lambda: False)
+    send.notify_publisher(None, _built_kind().key, 1, title="Отозван: цена 120 000 ₽",
+                          body="Мы отозвали материал. Причина: снят из-за цены 120 000 ₽.",
+                          context="site.ru · Магне · 10.2026", facts=[("причина", "дорого, 5 000 руб")])
+    for ch in ("panel", "tg"):
+        blob = " ".join(str(v) for v in seen[ch].values()).lower()
+        assert "₽" not in blob and "120 000" not in blob, (ch, blob)
+    assert seen["tg"]["title"] and seen["tg"]["context"] == "site.ru · Магне · 10.2026"
+
+
+def test_суммы_ловятся_слова_нет():
+    from app.notify.outward.send import has_amount
+    leaks = ("цена 120 000", "бюджет 500000", "за 150руб", "120 000 р.", "120 тыс", "120к",
+             "1,5 млн", "eCPM 90", "итого 1 200 ₽", "$500", "скидка 15%", "стоимость: 90",
+             "100 рублей", "дорого, 120 тысяч")
+    words = ("Оплата отправлена", "Документы лежат в ЭДО без подписи — оплата ждёт их.",
+             "Ван тач выгодная цена", "Платёж вернулся — оплата стоит", "не подходит рубрика",
+             "Рубин · 10.2026", "за рубежом", "ЕРИД 2SDnjdg8wQw", "креатив №3 на 240x400",
+             "Доставка креатива 01.10", "Ставки на спорт · 10.2026")
+    assert [x for x in leaks if not has_amount(x)] == []
+    assert [x for x in words if has_amount(x)] == []
+
+
+def test_текст_без_сумм_не_трогается():
+    from app.notify.outward import send
+    assert send.strip_money_text("Креатив ждёт решения", "Оплата отправлена",
+                                 fallback_title="x") == ("Креатив ждёт решения", "Оплата отправлена")
+    assert send.strip_money_text("цена 120 000", "бюджет 5 млн", fallback_title="x") == (
+        "x", "Подробности — в кабинете.")
+
+
+def test_отзыв_с_суммой_в_причине_отказывает():
+    from app.launch_prep import withdraw as W
+    import pytest
+    with pytest.raises(W.WithdrawError, match="сумма"):
+        W.withdraw(None, 1, None, "снят из-за цены 120 000 ₽")
+
+
+def test_запрос_посадочной_с_суммой_отказывает():
+    import inspect
+    from app.routers import launch_prep as lp
+    src = inspect.getsource(lp.request_member_url)
+    assert src.index("has_amount(text)") < src.index("_member(db, set_id, target_id, create=True)")

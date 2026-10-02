@@ -141,10 +141,12 @@ def resolve_service(db: Session, deal: SalesDeal):
     if plan_ids:
         names = [r.position for r in db.query(SalesMediaPlanRow.position)
                  .filter(SalesMediaPlanRow.plan_id.in_(plan_ids)).all() if r.position]
-        for name in names:
-            svc = db.query(SalesService).filter(SalesService.name == name).first()
-            if svc:
-                return svc, "из медиаплана"
+        # Одним запросом, а не на каждую строку плана (Н-10); первая по порядку строк.
+        by_name = {s.name: s for s in db.query(SalesService)
+                   .filter(SalesService.name.in_(set(names))).all()} if names else {}
+        svc = next((by_name[n] for n in names if n in by_name), None)
+        if svc:
+            return svc, "из медиаплана"
 
     if deal.product:
         svc = db.query(SalesService).filter(SalesService.name == deal.product).first()
@@ -286,6 +288,8 @@ def _recipient_out(target, pub, pair=None, review=None, traffic=None,
         # режим «обе» требует диплинк рядом с посадочной — он встанет в <a href>.
         "deeplink_url": getattr(member, "deeplink_url", None) if member else None,
         "needs_deeplink": pub_rules.needs_deeplink(rule),
+        # Какую ссылку принимает площадка — подсказкой у поля посадочной (02.10.2026).
+        "landing_hint": pub_rules.landing_hint(rule),
         "placement_channel": (rule or {}).get("channel"),
         "rule_label": pub_rules.applied_label(rule),
         "plan_show": member.plan_show if member else None,
@@ -1289,10 +1293,13 @@ def drop_set(set_id: int, db: Session = Depends(get_db),
     # но ссылки на файлы вели в пустоту. Диск отката не имеет, база имеет.
     doomed = [(f.path, f.sandbox_token) for f in db.query(LaunchPrepCreativeFile)
               .filter(LaunchPrepCreativeFile.set_id == set_id).all()]
+    deal_id, what = row.deal_id, f"комплект №{row.no} «{row.title or '—'}», файлов {len(doomed)}"
     db.delete(row)
     db.commit()
     for path, token in doomed:
         _remove_file(path, token)
+    # Удаление необратимо — в журнал (аудит 01.10.2026, С-9).
+    log_action(db, current_user, "delete_creative_set", "sales_deal", deal_id, what)
     return {"ok": True}
 
 
@@ -1362,7 +1369,10 @@ async def upload_file(set_id: int, ratio: Optional[str] = None,
     if ext in ARCHIVE_EXTENSIONS:
         from app.dsp.targeting_creative import for_our_web_dsp
         if for_our_web_dsp(db, set_id):
-            content, prepared = sandbox.prepare_for_dsp(content)
+            try:
+                content, prepared = sandbox.prepare_for_dsp(content)
+            except sandbox.SandboxError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
     safe = re.sub(r"[^\w.\-]", "_", original)
     # Имя несёт вид сущности: медиакит площадки №7 и файл комплекта №7 в общем каталоге
@@ -1411,6 +1421,8 @@ async def upload_file(set_id: int, ratio: Optional[str] = None,
         LaunchPrepCreativeFile.set_id == set_id).all()
     row.form = _derive_form(files)
     db.commit()
+    log_action(db, current_user, "upload_creative_file", "sales_deal", row.deal_id,
+               f"комплект №{row.no}: файл «{rec.original_name or rec.path}»")
     # `prepared` — что поправили в баннере при загрузке: 'ad.size' (вшит адаптивный
     # размер), 'link' (чужой макрос ссылки заменён на макрос DSP), 'root' (баннер поднят в корень).
     return {"id": rec.id, "form": row.form, "prepared": prepared}
@@ -1795,7 +1807,8 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
     no_deeplink = [pubs[t.publisher_id].name if t.publisher_id in pubs else str(t.publisher_id)
                    for t in targets
                    if pub_rules.needs_deeplink(rules.get((t.publisher_id, t.surface_kind)))
-                   and not getattr(own.get((set_id, t.id)), "deeplink_url", None)]
+                   and not getattr(own.get((set_id, t.id)), "deeplink_url", None)
+                   and not pub_rules.is_app_link(getattr(own.get((set_id, t.id)), "advertiser_url", None))]
     if no_deeplink:
         raise HTTPException(
             status_code=400,
@@ -1812,12 +1825,13 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
 
     from sqlalchemy.sql import func as sa_func
     created = 0
+    # Уже отправленные получатели — одним запросом, а не на каждого (Н-10).
+    have = {tid for (tid,) in db.query(LaunchPrepPair.target_id)
+            .filter(LaunchPrepPair.set_id == set_id)}
     for t in targets:
-        pair = (db.query(LaunchPrepPair)
-                .filter(LaunchPrepPair.set_id == set_id,
-                        LaunchPrepPair.target_id == t.id).first())
-        if pair:
+        if t.id in have:
             continue          # повторная отправка тем же получателям — не дубль
+        have.add(t.id)
         pair = LaunchPrepPair(set_id=set_id, target_id=t.id)
         db.add(pair)
         db.flush()
@@ -2353,7 +2367,8 @@ def _target_urls(db: Session, set_id: int) -> List[str]:
     и второе место с тем же правилом однажды разошлось бы с первым.
     """
     # С 25.09.2026 посадочная — у строки состава креатива, не у площадки сделки.
-    return [m.advertiser_url for m in
+    # В ОРД — веб-адрес: диплинк приложения там не ссылка (02.10.2026).
+    return [pub_rules.web_url(m.advertiser_url) for m in
             db.query(LaunchPrepSetTarget)
               .join(LaunchPrepPair, (LaunchPrepPair.set_id == LaunchPrepSetTarget.set_id)
                     & (LaunchPrepPair.target_id == LaunchPrepSetTarget.target_id))
@@ -2719,10 +2734,14 @@ def set_member_url(set_id: int, target_id: int, payload: TargetUrlIn,
     «javascript:» в поле, которое где-то отрисуется ссылкой, — это XSS, а не опечатка.
     """
     s, t, deal = _member_in_scope(db, set_id, target_id, current_user)
-    url = (payload.url or "").strip()
-    if url and not url.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400,
-                            detail="Ссылка должна начинаться с http:// или https://")
+    # На app-поверхности принимается и диплинк SDK (`deeplink+://…primaryUrl=…`,
+    # владелец 02.10.2026) — правило одно с кабинетом площадки: `pub_rules.validate_landing`.
+    try:
+        url = pub_rules.validate_landing(payload.url, t.surface_kind) or ""
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if len(url) > 512:
+        raise HTTPException(status_code=400, detail="Ссылка длиннее 512 знаков")
     m = _member(db, set_id, target_id, create=True)
     m.advertiser_url = url or None
     db.commit()
@@ -2849,6 +2868,12 @@ def request_member_url(set_id: int, target_id: int, payload: UrlRequestIn,
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Пустой текст запроса")
+    from app.notify.outward.send import has_amount
+    if has_amount(text):
+        # Письмо уходит площадке как есть — подменять его нельзя, значит отказ (аудит
+        # 01.10.2026, К-1: этот путь шёл мимо денежного заслона уведомлений).
+        raise HTTPException(status_code=400,
+                            detail="В тексте сумма — площадке деньги не пишем, уберите её")
     m = _member(db, set_id, target_id, create=True)
     if m.advertiser_url:
         raise HTTPException(status_code=400, detail="Ссылка уже есть — запрашивать нечего")
@@ -3077,10 +3102,18 @@ def _tell_publisher_erid(db: Session, cset, deal) -> None:
     rows = (db.query(SalesPublisher, LaunchPrepPair)
             .join(LaunchPrepTarget, LaunchPrepTarget.publisher_id == SalesPublisher.id)
             .join(LaunchPrepPair, LaunchPrepPair.target_id == LaunchPrepTarget.id)
-            .filter(LaunchPrepPair.set_id == cset.id).all())
+            .filter(LaunchPrepPair.set_id == cset.id,
+                    LaunchPrepPair.withdrawn_at.is_(None))
+            .order_by(LaunchPrepPair.id).all())
     brand = _deal_brand_name(db, deal)
     period = deal_period_text(deal)
+    # Одно письмо на ПЛОЩАДКУ: у площадки с web и app две пары одного комплекта, и она
+    # получала два одинаковых письма (аудит 01.10.2026, С-5). ЕРИД у комплекта один.
+    seen = set()
     for pub, pair in rows:
+        if pub.id in seen:
+            continue
+        seen.add(pub.id)
         context = " · ".join(x for x in ((pub.domain or pub.name), brand, period) if x)
         try:
             notify_publisher(

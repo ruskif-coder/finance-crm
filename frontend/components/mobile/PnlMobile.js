@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { MONO } from '../salesTableKit'
+import { MONO, Z } from '../salesTableKit'
 import { grp0 as fmt, mln } from '../../lib/salesFormat'
 import { monoLbl, rise } from './kit'
 import ReportShell, { ReportSection } from './ReportShell'
@@ -109,8 +109,8 @@ export default function PnlMobile({
         {rangeShort(dateFrom, dateTo)} ▾
       </button>
       {periodOpen && (<>
-        <div style={{ position: 'fixed', inset: 0, zIndex: 39 }} onClick={() => setPeriodOpen(false)} />
-        <div style={{ position: 'absolute', top: 44, left: 0, zIndex: 40, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: Z.dropdown - 1 }} onClick={() => setPeriodOpen(false)} />
+        <div style={{ position: 'absolute', top: 44, left: 0, zIndex: Z.dropdown, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
           <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ border: '1px solid var(--border-card)', borderRadius: 8, padding: '7px 8px', fontSize: 12, fontFamily: MONO, outline: 'none' }} />
           <span style={{ color: 'var(--text-faint)' }}>—</span>
           <input type="month" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ border: '1px solid var(--border-card)', borderRadius: 8, padding: '7px 8px', fontSize: 12, fontFamily: MONO, outline: 'none' }} />

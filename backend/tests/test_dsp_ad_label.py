@@ -82,5 +82,14 @@ def test_adomain_is_full_landing():
     assert cr.landing_adomain(long) == long
     assert cr.landing_adomain("https://farmakopeika.ru/" + "x" * 1100) == "https://farmakopeika.ru/"
     assert cr.landing_adomain("economapteka.ru/a") == "https://economapteka.ru/a"
-    assert cr.landing_adomain("https://120на80.рф/catalog") == "https://simb-ad.com/"
+    # .рф DSP принимает кириллицей (замер 02.10.2026: %-код и punycode — отказ).
+    assert cr.landing_adomain("https://120на80.рф/catalog") == "https://120на80.рф/catalog"
+    assert cr.landing_adomain("https://009.xn--p1ai/search/%D0%A5?x=1") == "https://009.рф/search/%D0%A5?x=1"
+    assert cr.landing_adomain("009.xn--p1ai/a") == "https://009.рф/a"
+    assert cr.landing_adomain("https://Site.RU:8080/a?x=1") == "https://site.ru:8080/a?x=1"
+    assert cr.landing_adomain("https://АПТЕКА.РФ/a") == "https://аптека.рф/a"
+    assert cr.landing_adomain("https://009.рф/поиск") == "https://009.рф/%D0%BF%D0%BE%D0%B8%D1%81%D0%BA"
+    assert cr.landing_adomain("https://009.рф/search/%D0%A5") == "https://009.рф/search/%D0%A5"
+    long_cyr = "https://009.рф/" + "я" * 600
+    assert cr.landing_adomain(long_cyr) == "https://009.рф/"
     assert cr.landing_adomain("not a url") is None

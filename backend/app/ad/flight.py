@@ -221,8 +221,12 @@ def need_per_day(plan: Optional[float], fact: Optional[float],
 
 def progress(plan: Optional[float], fact: Optional[float],
              date_start: Optional[date], date_end: Optional[date],
-             today: Optional[date] = None) -> dict:
+             today: Optional[date] = None, now: Optional[date] = None) -> dict:
     """Полный расчёт строки РК одним вызовом — то, что уходит в ответ дашборда.
+
+    `today` — дата среза статистики (по ней темп и прогноз), `now` — календарный день:
+    «до старта» считается от него, иначе РК, стартовавшая сегодня, весь день «стартует
+    через 1 день» (ревью 02.10.2026).
 
     Все ключи присутствуют ВСЕГДА; отсутствие данных — это None, а не пропуск ключа:
     фронт рисует прочерк по None, а по пропуску ключа рисовал бы `undefined`.
@@ -233,8 +237,9 @@ def progress(plan: Optional[float], fact: Optional[float],
     # Сколько дней ДО СТАРТА. У нестартовавшей РК «осталось N дней» означает длину всего
     # флайта и читается как «идёт и вот-вот кончится» — а она ещё не начиналась. Пока
     # старт впереди, осмысленно только это число (04.09.2026).
-    to_start = ((date_start - (today or date.today())).days
-                if (date_start and fl and not fl.done) else None)
+    ref = now or today or date.today()
+    to_start = ((date_start - ref).days
+                if (date_start and fl and not fl.done and date_start > ref) else None)
     return {
         "days_total": fl.length if fl else None,
         "days_to_start": to_start,

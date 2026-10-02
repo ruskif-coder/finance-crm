@@ -379,6 +379,11 @@ def deals_lookup(q: str = "", sort: str = "id", direction: str = "desc",
           .outerjoin(st, st.id == SalesDeal.our_stage_id))
     if allowed_ids is not None:
         qy = qy.filter(or_(SalesDeal.our_stage_id.in_(allowed_ids), SalesDeal.our_stage_id.is_(None)))
+    # Та же область «свои / все», что у самой привязки (`_deal_for_plan` →
+    # `_assert_deal_in_scope`): список не предлагает сделку, которую потом нельзя привязать,
+    # и не показывает чужие (аудит 01.10.2026, Н-8).
+    from app.sales.scope import apply_own_scope, own_rep_ids_or_all
+    qy = apply_own_scope(qy, own_rep_ids_or_all(db, current_user))
 
     qs = (q or "").strip()
     if qs:

@@ -8,6 +8,7 @@
 // allowQuarter=false — только месяц (напр. период размещения сделки).
 import { useState, useEffect, useRef } from 'react'
 import { MONO, UI } from './salesTableKit'
+import { todayMsk } from '../lib/dates'
 
 const MONTHS_RU = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
 
@@ -26,7 +27,7 @@ export function PeriodSelect({ value, onChange, allowQuarter = true, dense = fal
   const [m, setM] = useState(init.m)
   const [q, setQ] = useState(init.q)
 
-  const nowY = new Date().getFullYear()
+  const nowY = Number(todayMsk().slice(0, 4))
   const years = []
   for (let yr = nowY + 1; yr >= 2022; yr--) years.push(String(yr))
 

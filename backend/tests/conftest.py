@@ -148,6 +148,16 @@ def no_network(monkeypatch):
     def no_smtp(*a, **k):
         raise NetworkInTest("тест пытался открыть SMTP — подмените отправку в тесте")
     monkeypatch.setattr(smtplib, "SMTP", no_smtp)
+
+    # urllib — ещё один путь наружу: им ходит бот Telegram (`notify/tg_poll`). До аудита
+    # 01.10.2026 (С-13) защита его не видела, и тест мог дёрнуть Telegram боевым токеном.
+    import urllib.request
+    orig_open = urllib.request.OpenerDirector.open
+
+    def guarded_open(self, fullurl, *a, **k):
+        _guard(getattr(fullurl, "full_url", fullurl))
+        return orig_open(self, fullurl, *a, **k)
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", guarded_open)
     monkeypatch.setattr(smtplib, "SMTP_SSL", no_smtp)
 
     # Отправка креатива трафику сама заводит копию нацеливания в DSP (`ensure_quietly`) и

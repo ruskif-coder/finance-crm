@@ -96,21 +96,27 @@ def upload_zip(client, data: bytes, filename: str = "creative.zip",
     # всегда: архив, загруженный до 25.09.2026 или креатив, чей состав поменяли после
     # загрузки, дойдёт до загрузчика с размером и макросом ссылки. Хранимый файл не
     # меняется — правится отправляемая копия.
-    from app.launch_prep.sandbox import prepare_for_dsp
-    data, _ = prepare_for_dsp(data)
+    from app.launch_prep.sandbox import SandboxError, prepare_for_dsp
+    try:
+        data, _ = prepare_for_dsp(data)
+    except SandboxError as e:
+        raise CreativeError(str(e)) from e
     require_ad_size(data)
     url = client.upload_get_url("zip")
     if not isinstance(url, str) or not url.startswith("http"):
         raise CreativeError(f"Upload.getUploadFileUrl вернул не URL: {str(url)[:200]}")
-    req = {"url": url, "filename": filename, "bytes": len(data)}
+    # В журнал — без адреса: в нём имя поставщика и одноразовый токен (аудит 01.10.2026,
+    # К-2/К-3), а журнал обмена виден во вкладке «Логи» и скачивается целиком.
+    req = {"url": "<адрес загрузки DSP>", "filename": filename, "bytes": len(data)}
     try:
         r = httpx.post(url, files={"file": (filename, data, "application/zip")},
                        timeout=timeout)
         r.raise_for_status()
         html = r.text
     except httpx.HTTPError as e:
-        _journal_upload(client, local_ref, req, None, False, repr(e))
-        raise CreativeError(f"Загрузка архива не удалась: {e!r}") from e
+        from app.dsp.client import safe_error
+        _journal_upload(client, local_ref, req, None, False, safe_error(e))
+        raise CreativeError(f"Загрузка архива не удалась: {safe_error(e)}") from e
 
     # Загрузчик ВСЕГДА отвечает 200 и content-type text/html, а телом шлёт JSON:
     # {"result": {"width", "height", "size", "html"}} либо {"error": {"message", "code"}}.
@@ -289,7 +295,9 @@ def landing_domain(url: Optional[str]) -> Optional[str]:
     host = (parts.hostname or "").lower()
     if parts.scheme not in ("http", "https") or "." not in host or " " in host:
         return None
-    # Кириллический домен (`120на80.рф`) DSP в `adomain` НЕ принимает ни в какой записи —
+    # Это теперь ПРОВЕРКА адреса. «Конечный URL» собирает `landing_adomain`: с 02.10.2026
+    # DSP принимает кириллический домен как есть. Ниже — история до починки:
+    # кириллический домен (`120на80.рф`) DSP в `adomain` НЕ принимал ни в какой записи —
     # ни латиницей `xn--…`, ни кириллицей, ни полным адресом (демо-проверка 28.09.2026,
     # восемь вариантов, все «Invalid adomain format»). Ссылку перехода с таким доменом он
     # берёт. Поэтому `adomain` тогда — наш сайт, как у креатива нацеливания (владелец
@@ -310,19 +318,42 @@ def landing_adomain(url: Optional[str]) -> Optional[str]:
     """«Конечный URL» (`adomain`) — посадочная креатива целиком (владелец 01.10.2026).
 
     Посадочная — та, что пришла с креативом от аккаунтов или от площадки при запросе, а
-    не кликовая ссылка Weborama. Домен остаётся только там, где целиком нельзя: длиннее
-    предела DSP; кириллический домен — наш сайт, как и раньше (`landing_domain`).
+    не кликовая ссылка Weborama. Домен остаётся только там, где целиком нельзя — длиннее
+    предела DSP.
+
+    Кириллический домен (.рф) — КИРИЛЛИЦЕЙ (замер 02.10.2026, DSP починили приём):
+    `https://120на80.рф/…` принят, а %-код и punycode (`xn--…`) — «Invalid adomain
+    format». Записанный у нас punycode переводим в кириллицу; путь не трогаем.
     """
-    domain = landing_domain(url)
-    if domain is None or domain == ADOMAIN_FALLBACK:
-        return domain
-    raw = url.strip()
+    from urllib.parse import urlsplit, urlunsplit
+    from app.weborama.naming import unicode_domain
+    raw = (url or "").strip()
+    if landing_domain(raw) is None:
+        return None
+    from urllib.parse import quote
     full = raw if "://" in raw else "https://" + raw
-    return full if len(full) <= ADOMAIN_MAX else domain
+    parts = urlsplit(full)
+    host = unicode_domain((parts.hostname or "").lower())
+    try:
+        netloc = host + (f":{parts.port}" if parts.port else "")
+    except ValueError:
+        netloc = host
+    # Путь и параметры — в проверенный вид: %-код (вживую проверен он); уже закодированное
+    # не трогаем — «%» в безопасных.
+    path = quote(parts.path, safe="/%:@!$&'()*+,;=~-._")
+    query = quote(parts.query, safe="=&%+/:;,@!$'()*~-._?")
+    full = urlunsplit((parts.scheme, netloc, path, query, ""))
+    # Предел — в байтах: DSP может считать так, а кириллица домена — два байта на букву.
+    return full if len(full.encode("utf-8")) <= ADOMAIN_MAX else f"{parts.scheme}://{netloc}/"
 
 
-# `adomain` для посадочной, чей домен DSP не принимает (кириллический, зона .рф).
-ADOMAIN_FALLBACK = "https://simb-ad.com/"
+# `adomain`, которым до 02.10.2026 подменялся кириллический домен (DSP его не брал);
+# остался для копии нацеливания и как значение, которое скрипт правки меняет на настоящий.
+# Наш сайт — ОДИН на всю систему (аудит 01.10.2026, Н-3: было четыре копии с разными
+# хвостовыми «/»). Им подменяется посадочная, когда своей нет, и конечный URL копий
+# нацеливания.
+OWN_SITE = "https://simb-ad.com/"
+ADOMAIN_FALLBACK = OWN_SITE
 
 
 def build_creative_params(*, title: str, link: str, erid: Optional[str] = None,

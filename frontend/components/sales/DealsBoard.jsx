@@ -1,9 +1,9 @@
 import React, { useMemo, useRef, useState } from 'react'
 import { productWithSurface } from '@/lib/dealTitle';
-import { MONO, UI, HATCH, HATCH_RED, HATCH_GREEN } from '../salesTableKit'
+import { MONO, UI, HATCH, HATCH_RED, HATCH_GREEN, Z } from '../salesTableKit'
 import { DEAL_DOCS, docState } from '../../lib/dealDocs'
 import { dm } from '@/lib/salesFormat'
-import { serverDate } from '@/lib/dates'
+import { serverDate, todayMsk } from '@/lib/dates'
 
 /**
  * Канбан-доска сделок для дашборда: виды «По месяцам» и «По стадиям».
@@ -310,7 +310,7 @@ function BoardColumn({ col, openId, setOpenId, tipId, setTipId, canEdit, handler
 
         {tipId === col.id && col.tip.length > 0 && (
           <span style={{
-            position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 40, minWidth: 200,
+            position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: Z.dropdown, minWidth: 200,
             background: T.card, border: `1px solid ${T.border}`, boxShadow: T.pop, borderRadius: 12,
             padding: '9px 11px', display: 'flex', flexDirection: 'column', gap: 5, animation: `popIn .16s ${T.ease} both`,
           }}>
@@ -372,7 +372,7 @@ export default function DealsBoard({ deals = [], view = 'months', range = 6, sta
   const boardRef = useRef(null)
   const groupsRef = useRef(null)
 
-  const now = useMemo(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() + 1 } }, [])
+  const now = useMemo(() => { const t = todayMsk(); return { y: Number(t.slice(0, 4)), m: Number(t.slice(5, 7)) } }, [])
   const cards = useMemo(() => deals.map(toCard), [deals])
   const columns = useMemo(
     () => (view === 'stages' ? buildStageColumns(cards, stages) : buildMonthColumns(cards, range, now)),

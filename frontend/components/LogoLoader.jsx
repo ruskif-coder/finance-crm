@@ -1,3 +1,4 @@
+import { Z } from './salesTableKit'
 // Анимированный фирменный кубик SIMB-AD (из docs/Анимация кубика логотипа).
 // Два режима: 'wave' (1a — импульс от синего модуля, загрузчик страниц) и
 // 'spinner' (1c — модули гаснут по кругу, индикатор скачивания). Чистый inline-SVG
@@ -68,7 +69,7 @@ export function DownloadOverlay({ label = 'Готовим файл…', progress
 }
 
 const overlay = {
-  position: 'fixed', inset: 0, zIndex: 9999,
+  position: 'fixed', inset: 0, zIndex: Z.toast - 1,
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   background: 'rgba(247,248,250,.9)', backdropFilter: 'blur(2px)',
 }

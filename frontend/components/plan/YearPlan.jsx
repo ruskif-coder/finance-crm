@@ -13,7 +13,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { markDirty, markClean } from '@/lib/unsaved';
-import { PortalPopover } from '../salesTableKit';
+import { PortalPopover, Z } from '../salesTableKit';
 import BrandBrief from './BrandBrief';
 import { DownloadOverlay } from '../LogoLoader';
 import { overlayClose } from '@/lib/overlay'
@@ -501,7 +501,7 @@ export default function YearPlan({
 
       {pendingDel && (
         <div {...overlayClose(() => !pwBusy && setPendingDel(null))}
-          style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(28,36,51,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(28,36,51,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
           <div onClick={stop} style={{ width: 400, maxWidth: '100%', background: T.card, borderRadius: 16, boxShadow: T.pop, padding: '22px 22px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
             <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.01em' }}>Удалить из плана</span>
             <span style={{ fontSize: 13, color: T.t2, lineHeight: 1.5 }}>

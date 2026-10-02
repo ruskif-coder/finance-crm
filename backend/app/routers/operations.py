@@ -1379,6 +1379,10 @@ async def import_excel(
 
     _assert_import_rows_valid(db, problems)
     db.commit()
+    # Разовая заливка — тоже в журнал (аудит 01.10.2026, С-9): массовое создание
+    # финансовых строк без следа нельзя потом ни найти, ни объяснить.
+    log_action(db, current_user, "import_operations", "operation", None,
+               f"первичный импорт: создано {imported} операций")
     return {"message": f"Импортировано {imported} операций"}
 
 

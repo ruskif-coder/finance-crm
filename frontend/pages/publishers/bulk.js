@@ -8,6 +8,7 @@ import { MONO, UI, IconBtn, inp, sel, btn, headCell, card, CAP } from '@/compone
 import { INTEG_TONE_SOLID as INTEG_TONE, STATUS_TONE, nextStatus, Pin }
   from '@/components/publishers/kit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { isAdmin } from '@/lib/auth'
 
 // Экран быстрого заполнения: строка на площадку, всё правится одним кликом.
 // Заведён под первичное наполнение реестра — переносить из Excel было нечего, и на
@@ -87,7 +88,7 @@ export default function PublishersBulk() {
     setPerms(p)
     // Экран закрыт своим правом: без него уводим на первый доступный раздел, а не
     // оставляем пустую таблицу с 403 — по прямой ссылке это выглядело как поломка.
-    if (!can(p, 'dir_publishers_bulk', 'view')) { router.push(firstAllowedHref(p, localStorage.getItem('role'))); return }
+    if (!can(p, 'dir_publishers_bulk', 'view')) { router.push(firstAllowedHref(p, isAdmin())); return }
     load()
   }, [])
 

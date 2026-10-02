@@ -60,6 +60,24 @@ def _client(account_id: str) -> WcmClient:
         raise HTTPException(400, str(e))
 
 
+class _Busy(Exception):
+    pass
+
+
+def _post(c, path, **kw):
+    """Создание объекта в Weborama — по одному за раз (аудит 01.10.2026, С-7). Удалить
+    созданное в их кабинете нельзя, а двойной клик заводил второй такой же объект: боевое
+    заведение держит блокировку и реестр, демо-ручки шли мимо обоих."""
+    from app.ext_lock import WEBORAMA_DEMO, only_one
+    try:
+        # obj_id = 0 — намеренно: на демо-стенде создаём по одному за раз вообще, а не по
+        # аккаунту; второму нажатию — сразу 409, без ожидания.
+        with only_one(WEBORAMA_DEMO, 0, _Busy, "Создание объекта в Weborama", where="сейчас"):
+            return _run(c.call, "POST", path, **kw)
+    except _Busy as e:
+        raise HTTPException(409, str(e))
+
+
 def _run(fn, *a, **kw):
     """Один вызов с переводом ошибок обмена в понятный человеку отказ."""
     try:
@@ -206,7 +224,7 @@ def create_project(payload: ProjectIn, db: Session = Depends(get_db),
     except ValueError as e:
         raise HTTPException(400, str(e))
     c = _client(payload.account_id)
-    raw = _run(c.call, "POST", "/advertiser/projects.json", data={"label": label})
+    raw = _post(c, "/advertiser/projects.json", data={"label": label})
     wid = _run(c._created, raw, "проект")
     _journal("4 · проект", user, payload.dict(), raw)
     log_action(db, user, "weborama_project", "weborama", None, f"{label} → {wid}")
@@ -240,7 +258,7 @@ def create_campaign(payload: CampaignIn, db: Session = Depends(get_db),
                  "и без разметки. Похоже, вставилась ссылка целиком со скобками: "
                  "оставьте только адрес")
     c = _client(payload.account_id)
-    raw = _run(c.call, "POST", "/advertiser/campaigns.json",
+    raw = _post(c, "/advertiser/campaigns.json",
                data={"project_id": payload.project_id, "label": label,
                      "landing_url": payload.landing_url.strip(),
                      "channel_id": enums.DEFAULT_CHANNEL})
@@ -270,7 +288,7 @@ def create_ad_network(payload: NetworkIn, db: Session = Depends(get_db),
     известный id вводится руками на экране.
     """
     c = _client(payload.account_id)
-    raw = _run(c.call, "POST", "/advertiser/ad_networks.json", data={"label": payload.label})
+    raw = _post(c, "/advertiser/ad_networks.json", data={"label": payload.label})
     wid = _run(c._created, raw, "сеть")
     _journal("6 · сеть", user, payload.dict(), raw)
     log_action(db, user, "weborama_ad_network", "weborama", None, f"{payload.label} → {wid}")
@@ -317,7 +335,7 @@ def create_insertion(payload: InsertionIn, db: Session = Depends(get_db),
         payload.account_label, payload.fmt,
         naming.row_name(payload.channel, payload.campaign_label, payload.domain))
     c = _client(payload.account_id)
-    raw = _run(c.call, "POST", "/advertiser/insertions/placements/json",
+    raw = _post(c, "/advertiser/insertions/placements/json",
                data={"campaign_id": payload.campaign_id,
                      "ad_network_id": payload.ad_network_id,
                      "ad_space_id": payload.ad_space_id,

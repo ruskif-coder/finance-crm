@@ -84,6 +84,13 @@ def _run(dry_run: bool) -> dict:
                AND NOT EXISTS (
                    SELECT 1 FROM cabinet_publisher cp JOIN cabinet cab ON cab.id = cp.cabinet_id
                     WHERE cp.publisher_id = q.publisher_id AND cab.state = 'приостановлен')
+               -- Контакт снял «получает уведомления» или удалён после постановки — его
+               -- накопленное не уходит (аудит 01.10.2026, С-6).
+               AND EXISTS (SELECT 1 FROM sales_publisher_contacts c
+                            WHERE c.id = q.contact_id AND c.notify)
+               -- Площадку перевели в архив после постановки — накопленное не уходит (В-8).
+               AND EXISTS (SELECT 1 FROM sales_publishers p
+                            WHERE p.id = q.publisher_id AND p.status <> 'АРХИВ')
              ORDER BY due_at, id
              LIMIT :n"""), {"n": BATCH}).fetchall()
         stats["due"] = len(rows)

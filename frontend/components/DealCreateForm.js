@@ -3,7 +3,7 @@ import api, { auth } from '../lib/api'
 import useIsMobile from './mobile/useIsMobile'
 import { overlayClose } from '@/lib/overlay'
 import { buildTitle, separatePriceSet, SURFACE_TAG } from '@/lib/dealTitle'
-import { GenTitleBtn } from './salesTableKit'
+import { GenTitleBtn, Z } from './salesTableKit'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -30,8 +30,8 @@ function Search({ placeholder, options, value, onChange, disabled, hl }) {
         <span style={{ color: 'var(--text-faint)', flexShrink: 0 }}>▾</span>
       </button>
       {open && (<>
-        <div style={{ position: 'fixed', inset: 0, zIndex: 60 }} onClick={() => setOpen(false)} />
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, minWidth: 220, zIndex: 61, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, marginTop: 4, maxHeight: 260, overflowY: 'auto', padding: 6, boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)' }}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: Z.dropdown }} onClick={() => setOpen(false)} />
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, minWidth: 220, zIndex: Z.dropdown + 1, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 10, marginTop: 4, maxHeight: 260, overflowY: 'auto', padding: 6, boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)' }}>
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="поиск" style={{ ...INP, padding: '6px 8px', marginBottom: 6 }} />
           <div style={{ padding: '5px 8px', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13 }} onClick={() => { onChange(''); setOpen(false) }}>— не выбрано —</div>
           {shown.map(o => <div key={o.value} style={{ padding: '6px 8px', cursor: 'pointer', fontSize: 13, borderRadius: 6, fontWeight: String(o.value) === String(value) ? 600 : 400, color: String(o.value) === String(value) ? 'var(--accent)' : 'inherit' }}
@@ -295,7 +295,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
   // ── Мобиль: полноэкранная форма (как форма редактирования) ──
   if (isMobile) {
     return (
-      <div style={{ position: 'fixed', inset: 0, zIndex: 500, background: 'var(--bg-canvas)', overflowY: 'auto', fontFamily: UI, paddingBottom: 84 }}>
+      <div style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'var(--bg-canvas)', overflowY: 'auto', fontFamily: UI, paddingBottom: 84 }}>
         {header}
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 18 }}>{fields}</div>
         <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 14px', background: 'var(--bg-card)', borderTop: '1px solid var(--border-inner)', display: 'flex', gap: 8 }}>
@@ -309,7 +309,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
   // ── Десктоп: центрированная модалка ──
   return (
     <div {...overlayClose(onClose)}
-      style={{ position: 'fixed', inset: 0, zIndex: 55, background: 'rgba(28,36,51,.32)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40, overflow: 'auto', fontFamily: UI }}>
+      style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(28,36,51,.32)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40, overflow: 'auto', fontFamily: UI }}>
       <div style={{ width: 1080, maxWidth: '100%', margin: 'auto', background: 'var(--bg-card)', borderRadius: 18, overflow: 'visible', boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)', animation: 'riseIn .28s cubic-bezier(0.22,1,0.36,1) both' }}>
         <style>{`@keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}`}</style>
         {header}

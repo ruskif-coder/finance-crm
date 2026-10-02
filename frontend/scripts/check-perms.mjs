@@ -118,6 +118,28 @@ for (const dir of DIRS) {
   }
 }
 
+// Вторая ловушка той же природы (аудит 01.10.2026, В-6): второй аргумент навигационных
+// помощников — ПРИЗНАК «админ» (boolean), а не строка роли. `firstAllowedHref(p,
+// localStorage.getItem('role'))` для любой непустой роли (manager, viewer…) считал
+// человека админом и уводил его на экран, куда у него нет права. Двенадцать мест.
+const NAV_HELPERS = /(^|[^\w.])(firstAllowedHref|firstDirectoryHref|entryHref|allowedItems)\s*\(/g
+const ROLE_ARG = /getItem\(\s*['"]role['"]\s*\)$|^role$/
+for (const dir of DIRS) {
+  for (const file of walk(join(ROOT, dir))) {
+    const src = stripComments(readFileSync(file, 'utf8'))
+    let m
+    NAV_HELPERS.lastIndex = 0
+    while ((m = NAV_HELPERS.exec(src)) !== null) {
+      const args = topLevelArgs(src, m.index + m[0].length - 1)
+      const flag = args && args[args.length - 1]
+      if (args && args.length >= 2 && ROLE_ARG.test(flag)) {
+        const line = src.slice(0, m.index).split(NL).length
+        bad.push(`${relative(ROOT, file)}:${line}  ${m[2]}(…, ${flag}) — нужен признак «админ», а не роль`)
+      }
+    }
+  }
+}
+
 if (bad.length) {
   console.error(NL + 'Права проверяются неверно — сигнатура can(perms, section, action):' + NL)
   for (const b of bad) console.error('  ' + b)

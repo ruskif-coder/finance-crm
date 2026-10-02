@@ -471,8 +471,8 @@ export default function SalesDashboard2() {
       {vpop && <ValuePopover anchor={vpop.rect} title={vpop.title} dealLabel={vpop.dealLabel} options={vpop.options} value={vpop.value} clearLabel={vpop.clearLabel} onAddNew={vpop.onAddNew}
         onPick={(v) => { vpop.apply(v); setVpop(null) }} onClose={() => setVpop(null)} />}
       {probPick && (<>
-        <div style={{ position: 'fixed', inset: 0, zIndex: 60 }} onClick={() => setProbPick(null)} />
-        <div style={{ position: 'fixed', zIndex: 61, left: Math.min(probPick.rect.left, window.innerWidth - 160), top: Math.min(probPick.rect.bottom + 6, window.innerHeight - 70),
+        <div style={{ position: 'fixed', inset: 0, zIndex: Z.dropdown }} onClick={() => setProbPick(null)} />
+        <div style={{ position: 'fixed', zIndex: Z.dropdown + 1, left: Math.min(probPick.rect.left, window.innerWidth - 160), top: Math.min(probPick.rect.bottom + 6, window.innerHeight - 70),
           background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)', padding: 8, display: 'flex', gap: 8, alignItems: 'center', fontFamily: UI }}>
           {PROB_ORDER.map(c => (
             <button key={c} onClick={() => setProbability(probPick.dealId, c)} title={PROB_LABEL[c]}
@@ -482,8 +482,8 @@ export default function SalesDashboard2() {
         </div>
       </>)}
       {periodEdit && (<>
-        <div style={{ position: 'fixed', inset: 0, zIndex: 60 }} onClick={() => setPeriodEdit(null)} />
-        <div style={{ position: 'fixed', zIndex: 61, left: Math.min(periodEdit.rect.left, window.innerWidth - 248), top: Math.min(periodEdit.rect.bottom + 6, window.innerHeight - 130),
+        <div style={{ position: 'fixed', inset: 0, zIndex: Z.dropdown }} onClick={() => setPeriodEdit(null)} />
+        <div style={{ position: 'fixed', zIndex: Z.dropdown + 1, left: Math.min(periodEdit.rect.left, window.innerWidth - 248), top: Math.min(periodEdit.rect.bottom + 6, window.innerHeight - 130),
           background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)', padding: 12, width: 232, fontFamily: UI, animation: 'riseIn .22s cubic-bezier(0.22,1,0.36,1) both' }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Период размещения</div>
           <input type="month" autoFocus defaultValue={periodEdit.month}
@@ -493,7 +493,7 @@ export default function SalesDashboard2() {
         </div>
       </>)}
       {entityModal && (
-        <div {...overlayClose(() => setEntityModal(null))} style={{ position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        <div {...overlayClose(() => setEntityModal(null))} style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, width: 'min(440px, 96vw)', padding: '20px 22px', boxShadow: 'var(--shadow-card, 0 24px 64px rgba(28,36,51,0.22))', fontFamily: UI }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>{entityModal === 'agency' ? 'Новое агентство' : 'Новый рекламодатель'}</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -518,7 +518,7 @@ export default function SalesDashboard2() {
         </div>
       )}
       {advConfirm && (
-        <div {...overlayClose(() => setAdvConfirm(null))} style={{ position: 'fixed', inset: 0, zIndex: 72, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        <div {...overlayClose(() => setAdvConfirm(null))} style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, width: 'min(440px, 94vw)', padding: '20px 22px', boxShadow: 'var(--shadow-card, 0 24px 64px rgba(28,36,51,0.22))', fontFamily: UI }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>Сменить рекламодателя?</div>
             <div style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 18 }}>
@@ -534,8 +534,8 @@ export default function SalesDashboard2() {
         </div>
       )}
       {genConfirm && (<>
-        <div style={{ position: 'fixed', inset: 0, zIndex: 60 }} onClick={() => setGenConfirm(null)} />
-        <div style={{ position: 'fixed', zIndex: 61, width: 300, right: Math.max(8, window.innerWidth - genConfirm.rect.right),
+        <div style={{ position: 'fixed', inset: 0, zIndex: Z.dropdown }} onClick={() => setGenConfirm(null)} />
+        <div style={{ position: 'fixed', zIndex: Z.dropdown + 1, width: 300, right: Math.max(8, window.innerWidth - genConfirm.rect.right),
           ...(genConfirm.rect.bottom + 150 > window.innerHeight ? { bottom: window.innerHeight - genConfirm.rect.top + 6 } : { top: genConfirm.rect.bottom + 6 }),
           background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 12, fontFamily: UI, animation: 'riseIn .22s cubic-bezier(0.22,1,0.36,1) both' }}>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Новое название{genConfirm.current ? ' (заменит текущее)' : ''}:</div>

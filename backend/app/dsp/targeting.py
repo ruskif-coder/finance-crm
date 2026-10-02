@@ -46,8 +46,10 @@ def _checked(bid_key: str = "bid_rate", bid=1, name: Optional[str] = None) -> di
 
 
 def source_items(keys: Iterable[str], bid) -> dict:
-    """Источники. Ставка — `bid_start` (так в образце документа для источников)."""
-    return {k: _checked("bid_start", bid) for k in sorted(set(keys)) if k}
+    """Источники. Ставка — `bid_start` (так в образце документа для источников), и
+    `bid_rate: 1`, как у остальных таргетингов: без него DSP читает коэффициент как 0
+    (правка DSP 02.10.2026)."""
+    return {k: {**_checked(), "bid_start": bid} for k in sorted(set(keys)) if k}
 
 
 def geo_items(regions=GEO_DEFAULT) -> dict:

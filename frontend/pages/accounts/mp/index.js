@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { isAdmin as isAdminFn } from '@/lib/auth'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can, firstAllowedHref } from '@/components/Navbar'
-import { MONO, UI, card, primaryBtn, GenTitleBtn, MultiDrop, LoadError } from '@/components/salesTableKit'
+import { MONO, UI, card, primaryBtn, GenTitleBtn, MultiDrop, LoadError, Z } from '@/components/salesTableKit'
 import { errText, isAuth } from '@/lib/loadError'
 import api, { auth } from '@/lib/api'
 import { fmtFull, fmtMoney, grp } from '@/lib/salesFormat'
@@ -95,9 +96,9 @@ export default function MpRegistry() {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}
-    const admin = localStorage.getItem('role') === 'admin'
+    const admin = isAdminFn()
     setPerms(p); setIsAdmin(admin)
-    if (!admin && !can(p, 'media_plans', 'view')) { router.push(firstAllowedHref(p, localStorage.getItem('role'))); return }
+    if (!admin && !can(p, 'media_plans', 'view')) { router.push(firstAllowedHref(p, admin)); return }
     load()
     // Справочники — из ОТКРЫТЫХ эндпоинтов (аккаунт-кабинет не требует прав продаж).
     api.get('/sales/directories/brands', auth()).then(r => { const m = {}; (r.data.items || []).forEach(b => { (m[b.advertiser_id] = m[b.advertiser_id] || []).push({ value: b.id, label: b.name }) }); setBrandsByAdv(m) }).catch(() => {})
@@ -271,8 +272,8 @@ export default function MpRegistry() {
               {(dateFrom || dateTo) ? `${dateFrom || '…'} — ${dateTo || '…'}` : 'период'} ▾
             </div>
             {periodOpen && (<>
-              <div style={{ position: 'fixed', inset: 0, zIndex: 39 }} onClick={() => setPeriodOpen(false)} />
-              <div style={{ position: 'absolute', top: '110%', left: 0, marginTop: 4, zIndex: 40, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 10, display: 'flex', flexDirection: 'column', gap: 8, minWidth: 230 }}>
+              <div style={{ position: 'fixed', inset: 0, zIndex: Z.dropdown }} onClick={() => setPeriodOpen(false)} />
+              <div style={{ position: 'absolute', top: '110%', left: 0, marginTop: 4, zIndex: Z.dropdown + 1, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 12, boxShadow: 'var(--shadow-card)', padding: 10, display: 'flex', flexDirection: 'column', gap: 8, minWidth: 230 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <input type="month" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ flex: 1, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-card)', fontSize: 12, outline: 'none', fontFamily: UI }} />
                   <span style={{ color: 'var(--text-muted)' }}>—</span>

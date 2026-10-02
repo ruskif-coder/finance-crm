@@ -165,7 +165,8 @@ def _ensure(db: Session, client: WcmClient, acc: str, kind: str, local_id: int,
 #
 # Наш сайт честнее любой из двадцати одной: он ничей из них и ничего не обещает. На
 # счёт показов поле не влияет — в креатив уезжает ссылка СВОЕЙ площадки, а не эта.
-OWN_LANDING = "https://simb-ad.com"
+from app.dsp.creatives import OWN_SITE  # noqa: E402 — один адрес сайта на систему (Н-3)
+OWN_LANDING = OWN_SITE.rstrip("/")
 
 
 def default_landing(db: Session, camp: AdCampaign) -> str:
@@ -323,7 +324,13 @@ def _our_space(db: Session, client: WcmClient) -> dict:
     """Наш ad_space и сеть. Один на все размещения — «какая площадка» несёт только метка
     вставки. Каталог у них глобальный (1080 записей), поэтому ищем по метке."""
     from app.weborama import matching
-    rows = client.ad_spaces_all()
+    from app.weborama.client import WcmError
+    try:
+        rows = client.ad_spaces_all()
+    except WcmError as e:
+        # Каталог не прочитался — отказ словами: проект и кампания к этому моменту уже
+        # заведены, и 500 скрыл бы это (аудит 01.10.2026, С-14).
+        raise ProvisionError(f"каталог ad_space Weborama не прочитан: {e}") from e
     got = matching.find_our_ad_space(rows)
     if not got.get("id"):
         raise ProvisionError(got.get("reason") or "не найден наш ad_space")

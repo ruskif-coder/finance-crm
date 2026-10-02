@@ -60,7 +60,7 @@ def send_and_log(db: Session, *, to: str, subject: str, body: str, kind: str,
                  html: Optional[str] = None, send_after=None,
                  to_name: Optional[str] = None, reply_to: Optional[str] = None,
                  entity_type: Optional[str] = None, entity_id: Optional[int] = None,
-                 user_id: Optional[int] = None,
+                 user_id: Optional[int] = None, publisher_id: Optional[int] = None,
                  transport=None) -> MailLog:
     """Отправить письмо и записать факт. Возвращает строку журнала.
 
@@ -70,6 +70,7 @@ def send_and_log(db: Session, *, to: str, subject: str, body: str, kind: str,
     row = MailLog(to_email=(to or "").strip()[:320], to_name=(to_name or None),
                   reply_to=(reply_to or None), subject=subject, body=body, kind=kind,
                   entity_type=entity_type, entity_id=entity_id, user_id=user_id,
+                  publisher_id=publisher_id,
                   send_after=send_after, html=html, status="queued", attempts=0)
     db.add(row)
     db.commit()          # СНАЧАЛА след, потом отправка — см. шапку модуля
@@ -110,7 +111,9 @@ def retry(db: Session, row_id: int, *, transport=None) -> Optional[MailLog]:
     получателя появилось бы второе письмо, а у нас — уверенность, что это одно и то же.
     """
     row = db.query(MailLog).filter(MailLog.id == row_id).first()
-    if row is None or row.status == "sent":
+    # Подавленное (получатель снял отметку, кабинет приостановлен — С-6) тоже не
+    # повторяем: «повторить» не должно обходить решение получателя.
+    if row is None or row.status in ("sent", "suppressed"):
         return row
     if not mail.configured():
         return row

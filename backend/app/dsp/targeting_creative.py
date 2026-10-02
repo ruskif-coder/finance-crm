@@ -71,13 +71,13 @@ TITLE_PREFIX = "НАЦЕЛИВАНИЕ · "
 # страницы на отправке трафику обычно ещё нет — и это НЕ повод не выдать нацеливание.
 # Наш сайт честнее выдуманного адреса: по такому баннеру не кликают, а если кликнут,
 # будет видно, чей это тест.
-FALLBACK_LINK = "https://simb-ad.com"
+FALLBACK_LINK = cr.OWN_SITE.rstrip("/")
 
 # Конечный URL креатива (`adomain`) — «обязателен для ротации» по документации DSP: без
 # него креатив запущен, но не крутится, и кабинет DSP ругается на отсутствие конечного URL
 # (владелец 25.09.2026). У нацеливания это всегда наш сайт: баннер показывается только
 # нам, рекламодатель тут ни при чём. Полный URL, как в их примере, не голый домен.
-TARGETING_ADOMAIN = "https://simb-ad.com/"
+TARGETING_ADOMAIN = cr.OWN_SITE
 
 # МАРКЕР-ЗАГЛУШКА ДЛЯ НАЦЕЛИВАНИЯ (владелец 18.09.2026).
 #
@@ -100,6 +100,11 @@ TEST_ERID = "TEST00000"
 # Статусы ОРД, при которых маркер уже выдан (владелец 01.10.2026): Registering — маркер
 # есть, регистрация просто асинхронная. RegistrationRequired и прочие — ещё нет.
 ERID_READY_STATUSES = ("Active", "Registering")
+
+
+def title_of(s) -> str:
+    """Имя копии нацеливания в DSP — одна формула на заведение и на сверку."""
+    return f"{TITLE_PREFIX}{s.no} · {s.title or s.deal_id}"
 
 
 def erid_of(s: LaunchPrepCreativeSet) -> str:
@@ -240,7 +245,8 @@ def _landing(db: Session, s: LaunchPrepCreativeSet) -> str:
               JOIN sales_advertisers a ON a.id = d.advertiser_id
              WHERE d.id = :d AND coalesce(a.website, '') <> ''"""),
             {"d": s.deal_id}).scalar()
-    url = (url or "").strip() or FALLBACK_LINK
+    from app.launch_prep.pub_rules import web_url
+    url = web_url(url) or FALLBACK_LINK          # диплинк SDK → его веб-адрес (02.10.2026)
     if not url.lower().startswith(("http://", "https://")):
         url = "https://" + url
     return url
@@ -320,6 +326,14 @@ def ensure(db: Session, s: LaunchPrepCreativeSet, *,
         log.warning("DSP: креатив нацеливания %s не найден в кабинете, завожу заново", known)
         s.ms_targeting_creative_xxhash = None
 
+    # Прошлый `Creative.add` ушёл без ответа — DSP мог создать копию, а хеша мы не
+    # знаем. Повтор вслепую завёл бы вторую, а удалить её в DSP нечем (аудит 01.10.2026,
+    # В-5). Снять отметку — экран сверки РК («Нашёл» / «Нет в кабинете»), `ad/unknown`.
+    if c.unknown_outcome("Creative.add", "creative", ref):
+        raise TargetingCreativeError(
+            "прошлая попытка завести копию нацеливания осталась без ответа — она могла "
+            "создаться. Сверьтесь с кабинетом нацеливания DSP и отметьте результат: "
+            "дашборд трафика → кнопка «В DSP» у РК → блок зависших попыток")
     f = _archive(db, s)
     link = _landing(db, s)
     erid = erid_of(s)
@@ -331,7 +345,7 @@ def ensure(db: Session, s: LaunchPrepCreativeSet, *,
         html = cr.wrap_html(up["html"], erid=erid,
                             viewability_src=viewability_src(db))
         params = cr.build_creative_params(
-            title=f"{TITLE_PREFIX}{s.no} · {s.title or s.deal_id}",
+            title=title_of(s),
             link=link, erid=erid, size=up.get("size"), adomain=TARGETING_ADOMAIN)
         xxhash = c.creative_add(campaign, params, local_ref=ref)
         c.creative_edit(xxhash, {"data": {"html_code": html}}, local_ref=ref)
@@ -548,7 +562,8 @@ def campaign_state(db: Session, *, client: Optional[MsClient] = None) -> dict:
     out = {"partner_xxhash": partner, "campaign_xxhash": campaign,
            "title": None, "status": None, "date_start": None, "date_end": None,
            "running": False, "asleep": False, "reason": None, "error": None,
-           "admin_url": (os.getenv(ENV_ADMIN_URL) or "").strip().rstrip("/") or None}
+           # Адрес не отдаём — в нём имя поставщика (аудит 01.10.2026, К-2).
+           "admin_url_set": bool((os.getenv(ENV_ADMIN_URL) or "").strip())}
     if not (partner and campaign):
         out["reason"] = ("Не задан кабинет или кампания нацеливания: "
                          "Трафики → Каталог → Скрипты сайта")

@@ -68,6 +68,9 @@ class AdCampaignPlacement(Base):
     # но в DSP больше не уходит: клики не считаем, `link` — посадочная (владелец 01.10.2026).
     # Миграция 2026-10-01_placement_weborama_click.sql.
     weborama_click = Column(Text)
+    # Когда площадка запущена ВПЕРВЫЕ — письмо «кампания стартовала» уходит ей один раз
+    # (аудит 01.10.2026, В-4). Миграция 2026-10-02_first_start_and_mail_publisher.sql.
+    first_started_at = Column(DateTime)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(),
                         onupdate=func.now())
@@ -143,6 +146,9 @@ class PublisherBlock(Base):
     name = Column(String(255))                 # название в xoalt (cart / aboveReco)
     page_type = Column(String(64))             # раздел: главная/каталог/карточка/корзина/статьи/акции/лк
     network = Column(String(32))               # x-simb-web / x-simb (МС source-ключ)
+    # Платформа блока приложения: android | ios; у web — пусто (миграция
+    # 2026-10-02_app_links_sdk_and_block_platform.sql). Пока раскладка в настройках.
+    platform = Column(String(8))
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 

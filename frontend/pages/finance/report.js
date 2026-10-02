@@ -5,12 +5,13 @@ import { pageAccess } from '@/lib/pageGuard'
 import Head from 'next/head'
 import { makeApi as api } from '@/lib/http'
 import { grpDash as fmt, pctDot as fmtPct } from '@/lib/salesFormat'
-import { UI, MONO, card, th, td, inp, primaryBtn, LoadError, NoAccessScreen } from '@/components/salesTableKit'
+import { UI, MONO, card, th, td, inp, primaryBtn, LoadError, NoAccessScreen, Z } from '@/components/salesTableKit'
 import { errText, isAuth } from '@/lib/loadError'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import useLatest from '@/lib/useLatest'
+import { monthMsk, monthsAgoMsk } from '@/lib/dates'
 const FinReportMobile = dynamic(() => import('@/components/mobile/FinReportMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 
 // Финансовый отчёт — новый P&L рядом со старым (/pl). Старый намеренно оставлен
@@ -74,14 +75,8 @@ export default function FinReport() {
   const [basis, setBasis] = useState('accrual')
   const [vat, setVat] = useState('net')
   const [granularity, setGranularity] = useState('month')
-  const [dateFrom, setDateFrom] = useState(() => {
-    const d = new Date(); d.setMonth(d.getMonth() - 11)
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
-  })
-  const [dateTo, setDateTo] = useState(() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
-  })
+  const [dateFrom, setDateFrom] = useState(() => monthsAgoMsk(11))
+  const [dateTo, setDateTo] = useState(() => monthMsk())
 
   // Выбор базы и режима НДС запоминается: человек работает в одном режиме неделями,
   // и сбрасывать его на каждый заход — раздражать без причины.
@@ -250,7 +245,7 @@ export default function FinReport() {
   // Шапка таблицы липкая по вертикали; первая колонка — по горизонтали.
   const thBase = {
     ...th, textAlign: 'right', padding: '10px 10px', background: 'var(--bg-subtle)',
-    position: 'sticky', top: 0, zIndex: 10, borderBottom: '2px solid var(--border-card)',
+    position: 'sticky', top: 0, zIndex: Z.sticky - 10, borderBottom: '2px solid var(--border-card)',
   }
   // Числовая ячейка: моноширинный, вправо, без переносов.
   const num = { ...td, fontFamily: MONO, textAlign: 'right', whiteSpace: 'nowrap' }
@@ -330,7 +325,7 @@ export default function FinReport() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={{ ...thBase, textAlign: 'left', position: 'sticky', left: 0, zIndex: 20, minWidth: 240 }}>Статья</th>
+                  <th style={{ ...thBase, textAlign: 'left', position: 'sticky', left: 0, zIndex: Z.sticky, minWidth: 240 }}>Статья</th>
                   {periods.map(p => <th key={p} style={{ ...thBase, minWidth: colWidth, ...(isQ(p) ? { background: 'var(--accent-tint)', color: 'var(--text-primary)' } : null) }}>{formatPeriod(p)}</th>)}
                   <th style={{ ...thBase, ...totalCol, minWidth: 120 }}>ИТОГО</th>
                 </tr>

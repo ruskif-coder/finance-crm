@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { MONO, UI } from '../salesTableKit'
+import { grp } from '../../lib/salesFormat'
 import { CARD, Marker, rise } from './kit'
 import { T } from '../../lib/tokens'
 import BottomSheet from './BottomSheet'
@@ -204,7 +205,7 @@ export default function ContractsMobile({
         renderCard={(c, open, toggle) => <CtCard c={c} open={open} onToggle={toggle} onEdit={openEdit} onDownload={onDownload} canEdit={canEdit} />}
         hasMore={rows.length > shown.length}
         onMore={() => setLimit(l => (l || 50) + 50)}
-        moreLabel={`Показать ещё · ${shown.length} из ${new Intl.NumberFormat('ru-RU').format(rows.length)}`}
+        moreLabel={`Показать ещё · ${shown.length} из ${grp(rows.length)}`}
       />
 
       {fmtSheet && (

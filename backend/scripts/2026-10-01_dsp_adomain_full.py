@@ -43,7 +43,9 @@ def main():
     """), {"deal": deal}).all()
     c = MsClient()
     plan, sent, same, skipped, failed = 0, 0, 0, [], []
+    from app.launch_prep.pub_rules import web_url
     for cid, h, code, landing in rows:
+        landing = web_url(landing) or ""      # диплинк SDK → веб-адрес (02.10.2026)
         want = CR.landing_adomain(landing)
         if not want:
             skipped.append(f"{code} cr{cid}: нет посадочной")

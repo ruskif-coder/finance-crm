@@ -52,3 +52,60 @@ def test_check_failure_is_a_report_not_a_refusal(monkeypatch):
     _no_limits(monkeypatch)
     r = dc.after_status(None, CAMP, "LAUNCHED", {}, Ms(boom=True))
     assert "сверка с DSP не прошла" in r["error"]
+
+
+def _launch(monkeypatch, reread_fails=False):
+    from app.dsp.client import MsError
+    _no_limits(monkeypatch)
+    sent = []
+
+    class M(Ms):
+        def campaign_set_status(self, xx, st, local_ref=None):
+            sent.append(("camp", st))
+
+        def creative_set_status(self, xx, st, local_ref=None):
+            if xx == "K2":
+                raise MsError("Creative.setStatus: отказ")
+            sent.append((xx, st))
+            self.cr[xx] = st
+    monkeypatch.setattr(dc, "creative_targets",
+                        lambda rows, t: {"K1": "LAUNCHED", "K2": "LAUNCHED", "K3": "LAUNCHED"})
+    monkeypatch.setattr(dc, "sync_campaign_plan", lambda *a, **k: None)
+
+    class Q:
+        def __getattr__(self, n):
+            return lambda *a, **k: self
+
+        def all(self):
+            return []
+    camp = SimpleNamespace(id=2, ms_campaign_xxhash="C2")
+    ms = M(cr={"K2": "STOPPED"}, boom=reread_fails)
+    assert dc.apply_status(SimpleNamespace(query=lambda *a: Q()), camp, "запущена", client=ms) == "LAUNCHED"
+    return sent, camp._dsp_check
+
+
+def test_one_refused_creative_does_not_undo_an_accepted_launch(monkeypatch):
+    """Аудит 01.10.2026, К-6: DSP отказал на N-м креативе — раньше `apply_status` падал,
+    вызывающий откатывал НАШ статус и писал «изменения не сохранены», а кампания и
+    креативы 1…N−1 в DSP уже крутились."""
+    sent, chk = _launch(monkeypatch)
+    assert ("K1", "LAUNCHED") in sent and ("K3", "LAUNCHED") in sent, "отказ K2 не остановил K3"
+    assert [m["got"] for m in chk["mismatch"] if "K2" in m["what"]] == ["STOPPED"]
+    assert [r["what"] for r in chk["refused"]] == ["креатив K2"]
+
+
+def test_refusal_survives_a_failed_reread(monkeypatch):
+    """Обрыв связи бьёт и по отказу, и по перечитыванию — отказ всё равно в отчёте."""
+    _, chk = _launch(monkeypatch, reread_fails=True)
+    assert chk["error"] and [r["what"] for r in chk["refused"]] == ["креатив K2"]
+
+
+def test_campaign_refusal_still_propagates(monkeypatch):
+    from app.dsp.client import MsError
+    import pytest
+
+    class M(Ms):
+        def campaign_set_status(self, xx, st, local_ref=None):
+            raise MsError("Campaign.setStatus: отказ")
+    with pytest.raises(MsError):
+        dc.apply_status(None, SimpleNamespace(id=3, ms_campaign_xxhash="C3"), "остановлена", client=M())

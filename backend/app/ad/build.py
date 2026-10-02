@@ -372,6 +372,8 @@ def creative_plans(db: Session, camp: AdCampaign) -> dict:
         by_pl.setdefault(r["placement_id"], []).append(dict(r))
     plan_of = {p.id: p.plan_show for p in db.query(AdCampaignPlacement).filter(
         AdCampaignPlacement.campaign_id == camp.id).all()}
+    # Удержание долей — по КАЛЕНДАРЮ, не по дате среза статистики (ревью 02.10.2026):
+    # это правило перераспределения, а не отчёт; на застывшем срезе оно стало бы вечным.
     hold = holds(flight_of(camp.date_start, camp.date_end))
     out = {}
     for pid, crs in by_pl.items():

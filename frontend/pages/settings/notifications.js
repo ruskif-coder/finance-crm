@@ -26,6 +26,7 @@ import TemplateEditor from '../../components/notify/TemplateEditor'
 import { CH_LABELS, badge, checkbox, hint, linkBtn, msg, segBtn, td, topTab }
   from '../../components/notify/kit'
 import api, { auth } from '../../lib/http'
+import { isAdmin as checkAdmin } from '../../lib/auth'
 import { fmtDateTime } from '@/lib/dates'
 import { TONE, toneOf } from '@/lib/tone'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -75,7 +76,7 @@ export default function NotificationSettings() {
   useRefreshOnReturn(() => setTick(t => t + 1), { enabled: !dirty })
 
   useEffect(() => {
-    const admin = localStorage.getItem('role') === 'admin'
+    const admin = checkAdmin()
     setIsAdmin(admin)
     setMode(admin ? 'profiles' : 'me')
     api.get('/notifications/settings/catalog', auth())

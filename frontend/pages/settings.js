@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { firstSettingsHref } from '../components/SettingsTabs'
 import { firstAllowedHref } from '../lib/nav'
+import { isAdmin } from '../lib/auth'
 
 // Раздел «Настройки» разнесён на отдельные страницы (/settings/*). Этот роут —
 // тонкий редирект на первую ДОСТУПНУЮ секцию (с поддержкой старых ссылок ?tab=<id>).
@@ -21,8 +22,7 @@ export default function SettingsRedirect() {
     const href = firstSettingsHref()
     if (href) { router.replace(href); return }
     let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}
-    const isAdmin = localStorage.getItem('role') === 'admin'
-    router.replace(firstAllowedHref(p, isAdmin))
+    router.replace(firstAllowedHref(p, isAdmin()))
   }, [router.query.tab])
   return null
 }

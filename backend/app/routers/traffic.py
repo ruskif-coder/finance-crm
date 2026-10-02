@@ -43,7 +43,7 @@ from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepCreativeSe
                                     LaunchPrepTarget)
 from app.models import Role, User
 from app.notify import emit
-from app.permissions import require_any_permission, require_permission
+from app.permissions import get_permissions_for_user, require_any_permission, require_permission
 from app.sales.deal_label import deal_label
 from app.sales.models import (SalesAdvertiser, SalesBrand, SalesDeal, SalesPublisher,
                               SalesRep)
@@ -129,6 +129,17 @@ def _pair_in_scope(db: Session, pair_id: int, user: User):
     row = _apply_scope(row, db, user, all_reps=_is_master(user)).first()
     if not row:
         raise HTTPException(status_code=404, detail="Пара не найдена")
+    return row
+
+
+def _pair_for_files(db: Session, pair_id: int, user: User):
+    """Пара для скриншотов. Трафику — вся очередь (она общая, 03.09.2026); тому, кто
+    пришёл по праву «креативы» (аккаунт), — только его сделки: файлы открывались по
+    номеру, и аккаунт доставал скриншоты чужой сделки перебором (аудит 01.10.2026, К-4)."""
+    row = _pair_in_scope(db, pair_id, user)
+    if not get_permissions_for_user(db, user).get("traffic_queue", {}).get("view"):
+        from app.routers import launch_prep as lp
+        lp._assert_deal_in_scope(db, user, row[4])
     return row
 
 
@@ -676,9 +687,9 @@ def _shot_out(f: LaunchPrepPairFile) -> dict:
 def list_files(pair_id: int, db: Session = Depends(get_db),
                current_user: User = Depends(FILES_VIEW)):
     # Несуществующая пара — это 404, а не пустой список: «файлов нет» и «нет такой пары»
-    # разные ответы, и второй означает опечатку в ссылке или удалённую сущность.
-    if not db.query(LaunchPrepPair.id).filter(LaunchPrepPair.id == pair_id).first():
-        raise HTTPException(status_code=404, detail="Пара не найдена")
+    # разные ответы. Та же область, что у самих файлов: аккаунт видел по номеру пары
+    # имена и номера скриншотов чужих сделок (ревью К-4, 01.10.2026).
+    _pair_for_files(db, pair_id, current_user)
     rows = (db.query(LaunchPrepPairFile)
             .filter(LaunchPrepPairFile.pair_id == pair_id,
                     LaunchPrepPairFile.kind == 'размещение')
@@ -754,6 +765,7 @@ def get_shot(file_id: int, db: Session = Depends(get_db),
     rec = db.query(LaunchPrepPairFile).filter(LaunchPrepPairFile.id == file_id).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Файл не найден")
+    _pair_for_files(db, rec.pair_id, current_user)
     # Путь из базы — через общую проверку границы хранилища (`app/files_safe`).
     # До 11.09.2026 она была ровно в одном месте из десяти.
     full = existing_upload_path(rec.path)
@@ -776,6 +788,7 @@ def drop_shot(file_id: int, db: Session = Depends(get_db),
     rec = db.query(LaunchPrepPairFile).filter(LaunchPrepPairFile.id == file_id).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Файл не найден")
+    _pair_for_files(db, rec.pair_id, current_user)
     # Что удалили — запоминаем ДО удаления: после `db.delete` объект уже не читается,
     # а в журнале нужно имя файла, а не голый id.
     # `original_name`: поля `filename` у строки нет, и до 23.09.2026 удаление падало
@@ -803,7 +816,7 @@ def files_archive(pair_id: int, db: Session = Depends(get_db),
     и вешать такую кнопку некуда. Имя архива собирается из префикса пары и номера
     креатива, чтобы в загрузках не появлялось «архив (3).zip».
     """
-    pair, s, target, pub, deal = _pair_in_scope(db, pair_id, current_user)
+    pair, s, target, pub, deal = _pair_for_files(db, pair_id, current_user)
     rows = (db.query(LaunchPrepPairFile)
             .filter(LaunchPrepPairFile.pair_id == pair_id)
             .order_by(LaunchPrepPairFile.id).all())

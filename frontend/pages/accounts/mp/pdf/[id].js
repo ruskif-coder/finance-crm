@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { isAdmin } from '@/lib/auth'
 import Head from 'next/head'
 import { num, rowClicks, rowImp, rowNet } from '@/lib/mpRow'
 import { useRouter } from 'next/router'
@@ -92,7 +93,7 @@ export default function MpPdf() {
     }
     if (!id) return
     if (!localStorage.getItem('token')) { router.push('/login'); return }
-    if (localStorage.getItem('role') !== 'admin') {
+    if (!isAdmin()) {
       let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}
       if (!can(p, 'media_plans', 'view')) { router.replace('/accounts/mp'); return }
     }

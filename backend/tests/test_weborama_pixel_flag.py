@@ -8,6 +8,8 @@
 без счётчика. Поэтому проверяется не наличие колонки, а ПОВЕДЕНИЕ трёх её читателей.
 """
 import pytest
+
+from app.ad.stat_sources import fact_as_of   # WR — на дату среза (02.10.2026)
 from sqlalchemy import text
 
 from app.ad.build import needs_pixel
@@ -248,8 +250,8 @@ def test_campaign_mismatch_compares_only_covered_placements(db):
     def put(r):
         db.execute(text(
             "INSERT INTO ad_campaign_stat (campaign_id, placement_id, date, shows,"
-            " clicks, source) VALUES (:c, :p, CURRENT_DATE, :s, 0, 'weborama')"),
-            {"c": c.id, "p": r["id"], "s": int(r["fact_shows"] * 0.9)})
+            " clicks, source) VALUES (:c, :p, :d, :s, 0, 'weborama')"),
+            {"c": c.id, "p": r["id"], "s": int(r["fact_shows"] * 0.9), "d": fact_as_of(db)})
 
     put(rows[0])
     one = sd.deal_campaign(str(c.deal_id), db=db, current_user=user)
@@ -289,8 +291,8 @@ def test_placement_row_carries_its_own_mismatch(db):
 
     db.execute(text(
         "INSERT INTO ad_campaign_stat (campaign_id, placement_id, date, shows, clicks,"
-        " source) VALUES (:c, :p, CURRENT_DATE, :s, 0, 'weborama')"),
-        {"c": c.id, "p": r["id"], "s": int(r["fact_shows"] * 0.75)})
+        " source) VALUES (:c, :p, :d, :s, 0, 'weborama')"),
+        {"c": c.id, "p": r["id"], "s": int(r["fact_shows"] * 0.75), "d": fact_as_of(db)})
     after = sd.deal_campaign(str(c.deal_id), db=db, current_user=user)
     row = next(x for x in after["rows"] if x["id"] == r["id"])
     assert row["verifier_shows"] == int(r["fact_shows"] * 0.75)

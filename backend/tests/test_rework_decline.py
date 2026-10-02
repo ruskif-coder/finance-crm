@@ -39,8 +39,15 @@ def _pair(db, verdict):
         SELECT p.id FROM launch_prep_pair p
           JOIN launch_prep_review r ON r.pair_id = p.id AND r.kind = 'площадка'
           JOIN launch_prep_target t ON t.id = p.target_id
+          JOIN launch_prep_creative_set cs ON cs.id = p.set_id
+          LEFT JOIN ad_campaign a ON a.deal_id = cs.deal_id
+          LEFT JOIN ad_campaign_placement pl ON pl.campaign_id = a.id
+                                            AND pl.publisher_id = t.publisher_id
          WHERE p.sent_at IS NOT NULL AND p.withdrawn_at IS NULL
            AND t.state NOT IN ('в размещении','завершён','сверка завершена','архив')
+           -- запущенное размещение отзыву не подлежит (`withdraw.blocker`): на боевой
+           -- копии первые пары — на паузе, и тест проверял бы не то (репетиция 02.10.2026)
+           AND coalesce(pl.status, '') NOT IN ('запущен','пауза','завершена')
          ORDER BY p.id LIMIT 1""")).first()
     if not row:
         pytest.skip("нет подходящей пары")

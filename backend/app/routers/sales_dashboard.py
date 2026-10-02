@@ -2043,7 +2043,8 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
     from app.ad import build as ad_build
     from app.ad.flight import (PLACEMENT_RUNNING, best_chain_status, distribute,
                                effective_campaign_status, flight_of, progress)
-    from app.ad.stat_sources import comparable, goal_limit, mismatch_level, mismatch_pct
+    from app.ad.stat_sources import (comparable, fact_as_of, goal_limit, mismatch_level,
+                                     mismatch_pct, wr_outside)
     from app.ad.models import AdCampaign
     from app.routers import traffic_dashboard as td
 
@@ -2061,7 +2062,7 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
     if fact_shows is None:
         return {"has": False, "reason": "Статистика ещё не пришла"}
 
-    today = date.today()
+    today = fact_as_of(db)    # дата среза: план и темп — на последний отчитанный день
     fl = flight_of(c.date_start, c.date_end, today)
     pls = td._placements_of(db, [c.id]).get(c.id, [])
     by_pl = td._creatives_all(db, [c.id]).get(c.id, {})
@@ -2071,7 +2072,7 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
     from app.ad import balance
     balance.mark_capless(db, pls, ad_build.deal_plan(db, c.deal_id)["surfaces"])
     rows = distribute(c.plan_show, fact_shows, fl, pls, cap=balance.share_cap(db))["rows"]
-    fc = progress(c.plan_show, fact_shows, c.date_start, c.date_end, today)
+    fc = progress(c.plan_show, fact_shows, c.date_start, c.date_end, today, now=date.today())
 
     by_day = td._stat_by_day(db, [c.id]).get(c.id, {})
     all_clicks = sum(v[1] or 0 for v in by_day.values())
@@ -2088,7 +2089,7 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
         "SELECT shows, date FROM ad_campaign_stat WHERE campaign_id = :c "
         "AND placement_id IS NULL AND source = 'weborama_manual'"), {"c": c.id}).first()
 
-    ver = td._verifier(db, [c.id]).get(c.id) or {}
+    ver = td._verifier(db, [c.id], until=today).get(c.id) or {}
     ver_by_pl = ver.get("by_placement", {})
     ver_shows = ver.get("shows")
 
@@ -2104,8 +2105,13 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
     # скольких. Строки верификатора без площадки (замер по РК целиком) сопоставлять
     # не с чем по частям, и тогда сравнение идёт по всей РК.
     # Правило — `stat_sources.comparable`, одно на карточку и дашборд трафика.
-    own_cmp, ver_cmp, n_covered = comparable(
-        fact_shows, {r["id"]: r.get("fact_shows") or 0 for r in rows if r.get("id")}, ver)
+    own_by_pl = {r["id"]: r.get("fact_shows") or 0 for r in rows if r.get("id")}
+    own_cmp, ver_cmp, n_covered = comparable(fact_shows, own_by_pl, ver)
+    # На карточке WR — СОПОСТАВИМЫЙ (площадки с нашим фактом), вне DSP — отдельно
+    # справочно: вся сумма WR рядом с фактом DSP читалась задвоением (владелец 02.10.2026).
+    if n_covered:
+        ver_shows = ver_cmp
+    ver_outside = wr_outside(own_by_pl, ver) or None
 
     return {
         "has": True,
@@ -2138,6 +2144,7 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
         # Охват верификатора: без него процент выглядит приговором всей РК, хотя
         # посчитан по части площадок. Экран подписывает «по N из M».
         "verifier_placements": n_covered,
+        "verifier_outside": ver_outside,
         "pixel_mode": px["mode"] if px["needed"] else None,
         "verifier_manual": ({"shows": manual[0], "period_to": manual[1].isoformat()}
                             if manual else None),
@@ -2179,17 +2186,19 @@ def deal_campaign_stat(deal_id: str, grain: str = "day",
     if not c:
         return {"buckets": [], "grain": grain, "totals": None}
 
-    by_day = td._stat_by_day(db, [c.id]).get(c.id, {})
+    from app.ad.stat_sources import fact_as_of
+    today = fact_as_of(db)    # дата среза — тем же правилом, что дашборд трафика
+    by_day = {d: v for d, v in td._stat_by_day(db, [c.id]).get(c.id, {}).items() if d <= today}
     fact = td._facts(db, [c.id]).get(c.id, {}).get("shows")
-    out = daily_buckets(c.plan_show, fact, flight_of(c.date_start, c.date_end), by_day,
-                        grain=grain)
+    out = daily_buckets(c.plan_show, fact, flight_of(c.date_start, c.date_end, today), by_day,
+                        grain=grain, today=today)
     if out is None:
         return {"buckets": [], "grain": grain, "totals": None}
-    today = date.today()
     t_shows, t_clicks = by_day.get(today, (0, 0))
     all_shows = sum(v[0] or 0 for v in by_day.values())
     all_clicks = sum(v[1] or 0 for v in by_day.values())
     out["totals"] = {
+        "as_of": today,
         "today": {"shows": t_shows, "clicks": t_clicks,
                   "ctr": round(t_clicks / t_shows * 100, 2) if t_shows else None},
         "period": {"shows": all_shows, "clicks": all_clicks,

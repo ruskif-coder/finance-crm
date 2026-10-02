@@ -152,7 +152,7 @@ export default function CounterpartiesMobile({
         renderCard={(c, open, toggle) => <CpCard c={c} open={open} onToggle={toggle} onOpen={openCard} onEdit={openEdit} canEdit={canEdit} />}
         hasMore={rows.length > shown.length}
         onMore={() => setLimit(l => (l || 50) + 50)}
-        moreLabel={`Показать ещё · ${shown.length} из ${new Intl.NumberFormat('ru-RU').format(rows.length)}`}
+        moreLabel={`Показать ещё · ${shown.length} из ${grp(rows.length)}`}
       />
 
       {vidSheet && (

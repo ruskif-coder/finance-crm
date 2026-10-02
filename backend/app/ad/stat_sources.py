@@ -75,6 +75,40 @@ def fact_sources() -> list:
     return list(OWN)
 
 
+def fact_as_of(db, today=None):
+    """Дата среза статистики — последний день, за который пришёл БОЕВОЙ факт (владелец
+    02.10.2026). По ней считаются план на сегодня, темп, стена дней и сверка с WR.
+
+    Факт DSP приезжает ночью за вчера, а Weborama утром приносит и неполный текущий день.
+    План «на сегодня» против факта «по вчера» показывал РК на день отстающей, а WR за
+    полтора дня против DSP за сутки читался задвоением. Нет боевого факта (стенд) — по
+    нашему счётчику вообще; нет никакого — вчера.
+    """
+    from datetime import date as _date, timedelta
+    from sqlalchemy import text
+    today = today or _date.today()
+    q = text("SELECT max(date) FROM ad_campaign_stat WHERE source = ANY(:s) AND date <= :t")
+    for group in (COMBAT, OWN):
+        d = db.execute(q, {"s": list(group), "t": today}).scalar()
+        if d:
+            return d
+    return today - timedelta(days=1)
+
+
+def is_stale(as_of, today=None) -> bool:
+    """Срез старше вчерашнего — ночной съём DSP встал (ревью 02.10.2026). Без этого флага
+    застывший срез прятал бы сбой: темп считается на ту же дату, и все РК «в графике»."""
+    from datetime import date as _date
+    return ((today or _date.today()) - as_of).days > 1
+
+
+def wr_outside(own_by_placement, ver) -> int:
+    """Показы WR по площадкам БЕЗ нашего факта — вне DSP (прямой тег у аптеки). В сверку
+    не идут, на экране — справочной строкой (владелец 02.10.2026)."""
+    by = (ver or {}).get("by_placement") or {}
+    return sum(n or 0 for pid, n in by.items() if not own_by_placement.get(pid))
+
+
 def is_verifier(source: str) -> bool:
     return source in VERIFIER
 
@@ -115,10 +149,14 @@ def comparable(own_total, own_by_placement, ver):
     """
     ver = ver or {}
     by = ver.get("by_placement") or {}
-    covered = [pid for pid in by if pid in own_by_placement]
+    # Только площадки с НАШИМ фактом (владелец 02.10.2026): площадку вне DSP — прямой тег
+    # у аптеки — мерит одна Weborama, и её показы в сверке выглядели «лишними».
+    covered = [pid for pid in by if own_by_placement.get(pid)]
     if covered:
         return (sum(own_by_placement[pid] or 0 for pid in covered),
                 sum(by[pid] or 0 for pid in covered), len(covered))
+    if by:
+        return own_total, None, 0          # мерили только площадки вне нашего факта
     return own_total, ver.get("shows"), 0
 
 
