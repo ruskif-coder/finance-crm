@@ -200,13 +200,27 @@ export default function AssemblyOrd({ dealId, data, err, canEdit, onReload }) {
     } catch (e) { setBindErr(e.response?.data?.detail || 'Не удалось привязать договор') }
   }
 
+  // «Прямой рекламодатель» (владелец 02.10.2026): изначальный договор = доходный, отдельного
+  // нет — стадию это не запирает. Ставя галку, сервер снимает выбранный изначальный.
+  const [directBusy, setDirectBusy] = useState(false)
+  const setDirect = async (value) => {
+    if (directBusy) return
+    setBindErr(''); setDirectBusy(true)
+    try {
+      await api.put(`/ord/deal/${dealId}/direct-advertiser`, { value }, auth())
+      done()
+    } catch (e) { setBindErr(e.response?.data?.detail || 'Не удалось сохранить') }
+    finally { setDirectBusy(false) }
+  }
+
   const shown = err || bindErr
   if (shown) return <div style={{ ...card, padding: 13, color: 'var(--dot-overdue)' }}>{shown}</div>
   if (!data) return <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Загрузка…</div>
 
   const { payer, final, initial } = data
   const brand = data.creatives?.brand
-  const chosen = initial.bound || initial.proposal
+  const direct = !!initial.direct_advertiser
+  const chosen = direct ? null : (initial.bound || initial.proposal)
   // Менять можно и ПОСЛЕ привязки (находка I4): подсказка, приведшая к выбору, бывает
   // догадкой самого экрана, и передумать должно быть можно — «показать все»/«сменить»
   // не исчезают ровно тогда, когда нужны сильнее всего.
@@ -245,19 +259,22 @@ export default function AssemblyOrd({ dealId, data, err, canEdit, onReload }) {
     {
       label: 'Изначальный договор',
       state: sInitial,
-      value: chosen ? (chosen.number || 'без номера') : 'не выбран',
-      meta: chosen
-        ? `${chosen.advertiser?.name || '—'} · через ${chosen.contractor?.name || '—'}`
-        : '',
-      fill: initial.fill,
-      hint: initial.reason,
-      action: canPick
+      value: direct ? 'прямой рекламодатель'
+        : chosen ? (chosen.number || 'без номера') : 'не выбран',
+      meta: direct
+        ? `изначальный = доходный${final.ok ? ` ${final.contract.number || ''}` : ''}`
+        : chosen
+          ? `${chosen.advertiser?.name || '—'} · через ${chosen.contractor?.name || '—'}`
+          : '',
+      fill: direct ? null : initial.fill,
+      hint: direct ? '' : initial.reason,
+      action: (canPick && !direct)
         ? (initial.bound
           ? { label: 'сменить', primary: false, onClick: () => setPicking('initial') }
           : { label: initial.proposal ? 'подтвердить' : 'выбрать', primary: true,
             onClick: () => (initial.proposal ? bind(initial.proposal.id) : setPicking('initial')) })
         : null,
-      more: canPick && initial.candidates.length
+      more: canPick && !direct && initial.candidates.length
         ? { label: `показать все ${initial.candidates.length}`, onClick: () => setPicking('initial') }
         : null,
       href: '/accounts/ord',
@@ -292,6 +309,18 @@ export default function AssemblyOrd({ dealId, data, err, canEdit, onReload }) {
   return (
     <div style={{ fontFamily: UI }}>
       {rows.map(o => <Row key={o.label} o={o} />)}
+      {canEdit && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 2px 2px',
+          fontSize: 12.5, color: 'var(--text-secondary)', cursor: 'pointer' }}
+          title="Рекламодатель платит нам сам: изначального договора нет, его роль играет доходный. Креатив уйдёт в ОРД только с доходным, метка в DSP — с ИНН плательщика.">
+          <input type="checkbox" checked={direct} disabled={directBusy}
+            onChange={e => setDirect(e.target.checked)} />
+          Прямой рекламодатель — изначальный договор = доходный
+          {direct && !final.ok && (
+            <span style={{ color: 'var(--warning-text)' }}>· доходный договор не определён — без него ЕРИД не выпустить</span>
+          )}
+        </label>
+      )}
       {picking === 'payer' && (
         <PayerPicker dealId={dealId} chosenId={payer.counterparty_id}
           onDone={done} onClose={() => setPicking(false)} />

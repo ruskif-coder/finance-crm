@@ -31,6 +31,7 @@ import { downloadDealCreatives } from '@/lib/dealDocs'
 import OffsiteButton from '@/components/traffic/OffsiteButton'
 import PassportButton from '@/components/traffic/PassportButton'
 import StartRkModal from '@/components/traffic/StartRkModal'
+import DspRefreshModal from '@/components/traffic/DspRefreshModal'
 import AimButton from '@/components/traffic/AimButton'
 import safeHref from '@/lib/safeHref'
 import { useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
@@ -547,6 +548,7 @@ export default function TrafficDashboard() {
      нажатия, а откатывать нечем. */
   const [extAsk, setExtAsk] = useState(null)     // { row, kind, plan }
   const [startAsk, setStartAsk] = useState(null) // строка РК в окне запуска
+  const [refreshAsk, setRefreshAsk] = useState(null) // строка РК в окне «Обновить данные в DSP»
   const tgt = useTargetingCampaign()              // демо-кампания нацеливания: «протухла» ли
   const [extBusy, setExtBusy] = useState(false)
 
@@ -1555,6 +1557,17 @@ export default function TrafficDashboard() {
                                     color: 'var(--blue)', fontFamily: UI, fontSize: 12.5, fontWeight: 700 }}>
                                   Завершить РК
                                 </button>
+                                {/* Перезаписать у заведённой РК ссылки, пиксели и таргеты по
+                                    текущим данным — Администратор и «Админ Трафик» (02.10.2026). */}
+                                {!!data?.can_dsp_refresh && !!r.ms_campaign_xxhash && (
+                                  <button style={{ padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+                                    border: '1px solid var(--accent)', background: 'var(--bg-card)', color: 'var(--accent)',
+                                    fontFamily: UI, fontSize: 12.5, fontWeight: 700 }}
+                                    title="Перезаписать в DSP ссылки, пиксели и таргеты по текущим данным; сначала покажет, что изменится"
+                                    onClick={() => setRefreshAsk(r)}>
+                                    Обновить данные в DSP
+                                  </button>
+                                )}
                               </span>
                               {/* Подпись называет НАШУ стадию: в макете стоит «Предварительная
                                   сверка», но в каталоге такой стадии нет — после размещения
@@ -1607,6 +1620,15 @@ export default function TrafficDashboard() {
         </div>
       </div>
 
+      {refreshAsk && (
+        <DspRefreshModal row={refreshAsk} auth={auth} onClose={() => setRefreshAsk(null)}
+          onDone={async () => {
+            if (open === refreshAsk.id) {
+              const d = await api.get(`/traffic-dashboard/campaign/${refreshAsk.id}`, auth())
+              setDetail(x => ({ ...x, [refreshAsk.id]: d.data }))
+            }
+          }} />
+      )}
       {startAsk && (
         <StartRkModal row={startAsk} auth={auth} note={(r) => dspCheckNote(r.dsp_check)}
           onClose={() => setStartAsk(null)}

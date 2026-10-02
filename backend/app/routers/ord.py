@@ -797,7 +797,9 @@ def deal_assembly(deal_id: int, db: Session = Depends(get_db),
         },
         'initial': {
             'title': STEP_TITLES['initial'],
-            'ok': bound is not None,
+            # Прямой рекламодатель: изначальный = доходный, ступень закрыта (02.10.2026).
+            'ok': bound is not None or bool(getattr(deal, 'ord_direct_advertiser', False)),
+            'direct_advertiser': bool(getattr(deal, 'ord_direct_advertiser', False)),
             'reason': (_bound_initial_reason(bound, proposal) if bound is not None
                       else (proposal.reason if proposal else '')),
             'reason_code': ('bound' if bound is not None
@@ -1165,6 +1167,7 @@ def create_initial(deal_id: int, payload: NewInitialContract, db: Session = Depe
         db.add(OrdInitialFinalLink(initial_contract_id=c.id, final_ord_id=fr.final_ord_id,
                                    contract_id=fr.contract.id if fr.contract else None))
     deal.ord_initial_contract_id = c.id
+    deal.ord_direct_advertiser = False   # выбран изначальный — уже не прямой
     db.commit()
     log_action(db, current_user, "ord_create_initial", "sales_deal", deal.id,
                f"изначальный договор {number} заведён вручную ({payload.advertiser_name.strip()})")
@@ -1176,6 +1179,28 @@ class BindInitial(BaseModel):
     # Привязать договор, которого нет среди связей выгрузки под доходным сделки.
     # По умолчанию запрещено: см. проверку ниже.
     force: bool = False
+
+
+class DirectAdvertiserIn(BaseModel):
+    value: bool
+
+
+@router.put("/deal/{deal_id}/direct-advertiser")
+def set_direct_advertiser(deal_id: int, payload: DirectAdvertiserIn, db: Session = Depends(get_db),
+                          current_user: User = Depends(require_permission("sales_registry", "edit"))):
+    """Галка «Прямой рекламодатель» (владелец 02.10.2026): изначальный договор = доходный.
+    Ставя галку, снимаем выбранный изначальный — иначе креатив ушёл бы в ОРД с ним."""
+    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if deal is None:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    _assert_deal_in_scope(db, current_user, deal)
+    deal.ord_direct_advertiser = bool(payload.value)
+    if payload.value:
+        deal.ord_initial_contract_id = None
+    db.commit()
+    log_action(db, current_user, "ord_direct_advertiser", "sales_deal", deal.id,
+               "прямой рекламодатель: " + ("да — изначальный = доходный" if payload.value else "нет"))
+    return {"ok": True, "direct_advertiser": deal.ord_direct_advertiser}
 
 
 @router.put("/deal/{deal_id}/initial")
@@ -1213,6 +1238,7 @@ def bind_initial(deal_id: int, payload: BindInitial, db: Session = Depends(get_d
             detail="Этот изначальный договор не относится к доходному договору сделки")
 
     deal.ord_initial_contract_id = contract.id
+    deal.ord_direct_advertiser = False   # выбран изначальный — уже не прямой
     db.commit()
     log_action(db, current_user,
                "ord_bind_initial_forced" if linked is None else "ord_bind_initial",

@@ -380,6 +380,9 @@ def _ord_initial_contract(c: Ctx) -> Result:
     if getattr(c.deal, "is_self_promo", False):
         # Саморекламный договор через API ОРД не создаётся — требовать его нечем.
         return _na("самореклама")
+    if getattr(c.deal, "ord_direct_advertiser", False):
+        # Прямой рекламодатель: изначальный договор = доходный, отдельного нет (02.10.2026).
+        return _ok("прямой рекламодатель — изначальный = доходный")
     return _ok() if c.deal.ord_initial_contract_id else _not_yet("не выбран")
 
 

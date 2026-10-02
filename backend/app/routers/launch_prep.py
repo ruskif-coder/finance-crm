@@ -920,6 +920,7 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
         # Договоры ОРД переносятся: стороны те же, и цепочка у продления та же самая.
         ord_initial_contract_id=src.ord_initial_contract_id,
         ord_final_contract_id=src.ord_final_contract_id,
+        ord_direct_advertiser=src.ord_direct_advertiser,
         our_stage_id=stage.id if stage else src.our_stage_id,
         period_from=pf, period_to=pt,
         prolonged_from_id=src.id,

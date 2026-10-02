@@ -180,6 +180,16 @@ def ad_label(db: Session, deal_id) -> Optional[tuple]:
     from app.ord.models import OrdInitialContract
     from app.sales.models import SalesDeal
     deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
+    if deal is not None and getattr(deal, "ord_direct_advertiser", False):
+        # Прямой рекламодатель (02.10.2026): изначальный = доходный, рекламодатель — это
+        # плательщик сделки; метка берёт его ИНН и название.
+        # Плательщик — тем же разбором, что сборка ОРД и ЕРИД (`resolve_final`): по полю
+        # сделки, а если пусто — по метке имени. Иначе экран сборки зелёный, а метки нет.
+        from app.ord.matching import resolve_final
+        cp = resolve_final(db, deal).payer
+        inn = "".join(ch for ch in (getattr(cp, "inn", "") or "") if ch.isdigit())
+        name = (getattr(cp, "name", "") or "").strip()
+        return (inn, name) if inn and name else None
     if not deal or not getattr(deal, "ord_initial_contract_id", None):
         return None
     ic = (db.query(OrdInitialContract)

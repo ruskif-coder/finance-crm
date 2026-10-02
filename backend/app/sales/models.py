@@ -751,6 +751,10 @@ class SalesDeal(Base):
     # backend/migrations/2026-08-25_ord_mirror.sql (ALTER TABLE sales_deals ...) —
     # здесь только маппинг, ALTER в этом файле не выполняется.
     ord_initial_contract_id = Column(Integer, ForeignKey("ord_initial_contracts.id"))
+    # «Прямой рекламодатель» (владелец 02.10.2026): рекламодатель платит нам сам, изначальный
+    # договор = доходный. Стадия его не требует, креатив идёт в ОРД с одним доходным, метка
+    # DSP — из плательщика. Миграция backend/migrations/2026-10-02_deal_ord_direct_advertiser.sql.
+    ord_direct_advertiser = Column(Boolean, nullable=False, server_default='false')
     # Доходный договор, выбранный человеком на ступени сборки. Пусто — работает
     # вычисление от плательщика (app/ord/matching.py, resolve_final), и экран показывает
     # его как подсказку; заполнено — выбор побеждает. Тот же узор, что строкой выше.

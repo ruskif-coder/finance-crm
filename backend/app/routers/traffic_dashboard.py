@@ -45,6 +45,7 @@ from app.database import get_db
 from app.models import User
 from app.permissions import require_permission
 from app.routers.traffic import _apply_scope, _is_master
+from app.dsp import refresh as dsp_refresh
 from app.sales.models import SalesDeal, SalesRep
 from app.sales.reps import staff_users
 from app.sales.row_context import load_row_context
@@ -273,6 +274,14 @@ def _dsp_follow(db: Session, c) -> Optional[str]:
 # и подтверждает. До 01.10 «ждёт запуска» сюда не входил, и «Запустить» на 54ZYCH не
 # поднял ни одной из 19 готовых площадок.
 START_RAISABLE = (PLACEMENT_READY, PLACEMENT_OFF, "пауза")
+
+
+def mass_start_skip(mode: Optional[str]) -> Optional[str]:
+    """Принудительный старт РК площадки Adfox / вне контура НЕ поднимает (владелец
+    02.10.2026): они запускаются своей отметкой у площадки, а кнопка РК — про нашу DSP."""
+    from app.launch_prep import pub_rules
+    return ("Adfox / вне контура — запускается отметкой у площадки"
+            if mode == pub_rules.MODE_EXTERNAL else None)
 
 
 def start_block(db: Session, c, p, creatives: list, mode: Optional[str] = None) -> Optional[str]:
@@ -886,6 +895,8 @@ def dashboard(scope: Optional[str] = None,
         "culprits": culprits(culprit_rows),
         "wall": _day_wall(rows, _stat_by_day(db, ids), today),
         "is_master": _is_master(user),
+        # Кнопка «Обновить данные в DSP» — Администратор и «Админ Трафик» (02.10.2026).
+        "can_dsp_refresh": dsp_refresh.may_refresh(user),
         # Список для переключателя — ВСЕ активные учётки трафика, с пометкой мастера.
         # Мастера идут первыми (сортировка в `staff_users`), звёздочку рисует фронт.
         "reps": staff_users(db, "traffic"),
@@ -1297,9 +1308,9 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
         pls = db.query(AdCampaignPlacement).filter_by(campaign_id=c.id).all()
         modes = pub_rules.placement_modes(db, {(c.deal_id, p.publisher_id) for p in pls})
         for p in pls:
-            if p.status in START_RAISABLE and not start_block(
-                    db, c, p, creatives.get(p.id, []),
-                    (modes.get((c.deal_id, p.publisher_id)) or {}).get("mode")):
+            mode = (modes.get((c.deal_id, p.publisher_id)) or {}).get("mode")
+            if (p.status in START_RAISABLE and not mass_start_skip(mode)
+                    and not start_block(db, c, p, creatives.get(p.id, []), mode)):
                 p.status = "запущен"
                 if _mark_first_start(p):
                     started.append(p.id)
@@ -1505,7 +1516,7 @@ def start_plan(campaign_id: int, db: Session = Depends(get_db), user: User = Dep
     for p in pls:
         pub = pubs.get(p.publisher_id)
         mode = (modes.get((c.deal_id, p.publisher_id)) or {}).get("mode")
-        why = start_block(db, c, p, creatives.get(p.id, []), mode)
+        why = mass_start_skip(mode) or start_block(db, c, p, creatives.get(p.id, []), mode)
         if p.status == "запущен":
             act = "running"
         elif p.status in START_RAISABLE and not why:
@@ -1816,3 +1827,62 @@ def _tell_publishers_started(db: Session, camp, placement_ids) -> None:
             # при уже записанном действии (ревью 24.09.2026).
             db.rollback()
             log.warning("Площадке %s не ушло «старт рк»: %s", pub.id, e)
+
+
+# ── «Обновить данные в DSP» (владелец 02.10.2026) ────────────────────────────
+# Приводит уже заведённое к текущим данным: ссылки, пиксели, таргеты; копии нацеливания —
+# только ЕРИД. Правила и сравнение — `app/dsp/refresh.py`.
+
+class RefreshItemIn(BaseModel):
+    kind: str
+    ref: str
+
+
+class RefreshDoneIn(BaseModel):
+    applied: int = 0
+    failed: List[str] = []
+
+
+def _refresh_guard(db: Session, campaign_id: int, user: User):
+    if not dsp_refresh.may_refresh(user):
+        raise HTTPException(403, "Обновлять данные в DSP могут Администратор и «Админ Трафик»")
+    return _campaign_in_scope(db, campaign_id, user)
+
+
+@router.get("/campaign/{campaign_id}/dsp-refresh")
+def dsp_refresh_plan(campaign_id: int, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Что изменится — по состоянию, прочитанному из DSP. Ничего не пишет."""
+    c, _deal = _refresh_guard(db, campaign_id, user)
+    return dsp_refresh.plan(db, c)
+
+
+@router.post("/campaign/{campaign_id}/dsp-refresh/item")
+def dsp_refresh_item(campaign_id: int, payload: RefreshItemIn,
+                     db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Записать ОДИН пункт — экран ведёт по ним настоящий прогресс."""
+    from app.dsp.client import MsError
+    c, deal = _refresh_guard(db, campaign_id, user)
+    try:
+        out = dsp_refresh.apply_item(db, c, payload.kind, payload.ref)
+    except (MsError, ValueError) as e:
+        raise HTTPException(400, str(e))
+    # Журнал — на сервере по каждому записанному пункту: итог от экрана мог не прийти
+    # (вкладку закрыли посреди прогона), а запись в боевом кабинете уже состоялась.
+    if out.get("changed"):
+        log_action(db, user, "dsp_refresh", "sales_deal", deal.id,
+                   f"{rk_label(db, c.id)}: {payload.kind} {payload.ref[:60]} — "
+                   f"{', '.join(out['changed'])}")
+    return out
+
+
+@router.post("/campaign/{campaign_id}/dsp-refresh/done")
+def dsp_refresh_done(campaign_id: int, payload: RefreshDoneIn,
+                     db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    c, deal = _refresh_guard(db, campaign_id, user)
+    # Итог прогона — со слов экрана, поэтому только сводка и с обрезкой: сами записи
+    # уже в журнале построчно (`dsp_refresh_item`).
+    failed = [str(f)[:200] for f in payload.failed[:10]]
+    log_action(db, user, "dsp_refresh", "sales_deal", deal.id,
+               f"{rk_label(db, c.id)}: прогон обновления завершён, пунктов {int(payload.applied)}"
+               + (f"; не принято: {'; '.join(failed)}" if failed else ""))
+    return {"ok": True}

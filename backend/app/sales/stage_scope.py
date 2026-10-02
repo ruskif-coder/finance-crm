@@ -116,7 +116,8 @@ def _has_content(db, deal, key: str) -> bool:
             "SELECT 1 FROM sales_media_plans WHERE deal_id = :d LIMIT 1"),
             {"d": deal.id}).first())
     if key == "ord":
-        return bool(deal.ord_initial_contract_id or deal.ord_final_contract_id)
+        return bool(deal.ord_initial_contract_id or deal.ord_final_contract_id
+                    or getattr(deal, "ord_direct_advertiser", False))
     if key == "traffic-brief":
         return bool((getattr(deal, "traffic_brief", None) or "").strip())
     if key == "creatives":

@@ -155,6 +155,8 @@ ACTION_LABELS = {
     "publisher_rules_update": "Особенности площадки изменены",
     "set_traffic_manager": "Назначен ответственный трафика",
     "ad_campaign_status": "Статус РК изменён",
+    "dsp_refresh": "Данные РК обновлены в DSP",
+    "ord_direct_advertiser": "Прямой рекламодатель (ОРД)",
     "ad_campaign_finish": "РК завершена",
     "ad_placement_status": "Статус размещения изменён",
     "ad_creative_status": "Статус креатива изменён",
