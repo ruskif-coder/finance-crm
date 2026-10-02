@@ -40,3 +40,47 @@ def test_prolongation_keeps_the_flag_and_label_uses_resolved_payer():
     assert "resolve_final(" in inspect.getsource(provision.ad_label), \
         "метка — тем же плательщиком, что сборка ОРД (по метке имени тоже)"
     assert "ord_direct_advertiser" in inspect.getsource(stage_scope)
+
+
+def test_creatives_step_opens_for_direct_advertiser():
+    """Ступень «Креативы и ЕРИД» открывалась только при привязанном изначальном —
+    у прямой сделки он не нужен (02.10.2026, 9HT4V9 и D5ETJ6)."""
+    from app.routers import ord as ordr
+    deal = SimpleNamespace(id=-1, ord_direct_advertiser=True, brand_id=None)
+    out = ordr._creatives_step(_FakeDb(), deal, None)
+    assert "цепочка" not in out.get("reason", "")
+
+
+class _FakeDb:
+    def query(self, *a, **k):
+        return self
+
+    def filter(self, *a, **k):
+        return self
+
+    def order_by(self, *a, **k):
+        return self
+
+    def all(self):
+        return []
+
+    def first(self):
+        return None
+
+    def execute(self, *a, **k):
+        return SimpleNamespace(fetchall=lambda: [], first=lambda: None, scalar=lambda: None)
+
+
+def test_creatives_step_names_the_stage_where_creatives_open():
+    """Креативов нет и блок ещё закрыт стадией — ступень называет стадию (02.10.2026)."""
+    from app.routers import ord as ordr
+    from app.sales import stage_scope
+    assert "block_opens_at(" in inspect.getsource(ordr._creatives_step)
+    st = [SimpleNamespace(id=1, name="Бронь"), SimpleNamespace(id=2, name="Готовятся к старту")]
+    cat = SimpleNamespace(stages=st)
+
+    class Db:
+        def execute(self, *a, **k):
+            return SimpleNamespace(fetchall=lambda: [(2, "creatives")])
+    assert stage_scope.block_opens_at(Db(), cat, "creatives").name == "Готовятся к старту"
+    assert stage_scope.block_opens_at(Db(), cat, "ord") is None

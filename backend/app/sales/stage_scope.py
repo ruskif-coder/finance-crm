@@ -149,6 +149,15 @@ def _has_content(db, deal, key: str) -> bool:
     return True
 
 
+def block_opens_at(db, catalog, key: str):
+    """Стадия, С КОТОРОЙ открывается блок карточки (первая по порядку каталога из его
+    разметки), или None — блок не размечен и виден всегда. Чтобы подсказки называли
+    стадию из той же разметки, что прячет блок, а не текстом в коде (02.10.2026)."""
+    sids = {sid for sid, k in db.execute(text(
+        "SELECT stage_id, block_key FROM sales_stage_blocks")).fetchall() if k == key}
+    return next((s for s in catalog.stages if s.id in sids), None)
+
+
 def visible_blocks(db, deal, catalog, marks: Optional[dict] = None) -> dict:
     """{block_key: True/False} — какие блоки карточки показывать этой сделке.
 

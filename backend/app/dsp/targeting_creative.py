@@ -276,7 +276,19 @@ def _html_of(db: Session, s: LaunchPrepCreativeSet, c: MsClient, ref: str) -> st
 
 def ensure(db: Session, s: LaunchPrepCreativeSet, *,
            client: Optional[MsClient] = None, wake: bool = True) -> str:
-    """Хеш креатива нацеливания для комплекта; заводит его, если ещё нет."""
+    """Хеш креатива нацеливания для комплекта; заводит его, если ещё нет.
+
+    ОДИН ПРОХОД НА КОМПЛЕКТ (02.10.2026). Копию заводят три пути — отправка трафику,
+    просьба о ссылке и запуск РК; без замка два одновременных видели «копии нет» и
+    заводили две, а удалить лишнюю по API нечем. Второй получает «уже заводится»."""
+    from app.ext_lock import DSP_TARGETING_COPY, only_one
+    with only_one(DSP_TARGETING_COPY, s.id, TargetingCreativeError,
+                  "Заведение копии нацеливания", where="по этому комплекту"):
+        return _ensure(db, s, client=client, wake=wake)
+
+
+def _ensure(db: Session, s: LaunchPrepCreativeSet, *,
+            client: Optional[MsClient] = None, wake: bool = True) -> str:
     from app.routers.traffic_catalog import targeting_cabinet, viewability_src
 
     # Раньше кабинета и кампании: слепому комплекту в DSP ходить незачем вовсе, ни за

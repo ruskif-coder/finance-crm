@@ -705,10 +705,20 @@ def _creatives_step(db: Session, deal, bound) -> dict:
               .order_by(LaunchPrepCreativeSet.no).all())
     marked = [s for s in sets if s.erid]
 
-    if bound is None:
+    # Прямой рекламодатель: изначальный = доходный, цепочка собрана без привязки (02.10.2026).
+    if bound is None and not getattr(deal, 'ord_direct_advertiser', False):
         reason = 'Откроется, когда договорная цепочка сойдётся.'
     elif not sets:
-        reason = 'Креативов нет — прикрепите материал в блоке «Креативы».'
+        # Блок «Креативы» открывается не сразу (разметка стадий): пока сделка до его
+        # стадии, «прикрепите» не выполнить — называем стадию (владелец 02.10.2026).
+        from app.sales import catalog as catalog_mod, stage_scope
+        cat = catalog_mod.Catalog(db)
+        opens = stage_scope.block_opens_at(db, cat, 'creatives')
+        if opens is not None and not stage_scope.visible_blocks(db, deal, cat).get('creatives', True):
+            reason = (f'Креативы прикрепляются на стадии «{opens.name}» — переведите сделку, '
+                      'затем материал в блоке «Креативы».')
+        else:
+            reason = 'Креативов нет — прикрепите материал в блоке «Креативы».'
     elif brand and not brand.get('kktu_code'):
         reason = 'Не заполнен код ККТУ у бренда — без него маркер не выпустить.'
     elif not marked:
@@ -800,8 +810,10 @@ def deal_assembly(deal_id: int, db: Session = Depends(get_db),
             # Прямой рекламодатель: изначальный = доходный, ступень закрыта (02.10.2026).
             'ok': bound is not None or bool(getattr(deal, 'ord_direct_advertiser', False)),
             'direct_advertiser': bool(getattr(deal, 'ord_direct_advertiser', False)),
-            'reason': (_bound_initial_reason(bound, proposal) if bound is not None
-                      else (proposal.reason if proposal else '')),
+            'reason': ('Прямой рекламодатель — изначальный договор = доходный.'
+                       if getattr(deal, 'ord_direct_advertiser', False)
+                       else _bound_initial_reason(bound, proposal) if bound is not None
+                       else (proposal.reason if proposal else '')),
             'reason_code': ('bound' if bound is not None
                             else (proposal.reason_code if proposal else 'no_final')),
             'bound': _initial_out(bound),
