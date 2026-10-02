@@ -378,7 +378,7 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
                         # считаем (владелец 01.10.2026).
                         # Диплинк SDK в посадочной — в `<a href>` баннера, сюда — его
                         # веб-адрес (`pub_rules.web_url`, владелец 02.10.2026).
-                        link=pub_rules.web_url(r["target"].advertiser_url),
+                        link=cr.landing_link(pub_rules.web_url(r["target"].advertiser_url)),
                         pixel=pix,
                         # Конечный URL — посадочная креатива целиком (владелец 01.10.2026).
                         adomain=cr.landing_adomain(pub_rules.web_url(r["target"].advertiser_url)),

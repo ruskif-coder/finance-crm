@@ -314,6 +314,29 @@ def landing_domain(url: Optional[str]) -> Optional[str]:
 ADOMAIN_MAX = 1024   # предел «конечного URL» — вводные DSP 01.10.2026 (в доке 128, устарело)
 
 
+def _landing_normalized(url: Optional[str]):
+    """Посадочная в виде, который принимает DSP: домен кириллицей (punycode переводим),
+    путь, параметры и якорь в проверенном %-виде. (адрес без якоря, схема, netloc, якорь) или None."""
+    from urllib.parse import quote, urlsplit, urlunsplit
+    from app.weborama.naming import unicode_domain
+    raw = (url or "").strip()
+    if landing_domain(raw) is None:
+        return None
+    full = raw if "://" in raw else "https://" + raw
+    parts = urlsplit(full)
+    host = unicode_domain((parts.hostname or "").lower())
+    try:
+        netloc = host + (f":{parts.port}" if parts.port else "")
+    except ValueError:
+        netloc = host
+    # Уже закодированное не трогаем — «%» в безопасных.
+    path = quote(parts.path, safe="/%:@!$&'()*+,;=~-._")
+    query = quote(parts.query, safe="=&%+/:;,@!$'()*~-._?")
+    frag = quote(parts.fragment, safe="!/?:@&=+$,;~-._%'()*")
+    # Якорь — отдельно: в adomain его не было и нет (не проверен вживую), в link — нужен.
+    return urlunsplit((parts.scheme, netloc, path, query, "")), parts.scheme, netloc, frag
+
+
 def landing_adomain(url: Optional[str]) -> Optional[str]:
     """«Конечный URL» (`adomain`) — посадочная креатива целиком (владелец 01.10.2026).
 
@@ -325,26 +348,23 @@ def landing_adomain(url: Optional[str]) -> Optional[str]:
     `https://120на80.рф/…` принят, а %-код и punycode (`xn--…`) — «Invalid adomain
     format». Записанный у нас punycode переводим в кириллицу; путь не трогаем.
     """
-    from urllib.parse import urlsplit, urlunsplit
-    from app.weborama.naming import unicode_domain
-    raw = (url or "").strip()
-    if landing_domain(raw) is None:
+    n = _landing_normalized(url)
+    if n is None:
         return None
-    from urllib.parse import quote
-    full = raw if "://" in raw else "https://" + raw
-    parts = urlsplit(full)
-    host = unicode_domain((parts.hostname or "").lower())
-    try:
-        netloc = host + (f":{parts.port}" if parts.port else "")
-    except ValueError:
-        netloc = host
-    # Путь и параметры — в проверенный вид: %-код (вживую проверен он); уже закодированное
-    # не трогаем — «%» в безопасных.
-    path = quote(parts.path, safe="/%:@!$&'()*+,;=~-._")
-    query = quote(parts.query, safe="=&%+/:;,@!$'()*~-._?")
-    full = urlunsplit((parts.scheme, netloc, path, query, ""))
+    full, scheme, netloc, _frag = n
     # Предел — в байтах: DSP может считать так, а кириллица домена — два байта на букву.
-    return full if len(full.encode("utf-8")) <= ADOMAIN_MAX else f"{parts.scheme}://{netloc}/"
+    return full if len(full.encode("utf-8")) <= ADOMAIN_MAX else f"{scheme}://{netloc}/"
+
+
+def landing_link(url: Optional[str]) -> Optional[str]:
+    """Кликовая ссылка креатива (`link`) — тем же видом, что `adomain` (владелец
+    02.10.2026): домен кириллицей, %-путь, якорь (`#!Tovar/…` у SPA-аптек) сохраняется.
+    Длиннее предела — домен вместо ссылки НЕ подставляем: переход на главную хуже
+    честного отказа DSP, поэтому отдаём нормализованную целиком (ревью 02.10.2026)."""
+    n = _landing_normalized(url)
+    if n is None:
+        return (url or "").strip() or None
+    return n[0] + (f"#{n[3]}" if n[3] else "")
 
 
 # `adomain`, которым до 02.10.2026 подменялся кириллический домен (DSP его не брал);

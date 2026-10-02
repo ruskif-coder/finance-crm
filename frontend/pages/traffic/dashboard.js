@@ -1030,6 +1030,7 @@ export default function TrafficDashboard() {
                         status={r.status === 'запущена' ? 'запущен'
                           : r.status === 'пауза' ? 'пауза' : 'ждёт запуска'}
                         canStart={r.status !== 'окончена' && r.status !== 'архив'}
+                        why={r.launch_hint}
                         onStart={() => startCampaign(r)}
                         onPause={() => setCampaignStatus(r, 'пауза')}
                         onOff={() => setCampaignStatus(r, 'остановлена')} />
@@ -1294,7 +1295,7 @@ export default function TrafficDashboard() {
                                 )}
                                 {mayEdit && p.ext_mode !== 'external' && (
                                   <PlaceActions status={p.status} canStart={p.can_start}
-                                    uploaded={p.dsp_uploaded}
+                                    uploaded={p.dsp_uploaded} why={p.start_why}
                                     onStart={() => setPlacementStatus(r.id, p, 'запущен')}
                                     onPause={() => setPlacementStatus(r.id, p, 'пауза')}
                                     onOff={() => setPlacementStatus(r.id, p, 'завершена')} />
@@ -1523,7 +1524,10 @@ export default function TrafficDashboard() {
                                 {/* До выкладки в DSP запуск и стоп заперты (владелец 29.09.2026):
                                     иначе меняется только наша пометка, а в сети — ничего.
                                     Причина — с сервера, тем же правилом, что у ручки. */}
-                                <button disabled={!!r.dsp_block} title={r.dsp_block || undefined}
+                                <button disabled={!!r.dsp_block}
+                                  title={r.status === 'запущена' ? undefined
+                                    : (detail[r.id]?.launch_hint || r.launch_hint)
+                                      ? `Запуск заперт: ${detail[r.id]?.launch_hint || r.launch_hint}` : undefined}
                                   onClick={() => (r.status === 'запущена'
                                     ? setCampaignStatus(r, 'пауза')
                                     /* Старт и возобновление — через окно с планом по площадкам

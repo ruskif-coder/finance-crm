@@ -208,6 +208,17 @@ def _creatives_all(db: Session, campaign_ids: List[int]) -> dict:
     return out
 
 
+def _uploaded_placements(db: Session, campaign_ids: List[int]) -> set:
+    """Площадки, выгруженные в DSP (хоть один креатив с хешем), — пачкой на реестр."""
+    if not campaign_ids:
+        return set()
+    return {pid for (pid,) in db.execute(text(
+        "SELECT DISTINCT c.placement_id FROM ad_campaign_creative c "
+        "JOIN ad_campaign_placement p ON p.id = c.placement_id "
+        "WHERE p.campaign_id = ANY(:i) AND coalesce(c.ms_creative_xxhash, '') <> ''"),
+        {"i": campaign_ids})}
+
+
 def _chain_of(c, placements, creatives: dict) -> str:
     """Цепной статус РК по её площадкам: `placements` — пары (id, сохранённый статус),
     `creatives` — {placement_id: [строки креативов]}.
@@ -221,7 +232,10 @@ def _chain_of(c, placements, creatives: dict) -> str:
         n += 1
         mine = [x["status"] for x in creatives.get(pid, [])]
         st = effective_status(stored, best_chain_status(_as_placement_scale(x) for x in mine))
-        running += st in PLACEMENT_RUNNING
+        # Крутит — только площадка НАШЕЙ DSP: Adfox и «вне контура» отмечают «запущен»
+        # руками, и РК от этого становилась «запущенной» без единого показа в DSP, а кнопка
+        # старта гасла (владелец 02.10.2026, 37ZTY3: «adfox не в счёт»).
+        running += st in PLACEMENT_RUNNING and dsp_uploaded(creatives.get(pid, []))
         can = can or can_start_placement(mine)
     return campaign_chain_status(has_plan=bool(c.plan_show), placements=n,
                                  running=running, can_start=can)
@@ -274,6 +288,24 @@ def start_block(db: Session, c, p, creatives: list, mode: Optional[str] = None) 
     if mode != pub_rules.MODE_EXTERNAL and not dsp_uploaded(creatives):
         return "креатив не выгружен в DSP — сначала «В DSP»"
     return None
+
+
+def launch_hint(dsp_block: Optional[str], vol: Optional[dict], closed: bool,
+                ready: int, running: int, waiting: int = 0) -> Optional[str]:
+    """Почему запуск РК заперт или ничего не поднимет — словами, для подсказки на кнопке
+    (владелец 02.10.2026: «выводи подсказку трафику, почему заперт запуск, по всем
+    событиям»). Причины — те же, что проверяет сервер при нажатии; None — запускать можно."""
+    why = []
+    if closed:
+        why.append("кампания в DSP в архиве — для продолжения нужна новая РК")
+    if dsp_block:
+        why.append(dsp_block)
+    if vol and vol.get("blocked"):
+        why.append(vol.get("message") or "объёмы площадок больше плана РК")
+    if not why and not ready and not running:
+        why.append("нет площадок, готовых к старту" + (
+            f": {waiting} ждут согласования креатива или выгрузки в DSP" if waiting else ""))
+    return "; ".join(why) or None
 
 
 RUNNING_STAGE = "В размещении"
@@ -690,6 +722,7 @@ def dashboard(scope: Optional[str] = None,
     # Статус собирается так же, как в расхлопе: конвейер поверх сохранённого.
     places = _placements_of(db, ids)
     cr_all = _creatives_all(db, ids)
+    uploaded = _uploaded_placements(db, ids)
     # Покрытие внешними системами — ОДНИМ расчётом на весь экран (четыре запроса на любое
     # число РК). По одной РК за раз это было бы под двести запросов на реестре из 57.
     ext_totals = ext_mod.totals_by_campaign(db, ids)
@@ -735,7 +768,9 @@ def dashboard(scope: Optional[str] = None,
         by_pl = cr_all.get(c.id, {})
         chain_st = campaign_chain_status(
             has_plan=bool(c.plan_show), placements=len(pls),
-            running=sum(1 for p in pls if p["status"] in PLACEMENT_RUNNING),
+            # то же правило, что `_chain_of`: в счёт — только выгруженные в нашу DSP
+            running=sum(1 for p in pls if p["status"] in PLACEMENT_RUNNING
+                        and p["id"] in uploaded),
             can_start=any(can_start_placement(by_pl.get(p["id"], [])) for p in pls))
         rows.append({
             "id": c.id, "deal_id": d.id, "deal_code": d.code, "deal_title": d.title,
@@ -764,6 +799,14 @@ def dashboard(scope: Optional[str] = None,
             "ms_campaign_xxhash": c.ms_campaign_xxhash,
             # Кнопки запуска/остановки заперты до выкладки в DSP — причина словами.
             "dsp_block": dsp_block_reason(ext_totals.get(c.id), c.ms_campaign_xxhash),
+            "launch_hint": launch_hint(
+                dsp_block_reason(ext_totals.get(c.id), c.ms_campaign_xxhash),
+                volumes.evaluate(c.plan_show, vol_by_deal.get(d.id, {})),
+                bool(c.ms_campaign_xxhash and c.status in build.CAMPAIGN_CLOSED),
+                ready=sum(1 for p in pls if p["status"] == PLACEMENT_READY),
+                running=sum(1 for p in pls if p["status"] in PLACEMENT_RUNNING),
+                waiting=sum(1 for p in pls if p["status"] not in PLACEMENT_RUNNING
+                            and p["status"] != PLACEMENT_READY and p["status"] != PLACEMENT_OFF)),
             # Покрытие внешними системами прямо в строке: серый — нет, жёлтый — не все,
             # зелёный — все (решение владельца 09.09.2026). Цвет считает экран, числа —
             # сервер, и оба берут их из одного расчёта.
@@ -905,6 +948,8 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         # Кнопки старт/пауза — только после выгрузки в DSP; внешняя площадка в нашу DSP
         # не идёт, у неё галочка, и запрет её не касается.
         d["dsp_uploaded"] = dsp_uploaded(mine)
+        # Почему кнопка старта площадки заперта — тем же правилом, что у сервера (02.10.2026).
+        d["start_why"] = start_block(db, c, None, mine, d["ext_mode"] or "dsp")
         prepared.append(d)
     balance.mark_capless(db, prepared, build.deal_plan(db, c.deal_id)["surfaces"])
     out = distribute(c.plan_show, fact_total, fl, prepared, cap=balance.share_cap(db))
@@ -941,6 +986,12 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         "placement_manual": list(PLACEMENT_MANUAL),
         "deal_id": deal.id,
         "volumes": volumes.evaluate(c.plan_show, volumes.deal_volumes(db, deal.id)),
+        "launch_hint": launch_hint(
+            dsp_not_ready(db, c), volumes.evaluate(c.plan_show, volumes.deal_volumes(db, deal.id)),
+            bool(c.ms_campaign_xxhash and c.status in build.CAMPAIGN_CLOSED),
+            ready=sum(1 for r in out["rows"] if r.get("status") == PLACEMENT_READY),
+            running=sum(1 for r in out["rows"] if r.get("status") in PLACEMENT_RUNNING),
+            waiting=sum(1 for r in out["rows"] if r.get("start_why"))),
         "owners": _owners(db, deal, user),
         # KPI приёмки из медиаплана — рядом с фактом, чтобы трафик видел, к чему его
         # открутку будут принимать, не открывая карточку сделки (владелец 05.09.2026).

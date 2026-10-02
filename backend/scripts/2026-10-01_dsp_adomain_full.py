@@ -58,8 +58,10 @@ def main():
         edit = {}
         if info.get("adomain") != want:
             edit["adomain"] = want
-        if (info.get("link") or "") != landing.strip():
-            edit["link"] = landing.strip()
+        # link — тем же правилом, что adomain: домен кириллицей (02.10.2026).
+        want_link = CR.landing_link(landing) or landing.strip()
+        if (info.get("link") or "") != want_link:
+            edit["link"] = want_link
         if not edit:
             same += 1
             continue

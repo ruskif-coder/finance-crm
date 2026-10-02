@@ -63,3 +63,30 @@ def test_dsp_and_ord_use_web_address():
     assert "web_url(" in inspect.getsource(targeting_creative)
     assert "web_url(" in inspect.getsource(launch_prep._ord_urls) if hasattr(launch_prep, "_ord_urls") \
         else "web_url(" in inspect.getsource(launch_prep)
+
+
+def test_dsp_link_has_cyrillic_host_like_adomain():
+    """link и adomain креатива — одним правилом (владелец 02.10.2026): посадочная, вписанная
+    в punycode, уходила в link как есть, а adomain — кириллицей."""
+    from app.dsp import creatives as CR
+    u = "https://xn--12080-6ve4g.xn--p1ai/catalog/product/lioton-1000-gel-100-g"
+    assert CR.landing_link(u) == "https://120на80.рф/catalog/product/lioton-1000-gel-100-g"
+    assert CR.landing_link(u) == CR.landing_adomain(u)
+    assert CR.landing_link("https://a.ru/x?y=1") == CR.landing_adomain("https://a.ru/x?y=1")
+    import inspect
+    from app.dsp import provision
+    assert "landing_link(" in inspect.getsource(provision)
+
+
+def test_dsp_link_keeps_spa_anchor():
+    from app.dsp import creatives as CR
+    assert CR.landing_link("https://minicen.ru/#!Tovar/717609") == "https://minicen.ru/#!Tovar/717609"
+
+
+def test_dsp_link_long_url_is_not_cut_to_domain_and_anchor_encoded():
+    from app.dsp import creatives as CR
+    long = "https://xn--12080-6ve4g.xn--p1ai/" + "a" * 1100
+    assert CR.landing_link(long).startswith("https://120на80.рф/aaa"), "ссылку не урезаем до домена"
+    assert CR.landing_adomain(long) == "https://120на80.рф/"
+    assert CR.landing_link("https://a.ru/#!Товар 1") == "https://a.ru/#!%D0%A2%D0%BE%D0%B2%D0%B0%D1%80%201"
+    assert "#" not in CR.landing_adomain("https://minicen.ru/#!Tovar/717609")

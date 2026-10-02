@@ -310,7 +310,7 @@ const IcoBtn = ({ title, tone, disabled, onClick, children }) => (
  * Запрет объяснён в подсказке, а не спрятан: кнопка, которая молча не нажимается,
  * читается как поломка.
  */
-export const PlaceActions = ({ status, canStart, uploaded = true, onStart, onPause, onOff }) => {
+export const PlaceActions = ({ status, canStart, uploaded = true, why, onStart, onPause, onOff }) => {
   const running = status === 'запущен'
   const off = status === 'завершена'
   // Старт и пауза — только после выгрузки в DSP (владелец 30.09.2026); сервер держит тот же
@@ -318,10 +318,12 @@ export const PlaceActions = ({ status, canStart, uploaded = true, onStart, onPau
   return (
     <span style={{ display: 'inline-flex', gap: 5 }}>
       <IcoBtn
-        title={!uploaded ? 'Площадка ещё не выгружена в DSP — сначала «В DSP», потом запуск'
-          : running ? 'Пауза: открутка встанет, доля в плане останется'
-            : canStart ? 'Запустить площадку'
-              : 'Креатив ещё не согласован — площадку нельзя запустить'}
+        /* Причина с сервера — тем же правилом, что проверяет запуск (02.10.2026). */
+        title={running ? 'Пауза: открутка встанет, доля в плане останется'
+          : why ? `Запуск заперт: ${why}`
+            : !uploaded ? 'Площадка ещё не выгружена в DSP — сначала «В DSP», потом запуск'
+              : canStart ? 'Запустить площадку'
+                : 'Креатив ещё не согласован — площадку нельзя запустить'}
         tone="var(--blue)"
         disabled={!uploaded || (!running && !canStart)}
         onClick={running ? onPause : onStart}>
