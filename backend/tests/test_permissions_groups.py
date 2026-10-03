@@ -41,8 +41,11 @@ EXPECTED_KEYS = {
     "traffic_queue",
     # Добавлен 2026-09-01 вместе с экраном «Каталог площадок»: МС-реквизиты + блоки.
     "traffic_catalog",
+    # Добавлен 2026-10-03 вместе со страницей «Трафики → Статистика».
+    "traffic_stats",
     # Добавлен 2026-09-02 вместе с дашбордом открутки РК (этап 3b).
-    "traffic_dashboard", "dsp_demo", "weborama_demo",
+    "traffic_dashboard",
+    # dsp_demo / weborama_demo сняты 02.10.2026 вместе с демо-экранами.
     "settings_balances", "settings_articles", "settings_pipelines",
     "settings_services", "settings_field_audit", "settings_audit",
     # Добавлен 2026-08-16 вместе с разделом «Бэклог отладки» (routers/backlog.py).

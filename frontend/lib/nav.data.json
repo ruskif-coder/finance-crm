@@ -111,12 +111,6 @@
           "label": "ОРД",
           "href": "/accounts/ord",
           "perm": "ord"
-        },
-        {
-          "key": "weborama-demo",
-          "label": "Weborama демо",
-          "href": "/accounts/weborama-demo",
-          "perm": "weborama_demo"
         }
       ]
     },
@@ -171,16 +165,16 @@
           "perm": "traffic_queue"
         },
         {
+          "key": "stats",
+          "label": "Статистика",
+          "href": "/traffic/stats",
+          "perm": "traffic_stats"
+        },
+        {
           "key": "catalog",
           "label": "Админ панель",
           "href": "/traffic/catalog",
           "perm": "traffic_catalog"
-        },
-        {
-          "key": "dsp-demo",
-          "label": "DSP демо",
-          "href": "/traffic/dsp-demo",
-          "perm": "dsp_demo"
         }
       ]
     },

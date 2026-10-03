@@ -51,7 +51,10 @@ NO_ERID = ("нет ЕРИД у согласованного креатива —
 
 
 def erid_ready(db: Session, placement_ids) -> set:
-    """Размещения, у которых есть согласованный креатив с ЕРИД."""
+    """Размещения, у которых есть согласованный креатив с ЕРИД.
+
+    `ad_campaign_creative.erid` получает только ГОТОВЫЙ маркер (`ad.build`, правило
+    `app.ord.readiness`), поэтому «не пусто» здесь и значит «готов»."""
     ids = list(placement_ids)
     if not ids:
         return set()

@@ -78,7 +78,7 @@ def _dsp_label(db: Session, camp) -> Optional[str]:
 def _tgt_client(db: Session) -> Optional[MsClient]:
     """Клиент кабинета НАЦЕЛИВАНИЯ — копии живут там, а не в боевом."""
     from app.dsp import targeting_creative as tc
-    from app.routers.traffic_catalog import targeting_cabinet
+    from app.dsp.config import targeting_cabinet
     partner, _ = targeting_cabinet(db)
     return tc._client(partner) if partner else None
 

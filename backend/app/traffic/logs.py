@@ -129,17 +129,11 @@ def dsp_rows(db: Session, limit: Optional[int] = 200, only_errors: bool = False,
              full: bool = False) -> list:
     """Лента DSP, новые сверху. `deal` — код сделки (фильтр после сведения: журнал
     сделок не знает). `limit=None` — все строки; `full` — тела целиком (скачивание)."""
-    if engine is None:
-        from app.dsp.db import dsp_engine
-        engine = dsp_engine()
-    with engine.connect() as c:
-        rows = c.execute(text(
-            "SELECT id, ts, method, entity_type, local_ref, ms_xxhash, ok, error, contour, "
-            "request, response FROM dsp_send_log "
-            + "WHERE true "
-            + ("AND contour = 'prod' " if prod_only else "")
-            + ("AND ok IS NOT TRUE " if only_errors else "")
-            + "ORDER BY id DESC LIMIT :n"), {"n": None if limit is None else limit * (5 if deal else 1)}).mappings().all()
+    from app.dsp import journal
+    from app.dsp.client import PROD
+    rows = journal.rows(None if limit is None else limit * (5 if deal else 1),
+                        contour=PROD if prod_only else None, only_errors=only_errors,
+                        engine=engine)
 
     cr_ids, camp_ids, hashes = set(), set(), set()
     for r in rows:

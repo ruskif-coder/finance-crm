@@ -17,6 +17,15 @@ from app.routers import launch_prep as lp
 from app.sales.models import SalesDeal
 
 
+from app.launch_prep import erid_service as svc  # noqa: E402
+
+def _patch(mp, name, value):
+    """Подмена в роутере и в сервисе ЕРИД: функции выпуска живут в
+    `app.launch_prep.erid_service` (02.10.2026), роутер держит их же имена."""
+    mp.setattr(lp, name, value)
+    if hasattr(svc, name):
+        mp.setattr(svc, name, value)
+
 @pytest.fixture
 def db():
     """Сессия без коммитов. Откат внутри прогона — пустой: на проде каждый комплект
@@ -61,17 +70,17 @@ def world(db, monkeypatch):
         plan[s.id] = (sent, agreed)
         return s
 
-    monkeypatch.setattr(lp, "active_pairs",
+    _patch(monkeypatch, "active_pairs",
                         lambda db_, set_id: _pairs(*plan[set_id]) if set_id in plan else [])
     monkeypatch.setattr(erid_auto, "_blockers", lambda db_, d: [])
-    monkeypatch.setattr(lp, "erid_threshold", lambda db_: 0.20)
+    _patch(monkeypatch, "erid_threshold", lambda db_: 0.20)
     monkeypatch.setattr("app.ord.client.env", lambda: "prod")
 
     def issue(db_, s, d, actor):
         calls["issue"].append(s.id)
         assert actor is None, "автовыпуск — действие системы"
         return {"erid": f"E{s.id}", "status": "Created"}
-    monkeypatch.setattr(lp, "issue_marker_for_set", issue)
+    _patch(monkeypatch, "issue_marker_for_set", issue)
     return SimpleNamespace(deal=deal, make=make, calls=calls, plan=plan)
 
 
@@ -130,7 +139,7 @@ def test_one_failure_does_not_stop_the_rest(db, world, monkeypatch):
         if s.id == a.id:
             raise HTTPException(400, "ОРД отказал")
         return {"erid": "E", "status": "Created"}
-    monkeypatch.setattr(lp, "issue_marker_for_set", issue)
+    _patch(monkeypatch, "issue_marker_for_set", issue)
     res = erid_auto.issue_due(db)
     assert a.id in [f["set_id"] for f in res["failed"]]
     assert b.id in _mine(res, world, "issued")
@@ -165,13 +174,17 @@ def test_marker_that_arrives_on_poll_is_announced(monkeypatch):
     s = SimpleNamespace(id=1, no=1, erid=None, ord_creative_id="CR-1", ord_env="prod")
     deal = SimpleNamespace(id=1, code="ABC123", brand_id=None)
     seen = []
-    monkeypatch.setattr(lp, "active_pairs", lambda db_, set_id: [1])
-    monkeypatch.setattr(lp, "_ord_chain", lambda db_, d: ("F-1", None))
-    monkeypatch.setattr(lp, "_files_with_content", lambda db_, set_id: [])
-    monkeypatch.setattr(lp, "_target_urls", lambda db_, set_id: [])
-    monkeypatch.setattr("app.ord.submit.issue_marker",
-                        lambda *a, **k: {"erid": "E1", "status": "Created"})
-    monkeypatch.setattr(lp, "announce_marker", lambda db_, s_, d, actor, out: seen.append(out["erid"]))
+    _patch(monkeypatch, "active_pairs", lambda db_, set_id: [1])
+    _patch(monkeypatch, "_ord_chain", lambda db_, d: ("F-1", None))
+    _patch(monkeypatch, "_files_with_content", lambda db_, set_id: [])
+    _patch(monkeypatch, "_target_urls", lambda db_, set_id: [])
+    # Настоящий issue_marker пишет маркер и статус в комплект; объявляется только ГОТОВЫЙ
+    # (Active/Registering — `app.ord.readiness`, 02.10.2026), Created ждёт опроса.
+    def issue(db_, cset, *a, **k):
+        cset.erid, cset.ord_status = "E1", "Registering"
+        return {"erid": "E1", "status": "Registering"}
+    monkeypatch.setattr("app.ord.submit.issue_marker", issue)
+    _patch(monkeypatch, "announce_marker", lambda db_, s_, d, actor, out: seen.append(out["erid"]))
     lp.issue_marker_for_set(SimpleNamespace(commit=lambda: None), s, deal, None)
     assert seen == ["E1"]
 
@@ -230,6 +243,8 @@ def test_live_run_is_recorded_dry_run_is_not(monkeypatch):
     monkeypatch.setattr(erid_auto, "refresh_statuses", lambda db_, dry_run=False: {
         "checked": 0, "changed": [], "failed": []})
     monkeypatch.setattr(erid_auto, "record", lambda db_, out: calls.append(out["dry_run"]))
+    # Догон объявлений пишет площадкам — в тесте его нет (реальные уведомления запрещены).
+    monkeypatch.setattr(erid_auto, "catch_up", lambda db_, dry_run=False: [])
     erid_auto.run(dry_run=True)
     erid_auto.run(dry_run=False)
     assert calls == [False]

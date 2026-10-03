@@ -17,6 +17,15 @@ from app.ord import submit as ord_submit
 from app.routers import launch_prep as lp
 
 
+from app.launch_prep import erid_service as svc  # noqa: E402
+
+def _patch(mp, name, value):
+    """Подмена в роутере и в сервисе ЕРИД: функции выпуска живут в
+    `app.launch_prep.erid_service` (02.10.2026), роутер держит их же имена."""
+    mp.setattr(lp, name, value)
+    if hasattr(svc, name):
+        mp.setattr(svc, name, value)
+
 class _Db:
     def __init__(self, s):
         self.s = s
@@ -45,22 +54,22 @@ def wired(monkeypatch):
             s.ord_creative_id = "CR-1"
         return {"ord_id": "CR-1", "erid": None, "status": "Registering", "env": "demo"}
 
-    monkeypatch.setattr(lp, "_deal", lambda db, deal_id, user: deal)
+    _patch(monkeypatch, "_deal", lambda db, deal_id, user: deal)
     # Одна пара, и она согласована: порог автовыпуска взят, ранний выпуск тут ни при чём
     # (его проверяет test_erid_issue_early.py).
-    monkeypatch.setattr(lp, "active_pairs",
+    _patch(monkeypatch, "active_pairs",
                         lambda db, set_id: [SimpleNamespace(agreed_at="2026-09-28")])
-    monkeypatch.setattr(lp, "erid_threshold", lambda db: 0.2)
-    monkeypatch.setattr(lp, "_ord_chain", lambda db, d: ("F-1", None))
-    monkeypatch.setattr(lp, "_files_with_content", lambda db, set_id: [])
-    monkeypatch.setattr(lp, "_target_urls", lambda db, set_id: [])
-    monkeypatch.setattr(lp, "_mark_targets_erid",
+    _patch(monkeypatch, "erid_threshold", lambda db: 0.2)
+    _patch(monkeypatch, "_ord_chain", lambda db, d: ("F-1", None))
+    _patch(monkeypatch, "_files_with_content", lambda db, set_id: [])
+    _patch(monkeypatch, "_target_urls", lambda db, set_id: [])
+    _patch(monkeypatch, "_mark_targets_erid",
                         lambda db, set_id: seen.__setitem__("marked", seen["marked"] + 1))
-    monkeypatch.setattr(lp, "_tell_publisher_erid",
+    _patch(monkeypatch, "_tell_publisher_erid",
                         lambda db, s, d: seen.__setitem__("told", seen["told"] + 1))
-    monkeypatch.setattr(lp, "emit",
+    _patch(monkeypatch, "emit",
                         lambda *a, **kw: seen.__setitem__("emitted", seen["emitted"] + 1))
-    monkeypatch.setattr(lp, "log_action", lambda *a, **kw: None)
+    _patch(monkeypatch, "log_action", lambda *a, **kw: None)
     monkeypatch.setattr("app.ad.build.sync_deal_quietly", lambda db, deal_id: None)
     monkeypatch.setattr(ord_submit, "issue_marker", issue, raising=False)
     # Ручка обязана идти через `issue_marker`: прямой вызов регистрации и есть дефект.

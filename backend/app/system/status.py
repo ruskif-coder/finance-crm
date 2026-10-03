@@ -625,11 +625,8 @@ def check_dsp_journal(db_dsp_ok: bool):
         return _check("ext_dsp_last", "Внешние связи", "DSP: последняя отправка", "idle",
                       "журнал недоступен")
     try:
-        from app.dsp.db import dsp_engine
-        with dsp_engine().connect() as c:
-            row = c.execute(text(
-                "SELECT ts, ok, error FROM dsp_send_log "
-                "WHERE contour = 'prod' ORDER BY ts DESC LIMIT 1")).first()
+        from app.dsp import journal
+        row = journal.last()
     except Exception as e:                       # noqa: BLE001
         return _check("ext_dsp_last", "Внешние связи", "DSP: последняя отправка", "idle",
                       "журнал недоступен", str(e)[:150])

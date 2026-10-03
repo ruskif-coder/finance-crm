@@ -18,6 +18,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.ad.models import AdCampaign
+from app.dsp import client as ds
 from app.dsp.client import MsClient, MsError
 from app.sales.models import SalesDeal
 
@@ -56,7 +57,7 @@ def build_campaign_params(camp: AdCampaign, deal: SalesDeal) -> dict:
         raise MsError(f"РК #{camp.id}: date_end раньше date_start")
     return {
         "title": campaign_title(camp, deal),
-        "status": "STOPPED",
+        "status": ds.STOPPED,
         "limits": {
             "traffic_distribution": "uniform_pro",
             "show": _limit(camp.plan_show),
@@ -143,13 +144,13 @@ def sync_campaign_plan(db: Session, camp: AdCampaign, client: MsClient,
 # поэтому она STOPPED. В архив уходит только то, что закончилось и у нас. «Готова» и
 # «ожидает сборки» — ничего не крутит, значит и DSP стоит.
 DSP_STATUS_OF = {
-    "ожидает сборки": "STOPPED",
-    "готова": "STOPPED",
-    "запущена": "LAUNCHED",
-    "пауза": "STOPPED",
-    "остановлена": "STOPPED",
-    "окончена": "ARCHIVE",
-    "архив": "ARCHIVE",
+    "ожидает сборки": ds.STOPPED,
+    "готова": ds.STOPPED,
+    "запущена": ds.LAUNCHED,
+    "пауза": ds.STOPPED,
+    "остановлена": ds.STOPPED,
+    "окончена": ds.ARCHIVE,
+    "архив": ds.ARCHIVE,
 }
 
 
@@ -175,7 +176,7 @@ def apply_status(db: Session, camp: AdCampaign, status: str,
     if not target or not camp.ms_campaign_xxhash:
         return None
     c = client or MsClient()
-    if target == "LAUNCHED":
+    if target == ds.LAUNCHED:
         sync_campaign_plan(db, camp, c, commit=False)
     c.campaign_set_status(camp.ms_campaign_xxhash, target, local_ref=camp.id)
     want, refused = follow_creatives(db, camp, target, c)
@@ -194,7 +195,7 @@ def after_status(db: Session, camp: AdCampaign, target: str, want: dict, client)
     → {"limits": {...} | None, "mismatch": [{"what", "want", "got"}], "error": str | None}"""
     out = {"limits": None, "mismatch": [], "error": None}
     try:
-        if target == "LAUNCHED":
+        if target == ds.LAUNCHED:
             from app.dsp.limits import sync_limits
             out["limits"] = sync_limits(db, camp, client)
         got = (client.campaign_get_info(camp.ms_campaign_xxhash) or {}).get("status")
@@ -221,15 +222,15 @@ def creative_targets(rows, campaign_target: str) -> dict:
 
     Кампания в архиве — креативы не трогаем (они уходят вместе с ней). «Отклонён» —
     тоже: отозванный уже в архиве DSP, а STOPPED вернул бы его оттуда."""
-    if campaign_target == "ARCHIVE":
+    if campaign_target == ds.ARCHIVE:
         return {}
     out = {}
     for xx, pl_status, cr_status in rows:
         if not (xx or "").strip() or cr_status == "отклонён":
             continue
-        live = (campaign_target == "LAUNCHED" and pl_status == "запущен"
+        live = (campaign_target == ds.LAUNCHED and pl_status == "запущен"
                 and cr_status in CREATIVE_LIVE)
-        out[xx.strip()] = "LAUNCHED" if live else "STOPPED"
+        out[xx.strip()] = ds.LAUNCHED if live else ds.STOPPED
     return out
 
 

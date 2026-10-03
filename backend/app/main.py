@@ -22,7 +22,7 @@ from app.routers import (auth, operations, reports, counterparties, articles, se
                          account_dashboard,
                          publishers, diadoc, ord, launch_prep, traffic, cabinets,
                          cabinet_gateway, traffic_catalog, traffic_balancer,
-                         dsp_demo, weborama_demo, traffic_dashboard, annexes, directory_add,
+                         traffic_dashboard, annexes, directory_add,
                          exec_dashboard, system_status, mail_admin, search)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
@@ -620,8 +620,16 @@ app.include_router(traffic_balancer.router, prefix="/api/traffic-catalog", tags=
 from app.routers import traffic_pub_rules  # noqa: E402
 app.include_router(traffic_pub_rules.router, prefix="/api/traffic-catalog", tags=["traffic_catalog"])
 app.include_router(traffic_dashboard.router, prefix="/api/traffic-dashboard", tags=["traffic_dashboard"])
-app.include_router(dsp_demo.router, prefix="/api/dsp-demo", tags=["dsp_demo"])
-app.include_router(weborama_demo.router, prefix="/api/weborama-demo", tags=["weborama_demo"])
+# «Импорт ADFOX» — суточный отчёт Adfox в факт РК (02.10.2026); свой файл, право дашборда.
+from app.routers import traffic_adfox  # noqa: E402
+app.include_router(traffic_adfox.router, prefix="/api/traffic-dashboard/adfox-import",
+                   tags=["traffic_dashboard"])
+# «Трафики → Статистика» — общая стата РК, «кукуха», база (03.10.2026).
+from app.routers import traffic_stats  # noqa: E402
+app.include_router(traffic_stats.router, prefix="/api/traffic-stats", tags=["traffic_stats"])
+# Демо-экраны DSP и Weborama отключены (владелец 02.10.2026): боевой обмен работает,
+# тренировочные ручки в боевой кабинет больше не нужны. Код роутеров оставлен в
+# репозитории, права `dsp_demo` / `weborama_demo` — тоже (ключ права неизменяем).
 # Приложения к договору (ДС): сборка, подтверждение номера, шаблоны формулировок.
 app.include_router(annexes.router, prefix="/api/annexes", tags=["annexes"])
 # «Добавить данные» — вход на экран и набор доступных блоков. Писателей у него нет:

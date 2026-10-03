@@ -35,6 +35,7 @@ from typing import Callable, Optional
 from sqlalchemy import text
 
 from app.ad.stat_sources import OWN
+from app.ord import readiness
 
 # ── Исходы ───────────────────────────────────────────────────────────────────
 OK = "ok"
@@ -380,7 +381,7 @@ def _ord_initial_contract(c: Ctx) -> Result:
     if getattr(c.deal, "is_self_promo", False):
         # Саморекламный договор через API ОРД не создаётся — требовать его нечем.
         return _na("самореклама")
-    if getattr(c.deal, "ord_direct_advertiser", False):
+    if readiness.is_direct(c.deal):
         # Прямой рекламодатель: изначальный договор = доходный, отдельного нет (02.10.2026).
         return _ok("прямой рекламодатель — изначальный = доходный")
     return _ok() if c.deal.ord_initial_contract_id else _not_yet("не выбран")
@@ -419,9 +420,13 @@ def _erid_issued(c: Ctx) -> Result:
 
     Самореклама условий применимости не снимает — ЕРИД обязан быть в любом случае,
     отличается только способ получения (`erid_source`), а это забота модуля ОРД."""
+    # «Выпущен» = маркер ГОТОВ, а не просто выдан: `app.ord.readiness` (02.10.2026) —
+    # выданный, но ещё не переданный в ЕРИР маркер называем отдельно.
     sets_ = c.sets
-    done = [s for s in sets_ if (getattr(s, "erid", "") or "").strip()]
-    bad = [f"№{s.no}" for s in sets_ if not (getattr(s, "erid", "") or "").strip()]
+    done = [s for s in sets_ if readiness.erid_ready(s)]
+    bad = [f"№{s.no}" + ("" if not (getattr(s, "erid", "") or "").strip()
+                         else f" — ждёт регистрации в ЕРИР ({getattr(s, 'ord_status', None) or 'статус не получен'})")
+           for s in sets_ if not readiness.erid_ready(s)]
     return _fan(len(done), len(sets_), bad, "комплектов")
 
 
@@ -457,10 +462,10 @@ def _one_pair_ready(c: Ctx) -> Result:
           JOIN launch_prep_target t ON t.id = p.target_id
           LEFT JOIN sales_publishers pub ON pub.id = t.publisher_id
          WHERE s.deal_id = :d AND p.agreed_at IS NOT NULL AND p.withdrawn_at IS NULL
-           AND coalesce(s.erid, '') <> ''
+           AND """ + readiness.ready_sql("s") + """
     """), {"d": c.deal.id}).mappings().all()
     if not rows:
-        return _not_yet("ни одной согласованной площадки с ЕРИД")
+        return _not_yet("ни одной согласованной площадки с готовым ЕРИД")
     from app.launch_prep import pub_rules
     modes = pub_rules.placement_modes(c.db, {(c.deal.id, r["publisher_id"]) for r in rows})
     ready = sorted({r["publisher"] for r in rows if r["checked"] and (

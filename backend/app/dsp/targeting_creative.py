@@ -54,9 +54,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.dsp import creatives as cr
+from app.dsp import client as ds
 from app.dsp.client import MsClient, MsError
 from app.files_safe import inside_uploads
 from app.dsp.targeting_link import ENV_ADMIN_URL
+from app.ord import readiness
 from app.launch_prep.models import LaunchPrepCreativeFile, LaunchPrepCreativeSet
 
 log = logging.getLogger("finance.dsp")
@@ -97,9 +99,8 @@ TARGETING_ADOMAIN = cr.OWN_SITE
 TEST_ERID = "TEST00000"
 
 
-# Статусы ОРД, при которых маркер уже выдан (владелец 01.10.2026): Registering — маркер
-# есть, регистрация просто асинхронная. RegistrationRequired и прочие — ещё нет.
-ERID_READY_STATUSES = ("Active", "Registering")
+# Когда маркер готов — единое правило `app.ord.readiness` (владелец 01.10 и 02.10.2026).
+ERID_READY_STATUSES = readiness.READY_STATUSES
 
 
 def title_of(s) -> str:
@@ -111,12 +112,7 @@ def erid_of(s: LaunchPrepCreativeSet) -> str:
     """Маркер копии нацеливания: ЕРИД комплекта, когда ОРД его выдал, иначе заглушка.
     Маркер не нашего ОРД (саморекламу маркирует площадка) нашего статуса не имеет и
     готов сразу."""
-    erid = (getattr(s, "erid", None) or "").strip()
-    if not erid:
-        return TEST_ERID
-    if (getattr(s, "erid_source", None) or "наш") != "наш":
-        return erid
-    return erid if getattr(s, "ord_status", None) in ERID_READY_STATUSES else TEST_ERID
+    return readiness.ready_erid(s) or TEST_ERID
 
 
 class TargetingCreativeError(RuntimeError):
@@ -289,7 +285,7 @@ def ensure(db: Session, s: LaunchPrepCreativeSet, *,
 
 def _ensure(db: Session, s: LaunchPrepCreativeSet, *,
             client: Optional[MsClient] = None, wake: bool = True) -> str:
-    from app.routers.traffic_catalog import targeting_cabinet, viewability_src
+    from app.dsp.config import targeting_cabinet, viewability_src
 
     # Раньше кабинета и кампании: слепому комплекту в DSP ходить незачем вовсе, ни за
     # копией, ни будить кампанию — и уже заведённая копия тоже ничего не покажет.
@@ -380,7 +376,7 @@ def ensure_live(db: Session, s: LaunchPrepCreativeSet, *,
     Тихое заведение при отправке трафику (`ensure_quietly`) креатив не запускает — как и
     кампанию не будит.
     """
-    from app.routers.traffic_catalog import targeting_cabinet
+    from app.dsp.config import targeting_cabinet
 
     partner, campaign = targeting_cabinet(db)
     c = client or _client(partner or "")
@@ -485,7 +481,7 @@ def wake_campaign(db: Session, *, client: Optional[MsClient] = None) -> dict:
     них обнулила бы показы и бюджет — то есть тихо сняла бы потолок, ради которого они и
     стоят (замер 17.09.2026: показы 200 000, бюджет 1000).
     """
-    from app.routers.traffic_catalog import targeting_cabinet
+    from app.dsp.config import targeting_cabinet
 
     partner, campaign = targeting_cabinet(db)
     if not (partner and campaign):
@@ -500,7 +496,7 @@ def wake_campaign(db: Session, *, client: Optional[MsClient] = None) -> dict:
     status = (info.get("status") or "").upper()
     # Удалённую и архивную поднять НЕЛЬЗЯ, и делать вид, что можно, — хуже отказа:
     # человек ждал бы показов от того, чего в кабинете уже нет.
-    if status in ("DELETED", "ARCHIVE"):
+    if status in ds.GONE_STATUSES:
         raise TargetingCreativeError(
             f"Кампания нацеливания «{info.get('title') or campaign}» {STATUS_RU.get(status, status)} "
             f"в кабинете DSP — нужна другая: Трафики → Каталог → Скрипты сайта")
@@ -536,13 +532,13 @@ def wake_campaign(db: Session, *, client: Optional[MsClient] = None) -> dict:
 
 # Кампания, в которой лежат креативы нацеливания, — ЧУЖАЯ: её заводят и останавливают
 # руками в кабинете DSP, а не мы. Поэтому её состояние не хранится, а спрашивается.
-RUNNING = "LAUNCHED"
-STOPPED = "STOPPED"
+RUNNING = ds.LAUNCHED
+STOPPED = ds.STOPPED
 
 # Их словарь статусов по-русски. Нужен в текстах отказа: человек читает наше сообщение,
 # а видит в кабинете английское слово — поэтому в отказе стоят оба.
-STATUS_RU = {"LAUNCHED": "запущена", "STOPPED": "остановлена",
-             "DELETED": "удалена", "ARCHIVE": "в архиве"}
+STATUS_RU = {ds.LAUNCHED: "запущена", ds.STOPPED: "остановлена",
+             ds.DELETED: "удалена", ds.ARCHIVE: "в архиве"}
 
 
 def _moment(v):
@@ -568,7 +564,7 @@ def campaign_state(db: Session, *, client: Optional[MsClient] = None) -> dict:
     Ошибка обмена возвращается полем `error`, а не исключением: это карточка для экрана,
     и недоступность DSP на ней — такая же новость, как остановленная кампания.
     """
-    from app.routers.traffic_catalog import targeting_cabinet
+    from app.dsp.config import targeting_cabinet
 
     partner, campaign = targeting_cabinet(db)
     out = {"partner_xxhash": partner, "campaign_xxhash": campaign,
@@ -603,7 +599,7 @@ def campaign_state(db: Session, *, client: Optional[MsClient] = None) -> dict:
     # человека искать причину не там.
     now = datetime.utcnow()
     st = (out["status"] or "").upper()
-    if st in ("DELETED", "ARCHIVE"):
+    if st in ds.GONE_STATUSES:
         # Единственный настоящий отказ: поднять такую кампанию нечем.
         out["reason"] = (f"Кампания {STATUS_RU.get(st, st)} в кабинете DSP — нужна другая: "
                          f"Трафики → Каталог → Скрипты сайта")
@@ -664,7 +660,7 @@ def stop_when_done(db: Session, set_id: int, *, client: Optional[MsClient] = Non
     if waiting:
         return False
     try:
-        from app.routers.traffic_catalog import targeting_cabinet
+        from app.dsp.config import targeting_cabinet
         partner, _campaign = targeting_cabinet(db)
         c = client or _client(partner or "")
         c.creative_set_status(row.ms_targeting_creative_xxhash, STOPPED,

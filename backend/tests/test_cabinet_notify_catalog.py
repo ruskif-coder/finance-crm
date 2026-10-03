@@ -44,7 +44,8 @@ def test_built_kinds_really_have_a_sender():
         # ключ вида → чем отправляется
         "запрос ссылки": ("app/routers/launch_prep.py", "KIND_URL_REQUEST"),
         "новый креатив": ("app/routers/traffic.py", '"новый креатив"'),
-        "ерид выпущен": ("app/routers/launch_prep.py", '"ерид выпущен"'),
+        # Выпуск и объявление ЕРИД — сервис `erid_service` (02.10.2026).
+        "ерид выпущен": ("app/launch_prep/erid_service.py", '"ерид выпущен"'),
         "старт рк": ("app/routers/traffic_dashboard.py", '"старт рк"'),
         "креатив отозван": ("app/launch_prep/withdraw.py", '"креатив отозван"'),
     }

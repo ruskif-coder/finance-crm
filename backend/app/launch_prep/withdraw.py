@@ -42,6 +42,7 @@ PLACED_STATES = ("в размещении", "завершён", "сверка з
 # Ручные статусы размещения в РК — запуск или то, что бывает только после него.
 # Площадка уже запускалась — это ручные статусы площадки (Н-2: копия расходилась бы).
 from app.ad.flight import PLACEMENT_MANUAL as PLACEMENT_STARTED  # noqa: E402
+from app.dsp import client as ds  # noqa: E402
 # Состояния получателя, которые держались на согласованной паре.
 AGREED_STATES = ("согласован", "ерид получен", "заведён в DSP")
 REASON_MAX = 500
@@ -114,7 +115,7 @@ def _archive_in_dsp(xxhash: str, ref: str, client=None) -> dict:
     from app.dsp.client import PROD, MsClient, MsError
     try:
         c = client or MsClient(contour=PROD)
-        c.creative_set_status(xxhash, "ARCHIVE", local_ref=ref)
+        c.creative_set_status(xxhash, ds.ARCHIVE, local_ref=ref)
         return {"state": "archived", "xxhash": xxhash}
     except (MsError, ValueError) as e:
         log.warning("Отзыв %s: креатив %s в DSP не архивирован: %s", ref, xxhash, e)
@@ -124,7 +125,7 @@ def _archive_in_dsp(xxhash: str, ref: str, client=None) -> dict:
 def _tell_publisher(db: Session, pair, s, target, reason: str) -> dict:
     """Площадке — сразу и с причиной. Сбой рассылки отзыв не отменяет."""
     from app.notify.outward import notify_publisher
-    from app.routers.launch_prep import _deal_brand_name, deal_period_text
+    from app.launch_prep.erid_service import _deal_brand_name, deal_period_text
     from app.sales.models import SalesDeal, SalesPublisher
 
     pub = db.get(SalesPublisher, target.publisher_id)

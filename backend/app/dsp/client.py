@@ -29,7 +29,11 @@ XXHASH_RE = re.compile(r"^[0-9A-Fa-f]{16}$")
 PROD, DEMO = "prod", "demo"
 CONTOURS = (PROD, DEMO)
 
-CAMPAIGN_STATUSES = ("STOPPED", "LAUNCHED", "DELETED", "ARCHIVE")
+# Статусы кампании и креатива в DSP — строки ИХ API. Сравнивать только с этими
+# константами (аудит интеграций 02.10.2026: литералы были в роутерах и в отзыве).
+STOPPED, LAUNCHED, DELETED, ARCHIVE = "STOPPED", "LAUNCHED", "DELETED", "ARCHIVE"
+CAMPAIGN_STATUSES = (STOPPED, LAUNCHED, DELETED, ARCHIVE)
+GONE_STATUSES = (DELETED, ARCHIVE)
 TRAFFIC_DISTRIBUTION = ("uniform_basic", "uniform_pro", "accelerated")
 
 

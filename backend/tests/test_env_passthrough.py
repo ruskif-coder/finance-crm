@@ -47,6 +47,10 @@ PASSED_THROUGH = {
     "PDF_SERVICE_URL": "runtime",
     "CABINET_SERVICE_TOKEN": "compose",
     "CABINET_SITE": "compose",
+    # Проверка «пропали из показов DSP» (site_monitor, отложено до 01.10.2026)
+    "DSP_ADMIN_API_URL": "compose",
+    "DSP_ADMIN_LOGIN": "compose",
+    "DSP_ADMIN_PASSWORD": "compose",
     "DEBUG": "НЕ передаётся: true открывает Swagger/ReDoc без аутентификации. "
              "Недоступность переменной на проде держит документацию закрытой даже при "
              "ошибке в .env. Нужен локально — добавляйте строку временно.",

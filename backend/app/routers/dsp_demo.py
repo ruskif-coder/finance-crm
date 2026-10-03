@@ -26,9 +26,9 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.dsp import client as ds
 from app.audit import log_action
 from app.database import get_db
 from app.dsp import campaigns as dsp_campaigns
@@ -109,12 +109,9 @@ def _assert_ours(xxhash: str) -> None:
     creds = _creds()
     if not creds or creds["cabinet"] != CAB_PROD:
         return
-    from app.dsp.db import dsp_engine
+    from app.dsp import journal
     try:
-        with dsp_engine().connect() as c:
-            found = c.execute(text(
-                "SELECT 1 FROM dsp_send_log WHERE contour = 'demo' "
-                "AND upper(ms_xxhash) = upper(:h) LIMIT 1"), {"h": xxhash}).first()
+        found = journal.demo_created(xxhash)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(503, f"Журнал недоступен, а без него в боевом кабинете "
                                  f"проверить принадлежность кампании нечем: {e!r}")
@@ -126,14 +123,10 @@ def _assert_ours(xxhash: str) -> None:
 
 def _log_rows(limit: int = 30) -> List[dict]:
     """Последние строки журнала ДЕМО-контура. Боевые сюда не попадают по условию."""
-    from app.dsp.db import dsp_engine
+    from app.dsp import journal
     try:
-        with dsp_engine().connect() as c:
-            rows = c.execute(text(
-                "SELECT ts, method, entity_type, local_ref, ms_xxhash, ok, error "
-                "FROM dsp_send_log WHERE contour = 'demo' ORDER BY ts DESC LIMIT :n"),
-                {"n": limit}).mappings().all()
-        return [dict(r) for r in rows]
+        return [{k: r[k] for k in ("ts", "method", "entity_type", "local_ref", "ms_xxhash", "ok", "error")}
+                for r in journal.rows(limit, contour=DEMO, full=False)]
     except Exception as e:  # noqa: BLE001 — журнал не должен ронять экран
         return [{"error": f"журнал недоступен: {e!r}"}]
 
@@ -224,7 +217,7 @@ def create_campaign(payload: CampaignIn, db: Session = Depends(get_db),
     limits["traffic_distribution"] = "uniform_pro"
     params = {"title": title[:255],
               "date_start": payload.date_start, "date_end": payload.date_end,
-              "status": "STOPPED",            # демо не должно ничего крутить
+              "status": ds.STOPPED,            # демо не должно ничего крутить
               "limits": limits}
     c = demo_client()
     try:
@@ -384,7 +377,7 @@ def set_targeting(payload: TargetingIn, db: Session = Depends(get_db),
 # «Стоп» отличается от паузы только тем, что кампанию убирают из работы совсем (ARCHIVE),
 # и обратно это уже не включается. Подписи на экране говорят об этом прямо — иначе
 # «пауза» и «стоп» выглядели бы двумя разными состояниями, которых в DSP нет.
-STATUS_ACTIONS = {"start": "LAUNCHED", "pause": "STOPPED", "stop": "ARCHIVE"}
+STATUS_ACTIONS = {"start": ds.LAUNCHED, "pause": ds.STOPPED, "stop": ds.ARCHIVE}
 
 
 @router.get("/campaign/{xxhash}")

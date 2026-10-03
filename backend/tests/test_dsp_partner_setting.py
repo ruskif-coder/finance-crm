@@ -11,6 +11,7 @@ from sqlalchemy import text
 import app.main  # noqa: F401
 from app.database import SessionLocal
 from app.dsp import client as dsp_client
+from app.dsp import config as dsp_config
 from app.routers import traffic_catalog as tcat
 
 
@@ -76,11 +77,12 @@ def test_targeting_hashes_fall_back_to_env(monkeypatch):
     """Все три хеша задаются и в .env (владелец 28.09.2026); настройка админки главнее."""
     db = SessionLocal()
     try:
-        monkeypatch.setattr(tcat, "_setting", lambda db_, key: "")
+        # Чтение настроек DSP — `app.dsp.config` (02.10.2026).
+        monkeypatch.setattr(dsp_config, "setting", lambda db_, key: "")
         monkeypatch.setenv("DSP_TARGETING_PARTNER_XXHASH", "D" * 16)
         monkeypatch.setenv("DSP_TARGETING_CAMPAIGN_XXHASH", "C" * 16)
         assert tcat.targeting_cabinet(db) == ("D" * 16, "C" * 16)
-        monkeypatch.setattr(tcat, "_setting", lambda db_, key: "A" * 16)
+        monkeypatch.setattr(dsp_config, "setting", lambda db_, key: "A" * 16)
         assert tcat.targeting_cabinet(db) == ("A" * 16, "A" * 16)
     finally:
         db.close()

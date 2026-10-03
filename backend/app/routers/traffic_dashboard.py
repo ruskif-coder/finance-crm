@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 import logging
 
+from app.dsp import client as ds
 from app import timez
 from app.ad import balance, build
 from app.ad import external as ext_mod
@@ -1324,11 +1325,11 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
     started = _keep_first_starts(db, started, dsp_status)
     # РК крутит — сделка «В размещении» (владелец 01.10.2026), с требованиями стадии.
     stage = (advance_deal(db, _deal, RUNNING_STAGE, user, "РК запущена трафиком")
-             if dsp_status == "LAUNCHED" else None)
+             if dsp_status == ds.LAUNCHED else None)
 
     db.commit()
     targeting = (_wake_quietly(db, c.deal_id)
-                 if dsp_status == "LAUNCHED" and old != "запущена" else None)
+                 if dsp_status == ds.LAUNCHED and old != "запущена" else None)
     # Площадкам — только о СТАРТЕ и только один раз: письмо получает площадка, которую
     # эта кнопка запустила ВПЕРВЫЕ (аудит 01.10.2026, В-4). «Пауза → запущен»
     # повторяется, и письмо «кампания стартовала» на третий раз перестают читать.
@@ -1411,17 +1412,17 @@ def _creative_to_dsp(db: Session, c, cr, old: str) -> Optional[str]:
     ms = MsClient()
     try:
         cur = ((ms.creative_get_info(xx) or {}).get("status") or "").upper()
-        if cur == "ARCHIVE":
+        if cur == ds.ARCHIVE:
             if old == CREATIVE_REJECTED and cr.status != CREATIVE_REJECTED:
                 db.rollback()
                 raise HTTPException(400, "Креатив отозван и в DSP в архиве — вернуть его нельзя, "
                                          "нужен новый креатив")
             return cur
         if cr.status == CREATIVE_REJECTED:
-            want = "STOPPED"
+            want = ds.STOPPED
         else:
             want = creative_targets([(xx, pl.status if pl else None, cr.status)],
-                                    camp_target or "STOPPED").get(xx)
+                                    camp_target or ds.STOPPED).get(xx)
         if want and want != cur:
             ms.creative_set_status(xx, want, local_ref=c.id)
         return want or cur
@@ -1588,7 +1589,7 @@ def set_placement_status(placement_id: int, payload: StatusIn,
     dsp_status = _dsp_follow(db, c)
     first = bool(_keep_first_starts(db, [p.id] if first else [], dsp_status))
     stage = (advance_deal(db, _deal, RUNNING_STAGE, user, "РК запущена трафиком")
-             if dsp_status == "LAUNCHED" else None)
+             if dsp_status == ds.LAUNCHED else None)
     db.commit()
     # Первый запуск площадки её кнопкой — то же письмо, что с кнопки РК (В-4).
     if first:
@@ -1766,7 +1767,7 @@ def _keep_first_starts(db: Session, ids: list, dsp_status: Optional[str]) -> lis
     """Первый запуск засчитывается, только если РК в DSP и правда пошла — или DSP этой
     РК не нужен (`dsp_status` пуст: кампании в DSP нет). Иначе отметку снимаем: письмо
     «стартовала» уйдёт при настоящем запуске, а не о кампании, которая не крутит."""
-    if not ids or dsp_status in (None, "LAUNCHED"):
+    if not ids or dsp_status in (None, ds.LAUNCHED):
         return ids
     for pl in db.query(AdCampaignPlacement).filter(AdCampaignPlacement.id.in_(ids)):
         pl.first_started_at = None

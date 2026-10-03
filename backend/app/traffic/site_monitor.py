@@ -26,6 +26,7 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.dsp import admin as dsp_admin
 from app.sales.models import PUBLISHER_ARCHIVE_STATUS
 
 log = logging.getLogger("finance.site_monitor")
@@ -279,34 +280,11 @@ def main() -> None:
 # поэтому доступы отдельные и лежат в `.env` сервера. Без них проверка честно говорит
 # «не настроено» и ничего не шлёт.
 SETTING_DSP_STATE = "site_monitor_dsp_missing"
-DSP_ENV = ("DSP_ADMIN_API_URL", "DSP_ADMIN_LOGIN", "DSP_ADMIN_PASSWORD")
-
-
-def dsp_configured() -> bool:
-    return all(os.getenv(k) for k in DSP_ENV)
-
-
-def _dsp_rpc(client: httpx.Client, url: str, method: str, params: dict, rid: int) -> dict:
-    r = client.post(url, json={"jsonrpc": "2.0", "method": method, "params": params, "id": rid})
-    r.raise_for_status()
-    data = r.json()
-    if data.get("error"):
-        raise RuntimeError(f"{method}: {data['error']}")
-    return data.get("result")
-
-
-def _sites_with_shows(client, url, day) -> set:
-    items = _dsp_rpc(client, url, "platform.getStatistics", {"filter": {
-        "date_from": day.isoformat(), "date_to": day.isoformat(), "main_group": ["site"]}}, 2) or []
-    out = set()
-    for it in items:
-        try:
-            shows = int(it.get("shows") or 0)
-        except (TypeError, ValueError):
-            shows = 0
-        if it.get("site") and shows > 0:
-            out.add(it["site"])
-    return out
+# Обмен с админ-кабинетом DSP — в модуле DSP (`app.dsp.admin`, аудит 02.10.2026);
+# имена здесь — для прежних читателей.
+DSP_ENV = dsp_admin.ENV
+DSP_TOKEN_ENV = dsp_admin.TOKEN_ENV
+dsp_configured = dsp_admin.configured
 
 
 def _domain(site: str) -> str:
@@ -320,18 +298,9 @@ def dsp_missing(db: Session, fetch=None, notify: bool = True) -> dict:
     import json
     from datetime import date
     if fetch is None:
-        if not dsp_configured():
+        if not dsp_admin.configured():
             return {"configured": False}
-        url, login, password = (os.getenv(k) for k in DSP_ENV)
-
-        def fetch(day):
-            with httpx.Client(timeout=60.0) as c:
-                tok = (_dsp_rpc(c, url, "user.auth", {"login": login, "password": password}, 1)
-                       or {}).get("access_token")
-                if not tok:
-                    raise RuntimeError("DSP: в ответе на вход нет токена")
-                c.headers["Authorization"] = f"Bearer {tok}"
-                return _sites_with_shows(c, url, day)
+        fetch = dsp_admin.sites_with_shows
     today = date.today()
     prev_sites, cur_sites = fetch(today - timedelta(days=1)), fetch(today)
     exclude = {x.strip().lower() for x in _setting(db, SETTING_DSP_EXCLUDE).splitlines() if x.strip()}
@@ -366,7 +335,7 @@ def dsp_state(db: Session) -> dict:
         st = json.loads(_setting(db, SETTING_DSP_STATE) or "{}")
     except ValueError:
         st = {}
-    return {"configured": dsp_configured(), **st}
+    return {"configured": dsp_admin.configured(), **st}
 
 
 if __name__ == "__main__":

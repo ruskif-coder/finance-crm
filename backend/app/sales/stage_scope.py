@@ -16,6 +16,8 @@ from typing import Optional
 
 from sqlalchemy import text
 
+from app.ord import readiness
+
 
 # ── Применимость стадии к услуге ─────────────────────────────────────────────
 
@@ -117,7 +119,7 @@ def _has_content(db, deal, key: str) -> bool:
             {"d": deal.id}).first())
     if key == "ord":
         return bool(deal.ord_initial_contract_id or deal.ord_final_contract_id
-                    or getattr(deal, "ord_direct_advertiser", False))
+                    or readiness.is_direct(deal))
     if key == "traffic-brief":
         return bool((getattr(deal, "traffic_brief", None) or "").strip())
     if key == "creatives":

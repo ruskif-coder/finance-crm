@@ -10,6 +10,16 @@ import app.main  # noqa: F401
 from app.database import SessionLocal
 
 
+from app.launch_prep import erid_service as svc  # noqa: E402
+from app.routers import launch_prep as lp  # noqa: E402
+
+def _patch(mp, name, value):
+    """Подмена в роутере и в сервисе ЕРИД: функции выпуска живут в
+    `app.launch_prep.erid_service` (02.10.2026), роутер держит их же имена."""
+    mp.setattr(lp, name, value)
+    if hasattr(svc, name):
+        mp.setattr(svc, name, value)
+
 def test_c4_traffic_silence_skips_withdrawn_pairs():
     """«Трафик не проверил» не напоминает про отозванную пару — как и соседнее правило
     про молчание площадки."""
@@ -24,8 +34,8 @@ def test_c5_erid_letter_once_per_publisher(monkeypatch):
     from app.notify import outward
     sent = []
     monkeypatch.setattr(outward, "notify_publisher", lambda db, kind, pid, **kw: sent.append(pid))
-    monkeypatch.setattr(lp, "_deal_brand_name", lambda db, d: "Бренд")
-    monkeypatch.setattr(lp, "deal_period_text", lambda d: "10.2026")
+    _patch(monkeypatch, "_deal_brand_name", lambda db, d: "Бренд")
+    _patch(monkeypatch, "deal_period_text", lambda d: "10.2026")
     pub = SimpleNamespace(id=7, domain="site.ru", name="site")
     rows = [(pub, SimpleNamespace(id=1)), (pub, SimpleNamespace(id=2)),
             (SimpleNamespace(id=8, domain="b.ru", name="b"), SimpleNamespace(id=3))]

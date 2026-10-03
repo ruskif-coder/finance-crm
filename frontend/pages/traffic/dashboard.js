@@ -32,6 +32,7 @@ import OffsiteButton from '@/components/traffic/OffsiteButton'
 import PassportButton from '@/components/traffic/PassportButton'
 import StartRkModal from '@/components/traffic/StartRkModal'
 import DspRefreshModal from '@/components/traffic/DspRefreshModal'
+import AdfoxImportModal from '@/components/traffic/AdfoxImportModal'
 import AimButton from '@/components/traffic/AimButton'
 import safeHref from '@/lib/safeHref'
 import { useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
@@ -549,6 +550,7 @@ export default function TrafficDashboard() {
   const [extAsk, setExtAsk] = useState(null)     // { row, kind, plan }
   const [startAsk, setStartAsk] = useState(null) // строка РК в окне запуска
   const [refreshAsk, setRefreshAsk] = useState(null) // строка РК в окне «Обновить данные в DSP»
+  const [adfoxOpen, setAdfoxOpen] = useState(false) // окно «Импорт ADFOX»
   const tgt = useTargetingCampaign()              // демо-кампания нацеливания: «протухла» ли
   const [extBusy, setExtBusy] = useState(false)
 
@@ -729,6 +731,14 @@ export default function TrafficDashboard() {
                 </option>
               ))}
             </select>
+            {/* Импорт суточного отчёта Adfox — площадки вне нашей DSP (владелец 02.10.2026):
+                перед кнопкой виджетов, у кого есть правка дашборда. */}
+            {mayEdit && (
+              <button style={btn(false)} onClick={() => setAdfoxOpen(true)}
+                title="Импорт ADFOX: загрузить суточный отчёт Adfox — показы площадок вне нашей DSP лягут в факт РК">
+                ↑ ADFOX
+              </button>
+            )}
             <WidgetsToggle open={widgets} onToggle={toggleWidgets} />
           </span>
         </div>
@@ -1620,6 +1630,9 @@ export default function TrafficDashboard() {
         </div>
       </div>
 
+      {adfoxOpen && (
+        <AdfoxImportModal auth={auth} onClose={() => setAdfoxOpen(false)} onDone={load} />
+      )}
       {refreshAsk && (
         <DspRefreshModal row={refreshAsk} auth={auth} onClose={() => setRefreshAsk(null)}
           onDone={async () => {

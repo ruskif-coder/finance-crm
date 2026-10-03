@@ -32,6 +32,7 @@ from app.dsp import creatives as cr
 from app.dsp.campaigns import ensure_campaign
 from app.dsp.client import MsClient, MsError
 from app.ext_lock import DSP_PROVISION, only_one
+from app.ord import readiness
 from app.files_safe import inside_uploads
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepPair,
                                     LaunchPrepSetTarget, LaunchPrepTarget)
@@ -180,7 +181,7 @@ def ad_label(db: Session, deal_id) -> Optional[tuple]:
     from app.ord.models import OrdInitialContract
     from app.sales.models import SalesDeal
     deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
-    if deal is not None and getattr(deal, "ord_direct_advertiser", False):
+    if deal is not None and readiness.is_direct(deal):
         # Прямой рекламодатель (02.10.2026): изначальный = доходный, рекламодатель — это
         # плательщик сделки; метка берёт его ИНН и название.
         # Плательщик — тем же разбором, что сборка ОРД и ЕРИД (`resolve_final`): по полю
@@ -299,7 +300,7 @@ def provision(db: Session, camp: AdCampaign, user_id=None,
 
 
 def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
-    from app.routers.traffic_catalog import creative_script, viewability_src
+    from app.dsp.config import creative_script, viewability_src
 
     px = pixel_setup(db, camp.deal_id)
     want_pixel, ext_tag = px["needed"], px["tag"]

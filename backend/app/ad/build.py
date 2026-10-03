@@ -32,6 +32,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.sales import mp_row
+from app.ord import readiness
 
 from app.ad.balance import SCOPES, SCOPE_SURFACE
 from app.ad.flight import (CREATIVE_REJECTED, PLACEMENT_READY, PLACEMENT_WAIT, as_placement_scale,
@@ -536,7 +537,8 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
     """), {"d": camp.deal_id}).mappings().all()}
     pairs = db.execute(text("""
         SELECT pr.id AS pair_id, pr.code AS pair_code, pr.sent_at, pr.withdrawn_at,
-               cs.id AS set_id, cs.no AS set_no, cs.title, cs.erid,
+               cs.id AS set_id, cs.no AS set_no, cs.title, cs.erid AS erid_raw,
+               CASE WHEN """ + readiness.ready_sql("cs") + """ THEN trim(cs.erid) END AS erid,
                t.publisher_id,
                tr.verdict AS traffic_verdict,
                pv.verdict AS platform_verdict
@@ -640,8 +642,17 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
         #
         # Пустым не затираем: маркер может прийти позже согласования, и «ещё нет» не
         # должно стирать уже перенесённое.
+        #
+        # Переносится только ГОТОВЫЙ маркер (`app.ord.readiness`, 02.10.2026): от этой
+        # колонки зависят выгрузка в DSP и пиксель Weborama. Выданный, но не переданный
+        # в ЕРИР маркер, попавший сюда раньше, снимается — вернётся, когда станет готов.
         if r["erid"]:
             row.erid = r["erid"]
+        elif (r["erid_raw"] and row.erid == r["erid_raw"].strip()
+              and not (row.ms_creative_xxhash or "").strip()):
+            # Креатив, уже выгруженный в DSP, не трогаем: маркер там вшит в баннер, и
+            # пустая колонка только запутала бы обновление данных в DSP.
+            row.erid = None
         # ФАЙЛ — С ТОГО ЖЕ КОМПЛЕКТА, ЧТО И МАРКЕР: в DSP уезжает тот архив, который
         # площадка согласовала.
         #

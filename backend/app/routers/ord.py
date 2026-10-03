@@ -20,6 +20,7 @@ from app.database import get_db
 from app.models import Contract, Counterparty, User
 from app import own_company
 from app.ord import importer
+from app.ord import readiness
 from app.ord.enums import (ACTION_TYPES, CONTRACT_TYPES, INITIAL_CONTRACT_TYPES,
                            SUBJECT_TYPES, label_by_code)
 from app.launch_prep.models import LaunchPrepCreativeSet
@@ -703,10 +704,13 @@ def _creatives_step(db: Session, deal, bound) -> dict:
     sets = (db.query(LaunchPrepCreativeSet)
               .filter(LaunchPrepCreativeSet.deal_id == deal.id)
               .order_by(LaunchPrepCreativeSet.no).all())
-    marked = [s for s in sets if s.erid]
+    # Маркирован = маркер ГОТОВ (`app.ord.readiness`, 02.10.2026); выданный, но ещё не
+    # переданный в ЕРИР называется отдельной строкой.
+    marked = [s for s in sets if readiness.erid_ready(s)]
+    waiting = [s for s in sets if s.erid and not readiness.erid_ready(s)]
 
     # Прямой рекламодатель: изначальный = доходный, цепочка собрана без привязки (02.10.2026).
-    if bound is None and not getattr(deal, 'ord_direct_advertiser', False):
+    if bound is None and not readiness.is_direct(deal):
         reason = 'Откроется, когда договорная цепочка сойдётся.'
     elif not sets:
         # Блок «Креативы» открывается не сразу (разметка стадий): пока сделка до его
@@ -722,9 +726,11 @@ def _creatives_step(db: Session, deal, bound) -> dict:
     elif brand and not brand.get('kktu_code'):
         reason = 'Не заполнен код ККТУ у бренда — без него маркер не выпустить.'
     elif not marked:
-        reason = 'Ни один креатив не маркирован.'
+        reason = ('Ни один креатив не маркирован.' if not waiting
+                  else readiness.waiting_text(waiting[0]) + '.')
     elif len(marked) < len(sets):
-        reason = f'Маркировано {len(marked)} из {len(sets)}.'
+        reason = f'Маркировано {len(marked)} из {len(sets)}.' + (
+            f' Ждут регистрации в ЕРИР: {len(waiting)}.' if waiting else '')
     else:
         reason = ('Маркированы все.' if len(sets) > 1
                   else f'Маркирован, ЕРИД {marked[0].erid}.')
@@ -808,10 +814,10 @@ def deal_assembly(deal_id: int, db: Session = Depends(get_db),
         'initial': {
             'title': STEP_TITLES['initial'],
             # Прямой рекламодатель: изначальный = доходный, ступень закрыта (02.10.2026).
-            'ok': bound is not None or bool(getattr(deal, 'ord_direct_advertiser', False)),
-            'direct_advertiser': bool(getattr(deal, 'ord_direct_advertiser', False)),
+            'ok': bound is not None or readiness.is_direct(deal),
+            'direct_advertiser': readiness.is_direct(deal),
             'reason': ('Прямой рекламодатель — изначальный договор = доходный.'
-                       if getattr(deal, 'ord_direct_advertiser', False)
+                       if readiness.is_direct(deal)
                        else _bound_initial_reason(bound, proposal) if bound is not None
                        else (proposal.reason if proposal else '')),
             'reason_code': ('bound' if bound is not None

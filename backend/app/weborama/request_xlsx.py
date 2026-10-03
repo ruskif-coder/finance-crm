@@ -36,6 +36,7 @@ from typing import Tuple
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.ord import readiness
 from app.weborama import naming, tags as wtags
 
 ACCOUNT = "SIMB-AD"        # он же Site name в шаблоне — так заполнено у владельца
@@ -175,7 +176,8 @@ def pixels_for_set(db: Session, set_id: int) -> list:
     """
     rows = db.execute(text("""
         SELECT pb.name, pb.domain, pb.our_code, pl.weborama_pixel,
-               cs.erid,
+               t.publisher_id, t.surface_kind,
+               CASE WHEN """ + readiness.ready_sql("cs") + """ THEN cs.erid END AS erid,
                (SELECT f.ratio FROM launch_prep_creative_file f
                  WHERE f.set_id = cs.id AND f.is_archive IS TRUE
                  ORDER BY f.id LIMIT 1) AS ratio
@@ -189,16 +191,16 @@ def pixels_for_set(db: Session, set_id: int) -> list:
          WHERE p.set_id = :s AND t.archived_at IS NULL
          ORDER BY pb.name
     """), {"s": set_id}).mappings().all()
+    # Куда едет показ — канал из «Особенностей площадок», без правила — признак «наш
+    # код». Макрос рандомизатора у каждого свой, и их однажды уже перепутали — разбор
+    # стоит в `naming.RANDOM_MACRO`, правило выбора — `naming.macro_kind` (одно с
+    # паспортом внешних площадок, 02.10.2026).
+    from app.launch_prep import pub_rules
+    rules = pub_rules.rules_for(db, {(r["publisher_id"], r["surface_kind"]) for r in rows})
     out = []
     for r in rows:
-        # Куда едет показ: площадка с нашим кодом крутится в НАШЕМ DSP, без него —
-        # через Adfox (он тоже наш, просто автозаведение туда пока не прикручено).
-        # Макрос рандомизатора у каждого свой, и их однажды уже перепутали — разбор
-        # стоит в `naming.RANDOM_MACRO`.
-        #
-        # `our_code` — БУЛЕВ признак, а не строка кода: прежняя проверка
-        # `(... or "").strip()` на значении True упала бы с AttributeError.
-        kind = "dsp" if r["our_code"] else "adfox"
+        channel = (rules.get((r["publisher_id"], r["surface_kind"])) or {}).get("channel")
+        kind = naming.macro_kind(r["our_code"], channel)
         tag, why = build_tag(r["weborama_pixel"], r["domain"], kind, r["ratio"], r["erid"])
         out.append({"publisher": r["name"], "domain": r["domain"],
                     "kind": "наш DSP" if kind == "dsp" else "Adfox",

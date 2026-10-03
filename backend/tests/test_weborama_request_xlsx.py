@@ -242,5 +242,9 @@ def test_our_code_is_a_flag_and_chooses_the_right_macro():
     import inspect
 
     from app.weborama import request_xlsx as R
+    from app.weborama.naming import macro_kind
     src = inspect.getsource(R.pixels_for_set)
-    assert 'kind = "dsp" if r["our_code"] else "adfox"' in src
+    # Правило выбора — общее с паспортом (`naming.macro_kind`, 02.10.2026); признак
+    # «наш код» в нём булев.
+    assert "macro_kind(" in src
+    assert macro_kind(True) == "dsp" and macro_kind(False) == "adfox"

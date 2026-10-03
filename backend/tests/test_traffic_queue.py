@@ -473,7 +473,7 @@ def _my_rows(env, pairs):  # noqa: F811
 
 def test_targeting_is_refused_when_no_publisher_runs_our_dsp(env, monkeypatch):  # noqa: F811
     from app.dsp import targeting_creative as tc
-    from app.routers import traffic_catalog
+    from app.dsp import config as traffic_catalog  # настройки DSP живут в app.dsp.config (02.10.2026)
     # Кабинет задан НАРОЧНО: без него `ensure` отказывал бы и сам, «не задан кабинет», и
     # проверка тихого пути прошла бы даже без правила (ревью 24.09.2026). С кабинетом
     # единственное, что держит её от похода в DSP, — само правило.

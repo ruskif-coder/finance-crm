@@ -48,7 +48,7 @@ def _deal_is_closed(db, deal) -> bool:
 
 def _blockers(db, deal) -> list:
     """То же, что экран готовности называет блокерами, кроме «пустого комплекта»."""
-    from app.routers import launch_prep as lp
+    from app.launch_prep import erid_service as lp
     from app.sales.models import SalesBrand
     out = []
     final_ord_id, _ = lp._ord_chain(db, deal)
@@ -64,7 +64,7 @@ def _blockers(db, deal) -> list:
 def issue_due(db, dry_run: bool = False) -> dict:
     """Выпустить маркер там, где порог взят. Сбой одного комплекта не останавливает остальных."""
     from app.launch_prep.models import LaunchPrepCreativeSet
-    from app.routers import launch_prep as lp
+    from app.launch_prep import erid_service as lp
     from app.sales.models import SalesDeal
 
     from app.ord import client as ord_client
@@ -120,7 +120,8 @@ def refresh_statuses(db, dry_run: bool = False) -> dict:
     """Опросить статус регистрации у комплектов с маркером, где он ещё не конечный."""
     from app.launch_prep.models import LaunchPrepCreativeSet
     from app.ord import client as ord_client
-    from app.ord import submit as ord_submit
+    from app.launch_prep import erid_service as lp
+    from app.sales.models import SalesDeal
 
     # Только свой контур: маркер песочницы на боевом не опрашивается — ОРД ответил бы
     # отказом на каждом прогоне, и крон краснел бы каждые полчаса без причины.
@@ -137,7 +138,10 @@ def refresh_statuses(db, dry_run: bool = False) -> dict:
             continue
         before = s.ord_status
         try:
-            out = ord_submit.refresh_creative_status(db, s)
+            # Опрос — через ту же функцию, что кнопка: маркер, ставший готовым, объявляется
+            # (площадки — «ерид получен», маркер — в РК), а не оседает молча (02.10.2026).
+            deal = db.query(SalesDeal).filter(SalesDeal.id == s.deal_id).first()
+            out = lp.refresh_and_announce(db, s, deal, None)
         except Exception as e:  # noqa: BLE001 — отчёт прогона, дальше следующий комплект
             db.rollback()
             failed.append({"set_id": s.id, "error": str(e)})
@@ -207,12 +211,23 @@ def _alert(db, out: dict) -> None:
     db.commit()
 
 
+def catch_up(db, dry_run: bool = False) -> list:
+    """Объявить готовые маркеры, которые не объявлены (`erid_service.announce_pending`)."""
+    from app.launch_prep import erid_service
+    return erid_service.announce_pending(db, dry_run=dry_run)
+
+
 def run(dry_run: bool = False) -> dict:
     db = SessionLocal()
     try:
         issued = issue_due(db, dry_run=dry_run)
         refreshed = refresh_statuses(db, dry_run=dry_run)
         out = {"issue": issued, "refresh": refreshed, "dry_run": dry_run}
+        try:
+            out["caught_up"] = catch_up(db, dry_run=dry_run)
+        except Exception:  # noqa: BLE001 — догон не должен ронять прогон
+            db.rollback()
+            log.exception("автовыпуск ЕРИД: догон объявлений не удался")
         if dry_run:
             db.rollback()
         else:

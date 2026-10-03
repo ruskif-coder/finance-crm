@@ -30,6 +30,7 @@ from typing import Dict, List, Optional
 
 from sqlalchemy import text
 
+from app.ord import readiness
 from app.sales.stage_checks import REGISTRY, Ctx, OK, NOT_YET
 from app.sales.stage_slots import TAIL_SLOTS, slot_of
 from app.sales.urgency import LAG_ALARM_PCT, Verdict, delivery_lag_pct, DealFacts
@@ -87,7 +88,8 @@ class Bundle:
     required: set = field(default_factory=set)                # запирают переход этой сделки
     creatives: Optional[tuple] = None       # (согласовано пар, всего пар)
     sets: int = 0                           # комплектов креативов
-    erids: List[str] = field(default_factory=list)
+    erids: List[str] = field(default_factory=list)   # ГОТОВЫЕ маркеры (`app.ord.readiness`)
+    erid_waiting: int = 0                   # выданы, ждут регистрации в ЕРИР
     kktu: bool = True                       # у бренда есть код ККТУ
     erid_share: int = 20                    # порог автовыпуска, %
     pixel_ordered: bool = False
@@ -204,6 +206,8 @@ def _by_slot(b: Bundle):
             state.append({"type": "progress", "k": "креативы", "x": done, "y": total})
         if b.sets and len(b.erids) >= b.sets:
             state.append(_fact("ЕРИД", b.erids[0] if b.sets == 1 else f"{len(b.erids)} / {b.sets}"))
+        elif b.erid_waiting:
+            state.append(_fact("ЕРИД", "регистрация в ЕРИР"))
         elif b.sets and not b.kktu:
             state.append(_alert("ЕРИД: нет ККТУ", "warn"))
         elif b.sets:
@@ -354,6 +358,7 @@ def row_state(b: Bundle) -> dict:
 class Batch:
     ctxs: Dict[int, Ctx]
     erids: Dict[int, List[str]]
+    erid_waiting: Dict[int, int]
     set_count: Dict[int, int]
     pairs: Dict[int, tuple]
     kktu: Dict[int, bool]
@@ -467,7 +472,10 @@ def load(db, deals, today: date) -> Batch:
 
     return Batch(
         ctxs=ctxs,
-        erids={did: [s.erid for s in lst if (s.erid or "").strip()] for did, lst in sets.items()},
+        erids={did: [readiness.ready_erid(s) for s in lst if readiness.erid_ready(s)]
+               for did, lst in sets.items()},
+        erid_waiting={did: sum(1 for s in lst if (s.erid or "").strip() and not readiness.erid_ready(s))
+                      for did, lst in sets.items()},
         set_count={did: len(lst) for did, lst in sets.items()},
         pairs={did: (sum(1 for p in lst if p["agreed_at"]), len(lst)) for did, lst in pairs.items()},
         kktu={d.id: kktu_of.get(d.brand_id, False) for d in deals},
@@ -480,7 +488,7 @@ def build(db, deals, verdicts: Dict[int, Verdict], today: date,
 
     `amounts` — {сделка: (до НДС, с НДС)} по правилу плана; роутер их уже посчитал."""
     from app.models import Counterparty
-    from app.routers import launch_prep as lp
+    from app.launch_prep import erid_service as lp
     from app.sales import stage_scope
     from app.sales.catalog import Catalog
     from app.sales.deal_delivery import delivery_by_deal
@@ -536,7 +544,8 @@ def build(db, deals, verdicts: Dict[int, Verdict], today: date,
             checks={k: REGISTRY[k].fn(ctx) for k in keys},
             required=required,
             creatives=batch.pairs.get(d.id), sets=batch.set_count.get(d.id, 0),
-            erids=batch.erids.get(d.id, []), kktu=batch.kktu.get(d.id, False),
+            erids=batch.erids.get(d.id, []), erid_waiting=batch.erid_waiting.get(d.id, 0),
+            kktu=batch.kktu.get(d.id, False),
             erid_share=share, pixel_ordered=bool(getattr(d, "weborama_pixel", False)),
             delivery=delivery.get(d.id),
             annex_no=(batch.annex.get(d.id) or ("", None))[0],

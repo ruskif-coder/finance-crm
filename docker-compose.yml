@@ -119,6 +119,11 @@ services:
       DSP_TARGETING_PARTNER_XXHASH: ${DSP_TARGETING_PARTNER_XXHASH:-}
       DSP_TARGETING_CAMPAIGN_XXHASH: ${DSP_TARGETING_CAMPAIGN_XXHASH:-}
       DSP_ADMIN_URL: ${DSP_ADMIN_URL:-}
+      # API админки DSP (app/dsp/admin.py): «пропали из показов» и суточная «кукуха» для
+      # «Статистики» и кабинета. Вход — логином и паролем: наш токен админка не принимает.
+      DSP_ADMIN_API_URL: ${DSP_ADMIN_API_URL:-}
+      DSP_ADMIN_LOGIN: ${DSP_ADMIN_LOGIN:-}
+      DSP_ADMIN_PASSWORD: ${DSP_ADMIN_PASSWORD:-}
       MAIL_SMTP_HOST: ${MAIL_SMTP_HOST:-}
       MAIL_SMTP_PORT: ${MAIL_SMTP_PORT:-}
       MAIL_SMTP_USER: ${MAIL_SMTP_USER:-}

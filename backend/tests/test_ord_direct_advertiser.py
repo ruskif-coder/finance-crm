@@ -27,7 +27,9 @@ def test_model_and_label_and_assembly_know_the_flag():
     from app.dsp import provision
     from app.routers import ord as ordr
     assert hasattr(SalesDeal, "ord_direct_advertiser")
-    assert "ord_direct_advertiser" in inspect.getsource(provision.ad_label)
+    # Флаг читается одной функцией `app.ord.readiness.is_direct` (02.10.2026).
+    assert "readiness.is_direct(" in inspect.getsource(provision.ad_label)
+    assert "readiness.is_direct(" in inspect.getsource(ordr)
     assert "ord_direct_advertiser" in inspect.getsource(ordr)
     assert "/deal/{deal_id}/direct-advertiser" in inspect.getsource(ordr)
 
@@ -39,7 +41,7 @@ def test_prolongation_keeps_the_flag_and_label_uses_resolved_payer():
     assert "ord_direct_advertiser=src.ord_direct_advertiser" in inspect.getsource(launch_prep)
     assert "resolve_final(" in inspect.getsource(provision.ad_label), \
         "метка — тем же плательщиком, что сборка ОРД (по метке имени тоже)"
-    assert "ord_direct_advertiser" in inspect.getsource(stage_scope)
+    assert "readiness.is_direct(" in inspect.getsource(stage_scope)
 
 
 def test_creatives_step_opens_for_direct_advertiser():

@@ -167,7 +167,10 @@ class AdCampaignStat(Base):
     date = Column(Date, nullable=False)
     shows = Column(Integer, nullable=False, default=0)
     clicks = Column(Integer, nullable=False, default=0)
-    source = Column(String(16), nullable=False, default="ms")   # ms | manual
+    # Уникальные показы за день — отчёт Adfox (миграция 2026-10-02_ad_stat_uniques.sql);
+    # у DSP и Weborama NULL: источник этого не меряет.
+    uniques = Column(Integer)
+    source = Column(String(16), nullable=False, default="ms")   # ad/stat_sources.KNOWN
     imported_at = Column(DateTime, nullable=False, server_default=func.now())
 
 class PublisherBalanceIndex(Base):

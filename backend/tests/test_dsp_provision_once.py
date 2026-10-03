@@ -154,7 +154,7 @@ def _row(n=1):
 @pytest.fixture
 def wired(monkeypatch):
     """Всё, что вокруг вызовов DSP, — заглушками; сами вызовы идут в FakeMs."""
-    from app.routers import traffic_catalog
+    from app.dsp import config as traffic_catalog  # настройки DSP живут в app.dsp.config (02.10.2026)
 
     state = {"rows": [_row(1)]}
     monkeypatch.setattr(prov, "_rows", lambda db, camp: state["rows"])

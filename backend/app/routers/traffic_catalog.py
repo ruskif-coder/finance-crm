@@ -14,7 +14,6 @@ ios/android (платформы `sales_publisher_surface_platforms`) — на б
 Право — `traffic_catalog` (view/create/edit/delete), доступ по умолчанию мастера + админ.
 Миграция `2026-09-01_traffic_catalog.sql`.
 """
-import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,7 +24,12 @@ from sqlalchemy.orm import Session
 from app.ad.models import PublisherBlock
 from app.audit import log_action
 from app.database import get_db
-from app.dsp.client import PARTNER_SETTING
+# Ключи и чтение настроек обмена с DSP — в модуле DSP (`app.dsp.config`, 02.10.2026);
+# имена здесь — для экрана и прежних импортёров.
+from app.dsp import config as dsp_config
+from app.dsp.config import (PROD_PARTNER, SCRIPT_NO_CODE, SCRIPT_OUR_CODE,  # noqa: F401
+                            SCRIPT_VIEWABILITY, TARGETING_CAMPAIGN, TARGETING_PARTNER,
+                            creative_script, targeting_cabinet, viewability_src)
 from app.models import User
 from app.permissions import require_any_permission, require_permission
 from app.sales.models import (PUBLISHER_ARCHIVE_STATUS, SalesPublisher,
@@ -276,8 +280,6 @@ def delete_block(block_id: int, db: Session = Depends(get_db), user: User = Depe
 # Признак «код стоит» — `sales_publishers.our_code`, тот же, что в карточке паблишера.
 # Второго флага для того же факта нет и быть не должно.
 
-SCRIPT_OUR_CODE = "traffic_creative_script_our_code"     # площадка с нашим кодом
-SCRIPT_NO_CODE = "traffic_creative_script_no_code"       # площадка без нашего кода
 
 # Скрипт видимости (viewability) — третье, что вшивается в тот же `<head>`. Его требует
 # сам DSP, поэтому счётчиком колонок он не делится: адрес один на все креативы.
@@ -285,7 +287,6 @@ SCRIPT_NO_CODE = "traffic_creative_script_no_code"       # площадка бе
 # В коде адреса НЕТ намеренно (09.09.2026): в имени хоста узнаётся поставщик, а
 # репозиторий уходит на GitHub и история гита не переписывается. Пусто — обёртка идёт без
 # скрипта, и демо-экран говорит об этом вслух, а не молчит.
-SCRIPT_VIEWABILITY = "dsp_viewability_src"
 
 # Куда заводится креатив НАЦЕЛИВАНИЯ (владелец и трафики 12.09.2026). Два значения, а
 # не одно: в DSP нет сущности «клиент» со своим хешем — есть ПАРТНЁР (кабинет) и его
@@ -299,11 +300,8 @@ SCRIPT_VIEWABILITY = "dsp_viewability_src"
 #
 # В настройке, а не в коде: демокампанию меняют в кабинете, и смена не должна требовать
 # выкладки. Пусто — кнопка честно скажет «не настроено».
-TARGETING_PARTNER = "dsp_targeting_partner_xxhash"
 # Кабинет БОЕВОГО клиента — по нему выгружаются РК (владелец 28.09.2026). Ключ — у
 # клиента DSP, единственного, кто его читает.
-PROD_PARTNER = PARTNER_SETTING
-TARGETING_CAMPAIGN = "dsp_targeting_campaign_xxhash"
 # Аккаунт WCM — он адресует ВЕСЬ обмен с верификатором. Жил в двух местах и ни одно из
 # них не было рабочим: переменная `WEBORAMA_DEMO_ACCOUNT_ID` — всего лишь подсказка в
 # поле демо-экрана, а само поле вводится руками и никуда не сохраняется. Рабочий путь
@@ -329,26 +327,10 @@ def _setting(db: Session, key: str) -> str:
                        {"k": key}).scalar() or "")
 
 
-def creative_script(db: Session, our_code: bool) -> str:
-    """Какой скрипт вшивать в креатив для этой площадки. ЕДИНСТВЕННАЯ точка выбора."""
-    return _setting(db, SCRIPT_OUR_CODE if our_code else SCRIPT_NO_CODE).strip()
 
 
-def viewability_src(db: Session) -> str:
-    """Адрес скрипта видимости. ЕДИНСТВЕННАЯ точка чтения — как и у счётчика колонок."""
-    return _setting(db, SCRIPT_VIEWABILITY).strip()
 
 
-def targeting_cabinet(db: Session) -> tuple:
-    """Куда заводить креатив нацеливания: (кабинет-демоклиент, демокампания в нём).
-
-    ЕДИНСТВЕННАЯ точка чтения — как у счётчика колонок и скрипта видимости. Возвращает
-    пару, а не два вызова: по отдельности они бессмысленны, и разъехаться им нельзя.
-    """
-    # Настройка админки главнее; пусто — окружение сервера (владелец 28.09.2026: все
-    # три хеша должны задаваться и в .env).
-    return (_setting(db, TARGETING_PARTNER).strip() or os.getenv("DSP_TARGETING_PARTNER_XXHASH", "").strip(),
-            _setting(db, TARGETING_CAMPAIGN).strip() or os.getenv("DSP_TARGETING_CAMPAIGN_XXHASH", "").strip())
 
 
 @router.get("/site-script")
@@ -372,9 +354,9 @@ def get_site_script(db: Session = Depends(get_db), user: User = Depends(VIEW)):
         "prod_partner": _setting(db, PROD_PARTNER),
         # Пусто в настройке — выгрузка берёт клиента из окружения сервера. Значение
         # окружения не отдаём: экрану достаточно знать, что запасной путь есть.
-        "prod_partner_env": bool(os.getenv("DSP_PARTNER_XXHASH")),
-        "targeting_partner_env": bool(os.getenv("DSP_TARGETING_PARTNER_XXHASH")),
-        "targeting_campaign_env": bool(os.getenv("DSP_TARGETING_CAMPAIGN_XXHASH")),
+        "prod_partner_env": dsp_config.env_present(PROD_PARTNER),
+        "targeting_partner_env": dsp_config.env_present(TARGETING_PARTNER),
+        "targeting_campaign_env": dsp_config.env_present(TARGETING_CAMPAIGN),
         "targeting_partner": _setting(db, TARGETING_PARTNER),
         "targeting_campaign": _setting(db, TARGETING_CAMPAIGN),
         "weborama_account": _setting(db, WEBORAMA_ACCOUNT),
@@ -453,8 +435,8 @@ def set_site_script(payload: SiteScriptIn, db: Session = Depends(get_db),
     new_demo = (payload.targeting_partner if payload.targeting_partner is not None
                 else _setting(db, TARGETING_PARTNER)).strip()
     # Пустое поле — действует значение из окружения: сверяем то, что реально пойдёт в DSP.
-    new_prod = new_prod or os.getenv("DSP_PARTNER_XXHASH", "").strip()
-    new_demo = new_demo or os.getenv("DSP_TARGETING_PARTNER_XXHASH", "").strip()
+    new_prod = dsp_config.effective(db, PROD_PARTNER, new_prod)
+    new_demo = dsp_config.effective(db, TARGETING_PARTNER, new_demo)
     # Отказываем, только когда МЕНЯЮТ хеши кабинетов: иначе уже сложившееся совпадение
     # (например, в .env) запирало бы сохранение любых скриптов на этом экране.
     touches = any(v is not None and v.strip() != _setting(db, k).strip()

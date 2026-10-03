@@ -123,3 +123,13 @@ def test_dsp_not_configured_says_so(monkeypatch, db):
     for k in sm.DSP_ENV:
         monkeypatch.delenv(k, raising=False)
     assert sm.dsp_missing(db) == {"configured": False}
+
+
+def test_dsp_uses_our_dsp_token_without_admin_login(monkeypatch):
+    """Доступ — токен нашей DSP (владелец 30.09.2026); логин/пароль админки не обязательны."""
+    for k in sm.DSP_ENV + (sm.DSP_TOKEN_ENV,):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("DSP_ADMIN_API_URL", "https://example.invalid/api")
+    assert not sm.dsp_configured()
+    monkeypatch.setenv(sm.DSP_TOKEN_ENV, "t")
+    assert sm.dsp_configured()

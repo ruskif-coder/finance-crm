@@ -27,6 +27,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from sqlalchemy.orm import Session
 
+from app.ord import readiness
 from app.launch_prep import originals, pub_rules, sandbox
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepCreativeSet, LaunchPrepPair,
                                     LaunchPrepReview, LaunchPrepSetTarget, LaunchPrepTarget)
@@ -96,9 +97,8 @@ def pixel_for(deal: SalesDeal, placement, pub=None, channel=None, ratio=None, er
     if pub is None:
         return raw
     from app.weborama.request_xlsx import build_tag
-    # Канал площадки главнее признака «наш код»: наша DSP — `dsp`, Adfox и «вне контура» —
-    # `adfox` (так же, как заявка Weborama решает по `our_code` для площадок без правила).
-    kind = "dsp" if channel == "dsp" or (channel is None and pub.our_code) else "adfox"
+    from app.weborama.naming import macro_kind
+    kind = macro_kind(pub.our_code, channel)   # одно правило с заявкой Weborama
     tag, why = build_tag(raw, pub.domain, kind, ratio, erid)
     return tag or f"не собран: {why}"
 
@@ -204,15 +204,19 @@ def build(db: Session, deal: SalesDeal, whole: bool = False) -> Tuple[bytes, str
                     pair.code,
                     # ЕРИД выпускается на комплект после согласований — пустая ячейка
                     # выглядела бы ошибкой выгрузки, поэтому причина словами (29.09.2026).
-                    s.erid or ("ещё не выпущен" if verdicts.get(pair.id) == "ок"
-                               else "нет — креатив не согласован"),
+                    # Только ГОТОВЫЙ маркер (`app.ord.readiness`, 02.10.2026): площадка
+                    # ставит его в эфир, а выданный, но не переданный в ЕРИР — ещё нельзя.
+                    readiness.ready_erid(s) or (
+                        "ждёт регистрации в ЕРИР" if (s.erid or "").strip()
+                        else "ещё не выпущен" if verdicts.get(pair.id) == "ок"
+                        else "нет — креатив не согласован"),
                     member.advertiser_url if member else None,
                     getattr(member, "deeplink_url", None) if member else None,
                     t.period_from or deal.period_from, t.period_to or deal.period_to,
                     # Объём пары; пара ещё не в РК — заданный на ней руками, иначе пусто
                     # (весь план площадки здесь был бы неверен при нескольких креативах).
                     volumes.get(pair.id, member.plan_show if member else None),
-                    pixel_for(deal, pl, pub, rule.get("channel"), f.ratio, s.erid)])
+                    pixel_for(deal, pl, pub, rule.get("channel"), f.ratio, readiness.ready_erid(s))])
         for col, w in zip("ABCDEFGHIJKLMNOPQRST", WIDTH):
             ws.column_dimensions[col].width = w
         for row in ws.iter_rows(min_row=2):

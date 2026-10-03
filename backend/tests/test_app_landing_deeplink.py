@@ -58,11 +58,11 @@ def test_deeplink_in_landing_satisfies_both_mode():
 def test_dsp_and_ord_use_web_address():
     import inspect
     from app.dsp import provision, targeting_creative
-    from app.routers import launch_prep
+    from app.launch_prep import erid_service
     assert "web_url(" in inspect.getsource(provision)
     assert "web_url(" in inspect.getsource(targeting_creative)
-    assert "web_url(" in inspect.getsource(launch_prep._ord_urls) if hasattr(launch_prep, "_ord_urls") \
-        else "web_url(" in inspect.getsource(launch_prep)
+    # Адреса для ОРД собирает выпуск ЕРИД — сервис `erid_service` (02.10.2026).
+    assert "web_url(" in inspect.getsource(erid_service._target_urls)
 
 
 def test_dsp_link_has_cyrillic_host_like_adomain():

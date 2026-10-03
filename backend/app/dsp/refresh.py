@@ -225,7 +225,7 @@ def _erid_copies(db: Session, camp) -> list:
     from app.dsp import targeting_creative as tc
     from app.dsp.client import MsError
     from app.launch_prep.models import LaunchPrepCreativeSet
-    from app.routers.traffic_catalog import targeting_cabinet
+    from app.dsp.config import targeting_cabinet
     sets = (db.query(LaunchPrepCreativeSet)
             .filter(LaunchPrepCreativeSet.deal_id == camp.deal_id,
                     LaunchPrepCreativeSet.ms_targeting_creative_xxhash.isnot(None)).all())
@@ -272,7 +272,7 @@ def _apply_item(db: Session, camp, kind: str, ref: str, client=None) -> dict:
     if kind == "erid":
         from app.dsp import targeting_creative as tc
         from app.launch_prep.models import LaunchPrepCreativeSet
-        from app.routers.traffic_catalog import targeting_cabinet
+        from app.dsp.config import targeting_cabinet
         s = db.get(LaunchPrepCreativeSet, int(ref))
         if not s or s.deal_id != camp.deal_id or not s.ms_targeting_creative_xxhash:
             raise ValueError("копия нацеливания не найдена у этой РК")
