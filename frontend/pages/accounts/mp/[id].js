@@ -122,7 +122,7 @@ export default function MpEditor() {
         // конвейер годового плана: модель/формат/инвентарь из справочника,
         // объём = сумма ÷ цену × (CPM → 1000). Здесь ничего не пересчитываем.
         setPrefill({ ...r.data, rows: r.data.rows || [] })
-        setDealBrief({ has_deal: true, deal_id: +dealParam, brief: r.data.brief || '', is_local: r.data.is_local })
+        setDealBrief({ has_deal: true, deal_id: +dealParam, brief: r.data.brief || '' })
       }).catch(() => setPrefill({}))
     }
   }, [id, dealParam])
@@ -206,8 +206,8 @@ export default function MpEditor() {
 
   // ── Free-text бриф связанной сделки ──
   // Параметр refresh снят вместе с кнопкой «⟳ С Битрикса» (21.09.2026): его не
-  // передавал ни один вызов, то есть ветка `?refresh=1` была недостижима. Ленивая
-  // подгрузка из Битрикса при первом открытии живёт на бэкенде и работает без него.
+  // передавал ни один вызов. Подгрузки из Битрикса и записи туда нет с 03.10.2026 —
+  // Битрикс больше не источник, бриф живёт только у нас.
   const loadDealBrief = () => {
     const pid = savedId || (id && id !== 'new' ? id : null)
     if (!pid) return
@@ -216,7 +216,7 @@ export default function MpEditor() {
   }
   const onDealBriefSave = async (text) => {
     if (!savedId) { alert('Сначала сохраните медиаплан — потом бриф запишется в сделку'); return }
-    try { const r = await api.put(`/sales/media-plans/${savedId}/deal-brief`, { brief: text }, auth()); setDealBrief(d => ({ ...(d || {}), ...r.data, has_deal: true })); alert(r.data.pushed_to_bitrix ? 'Бриф сохранён и отправлен в Битрикс' : 'Бриф сохранён') }
+    try { const r = await api.put(`/sales/media-plans/${savedId}/deal-brief`, { brief: text }, auth()); setDealBrief(d => ({ ...(d || {}), ...r.data, has_deal: true })); alert('Бриф сохранён') }
     catch (e) { alert(e.response?.data?.detail || 'Не удалось сохранить бриф') }
   }
 
@@ -297,9 +297,9 @@ export default function MpEditor() {
                       style={{ cursor: 'pointer', background: d.id === loaded?.deal_id ? 'var(--accent-tint)' : undefined }}>
                       {/* НАШ код сделки, а не битриксовый (владелец 08.09.2026): он
                           стоит везде в интерфейсе и ссылках. Битриксовый номер остаётся
-                          в поиске — в переписке иногда называют именно его. */}
-                      <td style={{ ...td, fontFamily: 'monospace', color: 'var(--accent)', fontWeight: 700 }}
-                          title={d.bitrix_id ? `в Битриксе: ${d.bitrix_id}` : ''}>{d.code || '—'}</td>
+                          в поиске — в переписке иногда называют именно его; подсказки
+                          «в Битриксе: …» нет с 03.10.2026. */}
+                      <td style={{ ...td, fontFamily: 'monospace', color: 'var(--accent)', fontWeight: 700 }}>{d.code || '—'}</td>
                       <td style={{ ...td, fontWeight: 600, color: 'var(--text-primary)' }} title={d.advertiser || ''}>{d.advertiser || '—'}</td>
                       <td style={td} title={d.brand || ''}>{d.brand || '—'}</td>
                       <td style={td} title={d.agency || ''}>{d.agency || '—'}</td>

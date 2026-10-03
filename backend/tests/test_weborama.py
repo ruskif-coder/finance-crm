@@ -14,22 +14,14 @@ from app.weborama.client import WcmAuthError, WcmClient, WcmError
 
 # ── имена ────────────────────────────────────────────────────────────────────
 
-def test_translit_follows_weborama_table_not_our_matching_one():
-    """Таблица Weborama отличается от `reconcile.translit`, и это НЕ дубль по недосмотру.
-
-    Тот огрубляет намеренно ради нечёткого сравнения названий компаний; здесь имя уезжает
-    наружу точным идентификатором позиции, по которому вернут пиксель. Прибор фиксирует
-    именно расхождение — чтобы «сведение дублей» однажды не склеило их обратно.
-    """
-    from app.sales.reconcile import translit as matching_translit
-
+def test_translit_follows_weborama_table():
+    """Таблица Weborama: имя уезжает наружу точным идентификатором позиции, по которому
+    вернут пиксель. (Сравнение с матчинговой транслитерацией сверки ушло вместе со
+    сверкой с Битриксом, 03.10.2026.)"""
     assert naming.translit("Ёжик") == "Yozhik"
     assert naming.translit("хмель") == "khmel"
     assert naming.translit("щавель") == "shchavel"
     assert naming.translit("майка") == "majka"
-    # А матчинговый на тех же словах даёт другое — и обязан давать другое.
-    assert matching_translit("ёжик") != naming.translit("ёжик").lower()
-    assert matching_translit("хмель") != naming.translit("хмель").lower()
 
 
 def test_translit_keeps_domain_readable_and_drops_the_rest():

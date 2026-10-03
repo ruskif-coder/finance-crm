@@ -6,7 +6,6 @@ import Link from 'next/link'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import { MONO, UI, HATCH_RED, Modal, Z } from '@/components/salesTableKit'
-import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
 import BriefFiles from '@/components/deal/BriefFiles'
 import { dm, grp0 } from '@/lib/salesFormat'
 import { overlayClose } from '@/lib/overlay'
@@ -129,17 +128,16 @@ function Ask({ title, text, onYes, onNo }) {
   )
 }
 
-/** Бриф сделки. Тянется лениво — поле живёт в Битриксе и кэшируется у нас при первом
- *  открытии, поэтому грузим по клику, а не вместе с карточкой. */
+/** Бриф сделки. Грузим по клику, а не вместе с карточкой. До 03.10.2026 поле тянулось
+ *  из Битрикса и кэшировалось у нас; Битрикс больше не источник — бриф живёт только у нас. */
 function BriefDialog({ dealId, canEdit, onClose }) {
-  const [state, setState] = useState({ loading: true, text: '', err: '', local: false, saving: false })
-  const load = (refresh) => {
+  const [state, setState] = useState({ loading: true, text: '', err: '', saving: false })
+  useEffect(() => {
     setState(s => ({ ...s, loading: true, err: '' }))
-    api.get(`/sales/deals/${dealId}/brief${refresh ? '?refresh=1' : ''}`, auth())
-      .then(r => setState({ loading: false, text: r.data.brief || '', err: '', local: !!r.data.is_local, saving: false }))
+    api.get(`/sales/deals/${dealId}/brief`, auth())
+      .then(r => setState({ loading: false, text: r.data.brief || '', err: '', saving: false }))
       .catch(e => setState(s => ({ ...s, loading: false, err: e.response?.data?.detail || 'Не удалось загрузить бриф' })))
-  }
-  useEffect(() => { load(false) }, [dealId])
+  }, [dealId])
 
   const save = () => {
     setState(s => ({ ...s, saving: true, err: '' }))
@@ -153,12 +151,6 @@ function BriefDialog({ dealId, canEdit, onClose }) {
       <div onClick={e => e.stopPropagation()} style={{ ...SHEET, maxWidth: 620 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 24px', borderBottom: '1px solid var(--border-card)' }}>
           <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.02em' }}>Бриф сделки</span>
-          {!state.local && (
-            <button type="button" onClick={() => load(true)} title="Перечитать поле из Битрикса"
-              style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: 0, cursor: 'pointer', fontFamily: UI }}>
-              обновить из Битрикса
-            </button>
-          )}
           <button type="button" onClick={onClose} style={{ marginLeft: 'auto', width: 32, height: 32, borderRadius: 9, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 16 }}>✕</button>
         </div>
         <div style={{ padding: '18px 24px' }}>
@@ -1013,7 +1005,6 @@ export default function DealCard() {
   const links = [
     { name: `Контрагент ${d.payer || ''}`.trim(), href: d.counterparty_id ? `/directory/counterparties/${d.counterparty_id}` : null, dot: 'var(--accent)' },
     { name: 'Медиаплан', href: null, dot: 'var(--income)' },
-    { name: 'Сделка в Битриксе', href: (d.bitrix_id && !String(d.bitrix_id).startsWith('local-')) ? BITRIX_DEAL_URL(d.bitrix_id) : null, dot: 'var(--bank-cash)' },
     { name: `Дебиторка ${rub(d.amount)}`, href: '/finance/receivables', dot: 'var(--dot-current-dz)' },
   ]
 

@@ -15,7 +15,7 @@
  */
 import { ESLint } from 'eslint'
 
-const EXHAUSTIVE_DEPS_MAX = 86   // замер 24.09.2026 с .jsx (без них было 80)
+const EXHAUSTIVE_DEPS_MAX = 83   // 03.10.2026: 83 — ушёл Битрикс (сверки, синк, бриф) (было 86 на 24.09)
 
 const eslint = new ESLint({
   // Без этого ESLint 8 по каталогу смотрит только .js — 31 файл .jsx шёл мимо (ревью 24.09.2026).

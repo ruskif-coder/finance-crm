@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """Прибор на заслон из conftest: тест не выходит во внешние системы (ревью 23.09.2026).
 
-Без этой проверки заслон мог бы молча перестать работать — например, если транспорт
-Битрикса перейдёт на свой `httpx.Client` — и следующий сломанный тест снова записал бы
-бриф в настоящую сделку.
+Без этой проверки заслон мог бы молча перестать работать — например, если какой-то
+коннектор перейдёт на свой `httpx.Client` — и следующий сломанный тест снова записал бы
+что-то в настоящую внешнюю систему. Проверки транспорта Битрикса сняты 03.10.2026 вместе
+с ним: Битрикс больше не источник.
 """
 import smtplib
 
@@ -11,20 +12,7 @@ import httpx
 import pytest
 
 from app.notify import telegram
-from app.sales.bitrix import transport
 from tests.conftest import NetworkInTest
-
-
-def test_bitrix_write_is_stopped(monkeypatch):
-    monkeypatch.setenv("VIBECODE_API_KEY", "прибор")
-    with pytest.raises(NetworkInTest):
-        transport.vibecode_patch("/deals/1", {"x": 1})
-
-
-def test_bitrix_read_is_stopped(monkeypatch):
-    monkeypatch.setenv("VIBECODE_API_KEY", "прибор")
-    with pytest.raises(NetworkInTest):
-        transport.vibecode_get("/deals/1", {})
 
 
 def test_telegram_host_is_stopped():

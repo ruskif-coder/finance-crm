@@ -78,7 +78,6 @@ SECTIONS = [
     # прямо на экране. Заводить здесь `edit` значило бы второе правило поверх тех же
     # ручек: право стояло бы, а сохранение всё равно упиралось бы в право блока.
     {"key": "directory_add",     "label": "Добавить данные",    "group": "Справочники", "actions": ["view"]},
-    {"key": "bx_reconcile",      "label": "Сверка с Битриксом", "group": "Справочники", "actions": ["view", "edit"]},
     # Настройки разнесены на отдельные страницы (/settings/*) — по праву на раздел,
     # как справочники. Пользователи и Роли сюда НЕ входят (admin-only, см. выше).
     # Паблишеры — свой контур: площадка перестала быть справочной записью, у неё
@@ -136,7 +135,6 @@ SECTIONS = [
     {"key": "settings_articles",    "label": "Настройки · Статьи",   "group": "Ядро", "actions": ["view", "edit"]},
     {"key": "settings_pipelines",   "label": "Настройки · Воронки",  "group": "Ядро", "actions": ["view", "edit"]},
     {"key": "settings_services",    "label": "Настройки · Услуги",   "group": "Ядро", "actions": ["view", "edit"]},
-    {"key": "settings_field_audit", "label": "Настройки · Сверка полей", "group": "Ядро", "actions": ["view"]},
     {"key": "settings_audit",       "label": "Настройки · Журнал действий", "group": "Ядро", "actions": ["view"]},
     # Бэклог отладки: что держим под наблюдением после больших изменений.
     # Без "delete" осознанно — записи снимаются с наблюдения статусом, а не стиранием:
@@ -152,7 +150,7 @@ SECTIONS = [
 
 # Разделы настроек (для фронта: SettingsTabs, редирект, гейт страниц).
 SETTINGS_SECTIONS = ("settings_balances", "settings_articles", "settings_pipelines",
-                     "settings_services", "settings_field_audit", "settings_audit",
+                     "settings_services", "settings_audit",
                      "settings_backlog", "settings_bugs", "settings_mail")
 
 # Секции продаж (5-уровневый контроль со свои/все) — для UI-матрицы и gate-хелперов.

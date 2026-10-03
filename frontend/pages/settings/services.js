@@ -42,9 +42,6 @@ export default function SettingsServices() {
   const [newAddon, setNewAddon] = useState({ name: '', unit_price: '', period: '', can_be_bonus: false })
   const [dragSvc, setDragSvc] = useState(null)
   const [confirmDel, setConfirmDel] = useState(null)   // {kind:'service'|'addon', id, name}
-  const [busy, setBusy] = useState(false)
-  const [bxOptions, setBxOptions] = useState([])       // услуги Битрикса (СП 1050) для привязки
-  const [bxErr, setBxErr] = useState(false)            // Битрикс недоступен → селект работает по кэшу
   const [formats, setFormats] = useState([])           // справочник форматов размещения
   const [palette, setPalette] = useState([])           // допустимые цвета маркера услуги
   const [articles, setArticles] = useState([])         // реестр статей (для маппинга услуга→статья выручки)
@@ -57,15 +54,7 @@ export default function SettingsServices() {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     if (!settingsSectionAllowed('services')) { let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}; router.push(firstAllowedHref(p, isAdmin())); return }
     load()
-    loadBx()
   }, [])
-
-  // Список битрикс-услуг для селекта привязки. Живой вызов Битрикса — грузим отдельно
-  // и терпимо к ошибке: если недоступен, селект всё равно показывает текущую привязку.
-  const loadBx = async () => {
-    try { const r = await api.get('/sales/directories/services/bitrix', auth()); setBxOptions(r.data.items || []); setBxErr(false) }
-    catch (e) { setBxErr(true) }
-  }
 
   const load = async () => {
     setLoading(true)
@@ -84,16 +73,15 @@ export default function SettingsServices() {
   }
 
   // ── услуги ──
-  const svcSeed = (s) => ({ name: s.name, group: s.group || '', placement_type: s.placement_type || '', calc_form: s.calc_form || '', separate_price: !!s.separate_price, unit_price: s.unit_price ?? '', unit_price_web: s.unit_price_web ?? '', unit_price_app: s.unit_price_app ?? '', constants: s.constants || {}, bx_id: s.bx_id || '', bx_title: s.bx_title || '', format_ids: (s.formats || []).map(f => f.id), revenue_article_id: s.revenue_article_id ?? '', color: s.color || '', doc_position: s.doc_position || '', rotation_type: s.rotation_type || '' })
-  const bxTitleFor = (id) => (id ? (bxOptions.find(o => o.id === id)?.title || null) : null)
+  const svcSeed = (s) => ({ name: s.name, group: s.group || '', placement_type: s.placement_type || '', calc_form: s.calc_form || '', separate_price: !!s.separate_price, unit_price: s.unit_price ?? '', unit_price_web: s.unit_price_web ?? '', unit_price_app: s.unit_price_app ?? '', constants: s.constants || {}, format_ids: (s.formats || []).map(f => f.id), revenue_article_id: s.revenue_article_id ?? '', color: s.color || '', doc_position: s.doc_position || '', rotation_type: s.rotation_type || '' })
   const svcEd = (s) => editingServices[s.id] || svcSeed(s)
   const svcSet = (s, f, v) => setEditingServices(p => ({ ...p, [s.id]: { ...(p[s.id] || svcSeed(s)), [f]: v } }))
   const svcSetConst = (s, k, v) => setEditingServices(p => { const cur = p[s.id] || svcSeed(s); return { ...p, [s.id]: { ...cur, constants: { ...(cur.constants || {}), [k]: v } } } })
   const svcDirty = (id) => !!editingServices[id]
-  const svcPayload = (ed) => ({ name: ed.name, group: ed.group || null, placement_type: ed.placement_type || null, calc_form: ed.calc_form || null, separate_price: !!ed.separate_price, unit_price: ed.separate_price ? null : numOrNull(ed.unit_price), unit_price_web: ed.separate_price ? numOrNull(ed.unit_price_web) : null, unit_price_app: ed.separate_price ? numOrNull(ed.unit_price_app) : null, constants: ed.constants || {}, bx_id: ed.bx_id || null, bx_title: ed.bx_id ? (bxTitleFor(ed.bx_id) || ed.bx_title || null) : null, format_ids: ed.format_ids ?? null, revenue_article_id: ed.revenue_article_id ? Number(ed.revenue_article_id) : null, color: ed.color || null, doc_position: ed.doc_position || null, rotation_type: ed.rotation_type || null })
+  const svcPayload = (ed) => ({ name: ed.name, group: ed.group || null, placement_type: ed.placement_type || null, calc_form: ed.calc_form || null, separate_price: !!ed.separate_price, unit_price: ed.separate_price ? null : numOrNull(ed.unit_price), unit_price_web: ed.separate_price ? numOrNull(ed.unit_price_web) : null, unit_price_app: ed.separate_price ? numOrNull(ed.unit_price_app) : null, constants: ed.constants || {}, format_ids: ed.format_ids ?? null, revenue_article_id: ed.revenue_article_id ? Number(ed.revenue_article_id) : null, color: ed.color || null, doc_position: ed.doc_position || null, rotation_type: ed.rotation_type || null })
   const saveService = async (id) => {
     const ed = editingServices[id]; if (!ed) return
-    try { await api.put(`/sales/directories/services/${id}`, svcPayload(ed), auth()); setEditingServices(p => { const n = { ...p }; delete n[id]; return n }); await load(); loadBx() }
+    try { await api.put(`/sales/directories/services/${id}`, svcPayload(ed), auth()); setEditingServices(p => { const n = { ...p }; delete n[id]; return n }); await load() }
     catch (e) { alert(e.response?.data?.detail || 'Ошибка сохранения') }
   }
   const createService = async () => {
@@ -125,12 +113,6 @@ export default function SettingsServices() {
     if (!newAddon.name.trim()) { alert('Введите название доп. услуги'); return }
     try { await api.post('/sales/directories/services/addons', { name: newAddon.name.trim(), unit_price: numOrNull(newAddon.unit_price), period: newAddon.period || null, can_be_bonus: !!newAddon.can_be_bonus }, auth()); setNewAddon({ name: '', unit_price: '', period: '', can_be_bonus: false }); await load() }
     catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
-  }
-  const refreshFromBitrix = async () => {
-    setBusy(true)
-    try { const r = await api.post('/sales/directories/services/refresh', {}, auth()); alert(`Синхронизация с Битриксом:\n• добавлено новых: ${r.data.added}\n• привязано по имени: ${r.data.linked}\n• в Битриксе всего: ${r.data.bitrix_total}`); await load(); loadBx() }
-    catch (e) { alert(e.response?.data?.detail || 'Обновление недоступно') }
-    finally { setBusy(false) }
   }
   const runDel = async () => {
     if (!confirmDel) return
@@ -226,7 +208,6 @@ export default function SettingsServices() {
             </span>
           ))}
           <button onClick={createService} style={primaryBtn}>+ Добавить</button>
-          <button onClick={refreshFromBitrix} disabled={busy} style={{ ...primaryBtn, marginLeft: 'auto', background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--border-card)', fontWeight: 600 }}>{busy ? 'Обновление…' : 'Обновить из Битрикса'}</button>
         </div>
 
         {/* Таблица услуг */}
@@ -237,11 +218,10 @@ export default function SettingsServices() {
               <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{services.length}</span>
             </div>
             <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1210 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1000 }}>
               <thead><tr>
                 <th style={{ ...th, width: 24 }}></th>
                 <th style={th}>Услуга</th>
-                <th style={{ ...th, width: 210 }}>Услуга в Битриксе</th>
                 <th style={{ ...th, width: 180 }}>Форматы</th>
                 <th style={{ ...th, width: 90 }}>Форма</th>
                 <th style={{ ...th, width: 110 }}>Конст.</th>
@@ -265,17 +245,6 @@ export default function SettingsServices() {
                       style={{ opacity: s.is_active ? 1 : 0.5, background: dragSvc === s.id ? 'var(--accent-tint)' : undefined }}>
                       <td style={{ ...td, textAlign: 'center', cursor: 'grab', color: 'var(--text-faint)', userSelect: 'none' }} title="Перетащить">☰</td>
                       <td style={td}><input value={ed.name} onChange={e => svcSet(s, 'name', e.target.value)} style={{ ...ci, fontWeight: 600 }} /></td>
-                      <td style={td}>
-                        <select value={ed.bx_id || ''} onChange={e => svcSet(s, 'bx_id', e.target.value)} style={cs} title={ed.bx_title || ''}>
-                          <option value="">— не привязано —</option>
-                          {ed.bx_id && !bxOptions.some(o => o.id === ed.bx_id) && <option value={ed.bx_id}>{ed.bx_title || ed.bx_id} (тек.)</option>}
-                          {bxOptions.map(o => {
-                            const takenByOther = o.linked_to && o.id !== ed.bx_id
-                            return <option key={o.id} value={o.id} disabled={takenByOther}>{o.title}{takenByOther ? ` — занята: ${o.linked_to}` : ''}</option>
-                          })}
-                        </select>
-                        {bxErr && <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>Битрикс недоступен — по кэшу</div>}
-                      </td>
                       <td style={td}>
                         <div onClick={() => setFmtOpen(s.id)} title="Выбрать форматы" style={{ ...cs, minHeight: 30, height: 'auto', display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center', cursor: 'pointer' }}>
                           {(ed.format_ids || []).length === 0 && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>форматы…</span>}
@@ -321,7 +290,7 @@ export default function SettingsServices() {
                     </tr>
                   )
                 })}
-                {!services.length && <tr><td colSpan={15} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Услуг нет — добавьте или нажмите «Обновить из Битрикса»</td></tr>}
+                {!services.length && <tr><td colSpan={14} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Услуг нет — добавьте</td></tr>}
               </tbody>
             </table>
             </div>

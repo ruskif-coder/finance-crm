@@ -52,7 +52,7 @@ def test_dashboard_summary_contract(client):
     assert r.status_code == 200, r.text
     j = r.json()
     for k in ("totals", "by_layer", "by_month", "by_sales_rep", "by_account_manager",
-              "by_agency", "by_advertiser", "by_product", "by_pipeline", "last_sync_at"):
+              "by_agency", "by_advertiser", "by_product", "by_pipeline"):
         assert k in j, f"dashboard: пропало поле {k}"
     assert _keys(j["totals"]) >= {"deals", "amount", "fact", "work", "deals_without_period", "reconciles"}
     # по слоям — то, что читают виджеты (сумма/кол-во/разбивка)

@@ -15,7 +15,6 @@ export default function Pipelines({ embedded = false } = {}) {
   const [expanded, setExpanded] = useState(null)
   const [stages, setStages] = useState({})   // { pipelineId: {items, bitrix_category_id} }
   const [expandAll, setExpandAll] = useState(false)
-  const [busy, setBusy] = useState(false)
 
   const mayEdit = can(perms, 'settings_pipelines', 'edit')
   const mayDelete = can(perms, 'settings_pipelines', 'edit')
@@ -37,16 +36,6 @@ export default function Pipelines({ embedded = false } = {}) {
   }, [])
 
   const flash = (m) => { setOk(m); setTimeout(() => setOk(''), 2500) }
-
-  const refresh = async () => {
-    setBusy(true); setError('')
-    try {
-      const r = await api.post('/sales/directories/pipelines/refresh', {}, auth())
-      flash(`Обновлено из Битрикса: воронок +${r.data.pipelines_added} (переим. ${r.data.pipelines_renamed || 0}), стадий +${r.data.stages_added}, переименовано стадий ${r.data.stages_renamed}`)
-      await load()
-    } catch (e) { setError(e.response?.data?.detail || 'Обновление недоступно') }
-    finally { setBusy(false) }
-  }
 
   const loadStagesFor = async (p) => {
     if (stages[p.id]) return
@@ -161,13 +150,10 @@ export default function Pipelines({ embedded = false } = {}) {
             {!!items.length && (
               <button style={btn()} onClick={toggleAll}>{expandAll ? 'Свернуть все' : 'Развернуть все'}</button>
             )}
-            {mayEdit && (
-              <button style={btn()} disabled={busy} onClick={refresh}>{busy ? 'Обновление…' : 'Обновить из Битрикса'}</button>
-            )}
           </div>
         </div>
         <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 0, marginBottom: 16 }}>
-          «Парсить» — учитывать ли воронку при синхронизации с Битрикс24. Снятый флаг
+          «Парсить» — показывать ли воронку в отчётах и фильтрах продаж. Снятый флаг
           не трогает существующие данные. Удаление воронки уносит все её сделки безвозвратно.
         </p>
 
@@ -223,13 +209,12 @@ export default function Pipelines({ embedded = false } = {}) {
                             <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>Загрузка стадий…</span>
                           ) : !stages[p.id].items.length ? (
                             <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>
-                              Стадии не загружены. Запустите синхронизацию с Битрикс24.
+                              Стадий нет.
                             </span>
                           ) : (
                             <>
                               <div style={{ fontSize: 11, color: 'var(--muted)', margin: '6px 0 10px' }}>
-                                Воронка в Битриксе: id={stages[p.id].bitrix_category_id ?? '—'}
-                                {' · '}«Светофор 2/2/2» задаёт слой денег для отчётов и реестра.
+                                «Светофор 2/2/2» задаёт слой денег для отчётов и реестра.
                                 {stages[p.id].items.some(s => s.deals && !s.stage_key) && (
                                   <span style={{ color: 'var(--danger)', marginLeft: 6 }}>
                                     ⚠ есть стадии со сделками без привязки

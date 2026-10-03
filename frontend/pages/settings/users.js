@@ -9,7 +9,8 @@ import api, { auth } from '../../lib/http'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 // ── Пользователи — отдельная страница раздела «Настройки» ──
-// Создание/редактирование/удаление пользователей + привязка к сотруднику Битрикс24.
+// Создание/редактирование/удаление пользователей. Привязки к сотруднику Битрикс24 нет
+// с 03.10.2026 — Битрикс больше не источник.
 // Логика перенесена 1:1 из pages/settings.js (вкладка «Пользователи»); изменён
 // только HTTP-слой (синглтон api + auth()) и оформление (дизайн-токены).
 
@@ -32,10 +33,6 @@ export default function SettingsUsers() {
   const [creatingUser, setCreatingUser] = useState(false)
   const [showNewPw, setShowNewPw] = useState(false)
   const [userError, setUserError] = useState('')
-  // Справочник сотрудников Битрикса (для привязки)
-  const [bitrixUsers, setBitrixUsers] = useState([])
-  const [bxLoading, setBxLoading] = useState(false)
-  const [bxError, setBxError] = useState('')
 
   // Под защитой: строка, которую сейчас правят, не должна перезаписаться
   // ответом сервера прямо под руками.
@@ -46,7 +43,6 @@ export default function SettingsUsers() {
     const ed = editingUsers[u.id]
     return !!ed && (ed.password || ed.name !== u.name || ed.email !== u.email
       || ed.role !== u.role || ed.is_active !== u.is_active
-      || String(ed.bitrix_user_id || '') !== String(u.bitrix_user_id || '')
       || Number(ed.notification_profile_id || 0) !== Number(u.notification_profile_id || 0))
   })
   useRefreshOnReturn(() => loadUsers(), { enabled: !usersDirty })
@@ -83,38 +79,12 @@ export default function SettingsUsers() {
       const res = await api.get('/users/', auth())
       setUsers(res.data)
       const ed = {}
-      res.data.forEach(u => { ed[u.id] = { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '', bitrix_user_id: u.bitrix_user_id || '', notification_profile_id: u.notification_profile_id || 0 } })
+      res.data.forEach(u => { ed[u.id] = { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '', notification_profile_id: u.notification_profile_id || 0 } })
       setEditingUsers(ed)
     } catch (e) {
       if (e.response?.status === 401) router.push('/login')
     } finally {
       setLoadingUsers(false)
-    }
-    loadBitrixUsers()
-  }
-
-  // Справочник пользователей Битрикса кэшируем в localStorage (TTL 12ч) — не дёргаем
-  // Битрикс при каждом открытии вкладки «Пользователи». refresh=true — принудительно.
-  const loadBitrixUsers = async (refresh = false) => {
-    const CACHE_KEY = 'bitrix_users_cache_v1', TTL = 12 * 60 * 60 * 1000
-    if (!refresh) {
-      try {
-        const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null')
-        if (c && Array.isArray(c.items) && (Date.now() - c.ts) < TTL) {
-          setBitrixUsers(c.items); setBxLoading(false); setBxError(''); return
-        }
-      } catch (e) {}
-    }
-    setBxLoading(true); setBxError('')
-    try {
-      const res = await api.get('/users/bitrix-directory', auth())
-      const items = res.data.items || []
-      setBitrixUsers(items)
-      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), items })) } catch (e) {}
-    } catch (e) {
-      setBxError(e.response?.data?.detail || 'Битрикс недоступен')
-    } finally {
-      setBxLoading(false)
     }
   }
 
@@ -140,7 +110,7 @@ export default function SettingsUsers() {
     const ed = editingUsers[id]
     setSavingUsers(prev => ({ ...prev, [id]: true }))
     try {
-      const payload = { name: ed.name, email: ed.email, role: ed.role, is_active: ed.is_active, bitrix_user_id: ed.bitrix_user_id || '', notification_profile_id: ed.notification_profile_id || 0 }
+      const payload = { name: ed.name, email: ed.email, role: ed.role, is_active: ed.is_active, notification_profile_id: ed.notification_profile_id || 0 }
       if (ed.password) payload.password = ed.password
       await api.put(`/users/${id}`, payload, auth())
       await loadUsers()
@@ -158,7 +128,7 @@ export default function SettingsUsers() {
       const ed = editingUsers[u.id]
       if (!ed) continue
       try {
-        const payload = { name: ed.name, email: ed.email, role: ed.role, is_active: ed.is_active, bitrix_user_id: ed.bitrix_user_id || '', notification_profile_id: ed.notification_profile_id || 0 }
+        const payload = { name: ed.name, email: ed.email, role: ed.role, is_active: ed.is_active, notification_profile_id: ed.notification_profile_id || 0 }
         if (ed.password) payload.password = ed.password
         await api.put(`/users/${u.id}`, payload, auth())
         ok++
@@ -338,17 +308,14 @@ export default function SettingsUsers() {
                   <th style={th}>Роль</th>
                   <th style={th}>Активен</th>
                   <th style={th}>Профиль уведомлений</th>
-                  <th style={th}>Сотрудник в Битрикс24</th>
                   <th style={th}>Новый пароль</th>
                   <th style={th}></th>
                 </tr>
               </thead>
               <tbody>
                 {users.filter(u => !hideInactive || u.is_active).map(u => {
-                  const ed = editingUsers[u.id] || { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '', bitrix_user_id: u.bitrix_user_id || '', notification_profile_id: u.notification_profile_id || 0 }
+                  const ed = editingUsers[u.id] || { name: u.name, email: u.email, role: u.role, is_active: u.is_active, password: '', notification_profile_id: u.notification_profile_id || 0 }
                   const isSelf = u.id === selfId
-                  const cur = ed.bitrix_user_id || ''
-                  const known = bitrixUsers.some(b => String(b.id) === String(cur))
                   return (
                     <tr key={u.id}>
                       <td style={td}>
@@ -387,22 +354,6 @@ export default function SettingsUsers() {
                         </select>
                       </td>
                       <td style={td}>
-                        <select value={cur}
-                          onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, bitrix_user_id: e.target.value } }))}
-                          disabled={bxLoading || (!!bxError && bitrixUsers.length === 0)}
-                          title={bxError || ''}
-                          // Ширина фиксирована: <select> растягивается по самому длинному пункту,
-                          // и полный текст ошибки Битрикса в пункте раздувал колонку до 1300+ px —
-                          // «Новый пароль» и кнопки уезжали за край (24.09.2026). В пункте — коротко,
-                          // полный текст — во всплывающей подсказке.
-                          style={{ ...sel, width: 220, maxWidth: 220 }}>
-                          <option value="">{bxLoading ? 'загрузка…' : (bxError && bitrixUsers.length === 0 ? 'Битрикс недоступен' : '— не привязан —')}</option>
-                          {cur && !known && <option value={cur}>ID {cur} (не в списке)</option>}
-                          {[...bitrixUsers].sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1)).map(b =>
-                            <option key={b.id} value={b.id}>{b.name}{b.active ? '' : ' (уволен)'} · #{b.id}</option>)}
-                        </select>
-                      </td>
-                      <td style={td}>
                         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                           <input type={ed.showPw ? 'text' : 'password'} placeholder="не менять" value={ed.password}
                             onChange={e => setEditingUsers(prev => ({ ...prev, [u.id]: { ...ed, password: e.target.value } }))}
@@ -435,7 +386,7 @@ export default function SettingsUsers() {
                   )
                 })}
                 {!users.filter(u => !hideInactive || u.is_active).length && (
-                  <tr><td colSpan={8} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Пользователей нет</td></tr>
+                  <tr><td colSpan={7} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Пользователей нет</td></tr>
                 )}
               </tbody>
             </table>

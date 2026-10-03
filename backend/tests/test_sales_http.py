@@ -121,10 +121,3 @@ def test_dashboard_reconciles(client):
     r = client.get("/api/sales/dashboard")
     assert r.status_code == 200
     assert r.json()["totals"]["reconciles"] is True
-
-
-def test_sync_without_webhook_reports_unavailable(client):
-    """Пока вебхук не настроен, синхронизация честно отвечает ошибкой,
-    а не рисует пустой успешный прогон."""
-    r = client.post("/api/sales/sync")
-    assert r.status_code in (501, 503)

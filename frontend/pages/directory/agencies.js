@@ -275,12 +275,13 @@ export default function Agencies() {
         {loading && <div style={{ color: 'var(--text-muted)' }}>Загрузка…</div>}
 
         {!loading && (() => {
-          const GGRID = '26px 64px minmax(120px,1fr) minmax(120px,1fr) minmax(120px,1fr) minmax(110px,0.9fr) 62px 56px minmax(180px,1.4fr) 210px'
+          // Колонки BX_ID (ссылка в Битрикс) нет с 03.10.2026 — Битрикс больше не источник.
+          const GGRID = '26px minmax(120px,1fr) minmax(120px,1fr) minmax(120px,1fr) minmax(110px,0.9fr) 62px 56px minmax(180px,1.4fr) 210px'
           return (
           <div style={{ overflowX: 'auto', maxWidth: '100%', margin: '4px -4px 0' }}>
-            <div style={{ minWidth: 1320 }}>
+            <div style={{ minWidth: 1244 }}>
               <div style={{ display: 'grid', gridTemplateColumns: GGRID, gap: 12, borderBottom: '1px solid var(--border-card)' }}>
-                <div />{headCell('BX_ID')}{headCell('Краткое')}{headCell('ENG')}{headCell('РУС')}{headCell('Холдинг')}{headCell('Сделок', true)}{headCell('СК', true)}{headCell('Юрлица')}<div />
+                <div />{headCell('Краткое')}{headCell('ENG')}{headCell('РУС')}{headCell('Холдинг')}{headCell('Сделок', true)}{headCell('СК', true)}{headCell('Юрлица')}<div />
               </div>
                 {filtered.map(a => (
                   <div key={a.id} style={{ display: 'grid', gridTemplateColumns: GGRID, gap: 12, alignItems: 'start', padding: '10px 0', borderBottom: '1px solid var(--border-row)', borderRadius: 10,
@@ -292,13 +293,6 @@ export default function Agencies() {
                         <input type="checkbox" checked={!!selAg[a.id]} onChange={() => toggleAg(a)}
                           style={{ cursor: 'pointer' }} />
                       )}
-                    </div>
-                    <div style={{ ...cell, fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)' }}>
-                      {a.bx_id
-                        ? <a href={`https://simb-ad.bitrix24.ru/crm/company/details/${a.bx_id}/`}
-                             target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}
-                             title="Открыть агентство в Битрикс24">{a.bx_id}</a>
-                        : dash}
                     </div>
                     {editId === a.id ? (
                       <>

@@ -6,8 +6,9 @@ import { fmtDateTime } from '@/lib/dates'
 import BriefFiles from '@/components/deal/BriefFiles'
 
 // Иконка «бриф» в строке сделки + всплывающее окно с текстом и инлайн-правкой.
-// Ленивая загрузка: текст тянется только при первом открытии (GET), дальше — из кэша БД.
-// Сохранение двустороннее: наша БД + поле ufCrm_1761318500 в Битриксе (на бэке).
+// Ленивая загрузка: текст тянется только при первом открытии (GET).
+// Бриф живёт только в нашей БД: подгрузки из Битрикса и отправки туда нет с 03.10.2026 —
+// Битрикс больше не источник.
 // controlledOpen/onClose — управление снаружи (кнопка «Бриф» на канбан-доске):
 // иконку-триггер в этом режиме не рисуем, показываем только сам попап.
 export default function DealBriefCell({ deal, canEdit, v2, controlledOpen, onClose }) {
@@ -21,24 +22,23 @@ export default function DealBriefCell({ deal, canEdit, v2, controlledOpen, onClo
   const [ok, setOk] = useState('')
   const [text, setText] = useState('')
   const [orig, setOrig] = useState('')
-  const [meta, setMeta] = useState({ loaded: false, is_local: false, synced_at: null })
+  const [meta, setMeta] = useState({ loaded: false, synced_at: null })
   const loadedOnce = useRef(false)
 
-  const load = async (refresh = false) => {
+  const load = async () => {
     setLoading(true); setErr(''); setOk('')
     try {
-      const r = await api.get(`/sales/deals/${deal.id}/brief${refresh ? '?refresh=1' : ''}`, auth())
+      const r = await api.get(`/sales/deals/${deal.id}/brief`, auth())
       setText(r.data.brief || ''); setOrig(r.data.brief || '')
-      setMeta({ loaded: r.data.loaded, is_local: r.data.is_local, synced_at: r.data.synced_at })
+      setMeta({ loaded: r.data.loaded, synced_at: r.data.synced_at })
       loadedOnce.current = true
-      if (refresh) setOk('Обновлено из Битрикса')
     } catch (e) {
       setErr(e.response?.data?.detail || 'Не удалось загрузить бриф')
     } finally { setLoading(false) }
   }
 
   useEffect(() => {
-    if (open && !loadedOnce.current) load(false)
+    if (open && !loadedOnce.current) load()
     // при закрытии сбрасываем сообщения, но кэш текста держим
     if (!open) { setErr(''); setOk('') }
   }, [open])
@@ -49,7 +49,7 @@ export default function DealBriefCell({ deal, canEdit, v2, controlledOpen, onClo
       const r = await api.put(`/sales/deals/${deal.id}/brief`, { brief: text }, auth())
       setOrig(text)
       setMeta(m => ({ ...m, loaded: true, synced_at: r.data.synced_at }))
-      setOk(r.data.pushed_to_bitrix ? 'Сохранено и отправлено в Битрикс' : 'Сохранено')
+      setOk('Сохранено')
     } catch (e) {
       setErr(e.response?.data?.detail || 'Не удалось сохранить')
     } finally { setSaving(false) }
@@ -107,11 +107,6 @@ export default function DealBriefCell({ deal, canEdit, v2, controlledOpen, onClo
                 <div style={{ color: 'var(--muted)', fontSize: 13, padding: '20px 0' }}>Загрузка…</div>
               ) : (
                 <>
-                  {meta.is_local && (
-                    <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>
-                      Локальная сделка — бриф хранится только у нас, в Битрикс не отправляется.
-                    </div>
-                  )}
                   <textarea
                     value={text}
                     onChange={(e) => setText(e.target.value)}
@@ -136,14 +131,8 @@ export default function DealBriefCell({ deal, canEdit, v2, controlledOpen, onClo
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px',
               borderTop: '1px solid var(--border-card)' }}>
-              <button onClick={() => load(true)} disabled={loading || saving}
-                title="Перечитать бриф из Битрикса"
-                style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-card)',
-                  background: 'var(--bg-subtle)', cursor: 'pointer', fontSize: 12.5 }}>
-                ⟳ Обновить из Битрикса
-              </button>
               <span style={{ flex: 1, fontSize: 11.5, color: 'var(--muted)' }}>
-                {meta.synced_at ? `синхронизировано: ${fmtDateTime(meta.synced_at)}` : ''}
+                {meta.synced_at ? `сохранено: ${fmtDateTime(meta.synced_at)}` : ''}
               </span>
               {canEdit && (
                 <button onClick={save} disabled={saving || loading || !dirty}

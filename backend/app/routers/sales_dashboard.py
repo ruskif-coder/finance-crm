@@ -33,7 +33,7 @@ from app import own_company
 from app.permissions import require_permission, require_any_permission
 from app.audit import log_action, require_admin
 from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
-                              SalesRep, SalesBrand, SalesBitrixSyncLog,
+                              SalesRep, SalesBrand,
                               SalesDealFieldOverride, SalesAgency,
                               SalesStage, SalesStagePhase, SalesPipeline,
                               SalesDealBriefFile)
@@ -267,8 +267,8 @@ def _base_query(db: Session, date_from, date_to, pipeline, sales_rep_id,
     """Сделки, склеенные со слоем денег НАШЕЙ стадии (our_stage — мастер).
     Джойн LEFT по our_stage_id: у сделки без нашей стадии (сид не сматчил —
     «требует разбора») слой NULL → «Без группы», а не исчезает.
-    Битрикс-маппинг (SalesBitrixStageMap) больше НЕ мастер денег — только
-    легаси-мост при сидировании our_stage (см. app/sales/stage_resolve.py)."""
+    Битрикс-маппинг (SalesBitrixStageMap) больше НЕ мастер денег; сид our_stage по
+    нему и резолвер stage_resolve.py удалены 03.10.2026 (Битрикс больше не источник)."""
     q = db.query(SalesDeal,
                  SalesStage.money_layer.label("layer"),
                  SalesStage.stage_key.label("stage_key")).outerjoin(
@@ -443,10 +443,6 @@ def dashboard(
     # отдельной строкой: 53% сделок в источнике не имеют «Старт РК».
     no_period = sum(1 for d, _, _ in rows if d.period_from is None)
 
-    last_sync = (db.query(SalesBitrixSyncLog)
-                 .filter(SalesBitrixSyncLog.status == "success")
-                 .order_by(SalesBitrixSyncLog.finished_at.desc()).first())
-
     return {
         "filters": {
             "date_from": date_from, "date_to": date_to, "pipeline": pipeline,
@@ -474,9 +470,8 @@ def dashboard(
             _group(rows, lambda d, layer: periods.month_key(d.period_from), excluded_adv, mp),
             key=lambda b: b["name"],
         ),
-        # Витрина всегда сообщает возраст данных: молча устаревшие цифры —
-        # худшее поведение для отчётной системы.
-        "last_sync_at": last_sync.finished_at.isoformat() if last_sync and last_sync.finished_at else None,
+        # `last_sync_at` (время синка с Битриксом) убран 03.10.2026 — Битрикс больше не
+        # источник, данные витрины живые, а журнал синка так и не заполнился ни разу.
     }
 
 
@@ -487,7 +482,6 @@ def dashboard(
 SALES_AGENCY_SK = 0.30       # базовый СК агентства (потом из справочника по агентству)
 SALES_BONUS_RATE = 0.03      # доля сейлза от «нашей» суммы
 _CLOSED_FUNNEL = "ДО"        # воронка «доведено до результата»
-BRIEF_FIELD = "ufCrm_1761318500"   # Битрикс-поле сделки «Бриф - Описание задач» (текст)
 _SANDBOX_KEYS = {"media_plan"}
 _BOOKING_KEYS = {"booking", "launch_prep", "launch"}
 
@@ -976,10 +970,6 @@ def deals_registry(
             # filled — есть текст. Текст брифа тут НЕ отдаём (ленивая подгрузка по клику).
             "brief_state": ("none" if d.brief is None
                             else ("empty" if not (d.brief or "").strip() else "filled")),
-            "sync_status": d.sync_status,
-            "sync_issues": (d.sync_report or {}).get("issues", []),
-            "sync_changes": (d.sync_report or {}).get("changes", []),
-            "sync_checked_at": (d.sync_report or {}).get("checked_at"),
         }, d) for d, layer, stage_key in rows],
     }
 
@@ -1519,77 +1509,8 @@ def create_deal(payload: DealCreate, db: Session = Depends(get_db),
     return {"id": deal.id, "code": deal.code, "bitrix_id": deal.bitrix_id}
 
 
-@router.post("/deals/{deal_id}/push-to-bitrix")
-def push_deal_to_bitrix(deal_id: int, db: Session = Depends(get_db),
-                        current_user: User = Depends(require_permission("sales_registry", "edit"))):
-    """ЗАПИСЬ В ПРОД-БИТРИКС: создаёт локальную сделку в Битриксе, заменяет local-id на реальный.
-    Маппит только резолвимые поля; рекламодателя/бренд пока не шлём (коды не опознаны)."""
-    from app.sales.bitrix.transport import vibecode_post, list_bitrix_services
-    from app.sales.models import SalesAgency, SalesPipeline, SalesPipelineStage
-    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
-    if not deal:
-        raise HTTPException(status_code=404, detail="Сделка не найдена")
-    _assert_deal_in_scope(db, current_user, deal)
-    if not (deal.bitrix_id or "").startswith("local-"):
-        raise HTTPException(status_code=409, detail="Сделка уже в Битриксе")
-
-    body = {"title": deal.title or ""}
-    pipe = db.query(SalesPipeline).filter(SalesPipeline.name == deal.pipeline).first()
-    if pipe and pipe.bitrix_category_id is not None:
-        body["categoryId"] = pipe.bitrix_category_id
-        st = (db.query(SalesPipelineStage)
-              .filter(SalesPipelineStage.bitrix_category_id == pipe.bitrix_category_id,
-                      SalesPipelineStage.name == deal.bitrix_stage).first())
-        if st:
-            body["stageId"] = st.status_id
-    if deal.amount is not None:
-        body["ufCrm_1690138678699"] = f"{deal.amount}|RUB"
-    if deal.period_from:
-        body["ufCrm_1723639172"] = deal.period_from.isoformat()
-    if deal.period_to:
-        body["ufCrm_1723639189"] = deal.period_to.isoformat()
-    if deal.agency_id:
-        ag = db.query(SalesAgency).filter(SalesAgency.id == deal.agency_id).first()
-        if ag and ag.bx_id:
-            try:
-                body["companyId"] = int(ag.bx_id)
-            except (TypeError, ValueError):
-                pass
-    if deal.product:
-        try:
-            svc = {s["title"]: s["id"] for s in list_bitrix_services()}
-            if deal.product in svc:
-                body["parentId1050"] = int(svc[deal.product])
-        except Exception:
-            pass
-    if deal.sales_rep_id:
-        rep = db.query(SalesRep).filter(SalesRep.id == deal.sales_rep_id).first()
-        if rep and rep.bitrix_user_id:
-            try:
-                body["ufCrm_1761319635"] = int(rep.bitrix_user_id)
-            except (TypeError, ValueError):
-                pass
-
-    try:
-        res = vibecode_post("/deals", body)
-    except Exception as e:
-        logger.error("push_deal_to_bitrix: deal=%s: %s", deal.id, e)
-        raise HTTPException(status_code=502, detail="Битрикс отклонил создание сделки (детали в логе сервера)")
-    new_id = (res.get("data") or {}).get("id") or res.get("id")
-    if not new_id:
-        raise HTTPException(status_code=502, detail="Битрикс не вернул id сделки")
-    deal.bitrix_id = str(new_id)
-    db.commit()
-    log_action(db, current_user, "push_deal_to_bitrix", "sales_deal", deal.id, f"→ bx {new_id}")
-    return {"bitrix_id": deal.bitrix_id}
-
-
 class BriefIn(BaseModel):
     brief: str
-
-
-def _deal_is_local(deal) -> bool:
-    return (deal.bitrix_id or "").startswith("local-")
 
 
 def _deal_by_ref(db, ref):
@@ -1604,57 +1525,35 @@ def _deal_by_ref(db, ref):
 
 
 @router.get("/deals/{deal_id}/brief")
-def get_deal_brief(deal_id: str, refresh: int = 0, db: Session = Depends(get_db),
+def get_deal_brief(deal_id: str, db: Session = Depends(get_db),
                    current_user: User = Depends(require_permission("sales_registry", "view"))):
-    """Бриф сделки. Ленивая подгрузка: если ещё не тянули (brief IS NULL) или refresh=1 —
-    читаем из Битрикса поле ufCrm_1761318500 и кэшируем. Локальные сделки (local-) — только БД."""
+    """Бриф сделки — только из нашей БД. До 03.10.2026 при пустом кэше тянулся из поля
+    Битрикса ufCrm_1761318500; Битрикс больше не источник. `synced_at` — время
+    последнего сохранения (колонка brief_synced_at, имя осталось от синка)."""
     deal = _deal_by_ref(db, deal_id)
     if not deal:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
     _assert_deal_in_scope(db, current_user, deal)
-    if (deal.brief is None or refresh) and not _deal_is_local(deal):
-        from app.sales.bitrix.transport import vibecode_get
-        try:
-            r = vibecode_get(f"/deals/{deal.bitrix_id}", {})
-            d = (r.get("data") if isinstance(r, dict) else None) or {}
-            deal.brief = d.get(BRIEF_FIELD) or ""
-            deal.brief_synced_at = datetime.utcnow()
-            db.commit()
-        except Exception as e:
-            if deal.brief is None:      # кэша ещё нет — сообщаем об ошибке
-                logger.error("get_deal_brief: deal=%s: %s", deal.id, e)
-                raise HTTPException(status_code=502, detail="Битрикс недоступен (детали в логе сервера)")
     return {"brief": deal.brief or "", "loaded": deal.brief is not None,
-            "is_local": _deal_is_local(deal),
             "synced_at": deal.brief_synced_at.isoformat() if deal.brief_synced_at else None}
 
 
 @router.put("/deals/{deal_id}/brief")
 def save_deal_brief(deal_id: int, payload: BriefIn, db: Session = Depends(get_db),
                     current_user: User = Depends(require_permission("sales_registry", "edit"))):
-    """Двусторонняя запись брифа: в нашу БД и (для сделок из Битрикса) в поле
-    ufCrm_1761318500. Для локальных сделок пишем только в БД."""
+    """Запись брифа в нашу БД. В Битрикс не отправляется с 03.10.2026 —
+    Битрикс больше не источник."""
     deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
     if not deal:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
     _assert_deal_in_scope(db, current_user, deal)
     text_val = payload.brief or ""
-    pushed = False
-    if not _deal_is_local(deal):
-        from app.sales.bitrix.transport import vibecode_patch
-        try:
-            vibecode_patch(f"/deals/{deal.bitrix_id}", {BRIEF_FIELD: text_val})
-            pushed = True
-        except Exception as e:
-            logger.error("save_deal_brief: deal=%s: %s", deal.id, e)
-            raise HTTPException(status_code=502, detail="Битрикс отклонил запись брифа (детали в логе сервера)")
     deal.brief = text_val
     deal.brief_synced_at = datetime.utcnow()
     db.commit()
     log_action(db, current_user, "save_deal_brief", "sales_deal", deal.id,
-               f"бриф {len(text_val)} симв.{' → Битрикс' if pushed else ' (локально)'}")
-    return {"brief": deal.brief, "pushed_to_bitrix": pushed,
-            "synced_at": deal.brief_synced_at.isoformat()}
+               f"бриф {len(text_val)} симв.")
+    return {"brief": deal.brief, "synced_at": deal.brief_synced_at.isoformat()}
 
 
 # ── Файлы брифа ──────────────────────────────────────────────────────────────
@@ -2276,201 +2175,6 @@ def add_deal_comment(deal_id: str, payload: CommentIn, db: Session = Depends(get
                text_val[:80] + ("…" if len(text_val) > 80 else ""))
     who = {current_user.id: _short_fio(current_user.name or current_user.email)}
     return _comment_out(row, who)
-
-
-# ── Сверка полей: наша карточка ↔ живой Битрикс ──────────────────────
-BX_PORTAL = "https://simb-ad.bitrix24.ru"
-
-# (наше поле, подпись, известный код в Битриксе или None — None = «требует опознания»)
-DEAL_FIELD_MAP = [
-    ("bitrix_id", "ID сделки", "id"),
-    ("title", "Название", "title"),
-    ("pipeline", "Воронка", "categoryId"),
-    ("bitrix_stage", "Стадия", "stageId"),
-    ("amount", "Сумма до НДС", "ufCrm_1690138678699"),
-    ("amount_with_vat", "Сумма с НДС", "amount"),          # стандартное поле opportunity
-    ("period_from", "Старт РК", "ufCrm_1723639172"),
-    ("period_to", "Конец РК", "ufCrm_1723639189"),
-    ("advertiser", "Рекламодатель (Лид)", "ufCrm_1761214459"),   # crm-поле → лид рекламодателя
-    ("brand", "Бренд", "ufCrm_64BD76BC5BC45"),
-    ("agency", "Рекламное агентство", "companyId"),
-    ("product", "Продукты Simb-ad", "parentId1050"),
-    ("sales_rep", "Sale manager (Продавец)", "ufCrm_1761319635"),        # employee
-    ("account_manager", "Key account (Ответственный КС)", "ufCrm_1723638961"),  # employee
-    ("brief", "Бриф — Описание задач", "ufCrm_1761318500"),
-    ("mp", "МП (медиаплан, файл)", "ufCrm_1690138838403"),               # file
-    ("contract_flag", "Договор — подписан?", "ufCrm_1761216445"),        # enumeration
-    ("contract_file", "Договор (файл)", "ufCrm_1690897647759"),          # file
-    ("payer", "ЮрЛицо | Контрагент | Заказчик", "ufCrm_1785165889"),     # iblock_element; у нас — из связки плательщика
-    ("date_create", "Дата создания", "dateCreate"),
-]
-AGENCY_FIELD_MAP = [
-    ("bx_id", "ID компании", "id"), ("name", "Название", "title"),
-    ("short_name", "Краткое имя", None), ("name_en", "Имя EN", None), ("name_ru", "Имя RU", None),
-    ("holding", "Холдинг", None), ("sk_percent", "СК, %", None),
-    ("legal_entity", "Юрлицо", None), ("inn", "ИНН", None),
-]
-ADVERTISER_FIELD_MAP = [
-    ("bx_id", "ID компании", "id"), ("name", "Название", "title"),
-    ("short_name", "Краткое имя", None), ("name_en", "Имя EN", None), ("name_ru", "Имя RU", None),
-    ("website", "Сайт", None), ("inn", "ИНН", None), ("exclude_from_revenue", "Исключён из выручки", None),
-]
-
-
-def _stringify(v):
-    if v is None:
-        return None
-    if isinstance(v, (dict, list)):
-        import json
-        return json.dumps(v, ensure_ascii=False)[:300]
-    return str(v)[:300]
-
-
-@router.get("/field-audit/deal/{deal_id}")
-def field_audit_deal(deal_id: int, db: Session = Depends(get_db),
-                     current_user: User = Depends(require_permission("settings_field_audit", "view"))):
-    """Сверка одной сделки: наши поля ↔ живой payload Битрикса (читается каждый раз)."""
-    from app.sales.bitrix.transport import vibecode_get
-    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
-    if not deal:
-        raise HTTPException(status_code=404, detail="Сделка не найдена")
-    if _deal_is_local(deal):
-        raise HTTPException(status_code=400, detail="Локальная сделка ещё не в Битриксе — сверять нечего")
-    adv = db.query(SalesAdvertiser).filter(SalesAdvertiser.id == deal.advertiser_id).first() if deal.advertiser_id else None
-    brand = db.query(SalesBrand).filter(SalesBrand.id == deal.brand_id).first() if deal.brand_id else None
-    agency = db.query(SalesAgency).filter(SalesAgency.id == deal.agency_id).first() if deal.agency_id else None
-    rep = db.query(SalesRep).filter(SalesRep.id == deal.sales_rep_id).first() if deal.sales_rep_id else None
-    acct = db.query(SalesRep).filter(SalesRep.id == deal.account_manager_id).first() if deal.account_manager_id else None
-    vals = {
-        "bitrix_id": deal.bitrix_id, "title": deal.title, "pipeline": deal.pipeline,
-        "bitrix_stage": deal.bitrix_stage, "amount": deal.amount, "amount_with_vat": deal.amount_with_vat,
-        "period_from": deal.period_from.isoformat() if deal.period_from else None,
-        "period_to": deal.period_to.isoformat() if deal.period_to else None,
-        "advertiser": (adv.short_name or adv.name) if adv else None,
-        "brand": brand.name if brand else None,
-        "agency": (agency.short_name or agency.name) if agency else deal.payer_name,
-        "product": deal.product, "sales_rep": rep.name if rep else None,
-        "account_manager": acct.name if acct else None,
-        "brief": ((deal.brief[:80] + "…") if deal.brief and len(deal.brief) > 80 else deal.brief),
-        "payer": deal.payer_name,
-        "date_create": deal.date_create.isoformat() if deal.date_create else None,
-    }
-    our = [{"field": f, "label": lab, "bx_code": code, "value": _stringify(vals.get(f))}
-           for f, lab, code in DEAL_FIELD_MAP]
-    try:
-        r = vibecode_get(f"/deals/{deal.bitrix_id}", {})
-    except Exception as e:
-        logger.error("field_audit_deal %s: %s", deal_id, e)
-        raise HTTPException(status_code=502, detail="Битрикс недоступен (детали в логе сервера)")
-    data = (r.get("data") if isinstance(r, dict) else None) or (r if isinstance(r, dict) else {})
-    bitrix = sorted(({"code": k, "value": _stringify(v)} for k, v in data.items()),
-                    key=lambda x: (not str(x["code"]).startswith("uf"), str(x["code"]).lower()))
-    return {"entity": "deal", "our": our, "bitrix": bitrix,
-            "bitrix_url": f"{BX_PORTAL}/crm/deal/details/{deal.bitrix_id}/",
-            "bitrix_id": deal.bitrix_id, "title": deal.title}
-
-
-@router.get("/field-audit/company/{kind}/{our_id}")
-def field_audit_company(kind: str, our_id: int, db: Session = Depends(get_db),
-                        current_user: User = Depends(require_permission("settings_field_audit", "view"))):
-    """Сверка одной компании (агентство/рекламодатель): наши поля ↔ живой Битрикс."""
-    from app.sales.bitrix.transport import vibecode_get
-    if kind == "agency":
-        e = db.query(SalesAgency).filter(SalesAgency.id == our_id).first()
-        fmap = AGENCY_FIELD_MAP
-    elif kind == "advertiser":
-        e = db.query(SalesAdvertiser).filter(SalesAdvertiser.id == our_id).first()
-        fmap = ADVERTISER_FIELD_MAP
-    else:
-        raise HTTPException(status_code=400, detail="kind должен быть agency или advertiser")
-    if not e:
-        raise HTTPException(status_code=404, detail="Запись не найдена")
-    if not e.bx_id:
-        raise HTTPException(status_code=400, detail="Нет привязки к Битриксу (bx_id пуст)")
-    cp = None
-    if getattr(e, "counterparty_id", None):
-        cp = db.query(Counterparty).filter(Counterparty.id == e.counterparty_id).first()
-    vals = {
-        "bx_id": e.bx_id, "name": e.name, "short_name": e.short_name,
-        "name_en": e.name_en, "name_ru": e.name_ru,
-        "holding": getattr(e, "holding", None), "sk_percent": getattr(e, "sk_percent", None),
-        "legal_entity": getattr(e, "legal_entity", None) or (cp.name if cp else None),
-        "inn": getattr(e, "inn", None) or (cp.inn if cp and getattr(cp, "inn", None) else None),
-        "website": getattr(e, "website", None),
-        "exclude_from_revenue": getattr(e, "exclude_from_revenue", None),
-    }
-    our = [{"field": f, "label": lab, "bx_code": code, "value": _stringify(vals.get(f))}
-           for f, lab, code in fmap]
-    try:
-        r = vibecode_get(f"/companies/{e.bx_id}", {})
-    except Exception as ex:
-        logger.error("field_audit_company %s/%s: %s", kind, our_id, ex)
-        raise HTTPException(status_code=502, detail="Битрикс недоступен (детали в логе сервера)")
-    data = (r.get("data") if isinstance(r, dict) else None) or (r if isinstance(r, dict) else {})
-    bitrix = sorted(({"code": k, "value": _stringify(v)} for k, v in data.items()),
-                    key=lambda x: (not str(x["code"]).startswith("uf"), str(x["code"]).lower()))
-    return {"entity": kind, "our": our, "bitrix": bitrix,
-            "bitrix_url": f"{BX_PORTAL}/crm/company/details/{e.bx_id}/",
-            "bitrix_id": e.bx_id, "title": e.short_name or e.name}
-
-
-@router.post("/deals/{deal_id}/sync-from-bitrix")
-def sync_from_bitrix(deal_id: int, db: Session = Depends(get_db),
-                     current_user: User = Depends(require_permission("sales_registry", "edit"))):
-    """Обработчик «⟳ Обновить из Битрикса»: тянет живую сделку, обновляет наши
-    поля (продавец/аккаунт/суммы/рекламодатель/бренд) и качает файлы МП/Договора."""
-    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
-    if not deal:
-        raise HTTPException(status_code=404, detail="Сделка не найдена")
-    _assert_deal_in_scope(db, current_user, deal)
-    from app.sales.bitrix.deal_sync import sync_deal_from_bitrix
-    try:
-        report = sync_deal_from_bitrix(db, deal)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except RuntimeError as e:
-        # Не настроена интеграция (нет VIBECODE_API_KEY) — это конфигурация, а не сбой.
-        # Показываем причину прямо в интерфейсе, иначе «детали в логе сервера» ничего не говорят.
-        logger.error("sync_from_bitrix %s: %s", deal_id, e)
-        raise HTTPException(status_code=503, detail=f"Синхронизация с Битриксом не настроена: {e}")
-    except Exception as e:
-        logger.error("sync_from_bitrix %s: %s", deal_id, e)
-        raise HTTPException(status_code=502, detail="Ошибка синхронизации с Битриксом (детали в логе сервера)")
-    log_action(db, current_user, "sync_deal_from_bitrix", "sales_deal", deal.id,
-               f"полей: {len(report['changes'])}, файлов: {len(report['files'])}, предупреждений: {len(report['warnings'])}")
-    return report
-
-
-class SyncBulkIn(BaseModel):
-    deal_ids: list[int]
-
-
-@router.post("/deals/bulk-sync-from-bitrix")
-def sync_bulk_from_bitrix(payload: SyncBulkIn, db: Session = Depends(get_db),
-                          current_user: User = Depends(require_permission("sales_registry", "edit"))):
-    """Массовая синхронизация выбранных сделок (кап 50 за раз — щадим Битрикс)."""
-    from app.sales.bitrix.deal_sync import sync_deal_from_bitrix
-    ids = list(dict.fromkeys(payload.deal_ids))[:50]
-    summary = {"green": 0, "blue": 0, "red": 0, "errors": 0, "skipped": 0, "total": len(ids)}
-    failed = []   # где отвалилось: [{id, title, error}]
-    for did in ids:
-        deal = db.query(SalesDeal).filter(SalesDeal.id == did).first()
-        if not deal or (deal.bitrix_id or "").startswith("local-"):
-            summary["skipped"] += 1
-            continue
-        try:
-            _assert_deal_in_scope(db, current_user, deal)
-            rep = sync_deal_from_bitrix(db, deal)
-            summary[rep["status"]] = summary.get(rep["status"], 0) + 1
-        except Exception as e:
-            logger.error("sync_bulk %s: %s", did, e)
-            summary["errors"] += 1
-            failed.append({"id": did, "title": (deal.title or f"#{did}"), "error": str(e)[:160]})
-    summary["done"] = summary["green"] + summary["blue"] + summary["red"]   # успешно отработано
-    summary["failed"] = failed
-    log_action(db, current_user, "sync_bulk_from_bitrix", "sales_deal", None,
-               f"массовая синхронизация: всего {summary['total']}, ок {summary['done']}, ошибок {summary['errors']}, пропущено {summary['skipped']}")
-    return summary
 
 
 @router.get("/deals/{deal_id}/files/{kind}/download")
@@ -3126,8 +2830,8 @@ def patch_deal(
     # старта (конец РК нигде не редактируется), поэтому отказать значило бы запереть
     # человека: починить конец ему нечем. Снимаем его: NULL по контракту модели читается
     # как «календарный месяц старта» — это утверждение, а не потеря данных, и оно
-    # заведомо вернее прошлогодней даты. Настоящий конец приедет со сверкой из Битрикса,
-    # где кампанию и переносили (теперь она его тянет — см. deal_sync.F_PERIOD_TO).
+    # заведомо вернее прошлогодней даты. (До 03.10.2026 настоящий конец привозила сверка
+    # из Битрикса; Битрикс больше не источник — конец теперь правится только у нас.)
     if ("period_from" in changes and "period_to" not in changes
             and periods.end_is_stale(changes["period_from"], deal.period_to)):
         changes["period_to"] = None
@@ -3426,83 +3130,3 @@ def filter_options(db: Session = Depends(get_db),
     }
 
 
-@router.get("/sync/status")
-def sync_status(db: Session = Depends(get_db),
-                current_user: User = Depends(require_permission("sales_registry", "view"))):
-    rows = (db.query(SalesBitrixSyncLog)
-            .order_by(SalesBitrixSyncLog.started_at.desc()).limit(10).all())
-    return {"items": [{
-        "id": r.id, "started_at": r.started_at, "finished_at": r.finished_at,
-        "status": r.status, "entity": r.entity, "fetched": r.fetched,
-        "created": r.created, "updated": r.updated, "rejected": r.rejected,
-        "error_text": r.error_text,
-    } for r in rows]}
-
-
-@router.post("/sync")
-def run_sync(db: Session = Depends(get_db),
-             current_user: User = Depends(require_permission("sales_registry", "edit"))):
-    """Принудительная синхронизация с Битрикс24.
-
-    Пока вебхук не настроен, честно отвечает 503 вместо создания пустого
-    успешного прогона: витрина не должна показывать «синхронизировано»,
-    когда синхронизации не было."""
-    if not os.getenv("BITRIX_WEBHOOK_URL"):
-        raise HTTPException(
-            status_code=503,
-            detail="BITRIX_WEBHOOK_URL не задан в .env — синхронизация с Битрикс24 не настроена",
-        )
-    raise HTTPException(
-        status_code=501,
-        detail="Загрузка из Битрикс24 ещё не подключена: данные загружены из Excel",
-    )
-
-
-# v1: льём в Битрикс только безопасный набор. brand/advertiser/agency/reps/product/
-# stage — позже, после синхронизации справочников и обратного маппинга.
-PUSHABLE_FIELDS = {"title"}
-
-
-@router.post("/push-edits")
-def push_edits_to_bitrix(commit: int = 0, db: Session = Depends(get_db),
-                         current_user: User = Depends(require_permission("sales_registry", "edit"))):
-    """Заливка наших ручных правок (pushed_at IS NULL) в Битрикс.
-    commit=0 — превью (что и куда уйдёт), commit=1 — запись + отметка pushed_at.
-    v1 — только title; остальные поля показываются как «пропущено»."""
-    from app.sales.models import SalesDealFieldOverride
-    pending = (db.query(SalesDealFieldOverride)
-               .filter(SalesDealFieldOverride.pushed_at.is_(None)).all())
-    by_field = {}
-    for o in pending:
-        by_field[o.field_name] = by_field.get(o.field_name, 0) + 1
-    will = {f: c for f, c in by_field.items() if f in PUSHABLE_FIELDS}
-    skipped = {f: c for f, c in by_field.items() if f not in PUSHABLE_FIELDS}
-    targets = [o for o in pending if o.field_name in PUSHABLE_FIELDS]
-    deal_ids = list({o.deal_id for o in targets})
-    deals = ({d.id: d for d in db.query(SalesDeal).filter(SalesDeal.id.in_(deal_ids)).all()}
-             if deal_ids else {})
-    # локальные (ещё не в Битриксе) сделки заливать некуда — исключаем из счётчиков
-    live = [o for o in targets if deals.get(o.deal_id)
-            and not (deals[o.deal_id].bitrix_id or "").startswith("local-")]
-
-    if commit == 0:
-        return {"will_push": will, "skipped": skipped,
-                "deals": len({o.deal_id for o in live}), "total": len(live)}
-
-    from app.sales.bitrix.transport import vibecode_patch
-    pushed = 0
-    errors = []
-    for o in live:
-        deal = deals[o.deal_id]
-        body = {"title": deal.title}   # v1: только title
-        try:
-            vibecode_patch(f"/deals/{deal.bitrix_id}", body)
-            o.pushed_at = datetime.utcnow()
-            pushed += 1
-        except Exception as e:
-            logger.error("push_edits deal=%s: %s", o.deal_id, e)
-            errors.append({"deal": deal.bitrix_id, "error": repr(e)[:80]})
-    db.commit()
-    log_action(db, current_user, "push_edits_to_bitrix", "sales_deal", None,
-               f"залито title: {pushed}, ошибок: {len(errors)}")
-    return {"pushed": pushed, "errors": errors, "skipped": skipped}

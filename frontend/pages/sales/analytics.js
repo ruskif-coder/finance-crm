@@ -5,7 +5,6 @@ import Navbar from '@/components/Navbar'
 import api from '@/lib/api'
 import { mln, mlnAuto, grp, pct, niceMax } from '@/lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
-import { fmtTime } from '@/lib/dates'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -89,7 +88,6 @@ export default function Analytics2() {
   const byLayer = data?.by_layer || []
   const layerAmt = (name) => (byLayer.find(b => b.name === name)?.amount) || 0
   const selBox = { border: `1px solid ${C.border}`, background: C.card, borderRadius: 12, padding: '9px 14px', fontFamily: UI, fontSize: 13, fontWeight: 600, color: C.text }
-  const syncTime = data?.last_sync_at ? fmtTime(data.last_sync_at, '') : null
   const periodLabel = (f.date_from || f.date_to) ? `${f.date_from || '…'} — ${f.date_to || '…'}` : '12 месяцев'
 
   // ── данные ──
@@ -144,7 +142,6 @@ export default function Analytics2() {
             <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.sec }}>{periodLabel}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            {syncTime && <span style={{ fontFamily: MONO, fontSize: 12, color: C.sec, marginRight: 4 }}>обновлено {syncTime}</span>}
             <input type="month" style={selBox} value={f.date_from} onChange={e => { const v = { ...f, date_from: e.target.value }; setF(v); loadWith(v) }} />
             <span style={{ color: C.faint }}>—</span>
             <input type="month" style={selBox} value={f.date_to} onChange={e => { const v = { ...f, date_to: e.target.value }; setF(v); loadWith(v) }} />

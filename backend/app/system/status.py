@@ -387,21 +387,6 @@ def check_notify_dispatch(db: Session):
                   consequence=consequence)
 
 
-def check_bitrix_sync(db: Session):
-    row = _last_run(db, "sales_bitrix_sync_log", error_col="error_text")
-    if row is None or row.s is None:
-        return _check("job_bitrix", "Фоновые задания", "Синхронизация с Битриксом", "idle",
-                      "ни одного прогона", "автосинки нет — запускается руками",
-                      consequence="Автосинки нет — расхождение с Битриксом растёт молча",
-                      # Ведём на экран, где синк запускается, а не дёргаем его отсюда:
-                      # это тяжёлая операция, и место ей там, где её подтверждают.
-                      action={"label": "Открыть сверку", "href": "/directory/reconcile"})
-    hours = _age(row.f or row.s)
-    sev = "bad" if row.e else "ok"
-    return _check("job_bitrix", "Фоновые задания", "Синхронизация с Битриксом", sev,
-                  f"{hours:.0f} ч назад", (row.e or "")[:200] or None)
-
-
 def check_erid_auto(db: Session):
     """Автовыпуск ЕРИД — крон раз в полчаса (владелец 27.09.2026).
 
@@ -499,8 +484,8 @@ def check_external_config():
     # Кнопки «Открыть .env» здесь НЕТ намеренно — файл лежит на сервере, из браузера его
     # не открыть, и кнопка была бы обещанием, которого интерфейс не выполнит.
     for key, title, names, hurts in (
-            ("ext_bitrix", "Битрикс", ("VIBECODE_API_KEY",),
-             "Синхронизация со сделками не работает"),
+            # Строки «Битрикс» (VIBECODE_API_KEY) нет с 03.10.2026 — Битрикс больше не
+            # источник, и без ключа она горела бы впустую.
             ("ext_ord", "ОРД", ("ORD_LOGIN", "ORD_PASSWORD"),
              "ЕРИД не выпустить — маркировка встанет"),
             ("ext_dsp", "DSP", ("DSP_API_URL", "DSP_ACCESS_TOKEN", "DSP_PARTNER_XXHASH"),
@@ -871,7 +856,7 @@ def collect(db: Session, live: bool = False) -> dict:
     checks += [_safe(check_pdf), _safe(check_cabinet),
                _safe(check_db_sizes, db), _safe(check_db_connections, db),
                _safe(check_disk), _safe(check_storage, db), _safe(check_orphans, db),
-               _safe(check_notify_dispatch, db), _safe(check_bitrix_sync, db),
+               _safe(check_notify_dispatch, db),
                _safe(check_erid_auto, db), _safe(check_dsp_stats, db)]
     ext = _safe(check_external_config)
     checks += ext if isinstance(ext, list) else [ext]

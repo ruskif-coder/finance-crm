@@ -910,7 +910,7 @@ export default function Nav({ children, onSearch }) {
   const go = href => router.push(href)
   // Доступ в «Настройки» — тот же набор ключей, что и в старом Navbar.
   // can() сам пропускает админа — дублировать bypass нельзя.
-  const canSettings = mounted && ['settings_balances', 'settings_articles', 'settings_pipelines', 'settings_services', 'settings_field_audit', 'settings_audit'].some(k => can(perms, k))
+  const canSettings = mounted && ['settings_balances', 'settings_articles', 'settings_pipelines', 'settings_services', 'settings_audit'].some(k => can(perms, k))
   const props = {
     sections, perms, isAdmin, active,
     onNavigate: it => go(it.href),

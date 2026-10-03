@@ -9,7 +9,6 @@ import DealBriefCell from '@/components/DealBriefCell'
 import ValuePopover from '@/components/ValuePopover'
 import api, { auth } from '@/lib/api'
 import { fmtMoney, fmtFull, fmtDate } from '@/lib/salesFormat'
-import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
 import { buildTitle, productWithSurface, separatePriceSet, surfaceTag, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
 import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, firstSortDir, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z, DealCodeLink, UnitPriceCell, PlanFactCell } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
@@ -354,9 +353,10 @@ export default function SalesDashboard2() {
     downloadFile(`/sales/deals/${dealId}/files/${kind}/download`, filename)
 
   // Ячейка строки по ключу колонки (для итерации по видимым колонкам).
-  // Действия карточки-детализации (раскрытие строки). Открыть — в Битрикс; правка и
+  // Действия карточки-детализации (раскрытие строки). Открыть — в нашу карточку сделки
+  // (до 03.10.2026 уводило в Битрикс; Битрикс больше не источник); правка и
   // загрузка МП — заглушки (доработаем).
-  const openDeal = (d) => { if (d.bitrix_id && !String(d.bitrix_id).startsWith('local-')) window.open(BITRIX_DEAL_URL(d.bitrix_id), '_blank', 'noopener') }
+  const openDeal = (d) => router.push(`/sales/deals/${d.code || d.id}`)
   const editDeal = () => alert('Редактирование сделки — скоро')
   const addMp = () => alert('Загрузка/создание МП — скоро')
 
@@ -569,7 +569,7 @@ export default function SalesDashboard2() {
                 высоте соседа и не растягивает ряд числом уведомлений. */}
             <div style={{ display: 'flex', gap: 16, alignItems: 'stretch' }}>
               <div style={{ flex: '1 1 0', minWidth: 0 }}>
-                <SalesQuarterWidgets data={data} summary={summary} lastSyncAt={summary?.last_sync_at}
+                <SalesQuarterWidgets data={data} summary={summary}
                   quarter={quarter} setQuarter={setQuarter} quarters={recentQuarters()}
                   repId={repId} setRepId={setRepId} reps={reps} canViewOthers={!!data.can_view_others}
                   onCreate={canEdit ? () => setCreateOpen(true) : undefined}

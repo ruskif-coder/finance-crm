@@ -32,7 +32,6 @@ class UserUpdate(BaseModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
     password: Optional[str] = None
-    bitrix_user_id: Optional[str] = None  # "" → отвязать, None → не трогать
     # Профиль уведомлений (app/notify): 0 → сбросить на профиль по умолчанию.
     # Сознательно НЕ выводится из роли — роль отвечает за доступ, профиль за рассылку.
     notification_profile_id: Optional[int] = None
@@ -53,7 +52,6 @@ def list_users(
             "role_label": u.role.label,
             "is_active": bool(u.is_active),
             "created_at": u.created_at,
-            "bitrix_user_id": u.bitrix_user_id,
             "notification_profile_id": u.notification_profile_id,
         }
         for u in users
@@ -134,18 +132,6 @@ def notification_profiles(db: Session = Depends(get_db),
     from app.notify.models import NotificationProfile
     rows = db.query(NotificationProfile).order_by(NotificationProfile.id).all()
     return [{"id": p.id, "label": p.label, "is_default": p.is_default} for p in rows]
-
-
-@router.get("/bitrix-directory")
-def bitrix_directory(current_user: User = Depends(require_admin)):
-    """Список сотрудников Битрикса для селектора привязки в настройках."""
-    from app.bitrix_api import list_bitrix_users
-    try:
-        # active_only=False — уволенные (неактивные) тоже нужны для привязки исторических reps;
-        # фронт помечает их «(уволен)».
-        return {"items": list_bitrix_users(active_only=False)}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Битрикс недоступен: {e}")
 
 
 @router.post("/")
@@ -240,11 +226,8 @@ def update_user(
         changes.append("пароль изменён")
         user.hashed_password = get_password_hash(data.password)
 
-    if data.bitrix_user_id is not None:
-        new_bx = data.bitrix_user_id.strip() or None
-        if new_bx != user.bitrix_user_id:
-            changes.append(f"Битрикс-привязка: {user.bitrix_user_id or '—'} → {new_bx or '—'}")
-            user.bitrix_user_id = new_bx
+    # Привязки к сотруднику Битрикса (bitrix_user_id) в форме нет с 03.10.2026 — Битрикс
+    # больше не источник. Колонка в users остаётся как история.
 
     if data.notification_profile_id is not None:
         from app.notify.models import NotificationProfile

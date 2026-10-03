@@ -10,9 +10,7 @@ import MoveDealDialog from '@/components/sales/MoveDealDialog'
 import ValuePopover from '@/components/ValuePopover'
 import api, { auth } from '@/lib/api'
 import { buildTitle, productWithSurface, separatePriceSet, surfaceTag, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
-import { DownloadOverlay } from '@/components/LogoLoader'
 import { fmtMoney, fmtFull, fmtDate, mln } from '@/lib/salesFormat'
-import { BITRIX_DEAL_URL } from '@/lib/salesLayers'
 import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, firstSortDir, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z, DealCodeLink, UnitPriceCell, PlanFactCell } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
@@ -20,7 +18,7 @@ import { overlayClose } from '@/lib/overlay'
 import StageRequirements from '@/components/sales/StageRequirements'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { downloadFile } from '@/lib/download'
-import { fmtDateTime, todayMsk } from '@/lib/dates'
+import { todayMsk } from '@/lib/dates'
 import { csvCell } from '@/lib/csv'
 const DealCardList = dynamic(() => import('@/components/mobile/DealCardList'), { ssr: false })
 const DealsMobileControls = dynamic(() => import('@/components/sales/DealsMobileControls'), { ssr: false })
@@ -75,8 +73,8 @@ export default function SalesRegistry2() {
   const [lastIdx, setLastIdx] = useState(null)   // якорь Shift-выделения
   const [bulkForm, setBulkForm] = useState({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', our_stage_id: '', period: '' })
   const [saving, setSaving] = useState(false)
-  // Итог массовой ПРАВКИ. Отдельно от `bulkResult` ниже — тот про массовую
-  // синхронизацию с Битриксом; одно имя на два разных итога однажды уже путало.
+  // Итог массовой ПРАВКИ. Массовой синхронизации с Битриксом (и её итога `bulkResult`)
+  // больше нет — 03.10.2026, Битрикс больше не источник.
   const [editResult, setEditResult] = useState(null)
   const selDealIds = Object.keys(selDeals).map(Number)
 
@@ -122,13 +120,6 @@ export default function SalesRegistry2() {
   const [colPicker, setColPicker] = useState(false)
   const [periodEdit, setPeriodEdit] = useState(null) // { dealId, rect, month } — правка периода строки
   const [genConfirm, setGenConfirm] = useState(null) // { dealId, rect, text, current } — подтверждение генерации имени
-  const [syncingId, setSyncingId] = useState(null)   // id сделки в процессе синхронизации из Битрикса
-  const [syncResult, setSyncResult] = useState(null) // { deal, changes, files, warnings } — попап результата
-  const [bulkResult, setBulkResult] = useState(null) // сводка массовой синхронизации
-  const [syncBulkBusy, setSyncBulkBusy] = useState(false) // кубик-оверлей на время конвеера
-  const [syncProgress, setSyncProgress] = useState(null)  // { done, total } для прогресс-бара
-  const [pushPreview, setPushPreview] = useState(null) // превью/результат заливки правок в Битрикс
-  const [pushBusy, setPushBusy] = useState(false)
   const [advConfirm, setAdvConfirm] = useState(null) // подтверждение смены рекламодателя со сбросом бренда
 
   // Смена периода сделки: только при изменении; period_from = 1-е число выбранного месяца.
@@ -302,16 +293,6 @@ export default function SalesRegistry2() {
     try { const r = await api.post('/sales/deals/bulk-delete', { deal_ids: selDealIds }, auth()); alert(r.data.message); setSelDeals({}); load(offset) }
     catch (e) { setErr(e.response?.data?.detail || 'Не удалось удалить') } finally { setSaving(false) }
   }
-  const syncDeals = async () => { try { await api.post('/sales/sync', {}, auth()); load(offset) } catch (e) { setErr(e.response?.data?.detail || 'Синхронизация недоступна') } }
-  const importDeals = async () => {
-    try {
-      const pv = (await api.post('/sales/reconcile/import-deals?commit=0', {}, auth())).data
-      if (!pv.to_insert) { alert('Свежих сделок нет — всё уже загружено.'); return }
-      if (!window.confirm(`Найдено ${pv.to_insert} свежих сделок${pv.skipped_untracked ? ` (пропущено вне воронок: ${pv.skipped_untracked})` : ''}.\nИмпортировать?`)) return
-      const res = (await api.post('/sales/reconcile/import-deals?commit=1', {}, auth())).data
-      alert(`Импортировано: ${res.inserted} сделок.`); load(offset)
-    } catch (e) { setErr(e.response?.data?.detail || 'Импорт недоступен') }
-  }
   const btnAcc = { background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 10, padding: '9px 14px', fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: 'pointer' }
   // кнопки в строке меню разделов — высота как у вкладок (padding 6×14)
   const tabBtn = (acc) => ({ padding: '6px 14px', borderRadius: 8, border: acc ? 'none' : '1px solid var(--border-card)', cursor: 'pointer', fontWeight: acc ? 700 : 600, fontSize: 13, whiteSpace: 'nowrap', fontFamily: acc ? MONO : UI, background: acc ? 'var(--accent)' : 'var(--bg-subtle)', color: acc ? 'var(--on-accent)' : 'var(--text-secondary)' })
@@ -372,88 +353,17 @@ export default function SalesRegistry2() {
     catch (e) { setDeals(ps => ps.map(x => x.id === id ? { ...x, probability_color: prev } : x)); alert('Не удалось сохранить вероятность') }
   }
 
-  // ── синхронизация одной сделки из Битрикса (кнопка ⟳ в строке) ──
-  const syncDeal = async (d) => {
-    setSyncingId(d.id)
-    try {
-      const r = await api.post(`/sales/deals/${d.id}/sync-from-bitrix`, {}, auth())
-      setSyncResult({ deal: d, ...r.data })
-      load(offset)
-    } catch (e) { alert(e.response?.data?.detail || 'Ошибка синхронизации') }
-    finally { setSyncingId(null) }
-  }
-  // Массовая синхронизация выбранных сделок
-  // Конвеер на клиенте: последовательно синхронизируем выбранные (пер-сделочный эндпоинт),
-  // обновляя прогресс «X из N» после каждой. Так виден живой прогресс и где отвалилось.
-  const syncBulk = async () => {
-    const ids = selDealIds.slice(0, 50)   // кап 50 за раз
-    if (!ids.length) return
-    const dmap = Object.fromEntries(deals.map(d => [d.id, d]))
-    const acc = { green: 0, blue: 0, red: 0, errors: 0, skipped: 0, done: 0, total: ids.length, failed: [] }
-    setSaving(true); setSyncBulkBusy(true); setSyncProgress({ done: 0, total: ids.length })
-    for (let i = 0; i < ids.length; i++) {
-      const id = ids[i]; const d = dmap[id]
-      if (d && String(d.bitrix_id || '').startsWith('local-')) { acc.skipped++; setSyncProgress({ done: i + 1, total: ids.length }); continue }
-      try {
-        const r = await api.post(`/sales/deals/${id}/sync-from-bitrix`, {}, { ...auth(), timeout: 0 })
-        const st = r.data && r.data.status
-        if (st && acc[st] != null) acc[st]++
-        acc.done++
-      } catch (e) {
-        acc.errors++
-        acc.failed.push({ id, title: (d && d.title) || ('#' + id), error: e.response?.data?.detail || 'ошибка синхронизации' })
-      }
-      setSyncProgress({ done: i + 1, total: ids.length })
-    }
-    setSaving(false); setSyncBulkBusy(false); setSyncProgress(null)
-    setBulkResult(acc); setSelDeals({}); load(offset)
-  }
-  // «Залить правки в Битрикс» — превью (commit=0) → подтверждение → запись (commit=1)
-  const PUSH_FIELD_LABELS = { title: 'Название', advertiser_id: 'Рекламодатель', brand_id: 'Бренд', agency_id: 'Агентство', sales_rep_id: 'Продавец', account_manager_id: 'Аккаунт', payer_counterparty_id: 'Контрагент', period_from: 'Старт РК', period_to: 'Конец РК', product: 'Услуга', bitrix_stage: 'Стадия' }
-  const openPushEdits = async () => {
-    setPushBusy(true)
-    try { const r = await api.post('/sales/push-edits?commit=0', {}, auth()); setPushPreview(r.data) }
-    catch (e) { alert(e.response?.data?.detail || 'Не удалось получить превью') }
-    finally { setPushBusy(false) }
-  }
-  const confirmPushEdits = async () => {
-    setPushBusy(true)
-    try { const r = await api.post('/sales/push-edits?commit=1', {}, auth()); setPushPreview(p => ({ ...p, done: r.data })); load(offset) }
-    catch (e) { alert(e.response?.data?.detail || 'Ошибка заливки в Битрикс') }
-    finally { setPushBusy(false) }
-  }
-  // Клик по светофору — детали последней синхронизации из сохранённого отчёта
-  const openSyncReport = (d) => setSyncResult({
-    deal: d, bitrix_id: d.bitrix_id, readonly: true, changes: {}, files: [],
-    issues: d.sync_issues || [], warnings: (d.sync_issues || []).map(i => i.message),
-    checked_at: d.sync_checked_at,
-  })
   // Скачивание сохранённого файла сделки — через общую точку (lib/download):
   // имя берём из ответа сервера, если своего нет.
   const downloadDealFile = (dealId, kind, filename) =>
     downloadFile(`/sales/deals/${dealId}/files/${kind}/download`, filename)
-  const SYNC_LABELS = { amount: 'Сумма до НДС', amount_with_vat: 'Сумма с НДС', sales_rep_id: 'Продавец', account_manager_id: 'Аккаунт', advertiser_id: 'Рекламодатель', brand_id: 'Бренд', period_from: 'Старт РК' }
-  // Действия карточки-детализации (раскрытие строки). Открыть — в Битрикс; правка и
-  // загрузка МП — заглушки (доработаем).
-  const openDeal = (d) => { if (d.bitrix_id && !String(d.bitrix_id).startsWith('local-')) window.open(BITRIX_DEAL_URL(d.bitrix_id), '_blank', 'noopener') }
+  // Действия карточки-детализации (раскрытие строки). Открыть — в нашу карточку сделки
+  // (до 03.10.2026 уводило в Битрикс; Битрикс больше не источник); правка — заглушка.
+  const openDeal = (d) => router.push(`/sales/deals/${d.id}`)
   const editDeal = () => alert('Редактирование сделки — скоро')
   const addMp = (d) => router.push(`/accounts/mp/new?deal=${d.id}`)
 
   const FILE_LABEL = { mp: 'МП', contract: 'Договор' }
-  const ISSUE_LABELS = { advertiser: 'Рекламодатель', brand: 'Бренд', sales_rep: 'Продавец', account_manager: 'Аккаунт', mp: 'МП', contract: 'Договор' }
-  // Светофор синхронизации: зелёный — совпадает, синий — мы полнее, красный — расхождение.
-  const SYNC_DOT = {
-    green: ['var(--income)', 'Синхронизировано: совпадает с Битриксом'],
-    blue: ['var(--accent)', 'У нас данные полнее — ещё не выгружено в Битрикс'],
-    red: ['var(--dot-overdue)', 'Расхождение с Битриксом (разные справочники) — проверьте'],
-  }
-  const renderSyncDot = (d) => {
-    const status = d.sync_status
-    const m = SYNC_DOT[status]
-    if (!m) return <span title="Синхронизация ещё не проверялась" style={{ width: 9, height: 9, borderRadius: 2, border: '1px solid var(--text-faint)', boxSizing: 'border-box', flex: '0 0 9px' }} />
-    return <span onClick={e => { e.stopPropagation(); openSyncReport(d) }} title={m[1] + ' · клик — детали'}
-      style={{ width: 9, height: 9, borderRadius: 2, background: m[0], flex: '0 0 9px', cursor: 'pointer' }} />
-  }
 
   const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }
 
@@ -479,23 +389,18 @@ export default function SalesRegistry2() {
       case 'brief': return (
         <span className="d2-brief" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           <DealBriefCell deal={d} canEdit={canEdit} v2 />
-          {renderSyncDot(d)}
         </span>
       )
       case 'bitrix_id': {
         // Метки «нет в Битриксе» (→БХ) здесь больше НЕТ — снята 15.09.2026 по решению
         // владельца: состояние неактуально. Сделка, заведённая у нас, полноценна сама
         // по себе, Битрикс давно не источник, и значок звал к действию, которого никто
-        // не ждёт. Ручка `push-to-bitrix` жива и вызывается только осознанно.
+        // не ждёт. Отправки в Битрикс и кнопки ⟳ «Обновить из Битрикса» нет с 03.10.2026.
         // Сама заглушка `bitrix_id = local-…` в базе остаётся: колонка NOT NULL, и это
         // служебный признак «идентификатора нет», а не статус сделки.
-        const isLocal = String(d.bitrix_id || '').startsWith('local-')
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <DealCodeLink deal={d} emptyLabel="—" />
-            {/* Обновление из Битрикса — только у тех, кого там есть откуда обновлять. */}
-            {!isLocal && canEdit && <span onClick={e => { e.stopPropagation(); syncingId !== d.id && syncDeal(d) }} title="Обновить из Битрикса (поля + файлы)"
-              style={{ cursor: syncingId === d.id ? 'default' : 'pointer', fontSize: 12, lineHeight: 1, color: syncingId === d.id ? 'var(--text-faint)' : 'var(--accent)' }}>{syncingId === d.id ? '⏳' : '⟳'}</span>}
           </span>
         )
       }
@@ -692,8 +597,6 @@ export default function SalesRegistry2() {
               {canDirAg && !isMobile && <button onClick={openAgency} style={tabBtnOutline}>+ Агентство</button>}
               {canDirAdv && !isMobile && <button onClick={openAdvertiser} style={tabBtnOutline}>+ Рекламодатель</button>}
               {canEdit && !isMobile && <button onClick={() => setCreateOpen(true)} style={tabBtn(true)}>+ Сделка</button>}
-              {canEdit && !isMobile && <button onClick={openPushEdits} disabled={pushBusy} title="Залить наши ручные правки в Битрикс24" style={tabBtn(false)}>{pushBusy ? '…' : '↑ Залить правки'}</button>}
-              {isAdmin && !isMobile && <button onClick={importDeals} style={tabBtn(false)}>Импорт</button>}
             </div>
           )}
         </div>
@@ -799,8 +702,6 @@ export default function SalesRegistry2() {
                       )
                     })()}
                     <button onClick={applyBulk} disabled={saving} style={{ ...btnAcc, flexShrink: 0 }}>Применить</button>
-                    <button onClick={syncBulk} disabled={saving} title="Синхронизировать выбранные из Битрикса (до 50 за раз)" style={{ ...btnSec, color: 'var(--accent)', borderColor: 'var(--accent)', flexShrink: 0 }}>{saving ? '…' : `⟳ Синхронизировать`}</button>
-                    {selDealIds.length > 25 && <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', flexShrink: 0 }} title="Каждая сделка ≈ 6 сек">выбрано {selDealIds.length} — займёт ≈ {Math.ceil(selDealIds.length * 6 / 60)} мин</span>}
                     {/* Удаление сделок — только админу (решение владельца 23.09.2026); сервер
                         отказывает остальным сам, здесь лишь не показываем недоступное. */}
                     {isAdmin && <button onClick={deleteBulk} disabled={saving} style={{ ...btnSec, color: 'var(--danger)', flexShrink: 0 }}>Удалить</button>}
@@ -937,52 +838,6 @@ export default function SalesRegistry2() {
           </div>
         )}
 
-        {/* ── Попап результата синхронизации из Битрикса ── */}
-        {syncResult && (
-          <div {...overlayClose(() => setSyncResult(null))} style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(20,26,40,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, boxShadow: 'var(--shadow-card)', width: 440, maxWidth: '92vw', maxHeight: '82vh', overflowY: 'auto', padding: '20px 22px', fontFamily: UI }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>{syncResult.readonly ? 'Синхронизация' : 'Обновлено из Битрикса'} · сделка {syncResult.bitrix_id}</span>
-                <span onClick={() => setSyncResult(null)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>✕</span>
-              </div>
-              {syncResult.checked_at && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 12 }}>проверено {fmtDateTime(syncResult.checked_at)}</div>}
-              {!syncResult.readonly && (Object.keys(syncResult.changes || {}).length > 0 ? (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>Обновлены поля ({Object.keys(syncResult.changes).length})</div>
-                  {Object.keys(syncResult.changes).map(k => (
-                    <div key={k} style={{ display: 'flex', gap: 8, fontSize: 13, padding: '3px 0' }}>
-                      <span style={{ color: 'var(--income)' }}>✓</span>
-                      <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{SYNC_LABELS[k] || k}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>Поля уже актуальны — изменений нет.</div>)}
-              {syncResult.readonly && (syncResult.issues || []).length === 0 && <div style={{ fontSize: 13, color: 'var(--income)', marginBottom: 12 }}>✓ Данные совпадают с Битриксом.</div>}
-              {(syncResult.files || []).length > 0 && (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>Файлы</div>
-                  {syncResult.files.map(f => (
-                    <div key={f.kind} onClick={() => downloadDealFile(syncResult.deal.id, f.kind, f.filename)} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '4px 0', cursor: 'pointer', color: 'var(--accent)' }}>
-                      <span>⭳</span><span style={{ fontWeight: 600 }}>{FILE_LABEL[f.kind] || f.kind}</span>
-                      <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.filename}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {((syncResult.issues || []).length > 0 || (syncResult.warnings || []).length > 0) && (
-                <div style={{ background: 'var(--warning-tint)', borderRadius: 10, padding: '10px 12px' }}>
-                  <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--warning-text)', marginBottom: 5 }}>Расхождения / требует внимания</div>
-                  {(syncResult.issues && syncResult.issues.length
-                    ? syncResult.issues.map((it, i) => <div key={i} style={{ fontSize: 12.5, color: 'var(--warning-text)', padding: '2px 0' }}>• <b>{ISSUE_LABELS[it.field] || it.field}:</b> {it.message}</div>)
-                    : syncResult.warnings.map((w, i) => <div key={i} style={{ fontSize: 12.5, color: 'var(--warning-text)', padding: '2px 0' }}>• {w}</div>))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {syncBulkBusy && <DownloadOverlay label="Синхронизация сделок" progress={syncProgress} />}
-
         {/* ── Итог массовой правки: что переведено и КТО не прошёл требования ── */}
         {editResult && (
           <div {...overlayClose(() => setEditResult(null))} style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(20,26,40,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
@@ -1009,88 +864,6 @@ export default function SalesRegistry2() {
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── Сводка массовой синхронизации ── */}
-        {bulkResult && (
-          <div {...overlayClose(() => setBulkResult(null))} style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(20,26,40,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, boxShadow: 'var(--shadow-card)', width: 360, maxWidth: '92vw', padding: '20px 22px', fontFamily: UI }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>Обработано {bulkResult.done != null ? bulkResult.done : (bulkResult.total - (bulkResult.skipped || 0) - (bulkResult.errors || 0))} из {bulkResult.total}</span>
-                <span onClick={() => setBulkResult(null)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>✕</span>
-              </div>
-              {[['green', 'Совпадает', 'var(--income)'], ['blue', 'Мы полнее', 'var(--accent)'], ['red', 'Расхождения', 'var(--dot-overdue)']].map(([k, l, c]) => (
-                <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, padding: '4px 0' }}>
-                  <span style={{ width: 9, height: 9, borderRadius: 2, background: c }} />
-                  <span style={{ flex: 1, color: 'var(--text-secondary)' }}>{l}</span>
-                  <span style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--text-primary)' }}>{bulkResult[k] || 0}</span>
-                </div>
-              ))}
-              {(bulkResult.skipped > 0 || bulkResult.errors > 0) && (
-                <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-row)', fontSize: 12, color: 'var(--text-muted)' }}>
-                  {bulkResult.skipped > 0 && <span>пропущено (локальные): {bulkResult.skipped}. </span>}
-                  {bulkResult.errors > 0 && <span style={{ color: 'var(--danger-fg)' }}>ошибок: {bulkResult.errors}</span>}
-                </div>
-              )}
-              {bulkResult.failed && bulkResult.failed.length > 0 && (
-                <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-row)', maxHeight: 160, overflowY: 'auto' }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--danger-fg)', marginBottom: 4 }}>Где отвалилось:</div>
-                  {bulkResult.failed.map(f => (
-                    <div key={f.id} style={{ fontSize: 12, padding: '3px 0', color: 'var(--text-secondary)' }}>
-                      <span style={{ fontFamily: MONO, color: 'var(--text-primary)' }}>#{f.id}</span> {f.title}
-                      <div style={{ fontSize: 11, color: 'var(--danger-fg)' }}>{f.error}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── Заливка правок в Битрикс: превью → подтверждение → результат ── */}
-        {pushPreview && (
-          <div {...overlayClose(() => !pushBusy && setPushPreview(null))} style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(20,26,40,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 16, boxShadow: 'var(--shadow-card)', width: 420, maxWidth: '92vw', maxHeight: '82vh', overflowY: 'auto', padding: '20px 22px', fontFamily: UI }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>Залить правки в Битрикс</span>
-                <span onClick={() => !pushBusy && setPushPreview(null)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>✕</span>
-              </div>
-
-              {pushPreview.done ? (
-                <>
-                  <div style={{ fontSize: 14, color: 'var(--income)', fontWeight: 600, marginBottom: 8 }}>✓ Залито в Битрикс: {pushPreview.done.pushed}</div>
-                  {(pushPreview.done.errors || []).length > 0 && (
-                    <div style={{ background: 'var(--danger-tint)', borderRadius: 10, padding: '10px 12px', marginTop: 8 }}>
-                      <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--danger-fg)', marginBottom: 5 }}>Ошибки ({pushPreview.done.errors.length})</div>
-                      {pushPreview.done.errors.slice(0, 8).map((e, i) => <div key={i} style={{ fontSize: 12, color: 'var(--danger-fg)', padding: '2px 0' }}>• {e.deal}: {e.error}</div>)}
-                    </div>
-                  )}
-                  <button onClick={() => setPushPreview(null)} style={{ marginTop: 14, ...btnAcc }}>Закрыть</button>
-                </>
-              ) : (
-                <>
-                  <div style={{ fontSize: 14, color: 'var(--text-primary)', marginBottom: 12 }}>
-                    Уйдёт в Битрикс: <b style={{ fontFamily: MONO, color: 'var(--accent)' }}>{pushPreview.total || 0}</b> правок <span style={{ color: 'var(--text-muted)' }}>(только «Название»)</span> в <b style={{ fontFamily: MONO }}>{pushPreview.deals || 0}</b> сделок.
-                  </div>
-                  {Object.keys(pushPreview.skipped || {}).length > 0 && (
-                    <div style={{ background: 'var(--warning-tint)', borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
-                      <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--warning-text)', marginBottom: 6 }}>Пока не льём (нужен маппинг справочников)</div>
-                      {Object.entries(pushPreview.skipped).map(([f, c]) => (
-                        <div key={f} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: 'var(--warning-text)', padding: '2px 0' }}>
-                          <span>{PUSH_FIELD_LABELS[f] || f}</span><span style={{ fontFamily: MONO }}>{c}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button onClick={confirmPushEdits} disabled={pushBusy || !(pushPreview.total > 0)} style={{ ...btnAcc, opacity: (pushBusy || !(pushPreview.total > 0)) ? 0.5 : 1 }}>{pushBusy ? 'Заливаю…' : `Залить ${pushPreview.total || 0}`}</button>
-                    <button onClick={() => setPushPreview(null)} disabled={pushBusy} style={btnSec}>Отмена</button>
-                  </div>
-                  <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--text-faint)' }}>Запись идёт в живой Битрикс24. Отменить после заливки нельзя.</div>
-                </>
               )}
             </div>
           </div>

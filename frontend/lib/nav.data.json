@@ -219,12 +219,6 @@
           "label": "Добавить данные",
           "href": "/directory/add",
           "perm": "directory_add"
-        },
-        {
-          "key": "reconcile",
-          "label": "Сверка",
-          "href": "/directory/reconcile",
-          "perm": "bx_reconcile"
         }
       ]
     }
@@ -312,7 +306,11 @@
     },
     {
       "from": "/reconcile",
-      "to": "/directory/reconcile"
+      "to": "/directory"
+    },
+    {
+      "from": "/directory/reconcile",
+      "to": "/directory"
     },
     {
       "from": "/directory/publishers",

@@ -10,9 +10,11 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { markDirty, markClean } from '@/lib/unsaved'
 
 // ── Наш каталог стадий (E1: движение сделки) ──
-// Этапы (орг-группировка) → стадии. У стадии: разметка 2/2/2 (для ДДС), флаг терминала,
-// и ОДНА привязка к битрикс воронка+стадия (два выпадающих). Правки копятся локально,
-// коммит одним запросом «Сохранить все». Воронки в Битриксе НЕ трогаем (см. вкладку «Воронки»).
+// Этапы (орг-группировка) → стадии. У стадии: разметка 2/2/2 (для ДДС) и флаг терминала.
+// Правки копятся локально, коммит одним запросом «Сохранить все».
+// Выбора «воронка/стадия Битрикса» нет с 03.10.2026 (Битрикс больше не источник), но уже
+// сделанная привязка не теряется: её поля читаются с сервера и отдаются обратно как есть —
+// по ней движение сделки проставляет `pipeline`/`bitrix_stage` (_reflect_stage_binding).
 const layerColor = (l) => l === 'фактические' ? 'var(--success)'
   : l === 'реализуемые' ? 'var(--warning, #d97706)'
   : l === 'планируемые' ? 'var(--muted)' : 'var(--border-card)'
@@ -20,7 +22,6 @@ const layerColor = (l) => l === 'фактические' ? 'var(--success)'
 export default function SettingsStages() {
   const router = useRouter()
   const [phases, setPhases] = useState([])      // [{_k, id, name, stages:[{_k, id, name, stage_key, is_terminal, bitrix_pipeline_id, bitrix_status_id}]}]
-  const [bxPipes, setBxPipes] = useState([])    // [{id, name, stages:[{status_id, name}]}]
   const [catalog, setCatalog] = useState([])    // под-этапы 2/2/2: [{key, label, money_layer}]
   const [blocks, setBlocks] = useState([])      // блоки карточки: [{key, label, stage_id|null}]
   const [loading, setLoading] = useState(true)
@@ -45,10 +46,7 @@ export default function SettingsStages() {
   const load = async () => {
     setLoading(true); setErr('')
     try {
-      const [c, b] = await Promise.all([
-        api.get('/sales/directories/stage-catalog', auth()),
-        api.get('/sales/directories/stage-catalog/bitrix-options', auth()),
-      ])
+      const c = await api.get('/sales/directories/stage-catalog', auth())
       setPhases((c.data.phases || []).map(p => ({
         _k: nextK(), id: p.id, name: p.name,
         stages: (p.stages || []).map(s => ({ _k: nextK(), id: s.id, name: s.name,
@@ -57,7 +55,6 @@ export default function SettingsStages() {
       })))
       setCatalog(c.data.catalog || [])
       setBlocks(c.data.card_blocks || [])
-      setBxPipes(b.data.pipelines || [])
       setDirty(false)
       markClean()
     } catch (e) { if (e.response?.status === 401) router.push('/login'); else setErr('Ошибка загрузки') }
@@ -78,7 +75,6 @@ export default function SettingsStages() {
   const movePhase = (pk, dir) => { setPhases(ps => { const i = ps.findIndex(p => p._k === pk); const j = i + dir; if (i < 0 || j < 0 || j >= ps.length) return ps; const n = [...ps];[n[i], n[j]] = [n[j], n[i]]; return n }); touch() }
   const moveStage = (pk, sk, dir) => { setPhases(ps => ps.map(p => { if (p._k !== pk) return p; const i = p.stages.findIndex(s => s._k === sk); const j = i + dir; if (i < 0 || j < 0 || j >= p.stages.length) return p; const n = [...p.stages];[n[i], n[j]] = [n[j], n[i]]; return { ...p, stages: n } })); touch() }
 
-  const pipeStages = (pid) => (bxPipes.find(p => p.id === Number(pid))?.stages) || []
   const layerOfKey = (key) => catalog.find(c => c.key === key)?.money_layer || ''
 
   const saveAll = async () => {
@@ -116,8 +112,7 @@ export default function SettingsStages() {
         </div>
         <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 0, marginBottom: 16, maxWidth: 900 }}>
           Наш список стадий по этапам. «2/2/2» — разметка слоя для ДДС (с какой вероятностью учитывать деньги стадии).
-          Привязка «воронка → стадия» связывает нашу стадию с Битриксом (одна на стадию — чтобы движение однозначно
-          толкалось и в Битрикс). Правки копятся — жмите «Сохранить все».
+          Правки копятся — жмите «Сохранить все».
         </p>
 
         {err && <div style={{ background: 'var(--danger-tint)', border: '1px solid var(--danger)', color: 'var(--danger)', padding: '10px 14px', borderRadius: 10, marginBottom: 12, fontSize: 13 }}>{err}</div>}
@@ -137,14 +132,12 @@ export default function SettingsStages() {
                 </div>
                 {/* Стадии этапа */}
                 <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
                     <thead><tr>
                       <th style={{ ...th, width: 54 }}></th>
                       <th style={th}>Стадия</th>
                       <th style={{ ...th, width: 230 }}>Под-этап 2/2/2 (ДДС)</th>
                       <th style={{ ...th, width: 60, textAlign: 'center' }}>Терм.</th>
-                      <th style={{ ...th, width: 200 }}>Воронка Битрикса</th>
-                      <th style={{ ...th, width: 220 }}>Стадия Битрикса</th>
                       <th style={{ ...th, width: 44 }}></th>
                     </tr></thead>
                     <tbody>
@@ -166,23 +159,10 @@ export default function SettingsStages() {
                             </span>
                           </td>
                           <td style={{ ...td, textAlign: 'center' }}><input type="checkbox" checked={s.is_terminal} onChange={e => setStage(p._k, s._k, { is_terminal: e.target.checked })} title="Терминальная (не случилась / сорвалась)" style={{ cursor: 'pointer' }} /></td>
-                          <td style={td}>
-                            <select value={s.bitrix_pipeline_id} onChange={e => setStage(p._k, s._k, { bitrix_pipeline_id: e.target.value, bitrix_status_id: '' })} style={cs}>
-                              <option value="">— воронка —</option>
-                              {bxPipes.map(bp => <option key={bp.id} value={bp.id}>{bp.name}</option>)}
-                            </select>
-                          </td>
-                          <td style={td}>
-                            <select value={s.bitrix_status_id} onChange={e => setStage(p._k, s._k, { bitrix_status_id: e.target.value })} disabled={!s.bitrix_pipeline_id} style={{ ...cs, opacity: s.bitrix_pipeline_id ? 1 : 0.5 }}>
-                              <option value="">{s.bitrix_pipeline_id ? '— стадия —' : 'сначала воронка'}</option>
-                              {pipeStages(s.bitrix_pipeline_id).map(bs => <option key={bs.status_id} value={bs.status_id}>{bs.name}</option>)}
-                              {s.bitrix_status_id && !pipeStages(s.bitrix_pipeline_id).some(bs => bs.status_id === s.bitrix_status_id) && <option value={s.bitrix_status_id}>{s.bitrix_status_id} (тек.)</option>}
-                            </select>
-                          </td>
                           <td style={{ ...td, textAlign: 'center' }}><button onClick={() => delStage(p._k, s._k)} title="Удалить стадию" style={{ ...iconBtn, color: 'var(--danger)', borderColor: 'var(--danger-tint)' }}>✕</button></td>
                         </tr>
                       ))}
-                      {!p.stages.length && <tr><td colSpan={7} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Стадий нет — «+ стадия»</td></tr>}
+                      {!p.stages.length && <tr><td colSpan={5} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Стадий нет — «+ стадия»</td></tr>}
                     </tbody>
                   </table>
                 </div>

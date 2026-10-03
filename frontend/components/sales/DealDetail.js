@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import { buildTitle, productWithSurface, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
 import { useRouter } from 'next/router'
 import api, { auth } from '../../lib/api'
-import { BITRIX_DEAL_URL } from '../../lib/salesLayers'
 import { MONO, UI, CAP, docCard, addBtn, iconSq, DocIcon, DownloadIcon, EditIcon, GenTitleBtn, StageLayerBar } from '../salesTableKit'
 import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc, downloadDealCreatives,
   creativesMeta } from '../../lib/dealDocs'
@@ -83,7 +82,6 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   const router = useRouter()
   const [history, setHistory] = useState(null)
   const [grow, setGrow] = useState(false)
-  const [checking, setChecking] = useState(false)
   // Название: редактируется по клику; генератор собирает имя по шаблону.
   const [title, setTitle] = useState(d.title || '')
   const [editing, setEditing] = useState(false)
@@ -126,17 +124,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   const mpOur = (d.our_mps || [])[0]                               // наш МП (конструктор)
   const paid = 0, expected = d.amount || 0
   const pct = expected ? Math.min(100, (paid / expected) * 100) : 0
-  const local = String(d.bitrix_id || '').startsWith('local-')
   const stop = (e) => e.stopPropagation()
-
-  // «Проверить» — подтянуть поля и файлы из Битрикса (МП появится, если он там есть).
-  const checkBitrix = async () => {
-    if (checking || local) return
-    setChecking(true)
-    try { await api.post(`/sales/deals/${d.id}/sync-from-bitrix`, {}, { ...auth(), timeout: 0 }); onChanged?.() }
-    catch (e) { alert(e.response?.data?.detail || 'Проверка недоступна') }
-    finally { setChecking(false) }
-  }
 
   /* Блоки сводки. Раскладок две (см. `layout`), блоки одни и те же: вторая копия
      «Документов» или «Оплат» под другую раскладку разошлась бы с первой. */
@@ -168,12 +156,12 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   const docsBlock = (
     <>
       <div style={CAP}>Медиаплан и документы</div>
-      {/* МП (Битрикс): есть → «Скачать»; нет → «Проверить» (синк из Битрикса) */}
+      {/* МП (Битрикс): есть → «Скачать»; нет → пусто. Кнопки «Проверить» (синк из Битрикса)
+          нет с 03.10.2026 — Битрикс больше не источник, файл остаётся как история. */}
       <DocLine oneLine={queue} title="МП (Битрикс)" meta={mpBx?.filename} empty={!mpBx}
         right={mpBx
           ? <button style={iconSq(false)} title={`Скачать · ${mpBx.filename || ''}`} onClick={() => blobGet(`/sales/deals/${d.id}/files/mp/download`, mpBx.filename)}><DownloadIcon /></button>
-          : <button style={{ ...addBtn, opacity: (checking || local) ? 0.6 : 1, cursor: (checking || local) ? 'default' : 'pointer' }} onClick={checkBitrix} disabled={checking || local}
-              title={local ? 'Локальная сделка — нет в Битриксе' : 'Проверить наличие МП в Битриксе'}>{checking ? 'Проверка…' : 'Проверить'}</button>} />
+          : <span />} />
       {/* МП наш: PDF · XLS · конструктор */}
       <DocLine oneLine={queue} title="МП наш" meta={mpOur ? `v${mpOur.version}` : ''} empty={!mpOur}
         onAdd={canEdit ? addMp : undefined}
@@ -279,8 +267,8 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   )
 
   // «Карточка» в очереди аккаунта открывается в НОВОЙ вкладке (макет «акки 3»): очередь
-  // с её фильтрами и раскрытой строкой остаётся на месте. Кнопки «Битрикс» там нет —
-  // Битрикс больше не источник (владелец 08.09.2026).
+  // с её фильтрами и раскрытой строкой остаётся на месте. Кнопки «Битрикс» нет нигде —
+  // Битрикс больше не источник (владелец 08.09.2026, из реестра убрана 03.10.2026).
   const buttons = (
     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 'auto', paddingTop: 14 }}>
       {queue ? (
@@ -292,12 +280,6 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
         <button onClick={() => router.push(`/sales/deals/${d.code || d.id}`)} title="Открыть карточку сделки"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 14px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>
           <DocIcon /> Карточка
-        </button>
-      )}
-      {!queue && d.bitrix_id && !local && (
-        <button onClick={() => window.open(BITRIX_DEAL_URL(d.bitrix_id), '_blank', 'noopener')} title="Открыть сделку в Битрикс24 (в новой вкладке)"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 12px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--accent-tint)', color: 'var(--accent)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>
-          Битрикс ↗
         </button>
       )}
       <button title="Бриф" onClick={() => (onOpenBrief ? onOpenBrief(d) : router.push(`/sales/deals/${d.id}`))} style={{ ...iconSq(false), width: 34, height: 34 }}><DocIcon /></button>

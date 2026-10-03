@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { grp, mln as mlnBase } from '../lib/salesFormat'
 import useIsMobile from './mobile/useIsMobile'
 import BottomSheet from './mobile/BottomSheet'
-import { fmtTime } from '@/lib/dates'
 
 // Верхний блок дашборда сейлза «Мой квартал» — редизайн по хендоффу
 // (design_handoff_sales_widgets). Один контейнер: шапка → 4 KPI с вертикальными
@@ -47,7 +46,7 @@ const LAYERS = [
 ]
 
 export default function SalesQuarterWidgets({
-  data, summary, lastSyncAt,
+  data, summary,
   quarter, setQuarter, quarters,
   repId, setRepId, reps, canViewOthers,
   onCreate, onCreateAgency, onCreateAdvertiser,
@@ -68,7 +67,6 @@ export default function SalesQuarterWidgets({
   const width = (name) => (barBase > 0 ? (layerAmt(name) / barBase) * 100 : 0)
   const archW = barBase > 0 ? (archAmt / barBase) * 100 : 0
 
-  const syncTime = lastSyncAt ? fmtTime(lastSyncAt, '') : null
   const recon = totals ? totals.reconciles : true
 
   const selBox = {
@@ -212,7 +210,6 @@ export default function SalesQuarterWidgets({
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            {syncTime && <div style={{ fontFamily: MONO, fontSize: 12, color: C.sec, marginRight: 8 }}>обновлено {syncTime}</div>}
             {canViewOthers && (
               <select className="qw-sel" value={repId} onChange={e => setRepId(e.target.value)} style={selBox}>
                 <option value="">— я / сотрудник —</option>

@@ -67,7 +67,7 @@ def test_brief_of_a_foreign_deal_is_not_read_or_written(db, stranger, open_deal,
     plan.deal_id = open_deal.id
     db.flush()
     with pytest.raises(HTTPException) as e:
-        mp.mp_get_deal_brief(plan.id, refresh=0, db=db, current_user=stranger)
+        mp.mp_get_deal_brief(plan.id, db=db, current_user=stranger)
     assert e.value.status_code == 403
     with pytest.raises(HTTPException) as e:
         mp.mp_save_deal_brief(plan.id, mp.DealBriefIn(brief="чужое"), db=db, current_user=stranger)

@@ -895,13 +895,12 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
             <Card className="mp-open" delay={0.05} pad="16px 22px 16px" gap={10}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 <span style={capTitle}>Бриф сделки</span>
-                {!briefHasDeal && <span style={{ fontSize: 12, color: T.t3 }}>привяжите сделку, чтобы сохранять и синхронизировать бриф</span>}
-                {dealBrief?.is_local && <span style={{ fontSize: 11, color: T.t4 }}>локальная сделка — без Битрикса</span>}
+                {!briefHasDeal && <span style={{ fontSize: 12, color: T.t3 }}>привяжите сделку, чтобы сохранять бриф</span>}
                 <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, alignItems: 'center' }}>
                   {/* Файлы брифа на месте прежней кнопки «⟳ С Битрикса». Ручное
                       перечитывание текста из Битрикса убрано по решению владельца
-                      21.09.2026: ленивая подгрузка при открытии и запись обратно
-                      остались, кнопка была третьим способом сделать то же самое. */}
+                      21.09.2026, подгрузка при открытии и запись обратно — 03.10.2026:
+                      Битрикс больше не источник. */}
                   <BriefFiles base={briefFilesBase} readOnly={briefFilesReadOnly}
                     disabled={!briefHasDeal} compact
                     disabledHint="Файл прикрепится после привязки сделки" />

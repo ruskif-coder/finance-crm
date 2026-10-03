@@ -30,15 +30,14 @@ OWNER = "sales/stage_move.py"
 # плана, и под тем же разрешением проехал `_advance_deal_on_link`, который стадию именно
 # ДВИГАЕТ.
 #
-# Две законные породы: рождение сделки (стадия — начальное значение, проверять нечего)
-# и разовый засев пустых стадий при старте.
+# Законная порода одна: рождение сделки (стадия — начальное значение, проверять нечего).
+# Разовый засев пустых стадий при старте (`main.py: backfill_deal_our_stage`) и импорт из
+# Битрикса (`upsert_deals`) удалены 03.10.2026 — Битрикс больше не источник.
 ALLOWED = {
     ("routers/media_plans.py", "create_deal_from_plan"),
     ("routers/sales_dashboard.py", "create_deal"),
     ("routers/year_plan.py", "_make_deal"),
     ("routers/launch_prep.py", "prolong"),
-    ("sales/bitrix/deal_import.py", "upsert_deals"),
-    ("main.py", "backfill_deal_our_stage"),
 }
 
 

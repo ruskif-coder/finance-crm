@@ -34,7 +34,6 @@ EXPECTED_KEYS = {
     "dir_publishers_approvals",
     # Добавлен 2026-09-29: особенности площадок для трафика («трафик админ»).
     "traffic_publisher_rules",
-    "bx_reconcile",
     # Добавлен 2026-09-06: экран «Добавить данные». Только view — см. комментарий в SECTIONS.
     "directory_add",
     # Добавлен 2026-08-28 вместе с контуром «Трафики»: очередь проверки материала.
@@ -47,7 +46,7 @@ EXPECTED_KEYS = {
     "traffic_dashboard",
     # dsp_demo / weborama_demo сняты 02.10.2026 вместе с демо-экранами.
     "settings_balances", "settings_articles", "settings_pipelines",
-    "settings_services", "settings_field_audit", "settings_audit",
+    "settings_services", "settings_audit",
     # Добавлен 2026-08-16 вместе с разделом «Бэклог отладки» (routers/backlog.py).
     "settings_backlog",
     "settings_bugs",

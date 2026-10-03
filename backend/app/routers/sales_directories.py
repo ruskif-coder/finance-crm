@@ -97,8 +97,6 @@ class ServiceIn(BaseModel):
     unit_price_web: Optional[float] = None
     unit_price_app: Optional[float] = None
     constants: Optional[dict] = None
-    bx_id: Optional[str] = None       # привязка к услуге в Битриксе (элемент СП 1050)
-    bx_title: Optional[str] = None    # кэш имени битрикс-услуги на момент привязки
     format_ids: Optional[List[int]] = None  # привязанные форматы (M2M); None — не трогать
     revenue_article_id: Optional[int] = None  # статья выручки (E0, мост сделка→операция)
     color: Optional[str] = None       # маркер услуги; пусто = авто по имени из палитры
@@ -241,7 +239,6 @@ def list_services(only_active: bool = True, db: Session = Depends(get_db),
                        "calc_form": s.calc_form, "separate_price": bool(s.separate_price),
                        "unit_price": s.unit_price, "unit_price_web": s.unit_price_web,
                        "unit_price_app": s.unit_price_app, "constants": s.constants or {},
-                       "bx_id": s.bx_id, "bx_title": s.bx_title,
                        "revenue_article_id": s.revenue_article_id,
                        # Печатается в приложении к договору, а не показывается в интерфейсе.
                        "doc_position": s.doc_position, "rotation_type": s.rotation_type}
@@ -278,26 +275,6 @@ def _set_service_fields(svc, data):
     svc.rotation_type = rot
 
 
-def _apply_bx_link(db, svc, bx_id, bx_title, exclude_id=None):
-    """Проставляет привязку к битрикс-услуге с проверкой уникальности: один элемент
-    СП 1050 может быть привязан максимум к одной локальной услуге (иначе синк снова
-    начнёт плодить дубли). Пустой bx_id снимает привязку."""
-    bx_id = (bx_id or "").strip() or None
-    if bx_id:
-        q = db.query(SalesService).filter(SalesService.bx_id == bx_id)
-        if exclude_id is not None:
-            q = q.filter(SalesService.id != exclude_id)
-        dup = q.first()
-        if dup:
-            raise HTTPException(status_code=400,
-                detail=f"Эта услуга Битрикса уже привязана к «{dup.name}»")
-        svc.bx_id = bx_id
-        svc.bx_title = (bx_title or "").strip() or None
-    else:
-        svc.bx_id = None
-        svc.bx_title = None
-
-
 def _sync_service_formats(db, svc, format_ids):
     """Пересобирает связки услуга↔формат по списку id (None — не трогать). Дефолтный формат
     (svc.placement_type, вариант B) должен быть среди выбранных имён; иначе — первый выбранный
@@ -321,23 +298,6 @@ def list_service_groups(db: Session = Depends(get_db),
     rows = db.query(SalesServiceGroup).order_by(SalesServiceGroup.sort_order,
                                                 SalesServiceGroup.name).all()
     return {"items": [{"id": g.id, "name": g.name, "sort_order": g.sort_order} for g in rows]}
-
-
-@router.get("/services/bitrix")
-def list_bitrix_service_options(db: Session = Depends(get_db),
-                                current_user: User = Depends(SVC_EDIT)):
-    """Список услуг Битрикса (СП 1050) для селекта привязки в настройках. linked_to —
-    имя локальной услуги, к которой этот элемент уже привязан (None — свободен)."""
-    from app.sales.bitrix.transport import list_bitrix_services
-    try:
-        items = list_bitrix_services()
-    except Exception as e:
-        logger.error("directories: Битрикс недоступен: %s", e)
-        raise HTTPException(status_code=502, detail="Битрикс недоступен (детали в логе сервера)")
-    linked = {s.bx_id: s.name for s in
-              db.query(SalesService).filter(SalesService.bx_id.isnot(None)).all()}
-    return {"items": [{"id": it["id"], "title": it["title"],
-                       "linked_to": linked.get(it["id"])} for it in items]}
 
 
 # ===== Форматы размещения (справочник + M2M с услугами) =====
@@ -537,7 +497,6 @@ def create_service(data: ServiceIn, db: Session = Depends(get_db),
     max_order = db.query(func.max(SalesService.sort_order)).scalar() or 0
     svc = SalesService(name=name, group=data.group, note=data.note, sort_order=max_order + 1)
     _set_service_fields(svc, data)
-    _apply_bx_link(db, svc, data.bx_id, data.bx_title)
     db.add(svc)
     db.flush()
     _sync_service_formats(db, svc, data.format_ids)
@@ -555,7 +514,6 @@ def update_service(service_id: int, data: ServiceIn, db: Session = Depends(get_d
     _reject_duplicate(db, SalesService, name, exclude_id=service_id)
     svc.name, svc.group, svc.note = name, data.group, data.note
     _set_service_fields(svc, data)
-    _apply_bx_link(db, svc, data.bx_id, data.bx_title, exclude_id=service_id)
     _sync_service_formats(db, svc, data.format_ids)
     db.commit()
     log_action(db, current_user, "update_sales_service", "sales_service", svc.id, name)
@@ -661,57 +619,6 @@ def set_service_use(service_id: int, data: UseIn, db: Session = Depends(get_db),
     return {"message": "Сохранено", "is_active": svc.is_active}
 
 
-@router.post("/services/refresh")
-def refresh_services(db: Session = Depends(get_db), current_user: User = Depends(SVC_EDIT)):
-    """Синхронизация услуг с Битриксом («Продукты Simb-ad», СП 1050). Матч по bx_id:
-      1) привязанные (есть bx_id) — не трогаем, лишь обновляем кэш имени bx_title;
-      2) без bx_id, но имя совпадает → авто-привязываем (проставляем bx_id/bx_title);
-      3) остаток из Битрикса → создаём новую локальную услугу уже с bx_id.
-    Так переименование локальной услуги не рвёт связь и не плодит дубли."""
-    from app.sales.bitrix.transport import list_bitrix_services
-    try:
-        items = list_bitrix_services()
-    except Exception as e:
-        logger.error("directories: Битрикс недоступен: %s", e)
-        raise HTTPException(status_code=502, detail="Битрикс недоступен (детали в логе сервера)")
-    services = db.query(SalesService).all()
-    by_bx = {s.bx_id: s for s in services if s.bx_id}
-    by_name = {normalize_name(s.name): s for s in services}
-    added = linked = renamed = 0
-    max_order = db.query(func.max(SalesService.sort_order)).scalar() or 0
-    for it in items:
-        bid = it["id"]
-        title = (it.get("title") or "").strip()
-        if not title:
-            continue
-        if bid in by_bx:
-            s = by_bx[bid]
-            if s.bx_title != title:      # в Битриксе переименовали — освежаем кэш
-                s.bx_title = title
-                renamed += 1
-            continue
-        nm = normalize_name(title)
-        s = by_name.get(nm)
-        if s is not None and not s.bx_id:
-            s.bx_id, s.bx_title = bid, title
-            by_bx[bid] = s
-            linked += 1
-            continue
-        max_order += 1
-        ns = SalesService(name=title, is_active=True, sort_order=max_order,
-                          bx_id=bid, bx_title=title)
-        db.add(ns)
-        by_bx[bid] = ns
-        by_name[nm] = ns
-        added += 1
-    db.commit()
-    log_action(db, current_user, "refresh_services", "sales_service", None,
-               f"из Битрикса: +{added} новых, {linked} привязано, {renamed} переименований")
-    return {"added": added, "linked": linked, "renamed": renamed, "bitrix_total": len(items)}
-
-
-# ========================== Рекламодатели ==========================
-
 @router.get("/producers")
 def list_advertisers(only_active: bool = True, db: Session = Depends(get_db),
                      current_user: User = Depends(PARTY_READ)):
@@ -746,7 +653,7 @@ def list_advertisers(only_active: bool = True, db: Session = Depends(get_db),
         adv_cps.setdefault(lk.advertiser_id, []).append(
             {"counterparty_id": lk.counterparty_id, "name": cp_names.get(lk.counterparty_id)})
 
-    return {"items": [{"id": a.id, "name": a.name, "bx_id": a.bx_id,
+    return {"items": [{"id": a.id, "name": a.name,
                        "short_name": a.short_name or a.name,
                        "name_en": a.name_en, "name_ru": a.name_ru, "website": a.website,
                        "inn": a.inn, "counterparty_id": a.counterparty_id,
@@ -982,40 +889,12 @@ def _cascade_pipeline_rename(db: Session, old: str, new: str) -> tuple[int, int]
     return (d, m)
 
 
-def _cascade_stage_rename(db: Session, pipeline_name: str, old: str, new: str) -> tuple[int, int]:
-    """Имя стадии — денормализованный ключ (в паре с воронкой) в sales_deals.bitrix_stage
-    и sales_bitrix_stage_map.bitrix_stage. Money-layer джойн витрины идёт по ИМЕНАМ
-    (pipeline+bitrix_stage), поэтому переименование стадии в Битриксе обязано каскадно
-    менять обе таблицы — иначе новые сделки с новым именем стадии не находят раскладку
-    и уходят в «Без группы». → (сколько сделок, сколько строк карты обновлено)."""
-    if not old or old == new:
-        return (0, 0)
-    d = (db.query(SalesDeal)
-         .filter(SalesDeal.pipeline == pipeline_name, SalesDeal.bitrix_stage == old)
-         .update({SalesDeal.bitrix_stage: new}, synchronize_session=False))
-    # Коллизия: если пара (pipeline, new) в карте уже есть, переименование старой
-    # строки нарушило бы UNIQUE(pipeline,bitrix_stage) и уронило бы весь refresh.
-    # Пропускаем — сделки уже переименованы в new и найдут раскладку по существующей
-    # строке; старая (pipeline, old) остаётся осиротевшей (безвредно, без сделок).
-    clash = (db.query(SalesBitrixStageMap)
-             .filter(SalesBitrixStageMap.pipeline == pipeline_name,
-                     SalesBitrixStageMap.bitrix_stage == new).first())
-    if clash:
-        m = 0
-    else:
-        m = (db.query(SalesBitrixStageMap)
-             .filter(SalesBitrixStageMap.pipeline == pipeline_name, SalesBitrixStageMap.bitrix_stage == old)
-             .update({SalesBitrixStageMap.bitrix_stage: new}, synchronize_session=False))
-    return (d, m)
-
-
 @router.put("/pipelines/{pipeline_id}/name")
 def rename_pipeline(pipeline_id: int, data: PipelineRename,
                     db: Session = Depends(get_db),
                     current_user: User = Depends(PIPE_EDIT)):
-    """Ручное переименование воронки. Нужно для категории 0 (дефолтной): её настоящее
-    имя VibeCode API не отдаёт, поэтому оно правится только здесь. refresh это имя не трогает.
-    Каскадно переносит имя на сделки и карту стадий."""
+    """Ручное переименование воронки — единственный способ сменить имя (обновления воронок
+    из Битрикса нет с 03.10.2026). Каскадно переносит имя на сделки и карту стадий."""
     p = _require(db, SalesPipeline, pipeline_id, "Воронка")
     new_name = (data.name or "").strip()
     if not new_name:
@@ -1031,72 +910,6 @@ def rename_pipeline(pipeline_id: int, data: PipelineRename,
     log_action(db, current_user, "rename_pipeline", "sales_pipeline", p.id,
                f"{old} → {new_name} (сделок {deals_n}, карт стадий {maps_n})")
     return {"message": "Сохранено", "name": p.name, "deals_updated": deals_n}
-
-
-@router.post("/pipelines/refresh")
-def refresh_pipelines(db: Session = Depends(get_db), current_user: User = Depends(PIPE_EDIT)):
-    """Синхронизация воронок/стадий с Битриксом. Новые воронки заводятся ВЫКЛЮЧЕННЫМИ
-    (is_tracked=False) — чтобы синхрон сделок их не тянул, пока не решим. Стадии добавляются/
-    переименовываются по имени. Данные (сделки) не трогает."""
-    from app.sales.bitrix.transport import list_bitrix_pipelines, list_bitrix_stages
-    try:
-        cats = list_bitrix_pipelines()
-    except Exception as e:
-        logger.error("directories: Битрикс недоступен: %s", e)
-        raise HTTPException(status_code=502, detail="Битрикс недоступен (детали в логе сервера)")
-    added_p, added_s, renamed_s, renamed_p = 0, 0, 0, 0
-    used_names = {p.name for p in db.query(SalesPipeline).all()}
-    for c in cats:
-        cid = c["id"]
-        p = db.query(SalesPipeline).filter(SalesPipeline.bitrix_category_id == cid).first()
-        if not p:
-            name = c["name"] or f"Воронка {cid}"
-            if name in used_names:
-                name = f"{name} ({cid})"
-            used_names.add(name)
-            p = SalesPipeline(name=name, bitrix_category_id=cid, is_tracked=False, is_active=True)
-            db.add(p)
-            db.flush()
-            added_p += 1
-        elif cid == 0:
-            # Категория 0 (дефолтная): её настоящее имя API не отдаёт (подставляем
-            # заглушку). Не затираем — имя задаётся только вручную через /name.
-            pass
-        else:
-            new_name = c["name"] or f"Воронка {cid}"
-            if new_name != p.name:
-                # не даём переименованием создать дубликат имени другой воронки
-                if new_name in used_names:
-                    new_name = f"{new_name} ({cid})"
-                if new_name != p.name:
-                    used_names.discard(p.name)
-                    used_names.add(new_name)
-                    _cascade_pipeline_rename(db, p.name, new_name)
-                    p.name = new_name
-                    renamed_p += 1
-        try:
-            stages = list_bitrix_stages(cid)
-        except Exception:
-            stages = []
-        for order, s in enumerate(stages):
-            sid = s["status_id"]
-            st = (db.query(SalesPipelineStage)
-                  .filter(SalesPipelineStage.bitrix_category_id == cid,
-                          SalesPipelineStage.status_id == sid).first())
-            if not st:
-                db.add(SalesPipelineStage(pipeline_id=p.id, bitrix_category_id=cid,
-                                          status_id=sid, name=s["name"], sort_order=order))
-                added_s += 1
-            elif st.name != s["name"]:
-                # каскад: карта слоёв и сделки хранят имя стадии денормализованно
-                _cascade_stage_rename(db, p.name, st.name, s["name"])
-                st.name = s["name"]
-                renamed_s += 1
-    db.commit()
-    log_action(db, current_user, "refresh_pipelines", "sales_pipeline", 0,
-               f"воронок +{added_p} (переим. {renamed_p}), стадий +{added_s}, переименовано стадий {renamed_s}")
-    return {"pipelines_added": added_p, "pipelines_renamed": renamed_p,
-            "stages_added": added_s, "stages_renamed": renamed_s}
 
 
 class StageMapping(BaseModel):
@@ -1149,8 +962,8 @@ def set_stage_mapping(pipeline_id: int, stage_id: int, data: StageMapping,
 @router.delete("/pipelines/{pipeline_id}")
 def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db),
                     current_user: User = Depends(PIPE_EDIT)):
-    """ФИЗИЧЕСКИ удаляет воронку вместе со всеми её сделками, их сырьём
-    и строками маппинга. Необратимо. Отклоняет удаление, если по сделкам
+    """ФИЗИЧЕСКИ удаляет воронку вместе со всеми её сделками и строками маппинга
+    (сырьё импорта из Битрикса, sales_bitrix_raw, не чистим с 03.10.2026 — это история). Необратимо. Отклоняет удаление, если по сделкам
     воронки есть ручные правки или разнесения — их потеря молча недопустима."""
     p = _require(db, SalesPipeline, pipeline_id, "Воронка")
 
@@ -1182,14 +995,6 @@ def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db),
                 detail=f"Нельзя удалить: по сделкам воронки есть {blocked} ручных правок "
                        f"или разнесений. Сначала разберите их.")
 
-    bitrix_ids = [d.bitrix_id for d in
-                  db.query(SalesDeal.bitrix_id).filter(SalesDeal.pipeline == p.name).all()]
-
-    from app.sales.models import SalesBitrixRaw, SalesBitrixStageMap
-    if bitrix_ids:
-        db.query(SalesBitrixRaw).filter(SalesBitrixRaw.entity == "deal",
-                                        SalesBitrixRaw.bitrix_id.in_(bitrix_ids)
-                                        ).delete(synchronize_session=False)
     deal_delete.purge_links(db, deal_ids)
     db.query(SalesDeal).filter(SalesDeal.pipeline == p.name).delete(synchronize_session=False)
     db.query(SalesBitrixStageMap).filter(SalesBitrixStageMap.pipeline == p.name
@@ -1203,7 +1008,9 @@ def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db),
 
 # ==================== НАШ КАТАЛОГ СТАДИЙ (E1: движение сделки) ====================
 # Собственный каталог: этапы → стадии, разметка 2/2/2 (money_layer для ДДС) + ОДНА
-# привязка к битрикс воронка+стадия (1:1, чтобы движение однозначно толкалось в Битрикс).
+# привязка к воронке+стадии (bitrix_pipeline_id/bitrix_status_id). В Битрикс не толкается
+# с 03.10.2026, а выбора в настройках нет; живёт как была — по ней движение проставляет
+# сделке pipeline/bitrix_stage, а диалог движения отличает продуктовые воронки.
 # Правки идут одним bulk-запросом («Сохранить все»): upsert по id + удаление убранного.
 
 class StageIn(BaseModel):
@@ -1272,23 +1079,6 @@ def get_stage_catalog(db: Session = Depends(get_db),
         # чтобы экран настройки показывал действующее правило, а не своё представление о нём.
         "card_blocks": stage_scope.blocks_markup(db, Catalog(db)),
     }
-
-
-@router.get("/stage-catalog/bitrix-options")
-def stage_catalog_bitrix_options(db: Session = Depends(get_db),
-                                 current_user: User = Depends(STAGE_READ)):
-    """Воронки Битрикса со стадиями — для двух выпадающих (воронка → стадия) привязки."""
-    pipelines = (db.query(SalesPipeline)
-                 .order_by(SalesPipeline.sort_order, SalesPipeline.name).all())
-    rows = (db.query(SalesPipelineStage)
-            .order_by(SalesPipelineStage.sort_order).all())
-    by_pipe = {}
-    for s in rows:
-        by_pipe.setdefault(s.pipeline_id, []).append({"status_id": s.status_id, "name": s.name})
-    return {"pipelines": [
-        {"id": p.id, "name": p.name, "stages": by_pipe.get(p.id, [])}
-        for p in pipelines
-    ]}
 
 
 @router.put("/stage-catalog")
@@ -1426,7 +1216,7 @@ def list_agencies(only_active: bool = True, db: Session = Depends(get_db),
     deal_counts = dict(db.query(SalesDeal.agency_id, func.count(SalesDeal.id))
                        .group_by(SalesDeal.agency_id).all())
 
-    return {"items": [{"id": a.id, "bx_id": a.bx_id,
+    return {"items": [{"id": a.id,
                        "short_name": a.short_name or a.name,
                        "name_en": a.name_en, "name_ru": a.name_ru,
                        # Исходное полное имя из Битрикса — для опознания, когда
@@ -1645,20 +1435,8 @@ def merge_advertiser(target_id: int, data: MergeIn, db: Session = Depends(get_db
         SalesDealFieldOverride.value_int == data.source_id).update(
         {SalesDealFieldOverride.value_int: target_id}, synchronize_session=False)
 
-    # Перенос связей с Битриксом: компании source переезжают на target (bx_id уникален
-    # по kind, коллизий нет). Мастер наследуется, если у target не задан.
-    from app.sales.models import SalesBitrixLink
-    db.query(SalesBitrixLink).filter(
-        SalesBitrixLink.kind == "advertisers", SalesBitrixLink.our_id == data.source_id).update(
-        {SalesBitrixLink.our_id: target_id}, synchronize_session=False)
-    if not target.bx_master and source.bx_master:
-        target.bx_master = source.bx_master
-    db.flush()
-    _tgt_links = [lk.bx_id for lk in db.query(SalesBitrixLink).filter(
-        SalesBitrixLink.kind == "advertisers", SalesBitrixLink.our_id == target_id)
-        .order_by(SalesBitrixLink.id).all()]
-    if _tgt_links:
-        target.bx_id = _tgt_links[0]
+    # Связи с компаниями Битрикса (sales_bitrix_links, bx_id/bx_master) при слиянии не
+    # переносим с 03.10.2026 — Битрикс больше не источник; строки остаются как история.
 
     db.query(SalesAdvertiser).filter(SalesAdvertiser.id == data.source_id).delete(
         synchronize_session=False)
@@ -1699,20 +1477,8 @@ def merge_agency(target_id: int, data: MergeIn, db: Session = Depends(get_db),
         SalesDealFieldOverride.value_int == data.source_id).update(
         {SalesDealFieldOverride.value_int: target_id}, synchronize_session=False)
 
-    # Перенос связей с Битриксом: компании source переезжают на target (bx_id уникален
-    # по kind, коллизий нет). Мастер наследуется, если у target не задан.
-    from app.sales.models import SalesBitrixLink
-    db.query(SalesBitrixLink).filter(
-        SalesBitrixLink.kind == "agencies", SalesBitrixLink.our_id == data.source_id).update(
-        {SalesBitrixLink.our_id: target_id}, synchronize_session=False)
-    if not target.bx_master and source.bx_master:
-        target.bx_master = source.bx_master
-    db.flush()
-    _tgt_links = [lk.bx_id for lk in db.query(SalesBitrixLink).filter(
-        SalesBitrixLink.kind == "agencies", SalesBitrixLink.our_id == target_id)
-        .order_by(SalesBitrixLink.id).all()]
-    if _tgt_links:
-        target.bx_id = _tgt_links[0]
+    # Связи с компаниями Битрикса (sales_bitrix_links, bx_id/bx_master) при слиянии не
+    # переносим с 03.10.2026 — Битрикс больше не источник; строки остаются как история.
 
     db.query(SalesAgency).filter(SalesAgency.id == data.source_id).delete(synchronize_session=False)
     db.commit()

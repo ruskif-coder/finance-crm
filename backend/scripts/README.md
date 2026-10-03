@@ -26,20 +26,21 @@ docker exec finance_backend python -m scripts.<имя> [аргументы]
 
 | Скрипт | Что делал |
 |---|---|
-| `import_new_deals.py` | обёртка над `app.sales.bitrix.deal_import` — довоз новых сделок из Битрикса |
 | `import_publishers.py` | первичный ввод площадок из «Аптеки — Рабочая.xlsx» |
 | `backfill_publishers_v3.py` | добор полей площадок под схему v3 |
 | `backfill_counterparty_requisites.py` | реквизиты и счета контрагентов из выгрузки |
 | `backfill_vat_articles.py` | ставки НДС и статьи по умолчанию из свежих операций |
 | `backfill_deal_codes.py` | проставление шестизначных меток сделкам |
 | `migrate_media_kit_to_documents.py` | медиакиты площадок в общий реестр документов |
-| `apply_stage_bindings.py` | привязки стадий Битрикса к нашему каталогу |
-| `seed_our_stage.py` | заполнение `our_stage_id` у сделок |
 | `fix_deal_gross_2026_08_13.py` | разовая правка сумм с НДС |
 | `mp_build_template.py` | генератор стартового Excel-шаблона медиаплана |
 | `mp_tokenize_template.py` | обратная сборка: выгрузка МП → шаблон с токенами |
-| `load_pipeline_stages.py` | первичная загрузка воронок и стадий из Битрикса |
 | `load_sales_from_xlsm.py` | шаг 2 импорта продаж из «Дашборд по продажам.xlsm» |
+
+Удалены 03.10.2026 вместе с интеграцией (Битрикс больше не источник): `import_new_deals.py`
+(довоз новых сделок из Битрикса), `load_pipeline_stages.py` (первичная загрузка воронок и
+стадий из Битрикса), `apply_stage_bindings.py` (привязки стадий Битрикса к нашему каталогу),
+`seed_our_stage.py` (засев `our_stage_id` по карте стадий Битрикса). Искать — в истории git.
 
 ### Дописано 31.08.2026 — пять августовских, которых в таблице не было
 

@@ -17,7 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.database import engine, Base, SessionLocal
 from app.routers import (auth, operations, reports, counterparties, articles, settings,
                          users, roles, contracts, sales_directories, sales_dashboard,
-                         sales_reconcile, media_plans, notifications, notify_settings,
+                         media_plans, notifications, notify_settings,
                          year_plan, finreport, backlog, bugs, maintenance as maintenance_api,
                          account_dashboard,
                          publishers, diadoc, ord, launch_prep, traffic, cabinets,
@@ -135,8 +135,7 @@ def seed_split_permissions():
                 add("dir_advertisers", sdir.can_view, sdir.can_edit, delete=sdir.can_delete)
                 add("dir_agencies", sdir.can_view, sdir.can_edit, delete=sdir.can_delete)
             # Настройки: старое единое право `settings` → per-раздел (остатки/статьи/
-            # воронки/услуги). settings_field_audit (раньше был под `settings`) и
-            # settings_audit (раньше был admin-only) намеренно НЕ переносим: по новой
+            # воронки/услуги). settings_audit (раньше был admin-only) намеренно НЕ переносим: по новой
             # модели доступ к настройкам default-deny, выдаётся ролям точечно через
             # конструктор ролей (админ и так видит всё через bypass).
             st = rows.get("settings")
@@ -370,44 +369,8 @@ def seed_stage_catalog():
 seed_stage_catalog()
 
 
-def backfill_deal_our_stage():
-    """Сидирует our_stage_id сделкам без него: (pipeline, bitrix_stage) → stage_key
-    (через sales_bitrix_stage_map) → первая наша стадия с этим stage_key. Работает
-    со всеми сделками независимо от происхождения; фолбэк — не трогаем (остаётся NULL)."""
-    from app.sales.models import SalesDeal, SalesStage, SalesBitrixStageMap
-    from app.sales.normalize import normalize_name
-    db = SessionLocal()
-    try:
-        stages = db.query(SalesStage).all()
-        if not stages:
-            return
-        # первая (по phase/sort) стадия на каждый stage_key
-        from app.sales.catalog import Catalog
-        cat = Catalog(db)
-        first_by_key = {}
-        for s in cat.stages:
-            if s.stage_key and s.stage_key not in first_by_key:
-                first_by_key[s.stage_key] = s.id
-        # карта (воронка, стадия) → stage_key
-        rows = db.query(SalesBitrixStageMap).all()
-        key_by_pair = {(normalize_name(r.pipeline), normalize_name(r.bitrix_stage)): r.stage_key for r in rows}
-        changed = 0
-        for d in db.query(SalesDeal).filter(SalesDeal.our_stage_id.is_(None)).all():
-            key = key_by_pair.get((normalize_name(d.pipeline or ""), normalize_name(d.bitrix_stage or "")))
-            sid = first_by_key.get(key) if key else None
-            if sid:
-                d.our_stage_id = sid; changed += 1
-        if changed:
-            db.commit()
-            logger.info(f"backfill_deal_our_stage: проставлено {changed} сделкам")
-    except Exception:
-        logger.exception("backfill_deal_our_stage: ошибка")
-        db.rollback()
-    finally:
-        db.close()
-
-
-backfill_deal_our_stage()
+# backfill_deal_our_stage (засев our_stage_id по карте стадий Битрикса) удалён 03.10.2026 —
+# Битрикс больше не источник; 36 архивных сделок без нашей стадии оставлены как есть.
 
 
 def backfill_sales_scope():
@@ -547,26 +510,13 @@ async def _maintenance_gate(request: Request, call_next):
 @app.middleware("http")
 async def _neutralize_ad_query(request: Request, call_next):
     """Блокировщики рекламы (uBlock/AdGuard) режут запросы с "advertiser" в URL.
-    Фронт шлёт нейтральные producer_id и /reconcile/producers — здесь возвращаем
-    исходные имена, чтобы эндпоинты/фильтры не менять (единая точка на бэке).
-
-    Путь понадобился отдельно от параметра: сверка справочников адресуется как
-    /api/sales/reconcile/{kind}/…, и при kind=advertisers блокировщик резал
-    /advertisers/link, /advertisers/deal-counts и остальные операции. Запрос при
-    этом не доходит до сервера вообще: в браузере ошибка без ответа, в логах —
-    ничего. Адрес, ЗАКАНЧИВАЮЩИЙСЯ на advertisers, проходил, поэтому список
-    загружался, а любое действие над ним — нет (проверено на проде 2026-08-23).
+    Фронт шлёт нейтральный producer_id — здесь возвращаем исходное имя, чтобы
+    эндпоинты/фильтры не менять (единая точка на бэке). Подмена пути
+    /reconcile/producers ушла вместе со сверкой с Битриксом (03.10.2026).
     """
     qs = request.scope.get("query_string", b"")
     if b"producer_id" in qs:
         request.scope["query_string"] = qs.replace(b"producer_id", b"advertiser_id")
-    path = request.scope.get("path", "")
-    if "/reconcile/producers" in path:
-        request.scope["path"] = path.replace("/reconcile/producers", "/reconcile/advertisers")
-        raw = request.scope.get("raw_path")
-        if raw:
-            request.scope["raw_path"] = raw.replace(b"/reconcile/producers",
-                                                    b"/reconcile/advertisers")
     return await call_next(request)
 
 
@@ -594,8 +544,7 @@ app.include_router(media_plans.router, prefix="/api/sales/media-plans", tags=["s
 app.include_router(notify_settings.router, prefix="/api/notifications/settings",
                    tags=["notifications"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
-app.include_router(sales_reconcile.router, prefix="/api/sales/reconcile", tags=["sales"])
-# Монтируется ПОСЛЕ справочников/сверки, чтобы их префиксы не перехватывались
+# Монтируется ПОСЛЕ справочников, чтобы их префиксы не перехватывались
 app.include_router(sales_dashboard.router, prefix="/api/sales", tags=["sales"])
 # Очередь аккаунта — тот же префикс: адреса /api/sales/account-* не менялись при выносе
 # в отдельный роутер (app/routers/account_dashboard.py).

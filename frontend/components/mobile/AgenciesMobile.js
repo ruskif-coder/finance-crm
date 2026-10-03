@@ -6,7 +6,7 @@ import BottomSheet from './BottomSheet'
 import DirectoryMobile from './DirectoryMobile'
 
 const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }
-const nm = (a) => a.name_ru || a.name_en || a.short_name || `#${a.bx_id || a.id}`
+const nm = (a) => a.name_ru || a.name_en || a.short_name || `#${a.id}`
 const sub = (a) => a.name_en || a.short_name || ''
 
 function AgCard({ a, open, onToggle, onEdit, canEdit }) {
@@ -16,7 +16,6 @@ function AgCard({ a, open, onToggle, onEdit, canEdit }) {
       <div onClick={onToggle} style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Marker c={a.sk_percent > 0 ? 'var(--accent)' : 'var(--text-faint)'} size={8} />
-          {a.bx_id && <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-faint)' }}>#{a.bx_id}</span>}
           <span style={{ marginLeft: 'auto', background: 'var(--accent-tint)', color: 'var(--accent)', borderRadius: 8, padding: '4px 9px', fontFamily: MONO, fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>СК {Math.round(a.sk_percent || 0)}%</span>
         </div>
         <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3, wordBreak: 'break-word' }}>{nm(a)}</div>

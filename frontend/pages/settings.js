@@ -9,7 +9,7 @@ import { isAdmin } from '../lib/auth'
 // Разделы, права и навигация между ними — components/SettingsTabs.js.
 const TAB_TO_ROUTE = {
   balances: 'balances', articles: 'articles', pipelines: 'pipelines', services: 'services',
-  users: 'users', roles: 'roles', audit: 'audit', field_audit: 'field-audit',
+  users: 'users', roles: 'roles', audit: 'audit',
 }
 
 export default function SettingsRedirect() {

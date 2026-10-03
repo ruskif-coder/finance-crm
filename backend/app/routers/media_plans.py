@@ -585,65 +585,42 @@ class DealBriefIn(BaseModel):
 
 
 @router.get("/{plan_id}/deal-brief")
-def mp_get_deal_brief(plan_id: int, refresh: int = 0, db: Session = Depends(get_db),
+def mp_get_deal_brief(plan_id: int, db: Session = Depends(get_db),
                       current_user: User = Depends(MP_ED_VIEW)):
     """Бриф связанной сделки для конструктора МП (по праву МП, без прав продаж).
-    Ленивая подгрузка из Битрикса (поле ufCrm_1761318500) + кэш, как в реестре сделок."""
+    Только из нашей БД: подгрузки из Битрикса нет с 03.10.2026 — Битрикс больше не источник."""
     p = db.query(SalesMediaPlan).filter(SalesMediaPlan.id == plan_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Медиаплан не найден")
     _guard_owned(db, p, current_user, "media_plans_editor")
     from app.sales.models import SalesDeal
-    from app.routers.sales_dashboard import BRIEF_FIELD, _deal_is_local
-    from datetime import datetime as _dt
     deal = db.query(SalesDeal).filter(SalesDeal.id == p.deal_id).first() if p.deal_id else None
     if not deal:
-        return {"has_deal": False, "deal_id": None, "brief": "", "is_local": None, "synced_at": None}
-    # Бриф — содержание сделки: чужую не читаем и в Битрикс за ней не ходим.
+        return {"has_deal": False, "deal_id": None, "brief": "", "synced_at": None}
+    # Бриф — содержание сделки: чужую не читаем.
     _deal_for_plan(db, deal.id, current_user)
-    if (deal.brief is None or refresh) and not _deal_is_local(deal):
-        from app.sales.bitrix.transport import vibecode_get
-        try:
-            r = vibecode_get(f"/deals/{deal.bitrix_id}", {})
-            d = (r.get("data") if isinstance(r, dict) else None) or {}
-            deal.brief = d.get(BRIEF_FIELD) or ""
-            deal.brief_synced_at = _dt.utcnow()
-            db.commit()
-        except Exception:
-            if deal.brief is None:
-                raise HTTPException(status_code=502, detail="Битрикс недоступен")
     return {"has_deal": True, "deal_id": deal.id, "brief": deal.brief or "",
-            "is_local": _deal_is_local(deal),
             "synced_at": deal.brief_synced_at.isoformat() if deal.brief_synced_at else None}
 
 
 @router.put("/{plan_id}/deal-brief")
 def mp_save_deal_brief(plan_id: int, data: DealBriefIn, db: Session = Depends(get_db),
                        current_user: User = Depends(MP_EDIT)):
-    """Сохранение брифа связанной сделки (двусторонняя запись в Битрикс для не-локальных)."""
+    """Сохранение брифа связанной сделки — в нашу БД (в Битрикс не пишем с 03.10.2026)."""
     p = db.query(SalesMediaPlan).filter(SalesMediaPlan.id == plan_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Медиаплан не найден")
     _guard_owned(db, p, current_user, "media_plans_editor")
     if not p.deal_id:
         raise HTTPException(status_code=400, detail="Медиаплан не привязан к сделке")
-    from app.routers.sales_dashboard import BRIEF_FIELD, _deal_is_local
     from datetime import datetime as _dt
     deal = _deal_for_plan(db, p.deal_id, current_user)
     text_val = data.brief or ""
-    pushed = False
-    if not _deal_is_local(deal):
-        from app.sales.bitrix.transport import vibecode_patch
-        try:
-            vibecode_patch(f"/deals/{deal.bitrix_id}", {BRIEF_FIELD: text_val})
-            pushed = True
-        except Exception:
-            raise HTTPException(status_code=502, detail="Битрикс отклонил запись брифа")
     deal.brief = text_val
     deal.brief_synced_at = _dt.utcnow()
     db.commit()
     log_action(db, current_user, "save_deal_brief_mp", "media_plan", p.id, f"бриф {len(text_val)} симв.")
-    return {"brief": deal.brief, "pushed_to_bitrix": pushed, "is_local": _deal_is_local(deal)}
+    return {"brief": deal.brief}
 
 
 def _plan_deal_for_brief(db, plan_id: int, current_user):
@@ -748,8 +725,7 @@ def mp_deal_prefill(deal_id: int, db: Session = Depends(get_db),
     """Данные сделки для префилла нового МП (создание МП из карточки сделки): реквизиты
     брифа + free-text бриф. Доступ по праву конструктора МП."""
     from app.sales.models import SalesDeal
-    from app.routers.sales_dashboard import BRIEF_FIELD, _deal_is_local, _assert_deal_in_scope
-    from datetime import datetime as _dt
+    from app.routers.sales_dashboard import _assert_deal_in_scope
     from app.sales.models import SalesRep
     deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
     if not deal:
@@ -763,16 +739,6 @@ def mp_deal_prefill(deal_id: int, db: Session = Depends(get_db),
             return None
         r = db.query(SalesRep.user_id).filter(SalesRep.id == rid).first()
         return r[0] if r else None
-    if deal.brief is None and not _deal_is_local(deal):
-        from app.sales.bitrix.transport import vibecode_get
-        try:
-            r = vibecode_get(f"/deals/{deal.bitrix_id}", {})
-            d = (r.get("data") if isinstance(r, dict) else None) or {}
-            deal.brief = d.get(BRIEF_FIELD) or ""
-            deal.brief_synced_at = _dt.utcnow()
-            db.commit()
-        except Exception:
-            pass
     return {
         "deal_id": deal.id, "title": deal.title,
         "advertiser_id": deal.advertiser_id, "brand_id": deal.brand_id,
@@ -783,7 +749,7 @@ def mp_deal_prefill(deal_id: int, db: Session = Depends(get_db),
         "rows": _prefill_rows(db, deal),   # готовая строка размещения (как в конвейере)
         "sales_rep_id": _rep_user(deal.sales_rep_id),         # user id (для owners МП)
         "account_manager_id": _rep_user(deal.account_manager_id),
-        "brief": deal.brief or "", "is_local": _deal_is_local(deal),
+        "brief": deal.brief or "",
     }
 
 
@@ -917,9 +883,11 @@ _PLAN_TO_DEAL = (("advertiser_id", "advertiser_id"), ("brand_id", "brand_id"),
 _PLAN_REPS = (("sales_rep_id", "sales_rep_id"),
               ("account_manager_id", "account_manager_id"),
               ("traffic_manager_id", "traffic_manager_id"))
-# Поля, которые трогает кнопка «⟳ Обновить из Битрикса» (app/sales/bitrix/deal_sync.py,
+# Поля, которые трогала кнопка «⟳ Обновить из Битрикса» (модуль синка сделки,
 # setf). Только их и нужно закрывать строкой override: остальные она и так не трогает,
 # а лишняя строка попала бы в очередь заливки НАШИХ правок обратно в Битрикс.
+# 03.10.2026 кнопка, её модуль и заливка в Битрикс удалены (Битрикс больше не источник);
+# строки override остались отметкой «правлено вручную» в реестре (manual_fields).
 _SYNC_TOUCHES = {"advertiser_id", "brand_id", "sales_rep_id", "account_manager_id",
                  "amount", "amount_with_vat", "period_from"}
 

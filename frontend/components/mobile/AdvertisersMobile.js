@@ -32,10 +32,10 @@ function AdvCard({ a, open, onToggle, onEdit, onDeals, canEdit }) {
   return (
     <div style={{ ...CARD, padding: '13px 14px', fontFamily: UI }}>
       <div onClick={onToggle} style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {/* верхняя строка: маркер · #bx_id · чип «сделок» / «брендов» */}
+        {/* верхняя строка: маркер · #id · чип «сделок» / «брендов» (BX_ID не показываем с 03.10.2026) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Marker c={vidColor(a)} size={8} />
-          <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-faint)' }}>#{a.bx_id || a.id}</span>
+          <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-faint)' }}>#{a.id}</span>
           {a.deals > 0
             ? <span style={{ marginLeft: 'auto', background: 'var(--accent-tint)', color: 'var(--accent)', borderRadius: 8, padding: '4px 9px', fontFamily: MONO, fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>сделок: {grp(a.deals)}</span>
             : brands.length > 0

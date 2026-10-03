@@ -26,7 +26,6 @@ const SECTIONS = [
   { id: 'pipelines', label: 'Воронки', href: '/settings/pipelines', perm: 'settings_pipelines' },
   { id: 'stages', label: 'Стадии', href: '/settings/stages', perm: 'settings_pipelines' },
   { id: 'services', label: 'Услуги', href: '/settings/services', perm: 'settings_services' },
-  { id: 'field_audit', label: 'Сверка полей', href: '/settings/field-audit', perm: 'settings_field_audit' },
   { id: 'audit', label: 'Журнал', href: '/settings/audit', perm: 'settings_audit' },
   // Рядом с «Журналом» намеренно: журнал — «что сделали», бэклог — «что может выстрелить».
   { id: 'backlog', label: 'Бэклог отладки', href: '/settings/backlog', perm: 'settings_backlog' },
