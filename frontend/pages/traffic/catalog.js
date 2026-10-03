@@ -10,7 +10,7 @@
  *
  * Слева реестр площадок (из реестра паблишеров — сюда попадают только заведённые там).
  * Справа выбранная площадка: вкладки поверхностей web/app (`sales_publisher_surfaces`), у
- * каждой свой ms_publisher_id и блок по умолчанию «кукуха2» (авто-цепляется к креативу, но
+ * каждой свой ms_publisher_id и блок по умолчанию «Block SIMB» (авто-цепляется к креативу, но
  * скрыт из статистики кабинета), ниже — наполняемая таблица блоков. Первичное наполнение —
  * импорт из xlsx (scripts.import_publisher_blocks), дальше правится здесь.
  *
@@ -462,7 +462,7 @@ export default function TrafficCatalog() {
                           value={surface.ms_publisher_id || ''} onChange={(e) => patchSurface({ ms_publisher_id: e.target.value })} />
                       </label>
                       <label style={{ fontSize: 12 }}>
-                        <div style={{ ...CAP, marginBottom: 4 }}>Блок по умолчанию · «кукуха2»</div>
+                        <div style={{ ...CAP, marginBottom: 4 }}>Блок по умолчанию · «Block SIMB»</div>
                         <input style={{ ...inp, width: '100%', fontFamily: MONO }} disabled={!mayEdit}
                           value={surface.default_ms_block_id || ''} onChange={(e) => patchSurface({ default_ms_block_id: e.target.value })} />
                       </label>

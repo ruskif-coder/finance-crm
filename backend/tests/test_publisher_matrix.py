@@ -17,10 +17,17 @@ TODAY = date(2026, 9, 29)          # вторник
     (("согласование", 1, 0, 0, None), "unsent"),
     (("согласование", 1, 1, 0, datetime(2026, 9, 28, 15)), "waiting"),   # 1 раб. день
     (("согласование", 1, 1, 0, datetime(2026, 9, 25, 15)), "waiting"),   # пт → вт = 2
-    (("согласование", 1, 1, 0, datetime(2026, 9, 24, 15)), "late"),      # чт → вт = 3
+    (("согласование", 1, 1, 0, datetime(2026, 9, 24, 15)), "waiting"),   # чт → вт = 3
+    (("согласование", 1, 1, 0, datetime(2026, 9, 23, 15)), "late"),      # ср → вт = 4
 ])
 def test_look(args, tone):
     assert M.look(*args, TODAY)["tone"] == tone
+
+
+def test_late_is_three_workdays():
+    """«Просрочено» — дольше ТРЁХ рабочих дней (владелец 03.10.2026), одно правило
+    на матрицу и «Подвисшие»."""
+    assert M.LATE_WORKDAYS == 3
 
 
 def test_weekend_is_not_counted():
@@ -124,4 +131,40 @@ def test_launched_deal_comes_first_and_cells_carry_screens():
             assert set(sc) == {"state", "got", "total"} and sc["got"] <= sc["total"]
     finally:
         db.rollback()
+        db.close()
+
+
+def test_rework_closed_by_replacing_set_is_not_counted():
+    """Доработку закрыл новый комплект (replaces_set_id) — старая пара остаётся историей
+    и в «на доработке» не считается (ревью «Подвисших» 03.10.2026: та же утечка)."""
+    from sqlalchemy import text
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        hit = db.execute(text("""
+            SELECT to_char(d.period_from, 'YYYY-MM') AS m, t.deal_id, t.publisher_id
+              FROM launch_prep_pair p
+              JOIN launch_prep_target t ON t.id = p.target_id
+              JOIN sales_deals d ON d.id = t.deal_id
+              JOIN launch_prep_review r ON r.pair_id = p.id AND r.kind = 'площадка'
+                                       AND r.verdict = 'на доработку'
+             WHERE p.withdrawn_at IS NULL
+               AND EXISTS (SELECT 1 FROM launch_prep_creative_set n
+                            WHERE n.replaces_set_id = p.set_id AND n.publisher_id = t.publisher_id)
+             LIMIT 1""")).mappings().first()
+        if not hit:
+            pytest.skip("на стенде нет заменённой доработки")
+        open_rework = db.execute(text("""
+            SELECT count(*) FROM launch_prep_pair p
+              JOIN launch_prep_target t ON t.id = p.target_id
+              JOIN launch_prep_review r ON r.pair_id = p.id AND r.kind = 'площадка'
+                                       AND r.verdict = 'на доработку'
+             WHERE t.deal_id = :d AND t.publisher_id = :p AND p.withdrawn_at IS NULL
+               AND NOT EXISTS (SELECT 1 FROM launch_prep_creative_set n
+                                WHERE n.replaces_set_id = p.set_id AND n.publisher_id = t.publisher_id)
+        """), {"d": hit["deal_id"], "p": hit["publisher_id"]}).scalar()
+        cell = next(c for c in M.load(db, hit["m"])["cells"]
+                    if c["deal_id"] == hit["deal_id"] and c["publisher_id"] == hit["publisher_id"])
+        assert cell["rework"] == open_rework
+    finally:
         db.close()

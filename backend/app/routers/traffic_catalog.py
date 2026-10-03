@@ -5,7 +5,7 @@
 
 Модель переиспользует иерархию модуля паблишеров, а не плодит свою:
   · поверхность площадки — `sales_publisher_surfaces` (web|app). На ней МС-реквизиты:
-    `ms_publisher_id` (id паблишера в DSP) и `default_ms_block_id` («кукуха2» —
+    `ms_publisher_id` (id паблишера в DSP) и `default_ms_block_id` («Block SIMB» —
     блок по умолчанию, авто-цепляется к креативу, но скрыт из статистики кабинета);
   · рекламные блоки — `publisher_block`, вешаются на поверхность через `surface_id`.
 ios/android (платформы `sales_publisher_surface_platforms`) — на будущее: в файле app пока

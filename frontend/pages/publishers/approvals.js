@@ -6,12 +6,14 @@ import Navbar, { can, firstAllowedHref } from '@/components/Navbar'
 import { MONO, UI, card, CAP } from '@/components/salesTableKit'
 import MonthPicker from '@/components/MonthPicker'
 import ApprovalsMatrix, { TONE, short, totalsOf } from '@/components/publishers/ApprovalsMatrix'
+import StuckView from '@/components/publishers/StuckView'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { todayMsk } from '@/lib/dates'
 
 // Паблишеры → «Согласования»: матрица площадка × РК месяца (владелец 29.09.2026).
 // Две вкладки на одних данных: светофор согласования и план площадок (показы и план
-// себестоимости по закупочному CPM из реестра). Только чтение, право dir_publishers_approvals.
+// себестоимости по закупочному CPM из реестра). Третья — «Подвисшие» (03.10.2026): свой
+// список без периода, components/publishers/StuckView. Только чтение, право dir_publishers_approvals.
 // Мобильной версии нет намеренно (решение владельца): широкая матрица на телефоне не читается.
 //
 // Раскладка — хендофф docs/матрица сайтов.zip: страница не скроллится, матрица занимает
@@ -58,7 +60,7 @@ export default function PublisherApprovals() {
       .then(r => { setData(r.data); setErr('') })
       .catch(e => setErr(e?.response?.data?.detail || 'Не удалось загрузить матрицу'))
   }, [month, service])
-  useEffect(() => { if (ready) load() }, [ready, load])
+  useEffect(() => { if (ready && view !== 'stuck') load() }, [ready, load, view])
   useRefreshOnReturn(load)
 
   const cell = useMemo(() => Object.fromEntries((data?.cells || [])
@@ -113,7 +115,7 @@ export default function PublisherApprovals() {
     return [
       ['РК в периоде', deals.length], ['Пар площадка×РК', t.n],
       ['Согласовано', n.agreed, TONE.agreed.kpi], ['Ждём ответа', n.waiting, TONE.waiting.kpi],
-      [`Ждём > ${data?.late_workdays ?? 2} дн.`, n.late, TONE.late.kpi],
+      [`Ждём > ${data?.late_workdays ?? 3} дн.`, n.late, TONE.late.kpi],
       ['На доработке', n.rework, TONE.rework.kpi],
       ['Отказ', n.refused, TONE.refused.kpi], ['Не отправлено', n.unsent, TONE.unsent.kpi],
     ]
@@ -129,7 +131,7 @@ export default function PublisherApprovals() {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', flex: '0 0 auto' }}>
             <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, letterSpacing: '-.025em' }}>Паблишеры</h1>
-            <span style={{ ...CAP, marginBottom: 0, paddingTop: 6 }}>матрица согласований · площадка × РК</span>
+            <span style={{ ...CAP, marginBottom: 0, paddingTop: 6 }}>{view === 'stuck' ? 'что подвисло на площадках' : 'матрица согласований · площадка × РК'}</span>
             {/* Переключатель вида — справа в шапке, в виде плашки вкладок (владелец 29.09). */}
             <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 12 }}>
               {view === 'plan' && (
@@ -140,10 +142,12 @@ export default function PublisherApprovals() {
               <span style={{ display: 'flex', gap: 4, padding: 6, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 14, boxShadow: 'var(--shadow-card)' }}>
                 <button style={segBtn(view === 'appr')} onClick={() => setView('appr')}>Согласования</button>
                 <button style={segBtn(view === 'plan')} onClick={() => setView('plan')}>План площадок</button>
+                <button style={segBtn(view === 'stuck')} onClick={() => setView('stuck')}>Подвисшие</button>
               </span>
             </span>
           </div>
 
+          {view === 'stuck' ? <StuckView /> : (<>
           <div style={{ display: 'flex', flex: '0 0 auto', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 18, boxShadow: 'var(--shadow-card)', padding: '4px 8px' }}>
             {kpis.map(([label, value, color, small], i) => (
               <div key={label} style={{ flex: 1, minWidth: 0, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 7, borderRight: i < kpis.length - 1 ? '1px solid var(--border-inner)' : 'none' }}>
@@ -178,7 +182,7 @@ export default function PublisherApprovals() {
               {view === 'appr' && Object.entries(TONE).map(([k, t]) => (
                 <span key={k} style={{ display: 'inline-flex', gap: 6, alignItems: 'center', color: 'var(--text-secondary)', fontSize: 11.5 }}>
                   <i style={{ width: 10, height: 10, borderRadius: 3, background: t.bg, boxShadow: `inset 0 0 0 1px ${t.bd}` }} />
-                  {k === 'late' ? `ждём > ${data?.late_workdays ?? 2} раб. дн.` : t.label}
+                  {k === 'late' ? `ждём > ${data?.late_workdays ?? 3} раб. дн.` : t.label}
                 </span>
               ))}
               {view === 'plan' && !!service && data && !data.plan_by_service && (
@@ -207,6 +211,7 @@ export default function PublisherApprovals() {
             по худшему состоянию; ячейка — состояние получателя «Сбора запуска», цифры — согласовано / отправлено комплектов;
             себестоимость — план показов × закупочный CPM площадки / 1000, до НДС. Клик по ячейке открывает креативы сделки.
           </div>
+          </>)}
         </div>
       </div>
     </>

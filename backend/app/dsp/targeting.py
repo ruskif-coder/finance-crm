@@ -169,7 +169,7 @@ def _media_plan(db: Session, deal_id: int) -> tuple:
 
 def _blocks(db: Session, publisher_ids) -> Dict[tuple, list]:
     """(площадка, поверхность) → id блоков DSP: активные блоки реестра и блок по умолчанию
-    поверхности («кукуха2» — DSP цепляет его к креативу сам; выпади он из белого списка,
+    поверхности («Block SIMB» — DSP цепляет его к креативу сам; выпади он из белого списка,
     креатив перестал бы показываться и там)."""
     ids = list(publisher_ids)
     if not ids:

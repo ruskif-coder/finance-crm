@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""«Трафики → Статистика»: «кукуха» площадки за день делится между РК по их суточным
+"""«Трафики → Статистика»: «Block SIMB» площадки за день делится между РК по их суточным
 показам DSP на площадке; у Adfox база = общая (владелец 03.10.2026)."""
 from datetime import date
 
@@ -15,7 +15,7 @@ def _wire(monkeypatch, fact, totals, kuk, camps=(1, 2)):
             "deal": f"DEAL0{c}", "deal_id": c} for c in camps})
     monkeypatch.setattr(st, "_fact", lambda db, ids: fact)
     monkeypatch.setattr(st, "_dsp_totals", lambda db, cells: totals)
-    monkeypatch.setattr(st, "_kukuha", lambda db, cells: kuk)
+    monkeypatch.setattr(st, "_block_simb", lambda db, cells: kuk)
 
     class _Db:
         def execute(self, *a, **k):
@@ -34,32 +34,32 @@ def _f(c, pub, day, shows, adfox=False):
 
 
 def test_daily_share_per_campaign(monkeypatch):
-    # День 1: на площадке 10 у РК1 300, у РК2 100 (всего 400), кукуха 80 → 60 и 20.
-    # День 2: только РК1 200 из 200, кукуха 50 → 50.
+    # День 1: на площадке 10 у РК1 300, у РК2 100 (всего 400), Block SIMB 80 → 60 и 20.
+    # День 2: только РК1 200 из 200, Block SIMB 50 → 50.
     db = _wire(monkeypatch,
                [_f(1, 10, D1, 300), _f(2, 10, D1, 100), _f(1, 10, D2, 200)],
                {(10, D1): 400, (10, D2): 200}, {(10, D1): 80, (10, D2): 50})
     rows = {r["campaign_id"]: r for r in st.compute(db)["rows"]}
-    assert rows[1]["kukuha"] == 110 and rows[1]["total"] == 500 and rows[1]["base"] == 390
-    assert rows[2]["kukuha"] == 20 and rows[2]["base"] == 80
+    assert rows[1]["block_simb"] == 110 and rows[1]["total"] == 500 and rows[1]["base"] == 390
+    assert rows[2]["block_simb"] == 20 and rows[2]["base"] == 80
 
 
 def test_denominator_counts_all_campaigns_not_only_current(monkeypatch):
     # Текущая РК1 — 100 из 400 показов площадки за день (остальное у прошлых РК):
-    # её доля кукухи 25 %, а не 100 %.
+    # её доля Block SIMB 25 %, а не 100 %.
     db = _wire(monkeypatch, [_f(1, 10, D1, 100)], {(10, D1): 400}, {(10, D1): 80}, camps=(1,))
-    assert st.compute(db)["rows"][0]["kukuha"] == 20
+    assert st.compute(db)["rows"][0]["block_simb"] == 20
 
 
-def test_adfox_has_no_kukuha(monkeypatch):
+def test_adfox_has_no_block_simb(monkeypatch):
     db = _wire(monkeypatch, [_f(1, 10, D1, 500, adfox=True)], {}, {(10, D1): 80}, camps=(1,))
     r = st.compute(db)["rows"][0]
-    assert (r["total"], r["adfox"], r["kukuha"], r["base"]) == (500, 500, 0, 500)
+    assert (r["total"], r["adfox"], r["block_simb"], r["base"]) == (500, 500, 0, 500)
 
 
-def test_kukuha_never_exceeds_campaign_shows(monkeypatch):
+def test_block_simb_never_exceeds_campaign_shows(monkeypatch):
     db = _wire(monkeypatch, [_f(1, 10, D1, 50)], {(10, D1): 50}, {(10, D1): 999}, camps=(1,))
-    assert st.compute(db)["rows"][0]["kukuha"] == 50
+    assert st.compute(db)["rows"][0]["block_simb"] == 50
 
 
 def test_route_has_own_permission():
@@ -90,4 +90,4 @@ def test_rows_carry_publisher_cpm(monkeypatch):
 def test_rounding_half_up_like_postgres(monkeypatch):
     """Кабинет (SQL round) и страница (Python) округляют одинаково: 2,5 → 3."""
     db = _wire(monkeypatch, [_f(1, 10, D1, 5)], {(10, D1): 10}, {(10, D1): 5}, camps=(1,))
-    assert st.compute(db)["rows"][0]["kukuha"] == 3
+    assert st.compute(db)["rows"][0]["block_simb"] == 3

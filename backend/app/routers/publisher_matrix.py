@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.launch_prep import matrix
+from app.launch_prep import matrix, stuck
 from app.models import User
 from app.permissions import require_permission
 
@@ -25,3 +25,9 @@ def get_matrix(month: Optional[str] = None, service_id: Optional[int] = None,
     if not re.fullmatch(r"20\d\d-(0[1-9]|1[0-2])", month):
         raise HTTPException(status_code=400, detail="Месяц — в виде ГГГГ-ММ, например 2026-10")
     return {**matrix.load(db, month, service_id), "months": matrix.months(db)}
+
+
+@router.get("/stuck")
+def get_stuck(db: Session = Depends(get_db), current_user: User = Depends(VIEW)):
+    """Вкладка «Подвисшие» — app/launch_prep/stuck.py."""
+    return stuck.load(db)

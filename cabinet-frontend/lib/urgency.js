@@ -25,14 +25,30 @@ export const daysTo = (iso, today) => {
   return Math.round((d - new Date(today.getFullYear(), today.getMonth(), today.getDate())) / 864e5)
 }
 
+// «Срочно» — до старта не больше трёх РАБОЧИХ дней (владелец 03.10.2026; было —
+// календарных). То же правило и порог у нас на экране «Подвисшие»
+// (backend app/launch_prep/stuck.py: горит / срочно / терпит).
 export const SOON_DAYS = 3
+
+/** Рабочих дней от сегодня до даты (выходные не считаются); дата в прошлом — 0. */
+export const workdaysTo = (iso, today) => {
+  const n = daysTo(iso, today)
+  if (n === null || n <= 0) return n === null ? null : 0
+  const d = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  let w = 0
+  for (let i = 0; i < n; i++) {
+    d.setDate(d.getDate() + 1)
+    if (d.getDay() !== 0 && d.getDay() !== 6) w++
+  }
+  return w
+}
 
 /** `'overdue' | 'soon' | 'normal'` — по дате старта кампании. */
 export const urgency = (periodFrom, today) => {
   const n = daysTo(periodFrom, today)
   if (n === null) return 'normal'
   if (n < 0) return 'overdue'
-  return n <= SOON_DAYS ? 'soon' : 'normal'
+  return workdaysTo(periodFrom, today) <= SOON_DAYS ? 'soon' : 'normal'
 }
 
 /** Подпись к дате: «через 4 дн.» / «сегодня» / «7 дн. назад». */

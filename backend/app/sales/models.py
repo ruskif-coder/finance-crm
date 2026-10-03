@@ -1144,7 +1144,7 @@ class SalesPublisherSurface(Base):
     app_links = Column(String(16))
     adfox_extra_code = Column(Text)
     # МС-реквизиты DSP на поверхность (миграция 2026-09-01_traffic_catalog.sql): id паблишера
-    # в DSP и блок по умолчанию «кукуха2» (авто-цепляется к креативу, скрыт из
+    # в DSP и блок по умолчанию «Block SIMB» (авто-цепляется к креативу, скрыт из
     # статистики кабинета). На каждую web/app — свои; ios/android (платформы) — на будущее.
     ms_publisher_id = Column(String)
     default_ms_block_id = Column(String)

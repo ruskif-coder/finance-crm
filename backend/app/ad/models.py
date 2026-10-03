@@ -129,7 +129,7 @@ class PublisherBlock(Base):
     Вешается на существующую поверхность площадки `sales_publisher_surfaces` (web/app) —
     отдельной таблицы под поверхности НЕ заводим, переиспользуем модуль паблишеров
     (миграция `2026-09-01_traffic_catalog.sql`). МС-реквизиты поверхности (`ms_publisher_id`,
-    `default_ms_block_id`/«кукуха2») лежат на самой `sales_publisher_surfaces`. Старые
+    `default_ms_block_id`/«Block SIMB») лежат на самой `sales_publisher_surfaces`. Старые
     колонки `publisher_id`/`surface`/`network` — денормализованные, заполняются импортёром;
     источник истины по принадлежности — `surface_id`.
     """

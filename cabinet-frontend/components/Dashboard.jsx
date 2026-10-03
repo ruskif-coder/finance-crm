@@ -43,6 +43,9 @@ import { isAppLink, landingWeb } from '../lib/landing'
 import { downloadFile } from '../lib/download'
 import { guideSeen, markGuideSeen } from './guide/seen'
 
+// Строка в одну линию с многоточием — колонка креатива в карточке задания.
+const ELLIPSIS = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+
 // Руководство — отдельным чанком: слайды нужны только тому, кто открыл окно.
 const Guide = dynamic(() => import('./guide/Guide'), { ssr: false, loading: () => null })
 
@@ -120,7 +123,7 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
      размещение уже должно идти.
 
        старт прошёл          → просрочено (красный)
-       до старта ≤ 3 дней    → срочно (жёлтый)
+       до старта ≤ 3 раб. дн. → срочно (жёлтый; рабочие — с 03.10.2026)
        иначе                 → ждёт решения (нейтральный)
 
      Сколько именно висит, видно отдельной подписью — это ориентир, а не приговор. */
@@ -231,11 +234,15 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
             <circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" />
           </svg>
         </span>
-        <span style={{ display: 'flex', flexDirection: 'column', minWidth: 200 }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>
+        {/* Колонка сжимается, текст обрезается многоточием: длинная служебная строка
+            («…старт уже прошёл · эскалация менеджеру») раздвигала её и выталкивала
+            «Согласовать» на новую строку (03.10.2026). Полный текст — в подсказке. */}
+        <span style={{ display: 'flex', flexDirection: 'column', flex: '1 1 200px', minWidth: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, ...ELLIPSIS }}
+            title={`Креатив №${t.creative_no}${t.creative_title ? ` — ${t.creative_title}` : ''}`}>
             Креатив №{t.creative_no}{t.creative_title ? ` — ${t.creative_title}` : ''}
           </span>
-          <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.faint }}>
+          <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.faint, ...ELLIPSIS }}>
             {[t.form === 'BannerHtml5' ? 'banner html5' : t.form,
               preview?.size,
               `ждёт ${t.waiting_days} дн.`,
@@ -243,7 +250,6 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
              ].filter(Boolean).join(' · ')}
           </span>
         </span>
-        <span style={{ flex: 1 }} />
         {t.url_state === 'есть' && (
           <a href={safeHref(landingWeb(t.advertiser_url))} target="_blank" rel="noreferrer"
             style={{ ...btnSm(false), textDecoration: 'none', display: 'inline-flex',

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Кабинет площадки показывает факт ЗА ВЫЧЕТОМ «кукухи» (владелец 03.10.2026).
+"""Кабинет площадки показывает факт ЗА ВЫЧЕТОМ «Block SIMB» (владелец 03.10.2026).
 
 Правило живёт в двух местах по необходимости: витрина `pub.campaign_v1` (SQL — кабинет
 читает её ролью базы, Python ему недоступен) и `app/traffic/stats.py` (страница
@@ -40,4 +40,4 @@ def test_view_fact_equals_stats_base():
 def test_view_subtracts_block_stat():
     body = SessionLocal().execute(text(
         "SELECT pg_get_viewdef('pub.campaign_v1'::regclass)")).scalar().lower()
-    assert "dsp_block_stat" in body, "витрина кабинета не вычитает «кукуху»"
+    assert "dsp_block_stat" in body, "витрина кабинета не вычитает «Block SIMB»"

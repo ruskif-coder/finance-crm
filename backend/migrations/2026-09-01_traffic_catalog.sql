@@ -11,7 +11,7 @@
 
 -- 1. МС-реквизиты на поверхность площадки (свои на каждую web/app).
 ALTER TABLE sales_publisher_surfaces ADD COLUMN IF NOT EXISTS ms_publisher_id VARCHAR;      -- id паблишера в DSP
-ALTER TABLE sales_publisher_surfaces ADD COLUMN IF NOT EXISTS default_ms_block_id VARCHAR;  -- «кукуха2»: авто-цепляется к креативу, скрыт из статистики кабинета
+ALTER TABLE sales_publisher_surfaces ADD COLUMN IF NOT EXISTS default_ms_block_id VARCHAR;  -- «Block SIMB»: авто-цепляется к креативу, скрыт из статистики кабинета
 
 -- 2. Блок вешаем на существующую поверхность, а не на дубль publisher_surface.
 -- Очистка нужна ТОЛЬКО при первом накате: строки указывали на ошибочную publisher_surface,

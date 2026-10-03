@@ -15,7 +15,7 @@ import { grp0, grp } from '@/lib/salesFormat'
 export const TONE = {
   agreed:    { label: 'согласовано', bg: 'var(--income-tint)', fg: 'var(--income-fg)', bd: 'var(--income-border)', kpi: 'var(--income)' },
   waiting:   { label: 'ждём ответа', bg: 'var(--warning-tint)', fg: 'var(--warning-text)', bd: 'var(--warning-border)', kpi: 'var(--warning-text)' },
-  late:      { label: 'ждём > 2 раб. дн.', bg: 'var(--warning-bg)', fg: 'var(--dot-current-dz)', bd: 'var(--dot-current-dz)', kpi: 'var(--dot-current-dz)' },
+  late:      { label: 'ждём > 3 раб. дн.', bg: 'var(--warning-bg)', fg: 'var(--dot-current-dz)', bd: 'var(--dot-current-dz)', kpi: 'var(--dot-current-dz)' },
   rework:    { label: 'на доработке', bg: 'var(--violet-tint)', fg: 'var(--violet-fg)', bd: 'var(--violet-border)', kpi: 'var(--violet-fg)' },
   refused:   { label: 'отказ', bg: 'var(--danger-tint)', fg: 'var(--danger-fg)', bd: 'var(--danger-border)', kpi: 'var(--danger-fg)' },
   unsent:    { label: 'не отправлено', bg: 'var(--bg-subtle)', fg: 'var(--text-faint)', bd: 'var(--border-card)', kpi: 'var(--text-faint)' },
@@ -46,7 +46,7 @@ const stick = (left, z = 2, bg = 'var(--bg-card)') => ({ position: 'sticky', lef
 const TG_PATH = 'M21.5 3.5 2.8 10.7c-1.3.5-1.2 1.2-.2 1.5l4.8 1.5 1.8 5.6c.2.6.1.9.8.9.5 0 .7-.2 1-.5l2.4-2.3 4.9 3.6c.9.5 1.5.2 1.8-.8l3.2-15.1c.3-1.3-.5-1.9-1.8-1.1zM8 13.4l10.4-6.6c.5-.3.9-.1.5.2l-8.9 8-.3 3.7L8 13.4z'
 
 // Значок группы: есть ссылка — в фирменном цвете мессенджера, нет — серый и неактивный.
-function Chat({ href, kind }) {
+export function Chat({ href, kind }) {
   const label = kind === 'tg' ? 'Группа в Telegram' : 'Группа в MAX'
   const box = { display: 'inline-flex', width: 18, height: 18, borderRadius: 5, alignItems: 'center',
     justifyContent: 'center', fontFamily: MONO, fontSize: 9, fontWeight: 700, flex: '0 0 auto', textDecoration: 'none' }

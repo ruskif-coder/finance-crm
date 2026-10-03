@@ -23,7 +23,8 @@ from sqlalchemy.orm import Session
 from app.launch_prep.withdraw import AGREED_STATES, PLACED_STATES
 
 # Сколько рабочих дней площадка может молчать, прежде чем ячейка станет «просрочено».
-LATE_WORKDAYS = 2
+# 3 (владелец 03.10.2026, было 2) — одно правило на матрицу и вкладку «Подвисшие» (stuck.py).
+LATE_WORKDAYS = 3
 
 # «Согласовано» — всё от согласования и дальше по ступеням: те же списки, что у отзыва
 # креатива (withdraw.py), чтобы граница «согласовано / нет» была одна на систему.
@@ -67,7 +68,7 @@ def look(state: str, pairs: int, sent: int, withdrawn: int,
 
 def _merge(a: dict, b: dict) -> dict:
     worse = b if RANK[b["tone"]] < RANK[a["tone"]] else a
-    out = {k: a[k] + b[k] for k in ("pairs", "sent", "agreed", "withdrawn")}
+    out = {k: a.get(k, 0) + b.get(k, 0) for k in ("pairs", "sent", "agreed", "withdrawn", "rework")}
     # Дни ожидания — самые долгие из сводимых строк, а не той, что оказалась хуже по цвету.
     days = max((x["days"] for x in (a, b) if x["days"] is not None), default=None)
     return {**worse, **out, "days": days if worse["days"] is not None else worse["days"],
@@ -111,8 +112,14 @@ def load(db: Session, month: str, service_id: Optional[int] = None,
         SELECT t.deal_id, t.publisher_id, t.service_id, t.surface_kind, t.state,
                count(p.id) AS pairs, count(p.sent_at) AS sent,
                count(p.agreed_at) AS agreed, count(p.withdrawn_at) AS withdrawn,
+               -- Доработку, закрытую новым комплектом (replaces_set_id), не считаем: старая
+               -- пара остаётся историей (как в «Подвисших», erid_service, ad/build).
                count(p.id) FILTER (WHERE r.verdict = 'на доработку'
-                                     AND p.withdrawn_at IS NULL) AS rework,
+                                     AND p.withdrawn_at IS NULL
+                                     AND NOT EXISTS (
+                                         SELECT 1 FROM launch_prep_creative_set n
+                                          WHERE n.replaces_set_id = p.set_id
+                                            AND n.publisher_id = t.publisher_id)) AS rework,
                min(p.sent_at) FILTER (WHERE p.agreed_at IS NULL AND p.withdrawn_at IS NULL
                                         AND p.sent_at IS NOT NULL AND r.verdict IS NULL) AS waiting_since
           FROM launch_prep_target t
@@ -133,7 +140,7 @@ def load(db: Session, month: str, service_id: Optional[int] = None,
         c = {**look(r["state"], r["pairs"], r["sent"], r["withdrawn"], r["waiting_since"], today,
                     r["rework"]),
              "pairs": r["pairs"], "sent": r["sent"], "agreed": r["agreed"],
-             "withdrawn": r["withdrawn"],
+             "withdrawn": r["withdrawn"], "rework": r["rework"],
              "services": [f'{names.get(r["service_id"]) or "—"} {(r["surface_kind"] or "").upper()}'.strip()],
              "states": [r["state"]]}
         key = (r["deal_id"], r["publisher_id"])

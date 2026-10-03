@@ -624,7 +624,7 @@ app.include_router(traffic_dashboard.router, prefix="/api/traffic-dashboard", ta
 from app.routers import traffic_adfox  # noqa: E402
 app.include_router(traffic_adfox.router, prefix="/api/traffic-dashboard/adfox-import",
                    tags=["traffic_dashboard"])
-# «Трафики → Статистика» — общая стата РК, «кукуха», база (03.10.2026).
+# «Трафики → Статистика» — общая стата РК, «Block SIMB», база (03.10.2026).
 from app.routers import traffic_stats  # noqa: E402
 app.include_router(traffic_stats.router, prefix="/api/traffic-stats", tags=["traffic_stats"])
 # Демо-экраны DSP и Weborama отключены (владелец 02.10.2026): боевой обмен работает,
