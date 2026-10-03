@@ -17,6 +17,7 @@ const STATUS = {
   matched: { label: 'сопоставлена', color: 'var(--income-fg)' },
   ambiguous: { label: 'неоднозначно', color: 'var(--warning-text)' },
   unmatched: { label: 'не сопоставлена', color: 'var(--danger-fg)' },
+  skipped: { label: 'пропущена', color: 'var(--text-faint)' },   // служебная строка Adfox
 }
 const CHANGE = {
   new: { label: 'новые данные', color: 'var(--accent)' },
@@ -141,7 +142,7 @@ export default function AdfoxImportModal({ auth, onClose, onDone }) {
 
   const sum = useMemo(() => {
     if (!rows) return null
-    const s = { matched: 0, ambiguous: 0, unmatched: 0, new: 0, update: 0, same: 0, picked: 0 }
+    const s = { matched: 0, ambiguous: 0, unmatched: 0, skipped: 0, new: 0, update: 0, same: 0, picked: 0 }
     rows.forEach(r => {
       s[r.status] += 1
       if (r.pick) s.picked += 1
@@ -185,7 +186,7 @@ export default function AdfoxImportModal({ auth, onClose, onDone }) {
     }
   }
 
-  const unresolved = rows ? rows.filter(r => r.status !== 'matched' && !r.pick).length : 0
+  const unresolved = rows ? rows.filter(r => (r.status === 'ambiguous' || r.status === 'unmatched') && !r.pick).length : 0
 
   const footer = (
     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
@@ -211,7 +212,7 @@ export default function AdfoxImportModal({ auth, onClose, onDone }) {
 
   const summary = sum
     ? `строк ${rows.length} · сопоставлено ${sum.matched + sum.picked} · неоднозначно ${sum.ambiguous - sum.picked > 0 ? sum.ambiguous - sum.picked : 0}`
-      + ` · не сопоставлено ${sum.unmatched} · новых ${sum.new} · обновлений ${sum.update} · без изменений ${sum.same}`
+      + ` · не сопоставлено ${sum.unmatched}${sum.skipped ? ` · служебных пропущено ${sum.skipped}` : ''} · новых ${sum.new} · обновлений ${sum.update} · без изменений ${sum.same}`
     : 'Суточный отчёт Adfox: День · Название кампании · Показы · Переходы · Уникальные показы'
 
   return (
@@ -281,7 +282,8 @@ export default function AdfoxImportModal({ auth, onClose, onDone }) {
                         {r.pick ? 'выбрано вручную' : st.label}
                       </div>
                       {(r.status === 'matched' || r.pick) && <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>{r.label}</div>}
-                      {r.status !== 'matched' && !res && <Pick row={r} auth={auth} onPick={c => pick(r, c)} />}
+                      {r.status === 'skipped' && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{r.reason}</div>}
+                      {(r.status === 'ambiguous' || r.status === 'unmatched') && !res && <Pick row={r} auth={auth} onPick={c => pick(r, c)} />}
                     </td>
                     <td style={{ ...td, padding: '6px 8px', whiteSpace: 'nowrap' }}>
                       {ch ? (

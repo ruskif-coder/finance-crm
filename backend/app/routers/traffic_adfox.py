@@ -60,7 +60,7 @@ def _with_state(db: Session, rows: List[dict]) -> List[dict]:
 
 
 def _summary(rows: List[dict]) -> dict:
-    s = {"rows": len(rows), "matched": 0, "ambiguous": 0, "unmatched": 0,
+    s = {"rows": len(rows), "matched": 0, "ambiguous": 0, "unmatched": 0, "skipped": 0,
          "new": 0, "update": 0, "same": 0}
     for r in rows:
         s[r["status"]] = s.get(r["status"], 0) + 1

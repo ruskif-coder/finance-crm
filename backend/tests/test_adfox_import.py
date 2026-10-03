@@ -168,3 +168,18 @@ def test_bind_refuses_placement_with_dsp_fact():
     import inspect
     from app.routers import traffic_adfox
     assert "dsp_fact" in inspect.getsource(traffic_adfox._bind)
+
+
+# ── отчёт 01–02.10 с прода (03.10.2026): 12 строк из 48 не сопоставились ──────
+
+def test_excel_escaped_newline_is_cleaned():
+    """Перевод строки в ячейке Adfox пишет как `_x000D_`, и openpyxl оставляет его текстом."""
+    assert ai.clean_name("PFPYGX-MXV-cr3-01_AK_x000D_ ") == "PFPYGX-MXV-cr3-01_AK"
+    assert ai.clean_name("AZTCWD-ZDS-cr8-01_AK_x000D__x000A_") == "AZTCWD-ZDS-cr8-01_AK"
+
+
+def test_adfox_default_campaign_is_skipped_not_an_error(monkeypatch):
+    monkeypatch.setattr(ai, "_creatives_of", lambda db, deals, allowed: [])
+    r = ai.resolve(None, [{"line": 2, "day": date(2026, 10, 1), "name": "Кампания по умолчанию",
+                           "shows": 5, "clicks": 0, "uniques": 1}])[0]
+    assert r["status"] == ai.SKIPPED

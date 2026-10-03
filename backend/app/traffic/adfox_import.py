@@ -35,6 +35,7 @@ NEW, UPDATE, SAME = "new", "update", "same"
 # куда больший лист, и читать его до конца незачем (ревью 03.10.2026).
 MAX_ROWS = 20000
 MATCHED, AMBIGUOUS, UNMATCHED = "matched", "ambiguous", "unmatched"
+SKIPPED = "skipped"   # служебная строка Adfox — не ошибка и не наша РК
 
 
 class ImportError_(ValueError):
@@ -64,8 +65,16 @@ def _day(v) -> Optional[date]:
     return None
 
 
+# Excel хранит управляющие символы в ячейке как `_xHHHH_` (перевод строки — `_x000D_`), и
+# openpyxl в режиме чтения оставляет их ТЕКСТОМ. Отчёт Adfox 01–02.10 с прода: 12 строк из
+# 48 не сопоставились именно так (03.10.2026).
+_EXCEL_ESCAPE = re.compile(r"_x[0-9A-Fa-f]{4}_")
+# Служебные строки самого Adfox — не наши РК: показы его заглушки «по умолчанию».
+SERVICE_NAMES = {"кампания по умолчанию"}
+
+
 def clean_name(v) -> str:
-    return " ".join(str(v or "").split())
+    return " ".join(_EXCEL_ESCAPE.sub(" ", str(v or "")).split())
 
 
 def parse(data: bytes) -> List[dict]:
@@ -161,6 +170,10 @@ def resolve(db: Session, rows: List[dict], allowed: Optional[set] = None) -> Lis
     for r in rows:
         m = parsed[r["line"]]
         res = dict(r)
+        if r["name"].lower() in SERVICE_NAMES:
+            res.update(status=SKIPPED, reason="служебная строка Adfox — не наша РК", candidates=[])
+            out.append(res)
+            continue
         if not m:
             res.update(status=UNMATCHED, reason="имя не по шаблону «СДЕЛКА-ПЛОЩАДКА-crN-NN_ИНИЦИАЛЫ»",
                        candidates=[])
