@@ -10,7 +10,7 @@
 берутся из `sales_publisher_traffics`; комплект/файлы/пары — из `launch_prep_*`.
 """
 from sqlalchemy import (Boolean, Column, Date, DateTime, Float,
-                        ForeignKey, Integer, String, Text, UniqueConstraint, func)
+                        ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func)
 
 from app.database import Base
 
@@ -151,6 +151,37 @@ class PublisherBlock(Base):
     platform = Column(String(8))
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class AdfoxCreativeStat(Base):
+    """Разбивка отчёта Adfox по креативам за день (миграция 2026-10-05_adfox_creative_stat.sql).
+    Сумма по креативам площадки = строке `ad_campaign_stat` (source adfox); пишет её импорт."""
+    __tablename__ = "adfox_creative_stat"
+    __table_args__ = (UniqueConstraint("creative_id", "date", name="uq_adfox_creative_day"),)
+
+    id = Column(Integer, primary_key=True)
+    creative_id = Column(Integer, ForeignKey("ad_campaign_creative.id", ondelete="CASCADE"),
+                         nullable=False)
+    date = Column(Date, nullable=False)
+    shows = Column(Integer, nullable=False, default=0)
+    clicks = Column(Integer, nullable=False, default=0)
+    uniques = Column(Integer)
+    imported_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class ReportDailyCoef(Base):
+    """Коэффициенты SIMB ID пары «площадка × креатив» на день (миграция
+    2026-10-05_report_daily_coef.sql; правило — app/ad/report_coef.py). Фиксируются разово."""
+    __tablename__ = "report_daily_coef"
+    __table_args__ = (UniqueConstraint("creative_id", "date", name="uq_report_coef_day"),)
+
+    id = Column(Integer, primary_key=True)
+    creative_id = Column(Integer, ForeignKey("ad_campaign_creative.id", ondelete="CASCADE"),
+                         nullable=False)
+    date = Column(Date, nullable=False)
+    freq = Column(Numeric(6, 2), nullable=False)
+    ctr_pct = Column(Numeric(8, 4), nullable=False)
+    computed_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
 class AdCampaignStat(Base):

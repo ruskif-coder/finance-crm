@@ -14,18 +14,29 @@ from sqlalchemy.orm import Session
 from app.sales.models import SalesPublisherSurface
 
 CHANNELS = {"dsp": "наша DSP", "adfox": "Adfox", "outside": "вне контура"}
-APP_LINKS = {"web": "веб-ссылка в href", "both": "диплинк в href + веб в url/adomain",
+# Режим «веб» (прямая веб-ссылка в href) снят 05.10.2026: загрузчик DSP требует кликовый
+# макрос в каждой ссылке баннера (код 2051), веб-ссылка его не несёт. Площадке, которой
+# нужна обычная посадочная, режим не нужен вовсе: макрос DSP в href, посадочная — в link.
+APP_LINKS = {"both": "диплинк в href + веб в url/adomain",
              # Площадка принимает диплинк SDK прямо в посадочной (владелец 02.10.2026).
              "sdk": "диплинк SDK (deeplink+://) в посадочной"}
 
 # Что подсказать человеку у поля посадочной — по режиму площадки. Подсказка, не запрет
 # (владелец 02.10.2026: «пока без жёсткой проверки»).
 LANDING_HINTS = {
-    "web": "Площадка принимает веб-ссылку: https://… на товар на сайте",
-    "both": "Здесь — веб-ссылка https://…, диплинк приложения — в поле рядом",
+    "both": ("Здесь — веб-ссылка https://…, диплинк приложения — в поле рядом; в диплинке "
+             "обязателен кликовый макрос DSP {LINK_ESC} или {LINK_UNESC}"),
     "sdk": ("Площадка принимает диплинк SDK: deeplink+://navigate?primaryUrl=<ссылка https "
             "в base64>&primaryTrackingUrl={LINK_ESC}"),
 }
+
+
+def normalize_app_links(value: Optional[str]) -> Optional[str]:
+    """Режим ссылок к сохранению: снятый «веб» (05.10.2026) = без режима — по смыслу то же:
+    макрос DSP в href, посадочная в link. Иначе строку со старым «веб» нельзя было бы
+    пересохранить (ревью 05.10.2026)."""
+    v = (value or "").strip() or None
+    return None if v == "web" else v
 
 
 def landing_hint(rule: Optional[dict]) -> Optional[str]:
@@ -119,9 +130,18 @@ def needs_deeplink(rule: Optional[dict]) -> bool:
     return bool(rule and rule.get("app_links") == "both")
 
 
-def click_href(rule: Optional[dict], advertiser_url: Optional[str],
-               deeplink_url: Optional[str]) -> Optional[str]:
-    """Что поставить в `<a href>` вместо макроса DSP. None — оставить макрос, как было."""
+# Кликовые макросы DSP. Хоть один обязан быть в КАЖДОЙ ссылке баннера — иначе загрузчик
+# отклоняет архив (код 2051, первый случай 05.10.2026: LBS2QH × Максавит).
+CLICK_MACROS = ("{LINK_UNESC}", "{LINK_ESC}")
+
+
+def has_click_macro(url: Optional[str]) -> bool:
+    return any(m in (url or "") for m in CLICK_MACROS)
+
+
+def _wanted_href(rule: Optional[dict], advertiser_url: Optional[str],
+                 deeplink_url: Optional[str]) -> Optional[str]:
+    """Что правило площадки хотело бы поставить в href (без проверки макроса)."""
     mode = (rule or {}).get("app_links")
     if mode in ("web", "sdk"):
         return (advertiser_url or "").strip() or None
@@ -131,6 +151,24 @@ def click_href(rule: Optional[dict], advertiser_url: Optional[str],
     # Диплинк SDK в посадочной работает только из баннера: без правила площадки он иначе
     # потерялся бы — в `link` уходит веб-адрес (02.10.2026).
     return (advertiser_url or "").strip() if is_app_link(advertiser_url) else None
+
+
+def click_href(rule: Optional[dict], advertiser_url: Optional[str],
+               deeplink_url: Optional[str]) -> Optional[str]:
+    """Что поставить в `<a href>` вместо макроса DSP. None — оставить макрос DSP: ссылку без
+    кликового макроса DSP не примет (2051), а клик через макрос уходит на посадочную из link."""
+    href = _wanted_href(rule, advertiser_url, deeplink_url)
+    return href if has_click_macro(href) else None
+
+
+def click_warning(rule: Optional[dict], advertiser_url: Optional[str],
+                  deeplink_url: Optional[str]) -> Optional[str]:
+    """Пояснение трафику, если правило площадки хотело ссылку в href, но в ней нет макроса."""
+    href = _wanted_href(rule, advertiser_url, deeplink_url)
+    if not href or has_click_macro(href):
+        return None
+    return ("ссылка из правила площадки без кликового макроса DSP — в баннере оставлен макрос "
+            "DSP, клик уйдёт на посадочную")
 
 
 def pair_problem(rule: Optional[dict], advertiser_url: Optional[str],
@@ -161,14 +199,19 @@ def applied_label(rule: Optional[dict]) -> Optional[str]:
 
 
 def validate_deeplink(value: Optional[str]) -> Optional[str]:
-    """Диплинк — схема приложения (`maksavit://…`) или https. Запрещены схемы, которыми
-    поле, отрисованное ссылкой, превращается в XSS."""
+    """Диплинк — схема приложения (`deeplink+://…`) или https. Запрещены схемы, которыми
+    поле, отрисованное ссылкой, превращается в XSS. Обязателен кликовый макрос DSP
+    (05.10.2026): диплинк встаёт в href баннера, а ссылку без макроса DSP отклоняет (2051)."""
     v = (value or "").strip()
     if not v:
         return None
     scheme = v.split(":", 1)[0].lower() if ":" in v else ""
     if not scheme or scheme in ("javascript", "data", "vbscript", "file") or len(v) > 1024:
         raise ValueError("Диплинк — адрес вида app://… или https://…, не длиннее 1024 символов")
+    if not has_click_macro(v):
+        raise ValueError("В диплинке нет кликового макроса DSP — без него DSP не примет креатив. "
+                         "Формат: deeplink+://navigate?primaryUrl=<ссылка в base64>"
+                         "&primaryTrackingUrl={LINK_ESC}")
     return v
 
 

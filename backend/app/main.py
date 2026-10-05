@@ -538,6 +538,12 @@ app.include_router(publishers.router, prefix="/api/publishers", tags=["publisher
 # Матрица согласований площадка × РК — свой файл и своё право (29.09.2026).
 from app.routers import publisher_matrix  # noqa: E402
 app.include_router(publisher_matrix.router, prefix="/api/publisher-approvals", tags=["publishers"])
+# «Настройки → SIMB ID»: коэффициенты отчётов клиенту, только админ (05.10.2026).
+from app.routers import simb_id  # noqa: E402
+app.include_router(simb_id.router, prefix="/api/settings/simb-id", tags=["settings"])
+# Отчёт клиенту по РК (Excel) — кнопка в очереди аккаунта (05.10.2026).
+from app.routers import client_report  # noqa: E402
+app.include_router(client_report.router, prefix="/api/client-report", tags=["sales"])
 app.include_router(media_plans.router, prefix="/api/sales/media-plans", tags=["sales"])
 # Настройки монтируются ПЕРЕД колокольчиком: у notifications есть @router.get(""),
 # и вложенный префикс не должен им перехватываться.
@@ -576,6 +582,8 @@ app.include_router(traffic_adfox.router, prefix="/api/traffic-dashboard/adfox-im
 # «Трафики → Статистика» — общая стата РК, «Block SIMB», база (03.10.2026).
 from app.routers import traffic_stats  # noqa: E402
 app.include_router(traffic_stats.router, prefix="/api/traffic-stats", tags=["traffic_stats"])
+from app.routers import bidder  # noqa: E402
+app.include_router(bidder.router, prefix="/api/bidder", tags=["bidder"])
 # Демо-экраны DSP и Weborama отключены (владелец 02.10.2026): боевой обмен работает,
 # тренировочные ручки в боевой кабинет больше не нужны. Код роутеров оставлен в
 # репозитории, права `dsp_demo` / `weborama_demo` — тоже (ключ права неизменяем).

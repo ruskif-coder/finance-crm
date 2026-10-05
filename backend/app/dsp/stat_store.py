@@ -58,8 +58,10 @@ class Target:
 
 @dataclass
 class HashMap:
-    """хеш креатива → (РК, площадка); хеш кампании → РК."""
+    """хеш креатива → (РК, площадка); хеш кампании → РК; хеш креатива → наша строка креатива
+    (`rows` — для разбивки по креативам в отчёте клиенту, 05.10.2026)."""
     creatives: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+    rows: Dict[str, int] = field(default_factory=dict)
     campaigns: Dict[str, int] = field(default_factory=dict)
 
     def creatives_of(self, campaign_ids) -> List[str]:
@@ -150,9 +152,11 @@ def hash_map(db, dsp_db, campaign_ids, *, contour: str, partner: Optional[str]) 
         "SELECT id, campaign_id, placement_id, ms_creative_xxhash FROM ad_campaign_creative "
         "WHERE campaign_id = ANY(:ids)"), {"ids": ids}).all()
     by_ref = {f"cr{r[0]}": (r[1], r[2]) for r in rows}
-    for _, cid, pid, xx in rows:
+    row_of_ref = {f"cr{r[0]}": r[0] for r in rows}
+    for rid, cid, pid, xx in rows:
         if xx:
             m.creatives[xx.upper()] = (cid, pid)
+            m.rows[xx.upper()] = rid
     if by_ref:
         hist = dsp_db.execute(text(
             "SELECT DISTINCT local_ref, ms_xxhash FROM dsp_send_log "
@@ -162,6 +166,7 @@ def hash_map(db, dsp_db, campaign_ids, *, contour: str, partner: Optional[str]) 
             {"ct": contour, "refs": list(by_ref), "px": partner}).all()
         for ref, xx in hist:
             m.creatives.setdefault(xx.upper(), by_ref[ref])
+            m.rows.setdefault(xx.upper(), row_of_ref[ref])
     return m
 
 

@@ -309,19 +309,11 @@ PLACEMENT_FIXED_SQL = (
     f" WHERE cc.placement_id = p.id AND cc.status <> '{CREATIVE_REJECTED}')")
 
 
-def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = None) -> None:
-    """Доли и планы площадок — снимок текущего распределения.
-
-    Считает НЕ здесь: правило живёт в `app/ad/flight.distribute` вместе с тем, что
-    рисует экран. Второе выражение с той же формулой разошлось бы с первым на первой
-    правке — а расходятся такие вещи молча, цифрами, которые выглядят правдоподобно.
-
-    Доля — ДОЛЯ (0…1), а не проценты: до 04.09.2026 здесь хранились проценты, и рядом
-    с долей из `distribute()` они читались бы как одно и то же число в сто раз больше.
-
-    Пересчитывать надо после КАЖДОЙ смены статуса площадки: доля считается по крутящим,
-    и выключенная площадка отдаёт свой объём остальным.
-    """
+def campaign_layout(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = None,
+                    facts: Optional[dict] = None, facts_given: bool = False):
+    """Раскладка объёма РК по площадкам — ОДНА на ночной пересчёт и страницу «Биддер»
+    (05.10.2026): страница объясняет ровно то число, которое уходит в DSP.
+    Возвращает (площадки ORM, результат `distribute` с полем `facts_used`)."""
     pls = (db.query(AdCampaignPlacement)
            .filter(AdCampaignPlacement.campaign_id == campaign_id).all())
     camp = db.query(AdCampaign).get(campaign_id)
@@ -336,17 +328,56 @@ def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = N
     if cap_ctx is None:
         cap_ctx = (share_cap(db), manual_scopes(db))
     cap, manual = cap_ctx
+    if not facts_given:
+        from app.bidder.facts import placement_facts
+        got = placement_facts(db, [campaign_id])
+        facts = got.get(campaign_id) if got is not None else None
     surfaces = deal_plan(db, camp.deal_id)["surfaces"] if camp else []
     out = distribute(camp.plan_show if camp else None, None, fl,
                      [{"id": p.id, "status": p.status, "weight": p.weight,
                        "fixed": fixed.get(p.id),
                        "capless": is_capless(manual, p.publisher_id, surfaces)}
-                      for p in pls], cap=cap)
+                      for p in pls], cap=cap, facts=facts)
+    out["facts_used"] = out["by_fact"]
+    out["cap"] = cap
+    return pls, out
+
+
+def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = None,
+                     facts: Optional[dict] = None, facts_given: bool = False) -> list:
+    """Доли и планы площадок — снимок текущего распределения. Возвращает изменения планов
+    площадок (для журнала биддера `bidder_run_change`, 05.10.2026).
+
+    Считает НЕ здесь: правило живёт в `app/ad/flight.distribute` вместе с тем, что
+    рисует экран. Второе выражение с той же формулой разошлось бы с первым на первой
+    правке — а расходятся такие вещи молча, цифрами, которые выглядят правдоподобно.
+
+    Доля — ДОЛЯ (0…1), а не проценты: до 04.09.2026 здесь хранились проценты, и рядом
+    с долей из `distribute()` они читались бы как одно и то же число в сто раз больше.
+
+    Пересчитывать надо после КАЖДОЙ смены статуса площадки: доля считается по крутящим,
+    и выключенная площадка отдаёт свой объём остальным — с 05.10.2026 только
+    неоткрученное (факт площадки, `app/bidder/facts`; `facts_given` — пакетный вызов уже
+    прочитал факт, в т. ч. None «статистики нет»).
+    """
+    from app.bidder.rules import explain
+    pls, out = campaign_layout(db, campaign_id, cap_ctx, facts, facts_given)
+    camp_plan = db.query(AdCampaign.plan_show).filter(AdCampaign.id == campaign_id).scalar()
+    cap = out.get("cap")
+    cap_abs = cap * camp_plan if (cap and camp_plan) else None
     by_id = {r["id"]: r for r in out["rows"]}
+    changes = []
     for p in pls:
         r = by_id[p.id]
+        before = p.plan_show
         p.share = r["share"] or None
         p.plan_show = r["plan_show"]
+        if (before or None) != (p.plan_show or None):
+            changes.append({"campaign_id": campaign_id, "placement_id": p.id,
+                            "plan_before": before, "plan_after": p.plan_show,
+                            "reason": explain(r, (facts or {}).get(p.id, 0),
+                                              out["facts_used"], cap_abs)["code"]})
+    return changes
 
 
 def creative_plans(db: Session, camp: AdCampaign) -> dict:
@@ -408,15 +439,19 @@ def refresh_weights(db: Session, commit: bool = True, campaign_ids=None) -> dict
         q = q.filter(AdCampaign.id.in_(list(campaign_ids)))
     camps = q.all()
     changed = 0
+    changes: list = []
     from app.ad.balance import manual_scopes, share_cap
     cap_ctx = (share_cap(db), manual_scopes(db))
+    from app.bidder.facts import placement_facts
+    all_facts = placement_facts(db, [c.id for c in camps])
     for camp in camps:
+        f = all_facts.get(camp.id) if all_facts is not None else None
         surfaces = deal_plan(db, camp.deal_id)["surfaces"]
         if not surfaces:
             # У сделки нет годного медиаплана (отклонён, без строк) — поверхностей не знаем,
             # и пустой набор весов не «индекс снят», а «спросить не у чего». Веса оставляем
             # прежними, как `sync_placements` (ревью 27.09.2026: иначе РК теряла все объёмы).
-            recompute_shares(db, camp.id, cap_ctx)
+            changes += recompute_shares(db, camp.id, cap_ctx, f, True)
             continue
         weights = publisher_weights(db, surfaces)
         for p in db.query(AdCampaignPlacement).filter(
@@ -425,11 +460,12 @@ def refresh_weights(db: Session, commit: bool = True, campaign_ids=None) -> dict
             if p.weight != w:
                 p.weight = w
                 changed += 1
-        recompute_shares(db, camp.id, cap_ctx)
+        changes += recompute_shares(db, camp.id, cap_ctx, f, True)
     db.flush()
     if commit:
         db.commit()
-    return {"campaigns": len(camps), "weights_changed": changed}
+    return {"campaigns": len(camps), "weights_changed": changed,
+            "by_fact": all_facts is not None, "changes": changes}
 
 
 def deal_publishers(db: Session, deal_id: int) -> set:

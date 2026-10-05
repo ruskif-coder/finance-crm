@@ -171,6 +171,12 @@
           "perm": "traffic_stats"
         },
         {
+          "key": "bidder",
+          "label": "Биддер",
+          "href": "/traffic/bidder",
+          "perm": "bidder"
+        },
+        {
           "key": "catalog",
           "label": "Админ панель",
           "href": "/traffic/catalog",

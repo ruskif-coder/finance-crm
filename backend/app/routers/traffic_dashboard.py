@@ -520,6 +520,7 @@ def _placements_of(db: Session, campaign_ids: List[int]) -> dict:
         return {}
     rows = db.execute(text("""
         SELECT p.campaign_id, p.id, p.publisher_id, p.status, p.weight,
+               p.plan_show AS plan_stored, p.share AS share_stored,
                pub.code, pub.domain, pub.name AS publisher,
                (SELECT sum(s.shows) FROM ad_campaign_stat s
                  WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact,
@@ -756,7 +757,10 @@ def dashboard(scope: Optional[str] = None,
         # значило бы завести два ответа на вопрос «сколько эта площадка недокрутила».
         balance.mark_capless(db, pls, surf_of.get(c.deal_id, []), manual)
         dist_by_camp[c.id] = distribute(c.plan_show, facts.get(c.id, {}).get("shows"),
-                                        fl, pls, cap=cap)["rows"]
+                                        fl, pls, cap=cap,
+                                        # план — записанный ночью, ровно лимиты DSP (05.10.2026)
+                                        use_stored=True,
+                                        hold_fl=flight_of(c.date_start, c.date_end, date.today()))["rows"]
         culprit_rows += dist_by_camp[c.id]
 
     # Креативы с материалом по сделкам страницы — для «↓ креативы» в раскрытии РК
@@ -922,6 +926,7 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
 
     pls = db.execute(text("""
         SELECT p.id, p.publisher_id, p.status, p.weight, p.bid, p.is_direct,
+               p.plan_show AS plan_stored, p.share AS share_stored,
                p.ms_source_key, pub.name AS publisher, pub.code, pub.domain,
                (SELECT sum(s.shows) FROM ad_campaign_stat s
                  WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact,
@@ -964,7 +969,9 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         d["start_why"] = start_block(db, c, None, mine, d["ext_mode"] or "dsp")
         prepared.append(d)
     balance.mark_capless(db, prepared, build.deal_plan(db, c.deal_id)["surfaces"])
-    out = distribute(c.plan_show, fact_total, fl, prepared, cap=balance.share_cap(db))
+    out = distribute(c.plan_show, fact_total, fl, prepared, cap=balance.share_cap(db),
+                     use_stored=True,
+                     hold_fl=flight_of(c.date_start, c.date_end, date.today()))
 
     # Третий этаж: план площадки делится ПОРОВНУ между её работающими креативами.
     for row in out["rows"]:

@@ -85,6 +85,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   // Название: редактируется по клику; генератор собирает имя по шаблону.
   const [title, setTitle] = useState(d.title || '')
   const [editing, setEditing] = useState(false)
+  const [reportBusy, setReportBusy] = useState(false)   // отчёт клиенту собирается
   const [draft, setDraft] = useState('')
 
   useEffect(() => {
@@ -271,6 +272,16 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   // Битрикс больше не источник (владелец 08.09.2026, из реестра убрана 03.10.2026).
   const buttons = (
     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 'auto', paddingTop: 14 }}>
+      {/* Отчёт клиенту по РК (владелец 05.10.2026): Excel с фактом и моделью SIMB ID, период —
+          со старта до последних данных. Только в очереди аккаунта, перед «Карточкой». */}
+      {queue && (
+        <button onClick={async () => { setReportBusy(true); await blobGet(`/client-report/deal/${d.id}.xlsx`, `Отчёт_РК_${d.code || d.id}.xlsx`); setReportBusy(false) }}
+          disabled={reportBusy || !d.report_ready}
+          title={d.report_ready ? 'Скачать отчёт клиенту по РК (Excel)' : 'Статистики по РК ещё нет — отчёт появится после первого дня с показами'}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 14px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 700, cursor: reportBusy ? 'wait' : (d.report_ready ? 'pointer' : 'not-allowed'), opacity: d.report_ready ? 1 : 0.5, fontFamily: UI }}>
+          <DownloadIcon /> {reportBusy ? 'Собираю…' : 'Отчёт'}
+        </button>
+      )}
       {queue ? (
         <a href={`/sales/deals/${d.code || d.id}`} target="_blank" rel="noopener noreferrer" title="Открыть карточку сделки в новой вкладке"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 14px', borderRadius: 10, background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 12, fontWeight: 700, textDecoration: 'none', fontFamily: UI }}>

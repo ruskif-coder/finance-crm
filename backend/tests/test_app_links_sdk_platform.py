@@ -13,7 +13,7 @@ def test_sdk_mode_is_known_and_hinted():
     assert "sdk" in R.APP_LINKS
     h = R.landing_hint({"app_links": "sdk"})
     assert "deeplink+://" in h and "primaryUrl" in h
-    assert "https://" in R.landing_hint({"app_links": "web"})
+    assert "https://" in R.landing_hint({"app_links": "both"})   # «веб» снят 05.10.2026
     assert R.landing_hint(None) is None
 
 

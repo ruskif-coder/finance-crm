@@ -333,7 +333,7 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
     vsrc = viewability_src(db)
     # Лимит креатива — ЕГО доля плана площадки, а не план площадки целиком (27.09.2026).
     plans = creative_plans(db, camp)
-    done, failed = [], []
+    done, failed, warnings = [], [], []
     for r in rows:
         cre, pub = r["creative"], r["publisher"]
         name = f"{cre.ms_title or cre.id} · {pub.name if pub else '?'}"
@@ -358,6 +358,13 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
                 # <a href> встаёт прямая ссылка вместо макроса DSP; url/adomain — веб всегда.
                 href = pub_rules.click_href(r.get("rule"), r["target"].advertiser_url,
                                             getattr(r["target"], "deeplink_url", None))
+                # Ссылка правила без кликового макроса в href не встаёт (DSP отклонит, 2051) —
+                # трафику сообщаем, что креатив ушёл с макросом DSP (05.10.2026).
+                note = pub_rules.click_warning(r.get("rule"), r["target"].advertiser_url,
+                                               getattr(r["target"], "deeplink_url", None))
+                if note:
+                    warnings.append({"creative_id": cre.id, "placement_id": r["placement"].id,
+                                     "name": name, "warning": note})
                 if href:
                     data, _ = prepare_for_dsp(data)
                     data, _ = set_click_href(data, href)
@@ -408,7 +415,7 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
         db.commit()
         done.append({"creative_id": cre.id, "placement_id": r["placement"].id,
                      "name": name, "xxhash": xxhash})
-    return {"campaign_xxhash": camp_hash, "done": done, "failed": failed,
+    return {"campaign_xxhash": camp_hash, "done": done, "failed": failed, "warnings": warnings,
             "targeting": _apply_targeting(db, camp, c, camp_hash)}
 
 

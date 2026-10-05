@@ -419,7 +419,8 @@ def check_erid_auto(db: Session):
                                   "ждут ЕРИД, пока кто-то не нажмёт кнопку")
     if failed or last.get("refresh_failed"):
         return _check("job_erid", "Фоновые задания", title, "bad", value,
-                      "; ".join(failed)[:400] or f"ошибок опроса статуса: {last['refresh_failed']}",
+                      "; ".join(failed)[:400] or (f"ошибок опроса статуса: {last['refresh_failed']}"
+                      + (": " + "; ".join(last["refresh_errors"]) if last.get("refresh_errors") else ""))[:400],
                       consequence="ОРД отказывает в выпуске или опросе — маркер не выходит, "
                                   "площадки не могут ставить материал в эфир")
     if blocked:

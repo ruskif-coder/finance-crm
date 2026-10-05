@@ -159,6 +159,14 @@ def refresh_statuses(db, dry_run: bool = False) -> dict:
 LAST_RUN_KEY = "erid_auto_last"
 
 
+def refresh_errors(failed: list, limit: int = 5) -> list:
+    """Ошибки опроса статусов — текстом, одинаковые склеены с числом комплектов (05.10.2026:
+    «ошибок опроса: 11» без текста прятало, что ОРД отвечает 403 «нет прав»)."""
+    from collections import Counter
+    cnt = Counter(str(f.get("error") or "без текста")[:200] for f in failed)
+    return [f"{e} — {n} компл." for e, n in cnt.most_common(limit)]
+
+
 def record(db, out: dict) -> None:
     import json
     from datetime import datetime
@@ -170,6 +178,7 @@ def record(db, out: dict) -> None:
         "blocked": [f"{b['deal']}: {', '.join(b['why'])}" for b in i["blocked"]][:20],
         "failed": [f"{f['deal']}: {f['error']}"[:200] for f in i["failed"]][:20],
         "refresh_failed": len(r["failed"]),
+        "refresh_errors": refresh_errors(r["failed"]),
     }, ensure_ascii=False)
     db.execute(text("INSERT INTO company_settings (key, value) VALUES (:k, :v) "
                     "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
@@ -204,7 +213,8 @@ def _alert(db, out: dict) -> None:
     i, r = out["issue"], out["refresh"]
     lines = [f"{f['deal']}: {f['error']}" for f in i["failed"]][:5]
     if r["failed"]:
-        lines.append(f"ошибок опроса статуса: {len(r['failed'])}")
+        lines.append(f"ошибок опроса статуса: {len(r['failed'])} — "
+                     + "; ".join(refresh_errors(r["failed"], 2)))
     emit(db, "cron_erid_auto_failed", title="Автовыпуск ЕРИД: ошибка",
          body="; ".join(lines)[:600], link="/settings/system",
          entity_type="cron", entity_id=1, actor=None)

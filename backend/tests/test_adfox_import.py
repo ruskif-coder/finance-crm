@@ -183,3 +183,53 @@ def test_adfox_default_campaign_is_skipped_not_an_error(monkeypatch):
     r = ai.resolve(None, [{"line": 2, "day": date(2026, 10, 1), "name": "Кампания по умолчанию",
                            "shows": 5, "clicks": 0, "uniques": 1}])[0]
     assert r["status"] == ai.SKIPPED
+
+
+@pytest.fixture
+def two_creatives():
+    """Размещение, у которого два креатива, — для разбивки по креативам (05.10.2026)."""
+    db = SessionLocal()
+    row = db.execute(text("""
+        SELECT placement_id, campaign_id, array_agg(id ORDER BY id) FROM ad_campaign_creative
+         WHERE placement_id IS NOT NULL GROUP BY 1, 2 HAVING count(*) >= 2 LIMIT 1""")).first()
+    if row is None:
+        db.close()
+        pytest.skip("на стенде нет размещения с двумя креативами")
+    day = date(2001, 1, 2)
+    yield db, row[0], row[1], row[2][:2], day
+    db.execute(text("DELETE FROM adfox_creative_stat WHERE date = :d"), {"d": day})
+    db.execute(text("DELETE FROM ad_campaign_stat WHERE source = 'adfox' AND date = :d"), {"d": day})
+    db.commit()
+    db.close()
+
+
+def test_write_keeps_split_by_creative(two_creatives):
+    """Отчёт Adfox знает креатив каждой строки — разбивку храним, а не только сумму площадки:
+    она нужна отчёту клиенту «по креативам» (владелец 05.10.2026)."""
+    db, pl, camp, (c1, c2), day = two_creatives
+    rows = [{"campaign_id": camp, "placement_id": pl, "creative_id": c1, "day": day,
+             "shows": 70, "clicks": 1, "uniques": 20},
+            {"campaign_id": camp, "placement_id": pl, "creative_id": c2, "day": day,
+             "shows": 30, "clicks": 2, "uniques": 9}]
+    ai.write(db, ai.aggregate(rows))
+    db.commit()
+    got = dict(db.execute(text("SELECT creative_id, shows FROM adfox_creative_stat "
+                               "WHERE date = :d"), {"d": day}).all())
+    assert got == {c1: 70, c2: 30}
+    total = db.execute(text("SELECT shows FROM ad_campaign_stat WHERE source='adfox' "
+                            "AND placement_id=:p AND date=:d"), {"p": pl, "d": day}).scalar()
+    assert total == sum(got.values())
+
+
+def test_rewrite_of_day_replaces_split_not_appends(two_creatives):
+    """Повторная загрузка дня площадки заменяет разбивку целиком: креатив, которого в новом
+    отчёте нет, не остаётся висеть старыми показами."""
+    db, pl, camp, (c1, c2), day = two_creatives
+    base = {"campaign_id": camp, "placement_id": pl, "day": day, "clicks": 0, "uniques": None}
+    ai.write(db, ai.aggregate([{**base, "creative_id": c1, "shows": 10},
+                               {**base, "creative_id": c2, "shows": 5}]))
+    ai.write(db, ai.aggregate([{**base, "creative_id": c1, "shows": 12}]))
+    db.commit()
+    got = dict(db.execute(text("SELECT creative_id, shows FROM adfox_creative_stat "
+                               "WHERE date = :d"), {"d": day}).all())
+    assert got == {c1: 12}

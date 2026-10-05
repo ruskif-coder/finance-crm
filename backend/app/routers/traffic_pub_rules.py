@@ -53,9 +53,10 @@ def update_rule(surface_id: int, payload: RuleIn, db: Session = Depends(get_db),
     ch = payload.placement_channel or None
     if ch and ch not in pub_rules.CHANNELS:
         raise HTTPException(status_code=400, detail="Канал: dsp, adfox или outside")
-    links = payload.app_links or None
+    links = pub_rules.normalize_app_links(payload.app_links)
     if links and links not in pub_rules.APP_LINKS:
-        raise HTTPException(status_code=400, detail="Ссылки для app: web или both")
+        raise HTTPException(status_code=400, detail="Ссылки для app: both или sdk "
+                            "(режим «веб» снят 05.10.2026 — DSP требует макрос в ссылке)")
     if links and s.kind != "app":
         raise HTTPException(status_code=400, detail="Режим ссылок задаётся только у app-поверхности")
     code = (payload.adfox_extra_code or "").strip() or None

@@ -216,6 +216,17 @@ const ExtResult = ({ wb, result }) => {
           ))}
         </div>
       )}
+      {/* Заведено, но ссылка правила площадки не встала: в ней нет кликового макроса DSP
+          (05.10.2026, код 2051) — в баннере оставлен макрос DSP. */}
+      {!!(result.warnings || []).length && (
+        <div style={{ display: 'grid', gap: 6 }}>
+          {result.warnings.map((x, i) => (
+            <div key={i} style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+              <b>{x.name}</b> — <span style={{ color: 'var(--warning-text)' }}>{x.warning}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -1532,7 +1543,7 @@ export default function TrafficDashboard() {
                                   отличаться), «Завершить» синим контуром. Подпись первой
                                   кнопки зависит от статуса: пауза и возобновление — одно
                                   состояние, а не два действия. */}
-                              <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
+                              <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'nowrap' }}>
                                 {/* До выкладки в DSP запуск и стоп заперты (владелец 29.09.2026):
                                     иначе меняется только наша пометка, а в сети — ничего.
                                     Причина — с сервера, тем же правилом, что у ручки. */}
@@ -1570,12 +1581,19 @@ export default function TrafficDashboard() {
                                 {/* Перезаписать у заведённой РК ссылки, пиксели и таргеты по
                                     текущим данным — Администратор и «Админ Трафик» (02.10.2026). */}
                                 {!!data?.can_dsp_refresh && !!r.ms_campaign_xxhash && (
-                                  <button style={{ padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
-                                    border: '1px solid var(--accent)', background: 'var(--bg-card)', color: 'var(--accent)',
-                                    fontFamily: UI, fontSize: 12.5, fontWeight: 700 }}
-                                    title="Перезаписать в DSP ссылки, пиксели и таргеты по текущим данным; сначала покажет, что изменится"
+                                  /* Пиктограммой круговых стрелок в одном ряду с остальными
+                                     (владелец 03.10.2026); смысл — в подсказке и aria-label. */
+                                  <button aria-label="Обновить данные в DSP"
+                                    style={{ width: 34, padding: 0, borderRadius: 10, cursor: 'pointer',
+                                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                      border: '1px solid var(--accent)', background: 'var(--bg-card)', color: 'var(--accent)' }}
+                                    title="Обновить данные в DSP: перезаписать ссылки, пиксели и таргеты по текущим данным; сначала покажет, что изменится"
                                     onClick={() => setRefreshAsk(r)}>
-                                    Обновить данные в DSP
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                      strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M21 12a9 9 0 0 1-15.5 6.2L3 16" /><path d="M3 21v-5h5" />
+                                      <path d="M3 12a9 9 0 0 1 15.5-6.2L21 8" /><path d="M21 3v5h-5" />
+                                    </svg>
                                   </button>
                                 )}
                               </span>

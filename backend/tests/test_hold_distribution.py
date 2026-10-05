@@ -87,8 +87,10 @@ def test_every_consumer_passes_the_flight():
     """Удержание решается по дню РК — вызов без флайта молча считал бы «до старта»."""
     import inspect
     from app.ad import build
-    src = inspect.getsource(build.recompute_shares)
-    assert "flight_of(" in src
+    # С 05.10.2026 раскладка вынесена в `campaign_layout` (её же читает страница «Биддер»),
+    # `recompute_shares` только записывает её результат.
+    assert "flight_of(" in inspect.getsource(build.campaign_layout)
+    assert "campaign_layout(" in inspect.getsource(build.recompute_shares)
 
 
 # ── индекс из балансировщика сразу в РК (владелец 27.09.2026) ───────────────────

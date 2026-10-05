@@ -1726,9 +1726,29 @@ export default function Dashboard({ name, onSignOut }) {
     const m = new Map()
     ;(tasks?.publishers || []).forEach(g => m.set(g.publisher_id, g.name))
     ;(dash?.done || []).forEach(d => d.publisher_id && m.set(d.publisher_id, d.publisher))
+    // И площадки, у которых сейчас есть только кампании: иначе их нельзя было выбрать,
+    // и выбор в шапке не доставал до раздела «Кампании» (03.10.2026).
+    ;(camps || []).forEach(c => c.publisher_id && !m.has(c.publisher_id)
+      && m.set(c.publisher_id, c.site))
     return [...m.entries()].map(([id, name]) => ({ id, name }))
       .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ru'))
-  }, [tasks, dash])
+  }, [tasks, dash, camps])
+
+  /* Кампании выбранной площадки — для дашборда, KPI и раздела «Кампании» одинаково.
+     До 03.10.2026 выбор в шапке сужал только заявки, а активные кампании и раздел
+     «Кампании» показывали все сайты кабинета. */
+  const shownCamps = useMemo(() => (camps || []).filter(
+    c => !pubFilter || c.publisher_id === pubFilter), [camps, pubFilter])
+  // Раздел «Кампании» выбирает площадку по домену — переводим туда и обратно.
+  const siteOfPub = useMemo(() => {
+    const m = new Map()
+    ;(camps || []).forEach(c => c.publisher_id && c.site && m.set(c.publisher_id, c.site))
+    return m
+  }, [camps])
+  const pubOfSite = (dom) => {
+    for (const [id, s] of siteOfPub) if (s === dom) return id
+    return ''
+  }
 
   /* Услуги, закреплённые за площадками. Считаются от ВЫБОРА: показывать «еФарм» при
      выбранном сайте, где его нет, — врать про его подключение. */
@@ -1797,7 +1817,7 @@ export default function Dashboard({ name, onSignOut }) {
   // массив, что у таблицы ниже, и разойтись им нечем.
   // Плитки считаются по ВЫБРАННОЙ площадке, как и «требует решения» ниже: иначе выбор
   // меняет список, а деньги в шапке продолжают говорить про все сайты (аудит, 7.L5).
-  const k = campaignKpi((camps || []).filter(c => !pubFilter || c.publisher_id === pubFilter))
+  const k = campaignKpi(shownCamps)
   const KPI = [
     ...((camps && camps.length) ? [
       ['расчётный биллинг', rub(k.billing), '', '', null,
@@ -1873,8 +1893,12 @@ export default function Dashboard({ name, onSignOut }) {
               которых у площадки нет. Выглядело правдоподобно, и поймал я это только
               потому, что сверил месяцы с настоящими. */}
           {tab === 'campaigns' ? (
-            mobile ? <CampaignsMobile campaigns={camps || []} />
-              : <CampaignsScreen campaigns={camps || []} />
+            mobile ? <CampaignsMobile campaigns={shownCamps} />
+              /* Площадка выбрана, но кампаний у неё нет — пусто, как на телефоне, а не
+                 все сайты кабинета (ревью 05.10.2026). */
+              : <CampaignsScreen campaigns={pubFilter && !siteOfPub.has(pubFilter) ? [] : (camps || [])}
+                  site={siteOfPub.get(pubFilter) || 'все'}
+                  onSite={dom => setPubFilter(dom === 'все' ? '' : pubOfSite(dom))} />
           ) : (
           <>
 
@@ -2130,7 +2154,7 @@ export default function Dashboard({ name, onSignOut }) {
           {/* Телефон: вместо таблицы кампаний — лента событий под очередью (хендофф,
               п. 1); кампании целиком во вкладке «Кампании». */}
           {mobile ? <Feed onErr={setErr} /> : (() => {
-            const live = (camps || []).filter(c => !c.reconciled)
+            const live = shownCamps.filter(c => !c.reconciled)
             return !!live.length && <ActiveCampaigns campaigns={live} canApprove={!!me?.can_approve}
               onPreview={c => setCampAct({ c, mode: 'preview' })}
               onRevoke={c => setCampAct({ c, mode: 'revoke' })}

@@ -1970,7 +1970,9 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
             td._as_placement_scale(x) for x in by_pl.get(p_["id"], [])))
     from app.ad import balance
     balance.mark_capless(db, pls, ad_build.deal_plan(db, c.deal_id)["surfaces"])
-    rows = distribute(c.plan_show, fact_shows, fl, pls, cap=balance.share_cap(db))["rows"]
+    rows = distribute(c.plan_show, fact_shows, fl, pls, cap=balance.share_cap(db),
+                      use_stored=True,
+                      hold_fl=flight_of(c.date_start, c.date_end, date.today()))["rows"]
     fc = progress(c.plan_show, fact_shows, c.date_start, c.date_end, today, now=date.today())
 
     by_day = td._stat_by_day(db, [c.id]).get(c.id, {})
@@ -2392,6 +2394,11 @@ def _deal_annexes(db: Session, deal_id: int) -> list:
              "amount": amt, "is_draft": a.no is None} for a, amt in rows]
 
 
+def _report_ready(db, deal_id) -> bool:
+    from app.ad.client_report import deal_report_ready
+    return deal_report_ready(db, deal_id)
+
+
 @router.get("/deals/{deal_id}")
 def get_deal(deal_id: str, db: Session = Depends(get_db),
              current_user: User = Depends(require_permission("sales_registry", "view"))):
@@ -2460,6 +2467,8 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         "traffic_brief": deal.traffic_brief or "",
         # Доп. параметры РК (миграция 2026-09-14). Пока один.
         "weborama_pixel": bool(deal.weborama_pixel),
+        # Отчёт клиенту по РК — только при статистике хоть за один день (владелец 05.10.2026).
+        "report_ready": _report_ready(db, deal.id),
         "weborama_pixel_at": deal.weborama_pixel_at.isoformat()
         if deal.weborama_pixel_at else None,
         "weborama_pixel_decided": deal.weborama_pixel_decided_at is not None,

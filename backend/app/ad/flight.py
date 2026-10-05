@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Iterable, List, Optional, Sequence
 
+from app.bidder.rules import capped_shares, floor_to_fact  # noqa: F401,E402 — реэкспорт
+
 # ── статусы площадки в РК ────────────────────────────────────────────────────
 #
 # Шесть значений (владелец 04.09.2026). Первые три СТАВИТ КОНВЕЙЕР согласования
@@ -258,46 +260,10 @@ def progress(plan: Optional[float], fact: Optional[float],
 
 # ── распределение объёма по площадкам ────────────────────────────────────────
 
-def capped_shares(weights: dict, cap: Optional[float], capless=frozenset()) -> dict:
-    """Доли по весам с потолком (владелец 30.09.2026, балансировщик вариант «A + D»).
-
-    `weights` — {ключ: вес}, `cap` — предел доли одной площадки в тех же единицах (0…1),
-    `capless` — ключи, которых потолок не касается (ручной индекс перекрывает всё).
-    Излишек сверх потолка уходит остальным пропорционально их весам («заливка»), пока
-    никто не выше потолка. Невыполнимый потолок (площадок меньше, чем 1/cap) поднимается
-    до равной доли — иначе часть объёма повисла бы ни на ком.
-    """
-    total = sum(float(w) for w in weights.values() if w) or 0.0
-    if not total:
-        return {k: 0.0 for k in weights}
-    share = {k: (float(w) / total if w else 0.0) for k, w in weights.items()}
-    if not cap or cap >= 1:
-        return share
-    live = [k for k, w in weights.items() if w]
-    # Невыполнимый потолок поднимаем до равной доли СРЕДИ ПОДЧИНЁННЫХ ему: площадки с
-    # ручным индексом держат свою долю по весу и в подъёме не участвуют.
-    capped = [k for k in live if k not in capless]
-    free_share = 1.0 - sum(share[k] for k in live if k in capless)
-    c = max(float(cap), free_share / len(capped)) if capped else 1.0
-    out = {k: 0.0 for k in weights}
-    for _ in range(len(live) + 1):
-        free = [k for k in live if k not in out or out[k] == 0.0]
-        placed = sum(v for v in out.values())
-        w_free = sum(float(weights[k]) for k in free)
-        if not free or not w_free:
-            break
-        cur = {k: (1.0 - placed) * float(weights[k]) / w_free for k in free}
-        over = [k for k in free if k not in capless and cur[k] > c + 1e-12]
-        if not over:
-            out.update(cur)
-            break
-        for k in over:
-            out[k] = c
-    return out
-
-
 def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight],
-               placements: Sequence[dict], cap: Optional[float] = None) -> dict:
+               placements: Sequence[dict], cap: Optional[float] = None,
+               facts: Optional[dict] = None, hold_fl: Optional[Flight] = None,
+               use_stored: bool = False) -> dict:
     """Доли, планы и прогнозы площадок РК.
 
     Доля = вес площадки ÷ сумма весов тех, кто УЧАСТВУЕТ В ПЛАНЕ: в удержание (`holds`,
@@ -317,20 +283,51 @@ def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight
     весам между остальными. Выключенная площадка объём не держит — он возвращается в
     остаток, как и её доля. Превысить план ввод не даёт (проверка при вводе), но и тут
     остаток не уходит в минус.
+
+    ФАКТ (`facts` = {id площадки: показов с начала РК}, владелец 05.10.2026, правила —
+    `app/bidder/rules`). Учитывается после удержания долей и только если передан
+    (статистики за вчера нет — вызывающий передаёт None, и раскладка идёт по весам):
+    выбывшая («завершена») площадка держит план = своему факту, остальным уходит только
+    неоткрученное; план площадки в раскладке не ниже её факта. Пауза держит долю.
+    Ревью 05.10.2026: то же для площадки, открутившей и потерявшей вес (снят индекс), и
+    для заданного объёма ниже факта.
+
+    `hold_fl` — флайт для решения «идёт ли удержание»: дашборды считают темп на дату среза
+    (вчера), а удержание обязано решаться на ту же дату, что у ночного пересчёта (сегодня),
+    иначе на стыке 5-го и 6-го дня экран и DSP расходятся на сутки. Не передан — `fl`.
+
+    `use_stored` (владелец 05.10.2026): план и доля площадки — ЗАПИСАННЫЕ ночным пересчётом
+    (`plan_stored` / `share_stored` в строке), а не посчитанные заново. Экраны показывают
+    ровно то, что ушло лимитами в DSP; прогноз и недокрут считаются от этого плана.
     """
-    in_plan_set = PLACEMENT_IN_WORK if holds(fl) else PLACEMENT_IN_PLAN
+    hold = holds(hold_fl if hold_fl is not None else fl)
+    settle = facts is not None and not hold
+    fact_of = {id(p): float((facts or {}).get(p.get("id")) or 0) for p in placements}
+    in_plan_set = PLACEMENT_IN_WORK if hold else PLACEMENT_IN_PLAN
     fixed_of = {id(p): float(p.get("fixed") or 0) for p in placements}
+    if settle:   # заданный объём не ниже факта
+        fixed_of = {k: (max(v, fact_of[k]) if v else 0.0) for k, v in fixed_of.items()}
+    # Вне раскладки (выбыла, нет веса), но уже открутила — держит план = свой факт.
+    dropped = {id(p): fact_of[id(p)] for p in placements
+               if settle and fact_of[id(p)] and not fixed_of[id(p)]
+               and (p.get("status") not in in_plan_set or not p.get("weight"))}
     fixed_in = sum(v for p in placements for v in [fixed_of[id(p)]]
                    if v and p.get("status") in in_plan_set)
-    rest = max(0.0, float(plan) - fixed_in) if plan else 0.0
+    rest = max(0.0, float(plan) - fixed_in - sum(dropped.values())) if plan else 0.0
     live = [p for p in placements
-            if p.get("status") in in_plan_set and p.get("weight") and not fixed_of[id(p)]]
+            if p.get("status") in in_plan_set and p.get("weight") and not fixed_of[id(p)]
+            and id(p) not in dropped]
     w_sum = sum(float(p["weight"]) for p in live) or 0.0
     # Потолок — от ПЛАНА РК, а делится остаток после заданных объёмов: переводим предел
     # в доли остатка. Площадка с ручным индексом (`capless`) потолку не подчиняется.
     cap_rest = (cap * float(plan) / rest) if (cap and plan and rest) else cap
-    w_of = capped_shares({id(p): p["weight"] for p in live}, cap_rest,
-                         frozenset(id(p) for p in live if p.get("capless")))
+    capless = frozenset(id(p) for p in live if p.get("capless"))
+    if settle and rest:
+        amt = floor_to_fact(rest, {id(p): p["weight"] for p in live}, fact_of,
+                            (cap * float(plan)) if cap else None, capless)
+        w_of = {k: v / rest for k, v in amt.items()}
+    else:
+        w_of = capped_shares({id(p): p["weight"] for p in live}, cap_rest, capless)
 
     rows: List[dict] = []
     for p in placements:
@@ -338,7 +335,13 @@ def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight
         in_plan = p.get("status") in in_plan_set
         no_weight = not p.get("weight")
         fixed = fixed_of[id(p)] if in_plan else 0.0
-        if fixed:
+        if use_stored:
+            p_plan = round(p["plan_stored"]) if p.get("plan_stored") else None
+            share = float(p.get("share_stored") or 0.0)
+        elif id(p) in dropped:
+            p_plan = round(dropped[id(p)])
+            share = (dropped[id(p)] / plan) if plan else 0.0
+        elif fixed:
             p_plan = round(fixed)
             share = (fixed / plan) if plan else 0.0
         else:
@@ -365,8 +368,12 @@ def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight
             "in_plan": in_plan,
             # Заданный объём — для подсветки на дашборде: «эта площадка на фиксе».
             "fixed": round(fixed) if fixed else None,
+            # Выбыла и держит план = свой факт (правило 05.10.2026).
+            "settled": id(p) in dropped,
         })
-    return {"rows": rows, "share_sum": round(sum(r["share"] for r in rows), 6)}
+    return {"rows": rows, "share_sum": round(sum(r["share"] for r in rows), 6),
+            # Учтён ли факт на самом деле: передан И удержание долей кончилось.
+            "by_fact": settle}
 
 
 def split_evenly(total, creatives, hold: bool = False):

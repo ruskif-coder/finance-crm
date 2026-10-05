@@ -96,6 +96,7 @@ ACTION_LABELS = {
     "bulk_update_deals": "Массовая правка сделок",
     "bulk_delete_deals": "Сделки удалены",
     "move_deal": "Сделка переведена на другую стадию",
+    "simb_id_settings": "Изменены настройки SIMB ID (частота, CTR)",
     "add_deal_comment": "Комментарий к сделке",
     "save_deal_brief": "Бриф сделки сохранён",
     "save_deal_brief_mp": "Бриф сделки сохранён из медиаплана",

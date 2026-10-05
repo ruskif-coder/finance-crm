@@ -2,7 +2,7 @@
 """Ночной пересчёт объёмов РК и лимитов креативов в DSP. Ставится в cron.
 
     docker exec finance_backend python -m app.ad.daily_shares --dry-run
-    docker exec finance_backend python -m app.ad.daily_shares
+    docker exec finance_backend python -m app.ad.daily_shares     (крон 02:00 UTC — после сбора статистики DSP)
 
 Что делает (владелец 27.09.2026):
   1. веса площадок во всех незавершённых РК — из балансировщика, объёмы пересчитываются
@@ -29,6 +29,15 @@ def run(dry_run: bool = False, client=None, campaign_ids=None) -> dict:
     from app.ad import build
     from app.ad.models import AdCampaign
 
+    from app.bidder import journal
+    # Журнал — справка, не условие работы (ревью 05.10.2026): нет таблицы (бэкенд выложен
+    # раньше миграции) — пересчёт и лимиты всё равно идут.
+    run_id = None
+    if not dry_run:
+        try:
+            run_id = journal.start()
+        except Exception:  # noqa: BLE001
+            log.exception("журнал биддера: прогон не заведён")
     db = SessionLocal()
     try:
         shares = build.refresh_weights(db, commit=not dry_run, campaign_ids=campaign_ids)
@@ -57,8 +66,17 @@ def run(dry_run: bool = False, client=None, campaign_ids=None) -> dict:
                     log.exception("РК %s: лимиты не подтянуты", camp.id)
                     limits.append({"campaign_id": camp.id, "updated": 0, "zero": [],
                                    "failed": [{"creative_id": None, "error": str(e)}]})
-        return {"shares": shares, "limits": limits,
-                "failed": sum(len(x["failed"]) for x in limits), "dry_run": False}
+        failed = sum(len(x["failed"]) for x in limits)
+        from app.ad.stat_sources import fact_as_of
+        if run_id is not None:
+            try:
+                journal.finish(run_id, shares, limits, failed,
+                               fact_as_of(db) if shares.get("by_fact") else None,
+                               [f for x in limits for f in x["failed"]])
+            except Exception:  # noqa: BLE001
+                log.exception("журнал биддера: прогон %s не закрыт", run_id)
+        return {"shares": shares, "limits": limits, "failed": failed, "dry_run": False,
+                "run_id": run_id}
     finally:
         db.close()
 
@@ -70,6 +88,8 @@ def _report(out: dict) -> str:
     return (f"РК пересчитано: {s['campaigns']}, весов сменилось: {s['weights_changed']}; "
             f"лимитов в DSP обновлено: {upd}, не ушло: {out['failed']}"
             + (f", креативов с нулевой долей (лимит не менялся): {zero}" if zero else "")
+            + ("" if s.get("by_fact", True) else
+               "; статистики DSP за вчера нет — объёмы по весам, без факта")
             + (" (пробный прогон, ничего не записано)" if out.get("dry_run") else ""))
 
 

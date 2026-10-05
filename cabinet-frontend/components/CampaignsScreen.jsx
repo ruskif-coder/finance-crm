@@ -125,7 +125,7 @@ const colHead = { fontFamily: T.mono, fontSize: 9, letterSpacing: '.08em', textT
 /* ══════════════════════════════════════════════════════════════════════
    ЭКРАН
    ══════════════════════════════════════════════════════════════════════ */
-export default function CampaignsScreen({ campaigns = DEMO, onOpen }) {
+export default function CampaignsScreen({ campaigns = DEMO, onOpen, site: siteProp, onSite }) {
   /* ПЕРИОД — ДИАПАЗОН «от … до», как в реестре сделок (владелец 15.09.2026).
      Одиночный месяц отвечал только на вопрос «что в сентябре»; за квартал или за
      полгода его пришлось бы складывать в уме. Пустые границы означают «без края»:
@@ -134,7 +134,12 @@ export default function CampaignsScreen({ campaigns = DEMO, onOpen }) {
   const [to, setTo] = useState('');
   /* Фильтр площадок. Умолчание — «все» (владелец 15.09.2026). Появляется, только если
      площадок в кабинете больше одной: выбор из одного варианта — это не выбор. */
-  const [site, setSite] = useState('все');
+  /* Выбор площадки — ОДИН на весь кабинет (владелец 03.10.2026): когда экран получает
+     `site`/`onSite`, он берёт выбор из шапки и пишет обратно туда же. Свой выбор жил
+     отдельно, и площадка, выбранная в шапке, сюда не доходила. */
+  const [ownSite, setOwnSite] = useState('все');
+  const site = onSite ? (siteProp || 'все') : ownSite;
+  const setSite = onSite || setOwnSite;
   const [siteOpen, setSiteOpen] = useState(false);
   const [calOpen, setCalOpen] = useState(false);
   const calRef = useRef(null);

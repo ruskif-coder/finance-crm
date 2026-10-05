@@ -108,7 +108,10 @@ export default function PublisherApprovals() {
         ['РК в периоде', deals.length],
         [pend ? 'План показов' : 'План показов, согласовано', short(t.s)],
         [pend ? 'План себестоимости' : 'План себестоимости, согласовано', `${short(t.m)} ₽`],
-        ['Ещё ждёт ответа', `${short(ws)} · ${short(wm)} ₽`],
+        // Показы и рубли — двумя плитками, как план выше: одной строкой «2,73 млн · 309 тыс ₽»
+        // не помещалось в ширину плитки и рвалось на две строки (03.10.2026).
+        ['Ждёт ответа, показы', short(ws)],
+        ['Ждёт ответа, ₽', `${short(wm)} ₽`],
         ...(noCpm.length ? [['Нет CPM в реестре', noCpm.join(', '), 'var(--danger-fg)', true]] : []),
       ]
     }
@@ -154,7 +157,7 @@ export default function PublisherApprovals() {
                 <span style={{ ...CAP, marginBottom: 0 }}>{label}</span>
                 <b style={small
                   ? { fontSize: 12.5, fontWeight: 600, color, lineHeight: 1.35 }
-                  : { fontFamily: MONO, fontSize: 26, fontWeight: 700, letterSpacing: '-.03em', lineHeight: 1, color: color || 'var(--text-primary)' }}>{value}</b>
+                  : { fontFamily: MONO, fontSize: 26, fontWeight: 700, letterSpacing: '-.03em', lineHeight: 1, whiteSpace: 'nowrap', color: color || 'var(--text-primary)' }}>{value}</b>
               </div>
             ))}
           </div>

@@ -228,9 +228,19 @@ def aggregate(rows: Iterable[dict]) -> Dict[Tuple[int, int, date], dict]:
     acc: Dict[Tuple[int, int, date], dict] = {}
     for r in rows:
         k = (int(r["campaign_id"]), int(r["placement_id"]), r["day"])
-        a = acc.setdefault(k, {"shows": 0, "clicks": 0, "uniques": None, "lines": [], "n": 0})
+        a = acc.setdefault(k, {"shows": 0, "clicks": 0, "uniques": None, "lines": [], "n": 0,
+                               "creatives": {}})
         a["shows"] += int(r.get("shows") or 0)
         a["clicks"] += int(r.get("clicks") or 0)
+        # Разбивка по креативам (05.10.2026) — для отчёта клиенту; пишется рядом с суммой.
+        if r.get("creative_id") is not None:
+            cr = a["creatives"].setdefault(int(r["creative_id"]),
+                                           {"shows": 0, "clicks": 0, "uniques": None, "n": 0})
+            cr["shows"] += int(r.get("shows") or 0)
+            cr["clicks"] += int(r.get("clicks") or 0)
+            cr["n"] += 1
+            cr["uniques"] = (None if cr["n"] > 1 or r.get("uniques") is None
+                             else int(r["uniques"]))
         a["n"] += 1
         # Уникальные НЕ складываются (ревью 03.10.2026): один человек мог видеть оба
         # креатива площадки. Одна строка — её число; несколько — сумма неизвестна, NULL.
@@ -276,5 +286,19 @@ def write(db: Session, agg: Dict[Tuple[int, int, date], dict]) -> int:
                    uniques = EXCLUDED.uniques, imported_at = now()"""),
             {"c": camp, "p": pl, "d": day, "s": a["shows"], "k": a["clicks"], "u": a["uniques"],
              "src": SOURCE})
+        _write_split(db, pl, day, a.get("creatives") or {})
         n += 1
     return n
+
+
+def _write_split(db: Session, pl: int, day: date, creatives: dict) -> None:
+    """Разбивка дня площадки по креативам ЗАМЕНЯЕТСЯ целиком (как и сумма): креатив, которого
+    в новом отчёте нет, не остаётся старыми показами (05.10.2026)."""
+    db.execute(text("""
+        DELETE FROM adfox_creative_stat WHERE date = :d AND creative_id IN (
+            SELECT id FROM ad_campaign_creative WHERE placement_id = :p)"""), {"d": day, "p": pl})
+    for cid, c in creatives.items():
+        db.execute(text("""
+            INSERT INTO adfox_creative_stat (creative_id, date, shows, clicks, uniques, imported_at)
+            VALUES (:c, :d, :s, :k, :u, now())"""),
+            {"c": cid, "d": day, "s": c["shows"], "k": c["clicks"], "u": c["uniques"]})

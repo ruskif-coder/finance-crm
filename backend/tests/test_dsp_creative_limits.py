@@ -41,8 +41,11 @@ def camp():
         db.add(cr)
         crs.append(cr)
     db.commit()
+    # Ночной прогон пишет журнал биддера (05.10.2026) — убираем только свои строки.
+    run_from = db.execute(text("SELECT coalesce(max(id), 0) FROM bidder_run")).scalar()
     yield db, c, pl, crs
     db.rollback()
+    db.execute(text("DELETE FROM bidder_run WHERE id > :r"), {"r": run_from})
     db.execute(text("DELETE FROM ad_campaign WHERE id = :c"), {"c": c.id})
     db.commit()
     db.close()

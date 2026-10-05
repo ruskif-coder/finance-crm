@@ -33,6 +33,8 @@ const SECTIONS = [
   // Профили уведомлений — политика на всю компанию, поэтому вкладка админская.
   // Личная часть той же страницы открывается всем из меню профиля («Мои уведомления»).
   { id: 'notifications', label: 'Уведомления', href: '/settings/notifications', adminOnly: true },
+  // Коэффициенты отчётов клиенту (05.10.2026) — на все РК сразу, поэтому только админ.
+  { id: 'simb_id', label: 'SIMB ID', href: '/settings/simb-id', adminOnly: true },
   { id: 'users', label: 'Пользователи', href: '/settings/users', adminOnly: true },
   { id: 'roles', label: 'Роли', href: '/settings/roles', adminOnly: true },
 ]

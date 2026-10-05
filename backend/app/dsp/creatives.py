@@ -199,6 +199,15 @@ def _journal_upload(client, local_ref, req, resp, ok, error) -> None:
         log.warning("Не удалось записать в журнал попытку загрузки архива", exc_info=True)
 
 
+def _has_counter(html: str, src: str) -> bool:
+    """В HTML уже подключён скрипт видимости — тот же адрес или тот же файл."""
+    name = src.strip().split("?", 1)[0].rsplit("/", 1)[-1]
+    # Адрес у DSP может быть с параметрами (?cid=…) — считаем и такой (ревью 05.10.2026).
+    return src.strip() in html or bool(name and re.search(
+        r"<script[^>]+src=[\"'][^\"']*/" + re.escape(name) + r"(?:[?#][^\"']*)?[\"']",
+        html, re.I))
+
+
 def wrap_html(html: str, *, erid: Optional[str] = None,
               viewability_src: Optional[str] = None,
               extra_script: Optional[str] = None) -> str:
@@ -221,7 +230,10 @@ def wrap_html(html: str, *, erid: Optional[str] = None,
     if extra_script and extra_script.strip():
         # Первым: счётчик должен успеть встать до отрисовки баннера.
         head.append(extra_script.strip())
-    if viewability_src and viewability_src.strip():
+    # Счётчик видимости — ровно один (владелец 05.10.2026). Загрузчик DSP сам вставляет его
+    # с параметрами кампании и креатива; наш второй, без параметров и раньше, — лишний. Если
+    # в HTML от загрузчика его нет — ставим свой: так счётчик в креативе есть всегда.
+    if viewability_src and viewability_src.strip() and not _has_counter(html, viewability_src):
         head.append(f'<script src="{viewability_src.strip()}"></script>')
         head.append("<script>window.adsn = window.adsn || {};"
                     " window.adsn.viewability = window.adsn.viewability || {};</script>")

@@ -27,9 +27,15 @@ def _entry(data, name="index.html"):
     return zipfile.ZipFile(io.BytesIO(data)).read(name).decode()
 
 
-@pytest.mark.parametrize("mode,href", [(None, None), ("web", WEB), ("both", DEEP)])
-def test_click_href_by_mode(mode, href):
-    assert R.click_href({"app_links": mode}, WEB, DEEP) == href
+# С 05.10.2026 в href встаёт только ссылка с кликовым макросом DSP (код 2051) —
+# подробно test_click_macro_rule.py. Без макроса — None: остаётся макрос DSP.
+DEEP_MACRO = "maksavit://product/1?track={LINK_ESC}"
+
+
+@pytest.mark.parametrize("mode,deep,href", [
+    (None, DEEP, None), ("web", DEEP, None), ("both", DEEP, None), ("both", DEEP_MACRO, DEEP_MACRO)])
+def test_click_href_by_mode(mode, deep, href):
+    assert R.click_href({"app_links": mode}, WEB, deep) == href
 
 
 def test_web_link_replaces_only_dsp_macro_and_is_escaped():
@@ -65,7 +71,7 @@ def test_deeplink_rejects_dangerous(bad):
 
 
 def test_deeplink_accepts_app_scheme():
-    assert R.validate_deeplink("  maksavit://p/1 ") == "maksavit://p/1"
+    assert R.validate_deeplink("  maksavit://p/1?t={LINK_ESC} ") == "maksavit://p/1?t={LINK_ESC}"
     assert R.validate_deeplink("") is None
 
 
