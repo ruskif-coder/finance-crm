@@ -233,3 +233,20 @@ def test_rewrite_of_day_replaces_split_not_appends(two_creatives):
     got = dict(db.execute(text("SELECT creative_id, shows FROM adfox_creative_stat "
                                "WHERE date = :d"), {"d": day}).all())
     assert got == {c1: 12}
+
+
+def test_same_total_without_split_is_update(two_creatives):
+    """05.10.2026: отчёт, загруженный до разбивки по креативам, совпадал суммой — окно снимало
+    галочку «без изменений», и разбивка не ложилась. Сумма та же, а разбивки нет — это
+    обновление, а не «без изменений»."""
+    db, pl, camp, (c1, c2), day = two_creatives
+    base = {"campaign_id": camp, "placement_id": pl, "day": day, "clicks": 0, "uniques": None}
+    agg = ai.aggregate([{**base, "creative_id": c1, "shows": 10},
+                        {**base, "creative_id": c2, "shows": 5}])
+    ai.write(db, agg)
+    db.execute(text("DELETE FROM adfox_creative_stat WHERE date = :d"), {"d": day})  # как до релиза
+    db.commit()
+    assert ai.diff(db, agg)[(camp, pl, day)]["state"] == ai.UPDATE
+    ai.write(db, agg)
+    db.commit()
+    assert ai.diff(db, agg)[(camp, pl, day)]["state"] == ai.SAME

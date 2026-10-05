@@ -259,12 +259,20 @@ def diff(db: Session, agg: Dict[Tuple[int, int, date], dict]) -> Dict[Tuple[int,
     have = {(r["placement_id"], r["date"]): r for r in db.execute(text("""
         SELECT placement_id, date, shows, clicks, uniques FROM ad_campaign_stat
          WHERE source = :s AND placement_id = ANY(:p)"""), {"s": SOURCE, "p": pls}).mappings()}
+    # Разбивка по креативам (05.10.2026): сумма та же, а разбивки за день нет (отчёт грузили
+    # до неё) — это обновление, иначе окно снимает галочку и разбивка не ложится никогда.
+    split = {(r[0], r[1]): r[2] for r in db.execute(text("""
+        SELECT cc.placement_id, a.date, sum(a.shows) FROM adfox_creative_stat a
+          JOIN ad_campaign_creative cc ON cc.id = a.creative_id
+         WHERE cc.placement_id = ANY(:p) GROUP BY 1, 2"""), {"p": pls}).all()}
     out = {}
     for k, a in agg.items():
         was = have.get((k[1], k[2]))
         if was is None:
             state = NEW
-        elif (was["shows"], was["clicks"], was["uniques"]) == (a["shows"], a["clicks"], a["uniques"]):
+        elif ((was["shows"], was["clicks"], was["uniques"]) == (a["shows"], a["clicks"], a["uniques"])
+              and (not a.get("creatives")
+                   or split.get((k[1], k[2])) == sum(c["shows"] for c in a["creatives"].values()))):
             state = SAME
         else:
             state = UPDATE

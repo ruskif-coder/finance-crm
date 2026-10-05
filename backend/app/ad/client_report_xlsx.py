@@ -80,8 +80,9 @@ class _Samples:
 
 
 class _Painter:
-    def __init__(self, ws, s: _Samples, days: list, model: bool = False):
+    def __init__(self, ws, s: _Samples, days: list, model: bool = False, d_from=None):
         self.ws, self.s, self.days, self.model = ws, s, days, model
+        self.d_from = d_from   # дни до начала периода — пустые, а не нули
         # Комплект «с поправкой» подписан в шапках: клики, уники и CTR там — модель SIMB ID.
         self.m = " (модель)" if model else ""
         self.total_col = G + len(days)
@@ -133,7 +134,7 @@ class _Painter:
         shows, clicks, uniq, ctr, acc, run = [], [], [], [], [], 0
         for d in self.days:
             v = vals.get(d)
-            past = bool(last and d <= last)
+            past = bool(last and d <= last and (self.d_from is None or d >= self.d_from))
             sh = v["shows"] if v else (0 if past else None)
             ck = v["clicks"] if v else (0 if past else None)
             shows.append(sh)
@@ -223,12 +224,16 @@ def _fill_header(ws, rep: Report):
 
 
 def _days_of(rep: Report) -> list:
-    """Колонки дней: от начала периода отчёта до конца флайта (по умолчанию) или периода."""
+    """Колонки дней — ПОЛНЫЕ календарные месяцы, в которые попадает период отчёта (владелец
+    05.10.2026: РК на 15 дней «поехала» — шаблон, график и ширины рассчитаны на месяц).
+    Дни вне периода остаются пустыми (`_Painter.d_from` / будущие дни)."""
     h = rep.head
     d1, d2 = h["period_from"], h.get("days_to") or h["period_to"]
     if not d1 or not d2 or d2 < d1:
         return []
-    return [d1 + timedelta(days=i) for i in range((d2 - d1).days + 1)]
+    m1 = d1.replace(day=1)
+    nxt = (d2.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return [m1 + timedelta(days=i) for i in range((nxt - m1).days)]
 
 
 def _fill_main(ws, rep: Report, samples: _Samples, model: bool):
@@ -245,7 +250,7 @@ def _fill_main(ws, rep: Report, samples: _Samples, model: bool):
                 if cell.value in ("Клики", "CTR, %"):
                     cell.value = f"{cell.value}{MODEL_SUFFIX}"
     days = _days_of(rep)
-    p = _Painter(ws, samples, days, model)
+    p = _Painter(ws, samples, days, model, rep.head["period_from"])
     r = FIRST_FREE + 1
     top_row = r + 1
     r = p.block(r, "ПО ПЛОЩАДКАМ И ПО ДНЯМ", rep.by_placement, rep.by_day)

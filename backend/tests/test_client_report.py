@@ -185,3 +185,34 @@ def test_period_after_data_is_refused(client):
     app.dependency_overrides[get_current_user] = lambda: _User("admin")
     r = client.get(f"/api/client-report/deal/{deal_id}.xlsx?date_from=2030-01-01")
     assert r.status_code == 409 and "период" in r.json()["detail"]
+
+
+def test_days_are_full_calendar_month_for_short_campaign():
+    """Владелец 05.10.2026: РК на 15 дней «поехала» — шаблон рассчитан на полный месяц.
+    Колонки дней — весь календарный месяц; дни вне РК пустые, а не нули."""
+    from app.ad import client_report_xlsx as X
+    head = {"period_from": date(2026, 10, 15), "period_to": date(2026, 10, 18),
+            "days_to": date(2026, 10, 29), "last_data": date(2026, 10, 18),
+            "date_start": date(2026, 10, 15), "date_end": date(2026, 10, 29),
+            "advertiser": "А", "code": "TEST01"}
+    tot = {"shows": 40, "clicks": 1, "ctr": 2.5, "plan": None, "done_pct": None}
+    pl = [{"label": "site.ru", "shows": 40, "clicks": 1, "uniques": None}]
+    days = [{"label": date(2026, 10, d), "shows": 10, "clicks": 0} for d in (15, 16, 17, 18)]
+    rep = CR.Report(head=head, totals=tot, by_placement=pl, by_day=days)
+    got = X._days_of(rep)
+    assert got[0] == date(2026, 10, 1) and got[-1] == date(2026, 10, 31) and len(got) == 31
+    wb = openpyxl.load_workbook(io.BytesIO(X.to_xlsx(rep, rep)))
+    ws = wb.worksheets[0]
+    vals = {}
+    for row in ws.iter_rows():
+        for c in row:
+            if c.value == "01.10":
+                head_row, first_col = c.row, c.column
+                vals = {ws.cell(head_row, first_col + i).value: ws.cell(head_row + 1, first_col + i).value
+                        for i in range(31)}
+                break
+        if vals:
+            break
+    assert vals, "колонки 01.10 нет"
+    assert vals["01.10"] is None and vals["14.10"] is None, "до старта — пусто, не ноль"
+    assert vals["15.10"] == 10 and vals["31.10"] is None
