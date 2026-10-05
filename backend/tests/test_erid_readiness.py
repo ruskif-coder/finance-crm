@@ -33,7 +33,8 @@ def _set(erid="KraXXX", status="Active", source="наш", no=1, sid=1):
 
 @pytest.mark.parametrize("status,ready", [
     ("Active", True), ("Registering", True),
-    ("RegistrationRequired", False), ("Created", False), ("RegistrationError", False),
+    # Временно готов и маркер в очереди ОРД (владелец 05.10.2026: 11 комплектов висели 3–5 дней).
+    ("RegistrationRequired", True), ("Created", False), ("RegistrationError", False),
     (None, False),
 ])
 def test_own_marker_ready_only_when_registered(status, ready):
@@ -70,7 +71,7 @@ def test_sql_fragment_matches_python_rule():
 
 def test_targeting_copy_reads_the_same_rule():
     from app.dsp import targeting_creative as tc
-    assert tc.erid_of(_set(status="RegistrationRequired")) == tc.TEST_ERID
+    assert tc.erid_of(_set(status="Created")) == tc.TEST_ERID
     assert tc.erid_of(_set(status="Registering")) == "KraXXX"
     assert tc.ERID_READY_STATUSES == readiness.READY_STATUSES
 
@@ -78,7 +79,7 @@ def test_targeting_copy_reads_the_same_rule():
 def test_stage_check_erid_issued_waits_for_registration():
     from app.sales import stage_checks as sc
     ctx = SimpleNamespace(sets=[_set(status="Active", no=1),
-                                _set(status="RegistrationRequired", no=2)])
+                                _set(status="Created", no=2)])
     r = sc._erid_issued(ctx)
     assert r.state != "ok"
     assert "№2" in str(r)
@@ -126,8 +127,8 @@ def test_issue_with_unregistered_marker_is_not_announced(lp_wired, monkeypatch):
     s = _set(erid=None, status=None)
 
     def issue(db, cset, *a, **kw):
-        cset.erid, cset.ord_status = "KraNEW", "RegistrationRequired"
-        return {"erid": "KraNEW", "status": "RegistrationRequired"}
+        cset.erid, cset.ord_status = "KraNEW", "Created"     # не готов и по временному правилу
+        return {"erid": "KraNEW", "status": "Created"}
     monkeypatch.setattr("app.ord.submit.issue_marker", issue)
     lp.issue_marker_for_set(_Db(s), s, SimpleNamespace(id=1, code="ABC", brand_id=None), None)
     assert seen["announced"] == 0
@@ -149,7 +150,7 @@ def test_issue_with_registering_marker_is_announced(lp_wired, monkeypatch):
     ("Registering", True, 1),            # стал готов, площадки ещё «согласован» — объявить
     ("Active", True, 1),
     ("Active", False, 0),                # уже объявлен (площадки «ерид получен») — молчать
-    ("RegistrationRequired", True, 0),   # не готов — молчать
+    ("Created", True, 0),                # не готов — молчать
 ])
 def test_refresh_announces_ready_marker_not_yet_announced(lp_wired, monkeypatch, after, pending, announced):
     """Объявлен ли маркер — по состоянию площадок, а не по переходу статуса (ревью 02.10.2026):

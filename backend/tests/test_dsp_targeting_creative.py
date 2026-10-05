@@ -781,16 +781,17 @@ def test_erid_only_once_ord_has_it():
     """ЕРИД — при Active и Registering (маркер выдан, регистрация асинхронная); до того
     заглушка (владелец 01.10.2026). Маркер не нашего ОРД (агентский) — готов сразу."""
     from types import SimpleNamespace as N
-    for st in ("Active", "Registering"):
+    # RegistrationRequired — временно тоже готов (владелец 05.10.2026, ord/readiness).
+    for st in ("Active", "Registering", "RegistrationRequired"):
         assert P.erid_of(N(erid=REAL, ord_status=st, erid_source="наш")) == REAL
-    for st in ("RegistrationRequired", "Created", None, ""):
+    for st in ("Created", None, ""):
         assert P.erid_of(N(erid=REAL, ord_status=st, erid_source="наш")) == P.TEST_ERID
     assert P.erid_of(N(erid=REAL, ord_status=None, erid_source="агентства")) == REAL
 
 
 def test_unregistered_erid_does_not_replace_the_placeholder():
     db = _db()
-    s = _set_with(db, erid=REAL, ord_status="RegistrationRequired",
+    s = _set_with(db, erid=REAL, ord_status="Created",          # не готов и по временному правилу
                   ms_targeting_creative_xxhash="UNREG00000000001")
     c = FakeClient(creative_status="LAUNCHED", adomain="https://simb-ad.com/",
                    info_html='<meta name="erid" content="TEST00000">')
