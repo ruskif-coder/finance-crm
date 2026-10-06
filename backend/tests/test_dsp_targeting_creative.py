@@ -519,6 +519,9 @@ def test_link_response_says_whether_targeting_is_live(monkeypatch):
     from app.routers import launch_prep as lp
     db = _db()
     s = _set_with(db)
+    # С 06.10.2026 ссылка выпускается только при готовом ЕРИД (test_targeting_needs_erid).
+    s.erid, s.ord_status = "2SDtest0001", "Active"
+    db.commit()
     monkeypatch.setattr(P, "ensure_live", lambda db, row: {
         "xxhash": "LIVE000000000001", "creative_status": "LAUNCHED",
         "campaign_status": "LAUNCHED", "active": True, "reason": None})

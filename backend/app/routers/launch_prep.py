@@ -1230,6 +1230,17 @@ def issue_targeting_link(set_id: int, db: Session = Depends(get_db),
         raise HTTPException(status_code=404, detail="Комплект не найден")
     deal = _deal(db, row.deal_id, current_user)
 
+    # Без готового ЕРИД ссылку не выпускаем (владелец 06.10.2026). Иначе копия нацеливания
+    # уходит с заглушкой TEST00000, а настоящий маркер, выданный позже, до неё не доходит
+    # (9HT4V9 №3: ссылка 05.10, ЕРИД 06.10). Готовность — общим правилом `ord.readiness`.
+    from app.ord import readiness
+    if not readiness.ready_erid(row):
+        raise HTTPException(status_code=409, detail=(
+            f"Комплект №{row.no}: ждём ЕРИД — ссылку нацеливания можно выпустить, когда "
+            "маркер будет готов. Загляните позже"
+            + (f" (сейчас ЕРИД {row.erid}, статус в ОРД: {row.ord_status or 'не получен'})"
+               if getattr(row, "erid", None) else "")))
+
     # Не только завести, но и ЗАПУСТИТЬ: креатив в DSP заводится остановленным, и кука
     # ставилась бы на то, что не крутится (владелец 25.09.2026).
     try:
