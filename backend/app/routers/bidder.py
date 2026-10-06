@@ -43,11 +43,21 @@ def runs(db: Session = Depends(get_db), user: User = Depends(VIEW)):
 
 @router.get("/runs/{run_id}")
 def run_changes(run_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
-    """Что поменялось у площадок в прогоне."""
+    """Что поменялось у площадок в прогоне + разбор по причинам и проверки прогона."""
+    from app.bidder import checks as K
     from app.bidder import journal
     from app.bidder.rules import REASONS
-    return [{**c, "reason_label": REASONS.get(c["reason"], c["reason"])}
-            for c in journal.changes_of(db, run_id)]
+    run = journal.run(db, run_id)
+    if run is None:
+        raise HTTPException(404, "Прогон не найден")
+    changes = journal.changes_of(db, run_id)
+    ids = sorted({c["campaign_id"] for c in changes})
+    starts = dict(db.execute(text("SELECT id, date_start FROM ad_campaign WHERE id = ANY(:i)"),
+                             {"i": ids}).all()) if ids else {}
+    return {"summary": K.summarize(changes, starts, run["run_day_msk"]),
+            "checks": run.get("checks") or [],
+            "changes": [{**c, "reason_label": REASONS.get(c["reason"], c["reason"])}
+                        for c in changes]}
 
 
 @router.get("/campaigns")

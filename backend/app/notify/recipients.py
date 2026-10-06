@@ -171,6 +171,18 @@ def master_of_responsible(db: Session, ctx: dict) -> List[int]:
     return _active(db, [h.user_id for h in heads])
 
 
+def traffic_masters(db: Session, ctx: dict) -> List[int]:
+    """Мастера контура трафика: роли `staff_group = 'traffic'` с признаком мастера — сейчас
+    «Мастер траффик» и «Админ Трафик» (владелец 06.10.2026, тревога биддера). По признакам,
+    а не по `roles.key`: ключ вида `role_12` между установками разный."""
+    ids = [r.id for r in db.query(Role).filter(Role.staff_group == "traffic",
+                                               Role.is_master.is_(True)).all()]
+    if not ids:
+        return []
+    return [u.id for u in db.query(User).filter(User.role_id.in_(ids),
+                                                User.is_active == 1).all()]
+
+
 RESOLVERS = {
     "mp_author": mp_author,
     "responsible": responsible,
@@ -180,6 +192,7 @@ RESOLVERS = {
     "year_plan_owner": year_plan_owner,
     "master_of_responsible": master_of_responsible,
     "traffic_admins": traffic_admins,
+    "traffic_masters": traffic_masters,
 }
 
 # Что резолвер ждёт в `ctx`. Объявлено списком, а не только в теле функции, потому что
@@ -215,6 +228,7 @@ RESOLVER_LABELS = {
     "year_plan_owner": "Сейлз годового плана",
     "master_of_responsible": "Мастер ответственного",
     "traffic_admins": "Трафик-админы (право «Особенности площадок»)",
+    "traffic_masters": "Мастера трафика (мастер-роли контура трафика)",
 }
 
 

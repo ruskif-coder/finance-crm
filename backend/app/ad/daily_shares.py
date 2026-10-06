@@ -68,17 +68,73 @@ def run(dry_run: bool = False, client=None, campaign_ids=None) -> dict:
                                    "failed": [{"creative_id": None, "error": str(e)}]})
         failed = sum(len(x["failed"]) for x in limits)
         from app.ad.stat_sources import fact_as_of
+        limit_errors = [f for x in limits for f in x["failed"]]
+        # Ручной прогон по части РК (`campaign_ids`) не проверяет и не тревожит по всем
+        # остальным и не становится «предыдущим» для ночного (ревью 06.10.2026).
+        full = _SCOPE_ALL(campaign_ids)
+        checks = _checks(db, shares, limit_errors) if full else []
+        prev = None
         if run_id is not None:
             try:
+                prev = journal.last_state(db) if full else None
                 journal.finish(run_id, shares, limits, failed,
                                fact_as_of(db) if shares.get("by_fact") else None,
-                               [f for x in limits for f in x["failed"]])
+                               limit_errors, checks)
             except Exception:  # noqa: BLE001
                 log.exception("журнал биддера: прогон %s не закрыт", run_id)
+            if full:
+                try:
+                    _alert_if_worse(db, prev, checks)
+                except Exception:  # noqa: BLE001
+                    db.rollback()
+                    log.exception("биддер: тревога о прогоне %s не отправлена", run_id)
         return {"shares": shares, "limits": limits, "failed": failed, "dry_run": False,
-                "run_id": run_id}
+                "run_id": run_id, "checks": checks}
     finally:
         db.close()
+
+
+def _SCOPE_ALL(campaign_ids) -> bool:   # noqa: N802 — подменяется в тестах
+    return campaign_ids is None
+
+
+def _checks(db, shares: dict, limit_errors: list) -> list:
+    """Проверки прогона (`app/bidder/checks`). Сбой проверки не роняет прогон — он
+    сам становится строкой-ошибкой: молчащий прибор хуже упавшего."""
+    from app.bidder import checks as K
+    from app.dsp.stat_daily import today_msk
+    try:
+        try:
+            from app.dsp.db import DspSessionLocal
+            dsp = DspSessionLocal() if DspSessionLocal else None
+        except Exception:  # noqa: BLE001
+            dsp = None
+        try:
+            g = K.gather(db, dsp, today_msk())
+        finally:
+            if dsp is not None:
+                dsp.close()
+        return K.evaluate(g["campaigns"], bool(shares.get("by_fact")), g["slice_vs_raw"],
+                          limit_errors, today_msk())
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        log.exception("биддер: проверки прогона не выполнены")
+        return [{"level": "error", "code": "checks_failed", "title": "Проверки не выполнены",
+                 "count": 1, "examples": [str(e)[:200]]}]
+
+
+def _alert_if_worse(db, prev_state, checks: list) -> None:
+    """Тревога владельцу и мастерам трафика — только когда прогон стал хуже предыдущего."""
+    from app.bidder import checks as K
+    now = K.state_of(checks)
+    if not K.should_alert(prev_state, now):
+        return
+    from app.notify.bus import emit
+    body = "; ".join(f"{c['title']}: {c['count']}" + (f" ({c['examples'][0]})" if c["examples"] else "")
+                     for c in checks)
+    emit(db, "cron_bidder_failed", title=f"Биддер: {now}", body=body[:600],
+         link="/traffic/bidder", entity_type="cron", entity_id=2, actor=None)
+    db.commit()
 
 
 def _report(out: dict) -> str:
@@ -90,6 +146,9 @@ def _report(out: dict) -> str:
             + (f", креативов с нулевой долей (лимит не менялся): {zero}" if zero else "")
             + ("" if s.get("by_fact", True) else
                "; статистики DSP за вчера нет — объёмы по весам, без факта")
+            + "".join(f"\n  [{c['level']}] {c['title']}: {c['count']}"
+                      + (f" — {', '.join(c['examples'][:3])}" if c["examples"] else "")
+                      for c in out.get("checks") or [])
             + (" (пробный прогон, ничего не записано)" if out.get("dry_run") else ""))
 
 

@@ -387,6 +387,39 @@ def check_notify_dispatch(db: Session):
                   consequence=consequence)
 
 
+def check_bidder(db: Session):
+    """Ночной пересчёт объёмов (биддер, 06.10.2026): последний прогон и его проверки."""
+    from app.bidder import journal
+    title = "Биддер: ночной пересчёт объёмов"
+    try:
+        runs = journal.runs(db, limit=1)
+    except Exception:  # noqa: BLE001 — таблицы нет (до миграции)
+        db.rollback()
+        return _check("job_bidder", "Фоновые задания", title, "idle", "журнала нет",
+                      "миграции биддера (2026-10-05_bidder_run, 2026-10-06_bidder_run_checks) не накатаны")
+    if not runs:
+        return _check("job_bidder", "Фоновые задания", title, "idle", "ни одного прогона",
+                      "на стенде это норма — cron стоит только на сервере")
+    r = runs[0]
+    value = f"{r['started_msk']} МСК · {r['state']}"
+    hours = _age(datetime.fromisoformat(r["started_msk"] + ":00") - timedelta(hours=3))
+    if hours > 26:
+        return _check("job_bidder", "Фоновые задания", title, "bad", value,
+                      "крон должен ходить раз в сутки (02:00 UTC)",
+                      consequence="Объёмы и лимиты в DSP не догоняют статусы площадок и факт")
+    if r["state"] in ("ошибки", "оборвался"):
+        bad = [f"{c['title']}: {c['count']}" for c in (r.get("checks") or [])
+               if c.get("level") == "error"]
+        return _check("job_bidder", "Фоновые задания", title, "bad", value,
+                      "; ".join(bad)[:400] or r["state"],
+                      consequence="Лимиты в DSP могут не совпадать с планом — открыть Биддер")
+    if r["state"] == "предупреждения":
+        warn = [f"{c['title']}: {c['count']}" for c in (r.get("checks") or [])
+                if c.get("level") == "warning"]
+        return _check("job_bidder", "Фоновые задания", title, "warn", value, "; ".join(warn)[:400])
+    return _check("job_bidder", "Фоновые задания", title, "ok", value)
+
+
 def check_erid_auto(db: Session):
     """Автовыпуск ЕРИД — крон раз в полчаса (владелец 27.09.2026).
 
@@ -858,7 +891,8 @@ def collect(db: Session, live: bool = False) -> dict:
                _safe(check_db_sizes, db), _safe(check_db_connections, db),
                _safe(check_disk), _safe(check_storage, db), _safe(check_orphans, db),
                _safe(check_notify_dispatch, db),
-               _safe(check_erid_auto, db), _safe(check_dsp_stats, db)]
+               _safe(check_erid_auto, db), _safe(check_dsp_stats, db),
+               _safe(check_bidder, db)]
     ext = _safe(check_external_config)
     checks += ext if isinstance(ext, list) else [ext]
     checks.append(_safe(check_dsp_journal, dsp["tone"] == "ok"))

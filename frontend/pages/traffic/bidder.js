@@ -36,10 +36,41 @@ function Part({ label, value, hint }) {
 }
 
 const dt = (v) => (v ? v.split(' ').map((x, i) => (i ? x : ru(x))).join(' ') : '—')   // уже МСК с сервера
-const STATE_TONE = { 'ок': 'var(--income)', 'идёт': 'var(--text-secondary)', 'с ошибками': 'var(--expense)', 'оборвался': 'var(--expense)' }
-const canOpen = (r) => !!r.plans_changed || !!(r.errors && r.errors.length)
+const STATE_TONE = { 'ок': 'var(--income)', 'идёт': 'var(--text-secondary)', 'предупреждения': 'var(--warning-text)',
+  'ошибки': 'var(--expense)', 'оборвался': 'var(--expense)' }
+const LEVEL_TONE = { error: 'var(--expense)', warning: 'var(--warning-text)' }
+// Раскрыть можно любой закрытый прогон: в нём есть разбор и проверки (06.10.2026).
+const canOpen = (r) => r.state !== 'идёт'
 
-function RunRow({ r, open, onToggle, changes }) {
+// Разбор по причинам и проверки прогона — над списком изменений площадок.
+function RunDetails({ r, det }) {
+  const checks = det ? det.checks : (r.checks || [])
+  return (
+    <tr style={{ background: 'var(--bg-subtle)' }}>
+      <td style={{ ...td, paddingLeft: 28 }} colSpan={6}>
+        {!!det && !!det.summary.length && (
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 4 }}>Что поменялось</div>
+            {det.summary.map((s, i) => <div key={i} style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>· {s}</div>)}
+          </div>
+        )}
+        <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 4 }}>Проверки</div>
+        {r.checks == null && <div style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>прогон до 06.10.2026 — проверок тогда не было</div>}
+        {r.checks != null && !checks.length && <div style={{ fontSize: 12.5, color: 'var(--income)' }}>все проверки пройдены</div>}
+        {checks.map(c => (
+          <div key={c.code} style={{ fontSize: 12.5, marginBottom: 4 }}>
+            <span style={{ color: LEVEL_TONE[c.level], fontWeight: 700 }}>{c.level === 'error' ? 'ошибка' : 'предупреждение'}</span>
+            {' · '}{c.title}: {c.count}
+            {c.examples.map((e, i) => <div key={i} style={{ paddingLeft: 14, fontFamily: MONO, fontSize: 11.5, color: 'var(--text-muted)' }}>{e}</div>)}
+          </div>
+        ))}
+      </td>
+    </tr>
+  )
+}
+
+function RunRow({ r, open, onToggle, det }) {
+  const changes = det ? det.changes : null
   return (
     <>
       <tr onClick={onToggle} style={{ cursor: canOpen(r) ? 'pointer' : 'default' }}>
@@ -52,6 +83,7 @@ function RunRow({ r, open, onToggle, changes }) {
         <td style={{ ...td, textAlign: 'right', fontFamily: MONO }}>{grp(r.plans_changed)}</td>
         <td style={{ ...td, textAlign: 'right', fontFamily: MONO }}>{grp(r.limits_updated)}</td>
       </tr>
+      {open && <RunDetails r={r} det={det} />}
       {open && (r.errors || []).map((e, i) => (
         <tr key={`e${i}`} style={{ background: 'var(--bg-subtle)' }}>
           <td style={{ ...td, paddingLeft: 28, color: 'var(--expense)' }} colSpan={6}>
@@ -68,7 +100,7 @@ function RunRow({ r, open, onToggle, changes }) {
           <td style={{ ...td, color: REASON_TONE[c.reason] }}>{c.reason_label}</td>
         </tr>
       ))}
-      {open && !!r.plans_changed && !changes && <tr><td style={td} colSpan={6}>Загрузка…</td></tr>}
+      {open && !det && <tr><td style={td} colSpan={6}>Загрузка…</td></tr>}
     </>
   )
 }
@@ -111,10 +143,14 @@ export default function BidderPage() {
     if (!canOpen(r)) return
     if (openRun === r.id) { setOpenRun(null); return }
     setOpenRun(r.id)
-    if (r.plans_changed && !runChanges[r.id]) {
+    if (!runChanges[r.id]) {
       api.get(`/bidder/runs/${r.id}`, auth())
         .then(x => setRunChanges(m => ({ ...m, [r.id]: x.data })))
-        .catch(e => setErr(e?.response?.data?.detail || 'Не удалось загрузить изменения прогона'))
+        .catch(e => {
+          // Без этого «Загрузка…» висела бы до перезагрузки страницы (ревью 06.10.2026).
+          setErr(e?.response?.data?.detail || 'Не удалось загрузить изменения прогона')
+          setOpenRun(null)
+        })
     }
   }
 
@@ -246,7 +282,7 @@ export default function BidderPage() {
               </thead>
               <tbody>
                 {runs.map(r => (
-                  <RunRow key={r.id} r={r} open={openRun === r.id} onToggle={() => toggleRun(r)} changes={runChanges[r.id]} />
+                  <RunRow key={r.id} r={r} open={openRun === r.id} onToggle={() => toggleRun(r)} det={runChanges[r.id]} />
                 ))}
               </tbody>
             </table>
