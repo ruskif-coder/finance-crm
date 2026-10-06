@@ -25,6 +25,7 @@ from app.database import SessionLocal
 from app.weborama import stats as S
 from app.weborama import store
 from app.weborama.client import WcmClient, WcmError
+import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей
 
 
 

@@ -39,6 +39,7 @@ from app.database import SessionLocal
 from app.mail import client as mail
 from app.mail import render
 from app.mail.send import send_and_log
+import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей
 
 log = logging.getLogger("finance.cabinet.digest")
 
@@ -177,7 +178,14 @@ def _card(r) -> dict:
         "when": timez.to_msk(r.created_at).strftime("%H:%M") if r.created_at else "",
         "facts": [tuple(f) for f in (r.facts or [])],
         "action": "Открыть кабинет",
+        "needs_action": _needs_action(getattr(r, "kind", None)),
     }
+
+
+def _needs_action(kind_key) -> bool:
+    from app.notify.outward.kinds import by_key
+    k = by_key(kind_key)
+    return bool(k and k.needs_action)
 
 
 def _plural(n: int) -> str:

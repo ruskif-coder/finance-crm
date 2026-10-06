@@ -30,6 +30,7 @@ from app.notify import registry
 from app.notify.bus import emit
 from app.sales.deal_label import deal_label
 from app.notify.models import NotificationAlertState, NotificationScanRun
+import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей
 
 
 # ─────────────────────────── общий механизм ───────────────────────────

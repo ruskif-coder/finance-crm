@@ -22,6 +22,7 @@ from app.notify import channels
 from app.notify.channels import quiet_now
 from app.notify.models import NotificationDelivery, UserNotificationChannels
 from app.models import User
+import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей
 
 MAX_AGE_HOURS = 48
 

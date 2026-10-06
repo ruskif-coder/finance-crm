@@ -85,3 +85,4 @@ class MailLog(Base):
     message_id = Column(String(255))
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     sent_at = Column(DateTime)
+

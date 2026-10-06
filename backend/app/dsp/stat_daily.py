@@ -25,6 +25,7 @@ from app.database import SessionLocal
 from app.dsp import stat_store as store
 from app.dsp import stats as S
 from app.dsp.client import PROD, MsClient, MsError
+import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей
 
 
 def _day(s: str) -> date:

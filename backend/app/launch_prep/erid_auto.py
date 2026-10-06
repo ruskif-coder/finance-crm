@@ -31,6 +31,7 @@ import sys
 from fastapi import HTTPException
 
 from app.database import SessionLocal
+import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей
 
 log = logging.getLogger("finance.ord")
 

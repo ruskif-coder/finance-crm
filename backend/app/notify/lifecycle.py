@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import text
 
 from app.database import SessionLocal
+import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей
 
 READ_DAYS = 30          # прочитанное и погашенное
 UNREAD_DAYS = 90        # непрочитанное

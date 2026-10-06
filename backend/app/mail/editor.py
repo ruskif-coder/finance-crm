@@ -197,7 +197,10 @@ def plural(n: int, one: str, few: str, many: str) -> str:
 def computed(cards: List[dict]) -> dict:
     """Три подстановки, которые СЧИТАЮТСЯ из состава письма и не набираются текстом."""
     n = len(cards)
-    need = sum(1 for c in cards if (c.get("tone") or "info") in ("bad", "warn"))
+    # Карточка площадке несёт признак «ждёт действия» (`outward.kinds.needs_action`) — по
+    # нему; у писем сотрудникам признака нет, там по-прежнему по цвету (06.10.2026).
+    need = sum(1 for c in cards
+               if c.get("needs_action", (c.get("tone") or "info") in ("bad", "warn")))
     if not n:
         urgent = "Письмо пустое."
     elif not need:

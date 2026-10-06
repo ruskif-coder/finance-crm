@@ -387,6 +387,29 @@ def check_notify_dispatch(db: Session):
                   consequence=consequence)
 
 
+def check_outward_digest(db: Session):
+    """Письма площадкам (дайджест, крон раз в час): в очереди нет событий, просроченных
+    больше чем на 2 часа. 06.10.2026 крон неделю падал на старте, очередь копилась 4 дня,
+    а экран состояния молчал — своего журнала прогонов у дайджеста нет, поэтому смотрим
+    на результат: ушло ли то, чему пора."""
+    title = "Письма площадкам (дайджест)"
+    n, oldest = db.execute(text("""
+        SELECT count(*), min(q.due_at) FROM cabinet_digest_queue q
+         WHERE q.sent_at IS NULL AND q.due_at < now() - interval '2 hours'
+           AND NOT EXISTS (SELECT 1 FROM cabinet_publisher cp JOIN cabinet cab ON cab.id = cp.cabinet_id
+                            WHERE cp.publisher_id = q.publisher_id AND cab.state = 'приостановлен')
+           AND EXISTS (SELECT 1 FROM sales_publisher_contacts c WHERE c.id = q.contact_id AND c.notify)
+           AND EXISTS (SELECT 1 FROM sales_publishers p WHERE p.id = q.publisher_id AND p.status <> 'АРХИВ')
+    """)).first() or (0, None)
+    if not n:
+        return _check("job_outward_digest", "Фоновые задания", title, "ok", "очередь не стоит")
+    hours = _age(oldest) or 0
+    return _check("job_outward_digest", "Фоновые задания", title, "bad",
+                  f"не ушло событий: {n}, старейшее {hours:.0f} ч",
+                  "крон app.notify.outward.digest не отправляет — смотреть logs/outward_digest.log",
+                  consequence="Площадки не получают писем о креативах на согласование и запросах ссылок")
+
+
 def check_bidder(db: Session):
     """Ночной пересчёт объёмов (биддер, 06.10.2026): последний прогон и его проверки."""
     from app.bidder import journal
@@ -892,7 +915,7 @@ def collect(db: Session, live: bool = False) -> dict:
                _safe(check_disk), _safe(check_storage, db), _safe(check_orphans, db),
                _safe(check_notify_dispatch, db),
                _safe(check_erid_auto, db), _safe(check_dsp_stats, db),
-               _safe(check_bidder, db)]
+               _safe(check_bidder, db), _safe(check_outward_digest, db)]
     ext = _safe(check_external_config)
     checks += ext if isinstance(ext, list) else [ext]
     checks.append(_safe(check_dsp_journal, dsp["tone"] == "ok"))

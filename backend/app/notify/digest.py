@@ -54,6 +54,7 @@ from app.notify import channels
 from app.notify import registry
 from app.notify import tone as tone_of
 from app.notify.models import NotificationDelivery, UserNotificationChannels
+import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей
 
 log = logging.getLogger("finance.notify.digest")
 

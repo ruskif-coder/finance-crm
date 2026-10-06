@@ -24,6 +24,7 @@ from app.ext_lock import MAIL_FLUSH, only_one
 from app.mail import client as mail
 from app.mail.models import MailLog
 from app.mail.send import _failed
+import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей
 
 log = logging.getLogger("finance.mail.flush")
 
