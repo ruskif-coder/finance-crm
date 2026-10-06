@@ -488,3 +488,47 @@ def test_picker_offers_a_platform_already_used_by_another_creative(env):
     assert env.pubs[0].id in free, (
         "занятость считается по сделке — второму креативу площадку не предложат")
 
+
+
+def _second_set(env, no):
+    """Ещё один комплект той же площадке (targets[0]) — как дубли №5/№6 у 6KZUTN."""
+    s = LaunchPrepCreativeSet(deal_id=env.deal.id, no=NO_BASE + no)
+    env.db.add(s)
+    env.db.flush()
+    env.db.add(LaunchPrepSetTarget(set_id=s.id, target_id=env.targets[0].id,
+                                   advertiser_url=_LANDING))
+    env.db.add(LaunchPrepCreativeFile(set_id=s.id, path=f'creatives/t{no}.png',
+                                      original_name=f't{no}.png', size_bytes=10))
+    env.db.add(LaunchPrepReview(set_id=s.id, kind='первичная_тт', verdict='ок',
+                                source='аккаунт', decided_by='тест'))
+    env.db.commit()
+    lp.send_set(s.id, lp.SendIn(), env.db, _ADMIN)
+    return _pass_traffic(env.db, s.id)[0]
+
+
+def test_refusal_of_one_set_does_not_drop_publisher_with_others_pending(env):
+    """06.10.2026, 6KZUTN × kuper: отказ по дублям №1/№2 уронил всю площадку, хотя №5/№6
+    ждали ответа. Отказ площадки — только когда по ВСЕМ её комплектам ответ «отказ»."""
+    lp.send_set(env.cset.id, lp.SendIn(), env.db, _ADMIN)
+    first = [p for p in _pass_traffic(env.db, env.cset.id) if p.target_id == env.targets[0].id][0]
+    second = _second_set(env, 5)
+    t = env.targets[0]
+
+    lp.pair_verdict(first.id, lp.PairVerdictIn(verdict='отказ', reason='дубль'), env.db, _ADMIN)
+    env.db.refresh(t)
+    assert t.state != 'отказ площадки', "второй комплект ещё ждёт ответа"
+
+    lp.pair_verdict(second.id, lp.PairVerdictIn(verdict='ок'), env.db, _ADMIN)
+    env.db.refresh(t)
+    assert t.state in ('согласован', 'ерид получен')
+
+
+def test_refusal_of_every_set_drops_publisher(env):
+    lp.send_set(env.cset.id, lp.SendIn(), env.db, _ADMIN)
+    first = [p for p in _pass_traffic(env.db, env.cset.id) if p.target_id == env.targets[0].id][0]
+    second = _second_set(env, 6)
+    t = env.targets[0]
+    lp.pair_verdict(first.id, lp.PairVerdictIn(verdict='отказ', reason='нет'), env.db, _ADMIN)
+    lp.pair_verdict(second.id, lp.PairVerdictIn(verdict='отказ', reason='нет'), env.db, _ADMIN)
+    env.db.refresh(t)
+    assert t.state == 'отказ площадки'

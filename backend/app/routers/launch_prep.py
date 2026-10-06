@@ -1675,6 +1675,18 @@ def _pair_code(deal_code: str, publisher_code: str, no: int) -> str:
     return f"{deal_code}-{publisher_code}-{no:02d}"
 
 
+def _all_refused(db: Session, target_id: int) -> bool:
+    """По всем живым (неотозванным) комплектам площадки в сделке ответ площадки — «отказ».
+    Ждёт ответа, согласован или на доработке хоть один — площадка в работе."""
+    db.flush()
+    verdicts = [v for (v,) in db.query(LaunchPrepReview.verdict)
+                .join(LaunchPrepPair, LaunchPrepPair.id == LaunchPrepReview.pair_id)
+                .filter(LaunchPrepPair.target_id == target_id,
+                        LaunchPrepPair.withdrawn_at.is_(None),
+                        LaunchPrepReview.kind == "площадка").all()]
+    return bool(verdicts) and all(v == "отказ" for v in verdicts)
+
+
 def _recompute_target_state(db: Session, target: LaunchPrepTarget):
     """Состояние получателя — из его пар. Хранится, но пересчитывается по фактам.
 
@@ -1982,9 +1994,13 @@ def apply_platform_verdict(db: Session, pair_id: int, verdict: str,
         # Площадка выпадает из кампании: новая версия ей не поможет, и висеть в ожидании
         # доработки она не должна — иначе порог ЕРИД будет вечно ждать её ответа, который
         # уже дан. В знаменателе порога она остаётся: спрашивали — значит считаем.
+        #
+        # Но только когда отказ — по ВСЕМ её комплектам в сделке (06.10.2026, 6KZUTN ×
+        # kuper): отказ по дублям №1/№2 ронял площадку, хотя №5/№6 ждали ответа. Правило
+        # писалось, когда у площадки был один комплект.
         target = db.query(LaunchPrepTarget).filter(
             LaunchPrepTarget.id == pair.target_id).first()
-        if target:
+        if target and _all_refused(db, target.id):
             target.state = "отказ площадки"
     if verdict == "ок":
         target = db.query(LaunchPrepTarget).filter(

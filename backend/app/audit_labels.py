@@ -137,6 +137,7 @@ ACTION_LABELS = {
     "send_creative_set": "Комплект креативов отправлен трафику",
     "primary_creative_review": "Первичное согласование креатива",
     "creative_pair_verdict": "Решение площадки по креативу",
+    "launch_target_state_fix": "Починка состояния площадки в сделке",
     "traffic_pair_verdict": "Решение трафика по паре",
     "traffic_pair_file": "Скриншот размещения приложен",
     "delete_pair_file": "Скриншот размещения удалён",
