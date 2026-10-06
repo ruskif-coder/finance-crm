@@ -22,7 +22,7 @@ def test_sending_refuses_when_nobody_even_asked():
     src = inspect.getsource(lp.send_set)
     # С 25.09.2026 проверяется посадочная ЭТОГО креатива (строка состава), а не
     # площадки сделки.
-    assert 'url_state(own.get((set_id, t.id))) == "нужна"' in src, "проверки состояния ссылки нет"
+    assert 'url_state(own.get((set_id, t.id)), t.surface_kind) == "нужна"' in src, "проверки состояния ссылки нет"
     assert "silent" in src and '", ".join(sorted(silent))' in src, (
         "в отказе должны быть названы площадки")
 
@@ -48,4 +48,4 @@ def test_the_gate_lives_in_the_endpoint_not_on_the_button():
     бы соседним путём — так уже было с вердиктом площадки."""
     from app.routers import launch_prep as lp
 
-    assert 'url_state(own.get((set_id, t.id))) == "нужна"' in inspect.getsource(lp.send_set)
+    assert 'url_state(own.get((set_id, t.id)), t.surface_kind) == "нужна"' in inspect.getsource(lp.send_set)

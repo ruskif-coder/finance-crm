@@ -39,7 +39,7 @@ import { daysTo, startNote, urgency } from '../lib/urgency'
 import { NEED, PAY_STATE, RK_STATE, SERVICE_DOT,
   SHOW_MONEY, billBlocked, blocking, camp, inBill, inPace, sum, useDemoNow } from '../lib/demo'
 import safeHref from '../lib/safeHref'
-import { isAppLink, landingWeb } from '../lib/landing'
+import { APP_LINK_FORMATS, isAppLink, landingWeb } from '../lib/landing'
 import { downloadFile } from '../lib/download'
 import { guideSeen, markGuideSeen } from './guide/seen'
 
@@ -64,15 +64,37 @@ const Guide = dynamic(() => import('./guide/Guide'), { ssr: false, loading: () =
 /* Посадочная — диплинк приложения (02.10.2026): кнопка «посадочная» открывает его
    веб-версию, и площадка должна это знать. Исходную строку можно развернуть и
    скопировать — ровно её мы поставим в баннер. */
+// Подсказка ко второму полю — все форматы ссылки в приложении (владелец 06.10.2026).
+// Отдельным блоком, чтобы его замечали; пока курсор во втором поле — подсвечен
+// оранжевым: глаз сам переходит к списку форматов (владелец 06.10.2026).
+function AppLinkHint({ active }) {
+  return (
+    <span style={{ flex: '1 0 100%', display: 'flex', flexDirection: 'column', gap: 2,
+      fontSize: 11, color: active ? C.warningFg : C.muted, lineHeight: 1.4,
+      padding: '8px 11px', borderRadius: 10,
+      border: `1px solid ${active ? C.warningBorder : C.accentBorder}`,
+      background: active ? C.warningTint : C.card,
+      transition: 'background .15s, border-color .15s, color .15s' }}>
+      <span style={{ fontWeight: 700 }}>Ссылка в приложении — в одном из форматов:</span>
+      {APP_LINK_FORMATS.map(([what, ex]) => (
+        <span key={what}>· {what}: <span style={{ fontFamily: MONO, color: C.secondary,
+          wordBreak: 'break-all' }}>{ex}</span></span>
+      ))}
+    </span>
+  )
+}
+
 function AppLinkNote({ u, full }) {
   const [open, setOpen] = useState(false)
-  if (!isAppLink(u)) return null
+  // Ссылка в приложении: диплинк SDK или своя схема площадки (storefront://… у kuper,
+  // 06.10.2026). Обычная https сюда не относится — её открывает кнопка «посадочная».
+  if (!u || /^https?:\/\//i.test(String(u))) return null
   return (
     <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 6,
       flex: full ? '1 0 100%' : '0 1 auto', fontSize: 11.5, color: C.faint }}>
-      <span>диплинк приложения — «посадочная» открывает его веб-версию</span>
+      <span>{isAppLink(u) ? 'диплинк приложения' : 'ссылка в приложении'} — «посадочная» открывает веб-версию</span>
       <button style={{ ...btnSm(false), padding: '2px 8px' }} onClick={() => setOpen(v => !v)}>
-        {open ? 'скрыть' : 'показать диплинк'}</button>
+        {open ? 'скрыть' : 'показать ссылку'}</button>
       {open && (
         <span style={{ flex: '1 0 100%', fontFamily: MONO, fontSize: 11.5, color: C.secondary,
           wordBreak: 'break-all', userSelect: 'all' }}>{u}</span>
@@ -86,6 +108,11 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
   const [ask, setAsk] = useState(null)
   const [reason, setReason] = useState('')
   const [url, setUrl] = useState('')
+  // Ссылка в приложении — вторая у app-площадки (06.10.2026), может совпадать с веб-ссылкой.
+  const [appUrl, setAppUrl] = useState('')
+  const [appFocus, setAppFocus] = useState(false)
+  const isApp = t.surface === 'app'
+  const urlReady = !!url.trim() && (!isApp || !!appUrl.trim())
   const [show, setShow] = useState(false)
   const [files, setFiles] = useState([])     // приложения к доработке
   const [drag, setDrag] = useState(false)
@@ -160,8 +187,9 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
   const sendUrl = async () => {
     setBusy(true)
     try {
-      await api.put(`/tasks/${t.task_id}/url`, { url: url.trim() }, auth())
-      setUrl(''); onDone()
+      await api.put(`/tasks/${t.task_id}/url`,
+        { url: url.trim(), app_url: isApp ? appUrl.trim() : null }, auth())
+      setUrl(''); setAppUrl(''); onDone()
     } catch (e) { onErr(e.response?.data?.detail || 'Не удалось сохранить ссылку') }
     setBusy(false)
   }
@@ -174,7 +202,9 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
       <TaskMobile t={t} late={late} soon={soon} stLabel={stLabel} toStart={toStart}
         stTone={[stChipBg, stChipFg, stChipBd]} today={today} preview={preview}
         canApprove={canApprove} busy={busy} urlPending={urlPending}
-        url={url} setUrl={setUrl} sendUrl={sendUrl} onErr={onErr}
+        url={url} setUrl={setUrl} appUrl={appUrl} setAppUrl={setAppUrl} isApp={isApp}
+        appFocus={appFocus} setAppFocus={setAppFocus}
+        urlReady={urlReady} sendUrl={sendUrl} onErr={onErr}
         show={show} setShow={setShow} download={download}
         ask={ask} setAsk={setAsk} closeAsk={closeAsk} reason={reason} setReason={setReason}
         reasons={reasons} files={files} addFiles={addFiles} upBusy={upBusy} answer={answer} />
@@ -262,7 +292,7 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
             посадочная
           </a>
         )}
-        {t.url_state === 'есть' && <AppLinkNote u={t.advertiser_url} />}
+        {t.url_state === 'есть' && <AppLinkNote u={t.app_url || t.advertiser_url} />}
         {/* Письмо о правах на изображения — рядом с креативом, а не в отдельном разделе:
             смотрят его, отвечая по этому же материалу. Показываем только когда оно
             есть — пустая кнопка «письма нет» заставляла бы гадать, спросить его или так
@@ -385,12 +415,21 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
             <>
               <input style={{ ...inp, flex: 1, minWidth: 260, background: C.card,
                 padding: '6px 11px', fontFamily: MONO, fontSize: 12 }}
-                title={t.url_request_text || undefined}
-                placeholder={longAsk ? 'https://…' : (t.url_request_text
-                  || 'пришлите ссылку на посадочную — UTM подставим сами')}
+                title={t.url_request_text || undefined} aria-label="Веб-ссылка"
+                placeholder={isApp ? 'веб-ссылка https://…' : (longAsk ? 'https://…' : (t.url_request_text
+                  || 'пришлите ссылку на посадочную — UTM подставим сами'))}
                 value={url} onChange={e => setUrl(e.target.value)} />
+              {isApp && (
+                <input style={{ ...inp, flex: 1, minWidth: 260, background: C.card,
+                  padding: '6px 11px', fontFamily: MONO, fontSize: 12 }}
+                  aria-label="Ссылка в приложении"
+                  placeholder="в приложении: storefront://…, deeplink+://… или та же https://…"
+                  value={appUrl} onChange={e => setAppUrl(e.target.value)}
+                  onFocus={() => setAppFocus(true)} onBlur={() => setAppFocus(false)} />
+              )}
               <button style={{ ...btn(true), padding: '6px 14px' }}
-                disabled={busy || !url.trim()} onClick={sendUrl}>Собрать</button>
+                disabled={busy || !urlReady} onClick={sendUrl}>Собрать</button>
+              {isApp && <AppLinkHint active={appFocus} />}
             </>
           ) : (
             <span style={{ fontSize: 11.5, color: C.faint }}>
@@ -507,7 +546,7 @@ const M_BTN = { minHeight: 40, borderRadius: 10, fontSize: 13, display: 'inline-
   alignItems: 'center', justifyContent: 'center', gap: 6 }
 
 function TaskMobile({ t, late, soon, stLabel, toStart, stTone, today, preview, canApprove,
-  busy, urlPending, url, setUrl, sendUrl, onErr, show, setShow, download, ask, setAsk,
+  busy, urlPending, url, setUrl, appUrl, setAppUrl, isApp, appFocus, setAppFocus, urlReady, sendUrl, onErr, show, setShow, download, ask, setAsk,
   closeAsk, reason, setReason, reasons, files, addFiles, upBusy, answer }) {
   const [stBg, stFg, stBd] = stTone
   return (
@@ -594,7 +633,7 @@ function TaskMobile({ t, late, soon, stLabel, toStart, stTone, today, preview, c
           </button>
         )}
       </div>
-      {t.url_state === 'есть' && <AppLinkNote u={t.advertiser_url} full />}
+      {t.url_state === 'есть' && <AppLinkNote u={t.app_url || t.advertiser_url} full />}
       {!!t.rights_letter && (
         <button onClick={() => downloadFile(`/tasks/${t.task_id}/rights-letter`, t.rights_letter.name)}
           style={{ ...btn(false), ...M_BTN }}>
@@ -616,9 +655,18 @@ function TaskMobile({ t, late, soon, stLabel, toStart, stTone, today, preview, c
           {canApprove ? (
             <>
               <input style={{ ...inp, background: C.card, minHeight: 40, fontFamily: MONO,
-                fontSize: 13 }} inputMode="url" placeholder="https://…"
+                fontSize: 13 }} inputMode="url" aria-label="Веб-ссылка"
+                placeholder={isApp ? 'веб-ссылка https://…' : 'https://…'}
                 value={url} onChange={e => setUrl(e.target.value)} />
-              <button style={{ ...btn(true), ...M_BTN }} disabled={busy || !url.trim()}
+              {isApp && (
+                <input style={{ ...inp, background: C.card, minHeight: 40, fontFamily: MONO,
+                  fontSize: 13 }} inputMode="url" aria-label="Ссылка в приложении"
+                  placeholder="в приложении: storefront://…, deeplink+://… или https://…"
+                  value={appUrl} onChange={e => setAppUrl(e.target.value)}
+                  onFocus={() => setAppFocus(true)} onBlur={() => setAppFocus(false)} />
+              )}
+              {isApp && <AppLinkHint active={appFocus} />}
+              <button style={{ ...btn(true), ...M_BTN }} disabled={busy || !urlReady}
                 onClick={sendUrl}>Собрать</button>
             </>
           ) : (

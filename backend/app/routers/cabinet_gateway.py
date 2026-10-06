@@ -189,7 +189,8 @@ def cabinet_revoke(pair_id: int, payload: CabinetRevokeIn, db: Session = Depends
 class CabinetUrlIn(BaseModel):
     publisher_id: int
     account_id: int
-    url: str
+    url: str                        # веб-ссылка — всегда http(s)
+    app_url: Optional[str] = None   # ссылка в приложении — у app-площадки обязательна (06.10.2026)
     author_name: str
 
 
@@ -223,16 +224,29 @@ def cabinet_task_url(pair_id: int, payload: CabinetUrlIn,
         raise HTTPException(status_code=400, detail=str(e))
     if len(url) > 512:
         raise HTTPException(status_code=400, detail="Ссылка длиннее 512 знаков")
+    # App-площадке нужны ОБЕ ссылки (владелец 06.10.2026): веб — для ОРД и DSP, в
+    # приложении — чтобы клик открыл страницу внутри приложения. Могут совпадать.
+    app_url = None
+    if target.surface_kind == "app":
+        try:
+            app_url = pub_rules.validate_app_link(payload.app_url)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if not app_url:
+            raise HTTPException(status_code=400, detail="Укажите и ссылку в приложении — "
+                                                        "можно ту же, что веб-ссылка")
 
     acc = _actor(db, payload.account_id, payload.publisher_id, approve=True)
     from app.routers.launch_prep import _member
     member = _member(db, pair.set_id, pair.target_id, create=True)
     member.advertiser_url = url
+    if app_url:
+        member.deeplink_url = app_url
     journal.write(db, 'посадочная', cabinet_id=acc.cabinet_id, account_id=acc.id,
                   publisher_id=payload.publisher_id, actor_name=payload.author_name,
                   entity_type='launch_prep_target', entity_id=target.id)
     db.commit()
-    return {"target_id": target.id, "url_state": url_state(member)}
+    return {"target_id": target.id, "url_state": url_state(member, target.surface_kind)}
 
 
 @router.get("/notify-kinds", dependencies=[Depends(require_cabinet_service)])

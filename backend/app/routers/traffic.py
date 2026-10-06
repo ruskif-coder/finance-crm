@@ -289,7 +289,7 @@ def queue(status: str = "waiting", db: Session = Depends(get_db),
             # Состояние ссылки — ОДНОЙ функцией на весь бэкенд. Здесь стояла своя копия
             # тех же трёх ответов; копия дешевле импорта ровно до первого изменения
             # правила, после которого один экран начинает врать.
-            "url_state": url_state(member),
+            "url_state": url_state(member, target.surface_kind),
             "url_request_text": member.url_request_text if member else None,
             # Правило площадки и то, что по нему встанет в код креатива.
             "deeplink_url": getattr(member, "deeplink_url", None) if member else None,

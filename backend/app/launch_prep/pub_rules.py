@@ -7,6 +7,7 @@
 Одна точка на правила: сборка (что спросить у аккаунта), отправка трафику (что запирает),
 выгрузка в DSP (что встаёт в href) и выдача архива под Adfox читают отсюда.
 """
+import re
 from typing import Dict, Iterable, Optional, Tuple
 
 from sqlalchemy.orm import Session
@@ -98,32 +99,78 @@ def is_app_link(url: Optional[str]) -> bool:
     return (url or "").strip().lower().startswith(APP_LINK_PREFIX)
 
 
+# Своя схема приложения площадки: `storefront://product_selection/4846` у kuper (владелец
+# 06.10.2026). Только app-поверхность; опасные схемы — никогда.
+_APP_SCHEME_RE = re.compile(r"^([a-z][a-z0-9+.\-]*)://\S+$", re.I)
+_BAD_SCHEMES = ("javascript", "data", "file", "vbscript", "about", "blob")
+
+
+def is_app_scheme(url: Optional[str]) -> bool:
+    """Ссылка своей схемой приложения (не http(s), не наш диплинк SDK, не опасная)."""
+    m = _APP_SCHEME_RE.match((url or "").strip())
+    return bool(m) and m.group(1).lower() not in _BAD_SCHEMES + ("http", "https")         and not is_app_link(url)
+
+
 def web_url(url: Optional[str]) -> Optional[str]:
-    """Веб-адрес посадочной: у диплинка SDK — раскодированный `primaryUrl`, иначе как есть."""
+    """Веб-адрес посадочной: у диплинка SDK — раскодированный `primaryUrl`; у ссылки своей
+    схемой приложения веб-адреса нет — None (в DSP и ОРД она не уходит); иначе как есть."""
     u = (url or "").strip()
     if not u:
+        return None
+    if is_app_scheme(u):
         return None
     return app_link_web(u) if is_app_link(u) else u
 
 
-def validate_landing(value: Optional[str], surface_kind: Optional[str]) -> Optional[str]:
-    """Посадочная пары: http(s) везде, диплинк SDK — только на app-поверхности.
+def validate_landing(value: Optional[str], surface_kind: Optional[str] = None) -> Optional[str]:
+    """ВЕБ-ссылка пары — всегда http(s), на любой поверхности (владелец 06.10.2026: «первая
+    всегда веб»). Ссылка в приложении — отдельное поле, `validate_app_link`.
     Ошибка — `ValueError` с текстом для человека."""
     v = (value or "").strip()
     if not v:
         return None
-    if is_app_link(v):
-        if surface_kind != "app":
-            raise ValueError("Диплинк приложения принимается только для app-площадки, "
-                             "для сайта — ссылка http(s)://")
-        if not app_link_web(v):
-            raise ValueError("В диплинке нет веб-адреса: primaryUrl должен быть base64 "
-                             "от ссылки https://…")
-        return v
     if not v.lower().startswith(("http://", "https://")):
-        raise ValueError("Ссылка должна начинаться с http:// или https://"
-                         + (" (или deeplink+://… для приложения)" if surface_kind == "app" else ""))
+        raise ValueError("Веб-ссылка должна начинаться с http:// или https://"
+                         + (" — ссылку в приложении (storefront://…, deeplink+://…) впишите "
+                            "во второе поле" if surface_kind == "app" else ""))
     return v
+
+
+def validate_app_link(value: Optional[str]) -> Optional[str]:
+    """Ссылка в приложении (владелец 06.10.2026): своя схема приложения (`storefront://…`),
+    диплинк SDK (`deeplink+://…`) или тот же https. Опасные схемы — отказ: поле где-то
+    отрисуется ссылкой. Кликовый макрос НЕ требуется: в баннер ссылка ставится, только если
+    он в ней есть (`click_href`), иначе клик идёт через макрос DSP."""
+    v = (value or "").strip()
+    if not v:
+        return None
+    if len(v) > 1024:
+        raise ValueError("Ссылка в приложении длиннее 1024 символов")
+    # Пробелы и управляющие символы внутри — склейка двух ссылок или подмена; intent://
+    # запускает любой компонент Android-приложения (ревью 06.10.2026).
+    if re.search(r"\s|[\x00-\x1f\x7f]", v):
+        raise ValueError("В ссылке в приложении не должно быть пробелов и переводов строки")
+    if v.lower().startswith("intent:"):
+        raise ValueError("Ссылки intent:// не принимаем — укажите схему приложения или https://")
+    if v.lower().startswith(("http://", "https://")) or is_app_link(v) or is_app_scheme(v):
+        return v
+    raise ValueError("Ссылка в приложении — адрес вида storefront://…, deeplink+://… или "
+                     "https://…")
+
+
+def split_landing(raw: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """Старая посадочная одной строкой → (веб, приложение). Для переноса 06.10.2026:
+    диплинк SDK — в приложение, его primaryUrl — в веб; «веб … приложение» одной строкой
+    (так вписывали у kuper) — по частям."""
+    v = (raw or "").strip()
+    if not v:
+        return None, None
+    if is_app_link(v):
+        return app_link_web(v), v
+    parts = v.split()
+    web = next((x for x in parts if x.lower().startswith(("http://", "https://"))), None)
+    app = next((x for x in parts if is_app_link(x) or is_app_scheme(x)), None)
+    return web, app
 
 
 def needs_deeplink(rule: Optional[dict]) -> bool:
@@ -142,15 +189,18 @@ def has_click_macro(url: Optional[str]) -> bool:
 def _wanted_href(rule: Optional[dict], advertiser_url: Optional[str],
                  deeplink_url: Optional[str]) -> Optional[str]:
     """Что правило площадки хотело бы поставить в href (без проверки макроса)."""
+    # С 06.10.2026 ссылка в приложении — своё поле (`deeplink_url`): диплинк SDK живёт там,
+    # а не в посадочной. Старые строки с диплинком в посадочной читаются как прежде.
+    app = (deeplink_url or "").strip() or None
+    legacy = (advertiser_url or "").strip() if is_app_link(advertiser_url) else None
     mode = (rule or {}).get("app_links")
-    if mode in ("web", "sdk"):
+    if mode == "web":     # старый режим (с 05.10 при сохранении пустой) — в href веб-ссылка
         return (advertiser_url or "").strip() or None
-    if mode == "both":
-        return ((deeplink_url or "").strip()
-                or ((advertiser_url or "").strip() if is_app_link(advertiser_url) else None))
-    # Диплинк SDK в посадочной работает только из баннера: без правила площадки он иначе
-    # потерялся бы — в `link` уходит веб-адрес (02.10.2026).
-    return (advertiser_url or "").strip() if is_app_link(advertiser_url) else None
+    if mode in ("sdk", "both"):
+        return app or legacy
+    # Без правила площадки диплинк SDK всё равно идёт в баннер: иначе он потерялся бы —
+    # в `link` уходит веб-адрес (02.10.2026).
+    return (app if is_app_link(app) else None) or legacy
 
 
 def click_href(rule: Optional[dict], advertiser_url: Optional[str],
@@ -196,23 +246,6 @@ def applied_label(rule: Optional[dict]) -> Optional[str]:
     if rule.get("app_links") == "sdk":
         return "в href — диплинк SDK из посадочной, в url/adomain — его веб-адрес"
     return None
-
-
-def validate_deeplink(value: Optional[str]) -> Optional[str]:
-    """Диплинк — схема приложения (`deeplink+://…`) или https. Запрещены схемы, которыми
-    поле, отрисованное ссылкой, превращается в XSS. Обязателен кликовый макрос DSP
-    (05.10.2026): диплинк встаёт в href баннера, а ссылку без макроса DSP отклоняет (2051)."""
-    v = (value or "").strip()
-    if not v:
-        return None
-    scheme = v.split(":", 1)[0].lower() if ":" in v else ""
-    if not scheme or scheme in ("javascript", "data", "vbscript", "file") or len(v) > 1024:
-        raise ValueError("Диплинк — адрес вида app://… или https://…, не длиннее 1024 символов")
-    if not has_click_macro(v):
-        raise ValueError("В диплинке нет кликового макроса DSP — без него DSP не примет креатив. "
-                         "Формат: deeplink+://navigate?primaryUrl=<ссылка в base64>"
-                         "&primaryTrackingUrl={LINK_ESC}")
-    return v
 
 
 # ── Площадка в РК: наша DSP / внешняя / смешанная (владелец 30.09.2026) ─────────────────

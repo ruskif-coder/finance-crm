@@ -284,13 +284,14 @@ def _recipient_out(target, pub, pair=None, review=None, traffic=None,
         # Посадочная и запрос — ЭТОГО креатива (строка состава), не площадки сделки:
         # у разных креативов одной площадки они бывают разные (владелец 25.09.2026).
         "advertiser_url": member.advertiser_url if member else None,
-        "url_state": url_state(member),
+        "url_state": url_state(member, target.surface_kind),
         "url_requested_at": member.url_requested_at if member else None,
         "url_request_text": member.url_request_text if member else None,
         # Особенности площадки (владелец 29.09.2026, app/launch_prep/pub_rules.py):
         # режим «обе» требует диплинк рядом с посадочной — он встанет в <a href>.
         "deeplink_url": getattr(member, "deeplink_url", None) if member else None,
-        "needs_deeplink": pub_rules.needs_deeplink(rule),
+        # Ссылка в приложении — у каждой app-площадки (06.10.2026), не только в режиме «обе».
+        "needs_deeplink": pub_rules.needs_deeplink(rule) or target.surface_kind == "app",
         # Какую ссылку принимает площадка — подсказкой у поля посадочной (02.10.2026).
         "landing_hint": pub_rules.landing_hint(rule),
         "placement_channel": (rule or {}).get("channel"),
@@ -1795,7 +1796,7 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
     # введённая у креатива №1, креативу №2 не засчитывается (владелец 25.09.2026).
     own = _members_of(db, [set_id])
     silent = [pubs[t.publisher_id].name if t.publisher_id in pubs else str(t.publisher_id)
-              for t in targets if url_state(own.get((set_id, t.id))) == "нужна"]
+              for t in targets if url_state(own.get((set_id, t.id)), t.surface_kind) == "нужна"]
     # Площадка требует диплинк (режим ссылок app «обе», владелец 29.09.2026) — без него
     # пара не уходит: в коде креатива ему будет не на что встать.
     rules = pub_rules.rules_for(db, {(t.publisher_id, t.surface_kind) for t in targets})
@@ -1961,7 +1962,9 @@ def apply_platform_verdict(db: Session, pair_id: int, verdict: str,
         # Запрос — у ЭТОГО креатива: открытый запрос соседнего креатива той же площадки
         # это согласование не держит (владелец 25.09.2026).
         member = _member(db, pair.set_id, pair.target_id)
-        if member is not None and url_state(member) == "запрошена":
+        surface = db.query(LaunchPrepTarget.surface_kind).filter(
+            LaunchPrepTarget.id == pair.target_id).scalar()
+        if member is not None and url_state(member, surface) == "запрошена":
             raise HTTPException(
                 status_code=400,
                 detail="Мы ждём от этой площадки посадочную страницу — "
@@ -2439,7 +2442,7 @@ def _members_of(db: Session, set_ids) -> dict:
             .filter(LaunchPrepSetTarget.set_id.in_(ids)).all()}
 
 
-def url_state(target) -> str:
+def url_state(target, surface_kind: Optional[str] = None) -> str:
     """Состояние ссылки — производное, а не колонка.
 
     Принимает строку состава креатива (`LaunchPrepSetTarget`): с 25.09.2026 посадочная и
@@ -2457,7 +2460,11 @@ def url_state(target) -> str:
     """
     if target is None:
         return "нужна"
-    if target.advertiser_url:
+    # App-площадке нужны ОБЕ ссылки — веб и в приложении (владелец 06.10.2026); могут
+    # совпадать. Веб-площадке — только веб.
+    have = bool(target.advertiser_url) and (
+        surface_kind != "app" or bool(getattr(target, "deeplink_url", None)))
+    if have:
         return "есть"
     return "запрошена" if target.url_requested_at else "нужна"
 
@@ -2505,25 +2512,27 @@ def set_member_url(set_id: int, target_id: int, payload: TargetUrlIn,
     db.commit()
     log_action(db, current_user, "set_target_url", "sales_deal", deal.id,
                f"креатив №{s.no}, площадка {t.publisher_id}: {url or 'ссылка снята'}")
-    return {"advertiser_url": m.advertiser_url, "url_state": url_state(m)}
+    return {"advertiser_url": m.advertiser_url, "url_state": url_state(m, t.surface_kind)}
 
 
 @router.put("/set/{set_id}/target/{target_id}/deeplink")
 def set_member_deeplink(set_id: int, target_id: int, payload: TargetUrlIn,
                         db: Session = Depends(get_db), current_user: User = Depends(EDIT)):
-    """Диплинк этого креатива на этой площадке — для app-площадок с режимом ссылок «обе»
-    (владелец 29.09.2026). Встаёт в <a href> при выгрузке; url/adomain DSP — веб-посадочная."""
+    """Ссылка В ПРИЛОЖЕНИИ этого креатива на этой площадке (владелец 06.10.2026; до того —
+    диплинк для режима «обе», 29.09.2026). У app-площадки обязательна вместе с веб-ссылкой,
+    может с ней совпадать. В <a href> встаёт, только если в ней кликовый макрос DSP."""
     s, t, deal = _member_in_scope(db, set_id, target_id, current_user)
     try:
-        link = pub_rules.validate_deeplink(payload.url)
+        link = pub_rules.validate_app_link(payload.url)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     m = _member(db, set_id, target_id, create=True)
     m.deeplink_url = link
     db.commit()
     log_action(db, current_user, "set_target_deeplink", "sales_deal", deal.id,
-               f"креатив №{s.no}, площадка {t.publisher_id}: {link or 'диплинк снят'}")
-    return {"deeplink_url": m.deeplink_url}
+               f"креатив №{s.no}, площадка {t.publisher_id}: ссылка в приложении "
+               f"{link or 'снята'}")
+    return {"deeplink_url": m.deeplink_url, "url_state": url_state(m, t.surface_kind)}
 
 
 class PlanIn(BaseModel):
@@ -2633,7 +2642,7 @@ def request_member_url(set_id: int, target_id: int, payload: UrlRequestIn,
         raise HTTPException(status_code=400,
                             detail="В тексте сумма — площадке деньги не пишем, уберите её")
     m = _member(db, set_id, target_id, create=True)
-    if m.advertiser_url:
+    if url_state(m, t.surface_kind) == "есть":
         raise HTTPException(status_code=400, detail="Ссылка уже есть — запрашивать нечего")
 
     from sqlalchemy.sql import func as sa_func
@@ -2648,7 +2657,7 @@ def request_member_url(set_id: int, target_id: int, payload: UrlRequestIn,
 
     log_action(db, current_user, "request_target_url", "sales_deal", deal.id,
                f"креатив №{s.no}, площадка {t.publisher_id}: запрошена ссылка ({mail_state})")
-    return {"url_state": url_state(m), "text": text, "mail": mail_state}
+    return {"url_state": url_state(m, t.surface_kind), "text": text, "mail": mail_state}
 
 
 

@@ -24,8 +24,11 @@ def test_web_url_is_decoded_from_primary_url():
 
 
 def test_app_landing_accepted_only_on_app_surface():
-    assert R.validate_landing(MINICEN, "app") == MINICEN
-    with pytest.raises(ValueError, match="app"):
+    """С 06.10.2026 диплинк — во втором поле (ссылка в приложении); веб-поле — только http(s)."""
+    assert R.validate_app_link(MINICEN) == MINICEN
+    with pytest.raises(ValueError, match="второе поле"):
+        R.validate_landing(MINICEN, "app")
+    with pytest.raises(ValueError):
         R.validate_landing(MINICEN, "web")
     assert R.validate_landing("https://b-apteka.ru/x", "web") == "https://b-apteka.ru/x"
     assert R.validate_landing("  ", "app") is None

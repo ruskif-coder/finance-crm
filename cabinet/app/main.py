@@ -363,13 +363,16 @@ def tasks(acc=Depends(current_account)):
             "surface": r.surface_kind,
             "period_from": r.period_from, "period_to": r.period_to,
             "advertiser_url": r.advertiser_url,
+            # Ссылка в приложении — у app-площадки вторая, обязательная (06.10.2026).
+            "app_url": getattr(r, "app_url", None),
             # ТТ площадки — её собственные требования к материалу. Лежат на строке
             # задания, а не только в шапке группы: на них смотрят, отвечая по креативу.
             "tech_requirements": r.tech_requirements,
             # Три ответа на «где ссылка»: есть / ждём от вас / не спрашивали. Правило
             # выведено в ядре (`url_state`), здесь только пересказ фактов — вторая копия
             # в SQL разошлась бы с первой.
-            "url_state": ('есть' if r.advertiser_url
+            "url_state": ('есть' if (r.advertiser_url and (r.surface_kind != 'app'
+                                                            or getattr(r, "app_url", None)))
                           # Копия `url_state` из ядра (app/routers/launch_prep.py) —
                           # структурная, а не забытая: кабинет отдельный процесс под
                           # отдельной ролью БД и `app.*` не импортирует по построению.
@@ -768,7 +771,8 @@ def set_verdict(task_id: int, payload: VerdictIn, acc=Depends(current_account)):
 
 
 class UrlIn(BaseModel):
-    url: str
+    url: str                        # веб-ссылка
+    app_url: Optional[str] = None   # ссылка в приложении — у app-площадки (06.10.2026)
 
 
 @app.put("/api/tasks/{task_id}/url")
@@ -785,6 +789,7 @@ def set_url(task_id: int, payload: UrlIn, acc=Depends(current_account)):
         "publisher_id": t.publisher_id,
         "account_id": acc.id,
         "url": payload.url,
+        "app_url": payload.app_url,
         "author_name": acc.name,
     })
 

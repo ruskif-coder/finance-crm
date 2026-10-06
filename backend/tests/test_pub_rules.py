@@ -67,12 +67,12 @@ def test_problems():
 @pytest.mark.parametrize("bad", ["javascript:alert(1)", "data:text/html,x", "noscheme", "x" * 1100])
 def test_deeplink_rejects_dangerous(bad):
     with pytest.raises(ValueError):
-        R.validate_deeplink(bad)
+        R.validate_app_link(bad)
 
 
 def test_deeplink_accepts_app_scheme():
-    assert R.validate_deeplink("  maksavit://p/1?t={LINK_ESC} ") == "maksavit://p/1?t={LINK_ESC}"
-    assert R.validate_deeplink("") is None
+    assert R.validate_app_link("  maksavit://p/1?t={LINK_ESC} ") == "maksavit://p/1?t={LINK_ESC}"
+    assert R.validate_app_link("") is None
 
 
 def test_provision_blocks_both_without_deeplink():

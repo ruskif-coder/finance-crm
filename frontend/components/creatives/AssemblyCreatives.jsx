@@ -1280,9 +1280,11 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
             <span onClick={() => setEditing(true)} title="Изменить посадочную"
               style={{ cursor: 'pointer', color: CB.t4, fontSize: 11, flex: '0 0 auto' }}>✎</span>
           )}
-          {/* Диплинк — только у app-площадок с режимом ссылок «обе» (29.09.2026). */}
+          {/* Ссылка в приложении — у каждой app-площадки (06.10.2026). */}
           <DeeplinkChip r={r} setId={set.id} canEdit={canEdit && !gone} onSave={onDeeplink} />
-          {canEdit && !r.advertiser_url && (
+          {/* Запросить — пока ссылки не «есть»: у app-площадки это и случай «веб есть, ссылки
+              в приложении нет» (ревью 06.10.2026), иначе отправка заперта без выхода. */}
+          {canEdit && r.url_state !== 'есть' && (
             <span onClick={e => { e.stopPropagation(); onRequest({ ...r, set_id: set.id }) }}
               title={r.url_state === 'запрошена' ? 'Запрос уже записан — открыть текст' : 'Запросить ссылку у площадки'}
               style={{ cursor: 'pointer', whiteSpace: 'nowrap', fontSize: 10.5, padding: '3px 7px',

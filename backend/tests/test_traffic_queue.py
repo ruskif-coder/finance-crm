@@ -552,6 +552,11 @@ def test_app_surface_never_gets_targeting(env, monkeypatch):  # noqa: F811
     try:
         for t in env.targets:
             t.surface_kind = 'app'
+        # У app-площадки обе ссылки — веб и в приложении (06.10.2026); здесь та же https.
+        from app.launch_prep.models import LaunchPrepSetTarget
+        for m in env.db.query(LaunchPrepSetTarget).filter(
+                LaunchPrepSetTarget.set_id == env.cset.id).all():
+            m.deeplink_url = m.advertiser_url
         env.db.commit()
         pairs = _sent(env)
         assert tc.blind_sets(env.db, [env.cset.id]) == {env.cset.id}

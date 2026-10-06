@@ -40,13 +40,15 @@ def test_web_mode_is_not_offered_anymore():
     assert "web" not in R.APP_LINKS
 
 
-def test_deeplink_without_macro_is_refused():
-    with pytest.raises(ValueError, match="макрос"):
-        R.validate_deeplink(WEB)
-    with pytest.raises(ValueError, match="макрос"):
-        R.validate_deeplink("maksavit://product/1")
-    assert R.validate_deeplink(SDK) == SDK
-    assert R.validate_deeplink("") is None
+def test_app_link_without_macro_is_accepted_but_not_put_into_banner():
+    """06.10.2026: ссылка в приложении — своё поле; макрос в ней не обязателен (у
+    storefront://… kuper его нет). В баннер она встаёт, только если макрос есть; иначе
+    в href остаётся макрос DSP, и это видно предупреждением."""
+    assert R.validate_app_link(WEB) == WEB
+    assert R.validate_app_link("maksavit://product/1") == "maksavit://product/1"
+    assert R.validate_app_link(SDK) == SDK
+    assert R.click_href({"app_links": "both"}, WEB, "maksavit://product/1") is None
+    assert R.click_warning({"app_links": "both"}, WEB, "maksavit://product/1")
 
 
 def test_legacy_web_mode_is_saved_as_no_mode():
