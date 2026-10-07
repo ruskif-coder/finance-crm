@@ -392,3 +392,15 @@ def test_delete_role_rules(db, made, audit):
     assert db.get(Role, rid) is None
     assert not db.query(RolePermission).filter(RolePermission.role_id == rid).count()
     assert audit[-1][0] == "delete_role"
+
+
+def test_list_returns_accounts_dashboard_scope_as_saved(db, made):
+    """Область «свои/все» дашборда аккаунта отдаётся ручкой: иначе страница ролей всегда рисует «все»
+    и сохранение роли тихо расширяет доступ."""
+    role = Role(key="", label=f"zz {uuid.uuid4().hex[:6]}", is_system=0)
+    db.add(role); db.commit(); db.refresh(role)
+    made["roles"].append(role.id)
+    db.add(RolePermission(role_id=role.id, section="accounts_dashboard", can_view=1, deals_scope="own"))
+    db.commit()
+    got = next(r for r in roles.list_roles(db=db, current_user=_admin())["roles"] if r["id"] == role.id)
+    assert got["acc_scope"] == "own"

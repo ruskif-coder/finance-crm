@@ -83,13 +83,23 @@ def month_bounds(month: str) -> tuple:
     return start, end
 
 
+# Чьи сделки показывает «Мои»: аккаунту — где он аккаунт, трафику — где он трафик.
+# Без рабочей группы (админ, юрист…) «мои» — где человек стоит и аккаунтом, и трафиком.
+MINE_FIELD = {"account": "d.account_manager_id = :rep", "traffic": "d.traffic_manager_id = :rep",
+              "": "(d.account_manager_id = :rep OR d.traffic_manager_id = :rep)"}
+
+
 def load(db: Session, month: str, service_id: Optional[int] = None,
-         today: Optional[date] = None) -> dict:
-    """Всё для обеих вкладок за месяц — пятью запросами на весь экран."""
+         today: Optional[date] = None, mine: Optional[tuple] = None) -> dict:
+    """Всё для обеих вкладок за месяц — пятью запросами на весь экран.
+
+    `mine` = (рабочая группа, id профиля ответственного) — оставить только сделки этого человека;
+    профиля нет (-1) — честно пусто, а не чужие сделки."""
+    mine_sql = f"AND {MINE_FIELD[mine[0] if mine[0] in MINE_FIELD else '']}" if mine else ""
     today = today or date.today()
     start, end = month_bounds(month)
 
-    deals = db.execute(text("""
+    deals = db.execute(text(f"""
         SELECT d.id, d.code, coalesce(b.name, d.title) AS brand,
                coalesce(a.short_name, a.name) AS advertiser, r.name AS account,
                EXISTS (SELECT 1 FROM ad_campaign c WHERE c.deal_id = d.id
@@ -101,11 +111,12 @@ def load(db: Session, month: str, service_id: Optional[int] = None,
           LEFT JOIN sales_reps r ON r.id = d.account_manager_id
          WHERE d.period_from >= :s AND d.period_from < :e
            AND EXISTS (SELECT 1 FROM launch_prep_target t WHERE t.deal_id = d.id)
+           {mine_sql}
          -- Запущенные РК впереди, внутри — в порядке добавления, ранние слева (владелец
          -- 01.10.2026). «Добавлена» — первый получатель сделки: номер сделки старше
          -- запуска (сделки из Битрикса), и по нему ранние оказывались справа.
          ORDER BY launched DESC, added_at, d.id
-    """), {"s": start, "e": end}).mappings().all()
+    """), {"s": start, "e": end, "rep": mine[1] if mine else None}).mappings().all()
     ids = [d["id"] for d in deals]
 
     raw = db.execute(text("""

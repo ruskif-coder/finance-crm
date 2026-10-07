@@ -40,6 +40,7 @@ export default function PublisherApprovals() {
   const [q, setQ] = useState('')
   const [onlyProblems, setOnlyProblems] = useState(false)
   const [allPubs, setAllPubs] = useState(false)
+  const [scope, setScope] = useState('')   // '' — как решит сервер: рядовому «мои», мастеру «все»
   const [pend, setPend] = useState(false)
   const [sort, setSort] = useState({ key: 'name', dir: 'asc' })
   const [ready, setReady] = useState(false)
@@ -55,11 +56,11 @@ export default function PublisherApprovals() {
   }, [router])
 
   const load = useCallback(() => {
-    const qs = new URLSearchParams({ month, ...(service ? { service_id: service } : {}) })
+    const qs = new URLSearchParams({ month, ...(service ? { service_id: service } : {}), ...(scope ? { scope } : {}) })
     api.get(`/publisher-approvals/matrix?${qs}`, auth())
       .then(r => { setData(r.data); setErr('') })
       .catch(e => setErr(e?.response?.data?.detail || 'Не удалось загрузить матрицу'))
-  }, [month, service])
+  }, [month, service, scope])
   useEffect(() => { if (ready && view !== 'stuck') load() }, [ready, load, view])
   useRefreshOnReturn(load)
 
@@ -175,6 +176,12 @@ export default function PublisherApprovals() {
               <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, alignItems: 'center' }}>
                 <input placeholder="Площадка или бренд…" value={q} onChange={e => setQ(e.target.value)}
                   style={{ height: 32, padding: '0 11px', border: '1px solid var(--border-card)', borderRadius: 10, background: 'var(--bg-subtle)', fontFamily: UI, fontSize: 12.5, color: 'var(--text-primary)', width: 220, outline: 'none', boxSizing: 'border-box' }} />
+                {data?.can_mine && (
+                  <span style={{ display: 'inline-flex', gap: 4 }}>
+                    <button style={chipBtn(data.scope === 'mine')} onClick={() => setScope('mine')} title="Сделки, где вы стоите аккаунтом или трафиком">Мои сделки</button>
+                    <button style={chipBtn(data.scope === 'all')} onClick={() => setScope('all')}>Все сделки</button>
+                  </span>
+                )}
                 <button style={chipBtn(onlyProblems)} onClick={() => setOnlyProblems(v => !v)} title="Просрочено, отказ или комплект не отправлен">Только проблемные</button>
                 <button style={chipBtn(allPubs)} onClick={() => setAllPubs(v => !v)} title="Показать и площадки без РК в этом месяце">Все площадки</button>
               </span>

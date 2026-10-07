@@ -64,9 +64,11 @@ def _serialize_role(db: Session, role: Role) -> dict:
     sd = rows.get("sales_dashboard")
     mp = rows.get("media_plans")
     yp = rows.get("year_plan")
+    acc = rows.get("accounts_dashboard")
     deals_scope = "all" if role.key == "admin" else ((sd.deals_scope if sd else None) or "all")
     mp_scope = "all" if role.key == "admin" else ((mp.deals_scope if mp else None) or "all")
     year_plan_scope = "all" if role.key == "admin" else ((yp.deals_scope if yp else None) or "all")
+    acc_scope = "all" if role.key == "admin" else ((acc.deals_scope if acc else None) or "all")
     return {
         "id": role.id,
         "key": role.key,
@@ -77,6 +79,7 @@ def _serialize_role(db: Session, role: Role) -> dict:
         "deals_scope": deals_scope,
         "mp_scope": mp_scope,
         "year_plan_scope": year_plan_scope,
+        "acc_scope": acc_scope,
         "staff_group": role.staff_group or "",
         "is_master": bool(role.is_master),
     }
