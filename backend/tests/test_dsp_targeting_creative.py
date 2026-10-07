@@ -410,8 +410,8 @@ def test_the_targeting_creative_carries_a_placeholder_marker():
         s = _set_with(db)
         assert len(P.TEST_ERID) == 9 and P.TEST_ERID.isalnum()
         c = FakeClient()
-        # Заглушка уезжает и в параметры креатива, и в тело разметки.
-        src = __import__("inspect").getsource(P._ensure)
+        # Заглушка уезжает и в параметры креатива, и в тело разметки (код — в общем ядре `_copy_core`).
+        src = __import__("inspect").getsource(P._copy_core)
         assert src.count("erid=erid") >= 2, "маркер нужен и в параметрах, и в html"
         # Заглушка — только у комплекта без ЕРИД (владелец 01.10.2026).
         assert P.erid_of(s) == P.TEST_ERID
@@ -587,7 +587,7 @@ def test_new_targeting_creative_is_added_with_adomain():
                                         adomain=P.TARGETING_ADOMAIN)
     assert params["adomain"] == P.TARGETING_ADOMAIN
     import inspect
-    assert "adomain=TARGETING_ADOMAIN" in inspect.getsource(P._ensure).replace(" ", ""), (
+    assert "adomain=TARGETING_ADOMAIN" in inspect.getsource(P._copy_core).replace(" ", ""), (
         "заведение креатива нацеливания обязано передавать домен")
 
 

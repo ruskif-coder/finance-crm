@@ -23,6 +23,8 @@ EXPECTED_KEYS = {
     # Добавлен 2026-08-26 вместе с модулем креативов (сбор запуска). Выпуск ЕРИД остался
     # под `ord_submit`: за одним правом — одна необратимость.
     "creatives",
+    # Добавлен 2026-10-07: страница «Проверка креатива» (аккаунты), своя секция.
+    "creative_check",
     "media_plans", "media_plans_editor",
     "operations", "import",
     "counterparties", "contracts", "annexes", "dir_advertisers", "dir_agencies", "dir_publishers",

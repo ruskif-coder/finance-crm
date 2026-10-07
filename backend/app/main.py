@@ -23,7 +23,7 @@ from app.routers import (auth, operations, reports, counterparties, articles, se
                          publishers, diadoc, ord, launch_prep, traffic, cabinets,
                          cabinet_gateway, traffic_catalog, traffic_balancer,
                          traffic_dashboard, annexes, directory_add,
-                         exec_dashboard, system_status, mail_admin, search)
+                         exec_dashboard, system_status, mail_admin, search, creative_check)
 
 # Базовое логирование ошибок без внешних сервисов (Sentry и т.п.) — файл с ротацией
 # внутри контейнера + дублирование в stdout (видно через "docker logs finance_backend").
@@ -610,6 +610,8 @@ app.include_router(cabinet_gateway.router, prefix="/api/cabinet-gw", tags=["cabi
 # Вебхук бота площадок — ОТДЕЛЬНЫМ префиксом: `/api/cabinet-gw/*` закрыт на Caddy, а сюда
 # стучится Телеграм из интернета. Разбор в шапке `webhook_router`.
 app.include_router(cabinet_gateway.webhook_router, prefix="/api/pub-bot", tags=["pub-bot"])
+# Проверка креатива без сделки (аккаунты, 07.10.2026): баннер, замечания по коду, нацеливание.
+app.include_router(creative_check.router, prefix="/api/creative-check", tags=["creative-check"])
 
 @app.get("/")
 def root():

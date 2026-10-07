@@ -15,6 +15,7 @@ import app.backlog_models  # noqa: F401
 import app.bugs.models  # noqa: F401
 import app.cabinet.models  # noqa: F401
 import app.diadoc_models  # noqa: F401
+import app.creative_check.models  # noqa: F401
 import app.launch_prep.models  # noqa: F401
 import app.mail.models  # noqa: F401
 import app.models  # noqa: F401

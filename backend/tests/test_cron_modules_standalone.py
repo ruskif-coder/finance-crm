@@ -27,6 +27,7 @@ CRON_MODULES = [
     "app.ad.daily_shares",
     "app.launch_prep.erid_auto",
     "app.dsp.stat_daily",
+    "app.creative_check.cleanup",
 ]
 
 PROBE = (

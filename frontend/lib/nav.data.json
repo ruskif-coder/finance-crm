@@ -107,6 +107,12 @@
           "perm": "media_plans"
         },
         {
+          "key": "creative-check",
+          "label": "Проверка креатива",
+          "href": "/accounts/creative-check",
+          "perm": "creative_check"
+        },
+        {
           "key": "ord",
           "label": "ОРД",
           "href": "/accounts/ord",

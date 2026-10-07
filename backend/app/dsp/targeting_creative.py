@@ -270,6 +270,64 @@ def _html_of(db: Session, s: LaunchPrepCreativeSet, c: MsClient, ref: str) -> st
     return up["html"]
 
 
+def _copy_core(c: MsClient, campaign: str, *, ref: str, known: Optional[str], title: str,
+               link: str, erid: str, get_zip, viewability_src) -> str:
+    """Завести копию нацеливания в кабинете демоклиента — ОДНО ядро на комплект сделки и на
+    страницу «Проверка креатива» (07.10.2026): второе выражение разошлось бы с первым на первой
+    же правке. Возвращает хеш креатива; сохранять его — дело вызывающего.
+
+    `get_zip` — вызывается лениво и возвращает `(байты архива, имя файла)`: архив нужен только
+    там, где копию надо завести или дошить, а отказ «нет архива» стоит после проверки зависших
+    попыток, как и раньше.
+    """
+    # Уже заведённый креатив ПРОВЕРЯЕМ, а не берём на веру. Причина конкретная: объект
+    # создаётся одним вызовом, а HTML вшивается вторым, и между ними связь может
+    # оборваться. Тогда в кабинете остаётся креатив БЕЗ КОДА — ссылка на него
+    # выпускается, открывается и показывает пустую страницу, по которой человек делает
+    # вывод «баннер не загрузился» и идёт искать причину не там (владелец 17.09.2026:
+    # «а как убедиться, что баннер загружен?»).
+    if known:
+        state = _html_state(c, known)
+        if state == "ok":
+            return known
+        if state == "empty":
+            # Объект есть, кода нет — дошиваем его, а не заводим второй: второй в чужом
+            # кабинете уже не удалить. Битый архив — отказ словами, а не 500.
+            data, filename = get_zip()
+            try:
+                up = cr.upload_zip(c, data, filename=filename, local_ref=ref)
+                html = cr.wrap_html(up["html"], erid=erid, viewability_src=viewability_src)
+            except (cr.CreativeError, ValueError) as e:
+                raise TargetingCreativeError(str(e))
+            c.creative_edit(known, {"data": {"html_code": html}}, local_ref=ref)
+            return known
+        # state == "gone" — креатив снесли в кабинете руками: заводим заново.
+        log.warning("DSP: креатив нацеливания %s не найден в кабинете, завожу заново", known)
+
+    # Прошлый `Creative.add` ушёл без ответа — DSP мог создать копию, а хеша мы не
+    # знаем. Повтор вслепую завёл бы вторую, а удалить её в DSP нечем (аудит 01.10.2026,
+    # В-5). Снять отметку — экран сверки РК («Нашёл» / «Нет в кабинете»), `ad/unknown`.
+    if c.unknown_outcome("Creative.add", "creative", ref):
+        raise TargetingCreativeError(
+            "прошлая попытка завести копию нацеливания осталась без ответа — она могла "
+            "создаться. Сверьтесь с кабинетом нацеливания DSP и отметьте результат: "
+            "дашборд трафика → кнопка «В DSP» у РК → блок зависших попыток")
+    data, filename = get_zip()
+    try:
+        up = cr.upload_zip(c, data, filename=filename, local_ref=ref)
+        # Маркер и в ТЕЛЕ креатива, не только в поле: DSP показывает плашку по разметке,
+        # и креатив без неё на демо-показе выглядит иначе, чем будет выглядеть боевой.
+        html = cr.wrap_html(up["html"], erid=erid, viewability_src=viewability_src)
+        params = cr.build_creative_params(
+            title=title, link=link, erid=erid, size=up.get("size"), adomain=TARGETING_ADOMAIN)
+        xxhash = c.creative_add(campaign, params, local_ref=ref)
+        c.creative_edit(xxhash, {"data": {"html_code": html}}, local_ref=ref)
+    except (cr.CreativeError, MsError, ValueError) as e:
+        raise TargetingCreativeError(str(e))
+    log.info("DSP: креатив нацеливания %s заведён как %s", ref, xxhash)
+    return xxhash
+
+
 def ensure(db: Session, s: LaunchPrepCreativeSet, *,
            client: Optional[MsClient] = None, wake: bool = True) -> str:
     """Хеш креатива нацеливания для комплекта; заводит его, если ещё нет.
@@ -316,50 +374,14 @@ def _ensure(db: Session, s: LaunchPrepCreativeSet, *,
     # вывод «баннер не загрузился» и идёт искать причину не там (владелец 17.09.2026:
     # «а как убедиться, что баннер загружен?»).
     known = s.ms_targeting_creative_xxhash or c.last_ok_xxhash("Creative.add", "creative", ref)
-    if known:
-        state = _html_state(c, known)
-        if state == "ok":
-            return _persist(db, s, known)
-        if state == "empty":
-            # Объект есть, кода нет — дошиваем его, а не заводим второй: второй в чужом
-            # кабинете уже не удалить. Битый архив — отказ словами, а не 500.
-            try:
-                html = cr.wrap_html(_html_of(db, s, c, ref), erid=erid_of(s),
-                                    viewability_src=viewability_src(db))
-            except (cr.CreativeError, ValueError) as e:
-                raise TargetingCreativeError(str(e))
-            c.creative_edit(known, {"data": {"html_code": html}}, local_ref=ref)
-            return _persist(db, s, known)
-        # state == "gone" — креатив снесли в кабинете руками: заводим заново.
-        log.warning("DSP: креатив нацеливания %s не найден в кабинете, завожу заново", known)
-        s.ms_targeting_creative_xxhash = None
 
-    # Прошлый `Creative.add` ушёл без ответа — DSP мог создать копию, а хеша мы не
-    # знаем. Повтор вслепую завёл бы вторую, а удалить её в DSP нечем (аудит 01.10.2026,
-    # В-5). Снять отметку — экран сверки РК («Нашёл» / «Нет в кабинете»), `ad/unknown`.
-    if c.unknown_outcome("Creative.add", "creative", ref):
-        raise TargetingCreativeError(
-            "прошлая попытка завести копию нацеливания осталась без ответа — она могла "
-            "создаться. Сверьтесь с кабинетом нацеливания DSP и отметьте результат: "
-            "дашборд трафика → кнопка «В DSP» у РК → блок зависших попыток")
-    f = _archive(db, s)
-    link = _landing(db, s)
-    erid = erid_of(s)
-    try:
-        up = cr.upload_zip(c, _read(f), filename=(f.original_name or "creative.zip"),
-                           local_ref=ref)
-        # Маркер и в ТЕЛЕ креатива, не только в поле: DSP показывает плашку по разметке,
-        # и креатив без неё на демо-показе выглядит иначе, чем будет выглядеть боевой.
-        html = cr.wrap_html(up["html"], erid=erid,
-                            viewability_src=viewability_src(db))
-        params = cr.build_creative_params(
-            title=title_of(s),
-            link=link, erid=erid, size=up.get("size"), adomain=TARGETING_ADOMAIN)
-        xxhash = c.creative_add(campaign, params, local_ref=ref)
-        c.creative_edit(xxhash, {"data": {"html_code": html}}, local_ref=ref)
-    except (cr.CreativeError, MsError, ValueError) as e:
-        raise TargetingCreativeError(str(e))
-    log.info("DSP: креатив нацеливания комплекта %s заведён как %s", s.id, xxhash)
+    def get_zip():
+        f = _archive(db, s)
+        return _read(f), (f.original_name or "creative.zip")
+
+    xxhash = _copy_core(c, campaign, ref=ref, known=known, title=title_of(s),
+                        link=_landing(db, s), erid=erid_of(s), get_zip=get_zip,
+                        viewability_src=viewability_src(db))
     return _persist(db, s, xxhash)
 
 
@@ -386,6 +408,13 @@ def ensure_live(db: Session, s: LaunchPrepCreativeSet, *,
     woke = wake_campaign(db, client=c) if (partner and campaign) else {"changed": []}
     xxhash = ensure(db, s, client=c, wake=False)
     ref = f"tgt{s.id}"
+    return _make_live(c, campaign, xxhash, ref, woke=woke,
+                      upgrade=lambda info: _upgrade_erid(c, xxhash, s, info, ref))
+
+
+def _make_live(c: MsClient, campaign: str, xxhash: str, ref: str, *, woke: dict, upgrade=None) -> dict:
+    """Креатив запущен и кампания его крутит — общая часть `ensure_live` и страницы
+    «Проверка креатива». `upgrade(info)` — необязательная правка маркера до запуска."""
     launched = False
 
     def read():
@@ -397,7 +426,8 @@ def ensure_live(db: Session, s: LaunchPrepCreativeSet, *,
     # заведённых до 25.09.2026, поле пустое; правка принимает одно поле.
     if not adomain:
         c.creative_edit(xxhash, {"adomain": TARGETING_ADOMAIN}, local_ref=ref)
-    _upgrade_erid(c, xxhash, s, info, ref)
+    if upgrade:
+        upgrade(info)
     if st != RUNNING:
         c.creative_set_status(xxhash, RUNNING, local_ref=ref)
         launched = True

@@ -59,6 +59,8 @@ SECTIONS = [
     # Выпуск ЕРИД сюда НЕ входит — он идёт под `ord_submit`: за одним правом должна
     # стоять одна необратимость, и она там уже описана.
     {"key": "creatives",         "label": "Аккаунты · Креативы",      "group": "Аккаунты", "actions": ["view", "edit", "delete", "approve"]},
+    # «Проверка креатива» (07.10.2026): правка = загрузить и получить нацеливание, удаление — снять проверку.
+    {"key": "creative_check",    "label": "Аккаунты · Проверка креатива", "group": "Аккаунты", "actions": ["view", "edit", "delete"]},
     {"key": "operations",        "label": "Операции",           "group": "Финансы",   "actions": ["view", "create", "edit", "delete"]},
     {"key": "import",            "label": "Импорт",             "group": "Финансы",   "actions": ["view"]},
     {"key": "counterparties",    "label": "Контрагенты",        "group": "Справочники", "actions": ["view", "edit", "delete", "view_operations"]},
