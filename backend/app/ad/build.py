@@ -220,6 +220,16 @@ def month_of(d: Optional[date]) -> Optional[date]:
 
 # ── порождение РК ─────────────────────────────────────────────────────────
 
+def _fill_campaign(camp: AdCampaign, d, plan: dict) -> None:
+    """Сроки и план РК — из сделки и её медиаплана. ОДНО правило на ночной прогон и на событие
+    (перевод сделки на стадию сборки): второе выражение разошлось бы с первым на первой правке."""
+    camp.month = month_of(d["period_from"])
+    camp.date_start = d["period_from"]
+    camp.date_end = d["period_to"]
+    camp.plan_show = plan["plan_show"]
+    camp.plan_budget = plan["plan_budget"]
+
+
 def sync_campaigns(db: Session, commit: bool = True) -> dict:
     """Заводит РК недостающим сделкам и подтягивает план у существующих.
 
@@ -246,11 +256,7 @@ def sync_campaigns(db: Session, commit: bool = True) -> dict:
             created += 1
         else:
             updated += 1
-        camp.month = month_of(d["period_from"])
-        camp.date_start = d["period_from"]
-        camp.date_end = d["period_to"]
-        camp.plan_show = plan["plan_show"]
-        camp.plan_budget = plan["plan_budget"]
+        _fill_campaign(camp, d, plan)
     db.flush()
     if commit:
         db.commit()
@@ -851,6 +857,40 @@ def unmark_target_placed(db: Session, pl: AdCampaignPlacement) -> int:
          WHERE deal_id = :d AND publisher_id = :p AND archived_at IS NULL AND state = :placed
     """), {"back": TARGET_ERID, "placed": TARGET_PLACED, "d": camp.deal_id,
            "p": pl.publisher_id}).rowcount
+
+
+def ensure_campaign_on_move(db: Session, deal, target) -> Optional[dict]:
+    """РК по СОБЫТИЮ перевода сделки (владелец 07.10.2026): сделку на «Сборке» могут собрать за пару часов,
+    а трафик увидел бы её в дашборде только после ночного прогона (SA5JUK: стадия «Готовятся к старту»,
+    а РК нет до утра).
+
+    Зовёт `stage_move.apply_move` — единственное место, через которое идут диалог перевода, массовая
+    правка и автоматика. Работает, только когда сделка входит в стадию сборки или дальше (кроме
+    терминальных, тот же набор `assembly_stage_ids`) и РК у неё ещё нет; существующую не трогает —
+    ею дальше управляет трафик. Заводит кампанию, площадки-кандидаты и креативы тем же расчётом, что
+    ночной прогон. Ночной прогон остаётся страховкой на сделки, созданные сразу на стадии сборки.
+
+    Сборка идёт в ПОДТРАНЗАКЦИИ и не отменяет перевод: сбой — запись в лог, а половина РК не остаётся.
+    Возвращает {"created": True, …} или None (нечего делать / не удалось)."""
+    import logging
+    try:
+        if target is None or target.id not in assembly_stage_ids(db):
+            return None
+        if db.query(AdCampaign.id).filter(AdCampaign.deal_id == deal.id).first():
+            return None
+        with db.begin_nested():
+            d = db.execute(text("SELECT id, code, period_from, period_to FROM sales_deals WHERE id = :i"),
+                           {"i": deal.id}).mappings().first()
+            camp = AdCampaign(deal_id=deal.id, status=STATUS_WAITING)
+            db.add(camp)
+            _fill_campaign(camp, d, deal_plan(db, deal.id))
+            db.flush()
+            res = sync_deal(db, deal.id, commit=False)
+        return {"created": True, "campaign_id": camp.id, **res}
+    except Exception as e:                              # noqa: BLE001 — перевод стадии важнее сборки
+        logging.getLogger("finance.ad").warning(
+            "РК сделки %s по переводу на стадию не заведена: %s", getattr(deal, "id", "?"), e)
+        return None
 
 
 def sync_deal(db: Session, deal_id: int, commit: bool = True) -> dict:
