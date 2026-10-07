@@ -29,11 +29,13 @@ def _entry(data, name="index.html"):
 
 # С 05.10.2026 в href встаёт только ссылка с кликовым макросом DSP (код 2051) —
 # подробно test_click_macro_rule.py. Без макроса — None: остаётся макрос DSP.
-DEEP_MACRO = "maksavit://product/1?track={LINK_ESC}"
+DEEP_MACRO = "maksavit://product/1?track={LINK_UNESC}"
+DEEP_ESC_ONLY = "maksavit://product/1?track={LINK_ESC}"   # загрузчик DSP такую не принимает (2051)
 
 
 @pytest.mark.parametrize("mode,deep,href", [
-    (None, DEEP, None), ("web", DEEP, None), ("both", DEEP, None), ("both", DEEP_MACRO, DEEP_MACRO)])
+    (None, DEEP, None), ("web", DEEP, None), ("both", DEEP, None), ("both", DEEP_MACRO, DEEP_MACRO),
+    ("both", DEEP_ESC_ONLY, None)])
 def test_click_href_by_mode(mode, deep, href):
     assert R.click_href({"app_links": mode}, WEB, deep) == href
 

@@ -46,11 +46,16 @@ def test_bad_landing_is_refused(bad):
         R.validate_landing(bad, "app")
 
 
-def test_href_gets_the_whole_deeplink_link_gets_web():
-    assert R.click_href({"app_links": "web"}, MINICEN, None) == MINICEN
-    assert R.click_href(None, MINICEN, None) == MINICEN, "диплинк без правила площадки потерялся бы"
+def test_href_gets_the_whole_deeplink_only_when_it_carries_the_unesc_macro():
+    """Диплинк целиком в href — только с `{LINK_UNESC}` (хотфикс 07.10.2026): загрузчик DSP
+    отклоняет ссылку с одним `{LINK_ESC}` (2051). Без него — макрос DSP, в `link` веб-адрес."""
+    minicen_u = MINICEN + "&c={LINK_UNESC}"
+    assert R.click_href({"app_links": "web"}, minicen_u, None) == minicen_u
+    assert R.click_href(None, minicen_u, None) == minicen_u, "диплинк без правила площадки потерялся бы"
+    assert R.click_href({"app_links": "both"}, minicen_u, None) == minicen_u
     assert R.click_href(None, "https://a.ru/", None) is None
-    assert R.click_href({"app_links": "both"}, MINICEN, None) == MINICEN
+    for rule in (None, {"app_links": "web"}, {"app_links": "both"}):
+        assert R.click_href(rule, MINICEN, None) is None, "только {LINK_ESC} — DSP отклонит архив"
 
 
 def test_deeplink_in_landing_satisfies_both_mode():

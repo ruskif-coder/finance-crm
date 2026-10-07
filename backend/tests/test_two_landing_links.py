@@ -60,10 +60,15 @@ def test_web_surface_needs_web_only():
     assert url_state(_m(KUPER_WEB, None, True)) == "есть"
 
 
-def test_sdk_deeplink_moves_to_app_field_and_still_goes_to_banner():
-    """После переноса диплинк SDK живёт в deeplink_url, а веб — в advertiser_url."""
-    assert R.click_href({"app_links": "sdk"}, "https://maksavit.ru/", SDK) == SDK
-    assert R.click_href(None, "https://maksavit.ru/", SDK) == SDK
+def test_sdk_deeplink_moves_to_app_field_and_goes_to_banner_only_with_unesc_macro():
+    """После переноса диплинк SDK живёт в deeplink_url, а веб — в advertiser_url. В баннер он
+    встаёт, только если в нём есть `{LINK_UNESC}`; с одним `{LINK_ESC}` загрузчик DSP отклоняет
+    весь архив (2051, 07.10.2026: 4FKFD2, LBS2QH) — тогда в href остаётся макрос DSP."""
+    assert R.click_href({"app_links": "sdk"}, "https://maksavit.ru/", SDK) is None
+    assert R.click_href(None, "https://maksavit.ru/", SDK) is None
+    sdk_unesc = SDK + "&c={LINK_UNESC}"
+    assert R.click_href({"app_links": "sdk"}, "https://maksavit.ru/", sdk_unesc) == sdk_unesc
+    assert R.click_href(None, "https://maksavit.ru/", sdk_unesc) == sdk_unesc
 
 
 @pytest.mark.parametrize("raw,web,app", [
@@ -78,9 +83,11 @@ def test_split_legacy_landing(raw, web, app):
 # ── ревью 06.10.2026 ─────────────────────────────────────────────────────────
 
 def test_web_mode_puts_web_link_into_banner():
-    """Режим «веб» — в href веб-ссылка, даже если рядом лежит диплинк SDK."""
-    adv = "https://a.ru/x?u={LINK_ESC}"
+    """Режим «веб» — в href веб-ссылка, даже если рядом лежит диплинк SDK. Ссылка встаёт, только
+    если в ней есть `{LINK_UNESC}` (загрузчик DSP, хотфикс 07.10.2026); с одним `{LINK_ESC}` — нет."""
+    adv = "https://a.ru/x?u={LINK_UNESC}"
     assert R.click_href({"app_links": "web"}, adv, SDK) == adv
+    assert R.click_href({"app_links": "web"}, "https://a.ru/x?u={LINK_ESC}", SDK) is None
 
 
 @pytest.mark.parametrize("bad", ["deeplink+://x\njavascript:alert(1)", "storefront://a b",

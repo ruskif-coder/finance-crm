@@ -177,9 +177,13 @@ def needs_deeplink(rule: Optional[dict]) -> bool:
     return bool(rule and rule.get("app_links") == "both")
 
 
-# Кликовые макросы DSP. Хоть один обязан быть в КАЖДОЙ ссылке баннера — иначе загрузчик
-# отклоняет архив (код 2051, первый случай 05.10.2026: LBS2QH × Максавит).
-CLICK_MACROS = ("{LINK_UNESC}", "{LINK_ESC}")
+# Кликовый макрос DSP, обязательный в КАЖДОЙ ссылке баннера: загрузчик отклоняет архив без него
+# (код 2051, «Any link must contains {LINK_UNESC}»; первый случай 05.10.2026: LBS2QH × Максавит).
+# Именно `{LINK_UNESC}`. С 05.10 по 07.10 макросом считался и `{LINK_ESC}` (по строке документации
+# «оба — только в коде баннера»), и SDK-диплинк `…&primaryTrackingUrl={LINK_ESC}` уходил в href —
+# DSP отклонил 16 загрузок 07.10 (4FKFD2, LBS2QH); за всё время журнала не принято ни одной ссылки
+# с одним `{LINK_ESC}`. Такая ссылка в баннер не встаёт: остаётся макрос DSP, клик идёт на веб.
+CLICK_MACROS = ("{LINK_UNESC}",)
 
 
 def has_click_macro(url: Optional[str]) -> bool:
@@ -217,8 +221,8 @@ def click_warning(rule: Optional[dict], advertiser_url: Optional[str],
     href = _wanted_href(rule, advertiser_url, deeplink_url)
     if not href or has_click_macro(href):
         return None
-    return ("ссылка из правила площадки без кликового макроса DSP — в баннере оставлен макрос "
-            "DSP, клик уйдёт на посадочную")
+    return ("ссылка из правила площадки без кликового макроса {LINK_UNESC} (загрузчик DSP "
+            "принимает только его) — в баннере оставлен макрос DSP, клик уйдёт на посадочную")
 
 
 def pair_problem(rule: Optional[dict], advertiser_url: Optional[str],
