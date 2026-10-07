@@ -54,8 +54,11 @@ def test_warning_when_rule_wanted_a_link_but_it_has_no_macro():
     assert w and "макрос" in w
     assert R.click_warning({"app_links": "sdk"}, APP_UNESC, None) is None
     assert R.click_warning(None, WEB, None) is None
-    sdk_warning = R.click_warning({"app_links": "sdk"}, WEB, SDK)
-    assert sdk_warning and "LINK_UNESC" in sdk_warning, "трафик должен видеть, почему диплинк не встал"
+    # SDK-диплинк с одним {LINK_ESC} в архив не идёт, но доезжает вторым шагом (`post_upload_href`) —
+    # предупреждать не о чем. А ссылка, которая не попадёт в баннер никак, предупреждает.
+    assert R.click_warning({"app_links": "sdk"}, WEB, SDK) is None
+    w = R.click_warning({"app_links": "both"}, WEB, "maksavit://product/1")
+    assert w and "LINK_UNESC" in w, "трафик должен видеть, почему ссылка не встала"
 
 
 def test_web_mode_is_not_offered_anymore():

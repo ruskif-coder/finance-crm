@@ -97,4 +97,9 @@ def test_dsp_link_long_url_is_not_cut_to_domain_and_anchor_encoded():
     assert CR.landing_link(long).startswith("https://120на80.рф/aaa"), "ссылку не урезаем до домена"
     assert CR.landing_adomain(long) == "https://120на80.рф/"
     assert CR.landing_link("https://a.ru/#!Товар 1") == "https://a.ru/#!%D0%A2%D0%BE%D0%B2%D0%B0%D1%80%201"
-    assert "#" not in CR.landing_adomain("https://minicen.ru/#!Tovar/717609")
+    # Якорь SPA-аптек (`#!Tovar/…`) — и в «Конечном URL» (владелец 07.10.2026): DSP принимает его в
+    # adomain и хранит как есть (проверено на боевом кабинете), поэтому adomain = link без отличий.
+    assert CR.landing_adomain("https://minicen.ru/#!Tovar/717609") == "https://minicen.ru/#!Tovar/717609"
+    assert CR.landing_adomain("https://a.ru/#!Товар 1") == CR.landing_link("https://a.ru/#!Товар 1")
+    # С якорем длиннее предела DSP — домен, как и без него.
+    assert CR.landing_adomain("https://a.ru/" + "x" * 1000 + "#" + "y" * 100) == "https://a.ru/"

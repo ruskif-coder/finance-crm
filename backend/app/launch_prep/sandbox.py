@@ -367,6 +367,27 @@ def set_click_href(data: bytes, href: str) -> Tuple[bytes, bool]:
     return _rewrite_entry(data, lambda h: _HREF_RE.sub(sub, h))
 
 
+def set_html_click_href(html: str, href: str) -> Tuple[str, bool]:
+    """То же, что `set_click_href`, но для ГОТОВОЙ строки html креатива — после загрузки архива.
+
+    Нужна диплинку SDK (07.10.2026): загрузчик DSP принимает в архиве только ссылку с `{LINK_UNESC}`,
+    а в html_code, правкой `Creative.edit`, принимает и `deeplink+://…&primaryTrackingUrl={LINK_ESC}` —
+    так вписывали ручные кампании. Меняются якоря с макросом клика DSP; чужие ссылки не трогаем.
+    `&` оставляем как есть (формат ручных креативов, проверен на боевом кабинете), экранируем только то,
+    что вывело бы за пределы атрибута."""
+    safe = (href.replace("&", "\x00").replace('"', "&quot;").replace("'", "&#39;")
+            .replace("<", "&lt;").replace(">", "&gt;").replace("\x00", "&"))
+    changed = False
+
+    def sub(m):
+        nonlocal changed
+        if m.group(3) != DSP_CLICK_MACRO:
+            return m.group(0)
+        changed = True
+        return f"{m.group(1)}{m.group(2)}{safe}{m.group(2)}"
+    return _HREF_RE.sub(sub, html), changed
+
+
 ADFOX_MACRO = "%user6%"
 _BODY_RE = re.compile(r"<body\b[^>]*>", re.I)
 
