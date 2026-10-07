@@ -1,6 +1,6 @@
 {
   "name": "cabinet-frontend",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
@@ -13,8 +13,8 @@
     "check-embeds": "node scripts/check-embeds.mjs"
   },
   "dependencies": {
-    "axios": "1.8.4",
-    "next": "14.2.35",
+    "axios": "1.20.0",
+    "next": "15.5.27",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   }
