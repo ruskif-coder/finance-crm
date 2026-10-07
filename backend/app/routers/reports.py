@@ -6,10 +6,19 @@ from app.models import Operation, Article, User
 from app.permissions import require_permission, require_any_permission
 from app.audit import log_action
 from pydantic import BaseModel
+from datetime import date
 from typing import Optional, List
 from app import timez
+from app.periods import quarter_parts
+from app.receivables import _period_bounds, GRACE_DAYS, DEFAULT_TERM_DAYS, _term_days_for_counterparty, _due_date, _aging_bucket  # noqa: F401 — перенесено 07.10.2026: кронам не нужен слой HTTP
 
 router = APIRouter()
+
+
+def op_order_key(o):
+    """Порядок операций внутри строки долга: датированные по дате, затем без даты по номеру.
+    Раньше `o.date or o.id` сравнивал дату с числом и ронял баланс 500-й (07.10.2026)."""
+    return (o.date is None, o.date or date.min, o.id)
 
 BANKS_ORDER = ['АльфаБанк', 'ОПТ Банк', 'Совкомбанк', 'Наличные']
 
@@ -22,13 +31,12 @@ QUARTER_MONTHS = {
 
 def expand_quarter_rows(rows):
     """Разбивает квартальные периоды на 3 месяца равными долями"""
-    import re
     expanded = []
     for r in rows:
         p = r.period or ''
-        match = re.match(r'^(Q[1-4])\s+(\d{4})$', p)
+        match = quarter_parts(p)
         if match:
-            q, year = match.group(1), match.group(2)
+            q, year = match
             months = QUARTER_MONTHS.get(q, [])
             for m in months:
                 expanded.append({
@@ -53,13 +61,12 @@ def expand_quarter_rows(rows):
 
 def _expand_quarter_rows_dict(rows):
     """То же что expand_quarter_rows, но принимает dict-строки (уже имеют все поля)."""
-    import re
     expanded = []
     for r in rows:
         p = r.get('period') or ''
-        match = re.match(r'^(Q[1-4])\s+(\d{4})$', p)
+        match = quarter_parts(p)
         if match:
-            q, year = match.group(1), match.group(2)
+            q, year = match
             months = QUARTER_MONTHS.get(q, [])
             for m in months:
                 expanded.append({**r, 'period': f'{year}-{m}',
@@ -344,7 +351,6 @@ def get_pl(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("pl", "view"))
 ):
-    import re
 
     query = db.query(
         Operation.period,
@@ -370,9 +376,9 @@ def get_pl(
         # справочника, разметка — за отчёт (одна группа собирает статьи с разной
         # судьбой, см. PL_LINE_TO_GROUP).
         grp = _pl_group(r.pl_line, r.group)
-        match = re.match(r'^(Q[1-4])\s+(\d{4})$', p)
+        match = quarter_parts(p)
         if match:
-            q, year = match.group(1), match.group(2)
+            q, year = match
             months = QUARTER_MONTHS.get(q, [])
             for m in months:
                 normalized.append({
@@ -518,7 +524,6 @@ def get_plan_fact(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("planfact", "view"))
 ):
-    import re
 
     query = db.query(
         Operation.period,
@@ -542,9 +547,9 @@ def get_plan_fact(
         # Раздел — из разметки статьи, как в /pl: иначе группы, которых нет в
         # PL_GROUPS_ORDER, снова тихо выпадут из отчёта.
         grp = _pl_group(r.pl_line, r.group)
-        match = re.match(r'^(Q[1-4])\s+(\d{4})$', p)
+        match = quarter_parts(p)
         if match:
-            q, year = match.group(1), match.group(2)
+            q, year = match
             months = QUARTER_MONTHS.get(q, [])
             for m in months:
                 normalized.append({
@@ -796,7 +801,7 @@ def get_balance_full(
                         'invoice': op.invoice,
                         'invoice_date': op.invoice_date.isoformat() if op.invoice_date else None,
                     }
-                    for op in sorted(group_ops, key=lambda o: o.date or o.id)
+                    for op in sorted(group_ops, key=op_order_key)
                 ],
             })
         return rows, total
@@ -820,70 +825,9 @@ def get_balance_full(
         'net_assets': net_assets,
     }
 
-def _period_bounds(period):
-    """Возвращает (start_date, end_date) периода ('YYYY-MM' или 'Qn YYYY'), либо (None, None)."""
-    import re, calendar
-    from datetime import date as date_cls
-
-    if not period:
-        return None, None
-    p = period.strip()
-
-    m = re.match(r'^(\d{4})-(\d{2})$', p)
-    if m:
-        year, month = int(m.group(1)), int(m.group(2))
-        last_day = calendar.monthrange(year, month)[1]
-        return date_cls(year, month, 1), date_cls(year, month, last_day)
-
-    m = re.match(r'^Q([1-4])\s+(\d{4})$', p)
-    if m:
-        q, year = int(m.group(1)), int(m.group(2))
-        start_month = (q - 1) * 3 + 1
-        end_month = start_month + 2
-        last_day = calendar.monthrange(year, end_month)[1]
-        return date_cls(year, start_month, 1), date_cls(year, end_month, last_day)
-
-    return None, None
-
-
-GRACE_DAYS = 30          # буфер после срока оплаты, в течение которого долг считается "текущим", а не просроченным
-DEFAULT_TERM_DAYS = 60   # стандартный срок отсрочки для контрагентов без явно заданного term_days
 # Раньше отсрочка для двух контрагентов была захардкожена здесь по ИНН (90/120 дн.) — теперь это
 # редактируемое поле Counterparty.term_days в реестре контрагентов (/settings → Контрагенты).
 # Значения 90/120 были перенесены в БД миграцией migrate_add_term_days.sql.
-
-
-def _term_days_for_counterparty(cp):
-    """Срок отсрочки в днях для контрагента: явное значение term_days из реестра контрагентов,
-    либо стандартный срок (DEFAULT_TERM_DAYS), если оно не задано."""
-    if cp is not None and cp.term_days is not None:
-        return cp.term_days
-    return DEFAULT_TERM_DAYS
-
-
-def _due_date(period, term_days):
-    """Срок оплаты = первый день месяца, следующего за периодом операции, + срок отсрочки контрагента."""
-    from datetime import timedelta
-    _, end = _period_bounds(period)
-    if not end:
-        return None
-    date_basis = end + timedelta(days=1)
-    return date_basis + timedelta(days=term_days)
-
-
-def _aging_bucket(due_date, today):
-    """Возраст долга относительно срока оплаты (с учётом отсрочки контрагента):
-    future  — срок оплаты ещё не наступил (план);
-    current — срок наступил, просрочка в пределах GRACE_DAYS (текущая задолженность);
-    overdue — просрочка больше GRACE_DAYS сверх срока оплаты."""
-    if not due_date:
-        return 'unknown'
-    diff = (today - due_date).days
-    if diff < 0:
-        return 'future'
-    if diff <= GRACE_DAYS:
-        return 'current'
-    return 'overdue'
 
 
 def _contracts_cells(contracts) -> tuple:

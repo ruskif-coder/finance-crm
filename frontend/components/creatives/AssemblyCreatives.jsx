@@ -20,7 +20,7 @@ import { MONO, UI, Z, inp, btn, PickValue, EXT_TONE, ExtChip, Modal, PortalPopov
 import BrandMarkingDialog, { saveBrandMarking, BRAND_MARKING_SAVED } from '../ord/BrandMarking'
 import ValuePopover from '@/components/ValuePopover'
 import { overlayClose } from '@/lib/overlay'
-import { can, getPermissions } from '@/lib/auth'
+import { can, getPermissions, canDelete } from '@/lib/auth'
 import { downloadFile } from '@/lib/download'
 import safeHref from '@/lib/safeHref'
 import DeeplinkChip from './DeeplinkChip'
@@ -907,7 +907,9 @@ function EridRow({ set, sent, onChanged }) {
           </span>
           <CbBtn onClick={copy}>{copied ? 'Скопировано' : 'Скопировать'}</CbBtn>
           {own && (
-            <CbBtn disabled={busy} title="Маркер приходит сразу, а регистрация в реестре идёт асинхронно"
+            <CbBtn disabled={busy || set.ord_status === 'Active'}
+              title={set.ord_status === 'Active' ? 'ЕРИД зарегистрирован — обновлять нечего'
+                : 'Маркер приходит сразу, а регистрация в реестре идёт асинхронно'}
               onClick={() => call(() => api.post(`/launch-prep/set/${set.id}/erid/refresh`, {}, auth()))}>
               Обновить статус
             </CbBtn>
@@ -1381,6 +1383,9 @@ const preparedNote = (list) => {
 }
 
 function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded, handlers, rkPlan, vol }) {
+  // «Удалить креатив» — право «удаление» (отдельно от правки с 07.10.2026); вложения и отвязки остаются правкой
+  const [mayDeleteSet, setMayDeleteSet] = useState(false)
+  useEffect(() => { setMayDeleteSet(canDelete(getPermissions(), 'creatives')) }, [])
   const fileRef = useRef(null)
   const letterRef = useRef(null)
   const [busy, setBusy] = useState(false)
@@ -1693,7 +1698,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
                   ↓ Пиксели Weborama
                 </CbBtn>
               )}
-              {canEdit && (
+              {canEdit && mayDeleteSet && (
                 /* Отправленный креатив не удаляется — у него вердикты площадок, у
                    маркированного и запись в реестре; кнопка гаснет и объясняет почему. */
                 <CbBtn danger disabled={sent} onClick={() => handlers.confirmDelete(set)}

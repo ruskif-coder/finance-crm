@@ -27,9 +27,9 @@ SECTIONS = [
     # правку сделок и синхронизацию. deals_scope (all/own) — видимость сделок,
     # задаётся 5-уровневым контролом матрицы (нет/просмотр-свои/все/ред.-свои/все).
     {"key": "sales_dashboard",   "label": "Продажи · Дашборд",       "group": "Продажи", "actions": ["view", "edit"]},
-    {"key": "sales_registry",    "label": "Продажи · Реестр сделок",  "group": "Продажи", "actions": ["view", "edit"]},
+    {"key": "sales_registry",    "label": "Продажи · Реестр сделок",  "group": "Продажи", "actions": ["view", "edit", "delete"]},
     {"key": "sales_analytics",   "label": "Продажи · Аналитика",      "group": "Продажи", "actions": ["view", "edit"]},
-    {"key": "year_plan",         "label": "Продажи · Годовой план",   "group": "Продажи", "actions": ["view", "edit"]},
+    {"key": "year_plan",         "label": "Продажи · Годовой план",   "group": "Продажи", "actions": ["view", "edit", "delete"]},
     # Рабочий экран аккаунт-менеджера — очередь «Что делать». Входной экран контура.
     # deals_scope (all/own) берётся от sales_registry: очередь показывает те же сделки,
     # что и реестр, — своё право на видимость завело бы два разных ответа на вопрос
@@ -40,7 +40,7 @@ SECTIONS = [
     # состояния у плана больше нет, его состояние — стадия сделки. Колонка
     # `role_permissions.can_approve` осталась (её используют «Креативы» и «Очередь
     # трафика»), у медиапланов она просто перестала на что-либо влиять.
-    {"key": "media_plans",        "label": "Медиапланы · Реестр",      "group": "Аккаунты", "actions": ["view", "edit"]},
+    {"key": "media_plans",        "label": "Медиапланы · Реестр",      "group": "Аккаунты", "actions": ["view", "edit", "delete"]},
     {"key": "media_plans_editor", "label": "Медиапланы · Конструктор", "group": "Аккаунты", "actions": ["view", "edit"]},
     # Обвязка ОРД — не отдельный модуль, а часть поля аккаунта (решение владельца
     # 2026-08-25), поэтому обе секции живут в контуре «Аккаунты», а не в справочниках.
@@ -58,11 +58,11 @@ SECTIONS = [
     # работает в реестре медиапланов, новых полей не понадобилось.
     # Выпуск ЕРИД сюда НЕ входит — он идёт под `ord_submit`: за одним правом должна
     # стоять одна необратимость, и она там уже описана.
-    {"key": "creatives",         "label": "Аккаунты · Креативы",      "group": "Аккаунты", "actions": ["view", "edit", "approve"]},
+    {"key": "creatives",         "label": "Аккаунты · Креативы",      "group": "Аккаунты", "actions": ["view", "edit", "delete", "approve"]},
     {"key": "operations",        "label": "Операции",           "group": "Финансы",   "actions": ["view", "create", "edit", "delete"]},
     {"key": "import",            "label": "Импорт",             "group": "Финансы",   "actions": ["view"]},
     {"key": "counterparties",    "label": "Контрагенты",        "group": "Справочники", "actions": ["view", "edit", "delete", "view_operations"]},
-    {"key": "contracts",         "label": "Договоры",           "group": "Справочники", "actions": ["view", "edit"]},
+    {"key": "contracts",         "label": "Договоры",           "group": "Справочники", "actions": ["view", "edit", "delete"]},
     # Приложения к договору (ДС). Своя секция, а не право «Договоры»: реестр приложений
     # видит суммы сделок и выпускает документы клиенту, а карточку договора правит и тот,
     # кому этого знать не нужно. `create` — завести черновик из сделки, `edit` —
@@ -83,17 +83,17 @@ SECTIONS = [
     # Паблишеры — свой контур: площадка перестала быть справочной записью, у неё
     # свои экраны и дальше кабинеты внешних пользователей. Ключ права при переносе
     # не менялся — он записан у живых пользователей, менять его нельзя.
-    {"key": "dir_publishers",    "label": "Паблишеры · Площадки", "group": "Паблишеры", "actions": ["view", "edit"]},
+    {"key": "dir_publishers",    "label": "Паблишеры · Площадки", "group": "Паблишеры", "actions": ["view", "edit", "delete"]},
     # Экран «Заполнение» — те же действия, что и в карточке, но пачкой и без
     # подтверждения. Право отдельное и самодостаточное: сотрудника первичного
     # наполнения сажают на него одно — правит пачкой, карточку видит только на чтение.
     # Эндпоинты у карточки и «Заполнения» общие, поэтому publishers.py пропускает по
     # ЛЮБОМУ из двух прав; это разделение экранов, а не защита данных.
-    {"key": "dir_publishers_bulk", "label": "Паблишеры · Заполнение", "group": "Паблишеры", "actions": ["view", "edit"]},
+    {"key": "dir_publishers_bulk", "label": "Паблишеры · Заполнение", "group": "Паблишеры", "actions": ["view", "edit", "delete"]},
     # Учётки внешнего кабинета. Право отдельное от реестра площадок: доступ снаружи —
     # другая ответственность, чем правка карточки, и раздаётся он уже́е.
     # Бэкфилла ролям НЕ делается: доступ к учёткам кабинета выдаёт владелец руками.
-    {"key": "dir_publishers_cabinets", "label": "Паблишеры · Кабинеты", "group": "Паблишеры", "actions": ["view", "edit"]},
+    {"key": "dir_publishers_cabinets", "label": "Паблишеры · Кабинеты", "group": "Паблишеры", "actions": ["view", "edit", "delete"]},
     # Матрица согласований и план площадок по РК месяца (29.09.2026). Только чтение;
     # бэкфилл — всем, кто видит «Площадки» (миграция 2026-09-29_publishers_approvals_permission).
     {"key": "dir_publishers_approvals", "label": "Паблишеры · Согласования", "group": "Паблишеры", "actions": ["view"]},
@@ -135,9 +135,9 @@ SECTIONS = [
     # вернётся экран под тем же ключом, вернётся и доступ.
 
     {"key": "settings_balances",    "label": "Настройки · Остатки",  "group": "Ядро", "actions": ["view", "edit"]},
-    {"key": "settings_articles",    "label": "Настройки · Статьи",   "group": "Ядро", "actions": ["view", "edit"]},
-    {"key": "settings_pipelines",   "label": "Настройки · Воронки",  "group": "Ядро", "actions": ["view", "edit"]},
-    {"key": "settings_services",    "label": "Настройки · Услуги",   "group": "Ядро", "actions": ["view", "edit"]},
+    {"key": "settings_articles",    "label": "Настройки · Статьи",   "group": "Ядро", "actions": ["view", "edit", "delete"]},
+    {"key": "settings_pipelines",   "label": "Настройки · Воронки",  "group": "Ядро", "actions": ["view", "edit", "delete"]},
+    {"key": "settings_services",    "label": "Настройки · Услуги",   "group": "Ядро", "actions": ["view", "edit", "delete"]},
     {"key": "settings_audit",       "label": "Настройки · Журнал действий", "group": "Ядро", "actions": ["view"]},
     # Бэклог отладки: что держим под наблюдением после больших изменений.
     # Без "delete" осознанно — записи снимаются с наблюдения статусом, а не стиранием:
@@ -160,6 +160,13 @@ SETTINGS_SECTIONS = ("settings_balances", "settings_articles", "settings_pipelin
 SALES_SECTIONS = ("sales_dashboard", "sales_registry", "sales_analytics")
 
 ACTION_FIELDS = {"view": "can_view", "create": "can_create", "edit": "can_edit", "delete": "can_delete", "view_operations": "can_view_operations", "approve": "can_approve"}
+
+
+def _known_action(action: str) -> str:
+    """Опечатка в названии действия не должна открывать ручку по праву чтения."""
+    if action not in ACTION_FIELDS:
+        raise ValueError(f"неизвестное действие права: {action!r} (допустимы: {', '.join(ACTION_FIELDS)})")
+    return action
 
 
 def get_permissions_for_user(db: Session, user: User) -> dict:
@@ -204,7 +211,7 @@ def require_any_permission(sections, action: str = "view"):
 
     Admin всегда проходит.
     """
-    pairs = [(s, action) if isinstance(s, str) else (s[0], s[1]) for s in sections]
+    pairs = [(s, _known_action(action)) if isinstance(s, str) else (s[0], _known_action(s[1])) for s in sections]
 
     def checker(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
         if current_user.role.key == "admin":
@@ -222,12 +229,14 @@ def require_any_permission(sections, action: str = "view"):
     # а не в тесте: тест не должен знать внутренностей фабрики.
     checker._perm_sections = tuple(x if isinstance(x, str) else x[0] for x in sections)
     checker._perm_action = action
+    checker._perm_pairs = tuple(pairs)   # точные пары (раздел, действие): у смешанных пар одного `action` мало
     return checker
 
 
 def require_permission(section: str, action: str = "view"):
     """Фабрика зависимостей FastAPI: пропускает запрос, только если у роли пользователя есть
     разрешение can_<action> для данного раздела. Admin всегда проходит без проверки."""
+    _known_action(action)
     def checker(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
         if current_user.role.key == "admin":
             return current_user
@@ -242,4 +251,5 @@ def require_permission(section: str, action: str = "view"):
         return current_user
     checker._perm_sections = (section,)
     checker._perm_action = action
+    checker._perm_pairs = ((section, action),)
     return checker

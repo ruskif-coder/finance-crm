@@ -315,7 +315,8 @@ export default function TrafficQueue() {
   async function aimAtMe(setId) {
     setErr(''); setAiming(setId)
     try {
-      const r = await issueAim(api, auth, setId)
+      // Конвейер согласования — первичная проверка, ЕРИД ещё нет (владелец 07.10.2026).
+      const r = await issueAim(api, auth, setId, { firstCheck: true })
       setAimLive(m => ({ ...m, [setId]: r.active }))
       if (r.restarted) { setNote(RESTART_NOTE); tgt.reload() } else setErr(r.message || '')
     } finally { setAiming(null) }

@@ -17,10 +17,12 @@ import io
 import re
 from collections import namedtuple
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-import pandas as pd
 from sqlalchemy.orm import Session
+
+if TYPE_CHECKING:           # только для подсказок типов; сам pandas подгружается внутри функций
+    import pandas as pd
 
 from app.models import Contract, Counterparty
 from app.ord.enums import ACTION_TYPES, CONTRACT_TYPES, SUBJECT_TYPES, code_by_label
@@ -32,7 +34,8 @@ SHEET_FINAL = "Доходные договоры"
 SHEET_OUTER = "Расходные договоры"
 
 
-def _sheet(contents: bytes, name: str) -> pd.DataFrame:
+def _sheet(contents: bytes, name: str) -> "pd.DataFrame":
+    import pandas as pd  # ленивый импорт: ~50 МБ памяти, нужен только разбору Excel (07.10.2026)
     xls = pd.ExcelFile(io.BytesIO(contents))
     if name not in xls.sheet_names:
         raise ValueError(
@@ -54,6 +57,7 @@ def _sheet_row_count(contents: bytes, name: str) -> int:
 
 def _text(v: Any) -> Optional[str]:
     """Пустота одна: и NaN, и пустая строка дают None."""
+    import pandas as pd  # ленивый импорт: ~50 МБ памяти, нужен только разбору Excel (07.10.2026)
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
     s = str(v).strip()
@@ -98,6 +102,7 @@ def _dt(v: Any) -> Optional[datetime]:
 
 
 def _amount(v: Any) -> Optional[float]:
+    import pandas as pd  # ленивый импорт: ~50 МБ памяти, нужен только разбору Excel (07.10.2026)
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
     try:

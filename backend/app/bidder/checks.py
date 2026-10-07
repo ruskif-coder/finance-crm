@@ -120,6 +120,13 @@ def summarize(changes: list, starts: dict, today: date) -> List[str]:
 
 # ── сбор данных ───────────────────────────────────────────────────────────────
 
+def dsp_unavailable(kind: str) -> dict:
+    """Строка проверок: сверка среза с сырьём DSP пропущена, потому что база DSP недоступна."""
+    return {"level": WARNING, "code": "dsp_db_unavailable",
+            "title": "База DSP недоступна — сверка среза с сырьём пропущена",
+            "count": 1, "examples": [kind]}
+
+
 def gather(db, dsp_db, today: date) -> dict:
     """Входы `evaluate` из базы: РК с планом, планы и факт площадок, срез DSP против сырья."""
     from app.ad.build import CAMPAIGN_CLOSED
@@ -143,8 +150,23 @@ def gather(db, dsp_db, today: date) -> dict:
             | {"plans": [], "facts": []})
         c["plans"].append(r["pl_plan"])
         c["facts"].append(int(r["pl_fact"] or 0))
-    return {"campaigns": list(camps.values()),
-            "slice_vs_raw": _slice_vs_raw(db, dsp_db, today - timedelta(days=1))}
+    # Сбой базы DSP стоит одной проверки (сверки среза с сырьём), а не всех: раньше он
+    # поднимался наверх и `_checks` заменял весь список строкой «проверки не выполнены».
+    # В журнал уходит только вид ошибки: в тексте ошибок драйвера бывают адрес и параметры.
+    dsp_error = None
+    try:
+        slice_vs_raw = _slice_vs_raw(db, dsp_db, today - timedelta(days=1))
+    except Exception as e:  # noqa: BLE001
+        slice_vs_raw, dsp_error = None, type(e).__name__
+        # Откатываем ОБЕ сессии: `_slice_vs_raw` читает и нашу базу, и после её сбоя прогон
+        # не должен остаться в оборванной транзакции (журнал, факт на дату упали бы следом).
+        for s in (db, dsp_db):
+            try:
+                s.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+    return {"campaigns": list(camps.values()), "slice_vs_raw": slice_vs_raw,
+            "dsp_error": dsp_error}
 
 
 def _known_creatives(db) -> list:

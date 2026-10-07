@@ -294,7 +294,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
         </button>
       )}
       <button title="Бриф" onClick={() => (onOpenBrief ? onOpenBrief(d) : router.push(`/sales/deals/${d.id}`))} style={{ ...iconSq(false), width: 34, height: 34 }}><DocIcon /></button>
-      {onEdit && <button title="Редактировать" onClick={() => onEdit(d)} style={{ ...iconSq(false), width: 34, height: 34 }}><EditIcon /></button>}
+      {onEdit && canEdit && <button title="Редактировать" onClick={() => onEdit(d)} style={{ ...iconSq(false), width: 34, height: 34 }}><EditIcon /></button>}
     </div>
   )
 

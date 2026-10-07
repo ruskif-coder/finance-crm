@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { isAdmin as isAdminFn } from '@/lib/auth'
+import { isAdmin as isAdminFn, canDelete as canDeleteRight } from '@/lib/auth'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can, firstAllowedHref } from '@/components/Navbar'
@@ -74,7 +74,7 @@ export default function MpRegistry() {
 
   const canEdit = isAdmin || can(perms, 'media_plans', 'edit')
   const canCreate = isAdmin || can(perms, 'media_plans_editor', 'edit')
-  const canDelete = isAdmin || can(perms, 'media_plans', 'edit')
+  const canDelete = canDeleteRight(perms, 'media_plans')
 
   // Сбой — не «Медиапланов нет» (аудит 23.09.2026, 7.M5): `.catch(() => {})` оставлял
   // пустой список с приглашением создать первый медиаплан. Фоновая перечитка — тихая.

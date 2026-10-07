@@ -38,6 +38,7 @@ from app.sales.models import (SalesYearPlan, SalesYearPlanLine, SalesAdvertiser,
                               SalesBrand, SalesService, SalesAddonService, SalesDeal,
                               SalesStage, SalesRep, SalesMediaPlan, SalesMediaPlanRow,
                               SalesMediaPlanExtra)
+from app.year_plan_core import _month_items, _intended_amount, _is_locked, _planned_months  # noqa: F401 — перенесено 07.10.2026: кронам не нужен слой HTTP
 
 # Ставка НДС — не константой: текущая из карточки юрлица для новых расчётов (`app/vat.py`,
 # правило владельца 23.09.2026 — ставка фиксируется на дату расчёта). amount = БЕЗ НДС.
@@ -45,6 +46,7 @@ from app.sales.models import (SalesYearPlan, SalesYearPlanLine, SalesAdvertiser,
 router = APIRouter()
 YP_VIEW = require_permission("year_plan", "view")
 YP_EDIT = require_permission("year_plan", "edit")
+YP_DELETE = require_permission("year_plan", "delete")
 
 FACT_LAYER = "фактические"   # слой денег «факт» в маппинге стадий
 
@@ -484,7 +486,7 @@ def export_year_xlsx(year: int, advertiser_id: int, rep_id: Optional[int] = None
 
 @router.delete("/plans/{plan_id}")
 def delete_plan(plan_id: int, db: Session = Depends(get_db),
-                current_user: User = Depends(YP_EDIT)):
+                current_user: User = Depends(YP_DELETE)):
     plan = db.get(SalesYearPlan, plan_id)
     if not plan:
         raise HTTPException(status_code=404, detail="План не найден")
@@ -759,11 +761,6 @@ def _pbounds(period: str):
     return date(y, mo, 1), date(y, mo, calendar.monthrange(y, mo)[1])
 
 
-def _month_items(line: SalesYearPlanLine, m: int) -> list:
-    return [it for it in (line.products or {}).get(str(m), [])
-            if isinstance(it, dict) and it.get("ref_id") is not None]
-
-
 def _month_groups(line: SalesYearPlanLine, m: int) -> list:
     """Услуги месяца, разложенные по сделкам: [(deal_idx, [услуги…]), …].
 
@@ -774,18 +771,6 @@ def _month_groups(line: SalesYearPlanLine, m: int) -> list:
     for it in _month_items(line, m):
         groups.setdefault(int(it.get("deal_idx") or 0), []).append(it)
     return [(idx, items) for idx, items in sorted(groups.items()) if items]
-
-
-def _intended_amount(line: SalesYearPlanLine, m: int, items: Optional[list] = None) -> float:
-    """Сумма (до НДС) месяца целиком или одной группы-сделки, если передан items."""
-    src = _month_items(line, m) if items is None else items
-    return round(sum(float(it.get("amount") or 0) for it in src), 2)
-
-
-def _is_locked(line: SalesYearPlanLine, m: int) -> bool:
-    """Замок месяца = полная заморозка: конвейер не создаёт и не пересобирает сделки
-    этого месяца, а /match-deals не перетирает его пины. Правки в обе стороны стоят."""
-    return bool((line.locks or {}).get(str(m)))
 
 
 def _stage_index(db: Session) -> dict:
@@ -857,11 +842,6 @@ def _apply_season(fc: dict, k: float) -> dict:
         except (TypeError, ValueError):
             pass
     return out
-
-
-def _planned_months(line: SalesYearPlanLine) -> list:
-    on = list(line.months_on or [])
-    return [m for m in range(12) if m < len(on) and on[m] and _month_items(line, m)]
 
 
 def _target_lines(db, reps, master, year, advertiser_id, line_id):

@@ -526,13 +526,19 @@ def cabinet_creative_file(pair_id: int, file_id: int, account_id: int, publisher
     отказ — 404: разные коды ответили бы, существует ли файл с таким номером.
     """
     from app.launch_prep.models import LaunchPrepCreativeFile
+    from app.launch_prep.withdraw import KIND_DECLINE
     _actor(db, account_id, publisher_id)
+    # Четвёртый замок (владелец 07.10.2026): после «отказа в правках» исходник площадке больше не
+    # отдаётся. Отказ — вид снятия пары, работа по креативу с площадкой закончена; прежде такая пара
+    # оставалась в «Актуальных кампаниях» и баннер клиента скачивался до сверки месяца.
     f = (db.query(LaunchPrepCreativeFile)
          .join(LaunchPrepPair, LaunchPrepPair.set_id == LaunchPrepCreativeFile.set_id)
          .join(LaunchPrepTarget, LaunchPrepTarget.id == LaunchPrepPair.target_id)
          .filter(LaunchPrepPair.id == pair_id,
                  LaunchPrepCreativeFile.id == file_id,
-                 LaunchPrepTarget.publisher_id == publisher_id).first())
+                 LaunchPrepTarget.publisher_id == publisher_id,
+                 (LaunchPrepPair.withdraw_kind.is_(None)
+                  | (LaunchPrepPair.withdraw_kind != KIND_DECLINE))).first())
     if f is None:
         raise HTTPException(status_code=404, detail="Креатив не найден")
     # ИСХОДНИК клиента, а не подготовленный под нашу DSP: наши вставки площадке не нужны,

@@ -63,7 +63,7 @@ def delivery_by_deal(db: Session, campaigns: Dict[int, object], today: date) -> 
     from app.ad.flight import (PLACEMENT_RUNNING, as_placement_scale, best_chain_status,
                                effective_status, progress)
     from app.ad.stat_sources import fact_as_of
-    from app.routers import traffic_dashboard as td
+    from app.traffic import delivery_facts as td     # не роутер: этим считает и крон
 
     cids = [c.id for c in campaigns.values()]
     if not cids:

@@ -9,8 +9,8 @@ from app.models import Operation, Article, Counterparty, User
 from app import own_company
 from app.audit import log_action
 from app.permissions import require_permission
-from app.routers.reports import (_due_date, _aging_bucket, _term_days_for_counterparty,
-                                 DEFAULT_TERM_DAYS)
+from app.receivables import (_due_date, _aging_bucket, _term_days_for_counterparty,
+                             DEFAULT_TERM_DAYS)
 from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import date, datetime
@@ -19,7 +19,6 @@ from collections import deque
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.worksheet.datavalidation import DataValidation
-import pandas as pd
 import io
 import re
 import uuid
@@ -117,6 +116,7 @@ def _assert_import_rows_valid(db, problems: list) -> None:
 # живёт в app/links.py (раньше была двумя почти одинаковыми копиями).
 from app.links import validate_link as _validate_link  # noqa: E402
 from app import timez
+from app import periods
 from app import import_match  # noqa: E402
 from app import operation_chains  # noqa: E402
 
@@ -904,13 +904,9 @@ _PERIOD_MONTHS = {
     'сентябрь': 9, 'октябрь': 10, 'ноябрь': 11, 'декабрь': 12,
 }
 
-# Квартальный формат план-строк без даты (ПЛАН ОПЛАТ/ПОСТУПЛЕНИЙ): договорились
-# хранить такие периоды как "Q1 2026", "Q4 2025" и т.п. Во входящем файле он
-# записан по-русски ("1 квартал 2026"), поэтому распознаём оба варианта и
-# приводим к единому каноническому виду "QN YYYY" (с заглавной Q и пробелом —
-# именно так его ждут reports.py/QUARTER_MONTHS и сортировка в get_operations).
-_QUARTER_EN_RE = re.compile(r'q([1-4])\D{0,3}(\d{4})')
-_QUARTER_RU_RE = re.compile(r'([1-4])\s*-?\s*(?:[йi]\s*)?кварт\w*\D{0,10}(\d{4})')
+# Квартальный формат план-строк без даты (ПЛАН ОПЛАТ/ПОСТУПЛЕНИЙ): храним как "Q1 2026", "Q4 2025" (так его
+# ждут reports.py/QUARTER_MONTHS и сортировка в get_operations). Во входящем файле он бывает записан по-разному
+# ("1 квартал 2026", "2025-Q1", "2026 Q2"): разбор и приведение к одному виду — в `app/periods.py`, единственном месте.
 
 
 def _normalize_period(period: Optional[str], op_date: Optional[date]) -> Optional[str]:
@@ -937,15 +933,14 @@ def _normalize_period(period: Optional[str], op_date: Optional[date]) -> Optiona
             return f"{year}-{num:02d}" if year else None
     if op_date:
         return op_date.strftime('%Y-%m')
-    qm = _QUARTER_EN_RE.search(p) or _QUARTER_RU_RE.search(p)
-    if qm:
-        return f"Q{qm.group(1)} {qm.group(2)}"
-    return None
+    found = periods.find_quarter(p)
+    return periods.format_quarter(*found) if found else None
 
 
 def _clean_inn(value) -> Optional[str]:
     """ИНН в Excel часто попадает как число (например 7712345678.0), если ячейка
     отформатирована как "Общий" — без этой очистки в БД улетел бы хвост ".0"."""
+    import pandas as pd  # ленивый импорт: ~50 МБ памяти, нужен только разбору Excel (07.10.2026)
     if pd.isna(value):
         return None
     s = str(value).strip()
@@ -960,6 +955,7 @@ def _map_header_row(header) -> dict:
     Первое вхождение поля выигрывает: файл может нести и "НДС", и "НДС %" —
     оба ведут в vat_rate, и без этого правила в выборку попали бы две колонки
     с одинаковым именем, на чём pandas и ломается."""
+    import pandas as pd  # ленивый импорт: ~50 МБ памяти, нужен только разбору Excel (07.10.2026)
     col_map = {}
     for col_idx, value in header.items():
         if pd.isna(value):
@@ -988,6 +984,7 @@ def _find_import_sheet(contents: bytes):
     Если ни один лист не подошёл, в ошибку идёт ближайший промах: имя листа,
     номер строки и чего именно не хватило. "Не найден лист CF BEST" на файле,
     где не хватает одной колонки, отправляет искать не там."""
+    import pandas as pd  # ленивый импорт: ~50 МБ памяти, нужен только разбору Excel (07.10.2026)
     xls = pd.ExcelFile(io.BytesIO(contents))
     names = xls.sheet_names
     order = ([n for n in names if n == "CF BEST"] + [n for n in names if n != "CF BEST"])
@@ -1022,6 +1019,7 @@ def _period_cell(value) -> Optional[str]:
     ОПЛАТЫ или теряла период вовсе (аудит 23.09.2026, 2.M3). Дата в этой колонке
     означает свой месяц.
     """
+    import pandas as pd  # ленивый импорт: ~50 МБ памяти, нужен только разбору Excel (07.10.2026)
     if value is None or (not isinstance(value, str) and pd.isna(value)):
         return None
     if isinstance(value, (datetime, date, pd.Timestamp)):
@@ -1041,6 +1039,7 @@ def _parse_cf_best_rows(contents: bytes) -> List[dict]:
     со служебной шапкой-дашбордом сверху или без неё, с лишними колонками
     (например, "Кредит"/"Дебет") — такие нераспознанные колонки просто
     игнорируются. Имя листа тоже не фиксировано, см. _find_import_sheet."""
+    import pandas as pd  # ленивый импорт: ~50 МБ памяти, нужен только разбору Excel (07.10.2026)
     raw, header_row_idx, col_map = _find_import_sheet(contents)
 
     df = raw.iloc[header_row_idx + 1:].rename(columns=col_map)

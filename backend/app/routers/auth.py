@@ -26,6 +26,12 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 480
 
 MAX_LOGIN_ATTEMPTS = 5
 LOGIN_LOCKOUT_MINUTES = 15
+# Общий потолок на почту с ЛЮБЫХ адресов (решение владельца 07.10.2026): замок пары «почта + адрес»
+# не мешал перебирать одну почту с многих адресов (по 5 попыток на каждый). 20 неудач подряд без
+# паузы дольше часа — и отказ на час, в том числе верному паролю. Цена известна: известную почту
+# можно запереть на час; снимает администратор (`_clear_login_attempts` по почте).
+MAX_LOGIN_PER_EMAIL = 20
+EMAIL_LOCKOUT_MINUTES = 60
 
 # Пентест 2026-07-18, находка #1: без этого хэша ответ на несуществующий email
 # приходит за ~9 мс (bcrypt не считается), а на существующий — за ~230 мс, что даёт
@@ -82,6 +88,18 @@ def _check_ip_rate_limit(ip: str):
         window.append(now)
 
 
+def _forgive_ip(ip: str) -> None:
+    """Вернуть адресу одну попытку после УСПЕШНОГО входа.
+
+    Лимит адреса вызывается до пароля и считает попытку заранее, поэтому верный вход
+    тоже тратил его: офис за одним внешним адресом запирал сам себя на 21-м входе за
+    15 минут (внешний аудит 06.10.2026). Лимит защищает от перебора, а не от работы."""
+    with _ip_lock:
+        window = _ip_attempts.get(ip)
+        if window:
+            window.pop()
+
+
 def client_ip(request) -> str:
     """Адрес клиента ДЛЯ ТРОТТЛИНГА — из доверенного звена, а не из первого попавшегося.
 
@@ -113,6 +131,43 @@ def _norm_email(email: str) -> str:
     return (email or "").strip().lower()
 
 
+def _pair_key(email: str, ip: str) -> str:
+    """Ключ блокировки входа — «почта + адрес», а не одна почта.
+
+    Блокировка по одной почте проверялась до пароля и копилась даже для несуществующего
+    адреса: пять неверных паролей на почту администратора запирали его на 15 минут, и так
+    сколько угодно раз (внешний аудит 06.10.2026). Теперь перебирающий запирает сам себя,
+    а хозяин учётки с другого адреса входит. Колонка 255 знаков: почту режем, чтобы
+    длинное имя из запроса не роняло запись (раньше оно давало 500 на неудачном входе).
+    Админская разблокировка по почте снимает замки всех пар этой почты."""
+    return f"{(email or '')[:200]}|{(ip or '')[:45]}"
+
+
+def _email_wide_key(email: str) -> str:
+    """Ключ общего счётчика почты: пара с «адресом» `*`, которого не бывает. Не «голая» почта —
+    её заняли подтверждение пароля и цепочки операций со своими порогами (5 за 15 минут)."""
+    return _pair_key(email, "*")
+
+
+def _register_failed_email(db: Session, email: str):
+    """Неудача входа в общий счётчик почты. Пауза дольше часа без неудач обнуляет счёт."""
+    key = _email_wide_key(email)
+    now = datetime.utcnow()
+    row = db.query(LoginAttempt).filter(LoginAttempt.email == key).first()
+    if not row:
+        row = LoginAttempt(email=key, failed_count=0)
+        db.add(row)
+    elif (not (row.locked_until and row.locked_until > now) and row.updated_at
+          and now - row.updated_at > timedelta(minutes=EMAIL_LOCKOUT_MINUTES)):
+        row.failed_count = 0
+    row.failed_count += 1
+    if row.failed_count >= MAX_LOGIN_PER_EMAIL:
+        row.locked_until = now + timedelta(minutes=EMAIL_LOCKOUT_MINUTES)
+        row.failed_count = 0
+    row.updated_at = now
+    db.commit()
+
+
 def _check_login_lockout(db: Session, email: str):
     row = db.query(LoginAttempt).filter(LoginAttempt.email == email).first()
     if row and row.locked_until and row.locked_until > datetime.utcnow():
@@ -135,11 +190,20 @@ def _register_failed_login(db: Session, email: str):
     db.commit()
 
 def _clear_login_attempts(db: Session, email: str):
-    row = db.query(LoginAttempt).filter(LoginAttempt.email == email).first()
-    if row:
-        row.failed_count = 0
-        row.locked_until = None
-        row.updated_at = datetime.utcnow()
+    """Снять счётчик и замок у почты и у всех её пар «почта + адрес».
+
+    Ключ входа — пара (`_pair_key`), и разблокировка администратором по одной почте иначе
+    оставляла бы замок пары. `_` и `%` в почте экранируются: иначе имя вида `a_b` снимало
+    бы замки чужих учёток `aXb`."""
+    like = email.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "|%"
+    rows = (db.query(LoginAttempt)
+            .filter((LoginAttempt.email == email) | LoginAttempt.email.like(like, escape="\\"))
+            .all())
+    if rows:
+        for row in rows:
+            row.failed_count = 0
+            row.locked_until = None
+            row.updated_at = datetime.utcnow()
         db.commit()
 
 # Имена оставлены прежними: их импортируют users.py и counterparties.py.
@@ -161,8 +225,11 @@ def password_fingerprint(user) -> str:
     выкидывал украденную сессию (аудит 23.09.2026, 9.2). Схему базы не трогает. HMAC на
     секрете ядра — чтобы по токену нельзя было ничего узнать о хеше.
     """
-    return hmac.new(SECRET_KEY.encode(), (user.hashed_password or '').encode(),
-                    hashlib.sha256).hexdigest()[:16]
+    # Счётчик отзыва (`users.token_epoch`) входит в отпечаток только когда он больше нуля: при нуле формула
+    # прежняя, и выкладка не разлогинивает никого. Растёт он при выключении и включении учётки.
+    epoch = getattr(user, 'token_epoch', 0) or 0
+    material = (user.hashed_password or '') + (f'|{epoch}' if epoch else '')
+    return hmac.new(SECRET_KEY.encode(), material.encode(), hashlib.sha256).hexdigest()[:16]
 
 
 def token_claims(user) -> dict:
@@ -216,10 +283,13 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
     from app.permissions import get_permissions_for_user  # тоже локальный — по той же причине (permissions.py импортирует auth.py)
 
     # per-IP троттлинг (#2). Адрес берётся из ПОСЛЕДНЕГО звена цепочки — см. client_ip.
-    _check_ip_rate_limit(client_ip(request))
+    ip = client_ip(request)
+    _check_ip_rate_limit(ip)
 
     email = _norm_email(form_data.username)
-    _check_login_lockout(db, email)
+    lock_key = _pair_key(email, ip)
+    _check_login_lockout(db, lock_key)
+    _check_login_lockout(db, _email_wide_key(email))
 
     # Регистронезависимый поиск (#3). Timing-фикс (#1): при отсутствии юзера всё равно
     # прогоняем bcrypt против фиктивного хэша, чтобы время ответа не выдавало наличие email.
@@ -227,7 +297,8 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
     password_ok = verify_password(form_data.password, user.hashed_password) if user else \
         (verify_password(form_data.password, _DUMMY_BCRYPT_HASH) and False)
     if not user or not password_ok:
-        _register_failed_login(db, email)
+        _register_failed_login(db, lock_key)
+        _register_failed_email(db, email)
         log_action(db, user, "login_failed", entity_type="user", entity_id=user.id if user else None,
                    details=f"Неудачная попытка входа: {form_data.username}")
         raise HTTPException(status_code=400, detail="Неверный email или пароль")
@@ -235,7 +306,9 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
         log_action(db, user, "login_failed", entity_type="user", entity_id=user.id,
                    details="Попытка входа деактивированного пользователя")
         raise HTTPException(status_code=400, detail="Учётная запись деактивирована")
-    _clear_login_attempts(db, email)
+    _clear_login_attempts(db, lock_key)
+    _clear_login_attempts(db, _email_wide_key(email))
+    _forgive_ip(ip)
     token = create_access_token(token_claims(user))
     log_action(db, user, "login_success", entity_type="user", entity_id=user.id)
     return {

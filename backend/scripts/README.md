@@ -28,7 +28,7 @@ docker exec finance_backend python -m scripts.<имя> [аргументы]
 |---|---|
 | `import_publishers.py` | первичный ввод площадок из «Аптеки — Рабочая.xlsx» |
 | `backfill_publishers_v3.py` | добор полей площадок под схему v3 |
-| `backfill_counterparty_requisites.py` | реквизиты и счета контрагентов из выгрузки |
+| ~~`backfill_counterparty_requisites.py`~~ | перенесён 07.10.2026 в корневой `scripts/` (не публикуется): в нём словарь руководителей с ФИО и ИНН. В истории гита остался — решение владельца: историю не чистить |
 | `backfill_vat_articles.py` | ставки НДС и статьи по умолчанию из свежих операций |
 | `backfill_deal_codes.py` | проставление шестизначных меток сделкам |
 | `migrate_media_kit_to_documents.py` | медиакиты площадок в общий реестр документов |

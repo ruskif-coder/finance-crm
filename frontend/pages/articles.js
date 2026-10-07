@@ -5,6 +5,7 @@ import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import { inp, btn, th, td } from '../components/salesTableKit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { canDelete } from '../lib/auth'
 
 
 const TYPE_META = {
@@ -36,6 +37,7 @@ export default function Articles({ embedded = false } = {}) {
   const [showForm, setShowForm] = useState(false)
 
   const mayEdit = can(perms, 'settings_articles', 'edit')
+  const mayDelete = canDelete(perms, 'settings_articles')
 
   const load = async () => {
     setLoading(true); setError('')
@@ -262,7 +264,7 @@ export default function Articles({ embedded = false } = {}) {
                           {mayEdit && (
                             <>
                               <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12, marginRight: 6 }} onClick={() => startEdit(a)}>Изменить</button>
-                              <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12, color: 'var(--danger)' }} onClick={() => remove(a)}>Удалить</button>
+                              {mayDelete && <button style={{ ...btn(false), padding: '3px 10px', fontSize: 12, color: 'var(--danger)' }} onClick={() => remove(a)}>Удалить</button>}
                             </>
                           )}
                         </td>

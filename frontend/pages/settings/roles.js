@@ -7,6 +7,7 @@ import SettingsTabs from '../../components/SettingsTabs'
 import { MONO, UI, card, inp, sel, primaryBtn, th } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { flagsForLevel, showDeleteBox } from '../../lib/roleLevels.mjs'
 
 // ── Роли и права доступа — отдельная страница раздела «Настройки» ──
 // Матрица: разделы по вертикали, роли по горизонтали, в ячейке — уровень доступа.
@@ -206,19 +207,15 @@ export default function SettingsRoles() {
   }
 
   // Установка уровня → раскладка по булевым полям секции (+ scope для scoped-секций).
+  // Раскладка — в lib/roleLevels.mjs (её стережёт гейт сборки check-role-levels): раньше у разделов
+  // «свои/все» терялось «удаление», а снять его, оставив правку, было нечем.
   const setLevel = (roleId, s, level) => {
-    let sec
-    if (SCOPED_KEYS.includes(s.key)) {
-      sec = { view: level !== 'none', edit: level.startsWith('edit') }
-      setScope(roleId, SCOPE_GROUP[s.key], level.endsWith('own') ? 'own' : 'all')
-    } else if (level === 'view') {
-      sec = Object.fromEntries(s.actions.map(a => [a, a === 'view']))
-    } else if (level === 'edit') {
-      sec = Object.fromEntries(s.actions.map(a => [a, true]))
-    } else { // none
-      sec = Object.fromEntries(s.actions.map(a => [a, false]))
-    }
-    setEditingRolePerms(prev => ({ ...prev, [roleId]: { ...prev[roleId], [s.key]: sec } }))
+    const scoped = SCOPED_KEYS.includes(s.key)
+    if (scoped) setScope(roleId, SCOPE_GROUP[s.key], level.endsWith('own') ? 'own' : 'all')
+    setEditingRolePerms(prev => ({
+      ...prev,
+      [roleId]: { ...prev[roleId], [s.key]: flagsForLevel(s, level, prev[roleId]?.[s.key] || {}, scoped) },
+    }))
   }
 
   // стили — общий модуль components/salesTableKit
@@ -343,6 +340,13 @@ export default function SettingsRoles() {
                                   style={{ ...sel, fontSize: 13, padding: '5px 8px', width: '100%', maxWidth: 200 }}>
                                   {levelsFor(s).map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
                                 </select>
+                              )}
+                              {showDeleteBox(s, currentLevel(r.id, s), isAdmin) && (
+                                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, marginTop: 5, fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }} title="Право удалять записи раздела. Убрать вложение, отвязать связь или сбросить значение — это правка, а не удаление">
+                                  <input type="checkbox" checked={!!editingRolePerms[r.id]?.[s.key]?.delete}
+                                    onChange={e => setEditingRolePerms(prev => ({ ...prev, [r.id]: { ...prev[r.id], [s.key]: { ...prev[r.id]?.[s.key], delete: e.target.checked } } }))} />
+                                  удаление
+                                </label>
                               )}
                               {s.actions.includes('approve') && !isAdmin && (
                                 <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, marginTop: 5, fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }} title="Право согласовывать/отклонять/архивировать МП">

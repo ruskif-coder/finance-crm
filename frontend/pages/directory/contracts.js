@@ -3,6 +3,7 @@ import Head from 'next/head'
 import api, { auth } from '@/lib/http'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '@/components/Navbar'
+import { canDelete } from '@/lib/auth'
 import { MONO, UI, Z, IconBtn, inp, inpSm, selSm, btn, btnSm } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
@@ -211,6 +212,7 @@ export default function Contracts() {
 
   const isAdmin = role === 'admin'
   const mayEdit = isAdmin || can(perms, 'contracts', 'edit')
+  const mayDelete = isAdmin || canDelete(perms, 'contracts')
 
   const flash = (m) => { setOk(m); setTimeout(() => setOk(''), 2500) }
 
@@ -817,7 +819,7 @@ export default function Contracts() {
                       {c.document_link && <a href={/^https?:\/\//i.test(c.document_link) ? c.document_link : undefined} target="_blank" rel="noopener noreferrer" title="Ссылка на документ" style={icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg></a>}
                       {c.attached_filename && <button onClick={() => handleDownload(c.id, c.attached_filename)} title="Скачать документ" style={icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg></button>}
                       {mayEdit && <button onClick={() => openEdit(c)} title="Редактировать" style={icoBtn} onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-tint)'; e.currentTarget.style.color = 'var(--accent)' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-faint)' }}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>}
-                      {mayEdit && <button onClick={() => handleDelete(c)} title="Удалить" style={icoBtn} onMouseEnter={e => { e.currentTarget.style.background = 'var(--danger-tint)'; e.currentTarget.style.color = T.danger }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-faint)' }}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>}
+                      {mayDelete && <button onClick={() => handleDelete(c)} title="Удалить" style={icoBtn} onMouseEnter={e => { e.currentTarget.style.background = 'var(--danger-tint)'; e.currentTarget.style.color = T.danger }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-faint)' }}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /></svg></button>}
                     </div>
                   </div>
                 )

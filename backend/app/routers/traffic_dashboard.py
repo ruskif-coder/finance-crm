@@ -50,6 +50,7 @@ from app.dsp import refresh as dsp_refresh
 from app.sales.models import SalesDeal, SalesRep
 from app.sales.reps import staff_users
 from app.sales.row_context import load_row_context
+from app.traffic.delivery_facts import _facts, _creatives_all, _placements_of  # noqa: F401 — перенесено 07.10.2026: кронам не нужен слой HTTP
 
 log = logging.getLogger("finance.traffic_dashboard")
 
@@ -123,17 +124,6 @@ def _fact_last_ingest(db: Session, campaign_ids: List[int]):
         {"i": campaign_ids, "src": fact_sources()}).scalar()
 
 
-def _facts(db: Session, campaign_ids: List[int]) -> dict:
-    if not campaign_ids:
-        return {}
-    rows = db.execute(text(
-        "SELECT campaign_id, sum(shows) AS shows, sum(clicks) AS clicks "
-        "FROM ad_campaign_stat WHERE campaign_id = ANY(:i) AND source = ANY(:src) "
-        "GROUP BY campaign_id"),
-        {"i": campaign_ids, "src": fact_sources()}).mappings().all()
-    return {r["campaign_id"]: dict(r) for r in rows}
-
-
 def _verifier(db: Session, campaign_ids: List[int], until: Optional[date] = None) -> dict:
     """Показы ВЕРИФИКАТОРА по РК и по каждой площадке — одним запросом на оба уровня.
 
@@ -191,23 +181,6 @@ def _campaign_in_scope(db: Session, campaign_id: int, user: User):
     if not row:
         raise HTTPException(404, "РК не найдена")
     return row
-
-
-def _creatives_all(db: Session, campaign_ids: List[int]) -> dict:
-    """Креативы НЕСКОЛЬКИХ РК: {campaign_id: {placement_id: [статусы]}}.
-
-    Дашборд считает статус каждой РК из её креативов, и запрос на каждую превратил бы
-    один экран в шестьдесят обращений — тот же приём, что `page_ids` в реестре сделок.
-    """
-    if not campaign_ids:
-        return {}
-    rows = db.execute(text(
-        "SELECT campaign_id, placement_id, status FROM ad_campaign_creative "
-        "WHERE campaign_id = ANY(:i)"), {"i": campaign_ids}).mappings().all()
-    out: dict = {}
-    for r in rows:
-        out.setdefault(r["campaign_id"], {}).setdefault(r["placement_id"], []).append(r["status"])
-    return out
 
 
 def _uploaded_placements(db: Session, campaign_ids: List[int]) -> set:
@@ -508,31 +481,6 @@ def _creatives_of(db: Session, campaign_id: int) -> dict:
 # Перевод шкалы живёт в `ad/flight` — им пользуется и синк. Имя здесь оставлено,
 # чтобы не править два десятка мест вызова.
 _as_placement_scale = as_placement_scale
-
-
-def _placements_of(db: Session, campaign_ids: List[int]) -> dict:
-    """Площадки всех видимых РК одним запросом — для долей, виновников и счётчиков.
-
-    Раскрывать каждую РК ради этого нельзя: виджет «площадки-виновники» отвечает на
-    вопрос «кто тянет вниз ВЕСЬ портфель», и по одной РК он не собирается вовсе.
-    """
-    if not campaign_ids:
-        return {}
-    rows = db.execute(text("""
-        SELECT p.campaign_id, p.id, p.publisher_id, p.status, p.weight,
-               p.plan_show AS plan_stored, p.share AS share_stored,
-               pub.code, pub.domain, pub.name AS publisher,
-               (SELECT sum(s.shows) FROM ad_campaign_stat s
-                 WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact,
-               """ + build.PLACEMENT_FIXED_SQL + """ AS fixed
-          FROM ad_campaign_placement p
-          JOIN sales_publishers pub ON pub.id = p.publisher_id
-         WHERE p.campaign_id = ANY(:i)
-    """), {"i": campaign_ids, "src": fact_sources()}).mappings().all()
-    out: dict = {}
-    for r in rows:
-        out.setdefault(r["campaign_id"], []).append(dict(r))
-    return out
 
 
 def _stat_by_day(db: Session, campaign_ids: List[int]) -> dict:

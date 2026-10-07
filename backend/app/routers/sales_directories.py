@@ -53,6 +53,8 @@ AG_EDIT = require_permission("dir_agencies", "edit")
 AG_DELETE = require_permission("dir_agencies", "delete")
 SVC_EDIT = require_permission("settings_services", "edit")
 PIPE_EDIT = require_permission("settings_pipelines", "edit")
+SVC_DELETE = require_permission("settings_services", "delete")   # удаление записи справочника
+PIPE_DELETE = require_permission("settings_pipelines", "delete")
 
 # ── чтение справочников: право любого экрана-потребителя ────────────────────
 # Справочники кормят выпадающие списки на многих экранах, поэтому жёсткое
@@ -351,7 +353,7 @@ def update_format(format_id: int, data: FormatIn, db: Session = Depends(get_db),
 
 
 @router.delete("/services/formats/{format_id}")
-def delete_format(format_id: int, db: Session = Depends(get_db), current_user: User = Depends(SVC_EDIT)):
+def delete_format(format_id: int, db: Session = Depends(get_db), current_user: User = Depends(SVC_DELETE)):
     f = _require(db, SalesFormat, format_id, "Формат")
     used = db.query(SalesServiceFormat.id).filter(SalesServiceFormat.format_id == format_id).first()
     if used:
@@ -402,7 +404,7 @@ def create_targeting(data: TargetingIn, db: Session = Depends(get_db),
 
 @router.delete("/targeting/{item_id}")
 def delete_targeting(item_id: int, db: Session = Depends(get_db),
-                     current_user: User = Depends(require_permission("sales_registry", "edit"))):
+                     current_user: User = Depends(require_permission("sales_registry", "delete"))):
     t = _require(db, SalesTargetingItem, item_id, "Значение таргетинга")
     label = f"{t.group}: {t.value}"
     db.delete(t)
@@ -561,7 +563,7 @@ def update_addon(addon_id: int, data: AddonIn, db: Session = Depends(get_db),
 
 
 @router.delete("/services/addons/{addon_id}")
-def delete_addon(addon_id: int, db: Session = Depends(get_db), current_user: User = Depends(SVC_EDIT)):
+def delete_addon(addon_id: int, db: Session = Depends(get_db), current_user: User = Depends(SVC_DELETE)):
     a = _require(db, SalesAddonService, addon_id, "Доп. услуга")
     db.delete(a)
     db.commit()
@@ -583,7 +585,7 @@ def deactivate_service(service_id: int, db: Session = Depends(get_db),
 
 @router.delete("/services/{service_id}/hard")
 def delete_service_hard(service_id: int, db: Session = Depends(get_db),
-                        current_user: User = Depends(SVC_EDIT)):
+                        current_user: User = Depends(SVC_DELETE)):
     """Полное удаление услуги из справочника. Сделки хранят услугу строкой
     (SalesDeal.product), не FK — их не задевает. Но услуга может быть строкой
     микс-приложения (SalesAnnexItem.service_id, NOT NULL FK): в этом случае
@@ -961,7 +963,7 @@ def set_stage_mapping(pipeline_id: int, stage_id: int, data: StageMapping,
 
 @router.delete("/pipelines/{pipeline_id}")
 def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db),
-                    current_user: User = Depends(PIPE_EDIT)):
+                    current_user: User = Depends(PIPE_DELETE)):
     """ФИЗИЧЕСКИ удаляет воронку вместе со всеми её сделками и строками маппинга
     (сырьё импорта из Битрикса, sales_bitrix_raw, не чистим с 03.10.2026 — это история). Необратимо. Отклоняет удаление, если по сделкам
     воронки есть ручные правки или разнесения — их потеря молча недопустима."""
@@ -1753,6 +1755,11 @@ def deactivate_brand(brand_id: int, db: Session = Depends(get_db),
 
 
 # ============================== Прайс ==============================
+# ЗАДЕЛ ПОД ИСТОРИЮ ЦЕН, с экранов не вызывается (проверено 07.10.2026; решение владельца: оставить, пометить).
+# Таблица `sales_price_list` (цена услуги с датами «действует с/по», валюта, единица) — недоделанная идея первой
+# схемы продаж; в ней 0 строк. Текущие цены лежат у самой услуги (`unit_price`, `unit_price_web`, `unit_price_app`).
+# Не удалять: при полном удалении услуги её строки прайса стираются (`delete_service_hard`), а таблицы в проекте
+# замораживают, а не удаляют. Список таких ручек — `docs/РУЧКИ_БЕЗ_ВЫЗОВА.md`.
 
 @router.get("/price-list")
 def list_price(service_id: Optional[int] = None, only_active: bool = True,

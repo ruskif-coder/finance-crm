@@ -16,6 +16,7 @@
   · свой ключ подписи — токен кабинета не должен подходить к финмодулю;
   · CORS не открывается: фронт кабинета живёт на том же origin через Caddy.
 """
+import logging
 import os
 import threading
 import time
@@ -31,6 +32,8 @@ from app.auth import (account_publishers, current_account, current_account_any,
                       find_account, make_token,
                       verify_password)
 from app.db import plain_session, scoped_session
+
+log = logging.getLogger("cabinet")
 
 # Документация закрыта так же, как в ядре: во внешнем контуре тем более незачем
 # публиковать карту эндпоинтов.
@@ -158,8 +161,12 @@ def _note_login(email: str, ok: bool) -> None:
         fn = "pub.clear_login_attempts" if ok else "pub.register_failed_login"
         db.execute(text(f"SELECT {fn}(:e)"), {"e": email})
         db.commit()
-    except Exception:
+    except Exception as e:
         db.rollback()      # учёт попытки не стоит того, чтобы ронять сам вход
+        # Но молча глотать нельзя: пока запись неудачи не проходит, счётчик не растёт и блокировка
+        # не наступает — защита от перебора выключена, а снаружи этого не видно (аудит 06.10.2026).
+        # Пишем только вид ошибки: в тексте ошибок драйвера стоят параметры запроса, то есть почта.
+        log.error("кабинет: попытка входа не записана (ok=%s): %s", ok, type(e).__name__)
     finally:
         db.close()
 

@@ -358,9 +358,10 @@ export default function SalesRegistry2() {
   const downloadDealFile = (dealId, kind, filename) =>
     downloadFile(`/sales/deals/${dealId}/files/${kind}/download`, filename)
   // Действия карточки-детализации (раскрытие строки). Открыть — в нашу карточку сделки
-  // (до 03.10.2026 уводило в Битрикс; Битрикс больше не источник); правка — заглушка.
+  // (до 03.10.2026 уводило в Битрикс; Битрикс больше не источник). Правка сделки — в её карточке (поля
+  // правятся на месте для тех, у кого есть право), поэтому карандаш открывает карточку.
   const openDeal = (d) => router.push(`/sales/deals/${d.id}`)
-  const editDeal = () => alert('Редактирование сделки — скоро')
+  const editDeal = openDeal
   const addMp = (d) => router.push(`/accounts/mp/new?deal=${d.id}`)
 
   const FILE_LABEL = { mp: 'МП', contract: 'Договор' }

@@ -219,6 +219,8 @@ def update_user(
             raise HTTPException(status_code=400, detail="Нельзя деактивировать самого себя")
         changes.append("активирован" if data.is_active else "деактивирован")
         user.is_active = 1 if data.is_active else 0
+        # Отзыв токенов, выданных до смены: иначе «выключил → включил» оживлял бы старые (аудит 06.10.2026)
+        user.token_epoch = (user.token_epoch or 0) + 1
 
     if data.password:
         if len(data.password) < 8:

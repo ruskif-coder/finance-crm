@@ -172,3 +172,14 @@ def no_network(monkeypatch):
         raise _MsError("в тестах DSP недоступен — передайте клиент явно")
     monkeypatch.setattr(_tc, "_client", no_dsp_client)
     yield
+
+
+@pytest.fixture
+def db():
+    """Сессия к базе стенда. Общая: файлы, которым нужна особая, объявляют свою — она перекрывает эту."""
+    from app.database import SessionLocal
+    s = SessionLocal()
+    try:
+        yield s
+    finally:
+        s.close()

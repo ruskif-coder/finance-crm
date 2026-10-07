@@ -60,6 +60,7 @@ ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
 PUB_SECTIONS = ("dir_publishers", "dir_publishers_bulk", "dir_publishers_cabinets")
 PUB_VIEW = require_any_permission(PUB_SECTIONS, "view")
 PUB_EDIT = require_any_permission(PUB_SECTIONS, "edit")
+PUB_DELETE = require_any_permission(PUB_SECTIONS, "delete")   # удаление записи; отвязки (`detach_*`) — правка
 
 
 def _require(db: Session, publisher_id: int) -> SalesPublisher:
@@ -797,7 +798,7 @@ def upsert_surface(publisher_id: int, kind: str, data: SurfaceIn,
 
 @router.delete("/{publisher_id}/surfaces/{kind}")
 def delete_surface(publisher_id: int, kind: str, db: Session = Depends(get_db),
-                   current_user: User = Depends(PUB_EDIT)):
+                   current_user: User = Depends(PUB_DELETE)):
     """Удаление поверхности означает «её нет» — вместе с ней уходят и её услуги,
     иначе в справочнике остались бы подключённые услуги несуществующего приложения."""
     s = (db.query(SalesPublisherSurface)
@@ -997,7 +998,7 @@ def update_contact(publisher_id: int, contact_id: int, data: ContactIn,
 
 @router.delete("/{publisher_id}/contacts/{contact_id}")
 def delete_contact(publisher_id: int, contact_id: int, db: Session = Depends(get_db),
-                   current_user: User = Depends(PUB_EDIT)):
+                   current_user: User = Depends(PUB_DELETE)):
     c = (db.query(SalesPublisherContact)
          .filter(SalesPublisherContact.id == contact_id,
                  SalesPublisherContact.publisher_id == publisher_id).first())
@@ -1300,7 +1301,7 @@ def download_document(publisher_id: int, doc_id: int, db: Session = Depends(get_
 
 @router.delete("/{publisher_id}/documents/{doc_id}")
 def delete_document(publisher_id: int, doc_id: int, db: Session = Depends(get_db),
-                    current_user: User = Depends(PUB_EDIT)):
+                    current_user: User = Depends(PUB_DELETE)):
     d = (db.query(SalesPublisherDocument)
          .filter(SalesPublisherDocument.id == doc_id,
                  SalesPublisherDocument.publisher_id == publisher_id).first())

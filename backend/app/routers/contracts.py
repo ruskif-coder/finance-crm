@@ -181,7 +181,7 @@ class ContractBulkDelete(BaseModel):
 def bulk_delete_contracts(
     payload: ContractBulkDelete,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("contracts", "edit"))
+    current_user: User = Depends(require_permission("contracts", "delete"))
 ):
     # Массовое удаление — отдельно от точечного DELETE /{id} (которое разрешено любому
     # с правом "edit" на раздел) — здесь дополнительно жёстко требуем роль admin, по
@@ -328,7 +328,7 @@ def update_contract(
 def delete_contract(
     contract_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("contracts", "edit"))
+    current_user: User = Depends(require_permission("contracts", "delete"))
 ):
     contract = db.query(Contract).filter(Contract.id == contract_id).first()
     if not contract:

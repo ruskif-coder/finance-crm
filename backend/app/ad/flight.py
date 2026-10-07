@@ -260,6 +260,119 @@ def progress(plan: Optional[float], fact: Optional[float],
 
 # ── распределение объёма по площадкам ────────────────────────────────────────
 
+@dataclass(frozen=True)
+class _Layout:
+    """Итог первого шага раскладки: кто что держит и как делится остаток плана РК.
+
+    Разбито из одной функции `distribute` 07.10.2026 (сложность была 62): расчёт «кто в плане и
+    сколько у кого зафиксировано» отдельно от сборки строки по каждой площадке. Поведение прежнее —
+    его держат тесты (`tests/test_ad_flight.py`) и дифференциальная проверка со старой версией."""
+    settle: bool            # раскладка по факту: факт передан И удержание долей кончилось
+    in_plan_set: tuple      # какие статусы участвуют в плане (в удержание — все «в работе»)
+    fixed_of: dict          # id(строки) -> заданный объём (после поправки на факт)
+    dropped: dict           # id(строки) -> объём выбывшей площадки (= её факт)
+    rest: float             # остаток плана РК после заданных объёмов и выбывших
+    w_sum: float            # сумма весов живых площадок
+    w_of: dict              # id(строки) -> доля остатка
+
+
+def _fixed_volumes(placements: Sequence[dict], fact_of: dict, settle: bool) -> dict:
+    """Заданный по креативам объём площадки; при раскладке по факту — не ниже факта."""
+    fixed_of = {id(p): float(p.get("fixed") or 0) for p in placements}
+    if settle:   # заданный объём не ниже факта
+        fixed_of = {k: (max(v, fact_of[k]) if v else 0.0) for k, v in fixed_of.items()}
+    return fixed_of
+
+
+def _dropped_volumes(placements: Sequence[dict], fact_of: dict, fixed_of: dict,
+                     in_plan_set: tuple, settle: bool) -> dict:
+    """Вне раскладки (выбыла, нет веса), но уже открутила — держит план = свой факт."""
+    return {id(p): fact_of[id(p)] for p in placements
+            if settle and fact_of[id(p)] and not fixed_of[id(p)]
+            and (p.get("status") not in in_plan_set or not p.get("weight"))}
+
+
+def _shares_of_rest(live: Sequence[dict], plan: Optional[float], rest: float, cap: Optional[float],
+                    settle: bool, fact_of: dict) -> dict:
+    """Доли остатка по весам живых площадок с потолком; по факту — через `floor_to_fact`.
+
+    Потолок — от ПЛАНА РК, а делится остаток после заданных объёмов: переводим предел в доли
+    остатка. Площадка с ручным индексом (`capless`) потолку не подчиняется."""
+    cap_rest = (cap * float(plan) / rest) if (cap and plan and rest) else cap
+    capless = frozenset(id(p) for p in live if p.get("capless"))
+    if settle and rest:
+        amt = floor_to_fact(rest, {id(p): p["weight"] for p in live}, fact_of,
+                            (cap * float(plan)) if cap else None, capless)
+        return {k: v / rest for k, v in amt.items()}
+    return capped_shares({id(p): p["weight"] for p in live}, cap_rest, capless)
+
+
+def _layout(plan: Optional[float], fl: Optional[Flight], placements: Sequence[dict],
+            cap: Optional[float], facts: Optional[dict], hold_fl: Optional[Flight]) -> _Layout:
+    hold = holds(hold_fl if hold_fl is not None else fl)
+    settle = facts is not None and not hold
+    fact_of = {id(p): float((facts or {}).get(p.get("id")) or 0) for p in placements}
+    in_plan_set = PLACEMENT_IN_WORK if hold else PLACEMENT_IN_PLAN
+    fixed_of = _fixed_volumes(placements, fact_of, settle)
+    dropped = _dropped_volumes(placements, fact_of, fixed_of, in_plan_set, settle)
+    fixed_in = sum(v for p in placements for v in [fixed_of[id(p)]]
+                   if v and p.get("status") in in_plan_set)
+    rest = max(0.0, float(plan) - fixed_in - sum(dropped.values())) if plan else 0.0
+    live = [p for p in placements
+            if p.get("status") in in_plan_set and p.get("weight") and not fixed_of[id(p)]
+            and id(p) not in dropped]
+    w_sum = sum(float(p["weight"]) for p in live) or 0.0
+    w_of = _shares_of_rest(live, plan, rest, cap, settle, fact_of)
+    return _Layout(settle, in_plan_set, fixed_of, dropped, rest, w_sum, w_of)
+
+
+def _plan_and_share(p: dict, lay: _Layout, plan: Optional[float], use_stored: bool,
+                    in_plan: bool, no_weight: bool, fixed: float):
+    """План (показы) и доля одной площадки: записанные ночью / выбывшая / заданный объём / по весам."""
+    if use_stored:
+        p_plan = round(p["plan_stored"]) if p.get("plan_stored") else None
+        return p_plan, float(p.get("share_stored") or 0.0)
+    if id(p) in lay.dropped:
+        return round(lay.dropped[id(p)]), ((lay.dropped[id(p)] / plan) if plan else 0.0)
+    if fixed:
+        return round(fixed), ((fixed / plan) if plan else 0.0)
+    w_share = lay.w_of.get(id(p), 0.0) if (in_plan and not no_weight and lay.w_sum) else 0.0
+    p_plan = round(lay.rest * w_share) if (lay.rest and w_share) else None
+    # Без плана РК доля — по весам, как до объёмов: её показывают дашборд и
+    # карточка, и `recompute_shares` пишет её в площадку.
+    return p_plan, ((lay.rest * w_share / plan) if plan else w_share)
+
+
+def _placement_row(p: dict, lay: _Layout, plan: Optional[float], fl: Optional[Flight],
+                   use_stored: bool) -> dict:
+    running = p.get("status") in PLACEMENT_RUNNING
+    in_plan = p.get("status") in lay.in_plan_set
+    no_weight = not p.get("weight")
+    fixed = lay.fixed_of[id(p)] if in_plan else 0.0
+    p_plan, share = _plan_and_share(p, lay, plan, use_stored, in_plan, no_weight, fixed)
+    # Факт площадки приходит из среза с разрезом по placement_id. Пока среза нет,
+    # вызывающий передаёт None — и здесь ничего не выдумывается: пропорция от факта
+    # РК была бы правдоподобным числом, за которым не стоит ни одного замера.
+    p_fact = p.get("fact")
+    p_fc = forecast_of(p_plan, p_fact, fl)
+    return {
+        **p,
+        "share": round(share, 6),
+        "plan_show": p_plan,
+        "fact_shows": p_fact,
+        "done_pct": round(p_fact / p_plan * 100, 1) if (p_plan and p_fact is not None) else None,
+        "forecast": round(p_fc) if p_fc is not None else None,
+        "under": round(under_of(p_plan, p_fc)) if p_fc is not None else None,
+        "no_weight": no_weight,
+        "running": running,
+        "in_plan": in_plan,
+        # Заданный объём — для подсветки на дашборде: «эта площадка на фиксе».
+        "fixed": round(fixed) if fixed else None,
+        # Выбыла и держит план = свой факт (правило 05.10.2026).
+        "settled": id(p) in lay.dropped,
+    }
+
+
 def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight],
                placements: Sequence[dict], cap: Optional[float] = None,
                facts: Optional[dict] = None, hold_fl: Optional[Flight] = None,
@@ -300,80 +413,11 @@ def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight
     (`plan_stored` / `share_stored` в строке), а не посчитанные заново. Экраны показывают
     ровно то, что ушло лимитами в DSP; прогноз и недокрут считаются от этого плана.
     """
-    hold = holds(hold_fl if hold_fl is not None else fl)
-    settle = facts is not None and not hold
-    fact_of = {id(p): float((facts or {}).get(p.get("id")) or 0) for p in placements}
-    in_plan_set = PLACEMENT_IN_WORK if hold else PLACEMENT_IN_PLAN
-    fixed_of = {id(p): float(p.get("fixed") or 0) for p in placements}
-    if settle:   # заданный объём не ниже факта
-        fixed_of = {k: (max(v, fact_of[k]) if v else 0.0) for k, v in fixed_of.items()}
-    # Вне раскладки (выбыла, нет веса), но уже открутила — держит план = свой факт.
-    dropped = {id(p): fact_of[id(p)] for p in placements
-               if settle and fact_of[id(p)] and not fixed_of[id(p)]
-               and (p.get("status") not in in_plan_set or not p.get("weight"))}
-    fixed_in = sum(v for p in placements for v in [fixed_of[id(p)]]
-                   if v and p.get("status") in in_plan_set)
-    rest = max(0.0, float(plan) - fixed_in - sum(dropped.values())) if plan else 0.0
-    live = [p for p in placements
-            if p.get("status") in in_plan_set and p.get("weight") and not fixed_of[id(p)]
-            and id(p) not in dropped]
-    w_sum = sum(float(p["weight"]) for p in live) or 0.0
-    # Потолок — от ПЛАНА РК, а делится остаток после заданных объёмов: переводим предел
-    # в доли остатка. Площадка с ручным индексом (`capless`) потолку не подчиняется.
-    cap_rest = (cap * float(plan) / rest) if (cap and plan and rest) else cap
-    capless = frozenset(id(p) for p in live if p.get("capless"))
-    if settle and rest:
-        amt = floor_to_fact(rest, {id(p): p["weight"] for p in live}, fact_of,
-                            (cap * float(plan)) if cap else None, capless)
-        w_of = {k: v / rest for k, v in amt.items()}
-    else:
-        w_of = capped_shares({id(p): p["weight"] for p in live}, cap_rest, capless)
-
-    rows: List[dict] = []
-    for p in placements:
-        running = p.get("status") in PLACEMENT_RUNNING
-        in_plan = p.get("status") in in_plan_set
-        no_weight = not p.get("weight")
-        fixed = fixed_of[id(p)] if in_plan else 0.0
-        if use_stored:
-            p_plan = round(p["plan_stored"]) if p.get("plan_stored") else None
-            share = float(p.get("share_stored") or 0.0)
-        elif id(p) in dropped:
-            p_plan = round(dropped[id(p)])
-            share = (dropped[id(p)] / plan) if plan else 0.0
-        elif fixed:
-            p_plan = round(fixed)
-            share = (fixed / plan) if plan else 0.0
-        else:
-            w_share = w_of.get(id(p), 0.0) if (in_plan and not no_weight and w_sum) else 0.0
-            p_plan = round(rest * w_share) if (rest and w_share) else None
-            # Без плана РК доля — по весам, как до объёмов: её показывают дашборд и
-            # карточка, и `recompute_shares` пишет её в площадку.
-            share = (rest * w_share / plan) if plan else w_share
-        # Факт площадки приходит из среза с разрезом по placement_id. Пока среза нет,
-        # вызывающий передаёт None — и здесь ничего не выдумывается: пропорция от факта
-        # РК была бы правдоподобным числом, за которым не стоит ни одного замера.
-        p_fact = p.get("fact")
-        p_fc = forecast_of(p_plan, p_fact, fl)
-        rows.append({
-            **p,
-            "share": round(share, 6),
-            "plan_show": p_plan,
-            "fact_shows": p_fact,
-            "done_pct": round(p_fact / p_plan * 100, 1) if (p_plan and p_fact is not None) else None,
-            "forecast": round(p_fc) if p_fc is not None else None,
-            "under": round(under_of(p_plan, p_fc)) if p_fc is not None else None,
-            "no_weight": no_weight,
-            "running": running,
-            "in_plan": in_plan,
-            # Заданный объём — для подсветки на дашборде: «эта площадка на фиксе».
-            "fixed": round(fixed) if fixed else None,
-            # Выбыла и держит план = свой факт (правило 05.10.2026).
-            "settled": id(p) in dropped,
-        })
+    lay = _layout(plan, fl, placements, cap, facts, hold_fl)
+    rows = [_placement_row(p, lay, plan, fl, use_stored) for p in placements]
     return {"rows": rows, "share_sum": round(sum(r["share"] for r in rows), 6),
             # Учтён ли факт на самом деле: передан И удержание долей кончилось.
-            "by_fact": settle}
+            "by_fact": lay.settle}
 
 
 def split_evenly(total, creatives, hold: bool = False):

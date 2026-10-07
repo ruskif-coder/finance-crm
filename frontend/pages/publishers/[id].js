@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/http'
 import Navbar, { can } from '@/components/Navbar'
+import { canDelete } from '@/lib/auth'
 import { MONO, UI, btn } from '@/components/salesTableKit'
 import PublisherCard from '@/components/publishers/PublisherCard'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -27,6 +28,7 @@ export default function PublisherCardPage() {
   const [saving, setSaving] = useState(false)
 
   const canEdit = can(perms, 'dir_publishers', 'edit')
+  const mayDelete = canEdit && canDelete(perms, 'dir_publishers')   // удаление — отдельное право
   const flash = (m) => { setOk(m); setTimeout(() => setOk(''), 2500) }
   // 422 проверки полей приходит СПИСКОМ объектов, а не строкой: нарисованный как есть,
   // он ронял экран в белый («Objects are not valid as a React child»). Список —
@@ -332,7 +334,7 @@ export default function PublisherCardPage() {
 
         {data && (
           <PublisherCard data={data} meta={meta} finance={finance} editing={editing}
-            canEdit={canEdit} form={form} setForm={setForm} api={cardApi} />
+            canEdit={canEdit} canDelete={mayDelete} form={form} setForm={setForm} api={cardApi} />
         )}
         </div>
       </div>

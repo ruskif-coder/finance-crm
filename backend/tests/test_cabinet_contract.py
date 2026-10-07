@@ -197,11 +197,15 @@ def test_empty_scope_shows_nothing(cab):
         функцией `pub.find_account(email)` с SECURITY DEFINER, отдающей одну строку;
       · `account_publisher_v1` отвечает на вопрос «какие площадки у этой учётки», то есть
         и есть источник области. Ограничить её областью — замкнуть круг.
+      · `notify_v1` ключуется по УЧЁТКЕ, а не по площадке (настройки уведомлений: вид, канал,
+        включено) и областью площадок не ограничивается — как `account_v1`. Кабинет фильтрует её
+        по `account_id` в запросе. Решение владельца 07.10.2026: исключение. На боевой копии в
+        ней строки есть (учётка 30), на стенде таблица пуста — потому тест и краснел только там.
 
     Записано здесь, а не в задачнике: список исключений — единственное место, где это
     видно тому, кто придёт следующим.
     """
-    GLOBAL = {'mute_v1', 'reason_v1', 'account_v1', 'account_publisher_v1'}
+    GLOBAL = {'mute_v1', 'reason_v1', 'account_v1', 'account_publisher_v1', 'notify_v1'}
     views = [v for (v,) in cab.execute(text(
         "SELECT viewname FROM pg_views WHERE schemaname = 'pub' ORDER BY viewname"))]
     assert len(views) >= 10, f'витрин подозрительно мало: {views}'

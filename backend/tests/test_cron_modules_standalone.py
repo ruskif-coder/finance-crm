@@ -19,6 +19,7 @@ CRON_MODULES = [
     "app.notify.outward.digest",
     "app.notify.digest",
     "app.notify.dispatch",
+    "app.notify.tg_poll",
     "app.notify.scanner",
     "app.notify.lifecycle",
     "app.mail.flush",

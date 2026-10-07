@@ -119,7 +119,7 @@ def create_article_group(
 def delete_article_group(
     group_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings_articles", "edit"))
+    current_user: User = Depends(require_permission("settings_articles", "delete"))
 ):
     group = db.query(ArticleGroup).filter(ArticleGroup.id == group_id).first()
     if not group:
@@ -250,7 +250,7 @@ def move_article(
 def delete_article(
     article_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings_articles", "edit"))
+    current_user: User = Depends(require_permission("settings_articles", "delete"))
 ):
     article = db.query(Article).filter(Article.id == article_id).first()
     if not article:

@@ -42,6 +42,7 @@ from app.sales.deal_label import deal_label
 from app.sales.catalog import Catalog, stage_public
 from app.sales import plan_lock
 from app import vat as vat_rules
+from app import periods as period_forms   # разбор квартала; `periods` ниже — другой модуль (app.sales.periods)
 from app.sales.models import SalesDealStageHistory
 from app.sales import periods
 from app.sales import stage_move
@@ -495,11 +496,10 @@ def _current_quarter(today: date):
 
 
 def _parse_quarter(s):
-    import re
-    m = re.search(r"(\d{4}).*?([1-4])", s or "")
-    if not m:
+    parsed = period_forms.parse_quarter(s)    # любое написание: «2026-Q2», «Q2 2026», «2 квартал 2026»
+    if not parsed:
         return None
-    year, q = int(m.group(1)), int(m.group(2))
+    year, q = parsed
     m0 = (q - 1) * 3 + 1
     start = date(year, m0, 1)
     end = date(year + 1, 1, 1) if q == 4 else date(year, m0 + 3, 1)

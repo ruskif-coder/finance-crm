@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 from sqlalchemy.sql import func
 from datetime import datetime
 from app.database import Base
@@ -43,6 +43,10 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     role_id = Column(Integer, ForeignKey("roles.id"), nullable=False)
     is_active = Column(Integer, default=1)
+    # Счётчик отзыва токенов: растёт при каждой смене активности (выключил/включил), входит в отпечаток
+    # токена `pwv`. Без него возврат `is_active = 1` оживлял токены, выданные до выключения, а учётку
+    # удалить нельзя (на неё ссылается журнал). Миграция 2026-10-07_users_token_epoch.sql.
+    token_epoch = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime, server_default=func.now())
     consent_accepted_at = Column(DateTime, nullable=True)  # 152-ФЗ: момент принятия согласия на обработку ПДн
     bitrix_user_id = Column(String, nullable=True)  # привязка к сотруднику в Битрикс24 (ручной выбор в настройках)
@@ -244,6 +248,14 @@ class Operation(Base):
     own_company  = relationship("Counterparty", foreign_keys="Operation.own_company_id")
     files = relationship("OperationFile", back_populates="operation",
                          cascade="all, delete-orphan", order_by="OperationFile.id")
+
+    @validates("period")
+    def _store_period_in_one_form(self, key, value):
+        """Квартал в любом написании (`2025-Q1`, «1 квартал 2025») пишется как `Q1 2025`: так его хранят 124
+        операции и так его ждут отчёты и сортировка. Здесь, а не в каждой ручке: период пишут создание,
+        правка, массовая правка и импорт (решение владельца 07.10.2026, см. `app/periods.py`)."""
+        from app.periods import normalize_period
+        return normalize_period(value)
 
 
 class OperationFile(Base):

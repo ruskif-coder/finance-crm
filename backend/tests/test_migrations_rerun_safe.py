@@ -35,34 +35,50 @@ DOLLAR = re.compile(r"\$[A-Za-z_]*\$")
 def _statements(sql: str):
     """Операторы файла без комментариев. Тело в долларовых кавычках (`$$`, `$mig$`, `$ddl$`)
     — одним куском: до ревью 23.09.2026 разбор знал только `$$`, и `$tag$` его ломал."""
-    sql = re.sub(r"--[^\n]*", "", sql)
-    out, buf, tag, i = [], [], None, 0
-    while i < len(sql):
-        m = DOLLAR.match(sql, i)
-        if m:
-            t = m.group(0)
-            if tag is None:
-                tag = t
-            elif t == tag:
-                tag = None
-            buf.append(t)
-            i = m.end()
+    out, buf, tag, quote, i, n = [], [], None, False, 0, len(sql)
+    while i < n:
+        c = sql[i]
+        if not quote and sql.startswith("--", i):           # комментарий — только вне строки
+            j = sql.find("\n", i)
+            i = n if j < 0 else j
             continue
-        if sql[i] == ";" and tag is None:
-            out.append("".join(buf).strip())
-            buf = []
-        else:
-            buf.append(sql[i])
+        if c == "'":                                        # '' внутри строки гасит себя сам
+            quote = not quote
+            buf.append(c)
+            i += 1
+            continue
+        if not quote:
+            m = DOLLAR.match(sql, i)
+            if m:
+                t = m.group(0)
+                if tag is None:
+                    tag = t
+                elif t == tag:
+                    tag = None
+                buf.append(t)
+                i = m.end()
+                continue
+            if c == ";" and tag is None:
+                out.append("".join(buf).strip())
+                buf = []
+                i += 1
+                continue
+        buf.append(c)
         i += 1
     if "".join(buf).strip():
         out.append("".join(buf).strip())
     return [st for st in out if st]
 
 
+def _blank_strings(st: str) -> str:
+    """Оператор с пустыми строками: `WHERE` или скобка внутри литерала — не часть оператора."""
+    return re.sub(r"'(?:[^']|'')*'", "''", st)
+
+
 def _top_level(st: str) -> str:
     """Оператор без содержимого скобок: `WHERE` подзапроса не делает условным сам UPDATE."""
     depth, keep = 0, []
-    for ch in st:
+    for ch in _blank_strings(st):
         if ch == "(":
             depth += 1
         elif ch == ")":
@@ -185,3 +201,39 @@ def test_cabinet_views_keep_the_barrier():
             if "security_barrier" not in m.group(2).lower():
                 bad.append(f"{f.name}: {m.group(1)}")
     assert not bad, "представление кабинета без security_barrier:\n  " + "\n  ".join(bad)
+
+
+# ── сам прибор: разбор операторов не врёт про строки ───────────────────────────────────
+
+def test_semicolon_inside_a_string_does_not_split_a_statement():
+    st = _statements("UPDATE t SET a = 'x;y' WHERE id = 1; SELECT 1;")
+    assert len(st) == 2 and _problems(st[0]) == []
+
+
+def test_comment_marker_inside_a_string_is_not_a_comment():
+    st = _statements("UPDATE t SET a = 'a--b' WHERE id = 1;")
+    assert len(st) == 1 and "WHERE" in st[0]
+
+
+def test_where_inside_a_string_is_not_a_condition():
+    st = _statements("UPDATE t SET a = ' WHERE ';")
+    assert _problems(st[0]) == ["UPDATE/DELETE без WHERE"]
+
+
+def test_apostrophe_in_a_comment_does_not_open_a_string():
+    st = _statements("-- don't panic\nDELETE FROM t;\nSELECT 1;")
+    assert len(st) == 2 and _problems(st[0]) == ["UPDATE/DELETE без WHERE"]
+
+
+def test_a_real_unconditional_update_is_still_caught():
+    assert _problems(_statements("UPDATE t SET a = 1")[0]) == ["UPDATE/DELETE без WHERE"]
+
+
+def test_migrations_use_only_constructs_the_parser_understands():
+    """Разбор операторов не знает `E'\'` (обратная косая перед кавычкой) и `/* … */`: кавычка в
+    таком месте перевернула бы признак «внутри строки», и остаток файла слипся бы в один оператор —
+    настоящий UPDATE без WHERE мог бы остаться незамеченным. Появится такое в миграции — научить
+    разбор, а не отключать тест."""
+    bad = [f.name for f in _files()
+           if chr(92) + "'" in (t := f.read_text(encoding="utf-8")) or "/*" in t]
+    assert not bad, f"разбор не понимает эти конструкции: {bad}"

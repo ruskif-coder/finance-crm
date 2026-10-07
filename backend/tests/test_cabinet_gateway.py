@@ -286,3 +286,24 @@ def test_creative_file_serves_the_clients_original_when_prepared(env):
         assert r.path == orig
     finally:
         originals.remove(f.path)
+
+
+def test_creative_file_is_closed_after_a_decline(env):
+    """После «отказа в правках» площадка больше не скачивает исходник (владелец 07.10.2026).
+
+    Отказ — это вид снятия пары (`withdraw_kind`): правки площадки не приняты, работа по этому
+    креативу с ней закончена. Раньше `campaign_creative_v1` оставляла такую пару в «Актуальных
+    кампаниях», и площадка тянула исходник клиента до сверки месяца. Закрыто в ЯДРЕ: проверка
+    только в кабинете осталась бы отсутствием проверки. Ответ тот же 404, что на чужую пару,
+    чтобы по коду нельзя было узнать, что именно с парой случилось.
+    """
+    from app.launch_prep.withdraw import KIND_DECLINE
+    f = _file_of(env.db, env.pair.set_id)
+    if f is None:
+        pytest.skip('у креатива пары нет файла')
+    env.pair.withdraw_kind = KIND_DECLINE
+    env.db.flush()
+    with pytest.raises(HTTPException) as e:
+        gw.cabinet_creative_file(env.pair.id, f.id, env.acc, env.own, env.db)
+    assert e.value.status_code == 404
+    assert e.value.detail == 'Креатив не найден', 'отказ должен закрывать выдачу, а не упасть на отсутствии файла'

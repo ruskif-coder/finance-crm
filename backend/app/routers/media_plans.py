@@ -58,6 +58,7 @@ KEEP_VERSIONS = 3
 MP_EDIT = require_permission("media_plans_editor", "edit")   # создание/правка МП
 MP_REG_VIEW = require_permission("media_plans", "view")       # реестр + выгрузка
 MP_REG_EDIT = require_permission("media_plans", "edit")       # удаление из реестра
+MP_REG_DELETE = require_permission("media_plans", "delete")   # удаление плана целиком
 MP_ED_VIEW = require_permission("media_plans_editor", "view")  # открыть в конструкторе
 
 
@@ -1408,7 +1409,7 @@ def plan_versions(plan_id: int, db: Session = Depends(get_db), current_user: Use
 
 
 @router.delete("/{plan_id}")
-def delete_media_plan(plan_id: int, whole_group: bool = False, db: Session = Depends(get_db), current_user: User = Depends(MP_REG_EDIT)):
+def delete_media_plan(plan_id: int, whole_group: bool = False, db: Session = Depends(get_db), current_user: User = Depends(MP_REG_DELETE)):
     p = db.query(SalesMediaPlan).filter(SalesMediaPlan.id == plan_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Медиаплан не найден")

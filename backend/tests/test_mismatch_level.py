@@ -141,10 +141,16 @@ def _call_stat(db, camp, deal_id):
         td._campaign_in_scope = orig
 
 
-def test_campaign_stat_compares_only_measured_placements():
-    from datetime import timedelta
+def test_campaign_stat_compares_only_measured_placements(monkeypatch):
+    from datetime import date, timedelta
     from sqlalchemy import text
     from app.database import SessionLocal
+    from app.routers import traffic_dashboard as td
+    # Срез статистики — последний день БОЕВОГО факта на стенде, а стенд — копия прода на день снимка.
+    # Без фиксации тест проходил, пока «вчера» совпадало с последним днём факта в копии, и краснел со
+    # следующих суток (07.10.2026), хотя код не менялся. Сам срез проверяет `test_stat_as_of`
+    # (он ЗОВЁТ общий `_call_stat`, поэтому срез фиксируется здесь, а не в помощнике).
+    monkeypatch.setattr(td, "fact_as_of", lambda db_, t=None: date.today())
     db = SessionLocal()
     camp, pls, deal_id, today = _stat_camp(db)
     try:

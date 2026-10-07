@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { firstAllowedHref } from '../../components/Navbar'
-import { isAdmin } from '../../lib/auth'
+import { isAdmin, canDelete, getPermissions } from '../../lib/auth'
 import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsTabs'
 import { MONO, UI, card, inp, sel, ci, cs, th, td, primaryBtn, PortalPopover, Z } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
@@ -42,6 +42,7 @@ export default function SettingsServices() {
   const [newAddon, setNewAddon] = useState({ name: '', unit_price: '', period: '', can_be_bonus: false })
   const [dragSvc, setDragSvc] = useState(null)
   const [confirmDel, setConfirmDel] = useState(null)   // {kind:'service'|'addon', id, name}
+  const [mayDelete, setMayDelete] = useState(false)    // право «удаление» (отдельно от правки с 07.10.2026)
   const [formats, setFormats] = useState([])           // справочник форматов размещения
   const [palette, setPalette] = useState([])           // допустимые цвета маркера услуги
   const [articles, setArticles] = useState([])         // реестр статей (для маппинга услуга→статья выручки)
@@ -53,6 +54,7 @@ export default function SettingsServices() {
     if (typeof window === 'undefined') return
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     if (!settingsSectionAllowed('services')) { let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}; router.push(firstAllowedHref(p, isAdmin())); return }
+    setMayDelete(canDelete(getPermissions(), 'settings_services'))
     load()
   }, [])
 
@@ -285,7 +287,7 @@ export default function SettingsServices() {
                       <td style={{ ...td, textAlign: 'center' }}><input type="checkbox" checked={!!s.is_active} onChange={e => toggleUse(s.id, e.target.checked)} style={{ cursor: 'pointer' }} /></td>
                       <td style={{ ...td, textAlign: 'center', whiteSpace: 'nowrap' }}>
                         {svcDirty(s.id) && <button onClick={() => saveService(s.id)} style={{ padding: '6px 10px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: 'var(--accent)', color: '#fff', marginRight: 6 }}>✓</button>}
-                        <button onClick={() => setConfirmDel({ kind: 'service', id: s.id, name: s.name })} title="Удалить" style={{ padding: '6px 9px', borderRadius: 7, border: '1px solid var(--danger-tint)', cursor: 'pointer', fontSize: 13, background: 'var(--bg-card)', color: 'var(--danger)' }}>✕</button>
+                        {mayDelete && <button onClick={() => setConfirmDel({ kind: 'service', id: s.id, name: s.name })} title="Удалить" style={{ padding: '6px 9px', borderRadius: 7, border: '1px solid var(--danger-tint)', cursor: 'pointer', fontSize: 13, background: 'var(--bg-card)', color: 'var(--danger)' }}>✕</button>}
                       </td>
                     </tr>
                   )
@@ -318,7 +320,7 @@ export default function SettingsServices() {
                   <span key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border-card)', background: f.is_active ? 'var(--bg-card)' : 'var(--bg-subtle)', opacity: f.is_active ? 1 : 0.55, fontSize: 12, color: 'var(--text-primary)' }}>
                     {f.name}
                     <span onClick={() => toggleFormatActive(f)} title={f.is_active ? 'Скрыть из выбора' : 'Вернуть в выбор'} style={{ cursor: 'pointer', color: 'var(--text-faint)', fontSize: 11 }}>{f.is_active ? 'скрыть' : 'вкл'}</span>
-                    <span onClick={() => deleteFormat(f)} title="Удалить" style={{ cursor: 'pointer', color: 'var(--danger)', fontSize: 13 }}>✕</span>
+                    {mayDelete && <span onClick={() => deleteFormat(f)} title="Удалить" style={{ cursor: 'pointer', color: 'var(--danger)', fontSize: 13 }}>✕</span>}
                   </span>
                 ))}
               </div>
@@ -361,7 +363,7 @@ export default function SettingsServices() {
                     <td style={{ ...td, textAlign: 'center' }}><input type="checkbox" checked={!!ed.can_be_bonus} onChange={e => addonSet(a, 'can_be_bonus', e.target.checked)} style={{ cursor: 'pointer' }} /></td>
                     <td style={{ ...td, textAlign: 'center', whiteSpace: 'nowrap' }}>
                       {addonDirty(a.id) && <button onClick={() => saveAddon(a.id)} style={{ padding: '6px 10px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: 'var(--accent)', color: '#fff', marginRight: 6 }}>✓</button>}
-                      <button onClick={() => setConfirmDel({ kind: 'addon', id: a.id, name: a.name })} title="Удалить" style={{ padding: '6px 9px', borderRadius: 7, border: '1px solid var(--danger-tint)', cursor: 'pointer', fontSize: 13, background: 'var(--bg-card)', color: 'var(--danger)' }}>✕</button>
+                      {mayDelete && <button onClick={() => setConfirmDel({ kind: 'addon', id: a.id, name: a.name })} title="Удалить" style={{ padding: '6px 9px', borderRadius: 7, border: '1px solid var(--danger-tint)', cursor: 'pointer', fontSize: 13, background: 'var(--bg-card)', color: 'var(--danger)' }}>✕</button>}
                     </td>
                   </tr>
                 )

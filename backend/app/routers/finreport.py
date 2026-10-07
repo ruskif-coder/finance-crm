@@ -34,6 +34,7 @@ from app.models import Article, Operation, User
 from app.permissions import require_permission
 from app.routers.reports import QUARTER_MONTHS
 from app import timez
+from app.periods import quarter_parts
 
 router = APIRouter()
 
@@ -238,10 +239,10 @@ def _collect(db: Session, basis: str, vat: str, date_from: Optional[str], date_t
             months = [_month_of(r.date)]
         else:
             p = (r.period or '').strip()
-            m = re.match(r'^(Q[1-4])\s+(\d{4})$', p)
+            m = quarter_parts(p)
             if m:
                 # Квартал раскладываем на три месяца равными долями — как в /reports.
-                months = [f'{m.group(2)}-{mm}' for mm in QUARTER_MONTHS.get(m.group(1), [])]
+                months = [f'{m[1]}-{mm}' for mm in QUARTER_MONTHS.get(m[0], [])]
             else:
                 months = [p]
 

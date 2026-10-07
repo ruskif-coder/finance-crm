@@ -105,18 +105,22 @@ def _checks(db, shares: dict, limit_errors: list) -> list:
     from app.bidder import checks as K
     from app.dsp.stat_daily import today_msk
     try:
+        dsp_error = None
         try:
             from app.dsp.db import DspSessionLocal
             dsp = DspSessionLocal() if DspSessionLocal else None
-        except Exception:  # noqa: BLE001
-            dsp = None
+        except Exception as e:  # noqa: BLE001
+            dsp, dsp_error = None, type(e).__name__
         try:
             g = K.gather(db, dsp, today_msk())
         finally:
             if dsp is not None:
                 dsp.close()
-        return K.evaluate(g["campaigns"], bool(shares.get("by_fact")), g["slice_vs_raw"],
-                          limit_errors, today_msk())
+        out = K.evaluate(g["campaigns"], bool(shares.get("by_fact")), g["slice_vs_raw"],
+                         limit_errors, today_msk())
+        # Базы DSP нет — сверка пропущена, и это должно быть видно, а не молча «всё ок».
+        dsp_error = dsp_error or g.get("dsp_error")
+        return out + [K.dsp_unavailable(dsp_error)] if dsp_error else out
     except Exception as e:  # noqa: BLE001
         db.rollback()
         log.exception("биддер: проверки прогона не выполнены")

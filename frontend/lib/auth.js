@@ -1,3 +1,4 @@
+import { deleteAllowed } from './roleLevels.mjs'
 // Единый источник проверки прав на фронтенде.
 //
 // Раньше getPermissions + can дублировались в 5-6 файлах, причём локальные копии
@@ -24,3 +25,7 @@ export const can = (perms, section, action = 'view') => {
   if (isAdmin()) return true
   return !!(perms && perms[section] && perms[section][action])
 }
+
+// Удаление записей раздела: отдельное право, с запасным вариантом «правка» для снимка прав, снятого до
+// его появления (см. `deleteAllowed`). Админу можно всё.
+export const canDelete = (perms, section) => isAdmin() || deleteAllowed(perms && perms[section])

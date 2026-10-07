@@ -154,8 +154,8 @@ def rule_invoice_overdue(db: Session, ev: registry.Event) -> List[Hit]:
       overdue  — буфер кончился, долг просрочен.
     """
     from app.models import Operation, Counterparty
-    from app.routers.reports import (_due_date, _term_days_for_counterparty,
-                                     GRACE_DAYS)
+    from app.receivables import (_due_date, _term_days_for_counterparty,
+                                 GRACE_DAYS)
 
     today = date.today()
     before_days = _param(ev, "before_days", 10)
@@ -350,7 +350,7 @@ def rule_plan_month_empty(db: Session, ev: registry.Event) -> List[Hit]:
     здесь значило бы завести второе мнение о том же плане.
     """
     from app.sales.models import (SalesDeal, SalesYearPlanLine, SalesAdvertiser, SalesBrand)
-    from app.routers.year_plan import _planned_months, _intended_amount, _is_locked
+    from app.year_plan_core import _planned_months, _intended_amount, _is_locked
 
     today = date.today()
     before_days = _param(ev, "before_days", 14)

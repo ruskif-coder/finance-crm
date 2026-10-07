@@ -33,7 +33,7 @@ import { MONO, UI, card, CAP, btn, btnSm, inp, sel, chip, ROW_TONE, Modal, PickV
 import ValuePopover from '@/components/ValuePopover'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
-import { isAdmin as isAdminNow } from '@/lib/auth'
+import { isAdmin as isAdminNow, canDelete } from '@/lib/auth'
 import { TONE, toneOf } from '@/lib/tone'
 import { CABINET_STATES, cabinetState } from '@/lib/cabinetState'
 import safeHref from '@/lib/safeHref'
@@ -217,7 +217,7 @@ const ContactHead = () => (
 )
 
 /** Строка контактного лица. Уровень — переключаемый чип, но только при учётке. */
-const ContactRow = ({ c, mayEdit, busy, onLevel, onPassword, onGrant, onDisable,
+const ContactRow = ({ c, mayEdit, mayDelete, busy, onLevel, onPassword, onGrant, onDisable,
   onEdit, onEnable, onDelete, onFlag }) => (
   <div style={{ display: 'grid', gap: 7, alignItems: 'center', padding: '7px 0',
     borderTop: '1px solid var(--border-row)', gridTemplateColumns: CT_GRID }}>
@@ -321,7 +321,7 @@ const ContactRow = ({ c, mayEdit, busy, onLevel, onPassword, onGrant, onDisable,
             {/* Удаление есть только у контакта БЕЗ учётки: у контакта с учёткой тот же
                 крест означает «отключить доступ», а сам человек остаётся. Ядро откажет,
                 если удалить контакт с учёткой, — здесь просто не показываем такой путь. */}
-            {!!c.contact_id && (
+            {!!c.contact_id && mayDelete && (
               <IconBtn title="Удалить контакт"
                 onClick={() => !busy && onDelete(c)}>🗑</IconBtn>
             )}
@@ -820,6 +820,7 @@ export default function CabinetsPage() {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [mayEdit, setMayEdit] = useState(false)
+  const [mayDelete, setMayDelete] = useState(false)   // удаление — отдельное право с 07.10.2026
 
   // Вкладки раздела: сами кабинеты и каталог того, что мы шлём наружу.
   const [tab, setTab] = useState('cabinets')
@@ -846,6 +847,7 @@ export default function CabinetsPage() {
   useRefreshOnReturn(() => load())
   useEffect(() => {
     setMayEdit(can(getPermissions(), 'dir_publishers_cabinets', 'edit'))
+    setMayDelete(canDelete(getPermissions(), 'dir_publishers_cabinets'))
     try { setIsAdmin(isAdminNow()) } catch { setIsAdmin(false) }
   }, [])
 
@@ -1143,7 +1145,7 @@ export default function CabinetsPage() {
                           ) : (
                             <ContactRow key={rowKey(x)} c={x}
                               onEdit={t => setEditing(rowKey(t))}
-                              mayEdit={mayEdit} busy={busy}
+                              mayEdit={mayEdit} mayDelete={mayDelete} busy={busy}
                               onLevel={t => run(() => api.put(`/cabinets/accounts/${t.account_id}`,
                                 { can_approve: t.level !== 'все' }, auth()))}
                               onDisable={t => run(() => api.put(`/cabinets/accounts/${t.account_id}`,

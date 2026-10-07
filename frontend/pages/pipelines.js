@@ -3,6 +3,7 @@ import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can } from '../components/Navbar'
 import api, { auth } from '../lib/api'
+import { canDelete } from '../lib/auth'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 export default function Pipelines({ embedded = false } = {}) {
@@ -17,7 +18,7 @@ export default function Pipelines({ embedded = false } = {}) {
   const [expandAll, setExpandAll] = useState(false)
 
   const mayEdit = can(perms, 'settings_pipelines', 'edit')
-  const mayDelete = can(perms, 'settings_pipelines', 'edit')
+  const mayDelete = canDelete(perms, 'settings_pipelines')
 
   const load = async () => {
     setLoading(true); setError('')

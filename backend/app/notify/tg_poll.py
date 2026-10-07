@@ -42,6 +42,7 @@ from typing import Callable, Dict, List, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей
 from app.database import SessionLocal
 from app.notify import telegram
 

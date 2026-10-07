@@ -8,7 +8,7 @@ import { MONO, UI, IconBtn, inp, sel, btn, headCell, card, CAP } from '@/compone
 import { INTEG_TONE_SOLID as INTEG_TONE, STATUS_TONE, nextStatus, Pin }
   from '@/components/publishers/kit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
-import { isAdmin } from '@/lib/auth'
+import { isAdmin, canDelete } from '@/lib/auth'
 
 // Экран быстрого заполнения: строка на площадку, всё правится одним кликом.
 // Заведён под первичное наполнение реестра — переносить из Excel было нечего, и на
@@ -67,6 +67,9 @@ export default function PublishersBulk() {
   // Правит либо тот, кому открыты «Площадки» целиком, либо тот, кого посадили на одно
   // «Заполнение» (первичное наполнение реестра) — второму карточка доступна на чтение.
   const mayEdit = can(perms, 'dir_publishers_bulk', 'edit') || can(perms, 'dir_publishers', 'edit')
+  // Снять галочку «поверхность есть» = удалить поверхность: нужно право «удаление» (любое из трёх разделов,
+  // как на сервере), иначе галочка остаётся включённой и недоступной.
+  const mayDelete = canDelete(perms, 'dir_publishers_bulk') || canDelete(perms, 'dir_publishers') || canDelete(perms, 'dir_publishers_cabinets')
 
   const load = async () => {
     setLoading(true); setError('')
@@ -288,7 +291,7 @@ export default function PublishersBulk() {
                         const s = kind === 'web' ? web : app
                         return (
                           <div key={kind} style={{ ...cellBox, gap: 8 }}>
-                            <input type="checkbox" style={tick} checked={!!s} disabled={!mayEdit}
+                            <input type="checkbox" style={tick} checked={!!s} disabled={!mayEdit || (!!s && !mayDelete)}
                               title="Поверхность есть у площадки"
                               onChange={e => (e.target.checked
                                 ? setSurface(p, kind, { integration_status: 'НЕТ', we_work: false })

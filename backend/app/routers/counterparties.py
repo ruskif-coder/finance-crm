@@ -8,7 +8,7 @@ from app.sales.models import SalesAgency, SalesAgencyCounterparty
 from app.routers.auth import get_current_user
 from app.permissions import require_permission, require_any_permission
 from app.audit import log_action
-from app.routers.reports import DEFAULT_TERM_DAYS
+from app.receivables import DEFAULT_TERM_DAYS
 from pydantic import BaseModel
 from typing import Optional, List
 
@@ -740,8 +740,8 @@ def get_counterparty_analytics(
     """), {"cid": counterparty_id}).fetchone()
 
     # Старение дебиторки этого контрагента (2026-07-16) — та же логика бакетов, что
-    # в отчёте «Дебиторка» (reports._aging_bucket): future / current / overdue.
-    from app.routers.reports import _due_date, _aging_bucket, _term_days_for_counterparty
+    # в отчёте «Дебиторка» (receivables._aging_bucket): future / current / overdue.
+    from app.receivables import _due_date, _aging_bucket, _term_days_for_counterparty
     from datetime import date as date_cls, timedelta
     today = date_cls.today()
     term = _term_days_for_counterparty(cp)
@@ -877,11 +877,13 @@ def lookup_bic(
     bank_name = ""
     bank_city = ""
     ks = ""
+    answered = False   # хоть один справочник ответил: иначе «не найден» было бы неправдой
     try:
         url1 = f"https://bik-info.ru/api.html?BIK={bik}&TYPE=json"
         r1 = httpx.get(url1, timeout=6.0)
         if r1.status_code == 200:
             d = r1.json()
+            answered = True
             bank_name = (d.get("namep") or d.get("name") or "").strip()
             bank_city = (d.get("city") or "").strip().title()
             ks        = (d.get("ks")   or "").strip()
@@ -896,6 +898,7 @@ def lookup_bic(
             r2 = httpx.get(url2, timeout=5.0)
             r2.raise_for_status()
             root = ET.fromstring(r2.content)
+            answered = True
             row  = root.find(".//Record") or root.find(".//BICRow")
             if row is not None:
                 def _t(p, *tags):
@@ -909,6 +912,10 @@ def lookup_bic(
             pass
 
     if not bank_name:
+        if not answered:
+            # Оба справочника не ответили: «БИК не найден» отправил бы человека перепроверять верный БИК.
+            raise HTTPException(status_code=503,
+                                detail="Справочники банков сейчас недоступны — повторите позже или заполните вручную")
         raise HTTPException(status_code=404, detail="БИК не найден")
 
     return {"bik": bik, "bank_name": bank_name, "bank_city": bank_city, "ks": ks}
@@ -956,7 +963,7 @@ def get_counterparty_operations(
     query = query.order_by(sc.asc().nulls_first() if sort_dir == "asc" else sc.desc().nulls_first())
     ops = query.offset(skip).limit(limit).all()
 
-    from app.routers.reports import _due_date, _aging_bucket, _term_days_for_counterparty
+    from app.receivables import _due_date, _aging_bucket, _term_days_for_counterparty
     from datetime import date as date_type
     today = date_type.today()
 

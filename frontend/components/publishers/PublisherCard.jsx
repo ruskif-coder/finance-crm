@@ -135,7 +135,8 @@ const IntegPin = ({ status, onClick, dim }) => {
 // parts: [{label, working}] — поверхность, с которой мы не работаем, показывается
 // бледной и с пометкой в подсказке. Услуга там отмечена как поддерживаемая площадкой,
 // но продавать её нельзя, и шапка не должна обещать обратное.
-export default function PublisherCard({ data, meta, finance, editing, canEdit, form, setForm, api }) {
+// canDelete — право «удаление» (отдельно от правки с 07.10.2026); без него передают canEdit.
+export default function PublisherCard({ data, meta, finance, editing, canEdit, canDelete = canEdit, form, setForm, api }) {
   const [tick, setTick] = useState(0)
   const [cpSearch, setCpSearch] = useState(null)   // null — поиск закрыт
   const [cpHits, setCpHits] = useState([])
@@ -466,7 +467,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
                       )}
                       {editing && (
                         <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 12 }}>
-                          <Check label="есть" checked={!!s} onChange={v => editSurfaceExists(kind, v)} />
+                          <Check label="есть" checked={!!s} disabled={!!s && !canDelete} onChange={v => editSurfaceExists(kind, v)} />
                           <Check label="работаем" checked={!!s?.we_work} disabled={!s}
                             onChange={v => editSurface(kind, { we_work: v })} />
                         </span>
@@ -624,7 +625,7 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
                         <div style={cap}>{d.doc_type}</div>
                       </span>
                       <button style={linkBtn} onClick={() => api.downloadDocument(d.id, d.filename)}>скачать</button>
-                      {canEdit && <button style={xBtn} title="Удалить документ"
+                      {canDelete && <button style={xBtn} title="Удалить документ"
                         onClick={() => api.deleteDocument(d.id)}>×</button>}
                     </div>
                   ))}
@@ -884,8 +885,8 @@ export default function PublisherCard({ data, meta, finance, editing, canEdit, f
                   <span style={{ display: 'inline-flex', gap: 4 }}>
                     <button style={xBtn} title="Править контакт"
                             onClick={() => setContactDraft({ ...c })}>✎</button>
-                    <button style={xBtn} title="Удалить контакт"
-                      onClick={() => api.deleteContact(c.id)}>×</button>
+                    {canDelete && <button style={xBtn} title="Удалить контакт"
+                      onClick={() => api.deleteContact(c.id)}>×</button>}
                   </span>
                 )}
               </div>
