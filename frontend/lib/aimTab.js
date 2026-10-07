@@ -87,11 +87,15 @@ export function aimToneFor(active, campaign) {
     креатива, дашборд трафика по креативам, свёрнутые креативы сделки, — и копии этой
     последовательности уже расходились (25.09). Каждая кнопка держит своё состояние,
     а путь один. → { active: true|false, message: '' | текст для человека, restarted }.
+    `firstCheck` — ПЕРВИЧНАЯ проверка баннера в очереди согласования: боевого ЕРИД ещё нет, копия
+    идёт с заглушкой (владелец 07.10.2026). Без признака (дашборд трафика, сводка креативов —
+    боевые РК) сервер требует готовый ЕРИД и отвечает 409 «ждём ЕРИД».
     `api` и `auth` передаёт вызывающий: модуль остаётся без зависимостей. */
-export async function issueAim(api, auth, setId) {
+export async function issueAim(api, auth, setId, { firstCheck = false } = {}) {
   const tab = openAimTab()
   try {
-    const r = await api.post(`/launch-prep/set/${setId}/targeting-link`, {}, auth())
+    const r = await api.post(`/launch-prep/set/${setId}/targeting-link`, {},
+      { ...auth(), params: firstCheck ? { first_check: true } : {} })
     aimTabGo(tab, r.data.url)
     return { active: !!r.data.active, restarted: !!r.data.restarted,
              message: r.data.restarted ? RESTART_NOTE : aimNotLive(r.data) }

@@ -1199,7 +1199,8 @@ def weborama_request(set_id: int, db: Session = Depends(get_db),
 
 @router.post("/set/{set_id}/targeting-link")
 def issue_targeting_link(set_id: int, db: Session = Depends(get_db),
-                         current_user: User = Depends(TARGETING_EDIT)):
+                         current_user: User = Depends(TARGETING_EDIT),
+                         first_check: bool = False):
     """Выпустить СВЕЖУЮ ссылку нацеливания — «прицелить рекламу на себя».
 
     Ссылка не хранится, и это главное решение здесь. Замер 12.09.2026: она живёт ровно
@@ -1230,13 +1231,17 @@ def issue_targeting_link(set_id: int, db: Session = Depends(get_db),
         raise HTTPException(status_code=404, detail="Комплект не найден")
     deal = _deal(db, row.deal_id, current_user)
 
-    # Без готового ЕРИД ссылку не выпускаем (владелец 06.10.2026). Иначе копия нацеливания
-    # уходит с заглушкой TEST00000, а настоящий маркер, выданный позже, до неё не доходит
-    # (9HT4V9 №3: ссылка 05.10, ЕРИД 06.10). Готовность — общим правилом `ord.readiness`.
-    from app.ord import readiness
-    if not readiness.ready_erid(row):
+    # Два случая на одной ручке (владелец 07.10.2026):
+    #   · ПЕРВИЧНАЯ ПРОВЕРКА баннера (очередь согласования, `first_check=true`) идёт ДО выдачи
+    #     маркера: копия нацеливания у демоклиента заводится с заглушкой `TEST_ERID`, пиксель
+    #     верификатора на ней не нужен — ЕРИД не требуется;
+    #   · НАЦЕЛИВАНИЕ В БОЕВОЙ РК (дашборд трафика, сводка креативов) снимает скриншоты размещения:
+    #     без готового ЕРИД (`ord.readiness`) ссылку не выпускаем, иначе копия уходит с
+    #     заглушкой TEST00000, а настоящий маркер до неё не доходит (9HT4V9 №3, 05–06.10).
+    # Умолчание строгое: вызов без признака не выпустит боевую ссылку с заглушкой.
+    if not first_check and not readiness.ready_erid(row):
         raise HTTPException(status_code=409, detail=(
-            f"Комплект №{row.no}: ждём ЕРИД — ссылку нацеливания можно выпустить, когда "
+            f"Комплект №{row.no}: ждём ЕРИД — нацеливание в боевой РК можно выпустить, когда "
             "маркер будет готов. Загляните позже"
             + (f" (сейчас ЕРИД {row.erid}, статус в ОРД: {row.ord_status or 'не получен'})"
                if getattr(row, "erid", None) else "")))
