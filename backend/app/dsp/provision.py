@@ -30,14 +30,15 @@ from app.ad.flight import PLACEMENT_IN_PLAN, PLACEMENT_READY
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.dsp import creatives as cr
 from app.dsp.campaigns import ensure_campaign
-from app.dsp.client import MsClient, MsError
+from app.dsp.client import MsClient, MsError, safe_error
 from app.ext_lock import DSP_PROVISION, only_one
 from app.ord import readiness
 from app.files_safe import inside_uploads
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepPair,
                                     LaunchPrepSetTarget, LaunchPrepTarget)
 from app.launch_prep import pub_rules
-from app.launch_prep.sandbox import SandboxError, prepare_for_dsp, set_click_href
+from app.launch_prep.sandbox import (SandboxError, prepare_for_dsp, set_click_href,
+                                     set_html_click_href)
 from app.sales.models import SalesPublisher
 from app.weborama import naming, tags as wtags
 
@@ -405,6 +406,7 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
                         total_shows=(int(plans[cre.id]) if plans.get(cre.id) else None))
                     xxhash = c.creative_add(camp_hash, params, local_ref=ref)
                 c.creative_edit(xxhash, {"data": {"html_code": html}}, local_ref=ref)
+                _apply_app_deeplink(c, xxhash, html, r, cre, name, ref, warnings)
         except (cr.CreativeError, MsError, DspProvisionError, ValueError, SandboxError) as e:
             failed.append({"creative_id": cre.id, "placement_id": r["placement"].id,
                            "name": name, "error": str(e)})
@@ -417,6 +419,30 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
                      "name": name, "xxhash": xxhash})
     return {"campaign_xxhash": camp_hash, "done": done, "failed": failed, "warnings": warnings,
             "targeting": _apply_targeting(db, camp, c, camp_hash)}
+
+
+def _apply_app_deeplink(c, xxhash: str, html: str, r: dict, cre, name: str, ref: str,
+                        warnings: list) -> None:
+    """Диплинк SDK в `<a href>` креатива — ВТОРЫМ шагом, после загрузки (владелец 07.10.2026).
+
+    Правило площадки («sdk»/«обе» или диплинк SDK в цели пары) хочет диплинк в баннере, а загрузчик
+    DSP отклоняет архив с такой ссылкой (2051): в html_code, через `Creative.edit`, она принимается.
+    Креатив к этому моменту уже заведён и годен с макросом DSP, поэтому сбой здесь — предупреждение, а не
+    отказ: он не должен ронять выгрузку и не должен заставлять заводить креатив заново."""
+    tgt = r["target"]
+    href = pub_rules.post_upload_href(r.get("rule"), tgt.advertiser_url,
+                                      getattr(tgt, "deeplink_url", None))
+    if not href:
+        return
+    new_html, changed = set_html_click_href(html, href)
+    if not changed:          # в баннере нет якоря с макросом DSP — подставлять некуда
+        return
+    try:
+        c.creative_edit(xxhash, {"data": {"html_code": new_html}}, local_ref=ref)
+    except MsError as e:
+        warnings.append({"creative_id": cre.id, "placement_id": r["placement"].id, "name": name,
+                         "warning": ("DSP не принял диплинк в коде креатива (" + safe_error(e) + ") — "
+                                     "креатив ушёл с макросом DSP, клик пойдёт на веб-посадочную")})
 
 
 def _apply_targeting(db: Session, camp: AdCampaign, c: MsClient, camp_hash: str):

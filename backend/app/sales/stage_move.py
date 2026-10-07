@@ -177,6 +177,10 @@ def apply_move(db, deal, target, user, *, reason: str, catalog: Optional[Catalog
     # Текст берём из `note`: у диалога это комментарий человека, у автоматики — причина
     # перехода. Для срыва причина и есть содержание письма.
     _notify_move(db, deal, prev, target, note, user)
+    # РК — по событию, а не ночным прогоном (владелец 07.10.2026): сделку собирают за пару часов, и трафик
+    # должен увидеть её сразу. Сбой сборки перевод не отменяет (подтранзакция внутри).
+    from app.ad import build
+    build.ensure_campaign_on_move(db, deal, target)
     return {"moved": True, "from_stage": prev, "to_stage": target, "overridden": bool(force)}
 
 

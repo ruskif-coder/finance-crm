@@ -17,9 +17,13 @@ def test_sdk_mode_is_known_and_hinted():
     assert R.landing_hint(None) is None
 
 
-def test_sdk_mode_puts_landing_into_href():
+def test_sdk_mode_puts_landing_into_href_only_with_the_dsp_click_macro():
+    """В href встаёт ссылка с `{LINK_UNESC}`; диплинк только с `{LINK_ESC}` загрузчик DSP отклоняет
+    (2051, хотфикс 07.10.2026) — тогда остаётся макрос DSP."""
     dl = "deeplink+://navigate?primaryUrl=aHR0cHM6Ly9hLnJ1Lw==&primaryTrackingUrl={LINK_ESC}"
-    assert R.click_href({"app_links": "sdk"}, dl, None) == dl
+    assert R.click_href({"app_links": "sdk"}, dl, None) is None
+    dl_unesc = dl + "&c={LINK_UNESC}"
+    assert R.click_href({"app_links": "sdk"}, dl_unesc, None) == dl_unesc
 
 
 def test_no_hard_check_by_mode():

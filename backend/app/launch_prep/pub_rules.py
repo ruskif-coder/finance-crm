@@ -177,9 +177,13 @@ def needs_deeplink(rule: Optional[dict]) -> bool:
     return bool(rule and rule.get("app_links") == "both")
 
 
-# Кликовые макросы DSP. Хоть один обязан быть в КАЖДОЙ ссылке баннера — иначе загрузчик
-# отклоняет архив (код 2051, первый случай 05.10.2026: LBS2QH × Максавит).
-CLICK_MACROS = ("{LINK_UNESC}", "{LINK_ESC}")
+# Кликовый макрос DSP, обязательный в КАЖДОЙ ссылке баннера: загрузчик отклоняет архив без него
+# (код 2051, «Any link must contains {LINK_UNESC}»; первый случай 05.10.2026: LBS2QH × Максавит).
+# Именно `{LINK_UNESC}`. С 05.10 по 07.10 макросом считался и `{LINK_ESC}` (по строке документации
+# «оба — только в коде баннера»), и SDK-диплинк `…&primaryTrackingUrl={LINK_ESC}` уходил в href —
+# DSP отклонил 16 загрузок 07.10 (4FKFD2, LBS2QH); за всё время журнала не принято ни одной ссылки
+# с одним `{LINK_ESC}`. Такая ссылка в баннер не встаёт: остаётся макрос DSP, клик идёт на веб.
+CLICK_MACROS = ("{LINK_UNESC}",)
 
 
 def has_click_macro(url: Optional[str]) -> bool:
@@ -211,14 +215,29 @@ def click_href(rule: Optional[dict], advertiser_url: Optional[str],
     return href if has_click_macro(href) else None
 
 
+def post_upload_href(rule: Optional[dict], advertiser_url: Optional[str],
+                     deeplink_url: Optional[str]) -> Optional[str]:
+    """Диплинк SDK для подстановки в `<a href>` ПОСЛЕ загрузки архива (07.10.2026).
+
+    Загрузчик DSP отклоняет архив, где в ссылке нет `{LINK_UNESC}` (2051), а SDK-диплинк несёт только
+    `{LINK_ESC}` — поэтому в архив он не идёт (`click_href`). Но в html_code креатива DSP его принимает:
+    так вписывали ручные «инапп»-кампании, и `Creative.edit` проверен на боевом кабинете. Значит правило
+    площадки («sdk» / «обе» или диплинк в цели пары) исполняется вторым шагом выгрузки. Только диплинк SDK
+    с нашим макросом клика: ссылка без него клики DSP не считала бы. None — подставлять нечего."""
+    href = _wanted_href(rule, advertiser_url, deeplink_url)
+    if href and is_app_link(href) and "{LINK_ESC}" in href and "{LINK_UNESC}" not in href:
+        return href
+    return None
+
+
 def click_warning(rule: Optional[dict], advertiser_url: Optional[str],
                   deeplink_url: Optional[str]) -> Optional[str]:
     """Пояснение трафику, если правило площадки хотело ссылку в href, но в ней нет макроса."""
     href = _wanted_href(rule, advertiser_url, deeplink_url)
-    if not href or has_click_macro(href):
+    if not href or has_click_macro(href) or post_upload_href(rule, advertiser_url, deeplink_url):
         return None
-    return ("ссылка из правила площадки без кликового макроса DSP — в баннере оставлен макрос "
-            "DSP, клик уйдёт на посадочную")
+    return ("ссылка из правила площадки без кликового макроса {LINK_UNESC} (загрузчик DSP "
+            "принимает только его) — в баннере оставлен макрос DSP, клик уйдёт на посадочную")
 
 
 def pair_problem(rule: Optional[dict], advertiser_url: Optional[str],

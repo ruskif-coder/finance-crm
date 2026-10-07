@@ -345,12 +345,14 @@ def _landing_normalized(url: Optional[str]):
     path = quote(parts.path, safe="/%:@!$&'()*+,;=~-._")
     query = quote(parts.query, safe="=&%+/:;,@!$'()*~-._?")
     frag = quote(parts.fragment, safe="!/?:@&=+$,;~-._%'()*")
-    # Якорь — отдельно: в adomain его не было и нет (не проверен вживую), в link — нужен.
+    # Якорь — отдельно, как кусок адреса, который на сервер не уходит. Нужен и в link, и (с 07.10.2026,
+    # проверено на боевом кабинете: DSP принимает и хранит как есть) в adomain.
     return urlunsplit((parts.scheme, netloc, path, query, "")), parts.scheme, netloc, frag
 
 
 def landing_adomain(url: Optional[str]) -> Optional[str]:
-    """«Конечный URL» (`adomain`) — посадочная креатива целиком (владелец 01.10.2026).
+    """«Конечный URL» (`adomain`) — посадочная креатива целиком (владелец 01.10.2026), с якорем
+    (владелец 07.10.2026: DSP его принимает, проверено).
 
     Посадочная — та, что пришла с креативом от аккаунтов или от площадки при запросе, а
     не кликовая ссылка Weborama. Домен остаётся только там, где целиком нельзя — длиннее
@@ -363,9 +365,11 @@ def landing_adomain(url: Optional[str]) -> Optional[str]:
     n = _landing_normalized(url)
     if n is None:
         return None
-    full, scheme, netloc, _frag = n
+    full, scheme, netloc, frag = n
+    # Якорь SPA-аптек (`#!Tovar/…`) остаётся: «Конечный URL» совпадает с кликовой ссылкой.
+    whole = full + (f"#{frag}" if frag else "")
     # Предел — в байтах: DSP может считать так, а кириллица домена — два байта на букву.
-    return full if len(full.encode("utf-8")) <= ADOMAIN_MAX else f"{scheme}://{netloc}/"
+    return whole if len(whole.encode("utf-8")) <= ADOMAIN_MAX else f"{scheme}://{netloc}/"
 
 
 def landing_link(url: Optional[str]) -> Optional[str]:

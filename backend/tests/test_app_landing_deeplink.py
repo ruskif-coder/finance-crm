@@ -46,11 +46,16 @@ def test_bad_landing_is_refused(bad):
         R.validate_landing(bad, "app")
 
 
-def test_href_gets_the_whole_deeplink_link_gets_web():
-    assert R.click_href({"app_links": "web"}, MINICEN, None) == MINICEN
-    assert R.click_href(None, MINICEN, None) == MINICEN, "диплинк без правила площадки потерялся бы"
+def test_href_gets_the_whole_deeplink_only_when_it_carries_the_unesc_macro():
+    """Диплинк целиком в href — только с `{LINK_UNESC}` (хотфикс 07.10.2026): загрузчик DSP
+    отклоняет ссылку с одним `{LINK_ESC}` (2051). Без него — макрос DSP, в `link` веб-адрес."""
+    minicen_u = MINICEN + "&c={LINK_UNESC}"
+    assert R.click_href({"app_links": "web"}, minicen_u, None) == minicen_u
+    assert R.click_href(None, minicen_u, None) == minicen_u, "диплинк без правила площадки потерялся бы"
+    assert R.click_href({"app_links": "both"}, minicen_u, None) == minicen_u
     assert R.click_href(None, "https://a.ru/", None) is None
-    assert R.click_href({"app_links": "both"}, MINICEN, None) == MINICEN
+    for rule in (None, {"app_links": "web"}, {"app_links": "both"}):
+        assert R.click_href(rule, MINICEN, None) is None, "только {LINK_ESC} — DSP отклонит архив"
 
 
 def test_deeplink_in_landing_satisfies_both_mode():
@@ -92,4 +97,9 @@ def test_dsp_link_long_url_is_not_cut_to_domain_and_anchor_encoded():
     assert CR.landing_link(long).startswith("https://120на80.рф/aaa"), "ссылку не урезаем до домена"
     assert CR.landing_adomain(long) == "https://120на80.рф/"
     assert CR.landing_link("https://a.ru/#!Товар 1") == "https://a.ru/#!%D0%A2%D0%BE%D0%B2%D0%B0%D1%80%201"
-    assert "#" not in CR.landing_adomain("https://minicen.ru/#!Tovar/717609")
+    # Якорь SPA-аптек (`#!Tovar/…`) — и в «Конечном URL» (владелец 07.10.2026): DSP принимает его в
+    # adomain и хранит как есть (проверено на боевом кабинете), поэтому adomain = link без отличий.
+    assert CR.landing_adomain("https://minicen.ru/#!Tovar/717609") == "https://minicen.ru/#!Tovar/717609"
+    assert CR.landing_adomain("https://a.ru/#!Товар 1") == CR.landing_link("https://a.ru/#!Товар 1")
+    # С якорем длиннее предела DSP — домен, как и без него.
+    assert CR.landing_adomain("https://a.ru/" + "x" * 1000 + "#" + "y" * 100) == "https://a.ru/"
