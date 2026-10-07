@@ -11,6 +11,13 @@ import app.main  # noqa: F401
 from app.routers import traffic_dashboard as td
 
 
+@pytest.fixture(autouse=True)
+def _no_share_lock(monkeypatch):
+    """Замок доли РК (`ext_lock.lock_campaign_shares`) ходит в настоящую базу, а здесь она подставная.
+    Сам замок и порядок его взятия проверяет test_campaign_shares_lock.py (07.10.2026)."""
+    monkeypatch.setattr(td, "_lock_shares", lambda db, cid: None)
+
+
 class _Db:
     def __init__(self, cr, pl_status="запущен"):
         self.cr, self.pl = cr, NS(status=pl_status)

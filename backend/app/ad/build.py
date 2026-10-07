@@ -361,6 +361,10 @@ def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = N
     прочитал факт, в т. ч. None «статистики нет»).
     """
     from app.bidder.rules import explain
+    from app.ext_lock import lock_campaign_shares
+    # Страховка: вызывающий обязан взять замок раньше первой записи (иначе возможен затор), но пересчёт,
+    # вызванный из нового места, не должен молча считать по неподтверждённым статусам соседей.
+    lock_campaign_shares(db, campaign_id)
     pls, out = campaign_layout(db, campaign_id, cap_ctx, facts, facts_given)
     camp_plan = db.query(AdCampaign.plan_show).filter(AdCampaign.id == campaign_id).scalar()
     cap = out.get("cap")
@@ -444,7 +448,11 @@ def refresh_weights(db: Session, commit: bool = True, campaign_ids=None) -> dict
     cap_ctx = (share_cap(db), manual_scopes(db))
     from app.bidder.facts import placement_facts
     all_facts = placement_facts(db, [c.id for c in camps])
+    from app.ext_lock import lock_campaign_shares
     for camp in camps:
+        # Замок РК — ДО правки весов: пока ночной проход держит строки площадок, запрос трафика не
+        # должен стоять в очереди с ними на руках (07.10.2026).
+        lock_campaign_shares(db, camp.id)
         f = all_facts.get(camp.id) if all_facts is not None else None
         surfaces = deal_plan(db, camp.deal_id)["surfaces"]
         if not surfaces:
@@ -498,6 +506,8 @@ def sync_placements(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
     """Площадки РК = получатели сделки (`deal_publishers`). Недостающих добавляет,
     лишних «без следа» убирает; площадку с креативами, статистикой или ручным статусом
     не трогает никогда — её судьбу решает трафик."""
+    from app.ext_lock import lock_campaign_shares
+    lock_campaign_shares(db, camp.id)       # до удаления и добавления строк площадок (07.10.2026)
     plan = deal_plan(db, camp.deal_id)
     keep = deal_publishers(db, camp.deal_id)
     weights = publisher_weights(db, plan["surfaces"])

@@ -1234,6 +1234,16 @@ CASCADE_TO_PLACEMENT = {
 }
 
 
+def _lock_shares(db: Session, campaign_id: int) -> None:
+    """Статусы площадок и доли РК меняются по одному (07.10.2026): замок берётся ДО первой записи.
+    Подробно — `ext_lock.lock_campaign_shares`. Занято дольше минуты — 409 вместо зависания."""
+    from app.ext_lock import CampaignBusy, lock_campaign_shares
+    try:
+        lock_campaign_shares(db, campaign_id)
+    except CampaignBusy as e:
+        raise HTTPException(409, str(e))
+
+
 def _cascade_placements(db: Session, campaign_id: int, campaign_status: str) -> int:
     """Спустить решение по РК на её площадки. → сколько площадок изменилось.
 
@@ -1288,6 +1298,7 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
         raise HTTPException(400, f"Выбрать можно {CAMPAIGN_MANUAL + ('запущена',)}; "
                                  f"«ожидает сборки» и «готова» считаются сами")
     c, _deal = _campaign_in_scope(db, campaign_id, user)
+    _lock_shares(db, campaign_id)          # до первой записи статуса: параллельные запуски — по одному
     # Объёмы по площадкам больше плана РК — РК не запускаем (владелец 27.09.2026).
     if payload.status == "запущена":
         volumes.guard(db, _deal.id)
@@ -1384,6 +1395,7 @@ def set_creative_status(creative_id: int, payload: StatusIn,
     if not cr:
         raise HTTPException(404, "Креатив не найден")
     c, _ = _campaign_in_scope(db, cr.campaign_id, user)   # область видимости — та же
+    _lock_shares(db, cr.campaign_id)       # до первой записи статуса (07.10.2026)
     # «Запущен» и «пауза» — только тому, что согласовано (или уже крутилось): иначе кнопка
     # — чёрный ход мимо согласования, в том числе через «пауза → запущен» (аудит
     # 01.10.2026, В-3).
@@ -1565,6 +1577,9 @@ def set_placement_status(placement_id: int, payload: StatusIn,
         raise HTTPException(404, "Площадка в РК не найдена")
     # Область видимости — та же, что у РК: до 23.09.2026 здесь её не спрашивали вовсе.
     c, _deal = _campaign_in_scope(db, p.campaign_id, user)
+    # Параллельные «запустить площадку» шли каждый по своим неподтверждённым статусам, и доли ложились
+    # по устаревшей раскладке (LBS2QH 07.10.2026: у всех 25 %). Теперь по одному — замок ДО записи.
+    _lock_shares(db, p.campaign_id)
     # «Площадка запущена только при хоть одном согласованном креативе» (владелец
     # 04.09.2026). Запрет НА СЕРВЕРЕ, а не серой кнопкой: спрятанная кнопка возвращается
     # первым же рефакторингом, а запущенная площадка без согласованного материала — это
