@@ -1,0 +1,16 @@
+# ПРОД-ТОЛЬКО: соседний сайт TruckCRM, живущий в общей docker-сети `caddy_proxy`.
+# Подключается через `import /etc/caddy/extra/*.caddy` в конце Caddyfile; на локальном
+# стенде каталог не смонтирован, и импорт ничего не находит. См. docker-compose.prod.yml.
+pm.simbad.pro {
+	encode gzip
+
+	header {
+		X-Frame-Options DENY
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	reverse_proxy truckcrm-frontend:80
+}

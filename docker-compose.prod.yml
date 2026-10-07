@@ -1,0 +1,80 @@
+# Прод-отличия от docker-compose.yml. Подключается переменной в .env НА СЕРВЕРЕ:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
+#
+# и больше ничего: `docker compose up/ps/logs` и deploy.sh читают её сами. Локально
+# переменной нет, и этот файл не участвует — отсюда и убрана необходимость на сервере
+# «вернуть чужие правки → git pull → снова вписать» (раньше docker-compose.yml и Caddyfile
+# там числились изменёнными постоянно, а слепой `git checkout --` затёр бы сервис бэкапов).
+#
+# Здесь ТОЛЬКО то, чего на локальном стенде быть не должно:
+#   · имена контейнеров вместо имён сервисов — сервер делит сеть `caddy_proxy` с TruckCRM,
+#     и у соседа тоже есть `backend`/`frontend`; по имени сервиса Caddy мог бы попасть к нему;
+#   · сеть `caddy_proxy` у caddy и каталог с его сайтом (`deploy/caddy-prod/`);
+#   · api.telegram.org закреплён вручную — DNS сервера его не отдаёт;
+#   · ORD_ALLOW_PROD_WRITE — запись в БОЕВОЙ ОРД открыта решением владельца 24.09.2026;
+#   · сервис ежедневного дампа `backup` (скрипт `scripts/backup.sh` лежит на сервере,
+#     корневая scripts/ в гит не идёт).
+# Лимит памяти бэкенда (1 ГБ) здесь НЕ дублируется: он общий и записан в базовом файле.
+#
+# Сверка с прежним боевым файлом сделана `docker compose config` по обоим вариантам:
+# различия — только перечисленные в docs/ПРОД_compose_override.md.
+
+services:
+  backend:
+    environment:
+      DSP_DATABASE_URL: postgresql://dsp:${DSP_DB_PASSWORD}@finance_dsp_db:5432/dsp_analytics
+      PDF_SERVICE_URL: http://finance_pdf:3001
+      # Третий замок: запись в БОЕВОЙ ОРД. Закрыть — убрать строку и пересоздать backend.
+      ORD_ALLOW_PROD_WRITE: "1"
+    extra_hosts:
+      - "api.telegram.org:149.154.167.220"
+
+  cabinet_backend:
+    environment:
+      CORE_API_URL: http://finance_backend:8000
+
+  pdf:
+    environment:
+      FRONTEND_URL: http://finance_frontend:3000
+
+  backup:
+    image: alpine:3.20
+    container_name: finance_backup
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./data/backups:/backups
+      - ./scripts/backup.sh:/usr/local/bin/db-backup:ro
+    environment:
+      - KEEP_DAYS=7
+      - POSTGRES_HOST=db
+      - POSTGRES_DB=finance
+      - POSTGRES_USER=finance_user
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    command:
+      - sh
+      - -c
+      - |
+        apk add --no-cache postgresql-client >/dev/null 2>&1
+        sh /usr/local/bin/db-backup || true
+        echo '30 3 * * * sh /usr/local/bin/db-backup >> /backups/backup.log 2>&1' \
+          > /etc/crontabs/root
+        crond -f -l 8
+
+  caddy:
+    environment:
+      # Caddyfile берёт имена бэкенда и витрины отсюда ({$BACKEND_HOST:backend}).
+      BACKEND_HOST: finance_backend
+      FRONTEND_HOST: finance_frontend
+    volumes:
+      - ./deploy/caddy-prod:/etc/caddy/extra:ro
+    networks:
+      - default
+      - caddy_proxy
+
+networks:
+  caddy_proxy:
+    external: true

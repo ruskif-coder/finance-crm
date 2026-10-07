@@ -74,7 +74,7 @@
 		request_body {
 			max_size 35MB
 		}
-		reverse_proxy backend:8000
+		reverse_proxy {$BACKEND_HOST:backend}:8000
 	}
 
 	# Всё остальное — фронтенд (Next.js, production-сборка, см. CLAUDE.md).
@@ -88,7 +88,7 @@
 		# и Next сам отдаёт `immutable` на год — это правильно и менять нечего.
 		@html not path /_next/static/*
 		header @html Cache-Control "no-cache"
-		reverse_proxy frontend:3000
+		reverse_proxy {$FRONTEND_HOST:frontend}:3000
 	}
 }
 
@@ -182,3 +182,7 @@
 		-Server
 	}
 }
+
+# Прод-отличия (соседний сайт) лежат ОТДЕЛЬНЫМИ файлами в каталоге, который монтирует
+# docker-compose.prod.yml. Нет файлов — импорт пуст, локальный стенд ничего не замечает.
+import /etc/caddy/extra/*.caddy

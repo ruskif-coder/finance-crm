@@ -3,7 +3,7 @@
 # Called from deploy_server.bat via SSH: ssh root@SERVER bash /root/finance/deploy.sh <action> [arg]
 
 set -e
-PROJECT=/root/finance
+PROJECT=${PROJECT:-/root/finance}   # переопределяется только для репетиции на локальном стенде
 cd $PROJECT
 SELF="$PROJECT/$(basename "$0")"   # звать себя ТОЛЬКО абсолютным путём: при запуске
                                    # `cd /root/finance && bash deploy.sh migrate X`
@@ -120,6 +120,82 @@ rebuild_next() {
   echo "  $NAME готова, сборка $(docker exec "$C" cat /app/.next/BUILD_ID)"
 }
 
+# ══════════════ Выкладка ОБРАЗОМ с откатом: release / rollback ══════════════
+#
+# Что не так со старыми действиями (`backend`, `cabinet-backend`): они кладут код `docker cp`
+# в ЖИВОЙ контейнер. Код оказывается в записываемом слое контейнера, а не в образе, поэтому
+#   · откатываться не на что — прежнего кода нигде нет, кроме гита;
+#   · любое пересоздание контейнера (`up --force-recreate`, смена лимита в compose) молча
+#     возвращает КОД ИЗ ОБРАЗА, то есть старый, — выглядит как «релиз пропал».
+#
+# `release` кладёт код в образ и оставляет прежнее состояние под тегом `:prev`:
+#   1. снимок работающего контейнера (`docker commit`, без паузы) → `<образ>:prev` и
+#      `<образ>:prev-<дата-время>` — это именно ТО, что работало, включая код, доехавший
+#      прежним способом через `docker cp`;
+#   2. `docker compose build` (код берётся с диска, из того, что принёс `deploy.sh pull`);
+#   3. `up -d --no-deps` — пересоздаётся ТОЛЬКО этот сервис;
+#   4. ждём `healthy`; не дождались — откат на `:prev` автоматически.
+# `git pull` здесь НЕ делается: сначала `deploy.sh pull`, потом `deploy.sh release <сервис>`.
+# База и миграции не трогаются — миграции только `deploy.sh migrate`, ДО релиза.
+
+svc_container() {
+  case "$1" in
+    backend)          echo finance_backend ;;
+    frontend)         echo finance_frontend ;;
+    cabinet_backend)  echo cabinet_backend ;;
+    cabinet_frontend) echo cabinet_frontend ;;
+    pdf)              echo finance_pdf ;;
+    *) echo "ERROR: сервис '$1' не поддержан (backend|frontend|cabinet_backend|cabinet_frontend|pdf)" >&2; return 1 ;;
+  esac
+}
+
+# Имя образа БЕЗ тега — берём у работающего контейнера, а не придумываем: так оно совпадает
+# с тем, что compose построит и поднимет сам.
+img_repo() {
+  local ref; ref=$(docker inspect -f '{{.Config.Image}}' "$1") || return 1
+  echo "${ref%%:*}"
+}
+
+wait_healthy() {
+  local c=$1 st i
+  for i in $(seq 1 40); do
+    st=$(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null || echo none)
+    [ "$st" = healthy ] && return 0
+    sleep 5
+  done
+  echo "  контейнер $c не стал healthy за 200 с (последнее состояние: $st)" >&2
+  return 1
+}
+
+# Снимок (`docker commit`) уносит в образ ПЕРЕМЕННЫЕ контейнера, то есть и секреты из .env.
+# Это тот же уровень доступа, что у `docker inspect` работающего контейнера (нужен root на
+# сервере), но образы `:prev*` НЕЛЬЗЯ `docker save`/`docker push` и выкладывать в реестр.
+# И обратная сторона: при откате переменная, которую убрали из compose после снимка, вернётся
+# из образа (так вернулась бы, например, ORD_ALLOW_PROD_WRITE). Убирая переменную из compose,
+# задавайте её пустой, а не удаляйте строку.
+#
+# Снимки копятся (по одному на release, по одному на откат) и весят сотни МБ: оставляем три
+# последних `prev-*` и три последних `failed-*`. Тег `:prev` указывает на самый свежий снимок.
+prune_snapshots() {
+  local repo=$1 kind
+  for kind in prev failed; do
+    docker images --format '{{.Tag}}' "$repo" | grep -E "^${kind}-" | sort -r | tail -n +4 |
+      while read -r t; do docker rmi "$repo:$t" >/dev/null 2>&1 || true; done
+  done
+}
+
+# Поднять сервис на образе `:prev`. Негодный `latest` не теряем — сохраняем как `:failed-<время>`.
+roll_back_service() {
+  local svc=$1 c repo
+  c=$(svc_container "$svc") || return 1
+  repo=$(img_repo "$c") || return 1
+  docker image inspect "$repo:prev" >/dev/null 2>&1 || { echo "ERROR: нет образа $repo:prev — откатываться не на что"; return 1; }
+  docker tag "$repo:latest" "$repo:failed-$(date +%Y%m%d-%H%M)" 2>/dev/null || true
+  docker tag "$repo:prev" "$repo:latest"
+  docker compose up -d --no-deps --no-build "$svc"
+  wait_healthy "$c"
+}
+
 ACTION=${1:-help}
 
 case "$ACTION" in
@@ -173,6 +249,43 @@ case "$ACTION" in
     # сборка сносилась до начала новой.
     rebuild_next cabinet_frontend "$PROJECT/cabinet-frontend" "Витрина кабинета"
     echo "Cabinet frontend deployed."
+    ;;
+
+  release)
+    SVC=${2:-}
+    [ -n "$SVC" ] || { echo "Usage: deploy.sh release <backend|frontend|cabinet_backend|cabinet_frontend|pdf>"; exit 1; }
+    C=$(svc_container "$SVC")
+    REPO=$(img_repo "$C")
+    STAMP=$(date +%Y%m%d-%H%M)
+    echo "[1/4] Снимок работающего $C → $REPO:prev (и :prev-$STAMP)..."
+    docker commit --pause=false "$C" "$REPO:prev-$STAMP" >/dev/null
+    docker tag "$REPO:prev-$STAMP" "$REPO:prev"
+    echo "[2/4] Сборка образа из текущего кода на диске..."
+    docker compose build "$SVC"
+    echo "[3/4] Пересоздание только $SVC..."
+    if ! docker compose up -d --no-deps "$SVC"; then
+      # set -e вышел бы здесь, не дойдя до отката: compose мог уже снять старый контейнер (ревью 07.10.2026)
+      echo "ВНИМАНИЕ: пересоздание $SVC не удалось — автоматический откат на $REPO:prev..."
+      if roll_back_service "$SVC"; then echo "Откат выполнен, $SVC снова healthy."; else echo "ОТКАТ НЕ УДАЛСЯ — смотреть: docker logs $C"; fi
+      exit 1
+    fi
+    echo "[4/4] Ждём healthy..."
+    if wait_healthy "$C"; then
+      prune_snapshots "$REPO"
+      echo "$SVC выложен образом. Откат: bash deploy.sh rollback $SVC (образ $REPO:prev)"
+    else
+      echo "ВНИМАНИЕ: $SVC не поднялся здоровым — автоматический откат на $REPO:prev..."
+      if roll_back_service "$SVC"; then echo "Откат выполнен, $SVC снова healthy."; else echo "ОТКАТ НЕ УДАЛСЯ — смотреть: docker logs $C"; fi
+      exit 1
+    fi
+    ;;
+
+  rollback)
+    SVC=${2:-}
+    [ -n "$SVC" ] || { echo "Usage: deploy.sh rollback <backend|frontend|cabinet_backend|cabinet_frontend|pdf>"; exit 1; }
+    echo "Откат $SVC на образ :prev..."
+    roll_back_service "$SVC"
+    echo "Откат выполнен: $SVC работает на :prev."
     ;;
 
   full)
@@ -546,13 +659,15 @@ EOF
     ;;
 
   help|*)
-    echo "Usage: deploy.sh {pull|backend|frontend|cabinet-backend|cabinet-frontend|full|migrate <script>|migrate-status|backup [db]|restore <file> [db] [--replace]|retention [apply]|status|logs [service]}"
+    echo "Usage: deploy.sh {pull|backend|frontend|cabinet-backend|cabinet-frontend|release <svc>|rollback <svc>|full|migrate <script>|migrate-status|backup [db]|restore <file> [db] [--replace]|retention [apply]|status|logs [service]}"
     echo ""
     echo "  pull              - git pull only"
     echo "  backend           - git pull + copy backend files + restart backend"
     echo "  frontend          - git pull + copy frontend files + rebuild + restart"
     echo "  cabinet-backend   - git pull + copy cabinet backend + restart"
     echo "  cabinet-frontend  - git pull + copy cabinet frontend + rebuild + restart"
+    echo "  release <svc>     - образом: снимок :prev → build → up --no-deps → ждёт healthy, при провале откат"
+    echo "  rollback <svc>    - вернуть сервис на образ :prev (svc: backend|frontend|cabinet_backend|cabinet_frontend|pdf)"
     echo "  full              - git pull + full docker compose rebuild (~10 min)"
     echo "  migrate <script>  - backup, apply SQL script (all-or-nothing), record in ledger"
     echo "  migrate-status    - compare migration files on disk against the ledger"
