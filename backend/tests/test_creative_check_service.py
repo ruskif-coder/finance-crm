@@ -314,3 +314,23 @@ def test_an_expired_check_is_not_shown_and_cannot_be_targeted(stand, people, api
         db.close()
     assert api.get("/api/creative-check", headers=_headers(editor)).json() == []
     assert api.post(f"/api/creative-check/{cid}/targeting-link", headers=_headers(editor)).status_code == 404
+
+
+def test_admin_sees_and_opens_every_check_others_only_their_own(stand, people):
+    """Владелец 08.10.2026: «я должен видеть все». Автор и метка «мой/чужой» приходят в карточке."""
+    import types
+    from app.routers import creative_check as R
+    db = SessionLocal()
+    try:
+        author = people({"view", "edit"})
+        chk = service.create(db, author, "zz чужая", "example.ru", "b.png", _png())
+        admin = types.SimpleNamespace(id=-1, role=types.SimpleNamespace(key="admin"))
+        other = types.SimpleNamespace(id=-2, role=types.SimpleNamespace(key="x"))
+        mine = [c for c in R.my_checks(db=db, current_user=admin) if c["id"] == chk.id]
+        assert mine and mine[0]["mine"] is False and mine[0]["author"]
+        assert all(c["id"] != chk.id for c in R.my_checks(db=db, current_user=other))
+        assert R._mine(db, chk.id, admin).id == chk.id
+        with pytest.raises(Exception):
+            R._mine(db, chk.id, other)
+    finally:
+        db.close()

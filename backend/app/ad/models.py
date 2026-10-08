@@ -9,7 +9,7 @@
 (`AdCampaignCreative`, у каждого свой ЕРИД и сквозное имя). Веса площадок НЕ дублируются —
 берутся из `sales_publisher_traffics`; комплект/файлы/пары — из `launch_prep_*`.
 """
-from sqlalchemy import (Boolean, Column, Date, DateTime, Float,
+from sqlalchemy import (BigInteger, Boolean, Column, Date, DateTime, Float,
                         ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func)
 
 from app.database import Base
@@ -166,6 +166,9 @@ class AdfoxCreativeStat(Base):
     shows = Column(Integer, nullable=False, default=0)
     clicks = Column(Integer, nullable=False, default=0)
     uniques = Column(Integer)
+    # Сколько показов сеть ПРЕДЛОЖИЛА площадке за сутки (`bid_statistic`, миграция 2026-10-08_campaign_boost.sql);
+    # NULL — не знаем (Adfox, ручной ввод, старые строки), 0 — предложено ноль.
+    offered = Column(BigInteger)
     imported_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
@@ -237,3 +240,25 @@ class PublisherBalanceIndex(Base):
     @property
     def effective(self):
         return self.index_manual if self.index_manual is not None else self.index_auto
+
+
+class AdCampaignBoost(Base):
+    """«Тест размещения»: остаток РК временно поднят на `pct` % на `days` дней.
+
+    Миграция `2026-10-08_campaign_boost.sql`. Активный — `ended_at IS NULL`, он один на РК.
+    План самой РК (`AdCampaign.plan_show`) не меняется: буст влияет только на раскладку
+    по площадкам и лимиты креативов в DSP (`app/ad/boost.py`).
+    """
+    __tablename__ = "ad_campaign_boost"
+
+    id = Column(Integer, primary_key=True)
+    campaign_id = Column(Integer, ForeignKey("ad_campaign.id", ondelete="CASCADE"), nullable=False)
+    pct = Column(Integer, nullable=False)
+    days = Column(Integer, nullable=False)
+    starts_on = Column(Date, nullable=False)
+    until = Column(Date, nullable=False)
+    rest_at_start = Column(BigInteger)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    ended_at = Column(DateTime)
+    ended_reason = Column(String(32))

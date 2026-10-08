@@ -39,6 +39,7 @@ from app.ad.flight import (CREATIVE_REJECTED, PLACEMENT_READY, PLACEMENT_WAIT, a
                            best_chain_status, chain_status, distribute, effective_status,
                            effective_status_creative, flight_of)
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
+from app.bidder.facts import any_facts
 from app.launch_prep import pub_rules
 from app.sales.models import PUBLISHER_ARCHIVE_STATUS
 
@@ -316,10 +317,17 @@ PLACEMENT_FIXED_SQL = (
 
 
 def campaign_layout(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = None,
-                    facts: Optional[dict] = None, facts_given: bool = False):
+                    facts: Optional[dict] = None, facts_given: bool = False,
+                    with_boost: bool = True, assume_running: Optional[set] = None):
     """Раскладка объёма РК по площадкам — ОДНА на ночной пересчёт и страницу «Биддер»
     (05.10.2026): страница объясняет ровно то число, которое уходит в DSP.
-    Возвращает (площадки ORM, результат `distribute` с полем `facts_used`)."""
+    Возвращает (площадки ORM, результат `distribute` с полем `facts_used`).
+
+    `with_boost=False` — раскладка без «теста размещения» (`app/ad/boost`): нужна, чтобы сказать, сколько
+    буст поднимет.
+
+    `assume_running` — id площадок, которые считаем ЗАПУЩЕННЫМИ: «что получит согласованная площадка, если
+    стартует сейчас» (`app/ad/volumes_now`). Ничего не записывает: статусы в базе не трогаются."""
     pls = (db.query(AdCampaignPlacement)
            .filter(AdCampaignPlacement.campaign_id == campaign_id).all())
     camp = db.query(AdCampaign).get(campaign_id)
@@ -339,13 +347,26 @@ def campaign_layout(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = No
         got = placement_facts(db, [campaign_id])
         facts = got.get(campaign_id) if got is not None else None
     surfaces = deal_plan(db, camp.deal_id)["surfaces"] if camp else []
-    out = distribute(camp.plan_show if camp else None, None, fl,
-                     [{"id": p.id, "status": p.status, "weight": p.weight,
-                       "fixed": fixed.get(p.id),
+    plan = camp.plan_show if camp else None
+    out = distribute(plan, None, fl,
+                     [{"id": p.id, "status": "запущен" if p.id in (assume_running or ()) else p.status,
+                       "weight": p.weight, "fixed": fixed.get(p.id),
                        "capless": is_capless(manual, p.publisher_id, surfaces)}
                       for p in pls], cap=cap, facts=facts)
     out["facts_used"] = out["by_fact"]
     out["cap"] = cap
+    # «Тест размещения»: остаток каждой запущенной площадки без заданного объёма поднят на X % (доли поднятых
+    # площадок друг относительно друга те же, потолок их не зажимает — `boost.boost_rows`). Читается ЗДЕСЬ, в единственной раскладке, — ночной пересчёт его не откатывает, а страница
+    # «Биддер» объясняет то же число, что уходит в DSP. План самой РК не меняется. Свежего среза нет —
+    # остаток считается по последнему известному факту, а не от всего плана площадки.
+    from app.ad import boost
+    live = boost.active(db, campaign_id) if (camp and with_boost) else None
+    extra = 0
+    if plan and boost.is_live(live):
+        known = facts if facts is not None else any_facts(db, campaign_id)
+        out["rows"], extra = boost.boost_rows(out["rows"], known, live.pct)
+    out["plan_eff"] = (plan + extra) if plan else plan
+    out["boost_extra"] = extra
     return pls, out
 
 
@@ -372,7 +393,8 @@ def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = N
     # вызванный из нового места, не должен молча считать по неподтверждённым статусам соседей.
     lock_campaign_shares(db, campaign_id)
     pls, out = campaign_layout(db, campaign_id, cap_ctx, facts, facts_given)
-    camp_plan = db.query(AdCampaign.plan_show).filter(AdCampaign.id == campaign_id).scalar()
+    camp_plan = out.get("plan_eff") or db.query(AdCampaign.plan_show).filter(
+        AdCampaign.id == campaign_id).scalar()
     cap = out.get("cap")
     cap_abs = cap * camp_plan if (cap and camp_plan) else None
     by_id = {r["id"]: r for r in out["rows"]}
@@ -390,7 +412,7 @@ def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = N
     return changes
 
 
-def creative_plans(db: Session, camp: AdCampaign) -> dict:
+def creative_plans(db: Session, camp: AdCampaign, extra_plans: Optional[dict] = None) -> dict:
     """План каждого креатива РК: {creative_id: показы или None}.
 
     Тем же правилом, что раскрытие дашборда трафика: сохранённый план площадки делится
@@ -414,6 +436,11 @@ def creative_plans(db: Session, camp: AdCampaign) -> dict:
         by_pl.setdefault(r["placement_id"], []).append(dict(r))
     plan_of = {p.id: p.plan_show for p in db.query(AdCampaignPlacement).filter(
         AdCampaignPlacement.campaign_id == camp.id).all()}
+    # Предварительный объём согласованных, но не запущенных площадок (`app/ad/volumes_now`): только тем,
+    # у кого записанного плана нет, и только на лету — в базу это не попадает.
+    for pid, v in (extra_plans or {}).items():
+        if not plan_of.get(pid):
+            plan_of[pid] = v
     # Удержание долей — по КАЛЕНДАРЮ, не по дате среза статистики (ревью 02.10.2026):
     # это правило перераспределения, а не отчёт; на застывшем срезе оно стало бы вечным.
     hold = holds(flight_of(camp.date_start, camp.date_end))

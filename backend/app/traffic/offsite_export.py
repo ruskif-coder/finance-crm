@@ -40,7 +40,7 @@ from app.xlsx_safe import save_workbook
 HEAD = ["Статус у площадки", "Площадка", "Домен", "Поверхность", "Канал", "Креатив №", "Название креатива",
         "Файл клиента", "Имя архива в выгрузке", "Название РК в Adfox", "Путь в архиве", "Размер",
         "Код пары", "ЕРИД", "Посадочная", "Диплинк", "Старт", "Конец", "План показов",
-        "Пиксель Weborama"]
+        "Пиксель Weborama", "Пометка объёма"]
 WIDTH = [16, 22, 22, 10, 12, 9, 26, 28, 34, 38, 52, 10, 16, 16, 16, 40, 30, 11, 11, 12, 40]
 
 
@@ -122,6 +122,23 @@ def pair_volumes(db: Session, deal: SalesDeal) -> dict:
     return out
 
 
+def preview_volumes(db: Session, deal: SalesDeal) -> dict:
+    """Предварительный объём пар согласованных, но НЕ запущенных площадок: {pair_id: показы}.
+
+    Считается на лету («что получит, если стартует сейчас», `ad/volumes_now`), в базу не пишется; паспорт
+    ставит рядом пометку. Трафик видит число сразу после согласования и успевает завести площадку."""
+    from app.ad.models import AdCampaign, AdCampaignCreative
+    from app.ad.volumes_now import preview_plans
+    out = {}
+    for camp in db.query(AdCampaign).filter(AdCampaign.deal_id == deal.id):
+        plans = preview_plans(db, camp)
+        for cid, pair_id in (db.query(AdCampaignCreative.id, AdCampaignCreative.pair_id)
+                             .filter(AdCampaignCreative.campaign_id == camp.id)):
+            if pair_id and plans.get(cid):
+                out[pair_id] = round(plans[cid])
+    return out
+
+
 def build(db: Session, deal: SalesDeal, whole: bool = False) -> Tuple[bytes, str]:
     """whole=False — архив для площадок без нашего кода (баннеры + паспорт);
     whole=True — только паспорт .xlsx по ВСЕЙ РК, без креативов (владелец 30.09.2026)."""
@@ -156,6 +173,7 @@ def build(db: Session, deal: SalesDeal, whole: bool = False) -> Tuple[bytes, str
                   .filter(AdCampaign.deal_id == deal.id)}
     rules = pub_rules.rules_for(db, {(t.publisher_id, t.surface_kind) for _, _, t, _ in rows})
     volumes = pair_volumes(db, deal)
+    preview = {k: v for k, v in preview_volumes(db, deal).items() if k not in volumes}
 
     from app.sales.models import SalesRep
     rep = db.get(SalesRep, deal.traffic_manager_id) if deal.traffic_manager_id else None
@@ -215,9 +233,11 @@ def build(db: Session, deal: SalesDeal, whole: bool = False) -> Tuple[bytes, str
                     t.period_from or deal.period_from, t.period_to or deal.period_to,
                     # Объём пары; пара ещё не в РК — заданный на ней руками, иначе пусто
                     # (весь план площадки здесь был бы неверен при нескольких креативах).
-                    volumes.get(pair.id, member.plan_show if member else None),
-                    pixel_for(deal, pl, pub, rule.get("channel"), f.ratio, readiness.ready_erid(s))])
-        for col, w in zip("ABCDEFGHIJKLMNOPQRST", WIDTH):
+                    volumes.get(pair.id, preview.get(pair.id, member.plan_show if member else None)),
+                    pixel_for(deal, pl, pub, rule.get("channel"), f.ratio, readiness.ready_erid(s)),
+                    # Объём без записанного плана — расчётный «если стартует сейчас» (владелец 08.10.2026)
+                    "предварительно — площадка ещё не запущена" if pair.id in preview else None])
+        for col, w in zip("ABCDEFGHIJKLMNOPQRSTU", WIDTH):
             ws.column_dimensions[col].width = w
         for row in ws.iter_rows(min_row=2):
             for c in (row[16], row[17]):

@@ -173,11 +173,11 @@ def hash_map(db, dsp_db, campaign_ids, *, contour: str, partner: Optional[str]) 
 # ── сырьё ──────────────────────────────────────────────────────────────────
 _RAW_SQL = text("""
     INSERT INTO dsp_stat_raw (ts, ms_campaign_xxhash, ms_source_key, ms_creative_xxhash,
-                              shows, clicks, spend, imported_at)
-    VALUES (CAST(:ts AS timestamptz), :camp, NULL, :cr, :shows, :clicks, :spend, now())
+                              shows, clicks, spend, offered, imported_at)
+    VALUES (CAST(:ts AS timestamptz), :camp, NULL, :cr, :shows, :clicks, :spend, :offered, now())
     ON CONFLICT ON CONSTRAINT uq_dsp_stat_raw DO UPDATE SET
         shows = EXCLUDED.shows, clicks = EXCLUDED.clicks, spend = EXCLUDED.spend,
-        imported_at = now()
+        offered = EXCLUDED.offered, imported_at = now()
 """)
 
 
@@ -191,11 +191,13 @@ def save_raw(dsp_db, pull: S.DayPull, hmap: HashMap) -> int:
         if not camp:
             continue
         dsp_db.execute(_RAW_SQL, {"ts": _ts(pull.day), "camp": camp, "cr": xx,
-                                  "shows": v.shows, "clicks": v.clicks, "spend": v.spend})
+                                  "shows": v.shows, "clicks": v.clicks, "spend": v.spend,
+                                  "offered": v.offered})
         n += 1
     for xx, v in pull.campaigns.items():
         dsp_db.execute(_RAW_SQL, {"ts": _ts(pull.day), "camp": xx, "cr": None,
-                                  "shows": v.shows, "clicks": v.clicks, "spend": v.spend})
+                                  "shows": v.shows, "clicks": v.clicks, "spend": v.spend,
+                                  "offered": v.offered})
         n += 1
     dsp_db.commit()
     return n
@@ -215,21 +217,25 @@ def remember(dsp_db, campaign_hash: str, day: date) -> None:
 
 # ── срез в основную базу ───────────────────────────────────────────────────
 _UPSERT = text("""
-    INSERT INTO ad_campaign_stat (campaign_id, placement_id, date, shows, clicks, source,
+    INSERT INTO ad_campaign_stat (campaign_id, placement_id, date, shows, clicks, offered, source,
                                   imported_at)
-    VALUES (:c, :p, :d, :shows, :clicks, :src, now())
+    VALUES (:c, :p, :d, :shows, :clicks, :offered, :src, now())
     ON CONFLICT ON CONSTRAINT uq_ad_stat DO UPDATE SET
-        shows = EXCLUDED.shows, clicks = EXCLUDED.clicks, imported_at = now()
+        shows = EXCLUDED.shows, clicks = EXCLUDED.clicks, offered = EXCLUDED.offered,
+        imported_at = now()
 """)
 _DELETE = text(
     "DELETE FROM ad_campaign_stat WHERE campaign_id = :c "
     "AND placement_id IS NOT DISTINCT FROM :p AND date = :d AND source = 'dsp'")
 
 
-def _put(db, cid, pid, day, shows, clicks) -> bool:
+def _put(db, cid, pid, day, shows, clicks, offered=None) -> bool:
     args = {"c": cid, "p": pid, "d": day}
-    if shows > 0 or clicks > 0:
-        db.execute(_UPSERT, {**args, "src": SOURCE, "shows": shows, "clicks": clicks})
+    # Предложено, но не показано — как раз тот случай, ради которого `offered` собирается («трафик есть,
+    # не открутили»): строка с нулём показов остаётся, пока сеть что-то предлагала.
+    if shows > 0 or clicks > 0 or (offered or 0) > 0:
+        db.execute(_UPSERT, {**args, "src": SOURCE, "shows": shows, "clicks": clicks,
+                             "offered": offered})
         return True
     db.execute(_DELETE, args)
     return False
@@ -245,7 +251,7 @@ def push_daily(db, dsp_db, hmap: HashMap, targets_: List[Target]) -> dict:
     for t in targets_:
         raw = dsp_db.execute(text("""
             SELECT (ts AT TIME ZONE 'Europe/Moscow')::date AS day, ms_creative_xxhash AS cr,
-                   shows, clicks
+                   shows, clicks, offered
               FROM dsp_stat_raw
              WHERE ms_campaign_xxhash = :h AND ms_source_key IS NULL
                AND ts BETWEEN CAST(:a AS timestamptz) AND CAST(:b AS timestamptz)
@@ -259,9 +265,11 @@ def push_daily(db, dsp_db, hmap: HashMap, targets_: List[Target]) -> dict:
             hit = hmap.creatives.get(r["cr"].upper())
             if not hit or hit[0] != t.campaign_id:
                 continue
-            acc = per_day.setdefault(r["day"], {}).setdefault(hit[1], [0, 0])
+            acc = per_day.setdefault(r["day"], {}).setdefault(hit[1], [0, 0, None])
             acc[0] += r["shows"]
             acc[1] += r["clicks"]
+            if r["offered"] is not None:           # сумма креативов площадки; ни одного значения — None
+                acc[2] = (acc[2] or 0) + r["offered"]
         placements = {pid for c, pid in hmap.creatives.values() if c == t.campaign_id}
         placements |= {pid for d in per_day.values() for pid in d}
         day = t.start
@@ -271,8 +279,8 @@ def push_daily(db, dsp_db, hmap: HashMap, targets_: List[Target]) -> dict:
                 # Нет ни одной строки сырья по площадке за сутки — замера нет, и прежнее
                 # число не трогаем: «не спросили» не значит «не крутила».
                 if pid in spread:
-                    s, k = spread[pid]
-                    written += _put(db, t.campaign_id, pid, day, s, k)
+                    s, k, off = spread[pid]
+                    written += _put(db, t.campaign_id, pid, day, s, k, off)
             if day in totals:
                 rest_s = totals[day][0] - sum(v[0] for v in spread.values())
                 rest_k = totals[day][1] - sum(v[1] for v in spread.values())

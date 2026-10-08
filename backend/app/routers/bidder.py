@@ -98,7 +98,9 @@ def layout(campaign_id: int, db: Session = Depends(get_db), user: User = Depends
         "JOIN sales_publishers sp ON sp.id = p.publisher_id WHERE p.campaign_id = :c"),
         {"c": campaign_id}).all())
     cap = out.get("cap")
-    cap_abs = cap * camp.plan_show if (cap and camp.plan_show) else None
+    # Буст («тест размещения») поднимает план раскладки, а не план РК: сверка идёт с поднятым.
+    plan_eff = out.get("plan_eff") or camp.plan_show
+    cap_abs = cap * plan_eff if (cap and plan_eff) else None
     rows, totals = [], {"fixed": 0, "settled": 0, "by_weight": 0}
     for r in out["rows"]:
         fact = shown.get(r["id"], 0)
@@ -120,12 +122,8 @@ def layout(campaign_id: int, db: Session = Depends(get_db), user: User = Depends
             "facts_used": out["facts_used"], "cap_pct": round(cap * 100, 1) if cap else None,
             "totals": totals, "rows": rows,
             # Факт уже больше плана РК: «не ниже факта» даёт сумму сверх плана — перекрут.
-            "over": max(0, sum(totals.values()) - round(camp.plan_show or 0))}
+            "over": max(0, sum(totals.values()) - round(plan_eff or 0)),
+            "boost_extra": out.get("boost_extra") or 0}
 
 
-def _facts_any(db: Session, campaign_id: int) -> dict:
-    from app.ad.stat_sources import fact_sources
-    return {pid: int(n or 0) for pid, n in db.execute(text(
-        "SELECT placement_id, sum(shows) FROM ad_campaign_stat WHERE campaign_id = :c "
-        "AND placement_id IS NOT NULL AND source = ANY(:s) GROUP BY placement_id"),
-        {"c": campaign_id, "s": fact_sources()}).all()}
+from app.bidder.facts import any_facts as _facts_any  # noqa: E402 — одно выражение с бустом (`app/ad/build`)

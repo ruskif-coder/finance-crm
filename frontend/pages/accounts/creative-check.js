@@ -108,6 +108,15 @@ function CheckCard({ c, mayEdit, mayDelete, onPreview, onDelete }) {
         <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
           {c.info?.size}
         </span>
+        {/* Администратор видит проверки всех: у чужой подписан автор (08.10.2026). */}
+        {c.mine === false && !!c.author && (
+          <span title="Проверку загрузил другой сотрудник — вы видите её как администратор"
+            style={{ display: 'inline-flex', alignItems: 'center', height: 22, padding: '0 8px', borderRadius: 7,
+              background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', fontSize: 11,
+              fontWeight: 600, color: 'var(--text-secondary)' }}>
+            Автор: {c.author}
+          </span>
+        )}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 7, height: 26,
           padding: '0 10px', background: 'var(--bg-subtle)', borderRadius: 8, fontFamily: MONO, fontSize: 11,
           fontWeight: 700, whiteSpace: 'nowrap',

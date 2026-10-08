@@ -929,8 +929,10 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
     # Состояние во внешних системах — ТОЙ ЖЕ функцией, что на карточке сделки. Второй
     # расчёт разошёлся бы с первым, и спорить было бы нечем.
     ext = ext_mod.states_by_placement(db, c.id)
+    pace_of = _pace_of(db, c, out["rows"], as_of)
     for row in out["rows"]:
         row["external"] = ext.get(row["id"])
+        row["pace"] = pace_of.get(row["id"])
 
     chain_st = _chain_of(c, [(p["id"], p["status"]) for p in pls], creatives)
     pixels = {r[0]: (r[1], r[2]) for r in db.execute(text(
@@ -944,6 +946,8 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         "external_totals": ext_mod.totals(ext),
         "date_start": c.date_start, "date_end": c.date_end,
         "placements": out["rows"], "share_sum": out["share_sum"],
+        # «Темп размещения» (08.10.2026): действующий буст — для метки у кнопки.
+        "boost": _boost_view(db, c.id),
         "creative_manual": list(CREATIVE_MANUAL),
         "creative_statuses": list(CREATIVE_STATUSES),
         **progress(c.plan_show, fact_total, c.date_start, c.date_end, as_of, now=date.today()),
@@ -1049,8 +1053,17 @@ def campaign_stat(campaign_id: int, grain: str = "day",
     # бы сверку несимметричной с другой стороны (ревью 02.10.2026).
     by_day = {d: v for d, v in by_day.items() if d <= today}
     fl = flight_of(c.date_start, c.date_end, today)
+    from app.ad import boost as boost_mod
+    live = boost_mod.active(db, c.id)
+    window = None
+    if boost_mod.is_live(live):
+        # норма РК целиком, а поднимается лишь остаток тех, кого буст касается: pct пересчитан на весь остаток
+        from app.ad.boost_apply import boostable_rest
+        rest_all, rest_free, _n, _f, _fact = boostable_rest(db, c)
+        first, last, pct = boost_mod.boosted_days(live)
+        window = (first, last, boost_mod.effective_pct(rest_all, rest_free, pct))
     out = daily_buckets(c.plan_show, fact, fl, by_day, grain=grain,
-                        date_from=date_from, date_to=date_to, today=today)
+                        date_from=date_from, date_to=date_to, today=today, boost=window)
     if out is None:
         # Ни плана, ни дат — рисовать нечего, и это не ошибка, а состояние экрана.
         return {"buckets": [], "grain": grain, "need_per_day": None,
@@ -1294,6 +1307,9 @@ def set_campaign_status(campaign_id: int, payload: StatusIn,
              if dsp_status == ds.LAUNCHED else None)
 
     db.commit()
+    if raised or stopped:
+        from app.ad import volumes_now
+        volumes_now.push_limits(db, c)     # объём перераскладан — лимиты в DSP сразу (08.10.2026)
     targeting = (_wake_quietly(db, c.deal_id)
                  if dsp_status == ds.LAUNCHED and old != "запущена" else None)
     # Площадкам — только о СТАРТЕ и только один раз: письмо получает площадка, которую
@@ -1504,6 +1520,97 @@ def start_plan(campaign_id: int, db: Session = Depends(get_db), user: User = Dep
             "skip": sum(r["action"] == "skip" for r in rows)}
 
 
+def _pace_of(db: Session, c: AdCampaign, rows: list, as_of) -> dict:
+    """Темп площадок РК (`app/ad/pace`): {id площадки: оценка или None}.
+
+    «Предложено» знает только DSP; если в сутках есть показы Adfox, предложенное по площадке неполно
+    и считается неизвестным — иначе «трафика мало» говорило бы о половине площадки."""
+    from app.ad import pace
+    days: dict = {}
+    mixed: set = set()
+    for pid, d, shows, offered, src in db.execute(text(
+            "SELECT placement_id, date, shows, offered, source FROM ad_campaign_stat "
+            "WHERE campaign_id = :c AND placement_id IS NOT NULL AND source = ANY(:s)"),
+            {"c": c.id, "s": fact_sources()}).all():
+        cell = days.setdefault(pid, {}).setdefault(d, [0, None])
+        cell[0] += shows or 0
+        if src == "dsp" and offered is not None:
+            cell[1] = (cell[1] or 0) + offered
+        elif src != "dsp" and (shows or 0) > 0:
+            mixed.add((pid, d))
+    return {r["id"]: pace.assess(
+        r.get("plan_show"),
+        {d: (v[0], None if (r["id"], d) in mixed else v[1]) for d, v in days.get(r["id"], {}).items()},
+        c.date_end, as_of) for r in rows}
+
+
+def _boost_view(db: Session, campaign_id: int):
+    from app.ad import boost as boost_mod
+    from app.ad.boost_apply import view
+    b = boost_mod.active(db, campaign_id)
+    return view(b) if boost_mod.is_live(b) else None
+
+
+class BoostIn(BaseModel):
+    pct: int
+    days: int
+
+
+@router.get("/campaign/{campaign_id}/boost")
+def boost_state(campaign_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Действующий «темп размещения» РК и границы ввода — для окна кнопки."""
+    from app.ad import boost as boost_mod
+    from app.ad.boost_apply import boostable_rest, view
+    c, deal = _campaign_in_scope(db, campaign_id, user)
+    fl = flight_of(c.date_start, c.date_end)
+    live = boost_mod.active(db, c.id)
+    rest_all, rest_free, free, fixed, fact_total = boostable_rest(db, c)
+    head = db.execute(text(
+        "SELECT coalesce(a.short_name, a.name), b.name FROM sales_deals d "
+        "LEFT JOIN sales_advertisers a ON a.id = d.advertiser_id "
+        "LEFT JOIN sales_brands b ON b.id = d.brand_id WHERE d.id = :d"), {"d": deal.id}).first()
+    return {"boost": view(live), "max_pct": boost_mod.MAX_PCT,
+            "days_left": fl.left if fl else 0, "days_done": fl.done if fl else 0,
+            "can_start": bool(fl and fl.done > 0 and fl.left > 0 and c.status not in build.CAMPAIGN_CLOSED),
+            "deal_code": deal.code, "advertiser": head[0] if head else None,
+            "brand": head[1] if head else None, "service": deal.product,
+            "plan": c.plan_show, "fact": fact_total,
+            "sites_free": free, "sites_fixed": fixed, "rest_free": round(rest_free)}
+
+
+@router.post("/campaign/{campaign_id}/boost")
+def boost_start(campaign_id: int, payload: BoostIn,
+                db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """«Темп размещения»: поднять остаток РК на pct % на days дней и сразу переписать лимиты в DSP.
+
+    Площадки вне нашей DSP лимитов в DSP не имеют — в ответе `external` их новая суточная норма."""
+    from app.ad import boost as boost_mod
+    from app.ad import boost_apply
+    c, _deal = _campaign_in_scope(db, campaign_id, user)
+    _lock_shares(db, c.id)
+    if c.status in build.CAMPAIGN_CLOSED:
+        raise HTTPException(400, "РК окончена — поднимать нечего")
+    try:
+        return boost_apply.apply(db, c, payload.pct, payload.days, user)
+    except boost_mod.BoostError as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
+
+
+@router.delete("/campaign/{campaign_id}/boost")
+def boost_cancel(campaign_id: int, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Снять «темп размещения» досрочно: исходный план возвращается сразу."""
+    from app.ad import boost as boost_mod
+    from app.ad import boost_apply
+    c, _deal = _campaign_in_scope(db, campaign_id, user)
+    _lock_shares(db, c.id)
+    try:
+        return boost_apply.cancel(db, c, user)
+    except boost_mod.BoostError as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
+
+
 @router.put("/placement/{placement_id}/status")
 def set_placement_status(placement_id: int, payload: StatusIn,
                          db: Session = Depends(get_db), user: User = Depends(EDIT)):
@@ -1561,6 +1668,10 @@ def set_placement_status(placement_id: int, payload: StatusIn,
     stage = (advance_deal(db, _deal, RUNNING_STAGE, user, "РК запущена трафиком")
              if dsp_status == ds.LAUNCHED else None)
     db.commit()
+    # Смена статуса перераскладывает объём между площадками: лимиты креативов в DSP — сразу, а не ночью
+    # (владелец 08.10.2026, оперативный старт). Сбой — в отчёт и в журнал, не в ошибку действия.
+    from app.ad import volumes_now
+    limits = volumes_now.push_limits(db, c)
     # Первый запуск площадки её кнопкой — то же письмо, что с кнопки РК (В-4).
     if first:
         _tell_publishers_started(db, c, [p.id])
@@ -1569,7 +1680,7 @@ def set_placement_status(placement_id: int, payload: StatusIn,
                f"{rk_label(db, p.campaign_id)}: площадка {pub_name} {old} → {p.status}"
                + (f"; получателей переведено в размещение: {moved}" if moved else ""))
     return {"id": p.id, "status": p.status, "targets_placed": moved,
-            "dsp_check": getattr(c, "_dsp_check", None), "stage": stage}
+            "dsp_check": getattr(c, "_dsp_check", None), "stage": stage, "limits": limits}
 
 
 # ── внешние системы: пиксель Weborama и выгрузка в DSP ───────────────────────

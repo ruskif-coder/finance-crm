@@ -41,3 +41,15 @@ def placement_facts(db: Session, campaign_ids: Iterable[int]) -> Optional[dict]:
 def _has_any_fact(db: Session) -> bool:
     return db.execute(text("SELECT EXISTS (SELECT 1 FROM ad_campaign_stat "
                            "WHERE source = ANY(:src))"), {"src": fact_sources()}).scalar()
+
+
+def any_facts(db: Session, campaign_id: int) -> dict:
+    """Факт площадок РК по последнему известному срезу, даже устаревшему: {id площадки: показов с начала РК}.
+
+    Для показа на экране и для размера буста: свежего среза нет → раскладка идёт по весам, но остаток площадки
+    всё равно считается от того, что известно, а не от нуля."""
+    from app.ad.stat_sources import fact_sources
+    return {pid: int(n or 0) for pid, n in db.execute(text(
+        "SELECT placement_id, sum(shows) FROM ad_campaign_stat WHERE campaign_id = :c "
+        "AND placement_id IS NOT NULL AND source = ANY(:s) GROUP BY placement_id"),
+        {"c": campaign_id, "s": fact_sources()}).all()}

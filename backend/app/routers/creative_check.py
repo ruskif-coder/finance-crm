@@ -2,7 +2,7 @@
 """Страница «Проверка креатива» (аккаунты, 07.10.2026): загрузить баннер, проверить код, получить нацеливание.
 
 Права: секция `creative_check` — просмотр / правка (загрузка и нацеливание) / удаление. Проверка видна
-только автору: чужие проверки не открываются ни списком, ни по номеру (404).
+только автору (администратор видит все): чужие проверки у остальных не открываются ни списком, ни по номеру (404).
 Историю не храним: через 48 часов крон `app.creative_check.cleanup` останавливает нацеливание и стирает.
 """
 from datetime import datetime
@@ -26,9 +26,10 @@ DELETE = require_permission("creative_check", "delete")
 
 
 def _mine(db: Session, check_id: int, user: User) -> CreativeCheck:
-    """Проверка автора; чужая и просроченная — «не найдена» (не подсказываем, что она есть)."""
+    """Проверка автора (администратору — любая); чужая и просроченная — «не найдена» (не подсказываем,
+    что она есть)."""
     chk = db.query(CreativeCheck).filter(CreativeCheck.id == check_id).first()
-    if not chk or chk.created_by != user.id or chk.expires_at < datetime.utcnow():
+    if not chk or (chk.created_by != user.id and not service.sees_all(user))             or chk.expires_at < datetime.utcnow():
         raise HTTPException(status_code=404, detail="Проверка не найдена или уже удалена по сроку")
     return chk
 
@@ -41,11 +42,10 @@ def publishers(db: Session = Depends(get_db), current_user: User = Depends(VIEW)
 
 @router.get("")
 def my_checks(db: Session = Depends(get_db), current_user: User = Depends(VIEW)):
-    rows = (db.query(CreativeCheck)
-            .filter(CreativeCheck.created_by == current_user.id,
-                    CreativeCheck.expires_at >= datetime.utcnow())
-            .order_by(CreativeCheck.id.desc()).all())
-    return [service.view(db, r) for r in rows]
+    q = db.query(CreativeCheck).filter(CreativeCheck.expires_at >= datetime.utcnow())
+    if not service.sees_all(current_user):
+        q = q.filter(CreativeCheck.created_by == current_user.id)
+    return [service.view(db, r, current_user) for r in q.order_by(CreativeCheck.id.desc()).all()]
 
 
 @router.post("")
@@ -60,7 +60,7 @@ async def create_check(title: str = Form(...), url: str = Form(...), file: Uploa
         raise HTTPException(status_code=400, detail="; ".join(e.messages))
     log_action(db, current_user, "creative_check_create", "creative_check", chk.id,
                f"«{chk.title}», {chk.kind}, замечаний: {len((chk.verdict or {}).get('warnings', []))}")
-    return service.view(db, chk)
+    return service.view(db, chk, current_user)
 
 
 @router.post("/{check_id}/targeting-link")

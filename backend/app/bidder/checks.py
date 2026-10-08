@@ -46,6 +46,10 @@ def evaluate(campaigns: list, by_fact: bool, slice_vs_raw: Optional[Tuple[int, i
             # Больше плана — перекрут, ошибка. Меньше — часть плана некуда поставить (06.10.2026,
             # 6KZUTN: одна площадка с заданным объёмом на треть плана) — предупреждение.
             diff = sum(plans) - c["plan_show"]
+            # «Темп размещения»: пока буст жив, суммы планов больше плана РК на добавку — это не перекрут.
+            # Верхняя граница добавки: pct % остатка РК (поднимается лишь остаток запущенных без фикса).
+            if diff > 0 and c.get("boost_pct"):
+                diff -= max(0.0, c["plan_show"] - sum(c["facts"])) * c["boost_pct"] / 100.0
             msg = (f"{c['code']}: планы {round(sum(plans))} при плане РК {round(c['plan_show'])}"
                    f" ({'+' if diff > 0 else '−'}{round(abs(diff))})")
             if diff > len(plans):
@@ -143,11 +147,14 @@ def gather(db, dsp_db, today: date) -> dict:
           LEFT JOIN ad_campaign_placement p ON p.campaign_id = c.id
          WHERE c.plan_show > 0 AND (c.status IS NULL OR c.status <> ALL(:closed))
          ORDER BY c.id"""), {"src": fact_sources(), "closed": list(CAMPAIGN_CLOSED)}).mappings().all()
+    boosts = {b: pct for b, pct in db.execute(text(
+        "SELECT campaign_id, pct FROM ad_campaign_boost WHERE ended_at IS NULL "
+        "AND starts_on <= :t AND until >= :t"), {"t": today})}
     camps: dict = {}
     for r in rows:
         c = camps.setdefault(r["id"], {k: r[k] for k in (
             "code", "plan_show", "date_start", "date_end", "status", "in_dsp", "creatives")}
-            | {"plans": [], "facts": []})
+            | {"plans": [], "facts": [], "boost_pct": boosts.get(r["id"], 0)})
         c["plans"].append(r["pl_plan"])
         c["facts"].append(int(r["pl_fact"] or 0))
     # Сбой базы DSP стоит одной проверки (сверки среза с сырьём), а не всех: раньше он

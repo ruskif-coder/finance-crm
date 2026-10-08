@@ -33,6 +33,16 @@ def test_parse_missing_is_not_zero_and_total_ignored():
     assert miss == ["BBBB000000000002"], "спрошенный и не пришедший хеш — «нет данных»"
 
 
+def test_parse_reads_offered_traffic_and_keeps_none_when_absent():
+    res = {"aaaa000000000001": {"show": 12, "click": 1, "spent": 1, "bid_statistic": 13950},
+           "aaaa000000000002": {"show": 0, "click": 0, "spent": 0, "bid_statistic": 0},
+           "aaaa000000000003": {"show": 5, "click": 0, "spent": 0}}
+    got, _ = S.parse(res, ["AAAA000000000001", "AAAA000000000002", "AAAA000000000003"])
+    assert got["AAAA000000000001"].offered == 13950
+    assert got["AAAA000000000002"].offered == 0, "предложено ноль — это значение, а не «нет данных»"
+    assert got["AAAA000000000003"].offered is None
+
+
 class _Batches:
     contour, partner_xxhash = PROD, PARTNER
 

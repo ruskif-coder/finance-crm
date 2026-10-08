@@ -161,6 +161,8 @@ ACTION_LABELS = {
     "set_traffic_manager": "Назначен ответственный трафика",
     "ad_campaign_status": "Статус РК изменён",
     "dsp_refresh": "Данные РК обновлены в DSP",
+    "ad_boost_start": "Темп размещения: остаток РК поднят",
+    "ad_boost_cancel": "Темп размещения снят",
     "adfox_import": "Импорт отчёта Adfox в факт РК",
     "ord_direct_advertiser": "Прямой рекламодатель (ОРД)",
     "ad_campaign_finish": "РК завершена",

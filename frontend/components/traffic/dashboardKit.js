@@ -540,6 +540,7 @@ const DayCardBody = ({ b, label }) => {
   const ctr = past && b.shows ? (b.clicks / b.shows * 100) : null
   const rows = [
     ['Показы план', num(b.plan), 'var(--text-primary)'],
+    ...(b.boost_extra ? [['В т. ч. темп размещения', `+${num(b.boost_extra)}`, 'var(--warning-text)']] : []),
     ['Показы факт', past ? num(b.shows) : DASH, past ? 'var(--blue)' : 'var(--text-faint)'],
     ['Клики', past ? num(b.clicks) : DASH, past ? 'var(--text-primary)' : 'var(--text-faint)'],
     ['CTR', ctr == null ? DASH : `${ctr.toFixed(2).replace('.', ',')} %`,
@@ -652,6 +653,8 @@ export const Dynamics = ({ data, label }) => {
       <div style={{ display: 'flex', gap: 3, alignItems: 'flex-end' }}>
         {data.buckets.map((b, i) => {
           const planCells = Math.round((b.plan || 0) / max * BAR_ROWS)
+          // «Темп размещения»: добавка буста — верхняя часть плана другим цветом, пропорционально.
+          const boostCells = Math.min(planCells, Math.round((b.boost_extra || 0) / max * BAR_ROWS))
           const factCells = b.days_past ? Math.round((b.shows || 0) / max * BAR_ROWS) : 0
           const on = tip && tip.i === i
           const track = (e) => {
@@ -669,7 +672,8 @@ export const Dynamics = ({ data, label }) => {
                 return (
                   <span key={k} style={{ height: 7, borderRadius: 2,
                     background: rank <= factCells ? 'var(--blue)'
-                      : rank <= planCells ? 'var(--blue-soft)' : 'var(--bg-subtle)' }} />
+                      : rank <= planCells - boostCells ? 'var(--blue-soft)'
+                        : rank <= planCells ? 'var(--warning)' : 'var(--bg-subtle)' }} />
                 )
               })}
             </span>

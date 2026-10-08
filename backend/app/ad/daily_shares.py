@@ -41,6 +41,13 @@ def run(dry_run: bool = False, client=None, campaign_ids=None) -> dict:
             log.exception("журнал биддера: прогон не заведён")
     db = SessionLocal()
     try:
+        # «Темп размещения» (`app/ad/boost`): истёкший буст закрывается ДО пересчёта — раскладка и лимиты
+        # ниже уже идут по исходному плану. Событие трафику («верни лимиты Adfox») — после коммита.
+        ended = []
+        if not dry_run:
+            from app.ad import boost
+            ended = boost.expire_due(db)
+            db.commit()
         shares = build.refresh_weights(db, commit=not dry_run, campaign_ids=campaign_ids)
         if dry_run:
             db.rollback()
@@ -68,6 +75,9 @@ def run(dry_run: bool = False, client=None, campaign_ids=None) -> dict:
                     limits.append({"campaign_id": camp.id, "updated": 0, "zero": [],
                                    "failed": [{"creative_id": None, "error": str(e)}]})
         failed = sum(len(x["failed"]) for x in limits)
+        if ended:
+            from app.ad import boost_apply
+            boost_apply.notify_ended(db, ended)
         from app.ad.stat_sources import fact_as_of
         limit_errors = [f for x in limits for f in x["failed"]]
         # Ручной прогон по части РК (`campaign_ids`) не проверяет и не тревожит по всем

@@ -31,6 +31,9 @@ class Numbers:
     shows: int
     clicks: int
     spend: Optional[Decimal]
+    # Предложено сетью за сутки (`bid_statistic`); None — в ответе поля не было. Это «доступный
+    # трафик» площадки, нужен для оценки темпа (`app/ad/pace`).
+    offered: Optional[int] = None
 
 
 @dataclass
@@ -72,7 +75,8 @@ def parse(result: dict, asked: Iterable[str]) -> tuple:
             missing.append(h)
             continue
         out[h.upper()] = Numbers(_int(v.get("show")), _int(v.get("click")),
-                                 _money(v.get("spent")))
+                                 _money(v.get("spent")),
+                                 _int(v.get("bid_statistic")) if "bid_statistic" in v else None)
     return out, missing
 
 

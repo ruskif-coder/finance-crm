@@ -93,8 +93,14 @@ def create(db: Session, user, title: str, url: str, filename: str, data: bytes) 
     return chk
 
 
-def view(db: Session, chk: CreativeCheck) -> dict:
-    """Карточка проверки для экрана: замечания, срок, площадки с доменами, ссылка предпросмотра."""
+def sees_all(user) -> bool:
+    """Администратор видит проверки ВСЕХ (владелец 08.10.2026: «я должен видеть все»); остальные — свои."""
+    return getattr(getattr(user, "role", None), "key", None) == "admin"
+
+
+def view(db: Session, chk: CreativeCheck, viewer=None) -> dict:
+    """Карточка проверки для экрана: замечания, срок, площадки с доменами, ссылка предпросмотра, автор."""
+    author = db.execute(text("SELECT name FROM users WHERE id = :u"), {"u": chk.created_by}).scalar()
     names = {}
     if chk.publisher_ids:
         for pid, name, domain in db.execute(
@@ -108,6 +114,7 @@ def view(db: Session, chk: CreativeCheck) -> dict:
         "warnings": v.get("warnings", []), "prepared": v.get("prepared", []), "info": v.get("info", {}),
         "created_at": chk.created_at.isoformat(), "expires_at": chk.expires_at.isoformat(),
         "dsp_state": chk.dsp_state,
+        "author": author, "mine": viewer is None or chk.created_by == getattr(viewer, "id", None),
         "sandbox_url": sandbox.public_url(chk.sandbox_token, chk.entry_path),
         "publishers": [names[i] for i in chk.publisher_ids if i in names],
     }

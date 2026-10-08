@@ -2038,7 +2038,13 @@ def apply_platform_verdict(db: Session, pair_id: int, verdict: str,
     # доезжало ночным прогоном — до суток ожидания на действии, которое делается за
     # минуты (владелец 18.09.2026).
     from app.ad.build import sync_deal_quietly
-    sync_deal_quietly(db, deal.id)
+    if verdict == "ок":
+        # Согласованная площадка меняет объёмы СРАЗУ: пересборка РК и лимиты креативов в DSP по событию, а не
+        # ночью (владелец 08.10.2026). Не падает — вердикт уже записан, ночной прогон страхует.
+        from app.ad.volumes_now import refresh_volumes_now
+        refresh_volumes_now(db, deal.id)
+    else:
+        sync_deal_quietly(db, deal.id)
     who = f" ({author_name})" if source == "кабинет" else ""
     from app.launch_prep.cabinet_label import verdict_prefix
     tgt_pub = db.query(LaunchPrepTarget.publisher_id).filter(

@@ -505,8 +505,13 @@ def daily_buckets(plan: Optional[float], fact: Optional[float], fl: Optional[Fli
                   facts_by_day: dict, grain: str = "day",
                   date_from: Optional[date] = None,
                   date_to: Optional[date] = None,
-                  today: Optional[date] = None) -> Optional[dict]:
+                  today: Optional[date] = None,
+                  boost: Optional[tuple] = None) -> Optional[dict]:
     """Столбцы графика «план против факта» с пересчётом плана на остаток.
+
+    `boost` = (первый день, последний день, pct) — «темп размещения» (`app/ad/boost`): будущие дни окна
+    идут с нормой `need × (1 + pct/100)`, добавка (`boost_extra`) красится на графике другим цветом;
+    остаток после окна пересчитан так, чтобы сумма будущих столбцов по-прежнему закрывала остаток.
 
     Правило пересчёта (требование брифа): прошедшие дни держат ИСХОДНЫЙ план — их уже
     не переиграть, — а будущие получают `(план − факт) ÷ остаток дней`. Такой столбец
@@ -529,6 +534,7 @@ def daily_buckets(plan: Optional[float], fact: Optional[float], fl: Optional[Fli
     # иначе `need` пустой, и в первый день запуска все будущие столбцы рисовались с
     # планом 0 — «план не рисуется до конца размещения» (владелец 01.10.2026, 54ZYCH).
     need = need_per_day(plan, fact if fact is not None else 0, fl) or 0.0
+    rate, extra_of = _day_rates(need, fl, boost, today)
 
     buckets = []
     start = lo
@@ -538,16 +544,19 @@ def daily_buckets(plan: Optional[float], fact: Optional[float], fl: Optional[Fli
         past = sum(1 for i in range(size) if start + timedelta(days=i) <= today)
         shows = sum(facts_by_day.get(start + timedelta(days=i), (0, 0))[0] for i in range(size))
         clicks = sum(facts_by_day.get(start + timedelta(days=i), (0, 0))[1] for i in range(size))
+        future = [start + timedelta(days=i) for i in range(past, size)]
         if past == size:
             plan_sum = size * per_day          # целиком прошедший столбец — исходный план
             repaced = False
+            extra = 0.0
         else:
-            plan_sum = past * per_day + (size - past) * need
+            plan_sum = past * per_day + sum(rate(d) for d in future)
             repaced = True
+            extra = sum(extra_of(d) for d in future)
         buckets.append({
             "date_from": start, "date_to": end, "days": size, "days_past": past,
             "plan": round(plan_sum), "shows": shows, "clicks": clicks,
-            "repaced": repaced,
+            "repaced": repaced, "boost_extra": round(extra),
         })
         start = end + timedelta(days=1)
 
@@ -558,6 +567,25 @@ def daily_buckets(plan: Optional[float], fact: Optional[float], fl: Optional[Fli
         "days_left": fl.left,
         "speed": round(fact / fl.done) if (fl.done and fact is not None) else None,
     }
+
+
+def _day_rates(need: float, fl: Flight, boost: Optional[tuple], today: date):
+    """(норма дня, добавка буста дня) для будущих дней. Без буста — везде `need`, добавка 0."""
+    if not boost or not need or not fl.left:
+        return (lambda d: need), (lambda d: 0.0)
+    first, last, pct = boost
+    k = pct / 100.0
+    # будущие дни окна: после сегодняшнего (он «отчитан») и в пределах флайта
+    n_boost = max(0, min((last - today).days, fl.left) - max(0, (first - today).days - 1))
+    boosted = need * (1 + k)
+    rest_after = max(0.0, need * fl.left - n_boost * boosted)
+    after = rest_after / (fl.left - n_boost) if fl.left > n_boost else 0.0
+
+    def in_window(d):
+        return first <= d <= last and d > today
+
+    return ((lambda d: boosted if in_window(d) else after),
+            (lambda d: need * k if in_window(d) else 0.0))
 
 
 # ── недокрут по площадкам поперёк РК (виджет «Площадки-виновники») ───────────

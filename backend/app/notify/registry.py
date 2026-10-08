@@ -510,6 +510,29 @@ register(Event(
 ))
 
 register(Event(
+    key="traffic_boost_started", direction="traffic", group="Рекламная кампания",
+    title="Темп размещения: остаток РК поднят",
+    description=("Владелец 08.10.2026. Трафик поднял остаток РК на X % на N дней («Темп размещения» над "
+                 "графиком открутки). Лимиты креативов в DSP уже переписаны; площадки вне нашей DSP "
+                 "(Adfox) лимитов в DSP не имеют — им нужно поменять лимиты руками, новая суточная "
+                 "норма в тексте. Тому, кто нажал, не приходит: он видит то же в окне результата."),
+    tone="warn", action="Открыть дашборд", widget_group="Сделки", scan=False,
+    recipients=[{"type": "staff_group", "value": "traffic"}],
+    channels={"app": True},
+))
+
+register(Event(
+    key="traffic_boost_ended", direction="traffic", group="Рекламная кампания",
+    title="Темп размещения закончен",
+    description=("Буст истёк, снят досрочно или РК окончена: объём возвращён к исходному плану (ночной "
+                 "прогон или кнопка «снять»). Если в РК есть площадки вне нашей DSP — вернуть их "
+                 "лимиты руками, суточная норма в тексте."),
+    tone="warn", action="Открыть дашборд", widget_group="Сделки", scan=False,
+    recipients=[{"type": "staff_group", "value": "traffic"}],
+    channels={"app": True},
+))
+
+register(Event(
     key="traffic_silence", direction="traffic", group="Креативы",
     title="Трафик молчит третий день",
     description=("Материал ждёт проверки трафика, а вердикта нет. Ступень трафика стоит "

@@ -32,6 +32,9 @@ import OffsiteButton from '@/components/traffic/OffsiteButton'
 import PassportButton from '@/components/traffic/PassportButton'
 import StartRkModal from '@/components/traffic/StartRkModal'
 import DspRefreshModal from '@/components/traffic/DspRefreshModal'
+import BoostModal from '@/components/traffic/BoostModal'
+import PaceCell from '@/components/traffic/PaceCell'
+import { GearIcon } from '@/components/Nav'
 import AdfoxImportModal from '@/components/traffic/AdfoxImportModal'
 import AimButton from '@/components/traffic/AimButton'
 import safeHref from '@/lib/safeHref'
@@ -560,6 +563,7 @@ export default function TrafficDashboard() {
      нажатия, а откатывать нечем. */
   const [extAsk, setExtAsk] = useState(null)     // { row, kind, plan }
   const [startAsk, setStartAsk] = useState(null) // строка РК в окне запуска
+  const [boostAsk, setBoostAsk] = useState(null)       // строка РК в окне «Темп размещения»
   const [refreshAsk, setRefreshAsk] = useState(null) // строка РК в окне «Обновить данные в DSP»
   const [adfoxOpen, setAdfoxOpen] = useState(false) // окно «Импорт ADFOX»
   const tgt = useTargetingCampaign()              // демо-кампания нацеливания: «протухла» ли
@@ -1200,16 +1204,16 @@ export default function TrafficDashboard() {
 
                       {d && !!d.placements.length && !byCr && (
                         <>
-                          <div style={{ display: 'grid', gap: 9, padding: '0 0 6px',
-                            gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 82px 68px',
+                          <div style={{ display: 'grid', gap: 6, padding: '0 0 6px',
+                            gridTemplateColumns: 'minmax(0,1.3fr) 84px 44px 76px 56px 88px 88px 88px 96px 132px 76px 64px',
                             borderBottom: '1px solid var(--border-inner)' }}>
-                            {['Площадка', 'Креативы', 'Код', 'Вес', 'Доля', 'План', 'Факт', 'Недокрут', 'Статус', 'Е·W·D·С', '']
+                            {['Площадка', 'Креативы', 'Код', 'Вес', 'Доля', 'План', 'Факт', 'Недокрут', 'Темп', 'Статус', 'Е·W·D·С', '']
                               .map((h, i) => (
                                 <span key={h} style={{ fontFamily: MONO, fontSize: 9,
                                   letterSpacing: '.08em', textTransform: 'uppercase',
                                   color: 'var(--text-faint)',
                                   textAlign: i >= 3 && i <= 7 ? 'right'
-                                    : (i === 8 || i === 9) ? 'center' : 'left' }}>{h}</span>
+                                    : (i === 9 || i === 10) ? 'center' : 'left' }}>{h}</span>
                               ))}
                           </div>
                           {/* Площадки «не наш код» — всегда сверху (владелец 30.09.2026): их запуск
@@ -1220,8 +1224,8 @@ export default function TrafficDashboard() {
                                 > 100 % — красным; причина в подсказке. */}
                             <div onClick={() => setOpenPlace(x => (x === p.id ? null : p.id))}
                               title={volTitle(d.volumes, p.publisher_id)}
-                              style={{ display: 'grid', gap: 9, alignItems: 'center', cursor: 'pointer',
-                              gridTemplateColumns: 'minmax(0,1.3fr) 96px 46px 84px 62px 96px 96px 96px 132px 82px 68px',
+                              style={{ display: 'grid', gap: 6, alignItems: 'center', cursor: 'pointer',
+                              gridTemplateColumns: 'minmax(0,1.3fr) 84px 44px 76px 56px 88px 88px 88px 96px 132px 76px 64px',
                               padding: '7px 0', borderBottom: '1px solid var(--border-row)',
                               background: volTint(d.volumes, p.publisher_id) }}>
                               {/* Обрезается НАЗВАНИЕ, а метки остаются целыми: «не на…» не читается. */}
@@ -1274,6 +1278,7 @@ export default function TrafficDashboard() {
                               <span style={{ fontFamily: MONO, fontSize: 11, textAlign: 'right',
                                 color: p.under ? 'var(--danger)' : 'var(--text-faint)' }}>
                                 {p.under == null ? DASH : `−${num(p.under)}`}</span>
+                              <PaceCell pace={p.pace} />
                               {/* Статус ПОКАЗЫВАЕМ, а меняем кнопками: первые три значения
                                   ставит конвейер согласования, и выпадашка предлагала бы
                                   выбрать то, что человек не выбирает. */}
@@ -1353,6 +1358,22 @@ export default function TrafficDashboard() {
                         <span style={{ ...CAP, marginBottom: 0 }}>динамика показов</span>
                         <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 5,
                           alignItems: 'center' }}>
+                          {/* Видна всем с доступом к дашборду: аккаунт и продавец открывают окно в режиме чтения
+                              («меняет трафик»), применяет трафик (макет 08.10.2026). Флайт кончился — кнопка неактивна. */}
+                          {(
+                            <button disabled={detail[r.id]?.days_left === 0}
+                              style={{ ...btnSm(!!detail[r.id]?.boost), textTransform: 'uppercase',
+                              letterSpacing: '.04em', display: 'inline-flex', alignItems: 'center', gap: 6,
+                              opacity: detail[r.id]?.days_left === 0 ? 0.5 : 1 }}
+                              title={detail[r.id]?.days_left === 0 ? 'Флайт закончился — поднимать нечего'
+                                : 'Настройки темпа размещения: временно поднять остаток РК на заданный процент на несколько дней'}
+                              aria-label="Настройки темпа размещения"
+                              onClick={() => setBoostAsk(r)}>
+                              <GearIcon size={13} />
+                              темп размещения{detail[r.id]?.boost
+                                ? ` · +${detail[r.id].boost.pct} % до ${dm(detail[r.id].boost.until)}` : ''}
+                            </button>
+                          )}
                           {[['day', 'дни'], ['week', 'недели']].map(([g, l]) => (
                             <button key={g} style={btnSm((grain[r.id] || 'day') === g)}
                               onClick={() => { setGrain(x => ({ ...x, [r.id]: g }))
@@ -1406,7 +1427,9 @@ export default function TrafficDashboard() {
                           {/* Подсказка по цветам — в правом верхнем углу блока: без неё
                               светлый и сплошной столбцы читаются как «мало» и «много». */}
                           <span style={{ display: 'inline-flex', gap: 10, marginLeft: 6 }}>
-                            {[['план', 'var(--blue-soft)'], ['факт', 'var(--blue)']].map(([l, c]) => (
+                            {[['план', 'var(--blue-soft)'], ['факт', 'var(--blue)'],
+                              ...((stat[r.id]?.buckets || []).some(b => b.boost_extra)
+                                ? [['темп размещения', 'var(--warning)']] : [])].map(([l, c]) => (
                               <span key={l} style={{ display: 'inline-flex', alignItems: 'center',
                                 gap: 5, fontSize: 10.5, color: 'var(--text-muted)' }}>
                                 <span style={{ width: 8, height: 8, borderRadius: 2, background: c }} />{l}
@@ -1650,6 +1673,16 @@ export default function TrafficDashboard() {
 
       {adfoxOpen && (
         <AdfoxImportModal auth={auth} onClose={() => setAdfoxOpen(false)} onDone={load} />
+      )}
+      {boostAsk && (
+        <BoostModal row={boostAsk} auth={auth} canEdit={mayEdit} onClose={() => setBoostAsk(null)}
+          onDone={async () => {
+            const [d] = await Promise.all([
+              api.get(`/traffic-dashboard/campaign/${boostAsk.id}`, auth()),
+              loadStat(boostAsk.id, grain[boostAsk.id] || 'day', range[boostAsk.id]),
+            ])
+            setDetail(x => ({ ...x, [boostAsk.id]: d.data }))
+          }} />
       )}
       {refreshAsk && (
         <DspRefreshModal row={refreshAsk} auth={auth} onClose={() => setRefreshAsk(null)}
