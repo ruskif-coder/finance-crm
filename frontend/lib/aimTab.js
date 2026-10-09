@@ -108,6 +108,9 @@ export async function issueAimAt(api, auth, path, params = {}) {
   } catch (e) {
     const why = e?.response?.data?.detail || 'Не удалось выпустить ссылку нацеливания'
     aimTabFail(tab, why)
-    return { active: false, restarted: false, message: why, failed: true }
+    // status и сырой ответ — для журнала в окне ожидания: человеку нужен не только текст, но и
+    // «что именно ответил сервер» (09.10.2026).
+    return { active: false, restarted: false, message: why, failed: true,
+             status: e?.response?.status || 0, raw: e?.response?.data ?? e?.message ?? null }
   }
 }

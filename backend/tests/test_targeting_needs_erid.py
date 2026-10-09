@@ -29,9 +29,20 @@ def _db_with(row):
         def first(self):
             return row
 
+        def all(self):
+            return [row]
+
+    class _Rows:
+        def all(self):
+            # одна наша веб-пара с согласованным креативом: остальное решает ЕРИД
+            return [(row.id, "web", True, True)]
+
     class _Db:
         def query(self, *a, **k):
             return _Q()
+
+        def execute(self, *a, **k):
+            return _Rows()
 
     return _Db()
 

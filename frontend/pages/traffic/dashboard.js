@@ -1156,7 +1156,7 @@ export default function TrafficDashboard() {
                                   {g.ms_title || DASH}</span>
                                 {/* Нацеливание для скриншотов после старта (01.10.2026) — на
                                     текущую версию комплекта этого креатива. */}
-                                {!!g.set_id && <AimButton setId={g.set_id} tgtState={tgt.state} compact />}
+                                {!!g.set_id && <AimButton setId={g.set_id} tgtState={tgt.state} offWhy={g.aim_off} compact />}
                                 <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11 }}>
                                   план {num(g.plan)}</span>
                                 <span style={{ fontFamily: MONO, fontSize: 11,

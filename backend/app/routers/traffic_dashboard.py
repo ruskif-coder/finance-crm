@@ -469,9 +469,14 @@ def _creatives_of(db: Session, campaign_id: int) -> dict:
          WHERE c.campaign_id = :c
          ORDER BY c.placement_id, c.creative_no
     """), {"c": campaign_id, "rej": CREATIVE_REJECTED}).mappings().all()
+    # Кнопка «◎ нацелить» заперта с причиной, пока у комплекта нет нашей площадки с согласованным
+    # креативом и готовым ЕРИД (`aim_gate`, владелец 09.10.2026), а не жмётся вхолостую:
+    # TL5A8E, сервер отвечал отказом, а при заблокированном окне он не был виден.
+    from app.dsp.targeting_creative import aim_gate
+    gate = aim_gate(db, {r["set_id"] for r in rows if r["set_id"]})
     out: dict = {}
     for r in rows:
-        out.setdefault(r["placement_id"], []).append(dict(r))
+        out.setdefault(r["placement_id"], []).append({**r, "aim_off": gate.get(r["set_id"])})
     return out
 
 

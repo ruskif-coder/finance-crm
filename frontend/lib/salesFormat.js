@@ -39,6 +39,17 @@ export const mln = (v, d = 1) => (v == null ? '—'
 export const mlnAuto = (v) => (v == null ? '—'
   : (v / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: Math.abs(v) >= 1e7 ? 0 : 1 }))
 
+// Короткое число с единицей: «114 тыс.», «1,2 млн», «950». Для аудиторий и показов, где
+// диапазон от сотен до миллионов и «в миллионах» даёт «0,1» (аудитория площадок, 09.10.2026).
+export const shortNum = (v) => (v == null ? '—'
+  : Math.abs(v) >= 1e6 ? `${(v / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: Math.abs(v) >= 1e7 ? 0 : 1 })} млн`
+  : Math.abs(v) >= 1e3 ? `${Math.round(v / 1e3).toLocaleString('ru-RU')} тыс.`
+  : Math.round(v).toLocaleString('ru-RU'))
+
+// Число с пробелами-разрядами и не более d знаков (для ячеек ввода: без единиц, без «тыс.»); пусто → ''.
+export const grpDec = (v, d = 1) => (v == null ? ''
+  : new Intl.NumberFormat('ru-RU', { maximumFractionDigits: d }).format(v).replace(/ /g, ' '))
+
 // Проценты, 1 знак.
 export const pct = (v) => (v == null ? '—'
   : v.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%')

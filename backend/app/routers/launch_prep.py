@@ -1240,12 +1240,10 @@ def issue_targeting_link(set_id: int, db: Session = Depends(get_db),
     #     без готового ЕРИД (`ord.readiness`) ссылку не выпускаем, иначе копия уходит с
     #     заглушкой TEST00000, а настоящий маркер до неё не доходит (9HT4V9 №3, 05–06.10).
     # Умолчание строгое: вызов без признака не выпустит боевую ссылку с заглушкой.
-    if not first_check and not readiness.ready_erid(row):
-        raise HTTPException(status_code=409, detail=(
-            f"Комплект №{row.no}: ждём ЕРИД — нацеливание в боевой РК можно выпустить, когда "
-            "маркер будет готов. Загляните позже"
-            + (f" (сейчас ЕРИД {row.erid}, статус в ОРД: {row.ord_status or 'не получен'})"
-               if getattr(row, "erid", None) else "")))
+    if not first_check:
+        why = tc_mod.aim_gate(db, [row.id])[row.id]
+        if why:
+            raise HTTPException(status_code=409, detail=f"Комплект №{row.no}: {why}")
 
     # Не только завести, но и ЗАПУСТИТЬ: креатив в DSP заводится остановленным, и кука
     # ставилась бы на то, что не крутится (владелец 25.09.2026).

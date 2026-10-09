@@ -149,6 +149,12 @@
           "label": "Согласования",
           "href": "/publishers/approvals",
           "perm": "dir_publishers_approvals"
+        },
+        {
+          "key": "audience",
+          "label": "Аудитория",
+          "href": "/publishers/audience",
+          "perm": "dir_publishers_audience"
         }
       ]
     },

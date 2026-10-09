@@ -538,6 +538,8 @@ app.include_router(publishers.router, prefix="/api/publishers", tags=["publisher
 # Матрица согласований площадка × РК — свой файл и своё право (29.09.2026).
 from app.routers import publisher_matrix  # noqa: E402
 app.include_router(publisher_matrix.router, prefix="/api/publisher-approvals", tags=["publishers"])
+from app.routers import publisher_audience  # noqa: E402 — «Аудитория» (миграция 2026-10-09_publisher_audience.sql)
+app.include_router(publisher_audience.router, prefix="/api/publisher-audience", tags=["publishers"])
 # «Настройки → SIMB ID»: коэффициенты отчётов клиенту, только админ (05.10.2026).
 from app.routers import simb_id  # noqa: E402
 app.include_router(simb_id.router, prefix="/api/settings/simb-id", tags=["settings"])

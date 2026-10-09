@@ -191,6 +191,51 @@ def blind_sets(db: Session, set_ids) -> set:
     return seen - reachable
 
 
+NO_AGREED_TEXT = "Нет согласованного креатива на наших площадках — нацеливать пока нечего"
+
+
+def aim_gate(db: Session, set_ids) -> dict:
+    """{комплект: причина, по которой кнопка «нацелить» заперта; None — открыта}.
+
+    Кнопка активна, когда у комплекта есть НАША веб-площадка (нацеливание её покажет), на
+    которой креатив СОГЛАСОВАН (пара с `agreed_at`, не отозванная) и маркер ЕРИД ГОТОВ
+    (`ord.readiness`) — владелец 09.10.2026. Одна функция на экран и ручку: раньше экран
+    рисовал кнопку по одному признаку, а сервер отказывал по другому.
+    Первичная проверка баннера (`first_check`) в очереди согласования этим правилом НЕ
+    пользуется — там креатив ещё не согласован и маркера нет по определению."""
+    from app.launch_prep.models import LaunchPrepCreativeSet
+    from app.ord import readiness
+    ids = sorted({int(i) for i in set_ids if i is not None})
+    out = {i: None for i in ids}
+    if not ids:
+        return out
+    rows = db.execute(text(
+        "SELECT pr.set_id, t.surface_kind, p.our_code, "
+        "       (pr.agreed_at IS NOT NULL AND pr.withdrawn_at IS NULL) AS agreed "
+        "FROM launch_prep_pair pr "
+        "JOIN launch_prep_target t ON t.id = pr.target_id "
+        "JOIN sales_publishers p ON p.id = t.publisher_id "
+        "WHERE pr.set_id = ANY(:ids) AND t.state NOT IN ('отказ площадки', 'архив')"),
+        {"ids": ids}).all()
+    ours, agreed = set(), set()
+    for set_id, surface, our, ok in rows:
+        if targeting_miss(surface, our) is None:
+            ours.add(set_id)
+            if ok:
+                agreed.add(set_id)
+    sets = {x.id: x for x in db.query(LaunchPrepCreativeSet)
+            .filter(LaunchPrepCreativeSet.id.in_(ids)).all()}
+    for i in ids:
+        if i not in ours:
+            out[i] = BLIND_TEXT
+        elif i not in agreed:
+            out[i] = NO_AGREED_TEXT
+        elif i in sets and not readiness.ready_erid(sets[i]):
+            out[i] = ("Ждём ЕРИД: " + readiness.waiting_text(sets[i]) + ". Загляните позже"
+                      if (sets[i].erid or "").strip() else "Ждём ЕРИД: маркер ещё не выдан. Загляните позже")
+    return out
+
+
 def _client(partner: str) -> MsClient:
     return MsClient(partner_xxhash=partner)
 
@@ -701,6 +746,6 @@ def stop_when_done(db: Session, set_id: int, *, client: Optional[MsClient] = Non
     return True
 
 
-__all__ = ["ensure", "ensure_quietly", "campaign_state", "wake_campaign",
+__all__ = ["aim_gate", "ensure", "ensure_quietly", "campaign_state", "wake_campaign",
            "TargetingCreativeError", "TITLE_PREFIX", "FALLBACK_LINK", "TEST_ERID",
            "RUNNING", "LIVE_DAYS"]
