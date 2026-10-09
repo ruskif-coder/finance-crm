@@ -92,14 +92,20 @@ const fixedVal = (b, i) => {
   if (b.sums[i] != null) return b.sums[i];
   return null;
 };
+// Σ зафиксированных месяцев: услуги (Σ amount), иначе ручная сумма месяца. Та же формула,
+// что `committed_sum` на сервере (routers/year_plan.py).
+export const committedOf = (b) => b.on.reduce((a, v, k) => a + (v ? (fixedVal(b, k) || 0) : 0), 0);
+// Годовой план бренда: колонка не заполнена руками (0) → план равен сумме месяцев
+// (владелец 09.10.2026). Введённое руками число приоритетнее. Ноль в базе = «считать из месяцев».
+export const effPlan = (b) => b.plan || committedOf(b);
 export const monthValue = (b, i) => {
   if (!b.on[i]) return 0;
   const fv = fixedVal(b, i);
   if (fv != null) return fv;
   // остаток плана делится между месяцами без фикс-значения (без услуг и без ручной суммы)
-  const fixedSum = b.on.reduce((a, v, k) => a + (v ? (fixedVal(b, k) || 0) : 0), 0);
+  const fixedSum = committedOf(b);
   const free = b.on.reduce((a, v, k) => a + (v && fixedVal(b, k) == null ? 1 : 0), 0);
-  return free > 0 ? Math.max(0, b.plan - fixedSum) / free : 0;
+  return free > 0 ? Math.max(0, effPlan(b) - fixedSum) / free : 0;
 };
 export const factOf = (b, i) => (b.deals[i] || []).reduce((a, d) => a + (d[2] && !d[3] ? d[1] : 0), 0);
 export const bookedOf = (b, i) => (b.deals[i] || []).reduce((a, d) => a + (d[2] || d[3] ? 0 : d[1]), 0);
@@ -187,7 +193,7 @@ export default function YearPlan({
   onSave, onMatch, saving = false, matching = false, savedAt = '', readOnly = false,
   reps = [], repValue = null, onRep = () => {}, ownRepId = null, isMaster = false,
   mode = 'edit', allData = [], onVerifyPassword, onAddTargeting,
-  onConveyorPreview, onConveyorApply, onExport, vatPct = null,
+  onConveyorPreview, onConveyorApply, onExport, exporting = false, vatPct = null,
 }) {
   const [groups, setGroups] = useState(initial);
   const [pendingDel, setPendingDel] = useState(null);   // { kind:'group'|'brand', gid, bid, label }
@@ -295,7 +301,7 @@ export default function YearPlan({
   const totals = useMemo(() => {
     const filled = groups.filter(g => g.adv_id);
     const allBrands = groups.flatMap(g => g.brands);
-    const plan = allBrands.reduce((a, b) => a + b.plan, 0);
+    const plan = allBrands.reduce((a, b) => a + effPlan(b), 0);
     const fact = allBrands.reduce((a, b) => a + sumMonths(b, factOf), 0);
     const booked = allBrands.reduce((a, b) => a + sumMonths(b, bookedOf), 0);
     return {
@@ -328,7 +334,7 @@ export default function YearPlan({
     const fixedSum = b.on.reduce((a, v, k) => a + (v && (hasSvc(b, k) || (b.locks[k] && b.sums[k] != null)) ? (hasSvc(b, k) ? svcSum(b, k) : b.sums[k]) : 0), 0);
     const freeIdx = b.on.map((v, i) => (v && !b.locks[i] && !hasSvc(b, i) ? i : -1)).filter(i => i >= 0);
     if (!freeIdx.length) return;
-    const per = Math.max(0, b.plan - fixedSum) / freeIdx.length;
+    const per = Math.max(0, effPlan(b) - fixedSum) / freeIdx.length;
     const sums = { ...b.sums };
     freeIdx.forEach(i => { sums[i] = per; });
     patchBrand(gid, b.id, { sums });
@@ -399,6 +405,7 @@ export default function YearPlan({
 
       {/* конвейер: анимация процесса */}
       {conv?.busy && <DownloadOverlay label="Создаём сделки и медиапланы…" />}
+      {exporting && <DownloadOverlay label="Готовим годовой медиаплан в Excel…" />}
 
       {/* конвейер: модалка подтверждения / результата */}
       {conv && !conv.busy && (
@@ -682,7 +689,7 @@ export default function YearPlan({
               )}
 
               {groups.map(g => {
-                const plan = g.brands.reduce((a, b) => a + b.plan, 0);
+                const plan = g.brands.reduce((a, b) => a + effPlan(b), 0);
                 const emptyAdv = !g.adv_id;
                 // Группа считается сохранённой, как только у любой её строки есть line_id.
                 const advLocked = g.brands.some(b => b.line_id);
@@ -821,7 +828,7 @@ export default function YearPlan({
                           const brandList = (advById[g.adv_id] && advById[g.adv_id].brands) || [];
                           // сумма закреплённых месяцев; если она больше годового плана — план не сходится
                           // сумма всех фикс-месяцев: услуги (Σ amount) ИЛИ ручная сумма
-                          const committed = b.on.reduce((a, on, k) => a + (on ? (hasSvc(b, k) ? svcSum(b, k) : (b.sums[k] != null ? b.sums[k] : 0)) : 0), 0);
+                          const committed = committedOf(b);
                           const lockedSum = committed;
                           const overLocked = (b.plan || 0) > 0 && committed > (b.plan || 0);
                           // мини-аналитика: кол-во и сумма добавленных за год услуг
@@ -949,7 +956,11 @@ export default function YearPlan({
                               </span>
 
                               <span style={{ display: 'flex', alignItems: 'center', gap: 4, height: 28, padding: '0 4px 0 8px', background: T.card, border: `1px solid ${overLocked ? T.danger : T.border}`, borderRadius: 9 }}>
-                                <input value={b.plan ? num(b.plan) : ''} placeholder="" disabled={readOnly} onChange={e => patchBrand(g.id, b.id, { plan: parseN(e.target.value) })}
+                                {/* Пусто руками → план считается из месяцев и показан серым плейсхолдером;
+                                    введённое число — приоритетнее (владелец 09.10.2026). */}
+                                <input value={b.plan ? num(b.plan) : ''} placeholder={committed ? num(Math.round(committed)) : ''} disabled={readOnly}
+                                  title={b.plan ? undefined : (committed ? 'План не задан руками — равен сумме месяцев' : undefined)}
+                                  onChange={e => patchBrand(g.id, b.id, { plan: parseN(e.target.value) })}
                                   style={{ width: '100%', minWidth: 0, border: 'none', background: 'transparent', outline: 'none', fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, textAlign: 'right', color: overLocked ? T.danger : T.t1 }} />
                                 {!readOnly && overLocked && (
                                   <span title={`Подставить сумму услуг в план (${num(committed)} ₽)`} onClick={() => patchBrand(g.id, b.id, { plan: Math.round(committed) })}
@@ -1263,7 +1274,7 @@ export default function YearPlan({
           </div>
 
           {groups.filter(g => g.adv_id).map((g, gi) => {
-            const plan = g.brands.reduce((a, b) => a + b.plan, 0);
+            const plan = g.brands.reduce((a, b) => a + effPlan(b), 0);
             const fact = g.brands.reduce((a, b) => a + sumMonths(b, factOf), 0);
             const booked = g.brands.reduce((a, b) => a + sumMonths(b, bookedOf), 0);
             const pct = plan ? (fact / plan) * 100 : 0;
@@ -1295,8 +1306,9 @@ export default function YearPlan({
                   <div style={{ display: 'flex', flexDirection: 'column', background: T.nested, borderRadius: 12, margin: '3px 0 8px', padding: '4px 8px', animation: `rowIn .24s ${T.ease} both` }}>
                     {g.brands.map(b => {
                       const bf = sumMonths(b, factOf), bb = sumMonths(b, bookedOf);
-                      const bp = b.plan ? (bf / b.plan) * 100 : 0;
-                      const bgap = bf + bb - b.plan;
+                      const bplan = effPlan(b);
+                      const bp = bplan ? (bf / bplan) * 100 : 0;
+                      const bgap = bf + bb - bplan;
                       return (
                         <div key={b.id} style={{ display: 'grid', gridTemplateColumns: PROG_COLS, gap: 12, alignItems: 'center', padding: '6px 0', borderTop: `1px solid ${T.nestedRow}` }}>
                           <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, paddingLeft: 27 }}>
@@ -1304,10 +1316,10 @@ export default function YearPlan({
                             <span style={{ fontSize: 12, fontWeight: 600, color: T.t2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.brand || '—'}</span>
                             <span style={{ fontFamily: T.mono, fontSize: 9, color: T.t4, whiteSpace: 'nowrap' }}>{b.on.reduce((a, v) => a + v, 0)} мес.</span>
                           </span>
-                          <span style={{ fontFamily: T.mono, fontSize: 11.5, textAlign: 'right' }}>{kk(b.plan)} ₽</span>
+                          <span style={{ fontFamily: T.mono, fontSize: 11.5, textAlign: 'right' }}>{kk(bplan)} ₽</span>
                           <span style={{ fontFamily: T.mono, fontSize: 11.5, fontWeight: 700, color: T.fact, textAlign: 'right' }}>{kk(bf)} ₽</span>
                           <span style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
-                            <ProgressBar plan={b.plan} fact={bf} booked={bb} height={6} bg="var(--border-card)" />
+                            <ProgressBar plan={bplan} fact={bf} booked={bb} height={6} bg="var(--border-card)" />
                             <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: pctColor(bp), flex: '0 0 42px', textAlign: 'right' }}>{bp.toFixed(0)} %</span>
                           </span>
                           <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.t3, textAlign: 'right' }}>{bb ? kk(bb) + ' ₽' : '—'}</span>

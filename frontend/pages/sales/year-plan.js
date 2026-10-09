@@ -243,7 +243,11 @@ export default function YearPlanPage() {
   // Единица выгрузки — рекламодатель со всеми брендами, как он показан на странице:
   // бренды одного рекламодателя могут лежать в разных планах-пакетах, и выгрузка по
   // плану дала бы только часть брендов.
+  // Книга собирается секунды; пока ждём — экран перекрыт анимацией, чтобы правки не
+  // разошлись с тем, что уйдёт в файл (владелец 09.10.2026).
+  const [exporting, setExporting] = useState(false)
   const onExport = useCallback(async (advId, advName) => {
+    setExporting(true)
     try {
       const q = typeof view === 'number' ? `&rep_id=${view}` : ''
       const res = await api.get(
@@ -261,7 +265,7 @@ export default function YearPlanPage() {
       let msg = ''
       try { msg = JSON.parse(await e.response?.data?.text()).detail } catch {}
       alert(msg || 'Не удалось выгрузить годовой медиаплан')
-    }
+    } finally { setExporting(false) }
   }, [year, view])
 
   const onVerifyPassword = useCallback(async (password) => {
@@ -311,7 +315,7 @@ export default function YearPlanPage() {
               mode={allMode ? 'all' : 'edit'} allData={allData}
               onVerifyPassword={onVerifyPassword} onAddTargeting={onAddTargeting}
               onConveyorPreview={onConveyorPreview} onConveyorApply={onConveyorApply}
-              onExport={onExport} />}
+              onExport={onExport} exporting={exporting} />}
       </div>
     </>
   )

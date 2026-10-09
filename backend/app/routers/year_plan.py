@@ -126,29 +126,34 @@ def _guard_plan_owner(db: Session, plan, user: User):
 
 
 def _guard_line_owners(master: bool, own: set, before, seller, manager) -> None:
-    """403, если не-мастер меняет ответственных строки или заводит строку не на себя.
+    """403, если не-мастер уводит строку из своей корзины или заводит её не на себя.
 
     Сохранение года берёт продавца и аккаунта из брифа строки — так и задумано (бриф —
     источник истины). Но `update_plan` запрещал не-мастеру смену владельцев, а бриф
     это обходил: чужой продавец в брифе — и строка уезжала в чужую корзину, пропадая с
-    экрана сохранившего (аудит 23.09.2026, 1.M3). Новую строку не-мастер заводит только
-    так, чтобы сам был продавцом или аккаунтом: иначе он её больше не увидит.
+    экрана сохранившего (аудит 23.09.2026, 1.M3).
 
-    `before` — ответственные по СОХРАНЁННОМУ брифу строки (None у новой). Сравнение с
-    брифом, а не с колонками строки: на проде 4 из 12 строк уже расходятся с брифом
-    (24.09.2026), и сохранение, которое ничего не меняет, упиралось бы в отказ.
+    Чего заслон боится — что строка ПРОПАДЁТ С ЭКРАНА у того, кто её сохранил. Поэтому
+    правило одно и для новой строки, и для существующей: после сохранения сам сохраняющий
+    обязан остаться продавцом или аккаунтом. Смена продавца при этом допустима — так
+    аккаунт заводит строку на себя, а потом вписывает в бриф продавца (Bausch 09.10.2026:
+    аккаунт шесть раз получала 403 на штатном действии). До 09.10 у существующей строки
+    запрещалась любая смена ответственных, включая такую.
+
+    `before` — ответственные по СОХРАНЁННОМУ брифу строки (None у новой); оставлен в
+    сигнатуре: неизменённая строка проходит всегда, даже если сохраняющий не её владелец
+    по колонкам (на проде 4 из 12 строк расходились с брифом, 24.09.2026).
     """
     if master:
         return
-    if before is not None:
-        if (seller, manager) != tuple(before):
-            raise HTTPException(status_code=403,
-                                detail="Ответственных строки меняет только мастер")
+    if before is not None and (seller, manager) == tuple(before):
         return
-    if not ({seller, manager} & set(own)):
-        raise HTTPException(
-            status_code=403,
-            detail="Новую строку можно завести только на себя — продавцом или аккаунтом")
+    if {seller, manager} & set(own):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=("Строка должна остаться на вас — продавцом или аккаунтом; передать её "
+                "целиком другому может только мастер"))
 
 
 def _guard_deal_owner(db: Session, deal, user: User):
@@ -275,6 +280,30 @@ def _norm_products(products: Any) -> dict:
     return out
 
 
+def committed_sum(line) -> float:
+    """Σ «зафиксированных» месяцев строки: услуги (Σ amount), иначе ручная сумма месяца.
+    Та же формула, что `committed` на экране (components/plan/YearPlan.jsx)."""
+    months_on = list(line.months_on or [])
+    sums, products = line.sums or {}, line.products or {}
+    total = 0.0
+    for k in range(12):
+        if k >= len(months_on) or not months_on[k]:
+            continue
+        items = products.get(str(k)) or []
+        if items:
+            total += sum(float((it or {}).get("amount") or 0) for it in items)
+        elif sums.get(str(k)) is not None:
+            total += float(sums[str(k)])
+    return total
+
+
+def effective_plan(line) -> float:
+    """Годовой план строки. Колонка не заполнена руками (0) — план равен сумме того, что
+    добавили по месяцам (владелец 09.10.2026). Ноль в базе и значит «считать из месяцев»;
+    введённое руками число — приоритетнее."""
+    return float(line.plan_amount) if line.plan_amount else committed_sum(line)
+
+
 def _line_out(l: SalesYearPlanLine) -> dict:
     return {
         "id": l.id,
@@ -282,6 +311,7 @@ def _line_out(l: SalesYearPlanLine) -> dict:
         "advertiser_id": l.advertiser_id,
         "brand_id": l.brand_id,
         "plan_amount": l.plan_amount or 0,
+        "plan_effective": effective_plan(l),
         "months_on": (list(l.months_on or []) + [0] * 12)[:12],
         "sums": l.sums or {},
         "locks": l.locks or {},
@@ -1253,7 +1283,7 @@ def get_all_reps(year: int, db: Session = Depends(get_db),
         a = acc.setdefault(rep, {"plan": 0.0, "fact": 0.0, "booked": 0.0,
                                  "months": [0.0] * 12, "advs": {}})
         f, bk = fact_booked(l)
-        a["plan"] += l.plan_amount or 0
+        a["plan"] += effective_plan(l)
         a["fact"] += f
         a["booked"] += bk
         months_on = (l.months_on or [])
@@ -1267,10 +1297,10 @@ def get_all_reps(year: int, db: Session = Depends(get_db),
             if str(k) in sums:
                 mv = sums[str(k)]
             else:
-                mv = max(0, (l.plan_amount or 0) - locked_sum) / free if free else 0
+                mv = max(0, effective_plan(l) - locked_sum) / free if free else 0
             a["months"][k] += mv
         av = a["advs"].setdefault(l.advertiser_id, {"plan": 0.0, "fact": 0.0, "booked": 0.0, "plans": {}})
-        av["plan"] += l.plan_amount or 0
+        av["plan"] += effective_plan(l)
         av["fact"] += f
         av["booked"] += bk
         # Сами планы-пакеты с брендами — чтобы в режиме «Показать все» их можно было
@@ -1278,12 +1308,12 @@ def get_all_reps(year: int, db: Session = Depends(get_db),
         pk = av["plans"].setdefault(l.plan_id, {"plan_id": l.plan_id,
                                                 "title": plan_titles.get(l.plan_id),
                                                 "plan": 0.0, "fact": 0.0, "booked": 0.0, "brands": []})
-        pk["plan"] += l.plan_amount or 0
+        pk["plan"] += effective_plan(l)
         pk["fact"] += f
         pk["booked"] += bk
         pk["brands"].append({
             "line_id": l.id, "brand": brand_names.get(l.brand_id) or "— бренд не выбран",
-            "plan": round(l.plan_amount or 0, 2), "fact": round(f, 2), "booked": round(bk, 2),
+            "plan": round(effective_plan(l), 2), "fact": round(f, 2), "booked": round(bk, 2),
             "months_on": (list(l.months_on or []) + [0] * 12)[:12],
         })
 

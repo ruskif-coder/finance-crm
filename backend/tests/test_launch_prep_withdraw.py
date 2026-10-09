@@ -59,7 +59,12 @@ def env(monkeypatch):
     живым площадкам стенда."""
     db = SessionLocal()
     _purge(db)
-    deal = db.query(SalesDeal).filter(SalesDeal.code.isnot(None)).first()
+    # Сделка БЕЗ целей запуска и с порядком по id: `.first()` без order_by отдавал разные
+    # строки после любого UPDATE, и 09.10.2026 фикстура упёрлась в живую пару сделка×площадка
+    # (uq_launch_prep_target). Чужих данных фикстура не трогает — берёт чистую сделку.
+    busy = db.query(LaunchPrepTarget.deal_id)
+    deal = (db.query(SalesDeal).filter(SalesDeal.code.isnot(None), ~SalesDeal.id.in_(busy))
+            .order_by(SalesDeal.id).first())
     pub = db.query(SalesPublisher).filter(SalesPublisher.status != 'АРХИВ').first()
     service = db.query(SalesService).filter(SalesService.is_active.is_(True)).first()
     if not (deal and pub and service):

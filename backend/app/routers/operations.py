@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import func, case, or_
+from sqlalchemy import func, case, or_, and_
 from app.files_safe import existing_upload_path, remove_upload
 from app.database import get_db
 from app.xlsx_safe import xlsx_safe
@@ -324,6 +324,27 @@ class OperationCreate(BaseModel):
             raise ValueError("Ставка НДС должна быть в диапазоне 0–100")
         return v
 
+def _apply_dates(query, date_from, date_to):
+    """Диапазон дат. Операция с датой — по дате; планы без даты (ПЛАН ОПЛАТ/ПОСТУПЛЕНИЙ) — по
+    месяцу периода (квартал — по его первому месяцу), иначе фильтр молча терял все планы."""
+    if not (date_from or date_to):
+        return query
+    ym = case(
+        (Operation.period.like('Q1 %'), func.concat(func.substring(Operation.period, 4, 4), '-01')),
+        (Operation.period.like('Q2 %'), func.concat(func.substring(Operation.period, 4, 4), '-04')),
+        (Operation.period.like('Q3 %'), func.concat(func.substring(Operation.period, 4, 4), '-07')),
+        (Operation.period.like('Q4 %'), func.concat(func.substring(Operation.period, 4, 4), '-10')),
+        else_=Operation.period)
+    dated, undated = [Operation.date.isnot(None)], [Operation.date.is_(None)]
+    if date_from:
+        dated.append(Operation.date >= date_from)
+        undated.append(ym >= date_from.strftime('%Y-%m'))
+    if date_to:
+        dated.append(Operation.date <= date_to)
+        undated.append(ym <= date_to.strftime('%Y-%m'))
+    return query.filter(or_(and_(*dated), and_(*undated)))
+
+
 @router.get("/")
 def get_operations(
     skip: int = 0,
@@ -355,10 +376,7 @@ def get_operations(
         query = query.filter(Operation.status.in_(status))
     if bank:
         query = query.filter(Operation.bank.in_(bank))
-    if date_from:
-        query = query.filter(Operation.date >= date_from)
-    if date_to:
-        query = query.filter(Operation.date <= date_to)
+    query = _apply_dates(query, date_from, date_to)
     if article_id:
         query = query.filter(Operation.article_id.in_(article_id))
     if counterparty_id:
@@ -487,10 +505,7 @@ def export_operations(
         query = query.filter(Operation.status.in_(status))
     if bank:
         query = query.filter(Operation.bank.in_(bank))
-    if date_from:
-        query = query.filter(Operation.date >= date_from)
-    if date_to:
-        query = query.filter(Operation.date <= date_to)
+    query = _apply_dates(query, date_from, date_to)
     if article_id:
         query = query.filter(Operation.article_id.in_(article_id))
     if counterparty_id:
