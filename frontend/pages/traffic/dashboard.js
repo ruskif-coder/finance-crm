@@ -19,7 +19,7 @@
  * Пока коннектор не подключён (этап 2c), факта нет ни у одной РК: факт, процент, прогноз
  * и недокрут показываются ПРОЧЕРКОМ, а не нулём. Это норма экрана, а не поломка.
  */
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { can, getPermissions } from '@/components/Navbar'
@@ -37,13 +37,14 @@ import PaceCell from '@/components/traffic/PaceCell'
 import { GearIcon } from '@/components/Nav'
 import AdfoxImportModal from '@/components/traffic/AdfoxImportModal'
 import AimButton from '@/components/traffic/AimButton'
+import RkSummaryRow, { SummaryDot } from '@/components/traffic/RkSummaryRow'
 import safeHref from '@/lib/safeHref'
 import { useTargetingCampaign } from '@/components/traffic/TargetingCampaign'
 import { fmtDateTime, todayMsk } from '@/lib/dates'
 import ExternalLaunch from '@/components/traffic/ExternalLaunch'
 import {
   CreativeCounts, CreativeRows, Culprits, DASH, DayWall, Dynamics, KpiRow, PaceBar, Pips,
-  GOAL_LABELS, MISMATCH_FG, Owners, PlaceActions, ServiceCell, StatusPill, TABLE_LEGEND, TaskDoc, WALL_LEGEND,
+  GOAL_LABELS, MISMATCH_FG, Owners, PlaceActions, RkReportLink, ServiceCell, StatusPill, TABLE_LEGEND, TaskDoc, WALL_LEGEND,
   VerifierStrip, WidgetsToggle, byCreative, num, pctTone,
 } from '@/components/traffic/dashboardKit'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -90,7 +91,8 @@ const COLS = [
   ['Выполнение', 'minmax(150px,1.2fr)', 'done_pct', 'left'],
   ['Прогноз', '104px', 'forecast', 'right'],
   ['Недокрут', '110px', 'under', 'right'],
-  ['', '72px', null, 'right'],
+  // Действия: «Отчёт по РК» + пауза/стоп (11.10.2026). Было 72px на две кнопки — третья наезжала на «Недокрут».
+  ['', '190px', null, 'right'],
 ]
 const GRID = COLS.map(c => c[1]).join(' ')
 
@@ -384,6 +386,16 @@ export default function TrafficDashboard() {
     } catch (e) { setVerifier(null) }
   }, [])
   useEffect(() => { loadVerifier() }, [loadVerifier])
+  // Сводка «всё ли в порядке с РК» — записанный ночной прогон проверок (`app/ad/rk_check.py`). Отдельным
+  // запросом: она не про строки реестра и не должна ронять экран, если прогонов ещё не было.
+  const [summary, setSummary] = useState(null)
+  const loadSummary = useCallback(async () => {
+    try {
+      const r = await api.get('/rk-check/summary', auth())
+      setSummary(r.data)
+    } catch (e) { setSummary(null) }
+  }, [])
+  useEffect(() => { loadSummary() }, [loadSummary])
   /* ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ — только админу.
 
      Кнопку «Обновить из сделок» убрали 04.09.2026 со словами «РК появляются по цепочке,
@@ -450,9 +462,24 @@ export default function TrafficDashboard() {
     setStat(s => ({ ...s, [id]: r.data }))
   }, [])
 
+  // Раскрытая РК встаёт строкой под липкую шапку: расхлоп виден целиком сразу, без ручной прокрутки
+  // (владелец 11.10.2026). Прокрутка плавная и разовая — колесо после неё работает как обычно.
+  // Ждём кадр и долю секунды: если сверху закрылась прежняя открытая РК, разметка ещё съезжает.
+  const alignRow = (id) => {
+    setTimeout(() => {
+      const el = document.getElementById(`rk-row-${id}`)
+      if (!el) return
+      // Высота липкой шапки: измеряем, но не меньше 58px (её штатная высота) — иначе при нулевом замере строка
+      // РК уходит под шапку (11.10.2026, снимок владельца).
+      const navH = Math.max(58, ...Array.from(document.querySelectorAll('[data-navbar]')).map(n => n.getBoundingClientRect().height))
+      const top = el.getBoundingClientRect().top + window.scrollY - navH - 8
+      window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+    }, 60)
+  }
   const toggle = async (id) => {
     const next = open === id ? null : id
     setOpen(next)
+    if (next) alignRow(next)
     if (next && !detail[id]) {
       const r = await api.get(`/traffic-dashboard/campaign/${id}`, auth())
       setDetail(d => ({ ...d, [id]: r.data }))
@@ -627,10 +654,38 @@ export default function TrafficDashboard() {
   }
 
   const all = data?.rows || []
+  // ?open=КОД — «На дашборд» со страницы разбора раскрывает эту РК. toggle пересоздаётся на каждом
+  // рендере, поэтому эффект зовёт его через ref, а не держит в зависимостях.
+  const openCode = String(router.query.open || '')
+  const toggleRef = useRef(null)
+  toggleRef.current = toggle
+  useEffect(() => {
+    if (!openCode || !data?.rows) return
+    const row = data.rows.find(x => String(x.deal_code).toUpperCase() === openCode.toUpperCase())
+    if (row && open !== row.id) toggleRef.current(row.id)
+    router.replace('/traffic/dashboard', undefined, { shallow: true })
+  }, [openCode, data, open, router])
+  const sumOf = (r) => summary?.by_campaign?.[r.id]
+  // Ссылка-действие сводки ведёт в блок расхлопа, а не на новый экран (макет 11.10.2026).
+  const goTo = (r, target) => {
+    if (target === 'deal') { window.open(`/sales/deals/${encodeURIComponent(r.deal_code || r.deal_id)}`, '_blank', 'noopener'); return }
+    if (target === 'adfox') { setAdfoxOpen(true); return }
+    if (target === 'start' && mayEdit) { startCampaign(r); return }
+    if (target === 'start') setByCr(false)
+    if (target === 'placements' || target === 'alloc') setByCr(false)
+    const id = { pixel: 'ext', dsp: 'ext', placements: 'placements', alloc: 'placements', start: 'placements', wr: 'wr', stats: 'stats' }[target]
+    const el = id && document.getElementById(`rk-${r.id}-${id}`)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.style.outline = '2px solid var(--accent-soft)'
+    el.style.outlineOffset = '3px'
+    setTimeout(() => { el.style.outline = ''; el.style.outlineOffset = '' }, 1800)
+  }
   const needsAttention = (r) => !r.plan_show || !r.placements || (r.under || 0) > 0
   const TABS = [
     ['all', 'Все', all.length],
     ['running', 'Запущенные', all.filter(r => r.status === 'запущена').length],
+    ['action', 'Нужно действие', all.filter(r => sumOf(r)?.worst === 'red').length],
     ['attention', 'Требует внимания', all.filter(needsAttention).length],
     ['noplan', 'Без плана', all.filter(r => !r.plan_show).length],
     ['noplaces', 'Без площадок', all.filter(r => !r.placements).length],
@@ -646,6 +701,7 @@ export default function TrafficDashboard() {
 
   const rows = all.filter(r => {
     if (tab === 'running' && r.status !== 'запущена') return false
+    if (tab === 'action' && sumOf(r)?.worst !== 'red') return false
     if (tab === 'attention' && !needsAttention(r)) return false
     if (tab === 'noplan' && r.plan_show) return false
     if (tab === 'noplaces' && r.placements) return false
@@ -826,7 +882,10 @@ export default function TrafficDashboard() {
               {rows.length} из {all.length}</span>
             <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
               {TABS.map(([key, label, n]) => (
-                <button key={key} style={btnSm(tab === key)} onClick={() => setTab(key)}>
+                <button key={key} onClick={() => setTab(key)}
+                  style={{ ...btnSm(tab === key), ...(key === 'action' && n > 0
+                    ? { borderColor: 'var(--danger-border)', color: tab === key ? 'var(--bg-card)' : 'var(--danger-fg)' } : {}) }}
+                  title={key === 'action' ? 'Красная проверка заведения, сбора или раскладки (ночной прогон)' : undefined}>
                   {label} <span style={{ fontFamily: MONO, opacity: .7 }}>{n}</span>
                 </button>
               ))}
@@ -923,7 +982,7 @@ export default function TrafficDashboard() {
               : (live && (!r.plan_show || !r.placements)) ? ROW_TONE.today
                 : ROW_TONE.normal
             return (
-              <div key={r.id}>
+              <div key={r.id} id={`rk-row-${r.id}`}>
                 {/* Строка — ОБВЕДЁННАЯ карточка, тонами из общего кита `ROW_TONE`: ровно
                     так устроен реестр дашборда аккаунтов и так же нарисовано в макете.
                     Заливка сама по себе почти белая — читается именно рамка, поэтому
@@ -946,7 +1005,9 @@ export default function TrafficDashboard() {
                     borderBottom: open === r.id ? 'none' : `1px solid ${u.border}`,
                     background: open === r.id ? 'var(--accent-tint)' : u.bg }}>
                   <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>{open === r.id ? '▾' : '▸'}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: 'var(--accent)' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontFamily: MONO, fontSize: 11.5,
+                    fontWeight: 700, color: 'var(--accent)' }}>
+                    <SummaryDot sum={sumOf(r)} />
                     <CopyCode text={r.deal_code} /></span>
 
                   <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
@@ -1051,7 +1112,9 @@ export default function TrafficDashboard() {
 
                   {/* Действия над ВСЕЙ РК — дубль кнопок расхлопа: решение «стоп» часто
                       принимают, глядя на строку, и раскрывать её ради двух кнопок незачем. */}
-                  <span style={{ justifySelf: 'end' }} onClick={e => e.stopPropagation()}>
+                  <span style={{ justifySelf: 'end', display: 'inline-flex', gap: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                    <a href={`/traffic/campaign/${encodeURIComponent(r.deal_code)}`} title="Отчёт по РК: срезы, площадки, выводы"
+                      style={{ ...btnSm(false), textDecoration: 'none', whiteSpace: 'nowrap' }}>Отчёт по РК</a>
                     {mayEdit && (
                       <PlaceActions
                         status={r.status === 'запущена' ? 'запущен'
@@ -1073,8 +1136,9 @@ export default function TrafficDashboard() {
                     gap: 16, padding: '14px 12px 20px', marginBottom: 8,
                     border: '1px solid var(--border-row)', borderTop: 'none',
                     borderRadius: '0 0 9px 9px', background: 'var(--bg-card)' }}>
+                    <RkSummaryRow sum={sumOf(r)} checkedAt={summary?.checked_at} onAction={(t) => goTo(r, t)} />
                     {/* площадки и распределение */}
-                    <div>
+                    <div id={`rk-${r.id}-placements`}>
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
                         <span style={{ ...CAP, marginBottom: 0 }}>
                           {byCr ? 'креативы и площадки' : 'площадки и распределение'}</span>
@@ -1116,7 +1180,7 @@ export default function TrafficDashboard() {
                             первой, а DSP без пикселя площадку не берёт. Обе спрашивают
                             подтверждение с числами — см. `askExternal`. */}
                         {d && (
-                          <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
+                          <span id={`rk-${r.id}-ext`} style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
                             {/* Архив для площадок без нашего кода: баннеры по папкам площадок +
                                 Excel-паспорт (владелец 29.09.2026, app/traffic/offsite_export.py). */}
                             <PassportButton dealId={r.deal_id} />
@@ -1352,7 +1416,7 @@ export default function TrafficDashboard() {
                     </div>
 
                     {/* динамика */}
-                    <div>
+                    <div id={`rk-${r.id}-stats`}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10,
                         marginBottom: 10, flexWrap: 'wrap' }}>
                         <span style={{ ...CAP, marginBottom: 0 }}>динамика показов</span>
@@ -1470,7 +1534,7 @@ export default function TrafficDashboard() {
                                Строки у цели свои: частота и CR фактом пока не меряются,
                                поэтому столбцы самостоятельные, а не пары «план/факт» —
                                выдуманное соответствие врало бы про то, что сверено. */
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14,
+                            <div id={`rk-${r.id}-wr`} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14,
                               marginTop: 12, borderTop: '1px solid var(--border-inner)' }}>
                               {[[wk(r.id) ? 'эта неделя' : (stat[r.id].totals.as_of ? `за ${dm(stat[r.id].totals.as_of)}` : 'сегодня'), wk(r.id) ? weekTotals(stat[r.id]) : stat[r.id].totals.today],
                                 ['всего за период', stat[r.id].totals.period]]
@@ -1637,8 +1701,12 @@ export default function TrafficDashboard() {
                             </div>
                             {/* Послание аккаунта — между кнопками и ответственными:
                                 читают его перед тем, как что-то нажать. */}
-                            <TaskDoc text={d.traffic_brief} brief={d.mp_brief} deal={r.deal_code}
-                              title={r.deal_title} />
+                            {/* «Отчёт» и «Задачи» — одной ячейкой: отдельным элементом отчёт выталкивал ответственных на новую строку. */}
+                            <span style={{ display: 'inline-flex', gap: 4 }}>
+                              <RkReportLink code={r.deal_code} />
+                              <TaskDoc text={d.traffic_brief} brief={d.mp_brief} deal={r.deal_code}
+                                title={r.deal_title} />
+                            </span>
                             <Owners owners={d.owners} reps={data?.reps}
                               onPick={uid => setTraffic(r, uid)} />
                           </div>

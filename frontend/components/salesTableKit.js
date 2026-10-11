@@ -804,3 +804,23 @@ export const NoAccessScreen = ({ title, nav, what }) => (
     </div>
   </div>
 )
+
+/** Сегментный переключатель «один из нескольких» (разрез, метрика, вкладки). `opts` — [[значение, подпись, подсказка?]];
+ *  `disabled(v)` — недоступный вариант виден, но не нажимается. Первым применён на «Разборе РК» (11.10.2026). */
+export function Seg({ value, opts, onPick, disabled, size = 'md' }) {
+  const h = size === 'sm' ? 20 : 24
+  return (
+    <span style={{ display: 'inline-flex', padding: 3, gap: 2, background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 10 }}>
+      {opts.map(([v, label, title]) => {
+        const on = value === v, off = disabled && disabled(v)
+        return (
+          <button key={String(v)} type="button" title={title || ''} disabled={off} onClick={() => !off && onPick(v)}
+            style={{ display: 'inline-flex', alignItems: 'center', height: h, padding: '0 9px', borderRadius: 7, border: 'none',
+              background: on ? 'var(--bg-card)' : 'transparent', color: on ? 'var(--accent)' : off ? 'var(--text-disabled)' : 'var(--text-secondary)',
+              boxShadow: on ? 'var(--shadow-card)' : 'none', fontSize: 11.5, fontWeight: on ? 700 : 600, fontFamily: UI,
+              whiteSpace: 'nowrap', cursor: off ? 'default' : 'pointer' }}>{label}</button>
+        )
+      })}
+    </span>
+  )
+}

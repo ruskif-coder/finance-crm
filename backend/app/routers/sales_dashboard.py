@@ -2017,7 +2017,7 @@ def deal_campaign(deal_id: str, db: Session = Depends(get_db),
     return {
         "has": True,
         "campaign_id": c.id,
-        "status": effective_campaign_status(c.status, None) if c.status else None,
+        "status": effective_campaign_status(c.status, td._campaign_chain(db, c)) if c.status else None,
         "date_start": c.date_start, "date_end": c.date_end,
         "plan_show": c.plan_show, "fact_shows": fact_shows, "fact_clicks": all_clicks,
         "ctr": round(all_clicks / fact_shows * 100, 2) if fact_shows else None,

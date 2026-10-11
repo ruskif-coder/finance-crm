@@ -279,6 +279,7 @@ ACTION_LABELS = {
     "publisher_audience_delete": "Замер аудитории площадки удалён",
     "publisher_audience_bulk": "Замеры аудитории площадок внесены пачкой",
     "publisher_audience_import": "Аудитория площадок загружена из Excel",
+    "rk_check_run": "Проверка РК запущена вручную",
     "patch_publisher": "Площадка изменена",
     "set_publisher_surface": "Поверхность площадки изменена",
     "delete_publisher_surface": "Поверхность площадки удалена",

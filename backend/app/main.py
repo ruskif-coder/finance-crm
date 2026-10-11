@@ -540,6 +540,10 @@ from app.routers import publisher_matrix  # noqa: E402
 app.include_router(publisher_matrix.router, prefix="/api/publisher-approvals", tags=["publishers"])
 from app.routers import publisher_audience  # noqa: E402 — «Аудитория» (миграция 2026-10-09_publisher_audience.sql)
 app.include_router(publisher_audience.router, prefix="/api/publisher-audience", tags=["publishers"])
+from app.routers import rk_check as rk_check_router  # noqa: E402 — «Проверка РК» (миграция 2026-10-11_rk_check_result.sql)
+app.include_router(rk_check_router.router, prefix="/api/rk-check", tags=["traffic"])
+from app.routers import rk_analysis as rk_analysis_router  # noqa: E402 — «Разбор РК» (без своей схемы)
+app.include_router(rk_analysis_router.router, prefix="/api/rk-analysis", tags=["traffic"])
 # «Настройки → SIMB ID»: коэффициенты отчётов клиенту, только админ (05.10.2026).
 from app.routers import simb_id  # noqa: E402
 app.include_router(simb_id.router, prefix="/api/settings/simb-id", tags=["settings"])

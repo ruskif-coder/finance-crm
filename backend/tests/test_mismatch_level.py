@@ -27,10 +27,16 @@ def test_colours_by_the_owners_scale():
     assert ss.mismatch_level(20.1, 10)["level"] == "bad"
 
 
-def test_weborama_above_our_fact_is_our_collection_problem():
-    v = ss.mismatch_level(-3.0, 10)
-    assert v["level"] == "bad" and v["reason"] == "wr_higher"
-    assert "на нашей стороне" in v["hint"]
+def test_scale_is_symmetric_by_magnitude():
+    """«И больше, и меньше» (владелец 11.10.2026): Weborama выше нашего в пределах порога — не тревога."""
+    assert ss.mismatch_level(-3.0, 10)["level"] == "ok"
+    assert ss.mismatch_level(-10, 10)["level"] == "ok"
+    warn = ss.mismatch_level(-12, 10)
+    assert warn["level"] == "warn" and "больше нашего" in warn["hint"]
+    bad = ss.mismatch_level(-20.1, 10)
+    assert bad["level"] == "bad" and bad["reason"] == "wr_higher"
+    assert ss.mismatch_level(20.1, 10)["reason"] == "over_double"
+    assert "меньше нашего" in ss.mismatch_level(15, 10)["hint"]
 
 
 def test_campaign_stat_puts_weborama_next_to_our_fact(monkeypatch):

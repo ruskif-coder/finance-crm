@@ -199,7 +199,8 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
     # ── площадки и дни: факт системы (в модели — клики/уники из пар + остаток по базе) ─
     by_site: Dict[str, list] = defaultdict(lambda: [0, 0, 0])
     by_day: Dict[date, list] = defaultdict(lambda: [0, 0, 0])
-    site_days: Dict[str, Dict[date, list]] = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+    # [показы, клики, уники] — уники только в модели (`model=True`), их читает и страница разбора РК
+    site_days: Dict[str, Dict[date, list]] = defaultdict(lambda: defaultdict(lambda: [0, 0, 0]))
     for r in rows:
         site, day, sh = r["site"] or NO_PLACEMENT, r["date"], r["shows"] or 0
         if model:
@@ -211,6 +212,7 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
             ck, un = r["clicks"] or 0, 0
         site_days[site][day][0] += sh
         site_days[site][day][1] += ck
+        site_days[site][day][2] += un
         for acc in (by_site[site], by_day[day]):
             acc[0] += sh
             acc[1] += ck

@@ -952,6 +952,21 @@ function MpBrief({ brief }) {
   )
 }
 
+/* Кнопка «Разбор РК» в блоке управления расхлопа — рядом с «Задачи РК» и того же вида (владелец 11.10.2026).
+   Ведёт на страницу разбора одной РК: срезы, площадки с галочками, выводы. */
+export const RkReportLink = ({ code }) => (
+  <a href={`/traffic/campaign/${encodeURIComponent(code || '')}`} title="Отчёт по РК: срезы, площадки, выводы"
+    style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: '2px 8px', textDecoration: 'none' }}>
+    <span style={{ display: 'grid', placeItems: 'center', width: 44, height: 44, borderRadius: 13,
+      background: 'var(--accent-tint)', border: '1px solid var(--accent-border)' }}>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+      </svg>
+    </span>
+    <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--accent)', whiteSpace: 'nowrap' }}>отчёт</span>
+  </a>
+)
+
 /* Две вкладки (владелец 29.09.2026): первая — задача аккаунта трафику (`traffic_brief`
    с карточки сделки), вторая — шапка брифа из медиаплана: рекламодатель, юр. лицо,
    бренд, период, агентство, гео и таргетинг. */
@@ -984,7 +999,7 @@ export const TaskDoc = ({ text, brief, deal, title }) => {
           </svg>
         </span>
         <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.06em',
-          textTransform: 'uppercase', color: fg, whiteSpace: 'nowrap' }}>задачи рк</span>
+          textTransform: 'uppercase', color: fg, whiteSpace: 'nowrap' }}>задачи</span>
       </span>
       {open && (
         <Modal title="Задачи РК" width={760} onClose={() => setOpen(false)}

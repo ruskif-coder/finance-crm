@@ -58,6 +58,11 @@ ALLOWED_DESTRUCTIVE = (
     # погашенное — 30 дней, непрочитанное — 90, журнал отправок — 180. Выполняется кроном,
     # а не на старте и не по клику; условия записаны рядом и держатся тестами
     # `test_notify_lifecycle.py` на границах. Очередь дайджеста (`queued`) не трогается.
+    # Журнал проверок РК (11.10.2026, `ad/rk_check.save`): сегодняшний прогон перезаписывается по своим РК
+    # (повторный запуск не плодит дубли), строки старше трёх календарных месяцев подметаются
+    # (решение владельца, `retention.JOURNAL_MONTHS`). Это журнал результатов, не первичные данные.
+    "DELETE FROM rk_check_result WHERE run_date = :d AND campaign_id = ANY(:i)",
+    "DELETE FROM rk_check_result WHERE run_date < :c",
     "DELETE FROM notifications WHERE",
     "DELETE FROM notification_deliveries WHERE",
     # Возврат умолчания, а не разрушение: в `cabinet_account_notify` строка ОЗНАЧАЕТ

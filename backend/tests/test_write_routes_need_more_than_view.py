@@ -34,6 +34,7 @@ WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 # (метод, путь) -> почему это допустимо под правом «просмотр»
 VIEW_ONLY_WRITES = {
     ("POST", "/api/annexes/export.xlsx"): "выгрузка: POST только из-за тела запроса, ничего не пишет",
+    ("POST", "/api/rk-analysis/{code}/export.xlsx"): "выгрузка среза «Отчёта по РК»: POST только из-за тела запроса, ничего не пишет",
     ("POST", "/api/annexes/party/phrase"): "генерация фразы по стороне договора, ничего не пишет",
     ("POST", "/api/diadoc/import/preview"): "предпросмотр импорта: только разбор файла",
     ("POST", "/api/operations/import/preview"): "предпросмотр импорта: только разбор файла",
