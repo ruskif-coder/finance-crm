@@ -10,7 +10,7 @@ import { MONO, UI, Seg } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { indexData, kpis, sumOf, insights as buildInsights, elapsedDays, planTotal } from '@/lib/rkAnalysis.mjs'
-import { SLICES, METRICS, SOURCES, PERIODS, COMPARES, periodDays, timeRows, tableModel } from '@/lib/rkAnalysisSlices.mjs'
+import { SLICES, METRICS, SOURCES, PERIODS, COMPARES, periodDays, timeRows, tableModel, metricValue } from '@/lib/rkAnalysisSlices.mjs'
 import { downloadName } from '@/lib/salesFormat'
 import RkHead from '@/components/rk/RkHead'
 import RkPlacements from '@/components/rk/RkPlacements'
@@ -77,6 +77,10 @@ export default function RkAnalysisPage() {
   const tRows = isTime ? timeRows(ix, drill?.type === 'placement' ? [drill.id] : onIds, pDays,
     { slice: model.view === 'week' ? 'week' : 'day', metric: st.metric, source: st.source, offIds: st.cmp === 'onoff' && !drill ? offIds : [] }) : []
   const ins = buildInsights(ix, onIds)
+  // Значение выбранной метрики за весь показанный отрезок — в строке над графиком, пока курсор не на дне.
+  const chartIds = drill?.type === 'placement' ? [drill.id] : onIds
+  const chartFact = pDays.filter(x => x <= ix.asOf)
+  const chartTotal = metricValue(ix, sumOf(ix, chartIds, chartFact), chartIds, chartFact, st.metric, st.source)
   const offT = sumOf(ix, offIds, el)
   const ext = (p) => p.external
   const setOnBy = (f) => () => { setOn(Object.fromEntries(all.map(p => [p.id, !!f(p)]))); setDrill(null); setFocus(null) }
@@ -153,7 +157,7 @@ export default function RkAnalysisPage() {
           <TimeChart rows={tRows} metric={st.metric} source={st.source} cmp={st.cmp} events={ix.ev} on={on} tech={tech} setTech={setTech}
             onDay={onDay} pickNote={st.period === 'custom' ? (pick ? 'выберите второй день' : 'кликните начало и конец отрезка') : ''}
             inRange={x => st.period === 'custom' && range && range[0] <= x && x <= range[1]}
-            nPlaces={drill?.type === 'placement' ? 1 : onIds.length} wrLimit={data.head.wr_limit || 10} />
+            nPlaces={drill?.type === 'placement' ? 1 : onIds.length} wrLimit={data.head.wr_limit || 10} total={chartTotal} />
         ) : (
           <RankChart rows={model.rows} metric={st.metric} source={st.source} focus={focus} onRow={d => { setDrill(d); setSort(null) }} />
         )}

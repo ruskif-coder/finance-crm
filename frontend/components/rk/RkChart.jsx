@@ -17,7 +17,7 @@ export function fmtMetric(v, metric, source) {
   return nf(v)
 }
 
-export function TimeChart({ rows, metric, source, cmp, events, on, tech, setTech, onDay, pickNote, inRange, nPlaces, wrLimit }) {
+export function TimeChart({ rows, metric, source, cmp, events, on, tech, setTech, onDay, pickNote, inRange, nPlaces, wrLimit, total }) {
   const [hover, setHover] = useState(null)
   const isPct = metric === 'ctr' || metric === 'plan' || (metric === 'shows' && source === 'diff')
   const showsOur = metric === 'shows' && source === 'our'
@@ -62,6 +62,16 @@ export function TimeChart({ rows, metric, source, cmp, events, on, tech, setTech
     step && [`площадок в работе · шкала 0–${NP}`, 'var(--text-muted)', 14, 2],
   ].filter(Boolean)
   const R = hr ? hr.t : null
+  // Строка над графиком: ПЕРВОЙ — выбранная метрика (за день под курсором или за весь отрезок), рядом сравнение,
+  // дальше разбивка без повтора той же величины (владелец 12.10.2026: «при наведении — значение метрики»).
+  const cmpLabel = { plan: metric === 'plan' ? '100 % плана' : 'план', need: 'нужно', week: 'неделей раньше', wr: 'Weborama', onoff: 'выключенные' }[cmp]
+  const cmpVal = hr ? (cmp === 'onoff' ? hr.off : cmpOf(hr)) : null
+  const fmtCmp = (v) => (cmp === 'wr' || ((cmp === 'plan' || cmp === 'need') && showsOur) ? nf(v) : fmtMetric(v, metric, source))
+  const skip = { shows: source === 'our' ? 'факт' : source === 'wr' ? 'WR' : null, clicks: 'клики', offered: 'предл.', spend: 'расход' }[metric]
+  const rest = R ? [['факт', nf(R.fact), 'var(--income-fg)'], ['DSP', nf(R.dsp)], ['Adfox', nf(R.adf)], ['WR', nf(R.wr), 'var(--text-secondary)'],
+    ['план', nf(hr.plan), 'var(--accent)'], ['площадок', hr.active != null ? `${hr.active} из ${nPlaces}` : '—'], ['клики', nf(R.clk), 'var(--accent)'],
+    ['уники', nf(R.uni), 'var(--accent-fg)'], ['предл.', R.off ? nf(R.off) : '—', 'var(--text-secondary)'], ['расход', rub(R.spend), 'var(--text-secondary)']]
+    .filter(([k]) => k !== skip && !(k === 'план' && cmp === 'plan' && showsOur)) : []
   return (
     <>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end', marginTop: -6 }}>
@@ -72,9 +82,14 @@ export function TimeChart({ rows, metric, source, cmp, events, on, tech, setTech
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, minHeight: 18, padding: '6px 10px', background: 'var(--bg-tint)', borderRadius: 9, flexWrap: 'wrap' }}>
         <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--accent-fg)' }}>{hr ? (hr.days.length > 1 ? `${dm(hr.days[0])}–${dm(hr.days[hr.days.length - 1])}` : dm(hr.key)) : 'период'}</span>
-        {hr && !hr.future && [['факт', nf(R.fact), 'var(--income-fg)'], ['DSP', nf(R.dsp)], ['Adfox', nf(R.adf)], ['WR', nf(R.wr), 'var(--text-secondary)'],
-          ['план', nf(hr.plan), 'var(--accent)'], ['площадок', hr.active != null ? `${hr.active} из ${nPlaces}` : '—'], ['клики', nf(R.clk), 'var(--accent)'],
-          ['уники', nf(R.uni), 'var(--accent-fg)'], ['предл.', R.off ? nf(R.off) : '—', 'var(--text-secondary)'], ['расход', rub(R.spend), 'var(--text-secondary)']].map(([k, v, c]) => (
+        {(!hr || !hr.future) && (
+          <span style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtLegend(metric, source)}{' '}
+            <b style={{ fontSize: 13, color: lineColor }}>{fmtMetric(hr ? hr.value : total, metric, source)}</b></span>
+        )}
+        {hr && !hr.future && cmpVal != null && (
+          <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{cmpLabel} <b style={{ color: cmpColor }}>{fmtCmp(cmpVal)}</b></span>
+        )}
+        {hr && !hr.future && rest.map(([k, v, c]) => (
           <span key={k} style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{k} <b style={{ color: c || 'var(--text-primary)' }}>{v}</b></span>
         ))}
         {hr && hr.future && <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-muted)' }}>план <b style={{ color: 'var(--accent)' }}>{nf(hr.plan)}</b> · нужно <b style={{ color: 'var(--accent)' }}>{nf(hr.need)}</b></span>}
@@ -115,6 +130,13 @@ export function TimeChart({ rows, metric, source, cmp, events, on, tech, setTech
                   {!r.future && r.value != null && (hot || n <= 6) && (
                     <span style={{ position: 'absolute', left: '50%', bottom: `${Math.min(100, Math.abs(r.value) / max * 100)}%`, width: hot ? 9 : 7, height: hot ? 9 : 7,
                       transform: 'translate(-50%,50%)', borderRadius: 2, background: lineColor, boxShadow: '0 0 0 2px var(--bg-card)' }} />
+                  )}
+                  {/* Значение метрики у точки под курсором (владелец 12.10.2026) */}
+                  {hot && !r.future && r.value != null && (
+                    <span style={{ position: 'absolute', left: '50%', bottom: `calc(${Math.min(100, Math.abs(r.value) / max * 100)}% + 10px)`,
+                      transform: 'translateX(-50%)', padding: '1px 6px', borderRadius: 5, background: 'var(--bg-card)', border: `1px solid ${lineColor}`,
+                      fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 2 }}>
+                      {fmtMetric(r.value, metric, source)}</span>
                   )}
                 </span>
               )

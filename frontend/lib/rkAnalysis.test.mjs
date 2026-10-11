@@ -169,3 +169,15 @@ test('периоды и аналитика: считают по включённ
   assert.equal(pc.rows[0].now, 5000); assert.equal(pc.rows[0].was, 4000)
   assert.equal(Math.round(pc.rows[1].d), 10)   // 50 % против 40 % плана к дате — в п.п.
 })
+
+test('значение метрики за отрезок — то, что пишется в строке над графиком', async () => {
+  const { metricValue } = await import('./rkAnalysisSlices.mjs')
+  const ix = indexData(fixture())
+  const el = elapsedDays(ix), t = sumOf(ix, [1, 2], el)
+  assert.equal(metricValue(ix, t, [1, 2], el, 'shows', 'our'), 7500)
+  assert.equal(metricValue(ix, t, [1, 2], el, 'shows', 'wr'), 9000)
+  assert.equal(metricValue(ix, t, [1, 2], el, 'clicks', 'our'), 50)
+  assert.equal(metricValue(ix, t, [1, 2], el, 'spend', 'our'), 900)
+  assert.equal(Math.round(metricValue(ix, t, [1, 2], el, 'cpm', 'our')), 120)
+  assert.equal(Math.round(metricValue(ix, t, [1, 2], el, 'plan', 'our')), Math.round(7500 / (30000 / 10 * 5) * 100))
+})
