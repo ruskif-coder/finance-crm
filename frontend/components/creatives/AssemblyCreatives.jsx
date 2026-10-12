@@ -1126,7 +1126,7 @@ function NotePeek({ who, text }) {
 
 /* ── строка площадки ───────────────────────────────────────────────────── */
 function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt, onUrl, onRequest,
-                        onDeeplink, onVerdict, onRework, onProcess, onShots, onPlan, onWithdraw, vol }) {
+                        onDeeplink, onVerdict, onRework, onProcess, onShots, onPlan, onWithdraw, onReopen, vol }) {
   const [url, setUrl] = useState(r.advertiser_url || '')
   const [editing, setEditing] = useState(false)
   const [urlErr, setUrlErr] = useState('')
@@ -1178,6 +1178,8 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
   const withdrawable = !!onWithdraw && !!r.pair_id && !!r.sent_at && !r.withdrawn_at && !gone
     && !['отказ', 'в размещении', 'отозван', 'отказано'].includes(status)
   const done = ROW_GROUP[status] === 'ok'
+  // Отказавшую площадку можно вернуть в согласование под новый креатив (владелец 12.10.2026).
+  const reopenable = canEdit && !!onReopen && r.state === 'отказ площадки'
 
   // Объём площадки против плана РК (владелец 27.09.2026): > 50 % — жёлтым, > 100 % — красным.
   const volLevel = vol?.by_publisher?.[String(r.publisher_id)]
@@ -1352,6 +1354,9 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
           ) : withdrawable ? (
             <CbBtn onClick={() => onWithdraw(r)} style={{ width: 98, justifyContent: 'center', height: 28 }}
               title="Отозвать креатив у площадки до запуска размещения">Отозвать</CbBtn>
+          ) : reopenable ? (
+            <CbBtn onClick={() => onReopen(r)} style={{ width: 98, justifyContent: 'center', height: 28 }}
+              title="Площадка отказала. Вернуть её в согласование — следующий креатив снова уйдёт ей; прежние отказы останутся в истории">Вернуть</CbBtn>
           ) : (
             /* Кнопки «В эфир» здесь нет (26.09.2026): «в размещении» ставит только запуск
                площадки в дашборде трафика (с 18.09), ручной перевод сервер отклоняет. */
@@ -1769,7 +1774,8 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
                 onVerdict={handlers.verdict} onRework={(rec) => handlers.rework(set, rec)}
                 onProcess={(rec) => handlers.process(set, rec)}
                 onShots={handlers.shots} onPlan={handlers.plan}
-                onWithdraw={handlers.canWithdraw ? handlers.withdraw : null} />
+                onWithdraw={handlers.canWithdraw ? handlers.withdraw : null}
+                onReopen={handlers.reopen} />
             ))}
           </div>
         </div>
@@ -1955,6 +1961,14 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
     reload: load,
     canWithdraw: !!data?.can_withdraw,
     withdraw: setWithdrawFor,
+    reopen: async (rec) => {
+      if (!window.confirm(`Вернуть «${rec.name}» в согласование? Следующий креатив снова уйдёт этой площадке.`)) return
+      setErr('')
+      try {
+        await api.post(`/launch-prep/target/${rec.target_id}/reopen`, {}, auth())
+        load()
+      } catch (e) { setErr(e.response?.data?.detail || 'Не удалось вернуть площадку') }
+    },
     process: (set, rec) => setProcessFor({ set, rec }),
     tt: setTtFor,
     request: setUrlFor,

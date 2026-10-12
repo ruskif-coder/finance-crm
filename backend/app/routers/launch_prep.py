@@ -2411,7 +2411,7 @@ def move_target(target_id: int, payload: TargetStateIn, db: Session = Depends(ge
                             detail=f"Состояние: {', '.join(TARGET_STATES)}")
     if t.state == "отказ площадки":
         raise HTTPException(status_code=400,
-                            detail="Площадка отказалась — вернуть её в кампанию нельзя")
+                            detail="Площадка отказалась — вернуть её можно кнопкой «Вернуть в согласование»")
     # «В размещении» РУКАМИ НЕ СТАВИТСЯ (владелец 18.09.2026). Это не решение человека,
     # а факт из контура трафика: площадка запущена в РК. Пока её не запустили, надпись
     # «в размещении» на карточке сделки — неправда, и именно так она и выглядела: РК не
@@ -2432,6 +2432,30 @@ def move_target(target_id: int, payload: TargetStateIn, db: Session = Depends(ge
     db.commit()
     log_action(db, current_user, "move_creative_target", "sales_deal", deal.id,
                f"{t.publisher_id}: {payload.state}")
+    return {"state": t.state, "public": TARGET_STATE_PUBLIC.get(t.state)}
+
+
+@router.post("/target/{target_id}/reopen")
+def reopen_target(target_id: int, db: Session = Depends(get_db),
+                  current_user: User = Depends(EDIT)):
+    """Вернуть отказавшую площадку в согласование (владелец 12.10.2026).
+
+    Раньше из отказа пути назад не было: появился новый креатив, а площадка, отказавшая
+    по прежнему, в список адресатов не попадала (`_targets_for_set`). Прежние отказы
+    остаются историей пар — меняется только состояние площадки в сделке, и следующий
+    креатив снова ей адресуется. Откажет и по нему — `_all_refused` уронит её обратно.
+    """
+    t = db.query(LaunchPrepTarget).filter(LaunchPrepTarget.id == target_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Получатель не найден")
+    deal = _deal(db, t.deal_id, current_user)
+    if t.state != "отказ площадки":
+        raise HTTPException(status_code=400,
+                            detail="Вернуть в согласование можно только площадку в отказе")
+    t.state = "согласование"
+    db.commit()
+    log_action(db, current_user, "reopen_creative_target", "sales_deal", deal.id,
+               f"{t.publisher_id}: из отказа в согласование")
     return {"state": t.state, "public": TARGET_STATE_PUBLIC.get(t.state)}
 
 

@@ -532,3 +532,35 @@ def test_refusal_of_every_set_drops_publisher(env):
     lp.pair_verdict(second.id, lp.PairVerdictIn(verdict='отказ', reason='нет'), env.db, _ADMIN)
     env.db.refresh(t)
     assert t.state == 'отказ площадки'
+
+
+def test_refused_publisher_can_be_reopened_for_a_new_creative(env):
+    """12.10.2026 (владелец): отказавшую площадку можно вернуть в согласование — тогда
+    новый общий креатив снова ей адресуется; прежние отказы остаются историей."""
+    lp.send_set(env.cset.id, lp.SendIn(), env.db, _ADMIN)
+    first = [p for p in _pass_traffic(env.db, env.cset.id) if p.target_id == env.targets[0].id][0]
+    t = env.targets[0]
+    lp.pair_verdict(first.id, lp.PairVerdictIn(verdict='отказ', reason='нет'), env.db, _ADMIN)
+    env.db.refresh(t)
+    assert t.state == 'отказ площадки'
+
+    fresh = LaunchPrepCreativeSet(deal_id=env.deal.id, no=NO_BASE + 20)
+    env.db.add(fresh)
+    env.db.flush()
+    env.db.add(LaunchPrepSetTarget(set_id=fresh.id, target_id=t.id))
+    env.db.commit()
+    assert t.id not in {x.id for x in lp._targets_for_set(env.db, fresh)}
+
+    out = lp.reopen_target(t.id, env.db, _ADMIN)
+    env.db.refresh(t)
+    assert t.state == 'согласование' and out["state"] == 'согласование'
+    assert t.id in {x.id for x in lp._targets_for_set(env.db, fresh)}
+    rec = env.db.query(LaunchPrepReview).filter(LaunchPrepReview.pair_id == first.id,
+                                                LaunchPrepReview.kind == 'площадка').first()
+    assert rec.verdict == 'отказ', "прежний отказ — история, не стирается"
+
+
+def test_reopen_only_from_refusal(env):
+    with pytest.raises(HTTPException) as e:
+        lp.reopen_target(env.targets[0].id, env.db, _ADMIN)
+    assert e.value.status_code == 400

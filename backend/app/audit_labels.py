@@ -147,6 +147,7 @@ ACTION_LABELS = {
     "add_creative_targets": "Площадки добавлены к комплекту",
     "auto_creative_targets": "Площадки комплекта подставлены автоматически",
     "move_creative_target": "Площадка перенесена в другой комплект",
+    "reopen_creative_target": "Площадка возвращена из отказа в согласование",
     "issue_erid": "ЕРИД выпущен",
     "issue_erid_early": "ЕРИД выпущен до согласования площадок",
     "dsp_partner_reset": "РК отвязана от объектов DSP прежнего клиента",
