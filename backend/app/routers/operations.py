@@ -14,6 +14,7 @@ from app.receivables import (_due_date, _aging_bucket, _term_days_for_counterpar
 from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import date, datetime
+from app.import_dates import parse_cell_date
 from datetime import date as _Date  # alias: see OperationCreate note below
 from collections import deque
 from openpyxl import Workbook
@@ -1060,11 +1061,20 @@ def _parse_cf_best_rows(contents: bytes) -> List[dict]:
     df = raw.iloc[header_row_idx + 1:].rename(columns=col_map)
     df = df[list(col_map.values())]
     df = df[df['status'].astype(str).str.strip().str.lower() != 'статус'].copy()
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+
+    def _cell_date(row_no, value):
+        # День.месяц.год (12.10.2026, третий повтор): pandas читал «06.10.2026» как
+        # 6 июня. Разбор один — app/import_dates.py; нечитаемая дата останавливает загрузку
+        # с номером строки, а не превращается в пустую молча.
+        try:
+            return parse_cell_date(value)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Строка {row_no} файла: {e}")
 
     rows = []
-    for _, row in df.iterrows():
-        parsed_date = row['date'].date() if pd.notna(row.get('date')) else None
+    for idx, row in df.iterrows():
+        row_no = int(idx) + 1                 # индекс сырого листа с нуля — номер строки Excel
+        parsed_date = _cell_date(row_no, row.get('date'))
         raw_period = _period_cell(row.get('period'))
         parsed_income = float(row['income']) if pd.notna(row.get('income')) else 0
         parsed_expense = float(row['expense']) if pd.notna(row.get('expense')) else 0
@@ -1094,7 +1104,7 @@ def _parse_cf_best_rows(contents: bytes) -> List[dict]:
             'inn': _clean_inn(row.get('inn')),
             'ds_num': str(row['ds_num']) if pd.notna(row.get('ds_num')) else None,
             'invoice': str(row['invoice']) if pd.notna(row.get('invoice')) else None,
-            'invoice_date': pd.to_datetime(row['invoice_date']).date() if pd.notna(row.get('invoice_date')) else None,
+            'invoice_date': _cell_date(row_no, row.get('invoice_date')),
             'description': str(row['description']) if pd.notna(row.get('description')) else None,
             'document_link': _validate_link(row.get('document_link'), raise_on_bad=False),
         })
@@ -1263,7 +1273,7 @@ async def download_import_template(
 
     rows = [
         ("Лист CF BEST", "Заполняйте операции на этом листе, начиная со 2-й строки. Не переименовывайте лист и не меняйте заголовки — иначе файл не распознается при импорте."),
-        ("Дата", "Дата операции, формат ДД.МM.ГГГГ."),
+        ("Дата", "Дата документа (оплаты), формат ДД.ММ.ГГГГ. У планов (ПЛАН ОПЛАТ / ПЛАН ПОСТУПЛЕНИЙ) остаётся пустой: у них только период."),
         ("Статус", "Один из: ОПЛАЧЕНО / ПЛАН ОПЛАТ / ПЛАН ПОСТУПЛЕНИЙ (выбирается из выпадающего списка)."),
         ("Поступления / Списания", "Сумма по операции. Заполняется только одно из полей в зависимости от типа операции."),
         ("Банк", "Один из: АльфаБанк / ОПТ Банк / Совкомбанк / Наличные (выпадающий список)."),
