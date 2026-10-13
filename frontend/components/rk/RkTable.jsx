@@ -20,6 +20,12 @@ export function cellText(c, v) {
   }
 }
 
+// Подсказки к колонкам плана: план дня считается по недокруту прошлых дней, а не плоско (владелец 13.10.2026).
+const COL_HINT = {
+  plan: 'План дня = (план − факт до этого дня) ÷ дни до конца флайта, считая этот. Недокрут прошлых дней поднимает план следующих, перекрут (в том числе после «темпа размещения») — снижает. В дни «темпа размещения» (строки подкрашены зелёным) план поднят на процент буста.',
+  pct: 'Факт дня ÷ план дня (с учётом недокрута прошлых дней).',
+}
+
 export default function RkTable({ model, metric, sort, setSort, onDrill, drill, crumb, onUndrill, drillView, setDrillView, focus, weekLabel }) {
   const { cols, rows, tot, view } = model
   const hot = METRIC_KEY[metric]
@@ -74,7 +80,7 @@ export default function RkTable({ model, metric, sort, setSort, onDrill, drill, 
               const on = so.key === c.key
               const right = !['text', 'date'].includes(c.kind)
               return (
-                <span key={c.key} onClick={() => setSort({ key: c.key, dir: on ? -so.dir : right ? -1 : 1 })} title="сортировать"
+                <span key={c.key} onClick={() => setSort({ key: c.key, dir: on ? -so.dir : right ? -1 : 1 })} title={COL_HINT[c.key] || 'сортировать'}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 4, justifyContent: right ? 'flex-end' : 'flex-start', fontFamily: MONO, fontSize: 9, letterSpacing: '.06em',
                     textTransform: 'uppercase', color: c.key === hot ? 'var(--accent)' : on ? 'var(--text-primary)' : 'var(--text-cap)', fontWeight: c.key === hot ? 700 : 400,
                     cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>{c.label}<span style={{ fontSize: 8 }}>{on ? (so.dir > 0 ? '▲' : '▼') : ''}</span></span>
@@ -83,9 +89,9 @@ export default function RkTable({ model, metric, sort, setSort, onDrill, drill, 
           </div>
           <div style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto' }}>
             {sorted.map(r => (
-              <div key={r.id} onClick={() => r.drill && onDrill(r.drill)} title={r.drill ? 'провалиться' : ''}
+              <div key={r.id} onClick={() => r.drill && onDrill(r.drill)} title={r.boost ? `Темп размещения +${r.boost} %: план дня поднят на этот процент` + (r.drill ? ' · клик — провалиться' : '') : (r.drill ? 'провалиться' : '')}
                 style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, alignItems: 'center', padding: '6px 8px', borderBottom: '1px solid var(--border-row)', borderRadius: 7,
-                  background: focus != null && (focus === r.id) ? 'var(--accent-tint)' : 'transparent', cursor: r.drill ? 'pointer' : 'default' }}>
+                  background: focus != null && (focus === r.id) ? 'var(--accent-tint)' : r.boost ? 'var(--income-tint)' : 'transparent', cursor: r.drill ? 'pointer' : 'default' }}>
                 {cols.map(c => {
                   const right = !['text', 'date'].includes(c.kind)
                   return (

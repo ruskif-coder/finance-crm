@@ -506,16 +506,18 @@ def daily_buckets(plan: Optional[float], fact: Optional[float], fl: Optional[Fli
                   date_from: Optional[date] = None,
                   date_to: Optional[date] = None,
                   today: Optional[date] = None,
-                  boost: Optional[tuple] = None) -> Optional[dict]:
+                  boost: Optional[tuple] = None,
+                  boost_days: Optional[dict] = None) -> Optional[dict]:
     """Столбцы графика «план против факта» с пересчётом плана на остаток.
 
     `boost` = (первый день, последний день, pct) — «темп размещения» (`app/ad/boost`): будущие дни окна
     идут с нормой `need × (1 + pct/100)`, добавка (`boost_extra`) красится на графике другим цветом;
     остаток после окна пересчитан так, чтобы сумма будущих столбцов по-прежнему закрывала остаток.
 
-    Правило пересчёта (требование брифа): прошедшие дни держат ИСХОДНЫЙ план — их уже
-    не переиграть, — а будущие получают `(план − факт) ÷ остаток дней`. Такой столбец
-    помечается `repaced`, чтобы подпись честно говорила, что план пересчитан.
+    Правило пересчёта (владелец 13.10.2026, `app/ad/day_plan`): цель каждого отчитанного дня — остаток на утро ÷
+    дни до конца флайта (недокрут прошлых дней растёт в плане следующих, перекрут снижает; в дни окна буста —
+    плюс его процент, `boost_days` = {день: pct}); будущие дни — `(план − факт) ÷ остаток дней`. Столбец, чей
+    план отличается от исходного, помечается `repaced`, чтобы подпись честно говорила, что план пересчитан.
 
     Интервал всегда КЛИПУЕТСЯ К ФЛАЙТУ: столбцов не может быть больше, чем дней в РК.
     """
@@ -530,6 +532,8 @@ def daily_buckets(plan: Optional[float], fact: Optional[float], fl: Optional[Fli
         return None
 
     per_day = plan / fl.length
+    from app.ad.day_plan import past_goals
+    goals = past_goals(plan, fl, facts_by_day, today, boost_days)
     # Факта ещё нет («нет данных», а не ноль) — для плана на остаток это ноль показов:
     # иначе `need` пустой, и в первый день запуска все будущие столбцы рисовались с
     # планом 0 — «план не рисуется до конца размещения» (владелец 01.10.2026, 54ZYCH).
@@ -545,14 +549,11 @@ def daily_buckets(plan: Optional[float], fact: Optional[float], fl: Optional[Fli
         shows = sum(facts_by_day.get(start + timedelta(days=i), (0, 0))[0] for i in range(size))
         clicks = sum(facts_by_day.get(start + timedelta(days=i), (0, 0))[1] for i in range(size))
         future = [start + timedelta(days=i) for i in range(past, size)]
-        if past == size:
-            plan_sum = size * per_day          # целиком прошедший столбец — исходный план
-            repaced = False
-            extra = 0.0
-        else:
-            plan_sum = past * per_day + sum(rate(d) for d in future)
-            repaced = True
-            extra = sum(extra_of(d) for d in future)
+        past_sum = sum(goals.get(start + timedelta(days=i), per_day) for i in range(past))
+        plan_sum = past_sum + sum(rate(d) for d in future)
+        # «пересчитан» — если план столбца хоть сколько-то ушёл от исходного (будущий день, недокрут, буст)
+        repaced = bool(future) or abs(plan_sum - size * per_day) > 0.5
+        extra = sum(extra_of(d) for d in future)
         buckets.append({
             "date_from": start, "date_to": end, "days": size, "days_past": past,
             "plan": round(plan_sum), "shows": shows, "clicks": clicks,

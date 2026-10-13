@@ -140,6 +140,46 @@ def expire_due(db: Session, today: Optional[date] = None) -> list:
     return closed
 
 
+def boost_window(r) -> Optional[dict]:
+    """Дни, в которые «темп размещения» ДЕЙСТВОВАЛ: со дня после заведения до `until` включительно — ровно `days` суток
+    (сегодняшний уже отчитан, так считает весь `ad/flight`; на 783BU5 рост факта пришёлся именно на эти дни).
+    Снятый вручную или закрытый с окончанием РК — только полные дни до закрытия. Нет ни одного дня — None.
+    ЕДИНСТВЕННОЕ определение: «Отчёт по РК», график и стена дашборда читают окно отсюда."""
+    first = r["starts_on"] + timedelta(days=1)
+    last = r["until"]
+    if r["ended_at"] is not None and (r["ended_reason"] or "") != "истёк":
+        last = min(last, r["ended_at"].date() - timedelta(days=1))
+    if last < first:
+        return None
+    return {"pct": int(r["pct"]), "from": first.isoformat(), "to": last.isoformat()}
+
+
+def windows_of(db: Session, campaign_ids) -> dict:
+    """{id РК: [окна буста]} пачкой — стена дней берёт все РК одним запросом."""
+    from sqlalchemy import text
+    ids = list(campaign_ids)
+    out: dict = {}
+    if not ids:
+        return out
+    for r in db.execute(text("""SELECT campaign_id, pct, days, starts_on, until, ended_at, ended_reason
+                                  FROM ad_campaign_boost WHERE campaign_id = ANY(:c) ORDER BY id"""), {"c": ids}).mappings().all():
+        w = boost_window(r)
+        if w:
+            out.setdefault(r["campaign_id"], []).append(w)
+    return out
+
+
+def days_pct(windows) -> dict:
+    """{день: процент} по окнам (пересечение — больший процент): вход для плана дня."""
+    out: dict = {}
+    for w in windows or []:
+        d, last = date.fromisoformat(w["from"]), date.fromisoformat(w["to"])
+        while d <= last:
+            out[d] = max(out.get(d, 0), w["pct"])
+            d += timedelta(days=1)
+    return out
+
+
 def boosted_days(b: Optional[AdCampaignBoost]) -> Optional[tuple]:
     """(первый день, последний день, pct) для графика; None — буста нет."""
     return (b.starts_on, b.until, b.pct) if b and b.ended_at is None else None

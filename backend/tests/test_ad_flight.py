@@ -188,13 +188,16 @@ def test_place_fact_is_not_invented():
 
 # ── динамика и пересчёт плана ────────────────────────────────────────────────
 
-def test_past_buckets_keep_the_original_plan():
-    """Прошедшие дни держат исходный план — их не переиграть."""
+def test_past_buckets_follow_the_shortfall_of_earlier_days():
+    """Прошедшие дни: первый — исходный план, дальше цель растёт на недокрут прошлых дней (владелец 13.10.2026,
+    `app/ad/day_plan`); без факта план каждого следующего дня больше предыдущего."""
     fl = _fl(1, 30)
     out = daily_buckets(3_000_000, 900_000, fl, {}, today=TODAY)
     past = [b for b in out['buckets'] if b['days_past'] == b['days']]
-    assert past and all(not b['repaced'] for b in past)
-    assert past[0]['plan'] == round(3_000_000 / 30)
+    assert past and past[0]['plan'] == round(3_000_000 / 30) and not past[0]['repaced']
+    plans = [b['plan'] for b in past]
+    assert plans == sorted(plans) and plans[-1] > plans[0]
+    assert all(b['repaced'] for b in past[1:])
 
 
 def test_future_buckets_are_repaced_from_the_shortfall():

@@ -107,6 +107,7 @@ export function tableModel(ix, { slice, ids, days, drill }) {
       return { id: b.key, label: b.key, days: b.days, dsp: t.dsp, adf: t.adf, fact: t.fact, plan: pv, pct: pv ? t.fact / pv * 100 : null,
         wr: t.wr, wrd: d, wrLevel: wrLevel(d, limit), clk: t.clk, ctr: t.fact ? t.clk / t.fact * 100 : null, uni: t.uni,
         off: t.off || null, spend: t.spend, cpm: cpmOf(ix, scopeIds, b.days),
+        boost: view === 'day' ? (ix.boostPct && ix.boostPct[b.key]) || null : null,
         drill: view === 'day' && drill?.type !== 'placement' ? { type: 'day', id: b.key } : null }
     })
     cols = [['label', view === 'day' ? 'День' : 'Неделя', 'date'], ['dsp', 'DSP', 'num'], ['adf', 'Adfox', 'num'], ['fact', 'Факт', 'num'],

@@ -137,3 +137,19 @@ def test_rk_report_section_is_registered_in_traffic_group():
     from app import permissions as P
     sec = {s["key"]: s for s in P.SECTIONS}["rk_report"]
     assert sec["group"] == "Трафики" and sec["actions"] == ["view"]
+
+
+def test_boost_window_is_the_days_the_boost_really_acted():
+    """Окно буста для отчёта: со дня ПОСЛЕ заведения до последнего дня (`until`) — ровно `days` суток (так считает
+    весь `ad/flight`: сегодняшний уже отчитан). Снятый вручную — только полные дни до снятия."""
+    from datetime import date, datetime
+    from app.ad import rk_analysis as A
+    row = dict(pct=20, days=2, starts_on=date(2026, 10, 8), until=date(2026, 10, 10), ended_at=None, ended_reason=None)
+    assert A.boost_window(row) == {"pct": 20, "from": "2026-10-09", "to": "2026-10-10"}
+    expired = {**row, "ended_at": datetime(2026, 10, 11, 2, 0), "ended_reason": "истёк"}
+    assert A.boost_window(expired)["to"] == "2026-10-10"
+    removed = {**row, "ended_at": datetime(2026, 10, 9, 12, 0), "ended_reason": "снят"}
+    assert A.boost_window(removed) == {"pct": 20, "from": "2026-10-09", "to": "2026-10-08"} or A.boost_window(removed) is None
+    removed_same_day = {**row, "ended_at": datetime(2026, 10, 8, 15, 0), "ended_reason": "снят"}
+    assert A.boost_window(removed_same_day) is None, "снят в день заведения — ни одного полного дня буста"
+

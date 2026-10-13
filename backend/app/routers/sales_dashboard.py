@@ -2091,8 +2091,11 @@ def deal_campaign_stat(deal_id: str, grain: str = "day",
     today = fact_as_of(db)    # дата среза — тем же правилом, что дашборд трафика
     by_day = {d: v for d, v in td._stat_by_day(db, [c.id]).get(c.id, {}).items() if d <= today}
     fact = td._facts(db, [c.id]).get(c.id, {}).get("shows")
+    from app.ad import boost as boost_mod
     out = daily_buckets(c.plan_show, fact, flight_of(c.date_start, c.date_end, today), by_day,
-                        grain=grain, today=today)
+                        grain=grain, today=today,
+                        # дни «темпа размещения» — как в кабинете трафика (владелец 13.10.2026)
+                        boost_days=boost_mod.days_pct(boost_mod.windows_of(db, [c.id]).get(c.id)))
     if out is None:
         return {"buckets": [], "grain": grain, "totals": None}
     t_shows, t_clicks = by_day.get(today, (0, 0))

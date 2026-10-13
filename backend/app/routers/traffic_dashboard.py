@@ -519,7 +519,12 @@ def _stat_by_day(db: Session, campaign_ids: List[int]) -> dict:
 WALL_LIMIT = 30
 
 
-def _day_wall(rows: List[dict], stat: dict, today: date) -> List[dict]:
+def boost_mod_windows(db: Session, ids) -> dict:
+    from app.ad import boost as boost_mod
+    return boost_mod.windows_of(db, ids)
+
+
+def _day_wall(rows: List[dict], stat: dict, today: date, windows: Optional[dict] = None) -> List[dict]:
     """Стена дней: строка на РК, клетка на день флайта, отношение факта к нужному темпу.
 
     Цвет клетки считает ЭКРАН — здесь только отношение, потому что пороги (0.95 / 0.8)
@@ -538,18 +543,25 @@ def _day_wall(rows: List[dict], stat: dict, today: date) -> List[dict]:
         fl = flight_of(r["date_start"], r["date_end"], today)
         if not fl or not r["plan_show"]:
             continue
-        per_day = r["plan_show"] / fl.length
         by_day = stat.get(r["id"], {})
+        # План ДНЯ — с учётом недокрута прошлых дней (владелец 13.10.2026, `app/ad/day_plan`), как в графике и в
+        # «Отчёте по РК»; будущие дни — «нужно в день». Окна буста — из единого определения (`app/ad/boost`).
+        from app.ad import boost as boost_mod
+        from app.ad.day_plan import past_goals
+        goals = past_goals(r["plan_show"], fl, by_day, today, boost_mod.days_pct((windows or {}).get(r["id"])))
+        fact_all = sum((v[0] or 0) for k, v in by_day.items() if k <= today)
+        need = max(0.0, r["plan_show"] - fact_all) / fl.left if fl.left else 0.0
         cells = []
         for i in range(fl.length):
             d = fl.date_from + timedelta(days=i)
             shows, clicks = by_day.get(d, (None, None))
+            day_plan = goals.get(d, need)
             cells.append({
                 "date": d,
-                "plan": round(per_day),
+                "plan": round(day_plan),
                 "shows": shows,
                 "clicks": clicks,
-                "ratio": round(shows / per_day, 3) if (shows is not None and per_day) else None,
+                "ratio": round(shows / day_plan, 3) if (shows is not None and day_plan) else None,
                 "ahead": d > today,
             })
         out.append({"id": r["id"], "deal_code": r["deal_code"], "cells": cells,
@@ -852,7 +864,7 @@ def dashboard(scope: Optional[str] = None,
             "queue": _queue_badge(db),
         },
         "culprits": culprits(culprit_rows),
-        "wall": _day_wall(rows, _stat_by_day(db, ids), today),
+        "wall": _day_wall(rows, _stat_by_day(db, ids), today, boost_mod_windows(db, ids)),
         "is_master": _is_master(user),
         # Кнопка «Обновить данные в DSP» — Администратор и «Админ Трафик» (02.10.2026).
         "can_dsp_refresh": dsp_refresh.may_refresh(user),
@@ -1077,7 +1089,8 @@ def campaign_stat(campaign_id: int, grain: str = "day",
         first, last, pct = boost_mod.boosted_days(live)
         window = (first, last, boost_mod.effective_pct(rest_all, rest_free, pct))
     out = daily_buckets(c.plan_show, fact, fl, by_day, grain=grain,
-                        date_from=date_from, date_to=date_to, today=today, boost=window)
+                        date_from=date_from, date_to=date_to, today=today, boost=window,
+                        boost_days=boost_mod.days_pct(boost_mod.windows_of(db, [c.id]).get(c.id)))
     if out is None:
         # Ни плана, ни дат — рисовать нечего, и это не ошибка, а состояние экрана.
         return {"buckets": [], "grain": grain, "need_per_day": None,

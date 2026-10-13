@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timedelta
+from app.ad.boost import boost_window  # noqa: F401 — единое определение окна буста, тест читает его здесь
 from typing import Dict, List, Optional
 
 from sqlalchemy import text
@@ -234,10 +235,17 @@ def build(db: Session, head: dict, dsp_db=None, prev_id: Optional[int] = None,
         "model_uniques": model_uniques_of(db, dsp_db, head, placements, as_of),
         "creative_days": creative_days_of(db, dsp_db, head, as_of),
         "events": events_of(db, head, placements),
+        # Окна «темпа размещения»: в эти дни план дня поднят, строки таблицы подкрашены (владелец 13.10.2026).
+        "boosts": boosts_of(db, head["id"]),
         "checks": checks_of(db, head["id"]),
         "prev": {"options": options, "selected": chosen,
                  "flight": prev_flight(db, chosen) if chosen else None},
     }
+
+
+def boosts_of(db: Session, campaign_id: int) -> List[dict]:
+    from app.ad.boost import windows_of
+    return windows_of(db, [campaign_id]).get(campaign_id, [])
 
 
 def _first_offer_day(db: Session, campaign_id: int) -> Optional[date]:

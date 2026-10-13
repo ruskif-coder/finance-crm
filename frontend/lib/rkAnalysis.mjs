@@ -48,7 +48,10 @@ export function indexData(d) {
     if (days.length && date < days[0]) date = days[0]
     return { ...e, date }
   })
-  return { days, asOf, P, C, ev, pById, head: d.head, offerFrom: d.head.offer_from }
+  // Дни «темпа размещения» → процент буста (владелец 13.10.2026): в эти дни план поднят, строки подкрашены.
+  const boostPct = {}
+  ;(d.boosts || []).forEach(b => days.forEach(dt => { if (dt >= b.from && dt <= b.to) boostPct[dt] = Math.max(boostPct[dt] || 0, b.pct) }))
+  return { days, asOf, P, C, ev, pById, head: d.head, offerFrom: d.head.offer_from, boostPct }
 }
 
 export const elapsedDays = (ix) => ix.days.filter(x => x <= ix.asOf)
@@ -116,15 +119,41 @@ export function kpis(ix, pids) {
   }
 }
 
-/** План набора площадок на дни: прошедшие — исходный (план ÷ длина), будущие — остаток ÷ дни остатка. */
+// Цель каждого дня набора площадок: (план − факт ДО этого дня) ÷ дни до конца флайта, считая этот. Недокрут прошлых дней
+// растёт в плане следующих, перекрут (в том числе после «темпа размещения») — снижает; ниже нуля не уходит (владелец 13.10.2026).
+// Считается по одному разу на (набор площадок, срез данных) — таблицы и графики зовут `planFor` на каждую строку.
+/** Множитель плана дня в окне «темпа размещения»: +pct %. */
+const boostK = (ix, dt) => 1 + ((ix.boostPct && ix.boostPct[dt]) || 0) / 100
+
+const GOALS = new WeakMap()
+function goalByDay(ix, pids) {
+  const key = [...pids].sort((a, b) => a - b).join(',')
+  let byKey = GOALS.get(ix)
+  if (!byKey) GOALS.set(ix, (byKey = new Map()))
+  if (byKey.has(key)) return byKey.get(key)
+  const plan = planTotal(ix, pids)
+  const D = ix.days.length || 1
+  const goal = {}
+  let before = 0
+  ix.days.forEach((dt, i) => {
+    goal[dt] = Math.max(0, plan - before) / (D - i) * boostK(ix, dt)
+    if (dt <= ix.asOf) before += sumOf(ix, pids, [dt]).fact
+  })
+  byKey.set(key, goal)
+  return goal
+}
+
+/** План набора площадок на дни: дни с данными — цель дня с учётом недокрута/перекрута прошлых дней
+ *  (остаток на утро ÷ дни до конца), будущие — остаток на сегодня ÷ дни остатка («нужно в день»); в дни
+ *  «темпа размещения» — плюс процент буста. */
 export function planFor(ix, pids, dates) {
   const plan = planTotal(ix, pids)
   const D = ix.days.length || 1
   const el = elapsedDays(ix)
   const rest = D - el.length
-  const factAll = sumOf(ix, pids, el).fact
-  const need = rest ? Math.max(0, plan - factAll) / rest : 0
-  return dates.reduce((a, dt) => a + (dt <= ix.asOf ? plan / D : need), 0)
+  const need = rest ? Math.max(0, plan - sumOf(ix, pids, el).fact) / rest : 0
+  const goal = goalByDay(ix, pids)
+  return dates.reduce((a, dt) => a + (dt <= ix.asOf ? (goal[dt] ?? plan / D) : need * boostK(ix, dt)), 0)
 }
 
 /** Неделя (пн) для дня. */

@@ -87,10 +87,42 @@ test('площадка без CPM договора в расход и CPM не �
   assert.equal(cpmOf(ix, [1, 2], elapsedDays(ix)), 100)
 })
 
-test('план дней: прошедшие — исходный, будущие — остаток', () => {
+test('план дня: остаток на утро ÷ дни до конца, с недокрутом прошлых дней; будущие — остаток', () => {
   const ix = indexData(fixture())
+  // план 30000 на 10 дней, факт 1500 в день по 5 дней (в день 6 лишнего «после среза» нет)
+  assert.equal(planFor(ix, [1, 2], [day(1)]), 3000)                              // 30000 ÷ 10
+  assert.equal(planFor(ix, [1, 2], [day(2)]), (30000 - 1500) / 9)                 // недокрут первого дня растёт в плане
+  assert.equal(planFor(ix, [1, 2], [day(5)]), (30000 - 4 * 1500) / 6)
+  assert.equal(planFor(ix, [1, 2], [day(8)]), (30000 - 7500) / 5)                 // будущее — «нужно в день»
+  // сумма по набору дней — сумма дневных
+  assert.equal(planFor(ix, [1, 2], [day(1), day(2)]), 3000 + (30000 - 1500) / 9)
+})
+
+test('после перекрута (например, буст на пару дней) план следующих дней снижается', () => {
+  const d = fixture()
+  d.stat.forEach(r => { if (r.source === 'dsp' && (r.date === day(3) || r.date === day(4))) r.shows = 5000 })   // два дня «с бустом»
+  const ix = indexData(d)
+  const before = planFor(ix, [1, 2], [day(3)])
+  const after = planFor(ix, [1, 2], [day(5)])
+  assert.ok(after < before, `план дня после буста ${after} должен быть ниже, чем до него ${before}`)
+  // и ниже, чем был бы без буста (тот же день на обычном факте)
+  assert.ok(after < planFor(indexData(fixture()), [1, 2], [day(5)]))
+})
+
+test('план дня не уходит в минус, если факт обогнал план', () => {
+  const d = fixture()
+  d.stat.forEach(r => { if (r.source === 'dsp') r.shows = 100000 })
+  const ix = indexData(d)
+  ix.days.forEach(dt => assert.ok(planFor(ix, [1, 2], [dt]) >= 0, dt))
+})
+
+test('при плане «в ноль» факта день 1 равен исходному, а следующий день растёт на недокрут (нулевые дни)', () => {
+  const d = fixture()
+  d.stat = d.stat.filter(r => r.date >= day(3))          // первые два дня без статистики
+  const ix = indexData(d)
   assert.equal(planFor(ix, [1, 2], [day(1)]), 3000)
-  assert.equal(planFor(ix, [1, 2], [day(8)]), (30000 - 7500) / 5)
+  assert.ok(planFor(ix, [1, 2], [day(2)]) > 3000)
+  assert.ok(planFor(ix, [1, 2], [day(3)]) > planFor(ix, [1, 2], [day(2)]))
 })
 
 test('выводы: нет «0 из 0», знак словами, событие с площадкой', () => {
@@ -179,5 +211,28 @@ test('значение метрики за отрезок — то, что пи�
   assert.equal(metricValue(ix, t, [1, 2], el, 'clicks', 'our'), 50)
   assert.equal(metricValue(ix, t, [1, 2], el, 'spend', 'our'), 900)
   assert.equal(Math.round(metricValue(ix, t, [1, 2], el, 'cpm', 'our')), 120)
-  assert.equal(Math.round(metricValue(ix, t, [1, 2], el, 'plan', 'our')), Math.round(7500 / (30000 / 10 * 5) * 100))
+  // «% плана» за отрезок — факт ÷ сумма целей дней (с недокрутом): 3000 + 28500/9 + 27000/8 + 25500/7 + 24000/6
+  const goals = 3000 + 28500 / 9 + 27000 / 8 + 25500 / 7 + 24000 / 6
+  assert.equal(Math.round(metricValue(ix, t, [1, 2], el, 'plan', 'our')), Math.round(7500 / goals * 100))
 })
+
+test('дни «темпа размещения»: план дня поднят на процент буста, дни помечены, до и после — обычные', () => {
+  const d = fixture()
+  d.boosts = [{ pct: 20, from: day(3), to: day(4) }]
+  const ix = indexData(d), plain = indexData(fixture())
+  assert.equal(planFor(ix, [1, 2], [day(2)]), planFor(plain, [1, 2], [day(2)]))            // до буста
+  assert.equal(planFor(ix, [1, 2], [day(3)]), planFor(plain, [1, 2], [day(3)]) * 1.2)       // в день буста
+  assert.equal(planFor(ix, [1, 2], [day(4)]), planFor(plain, [1, 2], [day(4)]) * 1.2)
+  assert.equal(planFor(ix, [1, 2], [day(5)]), planFor(plain, [1, 2], [day(5)]))            // после
+  const rows = tableModel(ix, { slice: 'day', ids: [1, 2], days: ix.days }).rows
+  assert.deepEqual(rows.filter(r => r.boost).map(r => [r.label, r.boost]), [[day(3), 20], [day(4), 20]])
+})
+
+test('будущие дни действующего буста — «нужно в день» с процентом буста', () => {
+  const d = fixture()
+  d.boosts = [{ pct: 10, from: day(8), to: day(9) }]
+  const ix = indexData(d), plain = indexData(fixture())
+  assert.equal(planFor(ix, [1, 2], [day(8)]), planFor(plain, [1, 2], [day(8)]) * 1.1)
+  assert.equal(planFor(ix, [1, 2], [day(10)]), planFor(plain, [1, 2], [day(10)]))
+})
+
