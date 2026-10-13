@@ -81,3 +81,24 @@ def test_migration_seeds_kuper_only_when_column_is_new():
     sql = MIG.read_text(encoding="utf-8")
     assert "information_schema.columns" in sql, "бэкфилл Купера — только при первом накате (иначе повтор затрёт ручную правку)"
     assert "DROP" not in sql.upper()
+
+
+# ── иконка тизера: настройка на экране «Трафики → Каталог → Скрипты сайта» ────────────────────
+
+def test_icon_setting_is_edited_on_the_scripts_screen_and_validated(db):
+    from app.routers import traffic_catalog as TC
+    key = "dsp_teaser_icon_url"
+    before = db.execute(text("SELECT value FROM company_settings WHERE key = :k"), {"k": key}).scalar()
+    try:
+        for bad in ("http://x/a.png", "https://x/a.png<script>", "https://x/" + "a" * 1100):
+            with pytest.raises(HTTPException) as e:
+                TC.set_site_script(TC.SiteScriptIn(teaser_icon=bad), db, _ADMIN)
+            assert e.value.status_code == 400
+        out = TC.set_site_script(TC.SiteScriptIn(teaser_icon="https://cdn.example/i/80x80.png"), db, _ADMIN)
+        assert out["teaser_icon"] == "https://cdn.example/i/80x80.png"
+        assert TC.get_site_script(db, _ADMIN)["teaser_icon"] == "https://cdn.example/i/80x80.png"
+    finally:
+        db.rollback()
+        db.execute(text("INSERT INTO company_settings (key, value) VALUES (:k, :v) "
+                        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"), {"k": key, "v": before or ""})
+        db.commit()

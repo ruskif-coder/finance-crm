@@ -88,6 +88,7 @@ export default function SiteScript({ mayEdit }) {
   const [tPartner, setTPartner] = useState('')
   const [tCamp, setTCamp] = useState('')
   const [wbAcc, setWbAcc] = useState('')
+  const [icon, setIcon] = useState('')
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
   /* Что стоит за хешем: имя, статус и сроки кампании. Хеш сам по себе не говорит
@@ -101,6 +102,7 @@ export default function SiteScript({ mayEdit }) {
       setWithCode(r.data.with_code.script || '')
       setNoCode(r.data.without_code.script || '')
       setVsrc(r.data.viewability || '')
+      setIcon(r.data.teaser_icon || '')
       setPPartner(r.data.prod_partner || '')
       setTPartner(r.data.targeting_partner || '')
       setTCamp(r.data.targeting_campaign || '')
@@ -114,7 +116,7 @@ export default function SiteScript({ mayEdit }) {
     setSaving(true); setErr('')
     try {
       await api.put('/traffic-catalog/site-script',
-        { with_code: withCode, without_code: noCode, viewability: vsrc,
+        { with_code: withCode, without_code: noCode, viewability: vsrc, teaser_icon: icon,
           prod_partner: pPartner, targeting_partner: tPartner, targeting_campaign: tCamp,
           weborama_account: wbAcc }, auth())
       await load()
@@ -129,6 +131,8 @@ export default function SiteScript({ mayEdit }) {
   const dirtyNo = noCode !== (data.without_code.script || '')
   const dirtyV = vsrc !== (data.viewability || '')
   const vEmpty = !String(vsrc || '').trim()
+  const dirtyIcon = icon !== (data.teaser_icon || '')
+  const iconEmpty = !String(icon || '').trim()
   const dirtyTgt = tPartner !== (data.targeting_partner || '') || tCamp !== (data.targeting_campaign || '')
     || pPartner !== (data.prod_partner || '')
   // Одинаковые боевой и демо-кабинет — РК ушли бы в кабинет нацеливания (28.09.2026).
@@ -180,6 +184,32 @@ export default function SiteScript({ mayEdit }) {
           )}
           {mayEdit && !vEmpty && !dirtyV && (
             <button onClick={() => setVsrc('')} style={btn(false)}>Очистить</button>
+          )}
+        </div>
+      </div>
+
+      {/* Иконка тизера — одна на все тизеры (владелец 13.10.2026): DSP требует её в каждом тизере, площадка не
+          показывает. Пока пусто, тизеры не уходят в DSP и отказывают словами. */}
+      <div style={{ ...BOX, marginBottom: 14 }}>
+        <div style={{ ...LBL, marginBottom: 4, color: iconEmpty ? 'var(--warning-text)' : 'var(--text-faint)' }}>
+          Иконка тизера (80×80){iconEmpty ? ' · не задана' : ''}
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 8 }}>
+          Адрес картинки 80×80 на CDN DSP, одна на все тизеры. Пока пусто, тизеры в DSP не отправляются.
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input value={icon || ''} onChange={e => setIcon(e.target.value)} readOnly={!mayEdit}
+            placeholder="https://…/80x80.png"
+            style={{ ...inp, flex: '1 1 320px', fontFamily: MONO, fontSize: 12.5,
+              borderColor: iconEmpty ? 'var(--warning)' : 'var(--border-card)',
+              background: iconEmpty ? 'var(--warning-tint)' : 'var(--bg-card)' }} />
+          {mayEdit && dirtyIcon && (
+            <button onClick={save} disabled={saving} style={primaryBtn}>
+              {saving ? 'Сохраняю…' : 'Сохранить'}
+            </button>
+          )}
+          {mayEdit && !iconEmpty && !dirtyIcon && (
+            <button onClick={() => setIcon('')} style={btn(false)}>Очистить</button>
           )}
         </div>
       </div>

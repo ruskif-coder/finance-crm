@@ -28,7 +28,7 @@ from app.database import get_db
 # имена здесь — для экрана и прежних импортёров.
 from app.dsp import config as dsp_config
 from app.dsp.config import (PROD_PARTNER, SCRIPT_NO_CODE, SCRIPT_OUR_CODE,  # noqa: F401
-                            SCRIPT_VIEWABILITY, TARGETING_CAMPAIGN, TARGETING_PARTNER,
+                            SCRIPT_VIEWABILITY, TARGETING_CAMPAIGN, TARGETING_PARTNER, TEASER_ICON,
                             creative_script, targeting_cabinet, viewability_src)
 from app.models import User
 from app.permissions import require_any_permission, require_permission
@@ -351,6 +351,7 @@ def get_site_script(db: Session = Depends(get_db), user: User = Depends(VIEW)):
         "without_code": {"script": _setting(db, SCRIPT_NO_CODE),
                          "publishers": [out(p) for p in rows if not p.our_code]},
         "viewability": _setting(db, SCRIPT_VIEWABILITY),
+        "teaser_icon": _setting(db, TEASER_ICON),
         "prod_partner": _setting(db, PROD_PARTNER),
         # Пусто в настройке — выгрузка берёт клиента из окружения сервера. Значение
         # окружения не отдаём: экрану достаточно знать, что запасной путь есть.
@@ -388,6 +389,8 @@ class SiteScriptIn(BaseModel):
     # Адрес, а не тег: тег собирает `wrap_html`, и хранить его дважды значило бы
     # позволить им разойтись.
     viewability: Optional[str] = None
+    # Иконка тизера 80×80, одна на все тизеры: адрес картинки на CDN DSP (app/dsp/teaser.py).
+    teaser_icon: Optional[str] = None
     # Кабинет боевого клиента — по нему идут РК.
     prod_partner: Optional[str] = None
     # Куда заводить креатив нацеливания — хеши, не адреса.
@@ -428,6 +431,16 @@ def set_site_script(payload: SiteScriptIn, db: Session = Depends(get_db),
             "INSERT INTO company_settings (key, value) VALUES (:k, :v) "
             "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
             {"k": SCRIPT_VIEWABILITY, "v": v})
+    if payload.teaser_icon is not None:
+        v = payload.teaser_icon.strip()
+        # Адрес картинки: уйдёт в тизер как есть (app/dsp/teaser.py), поэтому только https и без разметки.
+        if v and not v.startswith("https://"):
+            raise HTTPException(400, "Иконка тизера — адрес картинки, начинающийся с https://")
+        if "<" in v or " " in v or len(v) > 1024:
+            raise HTTPException(400, "Это не адрес картинки: без пробелов и разметки, до 1024 символов")
+        db.execute(sa_text(
+            "INSERT INTO company_settings (key, value) VALUES (:k, :v) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"), {"k": TEASER_ICON, "v": v})
     # Боевой и демо-кабинет обязаны различаться: 28.09.2026 боевые РК ушли в кабинет
     # демоклиента, и разбирать это пришлось руками. Сверяем с тем, что станет после записи.
     new_prod = (payload.prod_partner if payload.prod_partner is not None
@@ -472,6 +485,7 @@ def set_site_script(payload: SiteScriptIn, db: Session = Depends(get_db),
     log_action(db, user, "traffic_creative_script", "settings", None,
                f"с кодом: {(payload.with_code or '')[:80]} | без: {(payload.without_code or '')[:80]}"
                f" | видимость: {(payload.viewability or '')[:80]}"
+               f" | иконка тизера: {'задана' if (payload.teaser_icon or '').strip() else 'не менялась'}"
                f" | нацеливание: {(payload.targeting_partner or '')[:40]}"
                f"/{(payload.targeting_campaign or '')[:40]}"
                f" | аккаунт WCM: {(payload.weborama_account or '')[:20]}")
