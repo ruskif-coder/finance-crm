@@ -13,11 +13,11 @@ import { MONO, card, inp, sel, SortHead } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
-const GRID = '220px 70px 170px 250px minmax(260px,1fr)'
+const GRID = '220px 70px 170px 170px 250px minmax(260px,1fr)'
 const CH_TONE = { dsp: 'var(--accent)', adfox: 'var(--dot-current-dz)', outside: 'var(--text-faint)' }
 
 /** Строка поверхности. Модульный уровень — иначе поле кода теряет фокус на каждом символе. */
-function RuleRow({ r, channels, links, mayEdit, onSave }) {
+function RuleRow({ r, channels, links, formats, mayEdit, onSave }) {
   const [code, setCode] = useState(r.adfox_extra_code || '')
   useEffect(() => { setCode(r.adfox_extra_code || '') }, [r.adfox_extra_code])
   const adfoxWeb = r.placement_channel === 'adfox' && r.kind === 'web'
@@ -30,6 +30,13 @@ function RuleRow({ r, channels, links, mayEdit, onSave }) {
           onChange={e => onSave(r, { placement_channel: e.target.value || null })}>
           <option value="">не задано</option>
           {Object.entries(channels).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+      </div>
+      <div style={{ padding: '0 8px' }}>
+        <select disabled={!mayEdit} value={r.creative_format || 'HTML'} style={{ ...sel, width: '100%', padding: '6px 8px', fontWeight: 600 }}
+          title="Стандартный тип креатива DSP для этой поверхности. Сейчас конвейер отправляет только HTML"
+          onChange={e => onSave(r, { creative_format: e.target.value })}>
+          {formats.map(f => <option key={f.key} value={f.key}>{f.title}</option>)}
         </select>
       </div>
       <div style={{ padding: '0 8px' }}>
@@ -73,7 +80,7 @@ export default function PublisherRules({ mayEdit }) {
 
   const save = (r, patch) => {
     const body = { placement_channel: r.placement_channel, app_links: r.app_links,
-      adfox_extra_code: r.adfox_extra_code, ...patch }
+      adfox_extra_code: r.adfox_extra_code, creative_format: r.creative_format, ...patch }
     api.put(`/traffic-catalog/publisher-rules/${r.surface_id}`, body, auth())
       .then(res => { setErr(''); setData(d => ({ ...d, items: d.items.map(x => (x.surface_id === r.surface_id ? { ...x, ...res.data } : x)) })) })
       .catch(e => setErr(e?.response?.data?.detail || 'Не удалось сохранить'))
@@ -110,13 +117,13 @@ export default function PublisherRules({ mayEdit }) {
         показано {rows.length} из {data?.items.length ?? 0}</div>
       {!!err && <div style={{ color: 'var(--danger-fg)', fontSize: 12.5, padding: '4px 0 8px' }}>{err}</div>}
       <div style={{ overflowX: 'auto' }}>
-        <div style={{ minWidth: 1000 }}>
+        <div style={{ minWidth: 1180 }}>
           <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12, borderBottom: '1px solid var(--border-card)' }}>
             {head('publisher', 'Площадка')}{head('kind', 'Поверх.')}{head('placement_channel', 'Канал размещения')}
-            {head('app_links', 'Ссылки для app')}{head('adfox_extra_code', 'Доп. код Adfox (%user6%)')}
+            {head('creative_format', 'Формат креатива')}{head('app_links', 'Ссылки для app')}{head('adfox_extra_code', 'Доп. код Adfox (%user6%)')}
           </div>
           {!data && !err && <div style={{ padding: 24, color: 'var(--text-muted)' }}>Загрузка…</div>}
-          {rows.map(r => <RuleRow key={r.surface_id} r={r} channels={data.channels} links={data.app_links} mayEdit={mayEdit} onSave={save} />)}
+          {rows.map(r => <RuleRow key={r.surface_id} r={r} channels={data.channels} links={data.app_links} formats={data.formats || []} mayEdit={mayEdit} onSave={save} />)}
         </div>
       </div>
     </div>

@@ -82,8 +82,9 @@ def test_dsp_link_has_cyrillic_host_like_adomain():
     assert CR.landing_link(u) == CR.landing_adomain(u)
     assert CR.landing_link("https://a.ru/x?y=1") == CR.landing_adomain("https://a.ru/x?y=1")
     import inspect
-    from app.dsp import provision
-    assert "landing_link(" in inspect.getsource(provision)
+    from app.dsp import assemble
+    # Сборка ссылок креатива — в одном месте пакета DSP (13.10.2026), выгрузка зовёт её оттуда.
+    assert "landing_link(" in inspect.getsource(assemble)
 
 
 def test_dsp_link_keeps_spa_anchor():

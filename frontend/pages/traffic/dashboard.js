@@ -356,6 +356,9 @@ export default function TrafficDashboard() {
   const [mayEdit, setMayEdit] = useState(false)
   useRefreshOnReturn(() => load())
   useEffect(() => { setMayEdit(can(getPermissions(), 'traffic_dashboard', 'edit')) }, [])
+  // «Отчёт по РК» — своё право, его раздаёт владелец (13.10.2026).
+  const [mayReport, setMayReport] = useState(false)
+  useEffect(() => { setMayReport(can(getPermissions(), 'rk_report', 'view')) }, [])
   /* Роль читаем В useEffect, а не при рендере: `localStorage` на сервере не существует,
      и обращение к нему в теле компонента роняет страницу при SSR. */
   const [isAdmin, setIsAdmin] = useState(false)
@@ -1113,8 +1116,10 @@ export default function TrafficDashboard() {
                   {/* Действия над ВСЕЙ РК — дубль кнопок расхлопа: решение «стоп» часто
                       принимают, глядя на строку, и раскрывать её ради двух кнопок незачем. */}
                   <span style={{ justifySelf: 'end', display: 'inline-flex', gap: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
-                    <a href={`/traffic/campaign/${encodeURIComponent(r.deal_code)}`} title="Отчёт по РК: срезы, площадки, выводы"
-                      style={{ ...btnSm(false), textDecoration: 'none', whiteSpace: 'nowrap' }}>Отчёт по РК</a>
+                    {mayReport && (
+                      <a href={`/traffic/campaign/${encodeURIComponent(r.deal_code)}`} title="Отчёт по РК: срезы, площадки, выводы"
+                        style={{ ...btnSm(false), textDecoration: 'none', whiteSpace: 'nowrap' }}>Отчёт по РК</a>
+                    )}
                     {mayEdit && (
                       <PlaceActions
                         status={r.status === 'запущена' ? 'запущен'
@@ -1703,9 +1708,9 @@ export default function TrafficDashboard() {
                                 читают его перед тем, как что-то нажать. */}
                             {/* «Отчёт» и «Задачи» — одной ячейкой: отдельным элементом отчёт выталкивал ответственных на новую строку. */}
                             <span style={{ display: 'inline-flex', gap: 4 }}>
-                              <RkReportLink code={r.deal_code} />
+                              {mayReport && <RkReportLink code={r.deal_code} />}
                               <TaskDoc text={d.traffic_brief} brief={d.mp_brief} deal={r.deal_code}
-                                title={r.deal_title} />
+                                title={r.deal_title} advertiser={d.advertiser_label} />
                             </span>
                             <Owners owners={d.owners} reps={data?.reps}
                               onPick={uid => setTraffic(r, uid)} />

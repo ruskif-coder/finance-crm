@@ -124,3 +124,16 @@ def test_export_returns_xlsx_and_limits_input(client, code):
     too_many = client.post(f"/api/rk-analysis/{code}/export.xlsx",
                            json={"title": "x", "columns": [{"key": f"c{i}", "label": "c"} for i in range(A.MAX_COLS + 1)], "rows": []})
     assert too_many.status_code == 400
+
+
+def test_report_has_its_own_permission():
+    """«Отчёт по РК» — своё право `rk_report` (владелец 13.10.2026: «вынеси в настройки, чтобы я раздал»):
+    кнопка в расхлопе аккаунтов и в дашборде трафика видна тем, кому он выдал. Ключ неизменяем."""
+    from app.routers import rk_analysis as R
+    assert R.VIEW._perm_sections == ("rk_report",) and R.VIEW._perm_action == "view"
+
+
+def test_rk_report_section_is_registered_in_traffic_group():
+    from app import permissions as P
+    sec = {s["key"]: s for s in P.SECTIONS}["rk_report"]
+    assert sec["group"] == "Трафики" and sec["actions"] == ["view"]

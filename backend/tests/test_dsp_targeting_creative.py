@@ -411,8 +411,11 @@ def test_the_targeting_creative_carries_a_placeholder_marker():
         assert len(P.TEST_ERID) == 9 and P.TEST_ERID.isalnum()
         c = FakeClient()
         # Заглушка уезжает и в параметры креатива, и в тело разметки (код — в общем ядре `_copy_core`).
-        src = __import__("inspect").getsource(P._copy_core)
-        assert src.count("erid=erid") >= 2, "маркер нужен и в параметрах, и в html"
+        # Ядро отдаёт маркер в `Spec`, а `assemble._html` кладёт его и в параметры, и в разметку.
+        from app.dsp import assemble
+        insp = __import__("inspect")
+        assert "erid=erid" in insp.getsource(P._copy_core)
+        assert insp.getsource(assemble._html).count("erid=spec.erid") >= 2, "маркер нужен и в параметрах, и в html"
         # Заглушка — только у комплекта без ЕРИД (владелец 01.10.2026).
         assert P.erid_of(s) == P.TEST_ERID
         assert c is not None

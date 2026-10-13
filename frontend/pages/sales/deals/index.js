@@ -11,6 +11,7 @@ import ValuePopover from '@/components/ValuePopover'
 import api, { auth } from '@/lib/api'
 import { buildTitle, productWithSurface, separatePriceSet, surfaceTag, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
 import { fmtMoney, fmtFull, fmtDate, mln } from '@/lib/salesFormat'
+import { exportTable } from '@/lib/dealsExport.mjs'
 import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, firstSortDir, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z, DealCodeLink, UnitPriceCell, PlanFactCell } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
@@ -172,12 +173,13 @@ export default function SalesRegistry2() {
   const activeFilterCount = Object.values(sel).filter(a => a.length).length + (gaps.length ? 1 : 0) + ((dateFrom || dateTo) ? 1 : 0) + (searchQ.trim() ? 1 : 0)
   const loadMoreMobile = () => { const ns = pageSize + 100; setPageSize(ns); load(0, ns) }
 
-  // Выгрузка текущей выборки в CSV (клиентская).
+  // Выгрузка текущей выборки в CSV (клиентская). Колонки — ВСЕ колонки реестра, таблица значений одна на всех
+  // (`lib/dealsExport.mjs`): новая колонка без экспортёра роняет тест, а не пропадает из файла молча (13.10.2026).
   const exportCsv = () => {
-    const head = ['Код', 'Агентство', 'Рекламодатель', 'Бренд', 'Услуга', 'Период', 'Стадия', 'Сумма', 'Аккаунт', 'Контрагент', 'Слой', 'Сделка']
+    const { head, rows } = exportTable(deals, DEAL_COLS.map(c => c.key))
     const esc = csvCell   // формулы в ячейках — текстом (lib/csv)
-    const lines = deals.map(d => [d.code || d.bitrix_id, d.agency, d.advertiser, d.brand, d.product, d.period, d.bitrix_stage, d.amount, d.account_manager, d.payer, d.money_layer, d.title].map(esc).join(';'))
-    const csv = '﻿' + head.map(esc).join(';') + '\n' + lines.join('\n')
+    const nl = String.fromCharCode(10)
+    const csv = '﻿' + [head, ...rows].map(r => r.map(esc).join(';')).join(nl)
     const url = window.URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
     const a = document.createElement('a'); a.href = url; a.download = `deals_${todayMsk()}.csv`
     document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url)

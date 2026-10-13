@@ -59,7 +59,9 @@ def rules_for(db: Session, keys: Iterable[Tuple[int, str]]) -> Dict[Tuple[int, s
 
 def rule_of(s) -> dict:
     return {"channel": s.placement_channel, "app_links": s.app_links if s.kind == "app" else None,
-            "adfox_code": s.adfox_extra_code if s.placement_channel == "adfox" else None}
+            "adfox_code": s.adfox_extra_code if s.placement_channel == "adfox" else None,
+            # Стандартный тип креатива DSP поверхности (13.10.2026); что с ним делать — app/dsp/teaser.py.
+            "creative_format": getattr(s, "creative_format", None) or "HTML"}
 
 
 # ── Посадочная app-площадки в формате диплинка SDK (владелец 02.10.2026) ─────────────

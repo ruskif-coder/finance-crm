@@ -53,6 +53,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.dsp import assemble
 from app.dsp import creatives as cr
 from app.dsp import client as ds
 from app.dsp.client import MsClient, MsError
@@ -325,52 +326,25 @@ def _copy_core(c: MsClient, campaign: str, *, ref: str, known: Optional[str], ti
     там, где копию надо завести или дошить, а отказ «нет архива» стоит после проверки зависших
     попыток, как и раньше.
     """
-    # Уже заведённый креатив ПРОВЕРЯЕМ, а не берём на веру. Причина конкретная: объект
-    # создаётся одним вызовом, а HTML вшивается вторым, и между ними связь может
-    # оборваться. Тогда в кабинете остаётся креатив БЕЗ КОДА — ссылка на него
-    # выпускается, открывается и показывает пустую страницу, по которой человек делает
-    # вывод «баннер не загрузился» и идёт искать причину не там (владелец 17.09.2026:
-    # «а как убедиться, что баннер загружен?»).
-    if known:
-        state = _html_state(c, known)
-        if state == "ok":
-            return known
-        if state == "empty":
-            # Объект есть, кода нет — дошиваем его, а не заводим второй: второй в чужом
-            # кабинете уже не удалить. Битый архив — отказ словами, а не 500.
-            data, filename = get_zip()
-            try:
-                up = cr.upload_zip(c, data, filename=filename, local_ref=ref)
-                html = cr.wrap_html(up["html"], erid=erid, viewability_src=viewability_src)
-            except (cr.CreativeError, ValueError) as e:
-                raise TargetingCreativeError(str(e))
-            c.creative_edit(known, {"data": {"html_code": html}}, local_ref=ref)
-            return known
-        # state == "gone" — креатив снесли в кабинете руками: заводим заново.
-        log.warning("DSP: креатив нацеливания %s не найден в кабинете, завожу заново", known)
-
-    # Прошлый `Creative.add` ушёл без ответа — DSP мог создать копию, а хеша мы не
-    # знаем. Повтор вслепую завёл бы вторую, а удалить её в DSP нечем (аудит 01.10.2026,
-    # В-5). Снять отметку — экран сверки РК («Нашёл» / «Нет в кабинете»), `ad/unknown`.
-    if c.unknown_outcome("Creative.add", "creative", ref):
+    # Сборка — в app/dsp/assemble.py (одна на выгрузку РК и копии нацеливания, 13.10.2026): там же
+    # проверка «код на месте» (объект создаётся одним вызовом, а HTML вшивается вторым, и между ними
+    # связь может оборваться — владелец 17.09.2026: «а как убедиться, что баннер загружен?») и
+    # отказ при зависшей прошлой попытке (аудит 01.10.2026, В-5). Маркер идёт и в ТЕЛО креатива, не
+    # только в поле: DSP показывает плашку по разметке.
+    def _unknown() -> None:
         raise TargetingCreativeError(
             "прошлая попытка завести копию нацеливания осталась без ответа — она могла "
             "создаться. Сверьтесь с кабинетом нацеливания DSP и отметьте результат: "
             "дашборд трафика → кнопка «В DSP» у РК → блок зависших попыток")
-    data, filename = get_zip()
+
     try:
-        up = cr.upload_zip(c, data, filename=filename, local_ref=ref)
-        # Маркер и в ТЕЛЕ креатива, не только в поле: DSP показывает плашку по разметке,
-        # и креатив без неё на демо-показе выглядит иначе, чем будет выглядеть боевой.
-        html = cr.wrap_html(up["html"], erid=erid, viewability_src=viewability_src)
-        params = cr.build_creative_params(
-            title=title, link=link, erid=erid, size=up.get("size"), adomain=TARGETING_ADOMAIN)
-        xxhash = c.creative_add(campaign, params, local_ref=ref)
-        c.creative_edit(xxhash, {"data": {"html_code": html}}, local_ref=ref)
+        built = assemble.ensure(c, campaign, assemble.Spec(
+            ref=ref, known=known, title=title, link=link, adomain=TARGETING_ADOMAIN, erid=erid,
+            load=get_zip, viewability_src=viewability_src, on_unknown=_unknown))
     except (cr.CreativeError, MsError, ValueError) as e:
         raise TargetingCreativeError(str(e))
-    log.info("DSP: креатив нацеливания %s заведён как %s", ref, xxhash)
-    return xxhash
+    log.info("DSP: креатив нацеливания %s заведён как %s", ref, built.xxhash)
+    return built.xxhash
 
 
 def ensure(db: Session, s: LaunchPrepCreativeSet, *,

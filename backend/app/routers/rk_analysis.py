@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Страница «Разбор РК» (трафик, владелец 11.10.2026). Право — дашборда трафика (`traffic_dashboard`
-view), деньги видны по нему же (решение владельца). Область видимости РК — та же, что у дашборда.
+"""Страница «Отчёт по РК» (трафик, владелец 11.10.2026). Право — своё, `rk_report` (view; с 13.10.2026:
+владелец раздаёт его по ролям, в том числе аккаунтам — кнопка в расхлопе их дашборда ведёт сюда же);
+деньги видны по этому праву (решение владельца). Область видимости РК — та же, что у дашборда.
 Данные — `app/ad/rk_analysis.py`, расчёты — на странице (`frontend/lib/rkAnalysis.mjs`)."""
 import re
 from datetime import date
@@ -19,7 +20,7 @@ from app.permissions import require_permission
 from app.routers.traffic_dashboard import _campaign_in_scope
 
 router = APIRouter()
-VIEW = require_permission("traffic_dashboard", "view")
+VIEW = require_permission("rk_report", "view")
 
 
 @router.get("/{code}")

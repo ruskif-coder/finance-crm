@@ -29,6 +29,7 @@ from app import timez
 from app.ad import balance, build
 from app.ad import external as ext_mod
 from app.launch_prep import volumes
+from app.ord.advertiser_label import advertiser_label
 from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_REJECTED, CREATIVE_STATUSES,
                            GRAIN_DAYS, campaign_chain_status, effective_campaign_status,
                            PLACEMENT_CHAIN, PLACEMENT_MANUAL, PLACEMENT_RUNNING,
@@ -978,7 +979,15 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
         "traffic_brief": (deal.traffic_brief or "").strip(),
         # Шапка брифа медиаплана — вторая вкладка «Задач РК» (владелец 29.09.2026).
         "mp_brief": build.deal_mp_brief(db, deal.id),
+        # Юр. лицо и ИНН по изначальному договору — в шапке «Задач РК» (владелец 13.10.2026).
+        # Тот же расчёт, что у рекламной метки креатива; нет договора — None.
+        "advertiser_label": _advertiser_label(db, deal.id),
     }
+
+
+def _advertiser_label(db: Session, deal_id) -> Optional[dict]:
+    label = advertiser_label(db, deal_id)
+    return {"name": label[1], "inn": label[0]} if label else None
 
 
 def _owners(db: Session, deal, user: User) -> dict:

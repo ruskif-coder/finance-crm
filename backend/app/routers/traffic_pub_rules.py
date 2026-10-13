@@ -15,7 +15,7 @@ from app.database import get_db
 from app.launch_prep import pub_rules
 from app.models import User
 from app.permissions import require_permission
-from app.sales.models import SalesPublisher, SalesPublisherSurface
+from app.sales.models import AdCreativeFormat, SalesPublisher, SalesPublisherSurface
 
 router = APIRouter()
 VIEW = require_permission("traffic_publisher_rules", "view")
@@ -31,17 +31,21 @@ def list_rules(db: Session = Depends(get_db), current_user: User = Depends(VIEW)
     items = [{"surface_id": s.id, "publisher_id": s.publisher_id,
               "publisher": pubs[s.publisher_id].name, "kind": s.kind,
               "placement_channel": s.placement_channel, "app_links": s.app_links,
-              "adfox_extra_code": s.adfox_extra_code,
+              "adfox_extra_code": s.adfox_extra_code, "creative_format": s.creative_format,
               "problem": (pub_rules.pair_problem(pub_rules.rule_of(s), "x", "x"))}
              for s in rows]
     items.sort(key=lambda x: (x["publisher"].lower(), x["kind"] != "web"))
-    return {"items": items, "channels": pub_rules.CHANNELS, "app_links": pub_rules.APP_LINKS}
+    formats = (db.query(AdCreativeFormat).filter(AdCreativeFormat.is_active.is_(True))
+               .order_by(AdCreativeFormat.sort_order).all())
+    return {"items": items, "channels": pub_rules.CHANNELS, "app_links": pub_rules.APP_LINKS,
+            "formats": [{"key": f.key, "title": f.title} for f in formats]}
 
 
 class RuleIn(BaseModel):
     placement_channel: Optional[str] = None
     app_links: Optional[str] = None
     adfox_extra_code: Optional[str] = None
+    creative_format: Optional[str] = None      # None — не менять
 
 
 @router.put("/publisher-rules/{surface_id}")
@@ -62,12 +66,22 @@ def update_rule(surface_id: int, payload: RuleIn, db: Session = Depends(get_db),
     code = (payload.adfox_extra_code or "").strip() or None
     if code and len(code) > CODE_MAX:
         raise HTTPException(status_code=400, detail=f"Доп. код длиннее {CODE_MAX} символов")
-    before = (s.placement_channel, s.app_links, bool(s.adfox_extra_code))
+    fmt = payload.creative_format
+    if fmt is not None:
+        known = db.query(AdCreativeFormat).filter(AdCreativeFormat.key == fmt,
+                                                  AdCreativeFormat.is_active.is_(True)).first()
+        if not known:
+            raise HTTPException(status_code=400, detail="Формат креатива — из справочника: "
+                                "HTML, TEASER, VIDEO_INLINE или VIDEO_VAST")
+    before = (s.placement_channel, s.app_links, bool(s.adfox_extra_code), s.creative_format)
     s.placement_channel, s.app_links, s.adfox_extra_code = ch, links, code
+    if fmt is not None:
+        s.creative_format = fmt
     db.commit()
     pub = db.query(SalesPublisher).get(s.publisher_id)
     log_action(db, current_user, "publisher_rules_update", "sales_publisher", s.publisher_id,
                f"{pub.name if pub else s.publisher_id} {s.kind}: канал {before[0]}→{ch}, "
-               f"ссылки {before[1]}→{links}, доп. код {'есть' if code else 'нет'}")
+               f"ссылки {before[1]}→{links}, доп. код {'есть' if code else 'нет'}, "
+               f"формат {before[3]}→{s.creative_format}")
     return {"surface_id": s.id, "placement_channel": ch, "app_links": links,
-            "adfox_extra_code": code, "problem": pub_rules.pair_problem(pub_rules.rule_of(s), "x", "x")}
+            "adfox_extra_code": code, "creative_format": s.creative_format, "problem": pub_rules.pair_problem(pub_rules.rule_of(s), "x", "x")}

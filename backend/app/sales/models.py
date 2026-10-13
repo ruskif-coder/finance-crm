@@ -1129,6 +1129,17 @@ class SalesPublisher(Base):
     documents = relationship("SalesPublisherDocument", cascade="all, delete-orphan")
 
 
+class AdCreativeFormat(Base):
+    """Типология креатива DSP (значение `type` в Creative.add). Справочник заводится миграцией,
+    а не из интерфейса: код знает, как собирать каждый тип."""
+    __tablename__ = "ad_creative_formats"
+    key = Column(String(16), primary_key=True)
+    title = Column(String(64), nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0, server_default="0")
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    note = Column(Text)
+
+
 class SalesPublisherSurface(Base):
     __tablename__ = "sales_publisher_surfaces"
     __table_args__ = (UniqueConstraint("publisher_id", "kind", name="uq_publisher_surface"),)
@@ -1143,6 +1154,10 @@ class SalesPublisherSurface(Base):
     placement_channel = Column(String(16))
     app_links = Column(String(16))
     adfox_extra_code = Column(Text)
+    # Стандартный тип креатива DSP для этой поверхности — ключ из `ad_creative_formats`
+    # (миграция 2026-10-13_creative_formats.sql). Конвейер пока отправляет только HTML.
+    creative_format = Column(String(16), ForeignKey("ad_creative_formats.key"), nullable=False,
+                             default="HTML", server_default="HTML")
     # МС-реквизиты DSP на поверхность (миграция 2026-09-01_traffic_catalog.sql): id паблишера
     # в DSP и блок по умолчанию «Block SIMB» (авто-цепляется к креативу, скрыт из
     # статистики кабинета). На каждую web/app — свои; ios/android (платформы) — на будущее.

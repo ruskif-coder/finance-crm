@@ -21,6 +21,8 @@ SCRIPT_NO_CODE = "traffic_creative_script_no_code"       # площадка бе
 # Адрес скрипта видимости. В коде адреса НЕТ намеренно (09.09.2026): в имени хоста
 # узнаётся поставщик.
 SCRIPT_VIEWABILITY = "dsp_viewability_src"
+# Адрес иконки тизера (80×80): требует DSP, площадка её не показывает. Адрес на CDN DSP — только в настройке, не в коде.
+TEASER_ICON = "dsp_teaser_icon_url"
 PROD_PARTNER = PARTNER_SETTING
 # Кабинет-демоклиент и демокампания для креатива НАЦЕЛИВАНИЯ (владелец 12.09.2026).
 TARGETING_PARTNER = "dsp_targeting_partner_xxhash"
@@ -68,6 +70,11 @@ def creative_script(db: Session, our_code: bool) -> str:
 def viewability_src(db: Session) -> str:
     """Адрес скрипта видимости. ЕДИНСТВЕННАЯ точка чтения."""
     return setting(db, SCRIPT_VIEWABILITY).strip()
+
+
+def teaser_icon_url(db: Session) -> str:
+    """Иконка тизера по умолчанию. ЕДИНСТВЕННАЯ точка чтения; пусто — тизер не уходит."""
+    return setting(db, TEASER_ICON).strip()
 
 
 def targeting_cabinet(db: Session) -> tuple:

@@ -796,6 +796,8 @@ const CB = {
 
 /* Кнопка хендоффа: высота 30, радиус 9. Настоящий <button>, а не span: у действия
    должен быть фокус с клавиатуры и честное «недоступно». */
+const FORMAT_LABEL = { TEASER: 'тизер', VIDEO_INLINE: 'видео', VIDEO_VAST: 'видео VAST' }
+
 const CbBtn = ({ children, primary, danger, onClick, title, disabled, style }) => (
   <button type="button" onClick={onClick} title={title} disabled={disabled} style={{
     display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 12px',
@@ -1210,6 +1212,16 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
             <span style={{ fontFamily: MONO, fontSize: 8.5, textTransform: 'uppercase', color: CB.t4 }}>
               {r.surface_kind === 'app' ? 'app' : 'web'}
             </span>
+            {/* Тип креатива площадки не HTML — отметка; материал не подходит ему — предупреждение
+                (проверяет сервер, app/dsp/teaser.py: одно правило на сборку и на выгрузку в DSP). */}
+            {!!r.creative_format && r.creative_format !== 'HTML' && (
+              <span title={`Стандартный формат креатива площадки: ${FORMAT_LABEL[r.creative_format] || r.creative_format}`}
+                style={{ marginLeft: 6, fontFamily: MONO, fontSize: 8.5, textTransform: 'uppercase', color: CB.accent }}>
+                {FORMAT_LABEL[r.creative_format] || r.creative_format}</span>
+            )}
+            {!!r.format_warning && (
+              <span title={r.format_warning} style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: CB.warnFg, cursor: 'help' }}>⚠</span>
+            )}
           </span>
           {!!r.pair_code && (
             <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 700, color: CB.income }}>{r.pair_code}</span>

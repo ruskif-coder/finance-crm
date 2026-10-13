@@ -147,8 +147,11 @@ def test_zero_share_is_reported_not_sent(camp, monkeypatch):
 def test_provision_refuses_zero_share():
     import inspect
     from app.dsp import provision
+    # Правило одно на HTML и тизер (13.10.2026): выгрузка зовёт `_guard_zero_share` из обеих веток.
     src = inspect.getsource(provision._provision)
-    assert "plans.get(cre.id) == 0" in src and "нулевой объём" in src
+    assert "_guard_zero_share(plans, cre)" in src
+    guard = inspect.getsource(provision._guard_zero_share)
+    assert "plans.get(cre.id) == 0" in guard and "нулевой объём" in guard
 
 
 def test_nightly_survives_a_non_dsp_error(camp, monkeypatch):

@@ -970,7 +970,21 @@ export const RkReportLink = ({ code }) => (
 /* Две вкладки (владелец 29.09.2026): первая — задача аккаунта трафику (`traffic_brief`
    с карточки сделки), вторая — шапка брифа из медиаплана: рекламодатель, юр. лицо,
    бренд, период, агентство, гео и таргетинг. */
-export const TaskDoc = ({ text, brief, deal, title }) => {
+/* Шапка окна «Задачи РК»: код сделки и название РК, ниже — юр. лицо и ИНН по изначальному договору
+   (владелец 13.10.2026). Нет договора — строки нет. */
+const taskSummary = (deal, title, advertiser) => {
+  const head = `${deal || ''}${title ? ` · ${title}` : ''}`.trim()
+  const who = advertiser?.name ? `${advertiser.name}${advertiser.inn ? ` · ИНН ${advertiser.inn}` : ''}` : ''
+  if (!head && !who) return null
+  return who ? (
+    <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {!!head && <span>{head}</span>}
+      <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{who}</span>
+    </span>
+  ) : head
+}
+
+export const TaskDoc = ({ text, brief, deal, title, advertiser }) => {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState('task')
   const has = !!(text || '').trim()
@@ -1003,7 +1017,7 @@ export const TaskDoc = ({ text, brief, deal, title }) => {
       </span>
       {open && (
         <Modal title="Задачи РК" width={760} onClose={() => setOpen(false)}
-          summary={`${deal || ''}${title ? ` · ${title}` : ''}`.trim() || null}>
+          summary={taskSummary(deal, title, advertiser)}>
           <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border-card)', marginBottom: 12 }}>
             {tabBtn('task', 'Задача от аккаунта')}{tabBtn('brief', 'Бриф медиаплана')}
           </div>

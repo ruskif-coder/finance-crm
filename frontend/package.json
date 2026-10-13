@@ -1,6 +1,6 @@
 {
   "name": "finance-frontend",
-  "version": "2.6.84",
+  "version": "2.6.85",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
@@ -29,7 +29,7 @@
     "check-screens": "node scripts/check-screens.mjs",
     "check-hooks-lint": "node scripts/check-hooks-lint.mjs",
     "check-vat": "node scripts/check-vat.mjs",
-    "test-rk": "node --test lib/rkAnalysis.test.mjs"
+    "test-rk": "node --test lib/rkAnalysis.test.mjs lib/dealsExport.test.mjs"
   },
   "dependencies": {
     "axios": "1.20.0",

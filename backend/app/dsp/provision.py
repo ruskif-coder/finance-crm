@@ -29,10 +29,11 @@ from app.ad.build import creative_plans, pixel_setup
 from app.ad.flight import PLACEMENT_IN_PLAN, PLACEMENT_READY
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 from app.dsp import creatives as cr
+from app.dsp import assemble, teaser
 from app.dsp.campaigns import ensure_campaign
 from app.dsp.client import MsClient, MsError, safe_error
 from app.ext_lock import DSP_PROVISION, only_one
-from app.ord import readiness
+from app.ord.advertiser_label import advertiser_label as ad_label  # одна функция на метку и шапку «Задач РК»
 from app.files_safe import inside_uploads
 from app.launch_prep.models import (LaunchPrepCreativeFile, LaunchPrepPair,
                                     LaunchPrepSetTarget, LaunchPrepTarget)
@@ -138,10 +139,10 @@ def _blocker(row: dict, want_pixel: bool = True,
         return "нет ЕРИД — маркер не перенесён в креатив кампании"
     if want_pixel and not ext_tag and not p.weborama_pixel:
         return "нет пикселя Weborama — сначала «ПИКСЕЛЬ WR»"
-    if not f:
-        return "к креативу не привязан файл комплекта"
-    if not f.is_archive:
-        return "файл креатива не архив — загрузчик DSP принимает zip"
+    # Годится ли файл формату поверхности (HTML-архив / картинка тизера) — решает пакет DSP.
+    why = teaser.material_problem(teaser.format_of(row.get("rule")), f)
+    if why:
+        return why
     if not (pub and naming.domain_of(pub.domain or "")):
         return "у площадки не задан домен — в тег пикселя его подставить неоткуда"
     if not (tgt and (tgt.advertiser_url or "").strip()):
@@ -170,35 +171,6 @@ def _without_blocks(db: Session, camp: AdCampaign, rows: list) -> set:
 
 AD_LABEL_MISSING = ("у сделки не выбран изначальный договор ОРД — ИНН и название "
                     "рекламодателя для рекламной метки взять неоткуда")
-
-
-def ad_label(db: Session, deal_id) -> Optional[tuple]:
-    """(ИНН, название) рекламодателя для рекламной метки — `self_inn` / `self_name` креатива.
-
-    Владелец 28.09.2026: слать всегда — эти данные идут в подсказку рекламной метки рядом
-    с ЕРИД. Источник — изначальный договор ОРД сделки: с ним маркер и зарегистрирован в
-    ЕРИР, и метка обязана говорить то же, что реестр. Нет договора или в нём пусто — None,
-    и креатив не выгружается: без полей боевой кабинет отказывает всем креативам сразу."""
-    from app.ord.models import OrdInitialContract
-    from app.sales.models import SalesDeal
-    deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
-    if deal is not None and readiness.is_direct(deal):
-        # Прямой рекламодатель (02.10.2026): изначальный = доходный, рекламодатель — это
-        # плательщик сделки; метка берёт его ИНН и название.
-        # Плательщик — тем же разбором, что сборка ОРД и ЕРИД (`resolve_final`): по полю
-        # сделки, а если пусто — по метке имени. Иначе экран сборки зелёный, а метки нет.
-        from app.ord.matching import resolve_final
-        cp = resolve_final(db, deal).payer
-        inn = "".join(ch for ch in (getattr(cp, "inn", "") or "") if ch.isdigit())
-        name = (getattr(cp, "name", "") or "").strip()
-        return (inn, name) if inn and name else None
-    if not deal or not getattr(deal, "ord_initial_contract_id", None):
-        return None
-    ic = (db.query(OrdInitialContract)
-          .filter(OrdInitialContract.id == deal.ord_initial_contract_id).first())
-    inn = "".join(ch for ch in (getattr(ic, "advertiser_inn", "") or "") if ch.isdigit())
-    name = (getattr(ic, "advertiser_name", "") or "").strip()
-    return (inn, name) if inn and name else None
 
 
 def plan(db: Session, camp: AdCampaign) -> dict:
@@ -301,7 +273,7 @@ def provision(db: Session, camp: AdCampaign, user_id=None,
 
 
 def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
-    from app.dsp.config import creative_script, viewability_src
+    from app.dsp.config import creative_script, teaser_icon_url, viewability_src
 
     px = pixel_setup(db, camp.deal_id)
     want_pixel, ext_tag = px["needed"], px["tag"]
@@ -332,6 +304,9 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
         raise DspProvisionError(f"Кампания в DSP не заведена: {e}")
 
     vsrc = viewability_src(db)
+    # Иконка тизера — из настройки, и только если в выгрузке есть тизер; пусто — тизеры откажут словами.
+    icon = teaser_icon_url(db) if any(teaser.is_teaser(r.get("rule")) for r in rows) else ""
+    scripts: dict = {}          # счётчик креатива — один запрос на значение признака, не на креатив
     # Лимит креатива — ЕГО доля плана площадки, а не план площадки целиком (27.09.2026).
     plans = creative_plans(db, camp)
     done, failed, warnings = [], [], []
@@ -340,73 +315,31 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
         name = f"{cre.ms_title or cre.id} · {pub.name if pub else '?'}"
         ref = f"cr{cre.id}"
         try:
-            # Прошлый проход мог завести креатив и оборваться до кода (4.H1). Журнал
-            # помнит хеш — тогда смотрим, что лежит в кабинете, а не заводим второй.
+            # Прошлый проход мог завести креатив и оборваться до кода (4.H1). Журнал помнит
+            # хеш — тогда смотрим, что лежит в кабинете, а не заводим второй.
             known = c.last_ok_xxhash("Creative.add", "creative", ref)
-            # Прошлый add ушёл без ответа — креатив мог создаться, а хеша мы не знаем.
-            # Перечислить креативы кампании у DSP нечем, поэтому повтор заперт до сверки
-            # (ревью 23.09.2026): второй креатив в кабинете не удалить.
-            if not known and c.unknown_outcome("Creative.add", "creative", ref):
-                raise DspProvisionError(
-                    "прошлая попытка завести этот креатив осталась без ответа — он мог "
-                    "создаться. Сверьтесь с кабинетом DSP, повтор запрещён до сверки")
-            state = cr.html_state(c, known) if known else "gone"
-            if state == "ok":
-                xxhash = known
-            else:
-                data = _read_archive(r["file"])
-                # Правило площадки (владелец 29.09.2026): в app-режимах «веб» / «обе» в
-                # <a href> встаёт прямая ссылка вместо макроса DSP; url/adomain — веб всегда.
-                href = pub_rules.click_href(r.get("rule"), r["target"].advertiser_url,
-                                            getattr(r["target"], "deeplink_url", None))
-                # Ссылка правила без кликового макроса в href не встаёт (DSP отклонит, 2051) —
-                # трафику сообщаем, что креатив ушёл с макросом DSP (05.10.2026).
-                note = pub_rules.click_warning(r.get("rule"), r["target"].advertiser_url,
-                                               getattr(r["target"], "deeplink_url", None))
-                if note:
-                    warnings.append({"creative_id": cre.id, "placement_id": r["placement"].id,
-                                     "name": name, "warning": note})
-                if href:
-                    data, _ = prepare_for_dsp(data)
-                    data, _ = set_click_href(data, href)
-                up = cr.upload_zip(c, data,
-                                   filename=(r["file"].original_name or "creative.zip"),
-                                   local_ref=ref)
+            fmt = teaser.format_of(r.get("rule"))
+            click, adomain = assemble.links_for(fmt, r["target"])
+            built = assemble.ensure(c, camp_hash, assemble.Spec(
+                ref=ref, known=known, fmt=fmt, title=cre.ms_title or name, link=click,
+                adomain=adomain, erid=cre.erid,
+                load=lambda r=r: (_read_archive(r["file"]), r["file"].original_name or "creative.zip"),
+                viewability_src=vsrc, icon_url=icon,
                 # Наш счётчик выбирается ПО ПЛОЩАДКЕ — одной точкой на систему.
-                script = creative_script(db, bool(pub.our_code)) if pub else ""
-                html = cr.wrap_html(up["html"], erid=cre.erid, viewability_src=vsrc,
-                                    extra_script=script)
-                # Пиксель показа — полем `pixel`, а не тегом в разметке (владелец
-                # 01.10.2026). И только если он по этой РК заказан: иначе тег
-                # верификатора уехал бы в сеть по кампании, которую он не считает.
-                pix = (pixel_url(r, up.get("width"), up.get("height"), ext_tag, cre.erid)
-                       if want_pixel else None)
-                if state == "empty":
-                    xxhash = known
-                else:
-                    # Нулевая доля — это «не крутить», а лимит 0 в DSP значит «без лимита»:
-                    # креатив ушёл бы откручивать без ограничения. Так бывает, когда соседний
-                    # креатив площадки забрал весь её объём заданным (ревью 27.09.2026).
-                    if plans.get(cre.id) == 0:
-                        raise DspProvisionError(
-                            "У креатива нулевой объём на площадке — весь её план отдан другому "
-                            "креативу. Уменьшите заданный объём соседа или отключите креатив")
-                    params = cr.build_creative_params(
-                        title=cre.ms_title or name,
-                        # Обычная посадочная: кликовый счётчик Weborama сняли, клики не
-                        # считаем (владелец 01.10.2026).
-                        # Диплинк SDK в посадочной — в `<a href>` баннера, сюда — его
-                        # веб-адрес (`pub_rules.web_url`, владелец 02.10.2026).
-                        link=cr.landing_link(pub_rules.web_url(r["target"].advertiser_url)),
-                        pixel=pix,
-                        # Конечный URL — посадочная креатива целиком (владелец 01.10.2026).
-                        adomain=cr.landing_adomain(pub_rules.web_url(r["target"].advertiser_url)),
-                        erid=cre.erid, size=up.get("size"),
-                        self_inn=label[0], self_name=label[1],
-                        total_shows=(int(plans[cre.id]) if plans.get(cre.id) else None))
-                    xxhash = c.creative_add(camp_hash, params, local_ref=ref)
-                c.creative_edit(xxhash, {"data": {"html_code": html}}, local_ref=ref)
-                _apply_app_deeplink(c, xxhash, html, r, cre, name, ref, warnings)
+                extra_script=_script_of(db, pub, scripts, creative_script),
+                prepare=lambda data, r=r: _prepare_archive(data, r, cre, name, warnings),
+                # Пиксель показа — полем `pixel`, не тегом в HTML (владелец 01.10.2026) и только
+                # если он по этой РК заказан. Размер — из ответа загрузчика; у тизера он фиксирован.
+                pixel=((lambda up, r=r: pixel_url(
+                    r, up.get("width", teaser.IMG_W), up.get("height", teaser.IMG_H),
+                    ext_tag, cre.erid)) if want_pixel else None),
+                self_inn=label[0], self_name=label[1],
+                total_shows=(int(plans[cre.id]) if plans.get(cre.id) else None),
+                before_add=lambda: _guard_zero_share(plans, cre),
+                on_unknown=_raise_unknown))
+            xxhash = built.xxhash
+            if built.html is not None:
+                _apply_app_deeplink(c, xxhash, built.html, r, cre, name, ref, warnings)
         except (cr.CreativeError, MsError, DspProvisionError, ValueError, SandboxError) as e:
             failed.append({"creative_id": cre.id, "placement_id": r["placement"].id,
                            "name": name, "error": str(e)})
@@ -419,6 +352,54 @@ def _provision(db: Session, camp: AdCampaign, c: MsClient) -> dict:
                      "name": name, "xxhash": xxhash})
     return {"campaign_xxhash": camp_hash, "done": done, "failed": failed, "warnings": warnings,
             "targeting": _apply_targeting(db, camp, c, camp_hash)}
+
+
+def _script_of(db: Session, pub, cache: dict, creative_script) -> str:
+    if not pub:
+        return ""
+    key = bool(pub.our_code)
+    if key not in cache:
+        cache[key] = creative_script(db, key)
+    return cache[key]
+
+
+def _raise_unknown() -> None:
+    # Прошлый add ушёл без ответа — креатив мог создаться, а хеша мы не знаем. Перечислить
+    # креативы кампании у DSP нечем, поэтому повтор заперт до сверки (ревью 23.09.2026):
+    # второй креатив в кабинете не удалить.
+    raise DspProvisionError(
+        "прошлая попытка завести этот креатив осталась без ответа — он мог "
+        "создаться. Сверьтесь с кабинетом DSP, повтор запрещён до сверки")
+
+
+def _prepare_archive(data: bytes, r: dict, cre, name: str, warnings: list) -> bytes:
+    """Правило площадки (владелец 29.09.2026): в app-режимах «веб» / «обе» в <a href> встаёт прямая
+    ссылка вместо макроса DSP; url/adomain — веб всегда. Ссылка без кликового макроса в href не
+    встаёт (DSP отклонит, 2051) — трафику сообщаем, что креатив ушёл с макросом DSP (05.10.2026).
+    Тизера это не касается: в нём нет архива, а ссылки идут полями."""
+    if teaser.is_teaser(r.get("rule")):
+        return data
+    tgt = r["target"]
+    deep = getattr(tgt, "deeplink_url", None)
+    href = pub_rules.click_href(r.get("rule"), tgt.advertiser_url, deep)
+    note = pub_rules.click_warning(r.get("rule"), tgt.advertiser_url, deep)
+    if note:
+        warnings.append({"creative_id": cre.id, "placement_id": r["placement"].id,
+                         "name": name, "warning": note})
+    if href:
+        data, _ = prepare_for_dsp(data)
+        data, _ = set_click_href(data, href)
+    return data
+
+
+def _guard_zero_share(plans: dict, cre) -> None:
+    """Нулевая доля — это «не крутить», а лимит 0 в DSP значит «без лимита»: креатив ушёл бы
+    откручивать без ограничения. Так бывает, когда соседний креатив площадки забрал весь её
+    объём заданным (ревью 27.09.2026). Одно правило на HTML и тизер."""
+    if plans.get(cre.id) == 0:
+        raise DspProvisionError(
+            "У креатива нулевой объём на площадке — весь её план отдан другому "
+            "креативу. Уменьшите заданный объём соседа или отключите креатив")
 
 
 def _apply_app_deeplink(c, xxhash: str, html: str, r: dict, cre, name: str, ref: str,

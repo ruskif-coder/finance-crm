@@ -43,6 +43,7 @@ from app.database import get_db
 from app.launch_prep import banner_origin, originals, sandbox
 from app.launch_prep import volumes as volumes_mod
 from app.launch_prep import pub_rules
+from app.dsp import teaser
 from app.launch_prep.models import (SET_ORIGINS, TARGET_STATE_PUBLIC, TARGET_STATES,
                                     LaunchPrepCreativeFile, LaunchPrepCreativeSet,
                                     LaunchPrepPair, LaunchPrepPairFile, LaunchPrepReview,
@@ -296,6 +297,8 @@ def _recipient_out(target, pub, pair=None, review=None, traffic=None,
         # Какую ссылку принимает площадка — подсказкой у поля посадочной (02.10.2026).
         "landing_hint": pub_rules.landing_hint(rule),
         "placement_channel": (rule or {}).get("channel"),
+        # Стандартный тип креатива поверхности; совпадение с материалом проверяет app/dsp/teaser.py.
+        "creative_format": teaser.format_of(rule),
         "rule_label": pub_rules.applied_label(rule),
         "plan_show": member.plan_show if member else None,
         # Пара появляется в момент отправки; до неё эти поля пусты.
@@ -361,6 +364,8 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
                                      member=members.get((s.id, t.id)),
                                      rule=rules.get((t.publisher_id, t.surface_kind)))
                       for t in candidates]
+    for rc in recipients:
+        rc["format_warning"] = teaser.format_warning(rc["creative_format"], files)
 
     return {
         "id": s.id, "no": s.no, "title": s.title, "origin": s.origin,

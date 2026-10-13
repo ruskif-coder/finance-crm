@@ -6,6 +6,7 @@ import { MONO, UI, CAP, docCard, addBtn, iconSq, DocIcon, DownloadIcon, EditIcon
 import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc, downloadDealCreatives,
   creativesMeta } from '../../lib/dealDocs'
 import { downloadMp } from '../../lib/mpDownload'
+import { can, getPermissions } from '@/lib/auth'
 import { grp } from '@/lib/salesFormat'
 import { fmtDateTimeShort } from '@/lib/dates'
 import { CampaignBrief } from '@/components/campaign/CampaignSummary'
@@ -86,6 +87,9 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   const [title, setTitle] = useState(d.title || '')
   const [editing, setEditing] = useState(false)
   const [reportBusy, setReportBusy] = useState(false)   // отчёт клиенту собирается
+  // «Отчёт по РК» (экран трафиков) — своё право, его раздаёт владелец (13.10.2026); снимок прав читаем после монтирования.
+  const [mayReport, setMayReport] = useState(false)
+  useEffect(() => { setMayReport(can(getPermissions(), 'rk_report', 'view')) }, [])
   const [draft, setDraft] = useState('')
 
   useEffect(() => {
@@ -272,6 +276,15 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   // Битрикс больше не источник (владелец 08.09.2026, из реестра убрана 03.10.2026).
   const buttons = (
     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 'auto', paddingTop: 14 }}>
+      {/* «Отчёт по РК» — тот же экран, что у трафика (`/traffic/campaign/{код}`, владелец 13.10.2026): срезы,
+          площадки, графики и деньги. Перед скачиванием отчёта клиенту; в новой вкладке, очередь остаётся на месте. */}
+      {queue && !!d.code && mayReport && (
+        <a href={`/traffic/campaign/${encodeURIComponent(d.code)}`} target="_blank" rel="noopener noreferrer"
+          title="Отчёт по РК: срезы, площадки, графики — тот же экран, что у трафика"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 14px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 700, textDecoration: 'none', fontFamily: UI }}>
+          Отчёт по РК
+        </a>
+      )}
       {/* Отчёт клиенту по РК (владелец 05.10.2026): Excel с фактом и моделью SIMB ID, период —
           со старта до последних данных. Только в очереди аккаунта, перед «Карточкой». */}
       {queue && (
