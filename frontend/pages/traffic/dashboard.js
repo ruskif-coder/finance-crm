@@ -633,6 +633,31 @@ export default function TrafficDashboard() {
     } catch (e) { fail(e?.response?.data?.detail || 'Не удалось сменить статус креатива') }
   }
 
+  // Массовое действие на креатив целиком — по всем его парам в РК (владелец 15.10.2026): чтобы не выключать поштучно.
+  // Сервер тот же, что у кнопки пары (проверки согласования, отправка в DSP); пары, к которым статус неприменим, пропускаются.
+  // Запросы — по очереди, а не разом: каждый пересчитывает доли площадки, параллельные гонялись бы за ними.
+  const setCreativeGroupStatus = async (campId, g, s) => {
+    const fit = g.places.filter(c => (s === 'отклонён' ? c.status !== 'отклонён'
+      : ['согласован', 'пауза', 'запущен'].includes(c.status) && c.status !== s))
+    if (!fit.length) { say('Менять нечего: у всех площадок креатив уже в этом статусе или не согласован'); return }
+    if (s === 'отклонён' && !window.confirm(`Отключить креатив «${g.name || 'без названия'}» на ${fit.length} площадк. сразу? `
+      + 'Его объём уйдёт остальным креативам этих площадок.')) return
+    let done = 0
+    const errs = []
+    for (const c of fit) {
+      try { await api.put(`/traffic-dashboard/creative/${c.id}/status`, { status: s }, auth()); done += 1 }
+      catch (e) { errs.push(`${c.domain}: ${e?.response?.data?.detail || 'ошибка'}`) }
+    }
+    try {
+      const r = await api.get(`/traffic-dashboard/campaign/${campId}`, auth())
+      setDetail(d => ({ ...d, [campId]: r.data }))
+    } catch { /* сообщение ниже важнее перечитывания */ }
+    const skipped = g.places.length - fit.length
+    const head = `Креатив «${g.name || 'без названия'}»: ${s} — ${done} из ${fit.length}${skipped ? `, пропущено ${skipped}` : ''}`
+    if (errs.length) fail(`${head}. Не вышло: ${errs.join('; ')}`)
+    else say(head)
+  }
+
   // «Скрины запуска сняты» на паре «креатив × площадка» (владелец 01.10.2026).
   const setCreativeScreens = async (campId, cr, done) => {
     try {
@@ -1231,6 +1256,22 @@ export default function TrafficDashboard() {
                                 <span style={{ fontFamily: MONO, fontSize: 11,
                                   color: g.live ? 'var(--blue)' : 'var(--text-faint)' }}>
                                   в МС {g.live} / {g.places.length}</span>
+                                {/* Креатив целиком, на всех площадках РК (15.10.2026): крутит, если крутит хоть одна пара;
+                                    отключён — если отключены все. По одной площадке — в расхлопе площадки. */}
+                                {mayEdit && (
+                                  <PlaceActions
+                                    status={g.places.some(c => c.status === 'запущен') ? 'запущен'
+                                      : g.places.every(c => c.status === 'отклонён') ? 'завершена' : 'пауза'}
+                                    canStart={g.places.some(c => ['согласован', 'пауза'].includes(c.status))}
+                                    onStart={() => setCreativeGroupStatus(r.id, g, 'запущен')}
+                                    onPause={() => setCreativeGroupStatus(r.id, g, 'пауза')}
+                                    onOff={() => setCreativeGroupStatus(r.id, g, 'отклонён')}
+                                    titles={{ start: 'Запустить креатив на всех площадках, где он согласован',
+                                      cannot: 'Нет площадок, где креатив согласован или на паузе',
+                                      pause: 'Пауза креатива на всех площадках: доли останутся',
+                                      off: 'Отключить креатив на всех площадках: объём уйдёт остальным креативам',
+                                      offDone: 'Креатив отключён на всех площадках' }} />
+                                )}
                               </div>
                               <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 6 }}>
                                 {g.places.map(pl => (
