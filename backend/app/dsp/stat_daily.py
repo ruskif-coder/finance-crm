@@ -116,6 +116,8 @@ def _report(out: dict) -> str:
         parts.append(f"НЕ РАЗНЕСЕНО по площадкам (показов по РК): {out['unassigned']}")
     if out.get("missing_creatives"):
         parts.append(f"нет данных по креативам: {', '.join(out['missing_creatives'])}")
+    if out.get("denied"):
+        parts.append(f"DSP отказала в доступе к хешам (пропущены, остальное забрано): {', '.join(out['denied'])}")
     if out.get("failed_campaigns"):
         parts.append(f"НЕ ЗАБРАНЫ кампании (с суток): {out['failed_campaigns']}")
     if out.get("errors"):

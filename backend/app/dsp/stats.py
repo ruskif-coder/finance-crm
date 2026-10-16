@@ -43,6 +43,9 @@ class DayPull:
     campaigns: Dict[str, Numbers] = field(default_factory=dict)
     missing_creatives: List[str] = field(default_factory=list)
     missing_campaigns: List[str] = field(default_factory=list)
+    # Хеши, к которым DSP отказала в доступе (удалённые/чужие). Они же в missing_*.
+    denied_creatives: List[str] = field(default_factory=list)
+    denied_campaigns: List[str] = field(default_factory=list)
 
 
 def _int(v) -> int:
@@ -85,18 +88,42 @@ def _chunks(seq: List[str], n: int):
         yield seq[i:i + n]
 
 
+def _is_denied(e: Exception) -> bool:
+    return "accessdenied" in str(e).replace(" ", "").lower() or "do not have access" in str(e).lower()
+
+
+def _ask(client, part: List[str], day: date, denied: List[str]) -> tuple:
+    """Один вызов; при отказе в доступе — делим пачку пополам до виновного хеша.
+
+    Замер 16.10.2026: DSP отклоняет пачку ЦЕЛИКОМ, если в ней хоть один недоступный хеш
+    (старая версия перезаведённого креатива). Без деления одна такая строка обнуляла ночь.
+    Остальные ошибки (сеть, 5xx) не глотаем."""
+    try:
+        return parse(client.statistic_get_period(part, day, day), part)
+    except Exception as e:  # noqa: BLE001 — разбираем ниже, чужое пробрасываем
+        if not _is_denied(e):
+            raise
+        if len(part) == 1:
+            denied.append(part[0])
+            return {}, list(part)
+        mid = len(part) // 2
+        g1, m1 = _ask(client, part[:mid], day, denied)
+        g2, m2 = _ask(client, part[mid:], day, denied)
+        return {**g1, **g2}, m1 + m2
+
+
 def pull_day(client, day: date, creatives: Iterable[str], campaigns: Iterable[str],
              batch: int = BATCH) -> DayPull:
     """Два вида вызовов на сутки: креативы пачками, кампании отдельно."""
     res = DayPull(day=day)
     cr = sorted({h.upper() for h in creatives if h})
     for part in _chunks(cr, batch):
-        got, miss = parse(client.statistic_get_period(part, day, day), part)
+        got, miss = _ask(client, part, day, res.denied_creatives)
         res.creatives.update(got)
         res.missing_creatives.extend(miss)
     camps = sorted({h.upper() for h in campaigns if h})
     for part in _chunks(camps, batch):
-        got, miss = parse(client.statistic_get_period(part, day, day), part)
+        got, miss = _ask(client, part, day, res.denied_campaigns)
         res.campaigns.update(got)
         res.missing_campaigns.extend(miss)
     return res
