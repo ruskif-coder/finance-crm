@@ -375,6 +375,20 @@ register(Event(
 ))
 
 register(Event(
+    # Владелец 16.10.2026: «повесь мне уведомление в тг, что сбор упал». Без факта DSP
+    # раскладка долей и проверки РК идут по весам, а «Отчёт по РК» пустеет по площадкам.
+    key="cron_dsp_stat_failed", direction="sys", group="Фоновые задания",
+    title="Сбор статистики DSP: ошибка",
+    description=("Ночной сбор статистики DSP не забрал кампании или DSP отказала в доступе "
+                 "к креативам: факт по площадкам не пришёл, доли и проверки РК считаются "
+                 "без него. Приходит при переходе из «работает» в «падает», а не каждую ночь."),
+    tone="bad", action="Открыть статус системы", widget_group="Трафик", locked=True,
+    recipients=[{"type": "role", "value": "admin"},
+                {"type": "resolver", "value": "traffic_masters"}],
+    channels={"app": True, "tg": True, "mail": True},
+))
+
+register(Event(
     key="cron_erid_auto_failed", direction="sys", group="Фоновые задания",
     title="Автовыпуск ЕРИД: ошибка",
     description=("Прогон раз в полчаса выпускает ЕРИД по порогу и опрашивает статус "
