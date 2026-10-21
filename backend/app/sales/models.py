@@ -42,6 +42,7 @@ class SalesService(Base):
     # комментарий, а здесь текст уходит в подписанный клиентом документ.
     doc_position = Column(Text)          # колонка «Позиция» в ДС
     rotation_type = Column(String(20))   # «Динамика» / «Статика»; пусто — формат не медийный
+    realization_pipeline_id = Column(Integer, ForeignKey("sales_pipelines.id"))  # воронка реализации услуги — задаёт цикл (14.10.2026)
     # Параметры для конструктора МП (см. docs/bridge_deals_operations.md):
     placement_type = Column(String)     # тип размещения: OLV / Banners / Native / … (список на фронте)
     calc_form = Column(String)          # форма расчёта: CPM / CPC / CPV / CPD / Фикс / Пакет (общая)
@@ -77,6 +78,7 @@ class SalesAddonService(Base):
     can_be_bonus = Column(Boolean, nullable=False, default=False)
     sort_order = Column(Integer, nullable=False, default=0)
     is_active = Column(Boolean, nullable=False, default=True)
+    doc_phrase = Column(Text)   # как доп называется в ДС и основании УПД (миграция 2026-10-21_addon_doc_phrase.sql)
 
 
 class SalesFormat(Base):
@@ -132,6 +134,9 @@ class SalesMediaPlan(Base):
     version = Column(Integer, nullable=False, default=1)
     status = Column(String, nullable=False, default="draft")   # ЗАМОРОЖЕНО 30.08.2026: у всех строк `draft`. Стейт-машины МП нет,
     #                                        состояние плана — стадия его сделки
+    # Виза (миграция 2026-10-15_mp_verified.sql): обе отметки «проверено» в конструкторе. Пусто — план создан системой.
+    verified_at = Column(DateTime)
+    verified_by = Column(Integer, ForeignKey("users.id"))
     title = Column(String)
     advertiser_id = Column(Integer)
     brand_id = Column(Integer)
@@ -347,6 +352,8 @@ class SalesPipeline(Base):
     bitrix_category_id = Column(Integer)
     stages = relationship("SalesPipelineStage", back_populates="pipeline",
                           cascade="all, delete-orphan", order_by="SalesPipelineStage.sort_order")
+    # Цикл воронки реализации (14.10.2026, app/final_recon/flow.py): полный цикл | контур аккаунта; пусто — не воронка реализации.
+    closing_flow = Column(String(20))
 
 
 class SalesPipelineStage(Base):
@@ -646,7 +653,7 @@ class SalesAnnex(Base):
     contract_id = Column(Integer, ForeignKey("contracts.id"), nullable=False)
     no = Column(Integer)                 # порядковый внутри договора — для счёта
     number = Column(String)              # как печатается: «Приложение № 68»
-    date = Column(Date)                  # последний день предыдущего месяца
+    date = Column(Date)                  # по умолчанию начало РК, правится аккаунтом (14.10.2026)
     period_from = Column(Date)
     period_to = Column(Date)
     total_amount = Column(Float)
@@ -664,6 +671,17 @@ class SalesAnnex(Base):
     # а подписан был именно этот файл.
     file_path = Column(String(500))
     created_at = Column(DateTime, server_default=func.now())
+    # Шаблон ДС (миграция 2026-10-13_annex_templates.sql): версия, по которой собрано, и замороженный документ подтверждённого.
+    template_version_id = Column(Integer, ForeignKey("annex_tpl_versions.id"))
+    blocks = Column(JSONB)
+    # ДС мастер-сделки (миграция 2026-10-15_closing_contour.sql): пакет и вид — main (№ n), addons (№ n-01), all (одним ДС).
+    master_deal_id = Column(Integer, ForeignKey("master_deals.id"))
+    kind = Column(String(8))
+    # ДС пакета (п. 10 миграции): суффикс номера у ДС допов («01» → «ДС № 5-01») и снимок строк раскладки — ДС собирается из него.
+    sub_no = Column(String(8))
+    rows = Column(JSONB)
+    # Вид ДС (п. 11 миграции): primary — выпущен на старте на план; fact — после итоговой сверки. Подпись — app/sales/annex_signed.py.
+    issue_kind = Column(String(8))
     items = relationship("SalesAnnexItem", back_populates="annex",
                          cascade="all, delete-orphan")
 
@@ -800,6 +818,10 @@ class SalesDeal(Base):
                                  server_default=text("'own'"), default="own")
     weborama_pixel_tag = Column(Text, nullable=True)
     weborama_ext_insertion = Column(String(32), nullable=True)
+    # Бонусный трафик — особенность РК (миграция 2026-10-15_closing_contour.sql): одно из трёх — % от плана (pct),
+    # количество показов (qty) или сумма без НДС (rub). В МП не пишется; в показы пересчитывается при чтении (final_recon/bonus.py).
+    bonus_traffic_mode = Column(String(8), nullable=True)
+    bonus_traffic_value = Column(Float, nullable=True)
     # Светофор синхронизации (считается при sync_deal_from_bitrix):
     # green — совпадает с Битриксом; blue — у нас данные полнее (не выгружено);
     # red — расхождение (Битрикс не матчится с нашими справочниками). NULL — не проверялось.
@@ -1111,6 +1133,8 @@ class SalesPublisher(Base):
     chat_url = Column(String)      # телеграм; ссылки нет у части чатов — известно только название
     chat_url_max = Column(String)  # MAX: часть площадок уходит с телеграма, период двух чатов уже идёт
     messenger_note = Column(Text)
+    # id площадки в системе приоритезации (`site_id` API; миграция 2026-10-19_prioritization.sql)
+    prio_site_id = Column(Integer)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -1335,3 +1359,9 @@ class SalesPublisherContact(Base):
     notify = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     note = Column(Text)
     publisher = relationship("SalesPublisher", back_populates="contacts")
+
+
+# `SalesAnnex.master_deal_id` ссылается на `master_deals`: без этой модели в метаданных запись ДС падает (NoReferencedTableError)
+# у любого, кто загрузил модели продаж без общего реестра — одиночный тест, скрипт (найдено аудитом 15.10.2026). Импорт безопасен:
+# app.master_deal.models зависит только от app.database.
+import app.master_deal.models  # noqa: E402,F401

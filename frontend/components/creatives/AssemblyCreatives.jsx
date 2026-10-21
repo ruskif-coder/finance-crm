@@ -88,9 +88,9 @@ const ROW_STATUS = {
 }
 
 function rowStatus(r, set) {
-  // Отказ — боковой выход, и он старше всех прочих признаков: площадка выпала из
-  // кампании, и новая версия ей не поможет.
-  if (r.state === 'отказ площадки' || r.verdict === 'отказ') return 'отказ'
+  // Отказ — боковой выход и старше прочих признаков, но ПО ЭТОМУ креативу: в новом, ещё не отправленном креативе площадка,
+  // отказавшая по прежнему, — обычный получатель (владелец 21.10.2026: отказ не запирает отправку нового креатива).
+  if (r.verdict === 'отказ' || (r.state === 'отказ площадки' && r.pair_id)) return 'отказ'
   // Отозван нами до запуска (владелец 28.09.2026): площадке его размещать не нужно.
   // Отказ площадке в правках (владелец 30.09.2026) — наш ответ на её запрос доработки.
   if (r.withdrawn_at) return r.withdraw_kind === 'отказ в правках' ? 'отказано' : 'отозван'
@@ -327,7 +327,7 @@ function PickTargets({ dealId, setId, onDone, onClose }) {
                     {group.map(c => (
                       <PubChip key={`${c.publisher_id}-${c.surface_kind}`} name={c.name} code={c.code}
                         surface={c.surface_kind} on={picked[c.publisher_id] === c.surface_kind}
-                        status={c.status} warn={c.status_warn}
+                        status={c.status} warn={c.status_warn} refused={c.refused}
                         onClick={() => toggle(c.publisher_id, c.surface_kind)} />
                     ))}
                   </div>
@@ -340,7 +340,7 @@ function PickTargets({ dealId, setId, onDone, onClose }) {
               {opts.all.filter(p => !p.already).map(p => (
                 <PubChip key={p.publisher_id} name={p.name} code={p.code}
                   surface={picked[p.publisher_id] || defaultSurface}
-                  on={!!picked[p.publisher_id]} status={p.status} warn={p.status_warn}
+                  on={!!picked[p.publisher_id]} status={p.status} warn={p.status_warn} refused={p.refused}
                   onClick={() => toggle(p.publisher_id, picked[p.publisher_id] === 'web' ? 'app' : 'web')}
                   hint="клик переключает веб / приложение" />
               ))}
@@ -361,14 +361,15 @@ function PickTargets({ dealId, setId, onDone, onClose }) {
   )
 }
 
-function PubChip({ name, code, surface, on, onClick, hint, status, warn }) {
+function PubChip({ name, code, surface, on, onClick, hint, status, warn, refused }) {
   /* Статус площадки виден ПРИ ВЫБОРЕ, а не после (владелец 30.08.2026). Архивные сюда
      не приезжают вовсе — их отсеивает бэкенд; паузовые и переговорные приезжают
      помеченными: пауза временная, кампания могла начаться до неё, и запрет заблокировал
      бы законный случай. До этого фильтра не было никакого, и площадка «НА ПАУЗЕ» тихо
      прошла всю цепочку до выпуска ЕРИД. */
   return (
-    <span onClick={onClick} title={warn ? `${name} · статус: ${status}` : (hint || name)}
+    <span onClick={onClick}
+      title={refused ? `${name} отказывала в этой сделке по прежнему креативу — новый уйдёт ей как обычно` : warn ? `${name} · статус: ${status}` : (hint || name)}
       style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
         padding: '5px 10px', borderRadius: 9, fontSize: 12.5,
         border: on ? '1px solid var(--accent)'
@@ -379,6 +380,9 @@ function PubChip({ name, code, surface, on, onClick, hint, status, warn }) {
       {!!warn && (
         <span style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '.05em',
           color: 'var(--warning-text)', whiteSpace: 'nowrap' }}>{status}</span>
+      )}
+      {!!refused && (
+        <span style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '.05em', color: 'var(--danger-fg)', whiteSpace: 'nowrap' }}>ранее отказала</span>
       )}
       {!!code && <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-muted)' }}>{code}</span>}
       <span style={{ fontFamily: MONO, fontSize: 10, color: on ? 'var(--accent)' : 'var(--text-faint)' }}>
@@ -1128,7 +1132,7 @@ function NotePeek({ who, text }) {
 
 /* ── строка площадки ───────────────────────────────────────────────────── */
 function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt, onUrl, onRequest,
-                        onDeeplink, onVerdict, onRework, onProcess, onShots, onPlan, onWithdraw, onReopen, vol }) {
+                        onDeeplink, onVerdict, onRework, onProcess, onShots, onPlan, onWithdraw, onReopen, onResend, vol }) {
   const [url, setUrl] = useState(r.advertiser_url || '')
   const [editing, setEditing] = useState(false)
   const [urlErr, setUrlErr] = useState('')
@@ -1182,6 +1186,8 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
   const done = ROW_GROUP[status] === 'ok'
   // Отказавшую площадку можно вернуть в согласование под новый креатив (владелец 12.10.2026).
   const reopenable = canEdit && !!onReopen && r.state === 'отказ площадки'
+  // Повторно отправить отказанный креатив той же площадке — только админ (владелец 14.10.2026).
+  const resendable = isAdmin && !!onResend && !!r.pair_id && r.verdict === 'отказ' && !r.withdrawn_at && !gone
 
   // Объём площадки против плана РК (владелец 27.09.2026): > 50 % — жёлтым, > 100 % — красным.
   const volLevel = vol?.by_publisher?.[String(r.publisher_id)]
@@ -1366,6 +1372,9 @@ function RecipientRow({ r, set, canEdit, canApprove, isAdmin, sent, onDrop, onTt
           ) : withdrawable ? (
             <CbBtn onClick={() => onWithdraw(r)} style={{ width: 98, justifyContent: 'center', height: 28 }}
               title="Отозвать креатив у площадки до запуска размещения">Отозвать</CbBtn>
+          ) : resendable ? (
+            <CbBtn onClick={() => onResend(r)} style={{ width: 98, justifyContent: 'center', height: 28, color: CB.accent, borderColor: CB.accentBorder }}
+              title="Только админ: снять отказ и снова отправить этот креатив площадке на согласование; прежний ответ уйдёт в журнал">Повторно</CbBtn>
           ) : reopenable ? (
             <CbBtn onClick={() => onReopen(r)} style={{ width: 98, justifyContent: 'center', height: 28 }}
               title="Площадка отказала. Вернуть её в согласование — следующий креатив снова уйдёт ей; прежние отказы останутся в истории">Вернуть</CbBtn>
@@ -1787,7 +1796,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
                 onProcess={(rec) => handlers.process(set, rec)}
                 onShots={handlers.shots} onPlan={handlers.plan}
                 onWithdraw={handlers.canWithdraw ? handlers.withdraw : null}
-                onReopen={handlers.reopen} />
+                onReopen={handlers.reopen} onResend={handlers.resend} />
             ))}
           </div>
         </div>
@@ -1980,6 +1989,14 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
         await api.post(`/launch-prep/target/${rec.target_id}/reopen`, {}, auth())
         load()
       } catch (e) { setErr(e.response?.data?.detail || 'Не удалось вернуть площадку') }
+    },
+    resend: async (rec) => {
+      if (!window.confirm(`Повторно отправить креатив площадке «${rec.name}»? Отказ снимется, прежний ответ уйдёт в журнал действий.`)) return
+      setErr('')
+      try {
+        await api.post(`/launch-prep/pair/${rec.pair_id}/resend`, {}, auth())
+        load()
+      } catch (e) { setErr(e.response?.data?.detail || 'Не удалось отправить повторно') }
     },
     process: (set, rec) => setProcessFor({ set, rec }),
     tt: setTtFor,

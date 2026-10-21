@@ -969,3 +969,74 @@ def cabinet_log_actions():
     подпись — то, чего в строке нет.
     """
     return {"actions": [{"key": a.key, "label": a.label} for a in journal.ACTIONS]}
+
+
+# ── Приоритезация (19.10.2026): SKU и ответ площадки ─────────────────────────────────────────────
+
+class CabinetPrioSkuIn(BaseModel):
+    publisher_id: int
+    account_id: int
+    sku: str
+    author_name: str
+
+
+class CabinetPrioVerdictIn(BaseModel):
+    publisher_id: int
+    account_id: int
+    verdict: str                     # ок | вернуть | отказ
+    reason: Optional[str] = None
+    author_name: str
+
+
+def _prio_placement(db: Session, prio_id: int, publisher_id: int):
+    from app.prio.models import PrioPlacement
+    p = db.get(PrioPlacement, prio_id)
+    if p is None or p.publisher_id != publisher_id:
+        raise HTTPException(status_code=404, detail="Запрос не найден")
+    return p
+
+
+def _prio_subject(db: Session, p) -> str:
+    from app.prio.models import PrioRequest
+    r = db.get(PrioRequest, p.request_id)
+    return f"Приоритезация · {r.product_name}" if r and r.product_name else "Приоритезация"
+
+
+@router.put("/prio/{prio_id}/sku", dependencies=[Depends(require_cabinet_service)])
+def cabinet_prio_sku(prio_id: int, payload: CabinetPrioSkuIn, db: Session = Depends(get_db)):
+    """SKU товара у площадки — единственное, что площадка вписывает в запрос на приоритезацию (посадочную даём мы)."""
+    from app.prio import service as PS
+    p = _prio_placement(db, prio_id, payload.publisher_id)
+    acc = _actor(db, payload.account_id, payload.publisher_id, approve=True)
+    try:
+        PS.set_sku(db, p, payload.sku)
+    except PS.PrioError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    journal.write(db, 'приоритезация_sku', cabinet_id=acc.cabinet_id, account_id=acc.id,
+                  publisher_id=payload.publisher_id, actor_name=payload.author_name,
+                  subject=_prio_subject(db, p), entity_type='prio_placement', entity_id=prio_id)
+    db.commit()
+    return {"sku": p.product_id}
+
+
+@router.post("/prio/{prio_id}/verdict", dependencies=[Depends(require_cabinet_service)])
+def cabinet_prio_verdict(prio_id: int, payload: CabinetPrioVerdictIn, db: Session = Depends(get_db)):
+    """Ответ площадки на запрос: согласовать (нужен SKU) / вернуть с замечанием / отказать с причиной (РК в архив)."""
+    from app.prio import service as PS
+    p = _prio_placement(db, prio_id, payload.publisher_id)
+    acc = _actor(db, payload.account_id, payload.publisher_id, approve=True)
+    try:
+        PS.verdict(db, p, payload.verdict, payload.reason)
+    except PS.PrioError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    journal.write(db, {'ок': 'приоритезация_ок', 'вернуть': 'приоритезация_возврат',
+                       'отказ': 'приоритезация_отказ'}[payload.verdict],
+                  cabinet_id=acc.cabinet_id, account_id=acc.id, publisher_id=payload.publisher_id,
+                  actor_name=payload.author_name, subject=_prio_subject(db, p),
+                  entity_type='prio_placement', entity_id=prio_id)
+    db.commit()
+    from app.notify import prio as PN
+    from app.prio.autostop import _deal_of
+    PN.site_answered(db, _deal_of(db, p), p)
+    db.commit()
+    return {"status": p.status}

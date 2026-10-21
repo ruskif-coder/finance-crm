@@ -372,6 +372,10 @@ def tasks(acc=Depends(current_account)):
             "advertiser_url": r.advertiser_url,
             # Ссылка в приложении — у app-площадки вторая, обязательная (06.10.2026).
             "app_url": getattr(r, "app_url", None),
+            # Пролонгация (владелец 15.10.2026): креатив сделки-копии площадка видит
+            # с пометкой — это продолжение согласованной кампании, а не новый запуск.
+            # getattr — чтобы кабинет не падал на базе до миграции 2026-10-15.
+            "is_prolongation": bool(getattr(r, "is_prolongation", False)),
             # ТТ площадки — её собственные требования к материалу. Лежат на строке
             # задания, а не только в шапке группы: на них смотрят, отвечая по креативу.
             "tech_requirements": r.tech_requirements,
@@ -1106,3 +1110,71 @@ async def rework_file(task_id: int, file: UploadFile = File(...),
         raise HTTPException(status_code=r.status_code if r.status_code < 500 else 502,
                             detail=detail)
     return r.json()
+
+
+# ── Приоритезация (19.10.2026): запросы в «Требует вашего решения», SKU и ответ площадки ─────────────────
+
+def _prio_list(s: Optional[str]) -> list:
+    """Список «через запятую и пробел» → пункты: окно «Подробнее» показывает их чипами, целиком."""
+    return [x.strip() for x in (s or "").split(",") if x.strip()]
+
+
+def _my_prio(acc, prio_id: int):
+    """Запрос, если он у площадки ЭТОЙ учётки и ждёт ответа. Иначе 404 — не 403 (как у креатива)."""
+    ids = [p.publisher_id for p in account_publishers(acc.id)]
+    if not ids:
+        raise HTTPException(status_code=404, detail="Запрос не найден")
+    with scoped_session(ids) as db:
+        row = db.execute(text("SELECT prio_id, publisher_id FROM pub.prio_task_v1 WHERE prio_id = :p"),
+                         {"p": prio_id}).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Запрос не найден")
+    return row
+
+
+@app.get("/api/prio-tasks")
+def prio_tasks(acc=Depends(current_account)):
+    """Запросы на приоритезацию площадок учётки. Денег нет — цель в показах."""
+    ids = [p.publisher_id for p in account_publishers(acc.id)]
+    if not ids:
+        return {"items": []}
+    with scoped_session(ids) as db:
+        rows = db.execute(text("SELECT * FROM pub.prio_task_v1 ORDER BY date_start, prio_id")).all()
+    return {"items": [{
+        "id": r.prio_id, "publisher_id": r.publisher_id, "site": r.publisher_name,
+        "advertiser": r.advertiser, "brand": r.brand, "product": r.product_name,
+        "period": {"from": r.date_start, "to": r.date_end}, "start": r.date_start,
+        "target_impressions": r.goal_imp, "erid": r.erid, "landing": r.landing, "sku": r.sku,
+        "remark": r.remark,
+        "competitors": _prio_list(r.target_competitors), "inn": _prio_list(r.target_mnn),
+        "keywords": _prio_list(r.target_meta),
+        "waiting_days": (_msk_today() - _to_msk(r.sent_at).date()).days if r.sent_at else None,
+    } for r in rows]}
+
+
+class PrioSkuIn(BaseModel):
+    sku: str
+
+
+@app.put("/api/prio/{prio_id}/sku")
+def prio_sku(prio_id: int, payload: PrioSkuIn, acc=Depends(current_account)):
+    row = _my_prio(acc, prio_id)
+    require_approver(acc)
+    return call_core("PUT", f"/api/cabinet-gw/prio/{prio_id}/sku", {
+        "publisher_id": row.publisher_id, "account_id": acc.id, "sku": payload.sku, "author_name": acc.name})
+
+
+class PrioVerdictIn(BaseModel):
+    verdict: str                    # ок | вернуть | отказ
+    reason: Optional[str] = None
+
+
+@app.post("/api/prio/{prio_id}/verdict")
+def prio_verdict(prio_id: int, payload: PrioVerdictIn, acc=Depends(current_account)):
+    if payload.verdict not in ("ок", "вернуть", "отказ"):
+        raise HTTPException(status_code=400, detail="Неизвестный ответ")
+    row = _my_prio(acc, prio_id)
+    require_approver(acc)
+    return call_core("POST", f"/api/cabinet-gw/prio/{prio_id}/verdict", {
+        "publisher_id": row.publisher_id, "account_id": acc.id, "verdict": payload.verdict,
+        "reason": payload.reason, "author_name": acc.name})

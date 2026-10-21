@@ -94,6 +94,9 @@ PASSED_THROUGH = {
     "DSP_TARGETING_PARTNER_XXHASH": "compose",
     "DSP_TARGETING_CAMPAIGN_XXHASH": "compose",
     "DSP_DEMO_API_URL": "compose",
+    # ── система приоритезации (19.10.2026) ──
+    "PRIO_API_TOKEN": "compose",
+    "PRIO_API_URL": "compose",
     "DSP_DEMO_TOKEN": "compose",
     "DSP_DEMO_PARTNER_XXHASH": "compose",
     # Адрес админки DSP: нужен генератору ссылок нацеливания. Не токен, но и не

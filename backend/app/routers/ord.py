@@ -787,10 +787,14 @@ def deal_assembly(deal_id: int, db: Session = Depends(get_db),
     initial_fill = _contract_fill(db, initial_contract) if initial_contract is not None else None
 
     payer_ok = fr.reason_code not in ('no_payer', 'payer_unknown')
+    req = _assembly_required(db, deal)
+    creatives = _creatives_step(db, deal, bound)
+    creatives['required'] = req['creatives']
     return {
         'deal_id': deal.id,
         'payer': {
             'title': STEP_TITLES['payer'],
+            'required': req['payer'],
             'ok': payer_ok,
             'reason': '' if payer_ok else fr.reason,
             # Имя и id берутся из НАЙДЕННОГО контрагента (fr.payer), а не из полей
@@ -803,6 +807,7 @@ def deal_assembly(deal_id: int, db: Session = Depends(get_db),
         },
         'final': {
             'title': STEP_TITLES['final'],
+            'required': req['final'],
             'ok': fr.contract is not None,
             'reason': fr.reason,
             'reason_code': fr.reason_code,
@@ -813,6 +818,7 @@ def deal_assembly(deal_id: int, db: Session = Depends(get_db),
         },
         'initial': {
             'title': STEP_TITLES['initial'],
+            'required': req['initial'],
             # Прямой рекламодатель: изначальный = доходный, ступень закрыта (02.10.2026).
             'ok': bound is not None or readiness.is_direct(deal),
             'direct_advertiser': readiness.is_direct(deal),
@@ -830,8 +836,36 @@ def deal_assembly(deal_id: int, db: Session = Depends(get_db),
             'candidates': [_initial_out(c) for c in (proposal.candidates if proposal else [])],
             'fill': initial_fill,
         },
-        'creatives': _creatives_step(db, deal, bound),
+        'creatives': creatives,
     }
+
+
+# Ступень сборки → пункты матрицы «Проверки стадий», которые её же и проверяют.
+# Креативы закрываются и приёмкой, и ЕРИДом — ступень нужна, если нужен любой из двух.
+ASSEMBLY_STEP_CHECKS = {
+    'payer': ('payer_set',),
+    'final': ('final_contract',),
+    'initial': ('ord_initial_contract',),
+    'creatives': ('creatives_accepted', 'erid_issued'),
+}
+
+
+def _assembly_required(db, deal) -> dict:
+    """Нужна ли ступень этой сделке — по матрице `sales_stage_checks`, а не по своему мнению.
+
+    Экран сборки раньше считал все четыре ступени обязательными для любой сделки, а матрица
+    уже говорит, что для части услуг (контур аккаунта, услуги без ОРД) этих пунктов нет —
+    и экран краснел там, где перевод стадии ничего не требует (владелец 14.10.2026).
+    Ступень обязательна, если есть хотя бы одна строка матрицы с её пунктом, чьё
+    `applies_when` сходится со сделкой. Один запрос на все пункты, не по запросу на ступень.
+    """
+    from app.sales.models import SalesStageCheck
+    from app.sales.stage_checks import scope_matches
+    keys = {k for ks in ASSEMBLY_STEP_CHECKS.values() for k in ks}
+    rows = (db.query(SalesStageCheck.check_key, SalesStageCheck.applies_when)
+              .filter(SalesStageCheck.check_key.in_(keys)).all())
+    hit = {key for key, aw in rows if scope_matches(aw, deal)}
+    return {step: any(k in hit for k in ks) for step, ks in ASSEMBLY_STEP_CHECKS.items()}
 
 
 def _cp_out(db, cp: Counterparty, agency_linked: bool) -> dict:

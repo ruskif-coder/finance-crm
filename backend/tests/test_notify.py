@@ -25,7 +25,7 @@ def test_every_recipient_spec_is_resolvable():
             if spec["type"] == "staff_group":
                 # Значения те же, что принимает экран ролей (`roles.py`). Опечатка здесь
                 # не ошибка, а тишина: адресат просто не находится.
-                assert spec["value"] in ("seller", "account", "traffic", "publishers"), (
+                assert spec["value"] in ("seller", "account", "traffic", "publishers", "legal"), (
                     f"{ev.key}: рабочей группы {spec['value']} не существует")
 
 

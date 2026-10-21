@@ -241,8 +241,12 @@ def sync_campaigns(db: Session, commit: bool = True) -> dict:
         return {"created": 0, "updated": 0, "no_media_plan": 0, "stages": 0}
 
     deals = db.execute(text(
-        "SELECT id, code, period_from, period_to FROM sales_deals "
-        "WHERE our_stage_id = ANY(:st) ORDER BY id"), {"st": stage_ids}).mappings().all()
+        "SELECT d.id, d.code, d.period_from, d.period_to FROM sales_deals d "
+        "LEFT JOIN sales_services s ON s.id = d.service_id "
+        "LEFT JOIN sales_pipelines p ON p.id = COALESCE(d.realization_pipeline_id, s.realization_pipeline_id) "
+        # Контур аккаунта (14.10.2026, app/final_recon/flow.py): РК не нужна — трафик сделку не ведёт, факт вносится вручную.
+        "WHERE d.our_stage_id = ANY(:st) AND p.closing_flow IS DISTINCT FROM 'контур аккаунта' ORDER BY d.id"),
+        {"st": stage_ids}).mappings().all()
     existing = {c.deal_id: c for c in db.query(AdCampaign).all()}
 
     created = updated = no_mp = 0
@@ -902,6 +906,9 @@ def ensure_campaign_on_move(db: Session, deal, target) -> Optional[dict]:
     import logging
     try:
         if target is None or target.id not in assembly_stage_ids(db):
+            return None
+        from app.final_recon import flow
+        if flow.is_account(db, deal):         # контур аккаунта — РК не заводим (14.10.2026)
             return None
         if db.query(AdCampaign.id).filter(AdCampaign.deal_id == deal.id).first():
             return None

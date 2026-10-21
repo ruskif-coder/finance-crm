@@ -50,9 +50,23 @@ export const shortNum = (v) => (v == null ? '—'
 export const grpDec = (v, d = 1) => (v == null ? ''
   : new Intl.NumberFormat('ru-RU', { maximumFractionDigits: d }).format(v).replace(/ /g, ' '))
 
+// Деньги документа: всегда два знака копеек («933 313,14», «0,00») — как в ДС и УПД; пусто → «—».
+export const rub2 = (v) => (v == null ? '—'
+  : new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v).replace(/ /g, ' '))
+
 // Проценты, 1 знак.
 export const pct = (v) => (v == null ? '—'
   : v.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%')
+
+// Целые рубли со знаком ₽: «163 077 ₽» (реестр и эффективность мастер-сделок, 20.10.2026 — вместо трёх локальных копий).
+export const rub0 = (v) => (v == null ? '—' : `${grp(v)} ₽`)
+
+// Процент, 1 знак, запятая и пробел перед знаком: «73,2 %» (маржа мастер-сделок).
+export const pctComma = (v) => (v == null ? '—' : `${v.toFixed(1).replace('.', ',')} %`)
+
+const MONTHS_FULL = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь']
+// «2026-10» → «октябрь 2026»
+export const monthLabel = (p) => { const [y, m] = String(p || '').split('-'); return m ? `${MONTHS_FULL[Number(m) - 1]} ${y}` : '—' }
 
 // Знаковая сумма с ₽ и типографским минусом: «+1 200 ₽» / «−1 200 ₽».
 export const signRub = (n) => `${n >= 0 ? '+' : '−'}${grp(Math.abs(n || 0))} ₽`

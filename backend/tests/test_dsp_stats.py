@@ -312,3 +312,34 @@ def test_manual_range_neither_moves_cursor_nor_takes_today(world):
     store.sync(db, dsp_db, FakeDsp({D0: {CR1: 1, CR1_OLD: 0, CR2: 0, CAMP: 1}}), TODAY,
                campaign_id=c.id, start=D0, end=D0)
     assert _cursor(dsp_db) is None, "ручной добор сдвинул курсор — дни до него ночь не заберёт"
+
+
+class _Denies(_Batches):
+    """DSP отклоняет пачку целиком, если в ней есть хоть один недоступный хеш (замер 16.10.2026)."""
+    BAD = {"C000000000000004"}
+
+    def statistic_get_period(self, hashes, a, b):
+        self.calls.append((list(hashes), a, b))
+        if self.BAD & set(hashes):
+            from app.dsp.client import MsError
+            raise MsError("Statistic.getPeriod: AccessDenied — You do not have access to campaigns")
+        return {h: {"show": 1, "click": 0, "spent": 0} for h in hashes}
+
+
+def test_one_foreign_hash_does_not_sink_the_batch():
+    c = _Denies()
+    crs = [f"C{i:015d}" for i in range(7)]
+    pull = S.pull_day(c, D0, crs, ["K000000000000001"], batch=7)
+    assert len(pull.creatives) == 6, "остальные креативы пачки забраны"
+    assert pull.denied_creatives == ["C000000000000004"]
+    assert "C000000000000004" in pull.missing_creatives, "недоступный — «нет данных», не ноль"
+    assert len(pull.campaigns) == 1
+
+
+def test_other_errors_are_not_swallowed():
+    class _Down(_Batches):
+        def statistic_get_period(self, hashes, a, b):
+            from app.dsp.client import MsError
+            raise MsError("HTTP 502")
+    with pytest.raises(Exception):
+        S.pull_day(_Down(), D0, ["C000000000000001"], [], batch=5)

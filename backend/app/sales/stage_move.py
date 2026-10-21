@@ -120,9 +120,22 @@ def plan_move(db, deal, target, catalog: Optional[Catalog] = None) -> Plan:
     lines = sc.evaluate(db, deal, checks_for(db, target.id))
     if not is_back and not target.is_terminal:
         lines = lines + _volumes_line(db, deal)
+    if not is_back and getattr(deal, "prolonged_from_id", None) and getattr(target, "stage_key", None) == PROLONG_STAGE:
+        lines = _prolong_lines(lines)
     return Plan(target=target, current=cat.by_id.get(cur_id), is_back=is_back,
                 needs_pipeline=needs_pipeline, lines=lines,
                 blockers=sc.blockers(lines))
+
+
+# Продление (владелец 21.10.2026): копия собранной кампании идёт на сборку, проверяется только виза медиаплана — остальное
+# (договор, плательщик, воронка…) у копии то же, что у исходной. Остальные строки остаются на экране, но не запирают.
+PROLONG_STAGE = "launch_prep"
+PROLONG_GATE = "mp_verified"
+
+
+def _prolong_lines(lines: list) -> list:
+    from dataclasses import replace
+    return [replace(ln, is_blocking=(ln.key == PROLONG_GATE)) for ln in lines]
 
 
 def _volumes_line(db, deal) -> list:
@@ -177,11 +190,41 @@ def apply_move(db, deal, target, user, *, reason: str, catalog: Optional[Catalog
     # Текст берём из `note`: у диалога это комментарий человека, у автоматики — причина
     # перехода. Для срыва причина и есть содержание письма.
     _notify_move(db, deal, prev, target, note, user)
+    from app.master_deal.service import RECON_STAGE
+    if target.name == RECON_STAGE and getattr(prev, "id", None) != target.id:
+        from app.notify import closing as CN
+        CN.deal_on_recon(db, deal, user)
     # РК — по событию, а не ночным прогоном (владелец 07.10.2026): сделку собирают за пару часов, и трафик
     # должен увидеть её сразу. Сбой сборки перевод не отменяет (подтранзакция внутри).
     from app.ad import build
     build.ensure_campaign_on_move(db, deal, target)
     return {"moved": True, "from_stage": prev, "to_stage": target, "overridden": bool(force)}
+
+
+def manual_guard(db, deal, target, user, catalog: Optional[Catalog] = None) -> Optional[str]:
+    """Правила РУЧНОГО перевода (диалог, массовая правка), владелец 14.10.2026. Автоматика (РК трафика, привязка МП, кнопки контура
+    аккаунта) идёт своим правилом и сюда не заходит. Возвращает текст отказа или None.
+
+    · Срыв — только в терминал СВОЕГО этапа: из Песочницы «Сделка не случилась», с реализации «Сделка сорвалась». Не обходится и
+      мастером: это не требование, а промах выбора, как неприменимая к услуге стадия.
+    · Вперёд через стадию — только мастер (и админ): обычный аккаунт ведёт сделку по шагу, следующей стадией."""
+    cat = catalog or Catalog(db)
+    cur = cat.by_id.get(deal.our_stage_id)
+    if cur is None or cur.id == target.id:
+        return None
+    if getattr(target, "is_lost", False):
+        if getattr(target, "phase_id", None) != getattr(cur, "phase_id", None):
+            own = next((s for s in cat.by_id.values() if getattr(s, "is_lost", False)
+                        and getattr(s, "phase_id", None) == getattr(cur, "phase_id", None)), None)
+            return (f"С этапа стадии «{cur.name}» сделка уходит в «{own.name}», а не в «{target.name}»" if own
+                    else f"С этапа стадии «{cur.name}» срыва нет — сделка уже в документообороте")
+        return None
+    if target.is_terminal or cur.is_terminal or not cat.is_before(cur.id, target.id):
+        return None                                   # назад / в архив / из терминала — своими правилами в вызывающем
+    nxt = next_stage(db, deal, cat)
+    if nxt is not None and target.id != nxt.id and not is_master(user):
+        return f"Через стадию двигает только мастер: следующая для этой сделки — «{nxt.name}»"
+    return None
 
 
 def refusal_text(plan: Plan) -> str:

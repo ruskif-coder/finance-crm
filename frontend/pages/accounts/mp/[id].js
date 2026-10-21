@@ -160,7 +160,9 @@ export default function MpEditor() {
         router.replace(`/accounts/mp/${r.data.id}`)
         return
       }
-      alert(r.data.unchanged ? 'Изменений нет — сохранена только отметка «проверено»'
+      // Неизменённый план без визы — это и есть визирование (владелец 15.10.2026: копия при пролонгации), а не «нечего сохранять».
+      alert(r.data.verified_now ? `Виза поставлена — медиаплан v${r.data.version} проверен`
+        : r.data.unchanged ? 'Изменений нет — план уже проверен'
         : `Сохранено, версия ${r.data.version}`)
       await reloadPlan(); loadVersions()
     } catch (e) { alert(e.response?.data?.detail || 'Ошибка сохранения') }

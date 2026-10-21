@@ -63,13 +63,22 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
   // каталога, а не из списка имён: переименуют или добавят воронку — ничего не сломается.
   const boundIds = new Set(flat.filter(s => !s.is_realization && s.bitrix_pipeline_id)
     .map(s => s.bitrix_pipeline_id))
-  const productFunnels = funnels.filter(f => !boundIds.has(f.id))
+  // Только воронки реализации (с циклом) и только та, что подходит сделке: её воронка, нет её — воронка услуги (владелец 14.10.2026:
+  // «в выборе стадий все стадии по обоим воронкам, а надо только те, что соответствуют услуге»). Ни того ни другого — все воронки реализации.
+  const realFunnels = funnels.filter(f => !boundIds.has(f.id) && (f.closing_flow || !funnels.some(x => x.closing_flow)))
+  const ownFunnelId = deal.realization_pipeline_id || deal.service_pipeline_id
+  const productFunnels = ownFunnelId && realFunnels.some(f => f.id === ownFunnelId)
+    ? realFunnels.filter(f => f.id === ownFunnelId) : realFunnels
   const noFunnels = flat.some(s => s.is_realization) && productFunnels.length === 0
   // Своей проверки МП здесь БОЛЬШЕ НЕТ (13.09.2026). Она собирала признак из четырёх
   // разных полей, потому что диалог открывают из двух мест с разной формой строки, —
   // и всё равно повторяла бэкенд своими словами. Теперь требования приходят готовым
   // списком из `move-preview`: один источник и одна формулировка на экране и в отказе.
   const cur = deal.our_stage
+  // Срыв — терминал СВОЕГО этапа (владелец 14.10.2026): из Песочницы «Сделка не случилась», с реализации «Сделка сорвалась».
+  // В этапе без терминала срыва (ДО) срыв из карточки не предлагается.
+  const curPhase = cur ? phases.find(ph => (ph.stages || []).some(s => s.id === cur.id)) : null
+  const lostOfPhase = curPhase ? (curPhase.stages || []).find(s => s.is_lost) : null
 
   // Предвыбор «следующей стадии» — после загрузки каталога и воронок. Для реализационной
   // стадии подставляем воронку сделки, если она уже выбрана; иначе выбор остаётся за
@@ -80,13 +89,12 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
     // toLost — предвыбрать срыв. Именно по признаку is_lost, а не по имени стадии:
     // «Сделка сорвалась» переименуют, а признак останется.
     const st = toLost
-      ? flat.find(s => s.is_lost)
+      ? (lostOfPhase || flat.find(s => s.is_lost))
       : (toStageKey ? flat.find(s => s.stage_key === toStageKey)
                     : (nx && flat.find(s => s.id === nx.id)))
     if (!st) return
     if (!st.is_realization) setSel(String(st.id))
-    else if (deal.realization_pipeline_id && productFunnels.some(f => f.id === deal.realization_pipeline_id))
-      setSel(`${st.id}:${deal.realization_pipeline_id}`)
+    else if (productFunnels.length === 1) setSel(`${st.id}:${productFunnels[0].id}`)   // воронка одна — выбирать нечего
   }, [phases, funnels, toStageKey, toLost])
 
   useEffect(() => {
@@ -146,11 +154,12 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
 
         <div style={{ marginBottom: 14 }}>
           <div style={lbl}>Куда</div>
+          {/* Из карточки — только следующая стадия и срыв; через стадию и назад двигает мастер из реестра (владелец 14.10.2026). */}
           <select value={sel} onChange={e => setSel(e.target.value)} style={inp}>
             <option value="">— выберите стадию —</option>
             {phases.map(ph => (
               <optgroup key={ph.id} label={ph.name}>
-                {ph.stages.flatMap(s => {
+                {ph.stages.filter(s => !onCard || (lostOfPhase && s.id === lostOfPhase.id) || !deal.our_next_stage || s.id === deal.our_next_stage.id).flatMap(s => {
                   const mark = `${cur && s.id === cur.id ? ' (текущая)' : ''}${s.is_terminal ? ' ⛔' : ''}`
                     + `${deal.our_next_stage && s.id === deal.our_next_stage.id ? ' → следующая' : ''}`
                   // Реализационная стадия существует в каждой продуктовой воронке —

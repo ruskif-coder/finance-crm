@@ -94,7 +94,7 @@ def next_for(deal, catalog, marks: dict):
 # невозможно найти: человек считает, что их нет, и заводит второй раз.
 
 BLOCK_KEYS = ("head", "mp", "ord", "traffic-brief", "campaign-extra", "creatives",
-              "campaign", "docs")
+              "campaign", "closing", "docs")
 
 # Подписи для экрана настройки. Живут рядом с ключами, а не во фронте: список блоков —
 # свойство карточки, и разойтись эти два перечня не должны.
@@ -106,6 +106,7 @@ BLOCK_LABELS = {
     "campaign-extra": "Доп. параметры РК",
     "creatives": "Креативы",
     "campaign": "Рекламная кампания",
+    "closing": "Итоговая сверка",
     "docs": "Документы",
 }
 
@@ -134,7 +135,13 @@ def _has_content(db, deal, key: str) -> bool:
         # «Непусто» = параметр отличается от умолчания, то есть его кто-то осознанно
         # включил. Пока параметр один; когда их станет несколько, условие станет ИЛИ по
         # ним — и останется одним выражением, а не проверкой в каждом месте вывода.
-        return bool(getattr(deal, "weborama_pixel", False))
+        return bool(getattr(deal, "weborama_pixel", False) or getattr(deal, "bonus_traffic_mode", None))
+    if key == "closing":
+        # Сверку уже трогали (пин суммы, «Отправить в ДО») — блок не прячем, даже если сделку откатили назад.
+        return bool(db.execute(text(
+            "SELECT 1 FROM final_recon_deals WHERE deal_id = :d AND (ds_mode IS NOT NULL OR sent_at IS NOT NULL) "
+            "UNION ALL SELECT 1 FROM final_recon_fact_entries WHERE deal_id = :d"),     # или аккаунт уже вводил факт (19.10)
+            {"d": deal.id}).first())
     if key == "docs":
         # Блок документов наполняется ТРЕМЯ разными способами, и «загруженный файл» —
         # только один из них. Медиаплан лежит своей строкой, а ДС считается готовой по

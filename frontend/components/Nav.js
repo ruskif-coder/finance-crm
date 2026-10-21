@@ -866,7 +866,7 @@ export function NavMobile({ sections, active, perms, isAdmin, onNavigate, bell, 
 /* ══════════════════════════════════════════════════════════════════════
    ЕДИНАЯ ТОЧКА ВХОДА
    ══════════════════════════════════════════════════════════════════════ */
-export default function Nav({ children, onSearch }) {
+export default function Nav({ children, onSearch, asPath }) {
   const router = useRouter()
   const [mobile, setMobile] = useState(false)
   useEffect(() => {
@@ -905,7 +905,7 @@ export default function Nav({ children, onSearch }) {
             ? { ...i, badge: String(trafficWaiting) } : i)) }
         : sec))
     : rawSections
-  const active = findByPath(router.pathname)
+  const active = findByPath(asPath || router.pathname)
 
   const go = href => router.push(href)
   // Доступ в «Настройки» — тот же набор ключей, что и в старом Navbar.

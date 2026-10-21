@@ -38,7 +38,7 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app.files_safe import existing_upload_path, inside_uploads, remove_upload
-from app.audit import log_action
+from app.audit import log_action, require_admin
 from app.database import get_db
 from app.launch_prep import banner_origin, originals, sandbox
 from app.launch_prep import volumes as volumes_mod
@@ -639,6 +639,9 @@ def target_options(deal_id: int, set_id: Optional[int] = None,
                    LaunchPrepSetTarget.target_id == LaunchPrepTarget.id).filter(
             LaunchPrepSetTarget.set_id == set_id)
     taken = {t.publisher_id for t in q.all()}
+    # Отказавшие в этой сделке выбираются как все (отказ отправку не запирает) — пометка только чтобы человек видел историю.
+    refused = {p for (p,) in db.query(LaunchPrepTarget.publisher_id).filter(
+        LaunchPrepTarget.deal_id == deal_id, LaunchPrepTarget.state == REFUSED_STATE).all()}
 
     proposed = _candidates(db, service.id, surfaces) if service else []
     # Полный список — на случай, когда услуга у площадки не отмечена, а разместить надо.
@@ -652,11 +655,11 @@ def target_options(deal_id: int, set_id: Optional[int] = None,
         "service": ({"id": service.id, "name": service.name} if service else None),
         "service_reason": reason,
         "surfaces": surfaces,
-        "proposed": [c for c in proposed if c["publisher_id"] not in taken],
+        "proposed": [{**c, "refused": c["publisher_id"] in refused} for c in proposed if c["publisher_id"] not in taken],
         "all": [{"publisher_id": p.id, "name": p.name, "domain": p.domain, "code": p.code,
                  "status": p.status, "status_warn": p.status in PICKER_WARN_STATUSES,
                  "our_code": bool(p.our_code),
-                 "already": p.id in taken} for p in all_pubs],
+                 "already": p.id in taken, "refused": p.id in refused} for p in all_pubs],
     }
 
 
@@ -667,6 +670,19 @@ class TargetsIn(BaseModel):
     по разным правилам, и «просто площадка» не определяет размещение."""
     items: List[dict]        # [{publisher_id, surface_kind}]
     set_id: Optional[int] = None      # в какой креатив; без него — только в сделку
+
+
+REFUSED_STATE = "отказ площадки"
+
+
+def reopen_refused(target) -> bool:
+    """Отказ площадки снимается фактом: ей ушёл новый креатив (отправка) или её вернули кнопкой «Вернуть». Отказ НЕ запирает
+    отправку нового креатива (владелец 21.10.2026) — состояние следует за парами, как при повторной отправке; прежние отказы
+    остаются историей пар. True — снят."""
+    if target.state != REFUSED_STATE:
+        return False
+    target.state = "согласование"
+    return True
 
 
 def _attach(db: Session, deal, service, items, set_id: Optional[int]) -> List[str]:
@@ -716,6 +732,7 @@ def _attach(db: Session, deal, service, items, set_id: Optional[int]) -> List[st
             db.add(LaunchPrepSetTarget(set_id=set_id, target_id=target.id))
             member.add(target.id)
             added.append(pub.name)
+
         elif not set_id:
             added.append(pub.name)
     return added
@@ -848,9 +865,39 @@ def drop_set_target(set_id: int, target_id: int, db: Session = Depends(get_db),
 # ============================== комплекты ==============================
 
 class ProlongIn(BaseModel):
-    """Новый период продлённой кампании. Всё остальное копируется как есть."""
+    """Новый период продлённой кампании. Всё остальное копируется как есть.
+
+    `month` (ГГГГ-ММ) — ФИНАНСОВЫЙ период копии: период сделки — с 1-го по последнее число (правило 15.09.2026, по нему отбор в
+    реестре). `period_from/period_to` — даты РАЗМЕЩЕНИЯ, уходят в медиаплан копии; по умолчанию весь месяц, сузить можно только
+    внутри него (владелец 15.10.2026). Без `month` — месяц начала размещения (прежние вызовы)."""
     period_from: str
     period_to: Optional[str] = None
+    month: Optional[str] = None
+    # Уже есть пролонгация на этот месяц — без явного «всё равно» отказ 409 (владелец 15.10.2026): дубль — двойной план и
+    # повторная рассылка тех же креативов площадкам.
+    force: bool = False
+
+
+def _prolongations_in(db: Session, src_id: int, month_start: date) -> list:
+    """Коды копий этой сделки на финансовый месяц (период сделки — с 1-го числа)."""
+    rows = (db.query(SalesDeal.code, SalesDeal.id)
+            .filter(SalesDeal.prolonged_from_id == src_id, SalesDeal.period_from >= month_start,
+                    SalesDeal.period_from < (date(month_start.year + (month_start.month == 12), month_start.month % 12 + 1, 1)))
+            .order_by(SalesDeal.id).all())
+    return [c or f"#{i}" for c, i in rows]
+
+
+@router.get("/deal/{deal_id}/prolong-check")
+def prolong_check(deal_id: int, month: str, db: Session = Depends(get_db),
+                  current_user: User = Depends(require_permission("sales_registry", "view"))):
+    """Есть ли уже пролонгация этой сделки на финансовый месяц (ГГГГ-ММ) — окно копирования предупреждает до нажатия."""
+    src = _deal(db, deal_id, current_user)
+    try:
+        y, m = (int(x) for x in month.split("-"))
+        start = date(y, m, 1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Месяц в виде ГГГГ-ММ")
+    return {"existing": _prolongations_in(db, src.id, start)}
 
 
 @router.post("/deal/{deal_id}/prolong")
@@ -888,8 +935,25 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
         raise HTTPException(status_code=400, detail="Период в виде ГГГГ-ММ-ДД")
     if pt and pt < pf:
         raise HTTPException(status_code=400, detail="Конец периода раньше начала")
+    import calendar
+    try:
+        my, mm = (int(x) for x in (payload.month or pf.strftime("%Y-%m")).split("-"))
+        m_from = date(my, mm, 1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Финансовый период в виде ГГГГ-ММ")
+    m_to = date(my, mm, calendar.monthrange(my, mm)[1])
+    same = _prolongations_in(db, src.id, m_from)
+    if same and not payload.force:
+        raise HTTPException(status_code=409, detail="У сделки уже есть пролонгация на " + m_from.strftime("%m.%Y") + ": "
+                            + ", ".join(c for c in same) + ". Скопировать ещё раз — подтвердите явно")
+    pt = pt or m_to
+    if pf < m_from or pt > m_to:
+        raise HTTPException(status_code=400, detail=f"Даты размещения — внутри финансового периода {m_from:%m.%Y}")
 
-    stage = db.query(SalesStage).filter(SalesStage.stage_key == "launch_prep").first()
+    # Копия встаёт на «Бронь», а на сборку («Готовятся к старту») переходит обычным путём — с проверкой требований матрицы
+    # (владелец 15.10.2026: «лучше перестраховаться»). Копируют собранные РК, так что обычно переход проходит сразу; не хватает
+    # чего-то (договор, плательщик…) — копия остаётся на «Брони», а в ответе и карточке видно, чего именно.
+    stage = db.query(SalesStage).filter(SalesStage.stage_key == "booking").first()
 
     import uuid as _uuid
     from app.sales.deal_code import assign_code
@@ -910,7 +974,7 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
         ord_final_contract_id=src.ord_final_contract_id,
         ord_direct_advertiser=src.ord_direct_advertiser,
         our_stage_id=stage.id if stage else src.our_stage_id,
-        period_from=pf, period_to=pt,
+        period_from=m_from, period_to=m_to,   # финансовый период — весь месяц (15.10.2026)
         prolonged_from_id=src.id,
         date_create=datetime.utcnow(),
     )
@@ -919,15 +983,25 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
     db.flush()
 
     # ── медиаплан: все показатели и цифры, виза сброшена ────────────────────
-    plans = (db.query(SalesMediaPlan).filter(SalesMediaPlan.deal_id == src.id)
-             .order_by(SalesMediaPlan.id.desc()).all())
-    if plans:
-        p0 = plans[0]
+    # План сделки — ОБЩЕЕ определение (`ad.build.LATEST_PLAN_SQL`: последняя не отклонённая версия), а не «самый свежий по id»:
+    # тот, по которому считаются РК, KPI и ДС (владелец 15.10.2026). У запущенной сделки это и есть план на запуске — он
+    # зафиксирован на «Сборке» (`sales/plan_lock.py`), правки после неё только мастером и с журналом.
+    # Запущенная (со «Сборки», план зафиксирован) — её план как есть; до запуска — последний ЗАВИЗИРОВАННЫЙ (обе «проверено»),
+    # а нет такого — последний действующий (владелец 15.10.2026). Копия визы не получает: новый период проверяют заново.
+    from app.ad.build import LATEST_PLAN_SQL
+    from app.sales import plan_lock
+    pid = None
+    if not plan_lock.deal_locks_plan(db, src.id):
+        pid = db.execute(sa_text("SELECT id FROM sales_media_plans WHERE deal_id = :d AND status <> 'rejected' "
+                                 "AND verified_at IS NOT NULL ORDER BY version DESC, id DESC LIMIT 1"), {"d": src.id}).scalar()
+    pid = pid or db.execute(sa_text(LATEST_PLAN_SQL), {"d": src.id}).scalar()
+    p0 = db.query(SalesMediaPlan).filter(SalesMediaPlan.id == pid).first() if pid else None
+    if p0:
         mp = SalesMediaPlan(
             group_id=None, version=1, status="draft", title=p0.title,
             advertiser_id=p0.advertiser_id, brand_id=p0.brand_id, agency_id=p0.agency_id,
             payer_counterparty_id=p0.payer_counterparty_id,
-            period=payload.period_from[:7], geo_id=p0.geo_id,
+            period=m_from.strftime("%Y-%m"), geo_id=p0.geo_id,
             date_from=pf, date_to=pt,
             targeting=p0.targeting, goals=p0.goals,
             sales_rep_id=p0.sales_rep_id, account_manager_id=p0.account_manager_id,
@@ -967,11 +1041,10 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
             new.amount_with_vat = mp_row.rub(float(new.amount) * (1 + float(mp.vat_rate) / 100))
 
     # ── площадки: состав, поверхность, посадочные ───────────────────────────
+    missing_files = []        # файлы креативов, которых нет на диске исходной сделки
     old_to_new_target = {}
-    personal_of = {}          # площадка → её старые получатели (для персональных комплектов)
     for t in (db.query(LaunchPrepTarget).filter(LaunchPrepTarget.deal_id == src.id)
               .order_by(LaunchPrepTarget.id).all()):
-        personal_of.setdefault(t.publisher_id, []).append(t.id)
         nt = LaunchPrepTarget(
             deal_id=new.id, publisher_id=t.publisher_id, service_id=t.service_id,
             surface_kind=t.surface_kind,
@@ -979,8 +1052,7 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
             # отказ закрывал ТО размещение, а не отношения с площадкой.
             state="согласование",
             period_from=pf, period_to=pt)
-        # Посадочная НЕ переносится (владелец 25.09.2026): поля пустые, пока их не заполнит
-        # аккаунт, — и живут они теперь у креатива, а не у площадки сделки.
+        # Посадочные живут у пары «креатив × площадка» (25.09.2026) и переносятся ниже, вместе с составом комплекта.
         db.add(nt)
         db.flush()
         old_to_new_target[t.id] = nt.id
@@ -1018,6 +1090,8 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
             # кампании, её пропускаем так же, как отсутствующий на диске файл.
             src_path = inside_uploads(f.path)
             if not src_path or not os.path.exists(src_path):
+                # Не молча (владелец 15.10.2026): копия без файла — креатив, которого нет; окно и журнал называют пропуски.
+                missing_files.append(f"№{s0.no}: {f.original_name or f.path}")
                 continue
             # Файл копируется ФИЗИЧЕСКИ, а не переиспользуется по пути: общая ссылка
             # означала бы, что удаление файла в одной кампании ломает предпросмотр в
@@ -1041,22 +1115,14 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
                 size_bytes=f.size_bytes, is_archive=f.is_archive,
                 sandbox_token=token, entry_path=entry, origin=f.origin))
 
-        # Адресуется ВЕСЬ список площадок изначального плана, а не состав того комплекта
-        # (владелец 28.08.2026) — включая тех, кто в прошлый раз отказал: обстоятельства
-        # могли измениться, товар появился, ограничение по бренду снялось. Спросить и
-        # получить второй отказ дешевле, чем не спросить и потерять размещение.
-        #
-        # Исключение — персональный комплект (`publisher_id` заполнен): он собирался под
-        # сложные ТТ конкретного сайта, и разослать его всем значило бы отправить
-        # чужой материал.
-        if s0.publisher_id:
-            own = next((nt for t_old, nt in old_to_new_target.items()
-                        if t_old in personal_of.get(s0.publisher_id, ())), None)
-            if own:
-                db.add(LaunchPrepSetTarget(set_id=ns.id, target_id=own))
-        else:
-            for nt in old_to_new_target.values():
-                db.add(LaunchPrepSetTarget(set_id=ns.id, target_id=nt))
+        # Пары переносятся ОДИН К ОДНОМУ (владелец 15.10.2026; «весь список площадок плана» от 28.08 — только для первичного заведения): у каждого
+        # комплекта копии — те же площадки, что у него в исходной, с теми же посадочными (веб и в приложении).
+        # Два креатива с разным набором площадок и ссылок так и переносятся. Персональный комплект — частный случай.
+        for m0 in db.query(LaunchPrepSetTarget).filter(LaunchPrepSetTarget.set_id == s0.id):
+            nt = old_to_new_target.get(m0.target_id)
+            if nt:
+                db.add(LaunchPrepSetTarget(set_id=ns.id, target_id=nt,
+                                           advertiser_url=m0.advertiser_url, deeplink_url=m0.deeplink_url))
 
         # Первичная проверка переносится вместе с материалом: файл тот же, и требовать
         # её заново значит проверять то же самое второй раз.
@@ -1064,12 +1130,30 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
                                 source="продление", decided_by=current_user.name,
                                 decided_at=datetime.utcnow()))
 
+    db.flush()
+    from app.sales import stage_move
+    from app.sales.catalog import Catalog
+    cat = Catalog(db)
+    target = db.query(SalesStage).filter(SalesStage.stage_key == "launch_prep").first()
+    missing = []
+    if target is not None:
+        plan = stage_move.plan_move(db, new, target, cat)
+        if stage_move.may_move(plan):
+            stage_move.apply_move(db, new, target, current_user, catalog=cat,
+                                  reason=f"продление {src.code}: копия собранной кампании")
+        else:
+            missing = [ln.title for ln in plan.blockers] or ["воронка реализации"]
     db.commit()
+    stage_now = cat.by_id.get(new.our_stage_id)
     log_action(db, current_user, "prolong_deal", "sales_deal", new.id,
                f"продление {src.code} → {new.code}: площадок {len(old_to_new_target)}, "
-               f"креативов {copied_sets}")
+               f"креативов {copied_sets}; стадия «{stage_now.name if stage_now else '—'}»"
+               + (f", не хватает: {', '.join(missing)}" if missing else "")
+               + (f"; НЕ НАЙДЕНЫ файлы креативов: {', '.join(missing_files)}" if missing_files else ""))
     return {"id": new.id, "code": new.code, "targets": len(old_to_new_target),
-            "sets": copied_sets}
+            "sets": copied_sets, "stage": stage_now.name if stage_now else None, "missing": missing,
+            # Медиаплан копии — без визы (две «проверено» не отжаты): окно копирования сразу ведёт его проверить (15.10.2026).
+            "mp_id": mp.id if p0 else None, "missing_files": missing_files}
 
 
 class SetIn(BaseModel):
@@ -1674,10 +1758,9 @@ def _targets_for_set(db: Session, s: LaunchPrepCreativeSet) -> List[LaunchPrepTa
     personal = {p for (p,) in db.query(LaunchPrepCreativeSet.publisher_id)
                 .filter(LaunchPrepCreativeSet.deal_id == s.deal_id,
                         LaunchPrepCreativeSet.publisher_id.isnot(None)).all()}
-    # Отказавшаяся площадка из кампании выпала: слать ей следующий комплект значит
-    # спрашивать заново то, на что уже ответили «мы это не берём».
-    return [t for t in q.all()
-            if t.publisher_id not in personal and t.state != "отказ площадки"]
+    # Отказ площадки получателя из креатива НЕ выкидывает (владелец 21.10.2026: «отказ не должен блокировать отправку нового
+    # креатива»): состав креатива собирают руками, и раз площадку в него добавили — новый материал ей и уходит.
+    return [t for t in q.all() if t.publisher_id not in personal]
 
 
 def _next_pair_no(db: Session, target_id: int) -> int:
@@ -1844,10 +1927,13 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
     # Уже отправленные получатели — одним запросом, а не на каждого (Н-10).
     have = {tid for (tid,) in db.query(LaunchPrepPair.target_id)
             .filter(LaunchPrepPair.set_id == set_id)}
+    reopened = []
     for t in targets:
         if t.id in have:
             continue          # повторная отправка тем же получателям — не дубль
         have.add(t.id)
+        if reopen_refused(t):  # у площадки снова живой креатив без ответа — она не «в отказе» (иначе согласие не сдвинуло бы её)
+            reopened.append(t.publisher_id)
         pair = LaunchPrepPair(set_id=set_id, target_id=t.id)
         db.add(pair)
         db.flush()
@@ -1879,7 +1965,8 @@ def send_set(set_id: int, payload: SendIn, db: Session = Depends(get_db),
         s.sent_at = sa_func.now()
     db.commit()
     log_action(db, current_user, "send_creative_set", "sales_deal", deal.id,
-               f"комплект №{s.no}: отправлен на проверку трафику — пар {created}")
+               f"комплект №{s.no}: отправлен на проверку трафику — пар {created}"
+               + (f"; снят отказ у площадок {', '.join(map(str, reopened))} — им ушёл новый креатив" if reopened else ""))
 
     if created:
         emit(db, "creative_set_sent",
@@ -2090,6 +2177,42 @@ def withdraw_pair(pair_id: int, payload: WithdrawIn, db: Session = Depends(get_d
         return W.withdraw(db, pair_id, current_user, payload.reason)
     except W.WithdrawError as e:
         raise HTTPException(status_code=409, detail=f"Отозвать нельзя: {e}")
+
+
+def _fmt_utc(dt) -> str:
+    return dt.strftime("%d.%m.%Y %H:%M UTC") if dt else "—"
+
+
+@router.post("/pair/{pair_id}/resend")
+def resend_pair(pair_id: int, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
+    """Повторно отправить отказанный креатив площадке на согласование (владелец 14.10.2026, только админ).
+
+    Отказ площадки снимается: креатив снова в её задачах кабинета, время запроса и отправки — сейчас (срок «подвисших» заново).
+    Прежний ответ не теряется — целиком в журнал действий сделки. Площадка в сделке, упавшая в «отказ» по всем креативам,
+    возвращается в «согласование»."""
+    pair = db.query(LaunchPrepPair).filter(LaunchPrepPair.id == pair_id).first()
+    if not pair:
+        raise HTTPException(status_code=404, detail="Пара не найдена")
+    if pair.withdrawn_at is not None:
+        raise HTTPException(status_code=409, detail="Креатив отозван у площадки — повторно отправить нельзя")
+    review = (db.query(LaunchPrepReview)
+              .filter(LaunchPrepReview.pair_id == pair.id, LaunchPrepReview.kind == "площадка").first())
+    if not review or review.verdict != "отказ":
+        raise HTTPException(status_code=409, detail="Повторно отправить можно только креатив, от которого площадка отказалась")
+    t = db.query(LaunchPrepTarget).filter(LaunchPrepTarget.id == pair.target_id).first()
+    s = db.query(LaunchPrepCreativeSet).filter(LaunchPrepCreativeSet.id == pair.set_id).first()
+    was = (f"«{review.verdict}» {_fmt_utc(review.decided_at)}, {review.decided_by or '—'}"
+           + (f", причина: {review.reason}" if review.reason else ""))
+    now = datetime.utcnow()
+    review.verdict = review.reason = review.decided_at = review.decided_by = review.decided_email = None
+    review.asked_at = now
+    pair.sent_at = now
+    if t.state == "отказ площадки":
+        t.state = "согласование"
+    db.commit()
+    log_action(db, current_user, "resend_creative_pair", "sales_deal", t.deal_id,
+               f"Креатив № {s.no if s else '?'} повторно отправлен площадке {t.publisher_id} (пара {pair.id}). Прежний ответ: {was}")
+    return {"ok": True, "pair_id": pair.id, "state": t.state}
 
 
 @router.post("/pair/{pair_id}/decline-rework")
@@ -2457,7 +2580,7 @@ def reopen_target(target_id: int, db: Session = Depends(get_db),
     if t.state != "отказ площадки":
         raise HTTPException(status_code=400,
                             detail="Вернуть в согласование можно только площадку в отказе")
-    t.state = "согласование"
+    reopen_refused(t)
     db.commit()
     log_action(db, current_user, "reopen_creative_target", "sales_deal", deal.id,
                f"{t.publisher_id}: из отказа в согласование")

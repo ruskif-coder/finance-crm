@@ -125,7 +125,6 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
     setDraft(t); setEditing(true)
   }
 
-  const mpBx = (d.files || []).find(f => f.kind === 'mp')          // МП из Битрикса
   const mpOur = (d.our_mps || [])[0]                               // наш МП (конструктор)
   const paid = 0, expected = d.amount || 0
   const pct = expected ? Math.min(100, (paid / expected) * 100) : 0
@@ -161,12 +160,6 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   const docsBlock = (
     <>
       <div style={CAP}>Медиаплан и документы</div>
-      {/* МП (Битрикс): есть → «Скачать»; нет → пусто. Кнопки «Проверить» (синк из Битрикса)
-          нет с 03.10.2026 — Битрикс больше не источник, файл остаётся как история. */}
-      <DocLine oneLine={queue} title="МП (Битрикс)" meta={mpBx?.filename} empty={!mpBx}
-        right={mpBx
-          ? <button style={iconSq(false)} title={`Скачать · ${mpBx.filename || ''}`} onClick={() => blobGet(`/sales/deals/${d.id}/files/mp/download`, mpBx.filename)}><DownloadIcon /></button>
-          : <span />} />
       {/* МП наш: PDF · XLS · конструктор */}
       <DocLine oneLine={queue} title="МП наш" meta={mpOur ? `v${mpOur.version}` : ''} empty={!mpOur}
         onAdd={canEdit ? addMp : undefined}
@@ -279,7 +272,7 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
       {/* «Отчёт по РК» — тот же экран, что у трафика (`/traffic/campaign/{код}`, владелец 13.10.2026): срезы,
           площадки, графики и деньги. Перед скачиванием отчёта клиенту; в новой вкладке, очередь остаётся на месте. */}
       {queue && !!d.code && mayReport && (
-        <a href={`/traffic/campaign/${encodeURIComponent(d.code)}`} target="_blank" rel="noopener noreferrer"
+        <a href={`/traffic/campaign/${encodeURIComponent(d.code)}?from=accounts`} target="_blank" rel="noopener noreferrer"
           title="Отчёт по РК: срезы, площадки, графики — тот же экран, что у трафика"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 14px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 700, textDecoration: 'none', fontFamily: UI }}>
           Отчёт по РК

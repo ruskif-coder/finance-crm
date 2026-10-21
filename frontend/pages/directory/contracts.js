@@ -10,8 +10,10 @@ import useIsMobile from '@/components/mobile/useIsMobile'
 const ContractsMobile = dynamic(() => import('@/components/mobile/ContractsMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
 import { T } from '@/lib/tokens'
 import SectionTabs from '@/components/SectionTabs'
-import { COOPERATION_FORMATS, PAYMENT_TERM_CONDITIONS, PROLONGATION_OPTIONS } from '@/lib/contractTerms'
+import { COOPERATION_FORMATS, ISSUE_CHANNELS, PAYMENT_TERM_CONDITIONS, PROLONGATION_OPTIONS } from '@/lib/contractTerms'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import BaseTemplateModal from '@/components/annex/BaseTemplateModal'
+import { annexTemplatesApi } from '@/lib/annexTemplatesApi'
 import { fmtDate as fmtCalendarDate, fileStamp } from '@/lib/dates'
 
 
@@ -25,7 +27,7 @@ const fmtEndDate = (s) => {
 const EMPTY = {
   counterparty_id: null, contract_number: '', contract_date: '', inn: '',
   counterparty_name: '', marketing_name: '', cooperation_format: '',
-  end_date_text: '', prolongation: '', payment_form: '',
+  end_date_text: '', prolongation: '', payment_form: '', issue_channel: '',
   payment_term_days: '', payment_term_condition: '', note: '', document_link: '',
 }
 
@@ -160,6 +162,12 @@ export default function Contracts() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [ok, setOk] = useState('')
+  const [tplContract, setTplContract] = useState(null)   // договор, чей шаблон ДС открыт (макет 13.10.2026)
+  // Договоры, чей кастомный шаблон ДС отстал от базы — иконка шаблона оранжевая (владелец 14.10.2026).
+  const [behind, setBehind] = useState({})
+  const loadBehind = () => annexTemplatesApi.behind()
+    .then(rows => setBehind(Object.fromEntries(rows.map(r => [r.contract_id, r])))).catch(e => { setBehind({}); setError(e?.response?.data?.detail || 'Не удалось проверить, отстали ли шаблоны ДС от базового') })
+  useEffect(() => { loadBehind() }, [])
 
   const [search, setSearch] = useState('')
   // `?q=` подставляет номер в поиск: с экрана приложения сюда приходят дозаполнить
@@ -196,6 +204,7 @@ export default function Contracts() {
   useEffect(() => { setSelectedIds([]) }, [search, formatFilter, prolongFilter, ordFilter])
   const [bulkFormat, setBulkFormat] = useState('')
   const [bulkProlong, setBulkProlong] = useState('')
+  const [bulkIssue, setBulkIssue] = useState('')
   const [bulkDays, setBulkDays] = useState('')
   const [bulkCondition, setBulkCondition] = useState('')
   const [bulkSaving, setBulkSaving] = useState(false)
@@ -387,6 +396,7 @@ export default function Contracts() {
     const fields = {}
     if (bulkFormat) fields.cooperation_format = bulkFormat
     if (bulkProlong) fields.prolongation = bulkProlong
+    if (bulkIssue) fields.issue_channel = bulkIssue
     if (bulkDays !== '') fields.payment_term_days = parseInt(bulkDays, 10)
     if (bulkCondition) fields.payment_term_condition = bulkCondition
     if (!Object.keys(fields).length) { alert('Выберите хотя бы одно поле'); return }
@@ -394,7 +404,7 @@ export default function Contracts() {
     setBulkSaving(true)
     try {
       await api.patch('/contracts/bulk', { ids: selectedIds, ...fields }, auth())
-      setSelectedIds([]); setBulkFormat(''); setBulkProlong(''); setBulkDays(''); setBulkCondition('')
+      setSelectedIds([]); setBulkFormat(''); setBulkProlong(''); setBulkIssue(''); setBulkDays(''); setBulkCondition('')
       loadAll()
     } catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
     finally { setBulkSaving(false) }
@@ -569,6 +579,10 @@ export default function Contracts() {
                 emptyLabel="Пролонгация"
                 onChange={e => setNewForm(p => ({ ...p, prolongation: e.target.value }))}
                 style={selSm(170)} />
+              <select value={newForm.issue_channel} onChange={e => setNewForm(p => ({ ...p, issue_channel: e.target.value }))} style={selSm(140)}>
+                <option value="">Выставление</option>
+                {ISSUE_CHANNELS.map(x => <option key={x} value={x}>{x}</option>)}
+              </select>
               <input type="number" min="0" placeholder="Срок оплаты, дни" value={newForm.payment_term_days}
                 onChange={e => setNewForm(p => ({ ...p, payment_term_days: e.target.value }))}
                 style={inpSm(140)} />
@@ -683,6 +697,13 @@ export default function Contracts() {
                 onChange={e => setBulkProlong(e.target.value)} style={selSm(160)} />
             </div>
             <div>
+              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 3 }}>Выставление</div>
+              <select value={bulkIssue} onChange={e => setBulkIssue(e.target.value)} style={selSm(130)}>
+                <option value="">— не менять —</option>
+                {ISSUE_CHANNELS.map(x => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </div>
+            <div>
               <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 3 }}>Срок оплаты, дни</div>
               <input type="number" min="0" placeholder="— не менять —" value={bulkDays}
                 onChange={e => setBulkDays(e.target.value)} style={inpSm(130)} />
@@ -701,7 +722,7 @@ export default function Contracts() {
               </button>
             )}
             <button style={btn(false)}
-              onClick={() => { setSelectedIds([]); setBulkFormat(''); setBulkProlong(''); setBulkDays(''); setBulkCondition('') }}>
+              onClick={() => { setSelectedIds([]); setBulkFormat(''); setBulkProlong(''); setBulkIssue(''); setBulkDays(''); setBulkCondition('') }}>
               Снять выделение
             </button>
           </div>
@@ -715,10 +736,11 @@ export default function Contracts() {
             ['num', '118px', '№ договора', 'contract_number'], ['date', '92px', 'Дата', 'contract_date'], ['inn', '110px', 'ИНН', 'inn'],
             ['mkt', 'minmax(130px,1fr)', 'Назв. маркет.', 'marketing_name'], ['fmt', '132px', 'Формат', 'cooperation_format'],
             ['end', '104px', 'Окончание', 'end_date_text'], ['prol', '118px', 'Пролонгация', 'prolongation'],
+            ['issue', '92px', 'Выставление', 'issue_channel'],
             ['days', '52px', 'Дни', 'payment_term_days'], ['cond', '122px', 'Условие', 'payment_term_condition'],
             ['annex', '86px', 'ДС с', 'annex_start_no'],
             ['ord', '96px', 'ОРД', 'ord_contract_id'],
-            ['act', '92px', ''],
+            ['act', '124px', ''],
           ]
           const CRIGHT = new Set(['days', 'annex'])
           const CGRID = CCOLS.map(c => c[1]).join(' ')
@@ -729,7 +751,7 @@ export default function Contracts() {
           )
           return (
           <div style={{ overflowX: 'auto', maxWidth: '100%', margin: '4px -4px 0' }}>
-            <div style={{ minWidth: 1506 }}>
+            <div style={{ minWidth: 1538 }}>
               <div style={{ display: 'grid', gridTemplateColumns: CGRID, gap: 12, borderBottom: '1px solid var(--border-card)' }}>
                 {CCOLS.map(([k, wd, label, sortKey]) => k === 'sel'
                   ? <div key={k} style={{ padding: '0 0 10px' }}>{mayEdit && <input type="checkbox" checked={allSelected} onChange={toggleAll} />}</div>
@@ -748,6 +770,7 @@ export default function Contracts() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Формат</span><SelectWithOther value={editDraft.cooperation_format} options={COOPERATION_FORMATS} onChange={e => setEditDraft(d => ({ ...d, cooperation_format: e.target.value }))} style={w(170)} /></div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Окончание</span><div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>{(editDraft._end_date_mode || 'date') === 'date' ? <input type="date" value={editDraft.end_date_text || ''} onChange={e => setEditDraft(d => ({ ...d, end_date_text: e.target.value }))} style={w(140)} /> : <input type="text" placeholder="Текст" value={editDraft.end_date_text || ''} onChange={e => setEditDraft(d => ({ ...d, end_date_text: e.target.value }))} style={w(150)} />}<button type="button" onClick={() => setEditDraft(d => ({ ...d, _end_date_mode: (d._end_date_mode || 'date') === 'date' ? 'text' : 'date', end_date_text: '' }))} style={{ ...btnSm(false), padding: '4px 8px' }}>{(editDraft._end_date_mode || 'date') === 'date' ? 'Aa' : '📅'}</button></div></div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Пролонгация</span><SelectWithOther value={editDraft.prolongation} options={PROLONGATION_OPTIONS} onChange={e => setEditDraft(d => ({ ...d, prolongation: e.target.value }))} style={w(160)} /></div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Выставление</span><select value={editDraft.issue_channel || ''} onChange={e => setEditDraft(d => ({ ...d, issue_channel: e.target.value }))} style={w(110)}><option value="">не задано</option>{ISSUE_CHANNELS.map(x => <option key={x} value={x}>{x}</option>)}</select></div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Дни</span><input type="number" min="0" value={editDraft.payment_term_days} onChange={e => setEditDraft(d => ({ ...d, payment_term_days: e.target.value }))} style={{ ...w(70), textAlign: 'right' }} /></div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Условие</span><SelectWithLegacy value={editDraft.payment_term_condition} options={PAYMENT_TERM_CONDITIONS} onChange={e => setEditDraft(d => ({ ...d, payment_term_condition: e.target.value }))} style={w(170)} /></div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Документ</span><div style={{ display: 'flex', gap: 4, alignItems: 'center' }}><input value={editDraft.document_link || ''} onChange={e => setEditDraft(d => ({ ...d, document_link: e.target.value }))} placeholder="Ссылка" style={{ ...w(180), fontSize: 12 }} />{c.attached_filename ? <><button onClick={() => handleDownload(c.id, c.attached_filename)} style={btnSm(false)} title={c.attached_filename}>📥</button><button onClick={() => handleDeleteDoc(c.id)} style={{ ...btnSm(false), color: 'var(--danger)' }}>✕</button></> : <button onClick={() => { setUploadTargetId(c.id); uploadRef.current?.click() }} style={btnSm(false)}>{uploadingId === c.id ? '…' : '📎'}</button>}</div></div>
@@ -772,6 +795,7 @@ export default function Contracts() {
                     <div style={{ padding: '0 8px', overflow: 'hidden' }}>{c.cooperation_format ? <span style={{ background: 'var(--accent-tint)', color: 'var(--accent)', borderRadius: 8, padding: '3px 8px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block', maxWidth: '100%' }} title={c.cooperation_format}>{c.cooperation_format}</span> : dash}</div>
                     <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', padding: '0 8px', whiteSpace: 'nowrap' }}>{fmtEndDate(c.end_date_text)}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.prolongation || ''}>{c.prolongation || dash}</div>
+                    <div style={{ fontSize: 12, padding: '0 8px', whiteSpace: 'nowrap', color: c.issue_channel ? 'var(--text-secondary)' : 'var(--text-faint)' }}>{c.issue_channel || dash}</div>
                     <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', textAlign: 'right', padding: '0 8px' }}>{c.payment_term_days != null ? c.payment_term_days : dash}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.payment_term_condition || ''}>{c.payment_term_condition || dash}</div>
                     {/* Стартовый номер приложений: последний, выданный ВНЕ системы.
@@ -816,6 +840,9 @@ export default function Contracts() {
                       ) : dash}
                     </div>
                     <div style={{ display: 'inline-flex', gap: 2, justifyContent: 'flex-end' }}>
+                      <button onClick={() => setTplContract({ id: c.id, number: c.contract_number, format: c.cooperation_format })}
+                              title={behind[c.id] ? `Базовый шаблон изменился (v${behind[c.id].known} → v${behind[c.id].now}) — решите: оставить свой или перенять базу` : 'Шаблон ДС, прикреплённый к договору'}
+                              style={behind[c.id] ? { ...icoBtn, color: 'var(--warning-fg)', background: 'var(--warning-tint)' } : icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M9 13h6M9 17h4" /></svg></button>
                       {c.document_link && <a href={/^https?:\/\//i.test(c.document_link) ? c.document_link : undefined} target="_blank" rel="noopener noreferrer" title="Ссылка на документ" style={icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg></a>}
                       {c.attached_filename && <button onClick={() => handleDownload(c.id, c.attached_filename)} title="Скачать документ" style={icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg></button>}
                       {mayEdit && <button onClick={() => openEdit(c)} title="Редактировать" style={icoBtn} onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-tint)'; e.currentTarget.style.color = 'var(--accent)' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-faint)' }}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>}
@@ -831,6 +858,7 @@ export default function Contracts() {
         })()}
         </div>
       </div>
+      <BaseTemplateModal open={!!tplContract} contract={tplContract} onClose={() => { setTplContract(null); loadBehind() }} />
     </>
   )
 }

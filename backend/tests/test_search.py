@@ -89,7 +89,9 @@ def test_classify_patterns():
     assert set(classify.classify("7701234567")["types"]) == {"counterparty", "contract",
                                                              "ord_contract"}
     assert classify.classify("12345")["kind"] == "digits"
-    assert set(classify.classify("12345")["types"]) == {"deal", "contract"}
+    assert set(classify.classify("12345")["types"]) == {"deal", "contract", "upd", "invoice"}
+    for code in ("M-1165", "м-1165", "M1165"):
+        assert classify.classify(code)["types"] == ["master_deal"], code
     assert classify.classify("2VtzqwXyZ1a")["kind"] == "erid"
     assert classify.classify("2VtzqwXyZ1a")["types"] == ["erid"]
     assert classify.classify("оккам")["kind"] == "text"
@@ -135,7 +137,7 @@ def test_search_matrix(db, monkeypatch):
     """Каждая живая роль: типы в выдаче — ровно те, на которые у неё есть `view`."""
     assert set(engine.SEARCHERS) == {"deal", "counterparty", "contract", "publisher",
                                      "advertiser", "agency", "brand", "media_plan",
-                                     "ord_contract", "erid"}
+                                     "ord_contract", "erid", "master_deal", "upd", "invoice"}
     def fake(t):
         return lambda db_, q, limit, offset, ctx: [
             {"id": 1, "title": t, "subtitle": "", "href": "/", "archived": False}]

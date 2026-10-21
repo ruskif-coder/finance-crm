@@ -43,6 +43,18 @@
           "perm": "planfact"
         },
         {
+          "key": "legal",
+          "label": "Юр запросы",
+          "href": "/finance/legal-requests",
+          "perm": "legal_requests"
+        },
+        {
+          "key": "master_deals",
+          "label": "Мастер-сделки",
+          "href": "/finance/master-deals",
+          "perm": "master_deals"
+        },
+        {
           "key": "operations",
           "label": "Операции",
           "href": "/finance/operations",

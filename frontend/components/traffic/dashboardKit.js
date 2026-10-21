@@ -310,7 +310,8 @@ const IcoBtn = ({ title, tone, disabled, onClick, children }) => (
  * Запрет объяснён в подсказке, а не спрятан: кнопка, которая молча не нажимается,
  * читается как поломка.
  */
-export const PlaceActions = ({ status, canStart, uploaded = true, why, onStart, onPause, onOff }) => {
+// `titles` — свои подсказки, когда кнопки стоят не на площадке (креатив целиком, 15.10.2026).
+export const PlaceActions = ({ status, canStart, uploaded = true, why, onStart, onPause, onOff, titles = {} }) => {
   const running = status === 'запущен'
   const off = status === 'завершена'
   // Старт и пауза — только после выгрузки в DSP (владелец 30.09.2026); сервер держит тот же
@@ -319,7 +320,8 @@ export const PlaceActions = ({ status, canStart, uploaded = true, why, onStart, 
     <span style={{ display: 'inline-flex', gap: 5 }}>
       <IcoBtn
         /* Причина с сервера — тем же правилом, что проверяет запуск (02.10.2026). */
-        title={running ? 'Пауза: открутка встанет, доля в плане останется'
+        title={titles.start && !running ? (canStart ? titles.start : titles.cannot) : titles.pause && running ? titles.pause
+          : running ? 'Пауза: открутка встанет, доля в плане останется'
           : why ? `Запуск заперт: ${why}`
             : !uploaded ? 'Площадка ещё не выгружена в DSP — сначала «В DSP», потом запуск'
               : canStart ? 'Запустить площадку'
@@ -337,7 +339,7 @@ export const PlaceActions = ({ status, canStart, uploaded = true, why, onStart, 
           </svg>
         )}
       </IcoBtn>
-      <IcoBtn title={off ? 'Площадка уже отключена'
+      <IcoBtn title={titles.off ? (off ? titles.offDone : titles.off) : off ? 'Площадка уже отключена'
         : 'Отключить: немедленная остановка и исключение из распределения'}
         tone="var(--danger)" disabled={off} onClick={onOff}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">

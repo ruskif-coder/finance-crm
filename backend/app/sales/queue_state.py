@@ -37,23 +37,41 @@ from app.sales.urgency import LAG_ALARM_PCT, Verdict, delivery_lag_pct, DealFact
 
 # Проверки, которые очередь считает сама. Для каждой `load` подкладывает окружение,
 # и тест держит равенство с поштучным расчётом карточки по всем ним.
-CHECK_KEYS = ("mp_linked", "payer_set", "final_contract", "ord_initial_contract",
+CHECK_KEYS = ("mp_linked", "mp_verified", "service_set", "period_set", "payer_set", "final_contract", "ord_initial_contract",
               "realization_pipeline", "creatives_accepted", "placements_approved",
               "erid_issued", "campaign_ready", "weborama_pixel", "fact_collected",
               "annex_generated", "signatory_filled", "ds_signed", "invoice_issued",
               "upd_issued", "report_attached")
 
-# Чипы стадии: проверка → короткая подпись. Порядок — порядок в строке (макет).
-SLOT_CHECKS = {
-    "booking": (("payer_set", "Плательщик"), ("final_contract", "Договор ОРД"),
-                ("realization_pipeline", "Воронка")),
-    "prep": (("campaign_ready", "РК в DSP"), ("weborama_pixel", "Пиксель")),
-    "recon": (("fact_collected", "Факт собран"),),
-    "ds_prep": (("annex_generated", "Приложение"), ("signatory_filled", "Подписант")),
-    "closing": (("invoice_issued", "Счёт"), ("upd_issued", "УПД"), ("report_attached", "Отчёт")),
+# Какие чипы стоят в строке, решает матрица `sales_stage_checks` (владелец 14.10.2026):
+# проверки стадии, в которую ведёт слот, применимые к сделке (`scope_matches`). Раньше
+# состав был зашит здесь по слотам — и расходился с тем, что админ настроил в матрице.
+# Проверка из матрицы вне CHECK_KEYS в строке не рисуется: для неё пачка не грузит
+# окружение, и расчёт пошёл бы запросом на сделку.
+#
+# Короткие подписи чипов; их порядок — порядок в строке (макет). Остальные — заголовком
+# проверки из реестра, после этих.
+SHORT_LABELS = {
+    "mp_verified": "Виза МП", "service_set": "Услуга", "period_set": "Период",
+    "payer_set": "Плательщик", "final_contract": "Договор ОРД",
+    "realization_pipeline": "Воронка", "campaign_ready": "РК в DSP",
+    "weborama_pixel": "Пиксель", "fact_collected": "Факт собран",
+    "annex_generated": "Приложение", "signatory_filled": "Подписант",
+    "invoice_issued": "Счёт", "upd_issued": "УПД", "report_attached": "Отчёт",
 }
-# Отчёт по РК владелец считает необязательным (17.08.2026): серым, даже если размечен.
-ALWAYS_OPTIONAL = {"report_attached"}
+# Обязательность — только из матрицы (`is_blocking` + применимость, то есть `b.required`).
+# Прежнее «отчёт всегда серым» (17.08.2026) перекрывало настройку админа и снято
+# (владелец 14.10.2026): не нужен отчёт — снимите галочку в матрице.
+
+
+def _label(key: str) -> str:
+    return SHORT_LABELS.get(key) or REGISTRY[key].title
+
+
+def chip_order(keys) -> list:
+    """Ключи в порядке строки: сначала по SHORT_LABELS, остальные — по имени."""
+    rank = {k: i for i, k in enumerate(SHORT_LABELS)}
+    return sorted(set(keys), key=lambda k: (rank.get(k, len(rank)), k))
 
 
 def _rub(n) -> str:
@@ -84,8 +102,13 @@ class Bundle:
     has_mp: bool = False
     amount: Optional[float] = None          # до НДС, по правилу плана
     gross: Optional[float] = None           # с НДС
-    checks: Dict[str, object] = field(default_factory=dict)   # ключ → Result
+    # ключ → Result; ровно чипы строки, в их порядке (матрица следующей стадии × применимость)
+    checks: Dict[str, object] = field(default_factory=dict)
     required: set = field(default_factory=set)                # запирают переход этой сделки
+    # Проверки, применимые к сделке хоть на одной стадии матрицы. Тревоги и кнопки,
+    # дублирующие проверку, показываются только если она применима (владелец 14.10.2026).
+    # None — «всё применимо» (сборка руками в тестах).
+    applies: Optional[set] = None
     creatives: Optional[tuple] = None       # (согласовано пар, всего пар)
     sets: int = 0                           # комплектов креативов
     erids: List[str] = field(default_factory=list)   # ГОТОВЫЕ маркеры (`app.ord.readiness`)
@@ -121,25 +144,25 @@ def _start(b: Bundle):
 
 def _check_chips(b: Bundle) -> list:
     out = []
-    for key, label in SLOT_CHECKS.get(b.slot, ()):
-        if key == "weborama_pixel" and not b.pixel_ordered:
-            continue
-        r = b.checks.get(key)
+    for key, r in b.checks.items():
         if r is None or r.state not in (OK, NOT_YET):
             continue
-        out.append({"type": "check", "v": label, "ok": r.state == OK,
-                    "optional": key in ALWAYS_OPTIONAL or key not in b.required})
+        out.append({"type": "check", "v": _label(key), "ok": r.state == OK,
+                    "optional": key not in b.required})
     return out
 
 
 def _first_missing(b: Bundle) -> Optional[str]:
     """Первая по порядку строки проверка, которая ЗАПИРАЕТ переход и не выполнена."""
-    for key, _ in SLOT_CHECKS.get(b.slot, ()):
-        r = b.checks.get(key)
-        if (r is not None and r.state == NOT_YET and key in b.required
-                and key not in ALWAYS_OPTIONAL):
+    for key, r in b.checks.items():
+        if r is not None and r.state == NOT_YET and key in b.required:
             return key
     return None
+
+
+def _applies(b: Bundle, key: str) -> bool:
+    """Проверка применима к сделке по матрице — тогда и её тревога/кнопка уместна."""
+    return b.applies is None or key in b.applies
 
 
 def _card(b: Bundle, anchor: str) -> str:
@@ -167,7 +190,10 @@ def _by_slot(b: Bundle):
         if b.has_mp:
             state.append(_fact("МП", "есть"))
             return state, _move("Отправить", "План есть — отдать клиенту"), ""
-        state.append(_alert("МП нет") if v.urgency == "overdue" else _fact("МП", "нет"))
+        # Тревогой — только если матрица требует МП у этой сделки (владелец 14.10.2026);
+        # иначе спокойный факт. Кнопка «Собрать МП» — ход стадии, не проверка: остаётся.
+        state.append(_alert("МП нет") if v.urgency == "overdue" and _applies(b, "mp_linked")
+                     else _fact("МП", "нет"))
         return state, {"label": "Собрать МП", "do": "mp",
                        "hint": "Собрать медиаплан в конструкторе"}, ""
 
@@ -198,8 +224,12 @@ def _by_slot(b: Bundle):
     if s == "prep":
         state = []
         done, total = b.creatives or (0, 0)
+        # Тревоги и кнопки, повторяющие проверку, — только если она применима к сделке по
+        # матрице (владелец 14.10.2026): у услуги без креативов/ЕРИД они были бы неправдой.
+        need_cr = _applies(b, "creatives_accepted")
+        need_erid = _applies(b, "erid_issued")
         if not b.sets:
-            state.append(_alert("креативов нет", "warn"))
+            state.append(_alert("креативов нет", "warn") if need_cr else _fact("креативы", "нет"))
         elif not total:
             state.append(_fact("креативы", "не отправлены"))
         else:
@@ -208,20 +238,21 @@ def _by_slot(b: Bundle):
             state.append(_fact("ЕРИД", b.erids[0] if b.sets == 1 else f"{len(b.erids)} / {b.sets}"))
         elif b.erid_waiting:
             state.append(_fact("ЕРИД", "регистрация в ЕРИР"))
-        elif b.sets and not b.kktu:
+        elif b.sets and not b.kktu and need_erid:
             state.append(_alert("ЕРИД: нет ККТУ", "warn"))
-        elif b.sets:
+        elif b.sets and need_erid:
             state.append(_fact("ЕРИД", f"ждёт {b.erid_share} %"))
         state += _check_chips(b)
         # Кнопка — первое несделанное по ходу сборки: креативы → ЕРИД → РК и пиксель.
-        if not b.sets or not total or done < total:
+        if need_cr and (not b.sets or not total or done < total):
             return state, {"label": "Креативы", "do": "prep",
                            "hint": "Сбор запуска: комплекты и согласование площадок"}, ""
-        if len(b.erids) < b.sets and not b.kktu:
+        erid_short = need_erid and len(b.erids) < b.sets
+        if erid_short and not b.kktu:
             return state, {"label": "ККТУ", "do": "link", "url": "/directory/advertisers",
                            "hint": "Без кода ККТУ у бренда ЕРИД не выпустить"}, ""
         blocked = any(r.state == NOT_YET for k, r in b.checks.items() if k in b.required)
-        if len(b.erids) < b.sets or blocked:
+        if erid_short or blocked:
             return state, {"label": "Сбор запуска", "do": "prep",
                            "hint": "Чек-лист сбора запуска"}, ""
         return state, _move("В размещение", "Запуск собран — перевести в «В размещении»"), ""
@@ -229,7 +260,8 @@ def _by_slot(b: Bundle):
     if s == "live":
         dl = b.delivery
         if dl is None:
-            state = [_alert("РК не собрана", "warn")]
+            # Без РК в DSP тревожно, только если матрица её требует (владелец 14.10.2026).
+            state = [_alert("РК не собрана", "warn")] if _applies(b, "campaign_ready") else []
         elif dl.get("done_pct") is None:
             state = [_fact("открутка", "статистики нет")]
         else:
@@ -494,7 +526,7 @@ def build(db, deals, verdicts: Dict[int, Verdict], today: date,
     from app.sales.deal_delivery import delivery_by_deal
     from app.sales.mp_amounts import eff_net, gross_of, mp_amounts_by_deal
     from app.sales.models import SalesStageCheck
-    from app.sales.stage_checks import scope_matches
+    from app.sales.stage_checks import blocking_for, scope_matches
     from app.sales.urgency import payment_due
     from app.sales.urgency_db import stage_since
 
@@ -507,7 +539,8 @@ def build(db, deals, verdicts: Dict[int, Verdict], today: date,
     batch = load(db, deals, today)
     since = stage_since(db, ids)
     rows_of: dict = {}
-    for r in db.query(SalesStageCheck).all():
+    all_rows = db.query(SalesStageCheck).order_by(SalesStageCheck.id).all()
+    for r in all_rows:
         rows_of.setdefault(r.stage_id, []).append(r)
     if amounts is None:
         mp_amt = mp_amounts_by_deal(db, ids)
@@ -527,9 +560,13 @@ def build(db, deals, verdicts: Dict[int, Verdict], today: date,
         slot = slots[d.id]
         ctx = batch.ctxs[d.id]
         nxt = stage_scope.next_for(d, cat, marks)
-        required = {r.check_key for r in rows_of.get(nxt.id if nxt else None, [])
-                    if r.is_blocking and scope_matches(r.applies_when, d)}
-        keys = [k for k, _ in SLOT_CHECKS.get(slot, ())]
+        # Чипы — строки матрицы той стадии, куда ведёт слот, применимые к сделке
+        # (владелец 14.10.2026). Матрица загружена один раз выше — не запрос на сделку.
+        own = [r for r in rows_of.get(nxt.id if nxt else None, [])
+               if scope_matches(r.applies_when, d)]
+        required = {r.check_key for r in own if blocking_for(r, d)}
+        keys = chip_order(r.check_key for r in own if r.check_key in CHECK_KEYS)
+        applies = {r.check_key for r in all_rows if scope_matches(r.applies_when, d)}
         entered = since.get((d.id, d.our_stage_id))
         net, gross = amounts.get(d.id, (None, None))
         cp = d.payer_counterparty_id or d.counterparty_id
@@ -542,7 +579,7 @@ def build(db, deals, verdicts: Dict[int, Verdict], today: date,
             has_mp=bool(ctx.plan) or "mp" in ctx.file_kinds,
             amount=net, gross=gross,
             checks={k: REGISTRY[k].fn(ctx) for k in keys},
-            required=required,
+            required=required, applies=applies,
             creatives=batch.pairs.get(d.id), sets=batch.set_count.get(d.id, 0),
             erids=batch.erids.get(d.id, []), erid_waiting=batch.erid_waiting.get(d.id, 0),
             kktu=batch.kktu.get(d.id, False),

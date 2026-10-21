@@ -15,6 +15,8 @@ import re
 DEAL_CODE = re.compile(r"^[0-9A-Z]{6}$")
 INN = re.compile(r"^(\d{10}|\d{12})$")
 DIGITS = re.compile(r"^\d+$")
+# Код мастер-сделки: «M-1165» (латинская или русская М, дефис необязателен).
+MASTER_CODE = re.compile(r"^[MМmм]-?\d{1,6}$")
 # ЕРИД — токен маркировки в алфавите base58 (без 0, O, I, l). Смешанный регистр И цифра
 # обязательны: без этого под шаблон попало бы любое латинское слово с заглавной буквы.
 ERID = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{8,64}$")
@@ -31,9 +33,11 @@ def classify(q: str) -> dict:
         return {"kind": "deal_code", "types": ["deal"]}
     if INN.match(q):
         return {"kind": "inn", "types": ["counterparty", "contract", "ord_contract"]}
+    if MASTER_CODE.match(q):
+        return {"kind": "master_code", "types": ["master_deal"]}
     if DIGITS.match(q):
-        # номер Битрикса у сделки, номер договора
-        return {"kind": "digits", "types": ["deal", "contract"]}
+        # номер Битрикса у сделки, номер договора, номер УПД и счёта из 1С
+        return {"kind": "digits", "types": ["deal", "contract", "upd", "invoice"]}
     if _is_erid(q):
         return {"kind": "erid", "types": ["erid"]}
     return {"kind": "text", "types": None}

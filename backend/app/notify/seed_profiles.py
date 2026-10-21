@@ -32,19 +32,34 @@ PLAN = {
     # это стадия его сделки. Заменять их подписками на правила очереди аккаунта я не
     # стал: кому адресовать сканерные правила — решение владельца (см. KNOWN_SILENT в
     # tests/test_notify_wiring.py), а не побочный эффект уборки.
-    "account":        {},
+    # «Сделку забрали в пакет» (16.10.2026) — дайджестом, по слову владельца.
+    "account":        {"deal_taken_into_master": ["digest"],
+                       # Контур закрытия (21.10.2026): в приложении и дайджестом; просрочки — ещё и в телеграм.
+                       **{k: ["app", "digest"] for k in ("recon_arrived", "master_deal_ready", "master_ds_created",
+                                                          "master_closed")},
+                       **{k: ["app", "tg"] for k in ("recon_overdue", "master_scans_overdue")},
+                       # Приоритезация (19.10.2026) — собирает аккаунт, ему и ответы, и автостоп.
+                       **{k: ["app"] for k in ("prio_site_answered", "prio_goal_reached")},
+                       "prio_stop_failed": ["app", "tg"]},
     # «ЕРИД не выпустился» — решение владельца 31.08.2026: адресуем админу и мастеру
     # аккаунта. Маркер не выпустился = сделка не может стартовать в размещении, и знать
     # об этом должны те, кто за это отвечает сверху, а не только исполнитель.
-    "account_master": {k: ["app"] for k in ("creative_erid_failed",)},
+    "account_master": {**{k: ["app"] for k in ("creative_erid_failed",)},
+                       "deal_taken_into_master": ["digest"],
+                       "prio_goal_reached": ["app"],
+                       **{k: ["app", "digest"] for k in ("master_deal_ready", "master_ds_created", "master_closed")},
+                       **{k: ["app", "tg"] for k in ("recon_overdue", "master_scans_overdue")}},
     "sales":          {k: ["app"] for k in ("mp_ready",)},
-    "fin":            {},
+    "fin":            {k: ["app", "digest"] for k in ("deal_sent_to_do", "master_wait_1c")},
     "admin":          {**{k: ["app"] for k in ("mp_ready", "creative_erid_failed")},
                        # Поломка фонового задания — срочно (владелец 27.09.2026): крон
                        # ломается ночью, панель увидят только утром.
                        **{k: ["app", "tg", "mail"] for k in ("cron_erid_auto_failed",
                                                               "cron_erid_auto_stale",
-                                                              "cron_bidder_failed")}},
+                                                              "cron_bidder_failed",
+                                                              "cron_dsp_stat_failed",     # хотфикс v2.6.90
+                                                              "cron_prio_stat_failed")},
+                       "prio_stop_failed": ["app", "tg"]},
 
     # Трафик (30.08.2026). Два события и ровно два: пришла работа и кто-то из своих
     # молчит. Всё остальное в реестре — про медиапланы и сделки, к материалу отношения
@@ -53,7 +68,8 @@ PLAN = {
                                                  "traffic_boost_started", "traffic_boost_ended")},
                        # Тревога биддера — мастерам трафика (06.10.2026); рядовым не
                        # адресована резолвером, профиль задаёт только каналы.
-                       "cron_bidder_failed": ["app", "tg", "mail"]},
+                       "cron_bidder_failed": ["app", "tg", "mail"],
+                       "cron_dsp_stat_failed": ["app", "tg", "mail"]},
 
     # Менеджер паблишеров. Его роль уже стоит адресатом в `creative_silence` — молчание
     # площадки это его разговор, а не аккаунта. Профиль нужен, чтобы у события были

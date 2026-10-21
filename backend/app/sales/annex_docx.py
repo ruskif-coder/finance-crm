@@ -26,7 +26,7 @@ from docx.shared import Cm, Pt, RGBColor
 FONT = "Times New Roman"
 HEADER_FILL = "4472C4"      # синяя шапка — как в образце и в наших выгрузках медиаплана
 TOTAL_FILL = "D9E2F3"
-BORDER = "FFFFFF"           # рамки белые (решение владельца 05.09.2026)
+BORDER = "000000"           # рамки чёрные (владелец 21.10.2026, просьба бухгалтерии; до того — белые, решение 05.09.2026)
 
 COLS = ["Место\nразмещения", "Позиция", "Гео", "Формат", "Девайс",
         "Тип ротации\n(для медийных\nформатов)", "Модель\nзакупки", "Объем размещения",
@@ -157,12 +157,27 @@ def _party_line(p: Optional[dict], role: str) -> str:
     fio = p.get("director_gen") or p.get("director") or "___________"
     basis = p.get("basis_gen") or p.get("basis") or "___________"
     acting = p.get("acting") or "действующего"
-    return (f"{p['name']}, именуемое в дальнейшем «{role}», в лице {pos} {fio}, "
+    return (f"{p.get('legal_name') or p['name']}, именуемое в дальнейшем «{role}», в лице {pos} {fio}, "
             f"{acting} на основании {basis}")
 
 
-def build_docx(d: dict) -> bytes:
-    """Собрать .docx из того же словаря, что печатает PDF."""
+def _basis_page(doc, d: dict) -> None:
+    """Страница «Основание для закрывающих документов» — после ДС, одним файлом: клиент видит, что будет написано в УПД и счёте, и подтверждает."""
+    doc.add_page_break()
+    h = doc.add_paragraph()
+    h.paragraph_format.space_after = Pt(8)
+    _run(h, "Основание для закрывающих документов", bold=True, size=12)
+    note = doc.add_paragraph()
+    note.paragraph_format.space_after = Pt(10)
+    _run(note, f"К {(d.get('number') or 'Приложение').replace('Приложение', 'Приложению', 1)} к Договору {_nb('№ ' + ((d.get('contract') or {}).get('number') or '________'))}. "
+               "Формулировка, которая будет указана в УПД и счёте. Просим согласовать.", italic=True, size=10.5)
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    _run(p, d.get("closing_basis") or "")
+
+
+def build_docx(d: dict, with_basis: bool = False) -> bytes:
+    """Собрать .docx из того же словаря, что печатает PDF. `with_basis` — добавить страницу с основанием закрывающих документов."""
     doc = Document()
     sec = doc.sections[0]
     sec.orientation = WD_ORIENT.LANDSCAPE
@@ -171,6 +186,10 @@ def build_docx(d: dict) -> bytes:
     sec.page_width, sec.page_height = Cm(PAGE_W), Cm(PAGE_H)
     sec.top_margin = sec.bottom_margin = Cm(MARGIN_Y)
     sec.left_margin = sec.right_margin = Cm(MARGIN_X)
+    if d.get("master_code"):              # код мастер-сделки в нижнем колонтитуле каждой страницы
+        fp = sec.footer.paragraphs[0]
+        fp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        _run(fp, d["master_code"], size=8, color="595959")
 
     style = doc.styles["Normal"]
     style.font.name = FONT
@@ -209,7 +228,7 @@ def build_docx(d: dict) -> bytes:
     _clause(doc, "1.", d.get("body") or "")
     _table(doc, d)
     _clause(doc, "1.1.", _clause_11(d), indent=0.8)
-    _clause(doc, "1.2.", CLAUSE_12, indent=0.8)
+    _clause(doc, "1.2.", _w(d, CLAUSE_12), indent=0.8)
     _clause(doc, "2.", CLAUSE_2)
     _clause(doc, "3.", _clause_3(d))
 
@@ -218,6 +237,8 @@ def build_docx(d: dict) -> bytes:
     sign.paragraph_format.space_after = Pt(8)
     _run(sign, "Подписи Сторон:", bold=True)
     _signatures(doc, ex, cust)
+    if with_basis and d.get("closing_basis"):
+        _basis_page(doc, d)
     out = BytesIO()
     doc.save(out)
     return out.getvalue()
@@ -235,8 +256,22 @@ CLAUSE_2 = ("В случае если Заказчик недоволен ока
             "приступает к доработке.")
 
 
+_DS_WORDS = (("настоящему Приложению", "настоящему ДС"), ("настоящим Приложением", "настоящим ДС"),
+             ("Настоящее Приложение", "Настоящее ДС"), ("настоящего Приложения", "настоящего ДС"),
+             ("отдельными Приложениями", "отдельными ДС"), ("Приложение составлено", "ДС составлено"))
+
+
+def _w(d: dict, text: str) -> str:
+    """ДС мастер-сделки называются «ДС», а не «Приложение» (решение владельца 15.10.2026); старые документы — как были."""
+    if not d.get("is_master"):
+        return text
+    for a, b in _DS_WORDS:
+        text = text.replace(a, b)
+    return text
+
+
 def _clause_11(d: dict) -> str:
-    return (f"Общая стоимость Услуг Исполнителя по настоящему Приложению составляет сумму "
+    return _w(d, f"Общая стоимость Услуг Исполнителя по настоящему Приложению составляет сумму "
             f"в размере {d.get('amount_words') or ''}, в том числе НДС "
             f"{d.get('vat_rate')}% — {d.get('vat_words') or ''}. Оплата услуг Исполнителя "
             f"по настоящему Приложению осуществляется Заказчиком на основании "
@@ -245,7 +280,7 @@ def _clause_11(d: dict) -> str:
 
 
 def _clause_3(d: dict) -> str:
-    return (f"Во всем остальном, не урегулированном настоящим Приложением, стороны "
+    return _w(d, f"Во всем остальном, не урегулированном настоящим Приложением, стороны "
             f"руководствуются положениями Договора. Настоящее Приложение вступает в силу "
             f"с момента его подписания Сторонами и распространяет свое действие на "
             f"отношения Сторон, возникшие с {_dm(d.get('period_from'))} г. Настоящее "
@@ -285,6 +320,10 @@ def _table(doc, d: dict) -> None:
         cells = t.add_row().cells
         for i, w in enumerate(widths):
             cells[i].width = Cm(w)
+        if r.get("group_title"):            # заголовок группы ДС мастер-сделки (бренд · услуга) — строкой на всю ширину
+            cells[0].merge(cells[len(widths) - 1])
+            _cell_text(cells[0], r["group_title"], bold=True, align="left")
+            continue
         period = f"{_dm(r.get('date_from') or d.get('period_from'))} –\n" \
                  f"{_dm(r.get('date_to') or d.get('period_to'))}"
         _cell_text(cells[0], r.get("network") or "—", bold=True)
@@ -297,10 +336,12 @@ def _table(doc, d: dict) -> None:
         _cell_text(cells[6], r.get("model") or "—")
         _cell_text(cells[7], _int(r.get("volume")) or "—", align="right")
         _cell_text(cells[8], period)
-        _cell_text(cells[9], _fix2(r.get("unit_price")), align="right")
-        _cell_text(cells[10], _fix2(r.get("amount")), bold=True, align="right")
-        _cell_text(cells[11], _fix2(r.get("vat")), align="right")
-        _cell_text(cells[12], _fix2(r.get("gross")), bold=True, align="right")
+        # Бонус: цена за единицу, стоимость, НДС и итог — прочерки (ячейки не остаются пустыми).
+        money = (lambda v: "—") if r.get("bonus") else _fix2
+        _cell_text(cells[9], money(r.get("unit_price")), align="right")
+        _cell_text(cells[10], money(r.get("amount")), bold=True, align="right")
+        _cell_text(cells[11], money(r.get("vat")), align="right")
+        _cell_text(cells[12], money(r.get("gross")), bold=True, align="right")
         total["volume"] += float(r.get("volume") or 0)
         total["net"] += float(r.get("amount") or 0)
         total["vat"] += float(r.get("vat") or 0)
@@ -334,8 +375,8 @@ def _signatures(doc, ex: dict, cust: dict) -> None:
         head = cell.paragraphs[0]
         head.alignment = a
         _run(head, "Исполнитель:" if party is ex else "Заказчик:", bold=True)
-        for text in (party.get("name") or "—",
-                     party.get("position") or "____________",
+        for text in (party.get("legal_name") or party.get("name") or "—",
+                     party.get("position_nom") or party.get("position") or "____________",
                      "",
                      f"____________________ /{party.get('short_fio') or '_________'}/",
                      "М.П."):

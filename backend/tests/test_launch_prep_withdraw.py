@@ -163,8 +163,13 @@ def test_dsp_failure_does_not_undo_withdraw(env):
 
 @pytest.mark.parametrize('setup,why', [
     (lambda e: setattr(e.pair, 'sent_at', None), 'у трафика'),
-    (lambda e: setattr(e.target, 'state', 'в размещении'), 'запущено'),
-    (lambda e: setattr(e.state, 'placement', SimpleNamespace(status='пауза')), 'запущено'),
+    # граница — САМ креатив (владелец 21.10.2026, UW4A8P × 003): запущен или на паузе — уже крутился
+    (lambda e: setattr(e.state, 'row', SimpleNamespace(status='запущен')), 'уже запущен'),
+    (lambda e: setattr(e.state, 'row', SimpleNamespace(status='пауза')), 'уже запущен'),
+    # согласован, заведён в DSP, а площадка запущена — DSP его уже включил: из эфира не отзываем (ревью 21.10.2026)
+    (lambda e: (setattr(e.state, 'placement', SimpleNamespace(status='запущен')),
+                setattr(e.state, 'row', SimpleNamespace(status='согласован', ms_creative_xxhash='ABCDEF0123456789'))),
+     'уже запущен'),
     (lambda e: setattr(e.pair, 'withdrawn_at', datetime.utcnow()), 'уже отозван'),
 ])
 def test_blockers(env, setup, why):
@@ -220,3 +225,27 @@ def test_sync_marks_withdrawn_creative_rejected():
     from app.ad import build
     src = inspect.getsource(build.sync_creatives)
     assert 'pr.withdrawn_at' in src and 'r.get("withdrawn_at")' in src
+
+
+def test_new_creative_in_running_placement_can_be_withdrawn(env):
+    """UW4A8P, креатив 7 × 003 (21.10.2026): площадка уже крутит другие креативы РК, а этот не запускался — отзыв разрешён."""
+    env.target.state = 'в размещении'
+    env.state.placement = SimpleNamespace(status='запущен')
+    env.state.row = SimpleNamespace(status='согласован', ms_creative_xxhash=None)
+    env.db.commit()
+    assert W.blocker(env.db, env.pair, env.target) is None
+
+
+def test_agreed_but_not_in_dsp_on_running_placement_can_be_withdrawn(env):
+    """Согласован, но в DSP ещё не заведён (хеша нет) — не крутится, отзыв разрешён."""
+    env.state.placement = SimpleNamespace(status='запущен')
+    env.state.row = SimpleNamespace(status='согласован', ms_creative_xxhash=None)
+    assert W.blocker(env.db, env.pair, env.target) is None
+
+
+def test_live_rule_is_one_for_dsp_and_withdraw():
+    from app.dsp import campaigns as C
+    rows = [('AA', 'запущен', 'согласован'), ('BB', 'согласован', 'согласован'), ('CC', 'запущен', 'у площадки')]
+    got = C.creative_targets(rows, C.ds.LAUNCHED)
+    assert got == {'AA': C.ds.LAUNCHED, 'BB': C.ds.STOPPED, 'CC': C.ds.STOPPED}
+    assert [C.creative_live(p, c, x) for x, p, c in rows] == [True, False, False]

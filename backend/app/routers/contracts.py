@@ -44,6 +44,7 @@ class ContractCreate(BaseModel):
     end_date_text: Optional[str] = None
     prolongation: Optional[str] = None
     payment_form: Optional[str] = None
+    issue_channel: Optional[str] = None
     payment_term_days: Optional[int] = None
     payment_term_condition: Optional[str] = None
     note: Optional[str] = None
@@ -59,8 +60,31 @@ class ContractBulkUpdate(BaseModel):
     ids: List[int]
     cooperation_format: Optional[str] = None
     prolongation: Optional[str] = None
+    issue_channel: Optional[str] = None
     payment_term_days: Optional[int] = None
     payment_term_condition: Optional[str] = None
+
+
+ISSUE_CHANNELS = ("ЭДО", "бумага")     # как выставляем закрывающие; сравнивается буквально (мастер-сделка)
+ISSUE_DEFAULT = "ЭДО"                   # по умолчанию всем; бумага — исключения (владелец 19.10.2026)
+
+
+def normalize_issue_channel(raw) -> Optional[str]:
+    """«эдо» / «Бумага » → значение из ISSUE_CHANNELS; пусто → None; непонятное → ValueError. Одно правило для формы и импорта Excel."""
+    v = _clean(str(raw)) if raw is not None else None
+    if v is None:
+        return None
+    hit = {x.lower(): x for x in ISSUE_CHANNELS}.get(v.lower())
+    if hit is None:
+        raise ValueError(v)
+    return hit
+
+
+def _issue_channel(v: Optional[str]) -> Optional[str]:
+    try:
+        return normalize_issue_channel(v)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Выставление: ЭДО или бумага")
 
 
 def _clean(s: Optional[str]) -> Optional[str]:
@@ -103,6 +127,7 @@ def _serialize(c: Contract) -> dict:
         "end_date_text": c.end_date_text,
         "prolongation": c.prolongation,
         "payment_form": c.payment_form,
+        "issue_channel": c.issue_channel,
         "payment_term_days": c.payment_term_days,
         "payment_term_condition": c.payment_term_condition,
         "payment_term_legacy": c.payment_term,  # старое текстовое поле — только для справки, не редактируется
@@ -150,6 +175,8 @@ def bulk_update_contracts(
         fields["prolongation"] = _clean(fields["prolongation"])
     if "payment_term_condition" in fields:
         fields["payment_term_condition"] = _clean(fields["payment_term_condition"])
+    if "issue_channel" in fields:
+        fields["issue_channel"] = _issue_channel(fields["issue_channel"])
     if not fields:
         raise HTTPException(status_code=400, detail="Не указаны поля для изменения")
 
@@ -165,6 +192,7 @@ def bulk_update_contracts(
     labels = {
         "cooperation_format": "формат сотрудничества", "prolongation": "пролонгация",
         "payment_term_days": "срок оплаты, дни", "payment_term_condition": "условие",
+        "issue_channel": "выставление",
     }
     changes_str = "; ".join(f"{labels[k]} → {v or '—'}" for k, v in fields.items())
     ids_str = ", ".join(str(c.id) for c in contracts)
@@ -233,6 +261,7 @@ def create_contract(
         end_date_text=_clean(data.end_date_text),
         prolongation=_clean(data.prolongation),
         payment_form=_clean(data.payment_form),
+        issue_channel=_issue_channel(data.issue_channel) or ISSUE_DEFAULT,   # не выбрали — ЭДО (владелец 19.10.2026)
         payment_term_days=data.payment_term_days,
         payment_term_condition=_clean(data.payment_term_condition),
         note=_clean(data.note),
@@ -291,6 +320,7 @@ def update_contract(
         "end_date_text": lambda: _clean(data.end_date_text),
         "prolongation": lambda: _clean(data.prolongation),
         "payment_form": lambda: _clean(data.payment_form),
+        "issue_channel": lambda: _issue_channel(data.issue_channel),
         "payment_term_days": lambda: data.payment_term_days,
         "payment_term_condition": lambda: _clean(data.payment_term_condition),
         "note": lambda: _clean(data.note),
@@ -307,7 +337,7 @@ def update_contract(
         "marketing_name": "маркетинговое название",
         "cooperation_format": "формат сотрудничества", "services": "услуги",
         "end_date_text": "дата окончания", "prolongation": "пролонгация",
-        "payment_form": "форма оплаты", "payment_term_days": "срок оплаты, дни",
+        "payment_form": "форма оплаты", "issue_channel": "выставление", "payment_term_days": "срок оплаты, дни",
         "payment_term_condition": "условие", "note": "примечание",
         "document_link": "ссылка на документ",
     }
@@ -464,13 +494,14 @@ _EXPORT_COLS = [
     ('payment_term_condition','Условие оплаты',         18,  False),  # dropdown M
     ('note',                  'Примечание',             28,  False),
     ('document_link',         'Ссылка на документ',     32,  False),
+    ('issue_channel',         'Выставление (ЭДО/бумага)', 18, False),  # dropdown P — последней: буквы G/J/M не сдвигаются
 ]
 
 # Поля, которые МОЖНО менять через импорт (read-only колонки игнорируются)
 _EDITABLE_FIELDS = {
     'contract_number', 'contract_date', 'marketing_name', 'cooperation_format',
     'services', 'end_date_text', 'prolongation', 'payment_form',
-    'payment_term_days', 'payment_term_condition', 'note', 'document_link',
+    'payment_term_days', 'payment_term_condition', 'note', 'document_link', 'issue_channel',
 }
 
 _FIELD_LABELS = {
@@ -486,6 +517,7 @@ _FIELD_LABELS = {
     'payment_term_condition':'Условие оплаты',
     'note':                  'Примечание',
     'document_link':         'Ссылка на документ',
+    'issue_channel':         'Выставление',
 }
 
 
@@ -517,6 +549,9 @@ def export_contracts(
     ws_ref["C1"] = "Условие оплаты"
     for i, v in enumerate(_PAYMENT_TERM_CONDS, 2):
         ws_ref.cell(row=i, column=3, value=v)
+    ws_ref["D1"] = "Выставление"
+    for i, v in enumerate(ISSUE_CHANNELS, 2):
+        ws_ref.cell(row=i, column=4, value=v)
 
     # Шапка
     header_font   = Font(bold=True, color="FFFFFF")
@@ -543,7 +578,7 @@ def export_contracts(
             'services': c.services, 'end_date_text': c.end_date_text,
             'prolongation': c.prolongation, 'payment_form': c.payment_form,
             'payment_term_days': c.payment_term_days, 'payment_term_condition': c.payment_term_condition,
-            'note': c.note, 'document_link': c.document_link,
+            'note': c.note, 'document_link': c.document_link, 'issue_channel': c.issue_channel,
         }
         for ci, (field, _, _, readonly) in enumerate(_EXPORT_COLS, 1):
             cell = ws.cell(row=ri, column=ci, value=xlsx_safe(vals[field]))
@@ -572,6 +607,12 @@ def export_contracts(
         allow_blank=True, showErrorMessage=False)
     ws.add_data_validation(dv_cnd)
     dv_cnd.sqref = f"M2:M{max_dv}"
+
+    # Выставление — строгий список: значение сравнивает мастер-сделка, свободный текст не нужен
+    dv_iss = DataValidation(type="list", formula1=f"=Справочники!$D$2:$D${len(ISSUE_CHANNELS)+1}",
+                            allow_blank=True, showErrorMessage=True, errorStyle="stop")
+    ws.add_data_validation(dv_iss)
+    dv_iss.sqref = f"P2:P{max_dv}"
 
     buf = io.BytesIO()
     from app.xlsx_safe import save_workbook   # формулы только наши (аудит, 1.L7)
@@ -653,6 +694,11 @@ def _coerce_import_value(field: str, raw):
             except Exception:
                 pass
         return UNREADABLE
+    if field == "issue_channel":
+        try:
+            return normalize_issue_channel(raw)
+        except ValueError:
+            return UNREADABLE
     return str(raw).strip() if raw is not None else None
 
 

@@ -44,9 +44,17 @@ app.post('/render', async (req, res) => {
     await page.waitForFunction((f) => window[f] === true, flag, { timeout: 15000 }).catch(() => {});
     await page.evaluate(() => (document.fonts ? document.fonts.ready : true));
     await page.waitForTimeout(400); // добить авто-подгонку zoom'ом
+    // Колонтитул (21.10.2026: код мастер-сделки на каждом листе ДС) — колонтитулом принтера в нижнем поле страницы:
+    // закреплённый элемент страницы ложится поверх текста. Только простой текст, экранируется здесь.
+    const footer = typeof body.footer === 'string' ? body.footer.slice(0, 80) : '';
+    const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const pdf = await page.pdf({
       format: 'A4', printBackground: true, preferCSSPageSize: true,
       margin: { top: '0', bottom: '0', left: '0', right: '0' },
+      ...(footer ? {
+        displayHeaderFooter: true, headerTemplate: '<span></span>',
+        footerTemplate: `<div style="width:100%;padding:0 16mm;text-align:right;font-family:'Times New Roman',serif;font-size:8pt;color:#595959">${esc(footer)}</div>`,
+      } : {}),
     });
     res.set('Content-Type', 'application/pdf').send(pdf);
   } catch (e) {

@@ -308,6 +308,8 @@ def get_counterparties_registry(
             Counterparty.group_override,
             Counterparty.term_days,
             Counterparty.is_own_company,
+            Counterparty.sk_mode,
+            Counterparty.sk_percent,
             func.count(Operation.id).label("op_count"),
             # Поступления/выплаты по факту (статус "ОПЛАЧЕНО")
             func.coalesce(func.sum(case((Operation.status == 'ОПЛАЧЕНО', Operation.income), else_=0)), 0).label("income_paid"),
@@ -322,7 +324,7 @@ def get_counterparties_registry(
         )
         .outerjoin(Operation, Operation.counterparty_id == Counterparty.id)
         .group_by(Counterparty.id, Counterparty.name, Counterparty.inn, Counterparty.status, Counterparty.group_override,
-                  Counterparty.term_days, Counterparty.is_own_company)
+                  Counterparty.term_days, Counterparty.is_own_company, Counterparty.sk_mode, Counterparty.sk_percent)
         .order_by(Counterparty.name)
         .all()
     )
@@ -375,6 +377,7 @@ def get_counterparties_registry(
                 "term_days": r.term_days,
                 "term_days_effective": r.term_days if r.term_days is not None else DEFAULT_TERM_DAYS,
                 "term_days_is_default": r.term_days is None,
+                "sk_mode": r.sk_mode, "sk_percent": r.sk_percent,
                 "status": r.status,
                 "relation": classify(r.total_income_all, r.total_expense_all),
                 "group": r.group_override or top_article.get(r.id, (None, 0))[0],
@@ -624,6 +627,7 @@ def get_counterparty_card(
         "note": cp.note,
         "status": cp.status,
         "term_days": cp.term_days,
+        "sk_mode": cp.sk_mode, "sk_percent": cp.sk_percent,
         # НДС и статьи по умолчанию раздельно по направлениям (старый vat_rate заморожен)
         "vat_rate_income": cp.vat_rate_income,
         "vat_rate_expense": cp.vat_rate_expense,

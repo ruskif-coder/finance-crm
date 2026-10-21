@@ -88,8 +88,12 @@ def test_deal_without_media_plan_still_gets_campaign_with_empty_plan():
         assert res["deals"] > 0
         empty = db.execute(text("""
             SELECT count(*) FROM ad_campaign c
+            JOIN sales_deals d ON d.id = c.deal_id LEFT JOIN sales_services s ON s.id = d.service_id
+            LEFT JOIN sales_pipelines p ON p.id = COALESCE(d.realization_pipeline_id, s.realization_pipeline_id)
             WHERE c.plan_show IS NULL
               AND NOT EXISTS (SELECT 1 FROM sales_media_plans mp WHERE mp.deal_id = c.deal_id)
+              -- контур аккаунта (14.10.2026): прогон таким РК не заводит; заведённые раньше в подсчёт не идут
+              AND p.closing_flow IS DISTINCT FROM 'контур аккаунта'
         """)).scalar()
         assert empty == res["no_media_plan"], "сделки без МП должны быть РК с пустым планом"
     finally:

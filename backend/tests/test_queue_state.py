@@ -220,6 +220,25 @@ def test_prep_no_kktu_asks_for_it():
     assert st["action"]["url"] == "/directory/advertisers"
 
 
+def test_alerts_follow_matrix_applicability():
+    """Тревога, повторяющая проверку, — только если проверка применима к сделке по
+    матрице (владелец 14.10.2026)."""
+    st = qs.row_state(bundle("prep", creatives=None, sets=0, applies=set()))
+    assert not [e for e in st["state"] if e["type"] == "alert"]
+    assert st["action"]["do"] == "move"
+    st = qs.row_state(bundle("prep", creatives=None, sets=0, applies={"creatives_accepted"}))
+    assert {"type": "alert", "tone": "warn", "v": "креативов нет"} in st["state"]
+    st = qs.row_state(bundle("live", delivery=None, applies=set()))
+    assert not [e for e in st["state"] if e["type"] == "alert"]
+    st = qs.row_state(bundle("mp_prep", has_mp=False, verdict=Verdict("overdue"), applies=set()))
+    assert {"type": "fact", "k": "МП", "v": "нет"} in st["state"]
+
+
+def test_chips_come_from_bundle_checks_with_registry_title_fallback():
+    st = qs.row_state(bundle("booking", checks=_checks(mp_linked=OK)))
+    assert [e["v"] for e in st["state"] if e["type"] == "check"] == [REGISTRY["mp_linked"].title]
+
+
 def test_prep_all_ready_goes_live():
     st = qs.row_state(bundle("prep", creatives=(6, 6), sets=1, erids=["2SDnQHT6RU"], kktu=True,
                              erid_share=20, checks=_checks(campaign_ready=OK),
@@ -262,12 +281,20 @@ def test_recon_estimate_to_close_is_at_plan_price():
     assert st["action"]["label"] == "В ДО"
 
 
-def test_closing_report_is_always_optional_and_docs_open_the_row():
+def test_closing_report_optional_only_by_matrix_and_docs_open_the_row():
+    """Раньше «Отчёт» был серым всегда (ALWAYS_OPTIONAL, 17.08.2026) — вопреки матрице.
+    Владелец 14.10.2026: обязательность решает только матрица, поэтому размеченный
+    запирающим отчёт — красный, неразмеченный — серый."""
     st = qs.row_state(bundle("closing", checks=_checks(
         invoice_issued=OK, upd_issued=NOT_YET, report_attached=NOT_YET),
         required={"invoice_issued", "upd_issued", "report_attached"}))
     rep = next(e for e in st["state"] if e.get("v") == "Отчёт")
-    assert rep["optional"] is True
+    assert rep["optional"] is False
+    st_free = qs.row_state(bundle("closing", checks=_checks(
+        invoice_issued=OK, upd_issued=OK, report_attached=NOT_YET),
+        required={"invoice_issued", "upd_issued"}))
+    assert next(e for e in st_free["state"] if e.get("v") == "Отчёт")["optional"] is True
+    assert st_free["action"]["label"] == "В ЭДО"
     assert st["action"] == {"label": "Документы", "do": "expand",
                             "hint": "Приложите документы в раскрытой строке"}
 

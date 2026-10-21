@@ -151,6 +151,27 @@ def test_rule1_raises_a_new_deal_long_before_the_start():
         assert v.cta == "Собрать МП"
 
 
+def test_rule1_follows_the_check_matrix():
+    """«Нужен МП» дублировал проверку mp_linked (владелец 14.10.2026): если матрица МП
+    у сделки не требует — пункта нет; требует или не читалась (None) — прежнее поведение."""
+    off = evaluate(facts(has_mp=False, period_from=d(3), mp_required=False), TODAY_D)
+    assert off.kind != "deal_mp_missing"
+    for req in (True, None):
+        v = evaluate(facts(has_mp=False, period_from=d(3), mp_required=req), TODAY_D)
+        assert v.kind == "deal_mp_missing", req
+
+
+def test_mp_required_matches_matrix_scope():
+    """Применимость строки mp_linked — та же scope_matches, что у самих проверок."""
+    from types import SimpleNamespace
+    from app.sales.urgency_db import mp_required
+    deal = SimpleNamespace(service_id=7)
+    assert mp_required([{"service_ids": [7, 8]}], deal) is True
+    assert mp_required([{"service_ids": [8]}], deal) is False
+    assert mp_required([None], deal) is True
+    assert mp_required([], deal) is False
+
+
 def test_rule1_raises_a_deal_without_any_dates():
     """Дат нет вовсе — план нужен тем более: такую сделку не начнёт считать никто,
     пока она не попадётся на глаза. Срочности при этом нет: гореть нечему."""

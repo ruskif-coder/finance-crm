@@ -7,9 +7,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import Head from 'next/head'
 import Navbar from '@/components/Navbar'
-import { MONO, UI, card, inp, th, td } from '@/components/salesTableKit'
+import { MONO, UI, btn, card, inp, th, td } from '@/components/salesTableKit'
 import { grp, grpDash } from '@/lib/salesFormat'
 import api, { auth } from '@/lib/api'
+import { can, getPermissions } from '@/lib/auth'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const ru = (d) => (d ? String(d).split('-').reverse().join('.') : '—')
@@ -107,6 +108,35 @@ function RunRow({ r, open, onToggle, det }) {
 
 const Op = ({ c }) => <div style={{ fontFamily: MONO, fontSize: 20, color: 'var(--text-faint)', alignSelf: 'center' }}>{c}</div>
 
+// Стоп ночного пересчёта (16.10.2026): сбор статистики DSP сломался — пересчёт по дырявому факту раскладывал
+// бы объём по нулям. Снимает стоп только человек, когда статистика снова верная.
+function HoldBanner({ hold, onResumed }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [mayEdit, setMayEdit] = useState(false)
+  useEffect(() => { setMayEdit(can(getPermissions(), 'bidder', 'edit')) }, [])
+  const resume = async () => {
+    if (!window.confirm('Возобновить ночной пересчёт долей? Он пойдёт в 02:00 UTC по факту, который будет к тому времени.')) return
+    setBusy(true); setErr('')
+    try { await api.post('/bidder/resume', {}, auth()); onResumed() }
+    catch (e) { setErr(e?.response?.data?.detail || 'Не удалось возобновить') }
+    finally { setBusy(false) }
+  }
+  return (
+    <div style={{ ...card, padding: 16, marginBottom: 14, border: '1px solid var(--danger-border)', background: 'var(--danger-tint)',
+      display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div style={{ flex: '1 1 420px' }}>
+        <b style={{ color: 'var(--danger-fg)' }}>Ночной пересчёт долей остановлен</b>
+        <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 4 }}>
+          Сбор статистики DSP сломан с {ru(String(hold.since || "").slice(0, 10))}: {hold.reason}. Пока стоп стоит, веса и лимиты ночью не меняются —
+          чтобы не раскладывать объём по нулям. Пересчёт по событию (согласование и запуск площадки) работает.</div>
+        {!!err && <div style={{ fontSize: 12, color: 'var(--danger-fg)', marginTop: 4 }}>{err}</div>}
+      </div>
+      {mayEdit && <button type="button" disabled={busy} onClick={resume} style={{ ...btn(true), opacity: busy ? 0.5 : 1 }}>Возобновить</button>}
+    </div>
+  )
+}
+
 export default function BidderPage() {
   const [info, setInfo] = useState(null)
   const [camps, setCamps] = useState([])
@@ -167,6 +197,7 @@ export default function BidderPage() {
         </div>
         {!!err && <div style={{ ...card, padding: 12, marginBottom: 12, color: 'var(--expense)' }}>{err}</div>}
 
+        {!!info?.hold && <HoldBanner hold={info.hold} onResumed={load} />}
         {!!info && (
           <div style={{ ...card, padding: 16, marginBottom: 14, display: 'flex', gap: 28, flexWrap: 'wrap' }}>
             <Part label="Факт по" value={ru(info.fact_as_of)}

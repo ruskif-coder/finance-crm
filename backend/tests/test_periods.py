@@ -170,3 +170,12 @@ def test_receivables_bounds_understand_every_spelling(raw):
     from app.receivables import _period_bounds
     start, end = _period_bounds(raw)
     assert (str(start), str(end)) == ("2026-01-01", "2026-03-31"), raw
+
+
+def test_month_names_live_in_one_place():
+    """Названия месяцев в именительном — только в `app/periods.py` (ревью 21.10.2026: было четыре копии)."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    hits = [str(p.relative_to(root)) for p in root.rglob("*.py")
+            if p.name != "periods.py" and '"январь", "февраль"' in p.read_text(encoding="utf-8")]
+    assert not hits, f"свой список месяцев: {hits} — берите app.periods.MONTHS_NOM"

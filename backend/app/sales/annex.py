@@ -7,7 +7,6 @@
 
 Схема заведена миграцией `backend/migrations/2026-09-05_annex_generator.sql`.
 """
-import calendar
 import re
 from datetime import date
 from typing import Optional
@@ -22,6 +21,7 @@ from app import own_company
 from app.sales.models import AnnexTemplate, SalesAnnex
 from app.sales.rubles import rub_phrase, vat_of
 from app.sales import rugram
+from app.annex_tpl.legal_name import legal_name
 
 # Номер, вытащенный из старых операций, — только ПОДСКАЗКА. В `operations.ds_num` лежит
 # свободный текст в шести форматах, и среди чисел встречается мусор: у одного контрагента
@@ -67,22 +67,9 @@ def no_hint(db: Session, contract: Contract) -> Optional[int]:
 
 
 def annex_date(period_from: date) -> date:
-    """Дата приложения — ПОСЛЕДНИЙ ДЕНЬ ПРЕДЫДУЩЕГО МЕСЯЦА (владелец 05.09.2026).
-
-    По закону приложение должно существовать на момент запуска, а подписывают его обычно
-    позже — отсюда и оговорка в теле документа о распространении на отношения с первого
-    дня периода.
-
-    Правило чисто календарное, поэтому производственный календарь не нужен: 31 мая для
-    июньского размещения считается арифметикой, а таблицу праздников пришлось бы
-    обновлять каждый год.
-    """
-    y, m = period_from.year, period_from.month
-    if m == 1:
-        y, m = y - 1, 12
-    else:
-        m -= 1
-    return date(y, m, calendar.monthrange(y, m)[1])
+    """Дата приложения по умолчанию — НАЧАЛО РК (владелец 14.10.2026; правило 05.09 «последний день прошлого месяца» отменено).
+    Другую дату аккаунт ставит на экране ДС — `PUT /annexes/{id}/date`, с записью в журнал."""
+    return period_from
 
 
 def party(cp: Optional[Counterparty]) -> dict:
@@ -113,6 +100,9 @@ def party(cp: Optional[Counterparty]) -> dict:
         # данные, а одно и то же поле в двух падежах — поэтому обе формы считаются
         # здесь, а не на печатной странице: docx получит те же самые.
         "position_gen": rugram.gen_position(cp.signer_position),
+        # В подписи должность стоит в именительном, даже если в карточке введена в родительном; название юрлица — аббревиатурой (14.10.2026).
+        "position_nom": rugram.nom_position(cp.signer_position),
+        "legal_name": legal_name(cp.name),
         "director_gen": rugram.gen_fio(cp.director_name),
         "basis_gen": rugram.gen_basis(cp.signer_basis),
         "acting": rugram.acting(cp.director_name),
@@ -194,16 +184,37 @@ def deal_brand(db: Session, deal_ids) -> Optional[str]:
     """), {"d": ids}).mappings().all()
     out = []
     for r in rows:
-        parts, seen = [], set()
-        for v in (r["adv"], r["brand"]):
-            v = (v or "").strip()
-            if v and v.lower() not in seen:
-                seen.add(v.lower())
-                parts.append(v)
-        line = " / ".join(parts)
+        line = brand_label(r["adv"], r["brand"])
         if line and line not in out:
             out.append(line)
     return ", ".join(out) or None
+
+
+def brand_label(adv, brand) -> str:
+    """«Рекламодатель / Бренд», схлопнутая, когда совпадают. Одна функция на шапку документа и на группировку таблицы."""
+    parts, seen = [], set()
+    for v in (adv, brand):
+        v = (v or "").strip()
+        if v and v.lower() not in seen:
+            seen.add(v.lower())
+            parts.append(v)
+    return " / ".join(parts)
+
+
+def deal_brands(db: Session, deal_ids) -> dict:
+    """{id сделки: «Рекламодатель / Бренд»} — для группировки таблицы по бренду."""
+    from sqlalchemy import text as sa_text
+    ids = [i for i in (deal_ids or []) if i]
+    if not ids:
+        return {}
+    rows = db.execute(sa_text("""
+        SELECT d.id AS deal_id, COALESCE(NULLIF(btrim(a.short_name), ''), a.name) AS adv, b.name AS brand
+          FROM sales_deals d
+          LEFT JOIN sales_advertisers a ON a.id = d.advertiser_id
+          LEFT JOIN sales_brands b ON b.id = d.brand_id
+         WHERE d.id = ANY(:d)
+    """), {"d": ids}).mappings().all()
+    return {r["deal_id"]: brand_label(r["adv"], r["brand"]) for r in rows}
 
 
 def plan_rows(db: Session, deal_ids) -> list:
@@ -228,7 +239,7 @@ def plan_rows(db: Session, deal_ids) -> list:
     if not ids:
         return []
     rows = db.execute(sa_text("""
-        SELECT r.position, r.format, r.model, r.inventory, r.volume, r.unit_price,
+        SELECT r.id AS row_id, r.position, r.format, r.model, r.inventory, r.volume, r.unit_price,
                r.discount, mp.deal_id, g.name AS geo,
                mp.date_from, mp.date_to, s.doc_position, s.rotation_type
           FROM sales_media_plan_rows r
@@ -252,6 +263,8 @@ def plan_rows(db: Session, deal_ids) -> list:
         net = round(mp_row.row_net(r["model"], vol, price, disc), 2) if (vol and price) else None
         fmt = (r["format"] or "").strip()
         out.append({
+            "deal_id": r["deal_id"],
+            "row_id": r["row_id"],      # строка МП — к ней привязан факт, введённый аккаунтом
             "network": PLACEMENT_NETWORK,
             "position": r["position"],
             # Описание из справочника услуг; пусто — в документе останется одно название.
@@ -265,6 +278,8 @@ def plan_rows(db: Session, deal_ids) -> list:
             "date_from": r["date_from"], "date_to": r["date_to"],
             "unit_price": price or None,
             "amount": net,
+            # Бонус (полная скидка) или строка без цены: в документе деньги — прочерки, в том числе цена за единицу (владелец 14.10.2026).
+            "bonus": str(r["model"] or "").strip().lower() == "бонус" or not net,
         })
 
     # ДОП. УСЛУГИ ПЛАНА — та же таблица, те же колонки. До 23.09.2026 они сюда не попадали
@@ -285,6 +300,7 @@ def plan_rows(db: Session, deal_ids) -> list:
     for e in extras:
         total = float(e["total"] or 0)
         out.append({
+            "deal_id": e["deal_id"],
             "network": PLACEMENT_NETWORK,
             "position": e["name"], "doc_position": None, "rotation": None, "geo": None,
             "format": None, "device": None, "model": (e["mode"] or "").strip() or None,
@@ -292,6 +308,7 @@ def plan_rows(db: Session, deal_ids) -> list:
             "date_from": e["date_from"], "date_to": e["date_to"],
             "unit_price": float(e["price"] or 0) or None,
             "amount": round(total, 2) if total else None,
+            "bonus": (e["mode"] or "").strip().lower() == "бонус" or not total,
             "kind": "extra",
         })
     return out

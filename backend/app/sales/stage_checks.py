@@ -261,10 +261,12 @@ REGISTRY: dict = {}
 PLACES = {
     "mp_linked":            ("Конструктор медиапланов", "/accounts/mp"),
     "service_set":          ("Медиаплан — первая строка размещения", "/accounts/mp"),
+    "mp_verified":          ("Конструктор медиапланов — «проверено»", "/accounts/mp"),
     "period_set":           ("Медиаплан — период размещения", "/accounts/mp"),
     "realization_pipeline": ("Здесь же, в диалоге движения", ""),
     "payer_set":            ("Карточка сделки — шапка", "#head"),
     "final_contract":       ("Карточка сделки — блок «ОРД»", "#ord"),
+    "account_finished":     ("Карточка сделки — кнопка «Завершить»", "#head"),   # контур аккаунта, app/final_recon/checks.py
     "ord_initial_contract": ("Карточка сделки — блок «ОРД»", "#ord"),
     "creatives_accepted":   ("Карточка сделки — блок «Креативы»", "#creatives"),
     "placements_approved":  ("Трафик — очередь согласования", "/traffic/queue"),
@@ -308,6 +310,16 @@ def _mp_linked(c: Ctx) -> Result:
     if "mp" in c.file_kinds:
         return _ok("файлом из Битрикса")
     return _not_yet("плана нет")
+
+
+@register("mp_verified", "Виза МП: медиаплан проверен",
+          "Откройте медиаплан в конструкторе, отметьте «проверено» у размещений и прогноза и сохраните")
+def _mp_verified(c: Ctx) -> Result:
+    """Виза (владелец 15.10.2026) — обе «проверено» в конструкторе. План, созданный системой (годовой план, продление), её не
+    имеет, пока аккаунт его не проверит. Без плана — неприменимо: это ловит «МП привязан»."""
+    if not c.plan:
+        return _na("плана нет")
+    return _ok() if getattr(c.plan, "verified_at", None) else _not_yet("план создан системой и ещё не проверен")
 
 
 @register("service_set", "Услуга сделки определена",
@@ -632,7 +644,7 @@ def _payment_received(c: Ctx) -> Result:
 # `{"servise": 7}` иначе означала бы «применимо всегда», и требование тихо расползлось бы
 # на все услуги. Тот же порядок, что у подстановок в почтовых шаблонах.
 
-SCOPE_KEYS = ("service_id", "self_promo", "weborama_pixel")
+SCOPE_KEYS = ("service_id", "self_promo", "weborama_pixel", "closing_flow", "service_ids", "blocking_service_ids")
 
 # Правила «по свежести сделки» здесь НЕТ и не должно быть (владелец 13.09.2026: «я могу
 # создавать сделки с МП за прошлые периоды и переводить их в архив успешных, не надо
@@ -655,6 +667,16 @@ def valid_scope(applies_when) -> bool:
     return applies_when is None or isinstance(applies_when, dict)
 
 
+def blocking_for(row, deal) -> bool:
+    """Блокирует ли пункт переход ДЛЯ ЭТОЙ сделки (владелец 14.10.2026: в матрице три состояния на услугу — не требуется / уведомляет /
+    требуется). Список `blocking_service_ids` в условии — услуги, для которых пункт запирает; нет списка — общий `is_blocking` строки."""
+    aw = getattr(row, "applies_when", None) or {}
+    ids = aw.get("blocking_service_ids") if isinstance(aw, dict) else None
+    if isinstance(ids, list):
+        return (getattr(deal, "service_id", None) or None) in ids
+    return bool(getattr(row, "is_blocking", False))
+
+
 def scope_matches(applies_when: Optional[dict], deal) -> bool:
     """Пусто — применимо всегда. Несколько ключей — И (все должны сойтись).
 
@@ -671,6 +693,12 @@ def scope_matches(applies_when: Optional[dict], deal) -> bool:
             return False
         if key == "service_id" and (deal.service_id or None) != want:
             return False
+        # «Обязательное на сборке» по услугам (владелец 14.10.2026): пункт действует для перечисленных услуг; экран — справочник услуг.
+        if key == "service_ids" and (not isinstance(want, list) or (deal.service_id or None) not in want):
+            return False
+        # `blocking_service_ids` — не условие применимости, а уровень (блокирует / уведомляет); применимость не трогает.
+        if key == "blocking_service_ids":
+            continue
         if key == "self_promo" and bool(getattr(deal, "is_self_promo", False)) != bool(want):
             return False
         # Доп. параметр РК: требование пикселя применимо только там, где аккаунт его
@@ -678,6 +706,11 @@ def scope_matches(applies_when: Optional[dict], deal) -> bool:
         # услуги, а различает сделки сам параметр.
         if key == "weborama_pixel" and bool(getattr(deal, "weborama_pixel", False)) != bool(want):
             return False
+        # Цикл услуги (14.10.2026, app/final_recon/flow.py): «полный цикл» / «контур аккаунта»; пусто у услуги — полный цикл.
+        if key == "closing_flow":
+            from app.final_recon import flow
+            if flow.of_deal(None, deal) != want:
+                return False
     return True
 
 
@@ -727,7 +760,7 @@ def evaluate(db, deal, rows) -> list:
                             result=_unknown("проверки с таким именем нет в реестре")))
             continue
         out.append(Line(key=chk.key, title=chk.title, hint=r.hint or chk.hint,
-                        is_blocking=bool(r.is_blocking),
+                        is_blocking=blocking_for(r, deal),
                         where=chk.where, link=chk.link, result=chk.fn(ctx)))
     return out
 
@@ -735,3 +768,7 @@ def evaluate(db, deal, rows) -> list:
 def blockers(lines) -> list:
     """Строки, запирающие переход. Только `is_blocking` И исход «не сделано»."""
     return [ln for ln in lines if ln.is_blocking and ln.result.blocks]
+
+
+# Проверки из пакетов регистрируются их модулями (точка входа, спринт 4): контур аккаунта — app/final_recon/checks.py.
+import app.final_recon.checks  # noqa: E402,F401

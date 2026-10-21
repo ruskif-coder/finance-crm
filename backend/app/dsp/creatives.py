@@ -208,6 +208,20 @@ def _has_counter(html: str, src: str) -> bool:
         html, re.I))
 
 
+# Клик по всей площади (14.10.2026, сделка 9E8Z4U). Загрузчик DSP заменяет ссылку баннера обёрткой `<a href="{LINK_UNESC}">` вокруг
+# всего тела — БЕЗ класса и id. Баннер, где кликабельную площадь задавал класс ссылки (`.banner{display:block;…}` — так верстают под
+# Adfox), а слои отключены от мыши, остаётся с обёрткой нулевого размера: показы идут, клик проходит сквозь слои мимо ссылки.
+# Растягиваем обёртку на весь баннер поверх слоёв. Маркер — чтобы не вставить дважды.
+CLICK_FIX_MARK = "data-simb-click-fix"
+CLICK_FIX_STYLE = (f'<style {CLICK_FIX_MARK}>body>a{{display:block;position:absolute;inset:0;z-index:2147483000;'
+                   'cursor:pointer}</style>')
+_DSP_WRAPPER_RE = re.compile(r"<body[^>]*>\s*<a\s+href=[\"']\{LINK_UNESC\}[\"']", re.I)
+
+
+def needs_click_fix(html: str) -> bool:
+    return bool(_DSP_WRAPPER_RE.search(html or "")) and CLICK_FIX_MARK not in (html or "")
+
+
 def wrap_html(html: str, *, erid: Optional[str] = None,
               viewability_src: Optional[str] = None,
               extra_script: Optional[str] = None) -> str:
@@ -237,6 +251,8 @@ def wrap_html(html: str, *, erid: Optional[str] = None,
         head.append(f'<script src="{viewability_src.strip()}"></script>')
         head.append("<script>window.adsn = window.adsn || {};"
                     " window.adsn.viewability = window.adsn.viewability || {};</script>")
+    if needs_click_fix(html):
+        head.append(CLICK_FIX_STYLE)
     if erid:
         # Маркировка живёт полем креатива, но в разметке она нужна видимой — иначе на
         # площадке её негде показать.

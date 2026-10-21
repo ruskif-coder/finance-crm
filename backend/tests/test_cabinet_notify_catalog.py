@@ -48,6 +48,9 @@ def test_built_kinds_really_have_a_sender():
         "ерид выпущен": ("app/launch_prep/erid_service.py", '"ерид выпущен"'),
         "старт рк": ("app/routers/traffic_dashboard.py", '"старт рк"'),
         "креатив отозван": ("app/launch_prep/withdraw.py", '"креатив отозван"'),
+        # Приоритезация (19.10.2026): отправитель — app/notify/prio.py, зовёт роутер prio после коммита.
+        "запрос приоритезации": ("app/notify/prio.py", '"запрос приоритезации"'),
+        "приоритезация остановлена": ("app/notify/prio.py", '"приоритезация остановлена"'),
     }
     for k in nk.KINDS:
         if not k.built:

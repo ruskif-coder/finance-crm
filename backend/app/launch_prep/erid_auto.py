@@ -198,6 +198,21 @@ def should_alert(prev: dict | None, out: dict) -> bool:
     return now_bad and not _had_failures(prev)
 
 
+def should_recover(prev: dict | None, out: dict) -> bool:
+    """Пара к тревоге (владелец 15.10.2026): прошлый прогон падал, этот прошёл чисто — сообщить «восстановился». Без неё со стороны
+    тревога выглядела незакрытой проблемой, хотя следующий прогон всё досинхронизировал."""
+    now_bad = bool(out["issue"]["failed"] or out["refresh"]["failed"])
+    return not now_bad and _had_failures(prev)
+
+
+def _recovered(db) -> None:
+    from app.notify.bus import emit
+    emit(db, "cron_erid_auto_recovered", title="Автовыпуск ЕРИД: восстановился",
+         body="Прогон прошёл без ошибок: выпуск и опрос статусов идут, пропущенное досинхронизировано.",
+         link="/settings/system", entity_type="cron", entity_id=1, actor=None)
+    db.commit()
+
+
 def _previous(db) -> dict | None:
     import json
     from sqlalchemy import text
@@ -250,6 +265,12 @@ def run(dry_run: bool = False) -> dict:
                 except Exception:  # noqa: BLE001 — тревога не должна ронять прогон
                     db.rollback()
                     log.exception("автовыпуск ЕРИД: тревога не отправлена")
+            elif should_recover(prev, out):
+                try:
+                    _recovered(db)
+                except Exception:  # noqa: BLE001 — сообщение не должно ронять прогон
+                    db.rollback()
+                    log.exception("автовыпуск ЕРИД: «восстановился» не отправлено")
         return out
     finally:
         db.close()

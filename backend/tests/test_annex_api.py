@@ -46,6 +46,18 @@ def no_leftovers():
     assert not ids, f'тест оставил приложения на стенде: {ids}'
 
 
+@pytest.fixture(autouse=True)
+def numbering_tests_skip_document_completeness(monkeypatch):
+    """Эти тесты — про НОМЕР приложения: черновики в них без строк таблицы и без реквизитов. Полноту документа и заморозку
+    проверяет `test_annex_tpl_document.py`; здесь подтверждению подставляется минимальный замороженный документ."""
+    from app.annex_tpl import document as tpl_doc
+
+    def fake(db, a, c, no):
+        v, _ = tpl_doc.resolve(db, c)
+        return {"template": {"version_id": v.id}, "amount": a.total_amount, "frozen_by": "тест нумерации"}
+    monkeypatch.setattr(A, "_freeze_for_confirm", fake)
+
+
 @pytest.fixture
 def env():
     db = SessionLocal()
@@ -75,7 +87,7 @@ def test_preview_writes_nothing_and_burns_no_number(env):
     before = env.db.query(SalesAnnex).count()
     p = A.preview(contract_id=env.c.id, period_from=date(2026, 6, 1),
                   period_to=date(2026, 6, 30), amount=732000, db=env.db, user=env.user)
-    assert p["no"] and p["date"] == date(2026, 5, 31)
+    assert p["no"] and p["date"] == date(2026, 6, 1)
     assert env.db.query(SalesAnnex).count() == before
 
 
@@ -124,14 +136,14 @@ def test_taken_number_is_refused_with_the_number_in_the_message(env):
 
 
 def test_editing_a_draft_recomputes_the_date(env):
-    """Дата считается от периода, а не вводится: сдвинули размещение на июль — дата
-    обязана стать 30 июня, иначе документ датирован не тем месяцем."""
+    """Дата идёт за началом периода: сдвинули размещение на июль — дата
+    обязана стать 1 июля (начало РК), если её не меняли руками."""
     a = _draft(env)
     out = A.edit_annex(a["id"], A.AnnexIn(contract_id=env.c.id,
                                           period_from=date(2026, 7, 1),
                                           period_to=date(2026, 7, 31),
                                           total_amount=800000), env.db, env.user)
-    assert out["date"] == date(2026, 6, 30)
+    assert out["date"] == date(2026, 7, 1)
 
 
 def test_backwards_period_is_refused_everywhere(env):
@@ -289,8 +301,8 @@ def test_annex_is_assembled_from_the_deal_without_asking_again(env):
     out = A.create_from_deal(did, env.db, env.user)
     try:
         assert out["is_draft"] and out["period_from"] and out["total_amount"] > 0
-        # Дата документа — последний день месяца ПЕРЕД периодом, как и везде.
-        assert out["date"].month != out["period_from"].month
+        # Дата документа — начало РК (владелец 14.10.2026).
+        assert out["date"] == out["period_from"]
     finally:
         env.db.query(Alloc).filter(Alloc.annex_id == out["id"]).delete()
         env.db.query(SalesAnnex).filter(SalesAnnex.id == out["id"]).delete()
@@ -362,10 +374,10 @@ def test_taken_number_names_the_document_that_holds_it(env):
 
 
 def test_date_can_be_set_by_hand_and_otherwise_stays_computed(env):
-    """Правило «последний день предыдущего месяца» покрывает обычный случай, но документ
-    могут датировать числом, о котором договорились. Пусто — остаётся посчитанная."""
+    """Дата по умолчанию — начало РК (14.10.2026), но документ могут датировать числом,
+    о котором договорились. Пусто — остаётся посчитанная."""
     auto = A.confirm_annex(_draft(env)["id"], A.ConfirmIn(), env.db, env.user)
-    assert auto["date"] == date(2026, 5, 31)
+    assert auto["date"] == date(2026, 6, 1)
     manual = A.confirm_annex(_draft(env)["id"],
                              A.ConfirmIn(doc_date=date(2026, 5, 29)), env.db, env.user)
     assert manual["date"] == date(2026, 5, 29)

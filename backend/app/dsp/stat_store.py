@@ -316,6 +316,7 @@ def sync(db, dsp_db, client, today: date, *, campaign_id: Optional[int] = None,
 
     raw_rows = shows = 0
     missing_cr: set = set()
+    denied: set = set()
     failed: Dict[str, str] = {}
     errors: List[str] = []
     for day in sorted(days):
@@ -333,6 +334,7 @@ def sync(db, dsp_db, client, today: date, *, campaign_id: Optional[int] = None,
         raw_rows += save_raw(dsp_db, pull, hmap)
         shows += sum(v.shows for v in pull.campaigns.values())
         missing_cr.update(pull.missing_creatives)
+        denied.update(pull.denied_creatives + pull.denied_campaigns)
         for h in pull.missing_campaigns:
             failed.setdefault(h, day.isoformat())
     # Курсор двигает только плановый прогон. Ручной добор отрезка в середине флайта
@@ -344,6 +346,7 @@ def sync(db, dsp_db, client, today: date, *, campaign_id: Optional[int] = None,
     pushed = push_daily(db, dsp_db, hmap, tg)
     out = {"campaigns": len(tg), "days": len(days), "raw_rows": raw_rows, "shows": shows,
            "creatives": len(hmap.creatives), "missing_creatives": sorted(missing_cr),
+           "denied": sorted(denied),
            "failed_campaigns": failed, "errors": errors[:20], **pushed}
     log.info("DSP съём: %s", out)
     return out

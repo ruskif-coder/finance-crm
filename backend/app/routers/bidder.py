@@ -15,12 +15,15 @@ from app.ad.models import AdCampaign
 from app.ad.stat_sources import fact_as_of, is_stale
 from app.bidder.facts import placement_facts
 from app.bidder.rules import RULES, explain
+from app.audit import log_action
 from app.database import get_db
+from app.dsp import stat_hold
 from app.models import User
 from app.permissions import require_permission
 
 router = APIRouter()
 VIEW = require_permission("bidder", "view")
+EDIT = require_permission("bidder", "edit")
 
 CRON = "ежедневно в 02:00 UTC (05:00 МСК), после сбора статистики DSP в 01:30 UTC"
 
@@ -31,7 +34,20 @@ def overview(db: Session = Depends(get_db), user: User = Depends(VIEW)):
     cap = balance.share_cap(db)
     return {"rules": RULES, "cron": CRON, "hold_days": HOLD_DAYS,
             "cap_pct": round(cap * 100, 1) if cap else None,
-            "fact_as_of": as_of.isoformat(), "stale": is_stale(as_of)}
+            "fact_as_of": as_of.isoformat(), "stale": is_stale(as_of),
+            "hold": stat_hold.get(db)}
+
+
+@router.post("/resume")
+def resume(db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """«Возобновить»: снять стоп ночного пересчёта, поставленный поломкой сбора DSP.
+    Пересчёт пойдёт следующей ночью в 02:00 UTC — по факту, который есть к тому времени."""
+    was = stat_hold.clear(db, user)
+    if was is None:
+        raise HTTPException(409, "Пересчёт не остановлен — возобновлять нечего")
+    log_action(db, user, "bidder_resume", "cron", 2, f"стоп с {was.get('since')}: {was.get('reason')}")
+    db.commit()
+    return {"hold": None}
 
 
 @router.get("/runs")
