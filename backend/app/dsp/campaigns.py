@@ -217,6 +217,13 @@ def after_status(db: Session, camp: AdCampaign, target: str, want: dict, client)
 CREATIVE_LIVE = ("согласован", "запущен")
 
 
+def creative_live(pl_status, cr_status, xxhash) -> bool:
+    """Крутится ли креатив в DSP при запущенной кампании: заведён (есть хеш), площадка запущена, сам согласован или запущен.
+    Одно правило на два места: выставление статусов в DSP (`creative_targets`) и запрет отзыва (`launch_prep.withdraw`) —
+    иначе отзыв разрешил бы архивировать креатив прямо из эфира (ревью 21.10.2026)."""
+    return bool((xxhash or "").strip()) and pl_status == "запущен" and cr_status in CREATIVE_LIVE
+
+
 def creative_targets(rows, campaign_target: str) -> dict:
     """{хеш: LAUNCHED|STOPPED} по строкам (хеш, статус площадки, статус креатива).
 
@@ -228,8 +235,7 @@ def creative_targets(rows, campaign_target: str) -> dict:
     for xx, pl_status, cr_status in rows:
         if not (xx or "").strip() or cr_status == "отклонён":
             continue
-        live = (campaign_target == ds.LAUNCHED and pl_status == "запущен"
-                and cr_status in CREATIVE_LIVE)
+        live = campaign_target == ds.LAUNCHED and creative_live(pl_status, cr_status, xx)
         out[xx.strip()] = ds.LAUNCHED if live else ds.STOPPED
     return out
 
