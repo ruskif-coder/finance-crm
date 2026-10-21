@@ -66,8 +66,9 @@ def test_dsp_creative_goes_to_archive(env, monkeypatch):  # noqa: F811
 
 @pytest.mark.parametrize('setup,why', [
     (lambda e: None, 'не согласован'),
-    (lambda e: (_agree(e), setattr(e.state, 'placement', SimpleNamespace(status='запущен'))), 'запущено'),
-    (lambda e: (_agree(e), setattr(e.target, 'state', 'в размещении')), 'запущено'),
+    # граница — сам креатив (21.10.2026): запущен или на паузе; идущее размещение площадки само по себе не запирает
+    (lambda e: (_agree(e), setattr(e.state, 'row', SimpleNamespace(status='запущен'))), 'уже запущен'),
+    (lambda e: (_agree(e), setattr(e.state, 'row', SimpleNamespace(status='пауза'))), 'уже запущен'),
 ])
 def test_blockers(env, setup, why):  # noqa: F811
     setup(env)
