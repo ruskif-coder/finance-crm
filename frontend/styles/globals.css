@@ -549,3 +549,48 @@ svg [data-tile] { transform-box: fill-box; transform-origin: center; }
 
 /* Токены хендоффа тем (22.10.2026): заливка основных кнопок под белый текст и подложки ячеек по тону. */
 :root { --accent-solid:#4F6CE6; --cell-fact:#F7FCF9; --cell-mid:#FFFDF8; --cell-low:#FFFBFB; }
+
+/* ── Розовая и Джапанди (22.10.2026, хендофф docs/темки.zip, tokens-5themes.css) — дословно. Обе светлые: токены нашего
+   кода, которых в хендоффе нет, наследуются от :root. Свои синие служебные оттенки переводим на акцент темы, иначе
+   в розовой и японской остались бы синие пятна. */
+[data-theme="pink"], [data-theme="japandi"] {
+  --accent-wash:var(--bg-tint); --accent-mid:var(--accent-soft); --accent-pale:var(--accent-soft); --bg-pick:var(--accent-tint);
+  --blue:var(--accent); --blue-tint:var(--accent-tint); --blue-soft:var(--accent-border);
+  --warning-text:var(--warning-fg);
+}
+[data-theme="pink"] {
+  --bg-canvas:#F7ECF1; --bg-card:#FFFFFF; --bg-subtle:#FBF3F6; --bg-tint:#FDF2F7;
+  --border-card:#F0DCE5; --border-inner:#F5E6EC; --border-row:#F8EDF2; --border-hover:#E6BFD0;
+  --text-primary:#2E1F27; --text-secondary:#5E4A55; --text-muted:#86707C; --text-faint:#9C8590; --text-cap:#7E6874; --text-disabled:#CDB8C2;
+  --accent:#C23A70; --accent-hover:#A82D5E; --accent-tint:#FBE6EF; --accent-border:#F3C9DA; --accent-soft:#E89BB9; --accent-fg:#A82D5E;
+  --income:#2FA37C; --income-tint:#E6F5EF; --income-border:#CDEADF; --income-bg:#F1FAF6; --income-fg:#1B7355;
+  --danger:#C9303F; --danger-tint:#FBE2E5; --danger-border:#F0C4CA; --danger-bg:#FFF6F7; --danger-fg:#A12230;
+  --warning:#E08A1E; --warning-tint:#FBEEDC; --warning-border:#F2DCBC; --warning-bg:#FFFAF2; --warning-fg:#955808;
+  --shadow-card:0 1px 3px rgba(80,30,55,.06), 0 4px 16px rgba(80,30,55,.05);
+  --shadow-float:0 10px 30px rgba(80,30,55,.16);
+  --cell-fact:#F1FAF6; --cell-mid:#FFF8EE; --cell-low:#FFF4F6;
+  --accent-solid:#C23A70;
+  color-scheme:light;
+}
+[data-theme="japandi"] {
+  --bg-canvas:#EEE7DA; --bg-card:#FBF8F1; --bg-subtle:#F3EEE3; --bg-tint:#F1EEE6;
+  --border-card:#DED4C3; --border-inner:#E8E0D2; --border-row:#EEE7DA; --border-hover:#C9BBA4;
+  --text-primary:#1F1B17; --text-secondary:#4E4740; --text-muted:#6F665B; --text-faint:#756C61; --text-cap:#6E655A; --text-disabled:#C2B7A5;
+  --accent:#2F4B6E; --accent-hover:#22384F; --accent-tint:#E3E8EF; --accent-border:#C6D0DD; --accent-soft:#8B9BB2; --accent-fg:#22384F;
+  --income:#6A8A4A; --income-tint:#E8EEDD; --income-border:#CFDBBB; --income-bg:#F3F6EC; --income-fg:#48632C;
+  --danger:#C2452D; --danger-tint:#F6E1D9; --danger-border:#EBC2B5; --danger-bg:#FCF2ED; --danger-fg:#9A311C;
+  --warning:#B8832B; --warning-tint:#F3E8D2; --warning-border:#E4D0A8; --warning-bg:#FAF4E7; --warning-fg:#7A5414;
+  --shadow-card:0 1px 2px rgba(40,30,20,.06);
+  --shadow-float:0 8px 24px rgba(40,30,20,.12);
+  --cell-fact:#EEF2E4; --cell-mid:#F7EFDD; --cell-low:#F8EBE5;
+  --accent-solid:#2F4B6E;
+  color-scheme:light;
+}
+/* зерно бумаги васи — на body: его фон перекрывает <html>, и узор на корне был бы не виден */
+[data-theme="japandi"] body {
+  background-image:
+    radial-gradient(rgba(110,90,60,.06) 1px, transparent 1.3px),
+    radial-gradient(rgba(110,90,60,.045) 1px, transparent 1.3px);
+  background-size:9px 9px, 17px 17px;
+  background-position:0 0, 4px 7px;
+}

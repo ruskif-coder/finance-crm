@@ -498,7 +498,7 @@ function Profile({ onGoto, canSettings, compact = false }) {
       </button>
       {open && (
         <span style={{
-          position: 'absolute', top: 'calc(100% + 10px)', right: 0, minWidth: 230, zIndex: Z.dropdown,
+          position: 'absolute', top: 'calc(100% + 10px)', right: 0, minWidth: 280, zIndex: Z.dropdown,
           background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: T.pop,
           overflow: 'hidden', display: 'flex', flexDirection: 'column', animation: `popIn .15s ${T.ease} both`,
         }}>
@@ -511,10 +511,10 @@ function Profile({ onGoto, canSettings, compact = false }) {
               у кого есть доступ в «Настройки»: каждый правит свои и ничьи больше. */}
           <button onClick={() => { setOpen(false); onGoto?.('/settings/notifications') }} style={menuItem(T.t2)}>Мои уведомления</button>
           {THEME_ON && (
-            <span style={{ display: 'flex', gap: 4, padding: '8px 10px', borderTop: `1px solid ${T.inner}`, borderBottom: `1px solid ${T.inner}` }}>
+            <span style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, padding: '8px 10px', borderTop: `1px solid ${T.inner}`, borderBottom: `1px solid ${T.inner}` }}>
               {THEMES.map(t => (
                 <button key={t.key} type="button" onClick={() => pickTheme(t.key)} style={{
-                  ...btnReset, flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                  ...btnReset, display: 'inline-flex', whiteSpace: 'nowrap', alignItems: 'center', justifyContent: 'center', gap: 5,
                   padding: '6px 6px', borderRadius: 8, fontSize: 12, fontWeight: theme === t.key ? 700 : 500,
                   background: theme === t.key ? 'var(--accent-tint)' : 'transparent', color: theme === t.key ? 'var(--accent)' : T.t2,
                 }}>

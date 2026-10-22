@@ -4,11 +4,13 @@
 // по умолчанию — светлая (системную настройку не подхватываем).
 // Приём тот же, что в кабинете паблишера (cabinet-frontend/pages/_app.js).
 export const THEME_KEY = 'theme'
-// Три темы хендоффа docs/темки.zip: день · ночь · графит; образец — цвет фона темы.
+// Пять тем хендоффа docs/темки.zip (tokens-5themes.css); образец — цвет фона темы.
 export const THEMES = [
   { key: 'light', label: 'День', swatch: '#EBEEF6' },
   { key: 'dark', label: 'Ночь', swatch: '#10141C' },
   { key: 'graphite', label: 'Графит', swatch: '#121314' },
+  { key: 'pink', label: 'Розовая', swatch: '#F7ECF1' },
+  { key: 'japandi', label: 'Джапанди', swatch: '#EEE7DA' },
 ]
 // Переключатель для всех (владелец 22.10.2026: «выложи переключатель тем»); до того был только в next dev.
 // Флаг оставлен, чтобы тему можно было снова спрятать одной строкой.

@@ -53,7 +53,7 @@ class User(Base):
     # Профиль уведомлений (app/notify). NULL = профиль по умолчанию (is_default).
     # Сознательно отдельно от роли: роль = «что можно видеть», профиль = «что касается».
     notification_profile_id = Column(Integer, ForeignKey("notification_profiles.id"), nullable=True)
-    # Тема интерфейса: light / dark / graphite, пусто — светлая (миграция 2026-10-22_user_theme.sql).
+    # Тема интерфейса: light / dark / graphite / pink / japandi, пусто — светлая (миграции 2026-10-22_user_theme*.sql).
     theme = Column(String(12), nullable=True)
     role = relationship("Role")
 
