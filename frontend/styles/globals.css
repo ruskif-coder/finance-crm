@@ -490,3 +490,62 @@ body {
 svg [data-tile] { transform-box: fill-box; transform-origin: center; }
 @keyframes mp-cube-pulse { 0%, 55%, 100% { transform: scale(1); } 25% { transform: scale(.66); } }
 @keyframes mp-cube-trail { 0% { opacity: 1; } 100% { opacity: .12; } }
+
+/* ── Тёмные темы — на пробе, только в быстрой версии (lib/theme.js), владелец 22.10.2026 ──
+   Ночь и графит — дословно из хендоффа docs/темки.zip (tokens-3themes.css). Светлая — наша, :root выше,
+   её не трогаем: она живая на проде. Сначала общий слой — токены нашего кода, которых в хендоффе нет
+   (выведены по аналогии), — потом блоки хендоффа поверх. */
+[data-theme="dark"], [data-theme="graphite"] {
+  --bg-pick:#232A3D; --bg-dim:#141922; --bg-header:var(--bg-card); --accent-wash:var(--bg-tint);
+  --accent-mid:#7C8BE0; --accent-pale:#5C6FB5;
+  --blue:var(--accent); --blue-soft:var(--accent-border); --blue-tint:var(--accent-tint);
+  --expense:#77839A; --warning-text:var(--warning-fg); --mixed:#9B85EA; --mixed-tint:#2A2444; --muted-fill:#4E5768;
+  --violet:#9B85EA; --overlay:var(--scrim);
+  --dot-wait:#3A4357; --dot-overdue:#E2585C; --dot-current-dz:#F0A947; --dot-income:#3FBE93; --dot-expense:#7C95F3;
+  --empty-bg:var(--warning-bg); --empty-border:var(--warning-border); --empty-num:#C7A46A; --empty-text:var(--warning-fg);
+  --shadow-modal:0 1px 3px rgba(0,0,0,.5), 0 24px 64px rgba(0,0,0,.6);
+}
+[data-theme="graphite"] { --bg-pick:#2A2C30; --bg-dim:#17181A; --accent-mid:#8494DC; --accent-pale:#4B557A; --dot-wait:#3E4146; --mixed-tint:#2A2734; --muted-fill:#4F5258 }
+
+[data-theme="dark"] {
+  --bg-canvas:#10141C; --bg-card:#171C26; --bg-subtle:#1E2432; --bg-tint:#1B2130;
+  --border-card:#262E3D; --border-inner:#222A38; --border-row:#1F2634; --border-hover:#3A465C;
+  --text-primary:#E8ECF5; --text-secondary:#A8B2C4; --text-muted:#8792A6;
+  --text-faint:#7E8699; --text-cap:#7C869A; --text-disabled:#4E5768;
+  --accent:#6E86F0; --accent-hover:#8698F5; --accent-tint:#232C4A; --accent-border:#33406A;
+  --accent-soft:#4A5A9C; --accent-fg:#A3B3F7;
+  --accent-solid:#5A72E0;
+  --income:#3FBE93;  --income-tint:#16362C;  --income-border:#1F5142;  --income-bg:#132A23;  --income-fg:#5CD0A8;
+  --warning:#F0A947; --warning-tint:#3A2B12; --warning-border:#5A431B; --warning-bg:#231B0F; --warning-fg:#F0B968;
+  --danger:#E2585C;  --danger-tint:#3A1B1D;  --danger-border:#5E2A2D;  --danger-bg:#231416;  --danger-fg:#F08A8D;
+  --violet-fg:#A493EC; --violet-tint:#2A2442; --violet-border:#3E3563;
+  --traffic:#3FBAB7; --traffic-tint:#16302F; --traffic-soft:#2A5654;
+  --cell-fact:#152420; --cell-mid:#1F1B13; --cell-low:#211618;
+  --shadow-card:0 1px 3px rgba(0,0,0,.5), 0 4px 16px rgba(0,0,0,.35);
+  --shadow-float:0 10px 30px rgba(0,0,0,.55);
+  --scrim:rgba(0,0,0,.55);
+  color-scheme:dark;
+}
+
+[data-theme="graphite"] {
+  --bg-canvas:#121314; --bg-card:#1B1C1E; --bg-subtle:#232427; --bg-tint:#202124;
+  --border-card:#2D2F33; --border-inner:#27292C; --border-row:#232528; --border-hover:#3E4146;
+  --text-primary:#E9EAEC; --text-secondary:#AEB1B7; --text-muted:#8C9097;
+  --text-faint:#80848B; --text-cap:#82868D; --text-disabled:#4F5258;
+  --accent:#7A8FE8; --accent-hover:#8C9EEC; --accent-tint:#262A36; --accent-border:#363D52;
+  --accent-soft:#4B557A; --accent-fg:#A6B4F5;
+  --accent-solid:#5C74DC;
+  --income:#3FBE93;  --income-tint:#18302A;  --income-border:#22473C;  --income-bg:#16251F;  --income-fg:#5CD0A8;
+  --warning:#F0A947; --warning-tint:#3A2D17; --warning-border:#4F3F22; --warning-bg:#221D15; --warning-fg:#F0B968;
+  --danger:#E2585C;  --danger-tint:#3A2320;  --danger-border:#523030;  --danger-bg:#22191A;  --danger-fg:#F08A8D;
+  --violet-fg:#A99BE6; --violet-tint:#2A2734; --violet-border:#3D3850;
+  --traffic:#3FBAB7; --traffic-tint:#1A2B2B; --traffic-soft:#2D4A49;
+  --cell-fact:#18211D; --cell-mid:#211E18; --cell-low:#211A1B;
+  --shadow-card:0 1px 3px rgba(0,0,0,.55), 0 4px 16px rgba(0,0,0,.4);
+  --shadow-float:0 10px 30px rgba(0,0,0,.6);
+  --scrim:rgba(0,0,0,.6);
+  color-scheme:dark;
+}
+
+/* Токены хендоффа тем (22.10.2026): заливка основных кнопок под белый текст и подложки ячеек по тону. */
+:root { --accent-solid:#4F6CE6; --cell-fact:#F7FCF9; --cell-mid:#FFFDF8; --cell-low:#FFFBFB; }

@@ -10,7 +10,7 @@ import { LAYER_DOT, mln } from './ladder'
 import StateChips from './StateChips'
 
 export const COLS = [
-  { key: 'code', label: 'Код', w: '62px' },
+  { key: 'code', label: 'Код', w: '78px' },   // +16 — квадрат срочности у кода (22.10.2026)
   { key: 'advertiser', label: 'Рекламодатель / бренд', w: 'minmax(130px,180px)' },
   { key: 'agency', label: 'Агентство', w: 'minmax(80px,118px)' },
   { key: 'product', label: 'Услуга', w: 'minmax(96px,124px)' },
@@ -68,6 +68,8 @@ function Cta({ row, canEdit, onAction }) {
   )
 }
 
+const URGENCY_HINT = { overdue: 'Просрочено', today: 'Срок — сегодня' }
+
 export default function QueueRow({ row: r, today, open, canEdit, onToggle, onAction, onSnooze, onUnsnooze }) {
   const tone = ROW_TONE[r.urgency] || ROW_TONE.normal
   const startIn = r.period_from && today ? daysBetween(r.period_from, today) : null
@@ -83,9 +85,14 @@ export default function QueueRow({ row: r, today, open, canEdit, onToggle, onAct
     <div onClick={() => onToggle(r)}
       style={{ display: 'grid', gridTemplateColumns: GRID, gap: 10, alignItems: 'center', boxSizing: 'border-box',
         padding: '7px 10px', borderBottom: '1px solid var(--border-row)', borderRadius: 9, cursor: 'pointer',
-        background: open ? 'var(--bg-tint)' : (r.urgency === 'overdue' || r.urgency === 'today' ? tone.bg : 'transparent'),
+        // Строку не красим (дизайн 22.10.2026) — срочность квадратом у кода, как в дашборде трафика.
+        background: open ? 'var(--bg-tint)' : 'transparent',
         transition: 'background-color 150ms ease' }}>
-      <DealCodeLink deal={r} size={11.5} />
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+        <span title={URGENCY_HINT[r.urgency] || ''} style={{ width: 8, height: 8, borderRadius: 2, flex: '0 0 8px',
+          background: r.urgency === 'overdue' || r.urgency === 'today' ? tone.dot : 'transparent' }} />
+        <DealCodeLink deal={r} size={11.5} />
+      </span>
 
       <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }} title={r.title || ''}>
         <span style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

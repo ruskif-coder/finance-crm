@@ -5,7 +5,8 @@
 * **Согласования** — светофор на пересечении: где сейчас согласование комплекта этой РК
   с этой площадкой;
 * **План площадок** — плановые показы площадки в РК и план себестоимости: показы ×
-  закупочный CPM площадки из реестра паблишеров (`cpm_contract`, до НДС) / 1000.
+  закупочный CPM площадки из реестра паблишеров (`cpm_contract`, до НДС) / 1000;
+* **Факт площадок** — факт показов и сумма, как биллинг в кабинете площадки (`_billing_fact`).
 
 Колонка — сделка с финансовым периодом в выбранном месяце (решение владельца: сделка,
 а не бренд). Ячейка — получатель «Сбора запуска» (сделка × площадка × услуга); при
@@ -179,6 +180,8 @@ def load(db: Session, month: str, service_id: Optional[int] = None,
         """), {"ids": ids}).all():
             plan[(d, p)] = int(shows or 0)
 
+    fact = _billing_fact(db, ids, month)
+
     # Все живые площадки, а не только участвующие в месяце: кнопка «Все площадки» показывает
     # и тех, кого нет ни в одной РК (пустые строки). Архив не считаем — правило проекта.
     pub_ids = sorted({p for _, p in cells})
@@ -193,8 +196,10 @@ def load(db: Session, month: str, service_id: Optional[int] = None,
     for (d, p), c in cells.items():
         shows = plan.get((d, p), 0)
         cost = round(shows * cpm[p] / 1000, 2) if shows and cpm.get(p) else None
+        got = fact.get((d, p), 0)
         out_cells.append({"deal_id": d, "publisher_id": p, **c, "plan_show": shows,
-                          "plan_cost": cost,
+                          "plan_cost": cost, "fact_show": got,
+                          "fact_cost": round(got * cpm[p] / 1000, 2) if got and cpm.get(p) else None,
                           "screens": shots.get((d, p), {"state": "none", "got": 0, "total": 0})})
     return {
         "month": month, "today": today, "late_workdays": LATE_WORKDAYS,
@@ -206,6 +211,22 @@ def load(db: Session, month: str, service_id: Optional[int] = None,
         "publishers": [dict(p) for p in pubs],
         "cells": out_cells,
     }
+
+
+def _billing_fact(db: Session, deal_ids, month: str) -> dict:
+    """Факт пары сделка × площадка для вкладки «Факт площадок» (владелец 22.10.2026) — тот же, что
+    биллинг в кабинете площадки: показы за вычетом Block SIMB. Считает `app.traffic.stats` (одна формула
+    на страницу «Статистика», кабинет сверяется с ней прибором), а не своя копия здесь."""
+    if not deal_ids:
+        return {}
+    from app.traffic import stats
+    camps = {r[0] for r in db.execute(text("SELECT id FROM ad_campaign WHERE deal_id = ANY(:ids)"),
+                                      {"ids": list(deal_ids)}).all()}
+    out = defaultdict(int)
+    if camps:
+        for r in stats.compute(db, allowed=camps, period=month)["rows"]:
+            out[(r["deal_id"], r["publisher_id"])] += r["base"]
+    return out
 
 
 def months(db: Session, today: Optional[date] = None) -> list:

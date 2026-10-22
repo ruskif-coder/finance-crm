@@ -6,6 +6,7 @@ import { useRouter } from 'next/router'
 import axios from 'axios'
 import { PageLoader } from '../components/LogoLoader'
 import MobileStub from '../components/mobile/MobileStub'
+import { applyTheme, readTheme } from '../lib/theme'
 
 // Локальный шрифт вместо next/font/google: раньше каждая сборка (docker compose
 // up -d --build) скачивала Onest с fonts.googleapis.com/fonts.gstatic.com, и при
@@ -36,6 +37,7 @@ export default function App({ Component, pageProps }) {
   // делается при логине, и без этого изменения роли в настройках не подхватывались
   // до повторного входа (кнопки/инлайн-редактирование оставались по старым правам).
   const [ready, setReady] = useState(false)
+  useEffect(() => { applyTheme(readTheme()) }, [])
   useEffect(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) { setReady(true); return }
@@ -47,6 +49,7 @@ export default function App({ Component, pageProps }) {
         localStorage.setItem('is_admin', d.is_admin ? '1' : '0')
         localStorage.setItem('permissions', JSON.stringify(d.permissions || {}))
         if (d.name) localStorage.setItem('name', d.name)
+        if (d.theme) applyTheme(d.theme)   // тема пользователя с сервера: выбрана на другом устройстве
         // Согласие не принято (токен выдан, а форму закрыли) — сервер данных не отдаст;
         // ведём на вход, там форма согласия (аудит 23.09.2026, 9.7).
         if (d.consent_required) { localStorage.clear(); router.replace('/login') }

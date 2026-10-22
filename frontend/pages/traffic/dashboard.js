@@ -1029,9 +1029,12 @@ export default function TrafficDashboard() {
                     // разные плашки, случайно оказавшиеся рядом.
                     borderRadius: open === r.id ? '9px 9px 0 0' : 9,
                     marginBottom: open === r.id ? 0 : 4,
+                    // Строку не красим (дизайн 22.10.2026): заливка большой площади в тёмных темах давала
+                    // светлые полосы с пропадающим текстом. Тревога — квадрат у кода и метки под названием,
+                    // тон строки остался только рамкой.
                     border: `1px solid ${u.border}`,
                     borderBottom: open === r.id ? 'none' : `1px solid ${u.border}`,
-                    background: open === r.id ? 'var(--accent-tint)' : u.bg }}>
+                    background: open === r.id ? 'var(--accent-tint)' : 'var(--bg-card)' }}>
                   <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>{open === r.id ? '▾' : '▸'}</span>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontFamily: MONO, fontSize: 11.5,
                     fontWeight: 700, color: 'var(--accent)' }}>
