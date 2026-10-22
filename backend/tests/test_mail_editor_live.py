@@ -113,6 +113,14 @@ def test_a_card_edit_reaches_a_live_staff_letter(db, monkeypatch):
     # события есть данные для подстановок.
     bus.emit(db, ev.key, title="Заголовок события", body="исходный текст",
              link="/deals/1", user_ids=[admin.id])
+    # Письмо уходит ПОСЛЕ commit действия (аудит 21.10.2026): шина кладёт строку «в очереди» со словами карточки, а
+    # отправляет её путь досылки — `deliver_mail` по строке журнала. Здесь — тот же вызов по той же строке, без commit.
+    row = (db.query(NotificationDelivery).filter(NotificationDelivery.channel == "mail",
+                                                 NotificationDelivery.user_id == admin.id,
+                                                 NotificationDelivery.suppress_reason == bus.PENDING)
+           .order_by(NotificationDelivery.id.desc()).first())
+    assert row is not None and not sent, "письмо ушло до commit"
+    channels.deliver_mail(db, admin.id, ev, row.title, row.body, row.link, row.facts, row.code)
     db.rollback()
     assert "Новый текст карточки" in sent["html"], "правка карточки не дошла до письма"
     assert "исходный текст" not in sent["html"]

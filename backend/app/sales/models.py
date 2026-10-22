@@ -762,6 +762,8 @@ class SalesDeal(Base):
     # при выпуске креатива. На 26.08.2026 признак только помечает сделку — отдельная
     # цепочка под саморекламу будет расписана позже.
     is_self_promo = Column(Boolean, nullable=False, server_default='false')
+    # Дата статуса, поставленная вручную в «Статусах продаж» (миграция 2026-10-22_sales_status.sql). Пусто — считается сама.
+    status_date_manual = Column(Date)
     annex_id = Column(Integer, ForeignKey("sales_annexes.id"))
     # Изначальный договор ОРД, которым закрывали сборку по этой сделке — единственная
     # память о прошлом выборе для пары агентство×рекламодатель (app/ord/matching.py,

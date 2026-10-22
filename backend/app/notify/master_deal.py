@@ -35,7 +35,6 @@ def deal_taken(db: Session, deal, m, user) -> None:
     """Сбой уведомления не роняет сборку пакета — пакет важнее письма."""
     if getattr(user, "id", None) is None or _owner_user_id(db, deal) == user.id:
         return
-    try:
+    from app.notify.safe import quiet
+    with quiet(db, f"пакет {m.code}: сделка {deal.code}"):
         _emit(db, deal, m, user)
-    except Exception:  # noqa: BLE001
-        log.exception("пакет %s: уведомление о сделке %s не ушло", m.code, deal.code)

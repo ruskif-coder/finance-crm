@@ -85,13 +85,21 @@ def _key(r: dict, by_brand: bool, by_service: bool) -> tuple:
     return ((r["brand"] if by_brand else None), (r["service"] if svc else None))
 
 
-def _vat(db: Session, ls: list) -> Optional[float]:
+def _contract_of(db: Session, m):
+    from app.models import Contract
+    return db.get(Contract, m.contract_id)
+
+
+def _vat(db: Session, m, ls: list) -> Optional[float]:
+    """Ставка пакета — та же, что у ДС: нашего юрлица на дату документа (`vat.for_document`, владелец 21.10.2026).
+    Раньше — ставка медиаплана первой сделки, и при расхождении ставок ДС, УПД и операция показывали три суммы."""
     if not ls:
         return None
-    from app.sales.mp_amounts import mp_amounts_by_deal, vat_pct_of
-    from app.sales.models import SalesDeal
-    d0 = db.get(SalesDeal, ls[0]["deal_id"])
-    return vat_pct_of(d0, mp_amounts_by_deal(db, [d0.id]))
+    from datetime import date as _date
+    from app import vat
+    from app.sales.annex import annex_date
+    y, mo = (int(x) for x in m.period.split("-"))
+    return vat.for_document(db, _contract_of(db, m), annex_date(_date(y, mo, 1)))
 
 
 def layout(db: Session, m: MasterDeal, settings: Optional[dict] = None, *, with_src: bool = False) -> dict:
@@ -110,7 +118,7 @@ def layout(db: Session, m: MasterDeal, settings: Optional[dict] = None, *, with_
     else:                                    # ДС допов без платных строк не создаётся — всё в основной
         parts = [("all" if paid_extras else "main", "основные и допы" if paid_extras else "основные услуги", ls)]
 
-    vat = _vat(db, ls)
+    vat = _vat(db, m, ls)
     rate = (vat or 0) / 100.0
     base_no = (m.start_no + 1) if m.start_no is not None else None
     ds_list, upd_no = [], 0

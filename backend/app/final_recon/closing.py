@@ -348,7 +348,35 @@ def _meta(db: Session, rec, frozen: bool, base_net: float, paid_extras: float) -
 
 
 def compute(db: Session, deal, *, rec: Optional[FinalReconDeal] = None) -> dict:
-    """Состояние блока «Итоговая сверка» сделки. `rec` — строка сверки (если уже загружена). Шаги — `_plan_fact`, `_money`, `_lines`, `_meta`."""
+    """Состояние блока «Итоговая сверка» сделки. `rec` — строка сверки (если уже загружена).
+
+    В реестре мастер-сделок (`memo`) сверка одной сделки считается один раз за запрос: «что сделать», раскладка и
+    эффективность звали её до трёх раз (аудит 21.10.2026, F1). Вне `memo` — всегда свежий расчёт."""
+    memo = getattr(db, "info", {}).get("cl_memo") if rec is None else None
+    if memo is None:
+        return _compute(db, deal, rec=rec)
+    if deal.id not in memo:
+        memo[deal.id] = _compute(db, deal)
+    import copy
+    return copy.deepcopy(memo[deal.id])
+
+
+class memo:
+    """`with CL.memo(db):` — кэш сверки на время ОДНОГО чтения (реестр). Пишущие пути его не включают."""
+    def __init__(self, db: Session):
+        self.db = db
+
+    def __enter__(self):
+        self.db.info["cl_memo"] = {}
+        return self
+
+    def __exit__(self, *exc):
+        self.db.info.pop("cl_memo", None)
+        return False
+
+
+def _compute(db: Session, deal, *, rec: Optional[FinalReconDeal] = None) -> dict:
+    """Расчёт сверки без кэша. Шаги — `_plan_fact`, `_money`, `_lines`, `_meta`."""
     from app.sales import annex as annex_mod
     rec = rec if rec is not None else db.get(FinalReconDeal, deal.id)
     rows = annex_mod.plan_rows(db, [deal.id])

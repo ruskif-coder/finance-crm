@@ -95,7 +95,8 @@ export default function MyChannels({ me, tgCode, setTgCode, reload, onErr }) {
           style={{ ...inp, width: 58, padding: '5px 7px', textAlign: 'center' }} />
         <button onClick={saveQuiet} style={linkBtn}>Сохранить</button>
         <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-          в это время ничего не приходит, кроме событий «нельзя отключить»
+          в это время ничего не приходит, кроме событий «нельзя отключить». Не заданы — 22–08 по Москве;
+          одинаковые «с» и «по» — без тихих часов
         </span>
       </span>
       {/* Час пачки — рядом с тихими часами, потому что вопрос у них общий: «когда меня

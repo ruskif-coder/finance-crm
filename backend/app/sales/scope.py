@@ -59,3 +59,44 @@ def apply_own_scope(q, own_ids):
     ids = own_ids or [-1]   # нет привязки к сейлзу → пустая выдача, а не «все»
     return q.filter(or_(SalesDeal.sales_rep_id.in_(ids),
                         SalesDeal.account_manager_id.in_(ids)))
+
+
+# ── ДС (аудит 21.10.2026) ─────────────────────────────────────────────────────────────────────────
+# Документ закрывает несколько сделок (разнесение выручки) или целый мастер-пакет. Правило — как у карточки мастер-сделки:
+# ДС «свой», если свои ВСЕ его сделки (в нём суммы и реквизиты каждой); ДС без сделок — только автору.
+
+def annex_owners(db: Session, annex_ids) -> dict:
+    """{annex_id: [(продавец, аккаунт) каждой сделки]} — по разнесению и по составу мастер-пакета, одним запросом."""
+    from sqlalchemy import text
+    ids = [int(i) for i in annex_ids]
+    out = {i: [] for i in ids}
+    if not ids:
+        return out
+    for aid, rep, acc in db.execute(text("""
+            SELECT x.annex_id, d.sales_rep_id, d.account_manager_id FROM (
+                SELECT annex_id, deal_id FROM sales_deal_annex_allocation WHERE annex_id = ANY(:ids)
+                UNION
+                SELECT a.id, i.deal_id FROM sales_annexes a JOIN master_deal_items i ON i.master_deal_id = a.master_deal_id
+                 WHERE a.id = ANY(:ids)
+            ) x JOIN sales_deals d ON d.id = x.deal_id"""), {"ids": ids}).all():
+        out[aid].append((rep, acc))
+    return out
+
+
+def annex_visible(owners, own, created_by, user_id) -> bool:
+    if own is None:
+        return True
+    ids = set(own or ())
+    if not owners:
+        return created_by is not None and created_by == user_id
+    return all(rep in ids or acc in ids for rep, acc in owners)
+
+
+def annex_in_scope(db: Session, user, annex) -> None:
+    """403, если ДС вне области «свои» пользователя. Для «все»/admin — без ограничения."""
+    own = own_rep_ids_or_all(db, user, "sales_registry")
+    if own is None:
+        return
+    if not annex_visible(annex_owners(db, [annex.id])[annex.id], own, getattr(annex, "created_by", None),
+                         getattr(user, "id", None)):
+        raise HTTPException(status_code=403, detail="Приложение вне вашей зоны видимости: в нём чужие сделки")

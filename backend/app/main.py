@@ -544,6 +544,8 @@ from app.routers import rk_check as rk_check_router  # noqa: E402 — «Пров
 app.include_router(rk_check_router.router, prefix="/api/rk-check", tags=["traffic"])
 from app.routers import rk_analysis as rk_analysis_router  # noqa: E402 — «Разбор РК» (без своей схемы)
 app.include_router(rk_analysis_router.router, prefix="/api/rk-analysis", tags=["traffic"])
+from app.routers import sales_status as sales_status_router  # noqa: E402 — «Статусы продаж» (миграция 2026-10-22_sales_status.sql)
+app.include_router(sales_status_router.router, prefix="/api/sales-status", tags=["sales"])
 # «Настройки → SIMB ID»: коэффициенты отчётов клиенту, только админ (05.10.2026).
 from app.routers import simb_id  # noqa: E402
 app.include_router(simb_id.router, prefix="/api/settings/simb-id", tags=["settings"])

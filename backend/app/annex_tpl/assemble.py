@@ -281,7 +281,8 @@ def assemble(db: Session, contract, version, *, period_from, period_to, deal_ids
     payer = contract.counterparty
     us = contract.own_company or own_company.sole(db)
     # Ставка — с юрлица, от которого услуги (владелец 14.10.2026); не задана — по закону на дату периода.
-    rate = getattr(us, "vat_rate_income", None) or vat_rules.on(period_from)
+    # Одна функция с раскладкой мастер-сделки: юрлицо на дату составления (владелец 21.10.2026).
+    rate = vat_rules.for_document(db, contract, doc_date or A.annex_date(period_from))
     n = no or A.next_no(db, contract)
 
     # ДС мастер-сделки — строки из снимка раскладки (пин сверки, скидка, переносы, группы), не из МП заново (15.10.2026).

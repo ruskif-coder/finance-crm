@@ -28,4 +28,5 @@ import app.ord.models  # noqa: F401
 import app.prio.models  # noqa: F401
 import app.publisher_requests  # noqa: F401
 import app.sales.models  # noqa: F401
+import app.sales.status_models  # noqa: F401
 import app.weborama.models  # noqa: F401

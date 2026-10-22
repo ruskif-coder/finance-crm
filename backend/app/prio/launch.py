@@ -31,7 +31,7 @@ def payload(db: Session, deal, p: M.PrioPlacement) -> dict:
 def _existing(client: PrioClient, body: dict):
     """РК, уже заведённая этим же запросом (оборванный ответ на POST): площадка + SKU + ЕРИД за период."""
     for c in client.campaigns(date_start=body["date_start"], date_end=body["date_end"]):
-        if (c.get("site_id") == body["site_id"] and str(c.get("product_id")) == str(body["product_id"])
+        if (str(c.get("site_id")) == str(body["site_id"]) and str(c.get("product_id")) == str(body["product_id"])
                 and (c.get("erid") or "") == (body["erid"] or "")):
             return c
     return None
@@ -47,7 +47,20 @@ def _check(client: PrioClient, camp_id: int, want: dict) -> None:
 
 
 def launch(db: Session, deal, pid: int, client: PrioClient = None) -> M.PrioPlacement:
+    """Один проход на площадку (аудит 21.10.2026): двойной клик или «Запустить согласованные» поверх одиночного запуска
+    иначе оба видят «согласовано», оба не находят РК и заводят две — учтена была бы одна, вторая крутилась бы без автостопа."""
+    from app import ext_lock
+    with ext_lock.only_one(ext_lock.PRIO_LAUNCH, pid, lambda msg: PrioError(409, msg), "Запуск приоритезации",
+                           where="по этой площадке"):
+        db.expire_all()                                     # под замком — статус, подтверждённый соседним проходом
+        return _launch(db, deal, pid, client)
+
+
+def _launch(db: Session, deal, pid: int, client) -> M.PrioPlacement:
     p = placement(db, deal, pid)
+    # Замок строки до commit роутера: `only_one` отпускается раньше, и второй проход в этом окне читал бы «согласовано»
+    # (ревью 22.10.2026). Второй ждёт здесь и после commit первого видит «идёт» — 409.
+    p = db.query(M.PrioPlacement).filter(M.PrioPlacement.id == p.id).with_for_update().populate_existing().one()
     if p.status != M.APPROVED:
         raise PrioError(409, f"Запустить можно согласованную площадку, а она «{p.status}»")
     body = payload(db, deal, p)
@@ -56,16 +69,22 @@ def launch(db: Session, deal, pid: int, client: PrioClient = None) -> M.PrioPlac
     try:
         c = client or PrioClient()
         camp = _existing(c, body) or c.create(body)
-        camp_id = camp.get("camp_id")
-        if not camp_id:
-            raise PrioError(502, "Система приоритезации не вернула camp_id")
-        _check(c, camp_id, {"toggle_on": True, "autostart": True, "goal_imp": body["goal_imp"]})
     except PrioApiError as e:
         raise PrioError(502, str(e))
+    camp_id = camp.get("camp_id")
+    if not camp_id:
+        raise PrioError(502, "Система приоритезации не вернула camp_id")
+    # РК в системе уже есть и крутится (toggle_on + autostart) — у нас она обязана остаться «идёт» с camp_id ДО перечитки:
+    # иначе сбой перечитки оставлял «согласовано» без camp_id, и автостоп её не видел (аудит 21.10.2026).
     now = datetime.utcnow()
     p.camp_id, p.tracker = camp_id, {k: camp.get(k) for k in TRACKER_KEYS if camp.get(k)}
     p.status, p.toggle_on, p.launched_at, p.updated_at = M.LIVE, True, now, now
     db.flush()
+    p.check_warning = None
+    try:
+        _check(c, camp_id, {"toggle_on": True, "autostart": True, "goal_imp": body["goal_imp"]})
+    except (PrioError, PrioApiError) as e:
+        p.check_warning = f"РК {camp_id} заведена, но перечитка не сошлась — проверьте в системе приоритезации: {e}"
     return p
 
 

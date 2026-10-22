@@ -1768,7 +1768,11 @@ def _next_pair_no(db: Session, target_id: int) -> int:
 
     Отвергнутая итерация имени не получала, поэтому в нумерации нет дыр от версий,
     которых не было в эфире.
+
+    Под замком строки размещения (аудит 21.10.2026): два «ок» по разным парам одной площадки иначе видели одно число и
+    получали один код. Второй ждёт commit первого и считает уже с его парой.
     """
+    db.query(LaunchPrepTarget.id).filter(LaunchPrepTarget.id == target_id).with_for_update().all()
     named = (db.query(LaunchPrepPair)
              .filter(LaunchPrepPair.target_id == target_id,
                      LaunchPrepPair.code.isnot(None)).count())
@@ -2077,9 +2081,10 @@ def apply_platform_verdict(db: Session, pair_id: int, verdict: str,
                 detail="Мы ждём от этой площадки посадочную страницу — "
                        "согласовать можно после того, как придёт ссылка")
 
+    # Под замком (аудит 21.10.2026): двойной ответ по одной паре перезаписывал вердикт и выдавал новый код уже после DSP.
     rec = (db.query(LaunchPrepReview)
            .filter(LaunchPrepReview.pair_id == pair_id,
-                   LaunchPrepReview.kind == "площадка").first())
+                   LaunchPrepReview.kind == "площадка").with_for_update().populate_existing().first())
     if rec is None:
         raise HTTPException(status_code=400, detail="Комплект этой площадке не отправляли")
     # Отозванный креатив ответа не принимает: площадка могла держать открытой страницу

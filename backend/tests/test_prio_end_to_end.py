@@ -28,6 +28,7 @@ from tests.test_prio import FakeApi
 class _U:
     id = None
     name = "тест"
+    role = type("R", (), {"key": "admin"})()       # ручки ДС спрашивают область «свои» (аудит 21.10.2026)
 
 
 @pytest.fixture

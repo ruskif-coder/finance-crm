@@ -112,6 +112,9 @@ services:
       # Система приоритезации (19.10.2026, `app/prio`): токен кладёт владелец в .env; адрес — по умолчанию pp.simbad.pro.
       PRIO_API_TOKEN: ${PRIO_API_TOKEN:-}
       PRIO_API_URL: ${PRIO_API_URL:-}
+      # Стенд: EXTERNAL_WRITES=off — изменяющие вызовы в DSP, приоритезацию и Weborama не уходят (аудит 21.10.2026).
+      # На проде не задаётся: пусто = запись разрешена.
+      EXTERNAL_WRITES: ${EXTERNAL_WRITES:-}
       # Нацеливание: кабинет демоклиента и кампания в нём. Запасной путь — главнее
       # настройка «Кабинеты DSP» в админке трафика (28.09.2026).
       DSP_TARGETING_PARTNER_XXHASH: ${DSP_TARGETING_PARTNER_XXHASH:-}

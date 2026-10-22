@@ -331,8 +331,7 @@ def build(db: Session, contract: Contract, *, period_from: date, period_to: date
     # Ставка юрлица не заполнена — ставка ЗАКОНА на период документа (`app/vat.py`). До
     # ревью 23.09.2026 запасом было `vat_rate` контрагента, а за ним 0: ДС выходил без НДС.
     from app import vat as vat_rules
-    rate = vat_rate if vat_rate is not None else (
-        getattr(us, "vat_rate_income", None) or vat_rules.on(period_from))
+    rate = vat_rate if vat_rate is not None else vat_rules.for_document(db, contract, annex_date(period_from))
     n = no or next_no(db, contract)
 
     # НДС по строке НАЧИСЛЯЕТСЯ, а не извлекается: `r["amount"]` — стоимость размещения

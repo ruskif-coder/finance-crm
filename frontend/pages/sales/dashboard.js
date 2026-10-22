@@ -212,7 +212,8 @@ export default function SalesDashboard2() {
     try {
       const params = {}
       if (quarter) params.quarter = quarter
-      if (repId) params.rep_id = repId
+      if (repId === 'all') params.all_reps = true
+      else if (repId) params.rep_id = repId
       const r = await api.get('/sales/dashboard/bonus', { ...auth(), params })
       if (!fresh()) return
       setData(r.data)

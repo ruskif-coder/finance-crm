@@ -115,10 +115,16 @@ def _index(db: Session, publisher_ids: list) -> dict:
 
 
 def rebalance(db: Session, deal) -> None:
+    """Под замком строки запроса (аудит 21.10.2026): ответ площадки и добавление площадки, идущие параллельно, иначе
+    раскладывали объём каждый по своему снимку статусов — сумма целей расходилась с планом (класс LBS2QH). Второй ждёт
+    commit первого и читает уже подтверждённые статусы."""
     r = request_of(db, deal)
     if r is None:
         return
-    pls = db.query(M.PrioPlacement).filter(M.PrioPlacement.request_id == r.id).all()
+    db.flush()
+    db.query(M.PrioRequest).filter(M.PrioRequest.id == r.id).with_for_update().one()
+    pls = (db.query(M.PrioPlacement).filter(M.PrioPlacement.request_id == r.id)
+           .populate_existing().all())
     live = [p for p in pls if p.status != M.REJECTED]
     free = [p for p in live if p.status not in FIXED]
     for p in pls:
@@ -337,6 +343,13 @@ def set_sku(db: Session, p: M.PrioPlacement, sku: str) -> M.PrioPlacement:
 
 def verdict(db: Session, p: M.PrioPlacement, verdict_: str, reason: Optional[str], by_user_id: Optional[int] = None) -> M.PrioPlacement:
     """Площадка: «ок» — согласовать (нужен SKU), «вернуть» — замечание аккаунту, «отказ» — причина, РК в архив."""
+    # Двойной ответ («ок» и «отказ» почти одновременно) проходил оба раза: проверка статуса — под замком строки (аудит 21.10.2026)
+    db.flush()
+    # Порядок замков — запрос, затем площадка, как в rebalance и add_placement: иначе два отказа по одному запросу
+    # брали замки навстречу друг другу и ловили взаимную блокировку (ревью 22.10.2026).
+    db.query(M.PrioRequest).filter(M.PrioRequest.id == p.request_id).with_for_update().one()
+    p = (db.query(M.PrioPlacement).filter(M.PrioPlacement.id == p.id).with_for_update()
+         .populate_existing().one())
     if p.status != M.AT_SITE:
         raise PrioError(409, "Ответить можно на запрос, который у вас")
     reason = (reason or "").strip()

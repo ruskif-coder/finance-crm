@@ -46,6 +46,8 @@ def parse(body: Any) -> dict:
             items = [dict(v, camp_id=k) for k, v in body.items() if isinstance(v, dict) and str(k).isdigit()]
     else:
         items = body
+    if isinstance(items, dict):                         # {"stats": {"123": {...}}} — словарь по camp_id вместо списка
+        items = [dict(v, camp_id=k) for k, v in items.items() if isinstance(v, dict) and str(k).isdigit()]
     out = {}
     for it in items or []:
         if not isinstance(it, dict) or it.get("camp_id") is None:
@@ -59,6 +61,28 @@ def parse(body: Any) -> dict:
             clicks = sum(v["clicks"] or 0 for v in by.values())
         out[int(it["camp_id"])] = {"shows": shows or 0, "clicks": clicks or 0, "by_type": by or None}
     return out
+
+
+def _has_payload(body: Any) -> bool:
+    """В ответе есть данные: непустой список или словарь с чем-то, кроме служебного `ok`."""
+    if isinstance(body, dict):
+        # Только контейнеры строк: служебные date_start / total=0 — не данные (ложная тревога в пустой день, ревью 22.10.2026)
+        # Данные — любой непустой список или словарь (в том числе под незнакомым ключом); скалярные служебные поля —
+        # date_start, total=0 — не данные: иначе ложная тревога в пустой день (ревью 22.10.2026)
+        return any(isinstance(v, (list, dict)) and v for k, v in body.items() if k != "ok")
+    return bool(body)
+
+
+def parse_strict(body: Any) -> dict:
+    """`parse`, но непустой ответ, из которого не разобралось НИ ОДНОЙ строки, — сбой, а не ноль (аудит 21.10.2026).
+
+    Формат `stats-all-summary` в доке не описан, разбор угадывает. Незнакомый вид раньше давал пустой результат и «успешный»
+    прогон: факт не писался, автостоп по плану молча не работал, тревоги не было."""
+    got = parse(body)
+    if not got and _has_payload(body):
+        from app.prio.client import PrioApiError
+        raise PrioApiError(f"ответ stats-all-summary не разобран (формат изменился?): {str(body)[:300]}")
+    return got
 
 
 def save_snapshot(db: Session, camp_id: int, day: date, v: dict) -> M.PrioStatRaw:
@@ -95,7 +119,7 @@ def pull(db: Session, client, days: Iterable[date], *, commit: bool = True) -> d
     known = {r[0] for r in db.execute(text("SELECT camp_id FROM prio_placements WHERE camp_id IS NOT NULL"))}
     out = {"days": 0, "snapshots": 0, "written": 0, "shrunk": [], "unknown": set(), "no_rk": set()}
     for day in days:
-        got = parse(client.stats(day.isoformat(), day.isoformat()))
+        got = parse_strict(client.stats(day.isoformat(), day.isoformat()))
         out["days"] += 1
         # Несколько РК системы могут лечь в одну строку факта (у РК сделки нет строки этой площадки → строка «РК целиком»):
         # складываем за сутки и пишем ОДИН раз — иначе вторая площадка затирала первую (найдено прогоном по шагам 19.10).
@@ -141,20 +165,65 @@ def _report(o: dict) -> str:
     return "; ".join(parts)
 
 
-if __name__ == "__main__":
-    from app.dsp.stat_daily import today_msk
-    from app.prio.client import PrioApiError, PrioClient
-    s = SessionLocal()
+LAST_RUN_KEY = "prio_stats_last_run"
+
+
+def last_ok(db) -> Optional[bool]:
+    """Чем кончился прошлый прогон: True / False / None — прогонов ещё не было."""
+    import json
+    v = db.execute(text("SELECT value FROM company_settings WHERE key = :k"), {"k": LAST_RUN_KEY}).scalar()
     try:
-        from app.prio import autostop
-        c = PrioClient()
+        return bool(json.loads(v)["ok"]) if v else None
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def record(db, ok: bool) -> None:
+    import json
+    db.execute(text("INSERT INTO company_settings (key, value) VALUES (:k, :v) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
+               {"k": LAST_RUN_KEY, "v": json.dumps({"ok": ok, "at": datetime.utcnow().isoformat(timespec="seconds")})})
+    db.commit()
+
+
+def should_alert(prev_ok: Optional[bool], ok: bool) -> bool:
+    """Тревога — на ПЕРЕХОДЕ «работает → падает», а не каждую ночь (как у автовыпуска ЕРИД; аудит 21.10.2026)."""
+    return not ok and prev_ok is not False
+
+
+def main(session=None, client=None) -> int:
+    """Крон: сбор → автостоп. Тревога — на ЛЮБОЙ сбой (аудит 21.10.2026): ошибка разбора или базы значит то же, что ошибка
+    API, — факта нет, автостоп не работает; раньше тревогу давал только `PrioApiError`."""
+    from app.dsp.stat_daily import today_msk
+    from app.notify import prio as N
+    from app.prio import autostop
+    from app.prio.client import PrioClient
+    s = session or SessionLocal()
+    try:
+        prev = last_ok(s)
+    except Exception:  # noqa: BLE001 — состояние не прочлось: лучше лишняя тревога, чем пропущенная
+        s.rollback()
+        prev = None
+    try:
+        c = client or PrioClient()
         print(_report(pull(s, c, window(today_msk()))))
         print(autostop.report(autostop.run(s, c)))
-    except PrioApiError as e:
+        record(s, True)
+        return 0
+    except Exception as e:  # noqa: BLE001
         print(f"Сбор приоритезации не состоялся: {e}", file=sys.stderr)
-        from app.notify import prio as N
+        log.exception("сбор приоритезации упал")
         s.rollback()
-        N.stat_failed(s, e)
-        sys.exit(1)
+        if should_alert(prev, False):
+            N.stat_failed(s, f"{type(e).__name__}: {e}")
+        try:
+            record(s, False)
+        except Exception:  # noqa: BLE001
+            s.rollback()
+        return 1
     finally:
         s.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

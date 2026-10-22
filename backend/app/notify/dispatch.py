@@ -57,6 +57,18 @@ def _flush(dry_run: bool = False) -> dict:
         active = {u.id for u in db.query(User.id).filter(
             User.id.in_({r.user_id for r in rows} or {0}), User.is_active == 1).all()}
         for r in rows:
+            if not due(r, now):
+                stats["skipped"] += 1
+                continue
+            # Строка под замком и всё ещё в очереди: её мог прямо сейчас отправить хук после commit (bus._send_after_commit)
+            # — тогда пропускаем, иначе письмо ушло бы дважды (ревью 22.10.2026).
+            if not dry_run:
+                held = (db.query(NotificationDelivery.id).filter(NotificationDelivery.id == r.id, NotificationDelivery.status == "queued")
+                        .with_for_update(skip_locked=True).first())
+                if held is None:
+                    stats["skipped"] += 1
+                    continue
+                db.refresh(r)
             # Строка за строкой, каждая своим коммитом (аудит 23.09.2026, 5.M5): один
             # коммит в конце при исключении посреди оставлял отправленное в очереди, и
             # те же письма уходили каждый час до 48 часов.
@@ -75,6 +87,18 @@ def _flush(dry_run: bool = False) -> dict:
         return stats
     finally:
         db.close()
+
+
+PENDING_GRACE_MINUTES = 10
+
+
+def due(r, now) -> bool:
+    """Строку «ждёт commit» первые минуты отправляет хук после commit (`bus._send_after_commit`) — досылка её не трогает,
+    иначе письмо ушло бы дважды. Старше — значит, процесс упал между commit и отправкой: досылаем."""
+    from app.notify.bus import PENDING
+    if r.suppress_reason != PENDING:
+        return True
+    return (now - (r.created_at or now)) >= timedelta(minutes=PENDING_GRACE_MINUTES)
 
 
 def _one(db, r, now, dry_run: bool, stats: dict, active: set) -> None:
@@ -123,7 +147,7 @@ def _one(db, r, now, dry_run: bool, stats: dict, active: set) -> None:
             db, r.user_id, ev, r.title or "", r.body, r.link,
             r.facts, r.code).partition("|")
         if status == "sent":
-            r.status, r.suppress_reason = "sent", None
+            r.status, r.suppress_reason, r.sent_at = "sent", None, datetime.utcnow()
             stats["sent"] += 1
         elif status == "failed":
             r.status, r.error = "failed", (reason or None)
@@ -142,16 +166,18 @@ def _one(db, r, now, dry_run: bool, stats: dict, active: set) -> None:
         stats["sent"] += 1
         print(f"    (сухой прогон) → {r.user_id}: {r.title}")
         return
-    try:
-        telegram.send_message(
-            ch.tg_chat_id,
-            channels.tg_text(r.title or "", r.body, r.facts),
-            link=r.link)
-        r.status, r.suppress_reason = "sent", None
+    # Тем же каналом, что живую доставку (как письмо выше): с 21.10.2026 живая доставка и ИДЁТ через досылку
+    # (`bus._send_after_commit`), и второй путь отправки в бота разошёлся бы с первым.
+    status, _, reason = channels.deliver_tg(db, r.user_id, ev, r.title or "", r.body, r.link,
+                                            r.entity_type, r.entity_id, r.facts).partition("|")
+    if status == "sent":
+        r.status, r.suppress_reason, r.sent_at = "sent", None, datetime.utcnow()
         stats["sent"] += 1
-    except Exception as e:
-        r.status, r.error = "failed", str(e)[:400]
+    elif status == "failed":
+        r.status, r.error = "failed", (reason or "")[:400] or None
         stats["failed"] += 1
+    else:
+        stats["skipped"] += 1
 
 
 if __name__ == "__main__":

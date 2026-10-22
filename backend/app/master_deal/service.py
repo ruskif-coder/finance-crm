@@ -31,19 +31,31 @@ def item_of(db: Session, deal_id: int) -> Optional[MasterDealItem]:
     return db.query(MasterDealItem).filter(MasterDealItem.deal_id == deal_id).first()
 
 
-def candidates(db: Session, deal) -> list:
-    """Открытые мастер-сделки того же доходного договора и месяца — куда можно добавить сделку."""
+def candidates(db: Session, deal, own=None) -> list:
+    """Открытые мастер-сделки того же доходного договора и месяца — куда можно добавить сделку.
+    `own` — область «свои»: только пакеты, все сделки которых свои; иначе присоединение запирало пакет для всех (аудит 21.10.2026)."""
     per = period_of(deal)
     if not (deal.ord_final_contract_id and per):
         return []
     rows = (db.query(MasterDeal).filter(MasterDeal.contract_id == deal.ord_final_contract_id, MasterDeal.period == per,
                                         MasterDeal.status.in_(OPEN)).order_by(MasterDeal.id).all())
+    if own is not None:
+        from app.master_deal import scope as SC
+        rows = [m for m in rows if SC.all_in_scope(db, m, own)]
     counts = dict(db.execute(text("SELECT master_deal_id, count(*) FROM master_deal_items WHERE master_deal_id = ANY(:i) "
                                   "GROUP BY master_deal_id"), {"i": [m.id for m in rows] or [0]}).fetchall())
     return [{"id": m.id, "code": m.code, "deals": counts.get(m.id, 0)} for m in rows]
 
 
-def siblings(db: Session, deal) -> list:
+def _own_only(rows, own) -> list:
+    """Соседи «своих»: чужие сделки с суммами сверки в модалке не показываются (аудит 21.10.2026)."""
+    if own is None:
+        return list(rows)
+    ids = set(own or ())
+    return [r for r in rows if r["sales_rep_id"] in ids or r["account_manager_id"] in ids]
+
+
+def siblings(db: Session, deal, own=None) -> list:
     """Другие сделки того же доходного договора и месяца, ещё не в пакете — взять можно любую (владелец 15.10.2026);
     статус словами: «РК не завершена» / «сверка не завершена» / «сверка завершена». Дальше конструктора документов
     пакет не уйдёт, пока сверка не завершена у всех (`gate`)."""
@@ -51,7 +63,7 @@ def siblings(db: Session, deal) -> list:
     if not (deal.ord_final_contract_id and per):
         return []
     rows = db.execute(text("""
-        SELECT d.id, d.code, d.title, st.name AS stage
+        SELECT d.id, d.code, d.title, st.name AS stage, d.sales_rep_id, d.account_manager_id
           FROM sales_deals d LEFT JOIN sales_stages st ON st.id = d.our_stage_id
          WHERE d.ord_final_contract_id = :c AND to_char(d.period_from, 'YYYY-MM') = :p AND d.id <> :me
            AND NOT EXISTS (SELECT 1 FROM master_deal_items i WHERE i.deal_id = d.id)
@@ -59,7 +71,7 @@ def siblings(db: Session, deal) -> list:
          ORDER BY d.code"""), {"c": deal.ord_final_contract_id, "p": per, "me": deal.id}).mappings().all()
     from app.sales.models import SalesDeal
     out = []
-    for r in rows:
+    for r in _own_only(rows, own):
         d = db.get(SalesDeal, r["id"])
         st = deal_status(db, d)
         c = CL.compute(db, d)
@@ -112,8 +124,8 @@ def attach(db: Session, deal, m, user) -> None:
     _taken(db, deal, m, user)
 
 
-def fork(db: Session, deal) -> dict:
-    """Что показать в модалке «Отправить в ДО»."""
+def fork(db: Session, deal, own=None) -> dict:
+    """Что показать в модалке «Отправить в ДО». `own` — область «свои» пользователя (None — все)."""
     me = {"code": deal.code, "title": deal.title}
     it = item_of(db, deal.id)
     if it:
@@ -124,8 +136,8 @@ def fork(db: Session, deal) -> dict:
         why = "У сделки не выбран доходный договор — он ключ пакета (блок ОРД)"
     elif not deal.period_from:
         why = "У сделки нет периода — финансовый месяц ключ пакета"
-    return {"deal": me, "in_master": None, "candidates": candidates(db, deal), "blocked": why,
-            "siblings": [] if why else siblings(db, deal),
+    return {"deal": me, "in_master": None, "candidates": candidates(db, deal, own), "blocked": why,
+            "siblings": [] if why else siblings(db, deal, own),
             "contract_id": deal.ord_final_contract_id, "period": period_of(deal)}
 
 
@@ -149,7 +161,8 @@ def send(db: Session, deal, user, *, target: str, master_id: Optional[int] = Non
     from app.sales import stage_move
     from app.sales.catalog import Catalog
 
-    f = fork(db, deal)
+    from app.master_deal import scope as SC
+    f = fork(db, deal, SC.own_reps(db, user) if user is not None else None)
     if f.get("in_master"):
         target = "existing"
     elif f.get("blocked"):
@@ -206,7 +219,8 @@ def send_with(db: Session, deal, extra: list, user, *, target: str, master_id: O
     отправляется целиком, иначе прикрепляется. Всё или ничего:
     отказ по любой сделке поднимается наверх, и вызывающий откатывает весь пакет."""
     out = send(db, deal, user, target=target, master_id=master_id, check_ready=False)
-    allowed = {x["id"]: x for x in siblings(db, deal)}
+    from app.master_deal import scope as SC
+    allowed = {x["id"]: x for x in siblings(db, deal, SC.own_reps(db, user) if user is not None else None)}
     m = db.get(MasterDeal, out["master"]["id"])
     added, first = [], out["first_send"]
     for x in extra:

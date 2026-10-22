@@ -24,6 +24,12 @@ def in_scope(db: Session, m, own) -> bool:
     return own is None or any(_deal_owned(rep, acc, own) for rep, acc in package_owners(db, m))
 
 
+def all_in_scope(db: Session, m, own) -> bool:
+    """Строгое правило — как у карточки и архива: свои ВСЕ сделки пакета. Реестр, кандидаты на присоединение (аудит 21.10.2026)."""
+    from app.routers.sales_dashboard import _deal_owned
+    return own is None or all(_deal_owned(rep, acc, own) for rep, acc in package_owners(db, m))
+
+
 def can_finance(db: Session, user) -> bool:
     """Право «Эффективность мастер-сделок» — прибыль и маржа отдаются только с ним (админ — всегда)."""
     from app.permissions import get_permissions_for_user

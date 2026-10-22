@@ -519,6 +519,7 @@ def _parse_quarter(s):
 def dashboard_bonus(
     quarter: Optional[str] = None,
     rep_id: Optional[int] = None,
+    all_reps: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_any_permission(("sales_dashboard", "sales_registry"), "view")),
 ):
@@ -527,8 +528,11 @@ def dashboard_bonus(
     is_admin = current_user.role.key == "admin"
     my_reps = db.query(SalesRep).filter(SalesRep.user_id == current_user.id).all()
     is_head = any(r.is_sales_head for r in my_reps)
-    can_view_others = is_admin or is_head
-    if rep_id is not None and can_view_others:
+    # Чужих смотрят админ, мастер-сейлз и наблюдатель (роль `viewer`); им же — «Все сотрудники» (владелец 22.10.2026)
+    can_view_others = is_admin or is_head or current_user.role.key == "viewer"
+    if all_reps and can_view_others:
+        rep_ids = [i for (i,) in db.query(SalesRep.id).order_by(SalesRep.id).all()]
+    elif rep_id is not None and can_view_others:
         rep_ids = [rep_id]
     else:
         rep_ids = [r.id for r in my_reps]   # по умолчанию — на себя
@@ -545,7 +549,7 @@ def dashboard_bonus(
     params = {"vat_rate": vat_rules.current(db) / 100.0, "agency_sk": SALES_AGENCY_SK,
               "bonus_rate": SALES_BONUS_RATE}
 
-    base = {"quarter": label, "rep": ", ".join(rep_names), "linked": bool(rep_ids),
+    base = {"quarter": label, "rep": "Все сотрудники" if all_reps and can_view_others else ", ".join(rep_names), "linked": bool(rep_ids),
             "can_view_others": can_view_others, "rep_ids": rep_ids, "params": params,
             "sandbox": {"count": 0, "amount": 0},
             "booking": {"amount": 0, "our_sum": 0, "bonus": 0, "by_stage": []},

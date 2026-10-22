@@ -78,7 +78,7 @@ class _Annex(SimpleNamespace):
 def _confirm_with(monkeypatch, exc):
     from app.routers import annexes as an
     a = _Annex(id=1, no=None, contract_id=2, date=None)
-    monkeypatch.setattr(an, "_annex", lambda db, i: a)
+    monkeypatch.setattr(an, "_annex", lambda db, i, *_: a)
     monkeypatch.setattr(an, "_contract", lambda db, i: SimpleNamespace(id=2))
     monkeypatch.setattr(an, "_check_no", lambda db, c, no: None)
     monkeypatch.setattr(an.legal, "blocking_reason", lambda db, aid: None)   # заявок юристу нет (14.10.2026)

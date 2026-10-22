@@ -94,18 +94,31 @@ class SendIn(BaseModel):
 @router.get("/deal/{deal_id}/fork")
 def deal_fork(deal_id: int, db: Session = Depends(get_db), user: User = Depends(MD_VIEW)):
     """Что показать в модалке «Отправить в ДО»: уже в пакете / открытые пакеты того же договора и месяца / почему нельзя."""
-    return MS.fork(db, _deal(db, deal_id, user))
+    from app.master_deal import scope as SC
+    return MS.fork(db, _deal(db, deal_id, user), SC.own_reps(db, user))
+
+
+def _lock_deals(db: Session, ids) -> None:
+    """Сделки «Отправить в ДО» — под замком строк, по возрастанию id (один порядок — без взаимной блокировки): второе нажатие
+    из соседней вкладки ждёт первое и видит, что сделка уже в пакете (аудит 21.10.2026, D5)."""
+    from app.sales.models import SalesDeal
+    db.query(SalesDeal.id).filter(SalesDeal.id.in_(sorted(set(ids)))).order_by(SalesDeal.id).with_for_update().all()
 
 
 @router.put("/deal/{deal_id}/send")
 def deal_send(deal_id: int, payload: SendIn, db: Session = Depends(get_db), user: User = Depends(MD_EDIT)):
+    from sqlalchemy.exc import IntegrityError
     d = _deal(db, deal_id, user)
     extra = [_deal(db, i, user) for i in dict.fromkeys(payload.with_deals) if i != deal_id]
+    _lock_deals(db, [d.id] + [x.id for x in extra])
     try:
         out = MS.send_with(db, d, extra, user, target=payload.target, master_id=payload.master_id)
     except MS.MasterError as e:
         db.rollback()
         raise HTTPException(e.status, e.message)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Сделку уже отправили в ДО — обновите экран")
     db.commit()
     where = {"new": "своё ДС", "join": "в мастер-сделку"}.get(payload.target, "мастер-сделка")
     log_action(db, user, "deal_send_to_do", "sales_deal", d.id,

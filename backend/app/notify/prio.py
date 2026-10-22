@@ -21,12 +21,11 @@ def _pub_name(db: Session, publisher_id: int) -> str:
 
 def _inward(db: Session, key: str, deal, **kw) -> None:
     from app.notify.bus import emit
+    from app.notify.safe import quiet
     from app.sales.deal_label import deal_label
-    try:
+    with quiet(db, f"приоритезация {deal.code}: {key}"):
         emit(db, key, title=f"{deal_label(deal)} — {kw.pop('title')}", link=f"/sales/deals/{deal.id}",
              entity_type="sales_deal", entity_id=deal.id, ctx={"deal": deal}, code=deal.code, **kw)
-    except Exception:  # noqa: BLE001
-        log.exception("приоритезация %s: событие %s не ушло", deal.code, key)
 
 
 def site_answered(db: Session, deal, p) -> None:
@@ -71,14 +70,15 @@ def _outward(db: Session, kind: str, deal, p, title: str, body: str, facts=()) -
     pub = db.get(SalesPublisher, p.publisher_id)
     if pub is None:
         return {"status": "skip"}
-    brand, period = _deal_brand_name(db, deal), deal_period_text(deal)
+    # Savepoint, а не `db.rollback()`: откат уносил внутренние уведомления по уже обработанным площадкам (аудит 21.10.2026).
     try:
-        return notify_publisher(db, kind, pub.id, title=title, body=body, facts=list(facts),
-                                context=" · ".join(x for x in ((pub.domain or pub.name), brand, period) if x),
-                                link="/", entity_type="prio_placement", entity_id=p.id,
-                                values={"бренд": brand, "период": period})
+        with db.begin_nested():
+            brand, period = _deal_brand_name(db, deal), deal_period_text(deal)
+            return notify_publisher(db, kind, pub.id, title=title, body=body, facts=list(facts),
+                                    context=" · ".join(x for x in ((pub.domain or pub.name), brand, period) if x),
+                                    link="/", entity_type="prio_placement", entity_id=p.id,
+                                    values={"бренд": brand, "период": period})
     except Exception as e:  # noqa: BLE001
-        db.rollback()
         log.warning("Площадке %s не ушло «%s»: %s", pub.id, kind, e)
         return {"status": "error", "why": str(e)[:200]}
 

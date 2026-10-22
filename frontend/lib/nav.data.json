@@ -87,6 +87,12 @@
           "perm": "sales_registry"
         },
         {
+          "key": "status",
+          "label": "Статусы продаж",
+          "href": "/sales/status",
+          "perm": "sales_status"
+        },
+        {
           "key": "analytics",
           "label": "Аналитика",
           "href": "/sales/analytics",

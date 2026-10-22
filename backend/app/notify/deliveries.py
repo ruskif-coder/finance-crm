@@ -55,13 +55,14 @@ SELECT 'n' || d.id            AS id,
        d.status               AS status,
        d.suppress_reason      AS reason,
        d.error                AS error,
-       d.event_key            AS kind
+       d.event_key            AS kind,
+       d.sent_at              AS sent_at
   FROM notification_deliveries d
   LEFT JOIN users u ON u.id = d.user_id
 UNION ALL
 SELECT 'm' || m.id, m.created_at, 'mail', :pub,
        coalesce(nullif(m.to_name, ''), m.to_email), m.subject, m.status,
-       NULL, m.error, m.kind
+       NULL, m.error, m.kind, m.sent_at
   FROM mail_log m
 """
 
@@ -106,5 +107,7 @@ def query(db: Session, *, limit: int = 100, offset: int = 0,
                              if r.status == "queued" and r.error
                              else STATUS.get(r.status, r.status)),
             "reason": r.reason, "error": r.error, "kind": r.kind,
+            # Время фактической отправки (21.10.2026): отложенное тихими часами уходит позже события.
+            "sent_at": r.sent_at,
         } for r in rows],
     }

@@ -55,7 +55,7 @@ def test_word_file_uses_abbreviated_names_and_a_nominative_signature():
 # ── пересоздание на актуальном шаблоне ───────────────────────────────────────────────────────
 
 def _rebuild_with(monkeypatch, annex_row, *, frozen=None, sent=False):
-    monkeypatch.setattr(A, "_annex", lambda db, i: annex_row)
+    monkeypatch.setattr(A, "_annex", lambda db, i, *a: annex_row)
     monkeypatch.setattr(A, "_contract", lambda db, i: SimpleNamespace(id=2))
     monkeypatch.setattr(A, "_freeze_for_confirm", lambda db, a, c, no: frozen or {"template": {"version_id": 9}, "amount": 1.0})
     monkeypatch.setattr(A, "_sent_to_onec", lambda a: sent)
@@ -106,7 +106,7 @@ def test_client_file_has_the_closing_basis_page_only_when_asked():
 
 def _set_date_with(monkeypatch, annex_row, new, *, sent=False):
     logs = []
-    monkeypatch.setattr(A, "_annex", lambda db, i: annex_row)
+    monkeypatch.setattr(A, "_annex", lambda db, i, *a: annex_row)
     monkeypatch.setattr(A, "_contract", lambda db, i: SimpleNamespace(id=2))
     monkeypatch.setattr(A, "_sent_to_onec", lambda a: sent)
     monkeypatch.setattr(A, "log_action", lambda db, u, action, et, eid, details: logs.append((action, details)))

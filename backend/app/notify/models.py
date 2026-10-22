@@ -117,7 +117,10 @@ class NotificationDelivery(Base):
     facts = Column(JSONB, nullable=False, default=list)
     code = Column(String(20))
     notification_id = Column(Integer, ForeignKey("notifications.id", ondelete="SET NULL"))
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now())   # время СОБЫТИЯ
+    # Время фактической отправки (миграция 2026-10-21_delivery_sent_at.sql): отложенное тихими часами уходит утром,
+    # и без этой колонки журнал не отличал его от ушедшего ночью.
+    sent_at = Column(DateTime)
 
 
 class NotificationScanRun(Base):

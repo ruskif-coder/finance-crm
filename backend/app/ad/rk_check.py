@@ -26,6 +26,8 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
+import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей (аудит 21.10.2026)
+
 log = logging.getLogger("finance.rk_check")
 
 GREEN, YELLOW, RED, SKIP = "green", "yellow", "red", "skip"
@@ -576,7 +578,6 @@ def run(campaign_id: Optional[int] = None, dry_run: bool = False) -> dict:
 if __name__ == "__main__":
     import argparse
     import sys
-    import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()

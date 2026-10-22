@@ -76,7 +76,7 @@ def test_ready_fires_once_after_send_with_whole_batch(monkeypatch):
     from app.master_deal import service as MS
     calls = []
     monkeypatch.setattr(MS, "send", lambda db, d, u, **kw: {"master": {"id": 1, "code": "M-1"}, "first_send": True})
-    monkeypatch.setattr(MS, "siblings", lambda db, d: [])
+    monkeypatch.setattr(MS, "siblings", lambda db, d, *a: [])
     monkeypatch.setattr(CN, "ready_check", lambda db, m: calls.append(m))
 
     class Db:
@@ -90,7 +90,7 @@ def test_resend_of_already_sent_deal_does_not_fire_ready(monkeypatch):
     from app.master_deal import service as MS
     calls = []
     monkeypatch.setattr(MS, "send", lambda db, d, u, **kw: {"master": {"id": 1, "code": "M-1"}, "first_send": False})
-    monkeypatch.setattr(MS, "siblings", lambda db, d: [])
+    monkeypatch.setattr(MS, "siblings", lambda db, d, *a: [])
     monkeypatch.setattr(CN, "ready_check", lambda db, m: calls.append(m))
 
     class Db:

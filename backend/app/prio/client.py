@@ -26,6 +26,9 @@ class PrioClient:
             raise PrioApiError("PRIO_API_TOKEN не задан — токен системы приоритезации кладётся в .env")
 
     def _call(self, method: str, path: str, *, params: Optional[dict] = None, json: Optional[dict] = None) -> Any:
+        from app import external_writes as EW
+        if method != "GET" and not EW.allowed():
+            raise PrioApiError(f"{method} {path}: {EW.REFUSAL}")
         try:
             r = httpx.request(method, self.base + path, params=params, json=json, timeout=TIMEOUT,
                               headers={"Authorization": f"Bearer {self.token}"})
@@ -36,7 +39,8 @@ class PrioClient:
         except ValueError:
             raise PrioApiError(f"{method} {path}: HTTP {r.status_code}, ответ не JSON: {r.text[:200]}")
         if r.status_code >= 400 or (isinstance(body, dict) and body.get("ok") is False):
-            raise PrioApiError(f"{method} {path}: HTTP {r.status_code} — {(body or {}).get('error') or str(body)[:200]}")
+            why = body.get("error") if isinstance(body, dict) else None     # тело-список не должно давать AttributeError → 500
+            raise PrioApiError(f"{method} {path}: HTTP {r.status_code} — {why or str(body)[:200]}")
         return body
 
     def create(self, payload: dict) -> dict:

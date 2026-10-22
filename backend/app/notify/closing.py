@@ -17,11 +17,12 @@ RECON_OVERDUE_DAYS = 3
 
 
 def _safe(fn):
+    """Savepoint вокруг уведомления: упавший запрос не отравляет транзакцию действия (аудит 21.10.2026)."""
+    from app.notify.safe import quiet
+
     def run(*a, **kw):
-        try:
+        with quiet(a[0] if a else kw.get("db"), f"контур закрытия: {fn.__name__}"):
             fn(*a, **kw)
-        except Exception:  # noqa: BLE001
-            log.exception("уведомление контура закрытия не ушло: %s", fn.__name__)
     return run
 
 

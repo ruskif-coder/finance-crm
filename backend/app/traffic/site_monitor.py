@@ -26,6 +26,7 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+import app.model_registry  # noqa: F401 — крон: все модели, без HTTP-слоя (раньше import app.main; аудит 21.10.2026)
 from app.dsp import admin as dsp_admin
 from app.sales.models import PUBLISHER_ARCHIVE_STATUS
 
@@ -258,7 +259,6 @@ def down_publishers(db: Session) -> set:
 
 
 def main() -> None:
-    import app.main  # noqa: F401 — все модели в реестре SQLAlchemy
     from app.database import SessionLocal
     logging.basicConfig(level=logging.INFO)
     db = SessionLocal()

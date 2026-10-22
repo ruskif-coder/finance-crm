@@ -181,10 +181,15 @@ def _report(out: dict) -> str:
             + (" (пробный прогон, ничего не записано)" if out.get("dry_run") else ""))
 
 
+def exit_code(res: dict) -> int:
+    """1 — пересчёт остановлен защитой или лимиты ушли не все. У остановленного нет `failed` (прод 22.10.2026: KeyError)."""
+    return 1 if res.get("held") or res.get("failed") else 0
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Ночной пересчёт объёмов РК и лимитов DSP")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     res = run(dry_run=a.dry_run)
     print(_report(res))
-    sys.exit(1 if res["failed"] else 0)
+    sys.exit(exit_code(res))

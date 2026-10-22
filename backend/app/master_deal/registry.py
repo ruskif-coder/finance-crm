@@ -40,13 +40,20 @@ def _iso(v, **kw):
 
 
 def rows(db: Session, user) -> list:
+    """Строки реестра. Сверка сделки — один раз за запрос (`CL.memo`, аудит 21.10.2026)."""
+    from app.final_recon import closing as CL
+    with CL.memo(db):
+        return _rows(db, user)
+
+
+def _rows(db: Session, user) -> list:
     from app.master_deal.models import MasterDeal
     own = SC.own_reps(db, user)
     fin = SC.can_finance(db, user)
     out = []
     for r in db.execute(_ROWS).all():
         m = db.get(MasterDeal, r[0])
-        if not SC.in_scope(db, m, own):
+        if not SC.all_in_scope(db, m, own):            # как карточка: суммы и эффективность всего пакета (аудит 21.10.2026)
             continue
         out.append({"code": r[1], "status": r[2], "status_label": MST.label(db, m), "todo": MST.todo(db, m), "period": r[3],
                     "contract": {"number": r[4], "date": _iso(r[5])}, "counterparty": r[6], "payer": r[7], "built_by": r[8],

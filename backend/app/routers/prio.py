@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Приоритезация — сборка в карточке сделки (владелец 19.10.2026). Собирает аккаунт; права — реестр сделок (как сверка),
 область видимости — как у сделки. Ответы площадки идут через шлюз кабинета (`cabinet_gw`), не сюда."""
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,6 +18,7 @@ from app.prio import models as M
 from app.prio import service as S
 from app.routers.final_recon import _deal
 
+log = logging.getLogger("finance.prio")
 router = APIRouter()
 VIEW = require_permission("sales_registry", "view")
 EDIT = require_permission("sales_registry", "edit")
@@ -123,6 +125,14 @@ def _notify(db, d, pid, action):
         N.live_to_site(db, d, p, action != "stop")
 
 
+def _notify_safe(db, d, pid, action):
+    try:
+        _notify(db, d, pid, action)
+    except Exception:  # noqa: BLE001 — действие сохранено; письмо площадке не важнее его
+        db.rollback()
+        log.exception("приоритезация %s: уведомление «%s» по площадке %s не ушло", d.code, action, pid)
+
+
 def _act(db, d, pid, action, body, user):
     if action == "send":
         return S.send(db, d, pid, user)
@@ -142,13 +152,16 @@ def prio_action(deal_id: int, pid: int, action: str, body: ActIn = ActIn(), db: 
                 user: User = Depends(EDIT)):
     d = _deal(db, deal_id, user)
     try:
-        _act(db, d, pid, action, body, user)
+        res = _act(db, d, pid, action, body, user)
     except S.PrioError as e:
         db.rollback(); _err(e)
+    warn = getattr(res, "check_warning", None)
     db.commit()
-    _notify(db, d, pid, action)
-    log_action(db, user, f"prio_{action}", "sales_deal", d.id, f"{d.code}: площадка запроса {pid} — {ACTIONS.get(action, action)}")
-    return S.view(db, d)
+    # Журнал — до уведомления: действие уже сохранено, сбой письма не должен ни терять запись, ни отдавать 500 (аудит 21.10.2026).
+    log_action(db, user, f"prio_{action}", "sales_deal", d.id,
+               f"{d.code}: площадка запроса {pid} — {ACTIONS.get(action, action)}" + (f" · {warn}" if warn else ""))
+    _notify_safe(db, d, pid, action)
+    return {**S.view(db, d), "warning": warn}
 
 
 @router.post("/deal/{deal_id}/bulk/{action}")
@@ -160,16 +173,19 @@ def prio_bulk(deal_id: int, action: str, db: Session = Depends(get_db), user: Us
     st = S.view(db, d)
     ids = [x["id"] for x in st["placements"]
            if (action == "send" and x["status"] == M.DRAFT and not x["missing"]) or (action == "launch" and x["status"] == M.APPROVED)]
-    done, failed = [], []
+    done, failed, warnings = [], [], []
     for pid in ids:
         try:
-            _act(db, d, pid, action, ActIn(), user)
+            res = _act(db, d, pid, action, ActIn(), user)
             db.commit()
-            _notify(db, d, pid, action)
-            done.append(pid)
         except S.PrioError as e:
             db.rollback()
             failed.append({"id": pid, "error": e.message})
+            continue
+        done.append(pid)
+        if getattr(res, "check_warning", None):
+            warnings.append({"id": pid, "warning": res.check_warning})
+        _notify_safe(db, d, pid, action)
     if done:
         log_action(db, user, f"prio_bulk_{action}", "sales_deal", d.id, f"{d.code}: {ACTIONS[action]} — {len(done)} площадок")
-    return {**S.view(db, d), "done": done, "failed": failed}
+    return {**S.view(db, d), "done": done, "failed": failed, "warnings": warnings}

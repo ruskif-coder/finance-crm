@@ -111,6 +111,11 @@ def list_requests(status: str = "open", db: Session = Depends(get_db), user: Use
 @router.get("/annex/{annex_id}")
 def of_annex(annex_id: int, db: Session = Depends(get_db), user: User = Depends(ANNEX_VIEW)):
     """Заявки одного ДС — для экрана приложения: что открыто и что ответил юрист."""
+    from app.sales.scope import annex_in_scope
+    a = db.query(SalesAnnex).filter(SalesAnnex.id == annex_id).first()
+    if not a:
+        raise HTTPException(404, "Приложение не найдено")
+    annex_in_scope(db, user, a)                     # переписка по чужому ДС не читается (аудит 21.10.2026)
     return _out(db, db.query(LegalRequest).filter(LegalRequest.annex_id == annex_id).order_by(LegalRequest.id.desc()).all())
 
 
@@ -125,6 +130,8 @@ def create(payload: CreateIn, db: Session = Depends(get_db), user: User = Depend
     a = db.query(SalesAnnex).filter(SalesAnnex.id == payload.annex_id).first()
     if not a:
         raise HTTPException(404, "Приложение не найдено")
+    from app.sales.scope import annex_in_scope
+    annex_in_scope(db, user, a)                     # заявкой блокируется выпуск ДС — только по своему (аудит 21.10.2026)
     c = db.query(Contract).filter(Contract.id == a.contract_id).first()
     try:
         r = S.create(db, a, _blocks_of(db, c), payload.block_id, payload.text, user)

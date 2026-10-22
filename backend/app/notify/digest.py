@@ -245,6 +245,8 @@ def _run(dry_run: bool) -> dict:
             # разбирается по журналу почты, где есть и адрес, и причина.
             for r in items:
                 r.status, r.error = status, err
+                if status == "sent":
+                    r.sent_at = datetime.utcnow()
             db.commit()
 
         print(f"дайджест сотрудникам: в очереди {stats['queued']}, "

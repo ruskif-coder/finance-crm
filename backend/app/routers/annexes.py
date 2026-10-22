@@ -43,7 +43,7 @@ from app.audit import log_action
 from app.database import get_db
 from app.models import Contract, Counterparty, User
 from app.permissions import require_permission
-from app.routers.sales_dashboard import _assert_deal_in_scope
+from app.routers.sales_dashboard import _assert_deal_in_scope, _scope_deal_ids
 from app.sales import annex as annex_build
 from app.sales import annex_docx as docx_build
 from app.sales import rugram
@@ -68,10 +68,15 @@ def _contract(db: Session, contract_id: int) -> Contract:
     return c
 
 
-def _annex(db: Session, annex_id: int) -> SalesAnnex:
+def _annex(db: Session, annex_id: int, user=None) -> SalesAnnex:
+    """ДС по id. С пользователем — ещё и область «свои» (аудит 21.10.2026): ручки обязаны передавать `user`,
+    служебные вызовы без него проверку не делают."""
     a = db.query(SalesAnnex).filter(SalesAnnex.id == annex_id).first()
     if not a:
         raise HTTPException(404, "Приложение не найдено")
+    if user is not None:
+        from app.sales import scope as SC
+        SC.annex_in_scope(db, user, a)
     return a
 
 
@@ -151,9 +156,10 @@ def preview(contract_id: int, period_from: date, period_to: date, amount: float,
     if period_to < period_from:
         raise HTTPException(400, "Конец периода раньше начала")
     c = _contract(db, contract_id)
+    ids = _scope_deal_ids(db, user, _ids(deal_ids))         # медиаплан чужой сделки не собирается (аудит 21.10.2026)
     data = annex_build.build(db, c, period_from=period_from, period_to=period_to,
                              amount=amount, brand=brand, vat_rate=vat_rate,
-                             deal_ids=_ids(deal_ids))
+                             deal_ids=ids)
     data["no_hint"] = annex_build.no_hint(db, c)
     data["annex_start_no"] = c.annex_start_no
     return data
@@ -188,6 +194,8 @@ def create_annex(payload: AnnexIn, db: Session = Depends(get_db), user: User = D
     version, reason = tpl_doc.resolve(db, c)
     if version is None:
         raise HTTPException(409, reason)            # формат не указан или шаблон не назначен — ДС не собирается
+    if payload.deal_ids:
+        _scope_deal_ids(db, user, payload.deal_ids)    # разнесение выручки — только в свои сделки (аудит 21.10.2026)
     _assert_one_advertiser(db, payload.deal_ids)
     data = annex_build.build(db, c, period_from=payload.period_from,
                              period_to=payload.period_to, amount=payload.total_amount,
@@ -348,7 +356,7 @@ def edit_annex(annex_id: int, payload: AnnexIn, db: Session = Depends(get_db),
                user: User = Depends(EDIT)):
     """Правка ЧЕРНОВИКА. Подтверждённое не меняем: документ уже у клиента, и правка
     задним числом означала бы два разных приложения под одним номером."""
-    a = _annex(db, annex_id)
+    a = _annex(db, annex_id, user)
     if a.no is not None:
         raise HTTPException(400, "Приложение подтверждено — правка запрещена")
     if payload.period_to < payload.period_from:
@@ -460,7 +468,7 @@ def edit_block(annex_id: int, payload: EditIn, db: Session = Depends(get_db), us
     """Быстрая правка блока, доступного аккаунту (зона до таблицы МП), и «основания для закрывающих документов». Текст хранится С подстановками —
     значения подставляются при сборке и остаются живыми. Черновик: правки в `blocks.edits`. Подтверждённое, пока не ушло в 1С: пункт зоны
     аккаунта пересобирает документ на той же версии шаблона (номер и дата прежние), основание закрывающих правится внутри замороженного документа."""
-    a = _annex(db, annex_id)
+    a = _annex(db, annex_id, user)
     c = _contract(db, a.contract_id)
     frozen = tpl_doc.is_frozen(a)
     if a.no is not None and not frozen:
@@ -512,7 +520,7 @@ def set_annex_date(annex_id: int, payload: DateIn, db: Session = Depends(get_db)
     """Сменить дату ДС (владелец 14.10.2026): по умолчанию она — начало РК, аккаунт ставит другую с экрана ДС после «Уверены?».
     Черновик — просто дата. Подтверждённое, пока не ушло в 1С, — документ пересобирается на той же версии шаблона с новой датой
     (номер прежний). Было и стало — в журнал."""
-    a = _annex(db, annex_id)
+    a = _annex(db, annex_id, user)
     c = _contract(db, a.contract_id)
     frozen = tpl_doc.is_frozen(a)
     if a.no is not None and not frozen:
@@ -559,7 +567,7 @@ def rebuild_annex(annex_id: int, db: Session = Depends(get_db), user: User = Dep
     """Пересоздать подтверждённое приложение на АКТУАЛЬНОЙ версии шаблона договора (владелец 14.10.2026): для ДС, собранных до конструктора,
     и для тех, что собраны по старой версии шаблона, пока они не ушли в 1С. Номер и дата сохраняются, документ собирается заново и замораживается
     (полнота и сверка чисел те же, что при подтверждении). Прежний замороженный текст заменяется; что было и что стало — в журнале."""
-    a = _annex(db, annex_id)
+    a = _annex(db, annex_id, user)
     if a.no is None:
         raise HTTPException(400, "Черновик собирается по текущему шаблону сам — пересоздавать нечего")
     if _sent_to_onec(a):
@@ -647,7 +655,7 @@ def confirm_annex(annex_id: int, payload: ConfirmIn, db: Session = Depends(get_d
     держит база (`uq_annex_contract_no`), и отказ по ней читается человеку понятным
     текстом, а не пятисоткой.
     """
-    a = _annex(db, annex_id)
+    a = _annex(db, annex_id, user)
     c, no = commit_confirm(db, payload.no, a.id, lambda: confirm_one(db, a, payload, user))
     db.refresh(a)
     log_action(db, user, "annex_confirm", "contract", c.id, f"{a.number}")
@@ -680,8 +688,16 @@ def list_annexes(db: Session = Depends(get_db), user: User = Depends(VIEW)):
                            .all()):
         deals.setdefault(aid, []).append({"id": did, "code": code})
     tpls = tpl_doc.template_labels(db, [a.template_version_id for a, _, _ in rows])
+    # Область «свои» (аудит 21.10.2026): реестр не отдаёт ДС с чужими сделками — правило то же, что у карточки ДС.
+    from app.sales import scope as SC
+    own = SC.own_rep_ids_or_all(db, user, "sales_registry")
+    truncated = total > len(rows)          # до фильтра: иначе у «своих» усечение старых ДС пряталось (ревью 22.10.2026)
+    if own is not None:
+        owners = SC.annex_owners(db, [a.id for a, _, _ in rows])
+        rows = [r for r in rows if SC.annex_visible(owners[r[0].id], own, r[0].created_by, user.id)]
+        total = len(rows)
     return {"total": total, "limit": LIST_LIMIT,
-            "truncated": total > len(rows),
+            "truncated": truncated,
             "items": [{**_out(a), "template": tpls.get(a.template_version_id),
                        # ИНН берётся из карточки контрагента, а не из договора: у
                        # легаси-договоров он бывает пуст, а у контрагента заполнен.
@@ -766,7 +782,7 @@ def export_annexes(payload: ExportIn, db: Session = Depends(get_db),
 @router.get("/{annex_id}")
 def get_annex(annex_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
     """Приложение вместе с собранным документом — тем же расчётом, что предпросмотр."""
-    a = _annex(db, annex_id)
+    a = _annex(db, annex_id, user)
     c = _contract(db, a.contract_id)
     deals = _deal_cards(db, a.id)
     state = tpl_doc.model_of(db, a, c, _annex_deals(db, a.id))
@@ -927,7 +943,7 @@ def annex_pdf(annex_id: int, db: Session = Depends(get_db), user: User = Depends
     в проекте нет, значит расходиться нечему. Данные инжектятся в окно, поэтому браузеру
     не нужен ни токен, ни доступ к API — доступ проверен здесь.
     """
-    a = _annex(db, annex_id)
+    a = _annex(db, annex_id, user)
     if not with_basis:
         _assert_no_open_legal(db, a)
     doc = _doc(db, a)
@@ -966,7 +982,7 @@ def annex_docx(annex_id: int, db: Session = Depends(get_db), user: User = Depend
     правки до подписания. Проверка полноты реквизитов ОДНА И ТА ЖЕ: документ с прочерком
     на месте подписанта одинаково опасен в любом формате.
     """
-    a = _annex(db, annex_id)
+    a = _annex(db, annex_id, user)
     if not with_basis:
         _assert_no_open_legal(db, a)
     doc = _doc(db, a)
