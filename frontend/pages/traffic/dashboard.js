@@ -324,6 +324,8 @@ export default function TrafficDashboard() {
   // умолчание считается там (рядовому — свои, мастеру — все), и в состояние не кладётся,
   // иначе ответ сервера тут же дёрнул бы вторую загрузку тем же фильтром.
   const [scope, setScope] = useState(null)
+  // Архив — РК закрытых сделок (владелец 22.10.2026): по умолчанию скрыт, как «скрыть архив» в продажах.
+  const [archive, setArchive] = useState(false)
   // Аналитика по умолчанию СВЁРНУТА (владелец 17.09.2026). Экран открывают ради
   // реестра РК: два виджета наверху отодвигают строки вниз, и первое, что видит
   // трафик, — не его работа. Кому аналитика нужна постоянно, разворачивает её один
@@ -367,13 +369,14 @@ export default function TrafficDashboard() {
   const load = useCallback(async () => {
     const p = new URLSearchParams()
     if (scope) p.set('scope', scope)
+    if (archive) p.set('archive', 'true')
     try {
       const r = await api.get(`/traffic-dashboard/dashboard?${p}`, auth())
       setData(r.data)
       return r.data
     } catch (e) { fail(e?.response?.data?.detail || 'Не удалось загрузить дашборд') }
     return null
-  }, [scope, fail])
+  }, [scope, archive, fail])
   useEffect(() => { load() }, [load])
 
   // Сверка с верификатором. Отдельным запросом, а не полем в дашборде: она НЕ про
@@ -830,6 +833,10 @@ export default function TrafficDashboard() {
                 </option>
               ))}
             </select>
+            <button style={btn(archive)} onClick={() => setArchive(v => !v)}
+              title={archive ? 'Показаны РК закрытых сделок — скрыть' : 'РК сделок в «Архиве успешных», «не случилась», «сорвалась» скрыты — показать'}>
+              {archive ? 'Скрыть архив' : `Архив${data?.archived ? ` (${data.archived})` : ''}`}
+            </button>
             {/* Импорт суточного отчёта Adfox — площадки вне нашей DSP (владелец 02.10.2026):
                 перед кнопкой виджетов, у кого есть правка дашборда. */}
             {mayEdit && (

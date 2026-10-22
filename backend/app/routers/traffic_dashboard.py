@@ -19,7 +19,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 import logging
@@ -48,7 +48,7 @@ from app.models import User
 from app.permissions import require_permission
 from app.routers.traffic import _apply_scope, _is_master
 from app.dsp import refresh as dsp_refresh
-from app.sales.models import SalesDeal, SalesRep
+from app.sales.models import SalesDeal, SalesRep, SalesStage
 from app.sales.reps import staff_users
 from app.sales.row_context import load_row_context
 from app.traffic.delivery_facts import _facts, _creatives_all, _placements_of  # noqa: F401 — перенесено 07.10.2026: кронам не нужен слой HTTP
@@ -662,13 +662,21 @@ def _scope_for(db: Session, user: User, scope: Optional[str]):
 # ── реестр ────────────────────────────────────────────────────────────────
 
 @router.get("/dashboard")
-def dashboard(scope: Optional[str] = None,
+def dashboard(scope: Optional[str] = None, archive: bool = False,
               db: Session = Depends(get_db), user: User = Depends(VIEW)):
     """Реестр РК в области видимости + сводка. Синк РК делает отдельная ручка `/sync`."""
     rep_id, scope = _scope_for(db, user, scope)
     q = (db.query(AdCampaign, SalesDeal)
          .join(SalesDeal, SalesDeal.id == AdCampaign.deal_id))
     q = _apply_scope(q, db, user, rep_id)
+    # РК закрытых сделок — архив (владелец 22.10.2026): «Архив успешных», «не случилась», «сорвалась» не
+    # показываются, пока не включён показ архива. То же правило, что «скрыть архив» в продажах. Исключений
+    # по статусу РК нет: стадии последовательны, закрытая сделка живой РК не имеет.
+    closed = db.query(SalesStage.id).filter(or_(SalesStage.is_terminal.is_(True), SalesStage.is_lost.is_(True)))
+    is_closed = SalesDeal.our_stage_id.in_(closed)
+    archived = q.filter(is_closed).count()
+    if not archive:
+        q = q.filter(or_(SalesDeal.our_stage_id.is_(None), ~is_closed))
     if scope == "none":
         # Разбор невыбранного: РК, на которых ответственный не стоит вовсе. Сегодня это
         # почти весь список (замерено 04.09.2026: 0 назначений на 57 РК), и именно
@@ -871,7 +879,7 @@ def dashboard(scope: Optional[str] = None,
         # Список для переключателя — ВСЕ активные учётки трафика, с пометкой мастера.
         # Мастера идут первыми (сортировка в `staff_users`), звёздочку рисует фронт.
         "reps": staff_users(db, "traffic"),
-        "scope": scope,
+        "scope": scope, "archive": archive, "archived": archived,
         # Себя фронт выкидывает из списка: «Мои» — это уже я, и вторая строка с моим
         # именем означала бы, что это разные фильтры.
         "my_user_id": user.id,
