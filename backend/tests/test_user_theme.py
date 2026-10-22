@@ -42,7 +42,7 @@ def _theme(uid):
         db.close()
 
 
-@pytest.mark.parametrize("theme", ["dark", "graphite", "light"])
+@pytest.mark.parametrize("theme", ["dark", "graphite", "pink", "japandi", "light"])
 def test_theme_is_saved_and_returned_by_me(me, theme):
     c = TestClient(app)
     r = c.put("/api/auth/me/theme", json={"theme": theme})
@@ -52,7 +52,7 @@ def test_theme_is_saved_and_returned_by_me(me, theme):
 
 
 def test_unknown_theme_is_rejected(me):
-    r = TestClient(app).put("/api/auth/me/theme", json={"theme": "pink"})
+    r = TestClient(app).put("/api/auth/me/theme", json={"theme": "neon"})
     assert r.status_code == 422
 
 
