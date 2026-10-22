@@ -1,3 +1,4 @@
+from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -320,6 +321,7 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
         "permissions": get_permissions_for_user(db, user),
         "name": user.name,
         "consent_required": user.consent_accepted_at is None,
+        "theme": user.theme or "light",
     }
 
 @router.get("/me")
@@ -335,7 +337,20 @@ def get_me(current_user: User = Depends(get_current_user_any), db: Session = Dep
         "is_admin": current_user.role.key == "admin",
         "permissions": get_permissions_for_user(db, current_user),
         "consent_required": current_user.consent_accepted_at is None,
+        "theme": current_user.theme or "light",
     }
+
+
+class _ThemeIn(BaseModel):
+    theme: Literal["light", "dark", "graphite"]
+
+
+@router.put("/me/theme")
+def set_my_theme(body: _ThemeIn, current_user: User = Depends(get_current_user_any), db: Session = Depends(get_db)):
+    """Тема интерфейса — личная настройка (владелец 22.10.2026): только своя, отдельного права нет."""
+    current_user.theme = body.theme       # в журнал действий не пишем: настройка вида, не действие над данными
+    db.commit()
+    return {"theme": body.theme}
 
 
 class _PwdCheck(BaseModel):

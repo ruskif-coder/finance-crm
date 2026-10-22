@@ -1,5 +1,6 @@
 // Матрица «площадка × РК» — тело двух вкладок экрана «Согласования» (владелец 29.09.2026).
-// view='appr' — светофор согласования; view='plan' — план показов и план себестоимости.
+// view='appr' — светофор согласования; view='plan' — план показов и план себестоимости;
+// view='fact' — факт показов и сумма, как биллинг в кабинете площадки (владелец 22.10.2026).
 // Данные — /publisher-approvals/matrix (app/launch_prep/matrix.py).
 //
 // Вид — по хендоффу docs/матрица сайтов.zip (design_handoff_approvals_matrix): карточка на
@@ -29,12 +30,14 @@ export const short = (v) => (v >= 1e6 ? `${(v / 1e6).toFixed(2).replace('.', ','
 
 /** Итоги строки/колонки — одно правило на строки, подвал и KPI страницы. */
 export function totalsOf(cells, pend) {
-  const t = { g: 0, n: 0, s: 0, m: 0 }
+  const t = { g: 0, n: 0, s: 0, m: 0, fs: 0, fm: 0 }
   cells.forEach(c => {
     if (!c) return
     t.n++
     if (c.tone === 'agreed') t.g++
     if (c.plan_show && counted(c.tone, pend)) { t.s += c.plan_show; t.m += c.plan_cost || 0 }
+    // Факт — уже открученное: в итог идёт при любом состоянии согласования.
+    t.fs += c.fact_show || 0; t.fm += c.fact_cost || 0
   })
   return t
 }
@@ -105,16 +108,29 @@ function PlanCell({ c, pend }) {
   )
 }
 
-const Tot = ({ plan, t }) => (plan
-  ? <div style={{ lineHeight: 1.25, textAlign: 'center' }}><b style={{ display: 'block' }}>{short(t.s)}</b>
-      <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>{short(t.m)} ₽</span></div>
-  : `${t.g}/${t.n}`)
+function FactCell({ c }) {
+  if (!c.fact_show) {
+    return <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)', opacity: .6, textAlign: 'center' }}>нет факта</div>
+  }
+  return (
+    <div className="mx-dot" style={{ padding: '4px 6px', borderRadius: 8, lineHeight: 1.25, textAlign: 'center',
+      background: TONE.agreed.bg, boxShadow: `inset 0 0 0 1px ${TONE.agreed.bd}` }}>
+      <b style={{ display: 'block', fontFamily: MONO, fontSize: 11 }}>{short(c.fact_show)}</b>
+      <span style={{ fontFamily: MONO, fontSize: 10, color: c.fact_cost == null ? 'var(--danger-fg)' : 'var(--text-muted)' }}>
+        {c.fact_cost == null ? 'нет CPM' : `${short(c.fact_cost)} ₽`}</span>
+    </div>
+  )
+}
+
+const Tot = ({ view, t }) => (view === 'appr' ? `${t.g}/${t.n}`
+  : <div style={{ lineHeight: 1.25, textAlign: 'center' }}><b style={{ display: 'block' }}>{short(view === 'fact' ? t.fs : t.s)}</b>
+      <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>{short(view === 'fact' ? t.fm : t.m)} ₽</span></div>)
 const totCell = { fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', padding: 6,
   display: 'flex', alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch' }
 
 export default function ApprovalsMatrix({ view, deals, pubs, cell, lateDays, pend, sort, onSort }) {
   const [tip, setTip] = useState(null)
-  const plan = view === 'plan'
+  const plan = view !== 'appr'   // план и факт — одна раскладка: показы и рубли в ячейке
   // В светофоре рядом с «1/1» — плашка скринов «С» (01.10.2026), отсюда ширина.
   const colW = plan ? 98 : 84
   const GRID = `${PUB_W}px ${TOT_W}px repeat(${deals.length}, ${colW}px)`
@@ -158,13 +174,18 @@ export default function ApprovalsMatrix({ view, deals, pubs, cell, lateDays, pen
                 <span title={p.name} style={{ marginLeft: 6, fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
               </div>
               <div style={{ ...stick(PUB_W, 2, 'var(--bg-subtle)'), ...totCell, borderBottom: LINE, borderRight: '1px solid var(--border-card)' }}>
-                <Tot plan={plan} t={totalsOf(cells, pend)} />
+                <Tot view={view} t={totalsOf(cells, pend)} />
               </div>
               {deals.map((d, i) => {
                 const c = cells[i]
                 const base = { padding: 4, borderBottom: LINE, borderRight: LINE, display: 'flex', alignItems: 'center', justifyContent: 'center' }
                 if (!c) return <div key={d.id} style={base} />
-                const extra = plan ? (c.plan_show
+                const extra = view === 'fact' ? (c.fact_show
+                  ? [`Факт: ${nf.format(c.fact_show)} показов (без Block SIMB, как в кабинете площадки)`,
+                    c.fact_cost == null ? 'CPM площадки в реестре не заполнен' : `Биллинг: ${grp(c.fact_cost)} ₽ (CPM ${p.cpm} ₽ до НДС)`,
+                    ...(c.plan_show ? [`План: ${nf.format(c.plan_show)} показов`] : [])]
+                  : ['Факта по площадке в РК пока нет'])
+                  : plan ? (c.plan_show
                   ? [`План: ${nf.format(c.plan_show)} показов`, c.plan_cost == null ? 'CPM площадки в реестре не заполнен'
                     : `Себестоимость: ${grp(c.plan_cost)} ₽ (CPM ${p.cpm} ₽ до НДС)`,
                     ...(counted(c.tone, pend) ? [] : ['В итог не входит'])]
@@ -174,7 +195,7 @@ export default function ApprovalsMatrix({ view, deals, pubs, cell, lateDays, pen
                 return (
                   <div key={d.id} style={{ ...base, cursor: 'pointer' }} onClick={() => openDeal(d)}
                     onMouseMove={e => show(e, t)} onMouseLeave={() => setTip(null)}>
-                    {plan ? <PlanCell c={c} pend={pend} /> : <Light c={c} />}
+                    {view === 'fact' ? <FactCell c={c} /> : plan ? <PlanCell c={c} pend={pend} /> : <Light c={c} />}
                   </div>
                 )
               })}
@@ -187,9 +208,9 @@ export default function ApprovalsMatrix({ view, deals, pubs, cell, lateDays, pen
             {plan ? 'Итого по РК' : 'Согласовано'}
           </div>
           <div style={{ ...stick(PUB_W, 4, 'var(--bg-subtle)'), ...totCell, borderRight: '1px solid var(--border-card)' }}>
-            {plan ? <Tot plan t={all} /> : ''}
+            {plan ? <Tot view={view} t={all} /> : ''}
           </div>
-          {colTot.map((t, i) => <div key={deals[i].id} style={{ ...totCell, borderRight: LINE }}><Tot plan={plan} t={t} /></div>)}
+          {colTot.map((t, i) => <div key={deals[i].id} style={{ ...totCell, borderRight: LINE }}><Tot view={view} t={t} /></div>)}
         </div>
       </div>
 

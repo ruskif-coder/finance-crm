@@ -32,7 +32,7 @@ export function Cube({ variant = 'wave', size = 96, accent = '#7096FC' }) {
   return (
     <svg width={size} height={size} viewBox="0 0 93.16 93.16" fill="none" aria-hidden="true">
       {TILES.map((t, i) => (
-        <path key={i} data-tile="" d={t.d} fill={t.blue ? accent : '#111'}
+        <path key={i} data-tile="" d={t.d} fill={t.blue ? accent : 'var(--text-primary)'}
           style={{ animation: anim, animationDelay: `${delays[i]}s` }} />
       ))}
     </svg>
@@ -52,15 +52,15 @@ export function PageLoader() {
 export function DownloadOverlay({ label = 'Готовим файл…', progress = null }) {
   const pct = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : null
   return (
-    <div style={{ ...overlay, background: 'rgba(20,22,28,.42)', backdropFilter: 'blur(3px)' }} role="status" aria-label={label}>
+    <div style={{ ...overlay, background: 'var(--scrim)', backdropFilter: 'blur(3px)' }} role="status" aria-label={label}>
       <div style={card}>
         <Cube variant="spinner" size={72} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: '#3a3f4a', letterSpacing: '.01em' }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '.01em' }}>
           {label}{progress ? ` — ${progress.done} из ${progress.total}` : ''}
         </span>
         {pct != null && (
-          <div style={{ width: 220, height: 6, borderRadius: 3, background: '#e6e8ee', overflow: 'hidden' }}>
-            <div style={{ width: pct + '%', height: '100%', background: '#4F6CE6', transition: 'width .25s ease' }} />
+          <div style={{ width: 220, height: 6, borderRadius: 3, background: 'var(--border-inner)', overflow: 'hidden' }}>
+            <div style={{ width: pct + '%', height: '100%', background: 'var(--accent)', transition: 'width .25s ease' }} />
           </div>
         )}
       </div>
@@ -71,12 +71,13 @@ export function DownloadOverlay({ label = 'Готовим файл…', progress
 const overlay = {
   position: 'fixed', inset: 0, zIndex: Z.toast - 1,
   display: 'flex', alignItems: 'center', justifyContent: 'center',
-  background: 'rgba(247,248,250,.9)', backdropFilter: 'blur(2px)',
+  // Цвета — от темы (22.10.2026): вбитая светлая подложка выбивала тёмную тему белым экраном.
+  background: 'color-mix(in srgb, var(--bg-canvas) 90%, transparent)', backdropFilter: 'blur(2px)',
 }
 const card = {
   display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
-  padding: '26px 34px', background: '#fff', borderRadius: 16,
-  boxShadow: '0 12px 40px rgba(20,22,28,.22)',
+  padding: '26px 34px', background: 'var(--bg-card)', borderRadius: 16,
+  boxShadow: 'var(--shadow-float)',
 }
 
 export default Cube

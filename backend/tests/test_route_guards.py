@@ -56,6 +56,7 @@ OPEN_BY_DESIGN = {
 OWN_DATA = {
     ("POST", "/api/auth/verify-password"),
     ("POST", "/api/auth/accept-consent"),
+    ("PUT", "/api/auth/me/theme"),          # своя тема интерфейса (22.10.2026)
     ("GET", "/api/notifications"),
     ("GET", "/api/notifications/count"),
     ("POST", "/api/notifications/read"),

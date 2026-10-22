@@ -12,7 +12,7 @@ import api, { auth } from '@/lib/api'
 import { buildTitle, productWithSurface, separatePriceSet, surfaceTag, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
 import { fmtMoney, fmtFull, fmtDate, mln } from '@/lib/salesFormat'
 import { exportTable } from '@/lib/dealsExport.mjs'
-import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, firstSortDir, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z, DealCodeLink, UnitPriceCell, PlanFactCell, ProlongTag } from '@/components/salesTableKit'
+import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, firstSortDir, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z, DealCodeLink, UnitPriceCell, PlanFactCell } from '@/components/salesTableKit'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import { overlayClose } from '@/lib/overlay'
@@ -404,7 +404,8 @@ export default function SalesRegistry2() {
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <DealCodeLink deal={d} emptyLabel="—" />
-            {!!d.prolonged_from_code && <span style={{ marginLeft: 6 }}><ProlongTag code={d.prolonged_from_code} size={10} /></span>}
+            {/* Плашки «пролонгация» в реестре нет (владелец 22.10.2026): она для аккаунтов и вылезала на «Агентство»;
+                в карточке сделки осталась. */}
           </span>
         )
       }

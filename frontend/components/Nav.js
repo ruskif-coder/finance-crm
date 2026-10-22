@@ -18,6 +18,7 @@ import { allowedSections, allowedItems, findByPath, entryHref, firstAllowedHref,
 import BugReport from './BugReport'
 import SearchBar, { SearchPill } from './search/SearchBar'
 import { useMaintenance, MaintenanceBar, MaintenanceStub } from './Maintenance'
+import { applyTheme, readTheme, THEME_ON, THEMES } from '@/lib/theme'
 
 /* Сброс дефолтов <button>: вся навигация — настоящие кнопки (фокус с клавиатуры,
    Enter/Space, роль для скринридера), но выглядят ровно как в макете. */
@@ -462,7 +463,16 @@ function Profile({ onGoto, canSettings, compact = false }) {
     document.addEventListener('mousedown', h)
     return () => document.removeEventListener('mousedown', h)
   }, [])
-  const logout = () => { localStorage.clear(); onGoto?.('/login') }
+  // Тема — настройка браузера, а не сессии: «Выйти» её не сбрасывает.
+  const logout = () => { const t = readTheme(); localStorage.clear(); applyTheme(t); onGoto?.('/login') }
+  const [theme, setTheme] = useState('light')
+  useEffect(() => { setTheme(readTheme()) }, [])
+  // Тема — у пользователя (users.theme): ходит за ним на любое устройство. Браузер держит копию для первого кадра.
+  const pickTheme = (t) => {
+    applyTheme(t); setTheme(t)
+    axios.put('/api/auth/me/theme', { theme: t }, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+      .catch(() => { /* не сохранилось на сервере — в этом браузере тема всё равно останется */ })
+  }
   const initial = (name || '?').trim().charAt(0).toUpperCase() || '?'
   const size = compact ? 36 : 32
   return (
@@ -488,7 +498,7 @@ function Profile({ onGoto, canSettings, compact = false }) {
       </button>
       {open && (
         <span style={{
-          position: 'absolute', top: 'calc(100% + 10px)', right: 0, minWidth: 180, zIndex: Z.dropdown,
+          position: 'absolute', top: 'calc(100% + 10px)', right: 0, minWidth: 230, zIndex: Z.dropdown,
           background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: T.pop,
           overflow: 'hidden', display: 'flex', flexDirection: 'column', animation: `popIn .15s ${T.ease} both`,
         }}>
@@ -500,6 +510,21 @@ function Profile({ onGoto, canSettings, compact = false }) {
           {/* Личная часть настроек уведомлений — доступна всем, а не только тем,
               у кого есть доступ в «Настройки»: каждый правит свои и ничьи больше. */}
           <button onClick={() => { setOpen(false); onGoto?.('/settings/notifications') }} style={menuItem(T.t2)}>Мои уведомления</button>
+          {THEME_ON && (
+            <span style={{ display: 'flex', gap: 4, padding: '8px 10px', borderTop: `1px solid ${T.inner}`, borderBottom: `1px solid ${T.inner}` }}>
+              {THEMES.map(t => (
+                <button key={t.key} type="button" onClick={() => pickTheme(t.key)} style={{
+                  ...btnReset, flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                  padding: '6px 6px', borderRadius: 8, fontSize: 12, fontWeight: theme === t.key ? 700 : 500,
+                  background: theme === t.key ? 'var(--accent-tint)' : 'transparent', color: theme === t.key ? 'var(--accent)' : T.t2,
+                }}>
+                  {/* образец фона темы — у каждого пункта, как в хендоффе */}
+                  <span style={{ width: 10, height: 10, borderRadius: 3, background: t.swatch, boxShadow: `inset 0 0 0 1px ${T.border}` }} />
+                  {t.label}
+                </button>
+              ))}
+            </span>
+          )}
           <button onClick={logout} style={menuItem(T.danger)}>Выйти</button>
           {role === 'admin' && (
             <span style={{ padding: '8px 14px', borderTop: `1px solid ${T.inner}`, fontFamily: T.mono, fontSize: 10, letterSpacing: '.04em', color: T.t4 }}>

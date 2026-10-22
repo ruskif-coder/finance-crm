@@ -9,10 +9,11 @@ import ApprovalsMatrix, { TONE, short, totalsOf } from '@/components/publishers/
 import StuckView from '@/components/publishers/StuckView'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { todayMsk } from '@/lib/dates'
+import { grp0 } from '@/lib/salesFormat'
 
 // Паблишеры → «Согласования»: матрица площадка × РК месяца (владелец 29.09.2026).
-// Две вкладки на одних данных: светофор согласования и план площадок (показы и план
-// себестоимости по закупочному CPM из реестра). Третья — «Подвисшие» (03.10.2026): свой
+// Вкладки на одних данных: светофор согласования, план площадок (показы и план
+// себестоимости по закупочному CPM из реестра) и факт площадок (биллинг, как в кабинете, 22.10.2026). Третья — «Подвисшие» (03.10.2026): свой
 // список без периода, components/publishers/StuckView. Только чтение, право dir_publishers_approvals.
 // Мобильной версии нет намеренно (решение владельца): широкая матрица на телефоне не читается.
 //
@@ -89,7 +90,7 @@ export default function PublisherApprovals() {
     if (!allPubs || onlyProblems) ps = ps.filter(p => ds.some(d => has(d, p)))
     ds = ds.filter(d => ps.some(p => has(d, p)))
     const k = sort.dir === 'asc' ? 1 : -1
-    const total = p => { const t = totalsOf(ds.map(d => cell[`${d.id}:${p.id}`]), pend); return view === 'plan' ? t.s : t.g / (t.n || 1) }
+    const total = p => { const t = totalsOf(ds.map(d => cell[`${d.id}:${p.id}`]), pend); return view === 'plan' ? t.s : view === 'fact' ? t.fm : t.g / (t.n || 1) }
     ps = [...ps].sort((a, b) => (sort.key === 'name' ? a.name.localeCompare(b.name) : total(a) - total(b)) * k)
     return { deals: ds, pubs: ps }
   }, [data, q, onlyProblems, allPubs, cell, sort, view, pend])
@@ -99,6 +100,23 @@ export default function PublisherApprovals() {
     const n = Object.fromEntries(Object.keys(TONE).map(k => [k, 0]))
     cells.forEach(c => { n[c.tone]++ })
     const t = totalsOf(cells, pend)
+    if (view === 'fact') {
+      const noCpm = [...new Set(cells.filter(c => c.fact_show && c.fact_cost == null)
+        .map(c => (data.publishers.find(p => p.id === c.publisher_id) || {}).name))]
+      const planAll = cells.reduce((a, c) => a + (c.plan_show || 0), 0)
+      // Средний CPM закупки — биллинг ÷ факт × 1000 по площадкам с CPM: показы без CPM в знаменатель
+      // не идут, иначе они занижали бы среднее (владелец 22.10.2026).
+      const priced = cells.reduce((a, c) => a + (c.fact_cost != null ? c.fact_show || 0 : 0), 0)
+      return [
+        ['РК в периоде', deals.length],
+        ['Факт показов', short(t.fs)],
+        ['Биллинг', `${short(t.fm)} ₽`],
+        ['CPM закупки', priced ? `${grp0(Math.round(t.fm / priced * 1000))} ₽` : '—'],
+        ['План показов', short(planAll)],
+        ['Выполнение', planAll ? `${Math.round(t.fs / planAll * 100)} %` : '—'],
+        ...(noCpm.length ? [['Нет CPM в реестре', noCpm.join(', '), 'var(--danger-fg)', true]] : []),
+      ]
+    }
     if (view === 'plan') {
       const waiting = cells.filter(c => c.tone === 'waiting' || c.tone === 'late')
       const ws = waiting.reduce((a, c) => a + (c.plan_show || 0), 0)
@@ -146,6 +164,7 @@ export default function PublisherApprovals() {
               <span style={{ display: 'flex', gap: 4, padding: 6, background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 14, boxShadow: 'var(--shadow-card)' }}>
                 <button style={segBtn(view === 'appr')} onClick={() => setView('appr')}>Согласования</button>
                 <button style={segBtn(view === 'plan')} onClick={() => setView('plan')}>План площадок</button>
+                <button style={segBtn(view === 'fact')} onClick={() => setView('fact')}>Факт площадок</button>
                 <button style={segBtn(view === 'stuck')} onClick={() => setView('stuck')}>Подвисшие</button>
               </span>
             </span>
@@ -195,9 +214,9 @@ export default function PublisherApprovals() {
                   {k === 'late' ? `ждём > ${data?.late_workdays ?? 3} раб. дн.` : t.label}
                 </span>
               ))}
-              {view === 'plan' && !!service && data && !data.plan_by_service && (
+              {view !== 'appr' && !!service && data && !data.plan_by_service && (
                 <span style={{ fontSize: 12, color: 'var(--warning-text)' }}>
-                  План размещения ведётся на площадку в РК целиком и по услугам не делится — показан план по всей РК.</span>
+                  {view === 'fact' ? 'Факт' : 'План размещения'} ведётся на площадку в РК целиком и по услугам не делится — показан {view === 'fact' ? 'факт' : 'план'} по всей РК.</span>
               )}
             </div>
           </div>
@@ -219,7 +238,8 @@ export default function PublisherApprovals() {
           <div style={{ flex: '0 0 auto', color: 'var(--text-muted)', fontSize: 11.5, lineHeight: 1.5, padding: '0 4px' }}>
             Колонка — сделка с финансовым периодом в выбранном месяце; при «Все» услуги у пары площадка×РК сводятся в одну ячейку
             по худшему состоянию; ячейка — состояние получателя «Сбора запуска», цифры — согласовано / отправлено комплектов;
-            себестоимость — план показов × закупочный CPM площадки / 1000, до НДС. Клик по ячейке открывает креативы сделки.
+            себестоимость — план показов × закупочный CPM площадки / 1000, до НДС; факт и биллинг — как в кабинете площадки: показы
+            за вычетом Block SIMB × тот же CPM / 1000, до НДС, окончательная сумма — после сверки. Клик по ячейке открывает креативы сделки.
           </div>
           </>)}
         </div>

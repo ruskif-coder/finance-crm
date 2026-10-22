@@ -364,8 +364,8 @@ const WARN_BORDER_HEX = '#F2E0B8'   // рамка предупреждающих
 // красят одно и то же одинаково. Раньше эти же значения были продублированы хексами
 // в pages/accounts/dashboard.js — так в проекте уже разъехались BANK_COLORS.
 export const ROW_TONE = {
-  overdue: { bg: '#FEF7F7', border: '#F0C9CA', dot: 'var(--danger)' },
-  today:   { bg: '#FFFBF3', border: '#F2DFC0', dot: 'var(--dot-current-dz)' },
+  overdue: { bg: 'var(--danger-bg)', border: 'var(--danger-border)', dot: 'var(--danger)' },
+  today:   { bg: 'var(--warning-bg)', border: 'var(--warning-border)', dot: 'var(--dot-current-dz)' },
   soon:    { bg: 'var(--bg-card)', border: 'var(--border-row)', dot: 'var(--accent)' },
   normal:  { bg: 'var(--bg-card)', border: 'var(--border-row)', dot: 'var(--text-faint)' },
 }
