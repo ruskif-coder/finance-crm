@@ -1,0 +1,59 @@
+# -*- coding: utf-8 -*-
+"""Блок эффективности мастер-сделки (владелец 19.10.2026): предварительный расчёт по пакету — выручка, СК, себестоимость,
+прибыль, маржа. Числа сделки берутся у итоговой сверки (`closing.compute`) — второго расчёта суммы и СК нет.
+
+- выручка — сумма ДС до НДС (при «скидке в счёт» СК из неё уже вычтена);
+- СК «постоплата» — наш будущий расход, вычитается из прибыли; «скидка в счёт» — уже в выручке, повторно не вычитается;
+- себестоимость — введённая аккаунтом, иначе оценка по показам × CPM договора площадки (с пометкой «оценка»), иначе неизвестна;
+- прибыль и маржа пакета считаются, только если себестоимость известна у всех сделок, — иначе «нет данных», не ноль."""
+import pytest
+
+from app.master_deal import efficiency as EF
+
+
+def _st(net, mode=None, pct=None, cost=None):
+    sk = (net or 0) * (pct or 0) / 100 if mode else 0.0
+    return {"total_net": net, "cost_net": cost, "sk": {"mode": mode, "percent": pct, "amount_net": round(sk, 2)}}
+
+
+def test_postpay_sk_is_our_cost_discount_is_already_in_revenue():
+    a = EF.row("A", _st(100000, "постоплата", 10, 50000), None)
+    assert (a["revenue"], a["sk_cost"], a["cost"], a["profit"], a["margin_pct"]) == (100000, 10000, 50000, 40000, 40.0)
+    b = EF.row("B", _st(90000, "скидка в счёт", 10, 50000), None)
+    assert b["sk_cost"] == 0 and b["profit"] == 40000, "скидка в счёт уже вычтена из выручки — второй раз не вычитаем"
+
+
+def test_cost_falls_back_to_estimate_and_is_marked():
+    r = EF.row("A", _st(100000), {"cost": 30000.0, "coverage_pct": 80.0})
+    assert r["cost"] == 30000 and r["cost_source"] == "оценка" and r["profit"] == 70000 and r["coverage_pct"] == 80.0
+    r = EF.row("A", _st(100000, cost=45000), {"cost": 30000.0, "coverage_pct": 100.0})
+    assert r["cost"] == 45000 and r["cost_source"] == "введена"
+
+
+def test_unknown_cost_gives_no_profit_not_zero():
+    r = EF.row("A", _st(100000), None)
+    assert r["cost"] is None and r["profit"] is None and r["margin_pct"] is None
+
+
+def test_total_profit_only_when_every_deal_has_cost():
+    rows = [EF.row("A", _st(100000, cost=50000), None), EF.row("B", _st(50000), None)]
+    t = EF.total(rows)
+    assert t["revenue"] == 150000 and t["profit"] is None and t["missing_cost"] == ["B"]
+    rows[1] = EF.row("B", _st(50000, cost=10000), None)
+    t = EF.total(rows)
+    assert t["profit"] == 90000 and t["margin_pct"] == 60.0 and t["missing_cost"] == []
+
+
+def test_zero_revenue_has_no_margin():
+    r = EF.row("A", _st(0, cost=0), None)
+    assert r["margin_pct"] is None
+
+
+@pytest.mark.parametrize("stats,want", [
+    ([(1000, 200.0), (500, 100.0)], (250.0, 100.0)),       # 1000×200/1000 + 500×100/1000
+    ([(1000, 200.0), (500, None)], (200.0, 66.7)),          # нет CPM у площадки — покрытие показов 2/3
+    ([], None),
+])
+def test_estimate_by_publisher_cpm(stats, want):
+    got = EF.estimate_from(stats)
+    assert (got if got is None else (got["cost"], got["coverage_pct"])) == want

@@ -180,10 +180,12 @@ export default function RkAnalysisPage() {
 }
 
 function Shell({ code, children }) {
+  // Открыт из расхлопа дашборда аккаунта — шапка остаётся в контуре «Аккаунты», «Дашборд» ведёт туда же (владелец 15.10.2026).
+  const fromAccounts = useRouter().query.from === 'accounts'
   return (
     <>
       <Head><title>{code ? `Отчёт по РК ${code}` : 'Отчёт по РК'} · Трафики | SIMB-AD ERP</title></Head>
-      <Navbar />
+      <Navbar asPath={fromAccounts ? '/accounts/dashboard' : undefined} />
       <div style={{ maxWidth: 2500, margin: '0 auto', padding: '18px 24px 40px', fontFamily: UI, display: 'flex', flexDirection: 'column', gap: 12 }}>
         {children}
       </div>

@@ -11,7 +11,7 @@ import api, { auth } from './http'
 export const SEARCH_DELAY_MS = 300
 export const SEARCH_MIN = 2
 export const SEARCH_MAX = 100
-export const SEARCH_HINT = 'Сделка, контрагент, ИНН, договор, площадка…'
+export const SEARCH_HINT = 'Сделка, мастер-сделка, контрагент, ИНН, договор, № УПД или счёта…'
 // Та же подсказка внутри фразы «Ищется: …» — строчная только первая буква: ИНН остаётся ИНН.
 export const SEARCH_HINT_TEXT = `Ищется: ${SEARCH_HINT[0].toLowerCase()}${SEARCH_HINT.slice(1)}`
 
@@ -26,6 +26,9 @@ export const TYPE_LABELS = {
   media_plan: 'Медиапланы',
   ord_contract: 'ОРД: изначальные договоры',
   erid: 'ОРД: ЕРИД',
+  master_deal: 'Мастер-сделки',
+  upd: 'УПД',
+  invoice: 'Счета',
 }
 
 const KEY = 'search_q'

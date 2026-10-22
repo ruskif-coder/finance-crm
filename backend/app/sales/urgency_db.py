@@ -34,6 +34,22 @@ def stage_since(db: Session, ids) -> dict:
                                            SalesDealStageHistory.to_stage_id).all())}
 
 
+def mp_linked_scopes(db: Session) -> list:
+    """applies_when всех строк матрицы с check_key='mp_linked' — ОДНИМ запросом на пачку.
+
+    «Нужен МП» (владелец 14.10.2026) показывается, только если матрица требует mp_linked
+    у сделки; читать матрицу на каждую сделку значило бы запрос на строку очереди."""
+    from app.sales.models import SalesStageCheck
+    return [aw for (aw,) in db.query(SalesStageCheck.applies_when)
+            .filter(SalesStageCheck.check_key == "mp_linked").all()]
+
+
+def mp_required(scopes, deal) -> bool:
+    """Есть ли строка mp_linked, применимая к сделке. Нет строк вовсе — МП не требуется."""
+    from app.sales.stage_checks import scope_matches
+    return any(scope_matches(aw, deal) for aw in scopes)
+
+
 def facts_for_deals(db: Session, deals, today: date = None):
     """Считает срочность для переданных сделок. Возвращает [(deal, verdict)].
 
@@ -87,6 +103,8 @@ def facts_for_deals(db: Session, deals, today: date = None):
     live_ids = [d.id for d in deals if slot_of(stages.get(d.our_stage_id)) == "live"]
     delivery = delivery_by_deal(db, campaigns_by_deal(db, live_ids), today) if live_ids else {}
 
+    mp_rows = mp_linked_scopes(db)
+
     out = []
     for d in deals:
         st = stages.get(d.our_stage_id)
@@ -104,6 +122,7 @@ def facts_for_deals(db: Session, deals, today: date = None):
             stage_is_first=(d.our_stage_id is not None and d.our_stage_id == first_id),
             period_from=d.period_from, period_to=d.period_to,
             has_mp=(d.id in mp_ours) or ("mp" in kinds),
+            mp_required=mp_required(mp_rows, d),
             has_ds="ds" in kinds,
             has_closing_docs=bool({"upd", "invoice", "act"} & kinds),
             # is_paid не заполняем: на уровне сделки факт оплаты не читается (см. urgency.py).

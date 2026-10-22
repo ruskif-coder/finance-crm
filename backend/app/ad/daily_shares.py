@@ -31,6 +31,16 @@ def run(dry_run: bool = False, client=None, campaign_ids=None) -> dict:
     from app.ad.models import AdCampaign
 
     from app.bidder import journal
+    if not dry_run:
+        from app.dsp import stat_hold
+        db0 = SessionLocal()
+        try:
+            hold = stat_hold.get(db0)
+        finally:
+            db0.close()
+        if hold:
+            # Сбор DSP сломан — пересчёт по дырявому факту раскладывал бы объём по нулям (16.10.2026).
+            return {"held": hold}
     # Журнал — справка, не условие работы (ревью 05.10.2026): нет таблицы (бэкенд выложен
     # раньше миграции) — пересчёт и лимиты всё равно идут.
     run_id = None
@@ -153,6 +163,10 @@ def _alert_if_worse(db, prev_state, checks: list) -> None:
 
 
 def _report(out: dict) -> str:
+    if out.get("held"):
+        h = out["held"]
+        return (f"ПЕРЕСЧЁТ ОСТАНОВЛЕН: сбор статистики DSP сломан с {h.get('since')} ({h.get('reason')}). "
+                "Возобновить — кнопкой на странице «Биддер», когда статистика снова верная.")
     s = out["shares"]
     upd = sum(x["updated"] for x in out["limits"])
     zero = sum(len(x.get("zero") or []) for x in out["limits"])
@@ -167,10 +181,15 @@ def _report(out: dict) -> str:
             + (" (пробный прогон, ничего не записано)" if out.get("dry_run") else ""))
 
 
+def exit_code(res: dict) -> int:
+    """1 — пересчёт остановлен защитой или лимиты ушли не все. У остановленного нет `failed` (прод 22.10.2026: KeyError)."""
+    return 1 if res.get("held") or res.get("failed") else 0
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Ночной пересчёт объёмов РК и лимитов DSP")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     res = run(dry_run=a.dry_run)
     print(_report(res))
-    sys.exit(1 if res["failed"] else 0)
+    sys.exit(exit_code(res))

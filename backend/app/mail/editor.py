@@ -178,8 +178,7 @@ def sample(db: Session, contour: str) -> dict:
 def _period(a, b) -> str:
     if not a:
         return ""
-    months = ("январь", "февраль", "март", "апрель", "май", "июнь", "июль",
-              "август", "сентябрь", "октябрь", "ноябрь", "декабрь")
+    from app.periods import MONTHS_NOM as months
     if b and (a.year, a.month) == (b.year, b.month):
         return f"{months[a.month - 1]} {a.year}"
     return f"{a.strftime('%d.%m')} — {b.strftime('%d.%m.%Y')}" if b else a.strftime("%d.%m.%Y")

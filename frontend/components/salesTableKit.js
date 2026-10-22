@@ -27,14 +27,14 @@ export function Modal({ title, summary, footer, width = 760, onClose, children }
   return (
     <div {...overlayClose(onClose)}
       style={{
-        position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'rgba(28,36,51,.32)',
+        position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'var(--scrim)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
         overflow: 'auto', fontFamily: UI,
       }}>
       <div style={{
         width, maxWidth: '100%', maxHeight: '88vh', margin: 'auto', display: 'flex',
         flexDirection: 'column', background: 'var(--bg-card)', borderRadius: 18,
-        boxShadow: '0 1px 3px rgba(28,36,51,.05), 0 24px 64px rgba(28,36,51,.22)',
+        boxShadow: 'var(--shadow-modal)',
         animation: 'riseIn .28s cubic-bezier(0.22,1,0.36,1) both',
       }}>
         <style>{`@keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}`}</style>
@@ -75,7 +75,8 @@ export function Modal({ title, summary, footer, width = 760, onClose, children }
 // «уехала». Одно значение на оба прохода, чтобы они не разошлись.
 const EDGE_GAP = 16
 
-export function PortalPopover({ open, minWidth = 220, maxHeight = 320, offset = 4, align = 'left', style, children }) {
+// `flip` — у нижнего края окна раскрыться ВВЕРХ от триггера (подтверждение шага в строке реестра мастер-сделок, 19.10.2026).
+export function PortalPopover({ open, minWidth = 220, maxHeight = 320, offset = 4, align = 'left', flip = false, style, children }) {
   const anchor = useRef(null)   // скрытый маркер на месте вызова: его parentElement — триггер
   const panel = useRef(null)    // сама панель: нужна, чтобы прижать её по ФАКТИЧЕСКОЙ ширине
   const [pos, setPos] = useState(null)
@@ -91,13 +92,14 @@ export function PortalPopover({ open, minWidth = 220, maxHeight = 320, offset = 
         ? Math.max(EDGE_GAP, Math.min(r.right - minWidth, window.innerWidth - minWidth - EDGE_GAP))
         : Math.max(EDGE_GAP, Math.min(r.left, window.innerWidth - minWidth - EDGE_GAP))
       clamped.current = false
-      setPos({ top: r.bottom + offset, left })
+      const up = flip && r.bottom + offset + maxHeight > window.innerHeight && r.top > maxHeight
+      setPos(up ? { bottom: window.innerHeight - r.top + offset, left } : { top: r.bottom + offset, left })
     }
     place()
     window.addEventListener('scroll', place, true)   // capture: ловим скролл любого предка
     window.addEventListener('resize', place)
     return () => { window.removeEventListener('scroll', place, true); window.removeEventListener('resize', place) }
-  }, [open, minWidth, offset, align])
+  }, [open, minWidth, offset, align, flip, maxHeight])
 
   // Второй проход — по ФАКТИЧЕСКОЙ ширине панели. Первый прижимает по `minWidth`, а это
   // всего лишь минимум: панель с двумя полями даты шире его на сотню пикселей, и у
@@ -125,7 +127,7 @@ export function PortalPopover({ open, minWidth = 220, maxHeight = 320, offset = 
         // stopPropagation: события портала всплывают по РЕАКТ-дереву (не DOM), иначе клик по
         // опции доходит до onClick родителя-триггера (напр. тумблера ячейки) и переключает его.
         <div ref={panel} data-pop-root onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{
-          position: 'fixed', top: pos.top, left: pos.left, zIndex: Z.dropdown, minWidth, maxHeight,
+          position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left, zIndex: Z.dropdown, minWidth, maxHeight,
           width: 'max-content', maxWidth: `calc(100vw - ${EDGE_GAP * 2}px)`,
           overflowY: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border-card)',
           borderRadius: 12, boxShadow: 'var(--shadow-card, 0 8px 28px rgba(28,36,51,.14))',
@@ -199,6 +201,19 @@ export const FILTER_DROPS = [
 // stopPropagation обязателен: у строк этих таблиц есть свой onClick — разворот
 // и переход. Без него щелчок по номеру и открывал бы вкладку, и разворачивал
 // строку под ней.
+// Пролонгация (владелец 15.10.2026): копия сделки на новый период — один значок на всех экранах (карточка, реестр, очереди).
+export function ProlongTag({ code, size = 10.5 }) {
+  if (code === undefined || code === null || code === false) return null
+  return (
+    <span title={code ? `Пролонгация — копия сделки ${code} на новый период; клик по коду — исходная сделка` : 'Пролонгация — копия сделки на новый период'}
+      style={{ display: 'inline-flex', alignItems: 'center', height: 18, padding: '0 7px', borderRadius: 6, background: 'var(--violet-tint)',
+        color: 'var(--violet-fg)', fontSize: size, fontWeight: 700, whiteSpace: 'nowrap', fontFamily: UI }}>
+      пролонгация{code ? <>{' · от '}<a href={`/sales/deals/${code}`} onClick={e => e.stopPropagation()}
+        style={{ color: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2 }}>{code}</a></> : ''}
+    </span>
+  )
+}
+
 export function DealCodeLink({ deal, size = 12, emptyLabel }) {
   const key = deal.code || deal.id
   if (!key) return <span style={{ color: 'var(--text-faint)', fontSize: size }}>{emptyLabel || '—'}</span>
@@ -806,19 +821,32 @@ export const NoAccessScreen = ({ title, nav, what }) => (
 )
 
 /** Сегментный переключатель «один из нескольких» (разрез, метрика, вкладки). `opts` — [[значение, подпись, подсказка?]];
- *  `disabled(v)` — недоступный вариант виден, но не нажимается. Первым применён на «Разборе РК» (11.10.2026). */
-export function Seg({ value, opts, onPick, disabled, size = 'md' }) {
+ *  `disabled(v)` — недоступный вариант виден, но не нажимается. Первым применён на «Разборе РК» (11.10.2026).
+ *  `slide` — подложка выбранного пункта бежит к нему (реестр мастер-сделок, 19.10.2026); без него — как было. */
+export function Seg({ value, opts, onPick, disabled, size = 'md', slide = false }) {
   const h = size === 'sm' ? 20 : 24
+  const box = useRef(null)
+  const [pos, setPos] = useState(null)
+  useLayoutEffect(() => {
+    if (!slide || !box.current) return
+    const el = box.current.querySelector('[data-seg-on="1"]')
+    setPos(el ? { left: el.offsetLeft, width: el.offsetWidth } : null)
+  }, [slide, value, opts.length])
   return (
-    <span style={{ display: 'inline-flex', padding: 3, gap: 2, background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 10 }}>
+    <span ref={box} style={{ position: 'relative', display: 'inline-flex', padding: 3, gap: 2, background: 'var(--bg-subtle)', border: '1px solid var(--border-card)', borderRadius: 10 }}>
+      {slide && pos && (
+        <span aria-hidden style={{ position: 'absolute', top: 3, bottom: 3, left: pos.left, width: pos.width, borderRadius: 7,
+          background: 'var(--accent)', boxShadow: 'var(--shadow-card)', transition: 'left .22s ease, width .22s ease' }} />
+      )}
       {opts.map(([v, label, title]) => {
         const on = value === v, off = disabled && disabled(v)
         return (
-          <button key={String(v)} type="button" title={title || ''} disabled={off} onClick={() => !off && onPick(v)}
-            style={{ display: 'inline-flex', alignItems: 'center', height: h, padding: '0 9px', borderRadius: 7, border: 'none',
-              background: on ? 'var(--bg-card)' : 'transparent', color: on ? 'var(--accent)' : off ? 'var(--text-disabled)' : 'var(--text-secondary)',
-              boxShadow: on ? 'var(--shadow-card)' : 'none', fontSize: 11.5, fontWeight: on ? 700 : 600, fontFamily: UI,
-              whiteSpace: 'nowrap', cursor: off ? 'default' : 'pointer' }}>{label}</button>
+          <button key={String(v)} type="button" title={title || ''} disabled={off} onClick={() => !off && onPick(v)} data-seg-on={on ? '1' : '0'}
+            style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', height: h, padding: '0 9px', borderRadius: 7, border: 'none',
+              background: on && !slide ? 'var(--bg-card)' : 'transparent',
+              color: on ? (slide ? 'var(--on-accent)' : 'var(--accent)') : off ? 'var(--text-disabled)' : 'var(--text-secondary)',
+              boxShadow: on && !slide ? 'var(--shadow-card)' : 'none', fontSize: 11.5, fontWeight: on ? 700 : 600, fontFamily: UI,
+              whiteSpace: 'nowrap', cursor: off ? 'default' : 'pointer', transition: slide ? 'color .22s ease' : undefined }}>{label}</button>
         )
       })}
     </span>

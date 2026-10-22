@@ -43,6 +43,18 @@
           "perm": "planfact"
         },
         {
+          "key": "legal",
+          "label": "Юр запросы",
+          "href": "/finance/legal-requests",
+          "perm": "legal_requests"
+        },
+        {
+          "key": "master_deals",
+          "label": "Мастер-сделки",
+          "href": "/finance/master-deals",
+          "perm": "master_deals"
+        },
+        {
           "key": "operations",
           "label": "Операции",
           "href": "/finance/operations",
@@ -73,6 +85,12 @@
           "label": "Реестр сделок",
           "href": "/sales/deals",
           "perm": "sales_registry"
+        },
+        {
+          "key": "status",
+          "label": "Статусы продаж",
+          "href": "/sales/status",
+          "perm": "sales_status"
         },
         {
           "key": "analytics",

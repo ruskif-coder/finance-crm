@@ -176,6 +176,9 @@ class WcmClient:
               with_auth: bool = True) -> Any:
         if self._transport is not None:
             return self._transport(method, path, params or {}, data or files or {})
+        from app import external_writes as EW
+        if with_auth and method.upper() != "GET" and not EW.allowed():   # вход (with_auth=False) — не запись
+            raise WcmError(f"{method} {path}: {EW.REFUSAL}")
         headers = self._headers() if with_auth else {}
         try:
             r = httpx.request(method, self.url + path, params=params, data=data,

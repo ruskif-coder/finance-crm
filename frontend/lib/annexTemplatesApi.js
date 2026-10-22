@@ -1,0 +1,31 @@
+/**
+ * Шаблоны ДС: клиент ручек `/api/annex-templates/*` (спринт 2, 14.10.2026). Заменил хранилище макета.
+ * Ошибки сервера приходят строкой или `{message, issues}` (422 проверки шаблона) — `errorOf` сводит их к тексту и списку.
+ */
+import api, { auth } from '@/lib/http'
+
+const base = '/annex-templates'
+
+export const annexTemplatesApi = {
+  list: () => api.get(base, auth()).then(r => r.data.items || []),
+  formats: () => api.get(`${base}/formats`, auth()).then(r => r.data),
+  subs: () => api.get(`${base}/subs`, auth()).then(r => r.data.items || []),
+  one: (id) => api.get(`${base}/${id}`, auth()).then(r => r.data),
+  forContract: (contractId) => api.get(`${base}/for-contract/${contractId}`, auth()).then(r => r.data),
+  versions: (id) => api.get(`${base}/${id}/versions`, auth()).then(r => r.data.items || []),
+  save: (id, blocks, adoptBase) => api.post(`${base}/${id}/versions`, { blocks, adopt_base: !!adoptBase }, auth()).then(r => r.data),
+  restore: (id, version) => api.post(`${base}/${id}/restore`, { version }, auth()).then(r => r.data),
+  fork: (contractId) => api.post(`${base}/custom`, { contract_id: contractId }, auth()).then(r => r.data),
+  behind: () => api.get(`${base}/behind`, auth()).then(r => r.data),
+  keepOwn: (id) => api.post(`${base}/${id}/keep-own`, {}, auth()).then(r => r.data),
+  createBase: (title, copyFrom, formats) => api.post(`${base}/base`, { title, copy_from: copyFrom, formats: formats || [] }, auth()).then(r => r.data),
+  setFormats: (id, formats) => api.put(`${base}/${id}/formats`, { formats }, auth()).then(r => r.data),
+}
+
+/** Текст ошибки и список замечаний проверки из ответа сервера. */
+export function errorOf(e, fallback = 'Не удалось выполнить действие') {
+  const d = e && e.response && e.response.data && e.response.data.detail
+  if (d && typeof d === 'object' && !Array.isArray(d)) return { message: d.message || fallback, issues: d.issues || [] }
+  if (typeof d === 'string') return { message: d, issues: [] }
+  return { message: fallback, issues: [] }
+}

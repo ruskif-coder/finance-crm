@@ -320,8 +320,7 @@ def _deal_rule(kind: str):
 
 # ──────────────── сейлзы: годовой план и конструктор МП ────────────────
 
-MONTHS_RU = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль",
-             "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
+from app.periods import MONTHS_NOM as MONTHS_RU  # noqa: E402 — названия месяцев в одном месте (`app/periods.py`)
 
 # Насколько далеко в прошлое напоминаем про пустой месяц плана. Дальше это уже не работа
 # на сегодня, а разбор истории: план прошлого полугодия правят разом, а не по письму
@@ -692,7 +691,19 @@ def rule_traffic_silence(db: Session, ev: registry.Event) -> List[Hit]:
     return hits
 
 
+def rule_recon_overdue(db: Session, ev: registry.Event) -> List[Hit]:
+    from app.notify.closing import recon_overdue_hits
+    return recon_overdue_hits(db, Hit, fact_days)
+
+
+def rule_master_scans_overdue(db: Session, ev: registry.Event) -> List[Hit]:
+    from app.notify.closing import scans_overdue_hits
+    return scans_overdue_hits(db, Hit, fact_days)
+
+
 RULES = {
+    "recon_overdue": rule_recon_overdue,
+    "master_scans_overdue": rule_master_scans_overdue,
     "invoice_overdue": rule_invoice_overdue,
     "plan_month_empty": rule_plan_month_empty,
     "mp_draft_stale": rule_mp_draft_stale,

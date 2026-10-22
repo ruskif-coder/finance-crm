@@ -55,7 +55,10 @@ def test_deferred_telegram_says_the_same_as_the_live_one():
     Проверяется вызов, а не результат: отправку в телеграм со стенда не сделать.
     """
     src = inspect.getsource(__import__("app.notify.dispatch", fromlist=["x"]))
-    assert "channels.tg_text(" in src
+    # С 21.10.2026 досылка отправляет через `channels.deliver_tg` — тот же канал, что живая доставка, а он собирает текст
+    # общим `tg_text`: один сборщик и один путь отправки.
+    assert "channels.deliver_tg(" in src or "channels.tg_text(" in src
+    assert "tg_text(title, body, facts)" in inspect.getsource(__import__("app.notify.channels", fromlist=["x"]).deliver_tg)
     assert not re.search(r"send_message\(\s*ch\.tg_chat_id,\s*r\.title", src), \
         "досылка снова собирает текст сама"
 

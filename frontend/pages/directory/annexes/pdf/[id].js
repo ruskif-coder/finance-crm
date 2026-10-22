@@ -50,7 +50,7 @@ const partyLine = (p, role) => {
   const pos = p.position_gen || p.position || '___________'
   const fio = p.director_gen || p.director || '___________'
   const basis = p.basis_gen || p.basis || '___________'
-  return `${p.name}, именуемое в дальнейшем «${role}», в лице ${pos} ${fio}, `
+  return `${p.legal_name || p.name}, именуемое в дальнейшем «${role}», в лице ${pos} ${fio}, `
     + `${p.acting || 'действующего'} на основании ${basis}`
 }
 
@@ -77,6 +77,10 @@ export default function AnnexPrint() {
   if (!d) return <div style={{ padding: 40, fontFamily: 'Times New Roman, serif' }}>Загрузка…</div>
 
   const rows = d.rows || []
+  // ДС мастер-сделки называются «ДС», а не «Приложение» (владелец 15.10.2026); старые документы — как были.
+  const W = d.is_master
+    ? { dat: 'настоящему ДС', gen: 'настоящего ДС', ins: 'настоящим ДС', nom: 'Настоящее ДС', plIns: 'ДС' }
+    : { dat: 'настоящему Приложению', gen: 'настоящего Приложения', ins: 'настоящим Приложением', nom: 'Настоящее Приложение', plIns: 'Приложениями' }
   // Итоги считаются по строкам таблицы, а не берутся из шапки: если они разойдутся,
   // это видно сразу — значит строки и общая сумма собраны из разного.
   const totals = rows.reduce((a, r) => ({
@@ -97,6 +101,8 @@ export default function AnnexPrint() {
            preferCSSPageSize, поэтому размер страницы задаётся здесь, а не в его коде —
            значит ориентация принадлежит документу, а не печатающему сервису. */
         @page { size: A4 landscape; margin: 15mm 16mm; }
+        /* Код мастер-сделки на каждом листе печатает сервис PDF колонтитулом принтера (поле footer в запросе печати, 21.10.2026):
+           закреплённый элемент страницы ложился поверх таблицы, а поля страницы в CSS (@bottom-right) Chromium не выводит. */
         html, body { background: #fff; }
         .doc { font-family: 'Times New Roman', Times, serif; font-size: 11.5pt;
                line-height: 1.4; color: #000; max-width: 265mm; margin: 0 auto;
@@ -119,9 +125,8 @@ export default function AnnexPrint() {
            бумаге, темы у него нет, и var(--*) в PDF взять неоткуда. */
         table { width: 100%; border-collapse: collapse; margin: 4mm 0 5mm;
                 font-size: 7.5pt; }
-        /* Рамки белые — как в наших выгрузках медиаплана: разделители видны на
-           заливке шапки и строки ИТОГО, а тело таблицы держится на самих заливках. */
-        th, td { border: 1px solid #fff; padding: 1.2mm 1.5mm; vertical-align: middle; }
+        /* Рамки чёрные (владелец 21.10.2026, просьба бухгалтерии; до того — белые, как в выгрузках медиаплана). */
+        th, td { border: 1px solid #000; padding: 1.2mm 1.5mm; vertical-align: middle; }
         th { background: #4472C4; color: #fff; font-weight: bold; text-align: center;
              font-size: 7pt; line-height: 1.15; }
         td { text-align: center; }
@@ -131,6 +136,8 @@ export default function AnnexPrint() {
         tr.total td { background: #D9E2F3; font-weight: bold; }
         /* Стороны разводятся по противоположным краям листа: исполнитель прижат
            влево, заказчик вправо — так подписи не читаются как один общий блок. */
+        .basis { page-break-before: always; padding-top: 4mm; }
+        .basis .note { font-style: italic; font-size: 0.92em; margin-bottom: 4mm; }
         .signs { display: flex; justify-content: space-between; align-items: flex-start;
                  gap: 10mm; margin-top: 10mm; page-break-inside: avoid; }
         .signs > div { width: 45%; text-align: left; }
@@ -193,7 +200,10 @@ export default function AnnexPrint() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
+              {rows.map((r, i) => (r.group_title ? (
+                /* ДС мастер-сделки: заголовок группы (бренд · услуга) строкой на всю ширину — как в DOCX */
+                <tr key={i}><td colSpan={13} style={{ fontWeight: 'bold', textAlign: 'left' }}>{r.group_title}</td></tr>
+              ) : (
                 <tr key={i}>
                   <td style={{ fontWeight: 'bold' }}>{r.network || '—'}</td>
                   <td className="pos">
@@ -210,12 +220,12 @@ export default function AnnexPrint() {
                   <td>
                     {dm(r.date_from || d.period_from)} –<br />{dm(r.date_to || d.period_to)}
                   </td>
-                  <td className="num">{fix2(r.unit_price)}</td>
-                  <td className="num net">{fix2(r.amount)}</td>
-                  <td className="num">{fix2(r.vat)}</td>
-                  <td className="num net">{fix2(r.gross)}</td>
+                  <td className="num">{r.bonus ? '—' : fix2(r.unit_price)}</td>
+                  <td className="num net">{r.bonus ? '—' : fix2(r.amount)}</td>
+                  <td className="num">{r.bonus ? '—' : fix2(r.vat)}</td>
+                  <td className="num net">{r.bonus ? '—' : fix2(r.gross)}</td>
                 </tr>
-              ))}
+              )))}
               <tr className="total">
                 <td colSpan={7}>ИТОГО:</td>
                 <td className="num">{Number(totals.volume).toLocaleString('ru-RU')}</td>
@@ -232,9 +242,9 @@ export default function AnnexPrint() {
         <div className="item lvl2">
           <span className="n">1.1.</span>
           <span>
-          Общая стоимость Услуг Исполнителя по настоящему Приложению составляет сумму
+          Общая стоимость Услуг Исполнителя по {W.dat} составляет сумму
           в размере {d.amount_words}, в том числе НДС {d.vat_rate}% — {d.vat_words}.
-          Оплата услуг Исполнителя по настоящему Приложению осуществляется Заказчиком
+          Оплата услуг Исполнителя по {W.dat} осуществляется Заказчиком
           на основании выставленного счета, счет-фактуры, Акта оказания услуг согласно
           разделу 4 Договора.
           </span>
@@ -245,8 +255,8 @@ export default function AnnexPrint() {
           <span>
           Услуги оказываются в соответствии с требованиями Заказчика. Стороны вправе
           согласовывать требования к Услугам, предоставлять и получать исходные материалы,
-          необходимые для оказания Услуг. Любое изменение условий настоящего Приложения
-          согласовывается сторонами отдельными Приложениями к Договору.
+          необходимые для оказания Услуг. Любое изменение условий {W.gen}
+          согласовывается сторонами отдельными {W.plIns} к Договору.
           </span>
         </div>
 
@@ -262,10 +272,10 @@ export default function AnnexPrint() {
         <div className="item">
           <span className="n">3.</span>
           <span>
-          Во всем остальном, не урегулированном настоящим Приложением, стороны
-          руководствуются положениями Договора. Настоящее Приложение вступает в силу
+          Во всем остальном, не урегулированном {W.ins}, стороны
+          руководствуются положениями Договора. {W.nom} вступает в силу
           с момента его подписания Сторонами и распространяет свое действие на отношения
-          Сторон, возникшие с {dm(d.period_from)} г. Настоящее Приложение составлено
+          Сторон, возникшие с {dm(d.period_from)} г. {W.nom} составлено
           в 2 (двух) экземплярах, имеющих равную юридическую силу, по одному для каждой
           из Сторон, и является неотъемлемой частью Договора.
           </span>
@@ -276,19 +286,28 @@ export default function AnnexPrint() {
         <div className="signs">
           <div>
             <b>Исполнитель:</b>
-            {exec.name}<br />
-            {exec.position || '____________'}
+            {exec.legal_name || exec.name}<br />
+            {exec.position_nom || exec.position || '____________'}
             <div className="line">____________________ /{exec.short_fio || '_________'}/</div>
             <div>М.П.</div>
           </div>
           <div>
             <b>Заказчик:</b>
-            {cust.name}<br />
-            {cust.position || '____________'}
+            {cust.legal_name || cust.name}<br />
+            {cust.position_nom || cust.position || '____________'}
             <div className="line">____________________ /{cust.short_fio || '_________'}/</div>
             <div>М.П.</div>
           </div>
         </div>
+
+        {/* Файл «для клиента»: после ДС — основание для закрывающих документов (УПД и счёт) на согласование, одним документом. */}
+        {d.with_basis && !!d.closing_basis && (
+          <div className="basis">
+            <p className="flat"><b>Основание для закрывающих документов</b></p>
+            <p className="flat note">К {String(d.number || 'Приложение').replace('Приложение', 'Приложению')} к Договору № {d.contract?.number || '________'}. Формулировка, которая будет указана в УПД и счёте. Просим согласовать.</p>
+            <p className="flat" style={{ whiteSpace: 'pre-line' }}>{d.closing_basis}</p>
+          </div>
+        )}
       </div>
     </>
   )

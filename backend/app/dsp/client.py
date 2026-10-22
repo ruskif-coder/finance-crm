@@ -152,6 +152,9 @@ class MsClient:
     def _http(self, method: str, body: dict) -> dict:
         if not self._configured():
             raise MsError("DSP_API_URL / DSP_ACCESS_TOKEN не заданы в окружении")
+        from app import external_writes as EW
+        if not EW.dsp_is_read(method) and not EW.allowed():
+            raise MsError(f"{method}: {EW.REFUSAL}")
         r = httpx.post(f"{self.url}?method={method}",
                        headers={"Authorization": f"Bearer {self.token}",
                                 "Content-Type": "application/json"},

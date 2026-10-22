@@ -17,6 +17,7 @@ export { can, getPermissions }
 export const firstAllowedHref = (perms, role) => _first(perms, role === 'admin')
 export const firstDirectoryHref = (perms, role) => _dir(perms, role === 'admin')
 
-export default function Navbar({ children, onSearch }) {
-  return <Nav onSearch={onSearch}>{children}</Nav>
+// `asPath` — чей контур подсветить и куда вести «Дашборд», когда экран открыт из другого контура (отчёт по РК из аккаунтов).
+export default function Navbar({ children, onSearch, asPath }) {
+  return <Nav onSearch={onSearch} asPath={asPath}>{children}</Nav>
 }

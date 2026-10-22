@@ -25,7 +25,7 @@ def test_every_recipient_spec_is_resolvable():
             if spec["type"] == "staff_group":
                 # Значения те же, что принимает экран ролей (`roles.py`). Опечатка здесь
                 # не ошибка, а тишина: адресат просто не находится.
-                assert spec["value"] in ("seller", "account", "traffic", "publishers"), (
+                assert spec["value"] in ("seller", "account", "traffic", "publishers", "legal"), (
                     f"{ev.key}: рабочей группы {spec['value']} не существует")
 
 
@@ -179,9 +179,10 @@ class Ch:
         self.quiet_from, self.quiet_to, self.mute_until = quiet_from, quiet_to, mute_until
 
 
-def test_quiet_hours_none_means_always_allowed():
-    assert quiet_now(Ch(), registry.get("mp_ready")) is False
-    assert quiet_now(None, registry.get("mp_ready")) is False
+def test_quiet_hours_none_means_the_default_window():
+    """С 21.10.2026 «не задано» — не «всегда», а умолчание 22–08 МСК (владелец); подробно — test_quiet_hours_default.py."""
+    from app.notify.channels import DEFAULT_QUIET
+    assert DEFAULT_QUIET == (22, 8)
 
 
 def test_locked_event_ignores_quiet_hours():
@@ -193,9 +194,10 @@ def test_locked_event_ignores_quiet_hours():
 
 def test_mute_until_blocks(monkeypatch):
     from datetime import date, timedelta
-    assert quiet_now(Ch(mute_until=date.today() + timedelta(days=1)),
+    # 0–0 — «без тихих часов»: проверяется только «не беспокоить до», без умолчания 22–08 (оно зависело бы от часа прогона)
+    assert quiet_now(Ch(0, 0, mute_until=date.today() + timedelta(days=1)),
                       registry.get("mp_ready")) is True
-    assert quiet_now(Ch(mute_until=date.today() - timedelta(days=1)),
+    assert quiet_now(Ch(0, 0, mute_until=date.today() - timedelta(days=1)),
                       registry.get("mp_ready")) is False
 
 

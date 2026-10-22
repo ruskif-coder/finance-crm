@@ -115,6 +115,129 @@ register(Event(
 # узнаёт из своих событий, дублировать ему документные напоминания незачем.
 
 register(Event(
+    # Владелец 16.10.2026: пакет собирают из сделок разных аккаунтов («закладывается на распределении»),
+    # поэтому видеть его можно — но аккаунт должен узнать, что его сделку забрали. Канал — дайджест.
+    key="deal_taken_into_master", direction="account", group="Закрытие месяца",
+    title="Сделку добавили в чужую мастер-сделку",
+    description=("Сделку добавил в мастер-сделку (пакет закрытия) не её аккаунт. Пакет собирает "
+                 "другой человек: суммы, ДС и закрывающие по сделке теперь идут через его пакет."),
+    tone="warn", action="Открыть мастер-сделку", widget_group="Документы",
+    recipients=[{"type": "resolver", "value": "account_manager"},
+                {"type": "resolver", "value": "account_masters"}],
+    channels={"app": False, "digest": True},
+))
+
+# ──────────────── КОНТУР ЗАКРЫТИЯ (владелец 21.10.2026) ────────────────
+# Всё — в приложении; в телеграм только две просрочки; остальное ещё и дайджестом. Точки вызова — `app/notify/closing.py`.
+_COLLECTOR = [{"type": "resolver", "value": "master_collector"}]
+_FIN = [{"type": "role", "value": "manager"}]
+
+register(Event(
+    key="recon_arrived", direction="account", group="Закрытие месяца",
+    title="Сделка пришла на итоговую сверку",
+    description="РК завершена — проверить факт, выбрать сумму в ДС и подтвердить сверку.",
+    tone="info", action="Открыть сделку", widget_group="Документы",
+    recipients=[{"type": "resolver", "value": "account_manager"}],
+    channels={"app": True, "digest": True},
+))
+register(Event(
+    key="recon_overdue", direction="account", group="Закрытие месяца",
+    title="Сделка 3 дня на итоговой сверке",
+    description="Сделка на «Итоговой сверке» дольше 3 дней и не отправлена в ДО: пакет закрытия ждёт её.",
+    tone="bad", action="Открыть сделку", widget_group="Документы", scan=True,
+    recipients=[{"type": "resolver", "value": "account_manager"}, {"type": "resolver", "value": "account_masters"}],
+    channels={"app": True, "tg": True},
+    params={"repeat_days": 3},
+))
+register(Event(
+    key="deal_sent_to_do", direction="fin", group="Закрытие месяца",
+    title="Сделка отправлена в ДО",
+    description="Сверка зафиксирована, сделка ушла в мастер-сделку — дальше ДС и закрывающие.",
+    tone="info", action="Открыть мастер-сделку", widget_group="Документы",
+    recipients=_FIN + [{"type": "staff_group", "value": "legal"}],
+    channels={"app": True, "digest": True},
+))
+register(Event(
+    key="master_deal_ready", direction="account", group="Закрытие месяца",
+    title="Мастер-сделка собрана, ждёт дальнейших действий",
+    description="Сверка завершена у всех сделок пакета — проверить раскладку и создать ДС.",
+    tone="ok", action="Открыть мастер-сделку", widget_group="Документы",
+    recipients=_COLLECTOR, channels={"app": True, "digest": True},
+))
+register(Event(
+    key="master_ds_created", direction="account", group="Закрытие месяца",
+    title="ДС мастер-сделки созданы, ждут подтверждения",
+    description="Черновики ДС пакета созданы — проверить текст и основания и подтвердить.",
+    tone="info", action="Открыть мастер-сделку", widget_group="Документы",
+    recipients=_COLLECTOR, channels={"app": True, "digest": True},
+))
+register(Event(
+    key="master_wait_1c", direction="fin", group="Закрытие месяца",
+    title="Мастер-сделка ждёт 1С",
+    description="ДС пакета подтверждены — нужны счёт и УПД из 1С.",
+    tone="info", action="Открыть мастер-сделку", widget_group="Документы",
+    recipients=_FIN, channels={"app": True, "digest": True},
+))
+register(Event(
+    key="master_closed", direction="account", group="Закрытие месяца",
+    title="Мастер-сделка оплачена / в архиве",
+    description="Пакет оплачен или закрыт целиком.",
+    tone="ok", action="Открыть мастер-сделку", widget_group="Документы",
+    recipients=_COLLECTOR, channels={"app": True, "digest": True},
+))
+register(Event(
+    key="master_scans_overdue", direction="account", group="Закрытие месяца",
+    title="Бумажный пакет без сканов дольше срока",
+    description="Документы отправлены на бумаге больше 30 дней назад, а сканов подписанных нет.",
+    tone="bad", action="Приложить сканы", widget_group="Документы", scan=True,
+    recipients=_COLLECTOR, channels={"app": True, "tg": True},
+    params={"repeat_days": 3},
+))
+
+# ──────────────── ПРИОРИТЕЗАЦИЯ (владелец 19.10.2026: «уведомления поднимай») ────────────────
+# Собирает аккаунт, трафик не участвует — поэтому всё адресовано аккаунту сделки; мастерам — только выполнение плана
+# (это решение о докрутке). Отправители — app/notify/prio.py.
+
+register(Event(
+    key="prio_site_answered", direction="account", group="Приоритезация",
+    title="Площадка ответила на запрос приоритезации",
+    description="Площадка согласовала запрос (вписала SKU), вернула его с замечанием или отказала.",
+    tone="info", action="Открыть сделку", widget_group="Сделки",
+    recipients=[{"type": "resolver", "value": "account_manager"}],
+    channels={"app": True},
+))
+
+register(Event(
+    key="prio_goal_reached", direction="account", group="Приоритезация",
+    title="Площадка выполнила план — остановлена",
+    description=("Факт площадки по суточной статистике достиг цели (с долей бонусного трафика), и система "
+                 "остановила её РК в системе приоритезации. Докрутить — «Старт» в карточке сделки."),
+    tone="ok", action="Открыть сделку", widget_group="Сделки",
+    recipients=[{"type": "resolver", "value": "account_manager"},
+                {"type": "resolver", "value": "account_masters"}],
+    channels={"app": True},
+))
+
+register(Event(
+    key="prio_stop_failed", direction="account", group="Приоритезация",
+    title="План выполнен, а остановить площадку не удалось",
+    description="Автостоп отправил «Стоп», система приоритезации его не приняла — площадка продолжает крутить сверх плана.",
+    tone="bad", action="Остановить вручную", widget_group="Сделки",
+    recipients=[{"type": "resolver", "value": "account_manager"},
+                {"type": "role", "value": "admin"}],
+    channels={"app": True, "tg": True},
+))
+
+register(Event(
+    key="cron_prio_stat_failed", direction="sys", group="Фоновые задания",
+    title="Сбор статистики приоритезации не состоялся",
+    description="Ночной сбор из системы приоритезации упал: нет факта за сутки, автостоп по плану не проверялся.",
+    tone="bad", action="Статус системы", widget_group="Система",
+    recipients=[{"type": "role", "value": "admin"}],
+    channels={"app": True, "tg": True, "mail": True},
+))
+
+register(Event(
     key="deal_mp_missing", direction="account", group="Очередь сделок",
     title="Нет медиаплана, а старт близко",
     description=("Старт РК через 5 дней или меньше, а медиаплан к сделке не привязан. "
@@ -375,6 +498,20 @@ register(Event(
 ))
 
 register(Event(
+    # Владелец 16.10.2026: «повесь мне уведомление в тг, что сбор упал». Без факта DSP
+    # раскладка долей и проверки РК идут по весам, а «Отчёт по РК» пустеет по площадкам.
+    key="cron_dsp_stat_failed", direction="sys", group="Фоновые задания",
+    title="Сбор статистики DSP: ошибка",
+    description=("Ночной сбор статистики DSP не забрал кампании или DSP отказала в доступе "
+                 "к креативам: факт по площадкам не пришёл, доли и проверки РК считаются "
+                 "без него. Приходит при переходе из «работает» в «падает», а не каждую ночь."),
+    tone="bad", action="Открыть статус системы", widget_group="Трафик", locked=True,
+    recipients=[{"type": "role", "value": "admin"},
+                {"type": "resolver", "value": "traffic_masters"}],
+    channels={"app": True, "tg": True, "mail": True},
+))
+
+register(Event(
     key="cron_erid_auto_failed", direction="sys", group="Фоновые задания",
     title="Автовыпуск ЕРИД: ошибка",
     description=("Прогон раз в полчаса выпускает ЕРИД по порогу и опрашивает статус "
@@ -384,6 +521,16 @@ register(Event(
     tone="bad", action="Открыть статус системы", widget_group="Документы", locked=True,
     recipients=[{"type": "role", "value": "admin"}],
     channels={"app": True, "tg": True, "mail": True},
+))
+
+register(Event(
+    key="cron_erid_auto_recovered", direction="sys", group="Фоновые задания",
+    title="Автовыпуск ЕРИД: восстановился",
+    description=("Пара к «Автовыпуск ЕРИД: ошибка» (владелец 15.10.2026): прошлый прогон падал, этот прошёл чисто — "
+                 "пропущенное повторено и досинхронизировано."),
+    tone="ok", action="Открыть статус системы", widget_group="Документы",
+    recipients=[{"type": "role", "value": "admin"}],
+    channels={"app": True, "tg": True},
 ))
 
 register(Event(
@@ -611,5 +758,50 @@ register(Event(
     tone="warn", action="Открыть админку трафика", widget_group="Площадки",
     recipients=[{"type": "resolver", "value": "traffic_admins"},
                 {"type": "staff_group", "value": "publishers"}],
+    channels={"app": True, "tg": True},
+))
+
+# ── Юр запросы (владелец 14.10.2026: «уведомления всем участникам») ─────────────────
+# Заявка аккаунта юристу по пунктам ДС после таблицы МП (app/legal). Новая — всему контуру юристов;
+# дальше — автору заявки и всему контуру юристов (владелец 16.10.2026; адресаты считает app/notify/legal.py).
+register(Event(
+    key="legal_request_new", direction="account", group="Юр запросы",
+    title="Новая заявка юристу",
+    description="Аккаунт просит поправить пункт ДС после таблицы медиаплана. Пока заявка открыта, ДС нельзя подтвердить и выгрузить чистовик.",
+    tone="warn", action="Открыть «Юр запросы»", widget_group="Документы",
+    recipients=[{"type": "staff_group", "value": "legal"}],
+    channels={"app": True, "tg": True},
+))
+
+register(Event(
+    key="annex_base_changed", direction="account", group="Юр запросы",
+    title="Базовый шаблон ДС изменился",
+    description="Юристам: сохранена новая версия базового шаблона, а у части договоров свой кастомный шаблон — решить «оставить свой» или «перенять базу» (список — в «Юр запросах»).",
+    tone="warn", action="Открыть «Юр запросы»", widget_group="Документы",
+    recipients=[{"type": "staff_group", "value": "legal"}],
+    channels={"app": True, "tg": True},
+))
+
+register(Event(
+    key="legal_request_taken", direction="account", group="Юр запросы",
+    title="Юрист взял заявку в работу",
+    description="Автору заявки: юрист начал править шаблон ДС договора.",
+    tone="info", action="Открыть ДС", widget_group="Документы",
+    channels={"app": True},
+))
+
+register(Event(
+    key="legal_request_done", direction="account", group="Юр запросы",
+    title="Заявка юристу выполнена",
+    description="Участникам заявки: правка внесена в шаблон ДС договора, выпуск ДС разблокирован. Подтверждённое ДС — пересоздать на новом шаблоне.",
+    tone="ok", action="Открыть ДС", widget_group="Документы",
+    channels={"app": True, "tg": True},
+))
+
+register(Event(
+    key="legal_request_rejected", direction="account", group="Юр запросы",
+    title="Заявка юристу отклонена",
+    description="Участникам заявки: юрист отклонил правку с ответом, выпуск ДС разблокирован.",
+    tone="warn", action="Открыть ДС", widget_group="Документы",
     channels={"app": True, "tg": True},
 ))

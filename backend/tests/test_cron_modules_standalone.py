@@ -28,6 +28,11 @@ CRON_MODULES = [
     "app.launch_prep.erid_auto",
     "app.dsp.stat_daily",
     "app.creative_check.cleanup",
+    # аудит 21.10.2026: четыре крона из docs/CRON_после_релиза.md прибором не покрывались
+    "app.prio.stats",
+    "app.ad.rk_check",
+    "app.dsp.block_stat",
+    "app.traffic.site_monitor",
 ]
 
 PROBE = (

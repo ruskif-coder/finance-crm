@@ -92,6 +92,8 @@ class ServiceIn(BaseModel):
     # 2026-09-05_service_doc_fields.sql). `note` остаётся внутренним комментарием.
     doc_position: Optional[str] = None
     rotation_type: Optional[str] = None
+    # Воронка реализации услуги — задаёт цикл (14.10.2026). Не прислано — не трогаем (старый клиент не сбросит).
+    realization_pipeline_id: Optional[int] = None
     placement_type: Optional[str] = None
     calc_form: Optional[str] = None
     separate_price: Optional[bool] = False
@@ -129,6 +131,7 @@ class AddonIn(BaseModel):
     unit_price: Optional[float] = None
     period: Optional[str] = None
     can_be_bonus: Optional[bool] = False
+    doc_phrase: Optional[str] = None
 
 
 class ReorderIn(BaseModel):
@@ -243,7 +246,8 @@ def list_services(only_active: bool = True, db: Session = Depends(get_db),
                        "unit_price_app": s.unit_price_app, "constants": s.constants or {},
                        "revenue_article_id": s.revenue_article_id,
                        # Печатается в приложении к договору, а не показывается в интерфейсе.
-                       "doc_position": s.doc_position, "rotation_type": s.rotation_type}
+                       "doc_position": s.doc_position, "rotation_type": s.rotation_type,
+                       "realization_pipeline_id": s.realization_pipeline_id}
                       for s in rows]}
 
 
@@ -275,6 +279,17 @@ def _set_service_fields(svc, data):
         raise HTTPException(status_code=400,
                             detail="Тип ротации: " + " или ".join(ROTATION_TYPES))
     svc.rotation_type = rot
+    if "realization_pipeline_id" in getattr(data, "model_fields_set", set()):
+        pid = data.realization_pipeline_id
+        from sqlalchemy.orm import object_session
+        sess = object_session(svc)
+        p = sess.get(SalesPipeline, pid) if (sess is not None and pid is not None) else None
+        if pid is not None and sess is not None and (p is None or not p.closing_flow):
+            raise HTTPException(status_code=400, detail="Воронка реализации — только воронка с заданным циклом (Pharm или «Прочие продукты»)")
+        svc.realization_pipeline_id = pid
+        if sess is not None:
+            from app.final_recon import flow as _flow
+            _flow.reset(sess)
 
 
 def _sync_service_formats(db, svc, format_ids):
@@ -502,6 +517,9 @@ def create_service(data: ServiceIn, db: Session = Depends(get_db),
     db.add(svc)
     db.flush()
     _sync_service_formats(db, svc, data.format_ids)
+    # Матрица «что требует учёта» (14.10.2026): новая услуга — в пункты, обязательные для всех прежних; столбец появляется сам.
+    from app.final_recon import assembly as _asm
+    _asm.add_service(db, svc.id)
     db.commit()
     db.refresh(svc)
     log_action(db, current_user, "create_sales_service", "sales_service", svc.id, name)
@@ -532,7 +550,7 @@ def list_addons(only_active: bool = False, db: Session = Depends(get_db),
         q = q.filter(SalesAddonService.is_active.is_(True))
     rows = q.order_by(SalesAddonService.sort_order, SalesAddonService.name).all()
     return {"items": [{"id": a.id, "name": a.name, "unit_price": a.unit_price, "period": a.period,
-                       "can_be_bonus": bool(a.can_be_bonus), "is_active": a.is_active,
+                       "can_be_bonus": bool(a.can_be_bonus), "is_active": a.is_active, "doc_phrase": a.doc_phrase,
                        "sort_order": a.sort_order} for a in rows]}
 
 
@@ -541,7 +559,8 @@ def create_addon(data: AddonIn, db: Session = Depends(get_db), current_user: Use
     name = _clean_name(data.name)
     max_order = db.query(func.max(SalesAddonService.sort_order)).scalar() or 0
     a = SalesAddonService(name=name, unit_price=data.unit_price, period=data.period or None,
-                          can_be_bonus=bool(data.can_be_bonus), sort_order=max_order + 1)
+                          can_be_bonus=bool(data.can_be_bonus), sort_order=max_order + 1,
+                          doc_phrase=(data.doc_phrase or "").strip() or None)
     db.add(a)
     db.commit()
     db.refresh(a)
@@ -557,6 +576,7 @@ def update_addon(addon_id: int, data: AddonIn, db: Session = Depends(get_db),
     a.unit_price = data.unit_price
     a.period = data.period or None
     a.can_be_bonus = bool(data.can_be_bonus)
+    a.doc_phrase = (data.doc_phrase or "").strip() or None
     db.commit()
     log_action(db, current_user, "update_sales_addon", "sales_addon", a.id, a.name)
     return {"message": "Доп. услуга обновлена"}
@@ -829,9 +849,37 @@ def list_pipelines(db: Session = Depends(get_db),
     counts = dict(db.query(SalesDeal.pipeline, func.count(SalesDeal.id))
                   .group_by(SalesDeal.pipeline).all())
     rows = db.query(SalesPipeline).order_by(SalesPipeline.sort_order, SalesPipeline.name).all()
+    real = dict(db.query(SalesDeal.realization_pipeline_id, func.count(SalesDeal.id))
+                .group_by(SalesDeal.realization_pipeline_id).all())
+    svc_by = {}
+    for s in db.query(SalesService).filter(SalesService.realization_pipeline_id.isnot(None)).order_by(SalesService.sort_order):
+        svc_by.setdefault(s.realization_pipeline_id, []).append(s.name)
     return {"items": [{"id": p.id, "name": p.name, "is_tracked": p.is_tracked,
                        "is_active": p.is_active,
+                       # Цикл есть — воронка реализации (14.10.2026); нет — сопоставление стадий Битрикса (история).
+                       "closing_flow": p.closing_flow, "services": svc_by.get(p.id, []),
+                       "realization_deals": real.get(p.id, 0),
                        "deals": counts.get(p.name, 0)} for p in rows]}
+
+
+class PipelineFlowIn(BaseModel):
+    closing_flow: Optional[str] = None
+
+
+@router.put("/pipelines/{pipeline_id}/flow")
+def set_pipeline_flow(pipeline_id: int, payload: PipelineFlowIn, db: Session = Depends(get_db),
+                      current_user: User = Depends(PIPE_EDIT)):
+    """Цикл воронки реализации: «полный цикл» / «контур аккаунта» (пусто — не воронка реализации). Владелец 14.10.2026."""
+    from app.final_recon import flow
+    p = _require(db, SalesPipeline, pipeline_id, "Воронка")
+    if payload.closing_flow is not None and payload.closing_flow not in flow.FLOWS:
+        raise HTTPException(status_code=400, detail="Цикл: " + " или ".join(flow.FLOWS))
+    was = p.closing_flow
+    p.closing_flow = payload.closing_flow
+    db.commit()
+    flow.reset(db)
+    log_action(db, current_user, "pipeline_flow_set", "sales_pipeline", p.id, f"{p.name}: цикл {was or '—'} → {p.closing_flow or '—'}")
+    return {"closing_flow": p.closing_flow}
 
 
 @router.get("/pipelines/{pipeline_id}/stages")

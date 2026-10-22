@@ -173,18 +173,23 @@ export default function CounterpartyCard() {
   useEffect(() => { if (id) loadOps(0, '', 'date', 'desc') }, [id])
   useEffect(() => { loadAnalytics() }, [loadAnalytics])
 
-  // Справочник статей — для селектов «статья по умолчанию»
-  useEffect(() => {
+  // Справочник статей — для селектов «статья по умолчанию». Грузится при КАЖДОМ открытии окна, а не раз на карточку:
+  // статья, заведённая после открытия карточки, в списке не появлялась (владелец 14.10.2026: «новых нет»).
+  const loadArticles = () => {
     const token = localStorage.getItem('token')
     api(token).get('/articles/').then(r => setArticles(r.data || [])).catch(() => {})
-  }, [])
+  }
+  useEffect(() => { loadArticles() }, [])
 
   const startDefEdit = () => {
+    loadArticles()
     setDefData({
       vat_rate_income: card.vat_rate_income ?? '',
       vat_rate_expense: card.vat_rate_expense ?? '',
       default_article_income_id: card.default_article_income_id || '',
       default_article_expense_id: card.default_article_expense_id || '',
+      sk_mode: card.sk_mode || '',
+      sk_percent: card.sk_percent ?? '',
     })
     setDefEdit(true)
   }
@@ -199,6 +204,12 @@ export default function CounterpartyCard() {
         default_article_income_id: defData.default_article_income_id ? Number(defData.default_article_income_id) : null,
         default_article_expense_id: defData.default_article_expense_id ? Number(defData.default_article_expense_id) : null,
       })
+      // СК — своей ручкой (пакет итоговой сверки, 14.10.2026): способ выплаты и базовый %, на закрытии сделки правится.
+      if ((defData.sk_mode || null) !== (card.sk_mode || null) || String(defData.sk_percent) !== String(card.sk_percent ?? '')) {
+        await api(token).put(`/final-recon/counterparty/${id}/sk`, {
+          mode: defData.sk_mode || null, percent: defData.sk_percent === '' ? null : Number(defData.sk_percent),
+        })
+      }
       setDefEdit(false)
       loadCard()
     } catch (e) {
@@ -387,6 +398,7 @@ export default function CounterpartyCard() {
         { label: 'НДС расход', value: card.vat_rate_expense != null ? `${card.vat_rate_expense}%` : '—', mono: true },
         { label: 'Статья прихода', value: card.default_article_income || '—' },
         { label: 'Статья расхода', value: card.default_article_expense || '—' },
+        { label: 'СК', value: card.sk_mode || card.sk_percent != null ? `${card.sk_mode || 'способ не задан'}${card.sk_percent != null ? ` · ${String(card.sk_percent).replace('.', ',')}%` : ''}` : '—' },
       ],
       kpi: [
         { label: 'Операций всего', value: String(stats.op_count || 0), hint: `${planCnt} в плане · ${factCnt} факт`, color: CT.t1 },
@@ -454,6 +466,22 @@ export default function CounterpartyCard() {
                       <div style={lbl}>НДС расход, %</div>
                       <input value={defData.vat_rate_expense} inputMode="decimal" placeholder="не задана"
                         onChange={e => setD('vat_rate_expense', e.target.value.replace(',', '.'))} style={inp} />
+                    </div>
+                  </div>
+                  {/* СК (агентская комиссия): способ выплаты и базовый %. На закрытии сделки % правится под проект. */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={lbl}>СК — способ</div>
+                      <select value={defData.sk_mode} style={inp} onChange={e => setD('sk_mode', e.target.value)}>
+                        <option value="">— не задан —</option>
+                        <option value="постоплата">постоплата</option>
+                        <option value="скидка в счёт">скидка в счёт</option>
+                      </select>
+                    </div>
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={lbl}>СК — базовый %</div>
+                      <input value={defData.sk_percent} inputMode="decimal" placeholder="нет СК"
+                        onChange={e => setD('sk_percent', e.target.value.replace(',', '.'))} style={inp} />
                     </div>
                   </div>
                   <div style={{ marginBottom: 10 }}>

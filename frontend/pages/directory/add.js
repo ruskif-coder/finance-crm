@@ -33,7 +33,7 @@ import ValuePopover from '@/components/ValuePopover'
 import { MONO, UI, card, inp, btn, primaryBtn } from '@/components/salesTableKit'
 // Списки — ОБЩИЕ с реестром договоров (lib/contractTerms). Своя копия здесь разошлась бы
 // с реестром, а значения сравниваются в базе буквально.
-import { COOPERATION_FORMATS, PAYMENT_TERM_CONDITIONS, PROLONGATION_OPTIONS } from '@/lib/contractTerms'
+import { COOPERATION_FORMATS, ISSUE_CHANNELS, PAYMENT_TERM_CONDITIONS, PROLONGATION_OPTIONS } from '@/lib/contractTerms'
 
 const CAPS = { fontFamily: MONO, fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-muted)' }
 const META = { fontFamily: MONO, fontSize: 9.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-faint)' }
@@ -59,7 +59,7 @@ const ORDER = ['agency', 'advertiser', 'publisher', 'cp', 'contract']
 
 const EMPTY = {
   cp: { name: '', inn: '', kpp: '', ogrn: '', okpo: '', address: '', address_fact: '', phone: '', email: '', website: '', edo_id: '', director_name: '', signer_position: '', signer_basis: '', note: '', bank_name: '', bank_city: '', rs: '', ks: '', bik: '' },
-  contract: { contract_number: '', contract_date: '', marketing_name: '', cooperation_format: '', end_date_text: '', prolongation: '', payment_form: '', payment_term_days: '', payment_term_condition: '', document_link: '', note: '' },
+  contract: { contract_number: '', contract_date: '', marketing_name: '', cooperation_format: '', end_date_text: '', prolongation: '', payment_form: '', payment_term_days: '', payment_term_condition: '', issue_channel: '', document_link: '', note: '' },
   agency: { short_name: '', name_ru: '', name_en: '', holding: '', note: '' },
   advertiser: { short_name: '', name_ru: '', name_en: '', website: '', inn: '', note: '' },
   publisher: { domain: '', name: '', code: '', kind: '', status: 'ПЕРЕГОВОРЫ', network: '', deal_type: '', note: '' },
@@ -94,12 +94,12 @@ function F({ label, value, onChange, placeholder, span, type = 'text', mono, req
  *  Через `ValuePopover` — канон выбора значения в проекте, а не свой `position:absolute`
  *  (см. навык `styling-new-page`). «Прочее» открывает свободный ввод: словари
  *  накопительные, и запрещать незнакомое значение значит останавливать работу. */
-function Pick({ label, value, options, onChange, span, openPop }) {
+function Pick({ label, value, options, onChange, span, openPop, strict }) {
   const custom = !!value && !options.includes(value)
   return (
     <div style={{ minWidth: 0, gridColumn: span ? `span ${span}` : undefined }} data-pop-root>
       <div style={{ ...CAPS, marginBottom: 5 }}>{label}</div>
-      <div onClick={e => openPop(e.currentTarget.getBoundingClientRect(), label, value, options, onChange)}
+      <div onClick={e => openPop(e.currentTarget.getBoundingClientRect(), label, value, options, onChange, strict)}
            style={{ ...inp, width: '100%', height: 36, borderRadius: 10, fontSize: 13,
                     display: 'flex', alignItems: 'center', cursor: 'pointer',
                     borderStyle: 'dashed',
@@ -252,8 +252,9 @@ export default function AddData() {
   const set = (block, key) => (val) => setV(f => ({ ...f, [block]: { ...f[block], [key]: val } }))
   const step = (text, ok, link) => setSteps(s => [...s, { text, ok, link }])
 
-  const openPop = (rect, title, value, options, onChange) =>
-    setPop({ rect, title, value, options, onChange })
+  // strict — закрытый список (Выставление): «+ Добавить» не показываем, значение сравнивается буквально
+  const openPop = (rect, title, value, options, onChange, strict = false) =>
+    setPop({ rect, title, value, options, onChange, strict })
 
   // Поиск юрлица — по имени И ПО ИНН (ручка `/directory-add/counterparties`). Дебаунс,
   // потому что ищут набором: без него запрос уходит на каждую букву.
@@ -387,7 +388,7 @@ export default function AddData() {
           cooperation_format: nn(k.cooperation_format), end_date_text: nn(k.end_date_text),
           prolongation: nn(k.prolongation), payment_form: nn(k.payment_form),
           payment_term_days: k.payment_term_days === '' ? null : Number(k.payment_term_days),
-          payment_term_condition: nn(k.payment_term_condition),
+          payment_term_condition: nn(k.payment_term_condition), issue_channel: nn(k.issue_channel),
           document_link: nn(k.document_link), note: nn(k.note),
         }, auth())
         step(`Договор № ${k.contract_number.trim()} создан`, true,
@@ -681,6 +682,8 @@ export default function AddData() {
                 <F label="Отсрочка, дней" mono value={v.contract.payment_term_days} onChange={set('contract', 'payment_term_days')} />
                 <Pick label="Условие отсрочки" span={2} options={PAYMENT_TERM_CONDITIONS}
                       value={v.contract.payment_term_condition} onChange={set('contract', 'payment_term_condition')} openPop={openPop} />
+                <Pick label="Выставление" options={ISSUE_CHANNELS} strict
+                      value={v.contract.issue_channel} onChange={set('contract', 'issue_channel')} openPop={openPop} />
                 <F label="Ссылка в ЭДО" span={2} value={v.contract.document_link} onChange={set('contract', 'document_link')} placeholder="https://diadoc.kontur.ru/…" />
                 <F label="Примечание" span={2} value={v.contract.note} onChange={set('contract', 'note')} />
               </div>
@@ -764,7 +767,7 @@ export default function AddData() {
                       clearLabel="— не задано —"
                       options={pop.options.map(o => ({ value: o, label: o }))}
                       onPick={val => { pop.onChange(val || ''); setPop(null) }}
-                      onAddNew={name => { pop.onChange(name); setPop(null) }}
+                      onAddNew={pop.strict ? undefined : name => { pop.onChange(name); setPop(null) }}
                       onClose={() => setPop(null)} />
       )}
     </>

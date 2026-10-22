@@ -105,6 +105,7 @@ export default function SalesQuarterWidgets({
             {canViewOthers ? (
               <select value={repId} onChange={e => setRepId(e.target.value)} style={{ ...selBox, flex: 1, minWidth: 0, padding: '11px 12px' }}>
                 <option value="">— я / сотрудник —</option>
+                <option value="all">Все сотрудники</option>
                 {(reps || []).map(r => <option key={r.id} value={r.id}>{r.is_head ? '★ ' : ''}{r.name}{r.linked ? '' : ' (без юзера)'}</option>)}
               </select>
             ) : (
@@ -213,6 +214,7 @@ export default function SalesQuarterWidgets({
             {canViewOthers && (
               <select className="qw-sel" value={repId} onChange={e => setRepId(e.target.value)} style={selBox}>
                 <option value="">— я / сотрудник —</option>
+                <option value="all">Все сотрудники</option>
                 {(reps || []).map(r => <option key={r.id} value={r.id}>{r.is_head ? '★ ' : ''}{r.name}{r.linked ? '' : ' (без юзера)'}</option>)}
               </select>
             )}

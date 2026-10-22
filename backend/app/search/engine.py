@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 
 from app.permissions import get_permissions_for_user
+from app.search import master as MT
 from app.search import types as T
 from app.search.classify import classify
 
@@ -36,6 +37,10 @@ SEARCHERS = {
     "media_plan": ("media_plans", T.media_plans),
     "ord_contract": ("ord", T.ord_contracts),
     "erid": ("ord", T.erids),
+    # контур закрытия (21.10.2026): пакет, УПД и счёт из 1С — право реестра мастер-сделок
+    "master_deal": ("master_deals", MT.master_deals),
+    "upd": ("master_deals", MT.upds),
+    "invoice": ("master_deals", MT.invoices),
 }
 
 Q_MIN, Q_MAX = 2, 100

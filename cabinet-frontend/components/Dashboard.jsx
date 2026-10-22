@@ -44,6 +44,7 @@ import safeHref from '../lib/safeHref'
 import { APP_LINK_FORMATS, isAppLink, landingWeb } from '../lib/landing'
 import { downloadFile } from '../lib/download'
 import { guideSeen, markGuideSeen } from './guide/seen'
+import PrioTask from './PrioTask'
 
 // Строка в одну линию с многоточием — колонка креатива в карточке задания.
 const ELLIPSIS = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
@@ -63,12 +64,25 @@ const Guide = dynamic(() => import('./guide/Guide'), { ssr: false, loading: () =
 // `daysTo`, `urgency`, `startNote` — в lib/urgency.js: правило было в двух местах
 // и разошлось (см. шапку модуля).
 
+// Пометка «пролонгация» (владелец 15.10.2026): креатив сделки-копии («Скопировать
+// сделку») площадка получает на согласование повторно — без пометки это выглядит как
+// новый запуск. Тон тот же, что у чипа «продление» в списке кампаний.
+function ProlongationChip({ t }) {
+  if (!t.is_prolongation) return null
+  return (
+    <span style={{ ...chip(C.violetTint, C.violetFg), fontSize: 10, marginLeft: 6,
+      verticalAlign: 'middle' }}
+      title="Продолжение уже согласованной кампании на новый период">пролонгация</span>
+  )
+}
+
 /* Посадочная — диплинк приложения (02.10.2026): кнопка «посадочная» открывает его
    веб-версию, и площадка должна это знать. Исходную строку можно развернуть и
    скопировать — ровно её мы поставим в баннер. */
 // Подсказка ко второму полю — все форматы ссылки в приложении (владелец 06.10.2026).
 // Отдельным блоком, чтобы его замечали; пока курсор во втором поле — подсвечен
 // оранжевым: глаз сам переходит к списку форматов (владелец 06.10.2026).
+
 function AppLinkHint({ active }) {
   return (
     <span style={{ flex: '1 0 100%', display: 'flex', flexDirection: 'column', gap: 2,
@@ -273,6 +287,7 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
           <span style={{ fontSize: 13, fontWeight: 600, ...ELLIPSIS }}
             title={`Креатив №${t.creative_no}${t.creative_title ? ` — ${t.creative_title}` : ''}`}>
             Креатив №{t.creative_no}{t.creative_title ? ` — ${t.creative_title}` : ''}
+            <ProlongationChip t={t} />
           </span>
           <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.faint, ...ELLIPSIS }}>
             {[t.form === 'BannerHtml5' ? 'banner html5' : t.form,
@@ -605,6 +620,7 @@ function TaskMobile({ t, late, soon, stLabel, toStart, stTone, today, preview, c
         <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>
             Креатив №{t.creative_no}{t.creative_title ? ` — ${t.creative_title}` : ''}
+            <ProlongationChip t={t} />
           </span>
           <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.faint }}>
             {[t.form === 'BannerHtml5' ? 'banner html5' : t.form, preview?.size,
@@ -1656,6 +1672,8 @@ export default function Dashboard({ name, onSignOut }) {
      одинаковым при каждой отрисовке. */
   const { NOW_MONTH, CAMPS, GROUP_PAY } = useDemoNow()
   const [tasks, setTasks] = useState(null)
+  // Запросы на приоритезацию (19.10.2026) — в том же блоке «Требует вашего решения»; отдельный список, своя ручка.
+  const [prio, setPrio] = useState([])
   const [dash, setDash] = useState(null)
   const [reasons, setReasons] = useState(null)
   const [me, setMe] = useState(null)
@@ -1705,6 +1723,8 @@ export default function Dashboard({ name, onSignOut }) {
         api.get('/tasks', auth()), api.get('/dashboard', auth()), api.get('/me', auth()),
       ])
       setTasks(t.data); setDash(d.data); setMe(m.data)
+      // Отдельно и мягко: сбой ручки приоритезации не должен ронять ленту креативов.
+      api.get('/prio-tasks', auth()).then(r => setPrio(r.data.items || [])).catch(() => setPrio([]))
     } catch (e) {
       if (e.response?.status === 401 || e.response?.status === 403) {
         onSignOut(); return
@@ -2064,10 +2084,10 @@ export default function Dashboard({ name, onSignOut }) {
               flexWrap: 'wrap' }}>
               <span style={{ fontSize: 17, fontWeight: 800 }}>Требует вашего решения</span>
               <span style={{ ...chip(C.dangerTint, C.danger, C.dangerBorder),
-                fontFamily: MONO }}>{tasks?.total ?? 0}</span>
+                fontFamily: MONO }}>{(tasks?.total ?? 0) + prio.length}</span>
               {!mobile && (
                 <span style={{ ...CAP, marginBottom: 0 }}>
-                  креативы, пролонгации, сверки · дедлайн решения
+                  креативы, пролонгации, приоритезация · дедлайн решения
                 </span>
               )}
               <span style={{ flex: 1 }} />
@@ -2097,7 +2117,10 @@ export default function Dashboard({ name, onSignOut }) {
                 <Task key={t.task_id} t={t} reasons={reasons} today={today}
                   canApprove={!!me?.can_approve} onDone={load} onErr={setErr} />
               ))}
-              {!allTasks.length && (
+              {prio.map(p => (
+                <PrioTask key={`prio-${p.id}`} t={p} today={today} canApprove={!!me?.can_approve} onDone={load} onErr={setErr} />
+              ))}
+              {!allTasks.length && !prio.length && (
                 <div style={{ padding: '22px 0', textAlign: 'center', color: C.muted,
                   fontSize: 13 }}>
                   Новых креативов на согласование нет.

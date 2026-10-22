@@ -23,6 +23,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
+import app.model_registry  # noqa: F401  (тест должен работать и в одиночном запуске)
 from app.database import SessionLocal
 from app.models import Contract, Counterparty, Role, RolePermission, User
 from app.routers import ord as ord_router
@@ -115,6 +116,9 @@ def test_assembly_response_has_the_four_pinned_steps_with_required_fields(db):
         for field in ord_router.STEP_FIELDS:
             assert field in step, f"ступень «{key}» лишилась поля «{field}»: {step}"
         assert isinstance(step['ok'], bool), f"«{key}».ok не bool — {step['ok']!r}"
+        # Обязательность по матрице «Проверки стадий» (владелец 14.10.2026): экран
+        # глушит ненужную услуге ступень по этому полю, значит оно всегда bool.
+        assert isinstance(step.get('required'), bool), f"«{key}».required не bool — {step.get('required')!r}"
 
 
 def test_assembly_reflects_the_resolved_deal_not_a_hollow_shape(db):

@@ -1,0 +1,32 @@
+# -*- coding: utf-8 -*-
+"""Модели «Статусов продаж» (миграция backend/migrations/2026-10-22_sales_status.sql, состав согласован с владельцем 22.10.2026)."""
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import ARRAY
+
+from app.database import Base
+
+MEETINGS = ("предложена", "подтверждена")
+FIELDS = ("meet_brand", "meet_agency", "comment_sales", "comment_head")
+
+
+class SalesStatusNote(Base):
+    """Строка «Статусов продаж» на бренд: встречи и комментарии, которых нет в сделке. Одна текущая запись на пару
+    «рекламодатель + бренд» (бренд пуст — строка рекламодателя) или на клиента из Excel вне справочника (`client_name`)."""
+    __tablename__ = "sales_status_notes"
+    # Те же ограничения, что в миграции: если таблицу создаст create_all раньше неё, они не потеряются (ревью 22.10.2026)
+    __table_args__ = (
+        CheckConstraint("(advertiser_id IS NOT NULL) <> (client_name IS NOT NULL)", name="ck_sales_status_note_owner"),
+        CheckConstraint("meet_brand IN ('предложена', 'подтверждена')", name="ck_sales_status_note_meet_brand"),
+        CheckConstraint("meet_agency IN ('предложена', 'подтверждена')", name="ck_sales_status_note_meet_agency"),
+    )
+    id = Column(Integer, primary_key=True)
+    advertiser_id = Column(Integer, ForeignKey("sales_advertisers.id", ondelete="CASCADE"))
+    brand_id = Column(Integer, ForeignKey("sales_brands.id", ondelete="CASCADE"))
+    client_name = Column(String(300))
+    meet_brand = Column(String(12))
+    meet_agency = Column(String(12))
+    comment_sales = Column(Text)
+    comment_head = Column(Text)
+    from_excel = Column(ARRAY(Text), nullable=False, server_default="{}")
+    updated_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())

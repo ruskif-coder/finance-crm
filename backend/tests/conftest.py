@@ -183,3 +183,11 @@ def db():
         yield s
     finally:
         s.close()
+
+
+@pytest.fixture(autouse=True)
+def _external_writes_as_on_prod(monkeypatch):
+    """Тесты идут с поведением прода: на стенде в `.env` стоит `EXTERNAL_WRITES=off` (21.10.2026), и тест, подменяющий
+    сеть на уровне httpx, иначе упирался бы в запрет раньше подмены. Наружу тесты всё равно не ходят — сеть подменена;
+    сам выключатель проверяет `test_external_writes_guard.py`, выставляя флаг явно."""
+    monkeypatch.delenv("EXTERNAL_WRITES", raising=False)

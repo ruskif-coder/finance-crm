@@ -38,6 +38,19 @@ def on(d: Optional[date]) -> float:
     return BEFORE
 
 
+def for_document(db, contract, doc_date: Optional[date]) -> float:
+    """Ставка документа (ДС, комплекты УПД пакета) — нашего юрлица на дату составления (владелец 21.10.2026).
+
+    Одна функция на конструктор ДС и раскладку мастер-сделки: раньше раскладка брала ставку медиаплана первой сделки, а документ
+    — ставку юрлица, и суммы ДС, УПД и операции расходились. Ставки юрлица нет — ставка закона на дату документа."""
+    us = getattr(contract, "own_company", None) if contract is not None else None
+    if us is None and db is not None:
+        from app import own_company
+        us = own_company.sole(db)
+    rate = getattr(us, "vat_rate_income", None) if us is not None else None
+    return float(rate) if rate else on(doc_date)
+
+
 def current(db) -> float:
     """Ставка для НОВОГО расчёта — из карточки нашего юрлица, иначе текущая по закону."""
     from app import own_company

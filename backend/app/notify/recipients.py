@@ -171,6 +171,17 @@ def master_of_responsible(db: Session, ctx: dict) -> List[int]:
     return _active(db, [h.user_id for h in heads])
 
 
+def account_masters(db: Session, ctx: dict) -> List[int]:
+    """Мастера аккаунтов: роли `staff_group = 'account'` с признаком мастера (16.10.2026, «сделку
+    забрали в пакет»). По признакам, а не по `roles.key` — ключ между установками разный."""
+    ids = [r.id for r in db.query(Role).filter(Role.staff_group == "account",
+                                               Role.is_master.is_(True)).all()]
+    if not ids:
+        return []
+    return [u.id for u in db.query(User).filter(User.role_id.in_(ids),
+                                                User.is_active == 1).all()]
+
+
 def traffic_masters(db: Session, ctx: dict) -> List[int]:
     """Мастера контура трафика: роли `staff_group = 'traffic'` с признаком мастера — сейчас
     «Мастер траффик» и «Админ Трафик» (владелец 06.10.2026, тревога биддера). По признакам,
@@ -183,7 +194,14 @@ def traffic_masters(db: Session, ctx: dict) -> List[int]:
                                                 User.is_active == 1).all()]
 
 
+def master_collector(db: Session, ctx: dict) -> List[int]:
+    """Кто собирает мастер-сделку — её автор (тот же, что «собирает <кто>» в карточке сделки)."""
+    m = ctx.get("master")
+    return _active(db, [m.created_by]) if m is not None and m.created_by else []
+
+
 RESOLVERS = {
+    "master_collector": master_collector,
     "mp_author": mp_author,
     "responsible": responsible,
     "account_manager": account_manager,
@@ -193,6 +211,7 @@ RESOLVERS = {
     "master_of_responsible": master_of_responsible,
     "traffic_admins": traffic_admins,
     "traffic_masters": traffic_masters,
+    "account_masters": account_masters,
 }
 
 # Что резолвер ждёт в `ctx`. Объявлено списком, а не только в теле функции, потому что
@@ -216,10 +235,12 @@ RESOLVER_CTX = {
     "sales_rep_of_deal": "deal",        # SalesDeal
     "year_plan_owner": "rep_id",        # int или список id SalesRep — владельцы строки
     "master_of_responsible": "deal",    # SalesDeal
+    "master_collector": "master",       # MasterDeal
     # "sales_head" и роль/пользователь в получателях контекста не читают вовсе.
 }
 
 RESOLVER_LABELS = {
+    "master_collector": "Кто собирает мастер-сделку",
     "mp_author": "Автор МП",
     "responsible": "Ответственный",
     "account_manager": "Аккаунт сделки",
@@ -229,6 +250,7 @@ RESOLVER_LABELS = {
     "master_of_responsible": "Мастер ответственного",
     "traffic_admins": "Трафик-админы (право «Особенности площадок»)",
     "traffic_masters": "Мастера трафика (мастер-роли контура трафика)",
+    "account_masters": "Мастера аккаунтов (мастер-роли контура аккаунтов)",
 }
 
 

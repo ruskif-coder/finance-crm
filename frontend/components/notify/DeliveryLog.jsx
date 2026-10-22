@@ -9,7 +9,7 @@
  */
 import { useState } from 'react'
 import { UI, MONO, card, inp, sel, th, btnSm, Modal } from '../salesTableKit'
-import { fmtDateTime } from '@/lib/dates'
+import { fmtDateTime, serverDate } from '@/lib/dates'
 import api, { auth } from '../../lib/http'
 import { STATUS, badge, msg, td } from './kit'
 
@@ -89,7 +89,14 @@ export default function DeliveryLog({ data, filter, setFilter, onErr }) {
                 <tr key={r.id} onClick={() => isMail && open(String(r.id).slice(1))}
                   style={{ cursor: isMail ? 'pointer' : 'default' }}>
                   <td style={{ ...td, whiteSpace: 'nowrap', color: 'var(--text-muted)',
-                    fontFamily: MONO, fontSize: 11 }}>{fmtDateTime(r.created_at)}</td>
+                    fontFamily: MONO, fontSize: 11 }}>
+                    {fmtDateTime(r.created_at)}
+                    {/* Ушло позже события (тихие часы, досылка) — видно, когда на самом деле (21.10.2026) */}
+                    {!!r.sent_at && Math.abs(serverDate(r.sent_at) - serverDate(r.created_at)) > 60000 && (
+                      <span style={{ display: 'block', color: 'var(--text-primary)' }}
+                        title="Время фактической отправки">ушло {fmtDateTime(r.sent_at)}</span>
+                    )}
+                  </td>
                   <td style={{ ...td, fontSize: 13 }}>
                     {r.channel_label}
                     <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)' }}>

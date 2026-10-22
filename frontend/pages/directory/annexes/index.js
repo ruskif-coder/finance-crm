@@ -17,6 +17,7 @@ import Head from 'next/head'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/http'
 import Navbar from '@/components/Navbar'
+import BaseTemplateModal from '@/components/annex/BaseTemplateModal'
 import SectionTabs from '@/components/SectionTabs'
 import { MONO, UI, IconBtn } from '@/components/salesTableKit'
 import { grp } from '@/lib/salesFormat'
@@ -39,6 +40,7 @@ const COLS = [
   ['period', '176px', 'Период', 'period_from'],
   ['deals', '132px', 'Сделки'],
   ['amount', '128px', 'Сумма с НДС', 'total_amount'],
+  ['tpl', '170px', 'Шаблон', 'cooperation_format'],
   ['files', '92px', ''],
 ]
 const RIGHT = new Set(['amount'])
@@ -54,6 +56,23 @@ function HeadCell({ k, label, sortKey, sortCol, sortDir, onSort }) {
   )
 }
 const GRID = COLS.map(c => c[1]).join(' ')
+
+/** Шаблон ДС приложения: «кастомный · vN» или название базового шаблона и его версия; у собранных до конструктора — серая метка.
+ *  Без шаблона у договора (формат не указан или не назначен шаблону) — красная: ДС по такому договору не собирается. */
+function TemplateChip({ tpl, format }) {
+  const tone = tpl
+    ? (tpl.scope === 'custom'
+      ? ['var(--violet-tint)', 'var(--violet-fg)', `кастомный шаблон под договор, версия ${tpl.version}`, `кастомный · v${tpl.version}`]
+      : ['var(--bg-subtle)', 'var(--text-muted)', `базовый шаблон «${tpl.title}», версия ${tpl.version}`, `${tpl.title} · v${tpl.version}`])
+    : format
+      ? ['var(--bg-subtle)', 'var(--text-faint)', 'собрано до конструктора шаблонов — прежним расчётом', 'до конструктора']
+      : ['var(--danger-tint)', 'var(--danger-fg)', 'формат сотрудничества у договора не указан — шаблон не определён, ДС не собирается', 'нет формата']
+  return (
+    <span title={tone[2]} style={{ display: 'inline-flex', alignItems: 'center', height: 22, padding: '0 8px', borderRadius: 7, background: tone[0], color: tone[1], fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      {tone[3]}
+    </span>
+  )
+}
 
 export default function AnnexRegistry() {
   const router = useRouter()
@@ -73,6 +92,7 @@ export default function AnnexRegistry() {
   const [sortCol, setSortCol] = useState('date')
   const [sortDir, setSortDir] = useState('desc')
   const [busy, setBusy] = useState('')
+  const [tplOpen, setTplOpen] = useState(false)
 
   // Загрузка вынесена из useEffect в именованную функцию: её зовёт и монтирование, и
   // возврат на экран. Безымянная стрелка внутри эффекта второму вызывающему недоступна.
@@ -181,6 +201,7 @@ export default function AnnexRegistry() {
               {payers.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
             <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <button type="button" onClick={() => setTplOpen(true)} style={{ ...chipSel, backgroundImage: 'none', padding: '7px 14px', color: 'var(--accent-fg)', background: 'var(--accent-tint)', borderColor: 'var(--accent-border)' }}>Базовые шаблоны</button>
               <IconBtn title="Сбросить фильтры" onClick={resetFilters}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v4h-4" /></svg></IconBtn>
               <IconBtn title="Выгрузить в Excel — в том же порядке, что на экране" onClick={exportXlsx}><svg width="15" height="15" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg></IconBtn>
             </span>
@@ -203,7 +224,7 @@ export default function AnnexRegistry() {
 
           {loading ? <div style={{ padding: 30, color: 'var(--text-muted)' }}>Загрузка…</div> : (
             <div style={{ overflowX: 'auto' }}>
-              <div style={{ minWidth: 1300 }}>
+              <div style={{ minWidth: 1460 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 12, borderBottom: '1px solid var(--border-card)' }}>
                   {COLS.map(([k, w, label, sortKey]) => (
                     <HeadCell key={k} k={k} label={label} sortKey={sortKey}
@@ -238,6 +259,7 @@ export default function AnnexRegistry() {
                         : '—'}
                     </div>
                     <div style={{ ...cell, textAlign: 'right', fontFamily: MONO, fontWeight: 700 }}>{grp(a.total_amount)}</div>
+                    <div style={cell}><TemplateChip tpl={a.template} format={a.cooperation_format} /></div>
                     <div style={{ ...cell, display: 'inline-flex', gap: 5, overflow: 'visible' }}>
                       <span onClick={e => grab(e, a.id, 'docx')} style={fileBtn}>
                         {busy === `${a.id}:docx` ? '…' : 'DOC'}
@@ -259,6 +281,7 @@ export default function AnnexRegistry() {
           )}
         </div>
       </div>
+      <BaseTemplateModal open={tplOpen} onClose={() => setTplOpen(false)} />
     </>
   )
 }

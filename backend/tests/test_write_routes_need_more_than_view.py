@@ -36,6 +36,8 @@ VIEW_ONLY_WRITES = {
     ("POST", "/api/annexes/export.xlsx"): "выгрузка: POST только из-за тела запроса, ничего не пишет",
     ("POST", "/api/rk-analysis/{code}/export.xlsx"): "выгрузка среза «Отчёта по РК»: POST только из-за тела запроса, ничего не пишет",
     ("POST", "/api/annexes/party/phrase"): "генерация фразы по стороне договора, ничего не пишет",
+    ("POST", "/api/master-deals/{code}/preview"): "предпросмотр черновика раскладки мастер-сделки: POST из-за тела, ничего не пишет",
+    ("POST", "/api/annex-templates/check"): "проверка блоков шаблона ДС без записи: POST только из-за тела запроса",
     ("POST", "/api/diadoc/import/preview"): "предпросмотр импорта: только разбор файла",
     ("POST", "/api/operations/import/preview"): "предпросмотр импорта: только разбор файла",
     ("POST", "/api/operations/export/alfa"):

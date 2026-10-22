@@ -22,6 +22,10 @@ import { grp, fmtFull } from '../../../lib/salesFormat'
 import api, { auth } from '../../../lib/api'
 import { saveBlob, filenameFromResponse } from '@/lib/download'
 import { fmtDate as fmtCalendarDate } from '@/lib/dates'
+import AnnexModelPanel from '@/components/annex/AnnexModelPanel'
+import AnnexQuickEdit from '@/components/annex/AnnexQuickEdit'
+import AnnexDateField from '@/components/annex/AnnexDateField'
+import AnnexLegalButton from '@/components/annex/AnnexLegalButton'
 
 const dm = (d) => fmtCalendarDate(d)
 
@@ -33,7 +37,7 @@ const SECTION = { ...card, padding: '18px 20px', marginBottom: 16 }
  *
  *  Незаполненное подсвечивается рамкой и подписью: все три поля обязательны для печати,
  *  и человек должен видеть, чего не хватает, ДО отказа выгрузки, а не после. */
-function Field({ label, value, onChange, placeholder, hint, warn }) {
+function Field({ label, value, onChange, placeholder, hint, warn, presets }) {
   const empty = !String(value || '').trim()
   const bad = empty || !!warn
   return (
@@ -46,6 +50,17 @@ function Field({ label, value, onChange, placeholder, hint, warn }) {
              style={{ ...inp, width: '100%',
                       borderColor: bad ? 'var(--warning)' : 'var(--border-card)',
                       background: bad ? 'var(--warning-tint)' : 'var(--bg-card)' }} />
+      {/* Быстрые подстановки частых значений: ввод идёт в одно нажатие, а в именительном падеже, как хранит карточка. */}
+      {!!presets && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+          {presets.map(p => (
+            <span key={p} onClick={() => onChange(p)} title={`Подставить «${p}»`}
+                  style={{ display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 9px', borderRadius: 7, border: '1px solid var(--border-card)', background: String(value || '').trim() === p ? 'var(--accent-tint)' : 'var(--bg-subtle)', color: String(value || '').trim() === p ? 'var(--accent-fg)' : 'var(--text-secondary)', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer' }}>
+              {p}
+            </span>
+          ))}
+        </div>
+      )}
       {(warn || hint) && (
         <div style={{ fontSize: 11, lineHeight: 1.4, marginTop: 4,
                       color: warn ? 'var(--warning-text)' : 'var(--text-faint)' }}>
@@ -55,6 +70,11 @@ function Field({ label, value, onChange, placeholder, hint, warn }) {
     </div>
   )
 }
+
+// Частые значения для подстановки одним нажатием. Должность — в именительном (карточка хранит так, склоняет сервер); основание — в
+// родительном, как оно стоит в «действующего на основании …». У доверенности подставляется заготовка: номер и дата вписываются руками.
+const POSITION_PRESETS = ['Генеральный директор', 'Директор']
+const BASIS_PRESETS = ['Устава', 'Доверенности № ___ от ___']
 
 // Доверенность без номера и даты в документе не значит ничего: «действующего на основании
 // Доверенности» не отсылает ни к какому документу, и подписант формально не подтверждён.
@@ -108,10 +128,12 @@ function Party({ title, p, onSave, saving, canEdit }) {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr', gap: 14,
                       alignItems: 'start' }}>
           <Field label="Должность" value={form.signer_position}
-                 onChange={v => set('signer_position', v)} placeholder="Генеральный директор" />
+                 onChange={v => set('signer_position', v)} placeholder="Генеральный директор"
+                 presets={POSITION_PRESETS} />
           <div style={{ alignSelf: 'stretch', background: 'var(--border-card)' }} />
           <Field label="Основание полномочий" value={form.signer_basis}
                  onChange={v => set('signer_basis', v)} placeholder="Устава"
+                 presets={BASIS_PRESETS}
                  hint={BASIS_HINT} warn={basisWarn(form.signer_basis)} />
         </div>
       </div>
@@ -122,8 +144,9 @@ function Party({ title, p, onSave, saving, canEdit }) {
         {' '}{g.acting || 'действующего'} на основании {g.basis_gen || '___________'}»
       </div>
       {dirty && canEdit && (
-        <button onClick={() => onSave(p.id, form)} disabled={saving}
-                style={{ ...primaryBtn, marginTop: 12 }}>
+        <button onClick={() => onSave(p.id, form)} disabled={saving || /_{3}/.test(form.signer_basis || '')}
+                title={/_{3}/.test(form.signer_basis || '') ? 'Впишите номер и дату доверенности вместо подчёркиваний' : ''}
+                style={{ ...primaryBtn, marginTop: 12, opacity: /_{3}/.test(form.signer_basis || '') ? .5 : 1 }}>
           {saving ? 'Сохраняю…' : 'Сохранить в карточку контрагента'}
         </button>
       )}
@@ -154,11 +177,15 @@ export default function AnnexAssembly() {
     setMayViewContracts(can(perms, 'contracts', 'view'))
   }, [])
 
+  const [legal, setLegal] = useState([])
+  const legalOpen = legal.filter(x => x.status === 'открыта' || x.status === 'в работе')
   const load = useCallback(async () => {
     if (!id) return
     try {
       const r = await api.get(`/annexes/${id}`, auth())
       setA(r.data)
+      // Заявки юристу этого ДС: открытая красит шапку и держит подтверждение и чистовик (владелец 14.10.2026).
+      api.get(`/legal-requests/annex/${id}`, auth()).then(x => setLegal(x.data)).catch(e => { setLegal([]); setErr(e?.response?.data?.detail || 'Не удалось загрузить заявки юристу — блокировка ДС не проверена') })
       setNo(String(r.data.no ?? r.data.next_no ?? ''))
       setDocDate(r.data.date ? String(r.data.date).slice(0, 10) : '')
       setErr('')
@@ -205,11 +232,33 @@ export default function AnnexAssembly() {
     } finally { setBusy('') }
   }
 
-  const download = async (kind = 'pdf') => {
-    setBusy(kind)
+  /** Пересоздать подтверждённое приложение на актуальном шаблоне (до отправки в 1С). */
+  const rebuild = async () => {
+    if (!window.confirm('Пересоздать документ по актуальной версии шаблона договора? Номер и дата сохранятся, прежний текст документа будет заменён.')) return
+    setBusy('rebuild')
     setErr('')
     try {
-      const r = await api.get(`/annexes/${id}/${kind}`, { ...auth(), responseType: 'blob' })
+      await api.post(`/annexes/${id}/rebuild`, {}, auth())
+      await load()
+    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось пересоздать документ') }
+    finally { setBusy('') }
+  }
+
+  /** Сохранить правку блока (зона аккаунта) или основания закрывающих; `text = null` — вернуть по шаблону. */
+  const saveDate = async (docDate) => {
+    await api.put(`/annexes/${id}/date`, { doc_date: docDate }, auth())
+    await load()
+  }
+  const saveEdit = async (key, text) => {
+    await api.put(`/annexes/${id}/edits`, { key, text }, auth())
+    await load()
+  }
+
+  const download = async (kind = 'pdf', withBasis = false) => {
+    setBusy(withBasis ? `${kind}+` : kind)
+    setErr('')
+    try {
+      const r = await api.get(`/annexes/${id}/${kind}${withBasis ? '?with_basis=1' : ''}`, { ...auth(), responseType: 'blob' })
       saveBlob(r.data, filenameFromResponse(r) || `ДС.${kind}`)
     } catch (e) {
       // Отказ приходит блобом, а не JSON: тело надо прочитать, иначе на экране
@@ -229,8 +278,25 @@ export default function AnnexAssembly() {
       <Head><title>{a?.number ? a.number + ' · приложение' : 'Приложение к договору'} | SIMB-AD ERP</title></Head>
       <Navbar />
       <div style={{ maxWidth: 1180, margin: '0 auto', padding: '22px 20px 60px' }}>
-        <button onClick={() => router.push('/directory/annexes')}
-                style={{ ...btn(false), marginBottom: 14 }}>← К реестру</button>
+        <span style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14 }}>
+          <button onClick={() => router.push('/directory/annexes')} style={btn(false)}>← К реестру</button>
+          {/* ДС мастер-сделки — назад к раскладке; номер займёт подтверждение (из раскладки), а не «следующий по договору». */}
+          {!!a?.master && (
+            <>
+              <button onClick={() => router.push(`/accounts/master/${a.master.code}`)} style={btn(false)}>← Раскладка {a.master.code}</button>
+              {!!a.master.will_be && !a.no && <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>при подтверждении — {a.master.will_be}</span>}
+              {(a.master.siblings || []).length > 1 && (
+                <span style={{ display: 'inline-flex', gap: 6, marginLeft: 8 }}>
+                  {a.master.siblings.map(x => (
+                    <button key={x.id} type="button" onClick={() => x.id !== a.id && router.push(`/directory/annexes/${x.id}`)}
+                      style={{ ...btn(x.id === a.id), cursor: x.id === a.id ? 'default' : 'pointer' }}>
+                      {x.number}{x.confirmed ? ' ✓' : ''}</button>
+                  ))}
+                </span>
+              )}
+            </>
+          )}
+        </span>
 
         {!!err && (
           <div style={{ ...SECTION, borderColor: 'var(--danger)', color: 'var(--danger)' }}>{err}</div>
@@ -238,7 +304,8 @@ export default function AnnexAssembly() {
 
         {a && (
           <>
-            <div style={{ ...SECTION, display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+            <div style={{ ...SECTION, display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap',
+                          ...(legalOpen.length ? { background: 'var(--warning-bg)', border: '1px solid var(--warning-border)' } : {}) }}>
               <div>
                 <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-.02em' }}>
                   {a.number || 'Черновик — номер не занят'}
@@ -249,6 +316,12 @@ export default function AnnexAssembly() {
                 <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
                   период размещения {dm(a.period_from)} — {dm(a.period_to)}
                 </div>
+                {!!legalOpen.length && (
+                  <div style={{ marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 8, padding: '4px 10px', borderRadius: 8,
+                                background: 'var(--warning-tint)', color: 'var(--warning-fg)', fontSize: 12.5, fontWeight: 700 }}>
+                    Ждёт юриста · {legalOpen.map(x => `${x.status}${x.taken_by ? ` (${x.taken_by})` : ''}`).join(', ')} — подтверждение и чистовые недоступны
+                  </div>
+                )}
                 {/* Сумма документа не сходится с суммой его сделок — говорим ДО подписания.
                     Текст считает сервер (routers/annexes._mismatch, аудит 23.09.2026, 3.H1). */}
                 {!!a.mismatch && (
@@ -307,22 +380,36 @@ export default function AnnexAssembly() {
                       <input type="date" value={docDate} onChange={e => setDocDate(e.target.value)}
                              style={{ ...inp, width: 160, fontFamily: MONO }} />
                     </div>
-                    <button onClick={confirm} disabled={!!busy} style={{ ...btn(false), height: 36 }}>
+                    <button onClick={confirm} disabled={!!busy || !!legalOpen.length} title={legalOpen.length ? 'Ждёт ответа юриста' : undefined}
+                            style={{ ...btn(false), height: 36, opacity: legalOpen.length ? .45 : 1, cursor: legalOpen.length ? 'not-allowed' : 'pointer' }}>
                       {busy === 'confirm' ? 'Занимаю номер…' : 'Подтвердить номер'}
                     </button>
                   </>
                 )}
-                <button onClick={() => download('docx')} disabled={!!busy || !!miss.length}
-                        title={miss.length ? 'Сначала заполните недостающее' : 'Редактируемый документ для правок'}
-                        style={{ ...btn(false), height: 36, opacity: miss.length ? .45 : 1,
-                                 cursor: miss.length ? 'not-allowed' : 'pointer' }}>
-                  {busy === 'docx' ? 'Собираю…' : 'Скачать DOCX'}
+                {/* Выгрузка в одну строку (владелец 14.10.2026): «Клиентские на согласование» — ДС и основание закрывающих одним файлом,
+                    затем разделитель, затем чистовые — только ДС, на подпись. */}
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)', alignSelf: 'center', whiteSpace: 'nowrap' }}>Клиентские на согласование</span>
+                <button onClick={() => download('docx', true)} disabled={!!busy || !!miss.length}
+                        title={miss.length ? 'Сначала заполните недостающее' : 'ДС и основание для закрывающих документов — одним редактируемым файлом на согласование'}
+                        style={{ ...btn(false), height: 36, opacity: miss.length ? .45 : 1, cursor: miss.length ? 'not-allowed' : 'pointer' }}>
+                  {busy === 'docx+' ? 'Собираю…' : 'DOCX'}
                 </button>
-                <button onClick={() => download('pdf')} disabled={!!busy || !!miss.length}
-                        title={miss.length ? 'Сначала заполните недостающее' : ''}
-                        style={{ ...primaryBtn, height: 36, opacity: miss.length ? .45 : 1,
-                                 cursor: miss.length ? 'not-allowed' : 'pointer' }}>
-                  {busy === 'pdf' ? 'Собираю…' : 'Скачать PDF'}
+                <button onClick={() => download('pdf', true)} disabled={!!busy || !!miss.length}
+                        title={miss.length ? 'Сначала заполните недостающее' : 'ДС и основание для закрывающих документов — одним PDF на согласование'}
+                        style={{ ...btn(false), height: 36, opacity: miss.length ? .45 : 1, cursor: miss.length ? 'not-allowed' : 'pointer' }}>
+                  {busy === 'pdf+' ? 'Собираю…' : 'PDF'}
+                </button>
+                <span style={{ alignSelf: 'stretch', width: 1, background: 'var(--border-card)', margin: '0 4px' }} />
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)', alignSelf: 'center', whiteSpace: 'nowrap' }}>Чистовые</span>
+                <button onClick={() => download('docx')} disabled={!!busy || !!miss.length || !!legalOpen.length}
+                        title={miss.length ? 'Сначала заполните недостающее' : legalOpen.length ? 'Ждёт ответа юриста' : 'Чистовой ДС — редактируемый файл'}
+                        style={{ ...btn(false), height: 36, opacity: miss.length || legalOpen.length ? .45 : 1, cursor: miss.length || legalOpen.length ? 'not-allowed' : 'pointer' }}>
+                  {busy === 'docx' ? 'Собираю…' : 'DOCX'}
+                </button>
+                <button onClick={() => download('pdf')} disabled={!!busy || !!miss.length || !!legalOpen.length}
+                        title={miss.length ? 'Сначала заполните недостающее' : legalOpen.length ? 'Ждёт ответа юриста' : 'Чистовой ДС на подпись'}
+                        style={{ ...primaryBtn, height: 36, opacity: miss.length || legalOpen.length ? .45 : 1, cursor: miss.length || legalOpen.length ? 'not-allowed' : 'pointer' }}>
+                  {busy === 'pdf' ? 'Собираю…' : 'PDF'}
                 </button>
               </div>
             </div>
@@ -338,7 +425,43 @@ export default function AnnexAssembly() {
               </div>
             )}
 
+            {/* Правка пунктов зоны аккаунта (до таблицы МП) — конструктор над самим документом, такой же, как у основания закрывающих. У черновика
+                и у подтверждённого, пока оно не ушло в 1С (сервер откажет, если ушло). Пункты после таблицы правит юрист. */}
+            {a.model && a.model.blocks && !a.model_legacy && (
+              <div style={SECTION}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                  {a.model.blocks.filter(b => !b.sys && b.zone === 'acc').map((b, i) => (
+                    <AnnexQuickEdit key={b.id} title={`Пункт ${b.num} ${b.title || ''}`} hint="до таблицы медиаплана — правит аккаунт"
+                                    source={b.source_text != null ? b.source_text : (b.template_text || '')} defaultText={b.template_text} edited={!!b.edited} inheritedFrom={b.inherited_from} values={a.model.values}
+                                    canEdit={mayEdit} onSave={(txt) => saveEdit(b.id, txt)}
+                                    aside={i === 0 ? <AnnexDateField value={a.date} periodFrom={a.period_from} canEdit={mayEdit} onSave={saveDate} /> : null} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Документ по шаблону ДС (спринт 2): тексты пунктов, таблица «бренд → услуги → допы», стороны. Собранные до конструктора
+                показываются прежним расчётом ниже. */}
             <div style={SECTION}>
+              <AnnexModelPanel state={{ model: a.model, frozen: a.model_frozen, legacy: a.model_legacy, reason: a.model_reason, template_state: a.template_state }}
+                               onRebuild={mayEdit && !a.is_draft ? rebuild : undefined} rebuildBusy={busy === 'rebuild'}
+                               actions={a.model && a.model.blocks && !a.model_legacy
+                                 ? <AnnexLegalButton annexId={a.id} canEdit={mayEdit} onChange={load} lawBlocks={a.model.blocks.filter(b => !b.sys && b.zone === 'law')} />
+                                 : null} />
+            </div>
+
+            {/* Основание для закрывающих документов (УПД и счёт — один текст). Генерируется по образцу и правится здесь; у подтверждённого
+                правится тоже — это не текст подписанного ДС. */}
+            {a.model && a.model.closing_basis && (
+              <div style={SECTION}>
+                <AnnexQuickEdit title="Основание для закрывающих документов" hint="попадёт в УПД и счёт; можно скопировать"
+                                source={a.model.closing_basis.template}
+                                edited={a.model.closing_basis.edited} inheritedFrom={a.model.closing_basis.inherited_from} values={a.model.values} canEdit={mayEdit} copy
+                                onSave={(t) => saveEdit('closing_basis', t)} />
+              </div>
+            )}
+
+            {!a.model && <div style={SECTION}>
               <div style={{ ...LBL, marginBottom: 10 }}>Медиаплан в документе</div>
               {rows.length ? (
                 <div style={{ overflowX: 'auto' }}>
@@ -360,8 +483,8 @@ export default function AnnexAssembly() {
                           <td style={td}>{r.rotation || '—'}</td>
                           <td style={td}>{r.model || '—'}</td>
                           <td style={{ ...td, textAlign: 'right', fontFamily: MONO }}>{grp(r.volume)}</td>
-                          <td style={{ ...td, textAlign: 'right', fontFamily: MONO }}>{grp(r.unit_price)}</td>
-                          <td style={{ ...td, textAlign: 'right', fontFamily: MONO, fontWeight: 700 }}>{grp(r.amount)}</td>
+                          <td style={{ ...td, textAlign: 'right', fontFamily: MONO }}>{r.bonus ? '—' : grp(r.unit_price)}</td>
+                          <td style={{ ...td, textAlign: 'right', fontFamily: MONO, fontWeight: 700 }}>{r.bonus ? '—' : grp(r.amount)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -372,7 +495,7 @@ export default function AnnexAssembly() {
                   К приложению не привязана ни одна сделка — таблица размещения в документе будет пустой.
                 </div>
               )}
-            </div>
+            </div>}
             <div style={SECTION}>
               <div style={{ ...LBL, marginBottom: 10 }}>Суммы</div>
               {/* Разделители вертикальные: без них три величины разной природы — деньги,

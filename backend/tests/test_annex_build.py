@@ -28,13 +28,10 @@ def db():
 
 # ── дата ─────────────────────────────────────────────────────────────────────
 
-def test_date_is_the_last_day_of_the_previous_month():
-    """Правило владельца 05.09.2026. Февраль и январь — там, где ошибаются."""
-    assert annex.annex_date(date(2026, 6, 1)) == date(2026, 5, 31)
-    assert annex.annex_date(date(2026, 6, 17)) == date(2026, 5, 31)   # день внутри месяца не важен
-    assert annex.annex_date(date(2026, 1, 1)) == date(2025, 12, 31)   # переход через год
-    assert annex.annex_date(date(2026, 3, 1)) == date(2026, 2, 28)
-    assert annex.annex_date(date(2024, 3, 1)) == date(2024, 2, 29)    # високосный
+def test_date_is_the_campaign_start():
+    """Владелец 14.10.2026: дата ДС по умолчанию — начало РК (правило 05.09 «последний день прошлого месяца» отменено)."""
+    assert annex.annex_date(date(2026, 6, 1)) == date(2026, 6, 1)
+    assert annex.annex_date(date(2026, 6, 17)) == date(2026, 6, 17)
 
 
 # ── номер ────────────────────────────────────────────────────────────────────
@@ -142,7 +139,7 @@ def test_build_reproduces_the_sample_document(db):
         pytest.skip('нужен договор с контрагентом')
     d = annex.build(db, c, period_from=date(2026, 6, 1), period_to=date(2026, 6, 30),
                     amount=732000, brand="Мезим / Mezym")
-    assert d["date"] == date(2026, 5, 31)
+    assert d["date"] == date(2026, 6, 1)
     assert d["vat"] == 132000.0
     assert d["amount_words"].endswith("(Семьсот тридцать две тысячи) рублей 00 копеек")
     assert d["vat_words"].endswith("(Сто тридцать две тысячи) рублей 00 копеек")

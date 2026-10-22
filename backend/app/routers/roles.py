@@ -44,7 +44,7 @@ class RoleCreate(BaseModel):
 class RoleUpdate(BaseModel):
     label: Optional[str] = None
     permissions: Optional[List[PermissionInput]] = None
-    staff_group: Optional[str] = None   # 'seller'/'account'/'traffic'/'publishers'/'' (снять)
+    staff_group: Optional[str] = None   # 'seller'/'account'/'traffic'/'publishers'/'legal'/'' (снять)
     is_master: Optional[bool] = None
 
 
@@ -130,7 +130,7 @@ def update_role(role_id: int, data: RoleUpdate, db: Session = Depends(get_db), c
     # Рабочая группа + мастер (классификация роли для конструктора МП).
     if data.staff_group is not None:
         role.staff_group = (data.staff_group
-                            if data.staff_group in ("seller", "account", "traffic", "publishers")
+                            if data.staff_group in ("seller", "account", "traffic", "publishers", "legal")
                             else None)
         changes.append(f"рабочая группа: {role.staff_group or '—'}")
     if data.is_master is not None:

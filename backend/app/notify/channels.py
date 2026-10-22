@@ -70,19 +70,26 @@ def deliver_digest(*, to: str, to_name: Optional[str], subject: str,
         return f"failed|{str(e)[:200]}"
 
 
+# Тихие часы по умолчанию — у тех, кто своих не задал (владелец 21.10.2026): сканер работает круглые сутки, и без
+# умолчания четверо из шести сотрудников с ботом получали напоминания в 00:20 МСК. Одинаковые «с» и «по» — «без тихих часов».
+DEFAULT_QUIET = (22, 8)
+
+
 def quiet_now(ch: Optional[UserNotificationChannels], ev: registry.Event) -> bool:
     """Тихие часы и «не беспокоить до». Событие с locked=True проходит сквозь них:
-    отказ по сделке и просрочка не ждут утра."""
-    if ch is None or ev.locked:
+    отказ по сделке и просрочка не ждут утра. Своих часов нет — `DEFAULT_QUIET`."""
+    if ev.locked:
         return False
     # Час и день — МОСКОВСКИЕ. Контейнер живёт в UTC, и `datetime.now().hour` давал
     # сдвиг на три часа: заданные человеком тихие часы 22:00–08:00 работали как
     # 01:00–11:00. Тот же дефект, что нашёлся у тихих часов площадок 14.09.2026.
     now = timez.msk_now()
-    if ch.mute_until and ch.mute_until >= now.date():
+    if ch is not None and ch.mute_until and ch.mute_until >= now.date():
         return True
-    a, b = ch.quiet_from, ch.quiet_to
+    a, b = (ch.quiet_from, ch.quiet_to) if ch is not None else (None, None)
     if a is None or b is None:
+        a, b = DEFAULT_QUIET
+    if a == b:
         return False
     h = now.hour
     return (a <= h < b) if a < b else (h >= a or h < b)   # интервал через полночь

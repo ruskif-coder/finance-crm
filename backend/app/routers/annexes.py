@@ -33,11 +33,17 @@ from sqlalchemy import func as sa_func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.annex_tpl import document as tpl_doc
+from app.legal import service as legal
+from app.sales import annex_signed
+from app.annex_tpl.assemble import (CLOSING_KEY, closing_template_for as tpl_closing_for, assemble as tpl_assemble,
+                                    closing_resolve as tpl_closing_resolve, validate_edit as tpl_validate_edit)
+from app.annex_tpl.service import AnnexTplError
 from app.audit import log_action
 from app.database import get_db
 from app.models import Contract, Counterparty, User
 from app.permissions import require_permission
-from app.routers.sales_dashboard import _assert_deal_in_scope
+from app.routers.sales_dashboard import _assert_deal_in_scope, _scope_deal_ids
 from app.sales import annex as annex_build
 from app.sales import annex_docx as docx_build
 from app.sales import rugram
@@ -62,10 +68,15 @@ def _contract(db: Session, contract_id: int) -> Contract:
     return c
 
 
-def _annex(db: Session, annex_id: int) -> SalesAnnex:
+def _annex(db: Session, annex_id: int, user=None) -> SalesAnnex:
+    """ДС по id. С пользователем — ещё и область «свои» (аудит 21.10.2026): ручки обязаны передавать `user`,
+    служебные вызовы без него проверку не делают."""
     a = db.query(SalesAnnex).filter(SalesAnnex.id == annex_id).first()
     if not a:
         raise HTTPException(404, "Приложение не найдено")
+    if user is not None:
+        from app.sales import scope as SC
+        SC.annex_in_scope(db, user, a)
     return a
 
 
@@ -122,7 +133,7 @@ def _out(a: SalesAnnex) -> dict:
         "id": a.id, "contract_id": a.contract_id, "no": a.no, "number": a.number,
         "date": a.date, "period_from": a.period_from, "period_to": a.period_to,
         "total_amount": a.total_amount, "vat_rate": a.vat_rate, "status": a.status,
-        "template_id": a.template_id, "signed_place": a.signed_place,
+        "template_id": a.template_id, "template_version_id": a.template_version_id, "signed_place": a.signed_place,
         "confirmed_at": a.confirmed_at, "file_path": a.file_path,
         # Черновик отличается от выпущенного ровно наличием номера — отдельного флага
         # заводить не стали: два признака одного состояния разъезжаются.
@@ -145,9 +156,10 @@ def preview(contract_id: int, period_from: date, period_to: date, amount: float,
     if period_to < period_from:
         raise HTTPException(400, "Конец периода раньше начала")
     c = _contract(db, contract_id)
+    ids = _scope_deal_ids(db, user, _ids(deal_ids))         # медиаплан чужой сделки не собирается (аудит 21.10.2026)
     data = annex_build.build(db, c, period_from=period_from, period_to=period_to,
                              amount=amount, brand=brand, vat_rate=vat_rate,
-                             deal_ids=_ids(deal_ids))
+                             deal_ids=ids)
     data["no_hint"] = annex_build.no_hint(db, c)
     data["annex_start_no"] = c.annex_start_no
     return data
@@ -179,6 +191,11 @@ def create_annex(payload: AnnexIn, db: Session = Depends(get_db), user: User = D
     if payload.period_to < payload.period_from:
         raise HTTPException(400, "Конец периода раньше начала")
     c = _contract(db, payload.contract_id)
+    version, reason = tpl_doc.resolve(db, c)
+    if version is None:
+        raise HTTPException(409, reason)            # формат не указан или шаблон не назначен — ДС не собирается
+    if payload.deal_ids:
+        _scope_deal_ids(db, user, payload.deal_ids)    # разнесение выручки — только в свои сделки (аудит 21.10.2026)
     _assert_one_advertiser(db, payload.deal_ids)
     data = annex_build.build(db, c, period_from=payload.period_from,
                              period_to=payload.period_to, amount=payload.total_amount,
@@ -202,8 +219,11 @@ def create_annex(payload: AnnexIn, db: Session = Depends(get_db), user: User = D
         total_amount=total, vat_rate=data["vat_rate"],
         status="черновик",
         template_id=payload.template_id or data["template_id"],
+        template_version_id=version.id,
         signed_place=payload.signed_place or data["signed_place"],
         created_by=getattr(user, "id", None),
+        # Создан до итоговой сверки (кнопка «Создать» в карточке сделки, реестр) — первичный, на план (владелец 16.10.2026).
+        issue_kind="primary",
     )
     db.add(a)
     db.flush()
@@ -336,11 +356,13 @@ def edit_annex(annex_id: int, payload: AnnexIn, db: Session = Depends(get_db),
                user: User = Depends(EDIT)):
     """Правка ЧЕРНОВИКА. Подтверждённое не меняем: документ уже у клиента, и правка
     задним числом означала бы два разных приложения под одним номером."""
-    a = _annex(db, annex_id)
+    a = _annex(db, annex_id, user)
     if a.no is not None:
         raise HTTPException(400, "Приложение подтверждено — правка запрещена")
     if payload.period_to < payload.period_from:
         raise HTTPException(400, "Конец периода раньше начала")
+    # Дата идёт за началом периода, только если её не меняли руками: выставленную аккаунтом дату правка периода не затирает.
+    date_is_default = a.date is None or a.date == annex_build.annex_date(a.period_from)
     a.period_from, a.period_to = payload.period_from, payload.period_to
     # Ставка — присланная, иначе СВОЯ ставка черновика. Пустая ставка в `build` означает
     # «текущая юрлица», и правка без поля ставки пересчитывала документ, посчитанный по
@@ -359,7 +381,8 @@ def edit_annex(annex_id: int, payload: AnnexIn, db: Session = Depends(get_db),
     deal_ids = _annex_deals(db, a.id)
     db.query(Alloc).filter(Alloc.annex_id == a.id).delete(synchronize_session=False)
     _link_deals(db, a, deal_ids, a.total_amount)
-    a.date = annex_build.annex_date(payload.period_from)
+    if date_is_default:
+        a.date = annex_build.annex_date(payload.period_from)
     if payload.vat_rate is not None:
         a.vat_rate = payload.vat_rate
     if payload.template_id is not None:
@@ -374,9 +397,8 @@ def edit_annex(annex_id: int, payload: AnnexIn, db: Session = Depends(get_db),
 class ConfirmIn(BaseModel):
     # Номер можно задать руками: бывает, что бумажный документ уже выпущен под своим.
     no: Optional[int] = None
-    # Дата тоже правится: правило «последний день предыдущего месяца» покрывает обычный
-    # случай, но документ могут датировать последним рабочим днём или числом, о котором
-    # договорились с клиентом. Пусто — остаётся посчитанная.
+    # Дата тоже правится: по умолчанию это начало РК, но документ могут датировать числом,
+    # о котором договорились с клиентом. Пусто — остаётся прежняя.
     #
     # Поле НЕ называется `date`: имя затенило бы тип `date` в этой же модели, и Pydantic
     # разобрал бы аннотацию как `Optional[None]` — поле принимало бы только пустоту, молча
@@ -384,7 +406,7 @@ class ConfirmIn(BaseModel):
     doc_date: Optional[date] = None
 
 
-def _check_no(db: Session, c: Contract, no: int) -> None:
+def _check_no(db: Session, c: Contract, no: int, sub_no=None) -> None:
     """Три проверки номера перед тем, как он станет постоянным.
 
     Уникальность в конечном счёте держит база (`uq_annex_contract_no`) — между проверкой
@@ -402,12 +424,225 @@ def _check_no(db: Session, c: Contract, no: int) -> None:
         raise HTTPException(
             400, f"Номер {no} не больше стартового ({start}): номера по {start} "
                  f"включительно выданы вне системы")
+    # «5» и «5-01» — разные номера (ДС допов мастер-сделки, суффикс `sub_no`)
     taken = (db.query(SalesAnnex)
-             .filter(SalesAnnex.contract_id == c.id, SalesAnnex.no == no).first())
+             .filter(SalesAnnex.contract_id == c.id, SalesAnnex.no == no,
+                     (SalesAnnex.sub_no == sub_no) if sub_no else SalesAnnex.sub_no.is_(None)).first())
     if taken:
         when = taken.date.strftime("%d.%m.%Y") if taken.date else "без даты"
         raise HTTPException(409, f"Номер {no} по этому договору уже занят "
                                  f"(приложение от {when})")
+
+
+def _freeze_for_confirm(db: Session, a: SalesAnnex, c: Contract, no: int, version=None, edits=None) -> dict:
+    """Собрать документ по ТЕКУЩЕЙ версии шаблона договора и заморозить. Не прошёл полноту или сверку чисел — подтверждение отказывает
+    поимённо (номер не занимается): бумагу с пустым местом или с двумя разными суммами подписывают не глядя."""
+    if version is None:
+        version, reason = tpl_doc.resolve(db, c)
+        if version is None:
+            raise HTTPException(409, reason)
+    try:
+        model = tpl_assemble(db, c, version, period_from=a.period_from, period_to=a.period_to,
+                             deal_ids=_annex_deals(db, a.id), amount=a.total_amount, no=no,
+                             edits=tpl_doc.edits_of(a) if edits is None else edits, doc_date=a.date,
+                             defaults=tpl_doc.previous_defaults(db, a, c),
+                             rows_override=getattr(a, "rows", None), sub_no=getattr(a, "sub_no", None))   # ДС пакета — из снимка раскладки
+    except AnnexTplError as e:
+        raise HTTPException(e.status, e.message)
+    problems = [f"{m['text']} ({m['where']})" for m in model["missing"]] + model["consistency"]["details"]
+    if a.total_amount is not None and abs(float(a.total_amount) - float(model["amount"])) >= 0.01:
+        problems.append(f"сумма приложения {a.total_amount:,.2f} не сходится с собранным документом {model['amount']:,.2f}")
+    if problems:
+        raise HTTPException(409, "Приложение не подтверждено — документ неполон: " + "; ".join(problems))
+    model["date"] = a.date or model["date"]
+    return tpl_doc.freeze(model)
+
+
+class EditIn(BaseModel):
+    key: str                      # id пункта шаблона из зоны аккаунта или `closing_basis`
+    text: Optional[str] = None    # None — вернуть по шаблону
+
+
+@router.put("/{annex_id}/edits")
+def edit_block(annex_id: int, payload: EditIn, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Быстрая правка блока, доступного аккаунту (зона до таблицы МП), и «основания для закрывающих документов». Текст хранится С подстановками —
+    значения подставляются при сборке и остаются живыми. Черновик: правки в `blocks.edits`. Подтверждённое, пока не ушло в 1С: пункт зоны
+    аккаунта пересобирает документ на той же версии шаблона (номер и дата прежние), основание закрывающих правится внутри замороженного документа."""
+    a = _annex(db, annex_id, user)
+    c = _contract(db, a.contract_id)
+    frozen = tpl_doc.is_frozen(a)
+    if a.no is not None and not frozen:
+        raise HTTPException(409, "Приложение собрано до конструктора — пересоздайте его на новом шаблоне, тогда его можно править")
+    if frozen and _sent_to_onec(a):
+        raise HTTPException(409, "Приложение уже ушло в 1С — править его нельзя")
+    key = payload.key
+    if payload.text is not None:
+        if frozen:
+            blocks = a.blocks["blocks"]                      # зоны и системные блоки читаются из самого замороженного документа
+        else:
+            version, reason = tpl_doc.resolve(db, c)
+            if version is None:
+                raise HTTPException(409, reason)
+            blocks = version.blocks
+        err = tpl_validate_edit(blocks, key, payload.text)
+        if err:
+            raise HTTPException(400, err)
+    edits = tpl_doc.edits_of(a)
+    if payload.text is None or not payload.text.strip():
+        # «Вернуть по шаблону»: если по умолчанию наследуется текст прошлого ДС — фиксируем явный сброс (None), иначе он вернулся бы сам.
+        if key in tpl_doc.previous_defaults(db, a, c):
+            edits[key] = None
+        else:
+            edits.pop(key, None)
+    else:
+        edits[key] = payload.text.strip()
+    if frozen and key == CLOSING_KEY:                  # основание пересчитывается внутри замороженного документа, подписанный текст не трогаем
+        model = tpl_doc.upgrade_frozen(db, a, c, _annex_deals(db, a.id))
+        model["edits"] = edits
+        model["closing_basis"] = tpl_closing_resolve(edits.get(key) or tpl_closing_for([r for g in (model.get("table") or {}).get("groups") or [] for r in g.get("rows") or []]), model["values"], bool(edits.get(key)))
+        a.blocks = model
+    elif frozen:                                       # пункт зоны аккаунта: документ собирается заново на ТОЙ ЖЕ версии шаблона, номер и дата прежние
+        was = tpl_doc.version_row(db, a.template_version_id)
+        a.blocks = _freeze_for_confirm(db, a, c, a.no, version=was, edits=edits)
+    else:
+        a.blocks = {"edits": edits} if edits else None
+    db.commit()
+    log_action(db, user, "annex_edit", "contract", c.id, f"#{a.id}: правка блока {key}" + (" (возвращён по шаблону)" if payload.text is None else ""))
+    return {"ok": True, "edits": edits}
+
+
+class DateIn(BaseModel):
+    doc_date: date
+
+
+@router.put("/{annex_id}/date")
+def set_annex_date(annex_id: int, payload: DateIn, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Сменить дату ДС (владелец 14.10.2026): по умолчанию она — начало РК, аккаунт ставит другую с экрана ДС после «Уверены?».
+    Черновик — просто дата. Подтверждённое, пока не ушло в 1С, — документ пересобирается на той же версии шаблона с новой датой
+    (номер прежний). Было и стало — в журнал."""
+    a = _annex(db, annex_id, user)
+    c = _contract(db, a.contract_id)
+    frozen = tpl_doc.is_frozen(a)
+    if a.no is not None and not frozen:
+        raise HTTPException(409, "Приложение собрано до конструктора — пересоздайте его на новом шаблоне, тогда дату можно менять")
+    if frozen and _sent_to_onec(a):
+        raise HTTPException(409, "Приложение уже ушло в 1С — дату менять нельзя")
+    was = a.date
+    if was == payload.doc_date:
+        return _out(a)
+    a.date = payload.doc_date
+    if frozen:
+        a.blocks = _freeze_for_confirm(db, a, c, a.no, version=tpl_doc.version_row(db, a.template_version_id))
+    db.commit()
+    fmt = (lambda d: d.strftime("%d.%m.%Y") if d else "без даты")
+    log_action(db, user, "annex_date_change", "contract", c.id,
+               f"{a.number or f'черновик #{a.id}'}: дата {fmt(was)} → {fmt(a.date)}")
+    return _out(a)
+
+
+def _assert_no_open_legal(db: Session, a: SalesAnnex) -> None:
+    """Открытая заявка юристу блокирует выпуск ДС: подтверждение и чистовые выгрузки (владелец 13.10.2026, п. 50). Клиентские файлы
+    на согласование не блокируются — их и отправляют, пока юрист работает."""
+    why = legal.blocking_reason(db, a.id)
+    if why:
+        raise HTTPException(409, why)
+
+
+def _sent_to_onec(a: SalesAnnex) -> bool:
+    """Ушло ли приложение в 1С — после отправки пересоздавать его нельзя (документ уже учтён). Отправка в 1С появится в спринте 6;
+    до тех пор признака нет, и пересоздавать можно любое подтверждённое. Условие вынесено в функцию, чтобы спринт 6 поменял одно место."""
+    return False
+
+
+def rebuild_frozen(db: Session, a: SalesAnnex, c: Contract) -> None:
+    """Собрать подтверждённое заново по актуальной версии шаблона договора и заморозить (номер и дата прежние). Без commit — его делает
+    вызывающий: кнопка «Пересоздать» и закрытие заявки юристу («Сделано» пересобирает ДС сам, владелец 14.10.2026)."""
+    frozen = _freeze_for_confirm(db, a, c, a.no)
+    a.template_version_id = frozen["template"]["version_id"]
+    a.blocks = frozen
+
+
+@router.post("/{annex_id}/rebuild")
+def rebuild_annex(annex_id: int, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Пересоздать подтверждённое приложение на АКТУАЛЬНОЙ версии шаблона договора (владелец 14.10.2026): для ДС, собранных до конструктора,
+    и для тех, что собраны по старой версии шаблона, пока они не ушли в 1С. Номер и дата сохраняются, документ собирается заново и замораживается
+    (полнота и сверка чисел те же, что при подтверждении). Прежний замороженный текст заменяется; что было и что стало — в журнале."""
+    a = _annex(db, annex_id, user)
+    if a.no is None:
+        raise HTTPException(400, "Черновик собирается по текущему шаблону сам — пересоздавать нечего")
+    if _sent_to_onec(a):
+        raise HTTPException(409, "Приложение уже ушло в 1С — пересоздать его нельзя")
+    c = _contract(db, a.contract_id)
+    was = tpl_doc.version_row(db, a.template_version_id)
+    rebuild_frozen(db, a, c)
+    db.commit()
+    now = tpl_doc.version_row(db, a.template_version_id)
+    log_action(db, user, "annex_rebuild", "contract", c.id,
+               f"{a.number}: пересобрано на шаблоне v{now.version if now else '?'}"
+               + (f" (было v{was.version})" if was else " (было собрано до конструктора)"))
+    return _out(a)
+
+
+def confirm_one(db: Session, a: SalesAnnex, payload: "ConfirmIn", user) -> tuple:
+    """Подтверждение одного приложения БЕЗ сохранения: номер, заморозка документа, отметка. Сохраняет вызывающий —
+    кнопка конструктора сразу, «Подтвердить ДС пакета» — одним разом за весь пакет (атомарно, 21.10.2026). Возвращает (договор, номер)."""
+    if a.no is not None:
+        raise HTTPException(400, "Приложение уже подтверждено")
+    _assert_no_open_legal(db, a)
+    c = _contract(db, a.contract_id)
+    # Номер запоминаем ОТДЕЛЬНОЙ переменной: после `rollback` объект сброшен, и в тексте
+    # отказа оказалось бы «Номер None уже занят» — сообщение, по которому нечего понять.
+    # `payload.no or ...` было бы ошибкой: ноль — ложь в Python, и введённый руками 0
+    # молча превращался бы в следующий свободный номер вместо отказа.
+    no = payload.no if payload.no is not None else annex_build.next_no(db, c)
+    master_id, sub_no = getattr(a, "master_deal_id", None), getattr(a, "sub_no", None)
+    if master_id:                          # ДС пакета: номер — из раскладки (последний актуальный + 1), у допов — суффикс «01»
+        from app.master_deal.models import MasterDeal
+        m = db.get(MasterDeal, master_id)
+        # Номер основного ДС пакета: уже занятый (первичный ДС, пересобранный по факту, или подтверждённый основной) — его же
+        # (у ДС допов — с суффиксом «01»); иначе — из раскладки: последний актуальный + 1.
+        taken_main = (db.query(SalesAnnex.no).filter(SalesAnnex.master_deal_id == master_id, SalesAnnex.no.isnot(None),
+                                                     SalesAnnex.sub_no.is_(None), SalesAnnex.id != a.id).scalar())
+        if taken_main is not None:
+            no = taken_main
+        elif m and m.start_no is not None:
+            no = m.start_no + 1
+        else:
+            raise HTTPException(409, "У мастер-сделки не задан номер ДС — задайте его на раскладке")
+    _check_no(db, c, no, sub_no) if sub_no else _check_no(db, c, no)
+    if payload.doc_date:
+        a.date = payload.doc_date
+    frozen = _freeze_for_confirm(db, a, c, no)
+    a.template_version_id = frozen["template"]["version_id"]
+    a.blocks = frozen
+    a.no = no
+    a.number = (f"ДС № {no}" + (f"-{sub_no}" if sub_no else "")) if master_id else f"Приложение № {no}"
+    a.status = "подтверждён"
+    a.confirmed_by = getattr(user, "id", None)
+    a.confirmed_at = datetime.utcnow()     # колонка — момент (в базе UTC), а не дата
+    return c, no
+
+
+def commit_confirm(db: Session, no, annex_id, work=None):
+    """Выполнить `work` (подтверждения без сохранения) и сохранить; отказ базы — понятным текстом, номер при этом не занят
+    (всё откатывается). База может отказать уже внутри `work` (автозапись перед запросом), поэтому он — внутри той же защиты."""
+    try:
+        out = work() if work else None
+        db.commit()
+        return out
+    except IntegrityError as e:
+        db.rollback()
+        if "uq_annex_contract_no" in str(e.orig):
+            raise HTTPException(409, f"Номер {no} по этому договору уже занят" if no is not None else "Номер ДС по этому договору уже занят")
+        log.warning("Подтверждение приложения #%s отклонено базой: %s", annex_id, e.orig)
+        raise HTTPException(409, "Приложение не подтверждено: данные не прошли проверку "
+                                 "базы. Номер не занят — сообщите администратору")
+    except SQLAlchemyError:
+        # Любая ошибка базы раньше выдавалась за «номер занят» — человек выбирал другой
+        # номер вместо того, чтобы повторить (аудит 23.09.2026, 2.L9).
+        db.rollback()
+        raise HTTPException(503, "Приложение не подтверждено: база не ответила. "
+                                 "Номер не занят — повторите через минуту")
 
 
 @router.post("/{annex_id}/confirm")
@@ -420,38 +655,8 @@ def confirm_annex(annex_id: int, payload: ConfirmIn, db: Session = Depends(get_d
     держит база (`uq_annex_contract_no`), и отказ по ней читается человеку понятным
     текстом, а не пятисоткой.
     """
-    a = _annex(db, annex_id)
-    if a.no is not None:
-        raise HTTPException(400, "Приложение уже подтверждено")
-    c = _contract(db, a.contract_id)
-    # Номер запоминаем ОТДЕЛЬНОЙ переменной: после `rollback` объект сброшен, и в тексте
-    # отказа оказалось бы «Номер None уже занят» — сообщение, по которому нечего понять.
-    # `payload.no or ...` было бы ошибкой: ноль — ложь в Python, и введённый руками 0
-    # молча превращался бы в следующий свободный номер вместо отказа.
-    no = payload.no if payload.no is not None else annex_build.next_no(db, c)
-    _check_no(db, c, no)
-    if payload.doc_date:
-        a.date = payload.doc_date
-    a.no = no
-    a.number = f"Приложение № {no}"
-    a.status = "подтверждён"
-    a.confirmed_by = getattr(user, "id", None)
-    a.confirmed_at = datetime.utcnow()     # колонка — момент (в базе UTC), а не дата
-    try:
-        db.commit()
-    except IntegrityError as e:
-        db.rollback()
-        if "uq_annex_contract_no" in str(e.orig):
-            raise HTTPException(409, f"Номер {no} по этому договору уже занят")
-        log.warning("Подтверждение приложения #%s отклонено базой: %s", a.id, e.orig)
-        raise HTTPException(409, "Приложение не подтверждено: данные не прошли проверку "
-                                 "базы. Номер не занят — сообщите администратору")
-    except SQLAlchemyError:
-        # Любая ошибка базы раньше выдавалась за «номер занят» — человек выбирал другой
-        # номер вместо того, чтобы повторить (аудит 23.09.2026, 2.L9).
-        db.rollback()
-        raise HTTPException(503, "Приложение не подтверждено: база не ответила. "
-                                 "Номер не занят — повторите через минуту")
+    a = _annex(db, annex_id, user)
+    c, no = commit_confirm(db, payload.no, a.id, lambda: confirm_one(db, a, payload, user))
     db.refresh(a)
     log_action(db, user, "annex_confirm", "contract", c.id, f"{a.number}")
     return _out(a)
@@ -482,9 +687,18 @@ def list_annexes(db: Session = Depends(get_db), user: User = Depends(VIEW)):
                            .filter(Alloc.annex_id.in_([a.id for a, _, _ in rows] or [0]))
                            .all()):
         deals.setdefault(aid, []).append({"id": did, "code": code})
+    tpls = tpl_doc.template_labels(db, [a.template_version_id for a, _, _ in rows])
+    # Область «свои» (аудит 21.10.2026): реестр не отдаёт ДС с чужими сделками — правило то же, что у карточки ДС.
+    from app.sales import scope as SC
+    own = SC.own_rep_ids_or_all(db, user, "sales_registry")
+    truncated = total > len(rows)          # до фильтра: иначе у «своих» усечение старых ДС пряталось (ревью 22.10.2026)
+    if own is not None:
+        owners = SC.annex_owners(db, [a.id for a, _, _ in rows])
+        rows = [r for r in rows if SC.annex_visible(owners[r[0].id], own, r[0].created_by, user.id)]
+        total = len(rows)
     return {"total": total, "limit": LIST_LIMIT,
-            "truncated": total > len(rows),
-            "items": [{**_out(a),
+            "truncated": truncated,
+            "items": [{**_out(a), "template": tpls.get(a.template_version_id),
                        # ИНН берётся из карточки контрагента, а не из договора: у
                        # легаси-договоров он бывает пуст, а у контрагента заполнен.
                        "counterparty_name": (cp.name if cp else None) or c.counterparty_name,
@@ -492,6 +706,8 @@ def list_annexes(db: Session = Depends(get_db), user: User = Depends(VIEW)):
                        "contract_id": c.id,
                        "contract_number": c.contract_number,
                        "contract_date": c.contract_date,
+                       # Вид базового шаблона ДС выводится из формата договора (макет 13.10.2026).
+                       "cooperation_format": c.cooperation_format,
                        "deals": deals.get(a.id, [])}
                       for a, c, cp in rows]}
 
@@ -566,16 +782,40 @@ def export_annexes(payload: ExportIn, db: Session = Depends(get_db),
 @router.get("/{annex_id}")
 def get_annex(annex_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
     """Приложение вместе с собранным документом — тем же расчётом, что предпросмотр."""
-    a = _annex(db, annex_id)
+    a = _annex(db, annex_id, user)
     c = _contract(db, a.contract_id)
     deals = _deal_cards(db, a.id)
+    state = tpl_doc.model_of(db, a, c, _annex_deals(db, a.id))
     return {**_out(a), "doc": _doc(db, a),
+            # Документ по шаблону ДС (спринт 2): живой у черновика, замороженный у подтверждённого, пусто у собранных до конструктора.
+            "model": state["model"], "model_frozen": state["frozen"], "model_legacy": state["legacy"],
+            "model_reason": state["reason"], "template_state": state["template_state"],
             "deals": deals,
             "mismatch": _mismatch(a, deals),
             # Границу нумерации экран показывает рядом с полем: без неё отказ «номер не
             # больше стартового» выглядит как придирка непонятно к чему.
             "annex_start_no": c.annex_start_no,
-            "next_no": annex_build.next_no(db, c)}
+            "next_no": annex_build.next_no(db, c),
+            # ДС мастер-сделки: ссылка «← Раскладка M-…» и номер, который займёт подтверждение (из раскладки).
+            "master": _master_ref(db, a),
+            # Вид ДС и подпись (16.10.2026): первичный на план или по факту; подпись — из источников (сейчас файл, позже ЭДО).
+            "issue_kind": getattr(a, "issue_kind", None),
+            "signed": annex_signed.signed_state(db, a)}
+
+
+def _master_ref(db: Session, a) -> Optional[dict]:
+    mid = getattr(a, "master_deal_id", None)
+    if not mid:
+        return None
+    from app.master_deal.models import MasterDeal
+    m = db.get(MasterDeal, mid)
+    if not m:
+        return None
+    from app.master_deal import to_annex as TA
+    # Все ДС пакета (основной и допы «-01») — конструктор открывает первый, к остальным переход отсюда (владелец 20.10.2026).
+    siblings = [{"id": x["id"], "number": x["number"], "confirmed": x["confirmed"]} for x in TA.annexes_of(db, m)]
+    return {"code": m.code, "kind": a.kind, "siblings": siblings,
+            "will_be": (f"ДС № {m.start_no + 1}" + (f"-{a.sub_no}" if a.sub_no else "")) if m.start_no is not None else None}
 
 
 # Символы, запрещённые в именах файлов Windows. Слэш приходит сюда штатно: бренд
@@ -584,7 +824,7 @@ _BAD_IN_NAME = ('\\', '/', ':', '*', '?', '"', '<', '>',
                 '|', '\r', '\n', '\t')
 
 
-def file_name(*, no, doc_date, brand, payer) -> str:
+def file_name(*, no, doc_date, brand, payer, basis: bool = False) -> str:
     """Имя файла ДС: «ДС №68 от 31.05.2026 — Dr. Reddy's Хелинорм — ООО Ромашка.pdf».
 
     Четыре части по правилу владельца 05.09.2026: номер, дата, рекламодатель с брендом,
@@ -601,6 +841,8 @@ def file_name(*, no, doc_date, brand, payer) -> str:
         v = " ".join((v or "").split())
         if v:
             parts.append(v)
+    if basis:
+        parts.append("с основанием для закрывающих")
     name = " — ".join(parts)
     for ch in _BAD_IN_NAME:
         name = name.replace(ch, " ")
@@ -685,26 +927,31 @@ def _doc(db: Session, a: SalesAnnex) -> dict:
     одни числа, а в PDF уходили другие — и разошлись бы они молча.
     """
     c = _contract(db, a.contract_id)
-    return annex_build.build(db, c, period_from=a.period_from, period_to=a.period_to,
-                             amount=a.total_amount or 0, vat_rate=a.vat_rate, no=a.no,
-                             deal_ids=_annex_deals(db, a.id))
+    deal_ids = _annex_deals(db, a.id)
+    doc = annex_build.build(db, c, period_from=a.period_from, period_to=a.period_to,
+                            amount=a.total_amount or 0, vat_rate=a.vat_rate, no=a.no,
+                            deal_ids=deal_ids)
+    # Пункт 1 и замечания — из шаблона ДС (мост до переписывания генерации файлов).
+    return tpl_doc.bridge_old_doc(db, a, c, doc, deal_ids)
 
 
 @router.get("/{annex_id}/pdf")
-def annex_pdf(annex_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+def annex_pdf(annex_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW), with_basis: bool = False):
     """Нативный PDF приложения — тем же сайдкаром, что печатает медиаплан.
 
     Сайдкар открывает НАШУ ЖЕ печатную страницу и печатает её: второй вёрстки документа
     в проекте нет, значит расходиться нечему. Данные инжектятся в окно, поэтому браузеру
     не нужен ни токен, ни доступ к API — доступ проверен здесь.
     """
-    a = _annex(db, annex_id)
+    a = _annex(db, annex_id, user)
+    if not with_basis:
+        _assert_no_open_legal(db, a)
     doc = _doc(db, a)
     assert_printable(doc)
     # Адрес печатной формы переехал вместе с разделом в Справочники (05.09.2026):
     # приложения к договору живут рядом с самими договорами, а не в контуре аккаунтов.
-    payload = {"path": f"/directory/annexes/pdf/{a.id}", "key": "__ANNEX__",
-               "flag": "__ANNEX_RENDERED__", "data": jsonable_encoder(doc)}
+    payload = {"path": f"/directory/annexes/pdf/{a.id}", "key": "__ANNEX__", "footer": doc.get("master_code") or "",
+               "flag": "__ANNEX_RENDERED__", "data": jsonable_encoder({**doc, "with_basis": bool(with_basis and doc.get("closing_basis"))})}
     try:
         r = httpx.post(f"{PDF_SERVICE_URL}/render", json=payload, timeout=60.0)
         r.raise_for_status()
@@ -714,8 +961,8 @@ def annex_pdf(annex_id: int, db: Session = Depends(get_db), user: User = Depends
     # ASCII-запасное имя для старых клиентов и `filename*` в UTF-8 для остальных. Без
     # этого ручка падала пятисоткой на кодировке заголовка, а не на документе.
     human = file_name(no=a.no, doc_date=doc["date"], brand=doc.get("brand"),
-                      payer=(doc.get("customer") or {}).get("name"))
-    ascii_name = f"Annex_{a.no or a.id}_{doc['date']:%Y-%m-%d}.pdf"
+                      payer=(doc.get("customer") or {}).get("name"), basis=with_basis)
+    ascii_name = f"Annex_{a.no or a.id}_{doc['date']:%Y-%m-%d}{'_with_basis' if with_basis else ''}.pdf"
     quoted = quote(human)
     return StreamingResponse(
         BytesIO(r.content), media_type="application/pdf",
@@ -728,20 +975,22 @@ class StartNoIn(BaseModel):
 
 
 @router.get("/{annex_id}/docx")
-def annex_docx(annex_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+def annex_docx(annex_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW), with_basis: bool = False):
     """Редактируемый .docx — тот же документ, что PDF, из того же собранного словаря.
 
     Оба формата нужны: PDF уходит на подпись, .docx — юристу клиента, который вносит
     правки до подписания. Проверка полноты реквизитов ОДНА И ТА ЖЕ: документ с прочерком
     на месте подписанта одинаково опасен в любом формате.
     """
-    a = _annex(db, annex_id)
+    a = _annex(db, annex_id, user)
+    if not with_basis:
+        _assert_no_open_legal(db, a)
     doc = _doc(db, a)
     assert_printable(doc)
-    data = docx_build.build_docx(doc)
+    data = docx_build.build_docx(doc, with_basis=with_basis)
     human = file_name(no=a.no, doc_date=doc["date"], brand=doc.get("brand"),
-                      payer=(doc.get("customer") or {}).get("name")).replace(".pdf", ".docx")
-    ascii_name = f"Annex_{a.no or a.id}_{doc['date']:%Y-%m-%d}.docx"
+                      payer=(doc.get("customer") or {}).get("name"), basis=with_basis).replace(".pdf", ".docx")
+    ascii_name = f"Annex_{a.no or a.id}_{doc['date']:%Y-%m-%d}{'_with_basis' if with_basis else ''}.docx"
     quoted = quote(human)
     return StreamingResponse(
         BytesIO(data),

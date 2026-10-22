@@ -3,7 +3,7 @@
 «на согласование» = новая версия. Файлы (Excel/PDF) генерируются по запросу."""
 import json
 import os
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 
 import httpx
@@ -809,6 +809,9 @@ def _advance_deal_on_link(db, current_user, p):
     Переход не молчит: сейлзу уходит «МП посчитан» — отправляет клиенту он."""
     if not p.deal_id:
         return
+    # Связь должна быть В БАЗЕ до проверки требований: «МП привязан» читает её запросом (14.10.2026 требование стало общим для
+    # всех услуг, и без записи связь, выставленная в этом же запросе, проверке не видна — сделка не двигалась).
+    db.flush()
     from app.sales.models import SalesDeal
     from app.sales.catalog import Catalog
     deal = db.query(SalesDeal).filter(SalesDeal.id == p.deal_id).first()
@@ -836,6 +839,14 @@ def _advance_deal_on_link(db, current_user, p):
     log_action(db, current_user, "move_deal", "sales_deal", deal.id,
                f"{first.name} → {nxt.name} (медиаплан прикреплён к сделке)")
     _notify_mp_ready(db, current_user, p, deal, nxt)
+
+
+def _mark_verified(p, data, user) -> None:
+    """Виза (владелец 15.10.2026): сохранение из конструктора с обеими отметками «проверено» визирует план. Планы, созданные
+    системой (годовой план, продление), визы не получают — пока аккаунт их не откроет и не проверит."""
+    if getattr(data, "verified", None):
+        p.verified_at = datetime.utcnow()
+        p.verified_by = getattr(user, "id", None)
 
 
 def _log_change_note(db, current_user, p, data):
@@ -1087,6 +1098,11 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
                 log_action(db, current_user, "update_media_plan", "media_plan", existing.id,
                            f"{existing.title} v{existing.version}")
             _log_change_note(db, current_user, existing, data)
+            visa_now = existing.verified_at is None and bool(getattr(data, "verified", None))
+            _mark_verified(existing, data, current_user)
+            if visa_now:
+                log_action(db, current_user, "media_plan_verified", "media_plan", existing.id,
+                           f"{existing.title} v{existing.version}: виза — план проверен")
             _sync_deal_from_plan(db, existing, current_user)
             # Связь план↔сделка могла появиться этим сохранением (у плана уже стоял
             # deal_id). Отрабатываем и на сохранении БЕЗ правок: содержимое совпало,
@@ -1096,7 +1112,7 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
             volumes.notify_if_newly_blocked(db, vol_deal, vol_before, current_user)
             db.refresh(existing)
             return {"id": existing.id, "group_id": existing.group_id, "version": existing.version,
-                    "unchanged": same}
+                    "unchanged": same, "verified_now": visa_now}
         version = (existing.version or 0) + 1
     else:
         version = 1
@@ -1120,6 +1136,7 @@ def save_media_plan(data: MpIn, db: Session = Depends(get_db), current_user: Use
         p.group_id = p.id
     _write_children(db, p.id, data)
     _enforce_cap(db, p.group_id)
+    _mark_verified(p, data, current_user)
     db.flush()
     log_action(db, current_user, "create_media_plan", "media_plan", p.id, f"{p.title} v{p.version}")
     _log_change_note(db, current_user, p, data)

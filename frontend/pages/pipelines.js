@@ -137,6 +137,14 @@ export default function Pipelines({ embedded = false } = {}) {
     color: 'var(--muted)', borderBottom: '1px solid var(--border-card)' }
   const td = { padding: '10px 12px', fontSize: 13.5, borderBottom: '1px solid var(--border-row)' }
 
+  const setFlow = async (p, value) => {
+    if (!window.confirm(`Цикл воронки «${p.name}»: ${value}? Он определяет, кто ведёт сделки её услуг — трафик или аккаунт.`)) return
+    try {
+      await api.put(`/sales/directories/pipelines/${p.id}/flow`, { closing_flow: value }, auth())
+      setItems(xs => xs.map(x => x.id === p.id ? { ...x, closing_flow: value } : x))
+    } catch (e) { setError(e.response?.data?.detail || 'Не удалось сменить цикл') }
+  }
+
   return (
     <>
       {!embedded && <Head><title>Воронки | SIMB-AD ERP</title></Head>}
@@ -154,7 +162,7 @@ export default function Pipelines({ embedded = false } = {}) {
           </div>
         </div>
         <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 0, marginBottom: 16 }}>
-          «Парсить» — показывать ли воронку в отчётах и фильтрах продаж. Снятый флаг
+          Воронка реализации задаёт цикл сделок своих услуг: «полный цикл» — ведёт трафик (DSP/Adfox), «контур аккаунта» — запуск и завершение кнопками аккаунта, факт вручную. Услугу к воронке привязывают в «Справочники → Услуги». «Парсить» — показывать ли воронку в отчётах и фильтрах продаж. Снятый флаг
           не трогает существующие данные. Удаление воронки уносит все её сделки безвозвратно.
         </p>
 
@@ -171,12 +179,13 @@ export default function Pipelines({ embedded = false } = {}) {
             <table style={{ borderCollapse: 'collapse' }}>
               <thead><tr>
                 <th style={th}>Воронка</th>
+                <th style={th}>Назначение</th>
                 <th style={{ ...th, textAlign: 'right' }}>Сделок</th>
                 <th style={{ ...th, textAlign: 'center' }}>Парсить</th>
                 <th style={th}></th>
               </tr></thead>
               <tbody>
-                {items.map(p => (
+                {[...items].sort((a, b) => (b.closing_flow ? 1 : 0) - (a.closing_flow ? 1 : 0)).map(p => (
                   <Fragment key={p.id}>
                     <tr style={{ opacity: p.is_tracked ? 1 : 0.55 }}>
                       <td style={{ ...td, fontWeight: 500 }}>
@@ -192,7 +201,27 @@ export default function Pipelines({ embedded = false } = {}) {
                               color: 'var(--muted)', fontSize: 12.5, padding: 0 }}>✎</button>
                         )}
                       </td>
-                      <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{p.deals}</td>
+                      {/* Воронка реализации — с циклом (14.10.2026); без цикла — сопоставление стадий Битрикса, история. */}
+                      <td style={td}>
+                        {p.closing_flow ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 6, padding: '2px 8px',
+                              background: p.closing_flow === 'контур аккаунта' ? 'var(--violet-tint)' : 'var(--accent-tint)',
+                              color: p.closing_flow === 'контур аккаунта' ? 'var(--violet-fg)' : 'var(--accent-fg)' }}>воронка реализации</span>
+                            {mayEdit ? (
+                              <select value={p.closing_flow} onChange={e => setFlow(p, e.target.value)}
+                                style={{ fontSize: 12, padding: '3px 6px', borderRadius: 7, border: '1px solid var(--border-card)' }}>
+                                <option value="полный цикл">полный цикл</option>
+                                <option value="контур аккаунта">контур аккаунта</option>
+                              </select>
+                            ) : <span style={{ fontSize: 12 }}>{p.closing_flow}</span>}
+                            <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{(p.services || []).join(', ') || 'услуг нет'}</span>
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>сопоставление стадий Битрикса · история</span>
+                        )}
+                      </td>
+                      <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{p.closing_flow ? p.realization_deals : p.deals}</td>
                       <td style={{ ...td, textAlign: 'center' }}>
                         <input type="checkbox" checked={p.is_tracked} disabled={!mayEdit}
                           onChange={() => toggle(p)} style={{ cursor: mayEdit ? 'pointer' : 'default' }} />
@@ -205,7 +234,7 @@ export default function Pipelines({ embedded = false } = {}) {
                     </tr>
                     {isOpen(p) && (
                       <tr>
-                        <td colSpan={4} style={{ padding: '4px 12px 14px 32px', background: 'var(--bg-subtle)' }}>
+                        <td colSpan={5} style={{ padding: '4px 12px 14px 32px', background: 'var(--bg-subtle)' }}>
                           {!stages[p.id] ? (
                             <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>Загрузка стадий…</span>
                           ) : !stages[p.id].items.length ? (

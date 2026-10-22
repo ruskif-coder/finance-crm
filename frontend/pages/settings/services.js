@@ -3,6 +3,7 @@ import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar, { firstAllowedHref } from '../../components/Navbar'
 import { isAdmin, canDelete, getPermissions } from '../../lib/auth'
+import RequirementsMatrix from '@/components/services/RequirementsMatrix'
 import SettingsTabs, { settingsSectionAllowed } from '../../components/SettingsTabs'
 import { MONO, UI, card, inp, sel, ci, cs, th, td, primaryBtn, PortalPopover, Z } from '../../components/salesTableKit'
 import api, { auth } from '../../lib/http'
@@ -39,13 +40,17 @@ export default function SettingsServices() {
   const [editingServices, setEditingServices] = useState({})
   const [editingAddons, setEditingAddons] = useState({})
   const [newService, setNewService] = useState(NEW_SVC)
-  const [newAddon, setNewAddon] = useState({ name: '', unit_price: '', period: '', can_be_bonus: false })
+  const [newAddon, setNewAddon] = useState({ name: '', unit_price: '', period: '', can_be_bonus: false, doc_phrase: '' })
   const [dragSvc, setDragSvc] = useState(null)
   const [confirmDel, setConfirmDel] = useState(null)   // {kind:'service'|'addon', id, name}
   const [mayDelete, setMayDelete] = useState(false)    // право «удаление» (отдельно от правки с 07.10.2026)
+  const [mayEditSvc, setMayEditSvc] = useState(false)
+  const [tab, setTab] = useState('list')               // list — справочник услуг; matrix — что требует учёта по услугам (14.10.2026)
   const [formats, setFormats] = useState([])           // справочник форматов размещения
   const [palette, setPalette] = useState([])           // допустимые цвета маркера услуги
   const [articles, setArticles] = useState([])         // реестр статей (для маппинга услуга→статья выручки)
+  const [pipes, setPipes] = useState([])               // воронки реализации (с циклом) — задают цикл сделок услуги (14.10.2026)
+  const [pipesErr, setPipesErr] = useState('')         // не загрузились — выпадашка пуста не потому, что воронок нет
   const [newFormat, setNewFormat] = useState({ name: '', group: '' })
   const [fmtOpen, setFmtOpen] = useState(null)         // id услуги с открытым пикером форматов
 
@@ -55,6 +60,7 @@ export default function SettingsServices() {
     if (!localStorage.getItem('token')) { router.push('/login'); return }
     if (!settingsSectionAllowed('services')) { let p = {}; try { p = JSON.parse(localStorage.getItem('permissions') || '{}') } catch (e) {}; router.push(firstAllowedHref(p, isAdmin())); return }
     setMayDelete(canDelete(getPermissions(), 'settings_services'))
+    setMayEditSvc(isAdmin())   // матрица «что требует учёта» — только администратору (владелец 14.10.2026)
     load()
   }, [])
 
@@ -67,6 +73,7 @@ export default function SettingsServices() {
         api.get('/sales/directories/services/formats', auth()),
         api.get('/articles/', auth()),
       ])
+      api.get('/sales/directories/pipelines', auth()).then(r => setPipes((r.data.items || []).filter(p => p.closing_flow))).catch(e => { setPipes([]); setPipesErr(e?.response?.data?.detail || 'Воронки реализации не загрузились') })
       setServices(s.data.items || []); setAddons(a.data.items || []); setFormats(f.data.items || [])
       setPalette(s.data.palette || [])
       setArticles(Array.isArray(art.data) ? art.data : (art.data.items || []))
@@ -75,12 +82,12 @@ export default function SettingsServices() {
   }
 
   // ── услуги ──
-  const svcSeed = (s) => ({ name: s.name, group: s.group || '', placement_type: s.placement_type || '', calc_form: s.calc_form || '', separate_price: !!s.separate_price, unit_price: s.unit_price ?? '', unit_price_web: s.unit_price_web ?? '', unit_price_app: s.unit_price_app ?? '', constants: s.constants || {}, format_ids: (s.formats || []).map(f => f.id), revenue_article_id: s.revenue_article_id ?? '', color: s.color || '', doc_position: s.doc_position || '', rotation_type: s.rotation_type || '' })
+  const svcSeed = (s) => ({ name: s.name, group: s.group || '', placement_type: s.placement_type || '', calc_form: s.calc_form || '', separate_price: !!s.separate_price, unit_price: s.unit_price ?? '', unit_price_web: s.unit_price_web ?? '', unit_price_app: s.unit_price_app ?? '', constants: s.constants || {}, format_ids: (s.formats || []).map(f => f.id), revenue_article_id: s.revenue_article_id ?? '', color: s.color || '', doc_position: s.doc_position || '', rotation_type: s.rotation_type || '', realization_pipeline_id: s.realization_pipeline_id ?? '' })
   const svcEd = (s) => editingServices[s.id] || svcSeed(s)
   const svcSet = (s, f, v) => setEditingServices(p => ({ ...p, [s.id]: { ...(p[s.id] || svcSeed(s)), [f]: v } }))
   const svcSetConst = (s, k, v) => setEditingServices(p => { const cur = p[s.id] || svcSeed(s); return { ...p, [s.id]: { ...cur, constants: { ...(cur.constants || {}), [k]: v } } } })
   const svcDirty = (id) => !!editingServices[id]
-  const svcPayload = (ed) => ({ name: ed.name, group: ed.group || null, placement_type: ed.placement_type || null, calc_form: ed.calc_form || null, separate_price: !!ed.separate_price, unit_price: ed.separate_price ? null : numOrNull(ed.unit_price), unit_price_web: ed.separate_price ? numOrNull(ed.unit_price_web) : null, unit_price_app: ed.separate_price ? numOrNull(ed.unit_price_app) : null, constants: ed.constants || {}, format_ids: ed.format_ids ?? null, revenue_article_id: ed.revenue_article_id ? Number(ed.revenue_article_id) : null, color: ed.color || null, doc_position: ed.doc_position || null, rotation_type: ed.rotation_type || null })
+  const svcPayload = (ed) => ({ name: ed.name, group: ed.group || null, placement_type: ed.placement_type || null, calc_form: ed.calc_form || null, separate_price: !!ed.separate_price, unit_price: ed.separate_price ? null : numOrNull(ed.unit_price), unit_price_web: ed.separate_price ? numOrNull(ed.unit_price_web) : null, unit_price_app: ed.separate_price ? numOrNull(ed.unit_price_app) : null, constants: ed.constants || {}, format_ids: ed.format_ids ?? null, revenue_article_id: ed.revenue_article_id ? Number(ed.revenue_article_id) : null, color: ed.color || null, doc_position: ed.doc_position || null, rotation_type: ed.rotation_type || null, realization_pipeline_id: ed.realization_pipeline_id ? Number(ed.realization_pipeline_id) : null })
   const saveService = async (id) => {
     const ed = editingServices[id]; if (!ed) return
     try { await api.put(`/sales/directories/services/${id}`, svcPayload(ed), auth()); setEditingServices(p => { const n = { ...p }; delete n[id]; return n }); await load() }
@@ -102,18 +109,18 @@ export default function SettingsServices() {
   }
 
   // ── доп. услуги ──
-  const addonSeed = (a) => ({ name: a.name, unit_price: a.unit_price ?? '', period: a.period || '', can_be_bonus: !!a.can_be_bonus })
+  const addonSeed = (a) => ({ name: a.name, unit_price: a.unit_price ?? '', period: a.period || '', can_be_bonus: !!a.can_be_bonus, doc_phrase: a.doc_phrase || '' })
   const addonEd = (a) => editingAddons[a.id] || addonSeed(a)
   const addonSet = (a, f, v) => setEditingAddons(p => ({ ...p, [a.id]: { ...(p[a.id] || addonSeed(a)), [f]: v } }))
   const addonDirty = (id) => !!editingAddons[id]
   const saveAddon = async (id) => {
     const ed = editingAddons[id]; if (!ed) return
-    try { await api.put(`/sales/directories/services/addons/${id}`, { name: ed.name, unit_price: numOrNull(ed.unit_price), period: ed.period || null, can_be_bonus: !!ed.can_be_bonus }, auth()); setEditingAddons(p => { const n = { ...p }; delete n[id]; return n }); await load() }
+    try { await api.put(`/sales/directories/services/addons/${id}`, { name: ed.name, unit_price: numOrNull(ed.unit_price), period: ed.period || null, can_be_bonus: !!ed.can_be_bonus, doc_phrase: ed.doc_phrase || null }, auth()); setEditingAddons(p => { const n = { ...p }; delete n[id]; return n }); await load() }
     catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
   }
   const createAddon = async () => {
     if (!newAddon.name.trim()) { alert('Введите название доп. услуги'); return }
-    try { await api.post('/sales/directories/services/addons', { name: newAddon.name.trim(), unit_price: numOrNull(newAddon.unit_price), period: newAddon.period || null, can_be_bonus: !!newAddon.can_be_bonus }, auth()); setNewAddon({ name: '', unit_price: '', period: '', can_be_bonus: false }); await load() }
+    try { await api.post('/sales/directories/services/addons', { name: newAddon.name.trim(), unit_price: numOrNull(newAddon.unit_price), period: newAddon.period || null, can_be_bonus: !!newAddon.can_be_bonus, doc_phrase: newAddon.doc_phrase || null }, auth()); setNewAddon({ name: '', unit_price: '', period: '', can_be_bonus: false, doc_phrase: '' }); await load() }
     catch (e) { alert(e.response?.data?.detail || 'Ошибка') }
   }
   const runDel = async () => {
@@ -183,6 +190,13 @@ export default function SettingsServices() {
       <Navbar active="settings" />
       <div style={{ padding: '20px 26px 50px', background: 'var(--bg-canvas)', minHeight: '100vh', fontFamily: UI }}>
         <SettingsTabs active="services" />
+        <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+          {[['list', 'Услуги'], ...(mayEditSvc ? [['matrix', 'Что требует учёта']] : [])].map(([k, l]) => (
+            <button key={k} onClick={() => setTab(k)} style={{ height: 32, padding: '0 14px', borderRadius: 9, cursor: 'pointer', fontSize: 13, fontWeight: 700,
+              border: tab === k ? 'none' : '1px solid var(--border-card)', background: tab === k ? 'var(--accent)' : 'var(--bg-card)', color: tab === k ? '#fff' : 'var(--text-secondary)' }}>{l}</button>
+          ))}
+        </div>
+        {tab === 'matrix' && mayEditSvc ? <RequirementsMatrix services={services} canEdit={mayEditSvc} /> : (<>
 
         {/* Создание услуги */}
         <div style={{ ...card, padding: '14px 18px', marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -234,6 +248,7 @@ export default function SettingsServices() {
                 <th style={{ ...th, width: 190 }}>Статья выручки</th>
                 {/* Печатается в приложении к договору, в интерфейсе больше нигде не
                     показывается — отсюда и подписи «в ДС». */}
+                <th style={{ ...th, width: 150 }} title="Воронка реализации: задаёт цикл сделок услуги — полный цикл (трафик) или контур аккаунта">Воронка</th>
                 <th style={{ ...th, width: 110 }} title="Тип ротации для медийных форматов — колонка документа">Ротация</th>
                 <th style={{ ...th, width: 220 }} title="Текст колонки «Позиция» в приложении к договору">Позиция в ДС</th>
                 <th style={{ ...th, textAlign: 'center', width: 44 }}>Исп.</th>
@@ -282,6 +297,9 @@ export default function SettingsServices() {
                           onPick={v => svcSet(s, 'color', v)} />
                       </td>
                       <td style={td}><select value={ed.revenue_article_id ?? ''} onChange={e => svcSet(s, 'revenue_article_id', e.target.value)} style={cs} title="Статья выручки для моста сделка→операция">{articleOpts()}</select></td>
+                      <td style={td}><select value={ed.realization_pipeline_id ?? ''} onChange={e => svcSet(s, 'realization_pipeline_id', e.target.value)} style={cs}
+                        title={pipesErr || (pipes.find(p => String(p.id) === String(ed.realization_pipeline_id)) || {}).closing_flow || 'не задана — полный цикл'}>
+                        <option value="">{pipesErr ? 'воронки не загрузились' : '—'}</option>{pipes.map(p => <option key={p.id} value={p.id}>{p.name} · {p.closing_flow}</option>)}</select></td>
                       <td style={td}><select value={ed.rotation_type ?? ''} onChange={e => svcSet(s, 'rotation_type', e.target.value)} style={cs}><option value="">—</option><option value="Динамика">Динамика</option><option value="Статика">Статика</option></select></td>
                       <td style={td}><input value={ed.doc_position ?? ''} onChange={e => svcSet(s, 'doc_position', e.target.value)} title={ed.doc_position || 'Описание услуги для колонки «Позиция» документа'} placeholder="описание для документа" style={ci} /></td>
                       <td style={{ ...td, textAlign: 'center' }}><input type="checkbox" checked={!!s.is_active} onChange={e => toggleUse(s.id, e.target.checked)} style={{ cursor: 'pointer' }} /></td>
@@ -292,7 +310,7 @@ export default function SettingsServices() {
                     </tr>
                   )
                 })}
-                {!services.length && <tr><td colSpan={14} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Услуг нет — добавьте</td></tr>}
+                {!services.length && <tr><td colSpan={15} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Услуг нет — добавьте</td></tr>}
               </tbody>
             </table>
             </div>
@@ -338,6 +356,7 @@ export default function SettingsServices() {
           <input placeholder="Название доп. услуги" value={newAddon.name} onChange={e => setNewAddon(p => ({ ...p, name: e.target.value }))} style={{ ...inp, width: 280 }} />
           <input type="number" placeholder="цена / ед" value={newAddon.unit_price} onChange={e => setNewAddon(p => ({ ...p, unit_price: e.target.value }))} style={{ ...inp, width: 120, textAlign: 'right' }} />
           <input placeholder="период (напр. по итогам РК)" value={newAddon.period} onChange={e => setNewAddon(p => ({ ...p, period: e.target.value }))} style={{ ...inp, width: 200 }} />
+          <input placeholder="формулировка в документах" value={newAddon.doc_phrase} onChange={e => setNewAddon(p => ({ ...p, doc_phrase: e.target.value }))} style={{ ...inp, width: 300 }} />
           <label style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
             <input type="checkbox" checked={newAddon.can_be_bonus} onChange={e => setNewAddon(p => ({ ...p, can_be_bonus: e.target.checked }))} />может быть бонусом
           </label>
@@ -349,6 +368,7 @@ export default function SettingsServices() {
               <th style={th}>Доп. услуга</th>
               <th style={{ ...th, width: 140, textAlign: 'right' }}>Цена / ед</th>
               <th style={{ ...th, width: 190 }}>Период</th>
+              <th style={th} title="Подстановка {услуга} в ДС допов и основании УПД. Пусто — название со строчной буквы">Формулировка в документах</th>
               <th style={{ ...th, width: 170, textAlign: 'center' }}>Может быть бонусом</th>
               <th style={{ ...th, width: 110 }}></th>
             </tr></thead>
@@ -360,6 +380,7 @@ export default function SettingsServices() {
                     <td style={td}><input value={ed.name} onChange={e => addonSet(a, 'name', e.target.value)} style={{ ...ci, fontWeight: 600 }} /></td>
                     <td style={{ ...td, textAlign: 'right' }}><input type="number" value={ed.unit_price} onChange={e => addonSet(a, 'unit_price', e.target.value)} style={{ ...ci, textAlign: 'right' }} /></td>
                     <td style={td}><input value={ed.period} onChange={e => addonSet(a, 'period', e.target.value)} placeholder="—" style={ci} /></td>
+                    <td style={td}><input value={ed.doc_phrase} onChange={e => addonSet(a, 'doc_phrase', e.target.value)} placeholder={a.name.charAt(0).toLowerCase() + a.name.slice(1)} style={ci} /></td>
                     <td style={{ ...td, textAlign: 'center' }}><input type="checkbox" checked={!!ed.can_be_bonus} onChange={e => addonSet(a, 'can_be_bonus', e.target.checked)} style={{ cursor: 'pointer' }} /></td>
                     <td style={{ ...td, textAlign: 'center', whiteSpace: 'nowrap' }}>
                       {addonDirty(a.id) && <button onClick={() => saveAddon(a.id)} style={{ padding: '6px 10px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: 'var(--accent)', color: '#fff', marginRight: 6 }}>✓</button>}
@@ -368,7 +389,7 @@ export default function SettingsServices() {
                   </tr>
                 )
               })}
-              {!addons.length && <tr><td colSpan={5} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Доп. услуг нет</td></tr>}
+              {!addons.length && <tr><td colSpan={6} style={{ ...td, textAlign: 'center', color: 'var(--text-faint)' }}>Доп. услуг нет</td></tr>}
             </tbody>
           </table>
         </div>
@@ -419,6 +440,7 @@ export default function SettingsServices() {
             </div>
           </div>
         )}
+        </>)}
       </div>
     </>
   )

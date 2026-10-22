@@ -18,10 +18,17 @@ import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 import Navbar from '@/components/Navbar'
 import Section from '@/components/deal/Section'
+import AccountFlowButton from '@/components/deal/AccountFlowButton'
+import CopyDealButton from '@/components/deal/CopyDealButton'
+import { ProlongTag } from '@/components/salesTableKit'
+import { nextStageVerb } from '@/lib/stageVerbs'
 import CreativesSummary, { CreativesAlert, creativesSummary } from '@/components/creatives/CreativesSummary'
-import AssemblyOrd, { OrdPips } from '@/components/ord/AssemblyOrd'
+import AssemblyOrd, { OrdPips, stepRequired, SKIP_LABEL } from '@/components/ord/AssemblyOrd'
 import AssemblyCreatives from '@/components/creatives/AssemblyCreatives'
 import CampaignSummary from '@/components/campaign/CampaignSummary'
+import ClosingBlock from '@/components/closing/ClosingBlock'
+import PrioAssembly from '@/components/prio/PrioAssembly'
+import BonusTraffic from '@/components/closing/BonusTraffic'
 import ValuePopover from '@/components/ValuePopover'
 import { productWithSurface } from '@/lib/dealTitle'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -521,13 +528,6 @@ function DealComments({ dealId, canEdit }) {
   )
 }
 
-const DocIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-    strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" />
-  </svg>
-)
-
 /** дд.мм.гггг из ISO: весь раздел продаж пишет даты так. */
 const ru = (x) => (x ? String(x).slice(0, 10).split('-').reverse().join('.') : '—')
 
@@ -568,9 +568,11 @@ function mpFacts({ d, lines, net, gross, tImp, mp }) {
 /** Короткая сводка обвязки ОРД: сошлось или где встало. */
 function ordSummaryText(a) {
   if (!a) return { text: 'не проверено', tone: null }
-  if (!a.payer.ok) return { text: 'плательщик не определён', tone: 'warn' }
-  if (!a.final.ok) return { text: 'нет доходного договора', tone: 'warn' }
-  if (!a.initial.ok) {
+  // Ступень, которую матрица не требует для услуги, сводку не держит (владелец 14.10.2026).
+  const need = (s) => stepRequired(s) && !s.ok
+  if (need(a.payer)) return { text: 'плательщик не определён', tone: 'warn' }
+  if (need(a.final)) return { text: 'нет доходного договора', tone: 'warn' }
+  if (need(a.initial)) {
     const k = a.initial.candidates?.length || 0
     return { text: k ? `выберите изначальный из ${k}` : 'нет изначальных договоров', tone: 'warn' }
   }
@@ -578,6 +580,7 @@ function ordSummaryText(a) {
   // ступень маркера теперь рабочая. Оставить «сошлась» на трёх из четырёх значило бы
   // объявить готовым то, по чему ещё не выпущен ни один маркер.
   const c = a.creatives || {}
+  if (!stepRequired(c)) return { text: 'цепочка сошлась', tone: 'ok' }
   if (!c.total) return { text: 'цепочка сошлась · креативов нет', tone: null }
   if (!c.marked) return { text: 'цепочка сошлась · маркер не выпущен', tone: 'warn' }
   if (!c.ok) return { text: `маркировано ${c.marked} из ${c.total}`, tone: 'warn' }
@@ -589,6 +592,7 @@ function ordSummaryText(a) {
    один креатив — сам маркер, несколько — счёт; «песочница» приписывается к демовскому,
    потому что снаружи он неотличим от боевого, а в размещение годится только настоящий. */
 function ordEridFact(c) {
+  if (c && !stepRequired(c)) return { label: 'ЕРИД', value: SKIP_LABEL, tone: 'off' }
   if (!c || !c.total) return { label: 'ЕРИД', value: 'не выпущен', tone: 'off' }
   const sandbox = (c.erids || []).some(e => e.env && e.env !== 'prod')
   const one = c.total === 1 && c.erids && c.erids[0]
@@ -603,15 +607,17 @@ function ordEridFact(c) {
 function ordFacts(a) {
   if (!a) return [{ label: 'Состояние', value: 'не проверено', tone: 'off' }]
   const ini = a.initial.bound || a.initial.proposal
+  // Ненужная услуге ступень — приглушённая плашка, не предупреждение (владелец 14.10.2026).
+  const skip = (s, f) => (stepRequired(s) ? f : { label: f.label, value: SKIP_LABEL, tone: 'off' })
   return [
-    { label: 'Плательщик', value: a.payer.ok ? (a.payer.name || 'без названия') : 'не определён',
-      tone: a.payer.ok ? 'ok' : 'warn' },
-    { label: 'Доходный договор', value: a.final.ok ? (a.final.contract.number || 'без номера') : 'не найден',
-      tone: a.final.ok ? 'ok' : 'warn' },
-    { label: 'Изначальный',
+    skip(a.payer, { label: 'Плательщик', value: a.payer.ok ? (a.payer.name || 'без названия') : 'не определён',
+      tone: a.payer.ok ? 'ok' : 'warn' }),
+    skip(a.final, { label: 'Доходный договор', value: a.final.ok ? (a.final.contract.number || 'без номера') : 'не найден',
+      tone: a.final.ok ? 'ok' : 'warn' }),
+    skip(a.initial, { label: 'Изначальный',
       value: a.initial.ok ? (ini && ini.number ? ini.number : 'привязан')
         : (a.initial.candidates?.length ? `выбрать из ${a.initial.candidates.length}` : 'нет'),
-      tone: a.initial.ok ? 'ok' : 'warn' },
+      tone: a.initial.ok ? 'ok' : 'warn' }),
     // Плашка ЕРИД читает ту же ступень, что и развёрнутый вид. Раньше здесь стояла
     // константа «не выпущен» — она была честна, пока выпуска не существовало, а теперь
     // врала бы про маркированную сделку прямо в свёрнутом виде.
@@ -704,6 +710,10 @@ export default function DealCard() {
   // видеть, чего не хватает, ещё до того как нажмёт «Изменить стадию». Цель не задаём —
   // ручка берёт следующую по цепочке, ту же, что подставит диалог.
   const [nextReq, setNextReq] = useState(null)
+  // Перечитать «чего не хватает» — не только при смене стадии, но и после правок, которые требования закрывают (договор в блоке ОРД,
+  // плательщик, воронка): иначе плашка «Доходный договор не выбран» висела при выбранном договоре (владелец 14.10.2026, J6JQYV).
+  const [reqTick, setReqTick] = useState(0)
+  const refreshNextReq = () => setReqTick(n => n + 1)
 
   useEffect(() => {
     if (!id) return
@@ -717,7 +727,7 @@ export default function DealCard() {
     // роняет карточку целиком в браузере, при этом сервер отдаёт 200 и чистый HTML —
     // страница статическая, ошибка возникает только при гидратации. Ни curl, ни сборка
     // этого не видят (13.09.2026).
-  }, [id, deal?.our_stage?.id])
+  }, [id, deal?.our_stage?.id, deal?.payer_counterparty_id, deal?.realization_pipeline_id, reqTick])
   const [docBusy, setDocBusy] = useState('')    // kind документа в процессе загрузки/удаления
   const [canEdit, setCanEdit] = useState(false)
   // Роль администратора нужна отдельным признаком: за ней спрятаны действия,
@@ -964,7 +974,9 @@ export default function DealCard() {
   // ДС считается готовым по ВЫПУЩЕННОМУ приложению, а не по файлу: файла у него больше
   // нет вовсе. Черновик не в счёт — номер не занят, документ клиенту не уходил.
   const annex = (d.annexes || [])[0]
-  const docsReady = DOC_KINDS.filter(([k]) => (k === 'ds' ? annex && !annex.is_draft : fileBy[k])).length
+  // Креативы — по прикреплённым на сборке, а не по файлу (как их плитка): до 15.10.2026 счётчик их не видел и показывал «1 из 7» при двух готовых.
+  const docsReady = DOC_KINDS.filter(([k]) => (k === 'ds' ? annex && !annex.is_draft
+    : k === 'creatives' ? (d.creatives_ready || 0) > 0 : fileBy[k])).length
     + (mp ? 1 : 0)
 
   // скачивание/загрузка/удаление документов — общие хелперы (lib/dealDocs)
@@ -1037,7 +1049,7 @@ export default function DealCard() {
           со страницы нельзя было уйти иначе как ссылкой «к реестру». */}
       <Navbar />
       {moveOpen && (
-        <MoveDealDialog onCard deal={d} onClose={() => setMoveOpen(false)}
+        <MoveDealDialog onCard deal={d} toLost={moveOpen === 'lost'} onClose={() => setMoveOpen(false)}
           onMoved={(patch) => { setMoveOpen(false); setDeal(x => ({ ...x, ...patch })); reload() }} />
       )}
       {promoAsk && (
@@ -1076,20 +1088,22 @@ export default function DealCard() {
               {/* Код, название и мета — одна базовая линия. Мета MONO капсом: это
                   адресная строка сделки, а не текст. Люди из неё убраны намеренно —
                   они и так стоят в «Ответственных» справа. */}
+              {/* Всё, кроме названия, — одним кеглем 12 и по низу строки, по базовой линии текста (владелец 15.10.2026: «хаос текста»). */}
               <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 10, minWidth: 0, flexWrap: 'wrap' }}>
-                <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>{d.code || d.bitrix_id || d.id}</span>
+                <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)' }}>{d.code || d.bitrix_id || d.id}</span>
+                {!!d.prolonged_from && <ProlongTag code={d.prolonged_from.code || ''} size={12} />}
+                {/* В мастер-сделке — ссылка на раскладку закрытия (п. 40 плана), на любой стадии */}
+                {!!d.master_deal && (
+                  <Link href={`/accounts/master/${d.master_deal}`} style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>
+                    в {d.master_deal}</Link>
+                )}
                 <span style={{ fontSize: 21, fontWeight: 700, letterSpacing: '-0.02em' }}>{title}</span>
-                <span style={{ ...SUBCAPS, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <span style={{ ...SUBCAPS, fontSize: 12, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {metaShort || '—'}
                 </span>
               </span>
               <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <button type="button" onClick={() => setBriefOpen(true)} title="Бриф сделки"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'var(--bg-card)',
-                    border: '1px solid var(--border-card)', color: 'var(--text-secondary)', borderRadius: 10,
-                    padding: '7px 13px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>
-                  <DocIcon />Бриф
-                </button>
+                {canEdit && <CopyDealButton deal={d} />}
                 {/* Самореклама — в шапке, рядом со стадией: признак управляет движением
                     сделки (в ОРД у неё свой тип договора, у креатива обязательная
                     отметка), поэтому читается всегда, а не только когда развёрнут
@@ -1187,7 +1201,7 @@ export default function DealCard() {
                       <span key={s.id} title={`${s.name}${s.phaseName ? ' · ' + s.phaseName : ''}`}
                         style={{
                           flex: cur ? '2 1 0' : '1 1 0', minWidth: 6, height: 8, borderRadius: 4,
-                          background: cur ? 'var(--accent)' : past ? 'var(--accent-border)' : 'var(--border-inner)',
+                          background: cur ? 'var(--accent)' : past ? 'var(--income)' : 'var(--border-inner)',   // пройденные — зелёные (владелец 14.10.2026)
                           transition: 'flex .25s cubic-bezier(0.22,1,0.36,1)',
                         }} />
                     )
@@ -1212,13 +1226,37 @@ export default function DealCard() {
               {/* Кнопка — в строке полосы стадий, а не рядом со всем блоком (владелец
                   27.09.2026): когда ниже раскрыт список требований, она уезжала к его
                   середине. */}
+              {/* Главная кнопка — действие для следующей стадии («Запустить», «Сверить», …); у контура аккаунта «Запустить/Завершить»
+                  переводят сразу, остальные открывают диалог с предвыбранной следующей стадией. «Изменить стадию» — для переходов
+                  не по порядку (владелец 14.10.2026). */}
               {canEdit && (
-                <button onClick={() => setMoveOpen(true)} title="Двинуть сделку по каталогу стадий"
-                  style={{ display: 'inline-flex', alignItems: 'center', height: 38, padding: '0 18px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: 'var(--bg-card)', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flex: '0 0 auto', fontFamily: UI }}>
-                  Изменить стадию
-                </button>
+                <AccountFlowButton dealId={d.id} stageId={d.our_stage && d.our_stage.id} onDone={reload}
+                  nextLabel={!isLost ? nextStageVerb(d.our_next_stage) : null}
+                  nextTitle={d.our_next_stage ? `Перевести в «${d.our_next_stage.name}»` : ''}
+                  onNext={() => setMoveOpen(true)} onLost={!isLost ? () => setMoveOpen('lost') : null}
+                  lostLabel={(() => {   // срыв — терминал своего этапа: Песочница → «не случилась», реализация → «сорвалась», ДО — нет
+                    const ph = phases.find(p => (p.stages || []).some(s => s.id === (d.our_stage && d.our_stage.id)))
+                    const lost = ph && (ph.stages || []).find(s => s.is_lost)
+                    return lost ? lost.name : null })()} />
               )}
             </div>
+
+            {/* Виза МП (владелец 15.10.2026): план создан системой (годовой план, продление) и ещё не проверен — две «проверено»
+                в конструкторе не отжаты. Показываем всегда, а не только перед переходом: это работа аккаунта, а не формальность стадии. */}
+            {!isLost && (() => {
+              const p = (d.our_mps || [])[0]
+              if (!p || p.verified_at) return null
+              return (
+                <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10, background: 'var(--warning-tint)', border: '1px solid var(--warning-border)',
+                  display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, color: 'var(--warning-fg)', fontWeight: 700 }}>Требуется виза</span>
+                  <span style={{ fontSize: 12.5, color: 'var(--text-secondary)', flex: 1, minWidth: 220 }}>
+                    Медиаплан v{p.version} создан системой и не проверен. Откройте его, отметьте «проверено» у размещений и прогноза и сохраните.
+                  </span>
+                  <a href={`/accounts/mp/${p.id}`} style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>Открыть медиаплан →</a>
+                </div>
+              )
+            })()}
 
             {/* Чего не хватает для следующего шага — ДО нажатия кнопки. Показываем
                 только невыполненное: полный список с галочками на каждой карточке
@@ -1456,7 +1494,7 @@ export default function DealCard() {
                 tone={ordSummaryText(ordSummary).tone} facts={ordFacts(ordSummary)}
                 factsAs="chips" right={<OrdPips assembly={ordSummary} />}>
                 {() => <AssemblyOrd dealId={d.id} data={ordSummary} err={ordErr}
-                  canEdit={canEdit} onReload={loadOrd} />}
+                  canEdit={canEdit} onReload={() => { loadOrd(); refreshNextReq() }} />}
               </Section>
               </div>
               )}
@@ -1497,8 +1535,12 @@ export default function DealCard() {
                 tone={!deal.weborama_pixel_decided ? 'warn'
                   : (deal.weborama_pixel ? 'ok' : undefined)}>
                 {() => (
+                  <>
                   <CampaignExtra dealId={d.id} deal={deal} canEdit={canEdit}
                     onSaved={v => setDeal(x => ({ ...x, ...v }))} />
+                  <BonusTraffic dealId={d.id} mode={deal.bonus_traffic_mode} value={deal.bonus_traffic_value}
+                    canEdit={canEdit} onSaved={reload} />
+                  </>
                 )}
               </Section>
               </div>
@@ -1537,6 +1579,11 @@ export default function DealCard() {
               {showBlock('campaign') && (
                 <CampaignSummary dealId={d.id} cardStyle={{ ...CARD, padding: '20px 26px 18px' }} />
               )}
+              {/* Приоритезация (19.10.2026): сборка запроса площадкам и запуск — только у этой услуги, ведёт аккаунт. */}
+              {d.product === 'Приоритезация' && <PrioAssembly dealId={d.id} canEdit={canEdit} cardStyle={{ ...CARD, padding: '20px 26px 18px' }} />}
+              {/* Итоговая сверка — после хода РК (владелец 15.10.2026): вывод, пины суммы ДС, «к закрытию». */}
+              {showBlock('closing') && <ClosingBlock dealId={d.id} canEdit={canEdit} reloadKey={`${deal.bonus_traffic_mode}${deal.bonus_traffic_value}`}
+                cardStyle={{ ...CARD, padding: '20px 26px 18px' }} />}
             </div>
 
             {/* правая: документы / ответственные / история */}
@@ -1565,14 +1612,40 @@ export default function DealCard() {
                   {VAT != null ? `НДС ${Math.round(VAT * 100)} %` : 'ставка НДС не задана'}
                 </span>
               </div>
+              {/* Кому оказываем услуги — сторона доходного договора из обвязки ОРД (владелец 15.10.2026). */}
+              {(() => {
+                const fc = ordSummary?.final?.ok ? ordSummary.final.contract : null
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6,
+                    background: 'var(--bg-subtle)', border: '1px solid var(--border-card)',
+                    borderRadius: 12, padding: '10px 12px' }}>
+                    <span style={SUBCAPS}>Услуги для</span>
+                    <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700,
+                      color: fc ? 'var(--text-primary)' : 'var(--text-faint)', lineHeight: 1.3 }}>
+                      {fc?.counterparty || 'доходный договор не выбран'}
+                    </span>
+                    {!!fc && (
+                      <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                        {`дог. ${fc.number || 'без номера'}${fc.date ? ` от ${String(fc.date).slice(0, 10).split('-').reverse().join('.')}` : ''}`}
+                      </span>
+                    )}
+                  </div>
+                )
+              })()}
 
               {/* документы — реальные: файлы сделки + наш МП. Загрузка/замена/удаление. */}
               {showBlock('docs') && (<>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={CAPS}>Документы</span>
-                <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10, fontWeight: 700, color: 'var(--accent)' }}>{docsReady} из {DOC_KINDS.length + 1}</span>
+                <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10, fontWeight: 700, color: 'var(--accent)' }}>{docsReady + (d.brief_state === 'filled' ? 1 : 0)} из {DOC_KINDS.length + 2}</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {/* Бриф — первым, над медиапланом (владелец 15.10.2026: из шапки страницы в документы). Открывает тот же диалог. */}
+                <DocRow ok={d.brief_state === 'filled'} title="Бриф"
+                  meta={d.brief_state === 'filled' ? 'заполнен' : 'не заполнен'}
+                  right={<button type="button" onClick={() => setBriefOpen(true)} title="Открыть бриф сделки"
+                    style={{ height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--border-card)', background: 'var(--bg-card)',
+                      color: 'var(--accent)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>Открыть</button>} />
                 {/* наш медиаплан — отдельной строкой: скачать PDF/XLSX или открыть конструктор */}
                 <DocRow ok={!!mp} title="Медиаплан"
                   meta={mp ? `v${mp.version}${mp.updated_at ? ' · ' + dm(mp.updated_at, '') : ''}` : 'не создан'}

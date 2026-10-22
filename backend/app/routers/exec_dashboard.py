@@ -31,8 +31,7 @@ router = APIRouter()
 STALE_DAYS = 30          # сколько дней без правки считаем «сделка стоит»
 BOOKING_MONTHS = 6       # горизонт блока загрузки
 SERIES_MONTHS = 12       # глубина помесячной динамики маржи
-MONTH_NAMES = ["январь", "февраль", "март", "апрель", "май", "июнь",
-               "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
+from app.periods import MONTHS_NOM as MONTH_NAMES  # noqa: E402 — одно место для названий месяцев
 
 
 def _shift(anchor: str, back: int) -> str:

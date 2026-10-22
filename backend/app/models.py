@@ -142,6 +142,10 @@ class Counterparty(Base):
     # что у договоров: идентификатор без контура неотличим от боевого.
     ord_env = Column(String(8))
     ord_synced_at = Column(DateTime)
+    # СК (агентская комиссия, владелец 14.10.2026; миграция 2026-10-14_sk_mode.sql): способ выплаты и базовый %.
+    # На закрытии сделки значения копируются и правятся там (app/final_recon) — смена здесь закрытые сделки не двигает.
+    sk_mode = Column(String(16))          # постоплата | скидка в счёт | NULL — не задано
+    sk_percent = Column(Float)            # базовый % СК; NULL — СК нет
     # Настоящий id приходит только из API ОРД (этап 2, ещё не реализован) — в выгрузке кабинета его нет вовсе,
     # только ИНН и название. До этапа 2 колонка остаётся пустой: до 2026-08-25 сюда писался суррогат
     # 'xlsx:<ИНН>' под условием «если пусто», из-за чего настоящий id уже никогда не смог бы сюда попасть
@@ -203,6 +207,7 @@ class Contract(Base):
     payment_form = Column(String, nullable=True)  # ФОРМА ОПЛАТЫ
     payment_term = Column(String, nullable=True)  # УСТАРЕЛО: старое текстовое "срок оплаты". Заменено на payment_term_days/payment_term_condition (см. migrate_payment_term.py). Колонка не удалена (см. CLAUDE.md про осторожность с деструктивными изменениями) и не используется в API/UI — оставлена для истории.
     payment_term_days = Column(Integer, nullable=True)  # срок оплаты, кол-во дней
+    issue_channel = Column(String(10), nullable=True)  # как выставляем закрывающие: 'ЭДО' | 'бумага'; NULL — не задан (2026-10-19_contract_issue_channel.sql)
     payment_term_condition = Column(String, nullable=True)  # срок оплаты, условие: С даты УПД / С даты АКТ / По периоду — свободный текст в БД, фронт ограничивает списком
     note = Column(Text, nullable=True)
     document_link = Column(String, nullable=True)   # URL на документ в ЭДО или другой системе — открывается по кнопке 🔗
@@ -236,6 +241,8 @@ class Operation(Base):
     description = Column(String)
     document_link = Column(String)
     own_company_id = Column(Integer, ForeignKey("counterparties.id"), nullable=True)  # наше юрлицо-плательщик/получатель
+    # Мост из мастер-сделки: операция = счёт комплекта УПД (2026-10-20_master_deal_operation_bridge.sql; app/master_deal/bridge.py)
+    master_deal_upd_id = Column(Integer, ForeignKey("master_deal_upds.id", ondelete="SET NULL"), nullable=True)
     # Материнская операция: эта — отделённая от неё часть (частичная оплата). Ссылка всегда
     # на корень цепочки. Миграция 2026-09-23_operation_parent.sql, там же смысл и правила.
     parent_operation_id = Column(Integer, ForeignKey("operations.id", ondelete="SET NULL"),

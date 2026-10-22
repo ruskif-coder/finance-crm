@@ -19,6 +19,7 @@
 import argparse
 import sys
 from datetime import date, datetime
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 from app.database import SessionLocal
@@ -54,6 +55,7 @@ def record(out: dict | None = None, error: str | None = None) -> None:
         "failed": [f"{h} с {d}" for h, d in (out.get("failed_campaigns") or {}).items()][:20],
         "unassigned": out.get("unassigned") or {},
         "missing_creatives": len(out.get("missing_creatives") or []),
+        "denied": len(out.get("denied") or []),
         "error": ((error or "; ".join(out.get("errors") or []))[:300]) or None,
     }, ensure_ascii=False)
     db = SessionLocal()
@@ -64,6 +66,69 @@ def record(out: dict | None = None, error: str | None = None) -> None:
         db.commit()
     finally:
         db.close()
+
+
+def is_bad(out: dict, error: Optional[str]) -> bool:
+    """Поломка сбора: прогон не состоялся, кампании не забраны или DSP отказала в доступе.
+    Неразнесённые показы — предупреждение (раскладка по площадкам), не поломка."""
+    return bool(error or (out or {}).get("failed_campaigns") or (out or {}).get("denied"))
+
+
+def _prev_bad() -> bool:
+    """Был ли прошлый плановый прогон поломкой — по записи для экрана состояния."""
+    import json
+
+    from sqlalchemy import text
+    db = SessionLocal()
+    try:
+        v = db.execute(text("SELECT value FROM company_settings WHERE key = :k"),
+                       {"k": LAST_RUN_KEY}).scalar()
+    finally:
+        db.close()
+    last = json.loads(v) if v else {}
+    return bool(last.get("error") or last.get("failed") or last.get("denied"))
+
+
+def _emit(title: str, body: str) -> None:
+    from app.notify.bus import emit
+    db = SessionLocal()
+    try:
+        emit(db, "cron_dsp_stat_failed", title=title, body=body[:600], link="/settings/system",
+             entity_type="cron", entity_id=3, actor=None)
+        db.commit()
+    finally:
+        db.close()
+
+
+def alert_if_broke(prev_bad: bool, out: Optional[dict], error: Optional[str]) -> None:
+    """Тревога — на переходе «работал → упал», а не каждую ночь, пока плохо."""
+    out = out or {}
+    if prev_bad or not is_bad(out, error):
+        return
+    if error:
+        body = f"Сбор не состоялся: {error}; ночной пересчёт долей остановлен"
+    else:
+        body = (f"РК {out.get('campaigns', 0)}; не забраны кампании: {len(out.get('failed_campaigns') or {})}; "
+                f"DSP отказала по хешам: {len(out.get('denied') or [])}")
+        body += "; ночной пересчёт долей остановлен — «Возобновить» на странице «Биддер»"
+        if out.get("errors"):
+            body += f"; {out['errors'][0]}"
+    _emit("Сбор статистики DSP упал", body)
+
+
+def after_planned_run(prev_bad: bool, out: Optional[dict], error: Optional[str]) -> None:
+    """После планового прогона: при поломке — стоп ночного пересчёта (`stat_hold`) и тревога.
+    Хороший прогон стоп НЕ снимает — это кнопка «Возобновить» на странице «Биддер»."""
+    if is_bad(out or {}, error):
+        from app.dsp import stat_hold
+        db = SessionLocal()
+        try:
+            stat_hold.engage(db, error or "; ".join((out or {}).get("errors") or [])
+                             or f"DSP отказала по хешам: {len((out or {}).get('denied') or [])}")
+            db.commit()
+        finally:
+            db.close()
+    alert_if_broke(prev_bad, out, error)
 
 
 def run(*, campaign_id=None, start=None, end=None, dry_run: bool = False,
@@ -116,6 +181,8 @@ def _report(out: dict) -> str:
         parts.append(f"НЕ РАЗНЕСЕНО по площадкам (показов по РК): {out['unassigned']}")
     if out.get("missing_creatives"):
         parts.append(f"нет данных по креативам: {', '.join(out['missing_creatives'])}")
+    if out.get("denied"):
+        parts.append(f"DSP отказала в доступе к хешам (пропущены, остальное забрано): {', '.join(out['denied'])}")
     if out.get("failed_campaigns"):
         parts.append(f"НЕ ЗАБРАНЫ кампании (с суток): {out['failed_campaigns']}")
     if out.get("errors"):
@@ -139,13 +206,21 @@ if __name__ == "__main__":
         if planned:
             try:
                 from app.dsp.client import safe_error
-                record(error=str(e) if isinstance(e, (MsError, RuntimeError)) else safe_error(e))
+                err = str(e) if isinstance(e, (MsError, RuntimeError)) else safe_error(e)
+                prev = _prev_bad()
+                record(error=err)
+                after_planned_run(prev, None, err)
             except Exception:  # noqa: BLE001 — база недоступна: останется «нет прогона 30 ч»
                 pass
         print(f"Съём DSP не состоялся: {e!r}", file=sys.stderr)
         sys.exit(1)
     if planned:
+        prev = _prev_bad()
         record(res)
+        try:
+            after_planned_run(prev, res, None)
+        except Exception as e:  # noqa: BLE001 — стоп и тревога не роняют сбор
+            print(f"стоп/тревога о сборе не ушли: {e!r}", file=sys.stderr)
     print(_report(res))
     if res.get("failed_campaigns"):
         sys.exit(2)

@@ -26,6 +26,7 @@ import hashlib
 import os
 from datetime import datetime
 from types import SimpleNamespace
+import logging
 from typing import Optional
 
 import httpx
@@ -40,6 +41,8 @@ from app.ord.models import OrdInitialFinalLink, OrdSubmission
 class OrdSubmitRefused(RuntimeError):
     """Отправка не начата: не выполнены условия. До ОРД запрос не дошёл."""
 
+
+log = logging.getLogger("finance.ord")
 
 def _assert_write_allowed() -> str:
     """Запись на боевом контуре — только с явного разрешения.
@@ -513,6 +516,41 @@ def _assert_no_marker(cset, env: str) -> None:
             f"Повторный выпуск дал бы там второй креатив, который не отозвать.")
 
 
+def _native_id(cset) -> str:
+    return f"set-{cset.id}"          # то же, что `payloads.creative` кладёт в nativeCustomerId
+
+
+def find_creative_by_native(native_id: str) -> Optional[dict]:
+    """Креатив в ОРД с нашим идентификатором комплекта — или None. Список креативов кабинета, фильтр у нас (ответ — список
+    или объект со списком). Сбой связи/ответа — исключение: «не знаю» не равно «нет»."""
+    answer = client.get('/webapi/v3/creatives')
+    items = answer if isinstance(answer, list) else (answer or {}).get('items') or (answer or {}).get('data') or []
+    return next((c for c in items if isinstance(c, dict) and str(c.get('nativeCustomerId') or '') == native_id), None)
+
+
+def resolve_pending_creative(db: Session, cset, env: str) -> Optional[str]:
+    """Незакрытая попытка регистрации (ответ ОРД потерян: таймаут, обрыв) — сначала СВЕРИТЬСЯ с ОРД, потом решать (владелец
+    15.10.2026: «сначала проверить наличие ЕРИДа, который не прошёл в ОРД, потом повторять»). Нашёлся креатив с нашим
+    `nativeCustomerId` — попытка закрывается с его id (дальше обычный опрос статуса и маркера, второй регистрации нет). Не нашёлся —
+    попытка закрывается «проверено: не создан», повтор разрешён. ОРД не ответил и сейчас — всё остаётся как было (блокировка).
+    Возвращает найденный id или None."""
+    stuck = pending(db, 'creative', cset.id, env)
+    if stuck is None:
+        return None
+    try:
+        found = find_creative_by_native(_native_id(cset))
+    except Exception as e:  # noqa: BLE001 — проверка не удалась: неизвестность сохраняется, блокировка тоже
+        log.warning("ОРД: проверка незакрытой попытки комплекта %s не удалась: %s", cset.id, e)
+        return None
+    was = stuck.error or "ответ ОРД не получен"
+    if found and found.get('id'):
+        _finish(db, stuck, ord_id=found['id'], ord_status=found.get('status'),
+                error=f"{was}; при повторе найден в ОРД — регистрация состоялась")
+        return found['id']
+    _finish(db, stuck, error=f"{was}; при повторе проверено в ОРД — креатива нет, повтор разрешён")
+    return None
+
+
 def issue_marker(db: Session, cset, files, deal, brand, final_ord_id, initial_ord_id,
                  user, campaign_type=None, advertiser_urls=None) -> dict:
     """Кнопка «выпустить ЕРИД»: регистрация — или опрос, если регистрация уже была.
@@ -523,6 +561,7 @@ def issue_marker(db: Session, cset, files, deal, brand, final_ord_id, initial_or
     """
     env = _assert_write_allowed()
     _assert_no_marker(cset, env)
+    resolve_pending_creative(db, cset, env)      # потерянный ответ — сначала свериться с ОРД (15.10.2026)
     if registry.known_id(db, 'creative', cset.id, env, cset.ord_creative_id, cset.ord_env):
         got = refresh_creative_status(db, cset)
         return {'ord_id': got['ord_id'], 'erid': got['erid'], 'status': got['status'],

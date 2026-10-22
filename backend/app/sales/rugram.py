@@ -55,14 +55,52 @@ def gen_word(w: str) -> str:
     return w
 
 
+_STOP_WORDS = ("по", "в", "на", "при", "и")
+
+
+def looks_genitive(pos: Optional[str]) -> bool:
+    """Должность уже введена в родительном падеже («Генерального директора»): первое слово — прилагательное на -ого/-его.
+
+    В карточке контрагента должность хранится в именительном («Генеральный директор»), а в документе склоняется. Но человек пишет её так,
+    как она звучит в «в лице …», — и повторное склонение давало «Генерального директоры» (замечание владельца 14.10.2026). Существительное
+    без прилагательного («Директора») так не опознать — этот случай остаётся на правильном вводе в именительном падеже.
+    """
+    first = (pos or "").strip().split(" ")[0].lower()
+    return len(first) > 4 and first.endswith(("ого", "его"))
+
+
+def nom_position(pos: Optional[str]) -> Optional[str]:
+    """Должность для подписи — в именительном: «Генерального директора» → «Генеральный директор». Уже именительная — как есть."""
+    if not pos or not looks_genitive(pos):
+        return pos
+    words = pos.split()
+    out, i = [], 0
+    while i < len(words) and words[i].lower().endswith(("ого", "его")) and len(words[i]) > 4:      # цепочка прилагательных
+        low, w = words[i].lower(), words[i]
+        stem = w[:-3]
+        out.append(stem + ("ий" if stem[-1:].lower() in "гкхжчшщ" or low.endswith("его") else "ый"))
+        i += 1
+    if i < len(words):                                                       # главное существительное; зависимые слова не трогаем
+        w, low = words[i], words[i].lower()
+        if low.endswith("я") and len(w) > 3:
+            w = w[:-1] + "ь"                                                 # руководителя → руководитель
+        elif low.endswith("а") and len(w) > 3:
+            w = w[:-1]                                                       # директора → директор
+        out.append(w)
+        i += 1
+    return " ".join(out + words[i:])
+
+
 def gen_position(pos: Optional[str]) -> Optional[str]:
     """Должность целиком: «Генеральный директор» → «Генерального директора».
 
     Предлоги и слова после них не склоняются: «директор по развитию» остаётся
-    «директора по развитию», а не «директора по развития».
+    «директора по развитию», а не «директора по развития». Уже родительная — как есть.
     """
     if not pos or not pos.strip():
         return pos
+    if looks_genitive(pos):
+        return pos.strip()
     stop = False
     out = []
     for w in pos.split():

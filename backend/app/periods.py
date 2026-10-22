@@ -95,3 +95,16 @@ def quarter_parts(value) -> Optional[Tuple[str, str]]:
     """('Q1', '2026') — как отдавали группы старого регулярного выражения; для `QUARTER_MONTHS`."""
     parsed = parse_quarter(value)
     return (f"Q{parsed[1]}", str(parsed[0])) if parsed else None
+
+
+# Названия месяцев в именительном падеже — «октябрь 2026» в подписях (поиск по мастер-сделкам, 21.10.2026).
+MONTHS_NOM = ("январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь")
+
+
+def month_label(period) -> str:
+    """«2026-10» → «октябрь 2026»; непонятное — как есть."""
+    try:
+        y, m = (int(x) for x in str(period or "").split("-"))
+        return f"{MONTHS_NOM[m - 1]} {y}"
+    except (ValueError, IndexError):
+        return period or ""

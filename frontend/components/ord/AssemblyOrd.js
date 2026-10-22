@@ -22,9 +22,15 @@ import InitialPicker from './InitialPicker'
 import PayerPicker from './PayerPicker'
 import FinalPicker from './FinalPicker'
 
-const DOT = { done: 'var(--income)', todo: 'var(--warning)', lock: 'var(--border-hover)' }
-const VAL_FG = { done: 'var(--text-primary)', todo: 'var(--warning-text)', lock: 'var(--text-faint)' }
-const DOT_TITLE = { done: 'готово', todo: 'ждёт человека', lock: 'ещё не открылась' }
+// skip — ступень не требуется матрицей «Проверки стадий» для услуги сделки (владелец
+// 14.10.2026): серая, не красная, и в счётчики «N из M» не входит.
+const DOT = { done: 'var(--income)', todo: 'var(--warning)', lock: 'var(--border-hover)', skip: 'var(--bg-subtle)' }
+const VAL_FG = { done: 'var(--text-primary)', todo: 'var(--warning-text)', lock: 'var(--text-faint)', skip: 'var(--text-faint)' }
+const DOT_TITLE = { done: 'готово', todo: 'ждёт человека', lock: 'ещё не открылась', skip: 'не требуется для услуги' }
+export const SKIP_LABEL = 'не требуется для услуги'
+
+/** Нет поля required (старый ответ) — ступень обязательна, как было до 14.10.2026. */
+export const stepRequired = (s) => !s || s.required !== false
 
 const OpenIcon = () => (
   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -95,12 +101,13 @@ function Row({ o }) {
           <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: VAL_FG[o.state] }}>
             {o.value}
           </span>
+          {o.state === 'skip' && <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)' }}>{SKIP_LABEL}</span>}
           {!!o.meta && <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)' }}>{o.meta}</span>}
           {!!o.fill && <FillBadge fill={o.fill} />}
         </span>
         {!!o.hint && (
           <span style={{ fontSize: 11, lineHeight: 1.4,
-            color: o.state === 'lock' ? 'var(--text-faint)' : 'var(--text-secondary)' }}>
+            color: (o.state === 'lock' || o.state === 'skip') ? 'var(--text-faint)' : 'var(--text-secondary)' }}>
             {o.hint}
           </span>
         )}
@@ -135,25 +142,30 @@ function Row({ o }) {
  */
 export function ordStates(a) {
   if (!a) return ['lock', 'lock', 'lock', 'lock']
-  const payer = a.payer.ok ? 'done' : 'todo'
+  // Ненужная услуге ступень не запирает следующую: ждать по ней нечего.
+  const pass = (s) => s.ok || !stepRequired(s)
+  const st = (s, v) => (stepRequired(s) ? v : 'skip')
+  const payer = st(a.payer, a.payer.ok ? 'done' : 'todo')
   // «не найден» ≠ «ступень не открылась»: плательщик известен, искать доходный
   // договор можно прямо сейчас. lock остаётся, только пока нет плательщика.
-  const final = a.final.ok ? 'done' : (a.payer.ok ? 'todo' : 'lock')
-  const initial = a.initial.ok ? 'done' : (a.final.ok ? 'todo' : 'lock')
+  const final = st(a.final, a.final.ok ? 'done' : (pass(a.payer) ? 'todo' : 'lock'))
+  const initial = st(a.initial, a.initial.ok ? 'done' : (pass(a.final) ? 'todo' : 'lock'))
   // Четвёртая ступень с 27.08.2026 рабочая: она открывается вместе с изначальным
   // договором и закрывается, когда маркирован КАЖДЫЙ креатив сделки.
-  const creatives = a.creatives.ok ? 'done' : (a.initial.ok ? 'todo' : 'lock')
+  const creatives = st(a.creatives, a.creatives.ok ? 'done' : (pass(a.initial) ? 'todo' : 'lock'))
   return [payer, final, initial, creatives]
 }
 
 /** Полоски и счётчик «N из 4» для шапки секции — видны и когда она свёрнута. */
 export function OrdPips({ assembly }) {
-  const states = ordStates(assembly)
+  const all = ordStates(assembly)
+  // Счётчик — только по нужным услуге ступеням; полоска ненужной остаётся, но серой.
+  const states = all.filter(s => s !== 'skip')
   const done = states.filter(s => s === 'done').length
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9 }}>
       <span style={{ display: 'flex', gap: 2 }}>
-        {states.map((s, i) => (
+        {all.map((s, i) => (
           <span key={i} style={{ width: 18, height: 7, borderRadius: 2, background: DOT[s] }} />
         ))}
       </span>

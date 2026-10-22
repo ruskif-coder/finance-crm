@@ -213,7 +213,7 @@ def _drop_deal(db, did):
 
 
 def test_prolonged_copy_starts_on_the_assembly_stage(prolonged):
-    """Копия встаёт на «Готовятся к старту» и не тащит за собой маркер.
+    """Копия встаёт на «Готовятся к старту» (если требования матрицы выполнены, иначе на «Бронь») и не тащит маркер.
 
     Стадия здесь не украшение: с неё сделка попадает в сборку, и ошибись продление —
     кампания оказалась бы заведённой, но невидимой в работе.
@@ -227,8 +227,14 @@ def test_prolonged_copy_starts_on_the_assembly_stage(prolonged):
 
     new = db.query(SalesDeal).filter(SalesDeal.id == out["id"]).first()
     stage = db.query(SalesStage).filter(SalesStage.stage_key == 'launch_prep').first()
+    booking = db.query(SalesStage).filter(SalesStage.stage_key == 'booking').first()
     assert stage is not None, "лестница стадий без ступени сборки — сама по себе поломка"
-    assert new.our_stage_id == stage.id
+    # С 15.10.2026 копия идёт на сборку обычным путём — по матрице требований: всё есть — «Готовятся к старту»,
+    # чего-то нет — остаётся на «Брони», и ответ называет недостающее (владелец: «лучше перестраховаться»).
+    if out["missing"]:
+        assert new.our_stage_id == booking.id and out["stage"] == booking.name
+    else:
+        assert new.our_stage_id == stage.id and out["stage"] == stage.name
     assert new.prolonged_from_id == stand.deal.id
     assert new.period_from == date(2026, 10, 1)
 
@@ -260,15 +266,11 @@ def test_prolonged_set_skips_the_traffic_step(prolonged):
     # Первичная проверка перенесена вместе с материалом.
     assert _state(db, out["id"], cset.id) == 'готов к отправке'
 
-    # Посадочные продление НЕ переносит (владелец 25.09.2026): поля пустые, пока их не
-    # заполнит аккаунт, — и без них отправка не проходит.
-    with pytest.raises(HTTPException):
-        lp.send_set(cset.id, lp.SendIn(), db, _ADMIN)
+    # Посадочные продление ПЕРЕНОСИТ (владелец 15.10.2026, отменяет 25.09): у кого в исходной ссылки не было — дозаполняем.
     from app.launch_prep.models import LaunchPrepSetTarget
     for m in db.query(LaunchPrepSetTarget).filter(LaunchPrepSetTarget.set_id == cset.id).all():
-        assert m.advertiser_url is None, "посадочная перенеслась при продлении"
-        lp.set_member_url(cset.id, m.target_id, lp.TargetUrlIn(url='https://lp.test/new'),
-                          db, _ADMIN)
+        if not m.advertiser_url:
+            lp.set_member_url(cset.id, m.target_id, lp.TargetUrlIn(url='https://lp.test/new'), db, _ADMIN)
 
     lp.send_set(cset.id, lp.SendIn(), db, _ADMIN)
     rows = db.query(LaunchPrepReview).filter(LaunchPrepReview.set_id == cset.id).all()
@@ -322,3 +324,67 @@ def test_prolonged_plan_is_a_new_calculation(prolonged):
         db.query(SalesMediaPlanExtra).filter(SalesMediaPlanExtra.plan_id == src.id).delete()
         db.query(SalesMediaPlan).filter(SalesMediaPlan.id == src.id).delete()
         db.commit()
+
+
+def test_second_prolongation_of_the_same_month_needs_force(prolonged):
+    """Владелец 15.10.2026: вторая копия на тот же финансовый месяц — только явным «всё равно» (иначе дубль плана и рассылки)."""
+    stand, made = prolonged
+    db = stand.db
+    first = lp.prolong_deal(stand.deal.id, lp.ProlongIn(period_from='2026-12-01', month='2026-12'), db, _ADMIN)
+    made.append(first["id"])
+    assert lp.prolong_check(stand.deal.id, '2026-12', db, _ADMIN)["existing"] == [first["code"]]
+    with pytest.raises(HTTPException) as e:
+        lp.prolong_deal(stand.deal.id, lp.ProlongIn(period_from='2026-12-01', month='2026-12'), db, _ADMIN)
+    assert e.value.status_code == 409 and first["code"] in e.value.detail
+    second = lp.prolong_deal(stand.deal.id, lp.ProlongIn(period_from='2026-12-05', period_to='2026-12-20', month='2026-12', force=True), db, _ADMIN)
+    made.append(second["id"])
+
+
+def test_prolongation_carries_landing_links_per_pair(prolonged):
+    """Владелец 15.10.2026: посадочные переносятся — ссылка пары «креатив × площадка» исходной сделки уходит в ту же пару копии."""
+    from app.launch_prep.models import LaunchPrepSetTarget
+    stand, made = prolonged
+    db = stand.db
+    src_links = {(s.no, t.publisher_id): (m.advertiser_url, m.deeplink_url)
+                 for m in db.query(LaunchPrepSetTarget).all()
+                 for s in [db.get(LaunchPrepCreativeSet, m.set_id)] for t in [db.get(LaunchPrepTarget, m.target_id)]
+                 if s.deal_id == stand.deal.id}
+    out = lp.prolong_deal(stand.deal.id, lp.ProlongIn(period_from='2027-01-01', month='2027-01'), db, _ADMIN)
+    made.append(out["id"])
+    new_links = {(s.no, t.publisher_id): (m.advertiser_url, m.deeplink_url)
+                 for m in db.query(LaunchPrepSetTarget).all()
+                 for s in [db.get(LaunchPrepCreativeSet, m.set_id)] for t in [db.get(LaunchPrepTarget, m.target_id)]
+                 if s.deal_id == out["id"]}
+    # Один к одному (владелец 15.10.2026): у каждого комплекта те же площадки и те же ссылки, лишних пар нет.
+    assert new_links == src_links
+
+
+def test_prolonged_copy_goes_through_closing_to_layout(prolonged, monkeypatch):
+    """Сквозной путь копии (15.10.2026): продление → итоговая сверка (факта нет — «Под МП») → подтверждение → «Собрать ДС» →
+    раскладка мастер-сделки. Ничего не падает; сумма пакета = сумме «к закрытию»; виза МП копии требуется."""
+    import app.notify.bus as bus
+    monkeypatch.setattr(bus, "emit", lambda *a, **k: None)
+    from app.final_recon import closing as CL
+    from app.master_deal import layout as LY
+    from app.master_deal import service as MS
+    from app.master_deal.models import MasterDeal
+    from sqlalchemy import text as _t
+    stand, made = prolonged
+    db = stand.db
+    out = lp.prolong_deal(stand.deal.id, lp.ProlongIn(period_from='2027-02-01', month='2027-02'), db, _ADMIN)
+    made.append(out["id"])
+    copy = db.get(SalesDeal, out["id"])
+    st0 = CL.compute(db, copy)
+    assert st0["fact_shows"] is None and st0["base_ds_net"] is None, "у свежей копии факта нет — суммы по факту нет"
+    copy.our_stage_id = db.execute(_t("SELECT id FROM sales_stages WHERE name = 'Итоговая сверка'")).scalar()
+    if not copy.ord_final_contract_id:        # у синтетической сделки стенда договора нет — даём любой, пакету нужен ключ
+        copy.ord_final_contract_id = db.execute(_t("SELECT id FROM contracts ORDER BY id LIMIT 1")).scalar()
+    db.flush()
+    with pytest.raises(CL.ClosingError):
+        CL.confirm(db, copy, True, None)                     # «по факту» без факта не подтверждается
+    CL.set_mode(db, copy, "plan", None, None, privileged=True)
+    CL.confirm(db, copy, True, None)
+    sent = MS.send(db, copy, None, target="new")
+    lay = LY.layout(db, db.get(MasterDeal, sent["master"]["id"]))
+    assert lay["total_net"] == pytest.approx(CL.compute(db, copy)["total_net"], abs=0.05)
+    assert sent["closing"]["frozen"]

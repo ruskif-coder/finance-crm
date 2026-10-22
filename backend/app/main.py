@@ -544,6 +544,8 @@ from app.routers import rk_check as rk_check_router  # noqa: E402 — «Пров
 app.include_router(rk_check_router.router, prefix="/api/rk-check", tags=["traffic"])
 from app.routers import rk_analysis as rk_analysis_router  # noqa: E402 — «Разбор РК» (без своей схемы)
 app.include_router(rk_analysis_router.router, prefix="/api/rk-analysis", tags=["traffic"])
+from app.routers import sales_status as sales_status_router  # noqa: E402 — «Статусы продаж» (миграция 2026-10-22_sales_status.sql)
+app.include_router(sales_status_router.router, prefix="/api/sales-status", tags=["sales"])
 # «Настройки → SIMB ID»: коэффициенты отчётов клиенту, только админ (05.10.2026).
 from app.routers import simb_id  # noqa: E402
 app.include_router(simb_id.router, prefix="/api/settings/simb-id", tags=["settings"])
@@ -618,6 +620,21 @@ app.include_router(cabinet_gateway.router, prefix="/api/cabinet-gw", tags=["cabi
 app.include_router(cabinet_gateway.webhook_router, prefix="/api/pub-bot", tags=["pub-bot"])
 # Проверка креатива без сделки (аккаунты, 07.10.2026): баннер, замечания по коду, нацеливание.
 app.include_router(creative_check.router, prefix="/api/creative-check", tags=["creative-check"])
+# Шаблоны ДС: версии, кастомные под договор (спринт 1, 13.10.2026). Логика — пакет `app/annex_tpl`.
+from app.routers import annex_templates  # noqa: E402
+app.include_router(annex_templates.router, prefix="/api/annex-templates", tags=["annex-templates"])
+# Юр запросы: заявки аккаунтов юристу по пунктам ДС после МП (спринт 3, 14.10.2026). Логика — пакет `app/legal`.
+from app.routers import legal_requests  # noqa: E402
+app.include_router(legal_requests.router, prefix="/api/legal-requests", tags=["legal-requests"])
+# Итоговая сверка (спринт 4, 14.10.2026): СК юрлица и сделки на закрытии. Логика — пакет `app/final_recon`.
+from app.routers import final_recon  # noqa: E402
+app.include_router(final_recon.router, prefix="/api/final-recon", tags=["final-recon"])
+# Мастер-сделки (15.10.2026): развилка «Отправить в ДО» и конструктор закрытия. Логика — пакет `app/master_deal`.
+from app.routers import master_deals  # noqa: E402
+app.include_router(master_deals.router, prefix="/api/master-deals", tags=["master-deals"])
+# Приоритезация (19.10.2026): сборка запроса в карточке сделки. Логика — пакет `app/prio`.
+from app.routers import prio  # noqa: E402
+app.include_router(prio.router, prefix="/api/prio", tags=["prio"])
 
 @app.get("/")
 def root():

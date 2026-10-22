@@ -33,6 +33,86 @@ from app.notify.models import (NotificationSubscription, NotificationProfile,
 # 33 подписок) — просто потому, что отправлять было нечем.
 LIVE_CHANNELS = {"app", "tg", "mail"}
 
+# ── почта и Telegram — после commit (аудит v2.6.0→v2.7.0, D1; 21.10.2026) ──────────────────────────
+# Внутри транзакции письмо уходило синхронно: SMTP до 30 с держал блокировку действия (пакет под FOR UPDATE), а откат
+# действия после отправки оставлял письмо о том, чего не было. Теперь `emit` пишет строку «в очереди» с этой меткой и
+# отправляет её после commit — путём досылки (`dispatch._one`). Откат уносит и строку. Процесс упал между commit и
+# отправкой — строку через `dispatch.PENDING_GRACE_MINUTES` подберёт обычная досылка: ничего не теряется.
+PENDING = "pending_commit"
+_PENDING_KEY = "notify_pending_ids"
+
+
+def _deferrable(db) -> bool:
+    """Настоящая сессия — отложить до commit; подмены в тестах — отправлять сразу, как раньше."""
+    return isinstance(db, Session)
+
+
+def _on_commit(session) -> None:
+    # after_commit приходит и на выходе из savepoint (ревью 22.10.2026): там внешняя транзакция ещё открыта,
+    # новая сессия строк не видит. Ждём настоящего commit.
+    if session.in_nested_transaction():
+        return
+    ids = session.info.pop(_PENDING_KEY, None)
+    if ids:
+        try:
+            _send_after_commit(ids)
+        except Exception:  # noqa: BLE001 — действие уже сохранено; строки дошлёт досылка
+            import logging
+            logging.getLogger("finance.notify").exception("отправка после commit не удалась — дошлёт досылка")
+
+
+def _on_rollback(session) -> None:
+    if session.in_nested_transaction():         # откат savepoint не уносит строки внешней транзакции
+        return
+    session.info.pop(_PENDING_KEY, None)
+
+
+def _defer(db: Session, row) -> None:
+    from sqlalchemy import event
+    db.flush()                                  # id строки нужен до commit: после него сессия SQL не шлёт
+    db.info.setdefault(_PENDING_KEY, []).append(row.id)
+    if not db.info.get("notify_hooked"):
+        db.info["notify_hooked"] = True
+        event.listen(db, "after_commit", _on_commit)
+        event.listen(db, "after_rollback", _on_rollback)
+
+
+def _send_after_commit(ids, session_factory=None) -> None:
+    """Отправить строки, записанные `emit`, — по одной, каждая своим commit, как досылка."""
+    from sqlalchemy import text as _text
+    from app.notify import dispatch
+    if session_factory is None:
+        from app.database import SessionLocal as session_factory
+    s = session_factory()
+    stats = {"sent": 0, "skipped": 0, "expired": 0, "failed": 0}
+    try:
+        rows = (s.query(NotificationDelivery)
+                .filter(NotificationDelivery.id.in_(list(ids)), NotificationDelivery.status == "queued",
+                        NotificationDelivery.suppress_reason == PENDING)
+                .with_for_update(skip_locked=True).all())
+        users = list({r.user_id for r in rows}) or [0]
+        active = {u for (u,) in s.execute(_text("SELECT id FROM users WHERE id = ANY(:u) AND is_active = 1"),
+                                          {"u": users}).all()}
+        now = datetime.utcnow()
+        for r in rows:
+            try:
+                dispatch._one(s, r, now, False, stats, active)
+                if r.status == "queued":            # не ушло сейчас (тихие часы, канал) — честная причина в журнал
+                    r.suppress_reason = _why_waiting(s, r)
+            except Exception:  # noqa: BLE001 — одна строка; дошлёт досылка
+                s.rollback()
+                continue
+            s.commit()
+    finally:
+        s.close()
+
+
+def _why_waiting(db: Session, r) -> str:
+    from app.notify.models import UserNotificationChannels
+    ev = registry.get(r.event_key)
+    ch = db.query(UserNotificationChannels).filter(UserNotificationChannels.user_id == r.user_id).first()
+    return "quiet_hours" if ev is not None and channels.quiet_now(ch, ev) else "no_channel"
+
 
 def _effective(db: Session, user_id: int, event_key: str):
     """Действующая настройка события для пользователя.
@@ -184,6 +264,17 @@ def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
                                             status="queued",
                                             title=m_title if letter else title))
                 continue
+            if ch in ("mail", "tg") and _deferrable(db):
+                row = NotificationDelivery(
+                    body=m_body if ch == "mail" else body, link=link, facts=facts, code=code,
+                    event_key=ev.key, entity_type=entity_type, entity_id=entity_id,
+                    user_id=uid, channel=ch, status="queued", suppress_reason=PENDING,
+                    title=m_title if ch == "mail" else title)
+                db.add(row)
+                _defer(db, row)
+                if uid not in delivered:
+                    delivered.append(uid)
+                continue
             if ch == "mail":
                 status, _, reason = channels.deliver_mail(
                     db, uid, ev, m_title, m_body, link, facts, code).partition("|")
@@ -191,6 +282,7 @@ def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
                     body=m_body, link=link, facts=facts, code=code,
                     event_key=ev.key, entity_type=entity_type, entity_id=entity_id,
                     user_id=uid, channel="mail", status=status, title=m_title,
+                    sent_at=datetime.utcnow() if status == "sent" else None,
                     suppress_reason=(reason or None) if status == "queued" else None,
                     error=(reason or None) if status == "failed" else None))
                 if status == "sent" and uid not in delivered:
@@ -204,6 +296,7 @@ def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
                     body=body, link=link, facts=facts, code=code,
                     event_key=ev.key, entity_type=entity_type, entity_id=entity_id,
                     user_id=uid, channel="tg", status=status, title=title,
+                    sent_at=datetime.utcnow() if status == "sent" else None,
                     suppress_reason=(reason or None) if status == "queued" else None,
                     error=(reason or None) if status == "failed" else None))
                 if status == "sent" and uid not in delivered:
@@ -214,7 +307,8 @@ def emit(db: Session, event_key: str, *, title: str, body: Optional[str] = None,
             db.flush()          # нужен n.id для ссылки из журнала отправок
             db.add(NotificationDelivery(body=body, link=link, event_key=ev.key, entity_type=entity_type,
                                         entity_id=entity_id, user_id=uid, channel=ch,
-                                        status="sent", title=title, notification_id=n.id))
+                                        status="sent", title=title, notification_id=n.id,
+                                        sent_at=datetime.utcnow()))
             if uid not in delivered:
                 delivered.append(uid)
     return delivered

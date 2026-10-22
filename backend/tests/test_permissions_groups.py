@@ -14,6 +14,8 @@ EXPECTED_KEYS = {
     # Добавлен 2026-08-17: у «Фин. отчёта» появилось своё право (был на pl).
     "finreport",
     "sales_dashboard", "sales_registry", "sales_analytics", "year_plan",
+    # Добавлен 2026-10-22: «Статусы продаж» — своё право (владелец), бэкфилл по реестру сделок.
+    "sales_status",
     # Добавлен 2026-08-17 вместе с дашбордом аккаунта (очередь «Что делать»).
     "accounts_dashboard",
     # Добавлены 2026-08-25 вместе с обвязкой ОРД. `ord` — зеркало справочников,
@@ -27,7 +29,7 @@ EXPECTED_KEYS = {
     "creative_check",
     "media_plans", "media_plans_editor",
     "operations", "import",
-    "counterparties", "contracts", "annexes", "dir_advertisers", "dir_agencies", "dir_publishers",
+    "counterparties", "contracts", "annexes", "annex_templates", "legal_requests", "master_deals", "master_deals_finance", "dir_advertisers", "dir_agencies", "dir_publishers",
     # Добавлен 2026-08-20: экран «Заполнение» отделён от реестра площадок (только view).
     "dir_publishers_bulk",
     # Добавлен 2026-08-28 вместе с контуром кабинета паблишера: учётки внешних лиц.

@@ -30,6 +30,7 @@ from app.files_safe import existing_upload_path, remove_upload
 from app.database import get_db
 from app.models import User, Counterparty, AuditLog
 from app import own_company
+from app.final_recon import flow as _flow
 from app.permissions import require_permission, require_any_permission
 from app.audit import log_action, require_admin
 from app.sales.models import (SalesDeal, SalesBitrixStageMap, SalesAdvertiser,
@@ -103,6 +104,14 @@ def _deal_owned(deal_rep_id, deal_acct_id, own_ids) -> bool:
     Сделка «своя», если пользователь по ней продавец ИЛИ аккаунт-менеджер."""
     ids = set(own_ids or ())
     return deal_rep_id in ids or deal_acct_id in ids
+
+
+def _prolonged_from(db, deal):
+    """Исходная сделка пролонгации: {id, code} — или None (не копия)."""
+    if not getattr(deal, "prolonged_from_id", None):
+        return None
+    src = db.query(SalesDeal.id, SalesDeal.code).filter(SalesDeal.id == deal.prolonged_from_id).first()
+    return {"id": src.id, "code": src.code} if src else {"id": deal.prolonged_from_id, "code": None}
 
 
 def _assert_deal_in_scope(db, user, deal):
@@ -510,6 +519,7 @@ def _parse_quarter(s):
 def dashboard_bonus(
     quarter: Optional[str] = None,
     rep_id: Optional[int] = None,
+    all_reps: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_any_permission(("sales_dashboard", "sales_registry"), "view")),
 ):
@@ -518,8 +528,11 @@ def dashboard_bonus(
     is_admin = current_user.role.key == "admin"
     my_reps = db.query(SalesRep).filter(SalesRep.user_id == current_user.id).all()
     is_head = any(r.is_sales_head for r in my_reps)
-    can_view_others = is_admin or is_head
-    if rep_id is not None and can_view_others:
+    # Чужих смотрят админ, мастер-сейлз и наблюдатель (роль `viewer`); им же — «Все сотрудники» (владелец 22.10.2026)
+    can_view_others = is_admin or is_head or current_user.role.key == "viewer"
+    if all_reps and can_view_others:
+        rep_ids = [i for (i,) in db.query(SalesRep.id).order_by(SalesRep.id).all()]
+    elif rep_id is not None and can_view_others:
         rep_ids = [rep_id]
     else:
         rep_ids = [r.id for r in my_reps]   # по умолчанию — на себя
@@ -536,7 +549,7 @@ def dashboard_bonus(
     params = {"vat_rate": vat_rules.current(db) / 100.0, "agency_sk": SALES_AGENCY_SK,
               "bonus_rate": SALES_BONUS_RATE}
 
-    base = {"quarter": label, "rep": ", ".join(rep_names), "linked": bool(rep_ids),
+    base = {"quarter": label, "rep": "Все сотрудники" if all_reps and can_view_others else ", ".join(rep_names), "linked": bool(rep_ids),
             "can_view_others": can_view_others, "rep_ids": rep_ids, "params": params,
             "sandbox": {"count": 0, "amount": 0},
             "booking": {"amount": 0, "our_sum": 0, "bonus": 0, "by_stage": []},
@@ -903,6 +916,10 @@ def deals_registry(
         item["units"] = units.get(deal.id) or None
         return row_ctx.apply(item, deal)
 
+    # Коды исходных сделок пролонгаций страницы — одним запросом (значок «Пролонгация» в реестре, 15.10.2026).
+    _src_ids = {d.prolonged_from_id for d, _l, _s in rows if d.prolonged_from_id}
+    prolonged_codes = dict(db.query(SalesDeal.id, SalesDeal.code).filter(SalesDeal.id.in_(_src_ids)).all()) if _src_ids else {}
+
     return {
         "total": total,
         "limit": limit,
@@ -927,6 +944,8 @@ def deals_registry(
             "our_next_stage": stage_public(stage_move.next_stage(db, d, cat,
                                                                  marks=stage_marks)),
             "realization_pipeline_id": d.realization_pipeline_id,
+            # Воронка реализации услуги — диалог движения предлагает стадии только по ней (14.10.2026, app/final_recon/flow.py).
+            "service_pipeline_id": _flow.service_pipeline(db, d.service_id),
             "agency": agencies.get(d.agency_id),
             "agency_full": agency_full.get(d.agency_id),
             "agency_id": d.agency_id,
@@ -968,6 +987,7 @@ def deals_registry(
             "annexes": annex_map.get(d.id, []),
             # состояние брифа для иконки: none — ещё не подгружали, empty — пусто,
             # filled — есть текст. Текст брифа тут НЕ отдаём (ленивая подгрузка по клику).
+            "prolonged_from_code": prolonged_codes.get(d.prolonged_from_id) if d.prolonged_from_id else None,
             "brief_state": ("none" if d.brief is None
                             else ("empty" if not (d.brief or "").strip() else "filled")),
         }, d) for d, layer, stage_key in rows],
@@ -1186,6 +1206,13 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
         reason = (payload.override_reason or "").strip() or "массовая правка стадии"
         for d in db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).all():
             if d.our_stage_id == target_id:
+                continue
+            guard = stage_move.manual_guard(db, d, target, current_user, cat)
+            if guard:
+                skipped.append({"code": d.code or str(d.id), "title": d.title,
+                                "lines": [{"key": "manual_guard", "title": guard, "hint": "", "is_blocking": True,
+                                           "where": "Реестр сделок — мастер", "link": "", "state": "not_yet",
+                                           "detail": "", "blockers": []}]})
                 continue
             plan = stage_move.plan_move(db, deal=d, target=target, catalog=cat)
             if plan.blockers and not force:
@@ -2437,7 +2464,9 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
             # Статуса у плана нет с 30.08.2026 — его состояние это стадия сделки,
             # которая тут же, в этой же карточке.
             our_mps[mp.group_id] = {"id": mp.id, "title": mp.title, "version": mp.version,
-                                    "updated_at": mp.updated_at}
+                                    "updated_at": mp.updated_at,
+                                    # Виза (15.10.2026): пусто — план создан системой и не проверен → алерт в карточке.
+                                    "verified_at": mp.verified_at}
     cat = Catalog(db)
     _mp_amt = mp_amounts_by_deal(db, [deal.id])
     _card_ctx = load_row_context(db, [deal.id])
@@ -2468,6 +2497,12 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         # это не ленивый бриф из Битрикса, а наше поле, и второй заход за строчкой
         # текста добавил бы экрану состояние загрузки на пустом месте.
         "traffic_brief": deal.traffic_brief or "",
+        # Пролонгация (владелец 15.10.2026): копия сделки — плашка «Пролонгация · от <код>» у нас и чип у площадки.
+        "prolonged_from": _prolonged_from(db, deal),
+        # В мастер-сделке (п. 40 плана закрытия) — отметка в шапке карточки на любой стадии.
+        "master_deal": _master_deal_code(db, deal.id),
+        # Бриф в «Документах» карточки (15.10.2026) — состояние, как у реестра; текст грузится по клику.
+        "brief_state": ("none" if deal.brief is None else ("empty" if not (deal.brief or "").strip() else "filled")),
         # Доп. параметры РК (миграция 2026-09-14). Пока один.
         "weborama_pixel": bool(deal.weborama_pixel),
         # Отчёт клиенту по РК — только при статистике хоть за один день (владелец 05.10.2026).
@@ -2476,6 +2511,9 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         if deal.weborama_pixel_at else None,
         "weborama_pixel_decided": deal.weborama_pixel_decided_at is not None,
         "weborama_pixel_mode": deal.weborama_pixel_mode or "own",
+        # Бонусный трафик — особенность РК (15.10.2026): одно из трёх — pct / qty / rub.
+        "bonus_traffic_mode": deal.bonus_traffic_mode,
+        "bonus_traffic_value": float(deal.bonus_traffic_value) if deal.bonus_traffic_value else None,
         "weborama_pixel_tag": deal.weborama_pixel_tag,
         "weborama_ext_insertion": deal.weborama_ext_insertion,
         # Замок рисуется сразу, а не узнаётся из 403 после клика — как у саморекламы.
@@ -2517,6 +2555,7 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         # и это честнее выдуманной даты.
         "stage_since": _stage_since(db, deal),
         "realization_pipeline_id": deal.realization_pipeline_id,
+        "service_pipeline_id": _flow.service_pipeline(db, deal.service_id),
         "our_mps": list(our_mps.values()),
         # Приложения к договору, которые закрывают эту сделку. В карточке строка «Доп.
         # соглашение» показывает номер и дату, а не «не загружен»: ДС у нас теперь не
@@ -2617,6 +2656,13 @@ def _notify_move(db, deal, prev, target, comment, actor):
          body=(comment or "").strip() or None,
          link=f"/sales/deals/{deal.code or deal.id}",
          entity_type="sales_deal", entity_id=deal.id, actor=actor, ctx={"deal": deal})
+
+
+def _master_deal_code(db, deal_id):
+    from app.master_deal.models import MasterDeal, MasterDealItem
+    row = (db.query(MasterDeal.code).join(MasterDealItem, MasterDealItem.master_deal_id == MasterDeal.id)
+           .filter(MasterDealItem.deal_id == deal_id).first())
+    return row[0] if row else None
 
 
 def _stage_since(db, deal):
@@ -2750,6 +2796,9 @@ def move_deal(
         if payload.realization_pipeline_id is not None:
             deal.realization_pipeline_id = payload.realization_pipeline_id
 
+    guard = stage_move.manual_guard(db, deal, target, current_user, cat)
+    if guard:
+        raise HTTPException(status_code=403 if guard.startswith("Через стадию") else 400, detail=guard)
     plan = stage_move.plan_move(db, deal, target, cat)
     master = stage_move.is_master(current_user)
     if plan.is_back and not master:

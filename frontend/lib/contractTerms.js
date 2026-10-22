@@ -28,3 +28,6 @@ export const COOPERATION_FORMATS = ['Агентство КЛ', 'Агентств
   'Аптека', 'Паблишер', 'Рекламная система']
 
 export const PROLONGATION_OPTIONS = ['АВТО на год', 'По соглашению', 'Нет']
+
+/** Как выставляем закрывающие (19.10.2026): берёт пакет закрытия. Значения сравниваются буквально — `contracts.issue_channel`. */
+export const ISSUE_CHANNELS = ['ЭДО', 'бумага']
