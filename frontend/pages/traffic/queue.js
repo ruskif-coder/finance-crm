@@ -700,7 +700,7 @@ export default function TrafficQueue() {
                       в нём лежит, остаётся доступным. Новых так не заводят. У креатива
                       не в нашей DSP она так же бесполезна, как кнопка, — не показываем. */}
                   {!!g.set.test_targeting_url && !g.set.targeting_blind && (
-                    <a href={g.set.test_targeting_url} target="_blank" rel="noreferrer"
+                    <a href={safeHref(g.set.test_targeting_url)} target="_blank" rel="noreferrer"
                        title={`Ручная ссылка · ${g.set.test_targeting_url}`}
                        style={{ ...iconBtn(true), color: 'var(--accent)',
                          borderColor: 'var(--accent-border)', background: 'var(--accent-tint)',

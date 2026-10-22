@@ -10,7 +10,7 @@ import CounterpartyCardDesktop, { T as CT } from '@/components/counterparty/Coun
 import { makeApi as api } from '@/lib/http'
 import { bankColor } from '@/lib/salesFormat'
 import { Z } from '@/components/salesTableKit'
-import { isAdmin as isAdminRole } from '@/lib/auth'
+import { isAdmin as isAdminRole, can, getPermissions } from '@/lib/auth'
 import { overlayClose } from '@/lib/overlay'
 import { fmtDate as fmtCalendarDate, daysUntil } from '@/lib/dates'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -57,6 +57,9 @@ export default function CounterpartyCard() {
   const isMobile = useIsMobile()
 
   const [card, setCard] = useState(null)
+  // Убрать сохранённый банковский счёт — право «удаление» (аудит 2.6.76, п. 1.22): то же правило проверяет сервер.
+  const [mayDelete, setMayDelete] = useState(false)
+  useEffect(() => { setMayDelete(can(getPermissions(), 'counterparties', 'delete')) }, [])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -561,7 +564,9 @@ export default function CounterpartyCard() {
                     <div key={i} style={{ background: CT.subtle, borderRadius: 12, padding: '12px 12px 2px', marginBottom: 10 }}>
                       <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                         <input value={b.bank_name || ''} onChange={e => setBank(i, 'bank_name', e.target.value)} placeholder="Банк" style={{ ...inpS, flex: 1 }} />
-                        <button onClick={() => delBank(i)} title="Удалить счёт" style={{ width: 38, flexShrink: 0, border: `1px solid ${CT.dangerTint}`, background: CT.card, color: CT.danger, borderRadius: 10, cursor: 'pointer' }}>✕</button>
+                        {(mayDelete || !b.id) && (
+                          <button onClick={() => delBank(i)} title="Удалить счёт" style={{ width: 38, flexShrink: 0, border: `1px solid ${CT.dangerTint}`, background: CT.card, color: CT.danger, borderRadius: 10, cursor: 'pointer' }}>✕</button>
+                        )}
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 10px' }}>
                         <div style={{ marginBottom: 10 }}><input value={b.rs || ''} onChange={e => setBank(i, 'rs', e.target.value)} placeholder="Р/С" style={{ ...inpS, fontFamily: CT.mono }} /></div>

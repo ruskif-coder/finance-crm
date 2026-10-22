@@ -59,8 +59,10 @@ export default function ClosingBlock({ dealId, canEdit, cardStyle, reloadKey }) 
     setS((await api.post(`/final-recon/deal/${dealId}/close-no-docs`, {}, auth())).data)
   })
   const confirm = (on) => call(async () => { setS((await api.put(`/final-recon/deal/${dealId}/closing/confirm`, { on }, auth())).data) })
+  // После «Отправить в ДО» сумму ДС меняют мастер и админ, пока пакет не ушёл в 1С (владелец 22.10.2026); решает сервер — `sum_open`.
+  const pinsOpen = !!s && (!s.frozen || (!!s.may_manual && !!s.sum_open))
   const pick = (k) => {
-    if (busy || !canEdit || s.frozen) return
+    if (busy || !canEdit || !pinsOpen) return
     if (k === 'manual') { setManualOpen(true); return }
     setManualOpen(false)
     if (k !== s.mode) setMode(k)
@@ -181,7 +183,7 @@ export default function ClosingBlock({ dealId, canEdit, cardStyle, reloadKey }) 
               <div style={{ display: 'grid', gridTemplateColumns: `repeat(${pins.length}, minmax(0,1fr))`, gap: 8 }}>
                 {pins.map(k => (
                   <Pin key={k} k={k} on={manualOpen ? k === 'manual' : s.mode === k} isDefault={s.mode_default === k}
-                    value={s.amounts[k]} by={k === 'manual' ? s.manual_by : null} disabled={!canEdit || s.frozen || (k === 'manual' && !s.may_manual)} onPick={pick} />
+                    value={s.amounts[k]} by={k === 'manual' ? s.manual_by : null} disabled={!canEdit || !pinsOpen || (k === 'manual' && !s.may_manual)} onPick={pick} />
                 ))}
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>
@@ -238,7 +240,7 @@ export default function ClosingBlock({ dealId, canEdit, cardStyle, reloadKey }) 
                 )
               )}
               {s.frozen && <span style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
-                {s.no_docs?.closed_at ? `Закрыто без документов${s.no_docs.closed_by ? ` · ${s.no_docs.closed_by}` : ''} · ${fmtDateTimeShort(s.no_docs.closed_at)}` : 'Отправлено в ДО'} — правки закрыты, цифры на момент закрытия.</span>}
+                {s.no_docs?.closed_at ? `Закрыто без документов${s.no_docs.closed_by ? ` · ${s.no_docs.closed_by}` : ''} · ${fmtDateTimeShort(s.no_docs.closed_at)}` : 'Отправлено в ДО'} — {pinsOpen ? 'сумму ДС ещё можно поменять: мастер и админ, пока пакет не ушёл в 1С.' : 'правки закрыты, цифры на момент закрытия.'}</span>}
               {!s.frozen && !!s.master && !s.may_manual && <span style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>Сделка в мастер-сделке — правки у мастера.</span>}
               {s.frozen && !s.no_docs?.closed_at && <CollectDsModal.OpenLink dealId={dealId} />}
               <style>{'@keyframes popIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}'}</style>

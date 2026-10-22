@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError, OperationalError
+from app.legal import service as legal_service
 
 APP = Path(__file__).resolve().parent.parent / "app"
 
@@ -81,7 +82,7 @@ def _confirm_with(monkeypatch, exc):
     monkeypatch.setattr(an, "_annex", lambda db, i, *_: a)
     monkeypatch.setattr(an, "_contract", lambda db, i: SimpleNamespace(id=2))
     monkeypatch.setattr(an, "_check_no", lambda db, c, no: None)
-    monkeypatch.setattr(an.legal, "blocking_reason", lambda db, aid: None)   # заявок юристу нет (14.10.2026)
+    monkeypatch.setattr(legal_service, "blocking_reason", lambda db, aid: None)   # заявок юристу нет (14.10.2026)
     # Тест про ошибки базы при записи номера, не про полноту документа (её проверяет test_annex_tpl_document.py).
     monkeypatch.setattr(an, "_freeze_for_confirm", lambda db, a, c, no: {"template": {"version_id": 1}})
     monkeypatch.setattr(an, "log_action", lambda *a, **kw: None)

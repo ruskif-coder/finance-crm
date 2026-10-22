@@ -6,6 +6,7 @@ import { bankColor } from '../../lib/salesFormat'
 import { T } from '../../lib/tokens'
 import CardShell from './CardShell'
 import { fmtDate as fmtCalendarDate } from '@/lib/dates'
+import safeHref from '@/lib/safeHref'
 
 const rub = (n) => (n || n === 0) ? new Intl.NumberFormat('ru-RU').format(Math.round(n)) + ' ₽' : '—'
 const mln = (n) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format((n || 0) / 1e6)
@@ -206,7 +207,7 @@ export default function CounterpartyCardMobile({ id, card, relation, analytics, 
     <>
       <Chip label={card.status} bg={isActive ? '#E6F5EF' : 'var(--bg-subtle)'} fg={isActive ? 'var(--income)' : 'var(--text-muted)'} />
       {relation && <Chip label={relation} bg="#F1EDFC" fg="#7B62D6" />}
-      {card.website && <Chip label={card.website.replace(/^https?:\/\//i, '').replace(/\/$/, '')} bg="var(--bg-card)" fg="var(--accent)" href={normalizeUrl(card.website)} />}
+      {card.website && <Chip label={card.website.replace(/^https?:\/\//i, '').replace(/\/$/, '')} bg="var(--bg-card)" fg="var(--accent)" href={safeHref(normalizeUrl(card.website))} />}
       {(card.linked_agencies || []).map(a => <Chip key={a.id} label={a.name_en || a.name} bg="var(--bg-card)" fg="var(--text-secondary)" />)}
     </>
   )

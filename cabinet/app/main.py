@@ -28,7 +28,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, Up
 from pydantic import BaseModel
 from sqlalchemy import text
 
-from app.auth import (account_publishers, current_account, current_account_any,
+from app.auth import (account_publishers, current_account, current_account_any, revoke_sessions,
                       find_account, make_token,
                       verify_password)
 from app.db import plain_session, scoped_session
@@ -309,6 +309,14 @@ def me(acc=Depends(current_account_any)):
             "can_approve": bool(getattr(acc, "can_approve", True)),
             "publishers": [{"id": p.publisher_id, "name": p.name, "domain": p.domain}
                            for p in pubs]}
+
+
+@app.post("/api/logout")
+def logout(acc=Depends(current_account_any)):
+    """«Выйти» (аудит 2.6.76, п. 1.6): отзывает ВСЕ выданные входы учётки, а не только стирает токен в этом браузере —
+    сохранённый или унесённый токен иначе жил бы ещё 12 часов."""
+    revoke_sessions(acc.id)
+    return {"ok": True}
 
 
 @app.post("/api/consent")

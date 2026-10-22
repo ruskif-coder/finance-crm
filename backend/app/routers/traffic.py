@@ -593,7 +593,8 @@ def creative_archive(pair_id: int, db: Session = Depends(get_db),
             full = inside_uploads(f.path)
             if not full or not os.path.exists(full):
                 continue
-            z.write(full, arcname=f.original_name or os.path.basename(f.path))
+            # Только имя файла: «../» из загруженного имени вынесло бы файл за папку при распаковке (аудит 2.7.0).
+            z.write(full, arcname=os.path.basename((f.original_name or "").replace("\\", "/")) or os.path.basename(f.path))
     name = tfiles.creative_download_name(deal.code, s.no, ".zip")
     return Response(content=buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})

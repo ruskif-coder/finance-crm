@@ -698,6 +698,9 @@ def update_account(account_id: int, payload: AccountPatch, db: Session = Depends
             acc.email = email; changes.append("почта")
     if payload.is_active is not None and bool(payload.is_active) != bool(acc.is_active):
         acc.is_active = bool(payload.is_active)
+        # Отключение и включение отзывают выданные входы (аудит 2.6.76, п. 1.6): без этого «выключил → включил» оживлял
+        # токены, выданные до выключения, — как было в ядре до `users.token_epoch`.
+        acc.token_epoch = (acc.token_epoch or 0) + 1
         changes.append("включён" if acc.is_active else "отключён")
         # Включение обратно отдельной строкой не пишем: у ленты один смысл — «доступ
         # менялся», и «отключена/создана» его уже несут.

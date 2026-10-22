@@ -39,6 +39,20 @@ from app.traffic import retention
 UPLOADS = os.getenv("UPLOADS_ROOT", "/app/uploads")
 
 
+def wipe(path: str, how: str, root: str = None) -> bool:
+    """Стереть файл или каталог хранилища по ключу из базы — ТОЛЬКО через общую проверку границы (аудит 2.6.76, п. 1.7):
+    раньше путь склеивался `os.path.join` напрямую, и испорченная строка в базе («../») стирала чужое."""
+    from app.files_safe import inside_uploads
+    full = inside_uploads(path, root=root or UPLOADS)
+    if not full or not os.path.exists(full):
+        return False
+    try:
+        shutil.rmtree(full) if how == "dir" else os.remove(full)
+    except OSError:
+        return False
+    return True
+
+
 def _size(rel):
     try:
         return os.path.getsize(os.path.join(UPLOADS, rel))
@@ -99,15 +113,14 @@ def sweep(apply: bool):
         print(f"  … и ещё {len(plan) - 40}")
 
     if apply:
-        for kind, path, _sz, (how, row) in plan:
-            full = os.path.join(UPLOADS, path)
-            try:
-                shutil.rmtree(full) if how == "dir" else os.remove(full)
-            except OSError as e:
-                print(f"  не удалось стереть {path}: {e}")
+        # Сначала база, потом диск — и диск только внутри хранилища (аудит 2.6.76, п. 1.7).
+        for _kind, _path, _sz, (_how, row) in plan:
             if row is not None:
                 db.delete(row)
         db.commit()
+        for _kind, path, _sz, (how, _row) in plan:
+            if not wipe(path, how):
+                print(f"  не стёр {path}: путь вне хранилища или файла нет")
         print("готово")
     db.close()
     return len(plan), total

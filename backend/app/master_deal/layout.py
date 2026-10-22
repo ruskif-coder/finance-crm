@@ -9,19 +9,20 @@
 - у допов услуга не делит ни группы, ни комплекты — доп относится к бренду;
 - точечный перенос платного допа в основной ДС (`moved`) живёт поверх общего правила;
 - комплект = счёт + УПД + отчёт, только из позиций со стоимостью; № УПД сквозной по пакету;
-- НДС ДС — от суммы ДС, не суммой строк."""
+- НДС — по строкам, как в счёте-фактуре и УПД (владелец 22.10.2026): НДС ДС и комплекта — сумма НДС строк (`final_recon.money`).
+  Строки базовой услуги складываются ровно в сумму сверки: остаток копеек — последней строке."""
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.final_recon import closing as CL
+from app.final_recon import money as M
 from app.master_deal.models import MasterDeal, MasterDealItem
 
 KEYS = ("addons_separate", "bonus_addons", "ds_by_brand", "ds_by_service", "upd_by_brand", "upd_by_service", "moved")
 
 
-def _r2(v) -> float:
-    return round(float(v or 0) + 1e-9, 2)
+_r2 = M.r2      # одно округление на сверку, раскладку и ДС (аудит 2.7.0, п. 2.5)
 
 
 def settings_of(m: MasterDeal) -> dict:
@@ -40,8 +41,8 @@ def lines(db: Session, m: MasterDeal) -> list:
         brand = annex_mod.deal_brand(db, [d.id]) or "без бренда"
         rows = annex_mod.plan_rows(db, [d.id])
         base = [r for r in rows if r.get("kind") != "extra"]
-        plan_sum = sum((r["amount"] or 0) for r in base)
-        k = (st["base_ds_net"] or 0) / plan_sum if plan_sum else 0
+        # Строки — пропорционально МП, в сумме ровно сумма сверки (аудит 2.7.0, п. 2.3): остаток копеек — последней строке.
+        nets = M.scale_to([r["amount"] or 0 for r in base], st["base_ds_net"] or 0)
         vol_sum = sum((r["volume"] or 0) for r in base)
         kv = (st["ds_volume"] / vol_sum) if (st.get("ds_volume") and vol_sum) else 1.0
         sk = st["sk"]
@@ -51,7 +52,7 @@ def lines(db: Session, m: MasterDeal) -> list:
             out.append({**common, "id": f"b:{d.id}:{i}", "kind": "base",
                         "position": " · ".join(x for x in (r.get("position"), r.get("device")) if x),
                         "model": r.get("model"), "volume": round((r.get("volume") or 0) * kv) or None,
-                        "unit_price": r.get("unit_price"), "net": _r2((r["amount"] or 0) * k), "src": r})
+                        "unit_price": r.get("unit_price"), "net": nets[i], "src": r})
         for i, r in enumerate(x for x in rows if x.get("kind") == "extra"):
             bonus = bool(r.get("bonus"))
             out.append({**common, "id": f"e:{d.id}:{i}", "kind": "bonus" if bonus else "extra",
@@ -119,7 +120,6 @@ def layout(db: Session, m: MasterDeal, settings: Optional[dict] = None, *, with_
         parts = [("all" if paid_extras else "main", "основные и допы" if paid_extras else "основные услуги", ls)]
 
     vat = _vat(db, m, ls)
-    rate = (vat or 0) / 100.0
     base_no = (m.start_no + 1) if m.start_no is not None else None
     ds_list, upd_no = [], 0
     for kind, title, rows in parts:
@@ -137,16 +137,17 @@ def layout(db: Session, m: MasterDeal, settings: Optional[dict] = None, *, with_
         upds = []
         for (br, sv), rs in kits.items():
             upd_no += 1
-            net = _r2(sum(x["net"] for x in rs))
+            net, vat_k = _r2(sum(x["net"] for x in rs)), M.doc_vat([x["net"] for x in rs], vat)
             by_deal: dict = {}
             for x in rs:
-                by_deal[x["deal"]] = by_deal.get(x["deal"], 0) + x["net"]
-            upds.append({"upd_no": upd_no, "brand": br, "service": sv, "net": net, "vat": _r2(net * rate), "gross": _r2(net * (1 + rate)),
+                by_deal.setdefault(x["deal"], []).append(x["net"])
+            upds.append({"upd_no": upd_no, "brand": br, "service": sv, "net": net, "vat": vat_k, "gross": _r2(net + vat_k),
                          "deals": sorted(by_deal), "lines": [x["id"] for x in rs],
-                         "by_deal": [{"deal": k, "net": _r2(v), "gross": _r2(v * (1 + rate))} for k, v in sorted(by_deal.items())]})
-        net = _r2(sum(x["net"] for x in rows))
+                         "by_deal": [{"deal": k, "net": _r2(sum(v)), "gross": _r2(sum(v) + M.doc_vat(v, vat))}
+                                     for k, v in sorted(by_deal.items())]})
+        net, vat_ds = _r2(sum(x["net"] for x in rows)), M.doc_vat([x["net"] for x in rows], vat)
         ds_list.append({
-            "kind": kind, "no": no, "title": title, "net": net, "vat": _r2(net * rate), "gross": _r2(net * (1 + rate)),
+            "kind": kind, "no": no, "title": title, "net": net, "vat": vat_ds, "gross": _r2(net + vat_ds),
             "groups": [{"brand": br, "service": sv, "net": _r2(sum(x["net"] for x in rs)),
                         "rows": [{k: v for k, v in x.items() if k != "src"} for x in rs], "_src": rs} for (br, sv), rs in groups.items()],
             "upds": upds, "no_kits": not upds,
@@ -156,5 +157,5 @@ def layout(db: Session, m: MasterDeal, settings: Optional[dict] = None, *, with_
             for g in ds["groups"]:
                 g.pop("_src", None)
     total = _r2(sum(ds["net"] for ds in ds_list))
-    return {"vat_rate": vat, "ds": ds_list, "total_net": total, "total_gross": _r2(total * (1 + rate)),
+    return {"vat_rate": vat, "ds": ds_list, "total_net": total, "total_gross": _r2(sum(ds["gross"] for ds in ds_list)),
             "upd_count": upd_no, "lines": len(ls), "has_paid_extras": bool(paid_extras), "settings": st}

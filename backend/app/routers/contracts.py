@@ -391,12 +391,6 @@ async def upload_contract_document(
 
     os.makedirs(UPLOADS_DIR, exist_ok=True)
 
-    # Удаляем старый файл, если был. Через общую проверку границы — тем же корнем
-    # `UPLOADS_DIR`, каким отдаёт скачивание десятью строками ниже: до 11.09.2026
-    # скачивание было проверено, а удаление рядом — нет.
-    if contract.attached_filename:
-        remove_upload(contract.attached_filename, root=UPLOADS_DIR)
-
     # Санитизация имени файла: оставляем только безопасные символы
     original_name = file.filename or "document"
     ext = os.path.splitext(original_name)[1].lower()
@@ -417,8 +411,14 @@ async def upload_contract_document(
     with open(os.path.join(UPLOADS_DIR, stored_name), "wb") as f:
         f.write(content)
 
+    # Старый файл — только ПОСЛЕ того, как новый проверен, записан и сохранён в базе (аудит 2.6.76, п. 1.3): раньше его
+    # стирали первым, и отклонённый новый (415/413) оставлял договор без документа. Тот же порядок, что у договоров площадок.
+    # Имя совпало — новый лёг поверх старого, удалять нечего: «уборка старого» стёрла бы новый. Граница — общей проверкой.
+    old = contract.attached_filename
     contract.attached_filename = stored_name
     db.commit()
+    if old and old != stored_name:
+        remove_upload(old, root=UPLOADS_DIR)
 
     log_action(db, current_user, "upload_contract_document", entity_type="contract",
                entity_id=contract_id, details=f"Прикреплён документ: {original_name}")

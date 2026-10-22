@@ -16,16 +16,10 @@ def _safe_name(s: str) -> str:
     return "".join("_" if ch in bad else ch for ch in (s or "")).strip() or "файл"
 
 def _annex_docx(db: Session, annex_id: int) -> tuple:
-    """(имя, байты) ДС — теми же функциями, что ручка `/annexes/{id}/docx`; отказ — HTTPException с причиной."""
-    from app.routers import annexes as AX
-    from app.sales import annex_docx as docx_build
-    a = AX._annex(db, annex_id)
-    AX._assert_no_open_legal(db, a)
-    doc = AX._doc(db, a)
-    AX.assert_printable(doc)
-    name = AX.file_name(no=a.no, doc_date=doc["date"], brand=doc.get("brand"),
-                        payer=(doc.get("customer") or {}).get("name")).replace(".pdf", ".docx")
-    return name, docx_build.build_docx(doc)
+    """(имя, байты) ДС — сервисом печатной сборки, тем же, что ручка `/annexes/{id}/docx`; отказ — HTTPException с причиной."""
+    from app.sales import annex_print
+    return annex_print.printable_docx(db, annex_id)
+
 
 def build(db: Session, m) -> tuple:
     """(имя архива, байты). Пустой пакет (ДС ещё нет и сканов нет) — архив с одним «не вошло.txt»."""

@@ -23,6 +23,7 @@ from app.annex_tpl.legal_name import legal_name
 from app.annex_tpl.models import AnnexTplTemplate
 from app.annex_tpl.subs import SUBS
 from app.annex_tpl.service import AnnexTplError
+from app.final_recon import money as M
 from app.sales import annex as A
 from app.sales.rubles import rub_phrase, vat_of
 
@@ -68,12 +69,12 @@ def _rows_with_tax(db: Session, deal_ids, rate: float) -> list:
     brands = A.deal_brands(db, deal_ids)
     for r in A.plan_rows(db, deal_ids):
         net = r.get("amount")
-        vat = round(net * rate / 100.0, 2) if net else None
+        vat = M.line_vat(net, rate) if net else None       # НДС строки — общим правилом контура (аудит 2.7.0, п. 2.4)
         out.append({**r,
                     "brand": brands.get(r.get("deal_id")) or "",
                     "vat": vat,
                     # Итог строки = стоимость + НДС строки: независимое округление двух величин расходилось на копейку.
-                    "gross": round(net + vat, 2) if net else None,
+                    "gross": M.r2(net + vat) if net else None,
                     # Бонус: полная скидка — строка остаётся в таблице, деньги (и цена за единицу) — прочерки (владелец 14.10.2026)
                     "bonus": bool(r.get("bonus")) or not net})
     return out
@@ -85,7 +86,7 @@ def _snapshot_with_tax(rows: list, rate: float) -> list:
     out = []
     for r in rows or []:
         net = r.get("amount")
-        vat = round(net * rate / 100.0, 2) if net else None
+        vat = M.line_vat(net, rate) if net else None       # НДС строки — общим правилом контура (аудит 2.7.0, п. 2.4)
         dates = {k: (_d.fromisoformat(r[k][:10]) if isinstance(r.get(k), str) and r.get(k) else r.get(k)) for k in ("date_from", "date_to")}
         out.append({**r, **dates, "vat": vat, "gross": round(net + vat, 2) if net else None,
                     "bonus": bool(r.get("bonus")) or (not net and r.get("kind") != "discount")})

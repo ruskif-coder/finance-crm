@@ -218,7 +218,12 @@ def need_per_day(plan: Optional[float], fact: Optional[float],
     """
     if fl is None or not plan or fact is None or not fl.left:
         return None
-    return max(0.0, plan - fact) / fl.left
+    return need_for(plan, fact, fl.left)
+
+
+def need_for(plan: float, fact: float, days_left: int) -> float:
+    """Остаток плана ÷ оставшиеся дни — одна формула на дашборд (`need_per_day`) и темп по суткам (`pace.need_on`)."""
+    return max(0.0, plan - fact) / days_left if days_left > 0 else 0.0
 
 
 def progress(plan: Optional[float], fact: Optional[float],

@@ -11,6 +11,7 @@ from app.legal import service as S
 from app.permissions import SECTIONS
 from app.routers import annexes as A
 from app.routers import legal_requests as R
+from app.legal import service as legal_service
 
 BLOCKS = [{"id": "p1", "title": "Предмет"}, {"id": "tbl", "sys": "table"}, {"id": "p5", "title": "Экземпляры"}]
 USER = SimpleNamespace(id=7)
@@ -74,7 +75,7 @@ def test_take_and_reject():
 
 
 def test_open_request_blocks_confirm_and_clean_exports_but_not_client_files(monkeypatch):
-    monkeypatch.setattr(A.legal, "blocking_reason", lambda db, aid: "открыта заявка")
+    monkeypatch.setattr(legal_service, "blocking_reason", lambda db, aid: "открыта заявка")
     monkeypatch.setattr(A, "_annex", lambda db, i, *a: SimpleNamespace(id=1, no=None, contract_id=2))
     for call in (lambda: A.confirm_annex(1, A.ConfirmIn(), None, USER),
                  lambda: A.annex_pdf(1, None, USER, with_basis=False),

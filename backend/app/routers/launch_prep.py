@@ -1696,9 +1696,7 @@ def drop_rights_letter(set_id: int, db: Session = Depends(get_db),
     if row.sent_at:
         raise HTTPException(status_code=400,
                             detail="Комплект отправлен — показанное площадке письмо не снимается")
-    if row.rights_letter_path:
-        remove_upload(row.rights_letter_path)
-    name = row.rights_letter_name
+    path, name = row.rights_letter_path, row.rights_letter_name
     row.rights_letter_path = row.rights_letter_name = None
     row.rights_letter_type = None
     row.rights_letter_size = row.rights_letter_by = None
@@ -1706,6 +1704,8 @@ def drop_rights_letter(set_id: int, db: Session = Depends(get_db),
     log_action(db, current_user, "rights_letter_delete", "sales_deal", row.deal_id,
                f"креатив №{row.no}: {name or ''}")
     db.commit()
+    if path:                     # диск — после базы (аудит 2.6.76, п. 1.10)
+        remove_upload(path)
     return {"ok": True}
 
 
@@ -1722,9 +1722,11 @@ def drop_file(file_id: int, db: Session = Depends(get_db),
     if parent.sent_at:
         raise HTTPException(status_code=400,
                             detail="Комплект отправлен — материал меняется новой итерацией")
-    _remove_file(rec.path, rec.sandbox_token)
+    # Сначала база, потом диск (аудит 2.6.76, п. 1.10): не прошёл commit — файл цел, а строка не ссылается на пустоту.
+    path, token = rec.path, rec.sandbox_token
     db.delete(rec)
     db.commit()
+    _remove_file(path, token)
     return {"ok": True}
 
 

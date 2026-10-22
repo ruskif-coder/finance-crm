@@ -11,6 +11,9 @@
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy import text
+
+from app.final_recon import money as M
 from sqlalchemy.orm import Session
 
 from app.final_recon.models import FinalReconDeal
@@ -24,8 +27,7 @@ class ClosingError(Exception):
         self.status, self.message = status, message
 
 
-def _r2(v) -> float:
-    return round(float(v or 0) + 1e-9, 2)
+_r2 = M.r2      # одно округление на сверку, раскладку и ДС (аудит 2.7.0, п. 2.5)
 
 
 def bonus_shows(mode: Optional[str], value, plan_shows: float, base_net: float) -> float:
@@ -287,7 +289,7 @@ def _plan_fact(db: Session, deal, rec, base: list, base_net: float) -> dict:
     return {"plan": plan, "fact": fact, "bonus": bonus, "source": source, "entry": entry, "frozen": frozen}
 
 
-def _money(db: Session, deal, rec, pf: dict, base_net: float, extras: list) -> dict:
+def _money(db: Session, deal, rec, pf: dict, base_net: float, base: list, extras: list) -> dict:
     """Режим и суммы ДС: по факту / под МП / вручную, платные допы, НДС, СК. СК (владелец 14.10): «скидка в счёт» уменьшает сумму ДС;
     «постоплата» — отдельным документом потом, сумму ДС не трогает."""
     from app.final_recon import sk as SK
@@ -307,7 +309,15 @@ def _money(db: Session, deal, rec, pf: dict, base_net: float, extras: list) -> d
     sk_net = _r2(total_net * float(sk["percent"] or 0) / 100.0) if (total_net is not None and sk["mode"] and sk["percent"]) else 0.0
     if sk["mode"] == "скидка в счёт" and total_net is not None:
         total_net = _r2(total_net - sk_net)
+    # НДС — по строкам, как в ДС и УПД (владелец 22.10.2026): строки базы под сумму сверки, платные допы, скидка в счёт строкой.
+    total_vat = None
+    if total_net is not None:
+        nets = (M.scale_to([r["amount"] or 0 for r in base], base_ds or 0)
+                + [e["amount"] or 0 for e in extras if not e.get("bonus")]
+                + ([-sk_net] if sk["mode"] == "скидка в счёт" and sk_net else []))
+        total_vat = M.doc_vat(nets, vat)
     return {"mode": mode, "amounts": amounts, "base_ds": base_ds, "paid_extras": paid_extras, "vat": vat, "total_net": total_net,
+            "total_vat": total_vat,
             "sk": {**sk, "amount_net": sk_net,
                    "before_net": _r2(total_net + sk_net) if (total_net is not None and sk["mode"] == "скидка в счёт") else total_net}}
 
@@ -338,7 +348,7 @@ def _meta(db: Session, rec, frozen: bool, base_net: float, paid_extras: float) -
         "confirmed": bool(has and rec.confirmed_at), "confirmed_at": rec.confirmed_at if has else None,
         "cost_net": _r2(float(rec.cost_net)) if has and rec.cost_net is not None else None,
         # Бонусное размещение (19.10.2026): сумма МП 0 ₽ (база и платные допы) → «Закрыть без документов», сразу в архив, без ДС.
-        "no_docs": {"eligible": (not frozen) and abs(base_net or 0) < 0.005 and abs(paid_extras or 0) < 0.005,
+        "no_docs": {"eligible": (not frozen) and _r2(base_net) == 0 and _r2(paid_extras) == 0,
                     "closed_at": rec.closed_no_docs_at.isoformat(timespec="seconds") if has and rec.closed_no_docs_at else None,
                     "closed_by": _user_name(db, rec.closed_no_docs_by) if has and rec.closed_no_docs_by else None},
         "manual_by": _user_name(db, rec.updated_by) if (has and rec.ds_mode == "manual") else None,   # подпись на пине «Вручную»
@@ -384,9 +394,11 @@ def _compute(db: Session, deal, *, rec: Optional[FinalReconDeal] = None) -> dict
     extras = [r for r in rows if r.get("kind") == "extra"]
     base_net = _r2(sum(r["amount"] or 0 for r in base))
     pf = _plan_fact(db, deal, rec, base, base_net)
-    mo = _money(db, deal, rec, pf, base_net, extras)
+    mo = _money(db, deal, rec, pf, base_net, base, extras)
     plan, fact, mode, total_net = pf["plan"], pf["fact"], mo["mode"], mo["total_net"]
     meta = _meta(db, rec, pf["frozen"], base_net, mo["paid_extras"])
+    # Можно ли ещё менять сумму ДС (мастеру и админу; кто именно — решает роутер): до отправки — да, после — пока пакет не ушёл в 1С.
+    meta["sum_open"] = (not pf["frozen"]) or (not (rec and rec.closed_no_docs_at) and _sum_open(package_status(db, deal.id)))
     return {
         "deal_id": deal.id, "deal_code": deal.code,
         "calculated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
@@ -415,7 +427,8 @@ def _compute(db: Session, deal, *, rec: Optional[FinalReconDeal] = None) -> dict
         "paid_extras_net": mo["paid_extras"],
         "vat_rate": mo["vat"],
         "total_net": total_net,
-        "total_gross": _r2(total_net * (1 + (mo["vat"] or 0) / 100.0)) if total_net is not None else None,
+        "total_vat": mo["total_vat"],
+        "total_gross": _r2(total_net + mo["total_vat"]) if total_net is not None else None,
     }
 
 
@@ -429,14 +442,42 @@ def _rec(db: Session, deal_id: int) -> FinalReconDeal:
     return rec
 
 
+# Сумма ДС после «Отправить в ДО» (владелец 22.10.2026): «до 1С можно, но только мастеру и админу». В «согласовании» ДС
+# уже собраны из этой суммы — молча поменять её значит разойтись с документом, поэтому пакет сперва возвращают в раскладку.
+OPEN_PACKAGE = ("черновик",)
+AGREEMENT = "согласование"
+
+
+def package_status(db: Session, deal_id: int) -> Optional[str]:
+    """Статус мастер-сделки, в которую входит сделка; None — в пакет ещё не взята."""
+    return db.execute(text("""SELECT m.status FROM master_deal_items i JOIN master_deals m ON m.id = i.master_deal_id
+                               WHERE i.deal_id = :d LIMIT 1"""), {"d": deal_id}).scalar()
+
+
+def _sum_open(status: Optional[str]) -> bool:
+    return status is None or status in OPEN_PACKAGE
+
+
+def _assert_sum_open(db: Session, deal_id: int, privileged: bool):
+    if not privileged:
+        raise ClosingError(403, "Сделка уже отправлена в ДО — сумму меняет мастер или админ")
+    st = package_status(db, deal_id)
+    if st == AGREEMENT:
+        raise ClosingError(409, "Пакет на согласовании: ДС уже собраны из этой суммы. Верните пакет в раскладку и поменяйте сумму")
+    if not _sum_open(st):
+        raise ClosingError(409, f"Пакет ушёл в 1С («{st}») — сумма ДС зафиксирована")
+
+
 def set_mode(db: Session, deal, mode: str, manual_net: Optional[float], user, *, privileged: bool,
              manual_volume: Optional[float] = None) -> dict:
     """Пин суммы ДС. «Вручную» — только мастер/админ и не больше суммы МП; после «Отправить в ДО» — тоже только они."""
     if mode not in MODES:
         raise ClosingError(400, "Сумма в ДС: по факту / под МП / вручную")
     rec = _rec(db, deal.id)
-    if rec.sent_at and not privileged:
-        raise ClosingError(403, "Сделка уже отправлена в ДО — сумму меняет мастер или админ")
+    if rec.sent_at:
+        if rec.closed_no_docs_at:
+            raise ClosingError(409, "Сделка закрыта без документов — ДС не будет, сумму менять незачем")
+        _assert_sum_open(db, deal.id, privileged)
     if mode == "manual":
         if not privileged:
             raise ClosingError(403, "Ручная сумма — только мастер или админ")
@@ -444,7 +485,7 @@ def set_mode(db: Session, deal, mode: str, manual_net: Optional[float], user, *,
         v = float(manual_net or 0)
         if v <= 0:
             raise ClosingError(400, "Укажите сумму больше нуля")
-        if v > state["base_plan_net"] + 0.005:
+        if M.dec(_r2(v)) > M.dec(_r2(state["base_plan_net"])):
             raise ClosingError(400, f"Сумма не больше суммы МП ({state['base_plan_net']:,.2f})".replace(",", " "))
         rec.ds_manual_net = _r2(v)
         rec.ds_manual_volume = int(round(manual_volume)) if manual_volume and manual_volume > 0 else None
