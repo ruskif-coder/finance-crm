@@ -6,7 +6,7 @@ from app.models import Counterparty, CounterpartyBankAccount, Operation, Article
 from app import own_company
 from app.sales.models import SalesAgency, SalesAgencyCounterparty
 from app.routers.auth import get_current_user
-from app.permissions import require_permission, require_any_permission
+from app.permissions import get_permissions_for_user, require_permission, require_any_permission
 from app.audit import log_action
 from app.receivables import DEFAULT_TERM_DAYS
 from pydantic import BaseModel
@@ -837,6 +837,14 @@ def update_counterparty_requisites(
     cp.signer_basis  = _s(data.signer_basis)
     cp.website       = _s(data.website)
     cp.note          = _s(data.note)
+
+    # Убрать счёт — это удаление (аудит 2.6.76, п. 1.22): раньше право «удаление» проверял только экран, а ручка под
+    # «правкой» перезаписывала счета целиком. Счёт узнаём по номеру расчётного счёта.
+    was = {(a.rs or "").strip() for a in db.query(CounterpartyBankAccount)
+           .filter(CounterpartyBankAccount.counterparty_id == counterparty_id) if (a.rs or "").strip()}
+    gone = was - {(ba.rs or "").strip() for ba in data.bank_accounts}
+    if gone and not get_permissions_for_user(db, current_user).get("counterparties", {}).get("delete"):
+        raise HTTPException(status_code=403, detail="Убрать банковский счёт можно только с правом «удаление» на контрагентов")
 
     # Перезаписываем банковские счета
     db.query(CounterpartyBankAccount).filter(

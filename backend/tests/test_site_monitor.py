@@ -9,6 +9,12 @@ from app.database import SessionLocal
 from app.traffic import site_monitor as sm
 
 
+@pytest.fixture(autouse=True)
+def _public(monkeypatch):
+    """Классификация проверки — без DNS: «публичный ли адрес» проверяет свой прибор (`test_site_monitor_public_only`)."""
+    monkeypatch.setattr(sm, "public_target", lambda url: True)
+
+
 def http_code(code):
     return lambda url: {"http_status": code, "final_url": url}
 

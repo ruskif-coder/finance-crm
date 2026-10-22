@@ -18,6 +18,9 @@ export function auth() {
 }
 
 export function signOut() {
+  // Сначала отзываем входы на сервере (аудит 2.6.76, п. 1.6), потом стираем токен здесь. Не дожидаемся ответа: выход
+  // не должен зависеть от сети, а сервер без ответа отзовёт входы при следующем «Выйти» или отключении учётки.
+  try { api.post('/logout', {}, auth()).catch(() => {}) } catch { /* без сети — только локальный выход */ }
   try {
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem('cabinet_name')

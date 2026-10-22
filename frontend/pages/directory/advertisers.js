@@ -12,6 +12,7 @@ import SectionTabs from '@/components/SectionTabs'
 import BrandMarkingDialog, { saveBrandMarking } from '@/components/ord/BrandMarking'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import ValuePopover from '@/components/ValuePopover'
+import safeHref from '@/lib/safeHref'
 
 
 const EMPTY = { short_name: '', name_en: '', name_ru: '', website: '', inn: '' }
@@ -490,7 +491,7 @@ export default function Advertisers() {
                         </div>
                         <div style={{ ...cell, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {a.website
-                            ? <a href={a.website.startsWith('http') ? a.website : `https://${a.website}`}
+                            ? <a href={safeHref(a.website)}
                                  target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontSize: 12 }}>{a.website}</a>
                             : dash}
                         </div>

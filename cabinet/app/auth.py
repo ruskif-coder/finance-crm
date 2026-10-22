@@ -66,30 +66,36 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-def password_fingerprint(pw_hash) -> str:
+def password_fingerprint(pw_hash, epoch: int = 0) -> str:
     """Отпечаток текущего хеша пароля. Сменился пароль — токены, выданные раньше, больше
     не принимаются (аудит 23.09.2026, 9.2): до этого сброс пароля менеджером не выкидывал
-    сессию площадки ещё 12 часов. HMAC на ключе кабинета — по токену о хеше не узнать."""
-    return hmac.new(SECRET_KEY.encode(), (pw_hash or '').encode(),
+    сессию площадки ещё 12 часов. HMAC на ключе кабинета — по токену о хеше не узнать.
+
+    `epoch` — счётчик отзыва (аудит 2.6.76, п. 1.6): растёт при «Выйти» и отключении/включении учётки. 0 даёт прежний
+    отпечаток — уже выданные входы не слетают; так же устроен `users.token_epoch` ядра."""
+    material = (pw_hash or '') + (f'|{epoch}' if epoch else '')
+    return hmac.new(SECRET_KEY.encode(), material.encode(),
                     hashlib.sha256).hexdigest()[:16]
 
 
-def _current_hash(account_id: int):
+def _current_secret(account_id: int):
+    """(хеш пароля, счётчик отзыва) учётки — то, из чего собирается отпечаток токена."""
     db = plain_session()
     try:
-        row = db.execute(text("SELECT hashed_password FROM pub.account_v1 WHERE id = :i"),
+        row = db.execute(text("SELECT hashed_password, token_epoch FROM pub.account_v1 WHERE id = :i"),
                          {"i": account_id}).first()
     finally:
         db.close()
-    return getattr(row, "hashed_password", None) if row else None
+    return (getattr(row, "hashed_password", None), getattr(row, "token_epoch", 0) or 0) if row else (None, 0)
 
 
 def make_token(account_id: int, email: str, pw_hash=None) -> str:
-    # Хеш передаёт вход (строка уже прочитана); без него — читаем сами.
+    # Хеш передаёт вход (строка уже прочитана); счётчик отзыва читаем всегда — он мог вырасти после чтения строки.
+    stored_hash, epoch = _current_secret(account_id)
     if pw_hash is None:
-        pw_hash = _current_hash(account_id)
+        pw_hash = stored_hash
     payload = {"sub": str(account_id), "email": email, "realm": "cabinet",
-               "pwv": password_fingerprint(pw_hash),
+               "pwv": password_fingerprint(pw_hash, epoch),
                "exp": datetime.now(timezone.utc) + timedelta(hours=TOKEN_HOURS)}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -155,15 +161,27 @@ def current_account_any(creds: HTTPAuthorizationCredentials = Depends(bearer)):
     try:
         row = db.execute(text(
             "SELECT id, email, name, is_active, can_approve, consent_accepted_at, "
-            "hashed_password FROM pub.account_v1 WHERE id = :i"),
+            "hashed_password, token_epoch FROM pub.account_v1 WHERE id = :i"),
             {"i": int(data["sub"])}).first()
     finally:
         db.close()
     if row is None or not row.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Доступ закрыт")
-    # Пароль сменился после выдачи токена — вход заново (9.2).
+    # Пароль сменился или вход отозван («Выйти», отключение учётки) после выдачи токена — вход заново (9.2, п. 1.6).
     if not hmac.compare_digest(str(data.get("pwv") or ""),
-                               password_fingerprint(getattr(row, "hashed_password", None))):
+                               password_fingerprint(getattr(row, "hashed_password", None),
+                                                    getattr(row, "token_epoch", 0) or 0)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Пароль сменился — войдите заново")
+                            detail="Сессия закрыта — войдите заново")
     return row
+
+
+def revoke_sessions(account_id: int) -> None:
+    """«Выйти»: все выданные входы учётки перестают приниматься. Запись — функцией ядра `pub.logout`: таблицу роль кабинета
+    не пишет (миграция 2026-10-22_cabinet_token_epoch.sql)."""
+    db = plain_session()
+    try:
+        db.execute(text("SELECT pub.logout(:i)"), {"i": account_id})
+        db.commit()
+    finally:
+        db.close()

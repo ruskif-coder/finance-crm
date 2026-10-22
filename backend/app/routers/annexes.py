@@ -34,7 +34,6 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.annex_tpl import document as tpl_doc
-from app.legal import service as legal
 from app.sales import annex_signed
 from app.annex_tpl.assemble import (CLOSING_KEY, closing_template_for as tpl_closing_for, assemble as tpl_assemble,
                                     closing_resolve as tpl_closing_resolve, validate_edit as tpl_validate_edit)
@@ -60,35 +59,10 @@ VIEW = require_permission("annexes", "view")
 CREATE = require_permission("annexes", "create")
 EDIT = require_permission("annexes", "edit")
 
-
-def _contract(db: Session, contract_id: int) -> Contract:
-    c = db.query(Contract).filter(Contract.id == contract_id).first()
-    if not c:
-        raise HTTPException(404, "Договор не найден")
-    return c
-
-
-def _annex(db: Session, annex_id: int, user=None) -> SalesAnnex:
-    """ДС по id. С пользователем — ещё и область «свои» (аудит 21.10.2026): ручки обязаны передавать `user`,
-    служебные вызовы без него проверку не делают."""
-    a = db.query(SalesAnnex).filter(SalesAnnex.id == annex_id).first()
-    if not a:
-        raise HTTPException(404, "Приложение не найдено")
-    if user is not None:
-        from app.sales import scope as SC
-        SC.annex_in_scope(db, user, a)
-    return a
-
-
-def _annex_deals(db: Session, annex_id: int) -> list:
-    """Сделки, которые закрывает приложение — из таблицы разнесения сумм.
-
-    Одно приложение может закрывать несколько сделок, и таблица заведена ровно затем,
-    чтобы выручку можно было вернуть их авторам.
-    """
-    from app.sales.models import SalesDealAnnexAllocation
-    return [d for (d,) in db.query(SalesDealAnnexAllocation.deal_id)
-            .filter(SalesDealAnnexAllocation.annex_id == annex_id).all()]
+# Печатная сборка ДС — в сервисе `app/sales/annex_print.py` (аудит 2.7.0, п. 2.7); прежние имена — ссылками туда.
+from app.sales import annex_print as AP  # noqa: E402
+_contract, _annex, _annex_deals = AP.contract_of, AP.annex_of, AP.annex_deals
+_assert_no_open_legal, file_name, assert_printable, _doc = AP.assert_no_open_legal, AP.file_name, AP.assert_printable, AP.printable_doc
 
 
 def _deal_cards(db: Session, annex_id: int) -> list:
@@ -540,14 +514,6 @@ def set_annex_date(annex_id: int, payload: DateIn, db: Session = Depends(get_db)
     return _out(a)
 
 
-def _assert_no_open_legal(db: Session, a: SalesAnnex) -> None:
-    """Открытая заявка юристу блокирует выпуск ДС: подтверждение и чистовые выгрузки (владелец 13.10.2026, п. 50). Клиентские файлы
-    на согласование не блокируются — их и отправляют, пока юрист работает."""
-    why = legal.blocking_reason(db, a.id)
-    if why:
-        raise HTTPException(409, why)
-
-
 def _sent_to_onec(a: SalesAnnex) -> bool:
     """Ушло ли приложение в 1С — после отправки пересоздавать его нельзя (документ уже учтён). Отправка в 1С появится в спринте 6;
     до тех пор признака нет, и пересоздавать можно любое подтверждённое. Условие вынесено в функцию, чтобы спринт 6 поменял одно место."""
@@ -820,38 +786,6 @@ def _master_ref(db: Session, a) -> Optional[dict]:
 
 # Символы, запрещённые в именах файлов Windows. Слэш приходит сюда штатно: бренд
 # собирается как «Рекламодатель / Бренд», и без замены файл не сохранился бы вовсе.
-_BAD_IN_NAME = ('\\', '/', ':', '*', '?', '"', '<', '>',
-                '|', '\r', '\n', '\t')
-
-
-def file_name(*, no, doc_date, brand, payer, basis: bool = False) -> str:
-    """Имя файла ДС: «ДС №68 от 31.05.2026 — Dr. Reddy's Хелинорм — ООО Ромашка.pdf».
-
-    Четыре части по правилу владельца 05.09.2026: номер, дата, рекламодатель с брендом,
-    юрлицо по договору. Порядок не косметика — по такому имени документ находят в папке
-    и в переписке, не открывая.
-
-    Пустые части выпадают, а не оставляют пустое место с разделителем: у черновика
-    номера ещё нет, у части контрагентов не заполнен бренд.
-    """
-    parts = [f"ДС №{no}" if no else "ДС без номера"]
-    if doc_date:
-        parts[0] += f" от {doc_date.strftime('%d.%m.%Y')}"
-    for v in (brand, payer):
-        v = " ".join((v or "").split())
-        if v:
-            parts.append(v)
-    if basis:
-        parts.append("с основанием для закрывающих")
-    name = " — ".join(parts)
-    for ch in _BAD_IN_NAME:
-        name = name.replace(ch, " ")
-    name = " ".join(name.split())
-    # Ограничение длины имени файла — 255 байт в большинстве систем; кириллица в UTF-8
-    # занимает по два, поэтому режем по символам с запасом.
-    return (name[:110].rstrip() or "ДС") + ".pdf"
-
-
 class SignerIn(BaseModel):
     """Реквизиты подписанта — правятся прямо с экрана ДС, а хранятся у контрагента.
 
@@ -905,34 +839,7 @@ def party_phrase(payload: PhraseIn, user: User = Depends(VIEW)):
     }
 
 
-def assert_printable(doc: dict) -> None:
-    """Не дать выгрузить документ с прочерками на месте реквизитов.
-
-    Проверка стоит на ВЫГРУЗКЕ, а не на подтверждении: номер можно занять заранее, а вот
-    бумага с пустым местом там, где стоит подпись, уходит клиенту и подписывается не
-    глядя. Чего не хватает — перечисляется поимённо, иначе отказ означает «сходи поищи».
-    """
-    miss = doc.get("missing") or []
-    if miss:
-        raise HTTPException(400, "Не хватает данных для документа: " + ", ".join(miss))
-
-
 PDF_SERVICE_URL = os.getenv("PDF_SERVICE_URL", "http://pdf:3001")
-
-
-def _doc(db: Session, a: SalesAnnex) -> dict:
-    """Собранный документ по сохранённому приложению.
-
-    Экран сборки и печать берут ЕГО ЖЕ: если бы экран считал сам, аккаунт проверял бы
-    одни числа, а в PDF уходили другие — и разошлись бы они молча.
-    """
-    c = _contract(db, a.contract_id)
-    deal_ids = _annex_deals(db, a.id)
-    doc = annex_build.build(db, c, period_from=a.period_from, period_to=a.period_to,
-                            amount=a.total_amount or 0, vat_rate=a.vat_rate, no=a.no,
-                            deal_ids=deal_ids)
-    # Пункт 1 и замечания — из шаблона ДС (мост до переписывания генерации файлов).
-    return tpl_doc.bridge_old_doc(db, a, c, doc, deal_ids)
 
 
 @router.get("/{annex_id}/pdf")

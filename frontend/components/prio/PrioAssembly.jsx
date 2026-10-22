@@ -10,6 +10,7 @@ import api, { auth } from '@/lib/api'
 import { MONO, UI, btn, btnSm, inp } from '@/components/salesTableKit'
 import { fmtDateTimeShort } from '@/lib/dates'
 import { fmtDateFull, grp } from '@/lib/salesFormat'
+import safeHref from '@/lib/safeHref'
 
 const CAP = { fontFamily: MONO, fontSize: 9.5, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-faint)' }
 const ELL = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }
@@ -101,7 +102,7 @@ function Landing({ p, canEdit, onSave }) {
     : <button type="button" onClick={() => setEdit(true)} style={{ border: 0, background: 'none', padding: 0, color: 'var(--accent)', cursor: 'pointer', fontSize: 12.5, textAlign: 'left' }}>+ указать</button>
   return (
     <span style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0 }}>
-      <a href={p.product_url} target="_blank" rel="noreferrer" title={p.product_url} style={{ ...ELL, color: 'var(--accent)', fontFamily: MONO, fontSize: 12 }}>{p.product_url.replace(/^https?:\/\//, '')}</a>
+      <a href={safeHref(p.product_url)} target="_blank" rel="noreferrer" title={p.product_url} style={{ ...ELL, color: 'var(--accent)', fontFamily: MONO, fontSize: 12 }}>{p.product_url.replace(/^https?:\/\//, '')}</a>
       {!locked && <button type="button" title="Изменить посадочную" onClick={() => setEdit(true)} style={{ border: 0, background: 'none', cursor: 'pointer', color: 'var(--text-faint)', padding: 0 }}>✎</button>}
     </span>
   )

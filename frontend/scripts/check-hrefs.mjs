@@ -8,7 +8,8 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOTS = process.argv.slice(2).length ? process.argv.slice(2) : ['components', 'pages']
-const DATA_URL = /\b(chat_url(_max)?|figma_url|max_url|advertiser_url|document_url|\w+\.url)\b/
+// Любое поле-ссылка (`*_url`, `*_url_*`, `.url`, `website`), а не перечень (аудит 2.6.76, п. 1.16): перечень слеп к новым полям.
+const DATA_URL = /\b(\w*_url(_\w+)?|\w+\.url|website)\b/
 const HREF = /href=\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/g
 
 function* walk(dir) {

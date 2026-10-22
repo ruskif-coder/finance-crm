@@ -56,6 +56,17 @@ PATH_COLUMNS = [
     ("sales_publishers", "media_kit_path"),
     ("operation_files", "path"),
     ("sales_annexes", "file_path"),
+    # Пропущенные хранилища (аудит 2.6.76, п. 1.17; живо в 2.7.0): их живые файлы экран показывал сиротами.
+    ("creative_check", "file_path"),
+    ("master_deal_files", "path"),
+    ("bug_report_file", "rel_path"),
+]
+
+# Песочницы распакованных баннеров — по токену каталога (см. `check_orphans`). Прибор
+# `test_orphans_know_every_storage` сверяет оба списка с базой.
+SANDBOX_COLUMNS = [
+    ("launch_prep_creative_file", "sandbox_token"),
+    ("creative_check", "sandbox_token"),
 ]
 
 
@@ -256,13 +267,12 @@ def check_orphans(db: Session):
         except Exception:                        # noqa: BLE001 — таблицы может не быть
             db.rollback()
     tokens = set()
-    try:
-        for (v,) in db.execute(text(
-                "SELECT sandbox_token FROM launch_prep_creative_file "
-                "WHERE sandbox_token IS NOT NULL")):
-            tokens.add(str(v))
-    except Exception:                            # noqa: BLE001
-        db.rollback()
+    for table, column in SANDBOX_COLUMNS:
+        try:
+            for (v,) in db.execute(text(f"SELECT {column} FROM {table} WHERE {column} IS NOT NULL")):
+                tokens.add(str(v))
+        except Exception:                        # noqa: BLE001 — таблицы может не быть
+            db.rollback()
 
     files = _walk_uploads()
     orphans, orphan_bytes, technical = 0, 0, 0

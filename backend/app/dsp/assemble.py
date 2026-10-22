@@ -50,7 +50,7 @@ class Spec:
     self_name: Optional[str] = None
     total_shows: Optional[int] = None
     before_add: Optional[Callable[[], None]] = None           # отказ ДО создания (нулевая доля)
-    on_unknown: Optional[Callable[[], None]] = None           # бросает, если исход прошлого add неизвестен
+    on_unknown: Optional[Callable[[], None]] = None           # своё сообщение отказа, если исход прошлого add неизвестен
 
 
 @dataclass
@@ -79,8 +79,13 @@ def ensure(c, campaign: str, spec: Spec) -> Built:
     st = state(c, spec.fmt, spec.known) if spec.known else "gone"
     if st == "ok":
         return Built(spec.known)
-    if st == "gone" and spec.on_unknown and c.unknown_outcome("Creative.add", "creative", spec.ref):
-        spec.on_unknown()
+    # Безусловно (аудит 2.7.0, п. 2.8): прошлый add без ответа — креатив мог создаться, второй в кабинете DSP не удалить.
+    # `on_unknown` — сообщение вызывающего; без него — общий отказ.
+    if st == "gone" and c.unknown_outcome("Creative.add", "creative", spec.ref):
+        if spec.on_unknown:
+            spec.on_unknown()
+        raise cr.CreativeError("прошлая попытка завести этот креатив осталась без ответа — он мог создаться. "
+                               "Сверьтесь с кабинетом DSP, повтор запрещён до сверки")
 
     data, filename = spec.load()
     if spec.fmt == TEASER:

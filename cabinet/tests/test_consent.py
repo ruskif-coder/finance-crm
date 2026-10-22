@@ -91,10 +91,10 @@ def test_login_tells_the_screen_about_consent():
 
 def test_only_two_doors_open_without_consent():
     """Ратчет: новая ручка по умолчанию закрыта без согласия. Открытых без него — ровно
-    две: «кто я» и само принятие."""
+    три: «кто я», само принятие и «Выйти» (22.10.2026: выйти обязан мочь и тот, кто согласия не дал)."""
     open_ = set()
     for route in cab_main.app.routes:
         deps = [d.call for d in getattr(getattr(route, 'dependant', None), 'dependencies', [])]
         if cab_auth.current_account_any in deps:
             open_.add(route.path)
-    assert open_ == {'/api/me', '/api/consent'}, open_
+    assert open_ == {'/api/me', '/api/consent', '/api/logout'}, open_

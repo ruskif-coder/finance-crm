@@ -278,10 +278,13 @@ def compute_vat_fact(income: float, expense: float, vat_rate: float) -> float:
     массовом) и при импорте — выделена в отдельную функцию, т.к. раньше эта формула
     была продублирована в 4 местах по отдельности и однажды уже расходилась
     (см. историю фикса "НДС не пересчитывается при редактировании")."""
+    # До копейки «половина вверх» — тем же правилом, что документы (аудит 2.6.76, п. 1.2): без округления в `vat_fact`
+    # ложились хвосты вроде 18.0327…, и суммы НДС в отчётах расходились с документами на копейки.
+    from app.final_recon.money import r2
     if income and income > 0 and vat_rate and vat_rate > 0:
-        return income * vat_rate / (100 + vat_rate)
+        return r2(income * vat_rate / (100 + vat_rate))
     if expense and expense > 0 and vat_rate and vat_rate > 0:
-        return expense * vat_rate / (100 + vat_rate)
+        return r2(expense * vat_rate / (100 + vat_rate))
     return 0
 
 class OperationCreate(BaseModel):

@@ -32,8 +32,8 @@ UNDER = (NO_TRAFFIC, LITTLE, NOT_DELIVERED, SHORT)
 
 def need_on(plan: float, fact_before: float, day: date, date_end: date) -> float:
     """Сколько нужно показать в эти сутки: остаток плана ÷ дней от них до конца флайта (включительно)."""
-    left = (date_end - day).days + 1
-    return max(0.0, plan - fact_before) / left if left > 0 else 0.0
+    from app.ad.flight import need_for
+    return need_for(plan, fact_before, (date_end - day).days + 1)
 
 
 def status_of(shows: float, offered: Optional[float], need: float) -> str:

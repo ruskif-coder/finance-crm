@@ -57,6 +57,9 @@ OWN_DATA = {
     ("POST", "/api/auth/verify-password"),
     ("POST", "/api/auth/accept-consent"),
     ("PUT", "/api/auth/me/theme"),          # своя тема интерфейса (22.10.2026)
+    # Наши юрлица со счетами — для выпадашек в операциях, платёжках, договорах, ДС. Открыта всем вошедшим; найдено
+    # исправленным прибором (аудит 2.6.76, п. 1.18). Владелец 22.10.2026: оставить открытой для всех вошедших.
+    ("GET", "/api/counterparties/own"),
     ("GET", "/api/notifications"),
     ("GET", "/api/notifications/count"),
     ("POST", "/api/notifications/read"),
@@ -126,7 +129,28 @@ def _classify(route):
         src = inspect.getsource(route.endpoint)
     except OSError:                                    # pragma: no cover
         src = ""
-    return "body" if any(m in src for m in BODY_MARKS) else "ungated"
+    return "body" if _marked(src) else "ungated"
+
+
+def _marked(src: str) -> bool:
+    """Маркер — только ИДЕНТИФИКАТОР в коде ручки (имя, атрибут, вызов), не слово в докстроке или комментарии
+    (аудит 2.6.76, п. 1.18): подстрокой `_own_` из описания `is_own_company` прибор засчитывал ручку как охраняемую.
+    Маркер с подчёркиванием на конце — префикс (`_own_` ловит `_own_rep_ids_or_all`)."""
+    import ast
+    import textwrap
+    try:
+        tree = ast.parse(textwrap.dedent(src))
+    except SyntaxError:                                # pragma: no cover
+        return False
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, ast.alias):
+            names.add(node.asname or node.name.rsplit(".", 1)[-1])
+    return any(n == m or (m.endswith("_") and n.startswith(m)) for n in names for m in BODY_MARKS)
 
 
 @pytest.fixture(scope="module")

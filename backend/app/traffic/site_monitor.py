@@ -17,8 +17,10 @@
 
 Запуск кроном раз в час: `python -m app.traffic.site_monitor`.
 """
+import ipaddress
 import logging
 import os
+import socket
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -105,22 +107,64 @@ def targets(db: Session) -> List[dict]:
     return out
 
 
+class NotPublic(Exception):
+    """Адрес ведёт не в интернет — монитор туда не ходит."""
+
+
+MAX_REDIRECTS = 5
+
+
+def public_target(url: str) -> bool:
+    """Только http(s) и только публичный адрес (аудит 2.6.76, п. 1.13): домен площадки вписывают люди, и внутренний адрес
+    («10.…», «localhost», метаданные облака) превращал монитор в запросчик к нашей же сети. Имя проверяется ПО ВСЕМ его
+    адресам: одного внутреннего достаточно для отказа."""
+    try:
+        u = httpx.URL(url)
+    except Exception:  # noqa: BLE001 — кривой адрес — не наш адрес
+        return False
+    if u.scheme not in ("http", "https") or not u.host:
+        return False
+    try:
+        infos = socket.getaddrinfo(u.host, u.port or (443 if u.scheme == "https" else 80), proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError, ValueError):
+        return False
+    return bool(infos) and all(ipaddress.ip_address(i[4][0].split("%")[0]).is_global for i in infos)
+
+
+def _transport():
+    return None                     # настоящая сеть; тесты подменяют
+
+
+def _get_status(url: str):
+    """(код, итоговый адрес): редиректы — вручную, каждый шаг той же проверкой; тело ответа не читается."""
+    with httpx.Client(headers=HEADERS, follow_redirects=False, transport=_transport(),
+                      timeout=httpx.Timeout(30.0, connect=10.0)) as c:
+        for _ in range(MAX_REDIRECTS + 1):
+            if not public_target(url):
+                raise NotPublic(url)
+            with c.stream("GET", url) as r:
+                code = r.status_code
+                loc = r.headers.get("location") if r.is_redirect else None
+            if not loc:
+                return code, url
+            url = str(httpx.URL(url).join(loc))
+    return code, url
+
+
 def _http(url: str) -> dict:
-    """Обычный запрос с повторами; сеть/таймаут — исключение наружу."""
+    """Обычный запрос с повторами; сеть/таймаут — исключение наружу, внутренний адрес — `NotPublic`."""
     last = None
     for _ in range(3):
         try:
-            with httpx.Client(headers=HEADERS, follow_redirects=True,
-                              timeout=httpx.Timeout(30.0, connect=10.0)) as c:
-                r = c.get(url)
-            if r.status_code in (429, 500, 502, 503, 504):
-                last = r
+            code, final = _get_status(url)
+            if code in (429, 500, 502, 503, 504):
+                last = (code, final)
                 continue
-            return {"http_status": r.status_code, "final_url": str(r.url)}
+            return {"http_status": code, "final_url": final}
         except httpx.HTTPError as e:
             last = e
-    if isinstance(last, httpx.Response):
-        return {"http_status": last.status_code, "final_url": str(last.url)}
+    if isinstance(last, tuple):
+        return {"http_status": last[0], "final_url": last[1]}
     raise last
 
 
@@ -133,6 +177,10 @@ def _browser(url: str) -> dict:
 def check(url: str, mode: str = "http", http=_http, browser=_browser) -> dict:
     """Одна проверка → {status, http_status, method, final_url, message}."""
     need_browser = mode == "browser"
+    refused = {"status": DOWN, "http_status": None, "method": "http", "final_url": url,
+               "message": "адрес не публичный (внутренняя сеть или не http) — не проверяем"}
+    if not public_target(url):
+        return refused
     if not need_browser:
         try:
             r = http(url)
@@ -143,6 +191,8 @@ def check(url: str, mode: str = "http", http=_http, browser=_browser) -> dict:
             if code not in ANTIBOT_CODES:
                 return {"status": DOWN, "http_status": code, "method": "http",
                         "final_url": r["final_url"], "message": f"HTTP {code}"}
+        except NotPublic:                     # редирект увёл во внутреннюю сеть — браузер туда тоже не пускаем
+            return {**refused, "message": "редирект ведёт во внутреннюю сеть — не проверяем"}
         except Exception as e:  # noqa: BLE001 — любая сетевая беда = повод спросить браузер
             log.info("site_monitor %s: запрос не прошёл (%s) — пробую браузером", url, e)
     try:

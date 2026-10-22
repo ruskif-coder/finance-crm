@@ -98,6 +98,9 @@ class FakeClient:
     def creative_get_info(self, xx):
         return self.info
 
+    def unknown_outcome(self, *a):          # как у настоящего клиента: зависших вызовов нет
+        return False
+
     def journal_raw(self, *a, **k):
         pass
 
@@ -153,6 +156,18 @@ def test_ensure_refuses_when_the_previous_add_has_no_answer(fake_upload):
         raise RuntimeError("зависла")
     with pytest.raises(RuntimeError):
         assemble.ensure(c, "CAMP", _spec(on_unknown=boom))
+    assert not c.added
+
+
+def test_refuses_even_if_the_caller_forgot_on_unknown(fake_upload):
+    """Защита от дубля безусловна (аудит 2.7.0, п. 2.8): вызывающий без `on_unknown` всё равно получает отказ, а не второй
+    креатив в чужом кабинете, который по API не удалить."""
+    from app.dsp import assemble
+    from app.dsp.creatives import CreativeError
+    c = FakeClient()
+    c.unknown_outcome = lambda *a: True
+    with pytest.raises(CreativeError):
+        assemble.ensure(c, "CAMP", _spec())
     assert not c.added
 
 

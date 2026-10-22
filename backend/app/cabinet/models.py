@@ -91,6 +91,9 @@ class CabinetAccount(Base):
     # Момент принятия согласия на обработку ПДн (миграция 2026-09-24_cabinet_consent.sql).
     # Пишет его только функция `pub.accept_consent` — кабинет прав на UPDATE не имеет.
     consent_accepted_at = Column(DateTime)
+    # Счётчик отзыва входов: растёт при «Выйти» и при отключении/включении — выданные токены больше не принимаются
+    # (аудит 2.6.76, п. 1.6; миграция 2026-10-22_cabinet_token_epoch.sql).
+    token_epoch = Column(Integer, nullable=False, default=0, server_default='0')
 
     cabinet = relationship("Cabinet", back_populates="accounts")
 

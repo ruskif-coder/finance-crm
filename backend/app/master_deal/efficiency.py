@@ -17,8 +17,7 @@ from sqlalchemy.orm import Session
 POSTPAY = "постоплата"
 
 
-def _r2(v) -> float:
-    return round(float(v or 0) + 1e-9, 2)
+from app.final_recon.money import r2 as _r2   # одно округление на контур закрытия (аудит 2.7.0, п. 2.5)
 
 
 def estimate_from(stats: List[tuple]) -> Optional[dict]:

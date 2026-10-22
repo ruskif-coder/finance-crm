@@ -18,12 +18,12 @@ class FinalReconDeal(Base):
     updated_at = Column(DateTime, nullable=False, server_default=func.now())
     # Итоговая сверка (миграция 2026-10-15_closing_contour.sql): пин суммы ДС и цифры, замороженные на «Отправить в ДО».
     ds_mode = Column(String(8))            # fact / plan / manual; пусто — по умолчанию
-    ds_manual_net = Column(Float)          # ручная сумма базовой услуги без НДС (мастер/админ)
+    ds_manual_net = Column(Numeric(14, 2))          # ручная сумма базовой услуги без НДС (мастер/админ)
     ds_manual_volume = Column(BigInteger)  # ручное количество единиц — связано с суммой через цену за единицу МП
     plan_shows = Column(BigInteger)
     fact_shows = Column(BigInteger)
     bonus_shows = Column(BigInteger)
-    base_net = Column(Float)
+    base_net = Column(Numeric(14, 2))      # как в базе (аудит 2.7.0, п. 2.1): деньги — не двоичная дробь
     sent_at = Column(DateTime)
     sent_by = Column(Integer, ForeignKey("users.id"))
     confirmed_at = Column(DateTime)        # «Подтвердить сверку»; снимается сменой режима, скидки, ручной суммы
