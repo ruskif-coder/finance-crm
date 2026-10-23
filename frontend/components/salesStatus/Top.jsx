@@ -86,7 +86,7 @@ export function Kpi({ cards }) {
   )
 }
 
-/** «В реестр запишется»: переносы и новые сделки; ничего не уходит без «Сохранить». */
+/** «В реестр запишется»: переносы сделок; ничего не уходит без «Сохранить». Новая сделка пишется сразу — стандартной формой. */
 export function Pending({ items, saving, onReset, onSave, onRemove }) {
   if (!items.length) return null
   return (
@@ -108,10 +108,10 @@ export function Pending({ items, saving, onReset, onSave, onRemove }) {
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {items.map(p => (
           <span key={p.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 26, padding: '0 9px', background: 'var(--bg-card)',
-            border: `1px ${p.isNew ? 'dashed' : 'solid'} var(--accent-border)`, borderRadius: 8, fontSize: 11.5, whiteSpace: 'nowrap' }}>
+            border: '1px solid var(--accent-border)', borderRadius: 8, fontSize: 11.5, whiteSpace: 'nowrap' }}>
             <span style={{ fontFamily: MONO, fontWeight: 700, color: 'var(--accent)' }}>{p.code}</span>
             <span style={{ color: 'var(--text-secondary)' }}>{p.text}</span>
-            <span onClick={() => onRemove(p)} title={p.isNew ? 'Убрать новую сделку' : 'Отменить перенос'}
+            <span onClick={() => onRemove(p)} title="Отменить перенос"
               style={{ color: 'var(--text-faint)', cursor: 'pointer', fontSize: 12 }}>✕</span>
           </span>
         ))}

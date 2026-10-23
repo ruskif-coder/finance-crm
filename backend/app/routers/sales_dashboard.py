@@ -1451,6 +1451,10 @@ class DealCreate(BaseModel):
     sales_rep_id: Optional[int] = None
     account_manager_id: Optional[int] = None
     title: Optional[str] = None
+    probability_color: Optional[str] = None   # светофор ячейки «Статусов продаж»: grey | orange | green
+
+
+PROBABILITY_COLORS = ("grey", "orange", "green")
 
 
 @router.get("/deals/whoami")
@@ -1475,6 +1479,8 @@ def create_deal(payload: DealCreate, db: Session = Depends(get_db),
         raise HTTPException(status_code=400, detail="Нужна сумма (с НДС или без НДС)")
     if not payload.agency_id and not payload.advertiser_id:
         raise HTTPException(status_code=400, detail="Нужно агентство или рекламодатель")
+    if payload.probability_color is not None and payload.probability_color not in PROBABILITY_COLORS:
+        raise HTTPException(status_code=400, detail="Вероятность — grey, orange или green")
     if payload.brand_id:
         brand = db.query(SalesBrand).filter(SalesBrand.id == payload.brand_id).first()
         if not brand:
@@ -1523,7 +1529,7 @@ def create_deal(payload: DealCreate, db: Session = Depends(get_db),
         advertiser_id=payload.advertiser_id, brand_id=payload.brand_id, agency_id=payload.agency_id,
         product=payload.product, sales_rep_id=rep_id, account_manager_id=acc_id,
         our_stage_id=our_stage_id,
-        period_from=pf, period_to=pt,
+        period_from=pf, period_to=pt, probability_color=payload.probability_color,
         date_create=datetime.utcnow(),
     )
     from app.sales.deal_code import assign_code
@@ -2578,7 +2584,7 @@ def set_deal_probability(
     """Светофор вероятности сделки (наша ручная разметка): grey|orange|green|None.
     В синке/заливке в Битрикс НЕ участвует — это чисто наш индикатор."""
     color = (payload.color or "").strip().lower() or None
-    if color is not None and color not in ("grey", "orange", "green"):
+    if color is not None and color not in PROBABILITY_COLORS:
         raise HTTPException(status_code=400, detail="Недопустимый цвет")
     deal = db.query(SalesDeal).filter(SalesDeal.id == deal_id).first()
     if not deal:

@@ -8,11 +8,10 @@ import Navbar, { can as canDo } from '@/components/Navbar'
 import { PortalPopover } from '@/components/salesTableKit'
 import { Header, Kpi, Pending } from '@/components/salesStatus/Top'
 import Matrix from '@/components/salesStatus/Matrix'
-import NewDealForm from '@/components/salesStatus/NewDealForm'
+import DealCreateForm from '@/components/DealCreateForm'
 import { grp } from '@/lib/salesFormat'
 import { todayMsk } from '@/lib/dates'
 import { COL_LABEL, COL_LIGHT, colOf, monthName, noteKey, quarterList, quarterOf, quarterStart, shiftMonth, window3 } from '@/lib/salesStatus'
-import { buildTitle } from '@/lib/dealTitle'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 
 const MONO = "'JetBrains Mono', monospace"
@@ -63,11 +62,9 @@ export default function SalesStatusPage() {
   const months = mode === 'q' ? window3(quarterStart(q)) : window3(mon)
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
-  const [dirs, setDirs] = useState({ advertisers: [], brands: {}, services: [], vat: null })
   const [st, setSt] = useState({ open: {}, showLost: false, expandAll: false, hideEmpty: false, drag: null, over: null, sales: '', account: '', search: '' })
   const set = useCallback((patch) => setSt(s => ({ ...s, ...patch })), [])
   const [moves, setMoves] = useState({})
-  const [created, setCreated] = useState([])
   const [form, setForm] = useState(null)
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
@@ -81,32 +78,23 @@ export default function SalesStatusPage() {
       .catch(e => setErr(e.response?.data?.detail || 'Не удалось загрузить статусы продаж'))
   }, [months[0]]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [load])
-  // Вернулись на вкладку — свежие сделки; пока в панели несохранённые переносы и новые сделки, не перечитываем
-  useRefreshOnReturn(load, { enabled: !Object.keys(moves).length && !created.length })
-  useEffect(() => {
-    Promise.all([
-      api.get('/sales/filters', auth()).catch(() => ({ data: {} })),
-      api.get('/sales/brands-by-advertiser', auth()).catch(() => ({ data: {} })),
-      api.get('/sales/directories/services?only_active=true', auth()).catch(() => ({ data: { items: [] } })),
-      api.get('/sales/own-company', auth()).catch(() => ({ data: {} })),
-    ]).then(([f, b, s, o]) => setDirs({ advertisers: f.data.advertiser_id || [], brands: b.data || {}, services: (s.data.items || []).map(x => x.name),
-      vat: o.data?.vat_current ?? null }))
-  }, [])
+  // Вернулись на вкладку — свежие сделки; пока в панели несохранённые переносы, не перечитываем
+  useRefreshOnReturn(load, { enabled: !Object.keys(moves).length })
 
   const can = mayEdit && !!data?.can_edit
-  // Сделки окна с отложенными переносами и новыми; колонка — по светофору (lib/salesStatus.colOf)
+  // Сделки окна с отложенными переносами; колонка — по светофору (lib/salesStatus.colOf)
   const deals = useMemo(() => {
     const list = (data?.deals || []).map(d => {
       const mv = moves[d.id]
       const x = mv ? { ...d, moved: { month: d.month, light: d.light }, month: mv.month, light: mv.light } : d
       return { ...x, col: colOf(x) }
-    }).concat(created.map(c => ({ ...c, col: colOf(c) })))
+    })
     const qx = st.search.trim().toLowerCase()
     const notes = new Map((data?.notes || []).map(n => [noteKey(n), n]))
     return list.filter(d => (!st.sales || d.sales === st.sales) && (!st.account || d.account === st.account) && (!qx ||
       [d.advertiser, d.brand, d.agency, d.code, d.title, notes.get(`a:${d.advertiser_id}|b:${d.brand_id ?? ''}`)?.comment_sales,
         notes.get(`a:${d.advertiser_id}|b:${d.brand_id ?? ''}`)?.comment_head].some(v => (v || '').toLowerCase().includes(qx))))
-  }, [data, moves, created, st.sales, st.account, st.search])
+  }, [data, moves, st.sales, st.account, st.search])
   const notes = useMemo(() => new Map((data?.notes || []).map(n => [noteKey(n), n])), [data])
   const inWindow = deals.filter(d => months.includes(d.month))
 
@@ -156,7 +144,6 @@ export default function SalesStatusPage() {
         mv.light !== mv.fromLight && `светофор → ${COL_LABEL[c].toLowerCase()}`].filter(Boolean)
       return { key: `m${id}`, id: Number(id), code: mv.code, text: parts.join(' · ') }
     }),
-    ...created.map(c => ({ key: c.id, id: c.id, isNew: true, code: 'новая', text: `${c.brand || c.advertiser} · ${monthName(c.month)} · ${COL_LABEL[colOf(c)].toLowerCase()} · ${grp(c.amount)}` })),
   ]
 
   const act = {
@@ -164,8 +151,7 @@ export default function SalesStatusPage() {
     newDeal: (p) => setForm(p),
     drop: (d, m, c) => {
       const light = COL_LIGHT[c]
-      if (d.isNew) setCreated(cs => cs.map(x => (x.id === d.id ? { ...x, month: m, light } : x)))
-      else {
+      {
         const orig = data.deals.find(x => x.id === d.id)
         setMoves(ms => {
           const next = { ...ms }
@@ -192,18 +178,8 @@ export default function SalesStatusPage() {
     },
   }
 
-  const createLocal = (f) => {
-    setCreated(cs => [...cs, { id: `n${Date.now()}`, isNew: true, code: null, advertiser_id: f.adv.id, advertiser: f.adv.name, brand_id: f.brand?.id ?? null,
-      brand: f.brand?.name ?? null, service: f.service, month: f.month, amount: f.amount, light: COL_LIGHT[f.col], stage: 'МП Подготовка', stage_key: 'media_plan',
-      locked: false, lost: false, status_date: todayMsk(), status_date_kind: 'manual', sales: null, account: null, agency: null }])
-    if (f.brand?.id) set({ open: { ...st.open, [`${f.adv.id}|${f.brand.id}`]: true } })
-    setForm(null)
-    flash(`Новая сделка: ${f.brand?.name || f.adv.name} · ${monthName(f.month)} · ${grp(f.amount)}`)
-  }
-
   const save = async () => {
     setSaving(true)
-    const failed = []
     try {
       const mv = Object.entries(moves).map(([id, m]) => ({ deal_id: Number(id), month: m.month, light: m.light, from_month: m.fromMonth, from_light: m.fromLight ?? null }))
       if (mv.length) await api.post('/sales-status/apply', { moves: mv }, auth())
@@ -213,26 +189,8 @@ export default function SalesStatusPage() {
       flash(e.response?.data?.detail || 'Переносы не сохранились')
       return
     }
-    // Сделка, уже созданная в прошлую попытку (`dealId`), второй раз не создаётся — повтор ставит только светофор (ревью 22.10.2026)
-    const left = []
-    for (const c of created) {
-      let dealId = c.dealId
-      try {
-        if (!dealId) {
-          const title = buildTitle({ advertiser: c.advertiser, brand: c.brand, product: c.service, period: c.month, separate: new Set() })
-          const r = await api.post('/sales/deals', { advertiser_id: c.advertiser_id, brand_id: c.brand_id, product: c.service, pipeline: 'Песочница',
-            bitrix_stage: 'МП Подготовка', period: c.month, amount: c.amount, title }, auth())
-          dealId = r.data.id
-        }
-        await api.post(`/sales/deals/${dealId}/probability`, { color: c.light }, auth())
-      } catch (e) {
-        failed.push(`${c.brand || c.advertiser}: ${e.response?.data?.detail || 'ошибка'}`)
-        left.push({ ...c, dealId })
-      }
-    }
-    setCreated(left)
     setSaving(false)
-    flash(failed.length ? `Не создались: ${failed.join('; ')}` : 'Сохранено в реестр')
+    flash('Сохранено в реестр')
     load()
   }
 
@@ -258,8 +216,8 @@ export default function SalesStatusPage() {
           onNew={() => setForm({ month: months[0], col: 'low' })} canEdit={can} />
         {err && <div style={{ padding: 14, borderRadius: 12, background: 'var(--danger-tint)', color: 'var(--danger-fg)', fontSize: 13 }}>{err}</div>}
         <Kpi cards={kpi} />
-        <Pending items={pending} saving={saving} onReset={() => { setMoves({}); setCreated([]) }} onSave={save}
-          onRemove={(p) => (p.isNew ? setCreated(cs => cs.filter(c => c.id !== p.id)) : setMoves(ms => { const n = { ...ms }; delete n[p.id]; return n }))} />
+        <Pending items={pending} saving={saving} onReset={() => setMoves({})} onSave={save}
+          onRemove={(p) => setMoves(ms => { const n = { ...ms }; delete n[p.id]; return n })} />
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, display: 'flex',
           flexDirection: 'column', overflow: 'hidden', animation: 'ssRise .4s cubic-bezier(.22,1,.36,1) .1s both' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '12px 16px', borderBottom: '1px solid var(--border-inner)' }}>
@@ -281,7 +239,11 @@ export default function SalesStatusPage() {
             : !err && <div style={{ padding: 40, color: 'var(--text-muted)', fontSize: 13 }}>Загрузка…</div>}
         </div>
       </div>
-      {form && <NewDealForm init={form} months={months} dirs={dirs} onClose={() => setForm(null)} onCreate={createLocal} />}
+      {/* Стандартная форма сделки (владелец 23.10.2026): из ячейки приходят рекламодатель, бренд, месяц и вероятность,
+          продавец — тот, кто создаёт. Сделка пишется в реестр сразу, матрица перечитывается. */}
+      <DealCreateForm open={!!form} onClose={() => setForm(null)} canPickRep
+        initial={form && { advertiser_id: form.adv?.id, brand_id: form.brand?.id, period: form.month, light: COL_LIGHT[form.col] }}
+        onCreated={() => { flash('Сделка создана'); load() }} />
       {toast && <div style={{ position: 'fixed', left: '50%', bottom: 28, transform: 'translateX(-50%)', zIndex: 50, display: 'inline-flex', alignItems: 'center', gap: 10,
         padding: '10px 16px', background: 'var(--text-primary)', color: 'var(--bg-card)', borderRadius: 12, boxShadow: 'var(--shadow-float)', fontSize: 12.5 }}>
         <span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--income)' }} />{toast}</div>}

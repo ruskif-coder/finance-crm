@@ -200,9 +200,6 @@ export default function Matrix({ months, deals, notes, leads, directory = [], sh
                     color: 'var(--text-faint)', fontSize: 9, cursor: 'pointer', flex: '0 0 16px' }}>{r.open ? '▾' : '▸'}</span>
                   <span title={r.brand.name} style={{ fontSize: 12.5, fontWeight: 600, ...ELL }}>{r.brand.name}</span>
                   {r.bl.length > 1 && <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{r.bl.length} сд.</span>}
-                  {can && r.adv.id && <span onClick={() => act.newDeal({ adv: r.adv, brand: r.brand, month: months[0], col: 'low' })} title="Новая сделка для бренда"
-                    style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, borderRadius: 6,
-                      color: 'var(--text-disabled)', fontSize: 14, cursor: 'pointer', flex: '0 0 20px' }}>+</span>}
                 </span>
                 <span style={{ display: 'flex', justifyContent: 'center' }}>{meet('meet_brand', 'брендом')}</span>
                 <span style={{ display: 'flex', justifyContent: 'center' }}>{meet('meet_agency', 'РА')}</span>
@@ -214,7 +211,7 @@ export default function Matrix({ months, deals, notes, leads, directory = [], sh
                 <span style={{ padding: '0 6px', borderRight: '1px solid var(--border-inner)', height: '100%', display: 'flex', alignItems: 'center' }}>
                   {r.last && <DateCell iso={r.last.status_date} kind={r.last.status_date_kind} fg="var(--text-secondary)"
                     title={r.bl.length > 1 ? `Дата последнего статуса · правка уйдёт в сделку ${r.last.code || 'новую'}` : 'Дата статуса · кликните, чтобы изменить'}
-                    onSet={can && !r.last.isNew ? (v => act.date(r.last, v)) : null} />}
+                    onSet={can ? (v => act.date(r.last, v)) : null} />}
                 </span>
                 <Cells cells={r.cells} st={st} set={set} can={can} />
                 <span style={{ padding: '4px 6px', minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, height: '100%' }}>
@@ -236,11 +233,10 @@ export default function Matrix({ months, deals, notes, leads, directory = [], sh
           const strike = d.lost ? 'line-through' : 'none'
           return (
             <div key={r.key} style={{ display: 'grid', gridTemplateColumns: cols, alignItems: 'center', minHeight: 34, background: r.mine ? 'var(--bg-tint)' : 'var(--bg-card)',
-              borderBottom: '1px solid var(--border-row)', borderLeft: `3px solid ${(d.moved || d.isNew) && !d.lost ? 'var(--accent)' : 'transparent'}`,
+              borderBottom: '1px solid var(--border-row)', borderLeft: `3px solid ${d.moved && !d.lost ? 'var(--accent)' : 'transparent'}`,
               opacity: dim(r.mine), outline: r.mine ? '1px solid var(--accent)' : 'none', outlineOffset: -1 }}>
               <span style={{ position: 'sticky', left: 0, zIndex: 2, display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px 0 36px', background: 'inherit', height: '100%', minWidth: 0 }}>
-                {d.isNew ? <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--accent)' }}>новая</span>
-                  : <Link href={`/sales/deals/${d.code || d.id}`} style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--accent)', textDecoration: strike }}>{d.code}</Link>}
+                <Link href={`/sales/deals/${d.code || d.id}`} style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--accent)', textDecoration: strike }}>{d.code}</Link>
                 <span style={{ fontSize: 11.5, color: 'var(--text-secondary)', textDecoration: strike, ...ELL }}>{d.service} · {d.lost ? 'сорвалась' : d.stage}</span>
               </span>
               <span /><span />
@@ -253,7 +249,7 @@ export default function Matrix({ months, deals, notes, leads, directory = [], sh
                 <DateCell iso={d.status_date} kind={d.status_date_kind} fg={fg}
                   title={d.status_date_kind === 'manual' ? 'Дата статуса поставлена вручную' : d.status_date_kind === 'history' ? 'Дата перехода на стадию · клик — изменить'
                     : 'Переходов в истории нет, взята дата правки (~) · клик — задать точную'}
-                  onSet={can && !d.lost && !d.isNew ? (v => act.date(d, v)) : null} />
+                  onSet={can && !d.lost ? (v => act.date(d, v)) : null} />
               </span>
               <Cells cells={r.cells} st={st} set={set} can={can} />
               <span /><span style={TXT}>{d.agency}</span><span style={TXT}>{d.account}</span><span style={TXT}>{d.sales}</span><span />
@@ -352,7 +348,7 @@ function Pin({ d, title, drag, canMove, onStart, onEnd }) {
       onDragEnd={onEnd}
       style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 8px 0 6px', borderRadius: 7,
         background: d.locked ? 'var(--income-tint)' : 'var(--bg-card)',
-        border: `1px ${d.isNew ? 'dashed' : 'solid'} ${d.isNew ? 'var(--accent)' : d.locked ? 'var(--income-border)' : 'var(--border-card)'}`,
+        border: `1px solid ${d.locked ? 'var(--income-border)' : 'var(--border-card)'}`,
         boxShadow: d.locked ? 'none' : 'var(--shadow-card)',
         color: d.lost ? 'var(--text-disabled)' : d.locked ? 'var(--income-fg)' : 'var(--text-primary)',
         fontFamily: MONO, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', cursor: !movable ? 'not-allowed' : mine ? 'grabbing' : 'grab' }}>

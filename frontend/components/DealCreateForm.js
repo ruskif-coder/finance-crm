@@ -4,6 +4,7 @@ import useIsMobile from './mobile/useIsMobile'
 import { overlayClose } from '@/lib/overlay'
 import { buildTitle, separatePriceSet, SURFACE_TAG } from '@/lib/dealTitle'
 import { GenTitleBtn, Z } from './salesTableKit'
+import { COLS, COL_LIGHT, COL_SHORT, GROUP } from '@/lib/salesStatus'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -68,7 +69,9 @@ const IcoBtn = ({ title, onClick, active, children }) => (
   </button>
 )
 
-export default function DealCreateForm({ open, onClose, canPickRep, onCreated }) {
+/* `initial` — признаки, с которыми форму открывают из ячейки «Статусов продаж» (владелец 23.10.2026):
+   рекламодатель, бренд, период и светофор вероятности. С ним в форме появляется выбор вероятности. */
+export default function DealCreateForm({ open, onClose, canPickRep, onCreated, initial }) {
   const [opts, setOpts] = useState({})
   const [services, setServices] = useState([])
   const [pipelines, setPipelines] = useState([])
@@ -83,6 +86,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
   const [briefFiles, setBriefFiles] = useState([])
   const briefFileRef = useRef(null)
   const [busy, setBusy] = useState(false)
+  const [light, setLight] = useState('')
   const isMobile = useIsMobile()
   const set = (k, v) => setF(p => ({ ...p, [k]: v }))
 
@@ -92,6 +96,9 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
   const [vatPct, setVatPct] = useState(null)
   useEffect(() => {
     if (!open) return
+    if (initial) setF(p => ({ ...p, advertiser_id: initial.advertiser_id ? String(initial.advertiser_id) : '',
+      brand_id: initial.brand_id ? String(initial.brand_id) : '', period: initial.period || '' }))
+    setLight(initial?.light || '')
     api.get('/sales/own-company', auth()).then(r => setVatPct(r.data?.vat_current ?? null)).catch(() => {})
     api.get('/sales/filters', auth()).then(r => setOpts(r.data || {})).catch(() => {})
     api.get('/sales/directories/services?only_active=true', auth()).then(r => setServices(r.data.items || [])).catch(() => {})
@@ -167,6 +174,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
         amount: f.amount ? parseFloat(f.amount) : null, amount_with_vat: f.amount_with_vat ? parseFloat(f.amount_with_vat) : null,
         sales_rep_id: (canPickRep && f.sales_rep_id) ? +f.sales_rep_id : null,
         account_manager_id: f.account_manager_id ? +f.account_manager_id : null, title: f.title || null,
+        probability_color: light || null,
       }, auth())
       if (brief.trim() && r.data?.id) { try { await api.put(`/sales/deals/${r.data.id}/brief`, { brief }, auth()) } catch (e) {} }
       // Файлы — после создания и по одному: отказ на третьем не должен отменять два
@@ -182,7 +190,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
         if (failed.length) alert(`Сделка создана, но файлы не прикрепились: ${failed.join(', ')}`)
       }
       setF({ agency_id: '', advertiser_id: '', brand_id: '', product: '', inventory: '', pipeline: f.pipeline, bitrix_stage: f.bitrix_stage, period: '', amount: '', amount_with_vat: '', sales_rep_id: '', account_manager_id: '', title: '' })
-      setBrief(''); setBriefOpen(true); setBriefFiles([])
+      setBrief(''); setBriefOpen(true); setBriefFiles([]); setLight('')
       onCreated && onCreated(); onClose()
     } catch (e) { alert(e.response?.data?.detail || 'Не удалось создать сделку') }
     finally { setBusy(false) }
@@ -229,6 +237,25 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated })
             : <div style={{ ...INP, background: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>вы (текущий)</div>}
         </div>
       </div>
+
+      {initial && (
+        <div>
+          <span style={LBL}>Вероятность · светофор реестра</span>
+          <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
+            {COLS.map(c => {
+              const on = light === COL_LIGHT[c]
+              return (
+                <button key={c} type="button" onClick={() => setLight(on ? '' : COL_LIGHT[c])}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 10, cursor: 'pointer', fontFamily: UI, fontSize: 12.5,
+                    fontWeight: on ? 700 : 500, border: `1px solid ${on ? 'var(--accent)' : 'var(--border-card)'}`,
+                    background: on ? 'var(--accent-tint)' : 'var(--bg-card)', color: on ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: GROUP[c].dot }} />{COL_SHORT[c]}
+                </button>
+              )
+            })}
+          </span>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 3fr 42px 42px', gap: 14, alignItems: 'end' }}>
         <div><span style={LBL}>Аккаунт</span><Search placeholder="не выбран" options={opts.account_manager_id} value={f.account_manager_id} onChange={v => set('account_manager_id', v)} /></div>
