@@ -58,9 +58,9 @@ export default function Matrix({ months, deals, notes, leads, directory = [], re
   const live = deals.filter(d => !d.lost)
   const shown = st.showLost ? deals : live
   const drag = st.drag ? deals.find(d => d.id === st.drag) : null
-  const cols = 'minmax(260px,1.2fr) 44px 44px 110px 150px 118px ' + 'minmax(104px,.8fr) '.repeat(months.length * 3) +
+  const cols = 'minmax(260px,1.2fr) 44px 44px 110px 150px 112px 32px ' + 'minmax(104px,.8fr) '.repeat(months.length * 3) +
     'minmax(240px,1.3fr) 120px 110px 110px minmax(220px,1.2fr)'
-  const tail = `${7 + months.length * 3} / span 5`
+  const tail = `${8 + months.length * 3} / span 5`
   const totals = {}
   COLS.forEach(c => { totals[c] = months.map(m => cellSum(live, m, c)) })
   // Темп к закрытию по месяцу (владелец 23.10.2026): факт × прогноз открутки РК полного цикла, внешние услуги — 100 %
@@ -146,7 +146,7 @@ export default function Matrix({ months, deals, notes, leads, directory = [], re
   }, [shown, notes, st.open, st.expandAll, st.hideEmpty, st.drag, months, can, directory, showDirectory, search]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const dim = (mine) => (drag && !mine ? 0.15 : 1)
-  const head = [['Клиент / бренд', 'left'], ['бренд', 'center'], ['РА', 'center'], ['Продукт', 'left'], ['Стадия', 'left'], ['Дата', 'left']]
+  const head = [['Клиент / бренд', 'left'], ['бренд', 'center'], ['РА', 'center'], ['Продукт', 'left'], ['Стадия', 'left'], ['Дата', 'left'], ['', 'center']]
 
 
   return (
@@ -155,7 +155,7 @@ export default function Matrix({ months, deals, notes, leads, directory = [], re
         <div style={{ position: 'sticky', top: 0, zIndex: 5, background: 'var(--bg-card)', borderBottom: '1px solid var(--border-card)' }}>
           <div style={{ display: 'grid', gridTemplateColumns: cols, borderLeft: '3px solid transparent' }}>
             <span style={{ gridColumn: 1, position: 'sticky', left: 0, zIndex: 3, background: 'var(--bg-card)' }} />
-            <span style={{ gridColumn: '2 / span 5', borderRight: '1px solid var(--border-inner)' }} />
+            <span style={{ gridColumn: '2 / span 6', borderRight: '1px solid var(--border-inner)' }} />
             {months.map(m => (
               <span key={m} style={{ gridColumn: 'span 3', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '9px 0 5px', background: 'var(--bg-subtle)',
                 borderRight: '1px solid var(--border-inner)', fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text-primary)' }}>
@@ -168,7 +168,7 @@ export default function Matrix({ months, deals, notes, leads, directory = [], re
             letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-cap)' }}>
             {head.map(([l, a], i) => (
               <span key={l + i} style={{ position: i === 0 ? 'sticky' : 'static', left: 0, zIndex: i === 0 ? 3 : 'auto', padding: '5px 8px 7px', textAlign: a,
-                background: 'var(--bg-card)', borderRight: `1px solid ${i === 5 ? 'var(--border-inner)' : 'transparent'}`, ...ELL }}>{l}</span>
+                background: 'var(--bg-card)', borderRight: `1px solid ${i === 6 ? 'var(--border-inner)' : 'transparent'}`, ...ELL }}>{l}</span>
             ))}
             {months.flatMap(m => COLS.map(c => (
               <span key={m + c} style={{ padding: '5px 8px 7px', textAlign: 'right', background: GROUP[c].bg, borderRight: `1px solid ${line(c)}`, ...ELL }}>{COL_SHORT[c]}</span>
@@ -190,9 +190,8 @@ export default function Matrix({ months, deals, notes, leads, directory = [], re
                 <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{r.brandsN} бр. · {r.liveDs.length} сд.</span>
               </span>
               <span /><span /><span /><span />
-              <span style={{ borderRight: '1px solid var(--border-inner)', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 6px' }}>
-                {!!r.adv.id && bell(r.adv.id, null)}
-              </span>
+              <span />
+              <span style={{ borderRight: '1px solid var(--border-inner)', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{!!r.adv.id && bell(r.adv.id, null)}</span>
               <Cells cells={r.cells} st={st} set={set} can={can} />
               <span /><span style={TXT}>{uniq(r.liveDs, 'agency')}</span><span /><span /><span />
             </div>
@@ -221,12 +220,12 @@ export default function Matrix({ months, deals, notes, leads, directory = [], re
                   {r.top && <><span style={{ width: 6, height: 6, borderRadius: 2, background: STAGE_DOT[r.top.stage_key] || 'var(--text-disabled)', flex: '0 0 6px' }} />
                     <span style={{ fontSize: 11, color: 'var(--text-secondary)', ...ELL }}>{r.top.stage}</span></>}
                 </span>
-                <span style={{ padding: '0 6px', borderRight: '1px solid var(--border-inner)', height: '100%', display: 'flex', alignItems: 'center' }}>
+                <span style={{ padding: '0 6px', height: '100%', display: 'flex', alignItems: 'center' }}>
                   {r.last && <DateCell iso={r.last.status_date} kind={r.last.status_date_kind} fg="var(--text-secondary)"
                     title={r.bl.length > 1 ? `Дата последнего статуса · правка уйдёт в сделку ${r.last.code || 'новую'}` : 'Дата статуса · кликните, чтобы изменить'}
                     onSet={can ? (v => act.date(r.last, v)) : null} />}
-                  {!!r.adv.id && <span style={{ marginLeft: 'auto' }}>{bell(r.adv.id, r.brand.id)}</span>}
                 </span>
+                <span style={{ borderRight: '1px solid var(--border-inner)', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{!!r.adv.id && bell(r.adv.id, r.brand.id)}</span>
                 <Cells cells={r.cells} st={st} set={set} can={can} />
                 <span style={{ padding: '4px 6px', minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, height: '100%' }}>
                   <Comment value={n.comment_sales} excel={ex.has('comment_sales')} title="Комментарий Sales · сохраняется при уходе из поля"
@@ -259,12 +258,13 @@ export default function Matrix({ months, deals, notes, leads, directory = [], re
                 <span style={{ width: 6, height: 6, borderRadius: 2, background: d.lost ? 'var(--danger)' : STAGE_DOT[d.stage_key] || 'var(--text-disabled)', flex: '0 0 6px' }} />
                 <span style={{ fontSize: 11, color: 'var(--text-secondary)', ...ELL }}>{d.lost ? 'сорвалась' : `${d.locked ? '▶ ' : ''}${d.stage}`}</span>
               </span>
-              <span style={{ padding: '0 6px', borderRight: '1px solid var(--border-inner)', height: '100%', display: 'flex', alignItems: 'center' }}>
+              <span style={{ padding: '0 6px', height: '100%', display: 'flex', alignItems: 'center' }}>
                 <DateCell iso={d.status_date} kind={d.status_date_kind} fg={fg}
                   title={d.status_date_kind === 'manual' ? 'Дата статуса поставлена вручную' : d.status_date_kind === 'history' ? 'Дата перехода на стадию · клик — изменить'
                     : 'Переходов в истории нет, взята дата правки (~) · клик — задать точную'}
                   onSet={can && !d.lost ? (v => act.date(d, v)) : null} />
               </span>
+              <span style={{ borderRight: '1px solid var(--border-inner)', height: '100%' }} />
               <Cells cells={r.cells} st={st} set={set} can={can} />
               <span /><span style={TXT}>{d.agency}</span><span style={TXT}>{d.account}</span><span style={TXT}>{d.sales}</span><span />
             </div>
@@ -292,9 +292,8 @@ export default function Matrix({ months, deals, notes, leads, directory = [], re
                   </span>
                 ))}
                 <span /><span />
-                <span style={{ padding: '0 6px', borderRight: '1px solid var(--border-inner)', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-                  {bell(l.advertiser_id, l.brand_id, l.client_name)}
-                </span>
+                <span />
+                <span style={{ borderRight: '1px solid var(--border-inner)', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{bell(l.advertiser_id, l.brand_id, l.client_name)}</span>
                 {months.flatMap(m => COLS.map(c => (
                   <span key={m + c} onClick={can ? (() => act.newDeal({ adv: l.advertiser_id ? { id: l.advertiser_id, name: l.title } : null, client: l.client_name, month: m, col: c })) : undefined}
                     title={can ? `Новая сделка: ${monthName(m)}, ${COL_LABEL[c].toLowerCase()}` : ''}
@@ -344,7 +343,7 @@ function TempoRow({ cols, tail, months, fact, tempo }) {
       borderLeft: '3px solid transparent', background: 'var(--bg-card)' }}>
       <span style={{ gridColumn: 1, position: 'sticky', left: 0, zIndex: 3, background: 'var(--bg-card)', padding: '4px 10px', fontSize: 8.5,
         letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>темп к закрытию</span>
-      <span style={{ gridColumn: '2 / span 5' }} />
+      <span style={{ gridColumn: '2 / span 6' }} />
       {months.flatMap((m, mi) => COLS.map(c => {
         if (c !== 'fact') return <span key={m + c} style={{ background: GROUP[c].bg, borderRight: `1px solid ${line(c)}`, height: '100%' }} />
         const v = tempo[mi], f = fact[mi]
@@ -372,7 +371,7 @@ function Totals({ cols, tail, months, totals, label, sub, top }) {
         fontSize: top ? 8.5 : 9.5, letterSpacing: '.1em', textTransform: 'uppercase', color: top ? 'var(--text-faint)' : 'var(--text-cap)', display: 'flex', alignItems: 'center', gap: 10, whiteSpace: 'nowrap' }}>
         {label}{sub && <span style={{ fontWeight: 400, color: 'var(--text-faint)', textTransform: 'none', letterSpacing: 0 }}>{sub}</span>}
       </span>
-      <span style={{ gridColumn: '2 / span 5' }} />
+      <span style={{ gridColumn: '2 / span 6' }} />
       {months.flatMap((m, mi) => COLS.map(c => {
         const v = totals[c][mi]
         return <span key={m + c} style={{ padding: top ? '5px 8px' : '0 8px', textAlign: 'right', color: v ? GROUP[c].fg : 'var(--text-disabled)', borderRight: `1px solid ${line(c)}`,
@@ -405,15 +404,17 @@ function Pin({ d, title, drag, canMove, onStart, onEnd }) {
     <span draggable={movable} title={title}
       onDragStart={e => { if (!movable) { e.preventDefault(); return } e.dataTransfer.effectAllowed = 'move'; onStart() }}
       onDragEnd={onEnd}
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 8px 0 6px', borderRadius: 7,
+      style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 4, height: 24, padding: '0 7px 0 5px', borderRadius: 7, maxWidth: '100%',
         background: lt ? lt.bg : d.locked ? 'var(--income-tint)' : 'var(--bg-card)',
         border: `1px solid ${lt ? lt.border : d.locked ? 'var(--income-border)' : 'var(--border-card)'}`,
         boxShadow: d.locked ? 'none' : 'var(--shadow-card)',
         color: d.lost ? 'var(--text-disabled)' : lt ? lt.fg : d.locked ? 'var(--income-fg)' : 'var(--text-primary)',
         fontFamily: MONO, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', cursor: !movable ? 'not-allowed' : mine ? 'grabbing' : 'grab' }}>
       <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{d.locked ? '🔒' : '⠿'}</span>{grp(d.amount)}
-      {lt && <span aria-label="старт опаздывает" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14,
-        borderRadius: '50%', background: lt.border, color: 'var(--on-accent)', fontSize: 10, fontWeight: 800 }}>!</span>}
+      {/* «!» — значком в углу пина, ширины не добавляет: иначе запертый пин с опозданием вылезал за колонку */}
+      {lt && <span aria-label="старт опаздывает" style={{ position: 'absolute', top: -6, right: -6, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        width: 13, height: 13, borderRadius: '50%', background: lt.border, color: 'var(--on-accent)', fontSize: 9, fontWeight: 800,
+        boxShadow: '0 0 0 2px var(--bg-card)' }}>!</span>}
     </span>
   )
 }
