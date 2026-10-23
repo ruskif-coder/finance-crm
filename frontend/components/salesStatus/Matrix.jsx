@@ -1,6 +1,7 @@
 // «Статусы продаж» — таблица: рекламодатель → бренд → сделки, 3 месяца × (факт · средняя · низкая).
 // Вёрстка — из хендоффа («Статусы продаж.dc.html»); первая колонка и шапка закреплены, скролл только внутри таблицы.
 import { useMemo } from 'react'
+import Bell from './Bell'
 import Link from 'next/link'
 import { grp } from '@/lib/salesFormat'
 import { COLS, COL_LABEL, COL_SHORT, GROUP, STAGE_DOT, cellSum, dm, meetLook, MEET_NEXT, monthName } from '@/lib/salesStatus'
@@ -46,22 +47,31 @@ function DateCell({ iso, kind, title, onSet, fg }) {
   )
 }
 
-export default function Matrix({ months, deals, notes, leads, directory = [], showDirectory, search, st, set, can, act }) {
+export default function Matrix({ months, deals, notes, leads, directory = [], reminders = [], showDirectory, search, st, set, can, act }) {
+  // Будильник строки (владелец 23.10.2026): ставит себе любой, кто видит экран, — это напоминание, а не правка сделок
+  const bell = (a, b, c) => (
+    <Bell list={reminders.filter(r => (c ? (r.client_name || '').toLowerCase() === c.toLowerCase()
+      : r.advertiser_id === a && (r.brand_id ?? null) === (b ?? null)))}
+      onSave={v => act.remind({ advertiser_id: c ? null : a, brand_id: c ? null : (b ?? null), client_name: c || null, ...v })}
+      onRemove={act.unremind} />
+  )
   const live = deals.filter(d => !d.lost)
   const shown = st.showLost ? deals : live
   const drag = st.drag ? deals.find(d => d.id === st.drag) : null
-  const cols = 'minmax(260px,1.2fr) 44px 44px 110px 150px 88px ' + 'minmax(104px,.8fr) '.repeat(months.length * 3) +
+  const cols = 'minmax(260px,1.2fr) 44px 44px 110px 150px 118px ' + 'minmax(104px,.8fr) '.repeat(months.length * 3) +
     'minmax(240px,1.3fr) 120px 110px 110px minmax(220px,1.2fr)'
   const tail = `${7 + months.length * 3} / span 5`
   const totals = {}
   COLS.forEach(c => { totals[c] = months.map(m => cellSum(live, m, c)) })
+  // Темп к закрытию по месяцу (владелец 23.10.2026): факт × прогноз открутки РК полного цикла, внешние услуги — 100 %
+  const tempo = months.map(m => live.filter(d => d.month === m && d.col === 'fact').reduce((a, d) => a + d.amount * (d.pace ?? 1), 0))
 
   const empty = (c, click, extra = {}) => ({ kind: 'empty', bg: GROUP[c].cell, line: line(c), cursor: click ? 'pointer' : 'default', click, ...extra })
 
   const pinCell = (d, c, m) => ({
     kind: 'pin', d, bg: GROUP[c].cell, line: line(c),
-    title: d.lost ? 'Сорвалась — в суммы не идёт' : d.locked ? 'Проект запущен — период и вероятность больше не двигаются'
-      : `${d.code || 'новая'} · ${monthName(m)}, ${COL_LABEL[c].toLowerCase()} · тащите в любую из 9 ячеек строки`,
+    title: (d.lost ? 'Сорвалась — в суммы не идёт' : d.locked ? 'Проект запущен — период и вероятность больше не двигаются'
+      : `${d.code || 'новая'} · ${monthName(m)}, ${COL_LABEL[c].toLowerCase()} · тащите в любую из 9 ячеек строки`) + startHint(d),
   })
 
   const dealCells = (d, adv, brand) => months.flatMap(m => COLS.map(c => {
@@ -168,6 +178,7 @@ export default function Matrix({ months, deals, notes, leads, directory = [], sh
             ))}
           </div>
           <Totals cols={cols} tail={tail} months={months} totals={totals} label="итог по месяцу" top />
+          <TempoRow cols={cols} tail={tail} months={months} fact={totals.fact} tempo={tempo} />
         </div>
 
         {rows.map(r => {
@@ -179,7 +190,9 @@ export default function Matrix({ months, deals, notes, leads, directory = [], sh
                 <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{r.brandsN} бр. · {r.liveDs.length} сд.</span>
               </span>
               <span /><span /><span /><span />
-              <span style={{ borderRight: '1px solid var(--border-inner)', height: '100%' }} />
+              <span style={{ borderRight: '1px solid var(--border-inner)', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 6px' }}>
+                {!!r.adv.id && bell(r.adv.id, null)}
+              </span>
               <Cells cells={r.cells} st={st} set={set} can={can} />
               <span /><span style={TXT}>{uniq(r.liveDs, 'agency')}</span><span /><span /><span />
             </div>
@@ -212,6 +225,7 @@ export default function Matrix({ months, deals, notes, leads, directory = [], sh
                   {r.last && <DateCell iso={r.last.status_date} kind={r.last.status_date_kind} fg="var(--text-secondary)"
                     title={r.bl.length > 1 ? `Дата последнего статуса · правка уйдёт в сделку ${r.last.code || 'новую'}` : 'Дата статуса · кликните, чтобы изменить'}
                     onSet={can ? (v => act.date(r.last, v)) : null} />}
+                  {!!r.adv.id && <span style={{ marginLeft: 'auto' }}>{bell(r.adv.id, r.brand.id)}</span>}
                 </span>
                 <Cells cells={r.cells} st={st} set={set} can={can} />
                 <span style={{ padding: '4px 6px', minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, height: '100%' }}>
@@ -278,7 +292,9 @@ export default function Matrix({ months, deals, notes, leads, directory = [], sh
                   </span>
                 ))}
                 <span /><span />
-                <span style={{ padding: '0 8px', borderRight: '1px solid var(--border-inner)', height: '100%' }} />
+                <span style={{ padding: '0 6px', borderRight: '1px solid var(--border-inner)', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+                  {bell(l.advertiser_id, l.brand_id, l.client_name)}
+                </span>
                 {months.flatMap(m => COLS.map(c => (
                   <span key={m + c} onClick={can ? (() => act.newDeal({ adv: l.advertiser_id ? { id: l.advertiser_id, name: l.title } : null, client: l.client_name, month: m, col: c })) : undefined}
                     title={can ? `Новая сделка: ${monthName(m)}, ${COL_LABEL[c].toLowerCase()}` : ''}
@@ -318,6 +334,35 @@ function Cells({ cells, st, set, can }) {
   ))
 }
 
+const TEMPO_HINT = 'Темп — прогноз суммы к закрытию: сделки полного цикла — с недокрутом по прогнозу открутки РК (факт ÷ отчитанные дни × флайт); '
+  + 'внешние услуги и закрытые сверкой по плану — 100 %.'
+
+// Строка «темп» под итогом месяца — только в колонке «Факт»
+function TempoRow({ cols, tail, months, fact, tempo }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: cols, alignItems: 'center', fontFamily: MONO, fontSize: 11, fontWeight: 700,
+      borderLeft: '3px solid transparent', background: 'var(--bg-card)' }}>
+      <span style={{ gridColumn: 1, position: 'sticky', left: 0, zIndex: 3, background: 'var(--bg-card)', padding: '4px 10px', fontSize: 8.5,
+        letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>темп к закрытию</span>
+      <span style={{ gridColumn: '2 / span 5' }} />
+      {months.flatMap((m, mi) => COLS.map(c => {
+        if (c !== 'fact') return <span key={m + c} style={{ background: GROUP[c].bg, borderRight: `1px solid ${line(c)}`, height: '100%' }} />
+        const v = tempo[mi], f = fact[mi]
+        const pct = f ? Math.round(v / f * 100) : null
+        return (
+          <span key={m + c} title={f ? `Темп ${pct} % от факта · недокрут ${grp(f - v)} ₽\n${TEMPO_HINT}` : TEMPO_HINT}
+            style={{ padding: '4px 8px', textAlign: 'right', background: GROUP[c].bg, borderRight: `1px solid ${line(c)}`, height: '100%', cursor: 'help',
+              display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5, whiteSpace: 'nowrap',
+              color: pct != null && pct < 100 ? 'var(--warning-fg)' : GROUP[c].fg }}>
+            {f ? grp(v) : '—'}
+          </span>
+        )
+      }))}
+      <span style={{ gridColumn: tail }} />
+    </div>
+  )
+}
+
 function Totals({ cols, tail, months, totals, label, sub, top }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: cols, alignItems: 'center', minHeight: top ? 0 : 38, fontFamily: MONO, fontSize: top ? 11 : 11.5, fontWeight: 700,
@@ -338,21 +383,37 @@ function Totals({ cols, tail, months, totals, label, sub, top }) {
   )
 }
 
+// Реальный старт в подсказке пина (владелец 23.10.2026): полный цикл — первый день статистики, внешние — кнопка «Запустить»
+function startHint(d) {
+  const full = d.full ? 'первая статистика' : 'кнопка «Запустить»'
+  if (d.real_start) return `\nРеальный старт: ${dm(d.real_start)}.${d.real_start.slice(0, 4)} (${full})`
+  if (!d.plan_start) return ''
+  const late = d.late ? ` — опоздание ${d.late_days} дн.` : ''
+  return `\nСтарта ещё не было (${full}) · план ${dm(d.plan_start)}${late}`
+}
+
+// Старт опаздывает: 7 дней после планового — жёлтый, 14 — красный (владелец 23.10.2026, app/sales/status_launch.py)
+const LATE = { warn: { fg: 'var(--warning-fg)', border: 'var(--warning)', bg: 'var(--warning-tint)' },
+  bad: { fg: 'var(--danger-fg)', border: 'var(--danger)', bg: 'var(--danger-tint)' } }
+
 // Пин сделки: перетаскивается по своей строке; запущенная — под замком, новая — пунктир.
 function Pin({ d, title, drag, canMove, onStart, onEnd }) {
   const movable = canMove && !d.locked && !d.lost
   const mine = drag === d.id
+  const lt = !d.lost && LATE[d.late]
   return (
     <span draggable={movable} title={title}
       onDragStart={e => { if (!movable) { e.preventDefault(); return } e.dataTransfer.effectAllowed = 'move'; onStart() }}
       onDragEnd={onEnd}
       style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 8px 0 6px', borderRadius: 7,
-        background: d.locked ? 'var(--income-tint)' : 'var(--bg-card)',
-        border: `1px solid ${d.locked ? 'var(--income-border)' : 'var(--border-card)'}`,
+        background: lt ? lt.bg : d.locked ? 'var(--income-tint)' : 'var(--bg-card)',
+        border: `1px solid ${lt ? lt.border : d.locked ? 'var(--income-border)' : 'var(--border-card)'}`,
         boxShadow: d.locked ? 'none' : 'var(--shadow-card)',
-        color: d.lost ? 'var(--text-disabled)' : d.locked ? 'var(--income-fg)' : 'var(--text-primary)',
+        color: d.lost ? 'var(--text-disabled)' : lt ? lt.fg : d.locked ? 'var(--income-fg)' : 'var(--text-primary)',
         fontFamily: MONO, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', cursor: !movable ? 'not-allowed' : mine ? 'grabbing' : 'grab' }}>
       <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{d.locked ? '🔒' : '⠿'}</span>{grp(d.amount)}
+      {lt && <span aria-label="старт опаздывает" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14,
+        borderRadius: '50%', background: lt.border, color: 'var(--on-accent)', fontSize: 10, fontWeight: 800 }}>!</span>}
     </span>
   )
 }

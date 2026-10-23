@@ -701,7 +701,36 @@ def rule_master_scans_overdue(db: Session, ev: registry.Event) -> List[Hit]:
     return scans_overdue_hits(db, Hit, fact_days)
 
 
+def rule_sales_status_reminder(db: Session, ev: registry.Event) -> List[Hit]:
+    """Будильники «Статусов продаж», чей день настал (владелец 23.10.2026). Ступень — дата: новая дата у того же
+    будильника — новая ступень, и он уходит снова; повтор того же дня не уходит (отметка sent_at в AFTER_SEND)."""
+    from urllib.parse import quote
+    from app.sales.status_reminders import due as due_reminders
+    from app.timez import msk_now
+    hits = []
+    for r, label in due_reminders(db, msk_now().date()):
+        hits.append(Hit(
+            # Ступень — дата И момент постановки: переставленный на тот же день после отправки — новая ступень, а не
+            # «повтор раньше срока» (иначе ушёл бы через repeat_days; ревью 23.10.2026)
+            entity_type="sales_status_reminder", entity_id=r.id,
+            stage=f"on:{r.remind_on.isoformat()}:{r.updated_at:%Y%m%d%H%M%S}",
+            due_date=r.remind_on, title=f"Будильник: {label}",
+            body=r.note or "Вы просили напомнить об этом клиенте в «Статусах продаж».",
+            link=f"/sales/status?find={quote(label.split(' · ')[0])}",
+            ctx={"reminder": r}, facts=[{"k": "на дату", "v": r.remind_on.strftime("%d.%m")}],
+        ))
+    return hits
+
+
+def _after_sales_status_reminder(db: Session, hit: Hit, now: datetime):
+    from app.sales.status_models import SalesStatusReminder
+    r = db.get(SalesStatusReminder, hit.entity_id)
+    if r:
+        r.sent_at = now
+
+
 RULES = {
+    "sales_status_reminder": rule_sales_status_reminder,
     "recon_overdue": rule_recon_overdue,
     "master_scans_overdue": rule_master_scans_overdue,
     "invoice_overdue": rule_invoice_overdue,
@@ -718,6 +747,7 @@ RULES = {
 # Хуки «после реальной отправки» (в сухом прогоне НЕ вызываются): нужны правилам,
 # которые держат отметку о напоминании в собственной таблице, а не только в alert_state.
 AFTER_SEND = {
+    "sales_status_reminder": _after_sales_status_reminder,
     "backlog_overdue": _after_backlog_overdue,
 }
 

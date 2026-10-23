@@ -8,6 +8,8 @@ import DealDetail from '@/components/sales/DealDetail'
 import DealBriefCell from '@/components/DealBriefCell'
 import ValuePopover from '@/components/ValuePopover'
 import api, { auth } from '@/lib/api'
+import { PROB_COLORS, PROB_ORDER, PROB_LABEL } from '@/lib/probability'
+import ProbDot, { saveProbability } from '@/components/sales/ProbDot'
 import { fmtMoney, fmtFull, fmtDate } from '@/lib/salesFormat'
 import { buildTitle, productWithSurface, separatePriceSet, surfaceTag, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
 import { MONO, UI, PIP, FILL, HATCH, HATCH_RED, FILTER_DROPS, GAP_FIELDS, shortLabel, MultiDrop, IconBtn, StageLayerBar, DEAL_COLS, DEAL_DEFAULT_HIDDEN, DEAL_COL_BY_KEY, DEAL_MIDDLE_KEYS, ColumnsMenu, GenTitleBtn, firstSortDir, tagSm as chip, needsMp, NEEDS_MP_BG, NEEDS_MP_BORDER, PortalPopover, Z, DealCodeLink, UnitPriceCell, PlanFactCell } from '@/components/salesTableKit'
@@ -27,9 +29,6 @@ import useLatest from '@/lib/useLatest'
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 // Светофор вероятности сделки (наша ручная разметка): цвет лампы по вероятности.
-const PROB_COLORS = { grey: 'var(--muted)', orange: 'var(--warning)', green: 'var(--success)' }
-const PROB_ORDER = ['grey', 'orange', 'green']
-const PROB_LABEL = { grey: 'малая', orange: 'средняя', green: 'высокая' }
 
 // Колонки — из общего шаблона salesTableKit (DEAL_COLS): дашборд и реестр
 // настраиваются как один внешний шаблон. Служебный префикс (prob/brief) —
@@ -338,10 +337,7 @@ export default function SalesDashboard2() {
   const saveTitle = async (id, title) => { try { await api.patch(`/sales/deals/${id}`, { title }, auth()); setDeals(prev => prev.map(x => x.id === id ? { ...x, title } : x)) } catch (e) { alert('Не удалось сохранить название') } }
   const setProbability = async (id, color) => {
     setProbPick(null)
-    const prev = deals.find(x => x.id === id)?.probability_color ?? null
-    setDeals(ps => ps.map(x => x.id === id ? { ...x, probability_color: color } : x))
-    try { await api.post(`/sales/deals/${id}/probability`, { color }, auth()) }
-    catch (e) { setDeals(ps => ps.map(x => x.id === id ? { ...x, probability_color: prev } : x)); alert('Не удалось сохранить вероятность') }
+    await saveProbability(id, color, deals, setDeals)
   }
 
   const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }
@@ -365,12 +361,7 @@ export default function SalesDashboard2() {
     const none = !FILL[d.money_layer]; const n = FILL[d.money_layer] || 0
     switch (key) {
       case 'prob': {
-        const col = PROB_COLORS[d.probability_color]
-        return (
-          <button onClick={e => { e.stopPropagation(); if (canEdit) setProbPick({ dealId: d.id, rect: e.currentTarget.getBoundingClientRect() }) }}
-            title={d.probability_color ? `Вероятность: ${PROB_LABEL[d.probability_color]}` : 'Вероятность не задана'}
-            style={{ display: 'inline-block', width: 14, height: 14, borderRadius: '50%', border: col ? 'none' : '1.5px solid var(--border-card)', background: col || 'transparent', cursor: canEdit ? 'pointer' : 'default', padding: 0 }} />
-        )
+        return <ProbDot d={d} canEdit={canEdit} onPick={rect => setProbPick({ dealId: d.id, rect })} />
       }
       case 'brief': return <span className="d2-brief" style={{ display: 'inline-flex' }}><DealBriefCell deal={d} canEdit={canEdit} v2 /></span>
       case 'bitrix_id': {

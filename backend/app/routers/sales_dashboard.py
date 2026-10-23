@@ -45,6 +45,8 @@ from app.sales import plan_lock
 from app import vat as vat_rules
 from app import periods as period_forms   # разбор квартала; `periods` ниже — другой модуль (app.sales.periods)
 from app.sales.models import SalesDealStageHistory
+from app.sales import probability
+from app.sales.probability import LIGHTS as PROBABILITY_COLORS
 from app.sales import periods
 from app.sales import stage_move
 from app.sales import stage_scope
@@ -933,6 +935,10 @@ def deals_registry(
             "product": d.product,
             # docs и product_color дописываются ниже из row_ctx (общий контекст строки).
             "probability_color": d.probability_color,
+            # Что видит человек — то же правило, что колонка «Статусов продаж»: пустой светофор по стадии, в работе — факт и
+            # правка закрыта (владелец 23.10.2026). `probability_color` остаётся записанным значением.
+            "probability_auto": probability.effective(d.probability_color, stage_key),
+            "probability_locked": probability.in_work(stage_key),
             "period": periods.month_key(d.period_from),
             "bitrix_stage": d.bitrix_stage,
             "money_layer": layer or NO_GROUP,
@@ -1202,12 +1208,26 @@ def bulk_update_deals(payload: BulkUpdate, db: Session = Depends(get_db),
             raise HTTPException(status_code=404, detail="Стадия не найдена")
         cat = Catalog(db)
         master = stage_move.is_master(current_user)
+        admin = stage_move.is_admin(current_user)
         force = master and bool((payload.override_reason or "").strip())
         reason = (payload.override_reason or "").strip() or "массовая правка стадии"
         for d in db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).all():
             if d.our_stage_id == target_id:
                 continue
             guard = stage_move.manual_guard(db, d, target, current_user, cat)
+            if admin:
+                # Админ — мимо всех запретов, с причиной (владелец 23.10.2026); без причины запертые пропускаются с подсказкой.
+                why = stage_move.admin_obstacles(guard, stage_move.plan_move(db, deal=d, target=target, catalog=cat))
+                if why and not force:
+                    skipped.append({"code": d.code or str(d.id), "title": d.title,
+                                    "lines": [{"key": "admin_force", "title": f"{why}. Укажите причину — админ проведёт принудительно",
+                                               "hint": "", "is_blocking": True, "where": "Реестр сделок — админ", "link": "",
+                                               "state": "not_yet", "detail": "", "blockers": []}]})
+                    continue
+                if stage_move.apply_move(db, d, target, current_user, catalog=cat, force=bool(why),
+                                         mark=stage_move.ADMIN_MARK, reason=reason)["moved"]:
+                    moved += 1
+                continue
             if guard:
                 skipped.append({"code": d.code or str(d.id), "title": d.title,
                                 "lines": [{"key": "manual_guard", "title": guard, "hint": "", "is_blocking": True,
@@ -1394,19 +1414,17 @@ def bulk_delete_deals(payload: BulkDelete, db: Session = Depends(get_db),
         raise HTTPException(status_code=400, detail="Не выбрано ни одной сделки")
     _scope_deal_ids(db, current_user, payload.deal_ids)
 
-    # ТОЛЬКО АДМИН и только «пустые» сделки (решение владельца 23.09.2026, аудит 3.H3).
-    # До этого удаление стояло под правом «правка» и КАСКАДОМ стирало кампании, разнесения
-    # по приложениям, сборку запуска и историю стадий; медиапланы оставались без сделки.
-    # Сделка с привязанной работой не удаляется даже админом: сначала отвязать — тогда
-    # удаление осознанное, а не побочный эффект выделения строк в реестре.
+    # ТОЛЬКО АДМИН (решение владельца 23.09.2026, аудит 3.H3). С 23.10.2026 админ удаляет сделку со всей НАШЕЙ цепочкой
+    # (медиаплан, РК без DSP, сборка, сверка, комментарии, файлы) — владелец, пример 2T7US3. Что ушло наружу (DSP, ОРД,
+    # кабинет площадки, мастер-сделка), у нас не стереть: такой след — отказ с перечнем, не удаляется ничего.
     from app.sales import deal_delete
     from app.sales.models import SalesDeletedDeal
-    held = deal_delete.holders(db, payload.deal_ids)
+    held = deal_delete.external(db, payload.deal_ids)
     if held:
         raise HTTPException(
             status_code=409,
-            detail=(f"Не удалено ничего: к сделкам привязана работа ({deal_delete.describe(db, held)}). "
-                    "Отвяжите её или переведите сделку в «Сделка не случилась»."))
+            detail=(f"Не удалено ничего: сделки оставили след снаружи ({deal_delete.describe(db, held)}). "
+                    "Снимите его там или переведите сделку в «Сделка не случилась»."))
 
     deals = db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).all()
     tombstoned = {t.bitrix_id for t in db.query(SalesDeletedDeal.bitrix_id).all()}
@@ -1418,11 +1436,17 @@ def bulk_delete_deals(payload: BulkDelete, db: Session = Depends(get_db),
 
     # Внешние ключи без каскада (комментарии, «продление от»): без этого пачка, где
     # попалась сделка с комментарием, падала целиком с 500.
-    deal_delete.purge_links(db, payload.deal_ids)
+    names = ", ".join(f"{d.code or d.id} «{d.title or '—'}»" for d in deals)
+    files = deal_delete.purge_chain(db, payload.deal_ids)
     n = db.query(SalesDeal).filter(SalesDeal.id.in_(payload.deal_ids)).delete(
         synchronize_session=False)
     db.commit()
-    log_action(db, current_user, "bulk_delete_deals", "sales_deal", None, f"удалено {n}")
+    # Журнал — до уборки диска: удаление уже необратимо, и сбой уборки не должен оставить его без записи (ревью 23.10.2026)
+    log_action(db, current_user, "bulk_delete_deals", "sales_deal", None, f"удалено {n} с цепочкой: {names}")
+    try:
+        deal_delete.clean_disk(files)
+    except Exception:   # noqa: BLE001 — файл без строки — сирота, его ловит проверка на экране «Статус»
+        pass
     return {"message": f"Удалено сделок: {n} (не вернутся при синхронизации)"}
 
 
@@ -1454,7 +1478,6 @@ class DealCreate(BaseModel):
     probability_color: Optional[str] = None   # светофор ячейки «Статусов продаж»: grey | orange | green
 
 
-PROBABILITY_COLORS = ("grey", "orange", "green")
 
 
 @router.get("/deals/whoami")
@@ -2590,9 +2613,12 @@ def set_deal_probability(
     if not deal:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
     _assert_deal_in_scope(db, current_user, deal)
+    key = db.query(SalesStage.stage_key).filter(SalesStage.id == deal.our_stage_id).scalar()
+    if probability.in_work(key) and color != probability.FACT:
+        raise HTTPException(status_code=409, detail="Сделка в работе — вероятность «факт» и не меняется (владелец 23.10.2026)")
     deal.probability_color = color
     db.commit()
-    return {"message": "Сохранено", "probability_color": color}
+    return {"message": "Сохранено", "probability_color": color, "probability_auto": probability.effective(color, key)}
 
 
 class MoveIn(BaseModel):
@@ -2744,6 +2770,9 @@ def move_preview(
             "needs_pipeline": plan.needs_pipeline,
             "allowed": plan.allowed,
             "can_override": stage_move.is_master(current_user),
+            # Админ проводит мимо ВСЕХ запретов с причиной (владелец 23.10.2026): что именно мешает — одной строкой.
+            "admin_force": (stage_move.admin_obstacles(stage_move.manual_guard(db, deal, target, current_user, cat), plan)
+                            if stage_move.is_admin(current_user) else None),
             "lines": [_line_public(ln) for ln in plan.lines],
             "blocking": [_line_public(ln) for ln in plan.blockers],
             # Переход ФИКСИРУЕТ медиаплан (Бронь → Сборка): диалог показывает это до
@@ -2803,28 +2832,35 @@ def move_deal(
             deal.realization_pipeline_id = payload.realization_pipeline_id
 
     guard = stage_move.manual_guard(db, deal, target, current_user, cat)
-    if guard:
-        raise HTTPException(status_code=403 if guard.startswith("Через стадию") else 400, detail=guard)
     plan = stage_move.plan_move(db, deal, target, cat)
     master = stage_move.is_master(current_user)
-    if plan.is_back and not master:
-        raise HTTPException(status_code=403, detail="Двигать сделку назад может только мастер")
+    reason = (payload.override_reason or "").strip()
+    # Админ двигает куда хочет (владелец 23.10.2026): все запреты ниже он проходит — но с причиной, как мастер требования.
+    admin_why = stage_move.admin_obstacles(guard, plan) if stage_move.is_admin(current_user) else None
+    if admin_why and not reason:
+        raise HTTPException(status_code=400, detail=f"{admin_why}. Админ может провести принудительно — укажите причину.")
+    admin_force = bool(admin_why)
 
-    # Воронка нужна рабочим стадиям реализационного этапа: одна и та же стадия живёт в
-    # каждой продуктовой воронке. Терминальные — исключение: сделка умерла, привязывать
-    # её к воронке незачем, а требование воронки сделало бы «сорвалась» недостижимой у
-    # сделок, которые до реализации не дошли.
-    if plan.needs_pipeline:
-        raise HTTPException(status_code=400, detail="Выберите воронку реализации под продукт")
-    # Стадия не относится к услуге сделки — отказ, и мастеру тоже: это не требование,
-    # которое можно обойти с причиной, а промах выбора. Карточка подчиняется правилам —
-    # решение владельца 24.09.2026, «чтобы привыкали ответственные» (аудит, 3.M1).
-    if plan.not_applicable:
-        raise HTTPException(status_code=400, detail=stage_move.refusal_text(plan))
+    if not admin_force:
+        if guard:
+            raise HTTPException(status_code=403 if guard.startswith("Через стадию") else 400, detail=guard)
+        if plan.is_back and not master:
+            raise HTTPException(status_code=403, detail="Двигать сделку назад может только мастер")
+        # Воронка нужна рабочим стадиям реализационного этапа: одна и та же стадия живёт в
+        # каждой продуктовой воронке. Терминальные — исключение: сделка умерла, привязывать
+        # её к воронке незачем, а требование воронки сделало бы «сорвалась» недостижимой у
+        # сделок, которые до реализации не дошли.
+        if plan.needs_pipeline:
+            raise HTTPException(status_code=400, detail="Выберите воронку реализации под продукт")
+        # Стадия не относится к услуге сделки — отказ, и мастеру тоже: это не требование,
+        # которое можно обойти с причиной, а промах выбора. Карточка подчиняется правилам —
+        # решение владельца 24.09.2026, «чтобы привыкали ответственные» (аудит, 3.M1).
+        if plan.not_applicable:
+            raise HTTPException(status_code=400, detail=stage_move.refusal_text(plan))
 
     # Требования цели. Обход разрешён мастеру и ТОЛЬКО с причиной: иначе «в обход» стало
     # бы неотличимо от «правило не сработало», и разбирать было бы нечего.
-    override = bool(plan.blockers) and master and bool((payload.override_reason or "").strip())
+    override = admin_force or (bool(plan.blockers) and master and bool(reason))
     if plan.blockers and not override:
         detail = stage_move.refusal_text(plan)
         if master:
@@ -2834,12 +2870,15 @@ def move_deal(
     prev = plan.current
     stage_move.apply_move(
         db, deal, target, current_user, catalog=cat, force=override,
+        mark=stage_move.ADMIN_MARK if admin_force else stage_move.OVERRIDE_MARK,
         reason=(payload.override_reason or payload.comment or ""))
     # Уведомление шлёт сама `apply_move` — одна точка на все пути движения.
     db.commit()
 
     label = f"{prev.name if prev else '—'} → {target.name}"
-    if override:
+    if admin_force:
+        label += f" (ПРИНУДИТЕЛЬНО, АДМИН: {reason}; мешало: {admin_why})"
+    elif override:
         label += f" (В ОБХОД ТРЕБОВАНИЙ: {payload.override_reason})"
     elif payload.override_reason:
         label += f" (оверрайд: {payload.override_reason})"

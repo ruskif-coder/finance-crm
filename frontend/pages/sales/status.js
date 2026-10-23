@@ -3,6 +3,7 @@
 // в панели «В реестр запишется» и уходят по «Сохранить»; встречи, комментарии и дата статуса сохраняются сразу.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Head from 'next/head'
+import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
 import Navbar, { can as canDo } from '@/components/Navbar'
 import { PortalPopover } from '@/components/salesTableKit'
@@ -69,6 +70,9 @@ export default function SalesStatusPage() {
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
   const [mayEdit, setMayEdit] = useState(false)
+  // Ссылка из будильника ведёт сюда с ?find=<клиент> — строка сразу находится поиском (23.10.2026)
+  const router = useRouter()
+  useEffect(() => { if (router.isReady && router.query.find) set({ search: String(router.query.find) }) }, [router.isReady, router.query.find]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setMayEdit(canDo('sales_status', 'edit')) }, [])
 
   const flash = useCallback((t) => { setToast(t); setTimeout(() => setToast(''), 2400) }, [])
@@ -170,6 +174,16 @@ export default function SalesStatusPage() {
         .then(() => flash(field.startsWith('meet') ? 'Встреча сохранена' : 'Комментарий сохранён'))
         .catch(e => flash(e.response?.data?.detail || 'Не сохранилось'))
     },
+    remind: (body) => {
+      api.put('/sales-status/reminder', body, auth())
+        .then(() => { flash(`Будильник на ${body.remind_on.slice(8, 10)}.${body.remind_on.slice(5, 7)} — придёт в 09:00 в Telegram и на почту`); load() })
+        .catch(e => flash(e.response?.data?.detail || 'Будильник не поставился'))
+    },
+    unremind: (id) => {
+      api.delete(`/sales-status/reminder/${id}`, auth())
+        .then(() => { flash('Будильник снят'); load() })
+        .catch(e => flash(e.response?.data?.detail || 'Будильник не снялся'))
+    },
     date: (d, iso) => {
       api.put(`/sales-status/deal/${d.id}/date`, { date: iso }, auth())
         .then(() => setData(dd => ({ ...dd, deals: dd.deals.map(x => (x.id === d.id ? { ...x, status_date: iso, status_date_kind: 'manual' } : x)) })))
@@ -234,7 +248,7 @@ export default function SalesStatusPage() {
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><span style={{ padding: '1px 5px', background: 'var(--income-tint)', border: '1px solid var(--income-border)', borderRadius: 5, fontFamily: MONO, fontSize: 9, color: 'var(--income-fg)' }}>🔒</span>запущен</span>
             </span>
           </div>
-          {data ? <Matrix months={months} deals={inWindow} notes={notes} leads={leads} directory={data.directory || []}
+          {data ? <Matrix months={months} deals={inWindow} notes={notes} leads={leads} directory={data.directory || []} reminders={data.reminders || []}
               showDirectory={!st.hideEmpty && !st.sales && !st.account} search={st.search} st={st} set={set} can={can} act={act} />
             : !err && <div style={{ padding: 40, color: 'var(--text-muted)', fontSize: 13 }}>Загрузка…</div>}
         </div>

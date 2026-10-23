@@ -3,6 +3,7 @@ import { Z } from '@/components/salesTableKit'
 import api, { auth } from '../../lib/http'
 import { overlayClose } from '@/lib/overlay'
 import StageRequirements from './StageRequirements'
+import { isAdmin as isAdminFn } from '@/lib/auth'
 
 // Диалог движения сделки по нашему каталогу (E2). Одна кнопка → адаптивный диалог:
 // дефолт «следующая стадия», перепрыгнуть или уйти в терминал — из того же списка.
@@ -75,6 +76,9 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
   // и всё равно повторяла бэкенд своими словами. Теперь требования приходят готовым
   // списком из `move-preview`: один источник и одна формулировка на экране и в отказе.
   const cur = deal.our_stage
+  // Админу в карточке — все стадии: он двигает куда хочет (владелец 23.10.2026); остальным — следующая и срыв.
+  const [admin, setAdmin] = useState(false)
+  useEffect(() => { setAdmin(isAdminFn()) }, [])
   // Срыв — терминал СВОЕГО этапа (владелец 14.10.2026): из Песочницы «Сделка не случилась», с реализации «Сделка сорвалась».
   // В этапе без терминала срыва (ДО) срыв из карточки не предлагается.
   const curPhase = cur ? phases.find(ph => (ph.stages || []).some(s => s.id === cur.id)) : null
@@ -120,8 +124,10 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
   }, [selStageId, selFunnelId, deal.id])
 
   const blocking = (req?.blocking || [])
-  const locked = blocking.length > 0
-  const canPass = !locked || (req?.can_override && override.trim())
+  // Админ проводит мимо всех запретов — срыв чужого этапа, воронка, услуга, требования — с причиной (владелец 23.10.2026)
+  const forced = !!req?.admin_force
+  const locked = blocking.length > 0 || forced
+  const canPass = !locked || ((req?.can_override || forced) && override.trim())
 
   const move = async () => {
     if (!comment.trim()) { setErr('Введите комментарий'); return }
@@ -159,7 +165,7 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
             <option value="">— выберите стадию —</option>
             {phases.map(ph => (
               <optgroup key={ph.id} label={ph.name}>
-                {ph.stages.filter(s => !onCard || (lostOfPhase && s.id === lostOfPhase.id) || !deal.our_next_stage || s.id === deal.our_next_stage.id).flatMap(s => {
+                {ph.stages.filter(s => !onCard || admin || (lostOfPhase && s.id === lostOfPhase.id) || !deal.our_next_stage || s.id === deal.our_next_stage.id).flatMap(s => {
                   const mark = `${cur && s.id === cur.id ? ' (текущая)' : ''}${s.is_terminal ? ' ⛔' : ''}`
                     + `${deal.our_next_stage && s.id === deal.our_next_stage.id ? ' → следующая' : ''}`
                   // Реализационная стадия существует в каждой продуктовой воронке —
@@ -228,14 +234,20 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
 
         {/* Обход — только мастеру и только с причиной. Она уйдёт в историю движения
             отдельной пометкой: «в обход требований» должно быть видно потом. */}
-        {locked && req?.can_override && (
+        {forced && (
+          <div style={{ marginBottom: 10, borderRadius: 10, padding: '10px 12px', background: 'var(--danger-tint)',
+            border: '1px solid var(--danger-border)', color: 'var(--text-primary)', fontSize: 13, lineHeight: 1.45 }}>
+            Принудительно, как админ: {req.admin_force}
+          </div>
+        )}
+        {locked && (req?.can_override || forced) && (
           <div style={{ marginBottom: 14 }}>
-            <div style={lbl}>Причина обхода требований*</div>
+            <div style={lbl}>{forced ? 'Причина принудительного переноса*' : 'Причина обхода требований*'}</div>
             <input value={override} onChange={e => setOverride(e.target.value)}
               placeholder="почему двигаем, не выполнив" style={inp} />
           </div>
         )}
-        {locked && !req?.can_override && (
+        {locked && !req?.can_override && !forced && (
           <div style={{ marginBottom: 14, fontSize: 12.5, color: 'var(--text-muted)' }}>
             Провести сделку мимо требований может только мастер.
           </div>
@@ -254,7 +266,7 @@ export default function MoveDealDialog({ deal, onClose, onMoved, toStageKey, toL
             const off = busy || !selStageId || !canPass
             return (
               <button onClick={move} disabled={off} style={{ padding: '9px 20px', borderRadius: 10, border: 'none', background: locked ? 'var(--danger)' : 'var(--accent)', color: 'var(--on-accent)', cursor: off ? 'default' : 'pointer', fontSize: 14, fontWeight: 700, opacity: off ? 0.5 : 1 }}>
-                {busy ? 'Двигаю…' : (locked ? 'Двинуть в обход' : 'Двинуть')}
+                {busy ? 'Двигаю…' : (forced ? 'Двинуть принудительно' : locked ? 'Двинуть в обход' : 'Двинуть')}
               </button>
             )
           })()}

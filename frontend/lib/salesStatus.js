@@ -18,6 +18,8 @@ export const STAGE_DOT = {
   closing: 'var(--income)', closing_fact: 'var(--income)', archive: 'var(--income)',
 }
 
+// Двойник `backend/app/sales/probability.effective` — нужен клиенту, чтобы колонка менялась при переносе пина ДО «Сохранить».
+// Правило менять в обоих местах вместе: в работе — факт, светофор задан — он, не задан — Бронь средняя, остальное низкая.
 export function colOf(d) {
   if (d.lost) return null
   if (d.locked) return 'fact'

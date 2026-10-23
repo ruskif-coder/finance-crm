@@ -49,9 +49,11 @@ PLAN = {
                        "prio_goal_reached": ["app"],
                        **{k: ["app", "digest"] for k in ("master_deal_ready", "master_ds_created", "master_closed")},
                        **{k: ["app", "tg"] for k in ("recon_overdue", "master_scans_overdue")}},
-    "sales":          {k: ["app"] for k in ("mp_ready",)},
+    # Будильник «Статусов продаж» (23.10.2026) — человек ставит его себе сам, поэтому сразу во все три канала.
+    "sales":          {**{k: ["app"] for k in ("mp_ready",)}, "sales_status_reminder": ["app", "tg", "mail"]},
     "fin":            {k: ["app", "digest"] for k in ("deal_sent_to_do", "master_wait_1c")},
     "admin":          {**{k: ["app"] for k in ("mp_ready", "creative_erid_failed")},
+                       "sales_status_reminder": ["app", "tg", "mail"],
                        # Поломка фонового задания — срочно (владелец 27.09.2026): крон
                        # ломается ночью, панель увидят только утром.
                        **{k: ["app", "tg", "mail"] for k in ("cron_erid_auto_failed",

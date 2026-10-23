@@ -16,7 +16,9 @@ const ASK = {
 /** Главная кнопка сделки — одна: действие следующей стадии (владелец 14.10.2026). Через стадию, назад, «сорвалась» — мастер из реестра. */
 const GREEN = { height: 38, border: 'none', background: 'var(--income)', color: 'var(--on-accent)', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', fontFamily: UI }
 
-export default function AccountFlowButton({ dealId, stageId, onDone, nextLabel, nextTitle, onNext, onLost, lostLabel }) {
+// onAny — «Сменить стадию» для админа: любая стадия мимо запретов, с причиной (владелец 23.10.2026). Нужна и там, где
+// следующей стадии нет (2T7US3 на последней «Оплате» не двигалась никак).
+export default function AccountFlowButton({ dealId, stageId, onDone, nextLabel, nextTitle, onNext, onLost, lostLabel, onAny }) {
   const [action, setAction] = useState(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -44,6 +46,11 @@ export default function AccountFlowButton({ dealId, stageId, onDone, nextLabel, 
           style={{ ...GREEN, borderRadius: 10, padding: '0 18px', cursor: busy ? 'wait' : 'pointer' }}>
           {busy ? 'Перевожу…' : label}
         </button>
+      )}
+      {!!onAny && (
+        <button onClick={onAny} title="Админ: любая стадия, мимо запретов — с причиной"
+          style={{ height: 38, padding: '0 14px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)',
+            color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Сменить стадию</button>
       )}
       {/* Срыв — красный квадрат с ✕ после основной кнопки; что именно («не случилась» / «сорвалась») — в подсказке (владелец 14.10.2026). */}
       {!!onLost && !!lostLabel && (

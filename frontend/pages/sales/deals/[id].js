@@ -1234,6 +1234,7 @@ export default function DealCard() {
                   nextLabel={!isLost ? nextStageVerb(d.our_next_stage) : null}
                   nextTitle={d.our_next_stage ? `Перевести в «${d.our_next_stage.name}»` : ''}
                   onNext={() => setMoveOpen(true)} onLost={!isLost ? () => setMoveOpen('lost') : null}
+                  onAny={isAdmin ? () => setMoveOpen('any') : null}
                   lostLabel={(() => {   // срыв — терминал своего этапа: Песочница → «не случилась», реализация → «сорвалась», ДО — нет
                     const ph = phases.find(p => (p.stages || []).some(s => s.id === (d.our_stage && d.our_stage.id)))
                     const lost = ph && (ph.stages || []).find(s => s.is_lost)

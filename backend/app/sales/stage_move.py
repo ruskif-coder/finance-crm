@@ -38,6 +38,9 @@ from app.sales.models import SalesDealStageHistory, SalesStageCheck
 
 # Пометка в истории движения, по которой обход отличается от обычного перехода.
 OVERRIDE_MARK = "в обход требований"
+# Админ двигает куда хочет — мимо ВСЕХ запретов, не только требований (владелец 23.10.2026, пример 2T7US3: старая сделка
+# на «Оплате» не уходила ни в срыв, ни назад в реализацию без воронки). Обход по-прежнему именован: только с причиной.
+ADMIN_MARK = "принудительно (админ)"
 
 
 @dataclass
@@ -157,7 +160,7 @@ def _volumes_line(db, deal) -> list:
 
 
 def apply_move(db, deal, target, user, *, reason: str, catalog: Optional[Catalog] = None,
-               force: bool = False) -> dict:
+               force: bool = False, mark: str = OVERRIDE_MARK) -> dict:
     """Переводит сделку. Возвращает {moved, from_stage, to_stage, overridden}.
 
     НЕ решает, можно ли: это дело вызывающего — у диалога, массовой правки и автоматики
@@ -176,10 +179,14 @@ def apply_move(db, deal, target, user, *, reason: str, catalog: Optional[Catalog
         return {"moved": False, "from_stage": prev, "to_stage": target, "overridden": False}
 
     deal.our_stage_id = target.id
+    # В работе — «факт» в базе (владелец 23.10.2026): светофор дашборда и колонка «Статусов продаж» не расходятся.
+    from app.sales import probability
+    if probability.in_work(getattr(target, "stage_key", None)):
+        deal.probability_color = probability.FACT
     _reflect_stage_binding(db, deal, target)
     note = (reason or "").strip() or "без причины"
     if force:
-        note = f"{OVERRIDE_MARK}: {note}"
+        note = f"{mark}: {note}"
     db.add(SalesDealStageHistory(deal_id=deal.id, from_stage_id=cur_id,
                                  to_stage_id=target.id,
                                  user_id=getattr(user, "id", None), reason=note))
@@ -246,6 +253,23 @@ def refusal_text(plan: Plan) -> str:
                 bit += f" и ещё {len(ln.result.blockers) - 5}"
         parts.append(bit)
     return "Нельзя перейти в «%s» — не выполнено: %s" % (plan.target.name, "; ".join(parts))
+
+
+def is_admin(user) -> bool:
+    role = getattr(user, "role", None)
+    return bool(role and role.key == "admin")
+
+
+def admin_obstacles(guard: Optional[str], plan: Plan) -> Optional[str]:
+    """Что помешало бы переводу, одной строкой, — админ проводит мимо всего этого с причиной.
+    None — мешать нечему, перевод обычный."""
+    if guard:
+        return guard
+    if plan.not_applicable or plan.blockers:
+        return refusal_text(plan)
+    if plan.needs_pipeline:
+        return "Не выбрана воронка реализации"
+    return None
 
 
 def is_master(user) -> bool:

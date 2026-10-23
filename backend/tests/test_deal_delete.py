@@ -8,6 +8,10 @@
 
 Решение владельца 23.09.2026: удаляет ТОЛЬКО АДМИН. И даже он не удаляет сделку, к которой
 уже привязана работа, — сначала её надо отвязать, чтобы удаление было осознанным.
+
+23.10.2026 владелец изменил: админ удаляет сделку со всей НАШЕЙ цепочкой; отказ — только если след
+ушёл наружу (DSP, ОРД, кабинет площадки, мастер-сделка), см. `test_admin_force_deal.py`. Удаление
+воронки живёт по прежнему правилу (`deal_delete.holders`).
 """
 import pytest
 from fastapi import HTTPException
@@ -54,14 +58,16 @@ def test_only_admin_may_delete_deals():
     assert require_admin in deps, "удаление сделок снова открыто не только админу"
 
 
-def test_deal_with_a_media_plan_is_not_deleted(db, admin):
+def test_deal_with_a_media_plan_goes_with_its_plan(db, admin):
+    """Было (23.09.2026): сделка с медиапланом не удаляется. Владелец 23.10.2026 отменил: админ удаляет со всей нашей
+    цепочкой, медиаплан не остаётся сиротой. Запрет остался только на внешний след — `test_admin_force_deal.py`."""
     d = _bare_deal(db, tag="mp")
-    db.add(SalesMediaPlan(deal_id=d.id, version=1, status="draft", title="прибор"))
+    plan = SalesMediaPlan(deal_id=d.id, version=1, status="draft", title="прибор")
+    db.add(plan)
     db.flush()
-    with pytest.raises(HTTPException) as e:
-        sd.bulk_delete_deals(sd.BulkDelete(deal_ids=[d.id]), db=db, current_user=admin)
-    assert e.value.status_code == 409 and "медиаплан" in e.value.detail
-    assert db.query(SalesDeal).filter(SalesDeal.id == d.id).count() == 1
+    sd.bulk_delete_deals(sd.BulkDelete(deal_ids=[d.id]), db=db, current_user=admin)
+    assert db.query(SalesDeal).filter(SalesDeal.id == d.id).count() == 0
+    assert db.query(SalesMediaPlan).filter(SalesMediaPlan.deal_id == d.id).count() == 0
 
 
 def test_empty_deal_with_a_comment_is_deleted_without_500(db, admin):

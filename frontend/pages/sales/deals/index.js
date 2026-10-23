@@ -9,6 +9,8 @@ import DealBriefCell from '@/components/DealBriefCell'
 import MoveDealDialog from '@/components/sales/MoveDealDialog'
 import ValuePopover from '@/components/ValuePopover'
 import api, { auth } from '@/lib/api'
+import { PROB_COLORS, PROB_ORDER, PROB_LABEL } from '@/lib/probability'
+import ProbDot, { saveProbability } from '@/components/sales/ProbDot'
 import { buildTitle, productWithSurface, separatePriceSet, surfaceTag, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
 import { fmtMoney, fmtFull, fmtDate, mln } from '@/lib/salesFormat'
 import { exportTable } from '@/lib/dealsExport.mjs'
@@ -31,9 +33,6 @@ const REG_FILTER_DROPS = FILTER_DROPS.flatMap(fd => fd[0] === 'account_manager_i
 
 // Описание колонок: ширина + подпись. brief/gen — фиксированные (не скрываются).
 // Светофор вероятности сделки (наша ручная разметка): цвет лампы по вероятности.
-const PROB_COLORS = { grey: 'var(--muted)', orange: 'var(--warning)', green: 'var(--success)' }
-const PROB_ORDER = ['grey', 'orange', 'green']
-const PROB_LABEL = { grey: 'малая', orange: 'средняя', green: 'высокая' }
 
 // Колонки — из общего шаблона salesTableKit (DEAL_COLS): реестр и дашборд
 // настраиваются как один внешний шаблон. Служебный префикс (prob/sel/brief) —
@@ -72,7 +71,7 @@ export default function SalesRegistry2() {
   // массовое редактирование + чекбоксы
   const [selDeals, setSelDeals] = useState({})   // { dealId: true }
   const [lastIdx, setLastIdx] = useState(null)   // якорь Shift-выделения
-  const [bulkForm, setBulkForm] = useState({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', our_stage_id: '', period: '' })
+  const [bulkForm, setBulkForm] = useState({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', our_stage_id: '', period: '', override_reason: '' })
   const [saving, setSaving] = useState(false)
   // Итог массовой ПРАВКИ. Массовой синхронизации с Битриксом (и её итога `bulkResult`)
   // больше нет — 03.10.2026, Битрикс больше не источник.
@@ -274,11 +273,14 @@ export default function SalesRegistry2() {
     const body = { deal_ids: selDealIds }; let any = false
     const STR = ['product', 'period']
     for (const [k, v] of Object.entries(bulkForm)) {
+      if (k === 'override_reason') continue
       if (v === '__clear__') { body[k] = null; any = true }
       else if (v !== '' && v !== null) { body[k] = STR.includes(k) ? v : Number(v); any = true }
     }
     // Стадия — только простое имя: срезаем возможный составной ключ "воронка\x1fстадия".
     if (!any) { setErr('Заполните хотя бы одно поле для изменения'); return }
+    // Админ переводит стадию мимо всех запретов — только с причиной (владелец 23.10.2026); без неё запертые пропускаются.
+    if (body.our_stage_id && bulkForm.override_reason.trim()) body.override_reason = bulkForm.override_reason.trim()
     setSaving(true); setErr('')
     try {
       const r = await api.post('/sales/deals/bulk-update', body, auth())
@@ -286,11 +288,11 @@ export default function SalesRegistry2() {
       // может не пройти требования, и человеку нужно увидеть ЧТО именно не выполнено и
       // где чинится, а не одну строку в системном окне без подробностей.
       setEditResult(r.data)
-      setSelDeals({}); setBulkForm({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', our_stage_id: '', period: '' }); load(offset)
+      setSelDeals({}); setBulkForm({ advertiser_id: '', agency_id: '', sales_rep_id: '', account_manager_id: '', product: '', our_stage_id: '', period: '', override_reason: '' }); load(offset)
     } catch (e) { setErr(e.response?.data?.detail || 'Не удалось применить') } finally { setSaving(false) }
   }
   const deleteBulk = async () => {
-    if (!window.confirm(`Удалить ${selDealIds.length} сделок? Действие необратимо.`)) return
+    if (!window.confirm(`Удалить ${selDealIds.length} сделок вместе со всем, что к ним привязано у нас (медиапланы, РК, сборка, сверка, файлы)? Действие необратимо. Если что-то уже ушло наружу — DSP, ОРД, кабинет площадки, мастер-сделка — не удалится ничего.`)) return
     setSaving(true); setErr('')
     try { const r = await api.post('/sales/deals/bulk-delete', { deal_ids: selDealIds }, auth()); alert(r.data.message); setSelDeals({}); load(offset) }
     catch (e) { setErr(e.response?.data?.detail || 'Не удалось удалить') } finally { setSaving(false) }
@@ -349,10 +351,7 @@ export default function SalesRegistry2() {
   const saveTitle = async (id, title) => { try { await api.patch(`/sales/deals/${id}`, { title }, auth()); setDeals(prev => prev.map(x => x.id === id ? { ...x, title } : x)) } catch (e) { alert('Не удалось сохранить название') } }
   const setProbability = async (id, color) => {
     setProbPick(null)
-    const prev = deals.find(x => x.id === id)?.probability_color ?? null
-    setDeals(ps => ps.map(x => x.id === id ? { ...x, probability_color: color } : x))
-    try { await api.post(`/sales/deals/${id}/probability`, { color }, auth()) }
-    catch (e) { setDeals(ps => ps.map(x => x.id === id ? { ...x, probability_color: prev } : x)); alert('Не удалось сохранить вероятность') }
+    await saveProbability(id, color, deals, setDeals)
   }
 
   // Скачивание сохранённого файла сделки — через общую точку (lib/download):
@@ -375,12 +374,7 @@ export default function SalesRegistry2() {
     const none = !FILL[d.money_layer]; const n = FILL[d.money_layer] || 0
     switch (key) {
       case 'prob': {
-        const col = PROB_COLORS[d.probability_color]
-        return (
-          <button onClick={e => { e.stopPropagation(); if (canEdit) setProbPick({ dealId: d.id, rect: e.currentTarget.getBoundingClientRect() }) }}
-            title={d.probability_color ? `Вероятность: ${PROB_LABEL[d.probability_color]}` : 'Вероятность не задана'}
-            style={{ display: 'inline-block', width: 14, height: 14, borderRadius: '50%', border: col ? 'none' : '1.5px solid var(--border-card)', background: col || 'transparent', cursor: canEdit ? 'pointer' : 'default', padding: 0 }} />
-        )
+        return <ProbDot d={d} canEdit={canEdit} onPick={rect => setProbPick({ dealId: d.id, rect })} />
       }
       case 'sel': return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
@@ -686,6 +680,8 @@ export default function SalesRegistry2() {
                       const bsel = (k, opt, ph, optsOverride) => <select style={{ ...bulkInp, ...W }} value={bulkForm[k]} onChange={e => setBulkForm({ ...bulkForm, [k]: e.target.value })}><option value="">{ph}</option>{(optsOverride || fopts[opt] || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
                       return <>
                         {bsel('our_stage_id', 'our_stage_id', 'стадия —', stageEditOpts)}
+                        {isAdmin && bulkForm.our_stage_id && <input style={{ ...bulkInp, flexShrink: 0, width: 220 }} value={bulkForm.override_reason}
+                          placeholder="причина — принудительно, админ" onChange={e => setBulkForm({ ...bulkForm, override_reason: e.target.value })} />}
                         {bsel('product', 'product', 'услуга —', productOpts)}
                         <input type="month" style={{ ...bulkInp, flexShrink: 0, width: 120 }} value={bulkForm.period} onChange={e => setBulkForm({ ...bulkForm, period: e.target.value })} />
                         {bsel('advertiser_id', 'advertiser_id', 'рекл. —')}

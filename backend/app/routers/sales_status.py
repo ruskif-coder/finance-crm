@@ -6,13 +6,14 @@
 низкая); сделки после Брони стоят в «факте» и заперты. Своё здесь — встречи и комментарии на бренд (`sales_status_notes`)
 и ручная дата статуса сделки. Перенос пина меняет период и светофор сделки — пачкой, по «Сохранить» (`/apply`).
 Новые сделки создаются обычным путём (`POST /sales/deals`). Все суммы — без НДС (`amount`)."""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from datetime import date as Day   # поле `date` в DateIn иначе перекрывает тип
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.audit import log_action
@@ -21,15 +22,13 @@ from app.models import User
 from app.permissions import require_permission
 from app.sales.models import SalesDeal
 from app.sales.scope import own_rep_ids_or_all
-from app.sales.status_models import MEETINGS, SalesStatusNote
+from app.sales.probability import IN_WORK as LOCKED
+from app.sales.status_reminders import row_label as _row_label
+from app.sales.status_models import MEETINGS, SalesStatusNote, SalesStatusReminder
 
 router = APIRouter()
 VIEW = require_permission("sales_status", "view")
 EDIT = require_permission("sales_status", "edit")
-
-# После Брони проект запущен: сделка — в «факте» и не двигается (владелец 21.10.2026).
-LOCKED = ("launch_prep", "launch", "closing", "closing_fact", "archive")
-LIGHTS = ("green", "orange", "grey")
 
 
 def _month(s: str) -> date:
@@ -74,6 +73,7 @@ _DEALS = text("""
            d.brand_id, b.name AS brand, coalesce(nullif(g.short_name, ''), g.name) AS agency,
            coalesce(sv.name, d.product) AS service, d.sales_rep_id, r.name AS sales, d.account_manager_id, ac.name AS account,
            s.name AS stage, s.stage_key, coalesce(s.is_lost, false) AS lost,
+           d.realization_pipeline_id, d.service_id,
            d.status_date_manual, (SELECT max(h.at) FROM sales_deal_stage_history h WHERE h.deal_id = d.id) AS stage_at,
            d.date_modify
       FROM sales_deals d
@@ -120,6 +120,10 @@ def matrix(frm: str, to: str, db: Session = Depends(get_db), user: User = Depend
     # заявкой на МП с примерной суммой, потом сумму даёт медиаплан). Одна функция с реестром — `mp_amounts.eff_net`.
     from app.sales.mp_amounts import mp_amounts_by_deal
     mp = mp_amounts_by_deal(db, [r.id for r in rows])
+    # Реальный старт, опоздание старта и темп к закрытию — пачкой (владелец 23.10.2026, app/sales/status_launch.py)
+    from app.sales import status_launch
+    from app.timez import msk_now
+    launch = status_launch.collect(db, rows, msk_now().date())
     deals = []
     for r in rows:
         deals.append({
@@ -131,7 +135,7 @@ def matrix(frm: str, to: str, db: Session = Depends(get_db), user: User = Depend
             "agency": r.agency, "service": r.service, "sales_rep_id": r.sales_rep_id, "sales": r.sales,
             "account_manager_id": r.account_manager_id, "account": r.account,
             "stage": r.stage, "stage_key": r.stage_key, "lost": bool(r.lost), "locked": r.stage_key in LOCKED,
-            **_status_date(r),
+            **_status_date(r), **launch.get(r.id, {}),
         })
     notes = [_note_out(n) for n in db.query(SalesStatusNote).order_by(SalesStatusNote.id).all()]
     # Названия — для строк «без сделки в окне»: у заметки только id рекламодателя и бренда
@@ -157,6 +161,7 @@ def matrix(frm: str, to: str, db: Session = Depends(get_db), user: User = Depend
         if bid:
             e["brands"].append({"id": bid, "name": bn})
     return {"from": frm, "to": to, "deals": deals, "notes": notes, "directory": list(directory.values()),
+            "reminders": reminders_out(db, user),
             "range": {"min": span[0], "max": span[1]} if span and span[0] else None,
             "can_edit": _can_edit(db, user)}
 
@@ -316,3 +321,75 @@ def apply_moves(data: ApplyIn, db: Session = Depends(get_db), user: User = Depen
     for x in saved:
         log_action(db, user, "sales_status_move", "sales_deal", x["id"], f"{x['code']}: " + "; ".join(x["changes"]))
     return {"saved": saved}
+
+
+# ── Будильник на строку (владелец 23.10.2026) ────────────────────────────────────────────────────────────────────────
+# Себе, на дату: в 09:00 МСК этого дня сканер уведомлений шлёт его в Telegram и на почту (`sales_status_reminder`).
+# Один на строку у каждого: новая дата переписывает старую и снова взводит отправку. Право — просмотр экрана: это
+# напоминание человека самому себе, данных сделок оно не меняет.
+
+def reminders_out(db, user) -> list:
+    rows = (db.query(SalesStatusReminder, User.name).join(User, User.id == SalesStatusReminder.user_id)
+            .filter(SalesStatusReminder.remind_on >= date.today() - timedelta(days=30))  # отработавшие — месяц, дальше не мешают
+            .order_by(SalesStatusReminder.remind_on).all())
+    return [{"id": r.id, "advertiser_id": r.advertiser_id, "brand_id": r.brand_id, "client_name": r.client_name,
+             "remind_on": r.remind_on.isoformat(), "note": r.note, "sent": r.sent_at is not None,
+             "user": name, "mine": r.user_id == user.id} for r, name in rows]
+
+
+class ReminderIn(BaseModel):
+    advertiser_id: Optional[int] = None
+    brand_id: Optional[int] = None
+    client_name: Optional[str] = None
+    remind_on: Day
+    note: Optional[str] = None
+
+
+@router.put("/reminder")
+def set_reminder(data: ReminderIn, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    name = (data.client_name or "").strip()[:300] or None
+    if (data.advertiser_id is None) == (name is None):
+        raise HTTPException(400, "Нужен рекламодатель или название клиента — что-то одно")
+    if data.advertiser_id is not None and not db.execute(
+            text("SELECT 1 FROM sales_advertisers WHERE id = :a"), {"a": data.advertiser_id}).first():
+        raise HTTPException(400, "Рекламодатель не найден")
+    if data.brand_id is not None:
+        ok = db.execute(text("SELECT 1 FROM sales_brands WHERE id = :b AND advertiser_id = :a"),
+                        {"b": data.brand_id, "a": data.advertiser_id}).first()
+        if not ok:
+            raise HTTPException(400, "Бренд не принадлежит рекламодателю")
+    from app.timez import msk_now
+    if data.remind_on < msk_now().date():
+        raise HTTPException(400, "Дата будильника уже прошла — выберите сегодня или позже")
+    note = (data.note or "").strip()[:500] or None
+    key = {"u": user.id, "a": data.advertiser_id or 0, "b": data.brand_id or 0, "c": (name or "").lower()}
+    row = db.execute(text("""SELECT id FROM sales_status_reminders WHERE user_id = :u AND coalesce(advertiser_id, 0) = :a
+                               AND coalesce(brand_id, 0) = :b AND lower(coalesce(client_name, '')) = :c FOR UPDATE"""), key).scalar()
+    r = db.get(SalesStatusReminder, row) if row else SalesStatusReminder(
+        user_id=user.id, advertiser_id=data.advertiser_id, brand_id=data.brand_id, client_name=name)
+    r.remind_on, r.note, r.sent_at, r.updated_at = data.remind_on, note, None, datetime.utcnow()
+    if not row:
+        db.add(r)
+    try:
+        db.commit()
+    except IntegrityError:   # двойной клик: второй запрос вставил ту же строку раньше — не 500 (ревью 23.10.2026)
+        db.rollback()
+        raise HTTPException(409, "Будильник уже ставится — обновите страницу")
+    log_action(db, user, "status_reminder_set", "sales_status_reminder", r.id,
+               f"{_row_label(db, r.advertiser_id, r.brand_id, r.client_name)}: {r.remind_on.strftime('%d.%m.%Y')}"
+               + (f" — {note}" if note else ""))
+    return {"id": r.id, "remind_on": r.remind_on.isoformat(), "note": r.note}
+
+
+@router.delete("/reminder/{rid}")
+def delete_reminder(rid: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Снять можно только свой: чужой будильник — чужое напоминание себе."""
+    r = db.query(SalesStatusReminder).filter(SalesStatusReminder.id == rid, SalesStatusReminder.user_id == user.id).first()
+    if not r:
+        raise HTTPException(404, "Будильник не найден")
+    what = _row_label(db, r.advertiser_id, r.brand_id, r.client_name)
+    db.delete(r)
+    db.commit()
+    log_action(db, user, "status_reminder_off", "sales_status_reminder", rid, what)
+    return {"ok": True}
+

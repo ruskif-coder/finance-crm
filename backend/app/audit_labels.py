@@ -150,6 +150,8 @@ ACTION_LABELS = {
     "sales_status_note": "Статусы продаж: встреча или комментарий",
     "sales_status_date": "Статусы продаж: дата статуса вручную",
     "sales_status_move": "Статусы продаж: перенос сделки (период, светофор)",
+    "status_reminder_set": "Статусы продаж: будильник поставлен",
+    "status_reminder_off": "Статусы продаж: будильник снят",
     "patch_sales_deal": "Сделка изменена",
     "bulk_update_deals": "Массовая правка сделок",
     "bulk_delete_deals": "Сделки удалены",

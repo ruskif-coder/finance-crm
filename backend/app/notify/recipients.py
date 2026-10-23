@@ -200,7 +200,14 @@ def master_collector(db: Session, ctx: dict) -> List[int]:
     return _active(db, [m.created_by]) if m is not None and m.created_by else []
 
 
+def reminder_owner(db: Session, ctx: dict) -> List[int]:
+    """Чей будильник — тому и напоминание («Статусы продаж», владелец 23.10.2026)."""
+    r = ctx.get("reminder")
+    return _active(db, [r.user_id]) if r is not None else []
+
+
 RESOLVERS = {
+    "reminder_owner": reminder_owner,
     "master_collector": master_collector,
     "mp_author": mp_author,
     "responsible": responsible,
@@ -236,10 +243,12 @@ RESOLVER_CTX = {
     "year_plan_owner": "rep_id",        # int или список id SalesRep — владельцы строки
     "master_of_responsible": "deal",    # SalesDeal
     "master_collector": "master",       # MasterDeal
+    "reminder_owner": "reminder",       # SalesStatusReminder
     # "sales_head" и роль/пользователь в получателях контекста не читают вовсе.
 }
 
 RESOLVER_LABELS = {
+    "reminder_owner": "Кто поставил будильник",
     "master_collector": "Кто собирает мастер-сделку",
     "mp_author": "Автор МП",
     "responsible": "Ответственный",

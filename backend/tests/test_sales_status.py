@@ -86,7 +86,7 @@ def test_routes_need_rights():
     from app.main import app
     paths = {r.path: r for r in app.routes if getattr(r, "path", "").startswith("/api/sales-status")}
     assert set(paths) == {"/api/sales-status", "/api/sales-status/note", "/api/sales-status/deal/{deal_id}/date",
-                          "/api/sales-status/apply"}
+                          "/api/sales-status/apply", "/api/sales-status/reminder", "/api/sales-status/reminder/{rid}"}
 
 
 def test_month_end_stays_month_end():

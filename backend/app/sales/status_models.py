@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Модели «Статусов продаж» (миграция backend/migrations/2026-10-22_sales_status.sql, состав согласован с владельцем 22.10.2026)."""
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY
 
 from app.database import Base
@@ -29,4 +29,24 @@ class SalesStatusNote(Base):
     comment_head = Column(Text)
     from_excel = Column(ARRAY(Text), nullable=False, server_default="{}")
     updated_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class SalesStatusReminder(Base):
+    """Будильник на строку «Статусов продаж» (миграция 2026-10-23_sales_status_reminders.sql, владелец 23.10.2026): человек
+    ставит себе дату — в 09:00 МСК этого дня напоминание уходит в Telegram и на почту. Один на строку у каждого."""
+    __tablename__ = "sales_status_reminders"
+    __table_args__ = (
+        CheckConstraint("(advertiser_id IS NOT NULL) <> (client_name IS NOT NULL)", name="ck_ssr_owner"),
+        CheckConstraint("brand_id IS NULL OR advertiser_id IS NOT NULL", name="ck_ssr_brand"),
+    )
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    advertiser_id = Column(Integer, ForeignKey("sales_advertisers.id", ondelete="CASCADE"))
+    brand_id = Column(Integer, ForeignKey("sales_brands.id", ondelete="CASCADE"))
+    client_name = Column(String(300))
+    remind_on = Column(Date, nullable=False)
+    note = Column(Text)
+    sent_at = Column(DateTime)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now())

@@ -48,11 +48,16 @@ VIEW_ONLY_WRITES = {
     ("POST", "/api/launch-prep/set/{set_id}/erid/refresh"):
         "ЗАПИСЬ осознанно: опрос статуса ЕРИД и объявление готового маркера; то же делает крон "
         "каждые 30 минут (решение владельца 07.10.2026)",
+    ("PUT", "/api/sales-status/reminder"):
+        "ЗАПИСЬ осознанно: будильник человек ставит САМ СЕБЕ, сделки и чужие данные не меняет — видит экран, может напомнить "
+        "себе (владелец 23.10.2026)",
+    ("DELETE", "/api/sales-status/reminder/{rid}"): "ЗАПИСЬ осознанно: снять можно только свой будильник (23.10.2026)",
 }
 
 # Ручки из списка, про которые проверяется «в исходнике нет записи в базу»
 WRITES_ON_PURPOSE = {("POST", "/api/launch-prep/set/{set_id}/erid/refresh"),
-                     ("POST", "/api/operations/export/alfa")}
+                     ("POST", "/api/operations/export/alfa"),
+                     ("PUT", "/api/sales-status/reminder"), ("DELETE", "/api/sales-status/reminder/{rid}")}
 NO_DB_WRITE = {k for k in VIEW_ONLY_WRITES if k not in WRITES_ON_PURPOSE}
 
 
