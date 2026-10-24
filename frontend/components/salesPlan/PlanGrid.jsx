@@ -1,6 +1,7 @@
 // Сетка «Плана продаж» (владелец 24.10.2026, docs/ПЛАН_план_продаж.md): общая цель → продажники (+ «без продажника») →
 // услуги по группам (+ «без услуги»). Режим «Выполнение» — одно число в ячейке, плашка % к цели и подсветка; режим «Цели» —
 // поля ввода по месяцам и строки сверки с общей целью. Расчёты — lib/salesPlan.mjs.
+import { Fragment } from 'react'
 import { MONO, UI } from '@/components/salesTableKit'
 import { buckets, cellValue, fmtK, fmtRub, fmtSigned, groupServices, heat, phase, sumCells } from '@/lib/salesPlan.mjs'
 
@@ -115,14 +116,14 @@ export default function PlanGrid({ rows, mode, grain, metric, cur, scope, collap
     )
   }
   const section = (id, title, right, body) => (
-    <>
+    <Fragment key={`sec-${id}`}>
       <tr key={`sec-${id}`} onClick={() => onToggle(id)} style={{ cursor: 'pointer' }}>
         <td style={{ ...stickyName('var(--bg-subtle)'), ...cap }}>{collapsed[id] ? '▸' : '▾'}&nbsp; {title}</td>
         <td colSpan={cols.length + 1} style={{ background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-inner)', textAlign: 'right',
           padding: '0 12px', fontSize: 11.5, fontFamily: UI }}>{right}</td>
       </tr>
       {!collapsed[id] && body}
-    </>
+    </Fragment>
   )
   return (
     <table style={{ borderCollapse: 'separate', borderSpacing: 0, width: '100%', fontFamily: UI }}>
@@ -146,7 +147,7 @@ export default function PlanGrid({ rows, mode, grain, metric, cur, scope, collap
           {!run && checkRows.reps}
         </>)}
         {scope !== 'rep' && groups.length > 0 && section('svc', 'Услуги', checkRows.svcNote, <>
-          {groups.map(g => <>{line(g.sub, { readOnly: true })}{g.rows.map(r => line(r, { sub: true }))}</>)}
+          {groups.map(g => <Fragment key={`g-${g.group}`}>{line(g.sub, { readOnly: true })}{g.rows.map(r => line(r, { sub: true }))}</Fragment>)}
           {noSvc.map(r => line(r))}
           {!run && checkRows.svc}
         </>)}

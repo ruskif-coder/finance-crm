@@ -5,6 +5,7 @@ import Navbar from '@/components/Navbar'
 import api from '@/lib/api'
 import { mln, mlnAuto, grp, pct, niceMax } from '@/lib/salesFormat'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
+import { EMPTY, cellsOf, PixelBar, PixelColumn } from '@/components/charts/PixelBars'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const UI = "'Manrope', system-ui, sans-serif"
@@ -12,7 +13,6 @@ const NO_GROUP = 'Без группы'
 
 // Цвета слоёв денег (v2): факт зелёный, реализуемые жёлтые, планируемые серые, сорванные красные.
 const LC = { fact: 'var(--income)', real: 'var(--dot-current-dz)', plan: 'var(--text-faint)', lost: 'var(--dot-overdue)' }
-const EMPTY = 'var(--border-inner)'
 // Штриховка «неразобранного» — та же, что в ките (`salesTableKit.HATCH`); цвета
 // через токены, иначе она поедет отдельно от палитры.
 const HATCH = 'repeating-linear-gradient(135deg,var(--text-disabled) 0 3px,var(--on-accent) 3px 6px)'
@@ -28,7 +28,6 @@ const defaultRange = () => { const n = new Date(); return { date_from: monthStr(
 
 const plural = (n, f) => { const a = Math.abs(n) % 100, b = a % 10; if (a > 10 && a < 20) return f[2]; if (b > 1 && b < 5) return f[1]; if (b === 1) return f[0]; return f[2] }
 const nDeals = (n) => `${n} ${plural(n, ['сделка', 'сделки', 'сделок'])}`
-const cellsOf = (v, scale, n) => (v > 0 ? Math.max(1, Math.round(v / scale * n)) : 0)
 
 const CARD = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, boxShadow: 'var(--shadow-card)' }
 const monoLbl = { fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.sec }
@@ -226,15 +225,11 @@ export default function Analytics2() {
                             {/* верх */}
                             <div style={{ flex: UP, display: 'flex', alignItems: 'flex-end', borderBottom: '1px solid var(--text-disabled)',
                               backgroundImage: `repeating-linear-gradient(to top, ${C.row} 0 1px, transparent 1px 25%)` }}>
-                              <div style={{ width: '58%', height: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column-reverse', gap: 2, animation: 'a2up .55s cubic-bezier(0.22,1,0.36,1) both', animationDelay: `${i * 0.04}s`, transformOrigin: 'bottom' }}>
-                                {upCells.map((c, j) => <div key={j} style={{ flex: 1, borderRadius: 2, background: c }} />)}
-                              </div>
+                              <PixelColumn cells={upCells} animate delay={i * 0.04} />
                             </div>
                             {/* низ (сорванные) */}
                             <div style={{ flex: DOWN, display: 'flex', alignItems: 'flex-start', paddingTop: 2 }}>
-                              <div style={{ width: '58%', height: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 2, animation: 'a2up .55s cubic-bezier(0.22,1,0.36,1) both', animationDelay: `${i * 0.04}s`, transformOrigin: 'top' }}>
-                                {down.map((c, j) => <div key={j} style={{ flex: 1, borderRadius: 2, background: c }} />)}
-                              </div>
+                              <PixelColumn cells={down} dir="down" animate delay={i * 0.04} />
                             </div>
                             {/* подпись месяца */}
                             <div style={{ height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: MONO, fontSize: 10, color: C.sec }}>{m.name.slice(5)}</div>
@@ -288,9 +283,8 @@ export default function Analytics2() {
                             <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: r.key === 'lost' ? 'var(--danger-fg)' : C.text }}>{mln(r.amount)}</span>
                           </span>
                         </div>
-                        <div style={{ display: 'flex', gap: 2, height: 12, animation: 'a2up .55s both', animationDelay: `${ri * 0.05}s`, transformOrigin: 'left' }}>
-                          {Array.from({ length: 16 }, (_, j) => <div key={j} style={{ flex: 1, borderRadius: 2, background: j < n ? r.color : EMPTY }} />)}
-                        </div>
+                        <PixelBar cells={Array.from({ length: 16 }, (_, j) => (j < n ? r.color : EMPTY))}
+                          style={{ animation: 'a2up .55s both', animationDelay: `${ri * 0.05}s`, transformOrigin: 'left' }} />
                       </div>
                     )
                   })}
@@ -316,7 +310,7 @@ export default function Analytics2() {
                             <span style={{ fontSize: 13, color: C.sec, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
                             <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: C.text }}>{mln(p.total)}</span>
                           </div>
-                          <div style={{ display: 'flex', gap: 2, height: 10 }}>{full.map((c, j) => <div key={j} style={{ flex: 1, borderRadius: 2, background: c }} />)}</div>
+                          <PixelBar cells={full} height={10} />
                         </div>
                       )
                     })}
@@ -355,7 +349,7 @@ export default function Analytics2() {
                       <div key={r.name + i} style={{ display: 'flex', alignItems: 'center', gap: 16, padding: mine ? 8 : '11px 8px', margin: '0 -8px', borderRadius: 10, borderBottom: `1px solid ${C.row}`, background: mine ? 'var(--accent-wash)' : 'transparent' }}>
                         <span style={{ width: 24, textAlign: 'right', fontFamily: MONO, fontSize: 11, color: mine ? 'var(--accent-pale)' : C.faint }}>{r.rest ? '' : i + 1}</span>
                         <span style={{ width: 176, fontSize: 13, fontWeight: mine ? 700 : 600, color: mine ? 'var(--accent-hover)' : (r.rest ? C.sec : C.text), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{none ? 'без группы' : r.name}</span>
-                        <div style={{ flex: 1, display: 'flex', gap: 2, height: 16 }}>{full.map((c, j) => <div key={j} style={{ flex: 1, borderRadius: 2, background: c }} />)}</div>
+                        <PixelBar cells={full} height={16} style={{ flex: 1 }} />
                         <span style={{ width: 78, textAlign: 'right', fontFamily: MONO, fontSize: 13, fontWeight: 700, color: mine ? 'var(--accent-hover)' : C.text }}>{mln(r.fact)}</span>
                         <span style={{ width: 52, textAlign: 'right', fontFamily: MONO, fontSize: 11, color: mine ? 'var(--accent-mid)' : C.sec }}>{r.rest ? '' : pct(share)}</span>
                       </div>

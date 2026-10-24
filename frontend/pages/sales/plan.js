@@ -9,6 +9,7 @@ import { MONO, UI, Seg, Z, LoadErrorScreen, IconBtn, XlsxIcon } from '@/componen
 import PlanGrid, { editKey, editable, layout } from '@/components/salesPlan/PlanGrid'
 import CellPanel from '@/components/salesPlan/CellPanel'
 import ImportPreview from '@/components/salesPlan/ImportPreview'
+import PlanAnalytics from '@/components/salesPlan/PlanAnalytics'
 import { downloadFile } from '@/lib/download'
 import { copyPrev, currentMonth, fmtK, fmtRub, fmtSigned, parseRub, pct, spreadBySeason, spreadEven, sumCells, toDate, typeRub } from '@/lib/salesPlan.mjs'
 import { todayMsk } from '@/lib/dates'
@@ -68,6 +69,8 @@ export default function SalesPlanPage() {
   const [msg, setMsg] = useState('')
   const [mayEdit, setMayEdit] = useState(false)
   const [imp, setImp] = useState(null)        // предпросмотр загрузки из Excel
+  const [weeks, setWeeks] = useState(null)    // прогноз года по неделям — из ночных снимков
+  const [anaOpen, setAnaOpen] = useState(true)
   const fileRef = useRef(null)
   useEffect(() => { setMayEdit(canDo('sales_plan', 'edit')) }, [])
   // Поповер «разложить год» закрывается кликом мимо — как остальные поповеры (data-pop-root)
@@ -83,6 +86,11 @@ export default function SalesPlanPage() {
       .catch(e => setErr(e.response?.data?.detail || 'Не удалось загрузить план продаж'))
   }, [year])
   useEffect(() => { setData(null); setEdits({}); load() }, [load])
+  useEffect(() => {
+    setWeeks(null)
+    api.get('/sales-plan/weeks', { ...auth(), params: { year } }).then(r => setWeeks(r.data.weeks))
+      .catch(e => { setWeeks([]); setMsg(e.response?.data?.detail || 'Не удалось загрузить прогноз по неделям') })
+  }, [year])
   useRefreshOnReturn(load, { enabled: !Object.keys(edits).length })
   // Прошлый год — для «по сезонности» и «как в прошлом году»: только в режиме «Цели»
   useEffect(() => {
@@ -202,6 +210,10 @@ export default function SalesPlanPage() {
 
         {!data && <div style={{ ...box, padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Считаю план…</div>}
         {!!total && <Kpis total={total} cur={cur} year={year} />}
+        {!!total && (
+          <PlanAnalytics open={anaOpen} onToggle={() => setAnaOpen(o => !o)} mode={mode} rows={rows} scope={scope} cur={cur} year={year}
+            weeks={weeks} goalsOfTotal={total.months.map((_, m) => goalOf(total, m))} prevTotal={prevOf(total)} />
+        )}
         {!!total && (
           <div style={box}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid var(--border-inner)', flexWrap: 'wrap' }}>

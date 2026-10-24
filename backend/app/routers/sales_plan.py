@@ -42,6 +42,13 @@ def screen(year: int, db: Session = Depends(get_db), user: User = Depends(VIEW))
     return out
 
 
+@router.get("/weeks")
+def weeks(year: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Прогноз года (общая цель) по неделям — для виджета «Прогноз по неделям»; копится с первого ночного снимка."""
+    from app.timez import msk_now
+    return {"weeks": plan.weekly(db, _year(year), msk_now().date())}
+
+
 @router.get("/cell")
 def cell(year: int, m_from: int, m_to: int, scope: str, key_id: int = 0,
          db: Session = Depends(get_db), user: User = Depends(VIEW)):

@@ -198,6 +198,20 @@ def rows_for(db, year: int, cells: dict, goals: dict, week: dict, own: Optional[
     return rows
 
 
+def weekly(db, year: int, today: date, weeks: int = 12) -> List[dict]:
+    """Прогноз года общей цели по неделям из ночных снимков: на каждую неделю (с понедельника) — последний снимок в ней.
+    → [{week: понедельник, day: день снимка, forecast}] за последние `weeks` недель, старые первыми."""
+    since = today - timedelta(days=7 * weeks)
+    rows = db.execute(text("""
+        SELECT day, sum(forecast) FROM sales_plan_snapshots
+         WHERE year = :y AND scope = 'общий' AND key_id = 0 AND day > :s AND day <= :t
+         GROUP BY day ORDER BY day"""), {"y": year, "s": since, "t": today}).all()
+    by_week: Dict[date, Tuple[date, float]] = {}
+    for day, fc in rows:
+        by_week[day - timedelta(days=day.weekday())] = (day, float(fc))
+    return [{"week": w.isoformat(), "day": d.isoformat(), "forecast": round(fc, 2)} for w, (d, fc) in sorted(by_week.items())]
+
+
 # ── цели ────────────────────────────────────────────────────────────────────
 class TargetItem(BaseModel):
     month: int

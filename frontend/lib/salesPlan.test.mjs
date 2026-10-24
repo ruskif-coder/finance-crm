@@ -71,3 +71,22 @@ test('ввод целей — полные рубли с тройками', asyn
   assert.equal(typeRub('1250,567').replace(/\s/g, ' '), '1 250,56')
   assert.equal(typeRub('абв'), '')
 })
+
+test('аналитика: нарастающий итог, кто держит разрыв, состав прогноза, сезонность, неделя', async () => {
+  const { cumulative, whoHolds, composition, seasonality, weekDelta } = await import('./salesPlan.mjs')
+  const months = Array.from({ length: 12 }, (_, m) => ({ goal: 10, fact: m < 2 ? 10 : m === 2 ? 4 : 0, work: m === 2 ? 2 : 0,
+    green: m >= 3 ? 5 : 0, orange: 0, grey: 0, done: m < 2 ? 10 : m === 2 ? 6 : 0, forecast: m < 2 ? 10 : m === 2 ? 6 : 5, forecast_week_ago: null }))
+  const c = cumulative({ months }, 3)
+  assert.equal(c.behindFrom, 2, 'отстаём с марта: 26 < 30')
+  assert.equal(c.bars[11].extra, 45, 'прогноз сверх выполненного — с текущего месяца')
+  assert.equal(c.short, 120 - (26 + 45))
+  const who = whoHolds([{ name: 'A', months: months.map(x => ({ ...x, goal: 20 })) }, { name: 'B', months }, { name: 'без', months: months.map(x => ({ ...x, goal: null })) }])
+  assert.deepEqual(who.map(x => x.name), ['A', 'B'], 'от худшего; без цели не участвует')
+  const comp = composition({ months: months.map(x => ({ ...x, orange: 2 })) })
+  assert.equal(comp.parts.find(p => p.k === 'orange').v, 12, 'оранжевые с весом 50 %')
+  const s = seasonality([10, 10, 80, 0, 0, 0, 0, 0, 0, 0, 0, 0], [10, 10, 80, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+  assert.equal(s.worst, null, 'совпадает с прошлым годом — перекоса нет')
+  assert.equal(seasonality([50, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [10, 10, 80, 0, 0, 0, 0, 0, 0, 0, 0, 0]).worst.m, 2)
+  assert.equal(weekDelta([{ forecast: 100 }, { forecast: 110 }, { forecast: 120 }, { forecast: 130 }, { forecast: 140 }, { forecast: 150 }]), 40)
+  assert.equal(weekDelta([{ forecast: 1 }]), null)
+})

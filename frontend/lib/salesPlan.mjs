@@ -119,3 +119,55 @@ export function typeRub(s) {
   const grouped = (int || '').replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
   return frac === undefined ? grouped : `${grouped},${frac.slice(0, 2)}`
 }
+
+// ── аналитика (хендофф 24.10.2026, docs/план продаж.zip §5) ─────────────────
+/** Нарастающим итогом по общей цели: накопленный факт и в работе по текущий месяц, дальше — + прогноз; черта — накопленная
+ *  цель. «Отстаём с» — первый прошедший месяц, где выполнено нарастающим < цели нарастающим. */
+export function cumulative(total, cur) {
+  let f = 0, w = 0, x = 0, g = 0, hasGoal = false
+  const bars = total.months.map((c, m) => {
+    f += c.fact; w += c.work
+    if (m >= cur) x += c.forecast - c.done          // прогноз сверх выполненного — с текущего месяца
+    if (c.goal != null) { g += c.goal; hasGoal = true }
+    return { m, fact: f, work: w, extra: x, goal: hasGoal ? g : null }
+  })
+  const past = bars.filter(b => b.m < Math.min(cur, 12))
+  const behind = past.find(b => b.goal != null && b.fact + b.work < b.goal)
+  const last = bars[11]
+  const short = last.goal == null ? null : last.goal - (last.fact + last.work + last.extra)
+  return { bars, behindFrom: behind ? behind.m : null, short }
+}
+
+/** Кто держит разрыв: прогноз года − цель года по строкам разреза (только с целью), от худшего. */
+export function whoHolds(rows) {
+  return rows.map(r => ({ r, s: sumCells(r.months) }))
+    .filter(({ s }) => s.goal != null)
+    .map(({ r, s }) => ({ name: r.name, scope: r.scope, key_id: r.key_id, gap: s.forecast - s.goal }))
+    .sort((a, b) => a.gap - b.gap)
+}
+
+/** Из чего прогноз: доли частей прогноза года (оранжевые — с весом 50 %). */
+export function composition(total) {
+  const s = sumCells(total.months)
+  const parts = [['fact', s.fact], ['work', s.work], ['green', s.green], ['orange', s.orange * 0.5]]
+  const sum = parts.reduce((a, [, v]) => a + v, 0)
+  return { parts: parts.map(([k, v]) => ({ k, v, share: sum ? v / sum : 0 })), forecast: sum, goal: s.goal }
+}
+
+/** Сезонность целей: доля месяца в цели года против доли факта прошлого года; перекос > 2 п. п. помечен. */
+export function seasonality(goals, prevDone) {
+  const gs = goals.reduce((a, v) => a + (v || 0), 0), ps = (prevDone || []).reduce((a, v) => a + (v || 0), 0)
+  const rows = goals.map((v, m) => {
+    const g = gs ? (v || 0) / gs : 0, p = ps ? ((prevDone || [])[m] || 0) / ps : null
+    return { m, goal: g, prev: p, skew: p == null ? false : Math.abs(g - p) > 0.02 }
+  })
+  const worst = rows.filter(r => r.prev != null).sort((a, b) => Math.abs(b.goal - b.prev) - Math.abs(a.goal - a.prev))[0]
+  return { rows, worst: worst && worst.skew ? worst : null, hasGoals: gs > 0, hasPrev: ps > 0 }
+}
+
+/** Прогноз по неделям: изменение за месяц = последняя неделя − четыре недели назад (если столько накопилось). */
+export function weekDelta(weeks) {
+  if (!weeks || weeks.length < 2) return null
+  const last = weeks[weeks.length - 1].forecast, base = weeks[Math.max(0, weeks.length - 5)].forecast
+  return last - base
+}

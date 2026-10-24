@@ -224,3 +224,18 @@ def test_inactive_reps_go_last_or_hide_and_active_sellers_always_show(db):
     rows2 = plan.rows_for(db, YEAR, cells, plan.targets_of(db, YEAR), {}, own=None)
     reps2 = [r for r in rows2 if r["scope"] == "продажник"]
     assert reps2[-1]["key_id"] == inactive and reps2[-1]["inactive"] is True
+
+
+def test_weekly_forecast_takes_one_snapshot_per_week(db):
+    """«Прогноз по неделям» (хендофф 24.10.2026): прогноз года общей цели на каждую неделю — последний снимок недели."""
+    rows = []
+    base = date(YEAR, 3, 2) - timedelta(days=date(YEAR, 3, 2).weekday())   # понедельник
+    for d, fc in ((0, 100), (2, 110), (7, 120), (15, 130)):
+        for m in range(1, 13):
+            rows.append({"d": base + timedelta(days=d), "y": YEAR, "m": m, "fc": fc if m == 1 else 0})
+    db.execute(text("INSERT INTO sales_plan_snapshots (day, year, month, scope, key_id, done, forecast) "
+                    "VALUES (:d, :y, :m, 'общий', 0, 0, :fc)"), rows)
+    db.commit()
+    w = plan.weekly(db, YEAR, base + timedelta(days=16))
+    assert [x["forecast"] for x in w] == [110, 120, 130], "неделя — по последнему снимку в ней"
+    assert w[0]["week"] == base.isoformat()
