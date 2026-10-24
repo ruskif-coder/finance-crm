@@ -153,3 +153,27 @@ def test_boost_window_is_the_days_the_boost_really_acted():
     removed_same_day = {**row, "ended_at": datetime(2026, 10, 8, 15, 0), "ended_reason": "снят"}
     assert A.boost_window(removed_same_day) is None, "снят в день заведения — ни одного полного дня буста"
 
+
+
+def test_creative_uniques_come_from_the_same_model(code):
+    """Уники в разрезе «по креативам» (владелец 24.10.2026) — те же пары «площадка × креатив × день»
+    модели SIMB ID, что и в отчёте клиенту: сумма по площадке не больше уников площадки."""
+    from app.dsp.db import DspSessionLocal
+    db, ddb = SessionLocal(), (DspSessionLocal() if DspSessionLocal else None)
+    try:
+        head = A.head_of(db, code)
+        d = A.build(db, head, dsp_db=ddb)
+        cu = d["creative_uniques"]
+        assert all({"date", "placement_id", "set_no", "uniques"} <= set(x) for x in cu)
+        by_pl = {}
+        for x in d["model_uniques"]:
+            by_pl[x["placement_id"]] = by_pl.get(x["placement_id"], 0) + x["uniques"]
+        cr_pl = {}
+        for x in cu:
+            cr_pl[x["placement_id"]] = cr_pl.get(x["placement_id"], 0) + x["uniques"]
+        for pid, v in cr_pl.items():
+            assert v <= by_pl.get(pid, 0) + 31, pid
+    finally:
+        db.rollback(); db.close()
+        if ddb is not None:
+            ddb.close()

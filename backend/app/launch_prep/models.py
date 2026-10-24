@@ -215,6 +215,9 @@ class LaunchPrepCreativeSet(Base):
     # Кто и когда прикрепил — вместе отвечают на «при каком письме площадка согласовала».
     rights_letter_at = Column(DateTime)
     rights_letter_by = Column(Integer, ForeignKey("users.id"))
+    # Группа в отчёте клиенту (миграция 2026-10-24_creative_report_group.sql, владелец 24.10.2026):
+    # «Аудитория А» и т. п. — строкой, список групп накопительный в пределах сделки. Пусто — без группы.
+    report_group = Column(Text)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime)
 

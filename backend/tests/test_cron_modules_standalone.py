@@ -33,6 +33,7 @@ CRON_MODULES = [
     "app.ad.rk_check",
     "app.dsp.block_stat",
     "app.traffic.site_monitor",
+    "app.sales.plan_snapshot",          # 24.10.2026: снимок «Плана продаж»
 ]
 
 PROBE = (

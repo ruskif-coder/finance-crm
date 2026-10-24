@@ -205,12 +205,17 @@ class Ctx:
                 return []
             return self.db.execute(text("""
                 SELECT pl.id, coalesce(pub.name, 'без имени') AS publisher,
-                       pub.our_code, pl.weborama_pixel, pl.is_direct
+                       pub.our_code, pl.weborama_pixel, pl.is_direct, pl.first_started_at
                   FROM ad_campaign_placement pl
                   LEFT JOIN sales_publishers pub ON pub.id = pl.publisher_id
                  WHERE pl.campaign_id = :c
             """), {"c": self.campaign.id}).mappings().all()
         return self._once("placements", load)
+
+    @property
+    def rk_started(self) -> bool:
+        """РК уже запускалась — у какой-то площадки есть первый запуск (ставится в момент первого «Запустить»)."""
+        return any(p["first_started_at"] for p in self.placements)
 
     @property
     def fact_by_placement(self) -> dict:
@@ -401,6 +406,14 @@ def _ord_initial_contract(c: Ctx) -> Result:
 
 # ── Сбор запуска ─────────────────────────────────────────────────────────────
 
+def _after_start(c: Ctx, r: Result) -> Result:
+    """«РК уже запускалась» (владелец 24.10.2026): аккаунты подгружают креативы и в середине РК, и новый креатив,
+    ещё идущий своим путём, не должен держать сделку перед «В размещении». Счёт остаётся на экране."""
+    if r.state == NOT_YET and getattr(c, "rk_started", False):
+        return _ok(f"{r.detail} — РК уже в эфире, новые креативы перехода не держат")
+    return r
+
+
 @register("creatives_accepted", "Комплект прошёл первичную проверку трафика",
           "Отправьте материал на проверку и дождитесь вердикта трафика")
 def _creatives_accepted(c: Ctx) -> Result:
@@ -412,7 +425,7 @@ def _creatives_accepted(c: Ctx) -> Result:
         return _not_yet("комплектов нет")
     passed = {r["set_id"] for r in c.first_reviews if r["verdict"] == "ок"}
     bad = [f"№{s.no}" for s in c.sets if s.id not in passed]
-    return _fan(len(passed), len(c.sets), bad, "комплектов")
+    return _after_start(c, _fan(len(passed), len(c.sets), bad, "комплектов"))
 
 
 @register("placements_approved", "Площадки согласовали баннер",
@@ -421,7 +434,7 @@ def _placements_approved(c: Ctx) -> Result:
     pairs = c.pairs
     done = [p for p in pairs if p["agreed_at"]]
     bad = sorted({p["publisher"] for p in pairs if not p["agreed_at"]})
-    return _fan(len(done), len(pairs), bad, "пар креатив×площадка")
+    return _after_start(c, _fan(len(done), len(pairs), bad, "пар креатив×площадка"))
 
 
 @register("erid_issued", "ЕРИД выпущен",
@@ -439,7 +452,7 @@ def _erid_issued(c: Ctx) -> Result:
     bad = [f"№{s.no}" + ("" if not (getattr(s, "erid", "") or "").strip()
                          else f" — ждёт регистрации в ЕРИР ({getattr(s, 'ord_status', None) or 'статус не получен'})")
            for s in sets_ if not readiness.erid_ready(s)]
-    return _fan(len(done), len(sets_), bad, "комплектов")
+    return _after_start(c, _fan(len(done), len(sets_), bad, "комплектов"))
 
 
 @register("campaign_ready", "РК заведена и получила идентификатор в DSP",

@@ -640,6 +640,15 @@ export const iconSq = (accent) => ({ display: 'inline-flex', alignItems: 'center
 const sk = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }
 export const DocIcon = () => <svg width="17" height="17" viewBox="0 0 24 24" style={{ ...sk, stroke: 'var(--text-faint)', flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
 export const DownloadIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" style={sk}><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M4 21h16" /></svg>
+// Пиктограмма Excel со стрелкой (24.10.2026, «План продаж»): лист с «X» цвета выручки и стрелка — вниз «выгрузить», вверх
+// «загрузить». Кнопки без текста — подпись в title.
+export const XlsxIcon = ({ dir = 'down', size = 18 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden style={{ flexShrink: 0 }}>
+    <rect x="2.5" y="4" width="13" height="16" rx="2.2" fill="var(--income)" />
+    <path d="M6 8.5l5 7M11 8.5l-5 7" stroke="var(--on-accent)" strokeWidth="1.8" strokeLinecap="round" />
+    <path d={dir === 'down' ? 'M19.5 5v11M16 12.5l3.5 3.5 3.5-3.5' : 'M19.5 16V5M16 8.5L19.5 5 23 8.5'} style={sk} stroke="currentColor" strokeWidth="1.8" />
+  </svg>
+)
 export const EditIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" style={sk}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
 
 // Значение, открывающее ValuePopover: выглядит как ЗНАЧЕНИЕ, а не как поле ввода —
@@ -710,7 +719,7 @@ export const GenTitleBtn = ({ onClick, title = 'Собрать название 
    и вид у них тоже обязан быть один: тот же факт под двумя разными плашками читается
    как два разных факта. */
 export const EXT_TONE = {
-  'есть': 'ok', 'крутится': 'ok', 'заведён': 'wait',
+  'есть': 'ok', 'крутится': 'ok', 'заведён': 'wait', 'частично': 'wait',
   'нет': 'none', 'неизвестно': 'bad', '—': 'off',
 }
 

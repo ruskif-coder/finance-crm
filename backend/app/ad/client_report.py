@@ -4,7 +4,8 @@
 Аккаунт отправляет его клиенту, поэтому здесь только НАШ боевой факт (`stat_sources.COMBAT`:
 DSP и Adfox) — Weborama не показываем, денег нет. Срезы — как в образце владельца: по
 площадкам, по дням, по креативам × площадкам, по креативам × дням; в каждом показы и клики.
-Охват — формулу даст владелец, пока его нет.
+Уники — модель SIMB ID в ОБОИХ комплектах (владелец 24.10.2026: DSP уников не отдаёт); где Adfox
+прислал реальные уники, его доля дня берётся реальной. В комплекте факта клики — реальные.
 
 Период по умолчанию — от старта РК до последней даты, за которую есть данные; можно задать свой.
 
@@ -38,9 +39,13 @@ class Report:
     by_placement: List[dict] = field(default_factory=list)
     by_day: List[dict] = field(default_factory=list)
     creatives: List[dict] = field(default_factory=list)   # [{label, by_placement, by_day}]
+    # группы креативов (владелец 24.10.2026) — блоки того же вида, что креативы
+    groups: List[dict] = field(default_factory=list)
     # площадка → {день: показы} — для листа «По неделям» (владелец 05.10.2026)
     # площадка → {день: [показы, клики]} — для листа «По неделям» (владелец 05.10.2026)
     site_days: Dict[str, Dict[date, list]] = field(default_factory=dict)
+    # (строка креатива, день) → [показы, клики, уники] — уники по креативам для страницы «Отчёт по РК»
+    pair_days: Dict[tuple, list] = field(default_factory=dict)
 
 
 def _row(label, shows, clicks, uniques=None) -> dict:
@@ -102,11 +107,11 @@ def deal_report_ready(db: Session, deal_id: int) -> bool:
 
 
 def _creative_labels(db: Session, campaign_id: int) -> Dict[int, tuple]:
-    """строка креатива → (ключ комплекта, подпись, площадка). Подпись — «Креатив №N · название»."""
+    """строка креатива → (ключ комплекта, подпись, площадка, №, группа). Подпись — «Креатив №N · название»."""
     out = {}
-    for cid, set_id, no, title, domain, pname in db.execute(text("""
+    for cid, set_id, no, title, domain, pname, grp in db.execute(text("""
         SELECT cr.id, coalesce(cr.root_set_id, cs.id), coalesce(cs.no, cr.creative_no),
-               cs.title, p.domain, p.name
+               cs.title, p.domain, p.name, cs.report_group
           FROM ad_campaign_creative cr
           LEFT JOIN launch_prep_pair pr ON pr.id = cr.pair_id
           LEFT JOIN launch_prep_creative_set cs ON cs.id = coalesce(cr.root_set_id, pr.set_id)
@@ -114,38 +119,38 @@ def _creative_labels(db: Session, campaign_id: int) -> Dict[int, tuple]:
           LEFT JOIN sales_publishers p ON p.id = pl.publisher_id
          WHERE cr.campaign_id = :c"""), {"c": campaign_id}).all():
         label = f"Креатив №{no}" + (f" · {title.strip()}" if title and title.strip() else "")
-        out[cid] = (set_id or f"no{no}", label, domain or pname or NO_PLACEMENT, no or 0)
+        out[cid] = (set_id or f"no{no}", label, domain or pname or NO_PLACEMENT, no or 0, grp)
     return out
 
 
 def _dsp_creative_days(db: Session, dsp_db, camp: dict, d1: date, d2: date) -> Dict[tuple, list]:
-    """(строка креатива, день) → [показы, клики] из сырья DSP."""
-    if dsp_db is None or not camp.get("ms_campaign_xxhash"):
-        return {}
-    from app.dsp import stat_store
-    from app.dsp.client import PROD, MsClient
-    cl = MsClient(contour=PROD)
-    hmap = stat_store.hash_map(db, dsp_db, [camp["id"]], contour=cl.contour,
-                               partner=cl.partner_xxhash)
-    out: Dict[tuple, list] = {}
-    for day, cr, shows, clicks in dsp_db.execute(text("""
-        SELECT (ts AT TIME ZONE 'Europe/Moscow')::date, ms_creative_xxhash, shows, clicks
-          FROM dsp_stat_raw
-         WHERE ms_campaign_xxhash = :h AND ms_source_key IS NULL AND ms_creative_xxhash IS NOT NULL
-           AND (ts AT TIME ZONE 'Europe/Moscow')::date BETWEEN :a AND :b"""),
-            {"h": camp["ms_campaign_xxhash"].upper(), "a": d1, "b": d2}).all():
-        rid = hmap.rows.get((cr or "").upper())
-        if rid is None:
-            continue
-        acc = out.setdefault((rid, day), [0, 0])
-        acc[0] += shows or 0
-        acc[1] += clicks or 0
-    return out
+    """(строка креатива, день) → [показы, клики] из сырья DSP — общий источник `ad/creative_fact`."""
+    from app.ad import creative_fact
+    return creative_fact.dsp_days(db, dsp_db, camp["id"], camp.get("ms_campaign_xxhash"), d1, d2)
+
+
+def with_real_uniques(model_un: float, shows: int, adfox_shows: int, adfox_uniques) -> float:
+    """Площадка-день: доля Adfox с РЕАЛЬНЫМИ униками заменяет свою долю модели (пропорционально показам)."""
+    if adfox_uniques is None or not shows or not adfox_shows:
+        return model_un
+    share = min(1.0, adfox_shows / shows)
+    return model_un * (1 - share) + float(adfox_uniques)
+
+
+def report_groups(db: Session, campaign_id: int) -> List[str]:
+    """Группы креативов РК — те, что аккаунт задал креативам сделки (владелец 24.10.2026)."""
+    return [g for (g,) in db.execute(text("""
+        SELECT DISTINCT cs.report_group FROM ad_campaign c JOIN launch_prep_creative_set cs ON cs.deal_id = c.deal_id
+         WHERE c.id = :c AND cs.report_group IS NOT NULL ORDER BY 1"""), {"c": campaign_id}).all()]
 
 
 def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
-          date_to: Optional[date] = None, dsp_db=None, model: bool = False) -> Optional[Report]:
-    """`model=True` — комплект «с поправкой» (SIMB ID, владелец 05.10.2026): показы те же,
+          date_to: Optional[date] = None, dsp_db=None, model: bool = False,
+          group: Optional[str] = None) -> Optional[Report]:
+    """`group` — отчёт по группе креативов (владелец 24.10.2026): только её креативы, площадки и дни
+    считаются из их пар, а не из факта площадки; плана нет — план РК к группе не относится.
+
+    `model=True` — комплект «с поправкой» (SIMB ID, владелец 05.10.2026): показы те же,
     реальные; клики и уники — от коэффициентов пары «площадка × креатив» за день
     (`report_coef`, фиксируются разово). Показы, которые не разнесены по креативам, получают
     базовые коэффициенты без поправки."""
@@ -161,7 +166,9 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
 
     # ── площадки и дни: факт системы ────────────────────────────────────────
     rows = db.execute(text("""
-        SELECT s.date, coalesce(p.domain, p.name) AS site, sum(s.shows) AS shows, sum(s.clicks) AS clicks
+        SELECT s.date, coalesce(p.domain, p.name) AS site, sum(s.shows) AS shows, sum(s.clicks) AS clicks,
+               sum(s.shows) FILTER (WHERE s.source = 'adfox' AND s.uniques IS NOT NULL) AS adfox_shows,
+               sum(s.uniques) FILTER (WHERE s.source = 'adfox') AS adfox_uniques
           FROM ad_campaign_stat s
           LEFT JOIN ad_campaign_placement pl ON pl.id = s.placement_id
           LEFT JOIN sales_publishers p ON p.id = pl.publisher_id
@@ -178,23 +185,27 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
         acc = per.setdefault((cid, day), [0, 0])
         acc[0] += shows or 0
         acc[1] += clicks or 0
-    per = {k: v for k, v in per.items() if k[0] in labels and (v[0] or v[1])}
+    per = {k: v for k, v in per.items() if k[0] in labels and (v[0] or v[1])
+           and (group is None or labels[k[0]][4] == group)}
 
-    # ── модель SIMB ID: клики и уники пары-дня от реальных показов ──────────
-    settings = None
-    if model:
-        from app.ad import report_coef
-        from app.routers.simb_id import load as load_settings
-        settings = load_settings(db)
-        coefs = report_coef.ensure(db, [k for k, v in per.items() if v[0]], settings)
-        for k, v in per.items():
-            d = report_coef.derive(v[0], coefs[k]) if k in coefs else {"uniques": 0, "clicks": 0}
-            per[k] = [v[0], d["clicks"], d["uniques"]]
+    # ── модель SIMB ID: уники (и в модели — клики) пары-дня от реальных показов ──
+    from app.ad import report_coef
+    from app.routers.simb_id import load as load_settings
+    settings = load_settings(db)
+    coefs = report_coef.ensure(db, [k for k, v in per.items() if v[0]], settings)
+    for k, v in per.items():
+        d = report_coef.derive(v[0], coefs[k]) if k in coefs else {"uniques": 0, "clicks": 0}
+        per[k] = [v[0], d["clicks"] if model else v[1], d["uniques"]]
     pair_site_day: Dict[tuple, list] = defaultdict(lambda: [0, 0, 0])
     for (cid, day), v in per.items():
         acc = pair_site_day[(labels[cid][2], day)]
         for i, x in enumerate(v):
             acc[i] += x or 0
+
+    if group is not None:
+        # Группа: площадка-день — только её пары; остатка по базе нет (rest = 0).
+        rows = [{"date": day, "site": site, "shows": v[0], "clicks": v[1], "adfox_shows": 0,
+                 "adfox_uniques": None} for (site, day), v in pair_site_day.items()]
 
     # ── площадки и дни: факт системы (в модели — клики/уники из пар + остаток по базе) ─
     by_site: Dict[str, list] = defaultdict(lambda: [0, 0, 0])
@@ -203,13 +214,11 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
     site_days: Dict[str, Dict[date, list]] = defaultdict(lambda: defaultdict(lambda: [0, 0, 0]))
     for r in rows:
         site, day, sh = r["site"] or NO_PLACEMENT, r["date"], r["shows"] or 0
-        if model:
-            pv = pair_site_day.get((site, day), [0, 0, 0])
-            rest = max(0, sh - pv[0])
-            ck = pv[1] + rest * settings["ctr_base"] / 100
-            un = pv[2] + (rest / settings["freq_base"] if settings["freq_base"] else 0)
-        else:
-            ck, un = r["clicks"] or 0, 0
+        pv = pair_site_day.get((site, day), [0, 0, 0])
+        rest = max(0, sh - pv[0])
+        ck = (pv[1] + rest * settings["ctr_base"] / 100) if model else (r["clicks"] or 0)
+        un = pv[2] + (rest / settings["freq_base"] if settings["freq_base"] else 0)
+        un = with_real_uniques(un, sh, r["adfox_shows"] or 0, r["adfox_uniques"])
         site_days[site][day][0] += sh
         site_days[site][day][1] += ck
         site_days[site][day][2] += un
@@ -218,21 +227,28 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
             acc[1] += ck
             acc[2] += un
 
+    def block(into: dict, key, label, no):
+        return into.setdefault(key, {"label": label, "no": no,
+                                     "site": defaultdict(lambda: [0, 0, 0]),
+                                     "day": defaultdict(lambda: [0, 0, 0]),
+                                     "site_day": defaultdict(lambda: defaultdict(lambda: [0, 0]))})
+
     groups: Dict[object, dict] = {}
+    by_group: Dict[str, dict] = {}
     for (cid, day), v in per.items():
-        key, label, site, no = labels[cid]
-        g = groups.setdefault(key, {"label": label, "no": no,
-                                    "site": defaultdict(lambda: [0, 0, 0]),
-                                    "day": defaultdict(lambda: [0, 0, 0]),
-                                    "site_day": defaultdict(lambda: defaultdict(lambda: [0, 0]))})
-        g["site_day"][site][day][0] += v[0]
-        g["site_day"][site][day][1] += v[1] or 0
-        for acc in (g["site"][site], g["day"][day]):
-            for i in range(3):
-                acc[i] += (v[i] if i < len(v) else 0) or 0
+        key, label, site, no, grp = labels[cid]
+        targets = [block(groups, key, label, no)]
+        if grp and group is None:
+            targets.append(block(by_group, grp, f"Группа «{grp}»", 0))
+        for g in targets:
+            g["site_day"][site][day][0] += v[0]
+            g["site_day"][site][day][1] += v[1] or 0
+            for acc in (g["site"][site], g["day"][day]):
+                for i in range(3):
+                    acc[i] += (v[i] if i < len(v) else 0) or 0
 
     def mk(k, v):
-        return _row(k, v[0], v[1], v[2] if model else None)
+        return _row(k, v[0], v[1], v[2])
 
     def site_rows(m):
         return [mk(k, v) for k, v in sorted(m.items(), key=lambda x: (-x[1][0], x[0]))]
@@ -240,22 +256,25 @@ def build(db: Session, campaign_id: int, date_from: Optional[date] = None,
     def day_rows(m):
         return [mk(k, v) for k, v in sorted(m.items())]
 
+    def out_block(g):
+        return {"label": g["label"], "by_placement": site_rows(g["site"]), "by_day": day_rows(g["day"]),
+                "site_days": {k: dict(v) for k, v in g["site_day"].items()}}
+
     shows = sum(v[0] for v in by_site.values())
     clicks = int(round(sum(v[1] for v in by_site.values())))
-    plan = int(camp["plan_show"] or 0) or None
+    plan = None if group is not None else (int(camp["plan_show"] or 0) or None)
     return Report(
         head={**camp, "period_from": d1, "period_to": d2, "last_data": last,
               # колонки дней — до конца флайта, если период не задан (будущие дни пустые)
               "to_flight_end": date_to is None, "model": model,
-              "days_to": per_["days_to"]},
+              "days_to": per_["days_to"], "group": group},
         totals={"shows": shows, "clicks": clicks,
                 "ctr": round(clicks / shows * 100, 2) if shows else None,
                 "plan": plan, "done_pct": round(shows / plan * 100, 1) if plan else None},
         by_placement=site_rows(by_site),
         by_day=day_rows(by_day),
         site_days={k: dict(v) for k, v in site_days.items()},
-        creatives=[{"label": g["label"], "by_placement": site_rows(g["site"]),
-                    "by_day": day_rows(g["day"]),
-                    "site_days": {k: dict(v) for k, v in g["site_day"].items()}}
-                   for g in sorted(groups.values(), key=lambda g: (g["no"], g["label"]))],
+        pair_days=per,
+        creatives=[out_block(g) for g in sorted(groups.values(), key=lambda g: (g["no"], g["label"]))],
+        groups=[out_block(by_group[k]) for k in sorted(by_group)],
     )

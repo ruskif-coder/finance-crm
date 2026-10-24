@@ -236,3 +236,29 @@ test('будущие дни действующего буста — «нужно
   assert.equal(planFor(ix, [1, 2], [day(10)]), planFor(plain, [1, 2], [day(10)]))
 })
 
+
+test('уники в разрезе по креативам — из пар модели (владелец 24.10.2026)', () => {
+  const d = fixture()
+  d.creative_uniques = [1, 2, 3, 4, 5].flatMap(n => [
+    { date: day(n), placement_id: 1, set_no: 1, uniques: 150 },
+    { date: day(n), placement_id: 1, set_no: 2, uniques: 100 }])
+  d.creative_uniques.push({ date: day(6), placement_id: 1, set_no: 1, uniques: 9999 })   // после среза
+  const ix = indexData(d)
+  const m = tableModel(ix, { slice: 'creative', ids: [1, 2], days: ix.days })
+  assert.ok(m.cols.some(c => c.key === 'uni'), 'колонка «Уники» есть')
+  assert.deepEqual(m.rows.map(r => r.uni), [750, 500])
+  const x = tableModel(ix, { slice: 'cxp', ids: [1, 2], days: ix.days })
+  assert.equal(x.rows.reduce((a, r) => a + r.uni, 0), 1250)
+})
+
+test('разрез «по группам» складывает креативы группы и проваливается в её площадки (владелец 24.10.2026)', () => {
+  const d = fixture()
+  d.creative_days = d.creative_days.map(r => ({ ...r, group: r.set_no === 1 ? 'Аудитория А' : null }))
+  d.creative_uniques = [1, 2, 3, 4, 5].map(n => ({ date: day(n), placement_id: 1, set_no: 1, group: 'Аудитория А', uniques: 150 }))
+  const ix = indexData(d)
+  const m = tableModel(ix, { slice: 'group', ids: [1, 2], days: ix.days })
+  assert.deepEqual(m.rows.map(r => [r.label, r.sets, r.fact, r.clk, r.uni]), [['Аудитория А', '№1', 3000, 15, 750]])
+  const dr = tableModel(ix, { slice: 'group', ids: [1, 2], days: ix.days, drill: { type: 'group', id: 'Аудитория А' } })
+  assert.equal(dr.view, 'placement')
+  assert.deepEqual(dr.rows.map(r => [r.label, r.fact]), [['a.ru', 3000]])
+})

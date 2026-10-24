@@ -5,7 +5,7 @@
 События «по факту» зовутся из точек, где случилось действие; просрочки считает сканер (`rules_*`). Сбой уведомления
 не роняет действие — сверка и пакет важнее письма."""
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 from sqlalchemy import func
@@ -108,7 +108,8 @@ def recon_overdue_hits(db: Session, Hit, fact_days) -> list:
             .filter(SalesDeal.our_stage_id == stage_id, since.c[1] < edge, FinalReconDeal.sent_at.is_(None)).all())
     hits = []
     for d, at in rows:
-        days = (datetime.utcnow() - at).days
+        # `at` — timestamptz (с поясом), utcnow — без: вычитать в одном виде (упало 24.10.2026 на первой просрочке)
+        days = (datetime.utcnow() - (at.astimezone(timezone.utc).replace(tzinfo=None) if at.tzinfo else at)).days
         hits.append(Hit(entity_type="sales_deal", entity_id=d.id, stage="overdue",
                         title=f"{deal_label(d)} — {days} дн. на итоговой сверке", link=f"/sales/deals/{d.code or d.id}",
                         ctx={"deal": d}, code=d.code, payload={"days": days},

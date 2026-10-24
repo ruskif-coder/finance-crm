@@ -388,3 +388,15 @@ def test_prolonged_copy_goes_through_closing_to_layout(prolonged, monkeypatch):
     lay = LY.layout(db, db.get(MasterDeal, sent["master"]["id"]))
     assert lay["total_net"] == pytest.approx(CL.compute(db, copy)["total_net"], abs=0.05)
     assert sent["closing"]["frozen"]
+
+
+def test_prolonged_copy_keeps_report_groups(prolonged):
+    """Группа креатива в отчёте переезжает в копию сделки (владелец 24.10.2026): та же аудитория."""
+    stand, made = prolonged
+    db = stand.db
+    stand.cset.report_group = "Аудитория А"
+    db.commit()
+    out = lp.prolong_deal(stand.deal.id, lp.ProlongIn(period_from='2026-10-01'), db, _ADMIN)
+    made.append(out["id"])
+    copied = db.query(LaunchPrepCreativeSet).filter(LaunchPrepCreativeSet.deal_id == out["id"]).all()
+    assert copied and {s.no: s.report_group for s in copied}[stand.cset.no] == "Аудитория А"

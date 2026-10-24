@@ -24,6 +24,9 @@ from app.dsp.client import MsError
 
 log = logging.getLogger("finance.dsp")
 
+# Порог правки лимита: меньше 1 % и меньше 100 показов — не шлём (владелец 24.10.2026, лимит по факту).
+DRIFT_PCT, DRIFT_MIN = 0.01, 100
+
 
 def sync_limits(db: Session, camp: AdCampaign, client) -> dict:
     """Подтянуть лимиты заведённых креативов РК. Сбой одного не останавливает остальных."""
@@ -44,7 +47,9 @@ def sync_limits(db: Session, camp: AdCampaign, client) -> dict:
             continue
         want = int(want)
         ref = f"cr{cr.id}"
-        if client.last_sent_show_limit(ref) == want:
+        last = client.last_sent_show_limit(ref)
+        # Лимит по факту (24.10.2026) дрожит каждый день; правка сбивает самонастройку DSP — мелочь не шлём.
+        if last is not None and abs(last - want) < max(DRIFT_MIN, want * DRIFT_PCT):
             continue
         try:
             client.creative_edit(cr.ms_creative_xxhash,

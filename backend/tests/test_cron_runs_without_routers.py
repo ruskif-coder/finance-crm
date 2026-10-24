@@ -18,7 +18,7 @@ import sys
 import pytest
 
 CRONS = ["app.notify.scanner", "app.notify.digest", "app.notify.dispatch", "app.notify.lifecycle",
-         "app.notify.outward.digest", "app.mail.flush"]
+         "app.notify.outward.digest", "app.mail.flush", "app.sales.plan_snapshot"]
 ALLOWED = {"auth"}
 
 CODE = ("import sys, runpy, json\nsys.argv = [sys.argv[1], '--dry-run']\n"

@@ -456,7 +456,7 @@ def load(db, deals, today: date) -> Batch:
     if cids:
         for r in db.execute(text("""
             SELECT pl.campaign_id, pl.id, coalesce(pub.name, 'без имени') AS publisher,
-                   pub.our_code, pl.weborama_pixel, pl.is_direct
+                   pub.our_code, pl.weborama_pixel, pl.is_direct, pl.first_started_at
               FROM ad_campaign_placement pl
               LEFT JOIN sales_publishers pub ON pub.id = pl.publisher_id
              WHERE pl.campaign_id = ANY(:c)

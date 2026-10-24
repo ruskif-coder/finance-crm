@@ -71,6 +71,9 @@ class AdCampaignPlacement(Base):
     # Когда площадка запущена ВПЕРВЫЕ — письмо «кампания стартовала» уходит ей один раз
     # (аудит 01.10.2026, В-4). Миграция 2026-10-02_first_start_and_mail_publisher.sql.
     first_started_at = Column(DateTime)
+    # Ручной план площадки в РК (миграция 2026-10-24_placement_fixed_plan.sql, «Темп размещения → Перераспределить»):
+    # держится раскладкой как заданный объём, ночной пересчёт его не перетирает. Пусто — план по весам.
+    fixed_plan = Column(Float)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(),
                         onupdate=func.now())

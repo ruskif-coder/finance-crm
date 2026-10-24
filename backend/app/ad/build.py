@@ -313,11 +313,12 @@ def publisher_weights(db: Session, surfaces: list) -> dict:
 # Отклонённый креатив объём не держит. ОДНО выражение на все сборщики площадок РК
 # (сохранение долей, реестр и раскрытие дашборда трафика, карточка сделки): три копии
 # подзапроса разошлись бы на первой правке. Ожидает алиас площадки `p`.
+# Ручной план площадки в РК (`fixed_plan`, «Перераспределить», 24.10.2026) главнее суммы по креативам.
 PLACEMENT_FIXED_SQL = (
-    "(SELECT sum(st.plan_show) FROM ad_campaign_creative cc "
+    "COALESCE(p.fixed_plan, (SELECT sum(st.plan_show) FROM ad_campaign_creative cc "
     " JOIN launch_prep_pair pr ON pr.id = cc.pair_id "
     " JOIN launch_prep_set_target st ON st.set_id = pr.set_id AND st.target_id = pr.target_id "
-    f" WHERE cc.placement_id = p.id AND cc.status <> '{CREATIVE_REJECTED}')")
+    f" WHERE cc.placement_id = p.id AND cc.status <> '{CREATIVE_REJECTED}'))")
 
 
 def campaign_layout(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = None,
@@ -416,7 +417,7 @@ def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = N
     return changes
 
 
-def creative_plans(db: Session, camp: AdCampaign, extra_plans: Optional[dict] = None) -> dict:
+def creative_plans(db: Session, camp: AdCampaign, extra_plans: Optional[dict] = None, facts: Optional[dict] = None) -> dict:
     """План каждого креатива РК: {creative_id: показы или None}.
 
     Тем же правилом, что раскрытие дашборда трафика: сохранённый план площадки делится
@@ -425,7 +426,10 @@ def creative_plans(db: Session, camp: AdCampaign, extra_plans: Optional[dict] = 
     подтягиванию лимитов (`app/dsp/limits`). До 27.09.2026 лимитом креатива уходил ВЕСЬ
     план площадки — три креатива получали трижды её объём.
     """
+    from app.ad import creative_fact
     from app.ad.flight import holds, split_evenly
+    # Лимит — по факту (владелец 24.10.2026): свой факт + доля остатка площадки, см. `split_evenly`.
+    facts = creative_fact.totals(db, camp) if facts is None else facts
     rows = db.execute(text("""
         SELECT c.id, c.placement_id, c.creative_no, c.status,
                CASE WHEN c.status <> :rej THEN st.plan_show END AS fixed
@@ -450,7 +454,7 @@ def creative_plans(db: Session, camp: AdCampaign, extra_plans: Optional[dict] = 
     hold = holds(flight_of(camp.date_start, camp.date_end))
     out = {}
     for pid, crs in by_pl.items():
-        for r in split_evenly(plan_of.get(pid), crs, hold=hold):
+        for r in split_evenly(plan_of.get(pid), crs, hold=hold, facts=facts):
             out[r["id"]] = r["plan_show"]
     return out
 

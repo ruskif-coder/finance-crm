@@ -89,8 +89,8 @@ def creative_days_of(db: Session, dsp_db, head: dict, until: date) -> List[dict]
     from app.dsp.client import PROD, MsClient
     cl = MsClient(contour=PROD)
     hmap = stat_store.hash_map(db, dsp_db, [head["id"]], contour=cl.contour, partner=cl.partner_xxhash)
-    labels = {r[0]: (r[1], r[2], r[3]) for r in db.execute(text("""
-        SELECT cr.id, cr.placement_id, coalesce(cs.no, cr.creative_no), cs.title
+    labels = {r[0]: (r[1], r[2], r[3], r[4]) for r in db.execute(text("""
+        SELECT cr.id, cr.placement_id, coalesce(cs.no, cr.creative_no), cs.title, cs.report_group
           FROM ad_campaign_creative cr LEFT JOIN launch_prep_creative_set cs ON cs.id = cr.root_set_id
          WHERE cr.campaign_id = :c"""), {"c": head["id"]}).all()}
     out = []
@@ -103,20 +103,25 @@ def creative_days_of(db: Session, dsp_db, head: dict, until: date) -> List[dict]
         rid = hmap.rows.get((cr or "").upper())
         if rid is None or rid not in labels:
             continue
-        pid, no, title = labels[rid]
-        out.append({"date": _iso(day), "placement_id": pid, "set_no": no, "set_title": title or "",
+        pid, no, title, grp = labels[rid]
+        out.append({"date": _iso(day), "placement_id": pid, "set_no": no, "set_title": title or "", "group": grp,
                     "shows": int(shows or 0), "clicks": int(clicks or 0),
                     "spend": float(spend) if spend is not None else 0.0, "offered": offered})
     return out
 
 
-def model_uniques_of(db: Session, dsp_db, head: dict, placements: List[dict], until: date) -> List[dict]:
-    """Уники модели SIMB ID по площадке за день — та же функция, что «Отчёт клиенту с поправкой»."""
+def model_report(db: Session, dsp_db, head: dict, until: date):
+    """Отчёт клиенту «с поправкой» за флайт по дату факта — источник уников страницы."""
     from app.ad import client_report
     start = head["date_start"]
     if not start or until < start:
-        return []
-    rep = client_report.build(db, head["id"], date_from=start, date_to=until, dsp_db=dsp_db, model=True)
+        return None
+    return client_report.build(db, head["id"], date_from=start, date_to=until, dsp_db=dsp_db, model=True)
+
+
+def model_uniques_of(db: Session, dsp_db, head: dict, placements: List[dict], until: date, rep=None) -> List[dict]:
+    """Уники модели SIMB ID по площадке за день — та же функция, что «Отчёт клиенту с поправкой»."""
+    rep = rep or model_report(db, dsp_db, head, until)
     if rep is None:
         return []
     pid_of = {p["domain"]: p["id"] for p in placements}
@@ -129,6 +134,19 @@ def model_uniques_of(db: Session, dsp_db, head: dict, placements: List[dict], un
             if len(v) > 2 and v[2]:
                 out.append({"placement_id": pid, "date": _iso(d), "uniques": round(v[2])})
     return out
+
+
+def creative_uniques_of(db: Session, head: dict, rep) -> List[dict]:
+    """Уники модели по креативу × площадке × дню (владелец 24.10.2026: разрез «по креативам»)."""
+    if rep is None or not rep.pair_days:
+        return []
+    of = {r[0]: (r[1], r[2], r[3]) for r in db.execute(text("""
+        SELECT cr.id, cr.placement_id, coalesce(cs.no, cr.creative_no), cs.report_group
+          FROM ad_campaign_creative cr LEFT JOIN launch_prep_creative_set cs ON cs.id = cr.root_set_id
+         WHERE cr.campaign_id = :c"""), {"c": head["id"]}).all()}
+    return [{"date": _iso(day), "placement_id": of[cid][0], "set_no": of[cid][1], "group": of[cid][2],
+             "uniques": round(v[2])}
+            for (cid, day), v in rep.pair_days.items() if cid in of and len(v) > 2 and v[2]]
 
 
 def events_of(db: Session, head: dict, placements: List[dict]) -> List[dict]:
@@ -225,6 +243,7 @@ def build(db: Session, head: dict, dsp_db=None, prev_id: Optional[int] = None,
     options = prev_options(db, head)
     chosen = prev_id if prev_id in {o["campaign_id"] for o in options} else (options[0]["campaign_id"] if options else None)
     goals = ad_build.deal_goals(db, head["deal_id"]) or {}
+    model = model_report(db, dsp_db, head, as_of)
     return {
         "head": {**{k: _iso(v) for k, v in head.items() if k not in ("advertiser_id", "brand_id")},
                  "plan_show": float(head["plan_show"] or 0), "plan_budget": float(head["plan_budget"] or 0),
@@ -232,7 +251,8 @@ def build(db: Session, head: dict, dsp_db=None, prev_id: Optional[int] = None,
                  "offer_from": _iso(_first_offer_day(db, head["id"]))},
         "placements": placements,
         "stat": stat_of(db, head["id"], as_of),
-        "model_uniques": model_uniques_of(db, dsp_db, head, placements, as_of),
+        "model_uniques": model_uniques_of(db, dsp_db, head, placements, as_of, rep=model),
+        "creative_uniques": creative_uniques_of(db, head, model),
         "creative_days": creative_days_of(db, dsp_db, head, as_of),
         "events": events_of(db, head, placements),
         # Окна «темпа размещения»: в эти дни план дня поднят, строки таблицы подкрашены (владелец 13.10.2026).

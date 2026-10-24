@@ -33,6 +33,7 @@ def _day(v: Optional[str], what: str) -> Optional[date]:
 
 @router.get("/deal/{deal_id}.xlsx")
 def deal_report(deal_id: int, date_from: Optional[str] = None, date_to: Optional[str] = None,
+                group: Optional[str] = None,
                 db: Session = Depends(get_db), current_user: User = Depends(VIEW)):
     from app.ad import client_report, client_report_xlsx
     from app.ad.models import AdCampaign
@@ -53,6 +54,10 @@ def deal_report(deal_id: int, date_from: Optional[str] = None, date_to: Optional
     if client_report.last_data_day(db, camp.id) is None:
         raise HTTPException(status_code=409, detail="Статистики по РК ещё нет — отчёт появится "
                                                     "после первого дня с показами")
+    # Отчёт по группе креативов (владелец 24.10.2026) — только по группе, заданной у креативов сделки
+    group = " ".join((group or "").split()) or None
+    if group and group not in client_report.report_groups(db, camp.id):
+        raise HTTPException(status_code=404, detail=f"У креативов сделки нет группы «{group}»")
     d1, d2 = _day(date_from, "Начало периода"), _day(date_to, "Конец периода")
     if d1 and d2 and d1 > d2:
         raise HTTPException(status_code=400, detail="Начало периода позже конца")
@@ -61,8 +66,8 @@ def deal_report(deal_id: int, date_from: Optional[str] = None, date_to: Optional
     try:
         from app.dsp.db import DspSessionLocal
         dsp_db = DspSessionLocal() if DspSessionLocal else None
-        rep = client_report.build(db, camp.id, d1, d2, dsp_db=dsp_db)
-        rep_m = client_report.build(db, camp.id, d1, d2, dsp_db=dsp_db, model=True)
+        rep = client_report.build(db, camp.id, d1, d2, dsp_db=dsp_db, group=group)
+        rep_m = client_report.build(db, camp.id, d1, d2, dsp_db=dsp_db, model=True, group=group)
     finally:
         if dsp_db is not None:
             dsp_db.close()
@@ -73,7 +78,7 @@ def deal_report(deal_id: int, date_from: Optional[str] = None, date_to: Optional
                                                     "пустой отчёт клиенту не отдаём")
     body = client_report_xlsx.to_xlsx(rep, rep_m)
     code = re.sub(r"[^\w-]", "", deal.code or str(deal.id))
-    human = f"Отчёт_РК_{code}_{date.today():%d.%m.%Y}.xlsx"
+    human = f"Отчёт_РК_{code}" + (f"_{group}" if group else "") + f"_{date.today():%d.%m.%Y}.xlsx"
     return Response(content=body, media_type=(
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"), headers={
         "Content-Disposition": f"attachment; filename=\"report_{code}.xlsx\"; "

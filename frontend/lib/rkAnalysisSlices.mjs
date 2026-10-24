@@ -2,7 +2,7 @@
 // Чистые функции над индексом из `rkAnalysis.mjs`; проверяются `node --test lib/rkAnalysis.test.mjs`.
 import { sumOf, planFor, wrDiff, wrLevel, cpmOf, elapsedDays, weekKey, addDays } from './rkAnalysis.mjs'
 
-export const SLICES = [['day', 'день'], ['week', 'неделя'], ['placement', 'площадка'], ['creative', 'креатив'], ['cxp', 'креатив × площадка']]
+export const SLICES = [['day', 'день'], ['week', 'неделя'], ['placement', 'площадка'], ['creative', 'креатив'], ['group', 'группа'], ['cxp', 'креатив × площадка']]
 export const METRICS = [['shows', 'показы'], ['clicks', 'клики'], ['ctr', 'CTR'], ['offered', 'предложено'], ['plan', '% плана'], ['spend', 'расход ₽'], ['cpm', 'CPM ₽']]
 export const SOURCES = [['our', 'наш факт'], ['wr', 'Weborama'], ['diff', 'расхождение %']]
 export const PERIODS = [['all', 'весь флайт'], ['7d', '7 дн.'], ['custom', 'свой отрезок']]
@@ -64,6 +64,8 @@ export function timeRows(ix, ids, days, { slice, metric, source, offIds = [] }) 
 const crSum = (ix, f) => {
   const t = { dsp: 0, clk: 0, spend: 0, off: 0, pl: new Set() }
   ix.C.forEach(r => { if (!f(r)) return; t.dsp += r.shows; t.clk += r.clicks; t.spend += r.spend || 0; t.off += r.offered || 0; t.pl.add(r.placement_id) })
+  // Уники креатива — модель SIMB ID по паре «креатив × площадка × день» (владелец 24.10.2026)
+  t.uni = (ix.CU || []).reduce((a, r) => a + (f(r) ? r.uniques : 0), 0)
   return t
 }
 const cpmCr = (ix, f) => {   // CPM креативной строки — среднее дневных
@@ -74,7 +76,7 @@ const cpmCr = (ix, f) => {   // CPM креативной строки — сре
 }
 const crRow = (ix, f, extra) => {
   const t = crSum(ix, f)
-  return { fact: t.dsp, clk: t.clk, ctr: t.dsp ? t.clk / t.dsp * 100 : null, off: t.off || null, spend: t.spend, cpm: cpmCr(ix, f), pl: t.pl.size, ...extra }
+  return { fact: t.dsp, clk: t.clk, ctr: t.dsp ? t.clk / t.dsp * 100 : null, uni: t.uni, off: t.off || null, spend: t.spend, cpm: cpmCr(ix, f), pl: t.pl.size, ...extra }
 }
 
 /** Модель таблицы: колонки (ключ, подпись, вид) и строки для разреза и проваливания. */
@@ -84,9 +86,12 @@ export function tableModel(ix, { slice, ids, days, drill }) {
   const sD = new Set(fd), sI = new Set(ids)
   const limit = ix.head.wr_limit || 10
   const ext = id => ix.pById[id]?.external
-  let view = slice, scopeIds = ids, scopeDays = fd, setNo = null
+  let view = slice, scopeIds = ids, scopeDays = fd, setNo = null, grp = null
   if (drill?.type === 'placement') { scopeIds = [drill.id]; view = drill.view || 'day' }
   if (drill?.type === 'creative') { setNo = drill.id; view = 'placement' }
+  // Группа креативов (владелец 24.10.2026) — проваливается в площадки, как креатив
+  if (drill?.type === 'group') { grp = drill.id; view = 'placement' }
+  const own = setNo != null ? (r => r.set_no === setNo) : grp != null ? (r => r.group === grp) : null
   if (drill?.type === 'day') { scopeDays = [drill.id]; view = 'placement' }
   const sets = {}
   ix.C.forEach(r => { sets[r.set_no] = r.set_title })
@@ -114,12 +119,12 @@ export function tableModel(ix, { slice, ids, days, drill }) {
       ['plan', 'План', 'num'], ['pct', '% плана', 'pct'], ['wr', 'Weborama', 'num'], ['wrd', 'Δ WR', 'wrd'], ['clk', 'Клики', 'num'],
       ['ctr', 'CTR', 'ctr'], ['uni', 'Уники', 'num'], ['off', 'Предложено', 'num'], ['spend', 'Расход', 'rub'], ['cpm', 'CPM', 'rub']]
   } else if (view === 'placement') {
-    const pids = setNo != null ? [...crSum(ix, r => r.set_no === setNo && sD.has(r.date)).pl].filter(id => sI.has(id)) : scopeIds
-    rows = pids.map(id => setNo != null
-      ? { id, label: ix.pById[id].domain, ...crRow(ix, r => r.set_no === setNo && r.placement_id === id && sD.has(r.date)) }
+    const pids = own ? [...crSum(ix, r => own(r) && sD.has(r.date)).pl].filter(id => sI.has(id)) : scopeIds
+    rows = pids.map(id => own
+      ? { id, label: ix.pById[id].domain, ...crRow(ix, r => own(r) && r.placement_id === id && sD.has(r.date)) }
       : { ...placementRow(id, scopeDays), drill: drill ? null : { type: 'placement', id, view: 'day' } })
-    cols = setNo != null
-      ? [['label', 'Площадка', 'text'], ['fact', 'Показы DSP', 'num'], ['clk', 'Клики', 'num'], ['ctr', 'CTR', 'ctr'], ['off', 'Предложено', 'num'], ['spend', 'Расход', 'rub'], ['cpm', 'CPM', 'rub']]
+    cols = own
+      ? [['label', 'Площадка', 'text'], ['fact', 'Показы DSP', 'num'], ['clk', 'Клики', 'num'], ['ctr', 'CTR', 'ctr'], ['uni', 'Уники', 'num'], ['off', 'Предложено', 'num'], ['spend', 'Расход', 'rub'], ['cpm', 'CPM', 'rub']]
       : [['label', 'Площадка', 'text'], ['status', 'Код', 'text'], ['share', 'Доля', 'pct1'], ['plan', 'План к дате', 'num'], ['fact', 'Факт', 'num'],
         ['pct', '% плана', 'pct'], ['wr', 'Weborama', 'num'], ['wrd', 'Δ WR', 'wrd'], ['clk', 'Клики', 'num'], ['ctr', 'CTR', 'ctr'],
         ['uni', 'Уники', 'num'], ['off', 'Предложено', 'num'], ['offPct', 'Взято', 'pct'], ['spend', 'Расход', 'rub'], ['cpm', 'CPM', 'rub']]
@@ -130,7 +135,18 @@ export function tableModel(ix, { slice, ids, days, drill }) {
         drill: drill ? null : { type: 'creative', id: n } }))
       .filter(r => r.fact > 0)
     cols = [['label', 'Комплект', 'text'], ['pl', 'Площадок', 'num'], ['fact', 'Показы DSP', 'num'], ['clk', 'Клики', 'num'], ['ctr', 'CTR', 'ctr'],
-      ['off', 'Предложено', 'num'], ['spend', 'Расход', 'rub'], ['cpm', 'CPM', 'rub']]
+      ['uni', 'Уники', 'num'], ['off', 'Предложено', 'num'], ['spend', 'Расход', 'rub'], ['cpm', 'CPM', 'rub']]
+  } else if (view === 'group') {
+    const only = drill?.type === 'placement' ? new Set([drill.id]) : sI
+    const names = [...new Set(ix.C.map(r => r.group).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'))
+    rows = names.map(g => {
+      const nos = [...new Set(ix.C.filter(r => r.group === g).map(r => r.set_no))].sort((a, b) => a - b)
+      return { id: g, label: g, sets: nos.map(n => `№${n}`).join(', '),
+        ...crRow(ix, r => r.group === g && only.has(r.placement_id) && sD.has(r.date)),
+        drill: drill ? null : { type: 'group', id: g } }
+    }).filter(r => r.fact > 0)
+    cols = [['label', 'Группа', 'text'], ['sets', 'Креативы', 'text'], ['pl', 'Площадок', 'num'], ['fact', 'Показы DSP', 'num'], ['clk', 'Клики', 'num'],
+      ['ctr', 'CTR', 'ctr'], ['uni', 'Уники', 'num'], ['off', 'Предложено', 'num'], ['spend', 'Расход', 'rub'], ['cpm', 'CPM', 'rub']]
   } else {
     const keys = new Set()
     ix.C.forEach(r => { if (sI.has(r.placement_id) && sD.has(r.date)) keys.add(r.set_no + '|' + r.placement_id) })
@@ -140,7 +156,7 @@ export function tableModel(ix, { slice, ids, days, drill }) {
         drill: { type: 'placement', id, view: 'creative' } }
     })
     cols = [['set', 'Комплект', 'text'], ['label', 'Площадка', 'text'], ['fact', 'Показы DSP', 'num'], ['clk', 'Клики', 'num'], ['ctr', 'CTR', 'ctr'],
-      ['off', 'Предложено', 'num'], ['spend', 'Расход', 'rub'], ['cpm', 'CPM', 'rub']]
+      ['uni', 'Уники', 'num'], ['off', 'Предложено', 'num'], ['spend', 'Расход', 'rub'], ['cpm', 'CPM', 'rub']]
   }
   // Итог считается из своих сумм, а не складывает проценты строк.
   const tot = {}

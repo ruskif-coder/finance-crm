@@ -64,7 +64,10 @@ def test_model_keeps_real_shows():
         f, m = CR.build(db, cid), CR.build(db, cid, model=True)
         assert m.totals["shows"] == f.totals["shows"]
         assert all(r["uniques"] is not None for r in m.by_placement)
-        assert all(r["uniques"] is None for r in f.by_placement)
+        # Уники и в отчёте факта — модель SIMB ID (DSP их не отдаёт; владелец 24.10.2026)
+        assert all(r["uniques"] is not None for r in f.by_placement)
+        assert [r["uniques"] for r in f.by_placement] == [r["uniques"] for r in m.by_placement]
+        assert all(len(v) == 3 for v in f.pair_days.values())   # без DSP-сырья пар может не быть
     finally:
         db.close()
 
@@ -189,30 +192,80 @@ def test_period_after_data_is_refused(client):
 
 def test_days_are_full_calendar_month_for_short_campaign():
     """Владелец 05.10.2026: РК на 15 дней «поехала» — шаблон рассчитан на полный месяц.
-    Колонки дней — весь календарный месяц; дни вне РК пустые, а не нули."""
+    Колонки дней — весь календарный месяц (горизонтально; вертикаль 24.10 владелец вернул); дни
+    вне РК пустые, а не нули. Уники — и на листе факта (модель SIMB ID, 24.10.2026)."""
     from app.ad import client_report_xlsx as X
     head = {"period_from": date(2026, 10, 15), "period_to": date(2026, 10, 18),
             "days_to": date(2026, 10, 29), "last_data": date(2026, 10, 18),
             "date_start": date(2026, 10, 15), "date_end": date(2026, 10, 29),
             "advertiser": "А", "code": "TEST01"}
     tot = {"shows": 40, "clicks": 1, "ctr": 2.5, "plan": None, "done_pct": None}
-    pl = [{"label": "site.ru", "shows": 40, "clicks": 1, "uniques": None}]
-    days = [{"label": date(2026, 10, d), "shows": 10, "clicks": 0} for d in (15, 16, 17, 18)]
+    pl = [{"label": "site.ru", "shows": 40, "clicks": 1, "uniques": 20}]
+    days = [{"label": date(2026, 10, d), "shows": 10, "clicks": 0, "uniques": 5} for d in (15, 16, 17, 18)]
     rep = CR.Report(head=head, totals=tot, by_placement=pl, by_day=days)
     got = X._days_of(rep)
     assert got[0] == date(2026, 10, 1) and got[-1] == date(2026, 10, 31) and len(got) == 31
     wb = openpyxl.load_workbook(io.BytesIO(X.to_xlsx(rep, rep)))
     ws = wb.worksheets[0]
-    vals = {}
-    for row in ws.iter_rows():
-        for c in row:
-            if c.value == "01.10":
-                head_row, first_col = c.row, c.column
-                vals = {ws.cell(head_row, first_col + i).value: ws.cell(head_row + 1, first_col + i).value
-                        for i in range(31)}
-                break
-        if vals:
-            break
-    assert vals, "колонки 01.10 нет"
+    at = next(c for row in ws.iter_rows() for c in row if c.value == "01.10")
+    labels = [ws.cell(at.row, at.column + i).value for i in range(31)]
+    assert labels[0] == "01.10" and labels[30] == "31.10", "дни — колонками"
+    vals = {labels[i]: ws.cell(at.row + 1, at.column + i).value for i in range(31)}
+    uniq = {labels[i]: ws.cell(at.row + 3, at.column + i).value for i in range(31)}
+    assert ws.cell(at.row + 3, at.column - 1).value == "Уники"
     assert vals["01.10"] is None and vals["14.10"] is None, "до старта — пусто, не ноль"
     assert vals["15.10"] == 10 and vals["31.10"] is None
+    assert uniq["15.10"] == 5 and uniq["19.10"] is None
+
+
+@pytest.fixture
+def grouped():
+    """РК с DSP-сырьём по креативам: первому креативу РК временно ставится группа, после — снимается."""
+    from app.dsp.db import DspSessionLocal
+    if not DspSessionLocal:
+        pytest.skip("нет аналитической базы DSP")
+    db, ddb = SessionLocal(), DspSessionLocal()
+    row = db.execute(text("""
+        SELECT c.id, cr.root_set_id FROM ad_campaign c JOIN ad_campaign_creative cr ON cr.campaign_id = c.id
+         WHERE cr.root_set_id IS NOT NULL AND cr.ms_creative_xxhash IS NOT NULL
+           AND EXISTS (SELECT 1 FROM ad_campaign_stat s WHERE s.campaign_id = c.id AND s.source = 'dsp' AND s.shows > 0)
+         ORDER BY c.id DESC LIMIT 1""")).first()
+    if row is None:
+        db.close(); ddb.close()
+        pytest.skip("на стенде нет РК с креативами в DSP")
+    cid, set_id = row
+    was = db.execute(text("SELECT report_group FROM launch_prep_creative_set WHERE id = :s"), {"s": set_id}).scalar()
+    db.execute(text("UPDATE launch_prep_creative_set SET report_group = 'ТЕСТ группа' WHERE id = :s"), {"s": set_id})
+    db.commit()
+    yield db, ddb, cid, set_id
+    db.rollback()
+    db.execute(text("UPDATE launch_prep_creative_set SET report_group = :g WHERE id = :s"), {"g": was, "s": set_id})
+    db.commit()
+    db.close(); ddb.close()
+
+
+def test_group_report_counts_only_its_creatives(grouped):
+    """Отчёт по группе (владелец 24.10.2026): только креативы группы — показы = сумма их пар."""
+    db, ddb, cid, set_id = grouped
+    full = CR.build(db, cid, dsp_db=ddb)
+    g = CR.build(db, cid, dsp_db=ddb, group="ТЕСТ группа")
+    assert g.head["group"] == "ТЕСТ группа"
+    assert [x["label"] for x in full.groups] == ["Группа «ТЕСТ группа»"]
+    blk = full.groups[0]
+    assert g.totals["shows"] == sum(r["shows"] for r in blk["by_placement"]) > 0
+    assert sum(r["shows"] for r in g.by_day) == g.totals["shows"]
+    assert g.totals["shows"] <= full.totals["shows"]
+    assert all(c["label"].startswith("Креатив №") for c in g.creatives)
+    assert g.totals["plan"] is None, "план РК к группе не относится"
+
+
+def test_unknown_group_is_refused(client, grouped):
+    db, _, cid, _ = grouped
+    deal_id = db.execute(text("SELECT deal_id FROM ad_campaign WHERE id = :c"), {"c": cid}).scalar()
+    app.dependency_overrides[get_current_user] = lambda: _User("admin")
+    assert client.get(f"/api/client-report/deal/{deal_id}.xlsx?group=нет такой").status_code == 404
+    r = client.get(f"/api/client-report/deal/{deal_id}.xlsx?group=ТЕСТ группа")
+    assert r.status_code == 200, r.text[:200]
+    wb = openpyxl.load_workbook(io.BytesIO(r.content))
+    assert any("ТЕСТ группа" in str(c.value) for c in wb["Отчёт"]["A"] + wb["Отчёт"]["B"] + tuple(
+        x for row in wb["Отчёт"].iter_rows(max_row=10) for x in row))

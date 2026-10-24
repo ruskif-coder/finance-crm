@@ -287,3 +287,32 @@ def test_checks_run_on_a_real_deal_without_exploding(db):
     for key, chk in sc.REGISTRY.items():
         r = chk.fn(ctx)
         assert r.state in (sc.OK, sc.NOT_YET, sc.UNKNOWN, sc.NA), f"{key}: {r.state}"
+
+
+def test_creative_fans_do_not_hold_after_the_rk_started():
+    """«РК уже запускалась» (владелец 24.10.2026): аккаунты подгружают креативы и в середине РК. После первого запуска
+    любой площадки веера по креативам (проверка трафика, согласование площадок, ЕРИД) перехода не держат — счёт виден.
+    До запуска — как раньше."""
+    from types import SimpleNamespace as NS
+
+    class _Ctx:
+        deal = _Deal()
+        sets = [NS(id=1, no=1, erid=None, ord_status=None), NS(id=2, no=2, erid=None, ord_status=None)]
+        first_reviews = [{"set_id": 1, "verdict": "ок"}]
+        pairs = [{"id": 1, "agreed_at": "x", "publisher": "a"}, {"id": 2, "agreed_at": None, "publisher": "b"}]
+        rk_started = False
+
+    keys = ("creatives_accepted", "placements_approved", "erid_issued")
+    before = {k: sc.REGISTRY[k].fn(_Ctx()) for k in keys}
+    assert all(r.state == sc.NOT_YET for r in before.values())
+    _Ctx.rk_started = True
+    after = {k: sc.REGISTRY[k].fn(_Ctx()) for k in keys}
+    assert all(not r.blocks for r in after.values()), {k: r.state for k, r in after.items()}
+    assert "1 из 2" in after["creatives_accepted"].detail and "в эфире" in after["creatives_accepted"].detail
+
+
+def test_rk_started_reads_the_first_start_of_any_placement():
+    from types import SimpleNamespace as NS
+    c = sc.Ctx(None, NS(id=0)).preload(placements=[{"first_started_at": None}, {"first_started_at": "2026-10-01"}])
+    assert c.rk_started is True
+    assert sc.Ctx(None, NS(id=0)).preload(placements=[{"first_started_at": None}]).rk_started is False

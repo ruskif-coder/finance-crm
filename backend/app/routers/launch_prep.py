@@ -336,6 +336,8 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
     27.08.2026): креатив первичен — сначала прикрепляем материал, потом выбираем, кому он
     уходит. Поэтому `recipients` — до отправки кандидаты, после отправки пары; форма одна.
     """
+    # Буква D — по ЭТОМУ креативу, W — по площадке (владелец 24.10.2026, `ad/external.for_set`)
+    from app.ad.external import for_set as ext_for_set
     primary = next((r for r in reviews if r.kind == "первичная_тт" and r.pair_id is None), None)
     by_pair = {r.pair_id: r for r in reviews if r.kind == "площадка" and r.pair_id}
     by_traffic = {r.pair_id: r for r in reviews if r.kind == "трафики" and r.pair_id}
@@ -356,11 +358,11 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
             recipients.append(_recipient_out(
                 t, pubs.get(t.publisher_id), p, by_pair.get(p.id), by_traffic.get(p.id),
                 file_counts.get(p.id, 0), (moved or {}).get((s.id, t.publisher_id)),
-                external.get(t.publisher_id), members.get((s.id, t.id)),
+                ext_for_set(external.get(t.publisher_id), s.id), members.get((s.id, t.id)),
                 rules.get((t.publisher_id, t.surface_kind))))
     else:
         recipients = [_recipient_out(t, pubs.get(t.publisher_id),
-                                     external=external.get(t.publisher_id),
+                                     external=ext_for_set(external.get(t.publisher_id), s.id),
                                      member=members.get((s.id, t.id)),
                                      rule=rules.get((t.publisher_id, t.surface_kind)))
                       for t in candidates]
@@ -369,6 +371,7 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
 
     return {
         "id": s.id, "no": s.no, "title": s.title, "origin": s.origin,
+        "report_group": s.report_group,
         "replaces_set_id": s.replaces_set_id,
         "publisher_id": s.publisher_id,
         "scope": "персональный" if s.publisher_id else "общий",
@@ -607,6 +610,8 @@ def deal_creatives(deal_id: int, db: Session = Depends(get_db),
                           else _targets_for_set(db, s),
                           file_counts, moved, ext, members, rules)
                  for s in sets],
+        # Группы креативов сделки для отчёта — накопительный список выбора (владелец 24.10.2026)
+        "report_groups": sorted({s.report_group for s in sets if s.report_group}),
     }
     # «Скрины запуска сняты» — отметка трафика на креативе РК этой пары (владелец
     # 01.10.2026). Карточка показывает её у аккаунта; ставится в дашборде трафика.
@@ -1073,7 +1078,7 @@ def prolong_deal(deal_id: int, payload: ProlongIn, db: Session = Depends(get_db)
     for s0 in sets:
         ns = LaunchPrepCreativeSet(
             deal_id=new.id, publisher_id=s0.publisher_id, no=s0.no,
-            title=s0.title, origin="продление",
+            title=s0.title, origin="продление", report_group=s0.report_group,   # группа в отчёте — та же (24.10.2026)
             form=s0.form, description=s0.description,
             test_targeting_url=s0.test_targeting_url,
             # erid / ord_* НЕ переносятся — см. шапку.
@@ -1223,6 +1228,64 @@ def set_title(set_id: int, payload: SetTitleIn, db: Session = Depends(get_db),
     row.title = title or None
     db.commit()
     return {"id": row.id, "no": row.no, "title": row.title}
+
+
+class ReportGroupIn(BaseModel):
+    group: Optional[str] = None
+
+
+@router.put("/set/{set_id}/report-group")
+def set_report_group(set_id: int, payload: ReportGroupIn, db: Session = Depends(get_db),
+                     current_user: User = Depends(EDIT)):
+    """Группа креатива в отчёте клиенту (владелец 24.10.2026): аккаунт объединяет креативы сделки
+    («Аудитория А»), отчёт и «Отчёт по РК» считают статистику по группе. Пусто — снять группу."""
+    row = db.query(LaunchPrepCreativeSet).filter(LaunchPrepCreativeSet.id == set_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Комплект не найден")
+    _deal(db, row.deal_id, current_user)
+    group = " ".join((payload.group or "").split())
+    if len(group) > 80:
+        raise HTTPException(status_code=400, detail="Название группы длиннее 80 знаков")
+    row.report_group = group or None
+    db.commit()
+    log_action(db, current_user, "set_report_group", "sales_deal", row.deal_id,
+               f"креатив №{row.no}: группа «{group}»" if group else f"креатив №{row.no}: группа снята")
+    return {"id": row.id, "report_group": row.report_group}
+
+
+@router.post("/set/{set_id}/copy")
+def copy_set(set_id: int, db: Session = Depends(get_db), current_user: User = Depends(EDIT)):
+    """«Скопировать креатив» (владелец 24.10.2026) — копия НАСТРОЕК для ускорения заведения.
+
+    Переносятся площадки креатива с их ссылками (веб и в приложении), включая присланные
+    площадкой по копируемому креативу, и описание для ОРД. Материал не копируется: файл
+    прикрепляют заново, и дальше копия идёт стандартным путём — первичная проверка, трафик,
+    площадки, ЕРИД. Поэтому не переносятся письмо о правах (оно о картинках файла), проверка,
+    маркер и открытые запросы ссылок. Объём показов тоже нет: сумма объёмов по креативам РК
+    ограничена планом, и копия заняла бы его второй раз.
+    """
+    src = db.query(LaunchPrepCreativeSet).filter(LaunchPrepCreativeSet.id == set_id).first()
+    if not src:
+        raise HTTPException(status_code=404, detail="Комплект не найден")
+    _deal(db, src.deal_id, current_user)
+    last = (db.query(LaunchPrepCreativeSet.no)
+            .filter(LaunchPrepCreativeSet.deal_id == src.deal_id)
+            .order_by(LaunchPrepCreativeSet.no.desc()).first())
+    title = f"{src.title} (копия)"[:120] if src.title else None
+    row = LaunchPrepCreativeSet(deal_id=src.deal_id, publisher_id=src.publisher_id, no=last[0] + 1,
+                                title=title, origin="параллельный", description=src.description,
+                                report_group=src.report_group,
+                                erid_source=src.erid_source)
+    db.add(row)
+    db.flush()
+    members = db.query(LaunchPrepSetTarget).filter(LaunchPrepSetTarget.set_id == src.id).all()
+    for m in members:
+        db.add(LaunchPrepSetTarget(set_id=row.id, target_id=m.target_id,
+                                   advertiser_url=m.advertiser_url, deeplink_url=m.deeplink_url))
+    db.commit()
+    log_action(db, current_user, "copy_creative_set", "sales_deal", src.deal_id,
+               f"креатив №{row.no} — копия №{src.no}: площадок {len(members)}")
+    return {"id": row.id, "no": row.no}
 
 
 class TargetingUrlIn(BaseModel):

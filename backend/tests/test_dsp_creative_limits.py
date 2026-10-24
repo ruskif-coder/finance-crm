@@ -167,3 +167,16 @@ def test_nightly_survives_a_non_dsp_error(camp, monkeypatch):
     monkeypatch.setattr(limits, "sync_limits", boom)
     out = daily_shares.run(client=FakeMs({}), campaign_ids=[c.id])
     assert out["failed"] == 1
+
+
+def test_small_drift_is_not_sent(camp):
+    """Лимит по факту (24.10.2026) шевелится каждый день на десятки показов. Каждая правка — Creative.edit, а правки
+    сбивают самонастройку DSP: расхождение меньше 1 % (и меньше 100 показов) не шлём, крупное — шлём."""
+    from app.dsp.limits import sync_limits
+    db, c, pl, crs = camp
+    ms = FakeMs({f"cr{crs[0].id}": 470})
+    sync_limits(db, c, ms)
+    assert ms.edits == [], "дрожание лимита ушло в DSP"
+    ms2 = FakeMs({f"cr{crs[0].id}": 300})
+    sync_limits(db, c, ms2)
+    assert len(ms2.edits) == 1

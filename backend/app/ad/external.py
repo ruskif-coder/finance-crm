@@ -19,6 +19,7 @@ from typing import Dict, Iterable, List
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.ad.flight import CREATIVE_REJECTED
 from app.ad.models import AdCampaign, AdCampaignCreative, AdCampaignPlacement
 
 # Значения. «—» и «нет» — РАЗНЫЕ вещи, и путать их дорого: «нет» зовёт нажать кнопку,
@@ -30,6 +31,9 @@ REGISTERED = "заведён"
 READY = "есть"
 RUNNING = "крутится"
 UNKNOWN = "неизвестно"
+# Часть креативов площадки в DSP, новые согласованные ещё нет (владелец 24.10.2026): жёлтый, как
+# «заведён», — площадка крутит, но выгрузка не закончена, и кнопка «В DSP» снова зовёт.
+PARTIAL = "частично"
 
 # Состояния, которые считаются «сделано» при подсчёте покрытия.
 DONE_WEBORAMA = (READY,)
@@ -98,6 +102,9 @@ def _state_of(p: AdCampaignPlacement, refs: dict, hung: set,
         ds = {"state": UNKNOWN,
               "why": "заведение креатива осталось без ответа — сверьтесь с кабинетом "
                      "(окно кнопки «DSP»)"}
+    elif with_hash and (waiting := [c for c in crs if not c.ms_creative_xxhash
+                                     and getattr(c, "status", None) != CREATIVE_REJECTED]):
+        ds = {"state": PARTIAL, "why": f"в DSP креативов {len(with_hash)}, ждут выгрузки {len(waiting)}"}
     elif p.status == "запущен" and with_hash:
         ds = {"state": RUNNING, "why": f"креативов в кабинете DSP: {len(with_hash)}"}
     elif with_hash:
@@ -110,6 +117,35 @@ def _state_of(p: AdCampaignPlacement, refs: dict, hung: set,
         # Смешанная: часть поверхностей (обычно web) во внешней DSP, остальное — в нашей.
         ds = {**ds, "why": f"{ds['why']}; {'/'.join(external_surfaces)} — во внешней DSP"}
     return {"weborama": wb, "dsp": ds}
+
+
+def with_dsp_by_set(state: dict, p: AdCampaignPlacement, crs: List[AdCampaignCreative],
+                    dsp_hung=frozenset(), **kw) -> dict:
+    """Добавляет `dsp_by_set` — состояние DSP по КАЖДОМУ креативу площадки (владелец 24.10.2026).
+
+    Буква D в строке креатива — про ЭТОТ креатив: площадка крутит креатив №3, а черновик №10
+    той же площадки в DSP не заведён, и «крутится» у него — неправда. Weborama остаётся
+    общей: вставка и пиксель — у площадки РК, а не у креатива. «Не нужно» (крутит сама,
+    внешняя DSP) не зависит от креатива и в разбивку не идёт."""
+    if state["dsp"]["state"] == NOT_NEEDED:
+        return state
+    by_set: Dict[int, List[AdCampaignCreative]] = {}
+    for c in crs:
+        if c.root_set_id:
+            by_set.setdefault(c.root_set_id, []).append(c)
+    return {**state, "dsp_by_set": {sid: _state_of(p, {}, set(), lst, dsp_hung, **kw)["dsp"]
+                                    for sid, lst in by_set.items()}}
+
+
+NOT_IN_DSP = {"state": MISSING, "why": "этот креатив в DSP не заведён"}
+
+
+def for_set(state, set_id: int):
+    """Состояние площадки в строке креатива `set_id`: DSP — по нему, Weborama — по площадке."""
+    if not state or "dsp_by_set" not in state:
+        return state
+    rest = {k: v for k, v in state.items() if k != "dsp_by_set"}
+    return {**rest, "dsp": state["dsp_by_set"].get(set_id, NOT_IN_DSP)}
 
 
 def states_by_campaign(db: Session, campaign_ids: Iterable[int]) -> Dict[int, Dict[int, dict]]:
@@ -156,11 +192,12 @@ def states_by_campaign(db: Session, campaign_ids: Iterable[int]) -> Dict[int, Di
     out: Dict[int, Dict[int, dict]] = {i: {} for i in ids}
     for p in pls:
         m = modes.get((deal_of.get(p.campaign_id), p.publisher_id)) or {}
-        out[p.campaign_id][p.id] = _state_of(
-            p, refs, hung, crs.get(p.id, []), dsp_hung,
-            offsite=m.get("mode") == MODE_EXTERNAL,
-            external_surfaces=m.get("external", []) if m.get("mode") == MODE_MIXED else (),
-            ext_tag=ext_of.get(deal_of.get(p.campaign_id), False))
+        kw = {"offsite": m.get("mode") == MODE_EXTERNAL,
+              "external_surfaces": m.get("external", []) if m.get("mode") == MODE_MIXED else ()}
+        own = crs.get(p.id, [])
+        out[p.campaign_id][p.id] = with_dsp_by_set(
+            _state_of(p, refs, hung, own, dsp_hung, ext_tag=ext_of.get(deal_of.get(p.campaign_id), False), **kw),
+            p, own, dsp_hung, **kw)
     return out
 
 
@@ -188,6 +225,6 @@ def external_states(db: Session, deal_id: int) -> Dict[int, dict]:
     return {p.publisher_id: by_pl[p.id] for p in pls if p.id in by_pl}
 
 
-__all__ = ["external_states", "states_by_placement", "states_by_campaign",
+__all__ = ["external_states", "for_set", "states_by_placement", "states_by_campaign",
            "totals", "totals_by_campaign",
-           "NOT_NEEDED", "MISSING", "REGISTERED", "READY", "RUNNING", "UNKNOWN"]
+           "NOT_NEEDED", "MISSING", "REGISTERED", "READY", "RUNNING", "UNKNOWN", "PARTIAL"]

@@ -947,10 +947,13 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
                      use_stored=True,
                      hold_fl=flight_of(c.date_start, c.date_end, date.today()))
 
-    # Третий этаж: план площадки делится ПОРОВНУ между её работающими креативами.
+    # Третий этаж: план площадки — между её работающими креативами, по факту (владелец 24.10.2026): свой факт + доля
+    # остатка; то же правило, что лимиты в DSP (`build.creative_plans`).
+    from app.ad import creative_fact
+    cr_facts = creative_fact.totals(db, c)
     for row in out["rows"]:
         row["creatives"] = split_evenly(row.get("plan_show"), creatives.get(row["id"], []),
-                                        hold=holds(fl))
+                                        hold=holds(fl), facts=cr_facts)
 
     # Состояние во внешних системах — ТОЙ ЖЕ функцией, что на карточке сделки. Второй
     # расчёт разошёлся бы с первым, и спорить было бы нечем.
@@ -1644,6 +1647,73 @@ def boost_cancel(campaign_id: int, db: Session = Depends(get_db), user: User = D
     except boost_mod.BoostError as e:
         db.rollback()
         raise HTTPException(400, str(e))
+
+
+class ReallocIn(BaseModel):
+    plans: dict      # {id площадки: новый план показов}
+
+
+def _realloc_view(db: Session, c: AdCampaign) -> dict:
+    from app.ad import realloc
+    rows, days_left = realloc.rows_of(db, c)
+    out = realloc.propose(rows, days_left)
+    out["plan"] = c.plan_show
+    out["has_manual"] = any(r.get("fixed_plan") is not None for r in rows)
+    from app.ad import boost as boost_mod
+    out["boost_live"] = boost_mod.is_live(boost_mod.active(db, c.id))
+    out["can_apply"] = c.status not in build.CAMPAIGN_CLOSED and days_left > 0 and not out["boost_live"]
+    return out
+
+
+@router.get("/campaign/{campaign_id}/realloc")
+def realloc_preview(campaign_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """«Темп размещения → Перераспределить» (владелец 24.10.2026): как изменятся планы (лимиты) площадок, если недобор
+    площадок, упёршихся в сеть, отдать площадкам с запасом предложения. Ничего не пишет."""
+    c, _deal = _campaign_in_scope(db, campaign_id, user)
+    return _realloc_view(db, c)
+
+
+@router.post("/campaign/{campaign_id}/realloc")
+def realloc_apply(campaign_id: int, payload: ReallocIn, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Записать ручные планы площадок РК (`fixed_plan`) и сразу отправить лимиты креативов в DSP."""
+    from app.ad import realloc
+    c, deal = _campaign_in_scope(db, campaign_id, user)
+    _lock_shares(db, c.id)
+    if c.status in build.CAMPAIGN_CLOSED:
+        raise HTTPException(400, "РК окончена — перераспределять нечего")
+    from app.ad import boost as boost_mod
+    if boost_mod.is_live(boost_mod.active(db, c.id)):
+        raise HTTPException(400, realloc.BOOST_LIVE)
+    try:
+        plans = {int(k): (None if v is None else float(v)) for k, v in (payload.plans or {}).items()}
+    except (TypeError, ValueError):
+        raise HTTPException(400, "План площадки — число показов")
+    if not plans:
+        raise HTTPException(400, "Нечего применять — планы не изменились")
+    rows, _left = realloc.rows_of(db, c)
+    why = realloc.check_plans(rows, plans, c.plan_show)
+    if why:
+        db.rollback()
+        raise HTTPException(400, why)
+    names = {r["id"]: r for r in rows}
+    out = realloc.apply(db, c, plans, user)
+    log_action(db, user, "traffic_realloc", "sales_deal", deal.id,
+               f"{rk_label(db, c.id)}: " + "; ".join(
+                   f"{names[k]['name']} {round(names[k]['plan']):,} → {round(v):,}".replace(",", " ")
+                   for k, v in plans.items()))
+    return {**out, "view": _realloc_view(db, c)}
+
+
+@router.delete("/campaign/{campaign_id}/realloc")
+def realloc_reset(campaign_id: int, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Снять ручные планы площадок РК — снова по весам балансировщика; лимиты в DSP уходят сразу."""
+    from app.ad import realloc
+    c, deal = _campaign_in_scope(db, campaign_id, user)
+    _lock_shares(db, c.id)
+    out = realloc.reset(db, c)
+    log_action(db, user, "traffic_realloc_reset", "sales_deal", deal.id,
+               f"{rk_label(db, c.id)}: ручные планы площадок сняты ({out['reset']})")
+    return {**out, "view": _realloc_view(db, c)}
 
 
 @router.put("/placement/{placement_id}/status")

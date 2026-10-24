@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { buildTitle, productWithSurface, TITLE_EMPTY_HINT } from '@/lib/dealTitle'
 import { useRouter } from 'next/router'
 import api, { auth } from '../../lib/api'
-import { MONO, UI, CAP, docCard, addBtn, iconSq, DocIcon, DownloadIcon, EditIcon, GenTitleBtn, StageLayerBar } from '../salesTableKit'
+import { MONO, UI, CAP, docCard, addBtn, iconSq, DocIcon, DownloadIcon, EditIcon, GenTitleBtn, StageLayerBar, PortalPopover, Z } from '../salesTableKit'
 import { DEAL_DOCS, downloadBlob, pickAndUploadDoc, deleteDoc, downloadDealCreatives,
   creativesMeta } from '../../lib/dealDocs'
 import { downloadMp } from '../../lib/mpDownload'
@@ -87,6 +87,20 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
   const [title, setTitle] = useState(d.title || '')
   const [editing, setEditing] = useState(false)
   const [reportBusy, setReportBusy] = useState(false)   // отчёт клиенту собирается
+  const [reportPick, setReportPick] = useState(false)   // выбор «вся РК / группа креативов»
+  useEffect(() => {
+    if (!reportPick) return
+    const off = (e) => { if (!e.target.closest('[data-pop-root]')) setReportPick(false) }
+    document.addEventListener('mousedown', off)
+    return () => document.removeEventListener('mousedown', off)
+  }, [reportPick])
+  const getReport = async (group) => {
+    setReportPick(false); setReportBusy(true)
+    const q = group ? `?group=${encodeURIComponent(group)}` : ''
+    await blobGet(`/client-report/deal/${d.id}.xlsx${q}`, `Отчёт_РК_${d.code || d.id}${group ? '_' + group : ''}.xlsx`)
+    setReportBusy(false)
+  }
+  const groups = d.report_groups || []
   // «Отчёт по РК» (экран трафиков) — своё право, его раздаёт владелец (13.10.2026); снимок прав читаем после монтирования.
   const [mayReport, setMayReport] = useState(false)
   useEffect(() => { setMayReport(can(getPermissions(), 'rk_report', 'view')) }, [])
@@ -280,13 +294,25 @@ export default function DealDetail({ deal, canEdit, onOpen, onEdit, onAddMp, onO
       )}
       {/* Отчёт клиенту по РК (владелец 05.10.2026): Excel с фактом и моделью SIMB ID, период —
           со старта до последних данных. Только в очереди аккаунта, перед «Карточкой». */}
+      {/* Креативы объединены в группы (владелец 24.10.2026) — сначала выбор: вся РК или группа. */}
       {queue && (
-        <button onClick={async () => { setReportBusy(true); await blobGet(`/client-report/deal/${d.id}.xlsx`, `Отчёт_РК_${d.code || d.id}.xlsx`); setReportBusy(false) }}
+        <span data-pop-root style={{ position: 'relative', display: 'inline-flex' }}>
+        <button onClick={() => (groups.length ? setReportPick(v => !v) : getReport(null))}
           disabled={reportBusy || !d.report_ready}
           title={d.report_ready ? 'Скачать отчёт клиенту по РК (Excel)' : 'Статистики по РК ещё нет — отчёт появится после первого дня с показами'}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 14px', borderRadius: 10, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 700, cursor: reportBusy ? 'wait' : (d.report_ready ? 'pointer' : 'not-allowed'), opacity: d.report_ready ? 1 : 0.5, fontFamily: UI }}>
-          <DownloadIcon /> {reportBusy ? 'Собираю…' : 'Отчёт'}
+          <DownloadIcon /> {reportBusy ? 'Собираю…' : 'Отчёт'}{groups.length ? ' ▾' : ''}
         </button>
+        <PortalPopover open={reportPick} minWidth={220} align="right" style={{ padding: 6, zIndex: Z.dropdown }}>
+          {[[null, 'Вся РК'], ...groups.map(g => [g, `Группа «${g}»`])].map(([g, label]) => (
+            <button key={label} type="button" onClick={() => getReport(g)}
+              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', border: 'none', borderRadius: 7,
+                background: 'transparent', color: 'var(--text-primary)', fontSize: 12.5, fontWeight: g ? 500 : 700, cursor: 'pointer', fontFamily: UI }}>
+              {label}
+            </button>
+          ))}
+        </PortalPopover>
+        </span>
       )}
       {queue ? (
         <a href={`/sales/deals/${d.code || d.id}`} target="_blank" rel="noopener noreferrer" title="Открыть карточку сделки в новой вкладке"

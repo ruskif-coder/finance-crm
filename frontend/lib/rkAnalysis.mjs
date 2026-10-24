@@ -43,6 +43,7 @@ export function indexData(d) {
     const cpm = pById[r.placement_id].cpm
     return { ...r, spend: cpm ? r.shows * cpm / 1000 : 0, priced: !!cpm }
   })
+  const CU = (d.creative_uniques || []).filter(r => r.date <= asOf && P[r.placement_id])
   const ev = (d.events || []).map(e => {
     let date = (e.at || '').slice(0, 10)
     if (days.length && date < days[0]) date = days[0]
@@ -51,7 +52,7 @@ export function indexData(d) {
   // Дни «темпа размещения» → процент буста (владелец 13.10.2026): в эти дни план поднят, строки подкрашены.
   const boostPct = {}
   ;(d.boosts || []).forEach(b => days.forEach(dt => { if (dt >= b.from && dt <= b.to) boostPct[dt] = Math.max(boostPct[dt] || 0, b.pct) }))
-  return { days, asOf, P, C, ev, pById, head: d.head, offerFrom: d.head.offer_from, boostPct }
+  return { days, asOf, P, C, CU, ev, pById, head: d.head, offerFrom: d.head.offer_from, boostPct }
 }
 
 export const elapsedDays = (ix) => ix.days.filter(x => x <= ix.asOf)

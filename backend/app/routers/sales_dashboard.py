@@ -2458,6 +2458,12 @@ def _report_ready(db, deal_id) -> bool:
     return deal_report_ready(db, deal_id)
 
 
+def _report_groups(db, deal_id) -> list:
+    from app.launch_prep.models import LaunchPrepCreativeSet as S
+    return [g for (g,) in db.query(S.report_group).filter(S.deal_id == deal_id, S.report_group.isnot(None))
+            .distinct().order_by(S.report_group).all()]
+
+
 @router.get("/deals/{deal_id}")
 def get_deal(deal_id: str, db: Session = Depends(get_db),
              current_user: User = Depends(require_permission("sales_registry", "view"))):
@@ -2536,6 +2542,8 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         "weborama_pixel": bool(deal.weborama_pixel),
         # Отчёт клиенту по РК — только при статистике хоть за один день (владелец 05.10.2026).
         "report_ready": _report_ready(db, deal.id),
+        # Группы креативов для отчёта клиенту по группе (владелец 24.10.2026)
+        "report_groups": _report_groups(db, deal.id),
         "weborama_pixel_at": deal.weborama_pixel_at.isoformat()
         if deal.weborama_pixel_at else None,
         "weborama_pixel_decided": deal.weborama_pixel_decided_at is not None,

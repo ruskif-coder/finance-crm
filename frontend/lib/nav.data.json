@@ -93,6 +93,12 @@
           "perm": "sales_status"
         },
         {
+          "key": "plan",
+          "label": "План продаж",
+          "href": "/sales/plan",
+          "perm": "sales_plan"
+        },
+        {
           "key": "analytics",
           "label": "Аналитика",
           "href": "/sales/analytics",

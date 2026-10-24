@@ -32,7 +32,7 @@ import OffsiteButton from '@/components/traffic/OffsiteButton'
 import PassportButton from '@/components/traffic/PassportButton'
 import StartRkModal from '@/components/traffic/StartRkModal'
 import DspRefreshModal from '@/components/traffic/DspRefreshModal'
-import BoostModal from '@/components/traffic/BoostModal'
+import TempoModal from '@/components/traffic/TempoModal'
 import PaceCell from '@/components/traffic/PaceCell'
 import { GearIcon } from '@/components/Nav'
 import AdfoxImportModal from '@/components/traffic/AdfoxImportModal'
@@ -1486,7 +1486,7 @@ export default function TrafficDashboard() {
                               letterSpacing: '.04em', display: 'inline-flex', alignItems: 'center', gap: 6,
                               opacity: detail[r.id]?.days_left === 0 ? 0.5 : 1 }}
                               title={detail[r.id]?.days_left === 0 ? 'Флайт закончился — поднимать нечего'
-                                : 'Настройки темпа размещения: временно поднять остаток РК на заданный процент на несколько дней'}
+                                : 'Темп размещения: поднять остаток РК на процент на несколько дней или перераспределить объём между площадками'}
                               aria-label="Настройки темпа размещения"
                               onClick={() => setBoostAsk(r)}>
                               <GearIcon size={13} />
@@ -1799,7 +1799,7 @@ export default function TrafficDashboard() {
         <AdfoxImportModal auth={auth} onClose={() => setAdfoxOpen(false)} onDone={load} />
       )}
       {boostAsk && (
-        <BoostModal row={boostAsk} auth={auth} canEdit={mayEdit} onClose={() => setBoostAsk(null)}
+        <TempoModal row={boostAsk} auth={auth} canEdit={mayEdit} onClose={() => setBoostAsk(null)}
           onDone={async () => {
             const [d] = await Promise.all([
               api.get(`/traffic-dashboard/campaign/${boostAsk.id}`, auth()),

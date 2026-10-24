@@ -44,7 +44,7 @@ FIRST_FREE = 18
 # CTR), подписи дней — H, дни с I, «ИТОГО» дней — сразу за последней датой (в образце AN).
 B, C, D, E, F, H, G = 2, 3, 4, 5, 6, 8, 9
 TOTAL_COL_SAMPLE = 40
-NO_DATA = "—"       # уники: формулу даст владелец вместе с охватом
+NO_DATA = "—"       # уники не посчитаны (с 24.10.2026 они моделью SIMB ID и на листах факта)
 NUM = "#,##0"
 CTR = "0.00"
 
@@ -139,15 +139,13 @@ class _Painter:
             ck = v["clicks"] if v else (0 if past else None)
             shows.append(sh)
             clicks.append(ck)
-            uniq.append((v.get("uniques") if v else 0) if (past and self.model) else
-                        (NO_DATA if past else None))
+            uniq.append(round((v.get("uniques") or 0) if v else 0) if past else None)
             ctr.append(_ctr(sh, ck) if past else None)
             run += sh or 0
             acc.append(run if past else None)
         tot_sh, tot_ck = sum(x or 0 for x in shows), sum(x or 0 for x in clicks)
         lines = (("Показы", shows, tot_sh, NUM), ("Клики", clicks, tot_ck, NUM),
-                 ("Уники", uniq, sum(x for x in uniq if isinstance(x, int)) if self.model
-                  else NO_DATA, NUM),
+                 ("Уники", uniq, sum(x for x in uniq if isinstance(x, int)), NUM),
                  ("CTR %", ctr, _ctr(tot_sh, tot_ck), CTR),
                  ("Накопительно", acc, run, NUM))
         for k, (lab, row_vals, total, fmt) in enumerate(lines, start=1):
@@ -201,7 +199,8 @@ def _fill_header(ws, rep: Report):
     h, t = rep.head, rep.totals
     adv, brand = h.get("advertiser") or "—", h.get("brand")
     mapping = {
-        "mp_title": f"Отчёт о размещении · {adv}" + (f" | {brand}" if brand else ""),
+        "mp_title": f"Отчёт о размещении · {adv}" + (f" | {brand}" if brand else "")
+                    + (f" · группа «{h['group']}»" if h.get("group") else ""),
         "mp_subtitle": f"SIMB-AD · {h.get('agency') or adv} · данные по {_ddmm(h.get('last_data'))}",
         "title": f"РК {h.get('code') or ''}".strip(),
         "agency": h.get("agency") or "—", "advertiser": adv, "brand": brand or "—",
@@ -255,7 +254,8 @@ def _fill_main(ws, rep: Report, samples: _Samples, model: bool):
     top_row = r + 1
     r = p.block(r, "ПО ПЛОЩАДКАМ И ПО ДНЯМ", rep.by_placement, rep.by_day)
     refs = _chart(ws, top_row, len(days)) if chart_at else None
-    for cr in rep.creatives:
+    # группы креативов (владелец 24.10.2026) — между общим блоком и креативами
+    for cr in rep.groups + rep.creatives:
         r = p.block(r, cr["label"], cr["by_placement"], cr["by_day"])
     # Фон однородный — как пустая ячейка образца (белый −5 %); значения и итоги белые, шапки
     # синие — их стили из образца. Правый край — две колонки за «ИТОГО» дней (AP при 31 дне):
@@ -410,7 +410,7 @@ def _weeks_sheet(wb, rep: Report, s: _Samples, title: str = WEEKS_SHEET) -> None
         return r + 2
 
     r = table(2, f"Показы по неделям · РК {h.get('code') or ''}", rep.site_days)
-    for cr in rep.creatives:
+    for cr in rep.groups + rep.creatives:
         r = table(r, cr["label"], cr.get("site_days") or {})
 
     ws.column_dimensions["A"].width = 3

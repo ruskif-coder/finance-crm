@@ -1408,7 +1408,7 @@ const preparedNote = (list) => {
   return parts.length ? 'Баннер подготовлен для DSP: ' + parts.join('; ') + '.' : null
 }
 
-function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded, handlers, rkPlan, vol }) {
+function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded, handlers, rkPlan, vol, groups = [] }) {
   // «Удалить креатив» — право «удаление» (отдельно от правки с 07.10.2026); вложения и отвязки остаются правкой
   const [mayDeleteSet, setMayDeleteSet] = useState(false)
   useEffect(() => { setMayDeleteSet(canDelete(getPermissions(), 'creatives')) }, [])
@@ -1423,6 +1423,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
   const [filter, setFilter] = useState('all')
   const [pixErr, setPixErr] = useState('')
   const [copied, setCopied] = useState(false)
+  const [gpop, setGpop] = useState(null)   // выбор группы в отчёте — якорь поповера
   /* Кто сделал баннер — спрашивается ПЕРЕД выбором файла (владелец 27.09.2026): «наш»
      собран под наш код, «рекламодатель» может быть кривым, и трафик увидит плашку.
      Ответ держим в ссылке: выбор файла приходит отдельным событием. */
@@ -1580,7 +1581,25 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
             {set.title || 'без названия'}
           </span>
         )}
+        {/* Группа в отчёте клиенту (владелец 24.10.2026): аккаунт объединяет креативы — отчёт и «Отчёт по РК» считают по группе.
+            Сразу после названия, шрифтом заголовка «Креатив №». */}
+        {(canEdit || !!set.report_group) && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: 19, fontWeight: 800, letterSpacing: '-0.02em' }}
+            title="Группа в отчёте: креативы одной группы (аудитория, формат) считаются в отчёте клиенту и в «Отчёте по РК» вместе">
+            {canEdit
+              ? <PickValue value={set.report_group} placeholder="без группы" size={19}
+                  onOpen={e => setGpop(e.currentTarget.getBoundingClientRect())} />
+              : <span>{set.report_group}</span>}
+          </span>
+        )}
         <span style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '.08em', textTransform: 'uppercase', color: CB.t3 }}>{tags}</span>
+        {!!gpop && (
+          <ValuePopover anchor={gpop} title="Группа в отчёте" value={set.report_group} clearLabel="— без группы —"
+            options={groups.map(g => ({ value: g, label: g }))}
+            onPick={v => { handlers.reportGroup(set, v); setGpop(null) }}
+            onAddNew={async (name) => { await handlers.reportGroup(set, name); setGpop(null) }}
+            onClose={() => setGpop(null)} />
+        )}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {set.erid ? (
             <span onClick={copyErid} title={`ЕРИД ${set.erid} — нажмите, чтобы скопировать`}
@@ -1702,6 +1721,15 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
             </div>
           )}
           {!!err && <div style={{ fontSize: 12.5, color: CB.danger }}>{err}</div>}
+          {/* Копия настроек (владелец 24.10.2026): площадки и их ссылки переносятся, файл прикрепляют заново */}
+          {canEdit && (
+            <span style={{ marginTop: 'auto', display: 'flex', justifyContent: 'flex-end' }}>
+              <CbBtn disabled={busy} onClick={() => handlers.copy(set)}
+                title="Новый креатив с теми же площадками и ссылками (и присланными площадками). Файл прикрепляется заново, дальше — обычный путь: проверка, согласование, ЕРИД">
+                Скопировать креатив
+              </CbBtn>
+            </span>
+          )}
         </div>
 
         {/* настройки и маркировка — внутренние действия */}
@@ -2004,6 +2032,20 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
     review: setReviewFor,
     verdict: setVerdictFor,
     rework,
+    reportGroup: async (set, group) => {
+      setErr('')
+      try { await api.put(`/launch-prep/set/${set.id}/report-group`, { group: group || '' }, auth()); load() }
+      catch (e) { setErr(e.response?.data?.detail || 'Не удалось сохранить группу') }
+    },
+    /* «Скопировать креатив»: копия сразу просит файл — как «Прикрепить креатив». */
+    copy: async (set) => {
+      setErr('')
+      try {
+        const r = await api.post(`/launch-prep/set/${set.id}/copy`, {}, auth())
+        setAutoUploadFor(r.data.id)
+        load()
+      } catch (e) { setErr(e.response?.data?.detail || 'Не удалось скопировать креатив') }
+    },
     addTargets: (setId) => setPicking(setId),
     confirmDelete: setDeleteFor,
     /* Возвращает УСПЕХ: строка держит ввод открытым, пока ссылка не легла. И при отказе
@@ -2124,7 +2166,7 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
       {data.sets.map(s => (
         <CreativeSet key={s.id} set={s} canEdit={canEdit} canApprove={canApprove} isAdmin={isAdmin}
           autoUpload={autoUploadFor === s.id} onUploaded={() => setAutoUploadFor(null)}
-          handlers={handlers} rkPlan={data.rk_plan_show} vol={data.volumes} />
+          handlers={handlers} rkPlan={data.rk_plan_show} vol={data.volumes} groups={data.report_groups} />
       ))}
 
       {!!data.sets.length && canEdit && (

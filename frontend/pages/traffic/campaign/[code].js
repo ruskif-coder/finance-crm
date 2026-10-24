@@ -20,7 +20,7 @@ import RkInsights, { cmpGroups } from '@/components/rk/RkInsights'
 import RkAnalytics from '@/components/rk/RkAnalytics'
 import { box, cap, title14, dm } from '@/components/rk/rkUi'
 
-const SL_NAME = { day: 'по дням', week: 'по неделям', placement: 'по площадкам', creative: 'по креативам', cxp: 'креатив × площадка' }
+const SL_NAME = { day: 'по дням', week: 'по неделям', placement: 'по площадкам', creative: 'по креативам', group: 'по группам', cxp: 'креатив × площадка' }
 const MNAME = { shows: 'показы', clicks: 'клики', ctr: 'CTR', offered: 'предложено сетью', plan: '% плана', spend: 'расход, ₽', cpm: 'CPM, ₽' }
 
 export default function RkAnalysisPage() {
@@ -88,7 +88,9 @@ export default function RkAnalysisPage() {
   const presets = presetDefs.map(([label, f]) => ({ label, pick: setOnBy(f), match: all.every(p => !!on[p.id] === !!f(p)) }))
   const sourceOff = v => v !== 'our' && !['shows', 'plan'].includes(st.metric)
   const cmpOff = v => !(st.slice === 'day' || st.slice === 'week') && (v === 'need' || v === 'week')
-  const crumb = { base: SL_NAME[st.slice], drill: drill ? (drill.type === 'placement' ? ix.pById[drill.id]?.domain : drill.type === 'creative' ? `комплект №${drill.id}` : dm(drill.id)) : '' }
+  const crumb = { base: SL_NAME[st.slice], drill: drill ? (drill.type === 'placement' ? ix.pById[drill.id]?.domain : drill.type === 'creative' ? `комплект №${drill.id}` : drill.type === 'group' ? `группа «${drill.id}»` : dm(drill.id)) : '' }
+  // Разрез «группа» — только когда аккаунт объединил креативы в группы (владелец 24.10.2026)
+  const slices = ix.C.some(r => r.group) ? SLICES : SLICES.filter(([v]) => v !== 'group')
   const periodLabel = st.period === 'all' ? 'весь флайт' : st.period === '7d' ? '7 дн.' : range ? `${dm(range[0])}–${dm(range[1])}` : 'свой отрезок'
   const weekLabel = (r) => `${dm(r.days[0])}–${dm(r.days[r.days.length - 1])}`
 
@@ -128,7 +130,7 @@ export default function RkAnalysisPage() {
       <RkHead head={data.head} k={k} ix={ix} checks={data.checks} partial={offIds.length ? ` · по ${onIds.length} из ${all.length}` : ''} onExport={exportXlsx} exporting={exporting} />
 
       <div style={{ ...box, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-        {[['Разрез', 'slice', SLICES], ['Метрика', 'metric', METRICS],
+        {[['Разрез', 'slice', slices], ['Метрика', 'metric', METRICS],
           ['Источник', 'source', SOURCES, sourceOff], ['Период', 'period', PERIODS], ['Сравнение', 'cmp', COMPARES, cmpOff]].map(([label, key, opts, dis]) => (
           <span key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
             <span style={cap}>{label}</span>

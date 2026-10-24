@@ -425,7 +425,7 @@ def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight
             "by_fact": lay.settle}
 
 
-def split_evenly(total, creatives, hold: bool = False):
+def split_evenly(total, creatives, hold: bool = False, facts=None):
     """План площадки → поровну между работающими креативами.
 
     `hold` — удержание (`holds(флайт)`): до старта и первые пять дней РК делят все
@@ -441,20 +441,27 @@ def split_evenly(total, creatives, hold: bool = False):
 
     Неработающий креатив получает None, а не ноль: ноль означал бы «ему запланировали
     ноль показов», а ему не планировали ничего.
+    
+    `facts` — {id креатива: открученные показы за РК} (владелец 24.10.2026): креатив, добавленный в середине РК, не
+    делит план поровну с тем, кто уже открутил часть. Лимит = свой факт + равная доля ОСТАТКА площадки (план минус
+    всё открученное, включая отклонённые); заданный объём держится, но не ниже факта. Без фактов — как раньше, поровну.
     """
     rows = sorted(creatives, key=lambda c: (c.get("creative_no") or 0, c.get("id") or 0))
     in_plan_set = CREATIVE_IN_WORK if hold else CREATIVE_SHARES
     live = [c for c in rows if c.get("status") in in_plan_set]
     out = []
     if total and live:
-        # Креатив с заданным объёмом получает его, остаток площадки — поровну остальным
-        # (владелец 25.09.2026).
-        fixed = {id(c): int(round(c.get("fixed") or 0)) for c in live}
+        # Креатив с заданным объёмом получает его (не меньше своего факта), остаток площадки — поровну остальным
+        # поверх их собственного факта (владелец 25.09.2026, по факту — 24.10.2026).
+        facts = facts or {}
+        fact = {id(c): int(round(facts.get(c.get("id")) or 0)) for c in rows}
+        fixed = {id(c): max(int(round(c.get("fixed") or 0)), fact[id(c)]) if c.get("fixed") else 0 for c in live}
         free = [c for c in live if not fixed[id(c)]]
-        left = max(0, int(round(total)) - sum(fixed.values()))
+        live_ids = {id(c) for c in live}
+        spent = sum(fact[id(c)] for c in rows if id(c) not in live_ids)
+        left = max(0, int(round(total)) - sum(fixed.values()) - sum(fact[id(c)] for c in free) - spent)
         base, rest = divmod(left, len(free)) if free else (0, 0)
         free_ids = {id(c) for c in free}
-        live_ids = {id(c) for c in live}
         given = 0
         for c in rows:
             if id(c) in live_ids and id(c) not in free_ids:
@@ -462,7 +469,7 @@ def split_evenly(total, creatives, hold: bool = False):
                             "share": round(fixed[id(c)] / total, 6), "in_plan": True,
                             "running": c.get("status") in CREATIVE_RUNNING})
             elif id(c) in free_ids:
-                val = base + (1 if given < rest else 0)
+                val = fact[id(c)] + base + (1 if given < rest else 0)
                 out.append({**c, "plan_show": val,
                             "share": round(val / total, 6), "in_plan": True,
                             "running": c.get("status") in CREATIVE_RUNNING})
