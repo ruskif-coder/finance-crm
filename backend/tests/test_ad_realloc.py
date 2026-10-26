@@ -192,3 +192,27 @@ def test_lagging_skips_sites_with_creative_volumes():
     rows = [dict(_row(1, 60_000, 30_000, 6_000, "трафик есть, не открутили"), shows_day=2_500, offered_day=6_000,
                  fixed=60_000)]
     assert not _sc(rows)["lagging"]["enabled"]
+
+
+# Тексты карточек — ОДНИМ местом, с сервера (владелец 26.10.2026): окно их только показывает. Раньше у двух карточек
+# окно складывало свою фразу, и она расходилась с серверной (дни буста, оговорка про объём по креативам).
+def test_every_card_text_and_confirm_come_from_the_server():
+    rows = [dict(_row(1, 30_000, 10_000, 800, "мало трафика"), shows_day=700, offered_day=800),
+            dict(_row(2, 60_000, 10_000, 20_000, "в темпе"), shows_day=9_000, offered_day=20_000),
+            dict(_row(3, 60_000, 30_000, 6_000, "трафик есть, не открутили"), shows_day=2_500, offered_day=6_000),
+            dict(_row(4, 20_000, 1_000, 0, "нет трафика"), shows_day=0, offered_day=0, chronic=True)]
+    sc = _sc(rows, has_manual=True)
+    assert all(sc[k]["enabled"] for k in ("move", "lagging", "drop", "reset"))
+    for k in ("move", "lagging", "drop", "reset"):
+        s = sc[k]
+        assert s["text"] == (s["what"] if s["enabled"] else s["why_not"]), k
+    assert "p3" in sc["lagging"]["text"] and "дн." in sc["lagging"]["text"]              # имена и дни буста
+    assert "объём по креативам" in sc["reset"]["text"]
+    for k in ("lagging", "drop", "reset"):
+        assert sc[k]["confirm"] and "DSP" in sc[k]["confirm"], k
+
+
+def test_move_text_names_what_cannot_be_placed():
+    rows = [_row(1, 100_000, 50_000, 2_000, "мало трафика"), _row(2, 100_000, 70_000, 4_000, "в темпе")]
+    s = _sc(rows, days=10)["move"]
+    assert s["unplaced"] > 0 and "не пристроить" in s["text"]

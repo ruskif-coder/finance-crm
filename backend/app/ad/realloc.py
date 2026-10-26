@@ -264,8 +264,9 @@ def scenarios(rows: List[dict], out: dict, days_left: int, *, boost_live: bool =
     takers = [r for r in out["rows"] if r.get("role") == "получатель"]
     move = {"key": "move", "title": "Перенести недобор на площадки в темпе", "moved": out.get("moved", 0),
             "unplaced": out.get("unplaced", 0), "plans": changed,
-            "what": (f"{names(donors)} отдаёт {out['moved']:,} показов → {len(takers)} площадкам в темпе".replace(",", " ")
-                     if changed else "")}
+            "what": ((f"{names(donors)} отдаёт {out['moved']:,} показов → {len(takers)} площадкам в темпе"
+                      + (f"; {out['unplaced']:,} не пристроить — запаса не хватает" if out.get("unplaced") else ""))
+                     .replace(",", " ") if changed else "")}
     move["why_not"] = (off or (BOOST_LIVE if boost_live else None)
                        or (None if changed else "площадок, упёршихся в сеть, нет — переносить нечего"))
 
@@ -276,7 +277,9 @@ def scenarios(rows: List[dict], out: dict, days_left: int, *, boost_live: bool =
     bdays = max(0, days_left if boost_days is None else boost_days)
     lagging = {"key": "lagging", "title": "Поднять темп не открутившим", "placement_ids": sorted(r["id"] for r in lag),
                "pct": pct, "days": bdays,
-               "what": f"{names(lag)}: остаток +{pct} % до конца флайта ({bdays} дн.)" if lag else "",
+               "what": (f"{names(lag)}: трафик есть, показов меньше нужного — остаток +{pct} % до конца флайта ({bdays} дн.)"
+                        if lag else ""),
+               "confirm": f"Поднять темп: {names(lag)} — остаток +{pct} % на {bdays} дн. Лимиты сразу уйдут в DSP." if lag else "",
                "note": "заменит действующий «Поднять темп»" if lag and boost_live else None}
     live_txt = "уже идёт «Поднять темп» — его планы подняты, статусы площадок считаются от поднятых; снимите буст в окне «Поднять темп», чтобы пересчитать"
     lagging["why_not"] = (off or (None if lag else (live_txt if boost_live else "площадок «трафик есть, не открутили» без ручного плана нет"))
@@ -284,20 +287,26 @@ def scenarios(rows: List[dict], out: dict, days_left: int, *, boost_live: bool =
 
     dead = [r for r in rows if r.get("running") and r.get("pace") == NO_TRAFFIC and r.get("chronic")]
     drop = {"key": "drop", "title": "Снять площадки без трафика", "placement_ids": sorted(r["id"] for r in dead),
-            "what": (f"{names(dead)} → «завершена»: план = факту, остаток разойдётся по долям" if dead else "")}
+            "what": (f"{names(dead)} → «завершена»: план = факту, остаток разойдётся по долям" if dead else ""),
+            "confirm": (f"Снять площадки без трафика: {names(dead)} → «завершена». План каждой = её факту, остаток разойдётся "
+                        f"по долям, лимиты сразу уйдут в DSP." if dead else "")}
     drop["why_not"] = off or (None if dead else "площадок без трафика несколько суток подряд нет")
 
     reset = {"key": "reset", "title": "Сбросить ручные планы", "what": "площадки снова по долям (где задан объём по креативам — по нему)" if has_manual else "",
              # План РК урезали ниже ручных планов (26.10.2026): кнопка подсвечена, нажимает человек
-             "urgent": bool(over_plan)}
+             "urgent": bool(over_plan),
+             "confirm": ("Снять записанные ручные планы — площадки снова по долям (где задан объём по креативам — по нему), "
+                         "лимиты сразу уйдут в DSP.")}
     if over_plan:
         reset["what"] = (f"ручные планы {over_plan['manual']:,} больше плана РК {over_plan['plan']:,} — "
-                         f"РК перекрутит; сброс вернёт площадки к долям").replace(",", " ")
+                         f"РК перекрутит; сброс вернёт площадки к долям (где задан объём по креативам — к нему)").replace(",", " ")
     reset["why_not"] = (off or (None if has_manual else "ручных планов нет"))
 
     out_list = [move, lagging, drop, reset]
     for s in out_list:
         s["enabled"] = s["why_not"] is None
+        # Текст карточки — одним местом, здесь (владелец 26.10.2026): окно его только показывает
+        s["text"] = s["what"] if s["enabled"] else s["why_not"]
     return out_list
 
 

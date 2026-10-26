@@ -68,28 +68,28 @@ export default function ReallocModal({ row, auth, canEdit = true, onClose, onDon
   const donors = rows.filter(r => (r.note || '').startsWith('успеет'))
   const takers = rows.filter(r => r.role === 'запас' || r.role === 'получатель')
   const s = (k) => sc[k] || {}
-  const lagIds = new Set(s('lagging').placement_ids || [])
+  // Тексты карточек и подтверждений — с сервера (`app/ad/realloc.scenarios`, 26.10.2026): одна фраза в одном месте
   const acts = [
     { key: 'move', title: 'Перенести недобор', tone: 'var(--income)', btn: 'Перенести', on: canEdit && s('move').enabled,
-      text: s('move').enabled ? `${s('move').what}${s('move').unplaced ? `; ${nf(s('move').unplaced)} не пристроить` : ''}` : s('move').why_not,
+      text: s('move').text,
       run: () => setEdits(e => ({ ...e, ...s('move').plans })) },
     { key: 'lagging', title: 'Поднять темп не открутившим', tone: 'var(--warning)', btn: 'Поднять темп', on: canEdit && s('lagging').enabled,
-      text: s('lagging').enabled ? `${rows.filter(r => lagIds.has(r.id)).map(r => r.name).join(', ')}: трафик есть, показов меньше — +${s('lagging').pct} % к темпу до конца флайта` : s('lagging').why_not,
-      run: () => act(`Поднять темп: ${s('lagging').what}. Лимиты сразу уйдут в DSP.`,
+      text: s('lagging').text,
+      run: () => act(s('lagging').confirm,
         () => api.post(`/traffic-dashboard/campaign/${row.id}/boost`, { pct: s('lagging').pct, days: s('lagging').days, placement_ids: s('lagging').placement_ids }, auth()),
         `темп поднят на ${s('lagging').pct} %`) },
     { key: 'drop', title: 'Снять площадки без трафика', tone: 'var(--danger)', btn: 'Снять', on: canEdit && s('drop').enabled,
-      text: s('drop').enabled ? s('drop').what : s('drop').why_not,
-      run: () => act(`Снять площадки без трафика: ${s('drop').what}.`, async () => {
+      text: s('drop').text,
+      run: () => act(s('drop').confirm, async () => {
         for (const id of s('drop').placement_ids) await api.put(`/traffic-dashboard/placement/${id}/status`, { status: 'завершена' }, auth())
       }, 'площадки сняты') },
     // План РК урезали ниже ручных планов (26.10.2026): карточка подсвечена, сбрасывает человек — сами планы не трогаются
     { key: 'reset', title: 'Сбросить ручные планы', tone: s('reset').urgent ? 'var(--danger)' : 'var(--text-muted)', urgent: !!s('reset').urgent,
       btn: 'Сбросить', on: canEdit && (changed.length > 0 || s('reset').enabled),
-      text: changed.length ? `Ручных правок: ${changed.length}` : s('reset').urgent ? s('reset').what
-        : s('reset').enabled ? 'Записанные ручные планы — площадки вернутся к долям' : 'Ручных планов нет',
+      // «Ручных правок: N» — несохранённые правки в окне, их знает только окно
+      text: changed.length ? `Ручных правок: ${changed.length}` : s('reset').text,
       run: () => (changed.length ? setEdits({})
-        : act('Снять записанные ручные планы — площадки снова по долям (где задан объём по креативам — по нему), лимиты сразу уйдут в DSP.',
+        : act(s('reset').confirm,
           () => api.delete(`/traffic-dashboard/campaign/${row.id}/realloc`, auth()), 'ручные планы сняты')) },
   ]
   const kpis = [
