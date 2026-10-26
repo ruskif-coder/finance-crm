@@ -60,6 +60,7 @@ PATH_COLUMNS = [
     ("creative_check", "file_path"),
     ("master_deal_files", "path"),
     ("bug_report_file", "rel_path"),
+    ("publisher_request_file", "path"),     # вложения переписки сверки (2026-10-26)
 ]
 
 # Песочницы распакованных баннеров — по токену каталога (см. `check_orphans`). Прибор

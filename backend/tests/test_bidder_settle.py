@@ -133,3 +133,17 @@ def test_no_stats_at_all_is_not_fresh(monkeypatch):
     from app.bidder import facts as F
     monkeypatch.setattr(F, "_has_any_fact", lambda db: False)
     assert F.placement_facts(None, [1]) is None
+
+
+def test_finished_placement_with_manual_plan_keeps_its_fact():
+    # Ручной план (`fixed_plan`, «Перераспределить») или объём по креативам не спасает выбывшую от правила 1:
+    # завершили площадку с ручным планом — её факт держится, остальным только неоткрученное. До 26.10.2026
+    # такую площадку не считал никто: ручной объём — только у тех, кто в плане, а выбывшие с заданным объёмом
+    # пропускались, и РК перекручивала на её факт.
+    pls = [{"id": 1, "status": OFF, "weight": 1, "fixed": 3000},
+           {"id": 2, "status": ON, "weight": 1},
+           {"id": 3, "status": ON, "weight": 1}]
+    r = _rows(distribute(9000, None, _fl(10), pls, facts={1: 2000, 2: 1000, 3: 1000}))
+    assert r[1]["plan_show"] == 2000 and r[1]["settled"], "выбывшая с ручным планом — план = её факт"
+    assert r[2]["plan_show"] == 3500 and r[3]["plan_show"] == 3500
+    assert sum(x["plan_show"] for x in r.values()) == 9000, "без перекрута"

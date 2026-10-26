@@ -67,7 +67,8 @@ PLAN = {
     # молчит. Всё остальное в реестре — про медиапланы и сделки, к материалу отношения
     # не имеющие; положить их сюда значило бы приучить контур не читать уведомления.
     "traffic":        {**{k: ["app"] for k in ("traffic_new_work", "traffic_silence",
-                                                 "traffic_boost_started", "traffic_boost_ended")},
+                                                 "traffic_boost_started", "traffic_boost_ended",
+                                                 "traffic_manual_over_plan")},
                        # Тревога биддера — мастерам трафика (06.10.2026); рядовым не
                        # адресована резолвером, профиль задаёт только каналы.
                        "cron_bidder_failed": ["app", "tg", "mail"],

@@ -594,3 +594,9 @@ svg [data-tile] { transform-box: fill-box; transform-origin: center; }
   background-size:9px 9px, 17px 17px;
   background-position:0 0, 4px 7px;
 }
+
+/* Под открытой модалкой страница не прокручивается — ни колесом, ни пальцем (правило владельца 26.10.2026,
+   для всего проекта). Подложку помечает overlayClose (lib/overlay.js) или явный data-overlay; одно правило здесь
+   вместо блокировки прокрутки в каждом окне. scrollbar-gutter держит место полосы прокрутки — страница не прыгает. */
+html:has([data-overlay]) { overflow: hidden; scrollbar-gutter: stable }
+[data-overlay] { overscroll-behavior: contain }

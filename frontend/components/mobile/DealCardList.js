@@ -119,7 +119,7 @@ function DealDetail({ deal, onClose, canEdit, fopts = {}, onPatch }) {
   const ef = { form, setForm, fopts, d }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'var(--bg-canvas)', overflowY: 'auto', fontFamily: UI, paddingBottom: 84 }}>
+    <div data-overlay="" style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'var(--bg-canvas)', overflowY: 'auto', fontFamily: UI, paddingBottom: 84 }}>
       <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
         {/* шапка + табы */}
         <div style={{ ...CARD, padding: '14px 16px' }}>

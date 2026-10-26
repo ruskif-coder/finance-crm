@@ -322,7 +322,7 @@ export default function DealCreateForm({ open, onClose, canPickRep, onCreated, i
   // ── Мобиль: полноэкранная форма (как форма редактирования) ──
   if (isMobile) {
     return (
-      <div style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'var(--bg-canvas)', overflowY: 'auto', fontFamily: UI, paddingBottom: 84 }}>
+      <div data-overlay="" style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'var(--bg-canvas)', overflowY: 'auto', fontFamily: UI, paddingBottom: 84 }}>
         {header}
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 18 }}>{fields}</div>
         <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 14px', background: 'var(--bg-card)', borderTop: '1px solid var(--border-inner)', display: 'flex', gap: 8 }}>

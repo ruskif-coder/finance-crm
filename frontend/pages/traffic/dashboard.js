@@ -578,12 +578,15 @@ export default function TrafficDashboard() {
   const finish = async (row) => {
     const ok = window.confirm(
       `Завершить РК «${row.deal_title}»? Статус станет «окончена», `
-      + 'сделка уедет на «Итоговую сверку» — дальше её ведёт аккаунт.')
+      + 'сделка уедет на «Итоговую сверку» — дальше её ведёт аккаунт. '
+      + 'Креативы, которые ещё ждут согласования площадок, будут отозваны.')
     if (!ok) return
     try {
       const r = await api.put(`/traffic-dashboard/campaign/${row.id}/finish`, {}, auth())
       say((r.data.moved ? `РК окончена, сделка на стадии «${r.data.stage}»` : 'РК окончена')
-        + (r.data.placements_stopped ? `; площадок остановлено: ${r.data.placements_stopped}` : ''))
+        + (r.data.placements_stopped ? `; площадок остановлено: ${r.data.placements_stopped}` : '')
+        + (r.data.approvals_withdrawn ? `; отозвано согласований: ${r.data.approvals_withdrawn}` : '')
+        + (r.data.withdraw_errors?.length ? `; не отозвано: ${r.data.withdraw_errors.length}` : ''))
       await load()
     } catch (e) { fail(e?.response?.data?.detail || 'Не удалось завершить РК') }
   }

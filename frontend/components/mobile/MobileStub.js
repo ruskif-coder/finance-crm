@@ -26,7 +26,7 @@ export default function MobileStub() {
     setSkip(next)
   }
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'var(--bg-canvas)', display: 'flex',
+    <div data-overlay="" style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'var(--bg-canvas)', display: 'flex',
       alignItems: 'center', justifyContent: 'center', padding: 24 }}>
       <div style={{ maxWidth: 360, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 14 }}>
         <b style={{ fontSize: 18, color: 'var(--text-primary)' }}>Этот экран — для устройств побольше</b>

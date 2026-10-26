@@ -139,7 +139,7 @@ function OperationForm({ initial, editId, articles, counterparties, onClose, onS
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'var(--bg-canvas)', overflowY: 'auto', fontFamily: UI, paddingBottom: 96 }}>
+    <div data-overlay="" style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'var(--bg-canvas)', overflowY: 'auto', fontFamily: UI, paddingBottom: 96 }}>
       {/* шапка */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--border-inner)', position: 'sticky', top: 0, background: 'var(--bg-card)', zIndex: Z.sticky }}>
         <button onClick={onClose} aria-label="Закрыть" style={{ width: 32, height: 32, borderRadius: 9, border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 16, lineHeight: 1 }}>✕</button>

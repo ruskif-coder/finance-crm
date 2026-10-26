@@ -900,7 +900,7 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
 
     pls = db.execute(text("""
         SELECT p.id, p.publisher_id, p.status, p.weight, p.bid, p.is_direct,
-               p.plan_show AS plan_stored, p.share AS share_stored,
+               p.plan_show AS plan_stored, p.share AS share_stored, p.fixed_plan,
                p.ms_source_key, pub.name AS publisher, pub.code, pub.domain,
                (SELECT sum(s.shows) FROM ad_campaign_stat s
                  WHERE s.placement_id = p.id AND s.source = ANY(:src)) AS fact,
@@ -953,7 +953,7 @@ def campaign(campaign_id: int, db: Session = Depends(get_db), user: User = Depen
     cr_facts = creative_fact.totals(db, c)
     for row in out["rows"]:
         row["creatives"] = split_evenly(row.get("plan_show"), creatives.get(row["id"], []),
-                                        hold=holds(fl), facts=cr_facts)
+                                        hold=holds(fl), facts=cr_facts, manual=row.get("fixed_plan") is not None)
 
     # Состояние во внешних системах — ТОЙ ЖЕ функцией, что на карточке сделки. Второй
     # расчёт разошёлся бы с первым, и спорить было бы нечем.
@@ -1095,10 +1095,8 @@ def campaign_stat(campaign_id: int, grain: str = "day",
     window = None
     if boost_mod.is_live(live):
         # норма РК целиком, а поднимается лишь остаток тех, кого буст касается: pct пересчитан на весь остаток
-        from app.ad.boost_apply import boostable_rest
-        rest_all, rest_free, _n, _f, _fact = boostable_rest(db, c)
         first, last, pct = boost_mod.boosted_days(live)
-        window = (first, last, boost_mod.effective_pct(rest_all, rest_free, pct))
+        window = (first, last, boost_mod.rk_pct(db, c, pct, live.placement_ids))
     out = daily_buckets(c.plan_show, fact, fl, by_day, grain=grain,
                         date_from=date_from, date_to=date_to, today=today, boost=window,
                         boost_days=boost_mod.days_pct(boost_mod.windows_of(db, [c.id]).get(c.id)))
@@ -1518,8 +1516,13 @@ def finish_campaign(campaign_id: int, db: Session = Depends(get_db), user: User 
                + (f"; сделка → {adv['stage']}" if moved else "")
                + (f"; остановлено площадок {stopped}" if stopped else "")
                + (f"; {refused}" if refused else ""))
+    # Креативы, которые всё ещё висят на согласовании у площадок, отзываются (владелец 26.10.2026): РК окончена,
+    # согласовывать нечего. Согласованное раньше не трогаем. Каждый отзыв — обычный, с письмом площадке.
+    from app.launch_prep.withdraw import withdraw_pending
+    wd = withdraw_pending(db, deal.id, user)
     return {"id": c.id, "status": c.status, "placements_stopped": stopped,
-            "stage_refused": refused, "stage": adv["stage"], "moved": bool(moved)}
+            "stage_refused": refused, "stage": adv["stage"], "moved": bool(moved),
+            "approvals_withdrawn": wd["withdrawn"], "withdraw_errors": wd["errors"]}
 
 
 @router.get("/campaign/{campaign_id}/start-plan")
@@ -1592,6 +1595,7 @@ def _boost_view(db: Session, campaign_id: int):
 class BoostIn(BaseModel):
     pct: int
     days: int
+    placement_ids: Optional[List[int]] = None     # только эти площадки (сценарий «Поднять темп не открутившим»)
 
 
 @router.get("/campaign/{campaign_id}/boost")
@@ -1628,8 +1632,13 @@ def boost_start(campaign_id: int, payload: BoostIn,
     _lock_shares(db, c.id)
     if c.status in build.CAMPAIGN_CLOSED:
         raise HTTPException(400, "РК окончена — поднимать нечего")
+    scope = payload.placement_ids
+    if scope is not None:
+        own = {pid for (pid,) in db.query(AdCampaignPlacement.id).filter(AdCampaignPlacement.campaign_id == c.id)}
+        if not scope or not set(scope) <= own:
+            raise HTTPException(400, "Площадки не из этой РК")
     try:
-        return boost_apply.apply(db, c, payload.pct, payload.days, user)
+        return boost_apply.apply(db, c, payload.pct, payload.days, user, placement_ids=scope)
     except boost_mod.BoostError as e:
         db.rollback()
         raise HTTPException(400, str(e))
@@ -1651,6 +1660,7 @@ def boost_cancel(campaign_id: int, db: Session = Depends(get_db), user: User = D
 
 class ReallocIn(BaseModel):
     plans: dict      # {id площадки: новый план показов}
+    reason: Optional[str] = None    # обязательна (хендофф 26.10.2026) — в журнал РК и историю окна
 
 
 def _realloc_view(db: Session, c: AdCampaign) -> dict:
@@ -1662,6 +1672,21 @@ def _realloc_view(db: Session, c: AdCampaign) -> dict:
     from app.ad import boost as boost_mod
     out["boost_live"] = boost_mod.is_live(boost_mod.active(db, c.id))
     out["can_apply"] = c.status not in build.CAMPAIGN_CLOSED and days_left > 0 and not out["boost_live"]
+    # Сценарии-кнопки (владелец 26.10.2026): готовые действия вместо ручной таблицы; таблица остаётся «подробнее».
+    # Хендофф 26.10.2026: график «Динамика по дням» и история перераспределений РК.
+    out["daily"] = realloc.daily_of(db, c)
+    out["history"] = realloc.journal_of(db, c.deal_id)
+    head = db.execute(text("""SELECT d.code, coalesce(b.name, '') AS brand, d.product FROM sales_deals d
+                               LEFT JOIN sales_brands b ON b.id = d.brand_id WHERE d.id = :d"""), {"d": c.deal_id}).first()
+    out["head"] = {"code": head.code if head else None, "brand": head.brand if head else None,
+                   "service": head.product if head else None,
+                   "date_start": c.date_start.isoformat() if c.date_start else None,
+                   "date_end": c.date_end.isoformat() if c.date_end else None}
+    fl_today = flight_of(c.date_start, c.date_end)
+    out["over_plan"] = realloc.over_plan_of(db, c)          # план РК урезали ниже ручных планов (26.10.2026)
+    out["scenarios"] = realloc.scenarios(rows, out, days_left, boost_live=out["boost_live"], over_plan=out["over_plan"],
+                                         has_manual=out["has_manual"], closed=c.status in build.CAMPAIGN_CLOSED,
+                                         boost_days=fl_today.left if fl_today else 0)
     return out
 
 
@@ -1691,16 +1716,13 @@ def realloc_apply(campaign_id: int, payload: ReallocIn, db: Session = Depends(ge
     if not plans:
         raise HTTPException(400, "Нечего применять — планы не изменились")
     rows, _left = realloc.rows_of(db, c)
-    why = realloc.check_plans(rows, plans, c.plan_show)
+    why = realloc.check_reason(payload.reason) or realloc.check_plans(rows, plans, c.plan_show)
     if why:
         db.rollback()
         raise HTTPException(400, why)
-    names = {r["id"]: r for r in rows}
     out = realloc.apply(db, c, plans, user)
     log_action(db, user, "traffic_realloc", "sales_deal", deal.id,
-               f"{rk_label(db, c.id)}: " + "; ".join(
-                   f"{names[k]['name']} {round(names[k]['plan']):,} → {round(v):,}".replace(",", " ")
-                   for k, v in plans.items()))
+               realloc.journal_text(rk_label(db, c.id), rows, plans, payload.reason))
     return {**out, "view": _realloc_view(db, c)}
 
 

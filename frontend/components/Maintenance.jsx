@@ -112,7 +112,7 @@ export function MaintenanceStub({ state }) {
   // проверка роли здесь была бы вторым расчётом одного права — а они расходятся.
   if (!state || state.mode !== 'active' || state.passes) return null
   return (
-    <div style={{
+    <div data-overlay="" style={{
       position: 'fixed', inset: 0, zIndex: Z.toast - 1, background: 'var(--bg-canvas)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
       textAlign: 'center',

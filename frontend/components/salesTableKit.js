@@ -23,7 +23,9 @@ export const Z = { base: 1, sticky: 20, dropdown: 3000, tooltip: 3500, overlay: 
 // принимается по списку, который в window.confirm не читается.
 // Закрытие — кликом строго по подложке (e.target === e.currentTarget), иначе
 // клик по содержимому закрывал бы окно.
-export function Modal({ title, summary, footer, width = 760, onClose, children }) {
+// `fill` — окно на высоту экрана, тело само не прокручивается: внутри раскладывают неподвижные части и одну прокрутку
+// (окно «Перераспределить объём»: шапка и график стоят, площадки — в прокрутке между ними).
+export function Modal({ title, summary, footer, width = 760, onClose, children, fill = false }) {
   return (
     <div {...overlayClose(onClose)}
       style={{
@@ -32,7 +34,8 @@ export function Modal({ title, summary, footer, width = 760, onClose, children }
         overflow: 'auto', fontFamily: UI,
       }}>
       <div style={{
-        width, maxWidth: '100%', maxHeight: '88vh', margin: 'auto', display: 'flex',
+        width, maxWidth: '100%', maxHeight: fill ? 'calc(100vh - 48px)' : '88vh', height: fill ? 'calc(100vh - 48px)' : undefined,
+        margin: 'auto', display: 'flex',
         flexDirection: 'column', background: 'var(--bg-card)', borderRadius: 18,
         boxShadow: 'var(--shadow-modal)',
         animation: 'riseIn .28s cubic-bezier(0.22,1,0.36,1) both',
@@ -48,7 +51,9 @@ export function Modal({ title, summary, footer, width = 760, onClose, children }
             fontSize: 13, color: 'var(--text-secondary)', background: 'var(--bg-subtle)',
           }}>{summary}</div>
         )}
-        <div style={{ padding: '10px 20px', overflowY: 'auto', flex: 1 }}>{children}</div>
+        <div style={fill
+          ? { padding: '10px 20px', overflow: 'hidden', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }
+          : { padding: '10px 20px', overflowY: 'auto', flex: 1 }}>{children}</div>
         {footer != null && (
           <div style={{
             padding: '12px 20px', borderTop: '1px solid var(--border-card)',

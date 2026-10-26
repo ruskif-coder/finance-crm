@@ -18,12 +18,17 @@
  * клик переставал бы закрывать окно. Мышь одна, жест не бывает параллельным — модульная
  * переменная тут ровно по размеру задачи.
  *
+ * Подложка ещё и помечается `data-overlay`: по этой метке globals.css запрещает прокрутку страницы,
+ * пока окно открыто (правило владельца 26.10.2026: колесо под модалкой не крутит основную страницу).
+ * Подложка, которая закрывается не кликом, ставит `data-overlay` сама — это проверяет гейт check-overlay.
+ *
  * Применение: `<div {...overlayClose(onClose)} style={{ position: 'fixed', inset: 0, … }}>`
  */
 let lastMouseDownTarget = null
 
 export function overlayClose(onClose) {
   return {
+    'data-overlay': '',
     onMouseDown: (e) => { lastMouseDownTarget = e.target },
     onClick: (e) => {
       if (e.target === e.currentTarget && lastMouseDownTarget === e.currentTarget) {

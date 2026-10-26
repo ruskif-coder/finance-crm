@@ -39,6 +39,7 @@ EXPECTED_KEYS = {
     "dir_publishers_approvals",
     # Добавлен 2026-10-09: «Аудитория» — заявленное площадкой рядом с измеренным нами; без бэкфилла.
     "dir_publishers_audience",
+    "dir_publishers_interaction",
     # Добавлен 2026-09-29: особенности площадок для трафика («трафик админ»).
     "traffic_publisher_rules",
     # Добавлен 2026-09-06: экран «Добавить данные». Только view — см. комментарий в SECTIONS.

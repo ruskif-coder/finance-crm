@@ -1186,3 +1186,8 @@ def prio_verdict(prio_id: int, payload: PrioVerdictIn, acc=Depends(current_accou
     return call_core("POST", f"/api/cabinet-gw/prio/{prio_id}/verdict", {
         "publisher_id": row.publisher_id, "account_id": acc.id, "verdict": payload.verdict,
         "reason": payload.reason, "author_name": acc.name})
+
+
+# ── Сверка месяца (26.10.2026): карточка в «Требует вашего решения», модалка, переписка — app/recon.py ──
+from app import recon as _recon  # noqa: E402 — подключается последним: берёт общие двери ядра из этого модуля
+app.include_router(_recon.router)

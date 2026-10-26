@@ -212,7 +212,8 @@ def test_rejected_creative_does_not_let_placement_start():
 def test_cabinet_views_hide_withdrawn():
     db = SessionLocal()
     try:
-        for view in ('pub.task_v1', 'pub.campaign_v1'):
+        # pub.campaign_v1 — фильтр над publisher_placement_v (2026-10-26): условие живёт там.
+        for view in ('pub.task_v1', 'publisher_placement_v'):
             assert db.execute(text(f"SELECT pg_get_viewdef('{view}') ~ 'withdrawn_at'")).scalar(), \
                 f'{view} показывает площадке отозванное'
     finally:
@@ -249,3 +250,40 @@ def test_live_rule_is_one_for_dsp_and_withdraw():
     got = C.creative_targets(rows, C.ds.LAUNCHED)
     assert got == {'AA': C.ds.LAUNCHED, 'BB': C.ds.STOPPED, 'CC': C.ds.STOPPED}
     assert [C.creative_live(p, c, x) for x, p, c in rows] == [True, False, False]
+
+
+# ── «Завершить РК» отзывает то, что висит на согласовании (владелец 26.10.2026) ──────────────────────
+
+def test_finishing_the_campaign_withdraws_pending_approvals(env):
+    """Площадка молчит — после «Завершить РК» задача из её кабинета уходит с причиной."""
+    out = W.withdraw_pending(env.db, env.target.deal_id, MASTER)
+    env.db.refresh(env.pair)
+    assert out == {"withdrawn": 1, "errors": []}
+    assert env.pair.withdrawn_at is not None and env.state.told, 'висящее согласование не отозвано'
+
+
+def test_finishing_the_campaign_keeps_what_the_publisher_already_answered(env):
+    """Ранее согласованное и всё, на что площадка уже ответила, не трогаем."""
+    rev = env.db.query(LaunchPrepReview).filter_by(pair_id=env.pair.id, kind='площадка').one()
+    rev.verdict = 'ок'
+    env.pair.agreed_at = datetime.utcnow()
+    env.db.commit()
+    assert W.withdraw_pending(env.db, env.target.deal_id, MASTER) == {"withdrawn": 0, "errors": []}
+    env.db.refresh(env.pair)
+    assert env.pair.withdrawn_at is None
+
+
+def test_finishing_the_campaign_ignores_unsent_pairs(env):
+    env.pair.sent_at = None
+    env.db.commit()
+    assert W.withdraw_pending(env.db, env.target.deal_id, MASTER)["withdrawn"] == 0
+
+
+def test_finishing_survives_an_unexpected_error_of_one_pair(env, monkeypatch):
+    """Ревью 26.10.2026: отзыв идёт ПОСЛЕ закрытия РК — любой сбой пары (не только отказ отзыва) должен лечь в `errors`,
+    а не превратить уже выполненное «Завершить РК» в 500."""
+    def boom(*a, **k):
+        raise RuntimeError("DSP недоступна")
+    monkeypatch.setattr(W, "withdraw", boom)
+    out = W.withdraw_pending(env.db, env.target.deal_id, MASTER)
+    assert out["withdrawn"] == 0 and len(out["errors"]) == 1 and "DSP недоступна" in out["errors"][0]

@@ -248,6 +248,7 @@ def sync_campaigns(db: Session, commit: bool = True) -> dict:
         "WHERE d.our_stage_id = ANY(:st) AND p.closing_flow IS DISTINCT FROM 'контур аккаунта' ORDER BY d.id"),
         {"st": stage_ids}).mappings().all()
     existing = {c.deal_id: c for c in db.query(AdCampaign).all()}
+    plan_before = {c.id: c.plan_show for c in existing.values()}
 
     created = updated = no_mp = 0
     for d in deals:
@@ -263,6 +264,9 @@ def sync_campaigns(db: Session, commit: bool = True) -> dict:
             updated += 1
         _fill_campaign(camp, d, plan)
     db.flush()
+    # План РК урезали ниже ручных планов «Перераспределить» — уведомление трафику (владелец 26.10.2026)
+    from app.ad.realloc import alert_plan_cut
+    alert_plan_cut(db, plan_before)
     if commit:
         db.commit()
     return {"created": created, "updated": updated, "no_media_plan": no_mp,
@@ -369,7 +373,7 @@ def campaign_layout(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = No
     extra = 0
     if plan and boost.is_live(live):
         known = facts if facts is not None else any_facts(db, campaign_id)
-        out["rows"], extra = boost.boost_rows(out["rows"], known, live.pct)
+        out["rows"], extra = boost.boost_rows(out["rows"], known, live.pct, live.placement_ids)
     out["plan_eff"] = (plan + extra) if plan else plan
     out["boost_extra"] = extra
     return pls, out
@@ -442,8 +446,10 @@ def creative_plans(db: Session, camp: AdCampaign, extra_plans: Optional[dict] = 
     by_pl: dict = {}
     for r in rows:
         by_pl.setdefault(r["placement_id"], []).append(dict(r))
-    plan_of = {p.id: p.plan_show for p in db.query(AdCampaignPlacement).filter(
-        AdCampaignPlacement.campaign_id == camp.id).all()}
+    pls = db.query(AdCampaignPlacement).filter(AdCampaignPlacement.campaign_id == camp.id).all()
+    plan_of = {p.id: p.plan_show for p in pls}
+    # Ручной план площадки — объёмы её креативов к нему в своей пропорции (владелец 26.10.2026)
+    manual = {p.id for p in pls if p.fixed_plan is not None}
     # Предварительный объём согласованных, но не запущенных площадок (`app/ad/volumes_now`): только тем,
     # у кого записанного плана нет, и только на лету — в базу это не попадает.
     for pid, v in (extra_plans or {}).items():
@@ -454,7 +460,7 @@ def creative_plans(db: Session, camp: AdCampaign, extra_plans: Optional[dict] = 
     hold = holds(flight_of(camp.date_start, camp.date_end))
     out = {}
     for pid, crs in by_pl.items():
-        for r in split_evenly(plan_of.get(pid), crs, hold=hold, facts=facts):
+        for r in split_evenly(plan_of.get(pid), crs, hold=hold, facts=facts, manual=pid in manual):
             out[r["id"]] = r["plan_show"]
     return out
 

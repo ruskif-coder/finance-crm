@@ -62,12 +62,14 @@ def is_live(b: Optional[AdCampaignBoost], today: Optional[date] = None) -> bool:
     return bool(b and b.ended_at is None and b.starts_on <= today <= b.until)
 
 
-def boostable(row) -> bool:
-    """Касается ли буст площадки: запущена, без заданного объёма, не выбыла (правила 25.09 и 05.10.2026)."""
-    return row.get("status") in PLACEMENT_RUNNING and not row.get("fixed") and not row.get("settled")
+def boostable(row, scope=None) -> bool:
+    """Касается ли буст площадки: запущена, без заданного объёма, не выбыла (правила 25.09 и 05.10.2026); у буста по
+    выбранным площадкам (`scope`, 26.10.2026) — ещё и в их числе."""
+    return (row.get("status") in PLACEMENT_RUNNING and not row.get("fixed") and not row.get("settled")
+            and (scope is None or row.get("id") in scope))
 
 
-def boost_rows(rows, facts: Optional[dict], pct: int):
+def boost_rows(rows, facts: Optional[dict], pct: int, scope=None):
     """Раскладка РК с бустом → (новые строки, добавка к плану РК).
 
     Буст — на ОСТАТКЕ ПЛОЩАДКИ: план' = план + (план − факт) × pct/100, и только у тех, кого он касается
@@ -81,7 +83,7 @@ def boost_rows(rows, facts: Optional[dict], pct: int):
     (None — не знаем, остаток от всего плана площадки)."""
     out, extra = [], 0
     for r in rows:
-        if not boostable(r):
+        if not boostable(r, scope):
             out.append(r)
             continue
         base = r.get("plan_show") or 0
@@ -92,14 +94,25 @@ def boost_rows(rows, facts: Optional[dict], pct: int):
     return out, extra
 
 
+def rk_pct(db: Session, camp: AdCampaign, pct: float, scope=None) -> float:
+    """Процент буста на ВСЮ РК — ОДНО правило для графика РК, стены дней, «Отчёта по РК» и дашборда продаж
+    (26.10.2026; до того три расчёта, и каждый ошибался в своём случае): pct × остаток тех, кого буст поднимает
+    (`boostable`: запущены, без заданного объёма и ручного плана, в `scope`) ÷ остаток плана РК. Считается по
+    сегодняшней раскладке — для прошедшего буста это приближение."""
+    from app.ad.boost_apply import boostable_rest
+    rest_all, rest_free, *_rest = boostable_rest(db, camp, scope)
+    return effective_pct(rest_all, rest_free, pct)
+
+
 def effective_pct(rest: float, rest_free: float, pct: float) -> float:
     """pct, пересчитанный на ВЕСЬ остаток РК: график рисует норму РК целиком, а поднимается только часть."""
     return pct * rest_free / rest if rest > 0 else 0.0
 
 
 def start(db: Session, camp: AdCampaign, pct, days, *, user_id: Optional[int],
-          facts: Optional[dict], today: Optional[date] = None) -> AdCampaignBoost:
-    """Завести буст; действующий закрывается («заменён»). Коммит — на вызывающем."""
+          facts: Optional[dict], today: Optional[date] = None, placement_ids=None) -> AdCampaignBoost:
+    """Завести буст; действующий закрывается («заменён»). Коммит — на вызывающем.
+    `placement_ids` — только эти площадки РК (сценарий «Поднять темп не открутившим»); None — все запущенные."""
     from app.ad.flight import flight_of
     today = today or date.today()
     starts_on, until = window(flight_of(camp.date_start, camp.date_end, today), pct, days, today)
@@ -109,8 +122,11 @@ def start(db: Session, camp: AdCampaign, pct, days, *, user_id: Optional[int],
         db.flush()   # уникальный индекс «один активный на РК» — старый закрыт до вставки нового
     fact_total = sum((facts or {}).values())
     rest = max(0, round((camp.plan_show or 0) - fact_total))
+    if placement_ids is not None and not placement_ids:
+        raise BoostError("Не выбрано ни одной площадки")
     b = AdCampaignBoost(campaign_id=camp.id, pct=pct, days=days, starts_on=starts_on, until=until,
-                        rest_at_start=rest, created_by=user_id)
+                        rest_at_start=rest, created_by=user_id,
+                        placement_ids=sorted(set(placement_ids)) if placement_ids else None)
     db.add(b)
     db.flush()
     return b
@@ -161,10 +177,20 @@ def windows_of(db: Session, campaign_ids) -> dict:
     out: dict = {}
     if not ids:
         return out
-    for r in db.execute(text("""SELECT campaign_id, pct, days, starts_on, until, ended_at, ended_reason
+    camps, share = {}, {}
+    for r in db.execute(text("""SELECT campaign_id, pct, days, starts_on, until, ended_at, ended_reason, placement_ids
                                   FROM ad_campaign_boost WHERE campaign_id = ANY(:c) ORDER BY id"""), {"c": ids}).mappings().all():
         w = boost_window(r)
         if w:
+            # План дня считают на всю РК; ДЕЙСТВУЮЩИЙ буст поднимает только остаток тех, кого касается — РК получает долю
+            # процента (`rk_pct`, одно правило с графиком РК). Прошедшее окно — свой процент: доля считается по сегодняшней
+            # раскладке, и у окончившейся РК (остатка нет) прошлый буст обнулялся бы задним числом (ревью 26.10.2026).
+            if r["ended_at"] is None:
+                key = (r["campaign_id"], tuple(r["placement_ids"] or ()))
+                if key not in share:
+                    camps.setdefault(r["campaign_id"], db.query(AdCampaign).get(r["campaign_id"]))
+                    share[key] = rk_pct(db, camps[r["campaign_id"]], 1.0, r["placement_ids"]) if camps[r["campaign_id"]] else 0.0
+                w = {**w, "pct_scope": w["pct"], "pct": round(w["pct"] * share[key], 1)}
             out.setdefault(r["campaign_id"], []).append(w)
     return out
 

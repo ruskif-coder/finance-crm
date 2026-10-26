@@ -45,6 +45,7 @@ import { APP_LINK_FORMATS, isAppLink, landingWeb } from '../lib/landing'
 import { downloadFile } from '../lib/download'
 import { guideSeen, markGuideSeen } from './guide/seen'
 import PrioTask from './PrioTask'
+import ReconTask from './ReconTask'
 
 // Строка в одну линию с многоточием — колонка креатива в карточке задания.
 const ELLIPSIS = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
@@ -227,10 +228,8 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
     )
   }
 
-  /* Полоса-акцент слева ТОЛЬКО у сверки (эталон, 2.3): она одна отличается родом —
-     это не креатив, а подтверждение месяца. У просроченного меняется фон и тон маркера,
-     но не толщина рамки: если полосу получают все «важные», она перестаёт выделять
-     что-либо. */
+  /* Левой полосы нет ни у одной карточки очереди, включая сверку (хендофф 26.10.2026): рамка одного цвета.
+     У просроченного меняется фон и тон маркера, но не толщина рамки. */
   return (
     <div className="rise" style={{ padding: '12px 14px', borderRadius: 12,
       background: late ? C.dangerBg : soon ? C.warnBg : C.card,
@@ -1674,6 +1673,7 @@ export default function Dashboard({ name, onSignOut }) {
   const [tasks, setTasks] = useState(null)
   // Запросы на приоритезацию (19.10.2026) — в том же блоке «Требует вашего решения»; отдельный список, своя ручка.
   const [prio, setPrio] = useState([])
+  const [recons, setRecons] = useState([])
   const [dash, setDash] = useState(null)
   const [reasons, setReasons] = useState(null)
   const [me, setMe] = useState(null)
@@ -1725,6 +1725,8 @@ export default function Dashboard({ name, onSignOut }) {
       setTasks(t.data); setDash(d.data); setMe(m.data)
       // Отдельно и мягко: сбой ручки приоритезации не должен ронять ленту креативов.
       api.get('/prio-tasks', auth()).then(r => setPrio(r.data.items || [])).catch(() => setPrio([]))
+      // Сверка месяца (26.10.2026) — так же мягко: без неё лента креативов работает.
+      api.get('/recons', auth()).then(r => setRecons(r.data.items || [])).catch(() => setRecons([]))
     } catch (e) {
       if (e.response?.status === 401 || e.response?.status === 403) {
         onSignOut(); return
@@ -2084,10 +2086,10 @@ export default function Dashboard({ name, onSignOut }) {
               flexWrap: 'wrap' }}>
               <span style={{ fontSize: 17, fontWeight: 800 }}>Требует вашего решения</span>
               <span style={{ ...chip(C.dangerTint, C.danger, C.dangerBorder),
-                fontFamily: MONO }}>{(tasks?.total ?? 0) + prio.length}</span>
+                fontFamily: MONO }}>{(tasks?.total ?? 0) + prio.length + recons.length}</span>
               {!mobile && (
                 <span style={{ ...CAP, marginBottom: 0 }}>
-                  креативы, пролонгации, приоритезация · дедлайн решения
+                  креативы, пролонгации, приоритезация, сверки · дедлайн решения
                 </span>
               )}
               <span style={{ flex: 1 }} />
@@ -2120,7 +2122,10 @@ export default function Dashboard({ name, onSignOut }) {
               {prio.map(p => (
                 <PrioTask key={`prio-${p.id}`} t={p} today={today} canApprove={!!me?.can_approve} onDone={load} onErr={setErr} />
               ))}
-              {!allTasks.length && !prio.length && (
+              {recons.map(r => (
+                <ReconTask key={`recon-${r.id}`} r={r} canApprove={!!me?.can_approve} onDone={load} onErr={setErr} />
+              ))}
+              {!allTasks.length && !prio.length && !recons.length && (
                 <div style={{ padding: '22px 0', textAlign: 'center', color: C.muted,
                   fontSize: 13 }}>
                   Новых креативов на согласование нет.

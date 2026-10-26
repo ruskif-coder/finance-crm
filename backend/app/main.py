@@ -637,6 +637,10 @@ app.include_router(master_deals.router, prefix="/api/master-deals", tags=["maste
 # Приоритезация (19.10.2026): сборка запроса в карточке сделки. Логика — пакет `app/prio`.
 from app.routers import prio  # noqa: E402
 app.include_router(prio.router, prefix="/api/prio", tags=["prio"])
+from app.routers import publisher_recon as publisher_recon_router  # noqa: E402 — сверки площадок (2026-10-26_publisher_recon.sql)
+from app.routers import cabinet_gateway_recon  # noqa: E402
+app.include_router(publisher_recon_router.router, prefix="/api/publisher-recon", tags=["publisher-recon"])
+app.include_router(cabinet_gateway_recon.router, prefix="/api/cabinet-gw", tags=["cabinet-gw"])
 
 @app.get("/")
 def root():

@@ -291,10 +291,12 @@ def _fixed_volumes(placements: Sequence[dict], fact_of: dict, settle: bool) -> d
 
 def _dropped_volumes(placements: Sequence[dict], fact_of: dict, fixed_of: dict,
                      in_plan_set: tuple, settle: bool) -> dict:
-    """Вне раскладки (выбыла, нет веса), но уже открутила — держит план = свой факт."""
+    """Вне раскладки (выбыла, нет веса), но уже открутила — держит план = свой факт.
+    Заданный объём (ручной план, объём по креативам) спасает от этого только площадку В ПЛАНЕ: выбывшую с заданным
+    объёмом раньше не считал никто, и РК перекручивала на её факт (26.10.2026)."""
     return {id(p): fact_of[id(p)] for p in placements
-            if settle and fact_of[id(p)] and not fixed_of[id(p)]
-            and (p.get("status") not in in_plan_set or not p.get("weight"))}
+            if settle and fact_of[id(p)]
+            and (p.get("status") not in in_plan_set or (not p.get("weight") and not fixed_of[id(p)]))}
 
 
 def _shares_of_rest(live: Sequence[dict], plan: Optional[float], rest: float, cap: Optional[float],
@@ -425,7 +427,7 @@ def distribute(plan: Optional[float], fact: Optional[float], fl: Optional[Flight
             "by_fact": lay.settle}
 
 
-def split_evenly(total, creatives, hold: bool = False, facts=None):
+def split_evenly(total, creatives, hold: bool = False, facts=None, manual: bool = False):
     """План площадки → поровну между работающими креативами.
 
     `hold` — удержание (`holds(флайт)`): до старта и первые пять дней РК делят все
@@ -445,10 +447,16 @@ def split_evenly(total, creatives, hold: bool = False, facts=None):
     `facts` — {id креатива: открученные показы за РК} (владелец 24.10.2026): креатив, добавленный в середине РК, не
     делит план поровну с тем, кто уже открутил часть. Лимит = свой факт + равная доля ОСТАТКА площадки (план минус
     всё открученное, включая отклонённые); заданный объём держится, но не ниже факта. Без фактов — как раньше, поровну.
+
+    `manual` — у площадки ручной план («Перераспределить», 24.10.2026): объёмы креативов масштабируются к нему в своей
+    пропорции (владелец 26.10.2026), иначе перенос до лимитов DSP не доходил — план площадки менялся, лимиты нет.
     """
     rows = sorted(creatives, key=lambda c: (c.get("creative_no") or 0, c.get("id") or 0))
     in_plan_set = CREATIVE_IN_WORK if hold else CREATIVE_SHARES
     live = [c for c in rows if c.get("status") in in_plan_set]
+    if manual and total:
+        rows = _scale_volumes(rows, live, total, facts or {})
+        live = [c for c in rows if c.get("status") in in_plan_set]
     out = []
     if total and live:
         # Креатив с заданным объёмом получает его (не меньше своего факта), остаток площадки — поровну остальным
@@ -483,6 +491,24 @@ def split_evenly(total, creatives, hold: bool = False, facts=None):
                     "in_plan": c.get("status") in in_plan_set,
                     "running": c.get("status") in CREATIVE_RUNNING})
     return out
+
+
+def _scale_volumes(rows, live, total, facts):
+    """Объёмы работающих креативов → к плану площадки в их пропорции; остаток округления — первому.
+    Масштаб — к тому, что объёмам остаётся: план − открученное креативами вне работы − факт креативов без объёма
+    (ревью 26.10.2026: к всему плану лимиты в сумме выходили больше плана)."""
+    vols = [c for c in live if c.get("fixed")]
+    base = sum(float(c["fixed"]) for c in vols)
+    if not base:
+        return rows
+    live_ids = {id(c) for c in live}
+    fact = lambda c: float(facts.get(c.get("id")) or 0)                      # noqa: E731
+    spent = sum(fact(c) for c in rows if id(c) not in live_ids)
+    free = sum(fact(c) for c in live if not c.get("fixed"))
+    target = max(0.0, float(total) - spent - free)
+    scaled = {id(c): int(float(c["fixed"]) * target / base) for c in vols}
+    scaled[id(vols[0])] += int(round(target)) - sum(scaled.values())
+    return [{**c, "fixed": scaled[id(c)]} if id(c) in scaled else c for c in rows]
 
 
 def creative_counts(creatives):

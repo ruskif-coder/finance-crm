@@ -14,10 +14,13 @@
  * Цель последнего нажатия хранится в модуле, а не в состоянии: замыкание пересоздаётся
  * при перерисовке между нажатием и отпусканием, и настоящий клик переставал бы закрывать.
  */
+// Подложка помечается `data-overlay`: по метке globals.css запрещает прокрутку страницы под открытым окном
+// (правило владельца 26.10.2026). Подложка, закрывающаяся не кликом, ставит `data-overlay` сама.
 let lastMouseDownTarget = null
 
 export function overlayClose(onClose) {
   return {
+    'data-overlay': '',
     onMouseDown: (e) => { lastMouseDownTarget = e.target },
     onClick: (e) => {
       if (e.target === e.currentTarget && lastMouseDownTarget === e.currentTarget) {

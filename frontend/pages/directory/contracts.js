@@ -620,7 +620,7 @@ export default function Contracts() {
 
         {/* Превью импорта */}
         {importPreview && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: Z.overlay,
+          <div data-overlay="" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: Z.overlay,
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
             <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-card)',
               padding: 24, maxWidth: 820, width: '100%', maxHeight: '80vh', overflow: 'auto',

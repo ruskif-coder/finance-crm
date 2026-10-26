@@ -378,3 +378,76 @@ def test_the_journal_names_the_boost_as_the_reason_not_the_weight(camp3):
     assert why[pls[2].id] == "weight"                           # пауза — по весу, буст её не трогал
     assert "boost" in REASONS and any("Темп размещения" in r["title"] for r in RULES)
     assert explain({"boosted": True, "in_plan": True, "plan_show": 10}, 0, False, None)["code"] == "boost"
+
+
+def test_rk_report_gives_placement_plans_without_the_boost(camp):
+    """«Отчёт по РК» (26.10.2026, 9E8Z4U): при живом бусте записанные планы площадок подняты, и сумма их
+    расходилась с планом РК в карточке сделки (2 184 257 против 1 826 485). Буст страница добавляет сама
+    множителем на свои дни (`boostK`), поэтому планы площадок ей нужны БЕЗ буста — иначе буст считается дважды."""
+    from app.ad import rk_analysis
+    db, c, pls = camp
+    facts = {pls[0].id: 300, pls[1].id: 300}
+    boost.start(db, c, 50, 3, user_id=None, facts=facts, today=date.today())
+    build.recompute_shares(db, c.id, facts=facts, facts_given=True)
+    db.commit()
+    stored = sum(db.get(AdCampaignPlacement, p.id).plan_show for p in pls)
+    assert stored > c.plan_show                                  # в базе — с бустом, так уходит в DSP
+    got = {r["id"]: r["plan_show"] for r in rk_analysis.placements_of(db, c.id)}
+    assert sum(got.values()) == c.plan_show                      # в отчёте — план РК, как в карточке сделки
+
+
+# ── буст по выбранным площадкам (сценарий «Поднять темп не открутившим», 26.10.2026) ────────────────
+
+def test_scoped_boost_raises_only_the_chosen_sites():
+    rows = [_row(1, plan=1000), _row(2, plan=1000)]
+    out, extra = boost.boost_rows(rows, {1: 0, 2: 0}, 50, scope=[2])
+    got = {r["id"]: r["plan_show"] for r in out}
+    assert got == {1: 1000, 2: 1500} and extra == 500
+
+
+def test_scoped_boost_is_stored_and_laid_out_only_on_its_sites(camp):
+    db, c, pls = camp
+    facts = {pls[0].id: 300, pls[1].id: 300}
+    b = boost.start(db, c, 50, 3, user_id=None, facts=facts, today=date.today(), placement_ids=[pls[1].id])
+    db.commit()
+    assert b.placement_ids == [pls[1].id]
+    during = _plans(db, c, facts)
+    assert during[pls[0].id] == 1500 and during[pls[1].id] == 1500 + 600    # только вторая: остаток 1200 × 0,5
+
+
+def test_window_of_scoped_boost_gives_the_rk_its_effective_pct(camp):
+    """График, стена дней и «Отчёт по РК» берут процент на ВСЮ РК: у буста на одну из двух площадок он меньше."""
+    db, c, pls = camp
+    boost.start(db, c, 50, 3, user_id=None, facts={}, today=date.today(), placement_ids=[pls[1].id])
+    build.recompute_shares(db, c.id, facts={}, facts_given=True)      # как `boost_apply.apply`: планы записаны
+    db.commit()
+    w = boost.windows_of(db, [c.id])[c.id][0]
+    assert 0 < w["pct"] < 50 and w["pct_scope"] == 50
+
+
+def test_rk_pct_is_one_number_for_the_wall_and_the_chart(camp):
+    """Процент буста на всю РК — одно правило (26.10.2026): стена дней, «Отчёт по РК» и график РК считали его тремя
+    способами. Площадка с ручным планом буст не получает — её остаток в доле не участвует, даже у буста «на всех»."""
+    db, c, pls = camp
+    pls[0].fixed_plan = 1500                                   # «Перераспределить»: первая на ручном плане
+    db.flush()
+    build.recompute_shares(db, c.id, facts={}, facts_given=True)
+    boost.start(db, c, 40, 3, user_id=None, facts={}, today=date.today())      # буст на всех запущенных
+    db.commit()
+    w = boost.windows_of(db, [c.id])[c.id][0]
+    assert w["pct"] == pytest.approx(20, abs=0.1)              # остаток второй — половина остатка РК
+    assert boost.rk_pct(db, c, 40, None) == pytest.approx(w["pct"], abs=0.1)
+
+
+def test_past_boost_window_keeps_its_pct_after_the_rk_is_over(camp):
+    """Ревью 26.10.2026: долю на РК считали и для прошедших окон по СЕГОДНЯШНЕЙ раскладке — у окончившейся РК остатка
+    нет, и процент прошлого буста обнулялся задним числом («Отчёт по РК», стена дней). Прошедшее окно — свой процент."""
+    db, c, pls = camp
+    b = boost.start(db, c, 40, 3, user_id=None, facts={}, today=date.today() - timedelta(days=5))
+    boost.end(db, b, "истёк")
+    c.status = "окончена"
+    for p in pls:
+        p.status = "завершена"                                  # у окончившейся РК площадки завершены — остатка нет
+    db.commit()
+    w = boost.windows_of(db, [c.id])[c.id][0]
+    assert w["pct"] == 40

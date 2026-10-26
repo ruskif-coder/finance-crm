@@ -182,8 +182,13 @@ def test_finish_archives_the_dsp_campaign(press, monkeypatch):
     monkeypatch.setattr(catalog, "Catalog",
                         lambda db: SimpleNamespace(stages=[], by_id={}))
     press["camp"].status = "запущена"
-    td.finish_campaign(5, press["db"], SimpleNamespace(id=1))
+    from app.launch_prep import withdraw as W
+    called = []
+    monkeypatch.setattr(W, "withdraw_pending", lambda db, deal_id, user: called.append(deal_id) or {"withdrawn": 2, "errors": []})
+    out = td.finish_campaign(5, press["db"], SimpleNamespace(id=1))
     assert press["ms"].calls == [("status", XX, "ARCHIVE")]
+    # Висящие согласования отзываются (владелец 26.10.2026) — по сделке этой РК.
+    assert called == [1] and out["approvals_withdrawn"] == 2
 
 
 def test_placement_launch_makes_dsp_follow(press, monkeypatch):

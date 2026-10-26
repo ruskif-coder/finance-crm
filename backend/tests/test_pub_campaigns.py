@@ -51,7 +51,7 @@ def test_fact_is_counted_per_placement_not_per_campaign():
     db = SessionLocal()
     try:
         sql = db.execute(text(
-            "SELECT pg_get_viewdef('pub.campaign_v1'::regclass, true)")).scalar()
+            "SELECT pg_get_viewdef('pub.campaign_v1'::regclass, true) || pg_get_viewdef('publisher_placement_v'::regclass, true)")).scalar()
     finally:
         db.close()
     assert 's.placement_id = pl.id' in sql.replace('\n', ' '), (
@@ -95,7 +95,7 @@ def test_erid_belongs_to_the_placement_not_to_the_brand():
     db = SessionLocal()
     try:
         sql = ' '.join(db.execute(text(
-            "SELECT pg_get_viewdef('pub.campaign_v1'::regclass, true)")).scalar().split())
+            "SELECT pg_get_viewdef('pub.campaign_v1'::regclass, true) || pg_get_viewdef('publisher_placement_v'::regclass, true)")).scalar().split())
     finally:
         db.close()
     assert 'cs.deal_id = t.deal_id' in sql, 'маркер обязан отбираться внутри сделки'
@@ -123,7 +123,7 @@ def test_archived_placements_are_not_shown(db):
     предлагать площадке считать деньги по тому, чего не будет.
     """
     sql = ' '.join(db.execute(text(
-        "SELECT pg_get_viewdef('pub.campaign_v1'::regclass, true)")).scalar().split())
+        "SELECT pg_get_viewdef('pub.campaign_v1'::regclass, true) || pg_get_viewdef('publisher_placement_v'::regclass, true)")).scalar().split())
     assert 't.archived_at IS NULL' in sql
 
 
@@ -252,7 +252,7 @@ def test_reconciliation_is_a_flag_not_a_filter(db):
     assert 'reconciled' in cols, 'признака сверки нет — отбор снова зашит в витрину'
 
     sql = ' '.join(db.execute(text(
-        "SELECT pg_get_viewdef('pub.campaign_v1'::regclass, true)")).scalar().split())
+        "SELECT pg_get_viewdef('pub.campaign_v1'::regclass, true) || pg_get_viewdef('publisher_placement_v'::regclass, true)")).scalar().split())
     # Условие сверки должно стоять в СПИСКЕ ВЫБОРКИ — то есть ДО главного `FROM`, а не
     # после него в отборе. Делить по первому `WHERE` нельзя: их несколько, они есть
     # внутри боковых подзапросов, и первый принадлежит не отбору витрины.

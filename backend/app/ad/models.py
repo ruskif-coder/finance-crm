@@ -9,7 +9,7 @@
 (`AdCampaignCreative`, у каждого свой ЕРИД и сквозное имя). Веса площадок НЕ дублируются —
 берутся из `sales_publisher_traffics`; комплект/файлы/пары — из `launch_prep_*`.
 """
-from sqlalchemy import (BigInteger, Boolean, Column, Date, DateTime, Float,
+from sqlalchemy import (ARRAY, BigInteger, Boolean, Column, Date, DateTime, Float,
                         ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func)
 
 from app.database import Base
@@ -261,6 +261,8 @@ class AdCampaignBoost(Base):
     starts_on = Column(Date, nullable=False)
     until = Column(Date, nullable=False)
     rest_at_start = Column(BigInteger)
+    # Площадки РК, которых касается буст (миграция 2026-10-26_boost_placements.sql); NULL — все запущенные.
+    placement_ids = Column(ARRAY(Integer))
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     ended_at = Column(DateTime)

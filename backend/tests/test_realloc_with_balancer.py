@@ -107,12 +107,15 @@ def test_routes_preview_refuse_and_apply(rk, monkeypatch):
         v = td.realloc_preview(camp.id, db, admin)
         assert {"rows", "moved", "unplaced", "days_left", "has_manual"} <= set(v)
         r = next(x for x in v["rows"] if x["running"] and x["fact"] > 0)
+        with pytest.raises(HTTPException) as e:          # без причины не применяется (хендофф 26.10.2026)
+            td.realloc_apply(camp.id, td.ReallocIn(plans={str(r["id"]): r["plan"]}), db, admin)
+        assert e.value.status_code == 400 and "причин" in e.value.detail
         with pytest.raises(HTTPException) as e:
-            td.realloc_apply(camp.id, td.ReallocIn(plans={str(r["id"]): r["fact"] - 1}), db, admin)
+            td.realloc_apply(camp.id, td.ReallocIn(plans={str(r["id"]): r["fact"] - 1}, reason="тест"), db, admin)
         assert e.value.status_code == 400 and "открученного" in e.value.detail
         with pytest.raises(HTTPException):
-            td.realloc_apply(camp.id, td.ReallocIn(plans={str(r["id"]): camp.plan_show * 2}), db, admin)
-        out = td.realloc_apply(camp.id, td.ReallocIn(plans={str(r["id"]): r["plan"]}), db, admin)
+            td.realloc_apply(camp.id, td.ReallocIn(plans={str(r["id"]): camp.plan_show * 2}, reason="тест"), db, admin)
+        out = td.realloc_apply(camp.id, td.ReallocIn(plans={str(r["id"]): r["plan"]}, reason="тест"), db, admin)
         assert out["view"]["has_manual"] is True
         out = td.realloc_reset(camp.id, db, admin)
         assert out["view"]["has_manual"] is False
@@ -139,3 +142,27 @@ def test_realloc_is_refused_while_boost_is_live(rk, monkeypatch):
         td.realloc_apply(camp.id, td.ReallocIn(plans={"1": 1}), db, admin)
     assert e.value.status_code == 400 and "буст" in e.value.detail.lower()
     assert td.realloc_preview(camp.id, db, admin)["boost_live"] is True
+
+
+def test_plan_cut_below_manual_plans_notifies_and_offers_reset(rk, monkeypatch):
+    """Медиаплан урезали ниже ручных планов: трафику уведомление (одно), в окне — плашка и сброс; планы не трогаются."""
+    from app.ad import realloc
+    from app.notify import bus
+    from app.routers.traffic_dashboard import _realloc_view
+    db, c = rk
+    sent = []
+    monkeypatch.setattr(bus, "emit", lambda db_, key, **kw: sent.append((key, kw.get("entity_id"))) or [])
+    run = [p for p in _pls(db, c.id).values() if p.status == "запущен"][:2]
+    for p in run:
+        p.fixed_plan = float(c.plan_show)                    # два ручных плана по плану РК — сумма вдвое больше
+    db.flush()
+    old = c.plan_show
+    realloc.alert_plan_cut(db, {c.id: old})                  # план не менялся — превышение уже было, не шумим
+    assert sent == []
+    realloc.alert_plan_cut(db, {c.id: old * 3})              # был больше суммы ручных, стал меньше — сигнал
+    assert sent == [("traffic_manual_over_plan", c.id)]
+    v = _realloc_view(db, c)
+    assert v["over_plan"] and v["over_plan"]["manual"] == round(2 * old)
+    reset = {s["key"]: s for s in v["scenarios"]}["reset"]
+    assert reset["enabled"] and reset["urgent"]
+    assert all(p.fixed_plan == float(old) for p in run)      # сами планы на месте: убирает человек

@@ -213,3 +213,36 @@ def withdraw(db: Session, pair_id: int, user, reason: str, dsp_client=None,
                + (f"; DSP: {dsp['state']}" if xxhash else ""))
     return {"pair_id": pair.id, "withdrawn_at": pair.withdrawn_at, "dsp": dsp,
             "publisher_notified": (mail or {}).get("status")}
+
+
+FINISH_REASON = "кампания завершена — согласование больше не нужно"
+
+
+def withdraw_pending(db: Session, deal_id: int, user, dsp_client=None) -> dict:
+    """«Завершить РК» (владелец 26.10.2026): отозвать креативы, которые висят на согласовании у площадок
+    этой сделки — отправлены и без ответа площадки. Согласованное раньше и всё, на что площадка уже
+    ответила (правки, отказ), не трогаем; не отправленное площадке — тоже.
+
+    Каждая пара — обычным `withdraw` (коммит, DSP, письмо площадке): последствия те же, что у ручного
+    отзыва. Сбой одной пары не держит остальные — он в `errors`. → {"withdrawn": N, "errors": [...]}"""
+    from app.launch_prep.models import LaunchPrepPair, LaunchPrepTarget
+    ids = [r[0] for r in db.query(LaunchPrepPair.id)
+           .join(LaunchPrepTarget, LaunchPrepTarget.id == LaunchPrepPair.target_id)
+           .filter(LaunchPrepTarget.deal_id == deal_id, LaunchPrepPair.sent_at.isnot(None),
+                   LaunchPrepPair.withdrawn_at.is_(None), LaunchPrepPair.agreed_at.is_(None))
+           .order_by(LaunchPrepPair.id)]
+    done, errors = 0, []
+    for pid in ids:
+        if _platform_verdict(db, pid) is not None:
+            continue
+        try:
+            withdraw(db, pid, user, FINISH_REASON, dsp_client=dsp_client)
+            done += 1
+        except (WithdrawError, LookupError) as e:
+            db.rollback()
+            errors.append(f"пара {pid}: {e}")
+        except Exception as e:  # noqa: BLE001 — РК уже закрыта: сбой одной пары — в отчёт, а не 500 (ревью 26.10.2026)
+            db.rollback()
+            log.exception("«Завершить РК»: отзыв пары %s не удался", pid)
+            errors.append(f"пара {pid}: {e}")
+    return {"withdrawn": done, "errors": errors}

@@ -39,5 +39,5 @@ def test_view_fact_equals_stats_base():
 
 def test_view_subtracts_block_stat():
     body = SessionLocal().execute(text(
-        "SELECT pg_get_viewdef('pub.campaign_v1'::regclass)")).scalar().lower()
+        "SELECT pg_get_viewdef('pub.campaign_v1'::regclass) || pg_get_viewdef('publisher_placement_v'::regclass)")).scalar().lower()
     assert "dsp_block_stat" in body, "витрина кабинета не вычитает «Block SIMB»"

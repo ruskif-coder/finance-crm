@@ -5,9 +5,10 @@
 однажды разойтись в этих двух копиях. Отличаются они тем, ЧТО спрашивают, и это
 выражено полями: у сверки заполнен `period`, у продления — `deal_id`.
 
-Таблицы созданы миграцией backend/migrations/2026-08-28_publisher_requests.sql.
+Таблицы созданы миграцией backend/migrations/2026-08-28_publisher_requests.sql; под сверку месяца
+дополнены миграцией 2026-10-26_publisher_recon.sql (переписка, вложения, разнесение итога).
 """
-from sqlalchemy import BigInteger, Column, Date, DateTime, ForeignKey, Integer, Text
+from sqlalchemy import BigInteger, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, Numeric, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -18,7 +19,9 @@ REQUEST_KINDS = ('сверка', 'пролонгация')
 # Исходы разные у разных видов, и это не оплошность перечня: у сверки площадка
 # подтверждает объём или оспаривает его, у продления — разрешает запуск или нет.
 REQUEST_VERDICTS = {
-    'сверка': ('подтверждено', 'оспорено'),
+    # Площадка сверку не «подтверждает»: она отвечает в переписке, а итог фиксирует менеджер паблишеров
+    # (владелец 26.10.2026). Вердикт сверки один — «согласовано», без возврата.
+    'сверка': ('согласовано',),
     'пролонгация': ('разрешено', 'отказано'),
 }
 
@@ -45,6 +48,10 @@ class PublisherRequest(Base):
     # ответственного задним числом не должна переписывать, кто его признал.
     decided_by = Column(Text)
     decided_email = Column(Text)
+    sent_by = Column(Text)              # кто отправил сверку площадке
+    # Когда каждая сторона последний раз открыла переписку — отсюда «новое» в строке и счётчик на карточке.
+    pub_seen_at = Column(DateTime)
+    our_seen_at = Column(DateTime)
 
     recon = relationship("PublisherRecon", back_populates="request", uselist=False,
                          cascade="all, delete-orphan")
@@ -70,8 +77,44 @@ class PublisherRecon(Base):
     our_volume = Column(BigInteger)
     their_volume = Column(BigInteger)
     agreed_volume = Column(BigInteger)
+    # CPM договора на момент согласования: смена CPM потом не двигает деньги закрытого месяца.
+    cpm = Column(Numeric(12, 2))
 
     request = relationship("PublisherRequest", back_populates="recon")
+
+
+class PublisherRequestMessage(Base):
+    """Сообщение переписки сверки. Чей ход — по последнему НЕсистемному: «площадка» — ход наш."""
+    __tablename__ = "publisher_request_message"
+    __table_args__ = (CheckConstraint("side IN ('площадка', 'мы', 'система')"),)
+    id = Column(Integer, primary_key=True)
+    request_id = Column(Integer, ForeignKey("publisher_request.id", ondelete="CASCADE"), nullable=False)
+    side = Column(Text, nullable=False)
+    author_name = Column(Text)
+    author_email = Column(Text)
+    body = Column(Text)
+    volume = Column(BigInteger)         # предложенная цифра показов за месяц
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class PublisherRequestFile(Base):
+    __tablename__ = "publisher_request_file"
+    id = Column(Integer, primary_key=True)
+    message_id = Column(Integer, ForeignKey("publisher_request_message.id", ondelete="CASCADE"), nullable=False)
+    path = Column(Text, nullable=False)
+    original_name = Column(Text)
+    content_type = Column(Text)
+    size_bytes = Column(Integer)
+    uploaded_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class PublisherReconLine(Base):
+    """Итог месяца по размещению (сделка × площадка) — пропорционально доле нашего факта."""
+    __tablename__ = "publisher_recon_line"
+    request_id = Column(Integer, ForeignKey("publisher_request.id", ondelete="CASCADE"), primary_key=True)
+    target_id = Column(Integer, ForeignKey("launch_prep_target.id", ondelete="CASCADE"), primary_key=True)
+    our_volume = Column(BigInteger, nullable=False)
+    agreed_volume = Column(BigInteger, nullable=False)
 
 
 def mismatch(recon) -> float:

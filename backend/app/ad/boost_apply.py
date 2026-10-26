@@ -30,16 +30,16 @@ def _facts_of(db: Session, campaign_id: int) -> Optional[dict]:
     return got.get(campaign_id) if got is not None else None
 
 
-def boostable_rest(db: Session, camp: AdCampaign):
+def boostable_rest(db: Session, camp: AdCampaign, scope=None):
     """(остаток РК, остаток тех, кого буст касается, их число, число запущенных «на фиксе», факт РК).
 
     Раскладка БЕЗ буста — иначе при действующем бусте остаток уже поднят. Свежего среза нет — остаток по
-    последнему известному факту (как в самой раскладке с бустом)."""
+    последнему известному факту (как в самой раскладке с бустом). `scope` — площадки буста по выбранным."""
     fresh = _facts_of(db, camp.id)
     _pls, out = build.campaign_layout(db, camp.id, facts=fresh, facts_given=True, with_boost=False)
     known = fresh if fresh is not None else any_facts(db, camp.id)
     running = [r for r in out["rows"] if r["status"] in PLACEMENT_RUNNING]
-    free = [r for r in running if boost.boostable(r)]
+    free = [r for r in running if boost.boostable(r, scope)]
     rest_free = sum(max(0.0, (r.get("plan_show") or 0) - known.get(r["id"], 0)) for r in free)
     fact = sum(known.values())
     return (max(0.0, (camp.plan_show or 0) - fact), rest_free, len(free), len(running) - len(free), fact)
@@ -107,14 +107,17 @@ def _ext_text(ext: list) -> str:
 
 
 def apply(db: Session, camp: AdCampaign, pct: int, days: int, user, client=None,
-          today: Optional[date] = None) -> dict:
-    """Включить буст. Замок долей РК взят вызывающим. Ошибку ввода даёт `boost.BoostError`."""
+          today: Optional[date] = None, placement_ids=None) -> dict:
+    """Включить буст. Замок долей РК взят вызывающим. Ошибку ввода даёт `boost.BoostError`.
+    `placement_ids` — только эти площадки (сценарий «Поднять темп не открутившим»)."""
     from app.routers.traffic_dashboard import rk_label
     facts = _facts_of(db, camp.id)
-    b = boost.start(db, camp, pct, days, user_id=getattr(user, "id", None), facts=facts, today=today)
+    b = boost.start(db, camp, pct, days, user_id=getattr(user, "id", None), facts=facts, today=today,
+                    placement_ids=placement_ids)
     changes = build.recompute_shares(db, camp.id)
+    who = f"; площадок {len(placement_ids)}" if placement_ids else ""
     log_action(db, user, "ad_boost_start", "ad_campaign", camp.id,
-               f"{rk_label(db, camp.id)}: остаток +{pct} % на {days} дн. (до {b.until:%d.%m})")
+               f"{rk_label(db, camp.id)}: остаток +{pct} % на {days} дн. (до {b.until:%d.%m}){who}")
     limits = _sync(db, camp, client)
     ext = _publisher_names(db, external_rows(db, camp, facts))
     if ext:
@@ -163,4 +166,4 @@ def view(b) -> Optional[dict]:
     if b is None:
         return None
     return {"id": b.id, "pct": b.pct, "days": b.days, "starts_on": b.starts_on, "until": b.until,
-            "rest_at_start": b.rest_at_start}
+            "rest_at_start": b.rest_at_start, "placement_ids": b.placement_ids}

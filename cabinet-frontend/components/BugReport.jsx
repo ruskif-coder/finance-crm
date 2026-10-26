@@ -101,7 +101,7 @@ export default function BugReport({ btnStyle }) {
       </button>
 
       {open && (
-        <div onMouseDown={e => { if (e.target === e.currentTarget) close() }}
+        <div data-overlay="" onMouseDown={e => { if (e.target === e.currentTarget) close() }}
           style={{ position: 'fixed', inset: 0, background: 'rgba(20,26,38,.45)', zIndex: 300,
             display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '60px 16px' }}>
           <div style={box}>

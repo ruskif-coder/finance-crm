@@ -151,6 +151,12 @@
       "href": "/publishers",
       "items": [
         {
+          "key": "interaction",
+          "label": "Взаимодействие",
+          "href": "/publishers/interaction",
+          "perm": "dir_publishers_interaction"
+        },
+        {
           "key": "list",
           "label": "Площадки",
           "href": "/publishers",

@@ -60,9 +60,25 @@ def placements_of(db: Session, campaign_id: int) -> List[dict]:
                (SELECT count(*) FROM ad_campaign_creative cr WHERE cr.placement_id = p.id) AS cr_all
           FROM ad_campaign_placement p JOIN sales_publishers pb ON pb.id = p.publisher_id
          WHERE p.campaign_id = :c ORDER BY p.plan_show DESC NULLS LAST, p.id"""), {"c": campaign_id}).mappings().all()
-    return [{**dict(r), "share": float(r["share"] or 0), "plan_show": float(r["plan_show"] or 0),
+    base = _plans_without_boost(db, campaign_id)
+    return [{**dict(r), "share": float(r["share"] or 0),
+             "plan_show": float(base.get(r["id"], r["plan_show"]) or 0),
              "cpm": float(r["cpm"]) if r["cpm"] is not None else None,
              "first_started_at": _iso(r["first_started_at"]), "external": not r["cr_dsp"]} for r in rows]
+
+
+def _plans_without_boost(db: Session, campaign_id: int) -> Dict[int, float]:
+    """Планы площадок без «темпа размещения», пока он действует; без буста — пусто (берётся записанный план).
+
+    Записанный план при бусте поднят — так он уходит в DSP. Страница же добавляет буст сама, множителем на
+    его дни (`boostK` в `lib/rkAnalysis.mjs`): с поднятым планом буст считался дважды, а «План» шапки
+    расходился с планом РК в карточке сделки (9E8Z4U, 26.10.2026: 2 184 257 против 1 826 485)."""
+    from app.ad import boost
+    from app.ad import build as ad_build
+    if not boost.is_live(boost.active(db, campaign_id)):
+        return {}
+    _pls, out = ad_build.campaign_layout(db, campaign_id, with_boost=False)
+    return {r["id"]: r["plan_show"] for r in out["rows"]}
 
 
 def stat_of(db: Session, campaign_id: int, until: date) -> List[dict]:

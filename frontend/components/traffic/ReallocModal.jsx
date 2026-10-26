@@ -1,164 +1,162 @@
-// «Темп размещения → Перераспределить» (владелец 24.10.2026). Показывает, как изменятся планы площадок (их сумма — лимиты
-// креативов в DSP), если недобор площадок, упёршихся в сеть, отдать площадкам с запасом предложения. Расчёт — сервер
-// (`app/ad/realloc.propose`); здесь только показ и правка нового плана руками. «Применить» пишет ручные планы и сразу
-// шлёт лимиты в DSP; «Снять ручные планы» возвращает площадки на веса балансировщика.
-import { useEffect, useState } from 'react'
+// «Темп размещения → Перераспределить объём» (хендофф docs/перераспределение.zip, 26.10.2026).
+// Каркас: KPI → 4 действия → фильтры → таблица площадок → динамика по дням | история; футер — баланс, причина, «Применить · N».
+// «Перенести» только раскладывает новые планы в таблицу; записывает «Применить» — при сохранённой сумме планов и с причиной
+// (уходит в журнал РК). «Поднять темп» и «Снять» действуют сразу, после подтверждения. Расчёт — сервер (`app/ad/realloc`).
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Modal, MONO } from '@/components/salesTableKit'
 import { Cube } from '@/components/LogoLoader'
 import api from '@/lib/api'
 import { grp } from '@/lib/salesFormat'
-import PaceCell from './PaceCell'
+import { balance, changedRows, chart, movedOf, passes } from '@/lib/reallocView.mjs'
+import { ReallocActions, ReallocKpis } from './realloc/ReallocTop'
+import { ReallocFilters, ReallocTable } from './realloc/ReallocTable'
+import { ReallocChart, ReallocHistory } from './realloc/ReallocChart'
 
-const CAP = { fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text-cap)' }
-const ghost = { display: 'inline-flex', alignItems: 'center', height: 38, padding: '0 16px', borderRadius: 12, background: 'var(--bg-card)',
-  border: '1px solid var(--border-card)', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer' }
-const ROLE_FG = { 'донор': 'var(--danger-fg)', 'получатель': 'var(--income-fg)', 'запас': 'var(--accent-fg)' }
-const ROLE_TXT = { 'донор': 'отдаёт', 'получатель': 'берёт', 'запас': 'есть запас' }
-// Те же числа, что в колонке «Темп» дашборда (`PaceCell`), открыто: сутки — показано / предложено сетью; возможность в сутки;
-// нужно в сутки до конца; затем перенос: отдаёт или берёт, новый план и сколько нужно в сутки после (владелец 24.10.2026).
-const COLS = '1.4fr 1.3fr 0.85fr 0.85fr 0.8fr 0.85fr 0.95fr 0.95fr 1.05fr 0.85fr'
-const HEAD = [['площадка'], ['темп'], ['показано', 'за сутки'], ['предложено', 'сетью за сутки'], ['может', 'в сутки ≈'],
-  ['нужно', 'в сутки до конца'], ['план', 'сейчас'], ['отдаёт / берёт', 'за флайт'], ['новый план'], ['нужно', 'в сутки после']]
-const num = { fontFamily: MONO, textAlign: 'right' }
-const signed = (v) => (v > 0 ? `+${grp(v)}` : v < 0 ? `−${grp(-v)}` : '—')
+const ghost = { display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 15px', borderRadius: 10, background: 'var(--bg-card)',
+  border: '1px solid var(--border-card)', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer', fontFamily: 'inherit' }
+const nf = (v) => grp(Math.round(v || 0))
+const ddmm = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}` : '')
 
 export default function ReallocModal({ row, auth, canEdit = true, onClose, onDone, onBack }) {
   const [v, setV] = useState(null)
-  const [edit, setEdit] = useState({})
+  const [edits, setEdits] = useState({})
+  const [filter, setFilter] = useState('all')
+  const [sel, setSel] = useState(null)
+  const [reason, setReason] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
-  const [done, setDone] = useState(null)
+  const [done, setDone] = useState('')
 
-  useEffect(() => {
-    let alive = true
-    api.get(`/traffic-dashboard/campaign/${row.id}/realloc`, auth())
-      .then(r => { if (alive) setV(r.data) })
-      .catch(e => { if (alive) setErr(e?.response?.data?.detail || 'Не удалось посчитать перераспределение') })
-    return () => { alive = false }
-  }, [row.id, auth])
+  const load = useCallback(() => api.get(`/traffic-dashboard/campaign/${row.id}/realloc`, auth())
+    .then(r => { setV(r.data); setErr('') })
+    .catch(e => setErr(e?.response?.data?.detail || 'Не удалось посчитать перераспределение')), [row.id, auth])
+  useEffect(() => { load() }, [load])
 
-  const planOf = (r) => (edit[r.id] !== undefined ? edit[r.id] : r.plan_new)
-  // «нужно в сутки после» пересчитывается и при ручной правке нового плана — тем же правилом, что на сервере
-  const needAfter = (r, np) => (v?.days_left ? Math.round(Math.max(0, (np || 0) - r.fact) / v.days_left) : 0)
-  const changed = (v?.rows || []).filter(r => r.running && planOf(r) !== r.plan)
-  const total = (v?.rows || []).reduce((a, r) => a + (r.running || r.plan ? (planOf(r) || 0) : 0), 0)
-  const over = v?.plan && total > v.plan * 1.001
+  const rows = useMemo(() => (v?.rows || []).filter(r => r.running), [v])
+  const sc = useMemo(() => Object.fromEntries((v?.scenarios || []).map(s => [s.key, s])), [v])
+  const setEdit = (id, val) => setEdits(e => { const n = { ...e }; if (val == null) delete n[id]; else n[id] = val; return n })
+  const changed = changedRows(rows, edits)
+  const bal = balance(v?.rows || [], edits)
+  const moved = movedOf(rows, edits)
+  const days = v?.days_left || 0
 
-  const run = async (fn, what) => {
+  // Действие, которое пишет сразу (буст, снять, сбросить записанное): подтверждение → ручка → пересчёт окна.
+  const act = async (ask, fn, msg) => {
+    if (!window.confirm(ask)) return
+    setBusy(true); setErr('')
+    try { await fn(); await load(); setEdits({}); setDone(msg); onDone && onDone() }
+    catch (e) { setErr(e?.response?.data?.detail || 'Не удалось выполнить') } finally { setBusy(false) }
+  }
+  const apply = async () => {
     setBusy(true); setErr('')
     try {
-      const r = await fn()
-      setV(r.data.view); setEdit({}); setDone(what); onDone && onDone()
-    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось выполнить') } finally { setBusy(false) }
+      const r = await api.post(`/traffic-dashboard/campaign/${row.id}/realloc`,
+        { plans: Object.fromEntries(changed.map(x => [x.id, edits[x.id]])), reason }, auth())
+      setV(r.data.view); setEdits({}); setReason(''); setDone('планы записаны, лимиты ушли в DSP'); onDone && onDone()
+    } catch (e) { setErr(e?.response?.data?.detail || 'Не удалось применить') } finally { setBusy(false) }
   }
-  const apply = () => run(() => api.post(`/traffic-dashboard/campaign/${row.id}/realloc`,
-    { plans: Object.fromEntries(changed.map(r => [r.id, planOf(r)])) }, auth()), 'планы записаны, лимиты ушли в DSP')
-  const reset = () => run(() => api.delete(`/traffic-dashboard/campaign/${row.id}/realloc`, auth()),
-    'ручные планы сняты — площадки снова по весам')
 
-  const off = busy || !canEdit || !changed.length || over || !v?.can_apply
+  if (!v) {
+    return (
+      <Modal title="Перераспределить объём" width={560} onClose={onClose}>
+        <div style={{ display: 'flex', gap: 8, padding: 16, color: err ? 'var(--danger-fg)' : 'var(--text-muted)' }}>
+          {err || <><Cube variant="spinner" size={14} /> считаю…</>}</div>
+      </Modal>
+    )
+  }
+
+  const donors = rows.filter(r => (r.note || '').startsWith('успеет'))
+  const takers = rows.filter(r => r.role === 'запас' || r.role === 'получатель')
+  const s = (k) => sc[k] || {}
+  const lagIds = new Set(s('lagging').placement_ids || [])
+  const acts = [
+    { key: 'move', title: 'Перенести недобор', tone: 'var(--income)', btn: 'Перенести', on: canEdit && s('move').enabled,
+      text: s('move').enabled ? `${s('move').what}${s('move').unplaced ? `; ${nf(s('move').unplaced)} не пристроить` : ''}` : s('move').why_not,
+      run: () => setEdits(e => ({ ...e, ...s('move').plans })) },
+    { key: 'lagging', title: 'Поднять темп не открутившим', tone: 'var(--warning)', btn: 'Поднять темп', on: canEdit && s('lagging').enabled,
+      text: s('lagging').enabled ? `${rows.filter(r => lagIds.has(r.id)).map(r => r.name).join(', ')}: трафик есть, показов меньше — +${s('lagging').pct} % к темпу до конца флайта` : s('lagging').why_not,
+      run: () => act(`Поднять темп: ${s('lagging').what}. Лимиты сразу уйдут в DSP.`,
+        () => api.post(`/traffic-dashboard/campaign/${row.id}/boost`, { pct: s('lagging').pct, days: s('lagging').days, placement_ids: s('lagging').placement_ids }, auth()),
+        `темп поднят на ${s('lagging').pct} %`) },
+    { key: 'drop', title: 'Снять площадки без трафика', tone: 'var(--danger)', btn: 'Снять', on: canEdit && s('drop').enabled,
+      text: s('drop').enabled ? s('drop').what : s('drop').why_not,
+      run: () => act(`Снять площадки без трафика: ${s('drop').what}.`, async () => {
+        for (const id of s('drop').placement_ids) await api.put(`/traffic-dashboard/placement/${id}/status`, { status: 'завершена' }, auth())
+      }, 'площадки сняты') },
+    // План РК урезали ниже ручных планов (26.10.2026): карточка подсвечена, сбрасывает человек — сами планы не трогаются
+    { key: 'reset', title: 'Сбросить ручные планы', tone: s('reset').urgent ? 'var(--danger)' : 'var(--text-muted)', urgent: !!s('reset').urgent,
+      btn: 'Сбросить', on: canEdit && (changed.length > 0 || s('reset').enabled),
+      text: changed.length ? `Ручных правок: ${changed.length}` : s('reset').urgent ? s('reset').what
+        : s('reset').enabled ? 'Записанные ручные планы — площадки вернутся к долям' : 'Ручных планов нет',
+      run: () => (changed.length ? setEdits({})
+        : act('Снять записанные ручные планы — площадки снова по долям (где задан объём по креативам — по нему), лимиты сразу уйдут в DSP.',
+          () => api.delete(`/traffic-dashboard/campaign/${row.id}/realloc`, auth()), 'ручные планы сняты')) },
+  ]
+  const kpis = [
+    ['Недобор · показы', v.shortfall, 'var(--danger-fg)', donors.length ? `${donors.map(r => r.name).join(', ')} упёрлись в сеть` : 'никто не упёрся в сеть'],
+    ['Запас в темпе', v.spare, 'var(--accent-fg)', `${takers.length} площадок`],
+    ['Переносим', moved, moved ? 'var(--income-fg)' : 'var(--text-disabled)', moved ? 'после правок' : 'пока ничего'],
+    ['Не пристроить', v.unplaced, v.unplaced ? 'var(--danger-fg)' : 'var(--text-primary)', v.unplaced ? 'запаса не хватает' : 'запаса хватает',
+      v.unplaced ? 'var(--danger-fg)' : undefined],
+  ]
+  const shown = rows.filter(r => passes(r, filter, edits))
+  const picked = rows.find(r => r.id === sel)
+  const c = chart(picked ? [picked] : rows, edits, v.daily, days)
+  const ok = canEdit && changed.length > 0 && bal.diff === 0 && reason.trim() && v.can_apply && !busy
+  const h = v.head || {}
+
   const title = (
     <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.02em' }}>Перераспределить объём</span>
-      <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: 'var(--accent)' }}>{row.deal_code}
-        {!!v && <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}> · до конца флайта {v.days_left} дн.</span>}</span>
+      <span style={{ fontSize: 19, fontWeight: 800, letterSpacing: '-0.02em' }}>Перераспределить объём</span>
+      <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 400, color: 'var(--text-muted)' }}>
+        <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{h.code || row.deal_code}</span>
+        {[h.brand, h.service, h.date_start && `флайт ${ddmm(h.date_start)}–${ddmm(h.date_end)}`, `до конца флайта ${days} дн.`].filter(Boolean).map(x => ` · ${x}`).join('')}
+      </span>
     </span>
   )
   const footer = (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%' }}>
-      {err ? <span style={{ fontSize: 12.5, color: 'var(--danger-fg)' }}>⚠ {err}</span>
-        : over ? <span style={{ fontSize: 12.5, color: 'var(--danger-fg)' }}>⚠ сумма планов {grp(total)} больше плана РК {grp(v.plan)}</span>
-          : <span style={{ fontSize: 12, color: done ? 'var(--income-fg)' : 'var(--text-faint)' }}>{done || (!canEdit ? 'меняет трафик' : '')}</span>}
-      <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 9 }}>
-        {!!onBack && <button type="button" style={ghost} onClick={onBack} disabled={busy}>← Назад</button>}
-        {canEdit && !!v?.has_manual && <button type="button" style={ghost} onClick={reset} disabled={busy}>Снять ручные планы</button>}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', width: '100%' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12, color: err ? 'var(--danger-fg)' : bal.diff ? 'var(--danger-fg)' : 'var(--income-fg)' }}>
+        <span style={{ width: 7, height: 7, borderRadius: 2, background: err || bal.diff ? 'var(--danger)' : 'var(--income)' }} />
+        {err || (bal.diff ? `План РК не сходится на ${bal.diff > 0 ? '+' : '−'}${nf(Math.abs(bal.diff))} — перенос должен сохранять сумму`
+          : done && !changed.length ? done : `План РК сохранён: сумма новых планов = ${nf(bal.before)}`)}
+      </span>
+      {canEdit && (
+        <input value={reason} onChange={e => setReason(e.target.value)} maxLength={300} placeholder="Причина переноса — обязательно, уйдёт в журнал РК"
+          style={{ flex: '1 1 280px', minWidth: 220, height: 34, boxSizing: 'border-box', padding: '0 11px', borderRadius: 12, fontSize: 12.5, outline: 'none',
+            fontFamily: 'inherit', color: 'var(--text-primary)', background: 'var(--bg-card)',
+            border: `1px solid ${changed.length && !reason.trim() ? 'var(--warning-border)' : 'var(--border-card)'}` }} />)}
+      <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 10 }}>
+        {!!onBack && <button type="button" style={ghost} onClick={onBack} disabled={busy}>Назад</button>}
         {canEdit && (
-          <button type="button" onClick={apply} disabled={off}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 38, padding: '0 18px', border: 'none', borderRadius: 12,
-              background: 'var(--accent)', color: 'var(--bg-card)', fontSize: 13, fontWeight: 700, cursor: off ? 'default' : 'pointer',
-              opacity: off ? 0.5 : 1 }}>
-            {busy && <Cube variant="spinner" size={14} />}Применить{changed.length ? ` (${changed.length})` : ''}
-          </button>
-        )}
+          <button type="button" onClick={ok ? apply : undefined} disabled={!ok}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 34, padding: '0 16px', border: 'none', borderRadius: 10, fontSize: 12.5, fontWeight: 700,
+              whiteSpace: 'nowrap', fontFamily: 'inherit', background: ok ? 'var(--accent)' : 'var(--text-disabled)', color: 'var(--on-accent)', cursor: ok ? 'pointer' : 'not-allowed' }}>
+            {busy && <Cube variant="spinner" size={14} />}Применить{changed.length ? ` · ${changed.length}` : ''}</button>)}
       </span>
     </div>
   )
 
   return (
-    <Modal title={title} width={1180} footer={footer} onClose={() => { if (!busy) onClose() }}>
-      {!v && !err && <div style={{ display: 'flex', gap: 8, padding: 16, color: 'var(--text-muted)' }}><Cube variant="spinner" size={14} /> считаю…</div>}
-      {!!v && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '6px 0 4px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,minmax(0,1fr))', padding: '12px 0', background: 'var(--bg-subtle)', borderRadius: 12 }}>
-            {[['недобор: упёрлись в сеть', grp(v.shortfall), 'var(--danger-fg)'], ['запас у площадок в темпе', grp(v.spare), 'var(--accent-fg)'],
-              ['переносим', grp(v.moved), 'var(--income-fg)'], ['не пристроить', grp(v.unplaced), v.unplaced ? 'var(--warning-fg)' : 'var(--text-secondary)']]
-              .map(([l, n, c], i) => (
-                <span key={l} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '0 14px', borderLeft: `1px solid ${i ? 'var(--border-card)' : 'transparent'}` }}>
-                  <span style={{ ...CAP, fontWeight: 400 }}>{l}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: c }}>{n}</span>
-                </span>
-              ))}
-          </div>
-          {!!v.boost_live && <div style={{ fontSize: 12.5, color: 'var(--warning-fg)' }}>
-            Идёт «Поднять темп»: планы площадок сейчас подняты на его процент. Записать их ручными значит продлить буст
-            и перекрутить план РК — снимите буст или дождитесь его конца, тогда можно применить.</div>}
-          {!!v.unplaced && <div style={{ fontSize: 12.5, color: 'var(--warning-fg)' }}>
-            {grp(v.unplaced)} показов отдать некому — у площадок в темпе нет столько запаса: нужны новые площадки.</div>}
-          {!v.shortfall && <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
-            Площадок, упёршихся в сеть, нет — переносить нечего. Если темп ниже плана, причина в другом: смотрите пометки
-            у площадок (трафик есть, а показов нет — это «Поднять темп» или креатив).</div>}
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 8, padding: '6px 8px', alignItems: 'end' }}>
-              {HEAD.map(([h, sub], i) => (
-                <span key={h + i} style={{ display: 'flex', flexDirection: 'column', textAlign: i > 1 ? 'right' : 'left' }}>
-                  <span style={CAP}>{h}</span>
-                  {!!sub && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{sub}</span>}
-                </span>
-              ))}
-            </div>
-            {v.rows.filter(r => r.running).sort((a, b) => (a.delta - b.delta)).map(r => {
-              const np = planOf(r)
-              return (
-                <div key={r.id} style={{ display: 'grid', gridTemplateColumns: COLS, gap: 8, padding: '7px 8px', alignItems: 'center',
-                  borderTop: '1px solid var(--border-inner)', fontSize: 12.5 }}>
-                  <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                    <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
-                    {!!r.note && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.note}</span>}
-                  </span>
-                  <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
-                    <PaceCell pace={r.pace ? { status: r.pace, day: r.day, shows: r.shows_day, need: r.need, offered: r.offered_day,
-                      capacity: r.capacity, chronic: r.chronic } : null} />
-                    {r.role !== 'без изменений' && <span style={{ fontSize: 10.5, fontWeight: 700, color: ROLE_FG[r.role] }}>{ROLE_TXT[r.role]}</span>}
-                  </span>
-                  <span style={num}>{r.shows_day != null ? grp(r.shows_day) : '—'}</span>
-                  <span style={num}>{r.offered_day != null ? grp(r.offered_day) : '—'}</span>
-                  <span style={num}>{r.capacity != null ? grp(r.capacity) : '—'}</span>
-                  <span style={{ ...num, fontWeight: 700 }}>{grp(r.need)}</span>
-                  <span style={num}>{grp(r.plan)}{r.fixed_plan != null ? ' ✎' : ''}</span>
-                  <span style={{ ...num, fontWeight: 700, color: np > r.plan ? 'var(--income-fg)' : np < r.plan ? 'var(--danger-fg)' : 'var(--text-faint)' }}>
-                    {signed(np - r.plan)}</span>
-                  {canEdit ? (
-                    <input type="number" min={r.fact} value={np ?? ''} disabled={busy}
-                      onChange={e => setEdit(s => ({ ...s, [r.id]: e.target.value === '' ? r.plan : Math.round(Number(e.target.value)) }))}
-                      style={{ width: '100%', boxSizing: 'border-box', height: 28, padding: '0 8px', fontFamily: MONO, fontSize: 12.5, textAlign: 'right',
-                        border: '1px solid var(--border-card)', borderRadius: 8, background: 'var(--bg-card)', color: 'var(--text-primary)' }} />
-                  ) : <span style={num}>{grp(np)}</span>}
-                  <span style={{ ...num, fontWeight: 700, color: needAfter(r, np) > (r.capacity ?? Infinity) ? 'var(--warning-fg)' : 'var(--text-primary)' }}
-                    title={r.capacity != null && needAfter(r, np) > r.capacity ? 'больше, чем площадке предлагает сеть в сутки' : ''}>
-                    {grp(needAfter(r, np))}</span>
-                </div>
-              )
-            })}
-          </div>
-          <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-            «Показано» и «предложено сетью» — последние отчитанные сутки, «может» — медиана предложенного за 5 суток, как в колонке
-            «Темп» дашборда. Донор — площадка, которой сеть предлагает меньше, чем нужно в день: её остаток сверх того, что она успеет по своей
-            возможности (медиана предложенного × дни), уходит площадкам в темпе — не больше половины их неиспользованного
-            предложения. Сумма планов не меняется, план не ниже факта. Новый план держится ночным пересчётом и балансировщиком
-            (✎ — ручной план) до «Снять ручные планы»; площадка, завершённая трафиком, свой объём отдаёт остальным по весам.
-          </div>
-        </div>
-      )}
+    // Шапка (KPI, действия, фильтры) и низ (график, история) стоят; площадки — в прокрутке между ними (владелец 26.10.2026).
+    <Modal title={title} width={1480} footer={footer} fill onClose={() => { if (!busy) onClose() }}>
+      <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', gap: 12, padding: '4px 0 10px' }}>
+        <ReallocKpis items={kpis} />
+        {!!v.over_plan && <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--danger-fg)' }}>
+          План РК уменьшили в медиаплане: ручные планы площадок {nf(v.over_plan.manual)} больше плана РК {nf(v.over_plan.plan)} — РК
+          перекрутит. Сбросьте ручные планы или перенесите заново.</div>}
+        {!!v.boost_live && <div style={{ fontSize: 12.5, color: 'var(--warning-fg)' }}>
+          Идёт «Поднять темп»: планы площадок подняты на его процент, переносить их сейчас нельзя — снимите буст или дождитесь его конца.</div>}
+        <ReallocActions acts={acts} busy={busy} />
+        <ReallocFilters rows={rows} edits={edits} filter={filter} setFilter={setFilter} />
+      </div>
+      <div style={{ flex: '1 1 auto', minHeight: 140, overflow: 'auto', borderTop: '1px solid var(--border-inner)', borderBottom: '1px solid var(--border-inner)' }}>
+        <ReallocTable rows={shown} all={v.rows || []} edits={edits} setEdit={setEdit} days={days} sel={sel} setSel={setSel} canEdit={canEdit} busy={busy} />
+      </div>
+      <div style={{ flex: '0 0 auto', display: 'grid', gridTemplateColumns: 'minmax(0,1.3fr) minmax(0,1fr)', gap: 12, paddingTop: 10 }}>
+        <ReallocChart c={c} scopeName={picked?.name} onClear={() => setSel(null)} changed={changed.length > 0} />
+        <ReallocHistory code={h.code || row.deal_code} items={v.history || []} />
+      </div>
     </Modal>
   )
 }

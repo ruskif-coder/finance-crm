@@ -12,6 +12,11 @@
  * самозакрывающийся `<div … />` рядом с поповером, а не вокруг него — правила не
  * касаются: выделять в них нечего, и клик из поповера до них не доходит.
  *
+ * ВТОРОЕ ПРАВИЛО (владелец 26.10.2026): под открытым окном страница не прокручивается. Блокирует её
+ * globals.css по метке `data-overlay`, которую ставит overlayClose. Поэтому подложка с содержимым БЕЗ
+ * onClick (закрывается кнопкой, а не кликом мимо) обязана поставить `data-overlay` сама — иначе под
+ * ней колесо крутит страницу.
+ *
  * Гейт, а не заметка в навыке: заметку читают, когда о ней помнят, а этот баг живёт
  * до первой жалобы человека, который потерял набранный текст.
  */
@@ -46,6 +51,7 @@ function tagEnd(text, start) {
 }
 
 const bad = []
+const unmarked = []
 for (const dir of DIRS) {
   for (const file of walk(join(ROOT, dir))) {
     const text = readFileSync(file, 'utf8')
@@ -56,9 +62,11 @@ for (const dir of DIRS) {
       if (open !== -1 && end !== -1 && end > at) {
         const tag = text.slice(open, end + 1)
         const selfClosing = text[end - 1] === '/'      // пустая ловушка кликов
+        const line = (text.slice(0, open).match(/\n/g) || []).length + 1
         if (!selfClosing && tag.includes('onClick=') && !tag.includes('overlayClose')) {
-          const line = (text.slice(0, open).match(/\n/g) || []).length + 1
           bad.push(`${relative(ROOT, file)}:${line}`)
+        } else if (!selfClosing && !tag.includes('overlayClose') && !tag.includes('data-overlay')) {
+          unmarked.push(`${relative(ROOT, file)}:${line}`)
         }
       }
       at = text.indexOf(OVERLAY, at + 1)
@@ -73,4 +81,11 @@ if (bad.length) {
   console.error('')
   process.exit(1)
 }
-console.log(`check-overlay: подложек через overlayClose — порядок`)
+if (unmarked.length) {
+  console.error('\nПодложка окна без overlayClose и без data-overlay — под ней колесо крутит основную страницу.')
+  console.error('Закрывается кликом мимо — overlayClose из lib/overlay.js; только кнопкой — data-overlay="":\n')
+  unmarked.forEach(b => console.error('  ' + b))
+  console.error('')
+  process.exit(1)
+}
+console.log(`check-overlay: подложки через overlayClose / data-overlay — порядок`)
