@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """Жизнь заявки юристу: создать → взять в работу → сделана (с версией шаблона договора) или отклонена (с ответом).
 
-Решения владельца 13–14.10.2026: заявка всегда от конкретного ДС; правка юриста ложится в КАСТОМНЫЙ шаблон ДС договора (текст договора
-не трогаем), поэтому этот ДС и все следующие по договору собираются уже с правкой; открытая заявка блокирует выпуск своего ДС.
+Решения владельца 13–14.10.2026: заявка всегда от конкретного ДС; правка юриста ложится в шаблон ДС договора (текст договора не трогаем),
+поэтому этот ДС и все следующие по этому шаблону собираются уже с правкой; открытая заявка блокирует выпуск своего ДС. С 27.10.2026
+шаблонов у договора несколько, у каждого имя: правка ложится в шаблон, выбранный в ДС заявки, или в новый шаблон договора — тогда ДС
+переключается на него.
 Ошибки — `LegalError` с текстом для человека; роутер превращает их в 4xx."""
 from datetime import datetime
 from typing import Optional
@@ -62,13 +64,13 @@ def take(r: LegalRequest, user) -> LegalRequest:
 
 
 def done(db: Session, r: LegalRequest, user, answer: Optional[str] = None) -> LegalRequest:
-    """«Сделана» — только когда юрист сохранил версию кастомного шаблона договора ПОСЛЕ подачи заявки: иначе правки нет нигде,
-    а ДС разблокировался бы с прежним текстом."""
+    """«Сделана» — только когда юрист сохранил версию шаблона договора ПОСЛЕ подачи заявки: иначе правки нет нигде, а ДС разблокировался
+    бы с прежним текстом. Сначала смотрим шаблон, выбранный в ДС заявки; правка легла в другой шаблон договора (юрист завёл новый) — ДС
+    переключается на него."""
     if r.status not in OPEN:
         raise LegalError(409, f"Заявка уже «{r.status}»")
-    custom = tpl.custom_of(db, r.contract_id)
-    v = tpl.current(db, custom.id) if custom else None
-    if not v or (v.created_at and r.created_at and v.created_at < r.created_at):
+    t, v = _edited_template(db, r)
+    if v is None:
         raise LegalError(409, "Сначала сохраните правку в шаблоне ДС этого договора (кнопка «Шаблон ДС» в реестре договоров) — "
                               "новой версии после заявки нет")
     now = datetime.utcnow()
@@ -77,6 +79,31 @@ def done(db: Session, r: LegalRequest, user, answer: Optional[str] = None) -> Le
     if not r.taken_at:
         r.taken_by, r.taken_at = r.closed_by, now
     return r
+
+
+def _candidates(db: Session, r: LegalRequest) -> tuple:
+    """(ДС заявки, шаблон, который его собирает, шаблоны договора по порядку проверки: выбранный в ДС первым, затем остальные)."""
+    from app.annex_tpl import document as tpl_doc
+    from app.models import Contract
+    from app.sales.models import SalesAnnex
+    annex = db.query(SalesAnnex).filter(SalesAnnex.id == r.annex_id).first()
+    contract = db.query(Contract).filter(Contract.id == r.contract_id).first()
+    cur = tpl_doc.pick(db, contract, annex)["template"] if annex and contract else None
+    cands = [cur] if cur is not None and cur.scope == "custom" else []
+    return annex, cur, cands + [t for t in tpl.customs_of(db, r.contract_id) if cur is None or t.id != cur.id]
+
+
+def _edited_template(db: Session, r: LegalRequest) -> tuple:
+    """(шаблон, версия) — шаблон договора, сохранённый после подачи заявки. Правка нашлась не в шаблоне ДС заявки — ДС переключается
+    на этот шаблон, чтобы пересборка взяла правку."""
+    annex, cur, cands = _candidates(db, r)
+    for t in cands:
+        v = tpl.current(db, t.id)
+        if v and not (v.created_at and r.created_at and v.created_at < r.created_at):
+            if annex is not None and annex.tpl_template_id != t.id and (cur is None or t.id != cur.id):
+                annex.tpl_template_id = t.id
+            return t, v
+    return None, None
 
 
 def reject(r: LegalRequest, user, answer: str) -> LegalRequest:

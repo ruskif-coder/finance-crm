@@ -673,6 +673,8 @@ class SalesAnnex(Base):
     created_at = Column(DateTime, server_default=func.now())
     # Шаблон ДС (миграция 2026-10-13_annex_templates.sql): версия, по которой собрано, и замороженный документ подтверждённого.
     template_version_id = Column(Integer, ForeignKey("annex_tpl_versions.id"))
+    # Шаблон, выбранный для этого ДС (миграция 2026-10-27_annex_tpl_named.sql); пусто — по умолчанию: память бренда → основной → базовый.
+    tpl_template_id = Column(Integer, ForeignKey("annex_tpl_templates.id"))
     blocks = Column(JSONB)
     # ДС мастер-сделки (миграция 2026-10-15_closing_contour.sql): пакет и вид — main (№ n), addons (№ n-01), all (одним ДС).
     master_deal_id = Column(Integer, ForeignKey("master_deals.id"))

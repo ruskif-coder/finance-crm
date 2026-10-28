@@ -46,3 +46,15 @@ assert.deepEqual(nextSort(null, 'name'), { key: 'name', dir: 'asc' })
 assert.deepEqual(nextSort({ key: 'plan', dir: 'desc' }, 'plan'), { key: 'plan', dir: 'asc' })
 assert.deepEqual(nextSort({ key: 'plan', dir: 'asc' }, 'need'), { key: 'need', dir: 'desc' })
 console.log('reallocView: ok')
+
+// План дня в «Динамике по дням» — правило дашборда и «Отчёта по РК» (`app/ad/day_plan.past_goals`, владелец 27.10.2026):
+// цель дня = остаток плана к началу дня ÷ оставшиеся дни × буст. Ровный план (plan ÷ дни) красил не те дни.
+{  // прошедший день сравнивается с целью по остатку, а не с ровным планом
+  const scope = [{ id: 1, plan: 100, fact: 28 }]
+  const daily = { dates: ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04'], as_of: '2026-10-02',
+    facts: { 1: { '2026-10-01': 0, '2026-10-02': 28 } }, boost: { '2026-10-02': 20 } }
+  const c = chart(scope, {}, daily, 2)
+  assert.equal(Math.round(c.bars[0].goal * 100) / 100, 25)
+  assert.equal(Math.round(c.bars[1].goal * 100) / 100, 40)        // 100 / 3 × 1,2
+  assert.equal(c.bars[1].low, true)                                // 28 < 0,9 × 40; при ровных 25 был бы «норма»
+}

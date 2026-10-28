@@ -72,3 +72,15 @@ def test_manual_scaling_leaves_room_for_spent_and_free_creatives():
     out = _plans(split_evenly(20_000, crs, facts={1: 5_000, 2: 3_000, 3: 1_000}, manual=True))
     assert out[1] == 16_000 and out[3] == 1_000
     assert out[1] + out[3] + 3_000 == 20_000                          # с открученным отклонённым — ровно план
+
+
+def test_manual_plan_limits_sum_to_the_plan_when_one_creative_is_ahead():
+    """Владелец 27.10.2026 (сценарий 2 разбора лимитов): ручной план 1000, объёмы 600/400, первый уже открутил 700. Было
+    700 + 400 = 1100 — второй докручивал свои 400, площадка перекручивала на 100. Креатив, открутивший больше своей доли,
+    держится на факте, остаток плана — остальным в их пропорции: 700 + 300."""
+    out = split_evenly(1000, [_cr(1, fixed=600), _cr(2, fixed=400)], facts={1: 700, 2: 0}, manual=True)
+    assert _plans(out) == {1: 700, 2: 300}
+    out = split_evenly(20_000, [_cr(1, fixed=15_000), _cr(2, fixed=15_000)], facts={1: 12_000, 2: 1_000}, manual=True)
+    assert _plans(out) == {1: 12_000, 2: 8_000}
+    out = split_evenly(1000, [_cr(1, fixed=600), _cr(2, fixed=400), _cr(3, fixed=500)], facts={1: 700}, manual=True)
+    assert _plans(out) == {1: 700, 2: 134, 3: 166}                  # остаток 300 — как 400:500, округление — первому

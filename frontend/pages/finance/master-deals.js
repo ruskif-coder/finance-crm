@@ -99,7 +99,8 @@ export default function MasterDealsRegistry() {
   const tGross = withSum.reduce((a, r) => a + (r.gross || 0), 0)
   const withProfit = withSum.filter(r => r.efficiency && r.efficiency.profit != null)
   const tProfit = withProfit.reduce((a, r) => a + r.efficiency.profit, 0)
-  const tRev = withProfit.reduce((a, r) => a + r.efficiency.revenue, 0)
+  // маржа — от суммы ДС до СК, как у строк и карточки (`efficiency.gross`, владелец 27.10.2026), а не от выручки после скидки
+  const tRev = withProfit.reduce((a, r) => a + (r.efficiency.gross ?? r.efficiency.revenue), 0)
   const noSum = shown.length - withSum.length
   const filtered = !!q || !!month || tab !== KEEP
   const cols = rights.fin ? COLS : COLS.replace(/ 142px$/, '')

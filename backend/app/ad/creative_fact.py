@@ -43,9 +43,15 @@ def dsp_days(db, dsp_db, campaign_id: int, ms_campaign_xxhash: Optional[str],
     return out
 
 
-def totals(db, camp, dsp_db=None) -> Dict[int, int]:
+class FactUnavailable(Exception):
+    """Факт креативов из аналитики DSP не прочитан — `strict`-вызов не должен решать по неполному факту."""
+
+
+def totals(db, camp, dsp_db=None, strict: bool = False) -> Dict[int, int]:
     """{строка креатива: показы за всю РК} — DSP + Adfox. Аналитика недоступна — только Adfox: раскладка тогда
-    делит остаток как раньше, поровну, а не обнуляет лимиты (сбой чтения не должен останавливать креативы)."""
+    делит остаток как раньше, поровну, а не обнуляет лимиты (сбой чтения не должен останавливать креативы).
+    `strict` — для ОТПРАВКИ лимитов в DSP (ревью 27.10.2026): деление поровну без факта поднимало лимит новому креативу,
+    пока старый уже открутил почти всё, — перекрут. Там сбой чтения — исключение, и лимиты РК не трогаются."""
     out: Dict[int, int] = {}
     for cid, shows in db.execute(text("""
         SELECT a.creative_id, sum(a.shows) FROM adfox_creative_stat a
@@ -65,6 +71,8 @@ def totals(db, camp, dsp_db=None) -> Dict[int, int]:
             out[rid] = out.get(rid, 0) + int(v[0] or 0)
     except Exception as e:     # аналитика — подсказка раскладке, а не условие: без неё — поровну
         log.warning("факт креативов РК %s не прочитан: %s", camp.id, e)
+        if strict:
+            raise FactUnavailable(str(e)) from e
     finally:
         if own is not None:
             own.close()

@@ -149,3 +149,43 @@ def test_move_refuses_when_registry_changed_it_meanwhile(db, monkeypatch):
         R.apply_moves(R.ApplyIn(moves=[R.MoveIn(deal_id=free, month=now_month, light="orange",
                                                 from_month=now_month, from_light=stale)]), db, U)
     assert e.value.status_code == 409 and "реестр" in e.value.detail
+
+
+def test_move_shifts_the_media_plan_with_the_deal(db):
+    """Владелец 27.10.2026: перенос сделки в «Статусах продаж» двигает и её медиаплан. Поломка: месяц сделки менялся, а период
+    и даты МП оставались прежними — сделка в декабре, медиаплан и даты ДС в ноябре."""
+    from app.sales.models import SalesDeal, SalesMediaPlan
+    free = db.execute(text("""SELECT d.id FROM sales_deals d JOIN sales_stages s ON s.id = d.our_stage_id
+                               JOIN sales_media_plans p ON p.deal_id = d.id
+                              WHERE s.stage_key IN ('media_plan','booking') AND d.period_from IS NOT NULL
+                                AND p.date_from IS NOT NULL ORDER BY d.id DESC LIMIT 1""")).scalar()
+    if not free:
+        pytest.skip("на стенде нет планируемой сделки с датами медиаплана")
+    d = db.get(SalesDeal, free)
+    mp = db.query(SalesMediaPlan).filter(SalesMediaPlan.deal_id == free).first()
+    was_from = mp.date_from
+    target = R._shift(d.period_from.replace(day=1), 1).strftime("%Y-%m")
+    R.apply_moves(R.ApplyIn(moves=[R.MoveIn(deal_id=free, month=target, light=d.probability_color)]), db, U)
+    db.refresh(mp)
+    assert mp.period == target
+    assert mp.date_from == R._shift(was_from, 1)
+
+
+def test_reminders_are_own_unless_the_role_sees_everyone(db, monkeypatch):
+    """Владелец 27.10.2026: будильник — каждому свой, мастер (видимость реестра «все») — все. Поломка: матрица отдавала
+    каждому будильники всех пользователей с именем и текстом."""
+    from datetime import date
+    from app.models import User
+    from app.sales.status_models import SalesStatusReminder
+    users = [u.id for u in db.query(User).filter(User.is_active == 1).order_by(User.id).limit(2).all()]
+    if len(users) < 2:
+        pytest.skip("на стенде меньше двух пользователей")
+    for uid in users:
+        db.add(SalesStatusReminder(user_id=uid, client_name=f"проба будильника {uid}", remind_on=date.today()))
+    db.flush()
+    me = SimpleNamespace(id=users[0], role=SimpleNamespace(key="role_7"))
+    names = lambda out: {r["client_name"] for r in out if (r["client_name"] or "").startswith("проба будильника")}  # noqa: E731
+    monkeypatch.setattr(R, "own_rep_ids_or_all", lambda db, user, section="sales_registry": [1])      # «свои»
+    assert names(R.reminders_out(db, me)) == {f"проба будильника {users[0]}"}
+    monkeypatch.setattr(R, "own_rep_ids_or_all", lambda db, user, section="sales_registry": None)     # «все»
+    assert names(R.reminders_out(db, me)) == {f"проба будильника {u}" for u in users}

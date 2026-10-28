@@ -48,17 +48,31 @@ def _req(status="открыта", created=None):
 
 
 def test_done_needs_a_template_version_saved_after_the_request(monkeypatch):
-    monkeypatch.setattr(S.tpl, "custom_of", lambda db, cid: None)
+    monkeypatch.setattr(S, "_candidates", lambda db, r: (None, None, []))
     with pytest.raises(S.LegalError) as e:
         S.done(None, _req(), USER)
     assert e.value.status == 409
-    monkeypatch.setattr(S.tpl, "custom_of", lambda db, cid: SimpleNamespace(id=5))
+    monkeypatch.setattr(S, "_candidates", lambda db, r: (None, None, [SimpleNamespace(id=5)]))
     monkeypatch.setattr(S.tpl, "current", lambda db, tid: SimpleNamespace(id=99, created_at=datetime(2026, 10, 14, 9)))
     with pytest.raises(S.LegalError):
         S.done(None, _req(), USER)                                    # версия старее заявки — правки нет
     monkeypatch.setattr(S.tpl, "current", lambda db, tid: SimpleNamespace(id=99, created_at=datetime(2026, 10, 14, 11)))
     r = S.done(None, _req(), USER, "сделал")
     assert (r.status, r.result_version_id, r.answer, r.closed_by, r.taken_by) == ("сделана", 99, "сделал", 7, 7)
+
+
+def test_done_switches_the_annex_to_the_template_the_lawyer_saved(monkeypatch):
+    """У договора несколько шаблонов (27.10.2026): юрист завёл новый и сохранил правку там — ДС заявки переходит на него."""
+    annex = SimpleNamespace(tpl_template_id=None)
+    picked, fresh = SimpleNamespace(id=5, scope="custom"), SimpleNamespace(id=6, scope="custom")
+    monkeypatch.setattr(S, "_candidates", lambda db, r: (annex, picked, [picked, fresh]))
+    monkeypatch.setattr(S.tpl, "current", lambda db, tid: SimpleNamespace(
+        id=tid * 10, created_at=datetime(2026, 10, 14, 9 if tid == 5 else 11)))
+    r = S.done(None, _req(), USER)
+    assert r.result_version_id == 60 and annex.tpl_template_id == 6
+    annex.tpl_template_id = None
+    monkeypatch.setattr(S.tpl, "current", lambda db, tid: SimpleNamespace(id=tid * 10, created_at=datetime(2026, 10, 14, 11)))
+    assert S.done(None, _req(), USER).result_version_id == 50 and annex.tpl_template_id is None   # правка в шаблоне ДС — ДС не трогаем
 
 
 def test_take_and_reject():
@@ -125,11 +139,11 @@ def test_done_rebuilds_a_confirmed_annex_but_not_a_draft(monkeypatch):
 def test_customs_behind_lists_only_changed_and_route_beats_template_id(monkeypatch):
     from app.annex_tpl import service as T
     from app.routers import annex_templates as AT
-    rows = [SimpleNamespace(id=1, contract_id=11), SimpleNamespace(id=2, contract_id=12)]
+    rows = [SimpleNamespace(id=1, contract_id=11, title="А"), SimpleNamespace(id=2, contract_id=12, title="Б")]
     q = SimpleNamespace(filter=lambda *a: q, order_by=lambda *a: SimpleNamespace(all=lambda: rows))
     monkeypatch.setattr(T, "base_state", lambda db, t: {"changed": t.id == 2, "known": 1, "now": 3})
     out = T.customs_behind(SimpleNamespace(query=lambda m: q))
-    assert out == [{"template_id": 2, "contract_id": 12, "known": 1, "now": 3}]
+    assert out == [{"template_id": 2, "title": "Б", "contract_id": 12, "known": 1, "now": 3}]
     paths = [r.path for r in AT.router.routes]
     assert paths.index("/behind") < paths.index("/{template_id}")      # иначе «behind» ушёл бы в id шаблона
 

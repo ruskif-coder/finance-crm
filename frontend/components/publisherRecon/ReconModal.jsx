@@ -1,6 +1,7 @@
 // Модалка сверки площадки за месяц (хендофф 26.10.2026): наши / площадки / итог менеджера, кампании, переписка.
 // «Ответить площадке» уходит вместе с цифрой из поля итога — в кабинете она становится «предлагает N».
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import useLatest from '@/lib/useLatest'
 import api, { auth } from '@/lib/http'
 import { MONO, Modal } from '@/components/salesTableKit'
 import { grpDash, monthLabel } from '@/lib/salesFormat'
@@ -32,16 +33,20 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
   const [reply, setReply] = useState('')
   const [busy, setBusy] = useState(false)
 
+  const latest = useLatest()
+  const finalSet = useRef(false)     // итог подставляем один раз: после «Ответить» перечитывание стирало набранную цифру
   const load = useCallback(() => {
+    const fresh = latest()
     api.get(`/publisher-recon/detail?publisher_id=${publisherId}&period=${period}`, auth())
       .then(r => {
+        if (!fresh()) return
         setD(r.data); setErr('')
         const row = r.data.row
-        setFinal(String(row.agreed ?? row.theirs ?? row.ours))
+        if (!finalSet.current || row.agreed != null) { setFinal(String(row.agreed ?? row.theirs ?? row.ours)); finalSet.current = true }
       })
-      .catch(e => setErr(e?.response?.data?.detail || 'Не удалось открыть сверку'))
-  }, [publisherId, period])
-  useEffect(() => { load() }, [load])
+      .catch(e => { if (fresh()) setErr(e?.response?.data?.detail || 'Не удалось открыть сверку') })
+  }, [publisherId, period, latest])
+  useEffect(() => { finalSet.current = false; load() }, [load])
 
   const run = async (fn, okMsg) => {
     if (busy) return

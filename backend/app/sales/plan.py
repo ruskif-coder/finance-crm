@@ -318,6 +318,8 @@ def cell(db, year: int, m_from: int, m_to: int, scope: str, key: int, own: Optio
             continue
         ok = (scope == "общий" or (scope == "услуга" and d.service_id == key) or (scope == NO_SERVICE and not d.service_id)
               or (scope == "продажник" and d.sales_rep_id == key) or (scope == NO_REP and not d.sales_rep_id))
+        if own is not None and d.sales_rep_id not in own:
+            ok = False                      # «свои»: общая цель видна, сделки — только свои (ревью 27.10.2026)
         if ok and (b := _bucket(d)):
             picked.append({"id": d.id, "code": d.code, "title": d.title, "stage": d.stage, "bucket": b,
                            "amount": round(d.amount, 2), "rep": d.rep, "service": d.service,

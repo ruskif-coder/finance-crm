@@ -78,7 +78,7 @@ def test_party_carries_both_cases(monkeypatch):
     cp = SimpleNamespace(id=1, name="ООО Ромашка", inn="1", kpp=None, address=None,
                          director_name="Макаров Денис Сергеевич",
                          signer_position="Генеральный директор", signer_basis="Устава")
-    out = annex.party(cp)
+    out = annex.party(cp, cp)        # подписант — отдельным аргументом (28.10.2026); у образца поля те же
     assert out["position"] == "Генеральный директор"
     assert out["position_gen"] == "Генерального директора"
     assert out["director_gen"] == "Макарова Дениса Сергеевича"

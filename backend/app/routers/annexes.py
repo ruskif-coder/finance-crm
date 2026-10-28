@@ -38,6 +38,7 @@ from app.sales import annex_signed
 from app.annex_tpl.assemble import (CLOSING_KEY, closing_template_for as tpl_closing_for, assemble as tpl_assemble,
                                     closing_resolve as tpl_closing_resolve, validate_edit as tpl_validate_edit)
 from app.annex_tpl.service import AnnexTplError
+from app.annex_tpl.service import remember as tpl_remember
 from app.audit import log_action
 from app.database import get_db
 from app.models import Contract, Counterparty, User
@@ -409,10 +410,10 @@ def _check_no(db: Session, c: Contract, no: int, sub_no=None) -> None:
 
 
 def _freeze_for_confirm(db: Session, a: SalesAnnex, c: Contract, no: int, version=None, edits=None) -> dict:
-    """Собрать документ по ТЕКУЩЕЙ версии шаблона договора и заморозить. Не прошёл полноту или сверку чисел — подтверждение отказывает
-    поимённо (номер не занимается): бумагу с пустым местом или с двумя разными суммами подписывают не глядя."""
+    """Собрать документ по ТЕКУЩЕЙ версии шаблона этого ДС (выбранного или по умолчанию) и заморозить. Не прошёл полноту или сверку
+    чисел — подтверждение отказывает поимённо (номер не занимается): бумагу с пустым местом или с двумя разными суммами подписывают не глядя."""
     if version is None:
-        version, reason = tpl_doc.resolve(db, c)
+        version, reason = tpl_doc.resolve(db, c, a)
         if version is None:
             raise HTTPException(409, reason)
     try:
@@ -454,7 +455,7 @@ def edit_block(annex_id: int, payload: EditIn, db: Session = Depends(get_db), us
         if frozen:
             blocks = a.blocks["blocks"]                      # зоны и системные блоки читаются из самого замороженного документа
         else:
-            version, reason = tpl_doc.resolve(db, c)
+            version, reason = tpl_doc.resolve(db, c, a)
             if version is None:
                 raise HTTPException(409, reason)
             blocks = version.blocks
@@ -525,6 +526,7 @@ def rebuild_frozen(db: Session, a: SalesAnnex, c: Contract) -> None:
     вызывающий: кнопка «Пересоздать» и закрытие заявки юристу («Сделано» пересобирает ДС сам, владелец 14.10.2026)."""
     frozen = _freeze_for_confirm(db, a, c, a.no)
     a.template_version_id = frozen["template"]["version_id"]
+    a.tpl_template_id = frozen["template"].get("template_id") or getattr(a, "tpl_template_id", None)
     a.blocks = frozen
 
 
@@ -580,6 +582,10 @@ def confirm_one(db: Session, a: SalesAnnex, payload: "ConfirmIn", user) -> tuple
         a.date = payload.doc_date
     frozen = _freeze_for_confirm(db, a, c, no)
     a.template_version_id = frozen["template"]["version_id"]
+    # Шаблон, по которому заморожен документ, — в сам ДС и в память его брендов: следующий ДС бренда в этом договоре получит его же.
+    a.tpl_template_id = frozen["template"].get("template_id") or getattr(a, "tpl_template_id", None)
+    if a.tpl_template_id:
+        tpl_remember(db, c.id, tpl_doc.brand_ids(db, a), a.tpl_template_id, getattr(user, "id", None))
     a.blocks = frozen
     a.no = no
     a.number = (f"ДС № {no}" + (f"-{sub_no}" if sub_no else "")) if master_id else f"Приложение № {no}"
@@ -635,13 +641,16 @@ LIST_LIMIT = 500
 
 
 @router.get("")
-def list_annexes(db: Session = Depends(get_db), user: User = Depends(VIEW)):
+def list_annexes(db: Session = Depends(get_db), user: User = Depends(VIEW), contract_id: Optional[int] = None):
     """Реестр приложений — учёт, о котором просил владелец: что выпущено и под каким
-    номером. Черновики идут первыми: это незакрытая работа, а не архив."""
-    total = db.query(sa_func.count(SalesAnnex.id)).scalar() or 0
+    номером. Черновики идут первыми: это незакрытая работа, а не архив. `contract_id` — ДС одного
+    договора (окно «Шаблон ДС» в реестре договоров, 28.10.2026)."""
+    by_contract = [SalesAnnex.contract_id == contract_id] if contract_id is not None else []
+    total = db.query(sa_func.count(SalesAnnex.id)).filter(*by_contract).scalar() or 0
     rows = (db.query(SalesAnnex, Contract, Counterparty)
             .join(Contract, Contract.id == SalesAnnex.contract_id)
             .outerjoin(Counterparty, Counterparty.id == Contract.counterparty_id)
+            .filter(*by_contract)
             .order_by(SalesAnnex.no.is_(None).desc(),
                       SalesAnnex.date.desc().nullslast(), SalesAnnex.id.desc())
             .limit(LIST_LIMIT).all())
@@ -756,6 +765,8 @@ def get_annex(annex_id: int, db: Session = Depends(get_db), user: User = Depends
             # Документ по шаблону ДС (спринт 2): живой у черновика, замороженный у подтверждённого, пусто у собранных до конструктора.
             "model": state["model"], "model_frozen": state["frozen"], "model_legacy": state["legacy"],
             "model_reason": state["reason"], "template_state": state["template_state"],
+            # Выбор шаблона на сборке (27.10.2026): варианты, что собирает сейчас и почему; у подтверждённого — нет.
+            "template_choice": state["choice"],
             "deals": deals,
             "mismatch": _mismatch(a, deals),
             # Границу нумерации экран показывает рядом с полем: без неё отказ «номер не
@@ -787,12 +798,12 @@ def _master_ref(db: Session, a) -> Optional[dict]:
 # Символы, запрещённые в именах файлов Windows. Слэш приходит сюда штатно: бренд
 # собирается как «Рекламодатель / Бренд», и без замены файл не сохранился бы вовсе.
 class SignerIn(BaseModel):
-    """Реквизиты подписанта — правятся прямо с экрана ДС, а хранятся у контрагента.
+    """Реквизиты подписанта — правятся прямо с экрана ДС, а хранятся у подписанта юрлица (`counterparty_signers`, 28.10.2026).
 
-    Отдельная ручка, а не общая правка контрагента: та перезаписывает карточку целиком
-    (`cp.field = data.field` по всем полям), и частичный запрос с экрана ДС стёр бы
-    адрес, банк и телефон. Здесь трогаются ровно присланные поля.
+    `signer_id` — подписант, который стоит в документе (выбранный договором или по умолчанию); без него правится подписант по
+    умолчанию, а нет его — заводится. Трогаются ровно присланные поля.
     """
+    signer_id: Optional[int] = None
     director_name: Optional[str] = None
     signer_position: Optional[str] = None
     signer_basis: Optional[str] = None
@@ -804,16 +815,26 @@ def set_signer(counterparty_id: int, payload: SignerIn, db: Session = Depends(ge
     cp = db.query(Counterparty).filter(Counterparty.id == counterparty_id).first()
     if not cp:
         raise HTTPException(404, "Контрагент не найден")
+    from app.signers import service as SG
     data = payload.dict(exclude_unset=True)
+    sid = data.pop("signer_id", None)
     if not data:
         raise HTTPException(400, "Нечего сохранять")
-    for k, v in data.items():
-        setattr(cp, k, (v or "").strip() or None)
-    db.commit()
+    try:
+        if sid is not None:
+            s = SG.update(db, sid, data, user)
+            if s.counterparty_id != cp.id:
+                raise SG.SignerError(400, "Подписант не относится к этому юрлицу")
+        else:
+            s = SG.upsert_default(db, cp, data, user)
+        db.commit()
+    except SG.SignerError as e:
+        db.rollback()
+        raise HTTPException(e.status, e.message)
     log_action(db, user, "counterparty_signer", "counterparty", cp.id,
                "; ".join(f"{k}={v}" for k, v in data.items()))
-    return {"id": cp.id, "director_name": cp.director_name,
-            "signer_position": cp.signer_position, "signer_basis": cp.signer_basis}
+    return {"id": cp.id, "signer_id": s.id if s else None, "director_name": s.director_name if s else None,
+            "signer_position": s.signer_position if s else None, "signer_basis": s.signer_basis if s else None}
 
 
 class PhraseIn(BaseModel):

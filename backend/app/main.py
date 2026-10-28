@@ -528,11 +528,17 @@ app.include_router(operation_chains.router, prefix="/api/operations", tags=["ope
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(finreport.router, prefix="/api/finreport", tags=["reports"])
 app.include_router(counterparties.router, prefix="/api/counterparties", tags=["counterparties"])
+from app.routers import counterparty_card  # noqa: E402 — карточка контрагента v2 (28.10.2026), под тем же префиксом
+app.include_router(counterparty_card.router, prefix="/api/counterparties", tags=["counterparties"])
 app.include_router(articles.router, prefix="/api/articles", tags=["articles"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(roles.router, prefix="/api/roles", tags=["roles"])
 app.include_router(contracts.router, prefix="/api/contracts", tags=["contracts"])
+from app.routers import signers as signers_router  # noqa: E402 — подписанты юрлиц и договора (28.10.2026)
+app.include_router(signers_router.router, prefix="/api/signers", tags=["signers"])
+from app.routers import contract_card  # noqa: E402 — карточка договора (28.10.2026), под тем же префиксом
+app.include_router(contract_card.router, prefix="/api/contracts", tags=["contracts"])
 app.include_router(sales_directories.router, prefix="/api/sales/directories", tags=["sales"])
 app.include_router(publishers.router, prefix="/api/publishers", tags=["publishers"])
 # Матрица согласований площадка × РК — свой файл и своё право (29.09.2026).
@@ -640,6 +646,8 @@ app.include_router(prio.router, prefix="/api/prio", tags=["prio"])
 from app.routers import publisher_recon as publisher_recon_router  # noqa: E402 — сверки площадок (2026-10-26_publisher_recon.sql)
 from app.routers import cabinet_gateway_recon  # noqa: E402
 app.include_router(publisher_recon_router.router, prefix="/api/publisher-recon", tags=["publisher-recon"])
+from app.routers import agency_terms as agency_terms_router  # noqa: E402 — «Агентские условия» (2026-10-27_agency_terms.sql)
+app.include_router(agency_terms_router.router, prefix="/api/agency-terms", tags=["agency-terms"])
 app.include_router(cabinet_gateway_recon.router, prefix="/api/cabinet-gw", tags=["cabinet-gw"])
 
 @app.get("/")

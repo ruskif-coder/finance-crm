@@ -4,6 +4,7 @@
  * Модель собирает сервер (`app/annex_tpl/assemble.py`); здесь только показ.
  */
 import { MONO } from '@/components/salesTableKit'
+import AnnexTemplateChoice from '@/components/annex/AnnexTemplateChoice'
 import { grpDec, fmtDateFull } from '@/lib/salesFormat'
 
 const SERIF = "'Times New Roman', Georgia, serif"
@@ -141,8 +142,8 @@ function RebuildBtn({ onClick, busy, small }) {
   )
 }
 
-export default function AnnexModelPanel({ state, onRebuild, rebuildBusy, actions }) {
-  const { model, frozen, legacy, reason, template_state: ts } = state
+export default function AnnexModelPanel({ state, onRebuild, rebuildBusy, actions, canEdit, onChoose, onSaveAs }) {
+  const { model, frozen, legacy, reason, template_state: ts, choice } = state
   if (legacy) {
     return (
       <Box tone="info">
@@ -153,15 +154,26 @@ export default function AnnexModelPanel({ state, onRebuild, rebuildBusy, actions
       </Box>
     )
   }
-  if (!model) return <Box tone="bad"><b>Шаблон ДС не определён.</b> {reason}</Box>
+  if (!model) {
+    return (
+      <Box tone="bad">
+        <b>Шаблон ДС не определён.</b> {reason}
+        {choice && !!choice.options.length && (
+          <div style={{ marginTop: 6 }}><AnnexTemplateChoice choice={choice} canEdit={canEdit} onChoose={onChoose} onSaveAs={onSaveAs} /></div>
+        )}
+      </Box>
+    )
+  }
   const t = model.template || {}
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span style={LBL}>Документ по шаблону</span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', height: 22, padding: '0 9px', borderRadius: 7, background: 'var(--violet-tint)', color: 'var(--violet-fg)', fontSize: 11, fontWeight: 700 }}>
-          {t.scope === 'custom' ? `кастомный · ${t.title} · v${t.version}` : `${t.title} · v${t.version}`}
-        </span>
+        {choice
+          ? <AnnexTemplateChoice choice={choice} version={t.version} canEdit={canEdit} onChoose={onChoose} onSaveAs={onSaveAs} />
+          : <span style={{ display: 'inline-flex', alignItems: 'center', height: 22, padding: '0 9px', borderRadius: 7, background: 'var(--violet-tint)', color: 'var(--violet-fg)', fontSize: 11, fontWeight: 700 }}>
+              {t.scope === 'custom' ? `шаблон договора · ${t.title} · v${t.version}` : `${t.title} · v${t.version}`}
+            </span>}
         <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>
           {frozen ? 'замороженный документ: правка шаблона его не меняет' : 'черновик: собирается по текущей версии шаблона, при подтверждении фиксируется'}
         </span>
@@ -174,7 +186,7 @@ export default function AnnexModelPanel({ state, onRebuild, rebuildBusy, actions
       </div>
       {ts && ts.changed && (
         <Box tone="warn">
-          <b>Базовый шаблон изменился</b> (v{ts.known} → v{ts.now}), а у этого договора свой кастомный шаблон. Надо ли отредактировать текущий — «Справочники → Договоры → Шаблон ДС».
+          <b>Базовый шаблон изменился</b> (v{ts.known} → v{ts.now}), а ДС собирается по шаблону договора. Надо ли отредактировать его — «Справочники → Договоры → Шаблон ДС».
           {!!(ts.changes || []).length && <div style={{ marginTop: 4 }}>{ts.changes.map((c, i) => <div key={i}>• {c[1]} — {c[2]}</div>)}</div>}
         </Box>
       )}

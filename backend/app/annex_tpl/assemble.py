@@ -313,7 +313,8 @@ def assemble(db: Session, contract, version, *, period_from, period_to, deal_ids
     blocks, empties = _blocks(version.blocks, values, edits, defaults)
     closing_text = edits.get(CLOSING_KEY)
     closing_default = defaults.get(CLOSING_KEY)
-    ex, cu = A.party(us), A.party(payer)
+    from app.signers.service import party_of
+    ex, cu = party_of(db, us, contract, "исполнитель", doc_date), party_of(db, payer, contract, "заказчик", doc_date)
     ex["legal_name"], cu["legal_name"] = legal_name(ex.get("name")), legal_name(cu.get("name"))
 
     return {

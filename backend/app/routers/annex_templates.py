@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Шаблоны ДС: базовые именованные (с форматами договоров, которые они обслуживают) и кастомные под договор (спринт 1, 13–14.10.2026).
-Роутер тонкий: вся логика — в `app/annex_tpl`. Права — секция `annex_templates` (view / create / edit), кто правит — галочки в «Ролях»."""
+"""Шаблоны ДС: базовые именованные (с форматами договоров, которые они обслуживают) и шаблоны договора (спринт 1, 13–14.10.2026; с 27.10.2026
+у договора их несколько, у каждого имя, один может быть основным). Роутер тонкий: вся логика — в `app/annex_tpl`. Права — секция
+`annex_templates` (view / create / edit), кто правит — галочки в «Ролях». Выбор шаблона в ДС и «Сохранить как шаблон» из конструктора ДС —
+по праву правки приложений (`annexes`, владелец 27.10.2026: «любой с правом правки»)."""
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.annex_tpl import document as D
 from app.annex_tpl import service as S
 from app.annex_tpl.check import check, numbering, zone_at
 from app.annex_tpl.formats import KNOWN_FORMATS
@@ -16,11 +19,13 @@ from app.audit import log_action
 from app.database import get_db
 from app.models import Contract, User
 from app.permissions import require_permission
+from app.sales import annex_print as AP
 
 router = APIRouter()
 VIEW = require_permission("annex_templates", "view")
 CREATE = require_permission("annex_templates", "create")
 EDIT = require_permission("annex_templates", "edit")
+ANNEX_EDIT = require_permission("annexes", "edit")
 
 
 class BlocksIn(BaseModel):
@@ -34,6 +39,27 @@ class RestoreIn(BaseModel):
 
 class ForkIn(BaseModel):
     contract_id: int
+    title: str
+    source_id: Optional[int] = None       # копия этого шаблона (базового или шаблона договора); пусто — базовый формата договора
+    main: bool = False
+    annex_id: Optional[int] = None        # заявка юристу из ДС: черновик этого ДС переключается на новый шаблон
+
+
+class TitleIn(BaseModel):
+    title: str
+
+
+class MainIn(BaseModel):
+    main: bool
+
+
+class ChoiceIn(BaseModel):
+    template_id: Optional[int] = None     # пусто — шаблон по умолчанию
+
+
+class SaveAsIn(BaseModel):
+    title: str
+    main: bool = False
 
 
 class BaseIn(BaseModel):
@@ -55,14 +81,14 @@ def _label(db: Session, t: AnnexTplTemplate) -> str:
     if t.scope == "base":
         return f"шаблон «{t.title}»"
     base = db.query(AnnexTplTemplate).filter_by(id=t.base_template_id).first()
-    return f"кастомный шаблон договора {t.contract_id} (база «{base.title if base else '?'}»)"
+    return f"шаблон договора {t.contract_id} «{t.title}» (база «{base.title if base else '?'}»)"
 
 
 def _row(db: Session, t: AnnexTplTemplate, with_blocks: bool = False) -> dict:
     cur = S.current(db, t.id)
     base = db.query(AnnexTplTemplate).filter_by(id=t.base_template_id).first() if t.base_template_id else None
-    out = {"id": t.id, "scope": t.scope, "title": t.title or (base.title if base else None),
-           "base_template_id": t.base_template_id, "contract_id": t.contract_id,
+    out = {"id": t.id, "scope": t.scope, "title": t.title or (base.title if base else None), "is_main": bool(t.is_main),
+           "base_title": base.title if base else None, "base_template_id": t.base_template_id, "contract_id": t.contract_id,
            "formats": S.formats_of(db, t.id) if t.scope == "base" else [],
            "version": cur.version if cur else None, "base_version": cur.base_version if cur else None,
            "updated_at": cur.created_at if cur else None, "author": cur.author_name if cur else None,
@@ -136,34 +162,126 @@ def create_base(payload: BaseIn, db: Session = Depends(get_db), user: User = Dep
     return _row(db, t, with_blocks=True)
 
 
-@router.get("/for-contract/{contract_id}")
-def for_contract(contract_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
-    """Шаблон, прикреплённый к договору: кастомный, иначе базовый его формата, иначе причина, почему нет."""
+def _contract(db: Session, contract_id: int) -> Contract:
     c = db.query(Contract).filter_by(id=contract_id).first()
     if not c:
         raise HTTPException(404, "Договор не найден")
+    return c
+
+
+@router.get("/for-contract/{contract_id}")
+def for_contract(contract_id: int, template_id: Optional[int] = None, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Шаблоны договора: его именованные (основной первым) и базовый формата. Открыт `template_id`, иначе тот, что подставляется по
+    умолчанию (основной, иначе базовый формата); шаблона нет вовсе — причина."""
+    c = _contract(db, contract_id)
     r = S.resolve_for_contract(db, c)
     t = r["template"]
-    return {"source": r["source"], "reason": r["reason"], "format": c.cooperation_format,
+    if template_id is not None:
+        t = next((x for x in S.choices(db, c) if x.id == template_id), None)
+        if t is None:
+            raise HTTPException(400, "Этот шаблон не относится к договору")
+    return {"source": t.scope if t else "none", "reason": r["reason"], "format": c.cooperation_format,
+            "templates": [_row(db, x) for x in S.choices(db, c)],
             "template": _row(db, t, with_blocks=True) if t else None,
             "base_changes": S.base_changes(db, t) if t and t.scope == "custom" else []}
 
 
 @router.post("/custom", status_code=201)
 def fork(payload: ForkIn, db: Session = Depends(get_db), user: User = Depends(CREATE)):
-    c = db.query(Contract).filter_by(id=payload.contract_id).first()
-    if not c:
-        raise HTTPException(404, "Договор не найден")
+    """Новый именованный шаблон договора — копия базового формата или указанного шаблона."""
+    c = _contract(db, payload.contract_id)
     try:
-        v = S.fork_custom(db, c, user)
+        v = S.fork_custom(db, c, user, title=payload.title, source_id=payload.source_id, main=payload.main)
+        if payload.annex_id is not None:
+            a = AP.annex_of(db, payload.annex_id, user)
+            if a.contract_id != c.id:
+                raise S.AnnexTplError(400, "Приложение не по этому договору")
+            a.tpl_template_id = v.template_id
         db.commit()
     except S.AnnexTplError as e:
         db.rollback()
         _fail(e)
     t = _template(db, v.template_id)
     log_action(db, user, "annex_tpl_fork", "annex_template", t.id,
-               f"договор {c.contract_number or c.id}: {_label(db, t)}, база v{v.base_version}")
+               f"договор {c.contract_number or c.id}: {_label(db, t)}, база v{v.base_version}" + (" · основной" if t.is_main else ""))
     return _row(db, t, with_blocks=True)
+
+
+@router.put("/{template_id}/title")
+def set_title(template_id: int, payload: TitleIn, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    was = _template(db, template_id).title
+    try:
+        t = S.rename(db, template_id, payload.title)
+        db.commit()
+    except S.AnnexTplError as e:
+        db.rollback()
+        _fail(e)
+    log_action(db, user, "annex_tpl_rename", "annex_template", t.id, f"договор {t.contract_id}: «{was}» → «{t.title}»")
+    return _row(db, t)
+
+
+@router.put("/{template_id}/main")
+def set_main(template_id: int, payload: MainIn, db: Session = Depends(get_db), user: User = Depends(EDIT)):
+    """Основной шаблон договора — подставляется в новый ДС, если для его брендов шаблон ещё не выбирали."""
+    try:
+        t = S.set_main(db, template_id, payload.main)
+        db.commit()
+    except S.AnnexTplError as e:
+        db.rollback()
+        _fail(e)
+    log_action(db, user, "annex_tpl_main", "annex_template", t.id,
+               f"{_label(db, t)}: " + ("основной" if t.is_main else "больше не основной"))
+    return _row(db, t)
+
+
+# ── шаблон в ДС: выбор на сборке и «Сохранить как шаблон» из конструктора (владелец 27.10.2026) ─────────────────────────────
+
+def _annex_contract(db: Session, annex_id: int, user):
+    a = AP.annex_of(db, annex_id, user)
+    return a, AP.contract_of(db, a.contract_id)
+
+
+@router.put("/annex/{annex_id}/choice")
+def choose(annex_id: int, payload: ChoiceIn, db: Session = Depends(get_db), user: User = Depends(ANNEX_EDIT)):
+    """Выбрать шаблон черновика ДС (пусто — по умолчанию). Подтверждённый собран и заморожен — его пересоздают, а не перевыбирают."""
+    a, c = _annex_contract(db, annex_id, user)
+    if a.no is not None:
+        raise HTTPException(409, "Приложение подтверждено — шаблон выбирают до подтверждения")
+    try:
+        if payload.template_id is not None:
+            S.resolve_for_contract(db, c, chosen_id=payload.template_id)      # шаблон должен относиться к договору
+    except S.AnnexTplError as e:
+        _fail(e)
+    a.tpl_template_id = payload.template_id
+    db.commit()
+    t = _template(db, payload.template_id) if payload.template_id else None
+    log_action(db, user, "annex_tpl_choice", "contract", c.id,
+               f"ДС #{a.id}: " + (f"шаблон «{t.title}»" if t else "шаблон по умолчанию"))
+    return D.choice(db, c, a)
+
+
+@router.post("/annex/{annex_id}/save-as", status_code=201)
+def save_as(annex_id: int, payload: SaveAsIn, db: Session = Depends(get_db), user: User = Depends(ANNEX_EDIT)):
+    """Сохранить документ ДС как новый именованный шаблон договора: пункты — с текстом, который на экране (правки аккаунта и унаследованные,
+    с подстановками), суммы и даты не запекаются. Черновик сразу переключается на новый шаблон."""
+    a, c = _annex_contract(db, annex_id, user)
+    version = (D.version_row(db, a.template_version_id) if D.is_frozen(a) else D.resolve(db, c, a)[0])
+    state = D.model_of(db, a, c, AP.annex_deals(db, a.id))
+    if version is None or not state["model"]:
+        raise HTTPException(409, state["reason"] or "У приложения нет документа по шаблону — сохранять нечего")
+    try:
+        blocks = S.blocks_from_model(version.blocks, state["model"]["blocks"])
+        v = S.fork_custom(db, c, user, title=payload.title, source_id=version.template_id, blocks=blocks, main=payload.main)
+        if a.no is None:
+            a.tpl_template_id = v.template_id
+        db.commit()
+    except S.AnnexTplError as e:
+        db.rollback()
+        _fail(e)
+    t = _template(db, v.template_id)
+    log_action(db, user, "annex_tpl_save_as", "annex_template", t.id,
+               f"договор {c.contract_number or c.id}: из ДС #{a.id} — {_label(db, t)}" + (" · основной" if t.is_main else ""))
+    return {"template": _row(db, t), "choice": D.choice(db, c, a) if a.no is None else None}
 
 
 @router.get("/behind")

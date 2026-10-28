@@ -9,6 +9,7 @@ from app.routers.auth import get_current_user
 from app.permissions import get_permissions_for_user, require_permission, require_any_permission
 from app.audit import log_action
 from app.receivables import DEFAULT_TERM_DAYS
+from app.signers import service as SG
 from pydantic import BaseModel
 from typing import Optional, List
 
@@ -70,6 +71,17 @@ class CounterpartyRequisitesUpdate(BaseModel):
     signer_basis: Optional[str] = None
     note: Optional[str] = None
     bank_accounts: List[BankAccountData] = []
+
+def _signer_out(s) -> dict:
+    return {"id": s.id, "director_name": s.director_name, "signer_position": s.signer_position, "signer_basis": s.signer_basis,
+            "valid_until": s.valid_until, "is_default": bool(s.is_default), "is_archived": bool(s.is_archived)}
+
+
+def _default_signer_fields(db: Session, cp_id: int) -> dict:
+    d = SG.default_of(db, cp_id)
+    return {"director_name": d.director_name if d else None, "signer_position": d.signer_position if d else None,
+            "signer_basis": d.signer_basis if d else None}
+
 
 @router.get("/")
 def get_counterparties(
@@ -620,9 +632,9 @@ def get_counterparty_card(
         "phone": cp.phone,
         "email": cp.email,
         "edo_id": cp.edo_id,
-        "director_name": cp.director_name,
-        "signer_position": cp.signer_position,
-        "signer_basis": cp.signer_basis,
+        # Подписант по умолчанию (28.10.2026 подписанты — в counterparty_signers; поля оставлены для старых экранов) и весь список.
+        **_default_signer_fields(db, cp.id),
+        "signers": [_signer_out(s) for s in SG.list_of(db, cp.id, archived=True)],
         "website": cp.website,
         "note": cp.note,
         "status": cp.status,
@@ -832,9 +844,11 @@ def update_counterparty_requisites(
     cp.phone         = _s(data.phone)
     cp.email         = _s(data.email)
     cp.edo_id        = _s(data.edo_id)
-    cp.director_name = _s(data.director_name)
-    cp.signer_position = _s(data.signer_position)
-    cp.signer_basis  = _s(data.signer_basis)
+    # Подписант — не колонки контрагента (заморожены 28.10.2026), а подписант по умолчанию; трогаем, только если форма прислала поля.
+    sent = data.dict(exclude_unset=True)
+    signer = {k: sent[k] for k in ("director_name", "signer_position", "signer_basis") if k in sent}
+    if signer:
+        SG.upsert_default(db, cp, signer, current_user)
     cp.website       = _s(data.website)
     cp.note          = _s(data.note)
 

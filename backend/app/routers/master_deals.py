@@ -145,8 +145,11 @@ def master_efficiency(code: str, db: Session = Depends(get_db),
                       user: User = Depends(require_permission("master_deals_finance", "view"))):
     """Эффективность пакета отдельно — для тех, у кого есть право «Эффективность мастер-сделок»."""
     from app.master_deal import efficiency as EF
+    from app.master_deal import scope as SC
     m = _master(db, code, user)
-    return EF.of_master(db, _scope_all(db, m, user))
+    deals = _scope_all(db, m, user)
+    eff = EF.of_master(db, deals)
+    return EF.with_full(db, deals, eff) if SC.can_special(db, user) else eff
 
 
 # ── статус ────────────────────────────────────────────────────────────────────────────────────────

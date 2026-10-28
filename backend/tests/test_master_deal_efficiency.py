@@ -57,3 +57,28 @@ def test_zero_revenue_has_no_margin():
 def test_estimate_by_publisher_cpm(stats, want):
     got = EF.estimate_from(stats)
     assert (got if got is None else (got["cost"], got["coverage_pct"])) == want
+
+
+def test_margin_is_over_full_ds_sum_before_sk_whatever_the_mode():
+    """Владелец 27.10.2026: маржа — от полной суммы ДС до СК, и при «скидке в счёт» тоже. Иначе одна и та же сделка показывала
+    разную маржу в зависимости от способа выплаты: ДС 100 000, СК 30 %, себестоимость 40 000 → 30 % и 42,9 %."""
+    post = EF.row("A", _st(100000, "постоплата", 30, 40000), None)
+    disc = EF.row("B", {"total_net": 70000, "cost_net": 40000, "sk": {"mode": "скидка в счёт", "percent": 30, "amount_net": 30000}}, None)
+    assert post["profit"] == disc["profit"] == 30000
+    assert post["margin_pct"] == disc["margin_pct"] == 30.0
+    assert disc["revenue"] == 70000 and disc["gross"] == 100000 and post["gross"] == 100000
+    t = EF.total([post, disc])
+    assert t["gross"] == 200000 and t["profit"] == 60000 and t["margin_pct"] == 30.0
+
+
+def test_full_margin_subtracts_partner_and_special_over_the_same_base():
+    """«Маржа с доп. СК» (владелец 27.10.2026): прибыль − партнёрская − спец. условия, база — та же сумма ДС до СК."""
+    rows = [EF.row("A", _st(100000, "постоплата", 30, 40000), None)]
+    eff = {"rows": rows, "total": EF.total(rows)}
+    f = EF.full(eff, {"A": {"partner": 2000.0, "special": 3000.0, "extra": 5000.0, "accumulating": ["3 % от 30 млн"]}})
+    assert (f["partner"], f["special"], f["extra"], f["profit"], f["margin_pct"]) == (2000, 3000, 5000, 25000, 25.0)
+    assert f["accumulating"] == ["3 % от 30 млн"]
+    assert eff["total"]["profit"] == 30000, "обычная маржа не меняется — полная показывается рядом"
+    rows.append(EF.row("B", _st(50000), None))
+    f = EF.full({"rows": rows, "total": EF.total(rows)}, {})
+    assert f["profit"] is None and f["margin_pct"] is None, "нет себестоимости — нет и полной прибыли"

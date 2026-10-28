@@ -159,7 +159,7 @@ export default function Analytics2() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)' }}>
                 {[
                   { mk: 'var(--income)', lbl: 'Реализованная выручка', node: <span style={{ color: 'var(--income)' }}><Num v={t.fact} /></span>, unit: 'млн ₽', cap: <>закрытые и архивные, без «МП»</> },
-                  { lbl: 'В работе', node: <Num v={t.work} />, unit: 'млн ₽', cap: <>реализуемые <b style={{ ...bMono, color: 'var(--warning-text)' }}>{mln(layerAmt('реализуемые'))}</b> + планируемые <b style={bMono}>{mln(layerAmt('планируемые'))}</b></> },
+                  { lbl: 'В работе + вероятности', node: <Num v={t.work} />, unit: 'млн ₽', cap: <>реализуемые <b style={{ ...bMono, color: 'var(--warning-text)' }}>{mln(layerAmt('реализуемые'))}</b> + планируемые <b style={bMono}>{mln(layerAmt('планируемые'))}</b></> },
                   { lbl: 'Сделок в периоде', node: <span style={{ fontFamily: MONO, fontWeight: 700 }}>{grp(t.deals)}</span>, unit: 'шт', cap: <>средний чек <b style={bMono}>{t.deals ? mln(t.amount / t.deals, 2) : '—'} млн ₽</b></> },
                   { lbl: 'Сверка', recon: t.reconciles, cap: t.reconciles ? 'слои дают сумму витрины' : 'слои не сходятся с суммой витрины' },
                 ].map((k, i) => (

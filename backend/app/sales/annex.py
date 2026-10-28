@@ -72,9 +72,13 @@ def annex_date(period_from: date) -> date:
     return period_from
 
 
-def party(cp: Optional[Counterparty]) -> dict:
+def party(cp: Optional[Counterparty], signer=None, on: Optional[date] = None) -> dict:
     """Сторона договора для шапки: «в лице Генерального директора Иванова Ивана
     Ивановича, действующего на основании Устава».
+
+    Подписант — строка `counterparty_signers` (с 28.10.2026 их у юрлица несколько, договор выбирает свой): его подбирает
+    `app.signers.service.party_of`, здесь только печать и проверка. `on` — дата документа: доверенность, истёкшая к ней, — тоже
+    «не хватает».
 
     Отдаёт и `missing` — чего не хватает. Документ с пустым местом на месте директора
     хуже отказа: его подпишут не глядя. Замерено 05.09.2026: ИНН заполнен у 191 из 211
@@ -82,31 +86,37 @@ def party(cp: Optional[Counterparty]) -> dict:
     """
     if not cp:
         return {"name": None, "missing": ["контрагент не указан"]}
+    fio = getattr(signer, "director_name", None)
+    pos = getattr(signer, "signer_position", None)
+    basis = getattr(signer, "signer_basis", None)
+    until = getattr(signer, "valid_until", None)
     miss = []
     if not (cp.inn or "").strip():
         miss.append("ИНН")
-    if not (cp.director_name or "").strip():
+    if not (fio or "").strip():
         miss.append("ФИО подписанта")
-    if not (cp.signer_position or "").strip():
+    if not (pos or "").strip():
         miss.append("должность подписанта")
-    if not (cp.signer_basis or "").strip():
+    if not (basis or "").strip():
         miss.append("основание полномочий")
+    if until and on and until < on:
+        miss.append(f"доверенность подписанта истекла {until:%d.%m.%Y}")
     return {
         "id": cp.id, "name": cp.name, "inn": cp.inn, "kpp": cp.kpp,
-        "address": cp.address, "director": cp.director_name,
-        "position": cp.signer_position, "basis": cp.signer_basis,
+        "address": cp.address, "director": fio, "signer_id": getattr(signer, "id", None), "valid_until": until,
+        "position": pos, "basis": basis,
         # Родительный падеж — ТОЛЬКО для оборота «в лице …» в шапке. В подписях внизу
         # должность стоит в именительном («Генеральный директор:»), и это не разные
         # данные, а одно и то же поле в двух падежах — поэтому обе формы считаются
         # здесь, а не на печатной странице: docx получит те же самые.
-        "position_gen": rugram.gen_position(cp.signer_position),
+        "position_gen": rugram.gen_position(pos),
         # В подписи должность стоит в именительном, даже если в карточке введена в родительном; название юрлица — аббревиатурой (14.10.2026).
-        "position_nom": rugram.nom_position(cp.signer_position),
+        "position_nom": rugram.nom_position(pos),
         "legal_name": legal_name(cp.name),
-        "director_gen": rugram.gen_fio(cp.director_name),
-        "basis_gen": rugram.gen_basis(cp.signer_basis),
-        "acting": rugram.acting(cp.director_name),
-        "short_fio": short_fio(cp.director_name),
+        "director_gen": rugram.gen_fio(fio),
+        "basis_gen": rugram.gen_basis(basis),
+        "acting": rugram.acting(fio),
+        "short_fio": short_fio(fio),
         "missing": miss,
     }
 
@@ -368,7 +378,9 @@ def build(db: Session, contract: Contract, *, period_from: date, period_to: date
         "договор_дата": (contract.contract_date.strftime("%d.%m.%Y")
                          if contract.contract_date else ""),
     }
-    us_party, payer_party = party(us), party(payer)
+    from app.signers.service import party_of
+    on = annex_date(period_from)
+    us_party, payer_party = party_of(db, us, contract, "исполнитель", on), party_of(db, payer, contract, "заказчик", on)
     return {
         "no": n,
         "number": f"Приложение № {n}",

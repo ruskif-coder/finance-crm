@@ -606,10 +606,10 @@ def _signatory_filled(c: Ctx) -> Result:
 
     Своя вторая проверка того же дала бы два расходящихся ответа на один вопрос: здесь
     «всё заполнено», а при выгрузке документа — отказ со списком недостающего."""
-    from app.sales.annex import party
+    from app.signers.service import party_of
     if not (c.deal.payer_counterparty_id or c.deal.counterparty_id):
         return _not_yet("плательщик не определён")
-    miss = party(c.payer).get("missing") or []
+    miss = party_of(c.db, c.payer).get("missing") or []       # договор сделки здесь не известен — подписант плательщика по умолчанию
     return _ok() if not miss else _not_yet(", ".join(miss))
 
 

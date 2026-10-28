@@ -10,6 +10,7 @@ from datetime import date, timedelta
 import pytest
 from sqlalchemy import text
 
+import app.model_registry  # noqa: F401 — отдельный запуск файла: связи моделей (users) должны быть известны
 from app.ad import build
 from app.database import SessionLocal
 
@@ -137,7 +138,7 @@ def test_zero_share_is_reported_not_sent(camp, monkeypatch):
     """Ноль в DSP — «без лимита». Нулевая доля не отправляется, а попадает в отчёт."""
     from app.dsp import limits
     db, c, pl, crs = camp
-    monkeypatch.setattr(limits, "creative_plans", lambda db_, camp_: {crs[0].id: 0})
+    monkeypatch.setattr(limits, "creative_plans", lambda db_, camp_, **k: {crs[0].id: 0})
     ms = FakeMs({})
     out = limits.sync_limits(db, c, ms)
     assert ms.edits == []

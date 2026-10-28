@@ -25,6 +25,14 @@ KEYS = ("addons_separate", "bonus_addons", "ds_by_brand", "ds_by_service", "upd_
 _r2 = M.r2      # одно округление на сверку, раскладку и ДС (аудит 2.7.0, п. 2.5)
 
 
+def service_label(svc: str, device=None) -> str:
+    """Услуга строки пакета в разбиении документов: название услуги и площадка строки МП («еФарм · WEB», «еФарм · APP»). Web и app одной
+    услуги — разные сделки (владелец 30.09.2026), и комплект закрывающих — под каждую отдельно (28.10.2026: у Сандоза на проде пакет
+    M-0001 при «УПД по услугам» дал одну УПД «еФарм» на обе площадки). Площадки нет — только название."""
+    d = (device or "").strip()
+    return f"{svc} · {d}" if d else svc
+
+
 def settings_of(m: MasterDeal) -> dict:
     return {k: (list(getattr(m, k) or []) if k == "moved" else getattr(m, k)) for k in KEYS}
 
@@ -49,7 +57,7 @@ def lines(db: Session, m: MasterDeal) -> list:
         disc = float(sk["percent"] or 0) if sk["mode"] == "скидка в счёт" else 0.0
         common = {"deal_id": d.id, "deal": d.code, "brand": brand, "service": svc, "sk_pct": disc}
         for i, r in enumerate(base):
-            out.append({**common, "id": f"b:{d.id}:{i}", "kind": "base",
+            out.append({**common, "service": service_label(svc, r.get("device")), "id": f"b:{d.id}:{i}", "kind": "base",
                         "position": " · ".join(x for x in (r.get("position"), r.get("device")) if x),
                         "model": r.get("model"), "volume": round((r.get("volume") or 0) * kv) or None,
                         "unit_price": r.get("unit_price"), "net": nets[i], "src": r})

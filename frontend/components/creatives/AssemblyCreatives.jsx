@@ -1902,6 +1902,7 @@ function CreativeSet({ set, canEdit, canApprove, isAdmin, autoUpload, onUploaded
 
 /* ── экран ──────────────────────────────────────────────────────────────── */
 export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin = false, onChanged }) {
+  const copying = useRef(false)      // двойной щелчок по «Скопировать креатив» делал две копии (ревью 27.10.2026)
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
   const [picking, setPicking] = useState(false)
@@ -2039,12 +2040,14 @@ export default function AssemblyCreatives({ dealId, canEdit, canApprove, isAdmin
     },
     /* «Скопировать креатив»: копия сразу просит файл — как «Прикрепить креатив». */
     copy: async (set) => {
+      if (copying.current) return
+      copying.current = true
       setErr('')
       try {
         const r = await api.post(`/launch-prep/set/${set.id}/copy`, {}, auth())
         setAutoUploadFor(r.data.id)
         load()
-      } catch (e) { setErr(e.response?.data?.detail || 'Не удалось скопировать креатив') }
+      } catch (e) { setErr(e.response?.data?.detail || 'Не удалось скопировать креатив') } finally { copying.current = false }
     },
     addTargets: (setId) => setPicking(setId),
     confirmDelete: setDeleteFor,

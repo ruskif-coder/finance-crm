@@ -75,7 +75,9 @@ export const parsePlan = (s) => {
 
 /**
  * График «Динамика по дням» по набору площадок `scope`.
- * Прошедшие дни (≤ as_of) — факт, красный ниже 90 % суточного плана; оставшиеся — «нужно до / после» против «сеть может».
+ * Прошедшие дни (≤ as_of) — факт, красный ниже 90 % ЦЕЛИ ДНЯ; оставшиеся — «нужно до / после» против «сеть может».
+ * Цель дня — правило дашборда и «Отчёта по РК» (`backend/app/ad/day_plan.past_goals`, владелец 27.10.2026): остаток плана
+ * к началу дня ÷ оставшиеся дни флайта × (1 + буст дня). `daily.boost` — {день: %} с сервера (`boost.days_pct`).
  */
 export function chart(scope, edits, daily, days) {
   const dates = daily?.dates || []
@@ -88,16 +90,19 @@ export function chart(scope, edits, daily, days) {
   const cNA = scope.reduce((a, r) => a + needPerDay(planOf(r, edits), r.fact, days), 0)
   const cCan = scope.reduce((a, r) => a + (r.capacity != null ? r.capacity : (r.shows_day || 0)), 0)
   const dayPlan = cPlan / total
-  const bars = dates.map(dt => {
+  let before = 0
+  const bars = dates.map((dt, i) => {
     if (dt <= asOf) {
       const f = scope.reduce((a, r) => a + ((daily.facts?.[r.id] || {})[dt] || 0), 0)
-      return { dt, future: false, fact: f, low: dayPlan > 0 && f / dayPlan < 0.9 }
+      const goal = Math.max(0, cPlan - before) / (total - i) * (1 + ((daily.boost || {})[dt] || 0) / 100)
+      before += f
+      return { dt, future: false, fact: f, goal, low: goal > 0 && f / goal < 0.9 }
     }
     return { dt, future: true, before: cNB, after: cNA, over: cNA > cCan }
   })
   const past = bars.filter(b => !b.future).length
   const pastFact = bars.filter(b => !b.future).reduce((a, b) => a + b.fact, 0)
-  const max = Math.max(dayPlan, cNB, cNA, ...bars.filter(b => !b.future).map(b => b.fact), 1) * 1.12
+  const max = Math.max(dayPlan, cNB, cNA, ...bars.filter(b => !b.future).map(b => Math.max(b.fact, b.goal)), 1) * 1.12
   return {
     bars, max, dayPlan, cNB, cNA, cCan,
     avg: past ? pastFact / past : 0,

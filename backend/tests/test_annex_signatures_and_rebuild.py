@@ -30,7 +30,7 @@ def test_signature_position_is_nominative_even_if_the_card_holds_genitive():
 def test_party_gives_both_forms_and_the_abbreviated_name():
     cp = SimpleNamespace(id=1, name="ГРИНДЕКС РУС ООО", inn="1", kpp=None, address=None, director_name="Кондеев Дмитрий Петрович",
                          signer_position="Генерального директора", signer_basis="Устава")
-    p = annex.party(cp)
+    p = annex.party(cp, cp)          # подписант — отдельным аргументом (28.10.2026); у образца поля те же
     assert p["position_gen"] == "Генерального директора" and p["position_nom"] == "Генеральный директор"
     assert p["legal_name"] == "ООО «ГРИНДЕКС РУС»"
     assert "должность подписанта" not in p["missing"]

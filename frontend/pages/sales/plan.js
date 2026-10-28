@@ -2,6 +2,7 @@
 // по услугам, по продажникам — и их выполнение из сделок. Режим «Выполнение» — контроль, режим «Цели» — ввод цифр.
 // Расчёт выполнения — сервер (`app/sales/plan.py`), свёртка и формат — lib/salesPlan.mjs.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import useLatest from '@/lib/useLatest'
 import Head from 'next/head'
 import api, { auth } from '@/lib/api'
 import Navbar, { can as canDo } from '@/components/Navbar'
@@ -81,10 +82,13 @@ export default function SalesPlanPage() {
     return () => document.removeEventListener('mousedown', close)
   }, [spread])
 
+  const latest = useLatest()
+  const latestPrev = useLatest()
   const load = useCallback(() => {
-    api.get('/sales-plan', { ...auth(), params: { year } }).then(r => { setData(r.data); setErr('') })
-      .catch(e => setErr(e.response?.data?.detail || 'Не удалось загрузить план продаж'))
-  }, [year])
+    const fresh = latest()     // пропускаем ответ на прошлый выбор (ревью 27.10.2026): быстро сменил год — старый ответ приходил последним
+    api.get('/sales-plan', { ...auth(), params: { year } }).then(r => { if (fresh()) { setData(r.data); setErr('') } })
+      .catch(e => { if (fresh()) setErr(e.response?.data?.detail || 'Не удалось загрузить план продаж') })
+  }, [year, latest])
   useEffect(() => { setData(null); setEdits({}); load() }, [load])
   useEffect(() => {
     setWeeks(null)
@@ -94,10 +98,12 @@ export default function SalesPlanPage() {
   useRefreshOnReturn(load, { enabled: !Object.keys(edits).length })
   // Прошлый год — для «по сезонности» и «как в прошлом году»: только в режиме «Цели»
   useEffect(() => {
+    setPrev(null)              // прошлый год СМЕНИЛСЯ: «+10 %» и сезонность не должны взять цели года до переключения
     if (mode !== 'goals') return
-    api.get('/sales-plan', { ...auth(), params: { year: year - 1 } }).then(r => setPrev(r.data))
-      .catch(e => { setPrev(null); setMsg(e.response?.data?.detail || `Не удалось загрузить ${year - 1} год — разложение по прошлому году недоступно`) })
-  }, [mode, year])
+    const fresh = latestPrev()
+    api.get('/sales-plan', { ...auth(), params: { year: year - 1 } }).then(r => { if (fresh()) setPrev(r.data) })
+      .catch(e => { if (fresh()) { setPrev(null); setMsg(e.response?.data?.detail || `Не удалось загрузить ${year - 1} год — разложение по прошлому году недоступно`) } })
+  }, [mode, year, latestPrev])
 
   const canEdit = mayEdit && !!data?.can_edit
   const cur = currentMonth(year, today)

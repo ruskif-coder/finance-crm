@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.annex_tpl.check import check, check_transition
 from app.annex_tpl.diff import diff
 from app.annex_tpl.formats import clean
-from app.annex_tpl.models import AnnexTplFormat, AnnexTplTemplate, AnnexTplVersion
+from app.annex_tpl.models import AnnexTplBrandMemory, AnnexTplFormat, AnnexTplTemplate, AnnexTplVersion
 
 
 class AnnexTplError(Exception):
@@ -33,7 +33,18 @@ def version_of(db: Session, template_id: int, version: int) -> Optional[AnnexTpl
 
 
 def custom_of(db: Session, contract_id: int) -> Optional[AnnexTplTemplate]:
-    return db.query(AnnexTplTemplate).filter_by(scope="custom", contract_id=contract_id).first()
+    """Основной шаблон договора (до 27.10.2026 шаблон договора был один — это он)."""
+    return main_of(db, contract_id)
+
+
+def customs_of(db: Session, contract_id: int) -> list:
+    """Шаблоны договора: основной первым, остальные по имени."""
+    return (db.query(AnnexTplTemplate).filter_by(scope="custom", contract_id=contract_id)
+            .order_by(AnnexTplTemplate.is_main.desc(), func.lower(AnnexTplTemplate.title), AnnexTplTemplate.id).all())
+
+
+def main_of(db: Session, contract_id: int) -> Optional[AnnexTplTemplate]:
+    return db.query(AnnexTplTemplate).filter_by(scope="custom", contract_id=contract_id, is_main=True).first()
 
 
 def base_by_title(db: Session, title: str) -> Optional[AnnexTplTemplate]:
@@ -168,22 +179,92 @@ def restore(db: Session, template_id: int, version: int, user) -> AnnexTplVersio
 
 # ── кастомный под договор ────────────────────────────────────────────────────────────────────
 
-def fork_custom(db: Session, contract, user) -> AnnexTplVersion:
-    """Кастомный шаблон под договор: копия ТЕКУЩЕЙ версии базового шаблона его формата, v1; запоминает версию базы."""
+MAX_TITLE = 120
+
+
+def _title(db: Session, contract_id: int, title, skip_id: Optional[int] = None) -> str:
+    """Имя шаблона договора: не пустое, не длиннее MAX_TITLE, не повторяется внутри договора (без учёта регистра)."""
+    t = " ".join(str(title or "").split())
+    if not t:
+        raise AnnexTplError(400, "Дайте шаблону имя — под ним его выбирают в ДС")
+    if len(t) > MAX_TITLE:
+        raise AnnexTplError(400, f"Имя шаблона длиннее {MAX_TITLE} знаков")
+    q = db.query(AnnexTplTemplate).filter(AnnexTplTemplate.scope == "custom", AnnexTplTemplate.contract_id == contract_id,
+                                          func.lower(AnnexTplTemplate.title) == t.lower())
+    if skip_id:
+        q = q.filter(AnnexTplTemplate.id != skip_id)
+    same = q.first()
+    if same:
+        raise AnnexTplError(409, f"Шаблон «{same.title}» у этого договора уже есть — выберите другое имя")
+    return t
+
+
+def _source(db: Session, contract, source_id: Optional[int]) -> AnnexTplTemplate:
+    """Откуда копировать: указанный шаблон (базовый или шаблон ЭТОГО договора), иначе базовый формата договора."""
+    if source_id is not None:
+        src = db.query(AnnexTplTemplate).filter_by(id=source_id).first()
+        if src is None or (src.scope == "custom" and src.contract_id != contract.id):
+            raise AnnexTplError(400, "Копировать можно базовый шаблон или шаблон этого же договора")
+        return src
     fmt = clean(getattr(contract, "cooperation_format", None))
     if not fmt:
         raise AnnexTplError(400, "У договора не указан «Формат сотрудничества» — шаблон не определён")
-    if custom_of(db, contract.id):
-        raise AnnexTplError(409, "У договора уже есть кастомный шаблон")
     base = base_for_format(db, fmt)
-    bcur = current(db, base.id) if base else None
-    if not bcur:
+    if base is None:
         raise AnnexTplError(409, f"Для формата «{fmt}» не задан базовый шаблон")
-    tpl = AnnexTplTemplate(scope="custom", contract_id=contract.id, base_template_id=base.id, created_by=user.id)
+    return base
+
+
+def fork_custom(db: Session, contract, user, title=None, source_id: Optional[int] = None, blocks: Optional[list] = None,
+                main: bool = False) -> AnnexTplVersion:
+    """Новый именованный шаблон договора, v1: копия текущей версии источника (базовый формата, указанный базовый или другой шаблон
+    договора) либо переданные блоки (сохранение из конструктора ДС). Запоминает базу и её версию — для «базовый изменился»."""
+    name = _title(db, contract.id, title)
+    src = _source(db, contract, source_id)
+    base = src if src.scope == "base" else db.query(AnnexTplTemplate).filter_by(id=src.base_template_id).first()
+    bcur = current(db, base.id) if base else None
+    scur = current(db, src.id)
+    if not (bcur and scur):
+        raise AnnexTplError(409, "У шаблона-источника нет версий")
+    if main:
+        _unset_main(db, contract.id)
+    tpl = AnnexTplTemplate(scope="custom", contract_id=contract.id, base_template_id=base.id, title=name, is_main=bool(main),
+                           created_by=getattr(user, "id", None))
     db.add(tpl)
     db.flush()
-    return _add(db, tpl, bcur.blocks, user.id, user.name or "—", base_version=bcur.version,
-                changes=[["+", "шаблон создан", f"ответвлён от «{base.title}» v{bcur.version}"]])
+    origin = "из конструктора ДС" if blocks is not None else f"копия «{src.title}» v{scur.version}"
+    return _add(db, tpl, blocks if blocks is not None else scur.blocks, getattr(user, "id", None),
+                getattr(user, "name", None) or "—", base_version=bcur.version,
+                changes=[["+", "шаблон создан", f"«{name}»: {origin}"]])
+
+
+def _custom(db: Session, template_id: int) -> AnnexTplTemplate:
+    t = _lock(db, template_id)
+    if t.scope != "custom":
+        raise AnnexTplError(400, "Только у шаблона договора")
+    return t
+
+
+def rename(db: Session, template_id: int, title) -> AnnexTplTemplate:
+    t = _custom(db, template_id)
+    t.title = _title(db, t.contract_id, title, skip_id=t.id)
+    db.flush()
+    return t
+
+
+def _unset_main(db: Session, contract_id: int) -> None:
+    db.query(AnnexTplTemplate).filter_by(contract_id=contract_id, is_main=True).update({"is_main": False})
+    db.flush()                       # иначе частичный уникальный индекс «основной один» споткнётся о прежний основной
+
+
+def set_main(db: Session, template_id: int, on: bool) -> AnnexTplTemplate:
+    """Основной шаблон договора: подставляется в новый ДС, если для его брендов шаблон ещё не выбирали. Основной — один."""
+    t = _custom(db, template_id)
+    if on:
+        _unset_main(db, t.contract_id)
+    t.is_main = bool(on)
+    db.flush()
+    return t
 
 
 def keep_own(db: Session, template_id: int, user) -> AnnexTplVersion:
@@ -230,21 +311,82 @@ def customs_behind(db: Session, base_template_id: Optional[int] = None) -> list:
     for t in q.order_by(AnnexTplTemplate.id).all():
         st = base_state(db, t)
         if st and st["changed"]:
-            out.append({"template_id": t.id, "contract_id": t.contract_id, "known": st["known"], "now": st["now"]})
+            out.append({"template_id": t.id, "title": t.title, "contract_id": t.contract_id, "known": st["known"], "now": st["now"]})
     return out
 
 
-def resolve_for_contract(db: Session, contract) -> dict:
-    """Какой шаблон прикреплён к договору: свой кастомный, иначе базовый его формата, иначе причина, почему нет."""
-    own = custom_of(db, contract.id)
-    if own:
-        return {"source": "custom", "template": own, "reason": None}
+def _usable(db: Session, contract, template_id: Optional[int]) -> Optional[AnnexTplTemplate]:
+    t = db.query(AnnexTplTemplate).filter_by(id=template_id).first() if template_id else None
+    if t is None or (t.scope == "custom" and t.contract_id != contract.id):
+        return None
+    return t
+
+
+def _by_brands(db: Session, contract, brand_ids) -> Optional[AnnexTplTemplate]:
+    """Шаблон из памяти брендов ДС: все бренды, для которых шаблон выбирали, указывают на один и тот же. Разошлись — памяти нет."""
+    ids = [b for b in set(brand_ids or ()) if b]
+    if not ids:
+        return None
+    got = {r.template_id for r in db.query(AnnexTplBrandMemory)
+           .filter(AnnexTplBrandMemory.contract_id == contract.id, AnnexTplBrandMemory.brand_id.in_(ids)).all()}
+    return _usable(db, contract, got.pop()) if len(got) == 1 else None
+
+
+def resolve_for_contract(db: Session, contract, brand_ids=(), chosen_id: Optional[int] = None) -> dict:
+    """Какой шаблон собирает ДС: выбранный руками → память брендов ДС → основной договора → базовый его формата.
+    `why` — откуда он взялся (chosen / brand / main / format); шаблона нет — `template=None` и причина."""
+    if chosen_id is not None:
+        t = _usable(db, contract, chosen_id)
+        if t is None:
+            raise AnnexTplError(400, "Этот шаблон не относится к договору приложения")
+        return {"source": t.scope, "template": t, "reason": None, "why": "chosen"}
+    for why, t in (("brand", _by_brands(db, contract, brand_ids)), ("main", main_of(db, contract.id))):
+        if t is not None:
+            return {"source": t.scope, "template": t, "reason": None, "why": why}
     fmt = clean(getattr(contract, "cooperation_format", None))
     if not fmt:
-        return {"source": "none", "template": None,
+        return {"source": "none", "template": None, "why": None,
                 "reason": "У договора не указан «Формат сотрудничества» — шаблон не определён, ДС не собирается"}
     base = base_for_format(db, fmt)
     if base is None:
-        return {"source": "none", "template": None,
+        return {"source": "none", "template": None, "why": None,
                 "reason": f"Для формата «{fmt}» не задан базовый шаблон — ДС не собирается"}
-    return {"source": "base", "template": base, "reason": None}
+    return {"source": "base", "template": base, "reason": None, "why": "format"}
+
+
+def choices(db: Session, contract) -> list:
+    """Из чего выбирают шаблон в ДС: шаблоны договора (основной первым) и базовый шаблон его формата."""
+    out = list(customs_of(db, contract.id))
+    fmt = clean(getattr(contract, "cooperation_format", None))
+    base = base_for_format(db, fmt) if fmt else None
+    return out + ([base] if base else [])
+
+
+def remember(db: Session, contract_id: int, brand_ids, template_id: int, user_id) -> None:
+    """Память «договор + бренд → шаблон»: пишется при подтверждении ДС для каждого его бренда."""
+    for b in {x for x in (brand_ids or ()) if x}:
+        row = db.query(AnnexTplBrandMemory).filter_by(contract_id=contract_id, brand_id=b).first()
+        if row is None:
+            db.add(AnnexTplBrandMemory(contract_id=contract_id, brand_id=b, template_id=template_id, updated_by=user_id))
+        else:
+            row.template_id, row.updated_by, row.updated_at = template_id, user_id, func.now()
+    db.flush()
+
+
+def blocks_from_model(blocks: list, model_blocks: list) -> list:
+    """Блоки нового шаблона из документа на экране конструктора: текст пункта — тот, что видит аккаунт (своя правка или унаследованная
+    из прошлого ДС, С подстановками), остальное — как в шаблоне, по которому собран документ."""
+    shown = {b.get("id"): b.get("source_text") for b in model_blocks or [] if not b.get("sys") and b.get("source_text")}
+    return [dict(b, text=shown[b["id"]]) if not b.get("sys") and b.get("id") in shown else copy.deepcopy(b) for b in blocks]
+
+
+def usage_by_contract(db: Session, contract_id: int) -> dict:
+    """{id шаблона: {n, last}} — сколько ДС договора собрано по каждому шаблону и дата последнего (карточка договора, 28.10.2026).
+    Шаблон ДС — тот, чьей версией заморожен документ, иначе выбранный в черновике."""
+    from sqlalchemy import text
+    rows = db.execute(text("""
+        SELECT coalesce(v.template_id, a.tpl_template_id) AS tpl, count(*) AS n, max(a.date) AS last
+          FROM sales_annexes a LEFT JOIN annex_tpl_versions v ON v.id = a.template_version_id
+         WHERE a.contract_id = :c AND coalesce(v.template_id, a.tpl_template_id) IS NOT NULL
+         GROUP BY 1"""), {"c": contract_id}).mappings().all()
+    return {r["tpl"]: r for r in rows}

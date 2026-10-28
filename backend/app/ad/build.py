@@ -408,6 +408,7 @@ def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = N
     cap_abs = cap * camp_plan if (cap and camp_plan) else None
     by_id = {r["id"]: r for r in out["rows"]}
     changes = []
+    before_total = sum(p.plan_show or 0 for p in pls)
     for p in pls:
         r = by_id[p.id]
         before = p.plan_show
@@ -418,10 +419,15 @@ def recompute_shares(db: Session, campaign_id: int, cap_ctx: Optional[tuple] = N
                             "plan_before": before, "plan_after": p.plan_show,
                             "reason": explain(r, (facts or {}).get(p.id, 0),
                                               out["facts_used"], cap_abs)["code"]})
+    # Остаток некуда положить — все крутящие на ручных планах (владелец 27.10.2026): уведомление, планы не трогаем
+    from app.ad.realloc import alert_unplaced
+    alert_unplaced(db, campaign_id, before_total, sum(p.plan_show or 0 for p in pls), camp_plan,
+                   any(r.get("running") for r in out["rows"]))
     return changes
 
 
-def creative_plans(db: Session, camp: AdCampaign, extra_plans: Optional[dict] = None, facts: Optional[dict] = None) -> dict:
+def creative_plans(db: Session, camp: AdCampaign, extra_plans: Optional[dict] = None, facts: Optional[dict] = None,
+                   strict: bool = False) -> dict:
     """План каждого креатива РК: {creative_id: показы или None}.
 
     Тем же правилом, что раскрытие дашборда трафика: сохранённый план площадки делится
@@ -433,7 +439,7 @@ def creative_plans(db: Session, camp: AdCampaign, extra_plans: Optional[dict] = 
     from app.ad import creative_fact
     from app.ad.flight import holds, split_evenly
     # Лимит — по факту (владелец 24.10.2026): свой факт + доля остатка площадки, см. `split_evenly`.
-    facts = creative_fact.totals(db, camp) if facts is None else facts
+    facts = creative_fact.totals(db, camp, strict=strict) if facts is None else facts
     rows = db.execute(text("""
         SELECT c.id, c.placement_id, c.creative_no, c.status,
                CASE WHEN c.status <> :rej THEN st.plan_show END AS fixed

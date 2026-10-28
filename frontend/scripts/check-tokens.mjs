@@ -32,7 +32,7 @@ function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
     if (statSync(p).isDirectory()) walk(p, out)
-    else if (/\.jsx?$/.test(name)) out.push(p)
+    else if (/\.(jsx?|mjs)$/.test(name)) out.push(p)        // .mjs — библиотеки экранов тоже несут var(--…) (ревью 27.10.2026)
   }
   return out
 }

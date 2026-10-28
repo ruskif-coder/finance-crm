@@ -366,7 +366,7 @@ def alert_plan_cut(db, before: dict) -> list:
 
 def daily_of(db, camp, as_of=None) -> dict:
     """Факт площадок РК по дням флайта (наш счётчик, как везде) — для графика «Динамика по дням» окна.
-    → {"dates": [ISO дни флайта], "as_of": ISO, "facts": {id площадки: {ISO день: показы}}}"""
+    → {"dates": [ISO дни флайта], "as_of": ISO, "facts": {id площадки: {ISO день: показы}}, "boost": {ISO день: %}}"""
     from datetime import date, timedelta
     from sqlalchemy import text
     from app.ad.stat_sources import fact_as_of, fact_sources
@@ -383,7 +383,11 @@ def daily_of(db, camp, as_of=None) -> dict:
                                  GROUP BY placement_id, date"""),
                         {"c": camp.id, "u": as_of, "src": list(fact_sources())}).all():
         facts.setdefault(r.placement_id, {})[r.date.isoformat()] = int(r.s or 0)
-    return {"dates": dates, "as_of": as_of.isoformat() if as_of else None, "facts": facts}
+    # Буст по дням — для цели дня графика тем же правилом, что стена дней дашборда (`day_plan.past_goals`, 27.10.2026)
+    from app.ad import boost as boost_mod
+    pct = boost_mod.days_pct(boost_mod.windows_of(db, [camp.id]).get(camp.id))
+    return {"dates": dates, "as_of": as_of.isoformat() if as_of else None, "facts": facts,
+            "boost": {d.isoformat(): p for d, p in pct.items() if p}}
 
 
 def journal_of(db, deal_id: int, limit: int = 20) -> List[dict]:
@@ -393,3 +397,37 @@ def journal_of(db, deal_id: int, limit: int = 20) -> List[dict]:
                                  AND action IN ('traffic_realloc', 'traffic_realloc_reset')
                                ORDER BY id DESC LIMIT :n"""), {"d": deal_id, "n": limit}).mappings().all()
     return history_of([dict(r) for r in rows])
+
+
+UNPLACED_TOL = (0.01, 100)          # округление раскладки — не тревога: 1 % плана, но не меньше 100 показов
+
+
+def newly_unplaced(before_total, after_total, plan, running: bool = True) -> bool:
+    """Объём РК впервые перестал раскладываться (владелец 27.10.2026): сумма планов площадок ушла ниже плана РК больше чем
+    на округление, а до пересчёта не была. Так бывает, когда все крутящие площадки на ручном плане и одну сняли — её
+    остаток некуда положить. Уже было — второй раз не шлём (ночной пересчёт повторял бы тревогу каждую ночь)."""
+    if not plan or not running:          # ни одна площадка не крутится — РК закончена, планы = факт, это недокрут
+        return False
+    tol = max(plan * UNPLACED_TOL[0], UNPLACED_TOL[1])
+    return (before_total or 0) >= plan - tol and (after_total or 0) < plan - tol
+
+
+def alert_unplaced(db, campaign_id: int, before_total, after_total, plan, running: bool = True) -> bool:
+    """После пересчёта долей (`build.recompute_shares`): уведомление трафику, если объём впервые не разложен. Планы не
+    трогаем — решает человек. Сбой уведомления пересчёт не роняет. → ушло ли."""
+    import logging
+    if not newly_unplaced(before_total, after_total, plan, running):
+        return False
+    from app.notify import bus
+    from app.routers.traffic_dashboard import rk_label
+    try:
+        gap = round(plan - after_total)
+        bus.emit(db, "traffic_volume_unplaced", title=f"Объём РК не разложен: {rk_label(db, campaign_id)}",
+                 body=(f"Планы площадок в сумме {round(after_total):,} при плане РК {round(plan):,} — {gap:,} показов не "
+                       f"достаются никому: крутящие площадки на ручных планах. Отдайте остаток площадкам в окне «Темп "
+                       f"размещения → Перераспределить» или сбросьте ручные планы.").replace(",", " "),
+                 link=f"/traffic/dashboard?rk={campaign_id}", entity_type="ad_campaign", entity_id=campaign_id)
+        return True
+    except Exception:  # noqa: BLE001 — уведомление справка, пересчёт долей важнее
+        logging.getLogger("finance.dsp").exception("уведомление о неразложенном объёме РК %s не отправлено", campaign_id)
+        return False

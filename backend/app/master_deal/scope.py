@@ -30,6 +30,15 @@ def all_in_scope(db: Session, m, own) -> bool:
     return own is None or all(_deal_owned(rep, acc, own) for rep, acc in package_owners(db, m))
 
 
+def can_special(db: Session, user) -> bool:
+    """Право вкладки «Спец. условия» (`sk_special`) — с ним в эффективности видна ещё «маржа с доп. СК» (владелец 27.10.2026)."""
+    from app.permissions import get_permissions_for_user
+    try:
+        return bool(get_permissions_for_user(db, user).get("sk_special", {}).get("view"))
+    except AttributeError:
+        return False
+
+
 def can_finance(db: Session, user) -> bool:
     """Право «Эффективность мастер-сделок» — прибыль и маржа отдаются только с ним (админ — всегда)."""
     from app.permissions import get_permissions_for_user

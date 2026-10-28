@@ -1,5 +1,6 @@
 /**
- * СК юрлица закрытия: «скидка в счёт / постоплата / не задан», правка % по сделке при «скидке в счёт».
+ * СК сделки на закрытии: «скидка в счёт / постоплата / не задан» — из «Агентских условий» (27.10.2026), правка % по сделке
+ * при «скидке в счёт».
  * Часть блока «Итоговая сверка» (`ClosingBlock.jsx`), вынесено при аудите 20.10.2026.
  */
 import { useState } from 'react'
@@ -13,7 +14,7 @@ export default function SkRow({ sk, canEdit, busy, onSave }) {
   const inBill = sk.mode === 'скидка в счёт'
   const post = sk.mode === 'постоплата'
   const own = sk.source === 'deal'
-  const legal = sk.payer_percent != null ? `${String(sk.payer_percent).replace('.', ',')} %` : 'не задан'
+  const legal = sk.payer_percent != null ? `${String(sk.payer_percent).replace('.', ',')} %` : 'не задано'
   const changed = String(pct).trim() !== '' && num(pct) !== (sk.percent ?? null)
   const tone = inBill ? ['var(--accent-tint)', 'var(--accent-border)', 'var(--accent-fg)']
     : post ? ['var(--violet-tint)', 'var(--violet-border)', 'var(--violet-fg)']
@@ -21,7 +22,7 @@ export default function SkRow({ sk, canEdit, busy, onSave }) {
   return (
     <div style={{ padding: '12px 0', borderTop: '1px solid var(--border-row)', borderBottom: '1px solid var(--border-row)', display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <span style={CAP}>СК юрлица закрытия</span>
+        <span style={CAP}>СК по агентским условиям</span>
         <span style={{ padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 700, background: tone[0], border: `1px solid ${tone[1]}`, color: tone[2] }}>
           {inBill ? 'Скидка в счёт' : post ? 'Постоплата СК' : 'Способ СК не задан'}{sk.mode ? ` · ${String(sk.percent ?? 0).replace('.', ',')} %` : ''}</span>
         <span style={{ ...CAP, fontWeight: 600 }}>{sk.payer_name || 'юрлицо не определено'}</span>
@@ -29,7 +30,7 @@ export default function SkRow({ sk, canEdit, busy, onSave }) {
       {inBill && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
-            уменьшает сумму ДС{sk.amount_net ? `: −${rub2(sk.amount_net)}` : ''} · у юрлица {legal}{own ? ' · поправлено по сделке' : ''}</span>
+            уменьшает сумму ДС{sk.amount_net ? `: −${rub2(sk.amount_net)}` : ''} · по условиям {legal}{own ? ' · поправлено по сделке' : ''}</span>
           {canEdit && (
             <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', marginLeft: 'auto' }}>
               <span style={CAP}>по этой сделке</span>
@@ -38,16 +39,16 @@ export default function SkRow({ sk, canEdit, busy, onSave }) {
               <button type="button" disabled={busy || !changed || !(num(pct) >= 0 && num(pct) <= 100)} style={{ ...btn(true), padding: '5px 12px', fontSize: 12, opacity: busy || !changed ? 0.5 : 1 }}
                 onClick={() => onSave('скидка в счёт', num(pct))}>Сохранить</button>
               {own && <button type="button" disabled={busy} style={{ ...btn(false), padding: '5px 12px', fontSize: 12 }}
-                onClick={() => onSave(null, null)}>Как у юрлица</button>}
+                onClick={() => onSave(null, null)}>Как в условиях</button>}
             </span>
           )}
         </div>
       )}
-      {post && <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>Счёт на полную сумму; СК {legal} выплачивается агентству отдельно — сумму ДС не меняет.</span>}
+      {post && <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>Счёт на полную сумму; СК {legal} выплачивается агентству отдельно — сумму ДС не меняет.{own ? ' Поправлено по сделке.' : ''}</span>}
       {!sk.mode && (
         <span style={{ fontSize: 12.5, color: 'var(--warning-text)' }}>
-          Задайте способ СК в карточке контрагента{sk.payer_id ? '' : ' (выберите плательщика или доходный договор)'} → «Условия по умолчанию».
-          {!!sk.payer_id && <> <Link href={`/directory/counterparties/${sk.payer_id}`} target="_blank" style={{ color: 'var(--accent)' }}>Открыть карточку</Link></>}</span>
+          Условие СК не задано: правило по договору закрытия и агентству сделки — в «Агентских условиях»{sk.payer_id ? '' : ' (сначала выберите доходный договор)'}.
+          {' '}<Link href="/sales/agency-terms" target="_blank" style={{ color: 'var(--accent)' }}>Открыть «Агентские условия»</Link></span>
       )}
     </div>
   )

@@ -11,8 +11,10 @@
 проверяет, что каждый крон разрешает все ключи сам.
 """
 import app.ad.models  # noqa: F401
+import app.agency_terms.models  # noqa: F401
 import app.annex_tpl.models  # noqa: F401
 import app.legal.models  # noqa: F401
+import app.signers.models  # noqa: F401
 import app.final_recon.models  # noqa: F401
 import app.master_deal.models  # noqa: F401
 import app.backlog_models  # noqa: F401

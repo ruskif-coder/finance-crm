@@ -268,3 +268,28 @@ def test_amount_after_agreement_is_agreed_times_cpm():
     agreed = {1: {**_rq(1, verdict="согласовано", our=100, lines=[10]), "agreed_volume": 150}}
     r = _row(B.assemble("2026-10", [_pl(1, 10)], agreed, MON), 1)
     assert r["agreed"] == 150 and r["amount"] == 15.0                 # 150 × 100 ₽ CPM / 1000
+
+
+def test_stale_open_request_cannot_change_an_agreed_recon(ready):
+    """Ревью 27.10.2026 (v2.7.0..): ответ площадки и наш ответ проверяли «сверка открыта» по устаревшей копии строки — ответ,
+    начатый до «Согласовать», после него перезаписывал цифру площадки и двигал срок. Должны брать строку на замок и видеть итог."""
+    db, row = ready
+    req = S.send(db, row["publisher_id"], "2026-10", _U(), date(2026, 10, 26))
+    db.flush()
+    db.execute(text("UPDATE publisher_request SET verdict = 'согласовано' WHERE id = :r"), {"r": req.id})   # итог из другой сессии
+    with pytest.raises(S.ReconError) as e:
+        S.publisher_answer(db, req, "Площадка", None, agree=False, volume=5, body="поздно")
+    assert e.value.status == 409
+    with pytest.raises(S.ReconError):
+        S.reply(db, req, _U(), "ещё", None, today=date(2026, 10, 27))
+
+
+def test_agree_takes_our_last_offered_figure_not_a_text_reply(ready):
+    """Ревью 27.10.2026: «Согласен» брал объём ПОСЛЕДНЕГО нашего сообщения, даже если в нём только текст — тогда согласие
+    записывалось не с той цифрой, что мы предлагали. Берётся последнее наше сообщение С ЦИФРОЙ."""
+    db, row = ready
+    req = S.send(db, row["publisher_id"], "2026-10", _U(), date(2026, 10, 26))
+    S.reply(db, req, _U(), "предлагаем", row["ours"] + 400, today=date(2026, 10, 27))
+    S.reply(db, req, _U(), "и ещё вопрос по датам", None, today=date(2026, 10, 27))
+    S.publisher_answer(db, req, "Площадка", None, agree=True)
+    assert req.recon.their_volume == row["ours"] + 400

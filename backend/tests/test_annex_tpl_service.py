@@ -140,7 +140,7 @@ def test_create_base_variant_and_move_formats(db):
 
 def test_formats_only_for_base(db):
     c = _contract(db)
-    S.fork_custom(db, c, USER)
+    S.fork_custom(db, c, USER, title="Шаблон договора", main=True)
     with pytest.raises(S.AnnexTplError) as e:
         S.set_formats(db, S.custom_of(db, c.id).id, ["Клиент"])
     assert e.value.status == 400
@@ -150,30 +150,30 @@ def test_fork_custom_copies_base_and_remembers_it(db):
     base = _base(db)
     bcur = S.current(db, base.id)
     c = _contract(db)
-    v = S.fork_custom(db, c, USER)
+    v = S.fork_custom(db, c, USER, title="Шаблон договора", main=True)
     tpl = S.custom_of(db, c.id)
     assert tpl.scope == "custom" and tpl.base_template_id == base.id and v.version == 1
     assert v.blocks == bcur.blocks and v.base_version == bcur.version
     assert S.base_state(db, tpl)["changed"] is False
     with pytest.raises(S.AnnexTplError) as e:
-        S.fork_custom(db, c, USER)
+        S.fork_custom(db, c, USER, title="Шаблон договора", main=True)
     assert e.value.status == 409
 
 
 def test_fork_needs_a_known_format(db):
     _base(db)
     with pytest.raises(S.AnnexTplError) as e:
-        S.fork_custom(db, _contract(db, fmt=None), USER)
+        S.fork_custom(db, _contract(db, fmt=None), USER, title="Шаблон договора", main=True)
     assert e.value.status == 400 and "Формат сотрудничества" in e.value.message
     with pytest.raises(S.AnnexTplError) as e2:
-        S.fork_custom(db, _contract(db, fmt="Формат без шаблона"), USER)
+        S.fork_custom(db, _contract(db, fmt="Формат без шаблона"), USER, title="Шаблон договора", main=True)
     assert e2.value.status == 409 and "не задан базовый шаблон" in e2.value.message
 
 
 def test_base_changed_then_keep_own_or_adopt(db):
     base = _base(db)
     c = _contract(db)
-    S.fork_custom(db, c, USER)
+    S.fork_custom(db, c, USER, title="Шаблон договора", main=True)
     tpl = S.custom_of(db, c.id)
     own_before = S.current(db, tpl.id)
 
@@ -202,7 +202,7 @@ def test_resolve_for_contract(db):
     assert "не задан базовый шаблон" in S.resolve_for_contract(db, _contract(db, fmt="Формат без шаблона"))["reason"]
     assert S.resolve_for_contract(db, _contract(db, fmt=FMT))["template"].id == base.id
     own = _contract(db, fmt=FMT)
-    S.fork_custom(db, own, USER)
+    S.fork_custom(db, own, USER, title="Шаблон договора", main=True)
     r = S.resolve_for_contract(db, own)
     assert r["source"] == "custom" and r["template"].contract_id == own.id
 

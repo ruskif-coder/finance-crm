@@ -66,6 +66,15 @@ def _open(req: Optional[PublisherRequest]) -> PublisherRequest:
     return req
 
 
+def _lock_open(db: Session, req: Optional[PublisherRequest]) -> PublisherRequest:
+    """Строку — на замок и перечитать, потом «открыта ли» (ревью 27.10.2026): без замка ответ, начатый до «Согласовать»,
+    после него перезаписывал цифру площадки и двигал срок — проверка шла по устаревшей копии."""
+    if req is not None:
+        db.execute(text("SELECT id FROM publisher_request WHERE id = :r FOR UPDATE"), {"r": req.id})
+        db.refresh(req)
+    return _open(req)
+
+
 def _last_side(db: Session, req: PublisherRequest) -> Optional[str]:
     return db.execute(text("""SELECT side FROM publisher_request_message WHERE request_id = :r AND side <> 'система'
                               ORDER BY id DESC LIMIT 1"""), {"r": req.id}).scalar()
@@ -129,7 +138,7 @@ def reply(db: Session, req: PublisherRequest, user, body: Optional[str], volume=
           today: Optional[date] = None) -> PublisherRequestMessage:
     """«Ответить площадке»: ход переходит к площадке, срок снова +2 рабочих дня (дизайн 26.10)."""
     today = today or date.today()
-    _open(req)
+    _lock_open(db, req)
     body, volume = _clean(body), _volume(volume)
     if not body and volume is None:
         raise ReconError(400, "Напишите ответ или предложите цифру")
@@ -147,7 +156,7 @@ def remind(db: Session, req: PublisherRequest, today: Optional[date] = None) -> 
     """«Напомнить» — строка в переписке, не чаще раза в рабочий день; статус и срок не меняются (предложение
     дизайна 26.10)."""
     today = today or date.today()
-    _open(req)
+    _lock_open(db, req)
     if _last_side(db, req) == "площадка":
         raise ReconError(409, "Площадка уже ответила — ход за нами")
     sent = db.execute(text("""SELECT 1 FROM publisher_request_message WHERE request_id = :r AND side = 'система'
@@ -178,10 +187,7 @@ def agree(db: Session, req: PublisherRequest, user, volume, today: Optional[date
     и разнесение по размещениям. Без возврата."""
     # Два «Согласовать» разом: второй ждёт первого на замке строки и видит уже зафиксированный итог — 409, а не
     # нарушение ключа строк разнесения (500) (ревью 26.10.2026).
-    if req is not None:
-        db.execute(text("SELECT id FROM publisher_request WHERE id = :r FOR UPDATE"), {"r": req.id})
-        db.refresh(req)
-    _open(req)
+    _lock_open(db, req)
     volume = _volume(volume)
     if volume is None:
         raise ReconError(400, "Укажите итог показов")
@@ -216,7 +222,7 @@ def publisher_answer(db: Session, req: PublisherRequest, author: str, email: Opt
     """Ответ площадки. «Согласен» — с цифрой, которую мы предложили последним сообщением, а если не
     предлагали — с нашими данными. «Есть расхождение» — без своей цифры не отправляется (дизайн 26.10).
     `free` — просто сообщение в переписке (вопрос, уточнение, своя цифра по желанию): текст обязателен."""
-    _open(req)
+    _lock_open(db, req)
     body = _clean(body)
     if free:
         volume = _volume(volume)
@@ -226,7 +232,7 @@ def publisher_answer(db: Session, req: PublisherRequest, author: str, email: Opt
         offer = None
         if _last_side(db, req) == "мы":
             offer = db.execute(text("""SELECT volume FROM publisher_request_message WHERE request_id = :r
-                                       AND side = 'мы' ORDER BY id DESC LIMIT 1"""), {"r": req.id}).scalar()
+                                       AND side = 'мы' AND volume IS NOT NULL ORDER BY id DESC LIMIT 1"""), {"r": req.id}).scalar()
         # Не предлагали — соглашается с нашими данными НА СЕЙЧАС: снимок при отправке мог отстать от досчёта DSP.
         volume = offer if offer is not None else sum(B.target_facts(db, req.publisher_id, req.period).values())
         body = body or "Согласны"
@@ -250,7 +256,7 @@ def save_file(db: Session, message: PublisherRequestMessage, original: str, cont
               content: bytes, root: str = "/app/uploads") -> PublisherRequestFile:
     # После итога сверка закрыта и для файлов (ревью 26.10.2026): иначе рядом с зафиксированным итогом появлялись бы
     # «подтверждения», которые уже ничего не меняют.
-    _open(db.get(PublisherRequest, message.request_id))
+    _lock_open(db, db.get(PublisherRequest, message.request_id))
     original = original or "file"
     ext = os.path.splitext(original)[1].lower()
     if ext not in FILE_EXT:

@@ -228,10 +228,18 @@ def test_signer_is_saved_from_the_annex_screen_and_lifts_the_block(env):
           .filter(Counterparty.id == env.c.counterparty_id).first())
     if not cp:
         pytest.skip('нужен договор с контрагентом')
-    was = (cp.director_name, cp.signer_position, cp.signer_basis)
+    # С 28.10.2026 подписант — `counterparty_signers`; восстанавливаем именно его (раньше тест восстанавливал колонки контрагента
+    # и оставлял на стенде тестового подписанта).
+    from app.signers import service as SG
+    d = SG.default_of(env.db, cp.id)
+    was = (d.director_name, d.signer_position, d.signer_basis) if d else None
     try:
+        if d is not None:
+            d.signer_position = d.signer_basis = None            # подписант заведомо неполон — блок есть
+            env.db.commit()
         a = _draft(env)
         before = A.get_annex(a["id"], env.db, env.user)["doc"]["missing"]
+        assert "заказчик: основание полномочий" in before
         A.set_signer(cp.id, A.SignerIn(director_name="Иванов Иван Иванович",
                                        signer_position="Генеральный директор",
                                        signer_basis="Устав"), env.db, env.user)
@@ -241,7 +249,11 @@ def test_signer_is_saved_from_the_annex_screen_and_lifts_the_block(env):
                      "заказчик: ФИО подписанта"):
             assert gone not in after
     finally:
-        cp.director_name, cp.signer_position, cp.signer_basis = was
+        now = SG.default_of(env.db, cp.id)
+        if was:
+            now.director_name, now.signer_position, now.signer_basis = was
+        elif now is not None:
+            env.db.delete(now)
         env.db.commit()
 
 
@@ -253,14 +265,24 @@ def test_signer_patch_touches_only_what_was_sent(env):
           .filter(Counterparty.id == env.c.counterparty_id).first())
     if not cp:
         pytest.skip('нужен договор с контрагентом')
-    was_addr, was_pos = cp.address, cp.signer_position
+    from app.signers import service as SG
+    d = SG.default_of(env.db, cp.id)
+    was_addr = cp.address
+    was = (d.director_name, d.signer_position, d.signer_basis) if d else None
     try:
         A.set_signer(cp.id, A.SignerIn(signer_position="Директор"), env.db, env.user)
         env.db.refresh(cp)
-        assert cp.signer_position == "Директор"
+        now = SG.default_of(env.db, cp.id)
+        assert now.signer_position == "Директор"                      # с 28.10.2026 — подписант юрлица по умолчанию
         assert cp.address == was_addr, 'непереданное поле обязано остаться нетронутым'
+        if was:
+            assert (now.director_name, now.signer_basis) == (was[0], was[2]), 'непереданные поля подписанта не трогаются'
     finally:
-        cp.signer_position = was_pos
+        now = SG.default_of(env.db, cp.id)
+        if was:
+            now.director_name, now.signer_position, now.signer_basis = was
+        elif now is not None:
+            env.db.delete(now)
         env.db.commit()
 
 

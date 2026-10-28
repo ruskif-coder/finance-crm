@@ -23,6 +23,7 @@ import api, { auth } from '../../../lib/api'
 import { saveBlob, filenameFromResponse } from '@/lib/download'
 import { fmtDate as fmtCalendarDate } from '@/lib/dates'
 import AnnexModelPanel from '@/components/annex/AnnexModelPanel'
+import { annexTemplatesApi, errorOf } from '@/lib/annexTemplatesApi'
 import AnnexQuickEdit from '@/components/annex/AnnexQuickEdit'
 import AnnexDateField from '@/components/annex/AnnexDateField'
 import AnnexLegalButton from '@/components/annex/AnnexLegalButton'
@@ -144,7 +145,7 @@ function Party({ title, p, onSave, saving, canEdit }) {
         {' '}{g.acting || 'действующего'} на основании {g.basis_gen || '___________'}»
       </div>
       {dirty && canEdit && (
-        <button onClick={() => onSave(p.id, form)} disabled={saving || /_{3}/.test(form.signer_basis || '')}
+        <button onClick={() => onSave(p.id, { ...form, signer_id: p.signer_id ?? undefined })} disabled={saving || /_{3}/.test(form.signer_basis || '')}
                 title={/_{3}/.test(form.signer_basis || '') ? 'Впишите номер и дату доверенности вместо подчёркиваний' : ''}
                 style={{ ...primaryBtn, marginTop: 12, opacity: /_{3}/.test(form.signer_basis || '') ? .5 : 1 }}>
           {saving ? 'Сохраняю…' : 'Сохранить в карточку контрагента'}
@@ -230,6 +231,21 @@ export default function AnnexAssembly() {
       try { msg = JSON.parse(await e.response.data.text()).detail || msg } catch (_) { /* не JSON */ }
       setErr(msg)
     } finally { setBusy('') }
+  }
+
+  /** Шаблон черновика (27.10.2026): выбрать другой (пусто — по умолчанию) или сохранить документ как новый шаблон договора. */
+  const chooseTemplate = async (templateId) => {
+    setBusy('template'); setErr('')
+    try { await annexTemplatesApi.choose(id, templateId); await load() }
+    catch (e) { setErr(errorOf(e, 'Не удалось выбрать шаблон').message) }
+    finally { setBusy('') }
+  }
+  // «Основной» отмечают в окне «Шаблон ДС» договора — здесь шаблон сохраняется без отметки.
+  const saveAsTemplate = async (title) => {
+    setBusy('template'); setErr('')
+    try { await annexTemplatesApi.saveAs(id, title, false); await load() }
+    catch (e) { setErr(errorOf(e, 'Не удалось сохранить шаблон').message) }
+    finally { setBusy('') }
   }
 
   /** Пересоздать подтверждённое приложение на актуальном шаблоне (до отправки в 1С). */
@@ -384,33 +400,42 @@ export default function AnnexAssembly() {
                             style={{ ...btn(false), height: 36, opacity: legalOpen.length ? .45 : 1, cursor: legalOpen.length ? 'not-allowed' : 'pointer' }}>
                       {busy === 'confirm' ? 'Занимаю номер…' : 'Подтвердить номер'}
                     </button>
+                    <span style={{ alignSelf: 'stretch', width: 1, background: 'var(--border-card)', margin: '0 4px' }} />
                   </>
                 )}
                 {/* Выгрузка в одну строку (владелец 14.10.2026): «Клиентские на согласование» — ДС и основание закрывающих одним файлом,
-                    затем разделитель, затем чистовые — только ДС, на подпись. */}
-                <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)', alignSelf: 'center', whiteSpace: 'nowrap' }}>Клиентские на согласование</span>
-                <button onClick={() => download('docx', true)} disabled={!!busy || !!miss.length}
-                        title={miss.length ? 'Сначала заполните недостающее' : 'ДС и основание для закрывающих документов — одним редактируемым файлом на согласование'}
-                        style={{ ...btn(false), height: 36, opacity: miss.length ? .45 : 1, cursor: miss.length ? 'not-allowed' : 'pointer' }}>
-                  {busy === 'docx+' ? 'Собираю…' : 'DOCX'}
-                </button>
-                <button onClick={() => download('pdf', true)} disabled={!!busy || !!miss.length}
-                        title={miss.length ? 'Сначала заполните недостающее' : 'ДС и основание для закрывающих документов — одним PDF на согласование'}
-                        style={{ ...btn(false), height: 36, opacity: miss.length ? .45 : 1, cursor: miss.length ? 'not-allowed' : 'pointer' }}>
-                  {busy === 'pdf+' ? 'Собираю…' : 'PDF'}
-                </button>
+                    затем разделитель, затем чистовые — только ДС, на подпись. Подписи групп — сверху, как у номера и даты (владелец 28.10.2026). */}
+                <div>
+                  <div style={{ ...LBL, marginBottom: 4 }}>Клиентские на согласование</div>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button onClick={() => download('docx', true)} disabled={!!busy || !!miss.length}
+                            title={miss.length ? 'Сначала заполните недостающее' : 'ДС и основание для закрывающих документов — одним редактируемым файлом на согласование'}
+                            style={{ ...btn(false), height: 36, opacity: miss.length ? .45 : 1, cursor: miss.length ? 'not-allowed' : 'pointer' }}>
+                      {busy === 'docx+' ? 'Собираю…' : 'DOCX'}
+                    </button>
+                    <button onClick={() => download('pdf', true)} disabled={!!busy || !!miss.length}
+                            title={miss.length ? 'Сначала заполните недостающее' : 'ДС и основание для закрывающих документов — одним PDF на согласование'}
+                            style={{ ...btn(false), height: 36, opacity: miss.length ? .45 : 1, cursor: miss.length ? 'not-allowed' : 'pointer' }}>
+                      {busy === 'pdf+' ? 'Собираю…' : 'PDF'}
+                    </button>
+                  </div>
+                </div>
                 <span style={{ alignSelf: 'stretch', width: 1, background: 'var(--border-card)', margin: '0 4px' }} />
-                <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)', alignSelf: 'center', whiteSpace: 'nowrap' }}>Чистовые</span>
-                <button onClick={() => download('docx')} disabled={!!busy || !!miss.length || !!legalOpen.length}
-                        title={miss.length ? 'Сначала заполните недостающее' : legalOpen.length ? 'Ждёт ответа юриста' : 'Чистовой ДС — редактируемый файл'}
-                        style={{ ...btn(false), height: 36, opacity: miss.length || legalOpen.length ? .45 : 1, cursor: miss.length || legalOpen.length ? 'not-allowed' : 'pointer' }}>
-                  {busy === 'docx' ? 'Собираю…' : 'DOCX'}
-                </button>
-                <button onClick={() => download('pdf')} disabled={!!busy || !!miss.length || !!legalOpen.length}
-                        title={miss.length ? 'Сначала заполните недостающее' : legalOpen.length ? 'Ждёт ответа юриста' : 'Чистовой ДС на подпись'}
-                        style={{ ...primaryBtn, height: 36, opacity: miss.length || legalOpen.length ? .45 : 1, cursor: miss.length || legalOpen.length ? 'not-allowed' : 'pointer' }}>
-                  {busy === 'pdf' ? 'Собираю…' : 'PDF'}
-                </button>
+                <div>
+                  <div style={{ ...LBL, marginBottom: 4 }}>Чистовые</div>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button onClick={() => download('docx')} disabled={!!busy || !!miss.length || !!legalOpen.length}
+                            title={miss.length ? 'Сначала заполните недостающее' : legalOpen.length ? 'Ждёт ответа юриста' : 'Чистовой ДС — редактируемый файл'}
+                            style={{ ...btn(false), height: 36, opacity: miss.length || legalOpen.length ? .45 : 1, cursor: miss.length || legalOpen.length ? 'not-allowed' : 'pointer' }}>
+                      {busy === 'docx' ? 'Собираю…' : 'DOCX'}
+                    </button>
+                    <button onClick={() => download('pdf')} disabled={!!busy || !!miss.length || !!legalOpen.length}
+                            title={miss.length ? 'Сначала заполните недостающее' : legalOpen.length ? 'Ждёт ответа юриста' : 'Чистовой ДС на подпись'}
+                            style={{ ...primaryBtn, height: 36, opacity: miss.length || legalOpen.length ? .45 : 1, cursor: miss.length || legalOpen.length ? 'not-allowed' : 'pointer' }}>
+                      {busy === 'pdf' ? 'Собираю…' : 'PDF'}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -443,7 +468,8 @@ export default function AnnexAssembly() {
             {/* Документ по шаблону ДС (спринт 2): тексты пунктов, таблица «бренд → услуги → допы», стороны. Собранные до конструктора
                 показываются прежним расчётом ниже. */}
             <div style={SECTION}>
-              <AnnexModelPanel state={{ model: a.model, frozen: a.model_frozen, legacy: a.model_legacy, reason: a.model_reason, template_state: a.template_state }}
+              <AnnexModelPanel state={{ model: a.model, frozen: a.model_frozen, legacy: a.model_legacy, reason: a.model_reason, template_state: a.template_state, choice: a.template_choice }}
+                               canEdit={mayEdit} onChoose={chooseTemplate} onSaveAs={saveAsTemplate}
                                onRebuild={mayEdit && !a.is_draft ? rebuild : undefined} rebuildBusy={busy === 'rebuild'}
                                actions={a.model && a.model.blocks && !a.model_legacy
                                  ? <AnnexLegalButton annexId={a.id} canEdit={mayEdit} onChange={load} lawBlocks={a.model.blocks.filter(b => !b.sys && b.zone === 'law')} />

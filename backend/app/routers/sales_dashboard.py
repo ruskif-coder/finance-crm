@@ -465,7 +465,7 @@ def dashboard(
             "deals": len(rows),
             "amount": round(total_amount, 2),
             "fact": round(sum(b["fact"] for b in by_layer), 2),          # реализованная выручка
-            "work": round(sum(b["real"] + b["plan"] for b in by_layer), 2),  # в работе
+            "work": round(sum(b["real"] + b["plan"] for b in by_layer), 2),  # в работе + вероятности (реализуемые + планируемые; в «Плане продаж» «в работе» — только реализуемые)
             "deals_without_period": no_period,
             "reconciles": round(layers_sum, 2) == round(total_amount, 2),
         },
@@ -565,14 +565,12 @@ def dashboard_bonus(
     # Слой/под-этап — от НАШЕЙ стадии сделки (our_stage — мастер), не от Битрикса.
     stage_key_by_id = {s.id: s.stage_key for s in db.query(SalesStage).all()}
 
-    # СК берём по агентству сделки (sales_agencies.sk_percent), дефолт — константа, если агентства нет.
-    sk_by_agency = dict(db.query(SalesAgency.id, SalesAgency.sk_percent).all())
-    default_sk_pct = SALES_AGENCY_SK * 100
+    # СК — «Агентские условия» тем же правилом, что закрытие (27.10.2026); где правила нет — прежние 30 % агентства оценкой.
+    from app.final_recon.sk import sales_percent_many
+    sk_pct = sales_percent_many(db, deals)
 
-    def net_of(amount, agency_id):
-        # Прямая сделка (без агентства) → СК нет, вся сумма наша.
-        pct = sk_by_agency.get(agency_id, default_sk_pct) if agency_id else 0
-        return float(amount or 0) * (1 - (pct or 0) / 100)
+    def net_of(amount, deal):
+        return float(amount or 0) * (1 - (sk_pct.get(deal.id) or 0) / 100)
 
     sandbox_cnt = 0
     sandbox_sum = booking_sum = closed_sum = 0.0
@@ -583,7 +581,7 @@ def dashboard_bonus(
         amt = eff_net(d, mp)
         if d.pipeline == _CLOSED_FUNNEL:
             closed_sum += amt
-            closed_our += net_of(amt, d.agency_id)
+            closed_our += net_of(amt, d)
             continue
         sk = stage_key_by_id.get(d.our_stage_id)
         if sk in _SANDBOX_KEYS:
@@ -591,7 +589,7 @@ def dashboard_bonus(
             sandbox_sum += amt
         elif sk in _BOOKING_KEYS:
             booking_sum += amt
-            booking_our += net_of(amt, d.agency_id)
+            booking_our += net_of(amt, d)
             booking_stages[d.bitrix_stage] = booking_stages.get(d.bitrix_stage, 0.0) + amt
     base.update({
         "sandbox": {"count": sandbox_cnt, "amount": round(sandbox_sum)},
@@ -791,9 +789,9 @@ def deals_registry(
     brands = dict(db.query(SalesBrand.id, SalesBrand.name).all())
     cps = dict(db.query(Counterparty.id, Counterparty.name).all())
     agencies = dict(db.query(SalesAgency.id, func.coalesce(SalesAgency.short_name, SalesAgency.name)).all())
-    # СК по агентству (как в сводке) — для «нашей суммы» в карточке сделки.
-    sk_by_agency = dict(db.query(SalesAgency.id, SalesAgency.sk_percent).all())
-    default_sk_pct = SALES_AGENCY_SK * 100
+    # СК — «Агентские условия» (как в сводке, 27.10.2026) — для «нашей суммы» в карточке сделки.
+    from app.final_recon.sk import sales_percent_many
+    sk_pct_of = sales_percent_many(db, [r[0] for r in rows])
 
     # Полная подпись «краткое | ENG | Рус» для тултипа в реестре (наведение на
     # агентство/рекламодателя, где показано только краткое имя).
@@ -965,7 +963,7 @@ def deals_registry(
             # досчитывала «с НДС» сама по зашитым 22 % (ревью 23.09.2026).
             "amount_with_vat": gross_of(d, mp_amt),
             "vat_rate": vat_pct_of(d, mp_amt),
-            "our_sum": round(eff_net(d, mp_amt) * (1 - ((sk_by_agency.get(d.agency_id, default_sk_pct) if d.agency_id else 0) or 0) / 100)),
+            "our_sum": round(eff_net(d, mp_amt) * (1 - (sk_pct_of.get(d.id) or 0) / 100)),
             "currency": d.currency,
             "advertiser": adv.get(d.advertiser_id),
             "advertiser_full": adv_full.get(d.advertiser_id),
@@ -2485,8 +2483,9 @@ def get_deal(deal_id: str, db: Session = Depends(get_db),
         cp = db.query(Counterparty).filter(Counterparty.id == deal.payer_counterparty_id).first()
         payer = cp.name if cp else None
     payer = payer or deal.payer_name
-    # Прямая сделка (без агентства) → СК нет, вся сумма наша.
-    sk_pct = dict(db.query(SalesAgency.id, SalesAgency.sk_percent).all()).get(deal.agency_id, SALES_AGENCY_SK * 100) if deal.agency_id else 0
+    # СК — «Агентские условия» (27.10.2026); прямая сделка без правила — 0, вся сумма наша.
+    from app.final_recon.sk import sales_percent_many
+    sk_pct = sales_percent_many(db, [deal]).get(deal.id, 0)
     files = [{"kind": f.kind, "filename": f.filename, "size": f.size} for f in
              db.query(SalesDealFile).filter(SalesDealFile.deal_id == deal.id).all()]
     creatives_ready = creatives_ready_by_deal(db, [deal.id]).get(deal.id, 0)

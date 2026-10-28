@@ -1,16 +1,17 @@
 /**
- * Данные окна «Шаблоны ДС» с сервера (спринт 2, 14.10.2026): список базовых шаблонов и форматов, шаблон договора, версии.
+ * Данные окна «Шаблоны ДС» с сервера (спринт 2, 14.10.2026): список базовых шаблонов и форматов, шаблоны договора (с 27.10.2026 их
+ * несколько, `tplId` — открытый; пусто — шаблон по умолчанию), версии.
  * Все действия возвращают `true`, когда сервер принял, и кладут причину отказа в `err`; после успеха данные перечитываются.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { annexTemplatesApi as API, errorOf } from '@/lib/annexTemplatesApi'
 
-export default function useTemplateData({ open, contract, baseId, step }) {
+export default function useTemplateData({ open, contract, baseId, step, tplId }) {
   const [bases, setBases] = useState([])          // базовые шаблоны (scope = base)
   const [fmtMap, setFmtMap] = useState({})        // формат → id шаблона
   const [known, setKnown] = useState([])          // форматы, которые предлагает экран
   const [detail, setDetail] = useState(null)      // открытый шаблон с блоками
-  const [info, setInfo] = useState(null)          // режим договора: {source, reason, format, base_changes}
+  const [info, setInfo] = useState(null)          // режим договора: {source, reason, format, templates, base_changes}
   const [versions, setVersions] = useState([])
   const [err, setErr] = useState(null)            // {message, issues}
   const [loading, setLoading] = useState(false)
@@ -21,7 +22,7 @@ export default function useTemplateData({ open, contract, baseId, step }) {
     setLoading(true)
     try {
       if (contractId) {
-        const r = await API.forContract(contractId)
+        const r = await API.forContract(contractId, tplId)
         setInfo(r)
         setDetail(r.template)
         setVersions(r.template ? await API.versions(r.template.id) : [])
@@ -41,7 +42,7 @@ export default function useTemplateData({ open, contract, baseId, step }) {
       setErr(null)
     } catch (e) { setErr(errorOf(e, 'Не удалось загрузить шаблоны')) }
     finally { setLoading(false) }
-  }, [contractId, baseId, step])
+  }, [contractId, baseId, step, tplId])
 
   useEffect(() => { if (open) reload() }, [open, reload])
 
@@ -61,7 +62,16 @@ export default function useTemplateData({ open, contract, baseId, step }) {
     bases, fmtMap, known, detail, info, versions, err, loading, setErr, reload,
     save: (id, blocks, adopt) => act(() => API.save(id, blocks, adopt)),
     restore: (id, v) => act(() => API.restore(id, v)),
-    fork: () => act(() => API.fork(contractId)),
+    /** Новый шаблон договора; возвращает его id (или null при отказе), чтобы окно сразу открыло его. */
+    fork: async ({ title, sourceId, main, annexId }) => {
+      try {
+        const t = await API.fork(contractId, { title, sourceId, main, annexId })
+        setErr(null)
+        return t.id
+      } catch (e) { setErr(errorOf(e)); return null }
+    },
+    rename: (id, title) => act(() => API.rename(id, title)),
+    setMain: (id, on) => act(() => API.setMain(id, on)),
     keepOwn: (id) => act(() => API.keepOwn(id)),
     createBase: (title, copyFrom) => act(() => API.createBase(title, copyFrom, [])),
     setFormats: (id, formats) => act(() => API.setFormats(id, formats)),

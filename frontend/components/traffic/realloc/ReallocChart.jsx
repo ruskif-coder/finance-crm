@@ -30,13 +30,14 @@ export function ReallocChart({ c, scopeName, onClear, changed }) {
         {c.bars.map(b => (
           <span key={b.dt} title={b.future
             ? `${ddmm(b.dt)} · остаток флайта · нужно до ${nf(b.before)} · после ${nf(b.after)} · сеть может ${nf(c.cCan)}`
-            : `${ddmm(b.dt)} · план ${nf(c.dayPlan)} · факт ${nf(b.fact)} · выполнение ${c.dayPlan ? Math.round(b.fact / c.dayPlan * 100) : 0} %`}
+            : `${ddmm(b.dt)} · план дня ${nf(b.goal)} · факт ${nf(b.fact)} · выполнение ${b.goal ? Math.round(b.fact / b.goal * 100) : 0} %`}
             style={{ position: 'relative', flex: '1 1 0', minWidth: 0, height: '100%', display: 'flex', gap: 1, alignItems: 'flex-end',
               background: b.future ? 'var(--bg-tint)' : 'transparent', borderRadius: 2 }}>
             <span style={{ flex: 1, height: hp(b.future ? b.before : b.fact), borderRadius: '2px 2px 0 0',
               background: b.future ? 'var(--border-hover)' : b.low ? 'var(--danger)' : 'var(--accent)' }} />
             {b.future && <span style={{ flex: 1, height: hp(b.after), borderRadius: '2px 2px 0 0', background: b.over ? 'var(--danger-border)' : 'var(--accent-border)' }} />}
-            <span style={{ position: 'absolute', left: 0, right: 0, bottom: hp(c.dayPlan), borderTop: '2px dashed var(--text-secondary)', opacity: 0.55 }} />
+            {/* план дня: прошедшие — цель по остатку (как стена дней дашборда), будущие — ровный план РК для ориентира */}
+            <span style={{ position: 'absolute', left: 0, right: 0, bottom: hp(b.future ? c.dayPlan : b.goal), borderTop: '2px dashed var(--text-secondary)', opacity: 0.55 }} />
           </span>
         ))}
       </div>

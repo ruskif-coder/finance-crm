@@ -506,8 +506,21 @@ def _scale_volumes(rows, live, total, facts):
     spent = sum(fact(c) for c in rows if id(c) not in live_ids)
     free = sum(fact(c) for c in live if not c.get("fixed"))
     target = max(0.0, float(total) - spent - free)
-    scaled = {id(c): int(float(c["fixed"]) * target / base) for c in vols}
-    scaled[id(vols[0])] += int(round(target)) - sum(scaled.values())
+    # Креатив, открутивший больше своей доли, держится на факте; остаток — остальным в их пропорции (владелец 27.10.2026):
+    # иначе 600/400 к плану 1000 при факте 700 давали лимиты 700 + 400 = 1100 — площадка перекручивала.
+    scaled, pool = {}, list(vols)
+    while pool:
+        pool_base = sum(float(c["fixed"]) for c in pool)
+        rest = max(0.0, target - sum(scaled.values()))
+        ahead = [c for c in pool if fact(c) > float(c["fixed"]) * rest / pool_base]
+        if not ahead:
+            share = {id(c): int(float(c["fixed"]) * rest / pool_base) for c in pool}
+            share[id(pool[0])] += int(round(rest)) - sum(share.values())
+            scaled.update(share)
+            break
+        for c in ahead:
+            scaled[id(c)] = int(round(fact(c)))
+        pool = [c for c in pool if id(c) not in scaled]
     return [{**c, "fixed": scaled[id(c)]} if id(c) in scaled else c for c in rows]
 
 

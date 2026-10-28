@@ -47,6 +47,30 @@ def _shift(d: date, months: int) -> date:
     return date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
 
 
+def _shift_month(ym: Optional[str], months: int) -> Optional[str]:
+    """«ГГГГ-ММ» на `months` месяцев; не месяц («разово» у допов, пусто) — как есть."""
+    if not ym or len(ym) != 7 or ym[4] != "-" or not (ym[:4] + ym[5:]).isdigit():
+        return ym
+    return _shift(date(int(ym[:4]), int(ym[5:]), 1), months).strftime("%Y-%m")
+
+
+def _shift_media_plans(db, deal_id: int, months: int) -> list:
+    """Медиаплан едет вместе со сделкой (владелец 27.10.2026): период, даты и месяц допов. Двигаются только незапущенные
+    сделки — их медиаплан ещё не зафиксирован. → строки для журнала."""
+    from app.sales.models import SalesMediaPlan, SalesMediaPlanExtra
+    out = []
+    for p in db.query(SalesMediaPlan).filter(SalesMediaPlan.deal_id == deal_id).all():
+        old = (p.period, p.date_from, p.date_to)
+        p.period = _shift_month(p.period, months)
+        p.date_from = _shift(p.date_from, months) if p.date_from else None
+        p.date_to = _shift_end(p.date_to, months) if p.date_to else None
+        for x in db.query(SalesMediaPlanExtra).filter(SalesMediaPlanExtra.plan_id == p.id).all():
+            x.period = _shift_month(x.period, months)
+        if (p.period, p.date_from, p.date_to) != old:
+            out.append(f"медиаплан №{p.id}: {old[0] or '—'} → {p.period or '—'}")
+    return out
+
+
 def _shift_end(d: date, months: int) -> date:
     """Конец периода: последний день месяца остаётся последним (01.11–30.11 → 01.12–31.12; ревью 22.10.2026),
     иначе туда-обратно январь сжимался бы до 28-го. Не конец месяца — как `_shift`."""
@@ -311,6 +335,7 @@ def apply_moves(data: ApplyIn, db: Session = Depends(get_db), user: User = Depen
             d.period_from = _shift(d.period_from, delta)
             d.period_to = _shift_end(d.period_to, delta) if d.period_to else None
             notes.append(f"период {old[0]}–{old[1]} → {d.period_from}–{d.period_to}")
+            notes += _shift_media_plans(db, d.id, delta)
         if mv.light != d.probability_color:
             notes.append(f"светофор {d.probability_color or 'не задан'} → {mv.light or 'не задан'}")
             d.probability_color = mv.light
@@ -329,9 +354,12 @@ def apply_moves(data: ApplyIn, db: Session = Depends(get_db), user: User = Depen
 # напоминание человека самому себе, данных сделок оно не меняет.
 
 def reminders_out(db, user) -> list:
-    rows = (db.query(SalesStatusReminder, User.name).join(User, User.id == SalesStatusReminder.user_id)
-            .filter(SalesStatusReminder.remind_on >= date.today() - timedelta(days=30))  # отработавшие — месяц, дальше не мешают
-            .order_by(SalesStatusReminder.remind_on).all())
+    """Будильники экрана (владелец 27.10.2026): каждому — свои; кто видит реестр целиком (мастера, админ) — все."""
+    q = (db.query(SalesStatusReminder, User.name).join(User, User.id == SalesStatusReminder.user_id)
+         .filter(SalesStatusReminder.remind_on >= date.today() - timedelta(days=30)))  # отработавшие — месяц, дальше не мешают
+    if own_rep_ids_or_all(db, user, "sales_registry") is not None:
+        q = q.filter(SalesStatusReminder.user_id == user.id)
+    rows = q.order_by(SalesStatusReminder.remind_on).all()
     return [{"id": r.id, "advertiser_id": r.advertiser_id, "brand_id": r.brand_id, "client_name": r.client_name,
              "remind_on": r.remind_on.isoformat(), "note": r.note, "sent": r.sent_at is not None,
              "user": name, "mine": r.user_id == user.id} for r, name in rows]

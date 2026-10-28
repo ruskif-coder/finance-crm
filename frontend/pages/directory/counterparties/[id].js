@@ -6,7 +6,12 @@ import Navbar from '@/components/Navbar'
 import dynamic from 'next/dynamic'
 import useIsMobile from '@/components/mobile/useIsMobile'
 const CounterpartyCardMobile = dynamic(() => import('@/components/mobile/CounterpartyCardMobile'), { ssr: false, loading: () => <div style={{ padding: 24 }} /> })
-import CounterpartyCardDesktop, { T as CT } from '@/components/counterparty/CounterpartyCard'
+import { T as CT } from '@/components/counterparty/CounterpartyCard'
+import CpHead from '@/components/counterpartyCard/Head'
+import CpContracts from '@/components/counterpartyCard/Contracts'
+import CpTurnover from '@/components/counterpartyCard/Turnover'
+import CpOperations from '@/components/counterpartyCard/Operations'
+import { Requisites as CpRequisites, Signers as CpSigners, Defaults as CpDefaults } from '@/components/counterpartyCard/Side'
 import { makeApi as api } from '@/lib/http'
 import { bankColor } from '@/lib/salesFormat'
 import { Z } from '@/components/salesTableKit'
@@ -120,8 +125,7 @@ export default function CounterpartyCard() {
         address: d.address || '', address_fact: d.address_fact || '',
         phone: d.phone || '', email: d.email || '',
         website: d.website || '', edo_id: d.edo_id || '',
-        director_name: d.director_name || '', note: d.note || '',
-        signer_position: d.signer_position || '', signer_basis: d.signer_basis || '',
+        note: d.note || '',
         bank_accounts: d.bank_accounts.length
           ? d.bank_accounts
           : [{ bank_name: '', bank_city: '', rs: '', ks: '', bik: '' }],
@@ -157,6 +161,27 @@ export default function CounterpartyCard() {
     finally { setOpsLoading(false) }
   }, [id])
 
+  // Карточка v2: сводка (договоры, расчёты, тип) и ВСЕ операции — фильтры и итоги считаются на экране по отфильтрованному.
+  const [overview, setOverview] = useState(null)
+  const [allOps, setAllOps] = useState([])
+  const [opFilter, setOpFilter] = useState('all')
+  const [opMonth, setOpMonth] = useState(null)
+  const [opQ, setOpQ] = useState('')
+  const [canNewContract, setCanNewContract] = useState(false)
+  useEffect(() => { setCanNewContract(can(getPermissions(), 'contracts', 'create')) }, [])
+  const loadOverview = useCallback(async () => {
+    if (!id) return
+    try { setOverview((await api(localStorage.getItem('token')).get(`/counterparties/${id}/overview`)).data) }
+    catch (e) { setOverview(null) }
+  }, [id])
+  const loadAllOps = useCallback(async () => {
+    if (!id || !canViewOps) return
+    try { setAllOps((await api(localStorage.getItem('token')).get(`/counterparties/${id}/operations?skip=0&limit=5000&sort_col=date&sort_dir=desc`)).data.items || []) }
+    catch (e) { setAllOps([]) }
+  }, [id, canViewOps])
+  useEffect(() => { loadOverview() }, [loadOverview])
+  useEffect(() => { loadAllOps() }, [loadAllOps])
+
   const loadAnalytics = useCallback(async () => {
     if (!id) return
     const token = localStorage.getItem('token')
@@ -191,8 +216,6 @@ export default function CounterpartyCard() {
       vat_rate_expense: card.vat_rate_expense ?? '',
       default_article_income_id: card.default_article_income_id || '',
       default_article_expense_id: card.default_article_expense_id || '',
-      sk_mode: card.sk_mode || '',
-      sk_percent: card.sk_percent ?? '',
     })
     setDefEdit(true)
   }
@@ -207,12 +230,6 @@ export default function CounterpartyCard() {
         default_article_income_id: defData.default_article_income_id ? Number(defData.default_article_income_id) : null,
         default_article_expense_id: defData.default_article_expense_id ? Number(defData.default_article_expense_id) : null,
       })
-      // СК — своей ручкой (пакет итоговой сверки, 14.10.2026): способ выплаты и базовый %, на закрытии сделки правится.
-      if ((defData.sk_mode || null) !== (card.sk_mode || null) || String(defData.sk_percent) !== String(card.sk_percent ?? '')) {
-        await api(token).put(`/final-recon/counterparty/${id}/sk`, {
-          mode: defData.sk_mode || null, percent: defData.sk_percent === '' ? null : Number(defData.sk_percent),
-        })
-      }
       setDefEdit(false)
       loadCard()
     } catch (e) {
@@ -365,81 +382,35 @@ export default function CounterpartyCard() {
 
   // ── ДЕСКТОП: референс-компонент дизайн-системы (правка — модалкой в том же дизайне) ──
   {
-    const kmln = (v) => v ? (v / 1e6).toFixed(2).replace('.', ',') : '0'
-    const pct = (v) => (v || v === 0) ? `${String(v).replace('.', ',')} %` : '—'
-    const bs = analytics?.by_status || []
-    const cnt = (p) => bs.filter(p).reduce((a, s) => a + (s.cnt || 0), 0)
-    const planCnt = cnt(s => /ПЛАН/.test(s.status)), factCnt = cnt(s => s.status === 'ОПЛАЧЕНО'), payCnt = cnt(s => s.status === 'ПЛАН ОПЛАТ')
-    const saldoV = stats.saldo || 0
-    const STL = { 'ОПЛАЧЕНО': { l: 'Оплачено', c: CT.income }, 'ПЛАН ОПЛАТ': { l: 'План оплат', c: CT.warning }, 'ПЛАН ПОСТУПЛЕНИЙ': { l: 'План поступл.', c: CT.accent } }
-    const monthly = analytics?.monthly || []
-    const ta = analytics?.top_articles || []
-    const taMax = ta[0] ? ((ta[0].income || 0) + (ta[0].expense || 0)) || 1 : 1
-    const data = {
-      name: card.name, state: card.status, kind: relation || '—',
-      site: card.website ? card.website.replace(/^https?:\/\//i, '').replace(/\/$/, '') : null,
-      brands: (card.linked_agencies || []).map(a => a.name_en || a.name).filter(Boolean),
-      requisites: [
-        { label: 'ИНН', value: card.inn || '—', mono: true }, { label: 'КПП', value: card.kpp || '—', mono: true },
-        { label: 'ОГРН', value: card.ogrn || '—', mono: true }, { label: 'ОКПО', value: card.okpo || '—', mono: true },
-        { label: 'Юр. адрес', value: card.address || '—' }, { label: 'Факт. адрес', value: card.address_fact || '—' },
-        { label: 'Телефон', value: card.phone || '—', mono: true }, { label: 'Email', value: card.email || '—' },
-        { label: 'Сайт', value: card.website || '—' }, { label: 'ЭДО', value: card.edo_id || '—', mono: true },
-        { label: 'ФИО подписанта', value: card.director_name || '—' },
-        { label: 'Должность подписанта', value: card.signer_position || '—' },
-        { label: 'Основание полномочий', value: card.signer_basis || '—' },
-        { label: 'Примечание', value: card.note || '—' },
-      ],
-      banks: (card.bank_accounts || []).filter(b => b.bank_name || b.rs).map(b => ({
-        name: b.bank_name || 'Банк', rows: [{ label: 'Р/С', value: b.rs || '—' }, { label: 'К/С', value: b.ks || '—' }, { label: 'БИК', value: b.bik || '—' }],
-      })),
-      belonging: (card.linked_agencies || []).map(a => [
-        { label: 'Краткое', value: a.name || '—' }, { label: 'Полное', value: a.name_en || a.name || '—' }, { label: 'Холдинг', value: a.holding || '—' },
-      ]),
-      terms: [
-        { label: 'НДС приход', value: card.vat_rate_income != null ? `${card.vat_rate_income}%` : '—', mono: true },
-        { label: 'НДС расход', value: card.vat_rate_expense != null ? `${card.vat_rate_expense}%` : '—', mono: true },
-        { label: 'Статья прихода', value: card.default_article_income || '—' },
-        { label: 'Статья расхода', value: card.default_article_expense || '—' },
-        { label: 'СК', value: card.sk_mode || card.sk_percent != null ? `${card.sk_mode || 'способ не задан'}${card.sk_percent != null ? ` · ${String(card.sk_percent).replace('.', ',')}%` : ''}` : '—' },
-      ],
-      kpi: [
-        { label: 'Операций всего', value: String(stats.op_count || 0), hint: `${planCnt} в плане · ${factCnt} факт`, color: CT.t1 },
-        { label: 'Дебиторка', value: kmln(stats.receivable), hint: (stats.receivable || 0) > 0 ? 'есть задолженность' : 'нет просрочки', color: CT.accent },
-        { label: 'Кредиторка', value: kmln(stats.payable), hint: (stats.payable || 0) > 0 ? `млн ₽ · ${payCnt} оп.` : '—', color: CT.warning },
-        { label: 'Сальдо', value: (saldoV < 0 ? '−' : '') + kmln(Math.abs(saldoV)), hint: `млн ₽ · ${saldoV < 0 ? 'мы им должны' : 'нам должны'}`, color: saldoV < 0 ? CT.danger : CT.income },
-      ],
-      turnover: { months: monthly.map(m => fmtMonth(m.period)), income: monthly.map(m => (m.income || 0) / 1e6), expense: monthly.map(m => (m.expense || 0) / 1e6) },
-      stats: [
-        { label: 'Ср. приход', value: analytics?.avg_income ? fmt(analytics.avg_income) : '—', color: CT.income },
-        { label: 'Ср. расход', value: analytics?.avg_expense ? fmt(analytics.avg_expense) : '—', color: CT.t2 },
-        { label: 'Доля в выручке (12 мес)', value: pct(analytics?.share_income_12m), color: CT.income },
-        { label: 'Доля в закупках (12 мес)', value: pct(analytics?.share_expense_12m), color: CT.t1 },
-      ],
-      topItems: ta.map(a => { const total = (a.income || 0) + (a.expense || 0); return { label: a.article, value: total, color: (a.income || 0) >= (a.expense || 0) ? CT.income : CT.expense, width: `${Math.round(total / taMax * 100)}%` } }),
-      byStatus: (analytics?.by_status || []).map(s => { const m = STL[s.status] || { l: s.status, c: CT.t3 }; const sum = (s.income || 0) > 0 ? s.income : s.expense; return { label: m.l, color: m.c, ops: s.cnt, sum: sum || 0 } }),
-      contracts: (card.contracts || []).map(c => ({
-        number: c.contract_number || '—', date: fmtDate(c.contract_date), format: c.cooperation_format || '—',
-        prolongation: c.prolongation || '—', payTerm: c.payment_term_days != null ? `${c.payment_term_days} дн.` : '—',
-        endsAt: c.end_date_text || '—', expired: !!(contractExpiry(c.end_date_text) && contractExpiry(c.end_date_text).label === 'истёк'),
-        document: (c.document_link || c.attached_filename) ? 'есть' : '—',
-      })),
-      opsTotal,
-      ops: ops.map(o => { const m = STL[o.status] || { l: o.status, c: CT.t3 }; return { date: o.date ? fmtDate(o.date) : '—', status: m.l, statusColor: m.c, income: o.income || null, expense: o.expense || null, dz: null, bank: o.bank || 'не указан', bankColor: bankColor(o.bank), period: o.period || '—', item: o.article || '—', ds: o.ds_num || '—', account: o.invoice || '—', accountDate: o.invoice_date ? fmtDate(o.invoice_date) : '—' } }),
-    }
+    // Карточка v2 по хендоффу «контрикZ» (28.10.2026): шапка с «Расчётами», договоры, оборот, операции; справа реквизиты, подписанты,
+    // условия. Ширина до 1600 и прижато к левому краю — как карточка договора (владелец 28.10.2026).
+    const showPlan = () => { setOpFilter('plan'); setOpMonth(null); setOpQ('') }
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-canvas)' }}>
         <Head><title>{card.name} · контрагент | SIMB-AD ERP</title></Head>
         <Navbar active="directories" />
-        <CounterpartyCardDesktop data={data} canEdit={canEdit} copied={copied}
-          onBack={() => router.push('/directory/counterparties')}
-          onEdit={() => { setEditMode(true); setSaveErr('') }}
-          onEditTerms={startDefEdit}
-          onCopyRequisites={copyRequisites}
-          onOpenContracts={() => router.push('/directory/contracts')}
-          opsStatus={opsStatus} opsSortCol={sortCol} opsSortDir={sortDir} opsLoading={opsLoading}
-          onOpsStatus={handleStatus} onOpsSortCol={handleSortCol} onOpsSortDir={handleSortDir}
-          onOpsMore={() => handlePage(opsPage + 1)} />
+        <div style={{ boxSizing: 'border-box', padding: '22px 28px 40px' }}>
+          <div style={{ width: '100%', maxWidth: 1600, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--text-muted)' }}>
+              <span onClick={() => router.push('/directory/counterparties')} style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>← Контрагенты</span>
+              <span>/</span><span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{card.name}</span>
+            </span>
+            <CpHead card={card} ov={overview} canEdit={canEdit} canContract={canNewContract}
+                    onEdit={() => { setEditMode(true); setSaveErr('') }} onNewContract={() => router.push(`/directory/contracts?new=${card.id}`)} onShowPlan={showPlan} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 440px', gap: 14, alignItems: 'start' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
+                {overview && <CpContracts rows={overview.contracts} warning={overview.warning} canSk={'sk' in overview} />}
+                <CpTurnover monthly={(analytics && analytics.monthly) || []} analytics={analytics} month={opMonth} onMonth={setOpMonth} />
+                {canViewOps && <CpOperations rows={allOps} filter={opFilter} onFilter={setOpFilter} month={opMonth} onMonth={setOpMonth} q={opQ} onQ={setOpQ} />}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
+                <CpRequisites c={card} />
+                <CpSigners c={card} canEdit={canEdit} onChange={loadCard} />
+                <CpDefaults c={card} sk={overview && overview.sk} showSk={!!overview && 'sk' in overview} canEdit={canEdit} onEdit={startDefEdit} />
+              </div>
+            </div>
+          </div>
+        </div>
         {/* Условия по умолчанию. startDefEdit/saveDefaults были написаны, а формы к
             ним не существовало: состояние defEdit не рисовалось нигде, и карандаш в
             карточке вёл в никуда. Ставку НДС задать было негде. */}
@@ -471,21 +442,11 @@ export default function CounterpartyCard() {
                         onChange={e => setD('vat_rate_expense', e.target.value.replace(',', '.'))} style={inp} />
                     </div>
                   </div>
-                  {/* СК (агентская комиссия): способ выплаты и базовый %. На закрытии сделки % правится под проект. */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
-                    <div style={{ marginBottom: 10 }}>
-                      <div style={lbl}>СК — способ</div>
-                      <select value={defData.sk_mode} style={inp} onChange={e => setD('sk_mode', e.target.value)}>
-                        <option value="">— не задан —</option>
-                        <option value="постоплата">постоплата</option>
-                        <option value="скидка в счёт">скидка в счёт</option>
-                      </select>
-                    </div>
-                    <div style={{ marginBottom: 10 }}>
-                      <div style={lbl}>СК — базовый %</div>
-                      <input value={defData.sk_percent} inputMode="decimal" placeholder="нет СК"
-                        onChange={e => setD('sk_percent', e.target.value.replace(',', '.'))} style={inp} />
-                    </div>
+                  {/* СК с 27.10.2026 задаётся в «Агентских условиях» — по договору в связке с агентством (рекламодателем); прежние
+                      поля юрлица — история, расчёт их не читает. */}
+                  <div style={{ marginBottom: 12, fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+                    СК теперь задаётся по договору в «Агентских условиях» (Продажи → Агентские условия).{' '}
+                    <Link href="/sales/agency-terms" target="_blank" style={{ color: 'var(--accent)' }}>Открыть</Link>
                   </div>
                   <div style={{ marginBottom: 10 }}>
                     <div style={lbl}>Статья по умолчанию — приход</div>
@@ -545,20 +506,8 @@ export default function CounterpartyCard() {
                     {fld('Email', 'email')}{fld('Сайт', 'website')}
                   </div>
                   {fld('ЭДО', 'edo_id')}{fld('Примечание', 'note', true)}
-                  {/* Подписант отдельным блоком: эти три поля печатаются в приложении к
-                      договору («в лице Генерального директора Иванова И.И., действующего
-                      на основании Устава»), и пустое из них означает прочерк в документе,
-                      который уходит клиенту. */}
-                  <div style={{ fontFamily: CT.mono, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: CT.t3, fontWeight: 700, margin: '10px 0 8px' }}>Подписант документов</div>
-                  {fld('ФИО подписанта', 'director_name')}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
-                    {fld('Должность', 'signer_position')}{fld('Основание полномочий', 'signer_basis')}
-                  </div>
-                  <div style={{ fontSize: 11, color: CT.t3, margin: '-4px 0 10px' }}>
-                    Должность и основание — как в договоре: «Генеральный директор», «Устава»
-                    или «Доверенности № 5 от 01.01.2026». Без них приложение к договору
-                    не выгрузится.
-                  </div>
+                  {/* Подписанты — не здесь: с 28.10.2026 их у юрлица несколько, они правятся секцией «Подписанты» карточки. Форма
+                      их полей не шлёт, поэтому подписанта по умолчанию сохранение реквизитов не трогает. */}
                   <div style={{ fontFamily: CT.mono, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase', color: CT.t3, fontWeight: 700, margin: '10px 0 8px' }}>Банковские счета</div>
                   {(editData.bank_accounts || []).map((b, i) => (
                     <div key={i} style={{ background: CT.subtle, borderRadius: 12, padding: '12px 12px 2px', marginBottom: 10 }}>

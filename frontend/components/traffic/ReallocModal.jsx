@@ -45,7 +45,8 @@ export default function ReallocModal({ row, auth, canEdit = true, onClose, onDon
     if (!window.confirm(ask)) return
     setBusy(true); setErr('')
     try { await fn(); await load(); setEdits({}); setDone(msg); onDone && onDone() }
-    catch (e) { setErr(e?.response?.data?.detail || 'Не удалось выполнить') } finally { setBusy(false) }
+    // часть действия могла пройти («Снять» — по площадке за запрос): экран перечитываем и при сбое (ревью 27.10.2026)
+    catch (e) { setErr(e?.response?.data?.detail || 'Не удалось выполнить'); load() } finally { setBusy(false) }
   }
   const apply = async () => {
     setBusy(true); setErr('')

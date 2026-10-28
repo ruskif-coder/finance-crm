@@ -22,13 +22,49 @@ OLD_NO_TEMPLATE = "не задан шаблон формулировки усл�
 LEGACY_REASON = "Собрано до конструктора шаблонов — документ показан прежним расчётом и не пересобирается"
 
 
-def resolve(db: Session, contract) -> tuple:
-    """(текущая версия шаблона договора, причина отказа). Кастомный договора, иначе базовый его формата."""
-    r = S.resolve_for_contract(db, contract)
+def brand_ids(db: Session, annex) -> list:
+    """Бренды сделок, которые закрывает ДС — для памяти «бренд → шаблон»."""
+    from app.sales.models import SalesDeal, SalesDealAnnexAllocation
+    aid = getattr(annex, "id", None)
+    if aid is None:
+        return []
+    return sorted({b for (b,) in db.query(SalesDeal.brand_id).join(SalesDealAnnexAllocation, SalesDealAnnexAllocation.deal_id == SalesDeal.id)
+                   .filter(SalesDealAnnexAllocation.annex_id == aid, SalesDeal.brand_id.isnot(None)).all()})
+
+
+def pick(db: Session, contract, annex=None) -> dict:
+    """Шаблон ДС (27.10.2026): выбранный в приложении → память его брендов → основной договора → базовый формата. Без приложения —
+    умолчание договора. Выбранный шаблон, который к договору не относится (договор сменили), — как невыбранный."""
+    chosen = getattr(annex, "tpl_template_id", None) if annex is not None else None
+    brands = brand_ids(db, annex) if annex is not None else []
+    if chosen is not None:
+        try:
+            return S.resolve_for_contract(db, contract, brand_ids=brands, chosen_id=chosen)
+        except S.AnnexTplError:
+            pass
+    return S.resolve_for_contract(db, contract, brand_ids=brands)
+
+
+def resolve(db: Session, contract, annex=None) -> tuple:
+    """(текущая версия шаблона, причина отказа) — шаблона, который собирает это приложение (`pick`)."""
+    r = pick(db, contract, annex)
     if r["template"] is None:
         return None, r["reason"]
     v = S.current(db, r["template"].id)
     return (v, None) if v else (None, "У шаблона нет версий")
+
+
+WHY = {"chosen": "выбран в этом ДС", "brand": "последний для бренда", "main": "основной шаблон договора", "format": "базовый формата договора"}
+
+
+def choice(db: Session, contract, annex) -> dict:
+    """Выбор шаблона на экране сборки: варианты (шаблоны договора и базовый формата), что собирает сейчас и почему, что было бы по умолчанию."""
+    r = pick(db, contract, annex)
+    cur = r["template"]
+    default = S.resolve_for_contract(db, contract, brand_ids=brand_ids(db, annex))["template"]
+    return {"current_id": cur.id if cur else None, "why": WHY.get(r["why"]), "chosen": r["why"] == "chosen",
+            "default_id": default.id if default else None,
+            "options": [{"id": t.id, "title": t.title, "scope": t.scope, "is_main": bool(t.is_main)} for t in S.choices(db, contract)]}
 
 
 def is_frozen(annex) -> bool:
@@ -92,10 +128,10 @@ def freeze(model: dict) -> dict:
     return jsonable_encoder(model)
 
 
-def template_state(db: Session, contract) -> Optional[dict]:
-    """Для кастомного шаблона договора: изменилась ли база (уведомление при генерации, п. 46 плана)."""
-    own = S.custom_of(db, contract.id)
-    if not own:
+def template_state(db: Session, contract, annex=None) -> Optional[dict]:
+    """Для шаблона договора, который собирает ДС: изменилась ли база (уведомление при генерации, п. 46 плана)."""
+    own = pick(db, contract, annex)["template"]
+    if not own or own.scope != "custom":
         return None
     st = S.base_state(db, own)
     return {**st, "changes": S.base_changes(db, own) if st["changed"] else [], "template_id": own.id}
@@ -112,7 +148,7 @@ def upgrade_frozen(db: Session, annex, contract, deal_ids) -> dict:
                     "edited": b.get("id") in edits and b.get("zone") == "acc"} for b in m.get("blocks", [])]
     if "closing_basis" in m and "edits" in m:
         return m
-    version = version_row(db, annex.template_version_id) or resolve(db, contract)[0]
+    version = version_row(db, annex.template_version_id) or resolve(db, contract, annex)[0]
     if version is None:
         return m
     lv = live(db, contract, version, annex, deal_ids)
@@ -123,16 +159,18 @@ def upgrade_frozen(db: Session, annex, contract, deal_ids) -> dict:
 
 
 def model_of(db: Session, annex, contract, deal_ids) -> dict:
-    """Что показать на экране: {model, frozen, legacy, reason, template_state}."""
+    """Что показать на экране: {model, frozen, legacy, reason, template_state, choice}. `choice` — выбор шаблона, только у черновика."""
     if is_frozen(annex):
-        return {"model": jsonable_encoder(upgrade_frozen(db, annex, contract, deal_ids)), "frozen": True, "legacy": False, "reason": None, "template_state": None}
+        return {"model": jsonable_encoder(upgrade_frozen(db, annex, contract, deal_ids)), "frozen": True, "legacy": False, "reason": None,
+                "template_state": None, "choice": None}
     if annex.no is not None:                                   # подтверждено до конструктора
-        return {"model": None, "frozen": False, "legacy": True, "reason": LEGACY_REASON, "template_state": None}
-    version, reason = resolve(db, contract)
+        return {"model": None, "frozen": False, "legacy": True, "reason": LEGACY_REASON, "template_state": None, "choice": None}
+    pick_ = choice(db, contract, annex)
+    version, reason = resolve(db, contract, annex)
     if version is None:
-        return {"model": None, "frozen": False, "legacy": False, "reason": reason, "template_state": None}
+        return {"model": None, "frozen": False, "legacy": False, "reason": reason, "template_state": None, "choice": pick_}
     return {"model": jsonable_encoder(live(db, contract, version, annex, deal_ids)), "frozen": False, "legacy": False,
-            "reason": None, "template_state": template_state(db, contract)}
+            "reason": None, "template_state": template_state(db, contract, annex), "choice": pick_}
 
 
 def version_row(db: Session, version_id: Optional[int]) -> Optional[AnnexTplVersion]:
@@ -159,7 +197,7 @@ def bridge_old_doc(db: Session, annex, contract, doc: dict, deal_ids) -> dict:
     if is_frozen(annex):
         model, live_model = upgrade_frozen(db, annex, contract, deal_ids), False
     else:
-        version, _ = resolve(db, contract)
+        version, _ = resolve(db, contract, annex)
         model = jsonable_encoder(live(db, contract, version, annex, deal_ids)) if version else None
         live_model = True
     if not model:

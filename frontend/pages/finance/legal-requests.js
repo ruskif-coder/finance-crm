@@ -47,7 +47,7 @@ function CloseModal({ req, kind, onClose, onDone }) {
            </>}>
       <div style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 10 }}>
         {done
-          ? <>Закрыть можно после того, как правка сохранена в шаблоне ДС договора <b>№ {req.contract_number || '—'}</b> (реестр договоров → «Шаблон ДС»). ДС и все следующие по договору соберутся уже с ней.</>
+          ? <>Закрыть можно после того, как правка сохранена в шаблоне ДС договора <b>№ {req.contract_number || '—'}</b> (реестр договоров → «Шаблон ДС»). ДС и все следующие по этому шаблону соберутся уже с ней; правка в новом шаблоне договора — ДС заявки переключится на него.</>
           : <>Напишите аккаунту, почему правка не нужна или невозможна.</>}
       </div>
       <textarea value={answer} onChange={e => setAnswer(e.target.value)} rows={4} placeholder={done ? 'Ответ аккаунту (необязательно)' : 'Ответ аккаунту'}
@@ -113,7 +113,7 @@ export default function LegalRequestsPage() {
                 <span style={{ fontWeight: 700, minWidth: 170 }}>№ {b.contract_number || '—'}</span>
                 <span style={{ flex: 1, fontSize: 12.5, color: 'var(--text-secondary)' }}>{b.counterparty || '—'}</span>
                 <span style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-faint)' }}>база v{b.known} → v{b.now}</span>
-                <button type="button" style={btnSm(false)} onClick={() => setTpl({ id: b.contract_id, number: b.contract_number, format: b.format })}>Шаблон ДС</button>
+                <button type="button" style={btnSm(false)} onClick={() => setTpl({ id: b.contract_id, number: b.contract_number, format: b.format, templateId: b.template_id })}>Шаблон ДС</button>
               </div>
             ))}
           </div>
@@ -155,7 +155,7 @@ export default function LegalRequestsPage() {
                   </td>
                   <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button type="button" title="Открыть редактор шаблона ДС этого договора — правка ляжет в него"
-                            style={{ ...btnSm(false), marginRight: 6 }} onClick={() => setTpl({ id: r.contract_id, number: r.contract_number, format: r.contract_format })}>Шаблон ДС</button>
+                            style={{ ...btnSm(false), marginRight: 6 }} onClick={() => setTpl({ id: r.contract_id, number: r.contract_number, format: r.contract_format, templateId: r.template_id, annexId: r.annex_id })}>Шаблон ДС</button>
                     <span style={{ display: 'inline-block', width: 1, height: 22, background: 'var(--border-card)', margin: '0 10px 0 4px', verticalAlign: 'middle' }} />
                     {mayEdit && r.status === 'открыта' && <button type="button" style={{ ...btnSm(false), marginRight: 6 }} onClick={() => take(r)}>Взять</button>}
                     {mayEdit && ['открыта', 'в работе'].includes(r.status) && <>

@@ -1,5 +1,6 @@
 /**
- * Полосы окна «Шаблоны ДС»: шапка, строка версии, уведомление «базовый изменился», ответвление, форматы, замечания, подвал.
+ * Полосы окна «Шаблоны ДС»: шапка, строка версии, уведомление «базовый изменился», форматы, замечания, подвал (шаблоны договора —
+ * `ContractTemplatesBar`).
  * Только показ: данные и действия — в `BaseTemplateModal.jsx` (спринт 2, 14.10.2026).
  */
 import { useState } from 'react'
@@ -10,9 +11,9 @@ import { fmtDate } from '@/lib/dates'
 const svg = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round', strokeLinejoin: 'round' }
 const roundBtn = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 10, cursor: 'pointer' }
 export const ghost = { display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 14px', border: '1px solid var(--border-card)', borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer' }
-const small = { display: 'inline-flex', alignItems: 'center', height: 28, padding: '0 11px', border: '1px solid var(--border-card)', borderRadius: 9, background: 'var(--bg-card)', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap', cursor: 'pointer' }
+export const small = { display: 'inline-flex', alignItems: 'center', height: 28, padding: '0 11px', border: '1px solid var(--border-card)', borderRadius: 9, background: 'var(--bg-card)', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap', cursor: 'pointer' }
 export const stripBox = { display: 'flex', alignItems: 'center', gap: 12, overflow: 'hidden', flex: '0 0 auto', padding: '9px 20px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-inner)', fontSize: 11.5, color: 'var(--text-secondary)' }
-const capTxt = { fontFamily: MONO, fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-cap)', whiteSpace: 'nowrap' }
+export const capTxt = { fontFamily: MONO, fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-cap)', whiteSpace: 'nowrap' }
 
 export function Head({ title, chip, canBack, edit, dirty, canHist, histOn, canEdit, onBack, onHist, onEdit, onClose }) {
   return (
@@ -61,7 +62,7 @@ export function Strip({ detail, dirty, custom, emptyDemo, onEmpty }) {
       <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>v{dirty ? `${detail.version + 1} · черновик` : detail.version}</span>
       <span style={{ whiteSpace: 'nowrap' }}>{detail.author || '—'} · {fmtDate(detail.updated_at)}</span>
       {custom && <><span style={{ width: 1, height: 14, background: 'var(--border-card)' }} />
-        <span style={capTxt}>кастомный · ответвлён от «{detail.title}» v{detail.base_version}</span></>}
+        <span style={capTxt}>шаблон договора · ответвлён от «{detail.base_title || '?'}» v{detail.base_version}</span></>}
       <EmptyToggle on={emptyDemo} onClick={onEmpty} />
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}><span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--accent)' }} />аккаунт</span>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}><span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--violet-fg)' }} />юрист</span>
@@ -98,16 +99,6 @@ export function BaseChangedBar({ baseTitle, known, now, changes, mayEdit, onKeep
         </span>
       </div>
       {open && <ChangeList changes={changes} />}
-    </div>
-  )
-}
-
-export function Fork({ baseTitle, format, mayCreate, onFork }) {
-  return (
-    <div style={{ ...stripBox, gap: 14 }}>
-      <span style={capTxt}>базовый шаблон «{baseTitle}» · формат договора: {format}</span>
-      <span style={{ fontSize: 11.5 }}>Договор собирается по базе. Своя редакция — отдельно, со своими версиями.</span>
-      {mayCreate && <span onClick={onFork} style={{ ...small, marginLeft: 'auto', borderColor: 'var(--violet-border)', color: 'var(--violet-fg)', background: 'var(--violet-tint)' }}>Сделать кастомный шаблон под договор</span>}
     </div>
   )
 }

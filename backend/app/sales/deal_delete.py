@@ -53,6 +53,11 @@ _EXTERNAL = (
     ("мастер-сделка", """SELECT i.deal_id FROM master_deal_items i WHERE i.deal_id = ANY(:ids)"""),
     # ДС (приложение) — документ, который уже у клиента; удаление сделки оставило бы его без сделки (ревью 23.10.2026)
     ("ДС к договору", "SELECT deal_id FROM sales_deal_annex_allocation WHERE deal_id = ANY(:ids)"),
+    # ревью 27.10.2026: сверка, ушедшая в документооборот, — сумма уже у бухгалтерии; сделку, отвязанную от пакета после
+    # «Отправить в ДО», удаление стирало вместе с замороженной суммой
+    ("сверка отправлена в ДО", "SELECT deal_id FROM final_recon_deals WHERE deal_id = ANY(:ids) AND sent_at IS NOT NULL"),
+    # СК, начисленная в закрытом месяце, — снимок расчёта; ключ без каскада ронял удаление с 500
+    ("СК начислена в закрытом месяце", "SELECT deal_id FROM sk_accruals WHERE deal_id = ANY(:ids)"),
 )
 
 

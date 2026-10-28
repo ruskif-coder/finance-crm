@@ -20,8 +20,13 @@ CREATE TABLE IF NOT EXISTS annex_tpl_templates (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_annex_tpl_base_title
     ON annex_tpl_templates (lower(title)) WHERE scope = 'base';
-CREATE UNIQUE INDEX IF NOT EXISTS uq_annex_tpl_custom_contract
-    ON annex_tpl_templates (contract_id) WHERE scope = 'custom';
+-- Один кастомный на договор — только до миграции 2026-10-27_annex_tpl_named (несколько именованных шаблонов на договор): при
+-- повторном накате всех миграций индекс не должен возвращаться, иначе договор с двумя шаблонами обрывает накат.
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'annex_tpl_templates' AND column_name = 'is_main') THEN
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_annex_tpl_custom_contract ON annex_tpl_templates (contract_id) WHERE scope = 'custom';
+    END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS ix_annex_tpl_templates_base ON annex_tpl_templates (base_template_id);
 
 COMMENT ON TABLE annex_tpl_templates IS

@@ -29,8 +29,15 @@ DRIFT_PCT, DRIFT_MIN = 0.01, 100
 
 
 def sync_limits(db: Session, camp: AdCampaign, client) -> dict:
-    """Подтянуть лимиты заведённых креативов РК. Сбой одного не останавливает остальных."""
-    plans = creative_plans(db, camp)
+    """Подтянуть лимиты заведённых креативов РК. Сбой одного не останавливает остальных.
+    Факт креативов не прочитан — лимиты РК не трогаем (ревью 27.10.2026): деление поровну без факта — перекрут."""
+    from app.ad.creative_fact import FactUnavailable
+    try:
+        plans = creative_plans(db, camp, strict=True)
+    except FactUnavailable as e:
+        log.warning("РК %s: факт креативов не прочитан — лимиты не менялись: %s", camp.id, e)
+        return {"campaign_id": camp.id, "updated": 0, "failed": [], "zero": [],
+                "skipped": "факт креативов недоступен — лимиты не менялись"}
     updated, failed, zero = 0, [], []
     crs = (db.query(AdCampaignCreative)
            .filter(AdCampaignCreative.campaign_id == camp.id,

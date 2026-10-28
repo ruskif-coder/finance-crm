@@ -156,7 +156,9 @@ const OPS_COLS = '88px 118px 90px 108px 108px 96px 84px 1fr 74px 74px 92px';
 // заголовки колонок были простыми span без обработчиков), поэтому сортировка и фильтры
 // не работали, хотя страница уже умела их грузить. Теперь состояние живёт на странице,
 // а компонент только зовёт колбэки.
-export default function CounterpartyCard({ data, onBack, onEdit, onEditTerms, onCopyRequisites, onOpenContracts, copied, canEdit = true,
+// signers — секция «Подписанты» (владелец 28.10.2026: у юрлица их несколько); рисует страница, здесь только место под ней.
+// onOpenContract(id) — строка договора ведёт в его карточку (владелец 28.10.2026), «В реестр →» — в реестр договоров.
+export default function CounterpartyCard({ data, onBack, onEdit, onEditTerms, onCopyRequisites, onOpenContracts, onOpenContract, copied, canEdit = true, signers = null,
                                            opsStatus = '', opsSortCol = 'date', opsSortDir = 'desc',
                                            onOpsStatus, onOpsSortCol, onOpsSortDir, onOpsMore, opsLoading = false }) {
   const { name, state, kind, site, brands, requisites, banks, belonging, terms,
@@ -226,6 +228,13 @@ export default function CounterpartyCard({ data, onBack, onEdit, onEditTerms, on
               </div>
             ))}
           </section>
+
+          {signers && (
+            <section style={{ ...card(0.1), padding: '20px 22px 16px' }}>
+              <span style={{ ...capTitle, paddingBottom: 8 }}>Подписанты</span>
+              {signers}
+            </section>
+          )}
 
           <section style={{ ...card(0.14), padding: '20px 22px 16px' }}>
             <span style={{ ...capTitle, paddingBottom: 8 }}>Принадлежность</span>
@@ -337,11 +346,12 @@ export default function CounterpartyCard({ data, onBack, onEdit, onEditTerms, on
                 <span>Срок опл.</span><span>Окончание</span><span>Документ</span>
               </div>
               {contracts.map(c => (
-                <div key={c.number} className="cc-row" style={{
+                <div key={c.id || c.number} className="cc-row" onClick={onOpenContract && c.id ? () => onOpenContract(c.id) : undefined}
+                  title={onOpenContract ? 'Открыть карточку договора' : undefined} style={{
                   minWidth: 700, display: 'grid', gridTemplateColumns: CONTRACT_COLS, gap: 14,
-                  alignItems: 'center', padding: '10px 4px', borderRadius: 10,
+                  alignItems: 'center', padding: '10px 4px', borderRadius: 10, cursor: onOpenContract ? 'pointer' : 'default',
                 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700 }}>{c.number}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: onOpenContract ? T.accent : undefined }}>{c.number}</span>
                   <span style={{ fontFamily: T.mono, fontSize: 12, color: T.t2 }}>{c.date}</span>
                   <span style={{ fontSize: 12, color: T.t2 }}>{c.format}</span>
                   <span style={{ fontFamily: T.mono, fontSize: 12, color: T.t4 }}>{c.prolongation}</span>

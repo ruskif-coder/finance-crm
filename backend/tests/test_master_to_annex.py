@@ -178,6 +178,14 @@ def test_signed_primary_stays_and_upds_close_by_fact(env):
         annex_signed._from_file = orig
 
 
+def _fill_signer(db, cp, fio, position):
+    """Дозаполнить подписанта заказчика по умолчанию (с 28.10.2026 — `counterparty_signers`) в транзакции теста: иначе документ неполон."""
+    from app.signers import service as SG
+    d = SG.default_of(db, cp.id)
+    SG.upsert_default(db, cp, {"director_name": (d and d.director_name) or fio, "signer_position": (d and d.signer_position) or position,
+                               "signer_basis": (d and d.signer_basis) or "Устава"}, None)
+
+
 def test_confirmed_unsigned_primary_keeps_number_and_is_refrozen_by_fact(env):
     from app.sales.models import SalesAnnex
     db, deals, u = env
@@ -187,9 +195,7 @@ def test_confirmed_unsigned_primary_keeps_number_and_is_refrozen_by_fact(env):
     from app.models import Contract
     cp = db.get(Contract, m.contract_id).counterparty    # подписант заказчика — иначе документ неполон и пересборка честно откажет
     cp.inn = cp.inn or "7700000000"
-    cp.director_name = cp.director_name or "Иванов Иван Иванович"
-    cp.signer_position = cp.signer_position or "Генеральный директор"
-    cp.signer_basis = cp.signer_basis or "Устава"
+    _fill_signer(db, cp, "Иванов Иван Иванович", "Генеральный директор")
     db.flush()
     p = _primary(db, m, deals, u, confirmed_no=free)
     TA.create(db, m, u)
@@ -213,8 +219,8 @@ def test_confirm_all_ds_of_package_in_one_action(env, monkeypatch):
     from app.models import Contract
     m = _package(db, deals, u, {"addons_separate": True})
     cp = db.get(Contract, m.contract_id).counterparty
-    cp.inn, cp.director_name = cp.inn or "7700000000", cp.director_name or "Иванов И.И."
-    cp.signer_position, cp.signer_basis = cp.signer_position or "Директор", cp.signer_basis or "Устава"
+    cp.inn = cp.inn or "7700000000"
+    _fill_signer(db, cp, "Иванов И.И.", "Директор")
     made = TA.create(db, m, u)
     admin = type("A", (), {"id": None, "name": "тест", "role": type("R", (), {"key": "admin", "is_master": True})()})()
     out = R.master_confirm_ds(m.code, db, admin)

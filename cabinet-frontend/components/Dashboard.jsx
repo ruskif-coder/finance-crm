@@ -68,11 +68,12 @@ const Guide = dynamic(() => import('./guide/Guide'), { ssr: false, loading: () =
 // Пометка «пролонгация» (владелец 15.10.2026): креатив сделки-копии («Скопировать
 // сделку») площадка получает на согласование повторно — без пометки это выглядит как
 // новый запуск. Тон тот же, что у чипа «продление» в списке кампаний.
-function ProlongationChip({ t }) {
+// `pin` — в шапке карточки рядом с площадкой, тем же размером, что её пин (владелец 27.10.2026).
+function ProlongationChip({ t, pin = false }) {
   if (!t.is_prolongation) return null
   return (
-    <span style={{ ...chip(C.violetTint, C.violetFg), fontSize: 10, marginLeft: 6,
-      verticalAlign: 'middle' }}
+    <span style={pin ? { ...chip(C.violetTint, C.violetFg, C.violetTint), fontSize: 11 }
+      : { ...chip(C.violetTint, C.violetFg), fontSize: 10, marginLeft: 6, verticalAlign: 'middle' }}
       title="Продолжение уже согласованной кампании на новый период">пролонгация</span>
   )
 }
@@ -253,6 +254,7 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
             {t.publisher}
           </span>
         )}
+        <ProlongationChip t={t} pin />
         <span style={{ flex: 1 }} />
         {/* Плашка старта: дата и сколько до неё осталось. Одна дата без остатка
             заставляет считать в уме, а решение принимают по остатку. */}
@@ -286,7 +288,6 @@ function Task({ t, reasons, canApprove, today, onDone, onErr }) {
           <span style={{ fontSize: 13, fontWeight: 600, ...ELLIPSIS }}
             title={`Креатив №${t.creative_no}${t.creative_title ? ` — ${t.creative_title}` : ''}`}>
             Креатив №{t.creative_no}{t.creative_title ? ` — ${t.creative_title}` : ''}
-            <ProlongationChip t={t} />
           </span>
           <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.faint, ...ELLIPSIS }}>
             {[t.form === 'BannerHtml5' ? 'banner html5' : t.form,

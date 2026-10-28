@@ -69,6 +69,13 @@ def add_context(
     }
 
 
+def _has_signer(db: Session, cp_id: int) -> bool:
+    """Подписант по умолчанию с должностью и основанием (28.10.2026 подписанты — в counterparty_signers)."""
+    from app.signers.service import default_of
+    d = default_of(db, cp_id)
+    return bool(d and (d.signer_position or "").strip() and (d.signer_basis or "").strip())
+
+
 @router.get("/counterparties")
 def lookup_counterparties(
     q: Optional[str] = None,
@@ -131,7 +138,7 @@ def lookup_counterparties(
         # Чем юрлицо УЖЕ заполнено — чтобы человек видел, что достаётся вместе с ним,
         # и что придётся дозаполнить. Подписант и счёт — те самые два поля, которых
         # 06.09.2026 не было у 209 контрагентов из 211.
-        "has_signer": bool((c.signer_position or "").strip() and (c.signer_basis or "").strip()),
+        "has_signer": _has_signer(db, c.id),
         "has_bank": bool(db.query(CounterpartyBankAccount.id)
                          .filter(CounterpartyBankAccount.counterparty_id == c.id).first()),
     } for c in rows]}

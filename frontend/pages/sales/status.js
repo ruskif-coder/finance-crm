@@ -2,6 +2,7 @@
 // Данные — сделки (/api/sales-status), встречи и комментарии — на бренд (sales_status_notes). Переносы и новые сделки копятся
 // в панели «В реестр запишется» и уходят по «Сохранить»; встречи, комментарии и дата статуса сохраняются сразу.
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import useLatest from '@/lib/useLatest'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import api, { auth } from '@/lib/api'
@@ -76,10 +77,12 @@ export default function SalesStatusPage() {
   useEffect(() => { setMayEdit(canDo('sales_status', 'edit')) }, [])
 
   const flash = useCallback((t) => { setToast(t); setTimeout(() => setToast(''), 2400) }, [])
+  const latest = useLatest()
   const load = useCallback(() => {
+    const fresh = latest()     // пропускаем ответ на прошлый выбор (ревью 27.10.2026): быстро сменил месяц — старый ответ приходил последним
     api.get('/sales-status', { ...auth(), params: { frm: months[0], to: months[2] } })
-      .then(r => { setData(r.data); setErr('') })
-      .catch(e => setErr(e.response?.data?.detail || 'Не удалось загрузить статусы продаж'))
+      .then(r => { if (fresh()) { setData(r.data); setErr('') } })
+      .catch(e => { if (fresh()) setErr(e.response?.data?.detail || 'Не удалось загрузить статусы продаж') })
   }, [months[0]]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [load])
   // Вернулись на вкладку — свежие сделки; пока в панели несохранённые переносы, не перечитываем

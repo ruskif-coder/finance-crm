@@ -81,17 +81,25 @@ def test_plan_pin_is_mp_sum_and_extras_add(deal_db):
     assert out["total_net"] == pytest.approx(out["base_plan_net"] + out["paid_extras_net"], abs=0.01)
 
 
-def test_pin_row_does_not_hide_payer_sk(deal_db):
-    """15.10.2026: строку сверки создаёт пин суммы ДС — пустой СК в ней не должен перекрывать СК плательщика."""
+def test_pin_row_does_not_hide_the_rule_sk(deal_db):
+    """15.10.2026: строку сверки создаёт пин суммы ДС — пустой СК в ней не должен перекрывать СК условий. С 27.10.2026
+    СК — правило «Агентских условий» по договору закрытия и агентству сделки."""
+    from datetime import date
+    from sqlalchemy import text
+    from app.agency_terms import service as T
     from app.final_recon import sk as SK
-    from app.models import Counterparty
     db, d = deal_db
-    payer = db.get(Counterparty, d.payer_counterparty_id) if d.payer_counterparty_id else None
-    if payer is None:
-        pytest.skip("у сделки нет плательщика")
-    payer.sk_mode, payer.sk_percent = "скидка в счёт", 10
+    if not d.ord_final_contract_id:
+        d.ord_final_contract_id = db.execute(text("SELECT id FROM contracts WHERE counterparty_id IS NOT NULL LIMIT 1")).scalar()
+    if not (d.agency_id or d.advertiser_id):
+        d.agency_id = db.execute(text("SELECT id FROM sales_agencies LIMIT 1")).scalar()
+    db.flush()
+    T.save_rule(db, {"kind": "основная", "contract_id": d.ord_final_contract_id, "agency_id": d.agency_id,
+                     "advertiser_id": None if d.agency_id else d.advertiser_id, "brand_id": d.brand_id,
+                     "service_id": d.service_id, "mode": "скидка в счёт", "percent": 10,
+                     "valid_from": date(2000, 1, 1)}, _U())
     CL.set_mode(db, d, "plan", None, _U(), privileged=False)
-    assert SK.of_deal(db, d)["source"] == "payer"
+    assert SK.of_deal(db, d)["source"] == "rule"
     out = CL.compute(db, d)
     assert out["sk"]["mode"] == "скидка в счёт"
     assert out["total_net"] == pytest.approx(out["sk"]["before_net"] - out["sk"]["amount_net"], abs=0.01)

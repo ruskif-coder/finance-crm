@@ -99,3 +99,23 @@ def test_pipeline_with_our_own_deals_is_not_deleted(db, admin):
         sdir.delete_pipeline(p.id, db=db, current_user=admin)
     assert e.value.status_code == 409 and "заведённых у нас" in e.value.detail
     assert db.query(SalesDeal).filter(SalesDeal.id == d.id).count() == 1
+
+
+def test_sent_recon_and_booked_sk_block_admin_delete(db):
+    """Ревью 27.10.2026 (v2.7.0..): удаление админом стирало итоговую сверку, уже отправленную в документооборот, — сделка,
+    отвязанная от пакета после «Отправить в ДО», удалялась вместе с замороженной суммой. А начисленная СК закрытого месяца
+    (`sk_accruals`, ключ без каскада) роняла удаление с 500. Оба следа — уже не только наши: блок с перечнем."""
+    from datetime import datetime
+    from sqlalchemy import text
+    from app.final_recon.models import FinalReconDeal
+    from app.sales import deal_delete as DD
+    d = _bare_deal(db, tag="recon-sent")
+    assert DD.external(db, [d.id]) == {}
+    db.add(FinalReconDeal(deal_id=d.id, sent_at=datetime.utcnow(), base_net=1000))
+    db.flush()
+    assert "сверка отправлена в ДО" in DD.external(db, [d.id]).get(d.id, [])
+    e = _bare_deal(db, tag="sk-booked")
+    db.execute(text("INSERT INTO sk_months (period) VALUES ('2019-02') ON CONFLICT DO NOTHING"))
+    db.execute(text("""INSERT INTO sk_accruals (period, deal_id, kind, mode, percent, base_net, amount_net)
+                       VALUES ('2019-02', :d, 'основная', 'постоплата', 10, 1000, 100)"""), {"d": e.id})
+    assert "СК начислена в закрытом месяце" in DD.external(db, [e.id]).get(e.id, [])

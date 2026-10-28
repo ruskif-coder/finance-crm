@@ -7,6 +7,7 @@ import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { GenTitleBtn, MONO, UI, Z } from '../salesTableKit';
 import BriefFiles from '../deal/BriefFiles';
+import WorkTermsNote from '../agencyTerms/WorkTermsNote';
 import { overlayClose } from '@/lib/overlay'
 import { buildTitle, separatePriceSet } from '@/lib/dealTitle'
 import { isCpc, isCpm, rowClicks, rowImp, rowNet } from '@/lib/mpRow'
@@ -422,6 +423,8 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
 
      Услуга и поверхность — из строк размещения: своего поля под них у плана нет. */
   const _lblT = (opts, v) => (opts.find(o => String(o.value) === String(v)) || {}).label;
+  // Услуги плана — названия позиций строк (своего поля у плана нет): по ним плашка «Условия работы» подбирает условия на услугу
+  const mpServices = useMemo(() => [...new Set(main.rows.map(r => (r.position || '').trim()).filter(Boolean))], [main.rows]);
   const autoTitle = useMemo(() => {
     const svcRows = main.rows.filter(r => (r.position || '').trim());
     const names = [...new Set(svcRows.map(r => r.position.trim()))];
@@ -808,6 +811,10 @@ export default function MediaPlanBuilder({ brief, catalog = CATALOG, extraCatalo
                       })}
                     </div>
                   </div>
+                  {/* «Условия работы» (Агентские условия, 27.10.2026): договорённости агентства / клиента, подходящие брифу, —
+                      под брифом на всю ширину, условия блоками в ряд (владелец 27.10.2026) */}
+                  <WorkTermsNote agencyId={bf.agency_id} advertiserId={bf.advertiser_id} brandId={bf.brand_id} period={bf.period}
+                    services={mpServices} />
                 </>);
               })()}
             </Card>

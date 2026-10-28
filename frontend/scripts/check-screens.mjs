@@ -24,7 +24,7 @@ const SKIP = new Set(['node_modules', '.next', 'public', 'scripts'])
 const LATEST_PAGES = [
   'pages/finance/report.js', 'pages/finance/pnl.js', 'pages/finance/plan-fact.js',
   'pages/finance/balance.js', 'pages/finance/receivables.js', 'pages/finance/operations.js',
-  'pages/sales/dashboard.js', 'pages/settings/audit.js',
+  'pages/sales/dashboard.js', 'pages/settings/audit.js', 'components/agencyTerms/CalcView.jsx',
 ]
 
 // Вспомогательные списки выпадашек и справочники формы: пустой список при сбое там не
@@ -36,6 +36,7 @@ const EMPTY_CATCH_FROZEN = {
   'pages/sales/dashboard.js': 2,         // колокольчик уведомлений, каталог стадий
   'components/DealCreateForm.js': 2,     // выпадашки стадий и брендов
   'components/notify/TemplateEditor.jsx': 1,  // текстовая часть предпросмотра
+  'components/agencyTerms/WorkTermsNote.jsx': 1,  // плашка-подсказка в МП: нет права на условия — нет плашки
 }
 
 // Право проверено выше по разметке (mayEdit/canEdit в обёртке), либо удаляется строка

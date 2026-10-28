@@ -61,8 +61,8 @@ def _contract_no(db: Session, r: LegalRequest) -> Optional[str]:
     return c.contract_number if c else None
 
 
-def _blocks_of(db: Session, contract) -> list:
-    version, _ = tpl_doc.resolve(db, contract)
+def _blocks_of(db: Session, contract, annex=None) -> list:
+    version, _ = tpl_doc.resolve(db, contract, annex)
     return version.blocks if version else []
 
 
@@ -79,13 +79,15 @@ def _out(db: Session, rows: list) -> list:
         {x for r in rows for x in (r.created_by, r.taken_by, r.closed_by) if x})).all()} if rows else {}
     contracts = {c.id: c for c in db.query(Contract).filter(Contract.id.in_({r.contract_id for r in rows})).all()} if rows else {}
     annexes = {a.id: a for a in db.query(SalesAnnex).filter(SalesAnnex.id.in_({r.annex_id for r in rows})).all()} if rows else {}
-    blocks = {cid: _blocks_of(db, c) for cid, c in contracts.items()}
+    blocks = {r.id: _blocks_of(db, contracts[r.contract_id], annexes.get(r.annex_id)) for r in rows if r.contract_id in contracts}
+    # Шаблон, по которому собирается ДС заявки: «Шаблон ДС» из заявки открывает именно его (у договора их несколько, 27.10.2026).
+    picked = {r.id: tpl_doc.pick(db, contracts[r.contract_id], annexes.get(r.annex_id))["template"] for r in rows if r.contract_id in contracts}
     out = []
     for r in rows:
         c, a = contracts.get(r.contract_id), annexes.get(r.annex_id)
         out.append({
             "id": r.id, "status": r.status, "text": r.text, "answer": r.answer, "block_id": r.block_id,
-            "block": _block_label(blocks.get(r.contract_id, []), r.block_id),
+            "block": _block_label(blocks.get(r.id, []), r.block_id),
             "annex_id": r.annex_id, "annex_number": (a.number if a else None) or f"черновик #{r.annex_id}",
             "period_from": a.period_from if a else None, "period_to": a.period_to if a else None,
             "contract_id": r.contract_id, "contract_number": c.contract_number if c else None,
@@ -95,6 +97,7 @@ def _out(db: Session, rows: list) -> list:
             "taken_by": users.get(r.taken_by), "taken_at": r.taken_at,
             "closed_by": users.get(r.closed_by), "closed_at": r.closed_at,
             "result_version_id": r.result_version_id,
+            "template_id": picked[r.id].id if picked.get(r.id) else None,
         })
     return out
 
@@ -134,7 +137,7 @@ def create(payload: CreateIn, db: Session = Depends(get_db), user: User = Depend
     annex_in_scope(db, user, a)                     # заявкой блокируется выпуск ДС — только по своему (аудит 21.10.2026)
     c = db.query(Contract).filter(Contract.id == a.contract_id).first()
     try:
-        r = S.create(db, a, _blocks_of(db, c), payload.block_id, payload.text, user)
+        r = S.create(db, a, _blocks_of(db, c, a), payload.block_id, payload.text, user)
     except S.LegalError as e:
         _raise(e)
     db.commit()

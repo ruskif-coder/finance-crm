@@ -19,8 +19,9 @@ const Z_BOX = Z.overlay + 2
 
 // Поповер выбора значения у места клика (Агентство / Рекламодатель / Бренд / Услуга).
 // Дизайн-хендофф v2 дашборда сейлза: 216px, поиск, ✓ на текущем, оптимистичный выбор.
-// props: anchor(DOMRect), title, dealLabel, options[{value,label}], value, onPick(value|null), onClose, clearLabel
-export default function ValuePopover({ anchor, title, dealLabel, options, value, onPick, onClose, clearLabel, onAddNew }) {
+// props: anchor(DOMRect), title, dealLabel, options[{value,label}], value, onPick(value|null), onClose, clearLabel,
+// onAddNew(name), addLabel(name) — подпись строки добавления, когда «добавить» значит не просто «завести значение»
+export default function ValuePopover({ anchor, title, dealLabel, options, value, onPick, onClose, clearLabel, onAddNew, addLabel }) {
   const [q, setQ] = useState('')
   const boxRef = useRef(null)
   const inputRef = useRef(null)
@@ -86,7 +87,7 @@ export default function ValuePopover({ anchor, title, dealLabel, options, value,
                 title={canAdd ? undefined : 'Введите название в поле поиска, затем нажмите'}
                 style={{ padding: '7px 8px', borderRadius: 7, fontSize: 12, cursor: 'pointer', fontWeight: canAdd ? 700 : 600, color: canAdd ? 'var(--accent)' : 'var(--text-muted)', borderTop: '1px solid var(--border-inner)', marginTop: 4 }}
                 onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-tint)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                {canAdd ? `+ Добавить «${q.trim()}»` : '+ Добавить новый'}
+                {addLabel ? addLabel(canAdd ? q.trim() : '') : (canAdd ? `+ Добавить «${q.trim()}»` : '+ Добавить новый')}
               </div>
             )
           })()}

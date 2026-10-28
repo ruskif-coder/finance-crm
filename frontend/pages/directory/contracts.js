@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { useState, useEffect, useRef } from 'react'
 import Head from 'next/head'
 import api, { auth } from '@/lib/http'
@@ -178,6 +179,11 @@ export default function Contracts() {
     const q = router.query.q
     if (typeof q === 'string' && q) setSearch(q)
   }, [router.query.q])
+  // «+ Договор» из карточки контрагента (28.10.2026): `?new=<id контрагента>` — сразу форма нового договора с этим контрагентом.
+  useEffect(() => {
+    const cp = Number(router.query.new)
+    if (cp) { setShowForm(true); setNewForm(p => ({ ...p, counterparty_id: cp })) }
+  }, [router.query.new])
   const [formatFilter, setFormatFilter] = useState('')
   const [prolongFilter, setProlongFilter] = useState('')
   const [ordFilter, setOrdFilter] = useState('')   // '' | 'yes' | 'no' — отметка ОРД
@@ -222,6 +228,7 @@ export default function Contracts() {
   const isAdmin = role === 'admin'
   const mayEdit = isAdmin || can(perms, 'contracts', 'edit')
   const mayDelete = isAdmin || canDelete(perms, 'contracts')
+  const mayAnnexes = isAdmin || can(perms, 'annexes', 'view')
 
   const flash = (m) => { setOk(m); setTimeout(() => setOk(''), 2500) }
 
@@ -788,7 +795,10 @@ export default function Contracts() {
                     <div>{mayEdit && <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleOne(c.id)} />}</div>
                     <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)', padding: '0 8px' }}>{c.id}</div>
                     <div style={{ padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.counterparty_name || ''}><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{c.counterparty_name || dash}</span>{!c.linked && <span title="Не привязан к реестру" style={{ marginLeft: 5, color: T.warning }}>⚠</span>}</div>
-                    <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.contract_number || dash}</div>
+                    <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {/* Номер ведёт в карточку договора — всё, что к нему привязано (28.10.2026) */}
+                      <Link href={`/directory/contracts/${c.id}`} onClick={e => e.stopPropagation()} style={{ color: 'inherit' }}>{c.contract_number || dash}</Link>
+                    </div>
                     <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)', padding: '0 8px', whiteSpace: 'nowrap' }}>{fmtDate(c.contract_date)}</div>
                     <div style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', padding: '0 8px' }}>{c.inn || dash}</div>
                     <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.marketing_name || ''}>{c.marketing_name || dash}</div>
@@ -840,6 +850,9 @@ export default function Contracts() {
                       ) : dash}
                     </div>
                     <div style={{ display: 'inline-flex', gap: 2, justifyContent: 'flex-end' }}>
+                      {/* ДС договора — уже подтверждённые приложения (владелец 28.10.2026), перед шаблоном ДС */}
+                      {mayAnnexes && <button onClick={() => setTplContract({ id: c.id, number: c.contract_number, format: c.cooperation_format, view: 'annexes' })}
+                              title="ДС договора — подтверждённые приложения" style={icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M8 7h11v13H8z" /><path d="M5 17V4h11" /><path d="M11 12h5M11 16h3" /></svg></button>}
                       <button onClick={() => setTplContract({ id: c.id, number: c.contract_number, format: c.cooperation_format })}
                               title={behind[c.id] ? `Базовый шаблон изменился (v${behind[c.id].known} → v${behind[c.id].now}) — решите: оставить свой или перенять базу` : 'Шаблон ДС, прикреплённый к договору'}
                               style={behind[c.id] ? { ...icoBtn, color: 'var(--warning-fg)', background: 'var(--warning-tint)' } : icoBtn}><svg width="14" height="14" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M9 13h6M9 17h4" /></svg></button>

@@ -3,8 +3,11 @@
  *
  * Два входа в одно окно:
  *  — из реестра приложений («Базовые шаблоны»): список базовых шаблонов, форматы, новый вариант, правка юристом;
- *  — из реестра договоров (`contract`): шаблон, прикреплённый к договору, — базовый его формата (просмотр) или кастомный
- *    (версии, история, «базовый изменился»).
+ *  — из реестра договоров и «Юр запросов» (`contract`): шаблоны договора — именованные, их несколько, один может быть основным
+ *    (27.10.2026), — и базовый его формата (просмотр); у шаблона договора версии, история, «базовый изменился». Из «Юр запросов»
+ *    `contract.templateId` открывает шаблон ДС заявки, `contract.annexId` переключает этот ДС на новый шаблон, если юрист заведёт его.
+ *    Без `templateId` окно открывается карточками шаблонов договора; `contract.view = 'annexes'` — «ДС договора», уже подтверждённые
+ *    приложения (кнопка в строке реестра договоров, 28.10.2026).
  * Права — секция `annex_templates`: просмотр / создание (кастомный, новый вариант) / правка (версии, форматы, откат).
  */
 import { useEffect, useState } from 'react'
@@ -19,7 +22,10 @@ import TemplatePick from '@/components/annex/TemplatePick'
 import TemplateSheet from '@/components/annex/TemplateSheet'
 import TemplateHistory from '@/components/annex/TemplateHistory'
 import { BlockList, PointEditor } from '@/components/annex/TemplateEditor'
-import { Head, Strip, BaseChangedBar, Fork, FormatsBar, Issues, Foot, Reason } from '@/components/annex/TemplateBars'
+import { Head, Strip, BaseChangedBar, FormatsBar, Issues, Foot, Reason } from '@/components/annex/TemplateBars'
+import ContractTemplatesBar from '@/components/annex/ContractTemplatesBar'
+import ContractTemplateCards from '@/components/annex/ContractTemplateCards'
+import ContractAnnexList from '@/components/annex/ContractAnnexList'
 
 export default function BaseTemplateModal({ open, onClose, contract }) {
   const [step, setStep] = useState('pick')
@@ -34,15 +40,21 @@ export default function BaseTemplateModal({ open, onClose, contract }) {
   const [busy, setBusy] = useState(false)
   const [seq, setSeq] = useState(1)
   const [perm, setPerm] = useState({ edit: false, create: false })
+  const [tplId, setTplId] = useState(null)
+  const [view, setView] = useState('cards')              // договор: cards — шаблоны карточками, tpl — открытый шаблон, annexes — ДС договора
+  useEffect(() => {
+    setTplId(open && contract ? contract.templateId || null : null)
+    setView(!contract ? 'cards' : contract.view || (contract.templateId ? 'tpl' : 'cards'))
+  }, [open, contract])
   useEffect(() => {
     const p = getPermissions()
     setPerm({ edit: can(p, 'annex_templates', 'edit'), create: can(p, 'annex_templates', 'create') })
   }, [])
 
-  const D = useTemplateData({ open, contract, baseId, step })
+  const D = useTemplateData({ open, contract, baseId, step, tplId })
   const detail = D.detail
   const custom = !!detail && detail.scope === 'custom'
-  const tpl = contract ? !!detail : step !== 'pick'
+  const tpl = contract ? view === 'tpl' && !!detail : step !== 'pick'
   const blocks = draft || (detail ? detail.blocks : [])
   const issues = check(blocks)
   const ok = issues.length === 0
@@ -60,7 +72,13 @@ export default function BaseTemplateModal({ open, onClose, contract }) {
     reset(); setStep('pick'); setBaseId(null); onClose()
   }
   const pickBase = (id) => { reset(); setBaseId(id); setStep('tpl'); setSel('p1') }
-  const back = () => { if (sure('Есть несохранённые правки шаблона. Выйти без сохранения?')) { reset(); setStep('pick'); setBaseId(null) } }
+  const back = () => {
+    if (!sure('Есть несохранённые правки шаблона. Выйти без сохранения?')) return
+    reset()
+    if (contract) { setView('cards'); return }
+    setStep('pick'); setBaseId(null)
+  }
+  const openTpl = (id) => { reset(); setTplId(id); setView('tpl') }
   const startEdit = () => { setDraft(detail.blocks.map(b => ({ ...b }))); setEdit(true); setSel('p1') }
   const add = () => {
     const id = `n${seq}`
@@ -90,6 +108,14 @@ export default function BaseTemplateModal({ open, onClose, contract }) {
       setDraft(base.blocks.map(b => ({ ...b }))); setAdopt(true); setEdit(true); setSel('p1')
     } catch (_) { D.setErr({ message: 'Не удалось загрузить базовый шаблон', issues: [] }) }
   }
+  const pickTpl = (id) => { if (id !== (detail && detail.id) && sure('Есть несохранённые правки шаблона. Перейти без сохранения?')) { reset(); setTplId(id) } }
+  const createTpl = async (title, sourceId, main) => {
+    setBusy(true)
+    const id = await D.fork({ title, sourceId, main, annexId: contract.annexId })
+    setBusy(false)
+    if (id) openTpl(id)
+    return !!id
+  }
   const toggleFormat = (f) => {
     const has = detail.formats.includes(f)
     D.setFormats(detail.id, has ? detail.formats.filter(x => x !== f) : [...detail.formats, f])
@@ -97,15 +123,15 @@ export default function BaseTemplateModal({ open, onClose, contract }) {
 
   const inEdit = tpl && edit && !hist
   const rows = D.versions.map(v => ({ v: v.version, date: fmtDate(v.created_at), author: v.author, changes: v.changes || [] }))
-  const title = contract ? `Шаблон ДС · ${contract.number || 'договор'}` : (tpl ? 'Базовый шаблон ДС' : 'Базовые шаблоны ДС')
-  const chip = !tpl || !detail ? null : custom ? `Кастомный · v${detail.version}` : detail.title
+  const title = contract ? `${view === 'annexes' ? 'ДС договора' : 'Шаблон ДС'} · ${contract.number || 'договор'}` : (tpl ? 'Базовый шаблон ДС' : 'Базовые шаблоны ДС')
+  const chip = !tpl || !detail ? null : custom ? `${detail.title} · v${detail.version}` : detail.title
   const serverIssues = D.err && D.err.issues && D.err.issues.length ? D.err : null
 
   return (
     <div {...overlayClose(close)}
          style={{ position: 'fixed', inset: 0, zIndex: Z.overlay, background: 'var(--scrim)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '32px 24px', boxSizing: 'border-box', overflowY: 'auto', fontFamily: UI }}>
       <div style={{ width: '100%', maxWidth: edit ? 1872 : 1180, background: 'var(--bg-card)', borderRadius: 18, boxShadow: 'var(--shadow-float)', display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 64px)' }}>
-        <Head title={title} chip={chip} canBack={!contract && tpl} edit={inEdit} dirty={!!draft}
+        <Head title={title} chip={chip} canBack={contract ? view === 'tpl' : tpl} edit={inEdit} dirty={!!draft}
               canHist={tpl && !!detail && !edit} histOn={hist} canEdit={tpl && !!detail && !edit && !hist && mayEditNow}
               onBack={back} onHist={() => { setHist(!hist); setHsel(null) }} onEdit={startEdit} onClose={close} />
 
@@ -113,15 +139,20 @@ export default function BaseTemplateModal({ open, onClose, contract }) {
           <div style={{ padding: '10px 20px', background: 'var(--danger-bg)', borderBottom: '1px solid var(--danger-border)', color: 'var(--danger-fg)', fontSize: 12.5 }}>{D.err.message}</div>
         )}
         {contract && D.info && D.info.source === 'none' && <Reason text={D.info.reason} />}
+        {contract && view === 'cards' && D.info && (
+          <ContractTemplateCards templates={D.info.templates || []} mayCreate={perm.create} busy={busy} onPick={openTpl} onCreate={createTpl} />
+        )}
+        {contract && view === 'annexes' && <ContractAnnexList contractId={contract.id} />}
         {tpl && detail && <Strip detail={detail} dirty={!!draft} custom={custom} emptyDemo={emptyDemo} onEmpty={() => setEmptyDemo(!emptyDemo)} />}
-        {contract && D.info && D.info.source === 'base' && detail && !edit && (
-          <Fork baseTitle={detail.title} format={D.info.format} mayCreate={perm.create} onFork={D.fork} />
+        {contract && view === 'tpl' && D.info && D.info.templates && !edit && !hist && (
+          <ContractTemplatesBar templates={D.info.templates} selectedId={detail ? detail.id : null} mayCreate={perm.create} mayEdit={perm.edit} busy={busy}
+                                onSelect={pickTpl} onCreate={createTpl} onRename={D.rename} onMain={D.setMain} />
         )}
         {!contract && tpl && detail && !edit && !hist && (
           <FormatsBar detail={detail} known={D.known} fmtMap={D.fmtMap} bases={D.bases} mayEdit={perm.edit} onToggle={toggleFormat} />
         )}
         {custom && detail.base && detail.base.changed && !edit && !hist && (
-          <BaseChangedBar baseTitle={detail.title} known={detail.base.known} now={detail.base.now} changes={(D.info && D.info.base_changes) || []}
+          <BaseChangedBar baseTitle={detail.base_title} known={detail.base.known} now={detail.base.now} changes={(D.info && D.info.base_changes) || []}
                           mayEdit={perm.edit} onKeep={() => D.keepOwn(detail.id)} onAdopt={adoptBase} />
         )}
         {!contract && !tpl && <TemplatePick bases={D.bases} canCreate={perm.create} onPick={pickBase} onAdd={(t, src) => D.createBase(t, src)} />}

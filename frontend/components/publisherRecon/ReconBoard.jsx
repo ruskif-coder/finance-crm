@@ -1,6 +1,7 @@
 // «Взаимодействие → Сверки» (хендофф docs/паблишеры взаимодействие.zip, 26.10.2026): плитки-фильтры, месяц,
 // жёлтая строка о прошлых месяцах, таблица площадка × месяц. Данные — /api/publisher-recon/board.
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import useLatest from '@/lib/useLatest'
 import api, { auth } from '@/lib/http'
 import { MONO, card } from '@/components/salesTableKit'
 import { grpDash, monthLabel } from '@/lib/salesFormat'
@@ -31,11 +32,13 @@ export default function ReconBoard({ month, setMonth, current, canEdit, onAnswer
   const [busy, setBusy] = useState(false)
   const [toast, flash] = useToast()
 
+  const latest = useLatest()
   const load = useCallback(() => {
+    const fresh = latest()     // пропускаем ответ на прошлый выбор (ревью 27.10.2026): быстро сменил месяц — старый ответ приходил последним
     api.get(`/publisher-recon/board?period=${month}`, auth())
-      .then(r => { setData(r.data); setErr('') })
-      .catch(e => { setData(null); setErr(e?.response?.data?.detail || 'Не удалось загрузить сверки') })
-  }, [month])
+      .then(r => { if (fresh()) { setData(r.data); setErr('') } })
+      .catch(e => { if (fresh()) { setData(null); setErr(e?.response?.data?.detail || 'Не удалось загрузить сверки') } })
+  }, [month, latest])
   useEffect(() => { load() }, [load])
   useRefreshOnReturn(load)
 
@@ -54,6 +57,8 @@ export default function ReconBoard({ month, setMonth, current, canEdit, onAnswer
   }
   const sendAll = async () => {
     if (!c.ready || busy) return
+    // необратимо и уходит площадкам в кабинет и почту — спрашиваем, сколько и за какой месяц (ревью 27.10.2026)
+    if (!window.confirm(`Отправить сверку за ${monthLabel(month)} всем готовым площадкам — ${c.ready}? Карточки появятся у них в кабинете.`)) return
     setBusy(true)
     try {
       const { data: d } = await api.post('/publisher-recon/send-all', { period: month }, auth())

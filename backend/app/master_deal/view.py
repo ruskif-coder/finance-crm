@@ -32,7 +32,7 @@ def issue(db: Session, m) -> dict:
             "due_days": IS.due_days(db)}
 
 
-def _deals(db: Session, deals: list, fin: bool) -> tuple:
+def _deals(db: Session, deals: list, fin: bool, special: bool = False) -> tuple:
     from app.final_recon import closing as CL
     from app.master_deal import efficiency as EF
     from app.sales.catalog import Catalog
@@ -51,7 +51,10 @@ def _deals(db: Session, deals: list, fin: bool) -> tuple:
                     "brand": annex_mod.deal_brand(db, [d.id]), "service": svc.get(d.service_id),
                     "verdict": st["verdict"], "mode": st["mode"], "total_net": st["total_net"], "total_gross": st["total_gross"],
                     "price": MDOC.deal_price(db, d.id), **MS.deal_status(db, d)})
-    return out, ({"rows": eff, "total": EF.total(eff)} if fin else None)
+    if not fin:
+        return out, None
+    res = {"rows": eff, "total": EF.total(eff)}
+    return out, (EF.with_full(db, deals, res) if special else res)
 
 
 def card(db: Session, m, user, deals: list) -> dict:
@@ -61,7 +64,7 @@ def card(db: Session, m, user, deals: list) -> dict:
     from app.models import Contract, Counterparty
     c = db.get(Contract, m.contract_id)
     payer = db.get(Counterparty, m.payer_counterparty_id) if m.payer_counterparty_id else None
-    out_deals, eff = _deals(db, deals, SC.can_finance(db, user))
+    out_deals, eff = _deals(db, deals, SC.can_finance(db, user), SC.can_special(db, user))
     lay = LY.layout(db, m)
     issued_list = PK.issued(db, m.contract_id)
     return {

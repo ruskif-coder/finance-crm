@@ -139,6 +139,8 @@ function ReconModal({ r, st, label, tone, canApprove, totals: t, onClose, onDone
   const [msgFile, setMsgFile] = useState(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  // Ответ ушёл, а файл нет (ревью 27.10.2026): повтор слал ответ заново — второе сообщение. Помним, к чему досылать файл.
+  const [pending, setPending] = useState(null)
   const [mounted, setMounted] = useState(false)
   useEffect(() => { setMounted(true) }, [])
   const ours = r.our_volume || 0
@@ -151,15 +153,23 @@ function ReconModal({ r, st, label, tone, canApprove, totals: t, onClose, onDone
 
   const send = async (kind, body, volume, f) => {
     setBusy(true); setErr('')
+    let mid = pending?.messageId || null
     try {
-      const { data } = await api.post(`/recons/${r.id}/answer`, { kind, body: body || null, volume }, auth())
+      if (!mid) mid = (await api.post(`/recons/${r.id}/answer`, { kind, body: body || null, volume }, auth())).data.message_id
       if (f) {
         const fd = new FormData()
         fd.append('file', f)
-        await api.post(`/recons/${r.id}/file?message_id=${data.message_id}`, fd, auth())
+        await api.post(`/recons/${r.id}/file?message_id=${mid}`, fd, auth())
       }
+      setPending(null)
       onDone()
-    } catch (e) { setErr(e.response?.data?.detail || 'Не удалось отправить') } finally { setBusy(false) }
+    } catch (e) {
+      const d = e.response?.data?.detail
+      if (mid && f) {
+        setPending({ messageId: mid, file: f })
+        setErr(`Ответ отправлен, а файл не прикрепился${d ? `: ${d}` : ''} — прикрепите его ещё раз`)
+      } else setErr(d || 'Не удалось отправить')
+    } finally { setBusy(false) }
   }
   const main = () => {
     if (diffOpen) {
@@ -297,7 +307,10 @@ function ReconModal({ r, st, label, tone, canApprove, totals: t, onClose, onDone
         <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '12px 22px 14px', borderTop: `1px solid ${C.inner}` }}>
           <span style={{ fontSize: 11.5, color: err ? C.danger : C.muted, lineHeight: 1.45, flex: '1 1 280px' }}>
             {err || '«Согласен» — ваш ответ; итог фиксирует SIMB-AD, после этого цифра без возврата идёт в акт и себестоимость.'}</span>
-          {canAct && (<>
+          {!!pending && (
+            <button disabled={busy} onClick={() => send(null, null, null, pending.file)} style={{ height: 34, padding: '0 16px', borderRadius: 10, border: 0, background: C.warning, color: C.onFill, fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', fontFamily: UI }}>
+              Прикрепить файл ещё раз</button>)}
+          {canAct && !pending && (<>
             <button onClick={() => { setDiffOpen(!diffOpen); setErr('') }} style={{ height: 34, padding: '0 15px', borderRadius: 10, border: `1px solid ${C.warningBorder}`, background: C.card, color: C.warningFg, fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', fontFamily: UI }}>
               {diffOpen ? 'Отмена' : 'Есть расхождение'}</button>
             <button disabled={busy} onClick={main} style={{ height: 34, padding: '0 16px', borderRadius: 10, border: 0, background: diffOpen ? C.warning : C.income, color: C.onFill, fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', fontFamily: UI }}>

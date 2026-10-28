@@ -109,6 +109,12 @@
           "label": "Годовой план",
           "href": "/sales/year-plan",
           "perm": "year_plan"
+        },
+        {
+          "key": "agency_terms",
+          "label": "Агентские условия",
+          "href": "/sales/agency-terms",
+          "perm": "sk_terms"
         }
       ]
     },
