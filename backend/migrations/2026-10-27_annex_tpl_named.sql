@@ -7,9 +7,9 @@
 -- получает имя и становится основным — так он и работал: собирал все ДС договора. Условие `title IS NULL` выполняется только
 -- при первом накате, повторный прогон отметку «основной» не трогает.
 ALTER TABLE annex_tpl_templates ADD COLUMN IF NOT EXISTS is_main BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE annex_tpl_templates DROP CONSTRAINT IF EXISTS annex_tpl_scope_shape;  -- до UPDATE: старое ограничение требовало у шаблона договора пустое имя (прод 28.10.2026)
 UPDATE annex_tpl_templates SET title = 'Шаблон договора', is_main = true WHERE scope = 'custom' AND title IS NULL;
 
-ALTER TABLE annex_tpl_templates DROP CONSTRAINT IF EXISTS annex_tpl_scope_shape;
 ALTER TABLE annex_tpl_templates ADD CONSTRAINT annex_tpl_scope_shape CHECK (
     (scope = 'base'   AND title IS NOT NULL AND contract_id IS NULL     AND base_template_id IS NULL     AND NOT is_main) OR
     (scope = 'custom' AND title IS NOT NULL AND contract_id IS NOT NULL AND base_template_id IS NOT NULL));
