@@ -25,7 +25,10 @@ def test_view_fact_equals_stats_base():
         view = {(r[1], r[0]): r[2] for r in db.execute(text("""
             SELECT v.publisher_id, c.id, v.fact FROM pub.campaign_v1 v
               JOIN launch_prep_target t ON t.id = v.placement_id
-              JOIN ad_campaign c ON c.deal_id = t.deal_id""")).all()}
+              JOIN ad_campaign c ON c.deal_id = t.deal_id
+             -- Согласованный месяц кабинет держит по итогу сверки, а не по живой статистике (владелец 29.10.2026):
+             -- там расхождение со «Статистикой» — правило, а не поломка; сверяем только открытые месяцы.
+             WHERE NOT v.reconciled""")).all()}
         both = [r for r in rows if (r["campaign_id"], r["publisher_id"]) in view]
         if not both:
             pytest.skip("витрина не видит ни одного размещения текущих РК")

@@ -94,10 +94,9 @@ def test_full_cycle_writes_three_numbers_and_spreads_the_total(ready):
 
     S.reply(db, req, _U(), "предлагаем", row["ours"] + 400, today=date(2026, 10, 27))
     assert req.due_at == date(2026, 10, 29)                            # наш ответ продлевает срок
-    S.publisher_answer(db, req, "Площадка", None, agree=True)          # «Согласен» — с нашей цифрой
+    S.publisher_answer(db, req, "Площадка", None, agree=True)          # «Согласен» — с нашей цифрой, и это итог
     assert req.recon.their_volume == row["ours"] + 400
 
-    S.agree(db, req, _U(), row["ours"] + 400)
     lines = db.execute(text("SELECT sum(agreed_volume), sum(our_volume) FROM publisher_recon_line WHERE request_id = :r"),
                        {"r": req.id}).first()
     assert lines[0] == row["ours"] + 400 and lines[1] == req.recon.our_volume
@@ -293,3 +292,120 @@ def test_agree_takes_our_last_offered_figure_not_a_text_reply(ready):
     S.reply(db, req, _U(), "и ещё вопрос по датам", None, today=date(2026, 10, 27))
     S.publisher_answer(db, req, "Площадка", None, agree=True)
     assert req.recon.their_volume == row["ours"] + 400
+
+
+def test_publisher_agreeing_without_dispute_fixes_the_total(ready):
+    """Владелец 29.10.2026: «если у площадки не возникло разногласий, то они последние, кто утверждает сверку». «Согласен»
+    с нашей цифрой сразу фиксирует итог — разаллокация доступна площадке без ожидания менеджера. Сломать: убрать
+    вызов `agree` из `publisher_answer` — сверка останется открытой, verdict пустой."""
+    db, row = ready
+    req = S.send(db, row["publisher_id"], "2026-10", _U(), date(2026, 10, 26))
+    S.publisher_answer(db, req, "Иванова", "i@pub.test", agree=True)
+    assert req.verdict == "согласовано" and req.decided_by == "Иванова" and req.decided_email == "i@pub.test"
+    assert req.recon.agreed_volume == row["ours"] and req.recon.cpm is not None
+    total = db.execute(text("SELECT sum(agreed_volume) FROM publisher_recon_line WHERE request_id = :r"), {"r": req.id}).scalar()
+    assert total == row["ours"]
+    with pytest.raises(S.ReconError) as e:
+        S.publisher_answer(db, req, "Иванова", None, agree=True)
+    assert e.value.status == 409
+
+
+def test_dispute_still_waits_for_our_manager(ready):
+    db, row = ready
+    req = S.send(db, row["publisher_id"], "2026-10", _U(), date(2026, 10, 26))
+    S.publisher_answer(db, req, "Площадка", None, agree=False, volume=row["ours"] + 1000, body="у нас больше")
+    assert req.verdict is None
+
+
+def test_cabinet_shows_the_same_figure_that_agreement_locks(ready):
+    """Ревью 29.10.2026: мы предложили N, потом ответили текстом без цифры — бэкенд при «Согласен» берёт N (последнее
+    наше сообщение С ЦИФРОЙ), а витрина кабинета брала последнее сообщение целиком и показывала нашу цифру вместо N.
+    С 29.10 «Согласен» — это итог, поэтому кнопка обязана показывать ровно то, что зафиксируется."""
+    db, row = ready
+    pid, offer = row["publisher_id"], row["ours"] + 400
+    req = S.send(db, pid, "2026-10", _U(), date(2026, 10, 26))
+    S.publisher_answer(db, req, "Площадка", None, agree=False, volume=row["ours"] + 1000, body="у нас больше")
+    S.reply(db, req, _U(), "предлагаем", offer, today=date(2026, 10, 27))
+    S.reply(db, req, _U(), "смотрим ещё", None, today=date(2026, 10, 27))
+    db.execute(text("SELECT set_config('app.publisher_ids', :p, true)"), {"p": str(pid)})
+    shown = db.execute(text("SELECT offer FROM pub.recon_v1 WHERE request_id = :r"), {"r": req.id}).scalar()
+    S.publisher_answer(db, req, "Площадка", None, agree=True)
+    assert shown == offer == req.recon.agreed_volume
+
+
+def test_agreed_month_numbers_in_the_cabinet_no_longer_change(ready):
+    """Владелец 29.10.2026: «после сверки с площадкой цифры должны фиксироваться и больше не меняться». Кабинет брал
+    показы живыми из статистики и CPM — текущий из реестра: досчиталась статистика или поменяли CPM — у площадки
+    поменялись цифры согласованного месяца. Теперь у согласованного месяца показы — из разнесения итога по
+    размещениям, CPM — зафиксированный при согласовании. Сломать: вернуть `fact`/`cpm` из publisher_placement_v."""
+    db, row = ready
+    pid = row["publisher_id"]
+    req = S.send(db, pid, "2026-10", _U(), date(2026, 10, 26))
+    S.publisher_answer(db, req, "Площадка", None, agree=True)
+    tid, frozen_cpm = db.execute(text("""SELECT l.target_id, r.cpm FROM publisher_recon_line l
+                                         JOIN publisher_recon r ON r.request_id = l.request_id
+                                         WHERE l.request_id = :r ORDER BY l.target_id LIMIT 1"""), {"r": req.id}).first()
+    # «Потом»: статистика досчиталась иначе, чем разнесено, и CPM площадки в реестре поменяли.
+    db.execute(text("UPDATE publisher_recon_line SET agreed_volume = 777 WHERE request_id = :r AND target_id = :t"),
+               {"r": req.id, "t": tid})
+    db.execute(text("UPDATE sales_publishers SET cpm_contract = coalesce(cpm_contract, 0) + 999 WHERE id = :p"), {"p": pid})
+    db.execute(text("SELECT set_config('app.publisher_ids', :p, true)"), {"p": str(pid)})
+    fact, cpm = db.execute(text("SELECT fact, cpm FROM pub.campaign_v1 WHERE placement_id = :t"), {"t": tid}).first()
+    assert fact == 777 and cpm == frozen_cpm
+
+
+def test_vat_is_fixed_at_agreement_and_razaloc_keeps_it(ready):
+    """Владелец 29.10.2026: цифры сверки после согласования не меняются — и НДС разаллокации тоже. Ставка записывается в
+    итог при согласовании; поменяли ставку у юрлица площадки потом — файл считается по прежней. Сломать: читать ставку
+    в `razaloc.of_request` живой (`publisher_vat`), а не из `publisher_recon.vat_rate`."""
+    from app.publisher_recon import razaloc as R
+    db, row = ready
+    pid = row["publisher_id"]
+    db.execute(text("""UPDATE counterparties SET vat_rate_expense = 5 WHERE id IN (
+        SELECT k.counterparty_id FROM sales_publisher_contracts pc JOIN contracts k ON k.id = pc.contract_id
+         WHERE pc.publisher_id = :p AND pc.role = 'с площадкой' AND NOT pc.is_archived)"""), {"p": pid})
+    if R.publisher_vat(db, pid) is None:
+        pytest.skip("у готовой площадки нет договора «с площадкой»")
+    req = S.send(db, pid, "2026-10", _U(), date(2026, 10, 26))
+    S.publisher_answer(db, req, "Площадка", None, agree=True)
+    stored = db.execute(text("SELECT vat_rate FROM publisher_recon WHERE request_id = :r"), {"r": req.id}).scalar()
+    assert stored == 5
+    db.execute(text("""UPDATE counterparties SET vat_rate_expense = 22 WHERE id IN (
+        SELECT k.counterparty_id FROM sales_publisher_contracts pc JOIN contracts k ON k.id = pc.contract_id
+         WHERE pc.publisher_id = :p AND pc.role = 'с площадкой')"""), {"p": pid})
+    rows = R.of_request(db, req)["rows"]
+    assert rows and {r["НДС,%"] for r in rows} == {0.05}
+
+
+def test_placement_outside_the_agreed_total_does_not_add_shows_to_a_closed_month(ready):
+    """Ревью 29.10.2026: размещение, которого не было в разнесении итога (отказ с нулём на момент согласования, позже
+    согласованное новым креативом; добавленное задним числом), оставалось живым — и его показы ложились поверх
+    зафиксированного итога месяца. Согласованный месяц закрыт целиком: такое размещение показывает 0. Сломать: брать
+    живой факт, когда строки разнесения нет."""
+    db, row = ready
+    pid = row["publisher_id"]
+    req = S.send(db, pid, "2026-10", _U(), date(2026, 10, 26))
+    S.publisher_answer(db, req, "Площадка", None, agree=True)
+    tid = db.execute(text("""SELECT l.target_id FROM publisher_recon_line l JOIN launch_prep_target t ON t.id = l.target_id
+                              WHERE l.request_id = :r ORDER BY l.our_volume DESC LIMIT 1"""), {"r": req.id}).scalar()
+    db.execute(text("DELETE FROM publisher_recon_line WHERE request_id = :r AND target_id = :t"), {"r": req.id, "t": tid})
+    db.execute(text("SELECT set_config('app.publisher_ids', :p, true)"), {"p": str(pid)})
+    assert db.execute(text("SELECT fact FROM pub.campaign_v1 WHERE placement_id = :t"), {"t": tid}).scalar() == 0
+
+
+def test_archived_placement_of_an_agreed_month_stays_in_the_cabinet(ready):
+    """Владелец 29.10.2026: кампания согласованного месяца не пропадает из кабинета, когда уходит в архив. Архив
+    наступает после сдачи в ОРД (`launch_prep_target.archived_at`) — то есть ровно после закрытия месяца, и витрина,
+    отбрасывавшая архивные, разом убрала бы закрытые месяцы, а сумма месяца перестала бы равняться итогу."""
+    db, row = ready
+    pid = row["publisher_id"]
+    req = S.send(db, pid, "2026-10", _U(), date(2026, 10, 26))
+    S.publisher_answer(db, req, "Площадка", None, agree=True)
+    tid, vol = db.execute(text("""SELECT target_id, agreed_volume FROM publisher_recon_line WHERE request_id = :r
+                                  ORDER BY agreed_volume DESC LIMIT 1"""), {"r": req.id}).first()
+    db.execute(text("UPDATE launch_prep_target SET archived_at = now() WHERE id = :t"), {"t": tid})
+    db.execute(text("SELECT set_config('app.publisher_ids', :p, true)"), {"p": str(pid)})
+    assert db.execute(text("SELECT fact FROM pub.campaign_v1 WHERE placement_id = :t"), {"t": tid}).scalar() == vol
+    total = db.execute(text("""SELECT sum(fact) FROM pub.campaign_v1
+                               WHERE publisher_id = :p AND to_char(date_from, 'YYYY-MM') = '2026-10'"""), {"p": pid}).scalar()
+    assert total == req.recon.agreed_volume

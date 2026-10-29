@@ -9,6 +9,7 @@ import os
 import re
 import uuid
 from datetime import date, datetime, timedelta
+from types import SimpleNamespace
 from typing import Dict, List, Optional
 
 from sqlalchemy import text
@@ -194,8 +195,11 @@ def agree(db: Session, req: PublisherRequest, user, volume, today: Optional[date
     facts = B.target_facts(db, req.publisher_id, req.period)
     cpm = db.execute(text("SELECT cpm_contract FROM sales_publishers WHERE id = :p"),
                      {"p": req.publisher_id}).scalar()
+    from app.publisher_recon.razaloc import publisher_vat
     rc = req.recon or PublisherRecon(request_id=req.id)
     rc.our_volume, rc.agreed_volume, rc.cpm = sum(facts.values()), volume, cpm
+    # НДС — как и CPM, на момент согласования: разаллокация по закрытому месяцу не пересчитывается (владелец 29.10.2026).
+    rc.vat_rate = publisher_vat(db, req.publisher_id)
     db.add(rc)
     for tid, v in spread(volume, facts).items():
         db.add(PublisherReconLine(request_id=req.id, target_id=tid, our_volume=facts[tid], agreed_volume=v))
@@ -205,6 +209,9 @@ def agree(db: Session, req: PublisherRequest, user, volume, today: Optional[date
     _msg(db, req, "система", f"Итог согласован: {_num(volume)} показов")
     db.flush()
     return req
+
+
+agree_total = agree     # в `publisher_answer` имя `agree` занято флагом ответа
 
 
 def mark_seen(req: PublisherRequest, side: str) -> None:
@@ -247,6 +254,10 @@ def publisher_answer(db: Session, req: PublisherRequest, author: str, email: Opt
         db.add(rc)
     req.pub_seen_at = datetime.utcnow()
     db.flush()                         # доска читает сырым SQL — без flush она не видит цифру площадки
+    if agree and not free:
+        # Разногласий нет — площадка последняя, кто утверждает сверку (владелец 29.10.2026): итог фиксируется её
+        # согласием, без менеджера, и разаллокация сразу доступна. Расхождение по-прежнему решает менеджер.
+        agree_total(db, req, SimpleNamespace(name=author, email=email), volume)
     return m
 
 

@@ -17,17 +17,22 @@ function nameOf(r, fallback) {
   return plain ? plain[1] : fallback
 }
 
+/** Отдать браузеру готовый файл — общий шаг для скачанного с сервера и собранного на месте (выгрузка «Кампаний»). */
+export function saveBlob(blob, name) {
+  const href = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = href
+  a.download = name
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(href)
+}
+
 export async function downloadFile(url, fallback, onError) {
   try {
     const r = await api.get(url, { ...auth(), responseType: 'blob' })
-    const href = URL.createObjectURL(r.data)
-    const a = document.createElement('a')
-    a.href = href
-    a.download = nameOf(r, fallback) || 'file'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(href)
+    saveBlob(r.data, nameOf(r, fallback) || 'file')
     return true
   } catch (e) {
     let msg = 'Не удалось скачать файл'
@@ -36,3 +41,8 @@ export async function downloadFile(url, fallback, onError) {
     return false
   }
 }
+
+/* Разаллокация согласованных сверок — один файл, площадка на своей вкладке (владелец 29.10.2026).
+   Зовут кнопка месяца в «Кампаниях» и окно после согласия со сверкой. */
+export const downloadRazaloc = (list, onError) =>
+  downloadFile('/recons/razaloc?' + list.map(x => 'ids=' + encodeURIComponent(x.request_id)).join('&'), 'Разаллокация.xlsx', onError)

@@ -13,6 +13,10 @@ import Pop from '../lib/pop';
    и для макета это верно; в работающем кабинете два набора чисел разъезжаются, и виджет
    «прыгает» при переходе между разделами (владелец 15.09.2026). */
 import { KPI_SIZE } from '../lib/ui';
+import { billing, campaignsCsv } from '../lib/campaignsExport.mjs';
+import { saveBlob } from '../lib/download';
+
+export { billing };
 
 /* ── токены ──────────────────────────────────────────────────────────
 
@@ -81,7 +85,6 @@ export const SERVICE_DOT = { 'еФарм': T.accent, 'Альфарм-Тарге�
 /* ── формат и расчёты ───────────────────────────────────────────────── */
 const nf = v => v.toLocaleString('ru-RU');
 const rub = v => nf(v) + ' ₽';
-export const billing = (fact, cpm) => Math.round(fact / 1000 * cpm);
 /** Месяц кампании выводится из флайта — пара «период ↔ срок» не расходится. */
 export const periodOf = c => {
   const m = /^(\d{2})\.(\d{2})/.exec(c.flight || '');
@@ -125,7 +128,7 @@ const colHead = { fontFamily: T.mono, fontSize: 9, letterSpacing: '.08em', textT
 /* ══════════════════════════════════════════════════════════════════════
    ЭКРАН
    ══════════════════════════════════════════════════════════════════════ */
-export default function CampaignsScreen({ campaigns = DEMO, onOpen, site: siteProp, onSite }) {
+export default function CampaignsScreen({ campaigns = DEMO, onOpen, site: siteProp, onSite, razalocs = [], onRazaloc }) {
   /* ПЕРИОД — ДИАПАЗОН «от … до», как в реестре сделок (владелец 15.09.2026).
      Одиночный месяц отвечал только на вопрос «что в сентябре»; за квартал или за
      полгода его пришлось бы складывать в уме. Пустые границы означают «без края»:
@@ -142,6 +145,10 @@ export default function CampaignsScreen({ campaigns = DEMO, onOpen, site: sitePr
   const setSite = onSite || setOwnSite;
   const [siteOpen, setSiteOpen] = useState(false);
   const [calOpen, setCalOpen] = useState(false);
+  /* Бренд и рекламодатель — площадки просили (владелец 29.10.2026). Живут под «Фильтрами» вместе с месяцами;
+     площадка — отдельной кнопкой, она общая со шапкой кабинета. Пусто = все. */
+  const [advSel, setAdv] = useState('');
+  const [brandSel, setBrand] = useState('');
   const calRef = useRef(null);
   const siteRef = useRef(null);
   const [opened, setOpened] = useState({});          /* переопределения раскрытия */
@@ -173,11 +180,24 @@ export default function CampaignsScreen({ campaigns = DEMO, onOpen, site: sitePr
      а таблица под ней про одну площадку, и числа на экране спорили бы друг с другом. */
   /* Сравнение строк «YYYY-MM» — лексикографическое, и оно же хронологическое: разбор
      даты здесь не нужен и только добавил бы место для ошибки. */
-  const scope = useMemo(() => all.filter(c => {
+  /* Варианты — из кампаний выбранной площадки, бренды — ещё и выбранного рекламодателя: пункт, после которого
+     список пуст, — ловушка. Сортировка по алфавиту. */
+  const ofSite = useMemo(() => all.filter(c => !multi || site === 'все' || c.site === site), [all, multi, site]);
+  const advs = useMemo(() => [...new Set(ofSite.map(c => c.advertiser).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'ru')), [ofSite]);
+  /* Площадку меняют и из шапки кабинета, минуя `setS`: выбранный там рекламодатель другой площадки не должен тихо
+     сужать экран, пока список показывает «все» (ревью 29.10.2026). Значения нет в вариантах — фильтра нет. */
+  const adv = advs.includes(advSel) ? advSel : '';
+  const brands = useMemo(() => [...new Set(ofSite.filter(c => !adv || c.advertiser === adv).map(c => c.brand_name).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'ru')), [ofSite, adv]);
+  const brand = brands.includes(brandSel) ? brandSel : '';
+  const scope = useMemo(() => ofSite.filter(c => {
     const k = periodOf(c);
     return (!from || k >= from) && (!to || k <= to)
-      && (!multi || site === 'все' || c.site === site);
-  }), [all, from, to, site, multi]);
+      && (!adv || c.advertiser === adv) && (!brand || c.brand_name === brand);
+  }), [ofSite, from, to, adv, brand]);
+
+  const nFilters = (from || to ? 1 : 0) + (adv ? 1 : 0) + (brand ? 1 : 0);
 
   /* месяцы, в которых есть кампании — только они доступны в календаре */
   const have = useMemo(() => [...new Set(all.map(periodOf))], [all]);
@@ -216,9 +236,24 @@ export default function CampaignsScreen({ campaigns = DEMO, onOpen, site: sitePr
      оставленное раскрытие относилось бы к чужим месяцам. Панель при этом НЕ
      закрывается — вторую границу выбирают следующим движением. */
   const setRange = (a, b) => { setFrom(a); setTo(b); setOpened({}); setExpandAll(false); };
+  /* Смена рекламодателя сбрасывает бренд: бренд другого рекламодателя дал бы пустой экран. */
+  const pickAdv = v => { setAdv(v); setBrand(''); setOpened({}); setExpandAll(false); };
+  const pickBrand = v => { setBrand(v); setOpened({}); setExpandAll(false); };
+  const resetFilters = () => { setRange('', ''); setAdv(''); setBrand(''); };
+  /* «Свернуть все» закрывает КАЖДЫЙ месяц явно: сброс раскрытия возвращал умолчание «первый месяц открыт», и при одном
+     месяце в отборе кнопка не делала ничего (владелец 29.10.2026). */
+  const toggleAll = () => {
+    if (expandAll) { setExpandAll(false); setOpened(Object.fromEntries(keys.map(k => [k, false]))); }
+    else { setExpandAll(true); setOpened({}); }
+  };
+  /* Выгрузка — ровно то, что на экране: площадка, фильтры, порядок месяцев и строк (владелец 29.10.2026). */
+  const exportCsv = () => {
+    saveBlob(new Blob([campaignsCsv(months)], { type: 'text/csv;charset=utf-8' }),
+      `Кампании${site !== 'все' ? ' ' + site : ''}${from || to ? ` ${from || '…'}—${to || '…'}` : ''}.csv`);
+  };
   /* Смена площадки сбрасывает раскрытие так же, как смена периода: список под шапкой
      становится другим, и оставленное раскрытие относилось бы к чужим месяцам. */
-  const setS = key => { setSite(key); setSiteOpen(false); setOpened({}); setExpandAll(false); };
+  const setS = key => { setSite(key); setSiteOpen(false); setOpened({}); setExpandAll(false); setAdv(''); setBrand(''); };
 
   /* ТОЛЬКО ЦЕНТРАЛЬНАЯ ЧАСТЬ (владелец 15.09.2026): шапка приложения и обе колонки —
      наши, кабинетные. В хендоффе компонент владел всей страницей: своя подложка на
@@ -250,7 +285,7 @@ export default function CampaignsScreen({ campaigns = DEMO, onOpen, site: sitePr
                   {' · '}{[...keys].sort()[0]} — {[...keys].sort()[keys.length - 1]}
                 </span>
 
-                <span className="cs-ghost" onClick={() => { setExpandAll(v => !v); setOpened({}); }}
+                <span className="cs-ghost" onClick={toggleAll}
                   style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 12px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: T.t2, whiteSpace: 'nowrap', cursor: 'pointer' }}>
                   {expandAll ? 'Свернуть все' : 'Развернуть все'}
                 </span>
@@ -284,17 +319,19 @@ export default function CampaignsScreen({ campaigns = DEMO, onOpen, site: sitePr
                   </span>
                 )}
 
-                {/* выбор периода — календарь месяцев, по умолчанию «все» */}
+                {/* «Фильтры» (владелец 29.10.2026): месяцы, рекламодатель, бренд — под одной кнопкой; число на ней —
+                    сколько включено, чтобы суженный экран не читался как «у нас больше ничего нет». */}
                 <span style={{ position: 'relative', flex: '0 0 auto' }}>
-                  <span ref={calRef} onClick={() => setCalOpen(o => !o)} style={{ display: 'inline-flex', alignItems: 'center', gap: 9, height: 34, padding: '0 12px', background: T.card, border: `1px solid ${calOpen ? T.accent : T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: calOpen ? T.accent : T.t2, whiteSpace: 'nowrap', cursor: 'pointer' }}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 10h17M8 3.5v3M16 3.5v3" /></svg>
-                    {!from && !to ? 'Все месяцы'
-                      : (from && to && from === to) ? MONTH_RU[from.slice(5)] + ' ' + from.slice(0, 4)
-                      : `${from ? from : '…'} — ${to ? to : '…'}`}
+                  <span ref={calRef} onClick={() => setCalOpen(o => !o)} style={{ display: 'inline-flex', alignItems: 'center', gap: 9, height: 34, padding: '0 12px', background: nFilters ? T.accentTint : T.card, border: `1px solid ${calOpen || nFilters ? T.accent : T.border}`, borderRadius: 10, fontSize: 12.5, fontWeight: 600, color: calOpen || nFilters ? T.accent : T.t2, whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h16l-6 7.5V19l-4-2v-4.5z" /></svg>
+                    Фильтры{nFilters ? ' · ' + nFilters : ''}
                     <span style={{ fontSize: 10, color: T.t4 }}>{calOpen ? '▴' : '▾'}</span>
                   </span>
 
-                  <Pop open={calOpen} anchor={calRef} onClose={() => setCalOpen(false)}>
+                  <Pop open={calOpen} anchor={calRef} width={280} onClose={() => setCalOpen(false)}>
+                    {nFilters > 0 && (
+                      <span onClick={resetFilters} style={{ alignSelf: 'flex-end', fontSize: 11.5, fontWeight: 700, color: T.accent, cursor: 'pointer' }}>сбросить все</span>
+                    )}
                     <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <span style={{ ...colHead, fontWeight: 700, color: T.t3 }}>Период</span>
                       <span onClick={() => setRange('', '')} style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, color: T.accent, cursor: 'pointer' }}>все месяцы</span>
@@ -319,7 +356,23 @@ export default function CampaignsScreen({ campaigns = DEMO, onOpen, site: sitePr
                         есть кампании: {[...have].sort()[0]} — {[...have].sort()[have.length - 1]}
                       </span>
                     )}
+                    {[['Рекламодатель', adv, pickAdv, advs, 'все рекламодатели'], ['Бренд', brand, pickBrand, brands, 'все бренды']].map(([label, value, pick, list, any]) => (
+                      <span key={label} style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 6, borderTop: `1px solid ${T.inner}` }}>
+                        <span style={{ ...colHead, fontWeight: 700, color: T.t3 }}>{label}</span>
+                        <select value={value} onChange={e => pick(e.target.value)}
+                          style={{ padding: '6px 8px', borderRadius: 8, border: `1px solid ${value ? T.accent : T.border}`, background: T.card, color: T.t1, fontSize: 12, fontFamily: T.sans, outline: 'none', cursor: 'pointer' }}>
+                          <option value="">{any}</option>
+                          {list.map(x => <option key={x} value={x}>{x}</option>)}
+                        </select>
+                      </span>
+                    ))}
                   </Pop>
+                </span>
+
+                {/* Excel того, что отобрано — рядом с «Фильтрами», которые его определяют */}
+                <span className="cs-ghost" onClick={scope.length ? exportCsv : undefined} title={scope.length ? 'Скачать в Excel то, что на экране' : 'Нечего выгружать'}
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, color: scope.length ? T.t2 : T.t5, cursor: scope.length ? 'pointer' : 'default', flex: '0 0 auto' }}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14" /></svg>
                 </span>
               </div>
 
@@ -350,7 +403,7 @@ export default function CampaignsScreen({ campaigns = DEMO, onOpen, site: sitePr
 
                   {/* шапка месяца: фиксированные колонки — иначе цифры прыгают */}
                   <div onClick={() => { setExpandAll(false); setOpened(o => ({ ...o, [m.key]: !m.open })); }}
-                    style={{ display: 'grid', gridTemplateColumns: '196px 76px 106px minmax(0,1fr)', gap: 14, alignItems: 'center', minWidth: 920, cursor: 'pointer' }}>
+                    style={{ display: 'grid', gridTemplateColumns: '196px 76px 106px 220px minmax(0,1fr)', gap: 14, alignItems: 'center', minWidth: 920, cursor: 'pointer' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 9, minWidth: 0 }}>
                       <span style={{ fontSize: 10, color: T.t4, flex: '0 0 8px' }}>{m.open ? '▾' : '▸'}</span>
                       <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>{MONTH_RU[m.key.slice(5)]} {m.key.slice(0, 4)}</span>
@@ -359,6 +412,16 @@ export default function CampaignsScreen({ campaigns = DEMO, onOpen, site: sitePr
                     <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: sBg, color: sFg, border: `1px solid ${sBorder}`, borderRadius: 7, padding: '4px 0', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
                       <span style={{ width: 6, height: 6, borderRadius: 2, background: sDot }} />{m.st}
                     </span>
+
+                    {/* Разаллокация согласованных сверок месяца — по ней площадка сдаёт акт в ОРД (владелец 29.10.2026).
+                        Ячейка есть всегда, пустая — иначе числа месяца съезжают у месяцев без сверки. */}
+                    <span>{razalocs.some(x => x.period === m.key) && (
+                      <button type="button" onClick={e => { e.stopPropagation(); onRazaloc?.(razalocs.filter(x => x.period === m.key)); }}
+                        title="Excel: строка на договор ОРД; у нескольких площадок — вкладка на площадку"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: T.accentTint, color: T.accent, border: `1px solid ${T.accentBorder}`, borderRadius: 7, padding: '4px 12px', fontSize: 10.5, fontWeight: 700, fontFamily: 'inherit', lineHeight: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                        ↓ Скачать разаллокацию
+                      </button>
+                    )}</span>
 
                     {/* три числа месяца: фиксированные колонки, без переноса */}
                     <span style={{ display: 'grid', gridTemplateColumns: '150px 140px 84px', gap: 22, justifyContent: 'end', whiteSpace: 'nowrap' }}>

@@ -42,10 +42,10 @@ import { NEED, PAY_STATE, RK_STATE, SERVICE_DOT,
   SHOW_MONEY, billBlocked, blocking, camp, inBill, inPace, sum, useDemoNow } from '../lib/demo'
 import safeHref from '../lib/safeHref'
 import { APP_LINK_FORMATS, isAppLink, landingWeb } from '../lib/landing'
-import { downloadFile } from '../lib/download'
+import { downloadFile, downloadRazaloc } from '../lib/download'
 import { guideSeen, markGuideSeen } from './guide/seen'
 import PrioTask from './PrioTask'
-import ReconTask from './ReconTask'
+import ReconTask, { RazalocReady } from './ReconTask'
 
 // Строка в одну линию с многоточием — колонка креатива в карточке задания.
 const ELLIPSIS = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
@@ -1716,6 +1716,14 @@ export default function Dashboard({ name, onSignOut }) {
       .catch(() => setCamps([]))     // блок и плитки просто не появятся
   }, [])
   useEffect(() => { loadCamps() }, [loadCamps])
+  // Разаллокации согласованных сверок — ссылки в месяцах экрана «Кампании» (29.10.2026)
+  const [razalocs, setRazalocs] = useState([])
+  const loadRazalocs = useCallback(() => {
+    api.get('/recons/agreed', auth()).then(r => setRazalocs(r.data.items || [])).catch(() => setRazalocs([]))
+  }, [])
+  useEffect(() => { loadRazalocs() }, [loadRazalocs])
+  // Площадка согласилась со сверкой — итог зафиксирован, предлагаем файл сразу (владелец 29.10.2026)
+  const [agreedRecon, setAgreedRecon] = useState(null)
 
   const load = useCallback(async () => {
     setErr('')
@@ -1923,6 +1931,7 @@ export default function Dashboard({ name, onSignOut }) {
 
   return (
     <>
+      {agreedRecon && <RazalocReady r={agreedRecon} onClose={() => setAgreedRecon(null)} onErr={setErr} />}
       <Head>
         <title>
           {pageTitle((NAV_MOBILE.find(n => n.key === tab) || {}).label || 'Дашборд')}
@@ -1971,7 +1980,9 @@ export default function Dashboard({ name, onSignOut }) {
                  все сайты кабинета (ревью 05.10.2026). */
               : <CampaignsScreen campaigns={pubFilter && !siteOfPub.has(pubFilter) ? [] : (camps || [])}
                   site={siteOfPub.get(pubFilter) || 'все'}
-                  onSite={dom => setPubFilter(dom === 'все' ? '' : pubOfSite(dom))} />
+                  onSite={dom => setPubFilter(dom === 'все' ? '' : pubOfSite(dom))}
+                  razalocs={razalocs.filter(x => !pubFilter || x.publisher_id === pubFilter)}
+                  onRazaloc={list => downloadRazaloc(list, setErr)} />
           ) : (
           <>
 
@@ -2124,7 +2135,8 @@ export default function Dashboard({ name, onSignOut }) {
                 <PrioTask key={`prio-${p.id}`} t={p} today={today} canApprove={!!me?.can_approve} onDone={load} onErr={setErr} />
               ))}
               {recons.map(r => (
-                <ReconTask key={`recon-${r.id}`} r={r} canApprove={!!me?.can_approve} onDone={load} onErr={setErr} />
+                <ReconTask key={`recon-${r.id}`} r={r} canApprove={!!me?.can_approve} onDone={load} onErr={setErr}
+                  onAgreed={x => { setAgreedRecon(x); loadRazalocs() }} />
               ))}
               {!allTasks.length && !prio.length && !recons.length && (
                 <div style={{ padding: '22px 0', textAlign: 'center', color: C.muted,

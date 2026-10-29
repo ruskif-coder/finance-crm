@@ -120,11 +120,23 @@ def test_archived_placements_are_not_shown(db):
     """Снятое с площадки размещение в блок не попадает.
 
     `archived_at` — это «мы это отменили»; показывать его наравне с живыми значило бы
-    предлагать площадке считать деньги по тому, чего не будет.
+    предлагать площадке считать деньги по тому, чего не будет. Исключение (29.10.2026) —
+    вошедшее в согласованный итог сверки: оно показывается и в архиве (тест в test_publisher_recon).
+    Проверяется поведением: архивное размещение вне согласованной сверки из витрины исчезает.
     """
-    sql = ' '.join(db.execute(text(
-        "SELECT pg_get_viewdef('pub.campaign_v1'::regclass, true) || pg_get_viewdef('publisher_placement_v'::regclass, true)")).scalar().split())
-    assert 't.archived_at IS NULL' in sql
+    row = db.execute(text("""
+        SELECT v.placement_id, v.publisher_id FROM publisher_placement_v v
+         WHERE v.archived_at IS NULL AND NOT EXISTS (
+               SELECT 1 FROM publisher_recon_line l JOIN publisher_request q ON q.id = l.request_id
+                WHERE l.target_id = v.placement_id AND q.verdict = 'согласовано')
+         LIMIT 1""")).first()
+    if row is None:
+        pytest.skip('на стенде нет размещения вне согласованной сверки')
+    db.execute(text("UPDATE launch_prep_target SET archived_at = now() WHERE id = :t"), {"t": row.placement_id})
+    db.execute(text("SELECT set_config('app.publisher_ids', :p, true)"), {"p": str(row.publisher_id)})
+    assert db.execute(text("SELECT count(*) FROM pub.campaign_v1 WHERE placement_id = :t"),
+                      {"t": row.placement_id}).scalar() == 0
+    db.rollback()
 
 
 def test_every_row_has_what_the_component_needs(db):

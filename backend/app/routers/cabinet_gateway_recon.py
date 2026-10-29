@@ -4,9 +4,9 @@
 Кабинет в базу не пишет — читает `pub.recon_*_v1`, а меняет через ядро (как креативы и приоритезация).
 Монтируется под тем же префиксом `/api/cabinet-gw`, закрытым на Caddy.
 """
-from typing import Optional
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.cabinet import journal
 from app.database import get_db
 from app.files_safe import existing_upload_path
+from app.publisher_recon import razaloc as R
 from app.publisher_recon import service as S
 from app.publisher_requests import PublisherRequest
 from app.routers.cabinet_gateway import _actor, require_cabinet_service
@@ -50,8 +51,8 @@ class AnswerIn(BaseModel):
 
 @router.post("/recon/{request_id}/answer", dependencies=[Depends(require_cabinet_service)])
 def answer(request_id: int, payload: AnswerIn, db: Session = Depends(get_db)):
-    """«Согласен с N», «Есть расхождение» (своя цифра обязательна) или сообщение в переписку. Итог фиксирует
-    менеджер паблишеров."""
+    """«Согласен с N», «Есть расхождение» (своя цифра обязательна) или сообщение в переписку. Согласие без спора —
+    итог (владелец 29.10.2026); расхождение фиксирует менеджер паблишеров. `agreed` — для окна разаллокации в кабинете."""
     if payload.kind not in KINDS:
         raise HTTPException(400, "Неизвестный ответ")
     req = _recon(db, request_id, payload.publisher_id)
@@ -66,7 +67,7 @@ def answer(request_id: int, payload: AnswerIn, db: Session = Depends(get_db)):
                   account_id=acc.id, publisher_id=payload.publisher_id, actor_name=payload.author_name,
                   subject=_subject(req), entity_type='publisher_request', entity_id=req.id)
     db.commit()
-    return {"message_id": m.id, "volume": m.volume}
+    return {"message_id": m.id, "volume": m.volume, "agreed": req.verdict == S.B.AGREED}
 
 
 class SeenIn(BaseModel):
@@ -113,3 +114,19 @@ def download(request_id: int, file_id: int, publisher_id: int, account_id: int, 
     if f is None:
         raise HTTPException(404, "Файл не найден")
     return FileResponse(existing_upload_path(f.path, subdir=S.FILE_DIR), filename=f.original_name or "file")
+
+
+@router.get("/recon/razaloc.xlsx", dependencies=[Depends(require_cabinet_service)])
+def razaloc(ids: List[int] = Query(...), account_id: int = Query(...), db: Session = Depends(get_db)):
+    """Разаллокация согласованных сверок (владелец 29.10.2026) — площадка сдаёт по ней свой акт в ОРД.
+    Несколько площадок — одним файлом, по вкладке на площадку; учётка проверяется по площадке КАЖДОЙ сверки."""
+    if not 0 < len(ids) <= 100:
+        raise HTTPException(400, "Нужен список сверок, не больше 100")
+    reqs = []
+    for rid in ids:
+        req = db.get(PublisherRequest, rid)
+        if req is None or req.kind != "сверка":
+            raise HTTPException(404, "Сверка не найдена")
+        _actor(db, account_id, req.publisher_id)
+        reqs.append(req)
+    return R.response(db, reqs)

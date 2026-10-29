@@ -19,6 +19,7 @@ from app.files_safe import existing_upload_path
 from app.models import User
 from app.permissions import require_permission
 from app.publisher_recon import board as B
+from app.publisher_recon import razaloc as R
 from app.publisher_recon import service as S
 from app.publisher_requests import PublisherRequest
 
@@ -149,6 +150,20 @@ def agree(request_id: int, payload: AgreeIn, db: Session = Depends(get_db), user
                f"{_label(db, req)}: итог {payload.volume} (наши {rc.our_volume}, площадки {rc.their_volume})")
     db.commit()
     return {"status": B.DONE}
+
+
+@router.get("/{request_id}/razaloc")
+def razaloc(request_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Разаллокация согласованной сверки для экрана: строки по договорам ОРД и сделки, которым договора не хватает."""
+    req = _req(db, request_id)
+    if req.verdict != B.AGREED:
+        raise HTTPException(409, "Разаллокация появится после согласования сверки")
+    return R.of_request(db, req)
+
+
+@router.get("/{request_id}/razaloc.xlsx")
+def razaloc_xlsx(request_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    return R.response(db, [_req(db, request_id)])
 
 
 @router.get("/file/{file_id}")

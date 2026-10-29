@@ -3,15 +3,16 @@
  * `docs/ПЛАН_сверка_паблишера.md` §5). Обычная карточка очереди — без левой полосы и без отдельного блока.
  *
  * Чип статуса = чей ход: «ждёт вашего ответа · до ДД.ММ» → «SIMB-AD ответил» (мы предложили цифру — «Согласен с N»
- * прямо с карточки) → «ответ у SIMB-AD». Итог фиксирует менеджер паблишеров; после этого карточка уходит из очереди.
+ * прямо с карточки) → «ответ у SIMB-AD». «Согласен» без спора — это итог (владелец 29.10.2026): карточка уходит из
+ * очереди, и окно предлагает скачать разаллокацию. Расхождение фиксирует менеджер паблишеров.
  * Сумма показывается (владелец 26.10): это биллинг площадки по CPM её договора, как в «Кампаниях».
  */
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import api, { auth } from '../lib/http'
 import { overlayClose } from '../lib/overlay'
-import { downloadFile } from '../lib/download'
-import { C, CAP, MONO, UI, chip, dm, num, rub, soft } from '../lib/ui'
+import { downloadFile, downloadRazaloc } from '../lib/download'
+import { C, CAP, MONO, UI, btn, chip, dm, num, rub, soft } from '../lib/ui'
 
 const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь']
 const monthOf = (p) => `${MONTHS[Number(p.slice(5, 7)) - 1]} ${p.slice(0, 4)}`
@@ -44,7 +45,7 @@ const Chart = () => (
   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M4 18h16" /><path d="M7 14l3-4 3 3 4-6" /></svg>
 )
 
-export default function ReconTask({ r, canApprove, onDone, onErr }) {
+export default function ReconTask({ r, canApprove, onDone, onAgreed, onErr }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const st = reconState(r)
@@ -59,7 +60,11 @@ export default function ReconTask({ r, canApprove, onDone, onErr }) {
 
   const agreeOffer = async () => {
     setBusy(true)
-    try { await api.post(`/recons/${r.id}/answer`, { kind: 'согласен' }, auth()); onDone?.() } catch (e) { onErr?.(e.response?.data?.detail || 'Не удалось ответить') } finally { setBusy(false) }
+    try {
+      const res = await api.post(`/recons/${r.id}/answer`, { kind: 'согласен' }, auth())
+      if (res.data?.agreed) onAgreed?.(r)
+      onDone?.()
+    } catch (e) { onErr?.(e.response?.data?.detail || 'Не удалось ответить') } finally { setBusy(false) }
   }
   const openThread = () => {
     setOpen(true)
@@ -123,7 +128,7 @@ export default function ReconTask({ r, canApprove, onDone, onErr }) {
       </span>
 
       {open && <ReconModal r={r} st={st} label={label} tone={TONE[st]} canApprove={canApprove} totals={t}
-        onClose={() => setOpen(false)} onDone={() => { setOpen(false); onDone?.() }} />}
+        onClose={() => setOpen(false)} onDone={(agreed) => { setOpen(false); if (agreed) onAgreed?.(r); onDone?.() }} />}
     </div>
   )
 }
@@ -154,19 +159,25 @@ function ReconModal({ r, st, label, tone, canApprove, totals: t, onClose, onDone
   const send = async (kind, body, volume, f) => {
     setBusy(true); setErr('')
     let mid = pending?.messageId || null
+    // Согласие могло пройти в первой попытке, а файл — нет: повтор шлёт только файл, и окно разаллокации не должно потеряться.
+    let agreed = !!pending?.agreed
     try {
-      if (!mid) mid = (await api.post(`/recons/${r.id}/answer`, { kind, body: body || null, volume }, auth())).data.message_id
+      if (!mid) {
+        const res = (await api.post(`/recons/${r.id}/answer`, { kind, body: body || null, volume }, auth())).data
+        mid = res.message_id
+        agreed = !!res.agreed
+      }
       if (f) {
         const fd = new FormData()
         fd.append('file', f)
         await api.post(`/recons/${r.id}/file?message_id=${mid}`, fd, auth())
       }
       setPending(null)
-      onDone()
+      onDone(agreed)
     } catch (e) {
       const d = e.response?.data?.detail
       if (mid && f) {
-        setPending({ messageId: mid, file: f })
+        setPending({ messageId: mid, file: f, agreed })
         setErr(`Ответ отправлен, а файл не прикрепился${d ? `: ${d}` : ''} — прикрепите его ещё раз`)
       } else setErr(d || 'Не удалось отправить')
     } finally { setBusy(false) }
@@ -317,6 +328,30 @@ function ReconModal({ r, st, label, tone, canApprove, totals: t, onClose, onDone
               {diffOpen ? 'Отправить правки' : `Согласен с ${num(agreeWith)}`}</button>
           </>)}
         </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+/** Окно после согласия со сверкой (владелец 29.10.2026): итог зафиксирован — разаллокацию можно скачать сразу, и она
+ *  всегда лежит в «Кампаниях» в шапке закрытого месяца. */
+export function RazalocReady({ r, onClose, onErr }) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  if (!mounted) return null
+  return createPortal(
+    <div {...overlayClose(onClose)} style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'var(--overlay)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 20px', fontFamily: UI }}>
+      <div style={{ width: '100%', maxWidth: 460, background: C.card, borderRadius: 18, boxShadow: 'var(--shadow-float)', padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <span style={{ fontSize: 17, fontWeight: 700 }}>Сверка за {monthOf(r.period)} согласована</span>
+        <span style={{ fontSize: 13, color: C.secondary, lineHeight: 1.5 }}>
+          По итогу сверки собрана разаллокация {r.site} — по ней сдаётся акт в ОРД.
+          Разаллокация всегда доступна в «Кампаниях» по закрытым месяцам.</span>
+        <span style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 6 }}>
+          <button type="button" onClick={onClose} style={btn(false)}>Закрыть</button>
+          <button type="button" onClick={() => downloadRazaloc([{ request_id: r.id }], onErr).then(ok => ok && onClose())} style={btn(true)}>
+            ↓ Скачать разаллокацию</button>
+        </span>
       </div>
     </div>,
     document.body,

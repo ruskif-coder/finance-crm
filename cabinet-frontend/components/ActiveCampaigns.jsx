@@ -7,6 +7,7 @@
  */
 import { declinedOf, declinedTitle } from './CampaignCreatives'
 import React, { useMemo, useState } from 'react';
+import { billing } from '../lib/campaignsExport.mjs';
 
 /* ── токены ──────────────────────────────────────────────────────────
 
@@ -56,8 +57,8 @@ export const SERVICE_DOT = { 'еФарм': T.accent, 'Альфарм-Тарге�
 /* ── формат и расчёты ───────────────────────────────────────────────── */
 const nf = v => v.toLocaleString('ru-RU');
 const rub = v => nf(v) + ' ₽';
-/** Биллинг: факт показов ÷ 1000 × CPM. Считается только от факта. */
-export const billing = (fact, cpm) => Math.round(fact / 1000 * cpm);
+/** Биллинг: факт показов ÷ 1000 × CPM. Считается только от факта. Формула — одна на кабинет (lib/campaignsExport). */
+export { billing };
 /** Период выводится из месяца флайта — пара «период ↔ срок РК» не может разойтись. */
 export const periodOf = c => {
   const m = /^(\d{2})\.(\d{2})/.exec(c.flight || '');

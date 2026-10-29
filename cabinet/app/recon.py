@@ -5,10 +5,10 @@
 Подключается в конце `app/main.py`, поэтому берёт оттуда общие двери ядра.
 """
 from datetime import date
-from typing import Optional
+from typing import List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -140,17 +140,53 @@ async def upload(request_id: int, message_id: int, file: UploadFile = File(...),
     return r.json()
 
 
-@router.get("/api/recons/{request_id}/files/{file_id}")
-def download(request_id: int, file_id: int, acc=Depends(current_account)):
-    row = _mine(acc, request_id)
+def _core_file(path: str, params: dict):
+    """Файл сверки из ядра — учётка и площадка ИЗ сверки, а не из запроса. Ответ ядра как есть — код разбирает вызывающий."""
     _core_or_503()
     try:
-        r = httpx.get(f"{CORE_API_URL}/api/cabinet-gw/recon/{request_id}/file/{file_id}",
-                      params={"account_id": acc.id, "publisher_id": row.publisher_id},
+        r = httpx.get(f"{CORE_API_URL}/api/cabinet-gw/recon/{path}", params=params,
                       headers={"X-Cabinet-Token": SERVICE_TOKEN}, timeout=120.0)
     except httpx.RequestError:
         raise HTTPException(status_code=503, detail="Система временно недоступна — попробуйте позже")
+    return r
+
+
+def _as_file(r, media: str) -> Response:
+    return Response(content=r.content, media_type=media,
+                    headers={"Content-Disposition": r.headers.get("content-disposition", "attachment")})
+
+
+@router.get("/api/recons/{request_id}/files/{file_id}")
+def download(request_id: int, file_id: int, acc=Depends(current_account)):
+    row = _mine(acc, request_id)
+    r = _core_file(f"{request_id}/file/{file_id}", {"account_id": acc.id, "publisher_id": row.publisher_id})
     if r.status_code >= 400:
         raise HTTPException(status_code=404, detail="Файл не найден")
-    return Response(content=r.content, media_type="application/octet-stream",
-                    headers={"Content-Disposition": r.headers.get("content-disposition", "attachment")})
+    return _as_file(r, "application/octet-stream")
+
+
+# ── Разаллокация (владелец 29.10.2026): после согласованной сверки мы раскладываем итог по изначальным договорам ОРД,
+# площадка сдаёт по ней свой акт. Список — для ссылок на экране «Кампании», файл собирает ядро.
+
+@router.get("/api/recons/agreed")
+def agreed(acc=Depends(current_account)):
+    ids = [p.publisher_id for p in account_publishers(acc.id)]
+    if not ids:
+        return {"items": []}
+    with scoped_session(ids) as db:
+        rows = db.execute(text("SELECT request_id, publisher_id, site, period FROM pub.recon_v1 WHERE verdict = :v "
+                               "ORDER BY period DESC, site"), {"v": AGREED}).mappings().all()
+    return {"items": [dict(r) for r in rows]}
+
+
+@router.get("/api/recons/razaloc")
+def razaloc(ids: List[int] = Query(...), acc=Depends(current_account)):
+    """Кнопка в шапке месяца: все согласованные сверки месяца одним файлом, площадка — на своей вкладке (владелец 29.10.2026)."""
+    if not 0 < len(ids) <= 100:
+        raise HTTPException(status_code=400, detail="Нужен список сверок, не больше 100")
+    if any(_mine(acc, rid).verdict != AGREED for rid in ids):
+        raise HTTPException(status_code=409, detail="Разаллокация появится после согласования сверки")
+    r = _core_file("razaloc.xlsx", {"account_id": acc.id, "ids": list(ids)})
+    if r.status_code >= 400:
+        raise HTTPException(status_code=404 if r.status_code == 404 else 502, detail="Не удалось собрать разаллокацию")
+    return _as_file(r, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

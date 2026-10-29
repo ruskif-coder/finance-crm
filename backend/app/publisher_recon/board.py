@@ -53,6 +53,8 @@ def _placements(db: Session, period: str, publisher_id: Optional[int] = None) ->
                v.plan, v.fact, v.cpm, v.erid, v.status
           FROM publisher_placement_v v
          WHERE to_char(v.date_from, 'YYYY-MM') = :p
+           -- архивное = снятое нами (правило 16.09.2026) — в сверку не идёт; витрина отдаёт его с отметкой (29.10.2026)
+           AND v.archived_at IS NULL
            -- «отказ» без показов — не размещение; с показами (успела открутить до отказа) — оплачивается, в сверке
            AND (v.status <> :refused OR v.fact > 0)
            AND (CAST(:pub AS integer) IS NULL OR v.publisher_id = :pub)

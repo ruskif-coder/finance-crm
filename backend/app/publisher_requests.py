@@ -79,6 +79,9 @@ class PublisherRecon(Base):
     agreed_volume = Column(BigInteger)
     # CPM договора на момент согласования: смена CPM потом не двигает деньги закрытого месяца.
     cpm = Column(Numeric(12, 2))
+    # Ставка НДС площадки на момент согласования, % (владелец 29.10.2026): разаллокация считает по ней, а не по
+    # текущей. Пусто — согласовано до миграции 2026-10-29_publisher_recon_vat.sql.
+    vat_rate = Column(Numeric(5, 2))
 
     request = relationship("PublisherRequest", back_populates="recon")
 

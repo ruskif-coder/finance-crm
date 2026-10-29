@@ -48,6 +48,15 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
   }, [publisherId, period, latest])
   useEffect(() => { finalSet.current = false; load() }, [load])
 
+  // Разаллокация площадке (владелец 29.10.2026) — только у согласованной сверки; предупреждения — до отправки площадке.
+  const [ra, setRa] = useState(null)
+  const agreedId = d?.row?.agreed != null ? d.row.request_id : null
+  useEffect(() => {
+    setRa(null)
+    if (!agreedId) return
+    api.get(`/publisher-recon/${agreedId}/razaloc`, auth()).then(x => setRa(x.data)).catch(() => {})
+  }, [agreedId])
+
   const run = async (fn, okMsg) => {
     if (busy) return
     setBusy(true)
@@ -83,10 +92,16 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
     run(() => api.post(`/publisher-recon/${rid}/reply`, fd2, auth()), 'Ответ отправлен · срок снова +2 раб. дня')
   }
 
-  const buttons = !canEdit ? [] : k === 'ready' ? [['Отправить площадке', send, 'p']]
+  const actions = !canEdit ? [] : k === 'ready' ? [['Отправить площадке', send, 'p']]
     : (k === 'wait' || k === 'late') ? [['Напомнить', remind, 'g'], [`Согласовать итог ${grpDash(fin)}`, agree, 'ok']]
       : k === 'answer' ? [['Ответить площадке', answer, 'g'], [`Согласовать итог ${grpDash(fin)}`, agree, 'ok']]
         : k === 'closing' ? [['Отправить', null, 'off']] : []
+  const buttons = k === 'done' && rid
+    ? [...actions, ['Разаллокация ↓', () => downloadFile(`/publisher-recon/${rid}/razaloc.xlsx`, null, setErr), 'p']] : actions
+  const raWarn = [
+    ra?.missing?.length ? `Без договора в ОРД: ${ra.missing.map(m => `${m.deal_code} (${grpDash(m.volume)})`).join(', ')} — в разаллокацию не попали` : '',
+    ra && !ra.vat_known ? 'НДС площадки не задан в договоре — бюджет посчитан без НДС' : '',
+  ].filter(Boolean).join(' · ')
 
   const title = (
     <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -103,7 +118,8 @@ export default function ReconModal({ publisherId, period, canEdit, onClose, onCh
     <Modal width={1240} onClose={onClose} title={title}
       summary={<span style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: '0.04em', color: 'var(--text-muted)' }}>{meta}</span>}
       footer={<>
-        <span style={{ fontSize: 12, color: err ? 'var(--danger-fg)' : 'var(--text-muted)', lineHeight: 1.45, flex: '1 1 300px' }}>{err || HINT[k](r)}</span>
+        <span style={{ fontSize: 12, color: err ? 'var(--danger-fg)' : 'var(--text-muted)', lineHeight: 1.45, flex: '1 1 300px' }}>{err || HINT[k](r)}
+          {!err && !!raWarn && <span style={{ display: 'block', color: 'var(--warning-fg)' }}>{raWarn}</span>}</span>
         {buttons.map(([label, fn, kind]) => (
           <button key={label} type="button" disabled={!fn || busy} onClick={fn || undefined} style={actBtn(kind, !fn || busy)}>{label}</button>))}
       </>}>
