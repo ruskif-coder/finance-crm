@@ -21,7 +21,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.launch_prep.withdraw import AGREED_STATES, PLACED_STATES
+from app.launch_prep.withdraw import AGREED_STATES, KIND_DECLINE, PLACED_STATES
 
 # Сколько рабочих дней площадка может молчать, прежде чем ячейка станет «просрочено».
 # 3 (владелец 03.10.2026, было 2) — одно правило на матрицу и вкладку «Подвисшие» (stuck.py).
@@ -31,9 +31,10 @@ LATE_WORKDAYS = 3
 # креатива (withdraw.py), чтобы граница «согласовано / нет» была одна на систему.
 AGREED = AGREED_STATES + PLACED_STATES
 REFUSED = "отказ площадки"
+PUBLISHER_REFUSAL = "отказ"     # вердикт площадки по одному креативу (launch_prep_review)
 
 # Порядок «от худшего к лучшему» — по нему сводятся несколько услуг одной пары.
-RANK = {"refused": 0, "late": 1, "rework": 2, "unsent": 3, "waiting": 4, "withdrawn": 5, "agreed": 6}
+RANK = {"refused": 0, "late": 1, "rework": 2, "unsent": 3, "waiting": 4, "declined": 5, "withdrawn": 6, "agreed": 7}
 
 
 def workdays_between(start: date, end: date) -> int:
@@ -47,7 +48,8 @@ def workdays_between(start: date, end: date) -> int:
 
 
 def look(state: str, pairs: int, sent: int, withdrawn: int,
-         waiting_since: Optional[datetime], today: date, rework: int = 0) -> dict:
+         waiting_since: Optional[datetime], today: date, rework: int = 0,
+         declined: int = 0, refused: int = 0) -> dict:
     """Цвет ячейки и сколько дней ждём. Чистая функция — проверяется таблицей случаев.
 
     `rework` — пары, которые площадка вернула на доработку (сразу или отозвав согласование
@@ -56,20 +58,26 @@ def look(state: str, pairs: int, sent: int, withdrawn: int,
     if state == REFUSED:
         return {"tone": "refused", "days": None}
     if withdrawn and withdrawn == pairs:
-        return {"tone": "withdrawn", "days": None}
+        return {"tone": "declined" if declined else "withdrawn", "days": None}
     if state in AGREED:
         return {"tone": "agreed", "days": None}
     if not sent:
         return {"tone": "unsent", "days": None}
     if rework and waiting_since is None:
         return {"tone": "rework", "days": None}
+    # От площадки ждать нечего (владелец 29.10.2026): креатив она отклонила сама — «отказ»; вернула на доработку, а
+    # аккаунт в правках отказал — «отклонено». Раньше такая ячейка висела «ждём ответа», будто мяч у площадки.
+    if waiting_since is None and refused:
+        return {"tone": "refused", "days": None}
+    if waiting_since is None and declined:
+        return {"tone": "declined", "days": None}
     days = workdays_between(waiting_since.date(), today) if waiting_since else 0
     return {"tone": "late" if days > LATE_WORKDAYS else "waiting", "days": days}
 
 
 def _merge(a: dict, b: dict) -> dict:
     worse = b if RANK[b["tone"]] < RANK[a["tone"]] else a
-    out = {k: a.get(k, 0) + b.get(k, 0) for k in ("pairs", "sent", "agreed", "withdrawn", "rework")}
+    out = {k: a.get(k, 0) + b.get(k, 0) for k in ("pairs", "sent", "agreed", "withdrawn", "rework", "declined", "refused")}
     # Дни ожидания — самые долгие из сводимых строк, а не той, что оказалась хуже по цвету.
     days = max((x["days"] for x in (a, b) if x["days"] is not None), default=None)
     return {**worse, **out, "days": days if worse["days"] is not None else worse["days"],
@@ -132,6 +140,8 @@ def load(db: Session, month: str, service_id: Optional[int] = None,
                                          SELECT 1 FROM launch_prep_creative_set n
                                           WHERE n.replaces_set_id = p.set_id
                                             AND n.publisher_id = t.publisher_id)) AS rework,
+               count(p.id) FILTER (WHERE p.withdraw_kind = :decline) AS declined,
+               count(p.id) FILTER (WHERE r.verdict = :refusal AND p.withdrawn_at IS NULL) AS refused,
                min(p.sent_at) FILTER (WHERE p.agreed_at IS NULL AND p.withdrawn_at IS NULL
                                         AND p.sent_at IS NOT NULL AND r.verdict IS NULL) AS waiting_since
           FROM launch_prep_target t
@@ -139,7 +149,7 @@ def load(db: Session, month: str, service_id: Optional[int] = None,
           LEFT JOIN launch_prep_review r ON r.pair_id = p.id AND r.kind = 'площадка'
          WHERE t.deal_id = ANY(:ids)
          GROUP BY 1, 2, 3, 4, 5
-    """), {"ids": ids}).mappings().all() if ids else []
+    """), {"ids": ids, "decline": KIND_DECLINE, "refusal": PUBLISHER_REFUSAL}).mappings().all() if ids else []
 
     names = dict(db.execute(text("SELECT id, name FROM sales_services")).all())
     services = sorted({r["service_id"] for r in raw if r["service_id"]},
@@ -150,9 +160,10 @@ def load(db: Session, month: str, service_id: Optional[int] = None,
         if service_id and r["service_id"] != service_id:
             continue
         c = {**look(r["state"], r["pairs"], r["sent"], r["withdrawn"], r["waiting_since"], today,
-                    r["rework"]),
+                    r["rework"], r["declined"], r["refused"]),
              "pairs": r["pairs"], "sent": r["sent"], "agreed": r["agreed"],
              "withdrawn": r["withdrawn"], "rework": r["rework"],
+             "declined": r["declined"], "refused": r["refused"],
              "services": [f'{names.get(r["service_id"]) or "—"} {(r["surface_kind"] or "").upper()}'.strip()],
              "states": [r["state"]]}
         key = (r["deal_id"], r["publisher_id"])

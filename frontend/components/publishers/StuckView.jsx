@@ -14,6 +14,8 @@ import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { MONO, UI } from '@/components/salesTableKit'
 import { tgHref } from '@/components/publishers/kit'
 import safeHref from '@/lib/safeHref'
+import { CreativePreview } from '@/components/creatives/CreativePreview'
+import { EyeIcon, ICON_BTN } from '@/components/creatives/CreativesSection'
 
 const ST = {
   rework:  { label: 'на доработке', bg: 'var(--accent-tint)', bd: 'var(--accent-border)', fg: 'var(--accent-fg)', dot: 'var(--accent)', event: 'вернули' },
@@ -56,7 +58,7 @@ function ChatIcon({ href, kind }) {
         style={{ ...box, background: 'var(--bg-subtle)', color: 'var(--text-disabled)' }}>{glyph}</span>
 }
 
-function Row({ r, sla, twins }) {
+function Row({ r, sla, twins, onPreview }) {
   const t = ST[r.kind]
   const deal = `/sales/deals/${r.deal_id}`
   const n = (twins[twinKey(r)] || 1) - 1
@@ -71,9 +73,14 @@ function Row({ r, sla, twins }) {
         <a href={deal} target="_blank" rel="noreferrer" style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>{r.deal_code}</a>
         <span style={{ fontSize: 12, color: 'var(--text-secondary)', ...ellipsis }} title={r.brand}>{r.brand}</span>
       </span>
-      <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 600, ...ellipsis }} title={creativeOf(r)}>{creativeOf(r)}</span>
-        <span style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.04em', color: 'var(--text-faint)', ...ellipsis }} title={meta}>{meta || '—'}</span>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        {/* Предпросмотр — как в креативах карточки сделки (владелец 29.10.2026) */}
+        <button type="button" title="Предпросмотр" aria-label="Предпросмотр" onClick={() => onPreview(r)}
+          style={{ ...ICON_BTN, width: 28, height: 28, flex: '0 0 28px', borderRadius: 9 }}><EyeIcon /></button>
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 600, ...ellipsis }} title={creativeOf(r)}>{creativeOf(r)}</span>
+          <span style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.04em', color: 'var(--text-faint)', ...ellipsis }} title={meta}>{meta || '—'}</span>
+        </span>
       </span>
       <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{t.event} {ddmm(r.kind === 'waiting' ? r.sent_at : r.decided_at)}</span>
@@ -116,6 +123,14 @@ export default function StuckView() {
   const [err, setErr] = useState('')
   const [q, setQ] = useState('')
   const [kind, setKind] = useState('')
+  const [preview, setPreview] = useState(null)      // { set, files } — файлы берём по клику, а не со всем списком
+
+  const openPreview = (r) => {
+    setErr('')
+    api.get(`/publisher-approvals/set/${r.set_id}/files`, auth())
+      .then(x => (x.data.files.length ? setPreview(x.data) : setErr('У креатива нет файлов')))
+      .catch(e => setErr(e?.response?.data?.detail || 'Не удалось открыть креатив'))
+  }
 
   const load = useCallback(() => {
     api.get('/publisher-approvals/stuck', auth())
@@ -223,11 +238,16 @@ export default function StuckView() {
                   <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: p.max > sla ? 'var(--warning-fg)' : 'var(--text-secondary)' }}>{days(p.max)}</span>
                 </span>
               </div>
-              {p.rows.map(r => <Row key={r.pair_id} r={r} sla={sla} twins={twins} />)}
+              {p.rows.map(r => <Row key={r.pair_id} r={r} sla={sla} twins={twins} onPreview={openPreview} />)}
             </div>
           ))}
         </div>
       </div>
+      {!!preview && (
+        <CreativePreview files={preview.files} startId={preview.files[0].id}
+          title={`Предпросмотр · №${preview.no}${preview.title ? ' · ' + preview.title : ''}`}
+          fileUrl={(id) => `/publisher-approvals/file/${id}`} onClose={() => setPreview(null)} />
+      )}
     </>
   )
 }

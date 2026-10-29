@@ -17,7 +17,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.launch_prep.matrix import AGREED, LATE_WORKDAYS, REFUSED, workdays_between
+from app.launch_prep.matrix import AGREED, LATE_WORKDAYS, PUBLISHER_REFUSAL as REFUSAL, REFUSED, workdays_between
 
 CUTOFF_STAGE = "Итоговая сверка"
 # «Горит / срочно / терпит» — по старту размещения у площадки (владелец 03.10.2026). То же
@@ -26,7 +26,6 @@ CUTOFF_STAGE = "Итоговая сверка"
 URGENT_WORKDAYS = 3
 URGENCY_ORDER = {"burning": 0, "urgent": 1, "calm": 2}
 REWORK = "на доработку"
-REFUSAL = "отказ"
 
 
 def classify(sent_at: Optional[datetime], agreed_at: Optional[datetime],

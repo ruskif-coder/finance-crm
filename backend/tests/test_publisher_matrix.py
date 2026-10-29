@@ -168,3 +168,23 @@ def test_rework_closed_by_replacing_set_is_not_counted():
         assert cell["rework"] == open_rework
     finally:
         db.close()
+
+
+# Площадка вернула на доработку, аккаунт в правках отказал (владелец 29.10.2026): ждать от площадки нечего — ячейка
+# «отклонено», а не «ждём ответа». Отказ площадки по отдельному креативу — «отказ», даже если получатель не в «отказе».
+def test_rework_declined_by_account_is_declined_not_waiting():
+    assert M.look("согласование", 1, 1, 1, None, TODAY, declined=1)["tone"] == "declined"
+    assert M.look("согласование", 5, 5, 5, None, TODAY, declined=3)["tone"] == "declined"   # часть — просто отозваны
+
+
+def test_publisher_refusal_of_one_creative_shows_refused_when_nothing_waits():
+    # D5ETJ6 × zdesapteka на стенде 29.10: 5 отказов в правках + 1 отказ площадки, ждать нечего
+    assert M.look("согласование", 6, 6, 5, None, TODAY, declined=5, refused=1)["tone"] == "refused"
+
+
+def test_waiting_creative_still_wins_over_declined_ones():
+    assert M.look("согласование", 2, 2, 1, datetime(2026, 9, 28, 9), TODAY, declined=1)["tone"] == "waiting"
+
+
+def test_plain_withdrawal_stays_withdrawn():
+    assert M.look("согласование", 2, 2, 2, None, TODAY)["tone"] == "withdrawn"

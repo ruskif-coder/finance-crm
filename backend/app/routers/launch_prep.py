@@ -327,6 +327,18 @@ def _recipient_out(target, pub, pair=None, review=None, traffic=None,
 
 
 
+def file_json(f: LaunchPrepCreativeFile) -> dict:
+    """Файл комплекта для предпросмотра — одна форма для сборки и для «Подвисших» менеджера паблишеров."""
+    return {"id": f.id, "ratio": f.ratio, "name": f.original_name,
+            "size_bytes": f.size_bytes, "is_archive": f.is_archive,
+            "uploaded_at": f.uploaded_at,
+            "content_type": f.content_type,
+            "origin": f.origin,
+            # Готовый адрес, а не токен: собрать его должен тот, кто знает домен
+            # песочницы, а знает его окружение бэкенда, не браузер.
+            "sandbox_url": sandbox.public_url(f.sandbox_token, f.entry_path)}
+
+
 def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
              pubs=None, candidates=(), file_counts=None, moved=None, external=None,
              members=None, rules=None) -> dict:
@@ -386,15 +398,7 @@ def _set_out(s: LaunchPrepCreativeSet, files, reviews, pairs=(), targets=None,
         "from_advertiser": banner_origin.from_advertiser(files),
         "rights_letter": ({"name": s.rights_letter_name, "size": s.rights_letter_size,
                            "at": s.rights_letter_at} if s.rights_letter_path else None),
-        "files": [{"id": f.id, "ratio": f.ratio, "name": f.original_name,
-                   "size_bytes": f.size_bytes, "is_archive": f.is_archive,
-                   "uploaded_at": f.uploaded_at,
-                   "content_type": f.content_type,
-                   "origin": f.origin,
-                   # Готовый адрес, а не токен: собрать его должен тот, кто знает домен
-                   # песочницы, а знает его окружение бэкенда, не браузер.
-                   "sandbox_url": sandbox.public_url(f.sandbox_token, f.entry_path)}
-                  for f in files],
+        "files": [file_json(f) for f in files],
         "primary_review": ({"verdict": primary.verdict, "reason": primary.reason,
                             "decided_by": primary.decided_by, "decided_at": primary.decided_at,
                             "source": primary.source} if primary else None),
@@ -1662,7 +1666,11 @@ def get_file(file_id: int, db: Session = Depends(get_db),
     parent = db.query(LaunchPrepCreativeSet).filter(
         LaunchPrepCreativeSet.id == rec.set_id).first()
     _deal(db, parent.deal_id, current_user)
+    return file_response(rec)
 
+
+def file_response(rec: LaunchPrepCreativeFile):
+    """Файл комплекта ответом: картинка — в браузер, остальное — вложением. Общая для сборки и «Подвисших»."""
     # Путь из базы — через общую проверку границы хранилища (`app/files_safe`).
     # До 11.09.2026 она была ровно в одном месте из десяти.
     full = existing_upload_path(rec.path)

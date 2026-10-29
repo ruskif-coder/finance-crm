@@ -112,7 +112,8 @@ def test_c6_same_email_at_another_publisher_does_not_unlock_the_letter():
     try:
         r = db.execute(text("""SELECT c.email, c.publisher_id FROM sales_publisher_contacts c
               JOIN sales_publishers p ON p.id = c.publisher_id
-             WHERE c.notify AND coalesce(c.email,'') <> '' AND p.status <> 'АРХИВ' LIMIT 1""")).first()
+             WHERE c.notify AND coalesce(c.email,'') <> '' AND p.status <> 'АРХИВ'
+               AND EXISTS (SELECT 1 FROM cabinet_account ca WHERE ca.contact_id = c.id AND ca.is_active) LIMIT 1""")).first()
         if not r:
             pytest.skip("нет живого контакта на стенде")
         other = db.execute(text("SELECT id FROM sales_publishers WHERE id <> :p LIMIT 1"),

@@ -151,6 +151,12 @@ def _is_archived(db: Session, publisher_id: int) -> bool:
                       {"p": publisher_id}).scalar() is True
 
 
+# Писать можно только тому, кто может войти в кабинет и снять «Письма» сам (владелец 29.10.2026): контакт без учётки
+# или с выключенной учёткой отказаться не может — добавили человека, и ему пошла вся почта. Одно условие на три отбора:
+# отправка (здесь), дайджест (`digest.py`) и досылка (`mail/flush._still_wanted`). Псевдоним контакта — `c`.
+HAS_CABINET_ACCESS = "EXISTS (SELECT 1 FROM cabinet_account ca WHERE ca.contact_id = c.id AND ca.is_active)"
+
+
 def _recipients(db: Session, publisher_id: int) -> list:
     """Кому писать: контактам с отметкой «получает уведомления».
 
@@ -163,9 +169,9 @@ def _recipients(db: Session, publisher_id: int) -> list:
     осознанное состояние площадки, а не повод тихо откатиться к основному: молчаливый
     откат сделал бы отметку декоративной.
     """
-    rows = db.execute(text("""
+    rows = db.execute(text(f"""
         SELECT c.id, c.email, c.name FROM sales_publisher_contacts c
-         WHERE c.publisher_id = :p AND c.notify AND coalesce(c.email, '') <> ''
+         WHERE c.publisher_id = :p AND c.notify AND coalesce(c.email, '') <> '' AND {HAS_CABINET_ACCESS}
            -- Приостановка останавливает и письма, не только бота: «Открыть кабинет» в
            -- письме вело бы в кабинет, который ничего не показывает (ревью 23.09.2026).
            AND NOT EXISTS (
@@ -377,7 +383,7 @@ def notify_publisher(db: Session, kind_key: str, publisher_id: int, *,
 
     to = _recipients(db, publisher_id)
     if not to:
-        return {"status": "no_address", "why": "у площадки нет контакта с почтой", **extra}
+        return {"status": "no_address", "why": "у площадки нет контакта с почтой и активной учёткой кабинета", **extra}
 
     # ── КТО ИЗ ПОЛУЧАТЕЛЕЙ ЧТО ВЫБРАЛ ───────────────────────────────────────
     #
@@ -386,9 +392,9 @@ def notify_publisher(db: Session, kind_key: str, publisher_id: int, *,
     # один человек снимал галочку и не влиял ни на что. Связь есть — `contact_id` у
     # учётки, — и правило стало прямым: каждый распоряжается СВОЕЙ почтой.
     #
-    # Контакт без учётки получает умолчания: настраивать ему негде, а отказывать ему в
-    # письме на этом основании было бы худшим из решений — до появления кабинета такие
-    # контакты и были единственными получателями.
+    # Контакт без активной учётки сюда уже не доходит (`HAS_CABINET_ACCESS` в `_recipients`,
+    # владелец 29.10.2026): ему негде снять «Письма», значит, и писать ему нельзя. Учётка без
+    # своих настроек получает умолчания.
     acc_of = prefs.accounts_by_contact(db, publisher_id)
 
     # Тихие часы площадки. Срочные виды не будят ночью тоже: снаружи мы не сотрудники

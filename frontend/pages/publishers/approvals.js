@@ -22,7 +22,7 @@ import { grp0 } from '@/lib/salesFormat'
 // (просьба владельца 29.09), а не ряд кнопок-месяцев макета.
 
 const thisMonth = () => todayMsk().slice(0, 7)
-const PROBLEM = ['late', 'refused', 'rework', 'unsent']
+const PROBLEM = ['late', 'refused', 'declined', 'rework', 'unsent']   // «отклонено» — нужен новый креатив (29.10.2026)
 
 const chipBtn = (on) => ({ height: 30, padding: '0 11px', borderRadius: 9, cursor: 'pointer', whiteSpace: 'nowrap',
   fontFamily: UI, fontSize: 12, fontWeight: on ? 700 : 600, border: `1px solid ${on ? 'var(--accent-border)' : 'var(--border-card)'}`,
@@ -139,7 +139,8 @@ export default function PublisherApprovals() {
       ['Согласовано', n.agreed, TONE.agreed.kpi], ['Ждём ответа', n.waiting, TONE.waiting.kpi],
       [`Ждём > ${data?.late_workdays ?? 3} дн.`, n.late, TONE.late.kpi],
       ['На доработке', n.rework, TONE.rework.kpi],
-      ['Отказ', n.refused, TONE.refused.kpi], ['Не отправлено', n.unsent, TONE.unsent.kpi],
+      ['Отказ', n.refused, TONE.refused.kpi], ['Отклонено', n.declined, TONE.declined.kpi],
+      ['Не отправлено', n.unsent, TONE.unsent.kpi],
     ]
   }, [deals, pubs, cell, view, pend, data])
 
@@ -201,7 +202,7 @@ export default function PublisherApprovals() {
                     <button style={chipBtn(data.scope === 'all')} onClick={() => setScope('all')}>Все сделки</button>
                   </span>
                 )}
-                <button style={chipBtn(onlyProblems)} onClick={() => setOnlyProblems(v => !v)} title="Просрочено, отказ или комплект не отправлен">Только проблемные</button>
+                <button style={chipBtn(onlyProblems)} onClick={() => setOnlyProblems(v => !v)} title="Просрочено, отказ, отклонено или комплект не отправлен">Только проблемные</button>
                 <button style={chipBtn(allPubs)} onClick={() => setAllPubs(v => !v)} title="Показать и площадки без РК в этом месяце">Все площадки</button>
               </span>
             </div>

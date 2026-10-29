@@ -19,6 +19,8 @@ export const TONE = {
   late:      { label: 'ждём > 3 раб. дн.', bg: 'var(--warning-bg)', fg: 'var(--dot-current-dz)', bd: 'var(--dot-current-dz)', kpi: 'var(--dot-current-dz)' },
   rework:    { label: 'на доработке', bg: 'var(--violet-tint)', fg: 'var(--violet-fg)', bd: 'var(--violet-border)', kpi: 'var(--violet-fg)' },
   refused:   { label: 'отказ', bg: 'var(--danger-tint)', fg: 'var(--danger-fg)', bd: 'var(--danger-border)', kpi: 'var(--danger-fg)' },
+  // Площадка вернула на доработку, аккаунт в правках отказал (владелец 29.10.2026) — от площадки ждать нечего.
+  declined:  { label: 'отклонено', bg: 'var(--bg-subtle)', fg: 'var(--danger-fg)', bd: 'var(--danger-border)', kpi: 'var(--danger-fg)' },
   unsent:    { label: 'не отправлено', bg: 'var(--bg-subtle)', fg: 'var(--text-faint)', bd: 'var(--border-card)', kpi: 'var(--text-faint)' },
   withdrawn: { label: 'отозван', bg: 'repeating-linear-gradient(45deg,var(--bg-subtle) 0 5px,var(--bg-card) 5px 10px)', fg: 'var(--text-muted)', bd: 'var(--border-card)', kpi: 'var(--text-muted)' },
 }
@@ -66,14 +68,15 @@ function tipOf(c, pub, deal, lateDays, extra = []) {
     ? `Ждём ответа ${c.days ? `${c.days} раб. дн.` : '— отправлено сегодня'}${c.tone === 'late' ? ` (дольше ${lateDays})` : ''} · согласовано ${c.agreed} из ${c.sent}`
     : c.tone === 'agreed' ? `Согласовано · ${[...new Set(c.states)].join(', ')}` : TONE[c.tone].label
   return { head: `${pub.name} × ${deal.brand} (${deal.code})`, lines: [state,
-    `Комплектов: ${c.pairs}, отправлено ${c.sent}${c.withdrawn ? `, отозвано ${c.withdrawn}` : ''}`,
+    `Комплектов: ${c.pairs}, отправлено ${c.sent}${c.withdrawn ? `, отозвано ${c.withdrawn}` : ''}`
+      + `${c.declined ? `, правки не приняты ${c.declined}` : ''}${c.refused ? `, отказ площадки ${c.refused}` : ''}`,
     `Услуга: ${[...new Set(c.services)].join(', ') || '—'}`, `Аккаунт: ${deal.account || '—'}`, ...extra] }
 }
 
 function Light({ c }) {
   const t = TONE[c.tone]
   const txt = c.tone === 'late' ? `${c.days} дн` : c.tone === 'refused' ? 'отказ' : c.tone === 'rework' ? 'правки'
-    : c.tone === 'withdrawn' ? 'отозв' : c.tone === 'unsent' ? '—' : `${c.agreed}/${c.sent}`
+    : c.tone === 'withdrawn' ? 'отозв' : c.tone === 'declined' ? 'откл' : c.tone === 'unsent' ? '—' : `${c.agreed}/${c.sent}`
   return (
     <div className="mx-dot" style={{ width: 74, height: 28, margin: 'auto', borderRadius: 8, display: 'flex',
       alignItems: 'center', justifyContent: 'center', gap: 5, fontFamily: MONO, fontSize: 10.5, fontWeight: 700,

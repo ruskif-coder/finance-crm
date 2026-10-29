@@ -126,9 +126,9 @@ const MarkBadge = ({ c }) => (c.erid ? (
 ));
 
 /* Квадратные кнопки строки: предпросмотр и скачать. */
-const ICON_BTN = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34,
+export const ICON_BTN = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34,
   flex: '0 0 34px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, color: T.t2, cursor: 'pointer', padding: 0 };
-const EyeIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>;
+export const EyeIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>;
 const DownIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></svg>;
 
 const PlusIcon = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>;

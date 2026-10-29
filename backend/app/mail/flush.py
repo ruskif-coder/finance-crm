@@ -52,9 +52,11 @@ def _still_wanted(db, email: str, publisher_id=None) -> bool:
     `notify.outward.send._recipients`. Площадка известна (строки с 02.10.2026) — ровно её
     контакт: тот же адрес бывает живым контактом другой площадки; старые строки — по адресу."""
     from sqlalchemy import text
-    return bool(db.execute(text("""
+
+    from app.notify.outward.send import HAS_CABINET_ACCESS
+    return bool(db.execute(text(f"""
         SELECT 1 FROM sales_publisher_contacts c
-         WHERE lower(c.email) = lower(:e) AND c.notify
+         WHERE lower(c.email) = lower(:e) AND c.notify AND {HAS_CABINET_ACCESS}
            AND (CAST(:p AS integer) IS NULL OR c.publisher_id = :p)
            AND EXISTS (SELECT 1 FROM sales_publishers sp
                         WHERE sp.id = c.publisher_id AND sp.status <> 'АРХИВ')

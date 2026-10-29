@@ -259,9 +259,14 @@ const ContactRow = ({ c, mayEdit, mayDelete, busy, onLevel, onPassword, onGrant,
     <span style={{ textAlign: 'center' }}>
       {/* Рассылка — ОТДЕЛЬНАЯ от «главного»: тот отвечает, к кому идти с вопросом,
           эта — кому уходит почта. Совпадают они не всегда. */}
-      <Tick on={c.notify} title="Получает уведомления по почте"
-        onChange={mayEdit && c.contact_id
-          ? () => onFlag(c, { notify: !c.notify }) : null} />
+      {/* Письма — только человеку с действующей учёткой (владелец 29.10.2026): без неё он не может войти и
+          отказаться от рассылки сам. Сервер так же и отбирает получателей (`notify.outward.send.HAS_CABINET_ACCESS`). */}
+      {c.has_account && c.is_active
+        ? <Tick on={c.notify} title="Получает уведомления по почте"
+            onChange={mayEdit && c.contact_id
+              ? () => onFlag(c, { notify: !c.notify }) : null} />
+        : <span title={c.has_account ? 'Учётка выключена — писем нет' : 'Без учётки писем нет: сначала выдайте доступ'}
+            style={{ color: 'var(--text-disabled)', fontSize: 12 }}>—</span>}
     </span>
     <span style={{ textAlign: 'center' }}>
       {/* Бот НЕ ПЕРЕКЛЮЧАЕТСЯ отсюда, и это не недоделка: чат заводит сам человек,
@@ -383,7 +388,7 @@ function ContactEdit({ c, busy, onCancel, onSave, onSyncLogin, onPickPosition })
           </span>
         </label>
       )}
-      {isContact && (
+      {isContact && c.has_account && c.is_active && (
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5,
           cursor: 'pointer' }}>
           <input type="checkbox" checked={v.notify}

@@ -53,7 +53,9 @@ function Frame({ wh, box, children }) {
  *  источник разметки — не показ. */
 export function CreativePreview({ files, startId, set, canApprove, onReviewed, onClose,
                                   htmlSource = null, sandboxUrl = null,
-                                  title = 'Предпросмотр креатива' }) {
+                                  title = 'Предпросмотр креатива',
+                                  // Откуда брать файл: у менеджера паблишеров своя ручка под правом «Согласования» (29.10.2026)
+                                  fileUrl = (id) => `/launch-prep/file/${id}` }) {
   const [curId, setCurId] = useState(startId)
   /* СВЕЖИЙ ДОКУМЕНТ НА КАЖДЫЙ ПОКАЗ. Баннер играет свою анимацию ОДИН раз и застывает на
      последнем кадре; пока адрес рамки не менялся, браузер переиспользовал отработавший
@@ -84,6 +86,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
   const isImg = !htmlSource && ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
   const isHtml = !!htmlSource || ext === 'html'
   const tabUrl = cur?.sandbox_url || sandboxUrl
+  const src = cur ? fileUrl(cur.id) : null
 
   useEffect(() => {
     let alive = true
@@ -91,7 +94,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
     setBlob(null); setHtml(null); setErr('')
     if (htmlSource) { setHtml(htmlSource); return }
     if (!cur || (!isImg && !isHtml)) return
-    api.get(`/launch-prep/file/${cur.id}`, { ...auth(), responseType: 'blob' })
+    api.get(src, { ...auth(), responseType: 'blob' })
       .then(async r => {
         if (!alive) return
         if (isHtml) setHtml(await r.data.text())
@@ -99,7 +102,7 @@ export function CreativePreview({ files, startId, set, canApprove, onReviewed, o
       })
       .catch(() => { if (alive) setErr('Не удалось загрузить файл') })
     return () => { alive = false; if (url) URL.revokeObjectURL(url) }
-  }, [cur, isImg, isHtml, htmlSource])
+  }, [cur, src, isImg, isHtml, htmlSource])
 
   // Размер сцены — от окна (80 % браузера); меняется вместе с окном браузера.
   useEffect(() => {

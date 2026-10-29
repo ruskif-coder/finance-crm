@@ -39,6 +39,7 @@ from app.database import SessionLocal
 from app.mail import client as mail
 from app.mail import render
 from app.mail.send import send_and_log
+from app.notify.outward.send import HAS_CABINET_ACCESS
 import app.model_registry  # noqa: F401 — крон отдельным процессом: все таблицы для внешних ключей
 
 log = logging.getLogger("finance.cabinet.digest")
@@ -76,7 +77,7 @@ def _run(dry_run: bool) -> dict:
             print("почта не настроена — дайджест собирать некуда")
             return stats
 
-        rows = db.execute(text("""
+        rows = db.execute(text(f"""
             SELECT id, publisher_id, contact_id, email, to_name, kind, title, body,
                    context, link_abs, facts, tone, tag, created_at
               FROM cabinet_digest_queue q
@@ -86,9 +87,9 @@ def _run(dry_run: bool) -> dict:
                    SELECT 1 FROM cabinet_publisher cp JOIN cabinet cab ON cab.id = cp.cabinet_id
                     WHERE cp.publisher_id = q.publisher_id AND cab.state = 'приостановлен')
                -- Контакт снял «получает уведомления» или удалён после постановки — его
-               -- накопленное не уходит (аудит 01.10.2026, С-6).
+               -- накопленное не уходит (аудит 01.10.2026, С-6); учётку выключили — тоже (29.10.2026).
                AND EXISTS (SELECT 1 FROM sales_publisher_contacts c
-                            WHERE c.id = q.contact_id AND c.notify)
+                            WHERE c.id = q.contact_id AND c.notify AND {HAS_CABINET_ACCESS})
                -- Площадку перевели в архив после постановки — накопленное не уходит (В-8).
                AND EXISTS (SELECT 1 FROM sales_publishers p
                             WHERE p.id = q.publisher_id AND p.status <> 'АРХИВ')

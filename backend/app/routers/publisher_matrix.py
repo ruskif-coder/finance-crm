@@ -7,10 +7,12 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import exists
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.launch_prep import matrix, stuck
+from app.launch_prep.models import LaunchPrepCreativeFile, LaunchPrepCreativeSet, LaunchPrepPair
 from app.models import User
 from app.sales.models import SalesRep
 from app.permissions import require_permission
@@ -44,3 +46,34 @@ def get_matrix(month: Optional[str] = None, service_id: Optional[int] = None,
 def get_stuck(db: Session = Depends(get_db), current_user: User = Depends(VIEW)):
     """Вкладка «Подвисшие» — app/launch_prep/stuck.py."""
     return stuck.load(db)
+
+
+# ── Предпросмотр креатива в «Подвисших» (владелец 29.10.2026) ──────────────────────────────────────
+# У менеджера паблишеров нет права на креативы сделки, а смотреть баннер, который подвис на площадке, ему нужно.
+# Отдаём только креативы, уже отправленные площадке: их и так видела площадка, а черновики сборки — нет.
+
+def _sent_set(db: Session, set_id: int):
+    s = db.query(LaunchPrepCreativeSet).filter(LaunchPrepCreativeSet.id == set_id).first()
+    sent = s is not None and db.query(exists().where(LaunchPrepPair.set_id == set_id,
+                                                     LaunchPrepPair.sent_at.isnot(None))).scalar()
+    if not sent:
+        raise HTTPException(status_code=404, detail="Креатив не найден")
+    return s
+
+
+@router.get("/set/{set_id}/files")
+def set_files(set_id: int, db: Session = Depends(get_db), current_user: User = Depends(VIEW)):
+    from app.routers.launch_prep import file_json      # роутер сборки тянет полпроекта — лениво
+    s = _sent_set(db, set_id)
+    files = db.query(LaunchPrepCreativeFile).filter(LaunchPrepCreativeFile.set_id == s.id).order_by(LaunchPrepCreativeFile.id).all()
+    return {"id": s.id, "no": s.no, "title": s.title, "files": [file_json(f) for f in files]}
+
+
+@router.get("/file/{file_id}")
+def file(file_id: int, db: Session = Depends(get_db), current_user: User = Depends(VIEW)):
+    from app.routers.launch_prep import file_response
+    rec = db.query(LaunchPrepCreativeFile).filter(LaunchPrepCreativeFile.id == file_id).first()
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    _sent_set(db, rec.set_id)
+    return file_response(rec)

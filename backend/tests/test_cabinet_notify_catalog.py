@@ -138,8 +138,13 @@ def test_recipients_follow_the_notify_flag_not_the_primary_one(db=None):
     s = SessionLocal()
     try:
         row = s.execute(sa_text("""
-            SELECT publisher_id FROM sales_publisher_contacts
-             WHERE notify AND coalesce(email,'') <> '' LIMIT 1""")).first()
+            SELECT c.publisher_id FROM sales_publisher_contacts c
+             WHERE c.notify AND coalesce(c.email,'') <> ''
+               -- письма — только контакту с действующей учёткой кабинета (владелец 29.10.2026)
+               AND EXISTS (SELECT 1 FROM cabinet_account ca WHERE ca.contact_id = c.id AND ca.is_active)
+               AND NOT EXISTS (SELECT 1 FROM cabinet_publisher cp JOIN cabinet cab ON cab.id = cp.cabinet_id
+                                WHERE cp.publisher_id = c.publisher_id AND cab.state = 'приостановлен')
+             LIMIT 1""")).first()
         if row is None:
             pytest.skip("на стенде нет контактов с отметкой рассылки")
         pub_id = row[0]
