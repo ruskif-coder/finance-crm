@@ -79,6 +79,12 @@ assert.deepEqual(got({ agency_id: 27, advertiser_id: '195', services: ['еФар
 assert.deepEqual(got({ agency_id: 27, advertiser_id: 195, services: ['Polza'], period: '2026-10' }), [2, 1])         // услуга не та
 assert.deepEqual(got({ agency_id: 27, period: '2025-06' }), [6])                                                    // срок
 assert.deepEqual(got({ agency_id: null, advertiser_id: 195, services: [], period: '2026-10' }), [])
+// Условие по рекламодателю без агентства видно сразу по рекламодателю — и без агентства в брифе, и при любом агентстве (владелец 28.10.2026)
+{
+  const W2 = [...W, { id: 7, advertiser_id: 192, valid_from: '2026-01-01', body: 'Bayer — без агентства' }]
+  assert.deepEqual(matchWork(W2, { advertiser_id: 192, period: '2026-11' }).map((t) => t.id), [7])
+  assert.deepEqual(matchWork(W2, { agency_id: 27, advertiser_id: 192, period: '2026-11' }).map((t) => t.id), [1, 7])
+}
 console.log('agencyTerms (условия работы): ok')
 
 // «Расчёт»: сделка без условия СК подсвечивается, с причиной (владелец 27.10.2026)

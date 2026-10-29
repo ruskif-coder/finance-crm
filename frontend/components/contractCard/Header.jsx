@@ -10,10 +10,10 @@ import { errText } from '@/lib/loadError'
 import safeHref from '@/lib/safeHref'
 import { MONO } from '@/components/salesTableKit'
 import { fmtDateFull } from '@/lib/salesFormat'
-import { ISSUE_CHANNELS, PROLONGATION_OPTIONS } from '@/lib/contractTerms'
+import { ISSUE_CHANNELS, PAYMENT_TERM_CONDITIONS, PROLONGATION_OPTIONS } from '@/lib/contractTerms'
 import { box, cap, btnGhost, btnPrimary, Pill, Notice, link, fieldInp } from '@/components/contractCard/ui'
 
-const EDITABLE = ['services', 'payment_form', 'payment_term_days', 'end_date_text', 'prolongation', 'issue_channel', 'marketing_name', 'note']
+const EDITABLE = ['services', 'payment_term_days', 'payment_term_condition', 'end_date_text', 'prolongation', 'issue_channel', 'marketing_name', 'note']
 const locked = { display: 'flex', alignItems: 'center', height: 32, padding: '0 9px', background: 'var(--bg-subtle)', border: '1px solid var(--border-inner)', borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)', overflow: 'hidden', whiteSpace: 'nowrap' }
 const valueStyle = { fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const pencil = 'M4 20h4l10-10-4-4L4 16v4z'
@@ -36,6 +36,30 @@ function Select({ value, options, onChange }) {
       <option value="">—</option>
       {list.map(o => <option key={o} value={o}>{o}</option>)}
     </select>
+  )
+}
+
+// Услуги договора — из каталога услуг продаж (владелец 28.10.2026: «просто прикреплять из списка»): хранятся названиями через запятую
+// в `contracts.services`. Значение не из каталога (переименовали или убрали) остаётся фишкой и снимается кликом.
+const SEP = ', '
+const splitServices = (v) => (v || '').split(',').map(x => x.trim()).filter(Boolean)
+
+function ServicesPicker({ value, catalog, onChange }) {
+  const on = splitServices(value)
+  const list = [...catalog, ...on.filter(x => !catalog.includes(x))]
+  const toggle = (n) => onChange((on.includes(n) ? on.filter(x => x !== n) : list.filter(x => x === n || on.includes(x))).join(SEP))
+  return (
+    <span style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+      {list.map(n => {
+        const sel = on.includes(n)
+        return (
+          <button key={n} type="button" onClick={() => toggle(n)}
+                  style={{ height: 24, padding: '0 8px', borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 11.5, fontWeight: sel ? 700 : 500,
+                           border: `1px solid ${sel ? 'var(--accent-border)' : 'var(--border-card)'}`, background: sel ? 'var(--accent-tint)' : 'var(--bg-card)',
+                           color: sel ? 'var(--accent-fg)' : 'var(--text-secondary)' }}>{n}</button>
+        )
+      })}
+    </span>
   )
 }
 
@@ -68,10 +92,15 @@ function SkPlaque({ sk, onClick }) {
 // extraSave — сохранить их вместе с полями договора одной кнопкой.
 export default function Header({ c, sk, showSk, canEdit, onSaved, onSk, onFile, editRequest = 0, onEditChange, extraSave }) {
   const [edit, setEdit] = useState(null)          // null — просмотр; объект — правка
+  const [catalog, setCatalog] = useState([])      // названия услуг каталога — грузятся при входе в правку
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const open = (v) => { setEdit(v); if (onEditChange) onEditChange(!!v) }
-  const start = () => { setErr(''); open(Object.fromEntries(EDITABLE.map(k => [k, c[k] ?? '']))) }
+  const start = () => {
+    setErr(''); open(Object.fromEntries(EDITABLE.map(k => [k, c[k] ?? ''])))
+    if (!catalog.length) api.get('/sales/directories/services?only_active=true', auth())
+      .then(r => setCatalog((r.data.items || []).map(x => x.name))).catch(e => setErr(errText(e)))
+  }
   useEffect(() => { if (editRequest && canEdit) start() }, [editRequest])  // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k) => (v) => setEdit({ ...edit, [k]: v })
   const save = async () => {
@@ -91,7 +120,7 @@ export default function Header({ c, sk, showSk, canEdit, onSaved, onSk, onFile, 
   }
   const docHref = safeHref(c.document_link)
   const text = (k) => edit ? <input value={edit[k] ?? ''} onChange={e => set(k)(e.target.value)} style={fieldInp} /> : <span title={c[k] || ''} style={valueStyle}>{c[k] || '—'}</span>
-  const pay = [c.payment_form, c.payment_term_days != null ? `${c.payment_term_days} дн.` : null].filter(Boolean).join(' · ')
+  const pay = [c.payment_term_days != null ? `${c.payment_term_days} дн.` : null, c.payment_term_condition].filter(Boolean).join(' · ')
   return (
     <section style={{ ...box, border: `1px solid ${edit ? 'var(--accent-border)' : 'var(--border-card)'}`, padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -119,13 +148,13 @@ export default function Header({ c, sk, showSk, canEdit, onSaved, onSk, onFile, 
             {!edit && c.inn && <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-faint)' }}>ИНН {c.inn}</span>}
           </Cell>
           <Cell label="Наше юрлицо">{edit ? <span title="Меняется в карточке юрлица" style={locked}>{c.own_company_name || '—'}</span> : <span style={valueStyle}>{c.own_company_name || '—'}</span>}</Cell>
-          <Cell label="Вид документа">{edit ? <span title="Поле не правится" style={locked}>{c.doc_type || '—'}</span> : <span style={valueStyle}>{c.doc_type || '—'}</span>}</Cell>
-          <Cell label="Услуги">{text('services')}</Cell>
+          <Cell label="Услуги">{edit ? <ServicesPicker value={edit.services} catalog={catalog} onChange={set('services')} />
+            : <span title={c.services || ''} style={valueStyle}>{c.services || '—'}</span>}</Cell>
           <Cell label="Оплата · отсрочка">
             {edit ? (
               <span style={{ display: 'flex', gap: 6 }}>
-                <input value={edit.payment_form ?? ''} onChange={e => set('payment_form')(e.target.value)} placeholder="постоплата" style={fieldInp} />
-                <input value={edit.payment_term_days ?? ''} onChange={e => set('payment_term_days')(e.target.value.replace(/\D/g, ''))} placeholder="дн." style={{ ...fieldInp, width: 64, flex: '0 0 64px' }} />
+                <input value={edit.payment_term_days ?? ''} onChange={e => set('payment_term_days')(e.target.value.replace(/\D/g, ''))} placeholder="дн." style={{ ...fieldInp, width: 56, flex: '0 0 56px', textAlign: 'right' }} />
+                <Select value={edit.payment_term_condition} options={PAYMENT_TERM_CONDITIONS} onChange={set('payment_term_condition')} />
               </span>
             ) : <span title={pay} style={valueStyle}>{pay || '—'}</span>}
           </Cell>
