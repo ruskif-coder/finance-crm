@@ -182,6 +182,8 @@ const Lock = ({ locked }) => (
   </svg>
 );
 
+// Поле комментария — у рекламодателя и у бренда одно на вид (владелец 29.10.2026).
+const COMMENT_INP = { maxWidth: 340, boxSizing: 'border-box', height: 26, padding: '0 9px', border: `1px solid ${T.inner}`, borderRadius: 8, background: T.card, fontSize: 11.5, fontWeight: 600, color: T.t2, outline: 'none', fontFamily: T.sans };
 const blankBrand = id => ({ id, line_id: null, brand: '', brand_id: null, plan: 0, on: Array(12).fill(0), sums: {}, locks: {}, products: {}, deals: {}, brief: {}, service_forecast: {} });
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -753,7 +755,7 @@ export default function YearPlan({
                                 ...x, brands: x.brands.map(bb => ({ ...bb, brief: { ...(bb.brief || {}), adv_comment: v } })),
                               })));
                             }}
-                            style={{ flex: '1 1 120px', minWidth: 80, maxWidth: 340, boxSizing: 'border-box', height: 26, padding: '0 9px', border: `1px solid ${T.inner}`, borderRadius: 8, background: T.card, fontSize: 11.5, fontWeight: 600, color: T.t2, outline: 'none', fontFamily: T.sans }} />
+                            style={{ ...COMMENT_INP, flex: '1 1 120px', minWidth: 80 }} />
                         )}
                         {readOnly && (g.brands.find(x => (x.brief || {}).adv_comment) || {}).brief?.adv_comment && (
                           <span style={{ fontSize: 11.5, color: T.t3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -843,7 +845,7 @@ export default function YearPlan({
                           return (
                             <div key={b.id} title={overLocked ? `Услуги/суммы за год: ${num(committed)} ₽ — больше годового плана ${num(b.plan || 0)} ₽` : undefined}
                               style={{ display: 'grid', gridTemplateColumns: PLAN_COLS, gap: 6, alignItems: 'center', padding: '7px 0', borderTop: `1px solid ${T.nestedRow}`, background: overLocked ? 'var(--danger-tint)' : undefined, borderRadius: overLocked ? 8 : undefined }}>
-                              <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, paddingLeft: 27 }}>
+                              <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, rowGap: 6, minWidth: 0, paddingLeft: 27 }}>
                                 <span data-pop-root style={{ position: 'relative', minWidth: 0, flex: '0 1 auto' }}>
                                   <span className={readOnly || brandLocked ? undefined : 'yp-field'} title={brandLocked ? 'Бренд зафиксирован. Для нового — кнопка «копировать» в конце строки' : undefined}
                                     onClick={() => { if (!readOnly && !brandLocked) toggleSel('b' + b.id); }} style={{
@@ -952,6 +954,17 @@ export default function YearPlan({
                                       );
                                     })()}
                                   </span>
+                                )}
+                                {/* Комментарий к бренду (владелец 29.10.2026) — как у рекламодателя: в brief строки, едет обычным
+                                    сохранением плана без новой колонки. Своя строка под брендом — `flexBasis: 100%`. */}
+                                {!readOnly && b.brand_id && (
+                                  <input value={(b.brief || {}).brand_comment || ''} placeholder="комментарий к бренду…"
+                                    onChange={e => patchBrand(g.id, b.id, { brief: { ...(b.brief || {}), brand_comment: e.target.value } })}
+                                    style={{ ...COMMENT_INP, flex: '1 1 100%' }} />
+                                )}
+                                {readOnly && (b.brief || {}).brand_comment && (
+                                  <span style={{ flex: '1 1 100%', fontSize: 11.5, color: T.t3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {b.brief.brand_comment}</span>
                                 )}
                               </span>
 
