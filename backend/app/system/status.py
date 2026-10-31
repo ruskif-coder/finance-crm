@@ -404,12 +404,21 @@ def check_outward_digest(db: Session):
     а экран состояния молчал — своего журнала прогонов у дайджеста нет, поэтому смотрим
     на результат: ушло ли то, чему пора."""
     title = "Письма площадкам (дайджест)"
-    n, oldest = db.execute(text("""
+    # Отбор ТОТ ЖЕ, что у отправителя, включая `HAS_CABINET_ACCESS` и закрытые строки.
+    # 31.10.2026 эта проверка была единственным из четырёх мест, куда условие доступа не
+    # добавили 29.10: она считала застрявшими 17 строк, которых отправитель взять уже не
+    # мог, и светилась красным постоянно. Вечно красный прибор бесполезен так же, как
+    # вечно зелёный — на него перестают смотреть. Держит их вместе прибор
+    # `test_all_four_selections_agree_on_who_may_receive`.
+    from app.notify.outward.send import HAS_CABINET_ACCESS
+    n, oldest = db.execute(text(f"""
         SELECT count(*), min(q.due_at) FROM cabinet_digest_queue q
-         WHERE q.sent_at IS NULL AND q.due_at < now() - interval '2 hours'
+         WHERE q.sent_at IS NULL AND q.closed_reason IS NULL
+           AND q.due_at < now() - interval '2 hours'
            AND NOT EXISTS (SELECT 1 FROM cabinet_publisher cp JOIN cabinet cab ON cab.id = cp.cabinet_id
                             WHERE cp.publisher_id = q.publisher_id AND cab.state = 'приостановлен')
-           AND EXISTS (SELECT 1 FROM sales_publisher_contacts c WHERE c.id = q.contact_id AND c.notify)
+           AND EXISTS (SELECT 1 FROM sales_publisher_contacts c
+                        WHERE c.id = q.contact_id AND c.notify AND {HAS_CABINET_ACCESS})
            AND EXISTS (SELECT 1 FROM sales_publishers p WHERE p.id = q.publisher_id AND p.status <> 'АРХИВ')
     """)).first() or (0, None)
     if not n:
@@ -419,6 +428,42 @@ def check_outward_digest(db: Session):
                   f"не ушло событий: {n}, старейшее {hours:.0f} ч",
                   "крон app.notify.outward.digest не отправляет — смотреть logs/outward_digest.log",
                   consequence="Площадки не получают писем о креативах на согласование и запросах ссылок")
+
+
+def check_tg_delivery_failures(db: Session):
+    """Доля неудач телеграма ЗА СУТКИ, а не связь в момент открытия экрана.
+
+    30.10.2026 прокси до Телеграма умер на день: из 268 отправок 252 легли статусом
+    `failed` с одной и той же ошибкой `ConnectTimeout`. Не заметил ни один прибор, и
+    заметить было нечем: живая проверка «Телеграм: связь» щупает связь СЕЙЧАС, а
+    прошедшие сутки не смотрел никто. Хуже того, `failed` терминален — досылка забирает
+    только `queued`, — поэтому эти 252 сообщения не придут уже никогда, и молчание было
+    полным. Владелец обнаружил сам, через день.
+
+    Порог по ДОЛЕ, а не по числу: десять неудач на тысячу отправок — обычная рваность
+    сети, десять на двадцать — поломка канала.
+    """
+    row = db.execute(text("""
+        SELECT count(*) FILTER (WHERE status = 'failed') AS failed,
+               count(*) AS total
+          FROM notification_deliveries
+         WHERE channel = 'tg' AND created_at > now() - interval '24 hours'""")).first()
+    failed, total = ((row.failed or 0), (row.total or 0)) if row else (0, 0)
+    title = "Телеграм: отправки за сутки"
+    if not total:
+        # Пустота — это «поводов не было», и так и говорим. Оправдывать её словами «на
+        # стенде это норма» нельзя: ровно так была обезврежена проверка сканера, которая
+        # печатала успокаивающую фразу и на проде тоже.
+        return _check("tg_fails", "Внешние связи", title, "idle", "отправок не было")
+    share = failed / total
+    tone = "bad" if share >= 0.5 else "warn" if share >= 0.1 else "ok"
+    return _check("tg_fails", "Внешние связи", title, tone,
+                  f"неудач {failed} из {total} ({share * 100:.0f}%)",
+                  "смотреть TELEGRAM_PROXY_URL и доступность api.telegram.org"
+                  if tone != "ok" else None,
+                  consequence=("Уведомления в телеграм не доходят, и повторно они НЕ "
+                               "посылаются: статус failed досылка не перечитывает")
+                  if tone == "bad" else None)
 
 
 def check_bidder(db: Session):
@@ -930,7 +975,8 @@ def collect(db: Session, live: bool = False) -> dict:
                _safe(check_disk), _safe(check_storage, db), _safe(check_orphans, db),
                _safe(check_notify_dispatch, db),
                _safe(check_erid_auto, db), _safe(check_dsp_stats, db),
-               _safe(check_bidder, db), _safe(check_outward_digest, db)]
+               _safe(check_bidder, db), _safe(check_outward_digest, db),
+               _safe(check_tg_delivery_failures, db)]
     ext = _safe(check_external_config)
     checks += ext if isinstance(ext, list) else [ext]
     checks.append(_safe(check_dsp_journal, dsp["tone"] == "ok"))
