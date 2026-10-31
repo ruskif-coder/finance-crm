@@ -203,6 +203,10 @@ class Contract(Base):
                                  foreign_keys=[own_company_id])
     marketing_name = Column(String, nullable=True)  # НАЗВАНИЕ МАРКЕТИНГОВОЕ
     cooperation_format = Column(String, nullable=True)  # ФОРМАТ СОТРУДНИЧЕСТВА
+    # Каким словом называется ДС по этому договору: 'приложение' | 'дс'. NULL = «приложение».
+    # Тумблер у ДОГОВОРА (владелец 31.10.2026), формы слова — app/annex_tpl/doc_kind.py.
+    # Миграция 2026-10-31_annex_doc_kind_and_legal_name.sql.
+    annex_word = Column(Text, nullable=True)
     services = Column(Text, nullable=True)  # УСЛУГИ
     end_date_text = Column(String, nullable=True)  # ДАТА ОКОНЧАНИЯ ДОГОВОРА — текст, формат в исходнике непостоянный
     prolongation = Column(String, nullable=True)  # ПРОЛОНГАЦИЯ — свободный текст в БД, фронт ограничивает списком (PROLONGATION_OPTIONS в settings.js)

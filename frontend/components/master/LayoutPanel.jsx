@@ -5,7 +5,8 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import api, { auth } from '@/lib/api'
-import { MONO, UI, btn, inp } from '@/components/salesTableKit'
+import { MONO, UI, btn, inp, Segmented } from '@/components/salesTableKit'
+import { isAdmin } from '@/lib/auth'
 import { fmtDateTimeShort } from '@/lib/dates'
 import { rub2 } from '@/lib/salesFormat'
 import { CAP, CARD, Note, SETTING_LABEL, num, plural, sameSettings } from '@/components/master/kit'
@@ -40,7 +41,16 @@ const Step = ({ n, title, hint, children }) => (
   </div>
 )
 
+// Вид документа по договору (владелец 31.10.2026): выбирается здесь, при первой сборке, вместе со стартовым номером, и
+// фиксируется в договоре. Дальше переключать может только администратор — сервер держит то же правило (`doc_kind.assign`).
+// Не выбран — для мастер-сделки предвыбрано «ДС»: так документы пакета печатаются и сейчас (решение 15.10.2026).
+const WORDS = [{ value: 'приложение', label: 'Приложение' }, { value: 'дс', label: 'ДС' }]
+const wordLabel = (w) => (w === 'дс' ? 'ДС' : w === 'приложение' ? 'Приложение' : 'не выбран')
+
 function StartNo({ m, locked, busy, onSave }) {
+  const fixed = (m.contract && m.contract.annex_word) || null
+  const mayWord = !fixed || isAdmin()                          // первичный выбор — любому, кто собирает; дальше — админ
+  const [word, setWord] = useState(fixed || 'дс')
   const [edit, setEdit] = useState(m.start_no == null)
   const [v, setV] = useState(m.start_no != null ? String(m.start_no) : (m.last_issued != null ? String(m.last_issued) : ''))
   const [chk, setChk] = useState(null)
@@ -57,6 +67,7 @@ function StartNo({ m, locked, busy, onSave }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', borderRadius: 12, background: 'var(--bg-subtle)', fontSize: 13 }}>
         <span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--income)' }} />
         <span>Последний ДС по договору — № <b style={{ fontFamily: MONO }}>{m.start_no}</b></span>
+        <span style={{ color: 'var(--text-muted)' }}>· вид документа: <b style={{ color: fixed ? 'var(--text-primary)' : 'var(--warning-fg)' }}>{wordLabel(fixed)}</b></span>
         {!locked && <button type="button" onClick={() => setEdit(true)} style={{ marginLeft: 'auto', border: 0, background: 'none', color: 'var(--accent)', fontWeight: 700, cursor: 'pointer', fontFamily: UI }}>изменить</button>}
       </div>
     )
@@ -69,7 +80,7 @@ function StartNo({ m, locked, busy, onSave }) {
       <div style={{ display: 'flex', gap: 8 }}>
         <input value={v} onChange={e => check(e.target.value)} placeholder="№" disabled={locked}
           style={{ ...inp, width: 90, fontFamily: MONO, borderColor: bad || (chk && !chk.ok) ? 'var(--danger-border)' : undefined }} />
-        <button type="button" disabled={blocked} onClick={async () => { if (await onSave(n)) setEdit(false) }} style={{ ...btn(true), opacity: blocked ? 0.5 : 1 }}>Сохранить</button>
+        <button type="button" disabled={blocked} onClick={async () => { if (await onSave(n, mayWord ? word : undefined)) setEdit(false) }} style={{ ...btn(true), opacity: blocked ? 0.5 : 1 }}>Сохранить</button>
         {m.start_no != null && <button type="button" onClick={() => setEdit(false)} style={btn(false)}>Отмена</button>}
       </div>
       {chk && !chk.ok && (
@@ -77,6 +88,13 @@ function StartNo({ m, locked, busy, onSave }) {
           <button type="button" onClick={() => check(String(chk.last))} style={{ border: 0, background: 'none', color: 'var(--accent)', cursor: 'pointer', fontWeight: 700 }}>Подставить № {chk.last}</button></span>
       )}
       {chk?.warn && <span style={{ fontSize: 11.5, color: 'var(--warning-text)' }}>{chk.warn}</span>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', paddingTop: 2 }}>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Вид документа по договору</span>
+        <Segmented value={word} options={WORDS} onChange={setWord} disabled={!mayWord || locked}
+                   title={mayWord ? 'Каким словом называются ДС по этому договору — в номере и тексте. Фиксируется в договоре'
+                                  : 'Вид уже выбран — изменить может только администратор'} />
+        {!fixed && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>выбирается один раз — дальше менять сможет только администратор</span>}
+      </div>
     </div>
   )
 }

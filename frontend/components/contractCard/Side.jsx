@@ -3,10 +3,16 @@
  * юр запросы, журнал. Только показ; действия — колбэками страницы.
  */
 import Link from 'next/link'
-import { MONO } from '@/components/salesTableKit'
+import { MONO, Segmented } from '@/components/salesTableKit'
+import { isAdmin } from '@/lib/auth'
 import { fmtDateFull } from '@/lib/salesFormat'
 import { fmtDateTime } from '@/lib/dates'
 import { cap, h2, count, note, btnPrimary, Pill, Notice, money, plural, link, panel } from '@/components/contractCard/ui'
+
+// Тумблер «как называется ДС» (владелец 31.10.2026). Подписи — как у нас на экранах («ДС»);
+// в самом документе слово печатается полностью — «Доп. соглашение» (`annex_tpl/doc_kind.py`).
+// Пусто в базе = «приложение»: так договоры печатаются по умолчанию.
+const WORDS = [{ value: 'приложение', label: 'Приложение' }, { value: 'дс', label: 'ДС' }]
 
 const PEN = 'M4 20h4l10-10-4-4L4 16v4z'
 const COPY = 'M9 9h11v11H9zM5 15V4h11'
@@ -39,12 +45,24 @@ function TplRow({ t, onOpen, onCopy }) {
   )
 }
 
-export function Templates({ rows, total, canCreate, onNew, onOpen, onCopy, onAll }) {
+export function Templates({ rows, total, canCreate, onNew, onOpen, onCopy, onAll, word, canEditWord, onWord }) {
   return (
     <section id="templates" style={{ ...panel, gap: 8 }}>
       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={h2}>Шаблоны ДС договора</span><span style={count}>{rows.length}</span>
         {canCreate && <button type="button" onClick={onNew} style={{ ...btnPrimary, marginLeft: 'auto', height: 28, padding: '0 11px', fontSize: 12 }}>+ Новый шаблон</button>}
+      </span>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Документ называется</span>
+        {/* Выбирается один раз (обычно при первой сборке ДС), дальше — только администратор (владелец 31.10.2026);
+            сервер держит то же правило. Не выбран — ничего не подсвечено: показать «Приложение» значило бы выдать
+            умолчание за сделанный выбор. */}
+        <Segmented value={word || null} options={WORDS} onChange={onWord}
+                   disabled={!(isAdmin() || (!word && canEditWord))}
+                   title={word ? (isAdmin() ? 'Меняет слово в номере и тексте ДС по этому договору'
+                                            : 'Вид уже выбран — изменить может только администратор')
+                               : 'Вид ещё не выбран — обычно выбирается при первой сборке ДС'} />
+        {!word && <span style={{ fontSize: 11, color: 'var(--warning-fg)' }}>не выбран</span>}
       </span>
       {rows.map(t => <TplRow key={t.id} t={t} onOpen={() => onOpen(t.id)} onCopy={() => onCopy(t.id)} />)}
       {!rows.length && <span style={note}>Шаблонов нет: у договора не указан формат или формату не назначен базовый шаблон.</span>}

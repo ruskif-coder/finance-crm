@@ -866,3 +866,62 @@ export function Seg({ value, opts, onPick, disabled, size = 'md', slide = false 
     </span>
   )
 }
+
+/**
+ * Переключатель сегментами — для тумблеров вида «Приложение / ДС» (договор, 31.10.2026).
+ *
+ * Выбранный сегмент — фон `--accent-tint`, текст `--accent-fg`: на плашке читается семейство
+ * `-fg`, а не сам цвет смысла (правило «цвет смысла ≠ цвет текста», гейт check-tokens).
+ *
+ * `disabled` — нет права менять: значение ВИДНО, но не переключается. Прятать тумблер
+ * целиком нельзя — тогда непонятно, каким словом называются ДС этого договора.
+ */
+export function Segmented({ value, options, onChange, disabled = false, title }) {
+  return (
+    <div role="radiogroup" title={title} style={{ display: 'inline-flex', border: '1px solid var(--border-card)',
+      borderRadius: 10, background: 'var(--bg-card)', padding: 2, gap: 2, fontFamily: UI }}>
+      {options.map(o => {
+        const on = o.value === value
+        return (
+          <button key={o.value} type="button" role="radio" aria-checked={on} disabled={disabled}
+            onClick={() => { if (!on && !disabled && onChange) onChange(o.value) }}
+            style={{ border: 'none', borderRadius: 8, padding: '5px 12px', fontSize: 12.5, fontFamily: UI,
+              fontWeight: on ? 700 : 500, cursor: disabled || on ? 'default' : 'pointer',
+              background: on ? 'var(--accent-tint)' : 'transparent',
+              color: on ? 'var(--accent-fg)' : (disabled ? 'var(--text-disabled)' : 'var(--text-muted)') }}>
+            {o.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * Вкладки ВНУТРИ страницы — подчёркиванием, как в «Трафике».
+ *
+ * Поднято в кит 31.10.2026: в `traffic/dashboardKit` этот вид был объявлен прямо в
+ * компоненте, а понадобился реестру приложений («Приложения / Шаблоны»). Вкладки МЕЖДУ
+ * экранами контура — другое: `SectionTabs`, из карты приложения.
+ */
+export function UnderlineTabs({ value, tabs, onChange }) {
+  return (
+    <div role="tablist" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border-card)', fontFamily: UI }}>
+      {tabs.map(t => {
+        const on = t.key === value
+        return (
+          <button key={t.key} type="button" role="tab" aria-selected={on} onClick={() => onChange(t.key)}
+            style={{ border: 'none', background: 'transparent', padding: '8px 14px', cursor: 'pointer',
+              fontSize: 13, fontWeight: 700, fontFamily: UI,
+              color: on ? 'var(--text-primary)' : 'var(--text-faint)',
+              borderBottom: `2px solid ${on ? 'var(--accent)' : 'transparent'}`, marginBottom: -1 }}>
+            {t.label}
+            {t.count != null && (
+              <span style={{ marginLeft: 6, fontFamily: MONO, fontSize: 11.5, color: 'var(--text-faint)' }}>{t.count}</span>
+            )}
+          </button>
+        )
+      })}
+    </div>
+  )
+}

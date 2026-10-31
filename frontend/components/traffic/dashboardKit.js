@@ -281,7 +281,7 @@ export const ServiceCell = ({ product, color, surface }) => (
 
 /* ── управление площадкой: старт · пауза · отключить ──────────────────────── */
 
-const IcoBtn = ({ title, tone, disabled, onClick, children }) => (
+export const IcoBtn = ({ title, tone, disabled, onClick, children }) => (
   <button onClick={disabled ? undefined : onClick} title={title} disabled={disabled}
     style={{ width: 26, height: 26, display: 'inline-flex', alignItems: 'center',
       justifyContent: 'center', borderRadius: 8, background: 'var(--bg-card)',

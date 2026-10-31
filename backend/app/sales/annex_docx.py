@@ -23,6 +23,8 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
+from app.annex_tpl import doc_kind as DK
+
 FONT = "Times New Roman"
 HEADER_FILL = "4472C4"      # синяя шапка — как в образце и в наших выгрузках медиаплана
 TOTAL_FILL = "D9E2F3"
@@ -169,7 +171,7 @@ def _basis_page(doc, d: dict) -> None:
     _run(h, "Основание для закрывающих документов", bold=True, size=12)
     note = doc.add_paragraph()
     note.paragraph_format.space_after = Pt(10)
-    _run(note, f"К {(d.get('number') or 'Приложение').replace('Приложение', 'Приложению', 1)} к Договору {_nb('№ ' + ((d.get('contract') or {}).get('number') or '________'))}. "
+    _run(note, f"К {DK.to_dative(d.get('number'), _kind(d))} к Договору {_nb('№ ' + ((d.get('contract') or {}).get('number') or '________'))}. "
                "Формулировка, которая будет указана в УПД и счёте. Просим согласовать.", italic=True, size=10.5)
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -201,7 +203,7 @@ def build_docx(d: dict, with_basis: bool = False) -> bytes:
 
     h = doc.add_paragraph()
     h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    _run(h, d.get("number") or "Приложение", bold=True, size=12)
+    _run(h, d.get("number") or DK.forms(_kind(d))["nom"], bold=True, size=12)
 
     sub = doc.add_paragraph()
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -220,7 +222,7 @@ def build_docx(d: dict, with_basis: bool = False) -> bytes:
     pre.paragraph_format.space_after = Pt(10)
     _run(pre, f"{_party_line(cust, 'Заказчик')}, с одной стороны, и "
               f"{_party_line(ex, 'Исполнитель')}, с другой стороны, заключили настоящее "
-              f"{d.get('number') or 'Приложение'} к Договору "
+              f"{d.get('number') or DK.forms(_kind(d))['nom']} к Договору "
               f"{_nb('№ ' + (contract.get('number') or '________'))} об оказании услуг "
               f"от {_long_date(contract.get('date'))} (далее по тексту – «Договор») "
               f"о нижеследующем:")
@@ -256,18 +258,23 @@ CLAUSE_2 = ("В случае если Заказчик недоволен ока
             "приступает к доработке.")
 
 
-_DS_WORDS = (("настоящему Приложению", "настоящему ДС"), ("настоящим Приложением", "настоящим ДС"),
-             ("Настоящее Приложение", "Настоящее ДС"), ("настоящего Приложения", "настоящего ДС"),
-             ("отдельными Приложениями", "отдельными ДС"), ("Приложение составлено", "ДС составлено"))
+def _kind(d: dict) -> str:
+    """Вид документа для файла. `kind` приходит из модели сборки; у документов, замороженных до
+    31.10.2026, его в модели нет — тогда мастер-сделка всё равно «дс» (`DK.resolve`). Иначе
+    уже выпущенный пакет при повторной выгрузке молча стал бы «Приложением»."""
+    return DK.resolve(d.get("kind"), None, is_master=bool(d.get("is_master")))
 
 
 def _w(d: dict, text: str) -> str:
-    """ДС мастер-сделки называются «ДС», а не «Приложение» (решение владельца 15.10.2026); старые документы — как были."""
-    if not d.get("is_master"):
-        return text
-    for a, b in _DS_WORDS:
-        text = text.replace(a, b)
-    return text
+    """Слово документа в пунктах, вшитых в код, — по виду документа.
+
+    История. С 15.10.2026 ДС мастер-сделки переписывались здесь таблицей замен на
+    сокращение: «настоящему Приложению» → «настоящему ДС». 31.10.2026 владелец решил
+    («синхронизировать»; «в настройках — ДС, в тексте — Доп. соглашение»): одно слово на
+    весь документ, в тексте — полной формой, и решает тумблер договора. Таблица заменена
+    общим правилом `DK.rebrand`; мастер-сделка по-прежнему по умолчанию доп. соглашение.
+    """
+    return DK.rebrand(text, _kind(d))
 
 
 def _clause_11(d: dict) -> str:

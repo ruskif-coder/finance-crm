@@ -19,7 +19,10 @@ import api, { auth } from '@/lib/http'
 import Navbar from '@/components/Navbar'
 import BaseTemplateModal from '@/components/annex/BaseTemplateModal'
 import SectionTabs from '@/components/SectionTabs'
-import { MONO, UI, IconBtn } from '@/components/salesTableKit'
+import { MONO, UI, IconBtn, UnderlineTabs, primaryBtn } from '@/components/salesTableKit'
+import TemplatesTab from '@/components/annex/TemplatesTab'
+import NewTemplateModal from '@/components/contractCard/NewTemplateModal'
+import { can, getPermissions } from '@/lib/auth'
 import { grp } from '@/lib/salesFormat'
 import { T } from '@/lib/tokens'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
@@ -93,6 +96,32 @@ export default function AnnexRegistry() {
   const [sortDir, setSortDir] = useState('desc')
   const [busy, setBusy] = useState('')
   const [tplOpen, setTplOpen] = useState(false)
+  // Вкладка «Шаблоны» (владелец 31.10.2026) — на праве шаблонов `annex_templates.view`, своего
+  // ключа нет. Вкладка в адресе (`?tab=templates`), чтобы ссылкой можно было отправить прямо в
+  // список «что пересохранить». Права читаем после монтирования: на сервере localStorage нет.
+  const [canTpl, setCanTpl] = useState(false)
+  const [canTplCreate, setCanTplCreate] = useState(false)
+  useEffect(() => {
+    const p = getPermissions()
+    setCanTpl(can(p, 'annex_templates', 'view')); setCanTplCreate(can(p, 'annex_templates', 'create'))
+  }, [])
+  const [newTpl, setNewTpl] = useState(false)            // окно «Новый шаблон» из реестра шаблонов
+  const tab = canTpl && router.query.tab === 'templates' ? 'templates' : 'annexes'
+  const setTab = (t) => router.replace({ pathname: router.pathname, query: t === 'templates' ? { tab: t } : {} },
+                                       undefined, { shallow: true })
+  const [tplContract, setTplContract] = useState(null)   // шаблон договора, открытый из вкладки
+  const [tplReload, setTplReload] = useState(0)
+  /** Шаблон договора открывается сразу; базовый — списком базовых (по номеру окно его не открывает). */
+  const openTpl = (r) => {
+    if (r.scope === 'custom' && r.contract_id) {
+      setTplContract({ id: r.contract_id, number: r.contract_number, format: r.format, templateId: r.id })
+    } else setTplOpen(true)
+  }
+  const closeTpl = () => { setTplOpen(false); setTplContract(null); setTplReload(n => n + 1) }
+  const onTplCreated = (tid, c) => {
+    setNewTpl(false); setTplReload(n => n + 1)
+    setTplContract({ id: c.id, number: c.contract_number, format: c.cooperation_format, templateId: tid })
+  }
 
   // Загрузка вынесена из useEffect в именованную функцию: её зовёт и монтирование, и
   // возврат на экран. Безымянная стрелка внутри эффекта второму вызывающему недоступна.
@@ -185,6 +214,22 @@ export default function AnnexRegistry() {
         {error && <div style={{ background: 'var(--danger-tint)', color: T.danger, padding: '10px 14px', borderRadius: 12, marginBottom: 12, fontSize: 13 }}>{error}</div>}
 
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', boxShadow: 'var(--shadow-card)', borderRadius: 18, padding: '18px 24px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {canTpl && (
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <UnderlineTabs value={tab} onChange={setTab}
+                  tabs={[{ key: 'annexes', label: 'Приложения' }, { key: 'templates', label: 'Шаблоны' }]} />
+              </div>
+              {tab === 'templates' && canTplCreate && (
+                <button type="button" onClick={() => setNewTpl(true)}
+                        style={{ ...primaryBtn, display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, marginBottom: 6 }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 2.4, strokeLinecap: 'round' }}><path d="M12 5v14M5 12h14" /></svg>
+                  Новый шаблон
+                </button>
+              )}
+            </div>
+          )}
+          {tab === 'templates' ? <TemplatesTab onOpen={openTpl} reloadKey={tplReload} /> : (<>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <h1 style={{ fontSize: 17, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Приложения</h1>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${searchOpen || search ? 'var(--accent)' : 'var(--border-card)'}`, borderRadius: 10, padding: '0 10px', height: 34, width: searchOpen || search ? 260 : 150, transition: 'width 200ms ease' }}>
@@ -279,9 +324,11 @@ export default function AnnexRegistry() {
               </div>
             </div>
           )}
+          </>)}
         </div>
       </div>
-      <BaseTemplateModal open={tplOpen} onClose={() => setTplOpen(false)} />
+      <BaseTemplateModal open={tplOpen || !!tplContract} contract={tplContract} onClose={closeTpl} />
+      {newTpl && <NewTemplateModal onClose={() => setNewTpl(false)} onCreated={onTplCreated} />}
     </>
   )
 }

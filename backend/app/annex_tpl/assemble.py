@@ -18,8 +18,9 @@ from sqlalchemy.orm import Session
 from app import own_company
 from app.annex_tpl.contract_check import gaps as contract_gaps
 from app import vat as vat_rules
-from app.annex_tpl.check import MAX_TEXT, numbering, unknown_keys, zone_at
+from app.annex_tpl.check import MAX_TEXT, NUMBERED, numbering, unknown_keys, zone_at
 from app.annex_tpl.legal_name import legal_name
+from app.annex_tpl import doc_kind as DK
 from app.annex_tpl.models import AnnexTplTemplate
 from app.annex_tpl.subs import SUBS
 from app.annex_tpl.service import AnnexTplError
@@ -50,6 +51,29 @@ def _advertisers(db: Session, deal_ids) -> str:
          WHERE d.id = ANY(:d)
     """), {"d": ids}).scalars().all()
     return ", ".join(sorted(x for x in rows if x))
+
+
+def _legal_names(db: Session, deal_ids) -> list:
+    """Юр. названия рекламодателей документа — В ТОМ ЖЕ ПОРЯДКЕ, что их короткие имена.
+
+    Порядок обязан совпадать с `_advertisers`, иначе `{юр_название_2}` указывал бы на
+    другого рекламодателя, чем второй в `{рекламодатель}` — и это было бы не видно.
+    Поэтому сортировка та же: по показываемому имени.
+
+    Незаполненное юр. название возвращается ПУСТОЙ строкой, а не подменяется коротким
+    именем: пустое запирает выгрузку и говорит, где заполнить (`SUBS["юр_название"]`),
+    а подмена напечатала бы в реквизитах не то, и этого никто бы не заметил.
+    """
+    ids = [i for i in (deal_ids or []) if i]
+    if not ids:
+        return []
+    rows = db.execute(sa_text("""
+        SELECT DISTINCT COALESCE(NULLIF(btrim(a.short_name), ''), a.name) AS adv,
+               COALESCE(NULLIF(btrim(a.legal_name), ''), '') AS legal
+          FROM sales_deals d JOIN sales_advertisers a ON a.id = d.advertiser_id
+         WHERE d.id = ANY(:d)
+    """), {"d": ids}).all()
+    return [r.legal for r in sorted(rows, key=lambda r: r.adv or "")]
 
 
 def _brands_only(db: Session, deal_ids) -> str:
@@ -122,7 +146,7 @@ def _short(d) -> str:
 
 
 def _values(*, no, contract, period_from, period_to, rate, gross, vat, brand, advertisers, brand_only="", doc_date=None,
-            service: str = "") -> dict:
+            service: str = "", legal_names=(), kind=None) -> dict:
     return {
         "услуга": service,
         "бренд_название": brand_only, "сеть": A.PLACEMENT_NETWORK,
@@ -132,30 +156,50 @@ def _values(*, no, contract, period_from, period_to, rate, gross, vat, brand, ad
         "сумма": _num(gross), "сумма_прописью": rub_phrase(gross),
         "ндс_ставка": f"{rate:g}", "ндс_сумма": _num(vat), "ндс_сумма_прописью": rub_phrase(vat),
         "номер_дс": str(no), "договор_номер": contract.contract_number or "", "договор_дата": _date(contract.contract_date),
+        "дата_дс": _date(doc_date),
+        # Первый рекламодатель — без номера, второй и далее — `юр_название_2`, `_3` …
+        # Объявить их списком в SUBS нельзя (у одного плательщика 116 рекламодателей),
+        # поэтому проверка шаблона понимает образец имени — `check.NUMBERED`.
+        **{("юр_название" if i == 0 else f"юр_название_{i + 1}"): v
+           for i, v in enumerate(legal_names or [])},
+        **DK.values(kind),
     }
 
 
 def _parts(text: str, values: dict) -> list:
-    """Текст пункта кусками: обычный и подставленное значение (с признаком «пусто») — экран подсвечивает подстановки."""
+    """Текст пункта кусками: обычный и подставленное значение (с признаком «пусто») — экран подсвечивает подстановки.
+
+    Слово документа в АВТОРСКОМ тексте переводится в вид документа («синхронизировать»,
+    владелец 31.10.2026): шаблон, ещё не пересохранённый на `{вид_документа}`, сразу
+    следует тумблеру договора. Подставленные значения не трогаются никогда — название
+    рекламодателя со словом «Приложение» осталось бы как есть. Вид берётся из самих
+    `values`: так правило действует во ВСЕХ местах сборки текста (пункты, основание УПД из
+    конструктора, документа и ручки приложений), а без вида — ничего не меняет.
+    """
+    kind = next((k for k, f in DK.KINDS.items() if f["nom"] == values.get("вид_документа")), None)
     out, last = [], 0
     for m in _KEY.finditer(text or ""):
         if m.start() > last:
-            out.append({"t": text[last:m.start()]})
+            out.append({"t": DK.rebrand(text[last:m.start()], kind)})
         key = m.group(1)
         if key in values:
             v = values[key]
             out.append({"t": v, "key": key, "empty": v == ""})
+        elif NUMBERED.match(key):
+            # `{юр_название_2}` при одном рекламодателе: тег законный, значения нет — пусто, а не текст тега
+            # (ревью 31.10.2026: печатался буквально, и подтверждение его не останавливало).
+            out.append({"t": "", "key": key, "empty": True})
         else:
             out.append({"t": m.group(0), "key": key, "unknown": True})
         last = m.end()
     if last < len(text or ""):
-        out.append({"t": text[last:]})
+        out.append({"t": DK.rebrand(text[last:], kind)})
     return out
 
 
 # Основание в закрывающих документах (УПД и счёт) — формулировка по образцу владельца 14.10.2026; правится на экране ДС.
 CLOSING_KEY = "closing_basis"
-CLOSING_DEFAULT = ("Размещение рекламных материалов бренда «{бренд_название}», в сети {сеть}, согласно Доп.соглашению {номер_дс} "
+CLOSING_DEFAULT = ("Размещение рекламных материалов бренда «{бренд_название}», в сети {сеть}, согласно {вид_документа_дат} {номер_дс} "
                    "от {дата_дс_кратко} к Договору {договор_номер} от {договор_дата_кратко}г., с {период_с} по {период_по}г.")
 # Начало основания по составу ДС (владелец 21.10.2026): допы — «оказание дополнительных услуг ({услуга})», смешанный — и то, и другое.
 CLOSING_HEAD = "Размещение рекламных материалов бренда «{бренд_название}», в сети {сеть}"
@@ -163,7 +207,7 @@ CLOSING_HEAD_ADDONS = "Оказание дополнительных услуг 
 CLOSING_HEAD_MIXED = "Размещение рекламных материалов и оказание дополнительных услуг ({услуга}) бренда «{бренд_название}», в сети {сеть}"
 # Пункт 1 ДС допов — стандарт, пока аккаунт не правил текст; пункт 1 основного ДС на ДС допов не наследуется.
 P1_KEY = "p1"
-P1_ADDONS = ("На условиях настоящего Приложения № {номер_дс} (далее по тексту – «Приложение») и Договора Исполнитель принимает на себя "
+P1_ADDONS = ("На условиях настоящего {вид_документа_род} № {номер_дс} (далее по тексту – «{вид_документа}») и Договора Исполнитель принимает на себя "
              "обязанность оказать дополнительные услуги: {услуга} (далее – Услуги) для {рекламодатель} по брендам {бренд} "
              "в период с {период_с} по {период_по}, согласно нижеследующим условиям:")
 ADDONS_STD = "стандарт для доп. услуг"
@@ -259,6 +303,11 @@ def _missing(empties: dict, executor: dict, customer: dict, rows: list, brand) -
     out = []
     for key in empties:
         info = SUBS.get(key, {})
+        if NUMBERED.match(key) and key not in SUBS:
+            n = key.rsplit("_", 1)[1]
+            out.append({"text": f"не заполнено: юр. название рекламодателя № {n}",
+                        "where": f"в ДС рекламодателей меньше {n} — уберите тег из шаблона или добавьте рекламодателя в сделки ДС"})
+            continue
         label = info.get("label") or key.replace("_", " ")
         out.append({"text": f"не заполнено: {label}", "where": info.get("where") or "данные сделки и договора"})
     out += [{"text": f"исполнитель: {m}", "where": "карточка нашего юрлица (Справочники → Контрагенты)"} for m in executor["missing"]]
@@ -272,12 +321,17 @@ def _missing(empties: dict, executor: dict, customer: dict, rows: list, brand) -
 
 def assemble(db: Session, contract, version, *, period_from, period_to, deal_ids=None,
              amount: Optional[float] = None, no: Optional[int] = None, edits: Optional[dict] = None, doc_date=None,
-             defaults: Optional[dict] = None, rows_override: Optional[list] = None, sub_no: Optional[str] = None) -> dict:
+             defaults: Optional[dict] = None, rows_override: Optional[list] = None, sub_no: Optional[str] = None,
+             kind: Optional[str] = None) -> dict:
     """Модель документа по версии шаблона. Ничего не пишет в базу: это предпросмотр; запись — при подтверждении."""
     if version is None:
         raise AnnexTplError(409, "У договора не определён шаблон ДС")
     tpl = db.query(AnnexTplTemplate).filter_by(id=version.template_id).first()
     base = db.query(AnnexTplTemplate).filter_by(id=tpl.base_template_id).first() if tpl and tpl.base_template_id else None
+
+    # Вид документа: зафиксированный у приложения (`sales_annexes.doc_kind`) важнее тумблера
+    # договора — выпущенное не переименовывают. Не передали — берём тумблер.
+    kind = DK.resolve(kind, getattr(contract, "annex_word", None), is_master=rows_override is not None)
 
     payer = contract.counterparty
     us = contract.own_company or own_company.sole(db)
@@ -300,7 +354,8 @@ def assemble(db: Session, contract, version, *, period_from, period_to, deal_ids
     no_text = f"{n}-{sub_no}" if sub_no else n
     values = _values(no=no_text, contract=contract, period_from=period_from, period_to=period_to, rate=rate, gross=gross, vat=vat,
                      brand=A.deal_brand(db, deal_ids), advertisers=_advertisers(db, deal_ids),
-                     brand_only=_brands_only(db, deal_ids), doc_date=doc_date, service=service_text(db, deal_ids, rows))
+                     brand_only=_brands_only(db, deal_ids), doc_date=doc_date, service=service_text(db, deal_ids, rows),
+                     legal_names=_legal_names(db, deal_ids), kind=kind)
     # `None` в правках — «явно по шаблону»: прошлый ДС не наследуется. Строки — собственные правки этого ДС.
     reset = {k for k, v in (edits or {}).items() if v is None}
     edits = {k: v for k, v in (edits or {}).items() if isinstance(v, str) and v.strip()}
@@ -318,7 +373,11 @@ def assemble(db: Session, contract, version, *, period_from, period_to, deal_ids
     ex["legal_name"], cu["legal_name"] = legal_name(ex.get("name")), legal_name(cu.get("name"))
 
     return {
-        "no": n, "number": (f"ДС № {no_text}" if rows_override is not None else f"Приложение № {n}"), "date": doc_date,
+        # Слово решает ТУМБЛЕР договора, а технический признак (`rows_override`/мастер-сделка) —
+        # только схему нумерации (подномера `N-M`). Прежде он решал и слово, из-за чего ДС
+        # мастер-сделок назывались иначе независимо от желания контрагента.
+        "no": n, "number": DK.number_text(kind, no_text), "date": doc_date, "kind": kind,
+        "kind_forms": DK.forms(kind),
         "period_from": period_from, "period_to": period_to,
         "signed_place": getattr(us, "signed_place", None) or "г. Москва",
         "contract": {"id": contract.id, "number": contract.contract_number, "date": contract.contract_date,

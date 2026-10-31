@@ -66,6 +66,11 @@ export default function ContractCard() {
     }
   }
   const onEditChange = (on) => { setEditing(on); setDrafts({}) }
+  /** Тумблер «Приложение / ДС» — сразу, без режима правки шапки: это одно значение, а не форма. */
+  const saveWord = async (word) => {
+    try { await api.put(`/contracts/${id}`, { annex_word: word }, auth()); await load() }
+    catch (e) { setErr(errText(e)) }
+  }
 
   /** Клик по красной проверке готовности — к месту правки. */
   const go = (target) => {
@@ -104,7 +109,8 @@ export default function ContractCard() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
                 {d.templates && <Templates rows={d.templates} total={d.annexes ? d.annexes.items.length : d.templates.reduce((s, t) => s + t.annexes, 0)}
                                            canCreate={perm.tpl} onNew={() => setNewTpl({})} onCopy={sid => setNewTpl({ sourceId: sid })}
-                                           onOpen={tid => tplWin({ templateId: tid })} onAll={() => tplWin({})} />}
+                                           onOpen={tid => tplWin({ templateId: tid })} onAll={() => tplWin({})}
+                                           word={c.annex_word} canEditWord={perm.edit} onWord={saveWord} />}
                 {d.money && <Money data={d.money} counterpartyId={c.counterparty && c.counterparty.id} />}
                 {d.ord && <Ord data={d.ord} />}
                 {d.legal && <Legal rows={d.legal} />}

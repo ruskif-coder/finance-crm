@@ -69,7 +69,9 @@ def card(db: Session, m, user, deals: list) -> dict:
     issued_list = PK.issued(db, m.contract_id)
     return {
         "id": m.id, "code": m.code, "status": m.status, "period": m.period,
-        "contract": {"id": c.id, "number": c.contract_number, "date": c.contract_date} if c else None,
+        # Вид документа по договору — панели сборки: выбирается при первой сборке со стартовым номером (31.10.2026).
+        "contract": {"id": c.id, "number": c.contract_number, "date": c.contract_date,
+                     "annex_word": getattr(c, "annex_word", None)} if c else None,
         "payer": {"id": payer.id, "name": payer.name, "inn": payer.inn} if payer else None,
         "deals": out_deals, "deals_total_net": round(sum((d["total_net"] or 0) for d in out_deals), 2),
         **({"efficiency": eff} if eff is not None else {}),

@@ -13,11 +13,17 @@ export const annexTemplatesApi = {
   one: (id) => api.get(`${base}/${id}`, auth()).then(r => r.data),
   forContract: (contractId, templateId) => api.get(`${base}/for-contract/${contractId}`, { ...auth(), params: templateId ? { template_id: templateId } : {} }).then(r => r.data),
   versions: (id) => api.get(`${base}/${id}/versions`, auth()).then(r => r.data.items || []),
-  save: (id, blocks, adoptBase) => api.post(`${base}/${id}/versions`, { blocks, adopt_base: !!adoptBase }, auth()).then(r => r.data),
+  // `annexWord` — вид документа по договору, выбранный при пересохранении (если ещё не выбран; 31.10.2026).
+  save: (id, blocks, adoptBase, annexWord) => api.post(`${base}/${id}/versions`,
+    { blocks, adopt_base: !!adoptBase, ...(annexWord ? { annex_word: annexWord } : {}) }, auth()).then(r => r.data),
   restore: (id, version) => api.post(`${base}/${id}/restore`, { version }, auth()).then(r => r.data),
   // Шаблон договора — именованный, их у договора несколько (27.10.2026); `sourceId` — копия этого шаблона, пусто — базового формата.
-  fork: (contractId, { title, sourceId, main, annexId } = {}) => api.post(`${base}/custom`,
-    { contract_id: contractId, title, source_id: sourceId ?? null, main: !!main, annex_id: annexId ?? null }, auth()).then(r => r.data),
+  // `brandId` — бренд, к которому относится шаблон (реестр шаблонов, 31.10.2026): пишется в память «договор + бренд →
+  // шаблон», по которой сборка подставит его в ДС бренда. Пусто — все бренды договора.
+  fork: (contractId, { title, sourceId, main, annexId, brandId } = {}) => api.post(`${base}/custom`,
+    { contract_id: contractId, title, source_id: sourceId ?? null, main: !!main, annex_id: annexId ?? null,
+      brand_id: brandId ?? null }, auth()).then(r => r.data),
+  brands: (contractId) => api.get(`${base}/brands/${contractId}`, auth()).then(r => r.data || []),
   rename: (id, title) => api.put(`${base}/${id}/title`, { title }, auth()).then(r => r.data),
   setMain: (id, main) => api.put(`${base}/${id}/main`, { main: !!main }, auth()).then(r => r.data),
   // Шаблон в ДС: выбор на сборке (пусто — по умолчанию) и «Сохранить как шаблон» из конструктора — право правки приложений.

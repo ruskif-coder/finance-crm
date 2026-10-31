@@ -146,10 +146,21 @@ class AdvertiserIn(BaseModel):
     short_name: Optional[str] = None
     name_en: Optional[str] = None
     name_ru: Optional[str] = None
+    legal_name: Optional[str] = None
     website: Optional[str] = None
     counterparty_id: Optional[int] = None
     inn: Optional[str] = None
     note: Optional[str] = None
+
+
+def _legal(v: Optional[str]) -> Optional[str]:
+    """Юр. название — БУКВАЛЬНО. Срезаем только пробелы по краям, ничего не переставляем.
+
+    Через `annex_tpl/legal_name.py` не пропускаем намеренно: тот переставляет форму вперёд
+    и ставит кавычки, а юр. название вписано руками точно как в реестре. Тихая правка
+    чужих реквизитов не видна, а ошибку в реквизитах подписывают."""
+    v = (v or "").strip()
+    return v or None
 
 
 def _advertiser_key_name(data: "AdvertiserIn") -> str:
@@ -678,6 +689,7 @@ def list_advertisers(only_active: bool = True, db: Session = Depends(get_db),
     return {"items": [{"id": a.id, "name": a.name,
                        "short_name": a.short_name or a.name,
                        "name_en": a.name_en, "name_ru": a.name_ru, "website": a.website,
+                       "legal_name": a.legal_name,
                        "inn": a.inn, "counterparty_id": a.counterparty_id,
                        "exclude_from_revenue": a.exclude_from_revenue,
                        "is_active": a.is_active,
@@ -701,6 +713,7 @@ def create_advertiser(data: AdvertiserIn, db: Session = Depends(get_db),
         short_name=(data.short_name or None),
         name_en=(data.name_en or None),
         name_ru=(data.name_ru or None),
+        legal_name=_legal(data.legal_name),
         website=(data.website or None),
         counterparty_id=data.counterparty_id,
         inn=normalize_inn(data.inn),
@@ -731,6 +744,12 @@ def update_advertiser(advertiser_id: int, data: AdvertiserIn, db: Session = Depe
     adv.short_name = data.short_name or None
     adv.name_en = data.name_en or None
     adv.name_ru = data.name_ru or None
+    # Юр. название — ТОЛЬКО если прислано. Остальные поля этой ручки перезаписываются
+    # целиком, и экран, не знающий о юр. названии, стирал бы его при каждом сохранении —
+    # тот же дефект, что аудит 23.09.2026 (2.L11) чинил у договоров. Ручку зовут несколько
+    # экранов, и «только присланное» безопасно для всех без ревизии каждого.
+    if "legal_name" in data.dict(exclude_unset=True):
+        adv.legal_name = _legal(data.legal_name)
     adv.website = data.website or None
     adv.counterparty_id = data.counterparty_id
     adv.inn = normalize_inn(data.inn)

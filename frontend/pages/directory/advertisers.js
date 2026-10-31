@@ -15,7 +15,7 @@ import ValuePopover from '@/components/ValuePopover'
 import safeHref from '@/lib/safeHref'
 
 
-const EMPTY = { short_name: '', name_en: '', name_ru: '', website: '', inn: '' }
+const EMPTY = { short_name: '', name_en: '', name_ru: '', legal_name: '', website: '', inn: '' }
 
 export default function Advertisers() {
   const router = useRouter()
@@ -312,7 +312,7 @@ export default function Advertisers() {
     setEditId(a.id)
     setForm({
       short_name: a.short_name || a.name || '',
-      name_en: a.name_en || '', name_ru: a.name_ru || '',
+      name_en: a.name_en || '', name_ru: a.name_ru || '', legal_name: a.legal_name || '',
       website: a.website || '', inn: a.inn || '',
     })
     // без прокрутки в шапку — правка идёт прямо в строке
@@ -323,7 +323,7 @@ export default function Advertisers() {
     if (!showHidden && !a.is_active) return false
     const q = search.trim().toLowerCase()
     if (!q) return true
-    return [a.short_name, a.name, a.name_en, a.name_ru].some(v => (v || '').toLowerCase().includes(q))
+    return [a.short_name, a.name, a.name_en, a.name_ru, a.legal_name].some(v => (v || '').toLowerCase().includes(q))
       || (a.brands || []).some(b => b.name.toLowerCase().includes(q))
   })
 
@@ -392,6 +392,10 @@ export default function Advertisers() {
               <input style={{ ...inp, width: 180 }} placeholder="Русское"
                 value={form.name_ru} onChange={e => setForm({ ...form, name_ru: e.target.value })}
                 onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancelForm() }} />
+              <input style={{ ...inp, width: 220 }} placeholder="Юр. название"
+                title="Как в реестре — печатается в ДС буквально, без правок"
+                value={form.legal_name} onChange={e => setForm({ ...form, legal_name: e.target.value })}
+                onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancelForm() }} />
               <input style={{ ...inp, width: 190 }} placeholder="сайт"
                 value={form.website} onChange={e => setForm({ ...form, website: e.target.value })}
                 onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancelForm() }} />
@@ -438,12 +442,13 @@ export default function Advertisers() {
 
         {!loading && (() => {
           // Колонки BX_ID (ссылка в Битрикс) нет с 03.10.2026 — Битрикс больше не источник.
-          const AGRID = '26px minmax(120px,1fr) minmax(120px,1fr) minmax(120px,1fr) 60px minmax(120px,1fr) minmax(200px,1.6fr) minmax(180px,1.4fr) minmax(150px,1.1fr) 232px'
+          // «Юр. название» (31.10.2026) — после имён: его печатает конструктор ДС тегом {юр_название}.
+          const AGRID = '26px minmax(120px,1fr) minmax(120px,1fr) minmax(120px,1fr) minmax(170px,1.3fr) 60px minmax(120px,1fr) minmax(200px,1.6fr) minmax(180px,1.4fr) minmax(150px,1.1fr) 232px'
           return (
           <div style={{ overflowX: 'auto', maxWidth: '100%', margin: '4px -4px 0' }}>
-            <div style={{ minWidth: 1284 }}>
+            <div style={{ minWidth: 1466 }}>
               <div style={{ display: 'grid', gridTemplateColumns: AGRID, gap: 12, borderBottom: '1px solid var(--border-card)' }}>
-                <div />{headCell('Короткое')}{headCell('Англ')}{headCell('Русское')}{headCell('Сделок', true)}{headCell('Сайт')}{headCell('Бренды')}{headCell('Юрлица')}{headCell('Ответственный сейлз')}<div />
+                <div />{headCell('Короткое')}{headCell('Англ')}{headCell('Русское')}{headCell('Юр. название')}{headCell('Сделок', true)}{headCell('Сайт')}{headCell('Бренды')}{headCell('Юрлица')}{headCell('Ответственный сейлз')}<div />
               </div>
                 {filtered.map(a => (
                   <div key={a.id} style={{
@@ -471,6 +476,11 @@ export default function Advertisers() {
                           <input style={{ ...inp, width: '100%', padding: '5px 8px' }} placeholder="Русское"
                             value={form.name_ru} onChange={e => setForm({ ...form, name_ru: e.target.value })} />
                         </div>
+                        <div style={cell}>
+                          <input style={{ ...inp, width: '100%', padding: '5px 8px' }} placeholder="ООО «Название»"
+                            title="Как в реестре — печатается в ДС буквально, без правок"
+                            value={form.legal_name} onChange={e => setForm({ ...form, legal_name: e.target.value })} />
+                        </div>
                         <div style={{ ...cell, fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>{a.deals}</div>
                         <div style={cell}>
                           <input style={{ ...inp, width: '100%', padding: '5px 8px' }} placeholder="сайт"
@@ -482,6 +492,8 @@ export default function Advertisers() {
                         <div style={{ ...cell, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.short_name || a.name || dash}</div>
                         <div style={{ ...cell, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name_en || dash}</div>
                         <div style={{ ...cell, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name_ru || dash}</div>
+                        <div title={a.legal_name || 'Не заполнено — ДС по этому рекламодателю не выгрузится'}
+                          style={{ ...cell, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.legal_name || dash}</div>
                         <div style={{ ...cell, fontFamily: MONO, fontSize: 12, textAlign: 'right' }}>
                           {a.deals > 0
                             ? <a href={`/sales/deals?producer_id=${a.id}`} target="_blank" rel="noreferrer"

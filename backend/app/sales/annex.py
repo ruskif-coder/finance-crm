@@ -20,6 +20,7 @@ from app.models import Contract, Counterparty
 from app import own_company
 from app.sales.models import AnnexTemplate, SalesAnnex
 from app.sales.rubles import rub_phrase, vat_of
+from app.annex_tpl import doc_kind as DK
 from app.sales import rugram
 from app.annex_tpl.legal_name import legal_name
 
@@ -383,7 +384,8 @@ def build(db: Session, contract: Contract, *, period_from: date, period_to: date
     us_party, payer_party = party_of(db, us, contract, "исполнитель", on), party_of(db, payer, contract, "заказчик", on)
     return {
         "no": n,
-        "number": f"Приложение № {n}",
+        # Предпросмотр называет документ тем же словом, что выпуск (тумблер договора, 31.10.2026).
+        "number": DK.number_text(DK.resolve(None, getattr(contract, "annex_word", None)), n),
         "date": annex_date(period_from),
         "period_from": period_from, "period_to": period_to,
         "signed_place": (getattr(us, "signed_place", None) or "г. Москва"),

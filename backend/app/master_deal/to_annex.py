@@ -15,6 +15,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.annex_tpl import doc_kind as DK
 from app.final_recon import closing as CL
 from app.master_deal import layout as LY
 from app.master_deal import package as PK
@@ -30,8 +31,15 @@ def _bounds(period: str) -> tuple:
     return date(y, mth, 1), date(y, mth, calendar.monthrange(y, mth)[1])
 
 
-def number_label(no, sub_no) -> str:
-    return f"ДС № {no}-{sub_no}" if sub_no else f"ДС № {no}"
+def number_label(no, sub_no, kind: str = "дс") -> str:
+    """Номер ДС мастер-сделки — тем же словом, что его документ («синхронизировать», 31.10.2026).
+
+    Прежде здесь было «ДС № N» сокращением, и черновик в реестре назывался не так, как его
+    живой документ («Доп. соглашение № N»). Полной формой — потому что номер печатается
+    в документе; «ДС» остаётся на экранах и в сообщениях. По умолчанию «дс»: мастер-сделка —
+    доп. соглашение (решение владельца 15.10.2026), пока тумблер договора не сказал иное.
+    """
+    return DK.number_text(kind, f"{no}-{sub_no}" if sub_no else no)
 
 
 def _snapshot(ds: dict) -> list:
@@ -132,7 +140,9 @@ def create(db: Session, m: MasterDeal, user) -> list:
             db.add(MasterDealUpd(master_deal_id=m.id, upd_no=k["upd_no"], annex_id=a.id, brand=k["brand"], service=k["service"],
                                  net=k["net"], vat=k["vat"], gross=k["gross"]))
         base = prim.no if (prim is not None and prim.no is not None) else (m.start_no or 0) + 1
-        made.append({"id": a.id, "kind": ds["kind"], "number": number_label(base, sub), "deal_ids": list(by_deal),
+        made.append({"id": a.id, "kind": ds["kind"],
+                     "number": number_label(base, sub, DK.resolve(None, getattr(c, "annex_word", None), is_master=True)),
+                     "deal_ids": list(by_deal),
                      "rebuilt": a is prim})
     db.flush()
     # Сумма документа — как её соберёт конструктор (НДС по строкам): иначе подтверждение отказало бы на копейке.
@@ -195,11 +205,16 @@ def revert(db: Session, m: MasterDeal) -> int:
 
 
 def annexes_of(db: Session, m: MasterDeal) -> list:
+    from app.models import Contract
     from app.sales.models import SalesAnnex
     rows = db.query(SalesAnnex).filter(SalesAnnex.master_deal_id == m.id).order_by(SalesAnnex.id).all()
     base = (m.start_no or 0) + 1
     main_no = next((a.no for a in rows if a.no is not None and not a.sub_no), None)
-    return [{"id": a.id, "kind": a.kind, "number": a.number or number_label(main_no or base, a.sub_no), "confirmed": a.no is not None,
+    word = getattr(db.get(Contract, m.contract_id), "annex_word", None)
+    # Номер черновика — тем же словом, что его документ: зафиксированный вид, иначе тумблер договора.
+    return [{"id": a.id, "kind": a.kind,
+             "number": a.number or number_label(main_no or base, a.sub_no, DK.resolve(a.doc_kind, word, is_master=True)),
+             "confirmed": a.no is not None,
              "status": a.status, "gross": a.total_amount, "primary": a.issue_kind == "primary"} for a in rows]
 
 

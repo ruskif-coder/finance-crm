@@ -187,6 +187,10 @@ class SettingsIn(BaseModel):
 
 class StartNoIn(BaseModel):
     no: int
+    # Вид документа по договору — «приложение» | «дс» (владелец 31.10.2026). Выбирается здесь, при первой сборке, вместе
+    # со стартовым номером, и фиксируется в договоре; дальше менять — только администратор (`doc_kind.assign`).
+    # Не прислан — вид не трогаем.
+    annex_word: Optional[str] = None
 
 
 class AddDealIn(BaseModel):
@@ -232,7 +236,19 @@ def master_start_no(code: str, payload: StartNoIn, db: Session = Depends(get_db)
         PK.set_start_no(db, m, payload.no, user)
     except MS.MasterError as e:
         _err(e)
-    return _done(db, user, m, "master_deal_start_no", f"последний ДС по договору — № {payload.no}")
+    note = f"последний ДС по договору — № {payload.no}"
+    if payload.annex_word is not None:
+        from app.annex_tpl import doc_kind as DK
+        from app.models import Contract
+        c = db.get(Contract, m.contract_id)
+        try:
+            word = DK.assign(c, payload.annex_word, user)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        note += f"; вид документа — {DK.forms(word)['ui'] if word else 'не выбран'}"
+    return _done(db, user, m, "master_deal_start_no", note)
 
 
 @router.post("/{code}/deals")

@@ -202,6 +202,9 @@ class SalesAdvertiser(Base):
     short_name = Column(String)   # короткое — основная колонка в реестре
     name_en = Column(String)
     name_ru = Column(String)
+    # Юридическое название — печатается в документах БУКВАЛЬНО (тег {юр_название}).
+    # Вывести его из связей нельзя: counterparty_id заполнен у 0 из 226 (31.10.2026).
+    legal_name = Column(Text)
     website = Column(String)
     # NULL намеренно: рекламодатель и плательщик — разные сущности.
     # Пусто = платит агентство, нормальное состояние, а не пропуск данных.
@@ -653,6 +656,9 @@ class SalesAnnex(Base):
     contract_id = Column(Integer, ForeignKey("contracts.id"), nullable=False)
     no = Column(Integer)                 # порядковый внутри договора — для счёта
     number = Column(String)              # как печатается: «Приложение № 68»
+    # Вид, зафиксированный на момент ВЫПУСКА: 'приложение' | 'дс'. Тумблер у договора можно
+    # переключить завтра, а подписанное не переименовывают. NULL — вид от договора.
+    doc_kind = Column(Text)
     date = Column(Date)                  # по умолчанию начало РК, правится аккаунтом (14.10.2026)
     period_from = Column(Date)
     period_to = Column(Date)

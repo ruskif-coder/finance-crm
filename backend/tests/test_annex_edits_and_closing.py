@@ -30,9 +30,9 @@ def db():
         s.close()
 
 
-def _assemble(db, edits=None, blocks=None):
+def _assemble(db, edits=None, blocks=None, kind=None):
     return AS.assemble(db, _contract(db), _version(blocks), period_from=date(2026, 11, 1), period_to=date(2026, 11, 30),
-                       deal_ids=[1, 2], no=7, edits=edits)
+                       deal_ids=[1, 2], no=7, edits=edits, kind=kind)
 
 
 def test_edit_of_an_account_block_is_applied_and_keeps_the_substitutions_live(db, stub_plan):  # noqa: F811
@@ -58,7 +58,14 @@ def test_closing_basis_follows_the_owners_sample(db, stub_plan, monkeypatch):  #
     # в заглушке плана есть и размещение, и допы — основание смешанного ДС (владелец 21.10.2026)
     assert cb["edited"] is False and cb["template"] == AS.closing_template_for([{"kind": "base"}, {"kind": "extra"}])
     assert cb["text"].startswith("Размещение рекламных материалов и оказание дополнительных услуг (")
-    assert "бренда «Магне В6», в сети SIMB-AD, согласно Доп.соглашению 7 от " in cb["text"]
+    # Слово в основании — ТО ЖЕ, что в заголовке документа (владелец 31.10.2026: «синхронизировать
+    # надо»). В образце 14.10 они расходились: заголовок «Приложение № 68», основание «согласно
+    # Доп.соглашению», — это был дефект, а не правило. Проверяем оба положения тумблера.
+    assert "бренда «Магне В6», в сети SIMB-AD, согласно Приложению 7 от " in cb["text"]
+    assert m["number"] == "Приложение № 7"
+    ds = _assemble(db, kind="дс")
+    assert "в сети SIMB-AD, согласно Доп. соглашению 7 от " in ds["closing_basis"]["text"]
+    assert ds["number"] == "Доп. соглашение № 7", "в документе — полная форма, не «ДС»"
     assert cb["text"].endswith("г., с 01.11.2026 по 30.11.2026г.")
     assert m["values"]["сеть"] == "SIMB-AD" and len(m["values"]["дата_дс_кратко"]) == 8          # ДД.ММ.ГГ
     mine = _assemble(db, edits={CLOSING_KEY: "Услуги по {бренд_название}, ДС {номер_дс}."})["closing_basis"]

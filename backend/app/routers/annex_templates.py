@@ -7,11 +7,13 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app.annex_tpl import document as D
 from app.annex_tpl import service as S
-from app.annex_tpl.check import check, numbering, zone_at
+from app.annex_tpl.check import check, literal_word_notes, numbering, zone_at
 from app.annex_tpl.formats import KNOWN_FORMATS
 from app.annex_tpl.models import AnnexTplFormat, AnnexTplTemplate, AnnexTplVersion
 from app.annex_tpl.subs import listing
@@ -31,6 +33,10 @@ ANNEX_EDIT = require_permission("annexes", "edit")
 class BlocksIn(BaseModel):
     blocks: List[dict]
     adopt_base: bool = False
+    # Вид документа по договору, выбранный при пересохранении шаблона договора (владелец 31.10.2026: «при пересохранении —
+    # выбор ДС/Приложение, если ещё не выбрано»). То же правило, что везде (`doc_kind.assign`): первичный выбор — тому,
+    # кто сохраняет; выбранный — менять только администратору. Не прислан — вид не трогаем.
+    annex_word: Optional[str] = None
 
 
 class RestoreIn(BaseModel):
@@ -43,6 +49,9 @@ class ForkIn(BaseModel):
     source_id: Optional[int] = None       # копия этого шаблона (базового или шаблона договора); пусто — базовый формата договора
     main: bool = False
     annex_id: Optional[int] = None        # заявка юристу из ДС: черновик этого ДС переключается на новый шаблон
+    # Бренд, к которому шаблон относится (реестр шаблонов, 31.10.2026). Пишется в память «договор + бренд →
+    # шаблон» — ту же, по которой сборка подставит шаблон в следующий ДС бренда. Пусто — все бренды договора.
+    brand_id: Optional[int] = None
 
 
 class TitleIn(BaseModel):
@@ -92,7 +101,14 @@ def _row(db: Session, t: AnnexTplTemplate, with_blocks: bool = False) -> dict:
            "formats": S.formats_of(db, t.id) if t.scope == "base" else [],
            "version": cur.version if cur else None, "base_version": cur.base_version if cur else None,
            "updated_at": cur.created_at if cur else None, "author": cur.author_name if cur else None,
-           "base": S.base_state(db, t)}
+           "base": S.base_state(db, t),
+           # Пункты, где вид документа написан СЛОВОМ, а не `{вид_документа}`: тумблер договора
+           # «Приложение / ДС» их не изменит. Число — для вкладки «Шаблоны»: что пересохранить.
+           "literal_words": len(literal_word_notes(cur.blocks)) if cur else 0,
+           "items": sum(1 for b in (cur.blocks or []) if not b.get("sys")) if cur else 0,
+           "created_at": t.created_at}
+    if with_blocks and t.contract_id:
+        out["contract_annex_word"] = getattr(db.get(Contract, t.contract_id), "annex_word", None)
     if with_blocks and cur:
         out["blocks"] = cur.blocks
         out["numbers"] = numbering(cur.blocks)
@@ -119,7 +135,59 @@ def _template(db: Session, template_id: int) -> AnnexTplTemplate:
 def list_templates(db: Session = Depends(get_db), user: User = Depends(VIEW)):
     """Базовые шаблоны и кастомные под договор — одним списком, текущие версии."""
     rows = db.query(AnnexTplTemplate).order_by(AnnexTplTemplate.scope, AnnexTplTemplate.id).all()
-    return {"items": [_row(db, t) for t in rows]}
+    # Чей шаблон — одним запросом на все договоры, а не по запросу на строку: вкладка
+    # «Шаблоны» показывает их все разом (по образцу `/behind`).
+    ids = {t.contract_id for t in rows if t.contract_id}
+    contracts = {c.id: c for c in db.query(Contract).filter(Contract.id.in_(ids)).all()} if ids else {}
+    tids = [t.id for t in rows]
+    # Реестр шаблонов (хендофф 31.10.2026): каждое поле — одним запросом на все шаблоны, а не по строке.
+    ds = {r.tid: (r.n, r.last) for r in db.execute(sa_text("""
+        SELECT tpl_template_id AS tid, count(*) AS n, max(date) AS last FROM sales_annexes
+         WHERE tpl_template_id = ANY(:t) GROUP BY 1"""), {"t": tids}).all()} if tids else {}
+    # Бренд шаблона — память «договор + бренд → шаблон»: по ней сборка и подставит шаблон в ДС бренда.
+    brands: dict = {}
+    for r in (db.execute(sa_text("""
+        SELECT m.template_id AS tid, b.name FROM annex_tpl_brand_memory m JOIN sales_brands b ON b.id = m.brand_id
+         WHERE m.template_id = ANY(:t) ORDER BY b.name"""), {"t": tids}).all() if tids else []):
+        brands.setdefault(r.tid, []).append(r.name)
+    # Последний порядковый номер ДС по договору (владелец 31.10.2026) — НАИБОЛЬШИЙ из всех источников. У договора два
+    # независимых счётчика: одиночные ДС нумеруются от «ДС с» договора и выданных (`sales.annex.next_no`), а мастер-сделка
+    # хранит свой `start_no` и в договор его не пишет (`master_deal.package.set_start_no`). Возьми один — и реестр
+    # разойдётся с панелью мастер-сделки (замер 31.10: у M-0001 № 44, у договора «ДС с» пусто). Источник — для подсказки.
+    from app.master_deal.models import MasterDeal
+    from app.sales.models import SalesAnnex
+    master = {cid: n for cid, n in db.query(MasterDeal.contract_id, func.max(MasterDeal.start_no))
+              .filter(MasterDeal.contract_id.in_(list(contracts)), MasterDeal.start_no.isnot(None))
+              .group_by(MasterDeal.contract_id).all()} if contracts else {}
+    issued = {cid: n for cid, n in db.query(SalesAnnex.contract_id, func.max(SalesAnnex.no))
+              .filter(SalesAnnex.contract_id.in_(list(contracts)), SalesAnnex.no.isnot(None))
+              .group_by(SalesAnnex.contract_id).all()} if contracts else {}
+    last_no: dict = {}       # договор → (номер, источник); НЕ `last` — так в цикле ниже зовётся дата последнего ДС
+    for cid, c in contracts.items():
+        src = [("вне системы", c.annex_start_no or 0), ("в системе", issued.get(cid) or 0),
+               ("в мастер-сделке", master.get(cid) or 0)]
+        name, n = max(src, key=lambda x: x[1])
+        last_no[cid] = (n, name if n else None)
+    uids = {t.created_by for t in rows if t.created_by}
+    names = {u.id: u.name for u in db.query(User).filter(User.id.in_(uids)).all()} if uids else {}
+    items = []
+    for t in rows:
+        r = _row(db, t)
+        n, last = ds.get(t.id, (0, None))
+        r.update(ds_count=n, ds_last_at=last, brands=brands.get(t.id, []),
+                 created_by_name=names.get(t.created_by), contract=None, entity=None)
+        if t.contract_id:
+            c = contracts.get(t.contract_id)
+            cp = getattr(c, "counterparty", None)
+            ln, src = last_no.get(t.contract_id, (None, None))
+            r["contract"] = {"id": t.contract_id, "no": getattr(c, "contract_number", None),
+                             "annex_word": getattr(c, "annex_word", None), "last_no": ln, "last_no_source": src}
+            # Юрлицо — из реестра контрагентов; у непривязанной исторической строки договора — его текст.
+            r["entity"] = {"id": cp.id, "name": cp.name, "inn": cp.inn} if cp else                 {"id": None, "name": getattr(c, "counterparty_name", None), "inn": getattr(c, "inn", None)}
+            r["contract_number"] = getattr(c, "contract_number", None)
+            r["format"] = getattr(c, "cooperation_format", None)
+        items.append(r)
+    return {"items": items}
 
 
 @router.get("/subs")
@@ -190,8 +258,12 @@ def for_contract(contract_id: int, template_id: Optional[int] = None, db: Sessio
 def fork(payload: ForkIn, db: Session = Depends(get_db), user: User = Depends(CREATE)):
     """Новый именованный шаблон договора — копия базового формата или указанного шаблона."""
     c = _contract(db, payload.contract_id)
+    if payload.brand_id is not None and payload.brand_id not in {b["id"] for b in _brands_of(db, c)}:
+        raise HTTPException(400, "Этот бренд не относится к договору — выберите бренд из списка или «все бренды»")
     try:
         v = S.fork_custom(db, c, user, title=payload.title, source_id=payload.source_id, main=payload.main)
+        if payload.brand_id is not None:
+            S.remember(db, c.id, [payload.brand_id], v.template_id, getattr(user, "id", None))
         if payload.annex_id is not None:
             a = AP.annex_of(db, payload.annex_id, user)
             if a.contract_id != c.id:
@@ -294,6 +366,26 @@ def behind(db: Session = Depends(get_db), user: User = Depends(VIEW)):
              "format": getattr(contracts.get(r["contract_id"]), "cooperation_format", None)} for r in rows]
 
 
+@router.get("/brands/{contract_id}")
+def contract_brands(contract_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
+    """Бренды, к которым можно отнести шаблон договора: бренды сделок его плательщика и уже
+    записанные в память «договор + бренд → шаблон». Плательщик — как у сборки ДС:
+    `payer_counterparty_id`, иначе `counterparty_id`."""
+    return _brands_of(db, _contract(db, contract_id))
+
+
+def _brands_of(db: Session, c) -> list:
+    """Один список на окно «Новый шаблон» и на проверку при создании: иначе сервер принял бы бренд,
+    которого окно не предлагает (ревью 31.10.2026: чужой id доходил до внешнего ключа и давал 500)."""
+    rows = db.execute(sa_text("""
+        SELECT DISTINCT b.id, b.name FROM sales_brands b
+         WHERE b.id IN (SELECT d.brand_id FROM sales_deals d
+                         WHERE coalesce(d.payer_counterparty_id, d.counterparty_id) = :cp AND d.brand_id IS NOT NULL)
+            OR b.id IN (SELECT brand_id FROM annex_tpl_brand_memory WHERE contract_id = :k)
+         ORDER BY b.name"""), {"cp": c.counterparty_id, "k": c.id}).all()
+    return [{"id": r.id, "name": r.name} for r in rows]
+
+
 @router.get("/{template_id}")
 def one(template_id: int, db: Session = Depends(get_db), user: User = Depends(VIEW)):
     t = _template(db, template_id)
@@ -335,12 +427,26 @@ def one_version(template_id: int, version: int, db: Session = Depends(get_db), u
 @router.post("/{template_id}/versions", status_code=201)
 def save(template_id: int, payload: BlocksIn, db: Session = Depends(get_db), user: User = Depends(EDIT)):
     """Сохранить новую версию. Не прошла проверку — 422 со списком ошибок, в базу ничего не попадает."""
+    t0 = _template(db, template_id)
     try:
+        # Вид — ДО версии: запрет должен сработать раньше, чем что-то запишется. Версия не сохранилась (например,
+        # «Изменений нет») — откатывается и вид: одно действие, одна транзакция.
+        if payload.annex_word is not None and t0.scope == "custom" and t0.contract_id:
+            from app.annex_tpl import doc_kind as DK
+            try:
+                DK.assign(_contract(db, t0.contract_id), payload.annex_word, user)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            except PermissionError as e:
+                raise HTTPException(status_code=403, detail=str(e))
         v = S.save_version(db, template_id, payload.blocks, user, payload.adopt_base)
         db.commit()
     except S.AnnexTplError as e:
         db.rollback()
         _fail(e)
+    except HTTPException:
+        db.rollback()
+        raise
     t = _template(db, template_id)
     log_action(db, user, "annex_tpl_save", "annex_template", t.id,
                f"{_label(db, t)}: версия v{v.version}" + (" (база принята)" if payload.adopt_base else ""))

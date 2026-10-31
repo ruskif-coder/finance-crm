@@ -13,6 +13,7 @@ from typing import Optional
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
+from app.annex_tpl import doc_kind as DK
 from app.annex_tpl import service as S
 from app.annex_tpl.assemble import assemble
 from app.annex_tpl.models import AnnexTplTemplate, AnnexTplVersion
@@ -201,18 +202,21 @@ def bridge_old_doc(db: Session, annex, contract, doc: dict, deal_ids) -> dict:
         model = jsonable_encoder(live(db, contract, version, annex, deal_ids)) if version else None
         live_model = True
     if not model:
-        return doc
+        return with_words({**doc, "kind": fixed_kind(annex, contract, None)})
     texts = [b.get("text") for b in model.get("blocks", []) if not b.get("sys")]
     doc["body"] = texts[0] if texts else ""
     # Основание для закрывающих документов — в тот же словарь: файл «для клиента» печатает его после ДС (одним документом на согласование).
     doc["closing_basis"] = ((model.get("closing_basis") or {}).get("text")) or ""
+    # Вид документа — генератору файла: DOCX называет документ тем же словом, что конструктор
+    # («синхронизировать», 31.10.2026). До развилки на мастер-сделку — получают обе ветки.
+    doc["kind"] = fixed_kind(annex, contract, model.get("kind"))
     if getattr(annex, "rows", None) is not None:
         doc = _master_doc(db, annex, contract, doc, model)
     doc["master_code"] = _master_code(db, annex)
     doc["missing"] = [m for m in (doc.get("missing") or []) if m != OLD_NO_TEMPLATE]
     if live_model:
         doc["missing"] += [m["text"] for m in model.get("missing", []) if m["text"] not in doc["missing"]]
-    return doc
+    return with_words(doc)
 
 
 MP_MISMATCH = "сумма приложения "
@@ -266,3 +270,34 @@ def upd_closing(model: dict, k, rows=None) -> dict:
     if cb.get("edited") or cb.get("inherited_from"):
         return closing_resolve(cb["template"], values, False, cb.get("inherited_from") or "основание этого ДС")
     return closing_resolve(_closing_template_for(rows), values, False)
+
+
+def fixed_kind(annex, contract, model_kind: Optional[str]) -> Optional[str]:
+    """Вид документа для печати: записанный в ДС при подтверждении → вид модели сборки → у черновика тумблер
+    договора → у подписанного до 31.10.2026 — ничего (тогда `with_words` берёт прежнее умолчание).
+
+    Подписанный документ не переименовывается тумблером, выбранным позже (ревью 31.10.2026); черновик
+    без шаблона называется так же, как в предпросмотре.
+    """
+    if getattr(annex, "doc_kind", None):
+        return annex.doc_kind
+    if model_kind:
+        return model_kind
+    if is_frozen(annex) or getattr(annex, "status", None) == "подтверждён":
+        return None
+    return DK.resolve(None, getattr(contract, "annex_word", None), is_master=bool(getattr(annex, "master_deal_id", None)))
+
+
+def with_words(doc: dict) -> dict:
+    """Слово документа — странице печати PDF (ревью 31.10.2026).
+
+    Вид — тот же, что у DOCX (`annex_docx._kind`): зафиксированный в модели, иначе у
+    мастер-сделки «дс», иначе «приложение». Формы и номер в дательном отдаются готовыми,
+    чтобы страница не считала их сама: своя таблица форм на странице однажды уже разошлась
+    с тумблером договора («Доп. соглашение № 68» в заголовке, «настоящим Приложением» в пунктах).
+    """
+    kind = DK.resolve(doc.get("kind"), None, is_master=bool(doc.get("is_master")))
+    # Номер в заголовке собран по ТЕКУЩЕМУ тумблеру договора (`annex.build`), а вид подписанного — зафиксирован:
+    # слово перед номером приводится к виду, иначе заголовок и пункты разошлись бы (ревью 31.10.2026).
+    number = DK.renumber(doc.get("number"), kind)
+    return {**doc, "kind": kind, "number": number, "words": DK.forms(kind), "number_dat": DK.to_dative(number, kind)}

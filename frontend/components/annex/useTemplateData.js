@@ -60,7 +60,7 @@ export default function useTemplateData({ open, contract, baseId, step, tplId })
 
   return {
     bases, fmtMap, known, detail, info, versions, err, loading, setErr, reload,
-    save: (id, blocks, adopt) => act(() => API.save(id, blocks, adopt)),
+    save: (id, blocks, adopt, word) => act(() => API.save(id, blocks, adopt, word)),
     restore: (id, v) => act(() => API.restore(id, v)),
     /** Новый шаблон договора; возвращает его id (или null при отказе), чтобы окно сразу открыло его. */
     fork: async ({ title, sourceId, main, annexId }) => {

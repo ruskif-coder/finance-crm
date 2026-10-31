@@ -138,7 +138,8 @@ export default function MasterDealPage() {
             onDraft={changeDraft}
             onSave={() => call(() => api.put(`/master-deals/${m.code}/settings`, draft, auth()))}
             onRevert={() => { setDraft(m.settings); setPreview(null) }}
-            onStartNo={(no) => call(() => api.put(`/master-deals/${m.code}/start-no`, { no }, auth()))}
+            onStartNo={(no, word) => call(() => api.put(`/master-deals/${m.code}/start-no`,
+              word === undefined ? { no } : { no, annex_word: word }, auth()))}
             onTakePrev={() => changeDraft({ ...m.prev.settings, moved: [] })} />
           <div>
             {!m.deals.length ? (

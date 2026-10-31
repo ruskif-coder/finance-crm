@@ -40,6 +40,7 @@ class ContractCreate(BaseModel):
     counterparty_name: Optional[str] = None
     marketing_name: Optional[str] = None
     cooperation_format: Optional[str] = None
+    annex_word: Optional[str] = None
     services: Optional[str] = None
     end_date_text: Optional[str] = None
     prolongation: Optional[str] = None
@@ -87,6 +88,23 @@ def _issue_channel(v: Optional[str]) -> Optional[str]:
         raise HTTPException(status_code=400, detail="Выставление: ЭДО или бумага")
 
 
+def _annex_word(v: Optional[str], contract=None, user=None) -> Optional[str]:
+    """Тумблер «Приложение / ДС». Пусто → NULL (вид не выбран). Незнакомое — отказ словом.
+
+    Вид выбирается ОДИН раз, дальше — только администратор (владелец 31.10.2026: «правки только для меня»). Правило
+    общее с панелью сборки мастер-сделки (`doc_kind.assign`), иначе правка договора обходила бы запрет панели."""
+    from app.annex_tpl import doc_kind as DK
+    try:
+        new = DK.normalize_word(v)
+        if contract is not None:
+            DK.check_change(getattr(contract, "annex_word", None), new, user)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    return new
+
+
 def _clean(s: Optional[str]) -> Optional[str]:
     if s is None:
         return None
@@ -123,6 +141,7 @@ def _serialize(c: Contract) -> dict:
         "vat_rate_expense": c.counterparty.vat_rate_expense if c.counterparty else None,
         "marketing_name": c.marketing_name,
         "cooperation_format": c.cooperation_format,
+        "annex_word": c.annex_word,
         "services": c.services,
         "end_date_text": c.end_date_text,
         "prolongation": c.prolongation,
@@ -316,6 +335,7 @@ def update_contract(
         "contract_date": lambda: data.contract_date,
         "marketing_name": lambda: _clean(data.marketing_name),
         "cooperation_format": lambda: _clean(data.cooperation_format),
+        "annex_word": lambda: _annex_word(data.annex_word, contract, current_user),
         "services": lambda: _clean(data.services),
         "end_date_text": lambda: _clean(data.end_date_text),
         "prolongation": lambda: _clean(data.prolongation),
@@ -336,6 +356,7 @@ def update_contract(
         "counterparty_name": "контрагент", "counterparty_id": "привязка к реестру",
         "marketing_name": "маркетинговое название",
         "cooperation_format": "формат сотрудничества", "services": "услуги",
+        "annex_word": "вид ДС",
         "end_date_text": "дата окончания", "prolongation": "пролонгация",
         "payment_form": "форма оплаты", "issue_channel": "выставление", "payment_term_days": "срок оплаты, дни",
         "payment_term_condition": "условие", "note": "примечание",

@@ -34,6 +34,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.annex_tpl import document as tpl_doc
+from app.annex_tpl import doc_kind as DK
 from app.sales import annex_signed
 from app.annex_tpl.assemble import (CLOSING_KEY, closing_template_for as tpl_closing_for, assemble as tpl_assemble,
                                     closing_resolve as tpl_closing_resolve, validate_edit as tpl_validate_edit)
@@ -588,7 +589,14 @@ def confirm_one(db: Session, a: SalesAnnex, payload: "ConfirmIn", user) -> tuple
         tpl_remember(db, c.id, tpl_doc.brand_ids(db, a), a.tpl_template_id, getattr(user, "id", None))
     a.blocks = frozen
     a.no = no
-    a.number = (f"ДС № {no}" + (f"-{sub_no}" if sub_no else "")) if master_id else f"Приложение № {no}"
+    # Вид ФИКСИРУЕТСЯ в момент подтверждения (`sales_annexes.doc_kind`): тумблер договора можно
+    # переключить завтра, а подписанное не переименовывают. Берём ровно тот вид, которым
+    # документ был собран (`frozen`), — иначе номер в реестре и слово в файле разошлись бы.
+    # Прежде слово решал `master_id` («ДС» / «Приложение»); 31.10.2026 — тумблер, а мастер-
+    # сделка по умолчанию доп. соглашение (`DK.resolve`), и в номере теперь полная форма.
+    kind = DK.resolve(frozen.get("kind"), getattr(c, "annex_word", None), is_master=bool(master_id))
+    a.doc_kind = kind
+    a.number = DK.number_text(kind, f"{no}-{sub_no}" if sub_no else no)
     a.status = "подтверждён"
     a.confirmed_by = getattr(user, "id", None)
     a.confirmed_at = datetime.utcnow()     # колонка — момент (в базе UTC), а не дата

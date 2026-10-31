@@ -26,6 +26,11 @@ import { Head, Strip, BaseChangedBar, FormatsBar, Issues, Foot, Reason } from '@
 import ContractTemplatesBar from '@/components/annex/ContractTemplatesBar'
 import ContractTemplateCards from '@/components/annex/ContractTemplateCards'
 import ContractAnnexList from '@/components/annex/ContractAnnexList'
+import { Segmented } from '@/components/salesTableKit'
+
+// Вид документа по договору (владелец 31.10.2026): «при пересохранении — выбор ДС/Приложение, если ещё не выбрано».
+// Подписи — как на наших экранах; в самом документе слово печатается полностью.
+const WORDS = [{ value: 'приложение', label: 'Приложение' }, { value: 'дс', label: 'ДС' }]
 
 export default function BaseTemplateModal({ open, onClose, contract }) {
   const [step, setStep] = useState('pick')
@@ -37,6 +42,7 @@ export default function BaseTemplateModal({ open, onClose, contract }) {
   const [sel, setSel] = useState('p1')
   const [draft, setDraft] = useState(null)
   const [adopt, setAdopt] = useState(false)
+  const [word, setWord] = useState(null)              // вид, выбранный при пересохранении (если у договора ещё не выбран)
   const [busy, setBusy] = useState(false)
   const [seq, setSeq] = useState(1)
   const [perm, setPerm] = useState({ edit: false, create: false })
@@ -92,9 +98,9 @@ export default function BaseTemplateModal({ open, onClose, contract }) {
     put(next); setSel(first ? first.id : null)
   }
   const save = async () => {
-    if (!ok) return
+    if (!ok || (needWord && !word)) return
     setBusy(true)
-    const done = await D.save(detail.id, draft, adopt)
+    const done = await D.save(detail.id, draft, adopt, needWord ? word : undefined)
     setBusy(false)
     if (done) reset()
   }
@@ -122,6 +128,11 @@ export default function BaseTemplateModal({ open, onClose, contract }) {
   }
 
   const inEdit = tpl && edit && !hist
+  // ПОСЛЕ `inEdit`: объявленный выше, он читал бы `inEdit` до инициализации, и окно падало бы при открытии.
+  // Шаблон договора, у договора которого вид не выбран, — спрашиваем при пересохранении. Без выбора не сохраняем:
+  // пересохранение шаблонов и есть тот проход, на котором вид у договоров фиксируется (выбор без умолчания — у договора
+  // может быть и «Приложение», и «ДС», угадывать нельзя). Базовый шаблон договора не имеет — его не касается.
+  const needWord = !!(inEdit && detail && detail.scope === 'custom' && !detail.contract_annex_word)
   const rows = D.versions.map(v => ({ v: v.version, date: fmtDate(v.created_at), author: v.author, changes: v.changes || [] }))
   const title = contract ? `${view === 'annexes' ? 'ДС договора' : 'Шаблон ДС'} · ${contract.number || 'договор'}` : (tpl ? 'Базовый шаблон ДС' : 'Базовые шаблоны ДС')
   const chip = !tpl || !detail ? null : custom ? `${detail.title} · v${detail.version}` : detail.title
@@ -167,8 +178,17 @@ export default function BaseTemplateModal({ open, onClose, contract }) {
         {D.loading && !detail && !D.bases.length && <div style={{ padding: 40, color: 'var(--text-muted)', fontSize: 13 }}>Загрузка…</div>}
         {inEdit && !ok && <Issues issues={issues} onGo={setSel} />}
         {inEdit && ok && serverIssues && <Issues issues={serverIssues.issues} serverMessage={serverIssues.message} onGo={setSel} />}
+        {needWord && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 20px', borderTop: '1px solid var(--border-inner)', background: 'var(--warning-bg)' }}>
+            <span style={{ fontSize: 12.5, color: 'var(--warning-fg)', fontWeight: 700 }}>Вид документа по договору ещё не выбран</span>
+            <Segmented value={word} options={WORDS} onChange={setWord}
+                       title="Каким словом называются ДС по этому договору — в номере и тексте. Фиксируется в договоре" />
+            <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>выбирается один раз — дальше менять сможет только администратор</span>
+          </div>
+        )}
         <Foot edit={inEdit} ok={ok} count={issues.length} nextVer={detail ? detail.version + 1 : 1} busy={busy}
-              onCancel={reset} onSave={save} onClose={close} />
+              onCancel={reset} onSave={save} onClose={close}
+              hold={needWord && !word ? 'выберите вид документа по договору — «Приложение» или «ДС»' : null} />
       </div>
     </div>
   )

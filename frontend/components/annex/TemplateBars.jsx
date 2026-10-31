@@ -141,7 +141,11 @@ export function Issues({ issues, serverMessage, onGo }) {
   )
 }
 
-export function Foot({ edit, ok, count, nextVer, busy, onCancel, onSave, onClose }) {
+// `hold` — причина не сохранять, НЕ связанная с текстом шаблона (например, не выбран вид документа по договору, 31.10.2026).
+// Держит кнопку и объясняет в подсказке, но надпись «проверка пройдена» не трогает: передать это через `ok` значило бы
+// написать «0 ошибок в шаблоне», которых нет.
+export function Foot({ edit, ok, count, nextVer, busy, onCancel, onSave, onClose, hold }) {
+  const can = ok && !hold
   const tone = ok ? ['var(--income-tint)', 'var(--income-border)', 'var(--income-fg)'] : ['var(--danger-tint)', 'var(--danger-border)', 'var(--danger-fg)']
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 20px', borderTop: '1px solid var(--border-inner)' }}>
@@ -155,8 +159,8 @@ export function Foot({ edit, ok, count, nextVer, busy, onCancel, onSave, onClose
         {edit ? (
           <>
             <span onClick={onCancel} style={ghost}>Отмена</span>
-            <span onClick={ok && !busy ? onSave : undefined} title={ok ? `сохранить как v${nextVer}` : 'исправьте ошибки в шаблоне'}
-                  style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 16px', background: ok ? 'var(--accent)' : 'var(--accent-soft)', borderRadius: 10, fontSize: 12.5, fontWeight: 700, color: 'var(--on-accent)', whiteSpace: 'nowrap', cursor: ok ? 'pointer' : 'not-allowed' }}>
+            <span onClick={can && !busy ? onSave : undefined} title={!ok ? 'исправьте ошибки в шаблоне' : hold || `сохранить как v${nextVer}`}
+                  style={{ display: 'inline-flex', alignItems: 'center', height: 34, padding: '0 16px', background: can ? 'var(--accent)' : 'var(--accent-soft)', borderRadius: 10, fontSize: 12.5, fontWeight: 700, color: 'var(--on-accent)', whiteSpace: 'nowrap', cursor: can ? 'pointer' : 'not-allowed' }}>
               {busy ? 'Сохраняю…' : `Сохранить как v${nextVer}`}
             </span>
           </>

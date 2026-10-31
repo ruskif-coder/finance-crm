@@ -77,10 +77,10 @@ export default function AnnexPrint() {
   if (!d) return <div style={{ padding: 40, fontFamily: 'Times New Roman, serif' }}>Загрузка…</div>
 
   const rows = d.rows || []
-  // ДС мастер-сделки называются «ДС», а не «Приложение» (владелец 15.10.2026); старые документы — как были.
-  const W = d.is_master
-    ? { dat: 'настоящему ДС', gen: 'настоящего ДС', ins: 'настоящим ДС', nom: 'Настоящее ДС', plIns: 'ДС' }
-    : { dat: 'настоящему Приложению', gen: 'настоящего Приложения', ins: 'настоящим Приложением', nom: 'Настоящее Приложение', plIns: 'Приложениями' }
+  // Слово документа — из бэкенда (`document.with_words`), тем же видом, что DOCX и конструктор:
+  // своя таблица форм здесь разошлась с тумблером договора (ревью 31.10.2026).
+  const w = d.words || { nom: 'Приложение', gen: 'Приложения', dat: 'Приложению', ins: 'Приложением', pl_ins: 'Приложениями' }
+  const W = { dat: `настоящему ${w.dat}`, gen: `настоящего ${w.gen}`, ins: `настоящим ${w.ins}`, nom: `Настоящее ${w.nom}`, plIns: w.pl_ins }
   // Итоги считаются по строкам таблицы, а не берутся из шапки: если они разойдутся,
   // это видно сразу — значит строки и общая сумма собраны из разного.
   const totals = rows.reduce((a, r) => ({
@@ -94,7 +94,7 @@ export default function AnnexPrint() {
 
   return (
     <>
-      <Head><title>{d.number || 'Приложение'}</title></Head>
+      <Head><title>{d.number || w.nom}</title></Head>
       <style>{`
         /* Альбомная ориентация: в документе таблица медиаплана из семи колонок, и в
            портретной A4 она сжимается до нечитаемого. Сайдкар печатает с
@@ -150,7 +150,7 @@ export default function AnnexPrint() {
       `}</style>
 
       <div className="doc">
-        <h1>{d.number || 'Приложение'}</h1>
+        <h1>{d.number || w.nom}</h1>
         <div className="sub">
           к Договору <span className="nb">№ {d.contract?.number || '________'}</span>{' '}
           об оказании услуг от {longDate(d.contract?.date)}
@@ -304,7 +304,7 @@ export default function AnnexPrint() {
         {d.with_basis && !!d.closing_basis && (
           <div className="basis">
             <p className="flat"><b>Основание для закрывающих документов</b></p>
-            <p className="flat note">К {String(d.number || 'Приложение').replace('Приложение', 'Приложению')} к Договору № {d.contract?.number || '________'}. Формулировка, которая будет указана в УПД и счёте. Просим согласовать.</p>
+            <p className="flat note">К {d.number_dat || w.dat} к Договору № {d.contract?.number || '________'}. Формулировка, которая будет указана в УПД и счёте. Просим согласовать.</p>
             <p className="flat" style={{ whiteSpace: 'pre-line' }}>{d.closing_basis}</p>
           </div>
         )}
