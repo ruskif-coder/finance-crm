@@ -46,7 +46,7 @@ def test_c11_bad_publisher_id_cell_is_skipped_not_500(monkeypatch):
     import openpyxl
     from app.routers import traffic_balancer as tb
     monkeypatch.setattr(tb, "log_action", lambda *a, **k: None)
-    monkeypatch.setattr(tb, "_push_to_campaigns", lambda db: 0)
+    monkeypatch.setattr(tb, "_push_to_campaigns", lambda db: {"campaigns_updated": True, "limits_updated": 0, "limits_failed": 0})
     monkeypatch.setattr(tb.balance, "rows", lambda db: [])
     BALANCE_COLS = tb.BALANCE_COLS
     wb = openpyxl.Workbook()

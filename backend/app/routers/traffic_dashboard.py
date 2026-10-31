@@ -33,7 +33,7 @@ from app.ord.advertiser_label import advertiser_label
 from app.ad.flight import (CAMPAIGN_MANUAL, CREATIVE_MANUAL, CREATIVE_REJECTED, CREATIVE_STATUSES,
                            GRAIN_DAYS, campaign_chain_status, effective_campaign_status,
                            PLACEMENT_CHAIN, PLACEMENT_MANUAL, PLACEMENT_RUNNING,
-                           PLACEMENT_STATUSES, PLACEMENT_OFF, PLACEMENT_READY,
+                           PLACEMENT_STATUSES, PLACEMENT_OFF, PLACEMENT_READY, PLACEMENT_RETURN,
                            as_placement_scale, best_chain_status, can_start_placement, holds,
                            creative_counts, culprits, daily_buckets,
                            distribute, effective_status, flight_of, progress, split_evenly)
@@ -1403,16 +1403,22 @@ def set_creative_status(creative_id: int, payload: StatusIn,
         raise HTTPException(400, "Креатив не согласован — запускать и ставить на паузу нечего")
     old, cr.status = cr.status, payload.status
     db.flush()
-    if (old == CREATIVE_REJECTED) != (cr.status == CREATIVE_REJECTED):
+    reshuffled = (old == CREATIVE_REJECTED) != (cr.status == CREATIVE_REJECTED)
+    if reshuffled:
         build.recompute_shares(db, cr.campaign_id)
     # DSP следует за ЭТИМ креативом — одним вызовом (В-3). Раньше пауза и отклонение
-    # меняли только нашу пометку, и в DSP креатив продолжал крутиться. Полный проход по
-    # РК (план, все креативы, лимиты) здесь не нужен: меняется один креатив.
+    # меняли только нашу пометку, и в DSP креатив продолжал крутиться.
     dsp = _creative_to_dsp(db, c, cr, old)
     db.commit()
+    # Отклонение (и его отмена) перекладывает план площадки на соседние креативы — их лимиты в DSP
+    # сразу, а не ночью (владелец 31.10.2026). Пауза долю держит: раскладка та же, проход не нужен.
+    limits = None
+    if reshuffled:
+        from app.ad import volumes_now
+        limits = volumes_now.push_limits(db, c)
     log_action(db, user, "ad_creative_status", "sales_publisher", None,
                f"креатив {cr.ms_title}: {old} → {cr.status}" + (f"; в DSP {dsp}" if dsp else ""))
-    return {"id": cr.id, "status": cr.status, "dsp_status": dsp}
+    return {"id": cr.id, "status": cr.status, "dsp_status": dsp, "limits": limits}
 
 
 def _creative_to_dsp(db: Session, c, cr, old: str) -> Optional[str]:
@@ -1751,7 +1757,7 @@ def set_placement_status(placement_id: int, payload: StatusIn,
     площадка отдаёт свой объём остальным. Без пересчёта план остался бы на строке,
     которая ничего не откручивает.
     """
-    if payload.status not in PLACEMENT_MANUAL:
+    if payload.status not in PLACEMENT_MANUAL and payload.status != PLACEMENT_RETURN:
         raise HTTPException(400, f"Выбрать можно {PLACEMENT_MANUAL}; "
                                  f"{PLACEMENT_CHAIN} ставит согласование креативов")
     p = db.query(AdCampaignPlacement).get(placement_id)
@@ -1762,6 +1768,11 @@ def set_placement_status(placement_id: int, payload: StatusIn,
     # Параллельные «запустить площадку» шли каждый по своим неподтверждённым статусам, и доли ложились
     # по устаревшей раскладке (LBS2QH 07.10.2026: у всех 25 %). Теперь по одному — замок ДО записи.
     _lock_shares(db, p.campaign_id)
+    # Статус — по строке, перечитанной ПОСЛЕ замка: пока второй «Вернуть» ждал, площадку могли
+    # запустить, и проверка до замка затёрла бы «запущен» статусом цепочки (ревью 31.10.2026).
+    db.refresh(p)
+    if payload.status == PLACEMENT_RETURN and p.status != PLACEMENT_OFF:
+        raise HTTPException(400, "Вернуть в распределение можно только отключённую площадку")
     # «Площадка запущена только при хоть одном согласованном креативе» (владелец
     # 04.09.2026). Запрет НА СЕРВЕРЕ, а не серой кнопкой: спрятанная кнопка возвращается
     # первым же рефакторингом, а запущенная площадка без согласованного материала — это
@@ -1777,7 +1788,11 @@ def set_placement_status(placement_id: int, payload: StatusIn,
                                      "площадку нельзя запустить")
         if why:
             raise HTTPException(409, DSP_NOT_UPLOADED)
-    old, p.status = p.status, payload.status
+    # Возврат — по согласованию креативов, тем же правилом, что экран и синк (владелец 31.10.2026).
+    new = (best_chain_status(_as_placement_scale(x["status"])
+                             for x in _creatives_of(db, p.campaign_id).get(p.id, []))
+           if payload.status == PLACEMENT_RETURN else payload.status)
+    old, p.status = p.status, new
     first = _mark_first_start(p)
     build.recompute_shares(db, p.campaign_id)
     # ЗАПУСК — ЕДИНСТВЕННЫЙ ПИСАТЕЛЬ «в размещении» у пары в сборе запуска. Раньше эту

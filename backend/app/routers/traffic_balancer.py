@@ -36,14 +36,30 @@ def _push_to_campaigns(db):
     Зовётся ПОСЛЕ коммита индекса и после записи в журнал: сбой пересчёта РК не должен
     выглядеть как «индекс не сохранён» (он сохранён) и не должен терять запись журнала.
     Не пересчиталось сейчас — догонит ночной `app.ad.daily_shares`.
+
+    Лимиты креативов в DSP — тоже сразу (владелец 31.10.2026), но только у РК, где план площадки
+    сдвинулся: правка индекса пересчитывает все незавершённые РК, а в DSP идти незачем там, где
+    ничего не поменялось. Сбой отправки — в журнал и в ответ: экран говорит, сколько лимитов не
+    ушло (ревью 31.10.2026: «доли пересчитаны» при отказе DSP — ложное «всё в порядке»).
+    Индекс и планы уже записаны.
     """
+    out = {"campaigns_updated": True, "limits_updated": 0, "limits_failed": 0}
     try:
-        build.refresh_weights(db)
-        return True
+        res = build.refresh_weights(db)
     except Exception:  # noqa: BLE001 — индекс сохранён, РК догонит ночной пересчёт
         db.rollback()
         log.exception("балансировщик: пересчёт РК после правки индекса не удался")
-        return False
+        return {**out, "campaigns_updated": False}
+    moved = sorted({c["campaign_id"] for c in res.get("changes") or []})
+    if not moved:
+        return out
+    from app.ad import volumes_now
+    from app.ad.models import AdCampaign
+    for camp in db.query(AdCampaign).filter(AdCampaign.id.in_(moved)).all():
+        r = volumes_now.push_limits(db, camp)
+        out = {**out, "limits_updated": out["limits_updated"] + (r.get("updated") or 0),
+               "limits_failed": out["limits_failed"] + len(r.get("failed") or [])}
+    return out
 
 VIEW = require_permission("traffic_catalog", "view")
 EDIT = require_permission("traffic_catalog", "edit")
@@ -105,8 +121,7 @@ def balancer_save_row(publisher_id: int, scope: str, payload: BalanceRowIn,
                f"{scope}: объём={payload.volume} глубина={payload.depth} "
                f"запросы={payload.requests} индекс_рука={payload.index_manual} "
                f"SW={payload.sw_visits}/{payload.sw_ppv}/{payload.sw_br}")
-    pushed = _push_to_campaigns(db)
-    return {"ok": True, "campaigns_updated": pushed, "rows": balance.rows(db)}
+    return {"ok": True, **_push_to_campaigns(db), "rows": balance.rows(db)}
 
 
 @router.post("/balancer/recalc")
@@ -115,8 +130,7 @@ def balancer_recalc(db: Session = Depends(get_db), user: User = Depends(EDIT)):
     log_action(db, user, "balancer_recalc", "sales_publisher", None,
                f"пересчёт индексов: {res['updated']}, заперто {res['locked_skipped']}, "
                f"без данных {res['no_data']}")
-    pushed = _push_to_campaigns(db)
-    return {**res, "campaigns_updated": pushed, "rows": balance.rows(db)}
+    return {**res, **_push_to_campaigns(db), "rows": balance.rows(db)}
 
 
 @router.put("/balancer/settings")
@@ -127,8 +141,7 @@ def balancer_settings(payload: CoefficientsIn, db: Session = Depends(get_db),
     coef = balance.set_coefficients(db, payload.share_cap_pct)
     log_action(db, user, "balancer_settings", "sales_publisher", None,
                f"потолок доли площадки в РК = {coef['share_cap_pct']} %")
-    pushed = _push_to_campaigns(db)
-    return {"coefficients": coef, "campaigns_updated": pushed, "rows": balance.rows(db)}
+    return {"coefficients": coef, **_push_to_campaigns(db), "rows": balance.rows(db)}
 
 
 def _save_sw(db, publisher_id: int, scope: str, visits, ppv, br, source: str = "manual") -> None:
@@ -279,8 +292,7 @@ def balancer_import(file: UploadFile = File(...), db: Session = Depends(get_db),
     db.commit()
     log_action(db, user, "balancer_import", "sales_publisher", None,
                f"импорт балансировщика: применено {applied}, пропущено {skipped}")
-    pushed = _push_to_campaigns(db)
-    return {"applied": applied, "skipped": skipped, "campaigns_updated": pushed,
+    return {"applied": applied, "skipped": skipped, **_push_to_campaigns(db),
             "rows": balance.rows(db)}
 
 

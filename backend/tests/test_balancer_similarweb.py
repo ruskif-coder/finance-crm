@@ -21,7 +21,7 @@ def db(monkeypatch):
     s = SessionLocal()
     s.commit = s.flush
     # Пересчёт РК после правки — не предмет этих тестов и ходит по всем сделкам.
-    monkeypatch.setattr(tb, "_push_to_campaigns", lambda db_: True)
+    monkeypatch.setattr(tb, "_push_to_campaigns", lambda db_: {"campaigns_updated": True, "limits_updated": 0, "limits_failed": 0})
     try:
         yield s
     finally:

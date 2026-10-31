@@ -112,6 +112,11 @@ const cmp = (a, b, col) => {
 }
 const kTxt = (v) => (v ? dec(v, 1) : 'нет данных')
 
+
+// Правка балансировщика сразу шлёт лимиты в DSP (31.10.2026). Не ушло — сказать вслух: иначе
+// «доли пересчитаны» читается как «площадки уже крутят по-новому» (ревью 31.10.2026).
+const dspNote = (d) => (d?.limits_failed > 0
+  ? ` ⚠ лимитов не ушло в DSP: ${d.limits_failed} — ночной прогон повторит` : '')
 export default function Balancer({ mayEdit }) {
   const [rows, setRows] = useState([])
   const [coef, setCoef] = useState({ share_cap_pct: null })
@@ -151,6 +156,7 @@ export default function Balancer({ mayEdit }) {
         ...(r.scope === 'web' ? { sw_visits: num(r.sw_visits), sw_ppv: num(r.sw_ppv), sw_br: num(r.sw_br) } : {}),
       }, auth())
       fromServer(res.data.rows)
+      if (dspNote(res.data)) setMsg(dspNote(res.data).trim())
     } catch (e) { setMsg(e?.response?.data?.detail || 'Не удалось сохранить строку') }
   }
 
@@ -160,7 +166,7 @@ export default function Balancer({ mayEdit }) {
       const r = await api.post('/traffic-catalog/balancer/recalc', {}, auth())
       fromServer(r.data.rows)
       if (r.data.coefficients) setCoef(r.data.coefficients)
-      setMsg(`Пересчитано ${r.data.updated}; заперто ${r.data.locked_skipped}; без данных ${r.data.no_data}`)
+      setMsg(`Пересчитано ${r.data.updated}; заперто ${r.data.locked_skipped}; без данных ${r.data.no_data}` + dspNote(r.data))
     } catch (e) { setMsg(e?.response?.data?.detail || 'Пересчёт не удался') } finally { setBusy(false) }
   }
 
@@ -170,7 +176,7 @@ export default function Balancer({ mayEdit }) {
       const r = await api.put('/traffic-catalog/balancer/settings',
         { share_cap_pct: num(coef.share_cap_pct) }, auth())
       setCoef(r.data.coefficients); fromServer(r.data.rows)
-      setMsg(`Потолок доли сохранён${r.data.campaigns_updated ? ' — доли в РК пересчитаны' : ''}`)
+      setMsg(`Потолок доли сохранён${r.data.campaigns_updated ? ' — доли в РК пересчитаны' : ''}` + dspNote(r.data))
     } catch (e) { setMsg(e?.response?.data?.detail || 'Не удалось сохранить') } finally { setBusy(false) }
   }
 
@@ -192,7 +198,7 @@ export default function Balancer({ mayEdit }) {
       const r = await api.post('/traffic-catalog/balancer/import', form,
         { ...auth(), headers: { ...auth().headers, 'Content-Type': 'multipart/form-data' } })
       fromServer(r.data.rows)
-      setMsg(`Загружено: применено ${r.data.applied}, пропущено ${r.data.skipped} — нажмите «Пересчитать индексы»`)
+      setMsg(`Загружено: применено ${r.data.applied}, пропущено ${r.data.skipped} — нажмите «Пересчитать индексы»` + dspNote(r.data))
     } catch (e2) { setMsg(e2?.response?.data?.detail || 'Импорт не удался') } finally { setBusy(false) }
   }
 

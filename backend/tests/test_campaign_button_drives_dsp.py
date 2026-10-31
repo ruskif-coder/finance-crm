@@ -65,6 +65,9 @@ class _Db:
     def flush(self):
         pass
 
+    def refresh(self, obj):
+        pass
+
     def commit(self):
         self.commits += 1
 

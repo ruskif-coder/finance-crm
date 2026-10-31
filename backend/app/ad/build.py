@@ -975,6 +975,10 @@ def sync_deal_quietly(db: Session, deal_id: int) -> None:
     Вердикт площадки, выпуск маркера и отправка — действия самостоятельные; их результат
     уже записан. Если пересборка кампании не удалась, правильнее оставить её крону, чем
     вернуть человеку ошибку на действии, которое на самом деле прошло.
+
+    Пересобрали — сразу и лимиты креативов в DSP (владелец 31.10.2026): раньше событие меняло
+    раскладку, а DSP крутила по вчерашним лимитам до ночного прогона. Шлются только сдвинувшиеся
+    (`dsp.limits.sync_limits`); сбой отправки — в журнал, ночь повторит.
     """
     import logging
     try:
@@ -983,3 +987,13 @@ def sync_deal_quietly(db: Session, deal_id: int) -> None:
         db.rollback()
         logging.getLogger("finance.ad").warning(
             "Пересборка РК сделки %s по событию не удалась: %s", deal_id, e)
+        return
+    # РК может и не быть — сборка заводит её позже; запрос после пересборки, а не до: её могла создать эта же.
+    try:
+        camp = db.query(AdCampaign).filter(AdCampaign.deal_id == deal_id).first()
+        if camp is not None:
+            from app.ad import volumes_now
+            volumes_now.push_limits(db, camp)
+    except Exception as e:                              # noqa: BLE001 — РК пересобрана, лимиты догонит ночь
+        logging.getLogger("finance.ad").warning(
+            "Лимиты РК сделки %s по событию не ушли в DSP: %s", deal_id, e)

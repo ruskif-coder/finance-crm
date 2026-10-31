@@ -180,7 +180,7 @@ def test_push_failure_does_not_undo_the_saved_index(monkeypatch):
         raise RuntimeError("упало посередине")
     monkeypatch.setattr(build, "refresh_weights", boom)
     db = Db()
-    assert tb._push_to_campaigns(db) is False
+    assert tb._push_to_campaigns(db)["campaigns_updated"] is False
     assert db.rolled
 
 
