@@ -73,7 +73,7 @@ def _off(db, account_id, channel='дайджест'):
     Умолчание — ДАЙДЖЕСТ, и это не произвол. Хранятся отклонения от умолчания, а
     умолчание у двух почтовых колонок противоположное: обычный вид по умолчанию идёт
     пачкой, срочный — сразу. Все проверки этого файла работают с обычными видами
-    («сверка», «продление»), поэтому отклонение у них создаётся снятием ДАЙДЖЕСТА;
+    («финиш рк», «продление»), поэтому отклонение у них создаётся снятием ДАЙДЖЕСТА;
     снятие «почты срочное» совпало бы с умолчанием и строки бы не оставило — прибор был
     бы зелёным, ничего не проверив.
     """
@@ -98,10 +98,12 @@ def test_default_is_everything_on(acc):
 
 
 def test_mute_and_unmute_are_symmetric(acc):
-    gw.cabinet_notify_cell(acc.id, _cell(acc.pub, 'сверка', False, author='тест'), acc.db)
-    assert 'сверка' in _off(acc.db, acc.id)
-    gw.cabinet_notify_cell(acc.id, _cell(acc.pub, 'сверка', True), acc.db)
-    assert 'сверка' not in _off(acc.db, acc.id)
+    # Обычный (дайджестный) вид. «Сверка» им была до 02.11.2026 — с тех пор она уходит сразу, и снятие дайджеста у неё
+    # совпадает с умолчанием: строки нет, проверять было бы нечего.
+    gw.cabinet_notify_cell(acc.id, _cell(acc.pub, 'финиш рк', False, author='тест'), acc.db)
+    assert 'финиш рк' in _off(acc.db, acc.id)
+    gw.cabinet_notify_cell(acc.id, _cell(acc.pub, 'финиш рк', True), acc.db)
+    assert 'финиш рк' not in _off(acc.db, acc.id)
 
 
 def test_muting_twice_does_not_duplicate(acc):

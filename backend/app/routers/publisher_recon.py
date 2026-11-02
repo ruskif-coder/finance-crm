@@ -17,6 +17,7 @@ from app.audit import log_action
 from app.database import get_db
 from app.files_safe import existing_upload_path
 from app.models import User
+from app.notify import recon as N
 from app.permissions import require_permission
 from app.publisher_recon import board as B
 from app.publisher_recon import razaloc as R
@@ -85,6 +86,7 @@ def send(payload: SendIn, db: Session = Depends(get_db), user: User = Depends(ED
         raise HTTPException(e.status, e.message)
     log_action(db, user, "publisher_recon_send", "publisher_request", req.id, f"{_label(db, req)}: сверка отправлена")
     db.commit()
+    N.to_site(db, req, "новая")
     return {"request_id": req.id}
 
 
@@ -101,6 +103,8 @@ def send_all(payload: PeriodIn, db: Session = Depends(get_db), user: User = Depe
     for req in reqs:
         log_action(db, user, "publisher_recon_send", "publisher_request", req.id, f"{_label(db, req)}: сверка отправлена")
     db.commit()
+    for req in reqs:
+        N.to_site(db, req, "новая")
     return {"sent": len(reqs)}
 
 
@@ -118,6 +122,7 @@ async def reply(request_id: int, body: str = Form(""), volume: Optional[int] = F
     log_action(db, user, "publisher_recon_reply", "publisher_request", req.id,
                f"{_label(db, req)}: ответ площадке" + (f", предложено {volume}" if volume is not None else ""))
     db.commit()
+    N.to_site(db, req, "ответ", offer=volume)
     return {"message_id": m.id}
 
 
@@ -130,6 +135,7 @@ def remind(request_id: int, db: Session = Depends(get_db), user: User = Depends(
         raise HTTPException(e.status, e.message)
     log_action(db, user, "publisher_recon_remind", "publisher_request", req.id, f"{_label(db, req)}: напомнили")
     db.commit()
+    N.to_site(db, req, "напоминание")
     return {"ok": True}
 
 
@@ -149,6 +155,7 @@ def agree(request_id: int, payload: AgreeIn, db: Session = Depends(get_db), user
     log_action(db, user, "publisher_recon_agree", "publisher_request", req.id,
                f"{_label(db, req)}: итог {payload.volume} (наши {rc.our_volume}, площадки {rc.their_volume})")
     db.commit()
+    N.to_site(db, req, "итог")
     return {"status": B.DONE}
 
 

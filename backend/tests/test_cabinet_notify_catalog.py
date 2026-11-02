@@ -51,6 +51,8 @@ def test_built_kinds_really_have_a_sender():
         # Приоритезация (19.10.2026): отправитель — app/notify/prio.py, зовёт роутер prio после коммита.
         "запрос приоритезации": ("app/notify/prio.py", '"запрос приоритезации"'),
         "приоритезация остановлена": ("app/notify/prio.py", '"приоритезация остановлена"'),
+        # Сверка месяца (02.11.2026): отправитель — app/notify/recon.py, зовёт роутер publisher_recon после коммита.
+        "сверка": ("app/notify/recon.py", '"сверка"'),
     }
     for k in nk.KINDS:
         if not k.built:
@@ -66,7 +68,7 @@ def test_unbuilt_kinds_are_the_debt_and_are_counted():
     """Непостроенных сегодня пятнадцать. Число в приборе — не придирка: оно падает, когда
     отправитель появляется, и заставляет снять признак `built` вместе с ним."""
     unbuilt = [k.key for k in nk.KINDS if not k.built]
-    assert len(unbuilt) == 12, (
+    assert len(unbuilt) == 11, (
         f"построенных видов стало больше или меньше: не построено {len(unbuilt)}. "
         f"Если отправитель появился — поставьте built=True и поправьте это число")
 

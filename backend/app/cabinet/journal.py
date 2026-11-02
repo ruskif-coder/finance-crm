@@ -99,6 +99,7 @@ ACTIONS: Tuple[LogAction, ...] = (
     LogAction('увед_креатив_отозван', 'Креатив отозван', 'warn', SIDE_US),
     LogAction('увед_запрос_приоритезации', 'Запрос на приоритезацию', 'info', SIDE_US),
     LogAction('увед_приоритезация_стоп', 'Приоритезация остановлена', 'warn', SIDE_US),
+    LogAction('увед_сверка', 'Сверка месяца', 'warn', SIDE_US),    # 02.11.2026
 )
 
 BY_KEY = {a.key: a for a in ACTIONS}
