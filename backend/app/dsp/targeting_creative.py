@@ -554,10 +554,13 @@ def wake_campaign(db: Session, *, client: Optional[MsClient] = None) -> dict:
     end = _moment(info.get("date_end"))
     start = _moment(info.get("date_start"))
     changed = []
+    limits = info.get("limits") or {}
+    topped = _budget_topped_up(c, campaign, limits, start)
+    extend = not end or end.date() < want_end
 
-    if not end or end.date() < want_end:
-        params = {"limits": info.get("limits") or {},
-                  "date_end": want_end.isoformat()}
+    if extend or topped is not None:
+        params = {"limits": topped if topped is not None else limits,
+                  "date_end": (want_end if extend else end.date()).isoformat()}
         # Начало двигаем назад, только если оно в будущем: иначе кампания «запущена», а
         # показов нет — и это ровно тот вид поломки, который выглядит как работа.
         if start and start > datetime.utcnow():
@@ -565,7 +568,10 @@ def wake_campaign(db: Session, *, client: Optional[MsClient] = None) -> dict:
         elif start:
             params["date_start"] = start.date().isoformat()
         c.campaign_edit(campaign, params, local_ref=campaign)
-        changed.append(f"срок до {want_end:%d.%m.%Y}")
+        if extend:
+            changed.append(f"срок до {want_end:%d.%m.%Y}")
+        if topped is not None:
+            changed.append(f"бюджет до {topped['budget']['total']}")
 
     if status != RUNNING:
         c.campaign_set_status(campaign, RUNNING, local_ref=campaign)
@@ -575,6 +581,33 @@ def wake_campaign(db: Session, *, client: Optional[MsClient] = None) -> dict:
         log.info("DSP: кампания нацеливания %s — %s", campaign, ", ".join(changed))
     return {"campaign_xxhash": campaign, "changed": changed,
             "date_end": want_end.isoformat()}
+
+
+# Остаток общего бюджета кампании нацеливания, до которого его доводит каждое пробуждение (владелец 02.11.2026:
+# «при добавлении креатива добивал бы до 500»). Потолок 1000 кончился к концу октября, DSP перестал выставлять кампанию
+# на торги (02.11 — ноль ставок), и ссылка нацеливания открывалась, а баннера на сайте не было.
+BUDGET_HEADROOM = 500
+
+
+def _budget_topped_up(c, campaign: str, limits: dict, start) -> Optional[dict]:
+    """Новые лимиты с общим бюджетом «потрачено + 500», если остаток меньше 500; иначе None. Остальные лимиты — как были
+    (`Campaign.edit` принимает их объектом целиком). Бюджет 0 — «без ограничения»: потолка, которого не было, не ставим."""
+    import math
+    total = ((limits or {}).get("budget") or {}).get("total") or 0
+    if not total:
+        return None
+    since = (start or datetime.utcnow()).date().isoformat()
+    try:
+        stat = c.statistic_get_period([campaign], since, datetime.utcnow().date().isoformat()) or {}
+    except MsError as e:
+        # Статистика не ответила — бюджет не трогаем, но будим: срок и запуск важнее доливки (ревью 02.11.2026).
+        log.warning("DSP: остаток бюджета кампании нацеливания %s не посчитан: %s", campaign, e)
+        return None
+    spent = float((stat.get(campaign) or {}).get("spent") or 0)
+    if total - spent >= BUDGET_HEADROOM:
+        return None
+    budget = {**(limits.get("budget") or {}), "total": math.ceil(spent + BUDGET_HEADROOM)}
+    return {**limits, "budget": budget}
 
 
 # ── состояние кампании нацеливания ───────────────────────────────────────────

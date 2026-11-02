@@ -102,12 +102,13 @@ def test_the_archive_is_carried_with_the_marker():
 
     from app.ad import build
     src = inspect.getsource(build.sync_creatives)
-    assert "row.file_id = archives[" in src, "файл не переносится вовсе"
-    assert 'archives.get(r["set_id"])' in src, (
+    assert "row.file_id = file_id" in src, "файл не переносится вовсе"
+    assert 'set_files.get(r["set_id"]' in src, (
         "файл берётся не с того комплекта: нужен комплект ПАРЫ")
     # Пустым не затираем — иначе пересборка после удаления файла обнулила бы связь у
-    # креатива, который уже уехал в DSP.
-    assert "if archives.get(" in src
+    # креатива, который уже уехал в DSP. Какой файл комплекта — по формату поверхности,
+    # см. test_creative_file_by_format.
+    assert "if file_id:" in src
 
 
 def test_the_creative_number_is_the_number_people_see():

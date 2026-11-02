@@ -47,6 +47,14 @@ class _Q:
         return self.rows
 
 
+class _Files:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def all(self):
+        return self.rows
+
+
 class _Db:
     def __init__(self, existing=()):
         self.pl = AdCampaignPlacement(id=11, campaign_id=1, publisher_id=7,
@@ -62,8 +70,11 @@ class _Db:
             return _Res([{"replaces_set_id": ROOT, "publisher_id": 7}])
         if "SELECT id, no FROM launch_prep_creative_set" in q:
             return _Res([{"id": ROOT, "no": 1}, {"id": REWORK, "no": 2}])
-        if "DISTINCT ON (f.set_id)" in q:
-            return _Res([{"set_id": ROOT, "file_id": 901}, {"set_id": REWORK, "file_id": 902}])
+        if "FROM launch_prep_creative_file f" in q:
+            return _Files([SimpleNamespace(id=901, set_id=ROOT, is_archive=True,
+                                           original_name="a.zip", path="a.zip"),
+                           SimpleNamespace(id=902, set_id=REWORK, is_archive=True,
+                                           original_name="b.zip", path="b.zip")])
         if "FROM launch_prep_pair pr" in q:
             return _Res([
                 {"pair_id": 81, "set_id": ROOT, "set_no": 1, "erid": "ERID-1",

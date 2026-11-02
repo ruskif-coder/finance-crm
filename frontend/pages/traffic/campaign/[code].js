@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
 import Navbar from '@/components/Navbar'
-import { MONO, UI, Seg } from '@/components/salesTableKit'
+import { MONO, UI, Seg, inp } from '@/components/salesTableKit'
 import api, { auth } from '@/lib/api'
 import useRefreshOnReturn from '@/lib/useRefreshOnReturn'
 import { indexData, kpis, sumOf, insights as buildInsights, elapsedDays, planTotal } from '@/lib/rkAnalysis.mjs'
@@ -135,6 +135,24 @@ export default function RkAnalysisPage() {
           <span key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
             <span style={cap}>{label}</span>
             <Seg value={st[key]} opts={opts} onPick={v => set(key, v)} disabled={dis || undefined} />
+            {/* «Свой отрезок» — полями дат в пределах флайта (02.11.2026: щелчками по графику отрезок задаётся только в
+                разрезе по дням, а в остальных его было не выбрать). Щелчки по графику работают как прежде. */}
+            {key === 'period' && st.period === 'custom' && !!ix.days.length && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {[0, 1].map(i => (
+                  <input key={i} type="date" min={ix.days[0]} max={ix.days[ix.days.length - 1]}
+                    value={(range || [ix.days[0], ix.days[ix.days.length - 1]])[i]}
+                    onChange={e => {
+                      const v = e.target.value
+                      if (!v) return
+                      const cur = range || [ix.days[0], ix.days[ix.days.length - 1]]
+                      const next = i === 0 ? [v, cur[1]] : [cur[0], v]
+                      setRange(next[0] <= next[1] ? next : [next[1], next[0]]); setPick(null)
+                    }}
+                    style={{ ...inp, height: 28, padding: '0 8px', fontFamily: MONO, fontSize: 11.5 }} />
+                ))}
+              </span>
+            )}
           </span>
         ))}
       </div>

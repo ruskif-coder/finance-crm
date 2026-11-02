@@ -83,6 +83,13 @@ def material_problem(fmt: str, f) -> Optional[str]:
     return None
 
 
+def pick_file(fmt: str, files):
+    """Файл комплекта под формат поверхности — первый подходящий; None — подходящего нет.
+    Годность — тот же `material_problem`, что отказывает при выгрузке: выбор и отказ не
+    разойдутся. HTML-площадке — первый архив (как было), тизерной — первая картинка."""
+    return next((f for f in files if f and material_problem(fmt, f) is None), None)
+
+
 def format_warning(fmt: str, files) -> Optional[str]:
     """Предупреждение на экране сборки: ни один файл комплекта не подходит формату площадки.
     Нет файлов — сравнивать не с чем, молчим (комплект ещё собирается)."""

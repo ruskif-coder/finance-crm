@@ -297,6 +297,15 @@ def candidates(db: Session, services: list, surfaces: list) -> list:
            "arch": PUBLISHER_ARCHIVE_STATUS}).mappings().all()
 
 
+def creative_file_id(files: list, rule: Optional[dict]) -> Optional[int]:
+    """id файла комплекта, который уедет в DSP креативом площадки с правилом `rule`.
+    Формат решает поверхность: тизерной площадке — картинка, остальным — архив (02.11.2026:
+    тизеру привязывался только архив, и ни один тизер из сборки в DSP не выгружался)."""
+    from app.dsp import teaser
+    f = teaser.pick_file(teaser.format_of(rule), files)
+    return f.id if f else None
+
+
 def publisher_weights(db: Session, surfaces: list) -> dict:
     """Действующий индекс площадки, сложенный по поверхностям РК (web / app→android+ios)."""
     scopes = [sc for sc in SCOPES if SCOPE_SURFACE[sc] in surfaces]
@@ -624,21 +633,24 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
     set_no = {r["id"]: r["no"] for r in db.execute(text(
         "SELECT id, no FROM launch_prep_creative_set WHERE deal_id = :d"),
         {"d": camp.deal_id}).mappings().all()}
-    # Архив каждого комплекта сделки одним запросом: по нему выгрузка в DSP берёт zip.
-    # Берём ПЕРВЫЙ архив комплекта — тот же, что показывает предпросмотр и что уезжает
-    # в нацеливание; три чтения одного файла обязаны давать один файл.
-    archives = {r["set_id"]: r["file_id"] for r in db.execute(text("""
-        SELECT DISTINCT ON (f.set_id) f.set_id, f.id AS file_id
+    # Файлы каждого комплекта сделки одним запросом, по порядку загрузки. Какой из них
+    # уедет в DSP, решает формат поверхности (`creative_file_id`): HTML-площадке — ПЕРВЫЙ
+    # архив комплекта, тот же, что показывает предпросмотр и что уезжает в нацеливание;
+    # тизерной — первая картинка.
+    set_files = {}
+    for f in db.execute(text("""
+        SELECT f.id, f.set_id, f.is_archive, f.original_name, f.path
           FROM launch_prep_creative_file f
           JOIN launch_prep_creative_set cs ON cs.id = f.set_id
-         WHERE cs.deal_id = :d AND f.is_archive IS TRUE
+         WHERE cs.deal_id = :d
          ORDER BY f.set_id, f.id
-    """), {"d": camp.deal_id}).mappings().all()}
+    """), {"d": camp.deal_id}).all():
+        set_files.setdefault(f.set_id, []).append(f)
     pairs = db.execute(text("""
         SELECT pr.id AS pair_id, pr.code AS pair_code, pr.sent_at, pr.withdrawn_at,
                cs.id AS set_id, cs.no AS set_no, cs.title, cs.erid AS erid_raw,
                CASE WHEN """ + readiness.ready_sql("cs") + """ THEN trim(cs.erid) END AS erid,
-               t.publisher_id,
+               t.publisher_id, t.surface_kind,
                tr.verdict AS traffic_verdict,
                pv.verdict AS platform_verdict
           FROM launch_prep_pair pr
@@ -669,6 +681,7 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
         next_no[pid] = max(next_no.get(pid, 0), c.creative_no)
         taken.add((pid, c.creative_no))
 
+    rules = pub_rules.rules_for(db, {(r["publisher_id"], r.get("surface_kind")) for r in pairs})
     created = updated = 0
     for r in pairs:
         pl = pls.get(r["publisher_id"])
@@ -752,15 +765,17 @@ def sync_creatives(db: Session, camp: AdCampaign, commit: bool = True) -> dict:
             # Креатив, уже выгруженный в DSP, не трогаем: маркер там вшит в баннер, и
             # пустая колонка только запутала бы обновление данных в DSP.
             row.erid = None
-        # ФАЙЛ — С ТОГО ЖЕ КОМПЛЕКТА, ЧТО И МАРКЕР: в DSP уезжает тот архив, который
-        # площадка согласовала.
+        # ФАЙЛ — С ТОГО ЖЕ КОМПЛЕКТА, ЧТО И МАРКЕР: в DSP уезжает тот файл, который
+        # площадка согласовала (архив или картинка тизера — по формату поверхности).
         #
         # Колонка `file_id` — четвёртая за два дня с читателями и без писателя: выгрузка
         # в DSP берёт по ней zip и без неё отказывает словами «к креативу не привязан
         # файл комплекта» (замер 18.09.2026, сделка PFPYGX). Пустым не затираем по той же
         # причине, что и маркер.
-        if archives.get(r["set_id"]):
-            row.file_id = archives[r["set_id"]]
+        file_id = creative_file_id(set_files.get(r["set_id"], []),
+                                   rules.get((r["publisher_id"], r.get("surface_kind"))))
+        if file_id:
+            row.file_id = file_id
         row.ms_title = creative_title(db, camp, pl, row.creative_no)
 
     # СТАТУС ПЛОЩАДКИ ПЕРЕСЧИТЫВАЕМ ЗДЕСЬ ЖЕ, из её креативов.

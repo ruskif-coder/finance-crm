@@ -25,7 +25,10 @@ class FakeClient:
     def __init__(self, journal_hash=None, add_hash="NEWHASH000000001",
                  info_html="<div>баннер</div>", campaign_status="LAUNCHED",
                  campaign_end="2999-01-01 00:00:00", creative_status="STOPPED",
-                 launch_sticks=True, adomain="", erid="TEST00000"):
+                 launch_sticks=True, adomain="", erid="TEST00000", spent=0.0, budget_total=1000):
+        self.spent = spent
+        self.budget_total = budget_total
+        self.edited_limits = None
         self.adomain = adomain
         self.erid = erid
         self.edited = []
@@ -45,6 +48,10 @@ class FakeClient:
         self.edited_limits = params.get("limits")
         return True
 
+    def statistic_get_period(self, hashes, day_from, day_to):
+        self.calls.append(("stat", tuple(hashes), day_from, day_to))
+        return {h: {"show": 0, "spent": self.spent} for h in hashes}
+
     def campaign_set_status(self, xxhash, status, local_ref=None):
         self.calls.append(("campaign_status", xxhash, status))
         self.campaign_status = status
@@ -59,7 +66,7 @@ class FakeClient:
         self.calls.append(("campaign", xxhash))
         return {"title": "ТЕСТ · кампания нацеливания", "xxhash": xxhash,
                 "status": self.campaign_status,
-                "limits": {"show": {"total": 200000}, "budget": {"total": 1000}},
+                "limits": {"show": {"total": 200000}, "budget": {"total": self.budget_total}},
                 "date_start": {"date": "2026-01-01 00:00:00"},
                 "date_end": {"date": self.campaign_end}}
 
@@ -147,8 +154,9 @@ def test_stored_hash_is_verified_but_never_duplicated():
         # Первым идёт вопрос о КАМПАНИИ: остановленная не покажет ничего, и проверять
         # креатив в ней бессмысленно. Дальше — одно чтение креатива. `Creative.add` в
         # этой ветке не вызывается никогда: удалить лишний в чужом кабинете нечем.
-        assert c.calls == [("campaign", c.calls[0][1]),
-                           ("info", "ALREADY0000000001")], (
+        # Чтение расхода кампании (`stat`) — проверка остатка бюджета при пробуждении (02.11.2026), тоже только чтение.
+        assert [x for x in c.calls if x[0] != "stat"] == [("campaign", c.calls[0][1]),
+                                                          ("info", "ALREADY0000000001")], (
             f"лишние вызовы при сохранённом хеше: {c.calls}")
         assert not any(k[0] == "add" for k in c.calls), "создан второй креатив"
     finally:
@@ -181,7 +189,7 @@ def test_journal_saves_us_from_a_duplicate():
     try:
         assert P.ensure(db, s, client=c) == "FROMJOURNAL00001"
         # Журнал подсказал хеш, чтение подтвердило код — создавать нечего.
-        assert [k[0] for k in c.calls] == ["campaign", "journal", "info"], (
+        assert [k[0] for k in c.calls if k[0] != "stat"] == ["campaign", "journal", "info"], (
             f"после журнала должно быть только чтение, а было: {c.calls}")
         db.refresh(s)
         assert s.ms_targeting_creative_xxhash == "FROMJOURNAL00001"
@@ -388,7 +396,7 @@ def test_the_process_itself_wakes_the_campaign():
         c = FakeClient(campaign_status="STOPPED", campaign_end="2026-09-13 00:00:00")
         with pytest.raises(P.TargetingCreativeError):
             P.ensure(db, s, client=c)        # архива у времянки нет — дальше не уедет
-        assert [x[0] for x in c.calls][:3] == ["campaign", "campaign_edit", "campaign_status"]
+        assert [x[0] for x in c.calls if x[0] != "stat"][:3] == ["campaign", "campaign_edit", "campaign_status"]
     finally:
         _drop(db, s)
         db.close()
@@ -819,3 +827,46 @@ def test_unanswered_add_is_not_repeated_blindly():
         assert not c.added
     finally:
         _drop(db, s)
+
+
+@pytest.mark.parametrize("spent,total,want", [
+    (4633.6, 1000, 5134),      # проело потолок давно — остаток доводится до 500 (прод 02.11.2026: торги встали в ноль)
+    (100.0, 1000, None),       # остаток 900 ≥ 500 — потолок не трогаем
+    (700.0, 1000, 1200),       # остаток 300 — до 500
+    (9999.0, 0, None),         # 0 — «без ограничения»: не ставим потолок, которого не было
+])
+def test_waking_tops_the_budget_up_to_500(spent, total, want):
+    """Владелец 02.11.2026: «при добавлении креатива добивал бы до 500». Общий бюджет кампании нацеливания (1000)
+    кончился, DSP перестал её выставлять на торги — ссылка открывалась, баннера не было. Поломка, которую ловит тест:
+    кампания будится с остатком бюджета меньше 500, или «без ограничения» превращается в потолок."""
+    db = _db()
+    try:
+        s = _set_with(db)
+        c = FakeClient(campaign_end="2999-01-01 00:00:00", spent=spent, budget_total=total)
+        P.wake_campaign(db, client=c)
+        if want is None:
+            assert c.edited_limits is None, "потолок трогать незачем"
+        else:
+            assert c.edited_limits == {"show": {"total": 200000}, "budget": {"total": want}}, "остальные лимиты — как были"
+            assert c.campaign_end.startswith("2999"), "срок вперёд и так — не трогаем"
+    finally:
+        _drop(db, s)
+        db.close()
+
+
+def test_waking_survives_a_statistics_failure():
+    """Остаток бюджета считается по статистике DSP. Её сбой не должен останавливать пробуждение: срок и запуск важнее
+    доливки. Поломка: кампания нацеливания не будится, потому что статистика не ответила."""
+    db = _db()
+    try:
+        s = _set_with(db)
+        c = FakeClient(campaign_end="2000-01-01 00:00:00", campaign_status="STOPPED", spent=4633.6, budget_total=1000)
+
+        def boom(*a, **k):
+            raise P.MsError("stat down")
+        c.statistic_get_period = boom
+        P.wake_campaign(db, client=c)
+        assert c.campaign_status == "LAUNCHED" and not c.campaign_end.startswith("2000")
+    finally:
+        _drop(db, s)
+        db.close()
