@@ -209,7 +209,8 @@ def test_empty_scope_shows_nothing(cab):
     Записано здесь, а не в задачнике: список исключений — единственное место, где это
     видно тому, кто придёт следующим.
     """
-    GLOBAL = {'mute_v1', 'reason_v1', 'account_v1', 'account_publisher_v1', 'notify_v1'}
+    # `maintenance_v1` — одна строка режима техобслуживания (02.11.2026): он общий для всех кабинетов.
+    GLOBAL = {'mute_v1', 'reason_v1', 'account_v1', 'account_publisher_v1', 'notify_v1', 'maintenance_v1'}
     views = [v for (v,) in cab.execute(text(
         "SELECT viewname FROM pg_views WHERE schemaname = 'pub' ORDER BY viewname"))]
     assert len(views) >= 10, f'витрин подозрительно мало: {views}'

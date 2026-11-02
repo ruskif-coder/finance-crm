@@ -31,6 +31,7 @@ from sqlalchemy import text
 from app.auth import (account_publishers, current_account, current_account_any, revoke_sessions,
                       find_account, make_token,
                       verify_password)
+from app import maintenance as mnt
 from app.db import plain_session, scoped_session
 
 log = logging.getLogger("cabinet")
@@ -419,6 +420,26 @@ def tasks(acc=Depends(current_account)):
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.middleware("http")
+async def _maintenance_gate(request: Request, call_next):
+    """Техобслуживание кабинета (02.11.2026): после наступления закрыто всё, кроме состояния. Разбор — `app/maintenance.py`.
+    Состояние читается на каждый запрос: кеш пережил бы снятие режима и держал бы площадки снаружи."""
+    path = request.scope.get("path", "")
+    if path.startswith("/api/") and not path.startswith(mnt.OPEN_PATHS):
+        st = mnt.current()
+        if mnt.blocks(path, request.method, st["mode"]):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=503, content={
+                "detail": mnt.TITLE, "maintenance": True, "note": mnt.NOTE})
+    return await call_next(request)
+
+
+@app.get("/api/maintenance")
+def maintenance_state():
+    """Режим для экрана — БЕЗ входа: заглушку показывает и страница входа."""
+    return mnt.current()
 
 
 class CellIn(BaseModel):

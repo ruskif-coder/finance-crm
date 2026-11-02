@@ -1,6 +1,7 @@
 import Head from 'next/head'
 import { useEffect } from 'react'
 import '../styles/globals.css'
+import { MaintenanceBar, MaintenanceStub, useMaintenance } from '../components/Maintenance'
 
 /**
  * Тема выбирается один раз при монтировании и живёт в `localStorage`.
@@ -11,6 +12,8 @@ import '../styles/globals.css'
  * это лучше, чем мигание всей страницы после гидрации.
  */
 export default function App({ Component, pageProps }) {
+  // Техобслуживание — здесь, а не в оболочке: заглушка нужна и на странице входа (02.11.2026).
+  const mnt = useMaintenance()
   useEffect(() => {
     try {
       const saved = localStorage.getItem('cabinet_theme')
@@ -34,7 +37,9 @@ export default function App({ Component, pageProps }) {
             Заголовок раздела приходит следом и заменяет этот: Next оставляет последний. */}
         <title>SIMB-AD | Кабинет паблишера</title>
       </Head>
+      <MaintenanceBar state={mnt} />
       <Component {...pageProps} />
+      <MaintenanceStub state={mnt} />
     </>
   )
 }

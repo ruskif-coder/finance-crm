@@ -11,7 +11,7 @@
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -28,6 +28,9 @@ class AnnounceIn(BaseModel):
     # Текст можно переопределить, но умолчание стандартное (решение владельца
     # 17.09.2026): сочинять его в спешке — верный способ написать невнятное.
     note: Optional[str] = None
+    # Что закрыть (владелец 02.11.2026): обе галочки по умолчанию отмечены.
+    portal: bool = True
+    cabinet: bool = True
 
 
 @router.get("")
@@ -56,9 +59,14 @@ def maintenance_announce(payload: AnnounceIn, db: Session = Depends(get_db),
                          user: User = Depends(require_admin)):
     """Объявить обслуживание через 10 минут. Срок фиксирован — выбор из вариантов на
     этой кнопке лишний: она нажимается в спешке, а лишний вопрос в спешке ошибается."""
-    st = mnt.announce(db, by=user.name or user.email, note=payload.note)
+    try:
+        st = mnt.announce(db, by=user.name or user.email, note=payload.note,
+                          portal=payload.portal, cabinet=payload.cabinet)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    what = " и ".join(w for w, on in (("портал", st["portal"]), ("кабинеты паблишеров", st["cabinet"])) if on)
     log_action(db, user, "maintenance_on", "settings", None,
-               f"объявлено обслуживание с {st['from']} UTC")
+               f"объявлено обслуживание ({what}) с {st['from']} UTC")
     return st
 
 

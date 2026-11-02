@@ -144,3 +144,90 @@ def test_the_stub_hides_from_whoever_passes():
         pytest.skip("фронт недоступен из этого контейнера")
     text = src.read_text(encoding="utf-8")
     assert "state.passes" in text
+
+
+# ── портал и кабинеты паблишеров — по выбору (владелец 02.11.2026) ─────────────────────────────────────────────────────
+#
+# «При постановке на техобслуживание надо закрывать и кабинеты паблишеров… да, давай выбор»: при объявлении две галочки,
+# обе отмечены. Поломки, которые ловят тесты ниже: кабинет не узнаёт о режиме (закрыли всё, а площадки отвечают в
+# полузакрытую систему); закрыли только кабинеты — а заглушка легла и на сотрудников; старое объявление без области
+# стало закрывать кабинеты задним числом.
+
+
+def test_scope_is_part_of_the_state():
+    db = _db()
+    try:
+        st = mnt.announce(db, by="прибор", portal=False, cabinet=True)
+        assert (st["portal"], st["cabinet"]) == (False, True)
+        st = mnt.announce(db, by="прибор", portal=True, cabinet=False)
+        assert (st["portal"], st["cabinet"]) == (True, False)
+        st = mnt.announce(db, by="прибор")
+        assert (st["portal"], st["cabinet"]) == (True, True), "по умолчанию закрывается и то, и другое"
+    finally:
+        mnt.cancel(db)
+        db.close()
+
+
+def test_an_announcement_without_scope_closes_only_the_portal():
+    """Объявление, сделанное до 02.11.2026, области не знает: оно закрывало портал — и только его."""
+    db = _db()
+    try:
+        mnt.announce(db, by="прибор")
+        mnt._set(db, mnt.KEY_SCOPE, "")
+        db.commit()
+        st = mnt.state(db)
+        assert (st["portal"], st["cabinet"]) == (True, False)
+    finally:
+        mnt.cancel(db)
+        db.close()
+
+
+def test_nothing_to_close_is_refused():
+    import pytest
+    db = _db()
+    try:
+        with pytest.raises(ValueError):
+            mnt.announce(db, by="прибор", portal=False, cabinet=False)
+        assert mnt.state(db)["mode"] == "off"
+    finally:
+        mnt.cancel(db)
+        db.close()
+
+
+def test_closed_cabinets_alone_do_not_close_the_portal():
+    """Прослойка ядра закрывает портал по ЕГО режиму: при закрытых одних кабинетах сотрудники работают."""
+    assert mnt.portal_mode({"mode": "active", "portal": False, "cabinet": True}) == "off"
+    assert mnt.portal_mode({"mode": "active", "portal": True, "cabinet": False}) == "active"
+    assert mnt.portal_mode({"mode": "announced", "portal": True, "cabinet": True}) == "announced"
+    assert mnt.portal_mode({"mode": "off"}) == "off"
+
+
+def test_cancel_clears_the_scope_too():
+    db = _db()
+    try:
+        mnt.announce(db, by="прибор", portal=False, cabinet=True)
+        mnt.cancel(db)
+        assert mnt._get(db, mnt.KEY_SCOPE) is None
+    finally:
+        db.close()
+
+
+def test_the_cabinet_reads_the_mode_through_its_own_view():
+    """Кабинет под ролью `cabinet` не видит `company_settings`; режим он узнаёт из `pub.maintenance_v1` — и видит
+    ровно время начала и область, без текста для сотрудников и без автора."""
+    from sqlalchemy import text
+    db = _db()
+    try:
+        st = mnt.announce(db, by="прибор", portal=False, cabinet=True)
+        cab = _db()
+        try:
+            cab.execute(text("SET LOCAL ROLE cabinet"))
+            row = cab.execute(text("SELECT * FROM pub.maintenance_v1")).mappings().one()
+            assert set(row.keys()) == {"starts_at", "scope"}
+            assert row["starts_at"] == st["from"] and "cabinet" in row["scope"]
+        finally:
+            cab.rollback()
+            cab.close()
+    finally:
+        mnt.cancel(db)
+        db.close()

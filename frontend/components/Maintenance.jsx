@@ -27,7 +27,8 @@ export function useMaintenance() {
       // 503 от прослойки означает, что обслуживание УЖЕ идёт: сама ручка открыта, но
       // сеть могла не дойти. Молчим — заглушку покажет следующий удачный ответ.
       if (e.response?.status === 503 && e.response?.data?.maintenance) {
-        setSt({ mode: 'active', stub_title: e.response.data.detail,
+        // 503 от прослойки ядра бывает, только когда закрыт ПОРТАЛ.
+        setSt({ mode: 'active', portal: true, stub_title: e.response.data.detail,
           stub_note: e.response.data.note })
       }
     }
@@ -66,7 +67,9 @@ function LiftButton({ onLifted }) {
 
 /** Полоса «через N минут». Живёт в шапке, поверх всего. */
 export function MaintenanceBar({ state, onLifted }) {
-  const announced = state && state.mode === 'announced'
+  // Полоса и заглушка сотрудникам — только если закрывается ПОРТАЛ: закрыты одни кабинеты паблишеров — портал
+  // работает (02.11.2026). Админу полоса нужна и тогда — помнить, что площадки снаружи.
+  const announced = state && state.mode === 'announced' && state.portal
   // РЕЖИМ ИДЁТ, А АДМИН РАБОТАЕТ — и он обязан об этом помнить. Заглушки он не видит
   // (сервер его пропускает), и без полосы портал выглядел бы для него обычным: человек
   // ушёл бы по делам, оставив систему закрытой для всех остальных.
@@ -82,7 +85,9 @@ export function MaintenanceBar({ state, onLifted }) {
       <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--warning)' }} />
       {adminInside ? (
         <>
-          <span>Портал закрыт на техобслуживание. Работать можете только вы.</span>
+          <span>{state.portal
+            ? `Портал${state.cabinet ? ' и кабинеты паблишеров' : ''} закрыт на техобслуживание. Работать можете только вы.`
+            : 'Кабинеты паблишеров закрыты на техобслуживание. Портал работает.'}</span>
           <span style={{ fontWeight: 400 }}>
             Для возобновления включите его обратно — кнопкой справа.
           </span>
@@ -110,7 +115,7 @@ export function MaintenanceStub({ state }) {
   //
   // Право решает сервер (`passes` в ответе `/api/maintenance`), экран подчиняется. Своя
   // проверка роли здесь была бы вторым расчётом одного права — а они расходятся.
-  if (!state || state.mode !== 'active' || state.passes) return null
+  if (!state || state.mode !== 'active' || state.passes || !state.portal) return null
   return (
     <div data-overlay="" style={{
       position: 'fixed', inset: 0, zIndex: Z.toast - 1, background: 'var(--bg-canvas)',

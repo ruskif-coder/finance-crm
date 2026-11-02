@@ -487,7 +487,8 @@ async def _maintenance_gate(request: Request, call_next):
     finally:
         db.close()
 
-    if st.get("mode") == "active":
+    # Закрыты одни кабинеты паблишеров — портал работает (02.11.2026); кабинет закрывается сам, своей прослойкой.
+    if mnt.portal_mode(st) == "active":
         is_admin = False
         auth_header = request.headers.get("authorization") or ""
         if auth_header.lower().startswith("bearer "):

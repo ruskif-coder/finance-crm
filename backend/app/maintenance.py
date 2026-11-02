@@ -16,6 +16,11 @@
 СНИМАЕТСЯ РУКАМИ. Автоснятие по таймеру вернуло бы людей в систему, которую мы ещё не
 починили: «время вышло» и «работа закончена» — разные утверждения.
 
+ОБЛАСТЬ — ПОРТАЛ И/ИЛИ КАБИНЕТЫ ПАБЛИШЕРОВ (владелец 02.11.2026: «надо закрывать и кабинеты… давай выбор»). При
+объявлении две галочки, обе отмечены. Кабинет — отдельный сервис под своей ролью БД: режим он читает из
+`pub.maintenance_v1` и закрывается сам, ядро его не трогает. Объявление без области (до 02.11) закрывало только портал —
+так и читается.
+
 Крон режим НЕ останавливает (решение 17.09.2026): пропущенный час досылки писем
 восстанавливается сам, пропущенный съём статистики — нет. То есть письма во время
 обслуживания уходить будут, и это осознанно.
@@ -29,6 +34,7 @@ from sqlalchemy.orm import Session
 KEY_FROM = "maintenance_from"        # ISO-время наступления
 KEY_NOTE = "maintenance_note"        # текст для людей
 KEY_BY = "maintenance_by"            # кто объявил — для журнала и для экрана
+KEY_SCOPE = "maintenance_scope"      # что закрыто: «portal», «cabinet» через запятую
 
 # Предупреждение фиксированное (решение владельца 17.09.2026). Десять минут — не
 # «круглое число»: это верхняя граница того, что человек готов ждать, не бросив работу,
@@ -74,18 +80,20 @@ def state(db: Session) -> dict:
     raw = _get(db, KEY_FROM)
     if not raw:
         return {"mode": "off", "from": None, "note": None, "by": None,
-                "seconds_left": None}
+                "seconds_left": None, "portal": False, "cabinet": False}
     try:
         start = datetime.fromisoformat(raw)
     except ValueError:
         # Испорченное значение — НЕ повод закрыть систему: режим выключаем и говорим
         # об этом в логе. Обратное решение запирает людей из-за опечатки в настройке.
         return {"mode": "off", "from": None, "note": None, "by": None,
-                "seconds_left": None, "broken": raw}
+                "seconds_left": None, "portal": False, "cabinet": False, "broken": raw}
     now = datetime.utcnow()
     left = int((start - now).total_seconds())
+    scope = set((_get(db, KEY_SCOPE) or "portal").split(","))
     return {
         "mode": "announced" if left > 0 else "active",
+        "portal": "portal" in scope, "cabinet": "cabinet" in scope,
         "from": start.isoformat(),
         "note": _get(db, KEY_NOTE) or NOTE_DEFAULT,
         "by": _get(db, KEY_BY),
@@ -94,10 +102,14 @@ def state(db: Session) -> dict:
     }
 
 
-def announce(db: Session, *, by: str, note: Optional[str] = None) -> dict:
-    """Объявить обслуживание через `LEAD_MINUTES` минут."""
+def announce(db: Session, *, by: str, note: Optional[str] = None,
+             portal: bool = True, cabinet: bool = True) -> dict:
+    """Объявить обслуживание через `LEAD_MINUTES` минут — портала, кабинетов паблишеров или обоих."""
+    if not (portal or cabinet):
+        raise ValueError("Нечего закрывать: отметьте портал или кабинеты паблишеров")
     start = datetime.utcnow() + timedelta(minutes=LEAD_MINUTES)
     _set(db, KEY_FROM, start.isoformat())
+    _set(db, KEY_SCOPE, ",".join(k for k, on in (("portal", portal), ("cabinet", cabinet)) if on))
     _set(db, KEY_NOTE, (note or "").strip() or NOTE_DEFAULT)
     _set(db, KEY_BY, by)
     db.commit()
@@ -107,10 +119,15 @@ def announce(db: Session, *, by: str, note: Optional[str] = None) -> dict:
 def cancel(db: Session) -> dict:
     """Снять режим — и отменой до наступления, и завершением после. Действие одно:
     разница только в том, наступило оно или нет, а состояние после обоих одинаковое."""
-    for k in (KEY_FROM, KEY_NOTE, KEY_BY):
+    for k in (KEY_FROM, KEY_NOTE, KEY_BY, KEY_SCOPE):
         _set(db, k, "")
     db.commit()
     return state(db)
+
+
+def portal_mode(st: dict) -> str:
+    """Режим ПОРТАЛА: закрыты одни кабинеты паблишеров — сотрудники работают как обычно."""
+    return st.get("mode", "off") if st.get("portal") else "off"
 
 
 def blocks(path: str, method: str, *, is_admin: bool, mode: str) -> bool:
