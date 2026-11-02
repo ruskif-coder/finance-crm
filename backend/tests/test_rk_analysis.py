@@ -177,3 +177,29 @@ def test_creative_uniques_come_from_the_same_model(code):
         db.rollback(); db.close()
         if ddb is not None:
             ddb.close()
+
+
+def test_finished_campaign_report_plan_is_the_media_plan_not_the_closed_fact():
+    """Владелец 02.11.2026: «после завершения РК план становится закрытым фактом, а так быть не должно, именно в
+    отчёте; план с МП идёт». Раскладка биддера закрывает выбывшую площадку фактом (05.10) — это нужно DSP, но отчёт,
+    взявший те же числа, у завершённой РК показывал план = факт. Поломка, которую ловит тест: сумма планов площадок в
+    отчёте завершённой РК снова расходится с планом РК."""
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT d.code, c.id, c.plan_show FROM ad_campaign c JOIN sales_deals d ON d.id = c.deal_id
+             WHERE c.status = 'окончена' AND c.plan_show > 0
+               AND EXISTS (SELECT 1 FROM ad_campaign_placement p WHERE p.campaign_id = c.id
+                            AND p.first_started_at IS NOT NULL)
+               AND abs((SELECT coalesce(sum(p.plan_show), 0) FROM ad_campaign_placement p
+                         WHERE p.campaign_id = c.id) - c.plan_show) > 1
+             LIMIT 3""")).all()
+        if not rows:
+            pytest.skip("на стенде нет завершённой РК, где записанный план площадок разошёлся с планом РК")
+        for code, cid, plan in rows:
+            pls = A.placements_of(db, cid)
+            got = sum(p["plan_show"] for p in pls)
+            # Раскладка округляет план каждой площадки — до показа на площадку (DD3ZKD на копии прода: 4 из 548 082).
+            assert abs(got - plan) <= len(pls), f"{code}: в отчёте план площадок {got:.0f}, план РК {plan:.0f}"
+    finally:
+        db.close()

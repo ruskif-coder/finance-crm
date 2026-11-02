@@ -60,11 +60,32 @@ def placements_of(db: Session, campaign_id: int) -> List[dict]:
                (SELECT count(*) FROM ad_campaign_creative cr WHERE cr.placement_id = p.id) AS cr_all
           FROM ad_campaign_placement p JOIN sales_publishers pb ON pb.id = p.publisher_id
          WHERE p.campaign_id = :c ORDER BY p.plan_show DESC NULLS LAST, p.id"""), {"c": campaign_id}).mappings().all()
-    base = _plans_without_boost(db, campaign_id)
+    base = _report_plans(db, campaign_id, rows)
     return [{**dict(r), "share": float(r["share"] or 0),
              "plan_show": float(base.get(r["id"], r["plan_show"]) or 0),
              "cpm": float(r["cpm"]) if r["cpm"] is not None else None,
              "first_started_at": _iso(r["first_started_at"]), "external": not r["cr_dsp"]} for r in rows]
+
+
+# РК закрыта — площадки «завершены» все разом (`finish_campaign`).
+FINISHED = "окончена"
+
+
+def _report_plans(db: Session, campaign_id: int, rows) -> Dict[int, float]:
+    """План площадки для отчёта. Пусто — берётся записанный план.
+
+    Завершённая РК (владелец 02.11.2026: «после завершения РК план становится закрытым фактом, так быть не должно,
+    именно в отчёте; план с МП идёт»): раскладка биддера закрывает выбывшую площадку её фактом — DSP так не получает
+    лишнего, — а «Завершить РК» выбывает все площадки разом, и записанный план превращался в факт. Отчёту нужен план
+    из медиаплана: та же раскладка плана РК, где площадки, успевшие открутиться, считаются работающими. Ничего не
+    записывает. Пока РК идёт — записанный план (без буста, см. ниже): там закрытие фактом остаток не теряет."""
+    status = db.execute(text("SELECT status FROM ad_campaign WHERE id = :c"), {"c": campaign_id}).scalar()
+    if status != FINISHED:
+        return _plans_without_boost(db, campaign_id)
+    from app.ad import build as ad_build
+    ran = {r["id"] for r in rows if r["first_started_at"]}
+    _pls, out = ad_build.campaign_layout(db, campaign_id, with_boost=False, assume_running=ran)
+    return {r["id"]: r["plan_show"] for r in out["rows"]}
 
 
 def _plans_without_boost(db: Session, campaign_id: int) -> Dict[int, float]:
